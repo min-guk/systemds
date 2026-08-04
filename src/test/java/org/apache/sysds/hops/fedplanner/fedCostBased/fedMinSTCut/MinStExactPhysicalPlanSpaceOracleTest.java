@@ -13,12 +13,12 @@ import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer.PlannedSelection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer.RepresentativePreference;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -116,7 +116,7 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 	}
 
 	@Test
-	public void presentLogicalFunctionInputRetainsCapturedMembershipAuthority() throws Exception {
+	public void logicalFunctionInputRetainsSelectedLegalBoundaryAuthority() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildDetachedAnalysis(ProductionShadowFixtureFactory.compile("B-21"));
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
@@ -134,11 +134,18 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 		Assert.assertFalse("fixture must publish exact function-input boundary authority",
 			boundaries.isEmpty());
 		for(var boundary : boundaries) {
-			Assert.assertSame("synthetic boundary must inherit its exact source placement identity",
-				selected.selectedStates().get(boundary.left()),
-				selected.selectedStates().get(boundary.right()));
+			PlacementState source = selected.selectedStates().get(boundary.left());
+			PlacementState target = selected.selectedStates().get(boundary.right());
+			Assert.assertTrue("synthetic boundary must retain a legal exact value-transfer authority",
+				NeutralPlacementGraph.constraintSatisfied(boundary, source, target));
+			if(target.output() == FederatedOutput.FOUT) {
+				Assert.assertEquals("a FOUT function input must forward an existing FOUT value",
+					FederatedOutput.FOUT, source.output());
+				Assert.assertSame("a FOUT function input must preserve exact layout identity",
+					source.fType(), target.fType());
+			}
 			Assert.assertSame("projection must retain synthetic boundary authority",
-				selected.selectedStates().get(boundary.right()),
+				target,
 				projected.normalizedResult().selectedStates().get(boundary.right()));
 		}
 	}
@@ -402,20 +409,24 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 
 	@Test
 	public void nativeAndDerivedEmissionsSharingOnePlacementStateRemainDistinct() throws Exception {
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
-			.buildAnalysis(ProductionShadowFixtureFactory.compile("B-01"));
-		CandidateRuleFact sourceFact = analysis.candidateRuleFacts().orderedFacts().stream()
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(
+			"A=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));"
+				+ "P=A/2;S=colSums(P);write(S,\"out\",format=\"binary\");"));
+		CandidateRuleFact rule = analysis.candidateRuleFacts().orderedFacts().stream()
 			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.filter(fact -> fact.allowedEmissionFacts().stream()
+				.anyMatch(emission -> emission.emissionState().derivedFedFout()))
 			.findFirst().orElseThrow();
-		PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT,
-			FType.ROW, false);
+		CandidateEmissionFact derivedEmission = rule.allowedEmissionFacts().stream()
+			.filter(emission -> emission.emissionState().derivedFedFout())
+			.findFirst().orElseThrow();
+		PlacementState state = derivedEmission.emissionState().placementState();
 		CandidateEmissionFact nativeEmission = new CandidateEmissionFact(
-			new PlacementEmissionState(state, false), FType.ROW);
-		CandidateEmissionFact derivedEmission = new CandidateEmissionFact(
-			new PlacementEmissionState(state, true), FType.ROW);
-		CandidateRuleFact synthetic = new CandidateRuleFact(sourceFact.key(), sourceFact.status(),
-			sourceFact.capability(), sourceFact.shapeProof(), sourceFact.profile(),
-			List.of(nativeEmission, derivedEmission), sourceFact.failureCode());
+			new PlacementEmissionState(state, false), derivedEmission.executionFType());
+		CandidateRuleFact synthetic = new CandidateRuleFact(rule.key(), rule.status(),
+			rule.capability(), rule.shapeProof(), rule.profile(),
+			List.of(nativeEmission, derivedEmission), rule.failureCode());
 		RepresentativePreference nativePreference = new RepresentativePreference(
 			synthetic.key().parentOccurrence(), state.execType(), state.output(),
 			synthetic.key().orderedInputs(), state, synthetic, nativeEmission);
@@ -658,6 +669,10 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 			"[C,Y]=kmeans(X=X,k=50,is_verbose=FALSE,runs=1,eps=1e-9,max_iter=60,"
 				+ "avg_sample_size_per_centroid=50,seed=133815928);",
 			"write(Y,\"out\",format=\"csv\");") + "\n";
+		return compile(script);
+	}
+
+	private static DMLProgram compile(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

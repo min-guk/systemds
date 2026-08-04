@@ -825,6 +825,46 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testDerivedFoutLeftTransposeRewriteKeepsNativeResultLocalBeforeMaterialization() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.COMPRESSED_LINALG, "false");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			DataOp x = createFederatedInput("X", 100000, 100);
+			Hop tX = HopRewriteUtils.createTranspose(x);
+			tX.setForcedExecType(ExecType.FED);
+			tX.setFederatedOutput(FederatedOutput.FOUT);
+			DataOp y = createFederatedInput("Y", 100000, 1);
+			AggBinaryOp parent = HopRewriteUtils.createMatrixMultiply(tX, y);
+			parent.setDim1(100);
+			parent.setDim2(1);
+			parent.setForcedExecType(ExecType.FED);
+			parent.setFederatedOutput(FederatedOutput.FOUT);
+			parent.setFederatedOutputDerived(true);
+
+			assertTrue("Expected the FED left-transpose rewrite fixture to be applicable",
+				parent.usesLeftTransposeRewrite(ExecType.FED));
+			Lop outerTranspose = parent.constructLops();
+			Lop innerMultiply = outerTranspose.getInputs().get(0);
+			assertEquals("A derived FED/FOUT result must execute its native final transpose locally",
+				ExecType.CP, outerTranspose.getExecType());
+			assertEquals("A derived FED/FOUT result must not claim native FOUT on the rewritten multiply",
+				FederatedOutput.LOUT, innerMultiply.getFederatedOutput());
+			assertEquals("The planner-selected FOUT representation remains explicit Hop authority",
+				FederatedOutput.FOUT, parent.getFederatedOutput());
+			assertTrue("The selected FOUT representation must remain marked as derived",
+				parent.isFederatedOutputDerived());
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+	}
+
+
+	@Test
 	public void testPlannerAllowsOptionalLocalTransientReadInputWhenFedSiblingPresent() {
 		DataOp fedMatrix = createFederatedInput("X", 100, 10);
 		DataOp localVector = createLocalMatrix("p", 10, 1);

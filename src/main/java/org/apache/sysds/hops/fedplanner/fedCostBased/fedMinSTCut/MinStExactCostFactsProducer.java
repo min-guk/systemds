@@ -4301,7 +4301,14 @@ public final class MinStExactCostFactsProducer {
 				return multiReturnEstimate;
 		}
 		double estimate = hop.getOutputMemEstimate();
-		if(Double.isFinite(estimate) && estimate > 0.0)
+		boolean unresolvedMatrixShape = hop.getDataType() != null && hop.getDataType().isMatrix()
+			&& (!hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0);
+		// A positive raw estimate is not necessarily concrete: unknown-dimension HOPs carry
+		// a large sentinel-sized envelope.  Returning it here bypassed the shared effective
+		// estimate and made MinST price small recompiled inputs (for example PCA Components)
+		// as multi-gigabyte broadcasts.  Prefer exact immutable shape evidence below and,
+		// when that is unavailable, the same bounded estimate used by DP.
+		if(Double.isFinite(estimate) && estimate > 0.0 && !unresolvedMatrixShape)
 			return estimate;
 		ExactMatrixShape exactShape = exactMatrixShape(analysis, key,
 			Collections.newSetFromMap(new IdentityHashMap<>()));
@@ -4322,6 +4329,10 @@ public final class MinStExactCostFactsProducer {
 				}
 			}
 		}
+		if(!Double.isFinite(derived) || derived <= 0.0)
+			derived = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		if(!Double.isFinite(derived) || derived <= 0.0)
+			derived = estimate;
 		if(!Double.isFinite(derived) || derived <= 0.0)
 			derived = anchorBytes(analysis, key);
 		if(!Double.isFinite(derived) || derived <= 0.0)

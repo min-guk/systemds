@@ -14,6 +14,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalModel.AuthorityKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalModel.InputAuthorityKind;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
@@ -26,6 +27,37 @@ import org.junit.Test;
 
 /** Production-shape PCA guards for exact physical authority and TWrite transfer pricing. */
 public class MinStPcaAuthorityClosureAndTWriteMetadataTest {
+	@Test
+	public void oneWorkerPcaUsesEffectiveUnknownDimTransferEstimate() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileHarnessShapePca());
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		MinStExactPhysicalSelection selected = optimize(model, surface);
+
+		var covarianceDomain = model.domains().stream().filter(candidate ->
+			candidate.node().key().normalizedSignature().contains(
+				"pca.dml:89:16:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp"))
+			.findFirst().orElseThrow();
+		var projectionDomain = model.domains().stream().filter(candidate ->
+			candidate.node().key().normalizedSignature().contains(
+				"pca.dml:110:21:org.apache.sysds.hops.AggBinaryOp:ba(+*):XReduced"))
+			.findFirst().orElseThrow();
+		var componentsReadDomain = model.domains().stream().filter(candidate ->
+			candidate.node().key().normalizedSignature().contains(
+				"pca.dml:110:21:org.apache.sysds.hops.DataOp:TRead Components:Components"))
+			.findFirst().orElseThrow();
+		var componentsRead = analysis.hop(componentsReadDomain.node().key()).orElseThrow();
+		Assert.assertTrue("PCA_COMPONENTS_UNKNOWN_DIM_ESTIMATE_MUST_BE_CLAMPED",
+			FederatedCostModel.getEffectiveOutputMemEstimate(componentsRead)
+				< componentsRead.getOutputMemEstimate());
+		Assert.assertEquals("PCA_ONE_WORKER_COVARIANCE_TSMM_MUST_STAY_FEDERATED",
+			ExecType.FED, selected.selectedStates().get(covarianceDomain.node().key()).execType());
+		Assert.assertEquals("PCA_ONE_WORKER_PROJECTION_MUST_BROADCAST_SMALL_COMPONENTS",
+			ExecType.FED, selected.selectedStates().get(projectionDomain.node().key()).execType());
+	}
+
 	@Test
 	public void pcaGroundsEveryFedContainsAlternativeAndPricesTWriteAsMetadata() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()

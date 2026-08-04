@@ -96,7 +96,6 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}
 
-	@Ignore
 	@Test
 	public void runLMFunctionPlannerFOUTPrivacyNone(){
 		runTestWithConfig("SystemDS-config-fout.xml", null, TEST_NAME_2);

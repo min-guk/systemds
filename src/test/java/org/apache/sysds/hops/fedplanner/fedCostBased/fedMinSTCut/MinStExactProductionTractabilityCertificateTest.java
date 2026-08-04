@@ -48,7 +48,10 @@ public class MinStExactProductionTractabilityCertificateTest {
 	public void physicalAlternativeFactorsAreBitExactWithLegacyCutOnSmallFixture() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\"),ranges=list(list(0,0),list(4,2)));",
-			"S=rand(rows=4,cols=2,seed=7);", "Y=X+S;",
+			// Keep this parity fixture inside the legacy objective's representable surface.
+			// Coordinator-local matrix inputs now have an additional physical NATIVE_LOCAL
+			// transfer factor that the legacy cut intentionally does not encode.
+			"Y=X+1;",
 			"write(Y,\"out\",format=\"csv\");") + "\n"));
 		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
 			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();

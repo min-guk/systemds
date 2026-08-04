@@ -685,12 +685,18 @@ public class AggBinaryOp extends MultiThreadedHop {
 		//matrix mult
 		Lop mult = new MatMultCP(tY, xLop, getDataType(), getValueType(), et, k);
 		mult.getOutputParameters().setDimensions(tYRows, isXTransposed ? actualX.getDim1() : X.getDim2(), getBlocksize(), getNnz());
-		mult.setFederatedOutput(_federatedOutput);
+		// A planner-selected derived FED/FOUT state means that this native
+		// aggregate-binary execution returns LOUT and a separately selected
+		// fed_fout materialization creates the final federated representation.
+		// Propagating the final FOUT marker into this rewrite would make the
+		// vector-times-row-federated multiply falsely advertise a FederationMap.
+		FederatedOutput nativeFedOut = getEffectiveFederatedOutput(et, _federatedOutput);
+		mult.setFederatedOutput(nativeFedOut);
 		setLineNumbers(mult);
 
 		//result transpose (dimensions set outside)
-		ExecType outTransposeExecType = (_federatedOutput == FederatedOutput.FOUT) ?
-				ExecType.FED : ExecType.CP;
+		ExecType outTransposeExecType = (nativeFedOut == FederatedOutput.FOUT) ?
+					ExecType.FED : ExecType.CP;
 		Lop out = new Transform(mult, ReOrgOp.TRANS, getDataType(), getValueType(), outTransposeExecType, k);
 
 		return out;

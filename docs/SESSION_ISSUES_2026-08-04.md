@@ -516,3 +516,123 @@
   포함해 MinST가 최적화하는 값과 실행 비용의 불일치를 바로잡았다.
 - **적용 원칙/제약**: MinST 전역 최적성은 인코딩된 합법 plan space/물리 목적함수 기준, DP의 국소 탐색 한계는
   유지, 후보 임의 축소 금지, 비용/shape/boundary 우선 수정, runtime fallback 금지, Docker-only 성능 검증.
+
+## 9. FedAll LM의 derived FOUT left-transpose rewrite가 local 결과를 federated로 오표기함
+
+- **상태**: 진행중 — 코드/단위·통합 테스트 해결, 동일 Docker 실패 cell canary 대기
+- **환경/조건**:
+  - 실패 campaign: `/home/mchoi/g014-one-pass-results-1f7fbce-cac3730-20260804-v1`
+  - logical cell: `workers=3|planner=FedAll|workload=lm|profile=wan_light`
+  - 실패 cell: `cells/035-70a3ed621b33`, attempt 1, retry 없음
+- **재현 절차**:
+  - 실패 로그:
+    `cells/035-70a3ed621b33/phases/cell-1/cold-docker-e2e/raw_coordinator.log`
+  - focused integration:
+    `mvn -q -Dsysds.compile.log_lop_mapping=true -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest#runLMFunctionPlannerFOUTPrivacyNone test`
+- **관측 증상**:
+  - runtime이 `FED reorg requires federated input but found local at runtime. op=r' input=_mVar17 dims=1x2100 fedOut=LOUT`로 중단했다.
+  - planner가 선택한 derived `FED/FOUT`은 native aggregate-binary 결과가 LOUT으로 생성된 뒤 명시적으로 FOUT
+    materialize되는 상태인데, left-transpose MM lowering이 최종 `_federatedOutput=FOUT`을 내부 multiply와 결과
+    transpose에 직접 전파했다.
+- **원인 분석**:
+  - 일반 Hop lowering은 `getEffectiveFederatedOutput`으로 derived `FED/FOUT`의 native output을 LOUT으로 낮췄다.
+  - `AggBinaryOp.constructCPLopsMMWithLeftTransposeRewrite`만 이 공통 경로를 우회하여 내부 multiply가 실제로는
+    local 결과를 내면서 FOUT FederationMap을 가진 것처럼 광고했고, 뒤의 FED transpose가 이를 소비했다.
+- **해결 요약**:
+  - `Hop.getEffectiveFederatedOutput`을 subclass가 재사용할 수 있도록 `protected`로 변경했다.
+  - left-transpose rewrite 내부 multiply와 결과 transpose의 ExecType을 최종 요청값이 아니라 effective native
+    output에서 결정한다. derived FOUT이면 multiply는 LOUT, outer transpose는 CP가 되고, 최종 FOUT은 기존
+    graph-owned materialization action만 생성한다.
+  - candidate를 닫거나 runtime fallback을 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/Hop.java`
+  - `src/main/java/org/apache/sysds/hops/AggBinaryOp.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedLMPlanningTest.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+- **검증**:
+  - 신규 lowering 회귀는 수정 전 outer transpose가 FED여서 실패했고 수정 후 CP/LOUT을 확인했다.
+  - `FederatedRefedPolicyTest` 전체 통과.
+  - LM privacy-none integration이 성공했으며 LOP mapping에서 left-transpose multiply는 `FED ba+* ... LOUT`,
+    결과 transpose는 `CP r'`로 생성됐다. 실행시간 `1.075 s`, fallback/error 0.
+- **잔여 이슈**:
+  - 새 immutable JAR로 실패 조건 `WAN-light/worker=3/FedAll/LM` Docker canary를 exactly-once 실행한다.
+- **잠재 회귀 위험**:
+  - native FOUT이 가능한 비-derived rewrite까지 CP로 낮추면 불필요한 download가 생길 수 있다. 회귀 테스트는
+    derived bit가 있을 때만 native LOUT으로 낮아지는지와 planner-selected 최종 FOUT authority 보존을 함께 확인한다.
+- **의사결정 근거**: planner의 derived materialization 계약을 lowering이 그대로 실행하도록 수정했다.
+- **적용 원칙/제약**: planner 계획 그대로 실행, runtime fallback 금지, graph-owned exact materialization authority,
+  후보 임의 축소 금지, Docker-only 성능 검증.
+
+## 10. MinST PCA worker=1이 unknown-dimension sentinel을 실제 broadcast 크기로 사용함
+
+- **상태**: 진행중 — 비용모델/회귀 테스트 해결, Docker 성능 canary 대기
+- **환경/조건**:
+  - campaign: `/home/mchoi/g014-one-pass-results-1f7fbce-cac3730-20260804-v1`
+  - `WAN-light/PCA/worker=1`, 고정 seed/data/JAR
+- **재현 절차**:
+  - 기존 MinST cell `cells/025-ce492e271b49`
+  - 기존 DP cell `cells/026-9a9725a896f2`
+  - 회귀:
+    `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStPcaAuthorityClosureAndTWriteMetadataTest test`
+- **관측 증상**:
+  - warm primary가 MinST `106.830 s`, DP `54.857 s`였다.
+  - MinST는 50000×2100 정규화 입력을 coordinator로 받고 `CP tsmm`에 `58.683 s`를 사용했으나, DP는
+    같은 covariance TSMM을 FED로 실행해 `5.178 s`였다. worker=2–4 MinST는 FED TSMM을 선택했다.
+- **원인 분석**:
+  - PCA recompile 경계의 `Components` TRead는 compile-time 차원이 `-1×-1`이지만 runtime은 약 `2100×10`이다.
+  - MinST private `estimatedBytes`는 positive raw `getOutputMemEstimate()`를 먼저 반환했고, unknown-dimension
+    sentinel 약 `3.15 GiB`를 실제 broadcast 크기로 가격 책정했다.
+  - 공통 `FederatedCostModel.getEffectiveOutputMemEstimate`는 동일 HOP을 `256 MiB` bounded estimate로 처리한다.
+    MinST만 이 공통 경로를 우회하여 final projection FED 비용을 과대평가했고, 이미 다운로드한 X 재사용 가정 때문에
+    앞의 covariance TSMM까지 CP가 근소하게 싸다고 잘못 선택했다.
+- **해결 요약**:
+  - matrix shape가 실제로 해결된 경우에만 raw positive estimate를 즉시 사용한다.
+  - unknown shape이면 먼저 immutable placement fact에서 증명 가능한 exact shape를 찾고, 없으면 DP와 공유하는
+    effective output estimate를 사용한 뒤 raw/anchor fallback 순서로 처리한다.
+  - candidate/ExecType 조합을 닫지 않고 실제 비용 입력만 바로잡았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStPcaAuthorityClosureAndTWriteMetadataTest.java`
+- **검증**:
+  - 신규 회귀는 수정 전 covariance TSMM이 CP여서 실패했고 수정 후 covariance와 final projection 모두 FED임을 확인했다.
+  - unknown raw estimate가 공통 effective estimate보다 큼을 fixture에서 직접 검증한다.
+  - `MinStPcaAuthorityClosureAndTWriteMetadataTest` 3/3, `MinStExactPhysicalModelCertificateTest` 8/8,
+    `MinStExactPhysicalPlanSpaceOracleTest` 9/9 및 legacy-representable small-fixture parity 2/2가 통과했다.
+- **잔여 이슈**:
+  - 새 immutable JAR로 `WAN-light/worker=1/MinST/PCA` Docker canary를 실행해 FED TSMM/최종 projection과
+    warm 실행시간 개선을 확인한다.
+- **잠재 회귀 위험**:
+  - 실제 크기가 immutable fact로 알려진 큰 source를 generic 256 MiB로 축소하면 반대로 upload를 과소평가할 수 있다.
+    따라서 exact immutable shape가 effective fallback보다 먼저 적용되며 테스트가 이 순서를 보호한다.
+- **의사결정 근거**: DP/MinST가 공유해야 하는 개별 HOP 크기 비용 의미를 공통 effective estimate와 일치시켰다.
+- **적용 원칙/제약**: MinST 전역 최적성은 인코딩된 물리 목적함수 기준, 비용/shape 추정 우선 수정,
+  후보 임의 축소 금지, runtime fallback 금지, Docker-only 성능 검증.
+
+## 11. exact physical 회귀 테스트 세 건이 현재 계약 이전의 가정을 고정함
+
+- **상태**: 해결
+- **환경/조건**: MinST exact physical test suite, source HEAD `1f7fbce3402e`
+- **재현 절차**:
+  - `MinStExactProductionTractabilityCertificateTest#physicalAlternativeFactorsAreBitExactWithLegacyCutOnSmallFixture`
+  - 전체 `MinStExactPhysicalPlanSpaceOracleTest`
+- **관측 증상**:
+  - legacy parity fixture가 새 physical-only `NATIVE_LOCAL` runtime transfer factor까지 legacy cut과 bit-exact여야 한다고 가정했다.
+  - function boundary fixture가 합법이고 비용이 부과되는 FOUT→LOUT 전달도 동일 placement identity여야 한다고 가정했다.
+  - derived emission fixture가 graph-owned materialization action 없이 derived bit만 생성해 constructor invariant에서 실패했다.
+- **원인 분석**: issue 8의 NATIVE_LOCAL 비용 추가, function value-transfer 비대칭 계약, exact derived-action authority가
+  도입된 뒤 fixture/assertion이 갱신되지 않았다. 현재 production 코드 결함이나 issue 9/10 변경 회귀는 아니었다.
+- **해결 요약**:
+  - legacy parity fixture는 legacy가 표현 가능한 scalar-input 범위에서 bit-exact를 계속 완전열거한다.
+  - function boundary는 공통 `constraintSatisfied`의 합법성을 검증하고, FOUT target일 때만 exact FOUT/FType 전달을 요구한다.
+  - derived/native 구분 테스트는 실제 graph-owned derived action을 가진 분석에서 emission을 가져와 동일 state의 native
+    counterpart를 구성하므로 invalid authority를 만들지 않는다.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactProductionTractabilityCertificateTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactPhysicalPlanSpaceOracleTest.java`
+- **검증**: 관련 exact physical 묶음 22 tests, failures/errors 0.
+- **잔여 이슈**: 28 campaign-shape workload/worker를 포함한 장시간 production certificate는 DP baseline 열거에서
+  13분 이상 소요되어 중단했다. 새 비용 변경과 직접 관련된 exact physical/plan-space 검증은 모두 통과했다.
+- **잠재 회귀 위험**: parity fixture 범위를 다시 matrix NATIVE_LOCAL 입력까지 넓힐 때는 legacy equality가 아니라
+  physical-only factor를 독립 계산해 차이를 검증해야 한다.
+- **의사결정 근거**: production 계약을 완화하지 않고 stale test가 유효한 권한/비용 의미를 검증하도록 고쳤다.
+- **적용 원칙/제약**: exact graph authority, 합법 candidate space 유지, runtime transfer 비용 누락 금지.

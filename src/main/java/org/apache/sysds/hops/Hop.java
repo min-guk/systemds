@@ -400,7 +400,7 @@ public abstract class Hop implements ParseInfo {
 			lop.setFederatedOutput(getEffectiveFederatedOutput(execType, fedOut));
 	}
 
-	private FederatedOutput getEffectiveFederatedOutput(ExecType execType, FederatedOutput fedOut) {
+	protected FederatedOutput getEffectiveFederatedOutput(ExecType execType, FederatedOutput fedOut) {
 		if (execType == ExecType.FED && _federatedOutputDerived && fedOut == FederatedOutput.FOUT)
 			return FederatedOutput.LOUT;
 		return fedOut;
