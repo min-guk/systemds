@@ -420,9 +420,17 @@
   - harness commit `cac37301b4303aa186b2327fdbc1ac290ba655ed`에서 focused 11/11 및 전체
     harness 147/147 테스트가 통과했다.
   - 변경 Python 파일 `py_compile` 및 `basedpyright` 0 errors/0 warnings/0 notes, `git diff --check`가 통과했다.
+  - 새 immutable stage `a07aa85b86f5f44e3aadc8f4c0b8129479fd210b2564576f2469507345ce99e4`를
+    staged validator로 검증했다. data/reference/JAR hash는 기존 고정값과 동일하다.
+  - 새 manifest `2ea60881c44bd4600efe9370c1eaa68ba82b866bbafdc9ac76739d56ef201aa8`는 336/336
+    unique cell, profile 경계 112/112/112, seed `2026072701`, retry policy `NONE`을 인증한다.
+  - 첫 live Docker request와 실제 runner argv가 모두
+    `workers=1|planner=DP|workload=kmeans|profile=wan_light`임을 확인했다.
+  - 첫 cell은 semantic oracle/runtime scan을 통과하고 fallback 없이 성공했다. warm primary execution은
+    52.495초, teardown 후 Docker resource 0개였으며 WAN-light 관측 RTT는 25.108 ms였다.
 - **잔여 이슈**:
-  - harness commit `cac3730` 기반 새 immutable stage와 output으로 campaign을 처음부터 시작하고 첫 cell/profile을
-    manifest와 live request 양쪽에서 검증한다.
+  - 새 output `/home/mchoi/g014-one-pass-results-97f792b-cac3730-20260804-v1`의 나머지 335개 cell을
+    exactly-once로 완료하고, 실패가 없을 때만 정렬 분석과 3×7 그래프를 생성한다.
 - **잠재 회귀 위험**:
   - profile 순서만 바꾸되 planner/worker period 균형이 깨질 수 있으므로 전체 harness period-count test와
     manifest 검증으로 감지한다.
