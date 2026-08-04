@@ -189,7 +189,7 @@
 
 ## 4. FedAll worker=1 KMeans에서 파생 FOUT action이 이전 세대 value-version identity를 보유함
 
-- **상태**: 진행 중 — 원인 수정 및 Docker-shaped 회귀 통과, 새 immutable Docker stage 재검증 대기
+- **상태**: 해결 — 원인 수정, Docker-shaped 회귀 및 새 immutable artifact의 worker=1 Docker 실행 통과
 - **환경/조건**:
   - planner: FedAll (`compile_fed_all`)
   - workload: KMeans, worker=1 FULL, LAN profile
@@ -233,9 +233,13 @@
     (`/tmp/g014_fedall_derived_fout_adjacent_green.log`).
   - FedAll Docker-shaped ALS/KMeans/L2SVM/StepLM/LogReg 5개 통과
     (`/tmp/g014_fedall_docker_shaped_suite_green.log`).
+  - 후속 source commit `98675082a1cf1ac886401f00e454b39213c6778c`, immutable artifact
+    `/home/mchoi/g014-systemds-build-9867508-874e409d`에서 KMeans worker=1 LAN Docker 실행 성공.
+    warm 실행시간은 DP `20.136 s`, FedAll `20.165 s`, MinST `20.047 s`, Heuristic `20.342 s`이며,
+    네 플래너 모두 semantic oracle, runtime scan, zero-restart/zero-fallback 검증을 통과했다.
 - **잔여 이슈**:
-  - 수정 source를 clean commit/JAR/stage로 고정하고, 실패한 FedAll KMeans cell을 포함한 새 336-cell one-pass
-    Docker campaign에서 실제 cold/warm 실행을 재검증해야 한다. 이전 DP 성공 1건과 새 artifact 결과는 합치지 않는다.
+  - worker=2에서 별도의 runtime recompile derived-FOUT authority 문제가 발견되었으며 아래 이슈 5에서 처리한다.
+    이슈 4의 worker=1 identity 버그와 원인은 다르다.
 - **잠재 회귀 위험**:
   - 향후 node replay가 value-version을 구조적으로도 변경한다면 final bind가 예외를 내야 한다. 구조 동일성 guard와
     Docker-shaped 회귀가 이를 감지한다.
@@ -243,3 +247,78 @@
   최종 소유 객체를 action에 게시하도록 authority 생성 순서를 바로잡았다.
 - **적용 원칙/제약**: exact graph-owned authority, planner 선검증, runtime fallback 금지, 후보군 축소 금지,
   worker=1 FULL 유지, Docker-only 성능 근거.
+
+## 5. runtime recompile이 DP exact state의 derived-FOUT 비트를 잃고 업로드를 건너뜀
+
+- **상태**: 해결 — 단위/인접 회귀 및 실제 worker=2 KMeans runtime 재현 통과, 새 immutable Docker canary 대기
+- **환경/조건**:
+  - planner: FedAll (`compile_fed_all`)
+  - workload: KMeans, worker=2 ROW, LAN profile
+  - 실패 artifact: `/home/mchoi/g014-systemds-build-9867508-874e409d`
+  - 실패 campaign: `/home/mchoi/g014-one-pass-results-9867508-44750a4-20260804-v1`
+  - 실패 logical cell: `workers=2|planner=FedAll|workload=kmeans|profile=lan` (5번째 cell)
+- **재현 절차**:
+  - Docker 원본 로그:
+    `/home/mchoi/g014-one-pass-results-9867508-44750a4-20260804-v1/cells/005-664ab033fd07/phases/cell-1/cold-docker-e2e/raw_coordinator.log`
+  - 정책 RED/GREEN:
+    `mvn -q -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedRefedPolicyTest#testRuntimeRecompileRegistersDerivedFoutProducerBeforeFedConsumer test`
+  - 실제 function recompile RED/GREEN:
+    `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedAll.CampaignBG014FedAllKMeansRuntimeRecompileDerivedFoutRedTest test`
+- **관측 증상**:
+  - Docker cold 실행이 다음 fail-closed 오류로 중단됐다:
+    `FED aggregate unary requires a planner-provided federated input; runtime CP fallback is forbidden.`
+    실패 instruction은 `FED uarsqk+ ... FOUT`이었다.
+  - planner trace에서 KMeans loop의 `ba(+*)` producer는 처음부터 `FED/FOUT/derived=true`로 선택되었다.
+    그러나 function recompile snapshot/restore는 `ExecType`과 `FederatedOutput`만 보존해 derived 비트를 잃었다.
+  - derived 비트를 보존한 첫 수정 뒤에도 `FederatedRefedPolicy.isRuntimeFederatedInput`이 placement만 보고 이를
+    이미 물리적으로 federated인 입력으로 판정했다. 따라서 `validateAndRegister`가 `fed_fout`/`fed_refed`
+    receipt를 만들기 전에 조기 종료했고, FED consumer는 실제 federated 입력 없이 lowering되었다.
+- **원인 분석**:
+  1. DP의 exact occurrence 충돌 탐지는 이미 `SelectedDpState.exactState`뿐 아니라
+     `SelectedDpState.derivedFedFout` 차이도 충돌로 취급한다.
+     `countIncompatibleDecisionMapPlans`와 `coalesceSelectedState` 모두 동일 occurrence에서 derived 비트가 다르면
+     fail-closed로 충돌을 보고한다.
+  2. 공통 `PlannerRecompileState`와 `Recompiler.HopState`에는 이 exact bit가 없었다. 즉 DP resolver가 구분한
+     두 물리 상태가 runtime recompile 경계에서 같은 `FED/FOUT`으로 축약됐다.
+  3. derived `FED/FOUT`은 FED 연산의 출력이 물리적으로 LOUT으로 떨어진 뒤 다시 FOUT으로 재배치되는 상태다.
+     따라서 exact materialize/REFED registry receipt 전에는 runtime-federated input이 아니다. 기존 분류기는
+     선택 placement를 물리 완료 증거로 오인했다.
+- **해결 요약**:
+  - `PlannerRecompileState`, immutable snapshot, `Recompiler.HopState`에
+    `federatedOutputDerived`를 추가하고 snapshot/restore/동등성/진단에 포함했다.
+  - derived 상태는 오직 `FED/FOUT`에만 허용하는 invariant를 snapshot 등록·복원 시 fail-closed 검증한다.
+  - DP가 clone/target HOP에 기존 recompile state를 재사용할 때도 derived 비트까지 같아야 동일 상태로 본다.
+  - runtime 분류기는 derived producer에 대해 exact materialize/REFED registry receipt가 있을 때만
+    runtime-federated input으로 인정한다. receipt가 없으면 local producer로 유지해 기존 planner-selected
+    REFED/FOUT 등록 경로가 실행되게 했다.
+  - runtime fallback, TRead/TWrite 규칙 완화, opcode별 candidate skip은 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerUtils.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/main/java/org/apache/sysds/hops/recompile/Recompiler.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `src/test/java/org/apache/sysds/hops/recompile/CampaignBG014DerivedFoutRecompileStateRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllKMeansRuntimeRecompileDerivedFoutRedTest.java`
+- **검증**:
+  - 신규 정책 테스트는 수정 전 정확히 실패했고 수정 후 성공했다.
+  - 실제 2-worker KMeans FedAll test 성공: execution `0.634 s`, function recompile 1회,
+    `fed_fed_fout` 4회, `fed_uarsqk+` 1회, fallback/repair 0.
+  - `FederatedRefedPolicyTest`: 64 tests, failures/errors 0.
+  - derived-FOUT recompile snapshot, FedAll ALS runtime recompile, KMeans derived authority,
+    DP disconnected exact-conflict completion, DP program/dynamic authority parity,
+    captured feasibility authority, placement transaction 인접 회귀를 함께 실행해 모두 통과했다.
+- **잔여 이슈**:
+  - source를 clean commit과 immutable build/stage로 고정한 뒤, 정확히 실패했던 worker=2 FedAll KMeans를
+    `run_LAN_docker.sh` canary로 재검증한다.
+  - canary 성공 뒤에만 새 336-cell campaign을 처음부터 한 번 실행한다. 이전 artifact의 4개 성공 row는
+    진단 자료로만 보존하고 새 결과와 합치지 않는다.
+- **잠재 회귀 위험**:
+  - 새 runtime classifier가 receipt 등록 전 derived 출력을 local로 보는 것이므로, 등록 순서가 바뀌면
+    upload가 누락되거나 중복될 수 있다. 정책 회귀가 receipt 전/후 상태를 검증하고, 실제 KMeans/ALS
+    function-recompile 테스트가 emitted `fed_fout`/`fed_refed` 및 zero-fallback을 감지한다.
+- **의사결정 근거**: DP의 기존 exact conflict semantics를 공통 recompile/lowering 경계까지 보존했다.
+  DP를 MinST식 전역 최적으로 바꾸지 않았고, DP의 국소 탐색 특성으로 생기는 합법적인 선택 차이는 유지했다.
+- **적용 원칙/제약**: planner가 runtime 가능성을 사전 검증, runtime fallback 금지, exact receipt authority,
+  후보 임의 축소 금지, TRead/TWrite `<CP,LOUT>`/`<FED,FOUT>` 유지, recompile `<CP,FOUT>` 금지,
+  Docker-only 성능 검증.

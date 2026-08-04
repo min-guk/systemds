@@ -3395,12 +3395,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (execType == null)
 				throw new DMLRuntimeException("ExecType is null in FedPlan for hop " + planHopId + " / " + hopRef.getOpString());
 			FederatedOutput outType = effectivePlan.getFedOutType();
-			boolean applyStateToTargetHop = shouldApplyRewriteStateToTargetHop(
-				memoTable, planHopId, hopRef, targetHop, execType, outType);
-
 			boolean derivedFedFout = execType == ExecType.FED
 				&& outType == FederatedOutput.FOUT
 				&& effectivePlan.isDerivedFedFout();
+			boolean applyStateToTargetHop = shouldApplyRewriteStateToTargetHop(
+				memoTable, planHopId, hopRef, targetHop, execType, outType, derivedFedFout);
 				if(selectedStates == null) {
 					applyPlannedHopState(hopRef, execType, outType, derivedFedFout);
 					if(targetHop != hopRef && applyStateToTargetHop)
@@ -3584,7 +3583,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Hop hopRef,
 		Hop targetHop,
 		ExecType execType,
-		FederatedOutput outType) {
+		FederatedOutput outType,
+		boolean derivedFedFout) {
 
 		if (targetHop == null || targetHop == hopRef)
 			return true;
@@ -3594,14 +3594,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerUtils.getPlannerRecompileState(targetHop);
 		if (existing == null)
 			return true;
-		return existing.getExecType() == execType && existing.getFederatedOutput() == outType;
+		return existing.getExecType() == execType && existing.getFederatedOutput() == outType
+			&& existing.isFederatedOutputDerived() == derivedFedFout;
 	}
 
 	private static String formatPlannerRecompileState(
 		FederatedPlannerUtils.PlannerRecompileState state) {
 		if (state == null)
 			return "null";
-		return state.getExecType() + "/" + state.getFederatedOutput();
+		return state.getExecType() + "/" + state.getFederatedOutput()
+			+ "/derived=" + state.isFederatedOutputDerived();
 	}
 
 		private static void registerPlannerRecompileState(

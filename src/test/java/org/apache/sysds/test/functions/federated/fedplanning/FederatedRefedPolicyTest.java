@@ -1236,6 +1236,45 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testRuntimeRecompileRegistersDerivedFoutProducerBeforeFedConsumer() {
+		DataOp x = createFederatedInput("X", 100, 20);
+		UnaryOp derived = HopRewriteUtils.createUnary(x, OpOp1.EXP);
+		derived.setDim1(100);
+		derived.setDim2(20);
+		derived.setForcedExecType(ExecType.FED);
+		derived.setFederatedOutput(FederatedOutput.FOUT);
+		derived.setFederatedOutputDerived(true);
+
+		UnaryOp fedConsumer = HopRewriteUtils.createUnary(derived, OpOp1.SQRT);
+		fedConsumer.setDim1(100);
+		fedConsumer.setDim2(20);
+		fedConsumer.setForcedExecType(ExecType.FED);
+		fedConsumer.setFederatedOutput(FederatedOutput.FOUT);
+
+		String rowSignature = "worker1:8001/data/X_1;worker2:8002/data/X_2;|0,50;50,100;";
+		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW, rowSignature);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(x.getHopID(), FType.ROW);
+		fTypeMap.put(derived.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("X", rowSignature);
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("X", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(
+			new java.util.ArrayList<>(Arrays.asList(fedConsumer)), true, fTypeMap, 17L,
+			runtimeSignatures, runtimeTypes);
+
+		assertTrue("Derived FED/FOUT is local until its exact REFED/FOUT receipt is rebuilt",
+			FederatedRefedRegistry.snapshot(17L).containsKey(derived.getHopID())
+				|| FederatedFoutMaterializeRegistry.snapshot(17L).containsKey(derived.getHopID()));
+		assertEquals("Runtime lowering must preserve the selected derived-FOUT bit", true,
+			derived.isFederatedOutputDerived());
+		assertEquals("The selected consumer must remain FED after its input receipt is rebuilt",
+			ExecType.FED, fedConsumer.getForcedExecType());
+	}
+
+	@Test
 	public void testRuntimeSignatureWithoutTypeDoesNotFabricateFullAnchorKey() {
 		DataOp local = createLocalMatrix("local", 10, 10);
 		Map<String, String> runtimeSignatures = new HashMap<>();

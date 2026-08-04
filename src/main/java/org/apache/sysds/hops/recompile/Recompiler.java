@@ -597,7 +597,8 @@ public class Recompiler {
 			Hop hop = queue.poll();
 			if (hop == null || !visited.add(hop))
 				continue;
-			HopState hs = new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput(), signatureOf(hop));
+			HopState hs = new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput(),
+				hop.isFederatedOutputDerived(), signatureOf(hop));
 			states.put(hop.getHopID(), hs);
 			// Debug aid for diagnosing recompile-time plan drift on key transient vars / PCA hot path hops.
 			if (LOG_RECOMPILE_NEW_HOPS && shouldDebugRecompileHop(hop.getName())) {
@@ -608,6 +609,7 @@ public class Recompiler {
 					+ " exec=" + hop.getExecType()
 					+ " forced=" + hop.getForcedExecType()
 					+ " fedOut=" + hop.getFederatedOutput()
+					+ " fedOutDerived=" + hop.isFederatedOutputDerived()
 					+ " sig=" + hs.signature);
 			}
 			List<Hop> inputs = hop.getInput();
@@ -665,7 +667,7 @@ public class Recompiler {
 				FederatedPlannerUtils.getPlannerRecompileState(sig);
 			HopState state = plannerState != null
 				? new HopState(plannerState.getExecType(), plannerState.getExecType(),
-					plannerState.getFederatedOutput(), sig)
+					plannerState.getFederatedOutput(), plannerState.isFederatedOutputDerived(), sig)
 				: null;
 			if (state == null) {
 				HopState idState = (cloneIdStates != null) ? cloneIdStates.get(hop.getHopID()) : null;
@@ -686,6 +688,7 @@ public class Recompiler {
 					hop.setForcedExecType(state.forcedExecType);
 				if (state.fedOut != null)
 					hop.setFederatedOutput(state.fedOut);
+				hop.setFederatedOutputDerived(state.fedOutDerived);
 				if (LOG_RECOMPILE_NEW_HOPS && plannerState != null) {
 					System.out.println("[RecompilePlannerStateRestore] hopID=" + hop.getHopID()
 						+ " name=" + String.valueOf(hop.getName())
@@ -697,7 +700,9 @@ public class Recompiler {
 						+ " afterExec=" + hop.getExecType()
 						+ " afterForced=" + hop.getForcedExecType()
 						+ " afterFedOut=" + hop.getFederatedOutput()
+						+ " afterFedOutDerived=" + hop.isFederatedOutputDerived()
 						+ " planner=" + plannerState.getExecType() + "/" + plannerState.getFederatedOutput()
+							+ "/derived=" + plannerState.isFederatedOutputDerived()
 						+ " sig=" + sig
 						+ " inputs=" + formatHopInputs(hop));
 				}
@@ -709,11 +714,13 @@ public class Recompiler {
 						+ " exec=" + hop.getExecType()
 						+ " forced=" + hop.getForcedExecType()
 						+ " fedOut=" + hop.getFederatedOutput()
+						+ " fedOutDerived=" + hop.isFederatedOutputDerived()
 						+ " sig=" + signatureOf(hop)
 						+ " matchedSig=" + state.signature
 						+ " stateExec=" + state.execType
 						+ " stateForced=" + state.forcedExecType
-						+ " stateFedOut=" + state.fedOut);
+						+ " stateFedOut=" + state.fedOut
+						+ " stateFedOutDerived=" + state.fedOutDerived);
 				}
 			}
 			List<Hop> inputs = hop.getInput();
@@ -748,7 +755,9 @@ public class Recompiler {
 					+ " exec=" + hop.getExecType()
 					+ " forced=" + hop.getForcedExecType()
 					+ " fedOut=" + hop.getFederatedOutput()
+					+ " fedOutDerived=" + hop.isFederatedOutputDerived()
 					+ " planner=" + plannerState.getExecType() + "/" + plannerState.getFederatedOutput()
+						+ "/derived=" + plannerState.isFederatedOutputDerived()
 					+ " sbId=" + (sb != null ? sb.getSBID() : -1)
 					+ " pred=" + pred
 					+ " tid=" + tid
@@ -839,7 +848,7 @@ public class Recompiler {
 				FederatedPlannerUtils.getPlannerRecompileState(sig);
 			if (plannerState != null) {
 				matchedState = new HopState(plannerState.getExecType(), plannerState.getExecType(),
-					plannerState.getFederatedOutput(), sig);
+					plannerState.getFederatedOutput(), plannerState.isFederatedOutputDerived(), sig);
 			}
 			if (baseStates != null) {
 				if (matchedState == null)
@@ -860,10 +869,12 @@ public class Recompiler {
 				+ " exec=" + hop.getExecType()
 				+ " forced=" + hop.getForcedExecType()
 				+ " fedOut=" + hop.getFederatedOutput()
+				+ " fedOutDerived=" + hop.isFederatedOutputDerived()
 				+ " sig=" + signatureOf(hop)
 				+ " matchedExec=" + (matchedState != null ? matchedState.execType : null)
 				+ " matchedForced=" + (matchedState != null ? matchedState.forcedExecType : null)
 				+ " matchedFedOut=" + (matchedState != null ? matchedState.fedOut : null)
+				+ " matchedFedOutDerived=" + (matchedState != null ? matchedState.fedOutDerived : null)
 				+ " matchedSig=" + (matchedState != null ? matchedState.signature : null)
 				+ " dataType=" + hop.getDataType()
 				+ " valueType=" + hop.getValueType()
@@ -891,12 +902,15 @@ public class Recompiler {
 		private final ExecType execType;
 		private final ExecType forcedExecType;
 		private final FederatedOutput fedOut;
+		private final boolean fedOutDerived;
 		private final String signature;
 
-		private HopState(ExecType execType, ExecType forcedExecType, FederatedOutput fedOut, String signature) {
+		private HopState(ExecType execType, ExecType forcedExecType, FederatedOutput fedOut,
+			boolean fedOutDerived, String signature) {
 			this.execType = execType;
 			this.forcedExecType = forcedExecType;
 			this.fedOut = fedOut;
+			this.fedOutDerived = fedOutDerived;
 			this.signature = signature;
 		}
 	}
@@ -944,7 +958,8 @@ public class Recompiler {
 			return false;
 		return a.execType == b.execType
 			&& a.forcedExecType == b.forcedExecType
-			&& a.fedOut == b.fedOut;
+			&& a.fedOut == b.fedOut
+			&& a.fedOutDerived == b.fedOutDerived;
 	}
 
 	private static void inferFTypeIfNeeded(Hop hop, Map<Long, FType> fTypeMap, Set<Hop> done, Set<Hop> stack) {

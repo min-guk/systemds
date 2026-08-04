@@ -91,15 +91,19 @@ public class FederatedPlannerUtils {
 	public record FedVarSnapshot(boolean fedInit, FType fType, String signature, String anchorKey) { }
 
 	/** Immutable copy of one planner recompile decision. */
-	public record PlannerRecompileStateSnapshot(Types.ExecType execType, FederatedOutput federatedOutput) { }
+	public record PlannerRecompileStateSnapshot(Types.ExecType execType, FederatedOutput federatedOutput,
+		boolean federatedOutputDerived) { }
 
 	public static final class PlannerRecompileState {
 		private final Types.ExecType _execType;
 		private final FederatedOutput _fedOut;
+		private final boolean _fedOutDerived;
 
-		private PlannerRecompileState(Types.ExecType execType, FederatedOutput fedOut) {
+		private PlannerRecompileState(Types.ExecType execType, FederatedOutput fedOut,
+			boolean fedOutDerived) {
 			_execType = execType;
 			_fedOut = fedOut;
+			_fedOutDerived = fedOutDerived;
 		}
 
 		public Types.ExecType getExecType() {
@@ -110,10 +114,15 @@ public class FederatedPlannerUtils {
 			return _fedOut;
 		}
 
+		public boolean isFederatedOutputDerived() {
+			return _fedOutDerived;
+		}
+
 		private boolean sameAs(PlannerRecompileState that) {
 			if (that == null)
 				return false;
-			return _execType == that._execType && _fedOut == that._fedOut;
+			return _execType == that._execType && _fedOut == that._fedOut
+				&& _fedOutDerived == that._fedOutDerived;
 		}
 	}
 
@@ -524,7 +533,10 @@ public class FederatedPlannerUtils {
 		String signature = plannerRecompileSignature(hop);
 		if (signature == null || signature.isEmpty() || execType == null || fedOut == null)
 			return;
-		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut);
+		boolean fedOutDerived = hop.isFederatedOutputDerived();
+		if (fedOutDerived && (execType != Types.ExecType.FED || fedOut != FederatedOutput.FOUT))
+			throw new IllegalArgumentException("Derived federated output requires FED/FOUT planner state");
+		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut, fedOutDerived);
 		if (AMBIGUOUS_PLANNER_RECOMPILE_STATES.contains(signature)) {
 			tracePlannerRecompileState(hop, "PlannerRecompileState-SkipAmbiguous",
 				signature, state, null);
@@ -563,7 +575,8 @@ public class FederatedPlannerUtils {
 	}
 
 	private static String formatPlannerRecompileState(PlannerRecompileState state) {
-		return state == null ? "null" : state.getExecType() + "/" + state.getFederatedOutput();
+		return state == null ? "null" : state.getExecType() + "/" + state.getFederatedOutput()
+			+ "/derived=" + state.isFederatedOutputDerived();
 	}
 
 	public static PlannerRecompileState getPlannerRecompileState(Hop hop) {
@@ -616,7 +629,7 @@ public class FederatedPlannerUtils {
 		for(Entry<String, PlannerRecompileState> entry : PLANNER_RECOMPILE_STATES.entrySet()) {
 			PlannerRecompileState state = entry.getValue();
 			snapshot.put(entry.getKey(), new PlannerRecompileStateSnapshot(
-				state.getExecType(), state.getFederatedOutput()));
+				state.getExecType(), state.getFederatedOutput(), state.isFederatedOutputDerived()));
 		}
 		return Collections.unmodifiableMap(snapshot);
 	}
@@ -637,8 +650,14 @@ public class FederatedPlannerUtils {
 			if (signature == null || signature.isEmpty() || state == null
 				|| state.execType() == null || state.federatedOutput() == null)
 				throw new IllegalArgumentException("Planner recompile snapshot contains an invalid entry");
+			if (state.federatedOutputDerived()
+				&& (state.execType() != Types.ExecType.FED
+					|| state.federatedOutput() != FederatedOutput.FOUT))
+				throw new IllegalArgumentException(
+					"Derived planner recompile snapshot must be FED/FOUT");
 			PLANNER_RECOMPILE_STATES.put(signature,
-				new PlannerRecompileState(state.execType(), state.federatedOutput()));
+				new PlannerRecompileState(state.execType(), state.federatedOutput(),
+					state.federatedOutputDerived()));
 		}
 		for (String signature : ambiguousSignatures) {
 			if (signature == null || signature.isEmpty())

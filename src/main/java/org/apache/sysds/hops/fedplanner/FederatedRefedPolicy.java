@@ -2152,6 +2152,17 @@ public final class FederatedRefedPolicy {
 		if (input == null)
 			return false;
 
+		boolean hasExactFederatedReceipt =
+			(materialize != null && materialize.containsKey(input.getHopID()))
+				|| (refed != null && refed.containsKey(input.getHopID()));
+		// A derived FED/FOUT state denotes a FED operation whose physical output is
+		// local and must be explicitly re-federated.  It becomes a runtime-federated
+		// input only after lowering has rebuilt the exact materialize/REFED receipt;
+		// treating the selected placement alone as physical authority skips the
+		// required upload and leaves the emitted FED consumer without a federated input.
+		if (input.isFederatedOutputDerived())
+			return hasExactFederatedReceipt;
+
 		if (input instanceof DataOp) {
 			DataOp dataOp = (DataOp) input;
 			OpOpData op = dataOp.getOp();
