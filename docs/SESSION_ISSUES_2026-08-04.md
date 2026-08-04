@@ -440,7 +440,7 @@
 
 ## 8. MinST가 KMeans 반복 로컬 입력 전송을 목적함수에서 누락해 DP보다 느린 계획을 선택함
 
-- **상태**: 진행중 — 비용모델 수정과 targeted/exhaustive 회귀는 통과, 동일 Docker WAN-light 실측 검증 대기
+- **상태**: 해결 — 비용모델 회귀와 새 immutable Docker WAN-light DP/MinST canary 통과
 - **환경/조건**:
   - 실패 source commit `97f792bdbef8ea63aa2727b4f8d26e571be515f7`
   - 실패 campaign `/home/mchoi/g014-one-pass-results-97f792b-cac3730-20260804-v1`
@@ -488,11 +488,25 @@
   - 전체 `MinStExactPhysicalPlanSpaceOracleTest`의 다른 두 fixture 실패는 수정 전 HEAD에서도 동일하게 재현했다.
     하나는 현재 합법인 function FOUT→LOUT download를 불법으로 가정하는 stale assertion이고, 다른 하나는
     required derived action 없이 derived emission을 생성하는 stale fixture라 본 이슈의 factor와 무관하다.
+  - source commit `9b6803c8948d30a3e9a509381e3ffa7f0d8cb7eb`, JAR SHA-256
+    `283cec0a6340df6a7701781c52e43553baffe1107dd79d80e9910c9bacf638c1`, immutable stage
+    `be9900f4f101e7bdbfdd5ed9d7b899ac8cdfa604c2f02b71be7120b04b58d702`에서 동일 seed/data/reference의
+    WAN-light KMeans worker=1 DP와 MinST를 각각 exactly-once Docker canary로 실행했다.
+  - warm primary는 MinST `45.052 s` ≤ DP `54.115 s`로 MinST가 `9.063 s` (`16.748%`) 빨랐다.
+    cold도 MinST `49.401 s` ≤ DP `60.899 s`였다.
+  - MinST의 matrix put은 실패 계획 `2,558,734,200 bytes`에서 `38,715,000 bytes`로 줄었고
+    `fed_fed_refed 50회/37.019 s`는 `0회/0 s`로 제거됐다. 비교 DP는 `77,741,040 bytes`,
+    `fed_fed_refed 50회/1.078 s`였다.
+  - 두 planner의 cold/warm 모두 semantic oracle/runtime scan, normalized runtime-plan 동일성,
+    instruction fingerprint 동일성, zero fallback/timeout/error, coordinator/worker restart 0,
+    project container/network/volume teardown 0을 검증했다.
+  - canary receipt:
+    `/home/mchoi/g014-minst-native-local-canary-results-9b6803c-283cec0a-20260804-v1/canary-receipt.json`
+    (SHA-256 `dd291591b1fab05429b1531812e3a63e66ff64981019738536f7c796c415f9e2`).
 - **잔여 이슈**:
-  - 새 immutable source/JAR/stage에서 KMeans worker=1 WAN-light DP와 MinST를 각각 한 번만 Docker 실행한다.
-  - MinST의 2.56 GB/37 s 반복 refed 제거, semantic oracle/runtime scan/zero fallback/zero restart 및
-    `MinST <= DP`를 실측한 뒤에만 해결 상태로 바꾼다.
-  - 성공한 뒤 폐기 campaign 행을 재사용하지 않고 새 profile-major 336-cell campaign을 처음부터 실행한다.
+  - 이 canary는 KMeans/WAN-light/worker=1 결함의 해결 증거이지 7 workload × 4 worker × 3 profile 전체
+    정렬 증명은 아니다. 폐기 campaign 행을 재사용하지 않고 새 profile-major 336-cell campaign을 처음부터 실행해
+    나머지 plan/runtime/ordering을 검증한다.
 - **잠재 회귀 위험**:
   - runtime branch와 shape 기반 sliced-vs-replicated 추론이 달라지면 전송비를 과대/과소평가할 수 있다.
     exact objective oracle과 Docker `Fed Put Bytes`/heavy-hitter 횟수로 감지한다.
