@@ -661,3 +661,48 @@
   physical-only factor를 독립 계산해 차이를 검증해야 한다.
 - **의사결정 근거**: production 계약을 완화하지 않고 stale test가 유효한 권한/비용 의미를 검증하도록 고쳤다.
 - **적용 원칙/제약**: exact graph authority, 합법 candidate space 유지, runtime transfer 비용 누락 금지.
+
+## 12. systemd user service가 Docker 보조 그룹을 상속하지 않아 새 campaign 첫 요청이 실행 전 실패함
+
+- **상태**: 해결 — 실패 output 보존·미채택 후 명시적 Docker group 경계로 새 campaign 정상 시작
+- **환경/조건**:
+  - 실패 output: `/home/mchoi/g014-one-pass-results-96858a1-cac3730-20260804-v1`
+  - 정상 output: `/home/mchoi/g014-one-pass-results-96858a1-cac3730-20260804-v2`
+  - systemd user unit에서 시작한 profile-major 336-cell Docker campaign
+- **재현 절차**:
+  - 실패 로그:
+    `g014-one-pass-results-96858a1-cac3730-20260804-v1/cells/001-1d2a37e2ae1b/runner.stderr.log`
+  - 직접 shell의 `id`와 `systemd-run --user --wait --collect --pipe id`를 비교한다.
+- **관측 증상**:
+  - 첫 logical request는 생성됐지만 `permission denied while trying to connect to the docker API at
+    unix:///var/run/docker.sock`로 Docker container 생성 전에 중단됐다.
+  - 실패 output은 row 0개, `failures.jsonl` 1개이며 in-place retry하지 않았다.
+- **원인 분석**:
+  - 로그인 shell은 supplementary group `docker(10001)`를 가지지만 오래 실행 중인 systemd user manager는
+    primary group `employees(5500)`만 상속했다. Docker socket은 `root:docker 0660`이라 service child가 거부됐다.
+  - planner/runtime/harness 코드 결함이 아니라 detached launcher의 OS group 경계 문제다.
+- **해결 요약**:
+  - 실패 output을 성공 결과에 합치거나 재시도하지 않고 그대로 보존했다.
+  - 새 `v2` output은 launcher에서 `/usr/bin/sg docker -c ...`로 Docker group을 명시적으로 설정한다.
+  - source/JAR/harness/stage/seed/data/reference는 변경하지 않았고 새 manifest로 0/336부터 시작했다.
+- **수정 파일**:
+  - SystemDS/harness production code 변경 없음
+  - campaign artifact:
+    `/home/mchoi/g014-one-pass-results-96858a1-cac3730-20260804-v2/launcher-command.sh`
+- **검증**:
+  - 동일 systemd user 경계에서 `sg docker -c '/snap/bin/docker version ...'`가 server `29.6.1`을 반환했다.
+  - `v2`가 실제 Docker project `g007-op-1d2a37e2ae1b849c`를 생성하고 첫 셀
+    `WAN-light/worker=1/DP/KMeans`를 exactly-once 완료했다.
+  - 첫 row는 cold `58.856 s`, warm `52.583 s`, semantic oracle/runtime scan 통과, fallback 0,
+    coordinator/worker restart 0, teardown zero resources이다.
+  - launch receipt:
+    `/home/mchoi/g014-one-pass-results-96858a1-cac3730-20260804-v2/launch-receipt.json`
+    (SHA-256 `5348fb1005f745a4da204f47fa3591f9735563332bd8d9d4083b96bb47010633`).
+- **잔여 이슈**:
+  - `v2`의 남은 335개 셀을 계속 실행하고, 실패 0으로 완료된 뒤 3x7 그래프와 planner ordering/worker
+    scaling을 검증한다.
+- **잠재 회귀 위험**:
+  - host 재로그인/daemon 변경으로 group/socket 계약이 바뀔 수 있다. 매 launch 전에 service 경계의 Docker API
+    probe를 실행하고 첫 실제 project 생성 및 teardown 영수증으로 감지한다.
+- **의사결정 근거**: 실행되지 않은 실패 attempt를 성공으로 덮지 않고 새 authenticated manifest/output을 사용했다.
+- **적용 원칙/제약**: Docker-only, exactly-once, retry/stitching 금지, 동일 immutable stage/seed/data 유지.
