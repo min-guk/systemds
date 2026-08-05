@@ -91,3 +91,69 @@
   - 공유 모델 변경이 DP 선택에도 영향을 줄 수 있으므로 DP canary를 MinST와 같은 입력·seed·Docker profile로 비교한다.
 - **의사결정 근거**: runtime futures/batch 구조와 exact factor decomposition으로 증명된 비용 모델 오류를 수정했다.
 - **적용 원칙/제약**: 후보군 임의 축소 금지, 비용/메모리 측정 우선 수정, runtime fallback 금지, Docker-only.
+
+## 3. MinST StepLM runtime recompile에서 여러 logical consumer가 하나의 physical REFED edge로 융합됨
+
+- **상태**: 진행중 — 정확한 RED→GREEN 및 관련 소스 회귀 통과; 동일 실패 셀 Docker canary 대기
+- **환경/조건**:
+  - 실패 campaign: `/home/mchoi/g014-one-pass-results-f9a307b-a32b188-20260805-v1`
+  - 실패 cell: `WAN-light/StepLM/MinST/worker=3`, canonical order index `97`(98번째 요청)
+  - 실패 cell directory: `cells/098-637a87a8cad4`
+  - source/JAR stage: commit `f9a307b87a6db57d5694945a166d0ca3c7fb271f`,
+    `/home/mchoi/g014-fixed-canary-f9a307b-a32b188-20260805-v1/g007-stage-5576aae75bf5dddc1470a68130dcabbdcb4f7380970732350fe23ea1accdf0a9`
+  - Docker-only, private-aggregate, seed `2026072701`, attempt `1`, retry 없음
+- **재현 절차**:
+  - 보존 실패 로그:
+    `/home/mchoi/g014-fixed-canary-f9a307b-a32b188-20260805-v1/g007-stage-5576aae75bf5dddc1470a68130dcabbdcb4f7380970732350fe23ea1accdf0a9/results/fed3/mkl-min-st-cut/steplm_dataset-P2P2D_coordinator_mkl-min-st-cut_76f1005e7a13bb8fa39a0bc2ee325591_wan_light_coordinator1.log`
+  - 소스 RED:
+    `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.test.component.federated.FederatedDagExactRefedInputProjectionTest test`
+  - RED 로그: `/tmp/g014-minst-steplm-shared-physical-refed-red-20260805.log`
+- **관측 증상**:
+  - 이전 scanner false-positive를 수정한 새 campaign에서 97번째 Heuristic/StepLM 셀은 cold/warm semantic,
+    scan, restart, teardown을 모두 통과했다.
+  - 다음 MinST 셀은 함수 본문 runtime recompile 중 실제
+    `LopsException: fed_refed lowering mapped multiple selected logical consumers to one physical consumer hop=1539 for local hop=1541`
+    로 중단됐다. FED 실행은 `fedinit` 외에는 시작되지 않았다.
+  - campaign은 성공 row `97/336`, failure `1`로 동결됐으며 실패 셀은 결과 row로 채택하지 않는다.
+- **원인 분석**:
+  - planner는 동일 source와 동일 anchor/FType 권한에 속하는 여러 exact logical consumer edge를 선택했다.
+  - StepLM 함수 recompile의 Lop fusion은 그 logical consumer들을 하나의 동일 physical consumer/input edge로 합쳤다.
+  - 기존 `Dag.resolveSelectedRefedConsumers`는 physical consumer identity가 한 번이라도 중복되면 입력 위치가 완전히
+    동일한지와 관계없이 실패시켰다. 따라서 하나의 physical edge를 한 번 rewiring하면 모든 선택된 logical use를
+    충족하는 합법적인 many-to-one projection도 거부했다.
+- **해결 요약**:
+  - 한 authority 안에서 logical consumer별 projection을 physical consumer identity와 exact input-position 목록으로 기록한다.
+  - 여러 logical consumer가 같은 physical consumer의 **동일한 exact input-position 목록**으로 융합된 경우에만 하나의
+    physical edge로 canonicalize하고 한 번 rewiring한다.
+  - 같은 physical consumer라도 input-position projection이 다르면 계속 fail-closed한다.
+  - 서로 다른 anchor/FType authority가 같은 physical input을 소유하려는 경우는 기존
+    `validateDistinctRefedInputOwnership`가 lowering mutation 전에 계속 거부한다.
+  - 후보군, 비용 모델, planner 선택, runtime 실행/fallback은 변경하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedDagExactRefedInputProjectionTest.java`
+  - `docs/SESSION_ISSUES_2026-08-05.md`
+- **검증**:
+  - 새 회귀는 수정 전 실제 예외와 같은 `mapped multiple selected logical consumers to one physical consumer`로 RED였다.
+  - 수정 후 exact projection test `4/4` GREEN:
+    `/tmp/g014-minst-steplm-shared-physical-refed-green-20260805.log`.
+  - Dag projection, DP fused registry slot, placement transaction, MinST StepLM Docker-shape compile,
+    FedAll StepLM runtime recompile, REFED policy 묶음 GREEN:
+    `/tmp/g014-minst-steplm-refed-lowering-bundle-20260805.log`, 총 `86/86` GREEN.
+    FedAll runtime regression은 함수 recompile `1`, statement-block recompile `8`, `fed_fed_refed=2`를 실제 실행했다.
+  - checkstyle/RAT 포함 package GREEN:
+    `/tmp/g014-minst-steplm-refed-lowering-package-20260805.log`, return code `0`.
+  - package JAR SHA-256: `5423f2ec774d58a95c2a4fd02691fd07503a895d198466a21d04a79e6b694aa7`.
+- **잔여 이슈**:
+  - 새 immutable JAR/stage 생성이 필요하다.
+  - 정확히 실패했던 `WAN-light/StepLM/MinST/worker=3`를 새 stage의 Docker canary로 먼저 통과시켜야 한다.
+  - 사용자 지시에 따라 기존 성공 97셀은 재실행하지 않고, canary 성공 후 미실행 셀만 별도 continuation manifest에서
+    수행한다. 최종 분석은 cell별 source/JAR provenance를 유지한다.
+- **잠재 회귀 위험**:
+  - 실제로 서로 다른 physical input occurrence를 잘못 동일시하면 선택되지 않은 edge를 rewiring할 수 있다.
+  - 감지 방법: 동일 exact input-position만 deduplicate하는 새 회귀, duplicate-source subset fail-closed 회귀,
+    cross-authority physical-input ownership 검증 및 Docker instruction/oracle scan을 함께 실행한다.
+- **의사결정 근거**: planner-selected logical authorities를 변경하지 않고 Lop fusion의 증명 가능한 identical physical
+  edge만 canonicalize했다.
+- **적용 원칙/제약**: runtime fallback 금지, planner-owned exact edge authority, 후보군 임의 축소 금지,
+  Docker-only, TRead/TWrite 및 recompile placement 제약 유지.

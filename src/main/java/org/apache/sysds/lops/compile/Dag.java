@@ -584,7 +584,7 @@ public class Dag<N extends Lop>
 		if (consumerInputs == null || consumerInputs.isEmpty())
 			throw new LopsException("fed_refed lowering requires exact selected consumer inputs for hop=" + hopId);
 		List<RefedConsumerEdge> consumers = new ArrayList<>();
-		Set<Lop> resolvedConsumers = Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<Lop,List<Integer>> resolvedConsumerInputs = new IdentityHashMap<>();
 		Map<Long,List<FederatedRefedRegistry.ConsumerInputSpec>> inputsByConsumer = new TreeMap<>();
 		for(FederatedRefedRegistry.ConsumerInputSpec input : consumerInputs)
 			inputsByConsumer.computeIfAbsent(input.consumerHopId(), ignored -> new ArrayList<>()).add(input);
@@ -608,16 +608,14 @@ public class Dag<N extends Lop>
 							throw new LopsException("fed_refed lowering found ambiguous fused selected consumer hop="
 								+ consumerHopId + " for local hop=" + hopId + " matches=" + fused.size());
 						RefedConsumerEdge edge = fused.get(0);
-						if(!resolvedConsumers.add(edge.consumer))
-							throw new LopsException("fed_refed lowering mapped multiple selected logical consumers to one"
-								+ " physical consumer hop=" + edge.consumer.getHopID() + " for local hop=" + hopId);
 						int inputMultiplicity = countOccurrences(edge.consumer.getInputs(), local);
 						int outputMultiplicity = countOccurrences(local.getOutputs(), edge.consumer);
 						if(inputMultiplicity != outputMultiplicity)
 							throw new LopsException("fed_refed lowering fused edge multiplicity mismatch for selected consumer hop="
 								+ consumerHopId + " local hop=" + hopId + " inputs=" + inputMultiplicity
 								+ " outputs=" + outputMultiplicity);
-						consumers.add(edge);
+						recordSelectedRefedConsumer(consumers, resolvedConsumerInputs, edge, hopId,
+							consumerHopId);
 						continue;
 					}
 				}
@@ -631,9 +629,6 @@ public class Dag<N extends Lop>
 				throw new LopsException("fed_refed lowering found ambiguous selected consumer hop="
 					+ consumerHopId + " for local hop=" + hopId + " matches=" + matchingConsumers.size());
 			Lop consumer = matchingConsumers.get(0);
-			if (!resolvedConsumers.add(consumer))
-				throw new LopsException("fed_refed lowering mapped multiple selected logical consumers to one"
-					+ " physical consumer hop=" + consumer.getHopID() + " for local hop=" + hopId);
 			List<Integer> inputPositions = allInputs ? inputPositions(consumer.getInputs(), local)
 				: selectedInputPositions(consumer, local, selectedInputs, logicalHopRoots, consumerHopId);
 			if(inputPositions == null || inputPositions.isEmpty())
@@ -645,9 +640,31 @@ public class Dag<N extends Lop>
 				throw new LopsException("fed_refed lowering edge multiplicity mismatch for selected consumer hop="
 					+ consumerHopId + " local hop=" + hopId + " inputs=" + inputMultiplicity
 					+ " outputs=" + outputMultiplicity);
-			consumers.add(new RefedConsumerEdge(consumer, inputPositions));
+			recordSelectedRefedConsumer(consumers, resolvedConsumerInputs,
+				new RefedConsumerEdge(consumer, inputPositions), hopId, consumerHopId);
 		}
 		return consumers;
+	}
+
+	private static void recordSelectedRefedConsumer(List<RefedConsumerEdge> consumers,
+		Map<Lop,List<Integer>> resolvedConsumerInputs, RefedConsumerEdge edge, long hopId,
+		long consumerHopId) {
+		List<Integer> priorInputs = resolvedConsumerInputs.putIfAbsent(edge.consumer, edge.inputPositions);
+		if(priorInputs == null) {
+			consumers.add(edge);
+			return;
+		}
+		// Lop fusion may collapse multiple planner-selected logical consumers that share
+		// one source and one authority onto the exact same physical input edge. Rewiring
+		// that edge once preserves every selected logical use. Different physical input
+		// projections remain ambiguous and therefore fail closed; incompatible authorities
+		// are rejected separately by validateDistinctRefedInputOwnership before mutation.
+		if(priorInputs.equals(edge.inputPositions))
+			return;
+		throw new LopsException("fed_refed lowering mapped selected logical consumer hop="
+			+ consumerHopId + " to conflicting inputs of physical consumer hop="
+			+ edge.consumer.getHopID() + " for local hop=" + hopId + " priorInputs="
+			+ priorInputs + " inputs=" + edge.inputPositions);
 	}
 
 	private static List<Integer> selectedInputPositions(Lop consumer, Lop local,

@@ -102,6 +102,34 @@ public class FederatedDagExactRefedInputProjectionTest {
 			fixture.consumerLop.getInput(1));
 	}
 
+	@Test
+	public void fusedLogicalConsumersSharingOnePhysicalEdgeRewireOnce() throws Exception {
+		DataOp localHop = localHop("L");
+		DataOp otherHop = localHop("R");
+		BinaryOp firstLogicalConsumer = HopRewriteUtils.createBinary(localHop, otherHop, OpOp2.PLUS);
+		BinaryOp secondLogicalConsumer = HopRewriteUtils.createBinary(localHop, otherHop, OpOp2.MINUS);
+		Data localLop = localLop("L", localHop.getHopID());
+		FunctionCallCP fusedPhysicalConsumer = new FunctionCallCP(new ArrayList<>(List.of(localLop)),
+			DMLProgram.INTERNAL_NAMESPACE, "mock", new String[] {"X"},
+			new String[] {"Out"}, false, ExecType.CP);
+		fusedPhysicalConsumer.setHopID(-1L);
+		localHop.setLops(localLop);
+		firstLogicalConsumer.setLops(fusedPhysicalConsumer);
+		secondLogicalConsumer.setLops(fusedPhysicalConsumer);
+		List<Lop> lops = new ArrayList<>(List.of(localLop, fusedPhysicalConsumer));
+
+		FederatedRefedRegistry.registerConsumerInputs(-1L, localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(firstLogicalConsumer.getHopID(), 0),
+				new ConsumerInputSpec(secondLogicalConsumer.getHopID(), 0)));
+
+		assertTrue(invokeInsertRefedLops(lops, List.of(firstLogicalConsumer, secondLogicalConsumer)));
+		assertTrue("The one physical edge shared by both selected logical consumers must be rewired once",
+			fusedPhysicalConsumer.getInput(0) instanceof org.apache.sysds.lops.FederatedRefed);
+		assertEquals("The fused physical consumer must retain one physical input", 1,
+			fusedPhysicalConsumer.getInputs().size());
+	}
+
 	private static Fixture fixture(boolean duplicateLocal, boolean reorderPhysicalInputs) {
 		DataOp localHop = localHop("L");
 		DataOp otherHop = localHop("R");
@@ -140,10 +168,14 @@ public class FederatedDagExactRefedInputProjectionTest {
 	}
 
 	private static boolean invokeInsertRefedLops(Fixture fixture) throws Exception {
+		return invokeInsertRefedLops(fixture.lops, List.of(fixture.consumerHop));
+	}
+
+	private static boolean invokeInsertRefedLops(List<Lop> lops, List<Hop> logicalHopRoots) throws Exception {
 		Method insert = Dag.class.getDeclaredMethod("insertRefedLops",
 			List.class, StatementBlock.class, List.class);
 		insert.setAccessible(true);
-		return (boolean) insert.invoke(new Dag<>(), fixture.lops, null, List.of(fixture.consumerHop));
+		return (boolean) insert.invoke(new Dag<>(), lops, null, logicalHopRoots);
 	}
 
 	private record Fixture(DataOp localHop, Hop consumerHop, Data localLop, Data otherLop,
