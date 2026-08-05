@@ -94,7 +94,7 @@
 
 ## 3. MinST StepLM runtime recompile에서 여러 logical consumer가 하나의 physical REFED edge로 융합됨
 
-- **상태**: 진행중 — 정확한 RED→GREEN 및 관련 소스 회귀 통과; 동일 실패 셀 Docker canary 대기
+- **상태**: 해결 — 정확한 RED→GREEN, 관련 소스 회귀 및 동일 실패 셀 Docker cold/warm canary 통과
 - **환경/조건**:
   - 실패 campaign: `/home/mchoi/g014-one-pass-results-f9a307b-a32b188-20260805-v1`
   - 실패 cell: `WAN-light/StepLM/MinST/worker=3`, canonical order index `97`(98번째 요청)
@@ -144,11 +144,21 @@
   - checkstyle/RAT 포함 package GREEN:
     `/tmp/g014-minst-steplm-refed-lowering-package-20260805.log`, return code `0`.
   - package JAR SHA-256: `5423f2ec774d58a95c2a4fd02691fd07503a895d198466a21d04a79e6b694aa7`.
+  - immutable Docker stage:
+    `/home/mchoi/g014-continuation-stage-2aa0f56-26882dd-20260806-v1/g007-stage-af432fa86c8cc97161d7e60cb8e7e810e469c49ba955e5766dc2ea7abad1a546`.
+    stage는 SystemDS commit `2aa0f5666ffcfb1d96bd1abcd5aeae8f3c3b9500`, 위 JAR SHA-256 및
+    harness commit `26882dd09f3dbe6d56f32305c37cc7982f51274c`를 인증한다.
+  - 정확히 실패했던 `WAN-light/StepLM/MinST/worker=3` Docker performance canary 통과:
+    cold `157.840 s`, warm `154.592 s`, cold/warm runtime plan SHA-256 모두
+    `f804a00e86d3117043a389b7239b267d0021178e4b35861dec3ca1fbf8a47431`로 동일했다.
+  - canary는 semantic oracle pass, runtime scan clean, fallback false, coordinator/worker restart 0,
+    teardown zero resources였고 `fed_fed_refed=4201`, `fed_tsmm=1`, `fed_fedinit=2`를 실행했다.
+    이전 `mapped multiple selected logical consumers`/`LopsException`은 cold/warm 모두 재발하지 않았다.
 - **잔여 이슈**:
-  - 새 immutable JAR/stage 생성이 필요하다.
-  - 정확히 실패했던 `WAN-light/StepLM/MinST/worker=3`를 새 stage의 Docker canary로 먼저 통과시켜야 한다.
-  - 사용자 지시에 따라 기존 성공 97셀은 재실행하지 않고, canary 성공 후 미실행 셀만 별도 continuation manifest에서
-    수행한다. 최종 분석은 cell별 source/JAR provenance를 유지한다.
+  - lowering 결함 자체의 잔여 수정은 없다.
+  - provenance-aware continuation에서 기존 성공 97셀과 canary 성공 셀을 재실행하지 않고 나머지 238셀을 수행 중이다.
+    전체 planner/workload/profile의 성공 및 실행시간 정렬은 campaign 완료 뒤 별도로 검증한다.
+  - 최종 분석은 predecessor/successor의 cell별 source/JAR provenance를 유지한다.
 - **잠재 회귀 위험**:
   - 실제로 서로 다른 physical input occurrence를 잘못 동일시하면 선택되지 않은 edge를 rewiring할 수 있다.
   - 감지 방법: 동일 exact input-position만 deduplicate하는 새 회귀, duplicate-source subset fail-closed 회귀,
