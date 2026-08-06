@@ -1457,6 +1457,13 @@ public final class FederatedRefedPolicy {
 					continue;
 				if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
 					continue;
+				// A DML FunctionOp is emitted as a coordinator-side FunctionCallCP. Its matrix
+				// arguments cross a logical actual/formal boundary; physical FED consumption and
+				// any required relocation are owned by the selected hops inside the function.
+				// Treating the forwarding placeholder itself as a FED consumer makes runtime
+				// recompile upload local actuals even when every executable hop remains CP.
+				if (isLogicalDmlFunctionBoundary(hop))
+					continue;
 				if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
 					if (!failOnInvalidRuntimePlan && canDemoteUnsatisfiedFedHop(hop)) {
 						demoteUnsatisfiedFedHop(hop, fTypeMap, sbId);
@@ -2592,6 +2599,11 @@ public final class FederatedRefedPolicy {
 		for (Hop parent : hop.getParent()) {
 			if (parent == null)
 				continue;
+			// DML FunctionOps only forward actuals to formals and lower to FunctionCallCP;
+			// they are not physical FED instruction consumers. Exact function-boundary
+			// placement analysis accounts for the formal-side executable consumers instead.
+			if (isLogicalDmlFunctionBoundary(parent))
+				continue;
 			ExecType exec = getPlannedExecType(parent);
 			if (exec != ExecType.FED)
 				continue;
@@ -2619,6 +2631,11 @@ public final class FederatedRefedPolicy {
 			.distinct()
 			.sorted(java.util.Comparator.comparingLong(Hop::getHopID))
 			.toList();
+	}
+
+	private static boolean isLogicalDmlFunctionBoundary(Hop hop) {
+		return hop instanceof FunctionOp
+			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.DML;
 	}
 
 	private static void registerTransientWriteAnchor(DataOp tWrite, java.util.Map<Long, FType> fTypeMap,

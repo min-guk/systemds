@@ -281,21 +281,15 @@ public final class FederatedCostModel {
 	/**
 	 * Runtime-aware FED compute cost for the legal WDivMM local-aggregation path.
 	 *
-	 * <p>The generic DP model divides FED self cost by worker count because most
-	 * partition-preserving FED instructions produce partitioned outputs and their
-	 * compute/memory work scales with the selected input partition.  Left WDivMM over
-	 * ROW X and right WDivMM over COL X are different: each worker returns a full
-	 * partial result through {@code GET_VAR}, and the coordinator waits for and
-	 * aggregates these full partials.  Applying the generic linear speedup to the
-	 * whole HOP self cost therefore under-prices this runtime path, especially in
-	 * looped ALS factor updates.  Keep the legal FED candidate open, but compare it
-	 * with the unscaled self-cost floor used by the coordinator alternative.</p>
+	 * <p>Each worker still computes only its X partition. The full partial-result
+	 * {@code GET_VAR} and coordinator aggregation are separate stages modeled by
+	 * {@link #computeMixedFedLocalCost(Hop, List, List, FType, double, double, int)}.
+	 * Replacing the partitioned worker cost with the unscaled coordinator cost would
+	 * count that worker work as serial and then charge the coordinator stage again.</p>
 	 */
 	public static double adjustFederatedComputeCostForWdivmmLocalAggregation(Hop hop,
 			FType logicalFType, double baseSelfCost, double defaultFederatedComputeCost) {
-		if (!requiresFederatedWdivmmLocalAggregation(hop, logicalFType))
-			return defaultFederatedComputeCost;
-		return Math.max(defaultFederatedComputeCost, baseSelfCost);
+		return defaultFederatedComputeCost;
 	}
 
 	/**
@@ -305,13 +299,12 @@ public final class FederatedCostModel {
 	 * for FED execution.  That is reasonable for arithmetic-heavy, partition-preserving
 	 * worker computation.  It is not a valid speedup assumption for operations where
 	 * runtime time is dominated by per-worker control, slicing/reindexing, representation
-	 * changes, or redundant fully-broadcast inputs.  Keep the FED candidate open, but
-	 * compare it against the unscaled self-cost floor for these runtime families.</p>
+	 * changes, or redundant fully-broadcast inputs. Partition-preserving binary operations
+	 * are intentionally excluded from the unscaled families: the runtime applies them to
+	 * independent worker shards, while dispatch latency is already modeled separately.</p>
 	 */
 	public static boolean shouldUseUnscaledFederatedComputeCost(Hop hop, boolean broadcastOnlyFedCompute) {
 		if (broadcastOnlyFedCompute)
-			return true;
-		if (hop instanceof BinaryOp)
 			return true;
 		if (isElementwiseTernaryOp(hop))
 			return true;
@@ -337,6 +330,29 @@ public final class FederatedCostModel {
 		if (shouldUseUnscaledFederatedComputeCost(hop, broadcastOnlyFedCompute))
 			return baseSelfCost;
 		return baseSelfCost / Math.max(1, numWorkers);
+	}
+
+	/**
+	 * Returns whether every matrix input is coordinator-local or explicitly replicated.
+	 * Such a FED instruction performs redundant full-input work on every worker and must
+	 * not receive partition-based compute scaling. A non-replicated FType proves that at
+	 * least one input supplies independent worker shards.
+	 */
+	public static boolean hasOnlyBroadcastMatrixInputs(List<Hop> inputHops, List<FType> inputFTypes) {
+		if (inputHops == null || inputHops.isEmpty())
+			return false;
+		boolean hasMatrixInput = false;
+		for (int position = 0; position < inputHops.size(); position++) {
+			Hop input = inputHops.get(position);
+			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			hasMatrixInput = true;
+			FType inputType = inputFTypes != null && position < inputFTypes.size()
+				? inputFTypes.get(position) : null;
+			if (inputType != null && inputType != FType.BROADCAST)
+				return false;
+		}
+		return hasMatrixInput;
 	}
 
 	/**
@@ -576,13 +592,11 @@ public final class FederatedCostModel {
 			computeWdivmmInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
 		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType)) {
 			return computePartialAggregationCost("wdivmm-local-aggregation",
-				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, baseSelfCost, false);
+				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, 0.0, false);
 		}
 		if (wdivmmInputPreparationCost > 0.0) {
-			double outputStageCost =
-				computeWdivmmNativeOutputStageCost(hop, logicalFType, outputMemEstimate, numWorkers);
 			return new MixedFedLocalCost("wdivmm-input-preparation",
-				wdivmmInputPreparationCost + outputStageCost, 0.0, 0.0, baseSelfCost);
+				wdivmmInputPreparationCost, 0.0, 0.0, 0.0);
 		}
 		if (requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes)) {
 			double inputPreparationCost =
@@ -735,36 +749,6 @@ public final class FederatedCostModel {
 			double outputMemEstimate, int numWorkers) {
 		return computeMixedFedLocalCost(hop, null, null, logicalFType, 0.0,
 			outputMemEstimate, numWorkers).getCoordinatorPhaseCost();
-	}
-
-	private static double computeWdivmmNativeOutputStageCost(Hop hop, FType logicalFType,
-			double outputMemEstimate, int numWorkers) {
-		if (!(hop instanceof QuaternaryOp))
-			return 0.0;
-		QuaternaryOp quaternaryOp = (QuaternaryOp) hop;
-		if (quaternaryOp.getOp() != OpOp4.WDIVMM)
-			return 0.0;
-		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType))
-			return 0.0;
-
-		double resultMem = outputMemEstimate > 0.0 ? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
-		if (resultMem <= 0.0)
-			resultMem = getEffectiveUploadMemEstimate(hop);
-		if (resultMem <= 0.0)
-			return 0.0;
-
-		// Native QuaternaryWDivMMFEDInstruction produces a federated runtime object for
-		// BASIC/LEFT/RIGHT cases that do not take the explicit local-aggregation
-		// GET_VAR path.  When the DP plan later needs both a coordinator-local
-		// consumer and a federated continuation, runtime pays a real result
-		// materialization/refederation stage (observed as WDIVMM plus FED->FOUT
-		// materialization work), not just the worker compute request.  Model that
-		// stage from result size and federation topology instead of closing the legal
-		// FED candidate or keying on workloads/rows/hop ids.
-		FType resultType = logicalFType != null ? logicalFType : FType.FULL;
-		return computeDownloadNetworkCost(resultMem, resultType, numWorkers)
-			+ computeUploadNetworkCost(resultMem, resultType, numWorkers)
-			+ computeLocalToFedForwardingPenalty(resultType, numWorkers);
 	}
 
 	/**
@@ -1057,19 +1041,30 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeOpCost(Hop currentHop) {
+		return computeOpCost(currentHop, 0.0);
+	}
+
+	/**
+	 * Computes the local operation cost while honoring a runtime-kernel compute-time
+	 * floor established from immutable placement-analysis evidence.
+	 *
+	 * <p>The supplemental floor is expressed in milliseconds rather than FLOPs.  A
+	 * dynamically recompiled kernel can have a different calibrated throughput family
+	 * than the pre-rewrite HOP (for example, a Quaternary WDivMM represented initially
+	 * by an AggBinary root), so applying its FLOPs to the old HOP's throughput would be
+	 * dimensionally correct but semantically wrong.</p>
+	 */
+	public static double computeOpCost(Hop currentHop, double supplementalComputeTimeFloor) {
 		double inputMemEstimate = getEffectiveInputMemEstimate(currentHop);
 		double outputMemEstimate = getEffectiveOutputMemEstimate(currentHop);
 		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
-		if (currentHop instanceof QuaternaryOp
-				&& ((QuaternaryOp) currentHop).getOp() == OpOp4.WDIVMM) {
-			computeCost = Math.max(computeCost,
-				estimateWdivmmRankAwareComputeFloor((QuaternaryOp) currentHop));
-		}
+		computeCost = Math.max(computeCost, estimateWdivmmRankAwareComputeFloor(currentHop));
 		if (isDmlFunctionOp(currentHop)) {
 			computeCost = Math.max(computeCost,
 				estimateDmlFunctionOpComputeFloor((FunctionOp) currentHop, inputMemEstimate, outputMemEstimate));
 		}
-		double computeTime = (computeCost / getComputeFlopsPerSec(currentHop)) * TO_MS;
+		double computeTime = Math.max((computeCost / getComputeFlopsPerSec(currentHop)) * TO_MS,
+			Math.max(0.0, supplementalComputeTimeFloor));
 		double inputAccessCost = computeMemoryAccessCost(inputMemEstimate);
 		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
 
@@ -1079,14 +1074,27 @@ public final class FederatedCostModel {
 		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
 	}
 
-	private static double estimateWdivmmRankAwareComputeFloor(QuaternaryOp hop) {
-		if (hop == null || hop.getOp() != OpOp4.WDIVMM || hop.getInput() == null
-				|| hop.getInput().isEmpty())
+	private static double estimateWdivmmRankAwareComputeFloor(Hop hop) {
+		if (hop == null)
 			return 0.0;
+		if (hop instanceof QuaternaryOp && ((QuaternaryOp) hop).getOp() == OpOp4.WDIVMM)
+			return estimateWdivmmRankAwareComputeFloor((QuaternaryOp) hop);
+		return 0.0;
+	}
 
-		Hop weights = hop.getInput().get(0);
+	private static double estimateWdivmmRankAwareComputeFloor(QuaternaryOp hop) {
+		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
+			return 0.0;
+		return estimateWdivmmRankAwareComputeFloor(hop.getInput(0),
+			hop.getInput().size() > 1 ? hop.getInput(1) : null,
+			hop.getInput().size() > 2 ? hop.getInput(2) : null, hop);
+	}
+
+	private static double estimateWdivmmRankAwareComputeFloor(Hop weights, Hop u, Hop v,
+			Hop output) {
+
 		double weightCells = estimateLogicalCellCount(weights, getEffectiveOutputMemEstimate(weights));
-		double rank = estimateWdivmmRank(hop);
+		double rank = estimateWdivmmRank(u, v, output);
 		if (weightCells <= 0.0 || rank <= 1.0)
 			return 0.0;
 
@@ -1100,21 +1108,25 @@ public final class FederatedCostModel {
 		return 4.0 * rank * weightCells;
 	}
 
-	private static double estimateWdivmmRank(QuaternaryOp hop) {
-		if (hop == null || hop.getInput() == null)
-			return 1.0;
-		List<Hop> inputs = hop.getInput();
-		if (inputs.size() > 1) {
-			long uRank = inputs.get(1).getDim2();
-			if (uRank > 0)
-				return uRank;
-		}
-		if (inputs.size() > 2) {
-			long vRank = inputs.get(2).getDim2();
+	/** Runtime-kernel compute-time floor for a rank-aware WDivMM over known weights. */
+	public static double computeWdivmmRankAwareComputeTimeFloor(long weightRows,
+			long weightCols, long rank) {
+		if(weightRows <= 0 || weightCols <= 0 || rank <= 1)
+			return 0.0;
+		double cells = weightRows * (double) weightCols;
+		return (4.0 * rank * cells / FLOPS_PER_SEC) * TO_MS;
+	}
+
+	private static double estimateWdivmmRank(Hop u, Hop v, Hop output) {
+		if (u != null && u.getDim2() > 0)
+			return u.getDim2();
+		if (v != null) {
+			long vRank = HopRewriteUtils.isTransposeOperation(v) && !v.getInput().isEmpty()
+				? v.getInput(0).getDim2() : v.getDim2();
 			if (vRank > 0)
 				return vRank;
 		}
-		long outputCols = hop.getDim2();
+		long outputCols = output == null ? -1 : output.getDim2();
 		return outputCols > 0 ? outputCols : 1.0;
 	}
 
@@ -1212,11 +1224,17 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeOpCostWithFallback(Hop hop) {
+		return computeOpCostWithFallback(hop, 0.0);
+	}
+
+	/** See {@link #computeOpCost(Hop, double)}. */
+	public static double computeOpCostWithFallback(Hop hop,
+			double supplementalComputeTimeFloor) {
 		if (hop == null) {
 			return 0.0;
 		}
 
-		double opCost = computeOpCost(hop);
+		double opCost = computeOpCost(hop, supplementalComputeTimeFloor);
 		if (opCost > 0.0) {
 			return opCost;
 		}

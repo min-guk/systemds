@@ -331,7 +331,7 @@ public final class MinStExactCostFactsProducer {
 			MinStExactPhysicalModel.Alternative alternative = domain.alternatives().get(value);
 			PlacementState state = alternative.state();
 			if(state.execType() == ExecType.CP) {
-				execution[value] = cpUnaryCost(hop, weight);
+				execution[value] = cpUnaryCost(analysis, domain.node().key(), hop, weight);
 				if(state.output() == FederatedOutput.FOUT)
 					nativeCpUpload[value] = physicalResultUploadCost(analysis, domain.node().key(),
 						hop, state.fType(), workers, weight);
@@ -530,6 +530,9 @@ public final class MinStExactCostFactsProducer {
 			if(!hasNativeLocalFedAlternative)
 				continue;
 			double bytes = estimatedBytes(analysis, edge.producer(), producerHop);
+			double fusedInputPreparationBytes =
+				PlacementCostSemantics.latentWdivmmFusedInputPreparationBytes(
+					analysis, edge.producer(), edge.consumer(), edge.inputPosition());
 			double weight = forwardingWeight(profiles, edge.consumer(), edge.producer());
 			factors.add(MinStExactCategoricalSolver.Factor.lazy(
 				List.of(producer.variable(), consumer.variable()), values -> {
@@ -550,10 +553,16 @@ public final class MinStExactCostFactsProducer {
 					FederatedCostModel.MixedFedLocalCost mixed =
 						FederatedCostModel.computeMixedFedLocalCost(consumerHop,
 							new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
-							unitLocalCost(consumerHop),
+							unitLocalCost(analysis, edge.consumer(), consumerHop),
 							effectiveOutputBytes(analysis, edge.consumer(), consumerHop), workers);
-					double cost = mixed.hasInputPreparation() ? 0.0
-						: nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
+					double cost;
+					if(mixed.hasInputPreparation())
+						cost = 0.0;
+					else if(fusedInputPreparationBytes >= 0.0)
+						cost = FederatedCostModel.computeInBandUploadPayloadCost(
+							fusedInputPreparationBytes, FType.BROADCAST, workers);
+					else
+						cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
 							executionFType, workers);
 					if(source.state().output() == FederatedOutput.FOUT) {
 						FType sourceType = Objects.requireNonNull(source.state().fType(),
@@ -2009,7 +2018,7 @@ public final class MinStExactCostFactsProducer {
 		boolean derivedFedFout = selectedFed != null && selectedFed.derivedFedFout();
 
 		double execWeight = executionWeight(occurrenceProfiles, decision.key());
-		double base = cpUnaryCost(hop, execWeight);
+		double base = cpUnaryCost(analysis, decision.key(), hop, execWeight);
 		FType executionFType = !fed ? null : selectedFedEmission == null
 			? executionRepresentative.state().fType() : selectedFedEmission.executionFType();
 		if(fed && executionFType == null)
@@ -2088,7 +2097,7 @@ public final class MinStExactCostFactsProducer {
 	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
 		CompiledHopKey key, Hop hop, List<FType> inputFTypes, FType executionFType,
 		int workers, double executionWeight) {
-		double base = cpUnaryCost(hop, executionWeight);
+		double base = cpUnaryCost(analysis, key, hop, executionWeight);
 		return fedCostProjection(hop, inputFTypes, executionFType, workers, executionWeight,
 			base, effectiveOutputBytes(analysis, key, hop), effectiveUploadBytes(analysis, key, hop));
 	}
@@ -2119,7 +2128,7 @@ public final class MinStExactCostFactsProducer {
 			? FederatedCostModel.MixedFedLocalCost.none()
 			: FederatedCostModel.computeMixedFedLocalCost(hop,
 				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
-				unitLocalCost(hop), outputBytes, workers);
+				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers);
 		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
 		double singleWorkerPenalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(
 			hop, executionWeight, workers);
@@ -2505,14 +2514,11 @@ public final class MinStExactCostFactsProducer {
 		return hasMatrix;
 	}
 
-	private static double unitLocalCost(Hop hop) {
-		if(hop instanceof DataOp) {
-			OpOpData op = ((DataOp)hop).getOp();
-			return op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE
-				? 0.0 : FederatedCostModel.computeOpCostWithFallback(hop);
-		}
-		return FederatedCostModel.computeLocalIndexingCostWithFallback(hop,
-			FederatedCostModel.computeOpCostWithFallback(hop));
+	private static double unitLocalCost(PlacementAnalysis analysis, CompiledHopKey key,
+			Hop hop) {
+		if(analysis.hop(key).orElse(null) != hop)
+			throw new IllegalArgumentException("MINST_COST_HOP_OCCURRENCE_MISMATCH");
+		return PlacementCostSemantics.analysisAwareUnitLocalCost(analysis, key);
 	}
 
 	private static double effectiveOutputBytes(PlacementAnalysis analysis,
@@ -3051,16 +3057,9 @@ public final class MinStExactCostFactsProducer {
 		return matches.isEmpty() ? null : matches.get(0);
 	}
 
-	private static double cpUnaryCost(Hop hop, double executionWeight) {
-		if(hop instanceof DataOp) {
-			OpOpData op = ((DataOp)hop).getOp();
-			if(op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE)
-				return 0.0;
-			return requireCost(executionWeight * FederatedCostModel.computeOpCostWithFallback(hop),
-				"MINST_CP_COST_UNPROVEN");
-		}
-		double unit = FederatedCostModel.computeLocalIndexingCostWithFallback(hop,
-			FederatedCostModel.computeOpCostWithFallback(hop));
+	private static double cpUnaryCost(PlacementAnalysis analysis, CompiledHopKey key,
+			Hop hop, double executionWeight) {
+		double unit = unitLocalCost(analysis, key, hop);
 		return requireCost(executionWeight * unit, "MINST_CP_COST_UNPROVEN");
 	}
 

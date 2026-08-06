@@ -4621,6 +4621,19 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testPartitionedBinaryFedComputeScalesButBroadcastOnlyDoesNot() {
+		DataOp partitioned = federatedRead("XpartitionedBinaryCost", ROWS, COLS);
+		DataOp local = transientRead("YpartitionedBinaryCost", ROWS, COLS);
+		BinaryOp plus = new BinaryOp("partitionedBinaryCost", DataType.MATRIX, ValueType.FP64,
+			OpOp2.PLUS, partitioned, local);
+
+		assertEquals("Partition-preserving binary compute executes independently on worker shards",
+			25.0, FederatedCostModel.computeFederatedComputeCost(plus, 100.0, 4, false), 0.0);
+		assertEquals("A FED op whose matrix inputs are all replicated must not receive worker scaling",
+			100.0, FederatedCostModel.computeFederatedComputeCost(plus, 100.0, 4, true), 0.0);
+	}
+
+	@Test
 	public void testWdivmmLocalAggregationAddsReplicatedPartialResultCost() {
 		DataOp x = federatedRead("XwdivmmAggPlan", ROWS, COLS);
 		DataOp u = transientRead("UwdivmmAggPlan", ROWS, 2);
@@ -4652,8 +4665,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 					100.0, OptimizerUtils.DOUBLE_SIZE, 4);
 			assertTrue("Local aggregation must charge coordinator-side partial-result aggregation",
 				tinyLocalAggCost.getCoordinatorLocalCost() > 0.0);
-			assertEquals("ROW-X WDIVMM local aggregation should not apply generic linear FED compute speedup",
-				100.0, FederatedCostModel.adjustFederatedComputeCostForWdivmmLocalAggregation(
+			assertEquals("ROW-X WDIVMM worker compute remains partitioned; partial-result aggregation is costed separately",
+				25.0, FederatedCostModel.adjustFederatedComputeCostForWdivmmLocalAggregation(
 					leftWdivmm, FType.ROW, 100.0, 25.0), 0.0);
 		assertEquals("Non-local-aggregation WDIVMM keeps the ordinary FED compute estimate",
 			25.0, FederatedCostModel.adjustFederatedComputeCostForWdivmmLocalAggregation(
@@ -4677,19 +4690,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 				FederatedCostModel.computeMixedFedLocalCost(rightWdivmm, rightWdivmm.getInput(),
 					Arrays.asList(FType.ROW, FType.FULL, FType.FULL, null), FType.ROW,
 					100.0, resultMem, 4);
-			double nativeResultStageCost =
-				FederatedCostModel.computeDownloadNetworkCost(resultMem, FType.ROW, 4)
-					+ FederatedCostModel.computeUploadNetworkCost(resultMem, FType.ROW, 4)
-					+ FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
 			assertEquals("Native FED WDIVMM still pays runtime input preparation",
 				"wdivmm-input-preparation", nativeFedWdivmmCost.getLabel());
-			assertEquals("Native FED WDIVMM should charge sliced/full broadcast input preparation plus"
-					+ " the result materialization/refederation stage that runtime pays around native FED output",
-				rowInputPrepCost + nativeResultStageCost,
+			assertEquals("Native FED WDIVMM creates a new federation mapping; later placement boundaries own"
+					+ " any real result materialization or refederation",
+				rowInputPrepCost,
 				nativeFedWdivmmCost.getInputPreparationCost(), 1e-9);
-			assertEquals("Native FED WDIVMM should not receive generic worker-linear compute speedup when"
-					+ " the rank-aware WDIVMM self-cost is the only trace-backed compute floor",
-				100.0, nativeFedWdivmmCost.getFederatedComputeFloor(), 0.0);
+			assertEquals("Native FED WDIVMM worker compute is partitioned and needs no unscaled self-cost floor",
+				0.0, nativeFedWdivmmCost.getFederatedComputeFloor(), 0.0);
 			assertEquals("Native FED WDIVMM does not use the local-aggregation partial GET path",
 				0.0, nativeFedWdivmmCost.getCoordinatorPhaseCost(), 0.0);
 		assertEquals("FULL-X WDIVMM is not a native FED input-preparation path",
@@ -4716,8 +4724,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedCostModel.computeMixedFedLocalCost(rankEightWdivmm, rankEightWdivmm.getInput(),
 				Arrays.asList(FType.ROW, FType.ROW, FType.FULL, null), FType.ROW,
 				rankEightCost, ROWS * 8 * (double) OptimizerUtils.DOUBLE_SIZE, 4);
-		assertEquals("WDivMM local aggregation must compare FED against the same rank-aware self-cost floor",
-			rankEightCost, rankEightLocalAggCost.getFederatedComputeFloor(), 0.0);
+		assertEquals("WDivMM local aggregation must not replace partitioned worker compute with an unscaled floor",
+			0.0, rankEightLocalAggCost.getFederatedComputeFloor(), 0.0);
 	}
 
 	@Test

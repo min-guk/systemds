@@ -76,6 +76,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Relocati
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -698,9 +699,13 @@ public class FederatedPlannerDpCostEnumerator {
 
 		// Todo: Check if is right
 		if ((hop instanceof DataOp) && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			List<Hop> transChildHops = rewireTable.get(hop.getHopID());
-			if (transChildHops != null) {
-				childHops.addAll(transChildHops);
+			List<Hop> exactLogicalSources = collectLogicalTransientSourceChildHops((DataOp) hop, capture);
+			if(!exactLogicalSources.isEmpty())
+				childHops.addAll(exactLogicalSources);
+			else {
+				List<Hop> transChildHops = rewireTable.get(hop.getHopID());
+				if (transChildHops != null)
+					childHops.addAll(transChildHops);
 			}
 		}
 
@@ -833,6 +838,11 @@ public class FederatedPlannerDpCostEnumerator {
 					numParentHops += transParentHops.size();
 				}
 			} else if (opType == Types.OpOpData.TRANSIENTREAD) {
+				Set<Hop> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+				retained.addAll(childHops);
+				for(Hop logicalSource : collectLogicalTransientSourceChildHops((DataOp) hop, capture))
+					if(retained.add(logicalSource))
+						childHops.add(logicalSource);
 				List<Hop> transChildHops = rewireTable.get(hop.getHopID());
 				if (transChildHops != null) {
 					for (Hop transChildHop : transChildHops) {
@@ -968,12 +978,6 @@ public class FederatedPlannerDpCostEnumerator {
 		double fedOverhead = (hop instanceof DataOp)
 				? 0.0
 				: fedExecWeight * FederatedCostModel.computeFedCoordinationCost(numOfWorkers);
-		// DP/MinST parity: use the shared runtime-stage predicate for FED compute scaling.
-		// The DP enumerator resolves per-input ftypes later in the variant loop; the
-		// operation-family predicate still prevents blanket linear speedup for low-arithmetic
-		// intensity FED stages such as cell ops, slicing, and transpose.
-		double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
-				hop, baseSelfCost, numOfWorkers, false);
 		double singleWorkerFedPenalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(
 				hop, fedExecWeight, numOfWorkers);
 			final long enumerationLimit = 1L << numBothOutInputs;
@@ -1114,6 +1118,10 @@ public class FederatedPlannerDpCostEnumerator {
 				List<Hop> exactCollectedHops = effectiveInputs.collectedHops();
 				List<FType> effectiveCollectedFTypes = effectiveInputs.collectedFTypes();
 				Map<Long, FType> effectiveNonNullFTypeMap = effectiveInputs.fedInputTypeMap();
+				boolean broadcastOnlyFedCompute = FederatedCostModel.hasOnlyBroadcastMatrixInputs(
+					exactCollectedHops, effectiveCollectedFTypes);
+				double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+					hop, baseSelfCost, numOfWorkers, broadcastOnlyFedCompute);
 
 			if (enforceTReadConsistency) {
 				if (!tWriteSeen) {
@@ -1194,7 +1202,7 @@ public class FederatedPlannerDpCostEnumerator {
 				double effectiveFedOverhead = FederatedCostModel.adjustFedCoordinationCost(
 						hop, oracleLogicalFType, fedOverhead);
 				double fedInstructionLatencyCost = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
-						hop, oracleLogicalFType, fedExecWeight, numOfWorkers, false);
+						hop, oracleLogicalFType, fedExecWeight, numOfWorkers, broadcastOnlyFedCompute);
 				double fedSelfCost = fedComputeCost + effectiveFedOverhead + singleWorkerFedPenalty
 						+ fedInstructionLatencyCost + inputPreparationCost;
 				double cpUploadMemEstimate = uploadMemEstimate;
@@ -1282,7 +1290,7 @@ public class FederatedPlannerDpCostEnumerator {
 							double exactChildCostFEDExec = replaceLegacyRelocationCost(
 								childCostFEDExec, relocation);
 							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
-								effectiveCollectedFTypes, exactEstimator, baseSelfCost, defaultFedComputeCost, outputMemEstimate,
+								effectiveCollectedFTypes, exactEstimator, baseSelfCost, outputMemEstimate,
 								cpUploadMemEstimate, fedOverhead, singleWorkerFedPenalty, fedExecWeight,
 								hopPlacementWeight, numOfWorkers, emissionFact.executionFType(), exactState.fType());
 							double entryFedFoutCost = entryCost.fedSelfCost() + exactChildCostFEDExec
@@ -1314,7 +1322,7 @@ public class FederatedPlannerDpCostEnumerator {
 							double exactChildCostFEDExec = replaceLegacyRelocationCost(
 								childCostFEDExec, relocation);
 							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
-								effectiveCollectedFTypes, exactEstimator, baseSelfCost, defaultFedComputeCost, outputMemEstimate,
+								effectiveCollectedFTypes, exactEstimator, baseSelfCost, outputMemEstimate,
 								cpUploadMemEstimate, fedOverhead, singleWorkerFedPenalty, fedExecWeight,
 								hopPlacementWeight, numOfWorkers, emissionFact.executionFType(), exactState.fType());
 							FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
@@ -1887,6 +1895,8 @@ public class FederatedPlannerDpCostEnumerator {
 		// logical candidate input and incorrectly produces a zero-input DP variant.
 		List<Hop> sourceChildHops = collectLogicalFunctionArgumentChildHops(dataOp, childHops, capture);
 		if(sourceChildHops.isEmpty())
+			sourceChildHops = collectLogicalTransientSourceChildHops(dataOp, capture);
+		if(sourceChildHops.isEmpty())
 			sourceChildHops = collectTransientWriteChildHops(dataOp, childHops, capture);
 		if (sourceChildHops.isEmpty()) {
 			return false;
@@ -2094,6 +2104,33 @@ public class FederatedPlannerDpCostEnumerator {
 		return capture.context.analysis().logicalFunctionInputsInCanonicalOrder().stream()
 			.filter(fact -> fact.targetRead() == read.key() && fact.logicalPosition() == 0)
 			.toList();
+	}
+
+	private static List<Hop> collectLogicalTransientSourceChildHops(DataOp transientRead,
+		EnumerationCapture capture) {
+		if(transientRead == null || capture == null)
+			return List.of();
+		HopOccurrenceProjection read = findOccurrence(capture, transientRead);
+		List<LogicalTransientInputFact> facts = capture.context.analysis()
+			.logicalTransientInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == read.key() && fact.logicalPosition() == 0)
+			.toList();
+		if(facts.size() > 1)
+			throw new IllegalArgumentException("Transient read has multiple exact logical source facts: "
+				+ read.key().normalizedSignature());
+		if(facts.isEmpty())
+			return List.of();
+		LogicalTransientInputFact fact = facts.get(0);
+		Hop source = capture.context.analysis().hop(fact.sourceWrite()).orElseThrow(() ->
+			new IllegalArgumentException("Logical transient DP source Hop is missing"));
+		HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(source);
+		if(projected == null || projected.key() != fact.sourceWrite())
+			throw new IllegalArgumentException(
+				"Logical transient DP source carrier differs from analysis authority");
+		if(source == transientRead)
+			throw new IllegalArgumentException("Logical transient DP source is self-recursive: "
+				+ read.key().normalizedSignature());
+		return List.of(source);
 	}
 
 	/**
@@ -2587,9 +2624,13 @@ public class FederatedPlannerDpCostEnumerator {
 
 	private static FedEntryCost computeFedEntryCost(Hop hop, List<Hop> exactCollectedHops,
 		List<FType> effectiveCollectedFTypes, FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator,
-		double baseSelfCost, double defaultFedComputeCost, double outputMemEstimate, double uploadMemEstimate, double fedOverhead,
+		double baseSelfCost, double outputMemEstimate, double uploadMemEstimate, double fedOverhead,
 		double singleWorkerFedPenalty, double fedExecWeight, double hopPlacementWeight, int numOfWorkers,
 		FType executionFType, FType materializationFType) {
+		boolean broadcastOnlyFedCompute = FederatedCostModel.hasOnlyBroadcastMatrixInputs(
+			exactCollectedHops, effectiveCollectedFTypes);
+		double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+			hop, baseSelfCost, numOfWorkers, broadcastOnlyFedCompute);
 		double genericResultDownloadCost = exactEstimator.download(outputMemEstimate, executionFType, numOfWorkers);
 		double nativeAggUnaryResultDownloadCost =
 			FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
@@ -2611,7 +2652,7 @@ public class FederatedPlannerDpCostEnumerator {
 		double fedSelfCost = fedComputeCost + FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
 			fedOverhead) + singleWorkerFedPenalty
 			+ FederatedCostModel.computeControlDominatedFederatedInstructionCost(hop, executionFType,
-				fedExecWeight, numOfWorkers, false)
+				fedExecWeight, numOfWorkers, broadcastOnlyFedCompute)
 			+ hopPlacementWeight * mixedFedLocalCost.getInputPreparationCost();
 		double uploadCost = hopPlacementWeight
 			* exactEstimator.upload(uploadMemEstimate, materializationFType, numOfWorkers);

@@ -71,6 +71,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -211,7 +212,9 @@ public class FederatedPlannerDpCostEstimator {
 		public double computeHopCost(FederatedPlannerDpMemoTable.HopCommon common) {
 			if(common == null || memo.requirePlanCarrierOccurrence(common.getHopRef()) != occurrence)
 				throw new IllegalArgumentException("Estimator HopCommon is not owned by the exact occurrence");
-			return FederatedPlannerDpCostEstimator.computeHopCost(common);
+			double modeledLocalCost = PlacementCostSemantics.analysisAwareUnitLocalCost(
+				analysis, occurrence.key());
+			return FederatedPlannerDpCostEstimator.computeHopCost(common, modeledLocalCost);
 		}
 
 		public void getChildCosts(FederatedPlannerDpMemoTable.HopCommon common,
@@ -225,6 +228,34 @@ public class FederatedPlannerDpCostEstimator {
 			FederatedPlannerDpCostEstimator.getChildCosts(common, memo, commonTable, inputs, cumulative, toCP,
 				toFED, foutToFED, loutOnly, loutCumulative, loutToFED, foutOnly, foutCumulative,
 				foutToCP, foutOnlyToFED, workers);
+			for(int index = 0; index < loutOnly.size(); index++) {
+				Hop child = loutOnly.get(index);
+				double replacementBytes = latentWdivmmInputPreparationBytes(child);
+				if(replacementBytes < 0.0)
+					continue;
+				FederatedPlannerDpMemoTable.FedPlan childPlan = memo.getFedPlanAfterPrune(
+					child.getHopID(), FederatedOutput.LOUT);
+				if(childPlan == null)
+					throw new IllegalArgumentException(
+						"Latent WDivMM input has no exact LOUT child plan");
+				double upload = FederatedCostModel.computeInBandUploadPayloadCost(
+					replacementBytes, FType.BROADCAST, workers);
+				loutToFED.set(index, computeBoundaryTransferShareForParent(
+					upload, childPlan, common, commonTable, memo));
+			}
+		}
+
+		private double latentWdivmmInputPreparationBytes(Hop child) {
+			HopOccurrenceProjection childOccurrence = memo.requirePlanCarrierOccurrence(child);
+			List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
+				.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.producer() == childOccurrence.key()
+					&& edge.consumer() == occurrence.key())
+				.toList();
+			if(edges.size() != 1)
+				return -1.0;
+			return PlacementCostSemantics.latentWdivmmFusedInputPreparationBytes(
+				analysis, childOccurrence.key(), occurrence.key(), edges.get(0).inputPosition());
 		}
 
 		public double download(double memory, FType type, int workers) {
@@ -641,6 +672,11 @@ public class FederatedPlannerDpCostEstimator {
 	 * @return The self cost of the Hop.
 	 */
 	public static double computeHopCost(FederatedPlannerDpMemoTable.HopCommon hopCommon) {
+		return computeHopCost(hopCommon, Double.NaN);
+	}
+
+	private static double computeHopCost(FederatedPlannerDpMemoTable.HopCommon hopCommon,
+			double exactModeledLocalCost) {
 		// TWrite and TRead are meta-data operations, hence selfCost is zero
 		if (hopCommon.hopRef instanceof DataOp) {
 			if (((DataOp) hopCommon.hopRef).getOp() == Types.OpOpData.TRANSIENTWRITE) {
@@ -658,8 +694,10 @@ public class FederatedPlannerDpCostEstimator {
 			}
 		}
 
-		double modeledLocalCost = FederatedCostModel.computeLocalIndexingCostWithFallback(
-			hopCommon.hopRef, FederatedCostModel.computeOpCostWithFallback(hopCommon.hopRef));
+		double modeledLocalCost = Double.isNaN(exactModeledLocalCost)
+			? FederatedCostModel.computeLocalIndexingCostWithFallback(hopCommon.hopRef,
+				FederatedCostModel.computeOpCostWithFallback(hopCommon.hopRef))
+			: exactModeledLocalCost;
 		if(Double.isNaN(modeledLocalCost)) {
 			double inputMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(hopCommon.hopRef);
 			if(Double.isFinite(inputMemEstimate) && inputMemEstimate > 0)

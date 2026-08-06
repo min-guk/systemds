@@ -32,6 +32,7 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
@@ -253,10 +254,8 @@ public final class NeutralPlacementGraphBuilder {
 		AnchorClosure anchorClosure = closeCfgDurableAnchors(occurrences, nodes, occurrenceAnchorProvenance, cfg, factsByHop);
 		nodes = anchorClosure.nodes();
 		occurrenceAnchorProvenance = anchorClosure.anchors();
-		CandidateReplay candidateReplay = replayUniqueCfgTransientForwards(occurrences, nodes, cfg, factsByHop,
-			candidateRuleDomainKeys, candidateRuleFacts);
-		candidateReplay = closePostCfgPhysicalCandidateDependencies(occurrences, candidateReplay,
-			factsByHop, ordinalsByBlock, cfg);
+		CandidateReplay candidateReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+			factsByHop, ordinalsByBlock, candidateRuleDomainKeys, candidateRuleFacts);
 		nodes = candidateReplay.nodes();
 		candidateRuleDomainKeys = candidateReplay.domainKeys();
 		candidateRuleFacts = candidateReplay.facts();
@@ -985,10 +984,28 @@ public final class NeutralPlacementGraphBuilder {
 		return outputShape.rows() == maxRow && outputShape.cols() == maxCol;
 	}
 
+	private CandidateReplay closeCfgTransientCandidateDependencies(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> factsByHop, Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts) {
+		CandidateReplay current = new CandidateReplay(List.copyOf(nodes), List.copyOf(domainKeys),
+			List.copyOf(facts), List.of(), List.of());
+		int maxPasses = Math.max(1, occurrences.size());
+		for(int pass = 0; pass < maxPasses; pass++) {
+			CandidateReplay replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
+				factsByHop, current.domainKeys(), current.facts(), current.logicalInputs());
+			if(replayed.changedOrdinals().isEmpty())
+				return replayed;
+			current = closePostCfgPhysicalCandidateDependencies(occurrences, replayed,
+				factsByHop, ordinalsByBlock, cfg);
+		}
+		throw new IllegalStateException("CFG transient candidate closure did not converge");
+	}
+
 	private CandidateReplay replayUniqueCfgTransientForwards(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
 		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> domainKeys,
-		List<CandidateRuleFact> facts) {
+		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before CFG replay");
 		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
@@ -1003,15 +1020,18 @@ public final class NeutralPlacementGraphBuilder {
 		List<Node> replayedNodes = new ArrayList<>(nodes.size());
 		List<CandidateRuleKey> replayedKeys = new ArrayList<>();
 		List<CandidateRuleFact> replayedFacts = new ArrayList<>();
-		List<LogicalTransientInputFact> logicalInputs = new ArrayList<>();
+		List<LogicalTransientInputFact> logicalInputs = new ArrayList<>(existingLogicalInputs);
+		Set<CompiledHopKey> replayedReads = Collections.newSetFromMap(new IdentityHashMap<>());
+		existingLogicalInputs.forEach(input -> replayedReads.add(input.targetRead()));
 		Set<Integer> copiedSlots = new HashSet<>();
 		Set<CompiledHopKey> replacedParents = Collections.newSetFromMap(new IdentityHashMap<>());
 		List<Integer> changedOrdinals = new ArrayList<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			Node node = nodes.get(ordinal);
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
-			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
-				factsByHop, replayedKeys, replayedFacts, logicalInputs);
+			Node replayed = replayedReads.contains(node.key()) ? node
+				: replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
+					factsByHop, replayedKeys, replayedFacts, logicalInputs);
 			replayedNodes.add(replayed);
 			if(replayed != node) {
 				replacedParents.add(node.key());
@@ -1041,25 +1061,53 @@ public final class NeutralPlacementGraphBuilder {
 		if(read.kind() != NodeKind.TRANSIENT_READ || !isTransientRead(readOccurrence.hop()))
 			return read;
 		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
-		if(definitions.size() != 1)
+		Integer loopPassThroughSource = definitions.size() > 1
+			? exactLoopPassThroughSource(ordinal, readOccurrence, read, definitions,
+				occurrences, nodes, factsByHop)
+			: null;
+		if(definitions.size() != 1 && loopPassThroughSource == null) {
+			traceTransientReplay(readOccurrence, "non-replayable-reaching-definitions=" + definitions
+				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
 			return read;
-		int definition = definitions.iterator().next();
-		if(definition < 0 || definition >= occurrences.size())
+		}
+		int definition = loopPassThroughSource != null
+			? loopPassThroughSource : definitions.iterator().next();
+		if(definition < 0 || definition >= occurrences.size()) {
+			traceTransientReplay(readOccurrence, "invalid-definition=" + definition);
 			return read;
+		}
 		PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
 		Node source = nodes.get(definition);
-		if(source.kind() != NodeKind.TRANSIENT_WRITE || !isTransientWrite(sourceOccurrence.hop())
-			|| !sameTransientForwardContext(source, read)
-			|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state)))
+		if(source.kind() != NodeKind.TRANSIENT_WRITE || !isTransientWrite(sourceOccurrence.hop())) {
+			traceTransientReplay(readOccurrence, "definition-is-not-transient-write|definition=" + definition
+				+ "|sourceKind=" + source.kind() + "|sourceHop=" + sourceOccurrence.hop().getHopID());
 			return read;
+		}
+		if(!sameTransientForwardContext(source, read)) {
+			traceTransientReplay(readOccurrence, "context-mismatch|definition=" + definition
+				+ "|source=" + source.valueVersion().normalizedSignature()
+				+ "|read=" + read.valueVersion().normalizedSignature());
+			return read;
+		}
+		if(source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state))) {
+			traceTransientReplay(readOccurrence, "illegal-source-alternative|definition=" + definition
+				+ "|states=" + source.legalAlternatives());
+			return read;
+		}
 		DurableAnchorKey anchor;
 		if(source.anchors().isEmpty() && read.anchors().isEmpty())
 			anchor = null;
 		else if(source.anchors().size() == 1 && read.anchors().size() == 1
 			&& source.anchors().get(0).equals(read.anchors().get(0)))
 			anchor = source.anchors().get(0);
-		else
+		else if(loopPassThroughSource != null && source.anchors().size() == 1
+			&& read.anchors().isEmpty())
+			anchor = source.anchors().get(0);
+		else {
+			traceTransientReplay(readOccurrence, "anchor-mismatch|definition=" + definition
+				+ "|sourceAnchors=" + source.anchors() + "|readAnchors=" + read.anchors());
 			return read;
+		}
 		List<PlacementState> localStates = source.legalAlternatives().stream().filter(state ->
 			state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 				&& state.fType() == null && !state.shapeDependent()).toList();
@@ -1070,8 +1118,15 @@ public final class NeutralPlacementGraphBuilder {
 		NodeShapeFact sourceShape = factsByHop.get(sourceOccurrence.hop());
 		NodeShapeFact readShape = factsByHop.get(readOccurrence.hop());
 		if(localStates.size() != 1 || federatedStates.size() != 1 || sourceShape == null || readShape == null
-			|| !sameLogicalValueShape(sourceShape, readShape))
+			|| !sameLogicalValueShape(sourceShape, readShape)) {
+			traceTransientReplay(readOccurrence, "state-or-shape-mismatch|definition=" + definition
+				+ "|sourceHop=" + sourceOccurrence.hop().getHopID() + ':' + sourceOccurrence.hop().getOpString()
+				+ "|sourcePath=" + sourceOccurrence.path() + "|sourceStates=" + source.legalAlternatives()
+				+ "|sourceAnchors=" + source.anchors() + "|readAnchors=" + read.anchors()
+				+ "|localStates=" + localStates + "|federatedStates=" + federatedStates
+				+ "|sourceShape=" + sourceShape + "|readShape=" + readShape);
 			return read;
+		}
 		PlacementState localState = localStates.get(0);
 		PlacementState federatedState = federatedStates.get(0);
 		FType federatedFType = federatedState.fType();
@@ -1082,6 +1137,97 @@ public final class NeutralPlacementGraphBuilder {
 			source.valueVersion(), read.valueVersion(), anchor, federatedFType, localState, federatedState,
 			CandidateInputState.absentLocal(), CandidateInputState.present(federatedFType)));
 		return replayed;
+	}
+
+	/**
+	 * Finds the one external placement seed of a compiler-generated loop carry. The remaining
+	 * reaching definitions must be exact {@code TWrite(v) <- TRead(v)} identity backedges in the
+	 * same statement block. This does not collapse a real loop update: any arithmetic, rename,
+	 * shape change, cross-context value, or second external definition keeps the phi unreplayed.
+	 */
+	private static Integer exactLoopPassThroughSource(int readOrdinal,
+		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, Set<Integer> definitions,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+		Map<Hop,NodeShapeFact> factsByHop) {
+		List<Integer> seeds = new ArrayList<>();
+		for(int definition : definitions) {
+			if(definition < 0 || definition >= occurrences.size())
+				return null;
+			PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
+			Node source = nodes.get(definition);
+			if(exactIdentityLoopBackedge(readOrdinal, readOccurrence, sourceOccurrence, source,
+				factsByHop))
+				continue;
+			if(source.kind() != NodeKind.TRANSIENT_WRITE || !isTransientWrite(sourceOccurrence.hop())
+				|| !sameTransientForwardContext(source, read)
+				|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state)))
+				return null;
+			List<PlacementState> local = source.legalAlternatives().stream().filter(state ->
+				state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+					&& state.fType() == null && !state.shapeDependent()).toList();
+			List<PlacementState> federated = source.legalAlternatives().stream().filter(state ->
+				state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+					&& state.fType() != null && state.fType() != FType.PART && state.fType() != FType.OTHER)
+				.toList();
+			if(local.size() != 1 || federated.size() != 1
+				|| !sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()),
+					factsByHop.get(readOccurrence.hop())))
+				return null;
+			seeds.add(definition);
+		}
+		return seeds.size() == 1 ? seeds.get(0) : null;
+	}
+
+	private static boolean exactIdentityLoopBackedge(int readOrdinal,
+		PlacementGraphFingerprint.HopOccurrence readOccurrence,
+		PlacementGraphFingerprint.HopOccurrence sourceOccurrence, Node source,
+		Map<Hop,NodeShapeFact> factsByHop) {
+		Hop sourceHop = sourceOccurrence.hop();
+		return sourceOccurrence.block() == readOccurrence.block()
+			&& sourceOccurrence.path().equals(readOccurrence.path())
+			&& isTransientWrite(sourceHop) && sourceHop.getInput().size() == 1
+			&& sourceHop.getInput(0) == readOccurrence.hop()
+			&& Objects.equals(sourceHop.getName(), readOccurrence.hop().getName())
+			&& source.kind() == NodeKind.TRANSIENT_WRITE
+			&& sourceOccurrence.hop() != readOccurrence.hop()
+			&& sameLogicalValueShape(factsByHop.get(sourceHop), factsByHop.get(readOccurrence.hop()));
+	}
+
+	private static List<String> describeTransientDefinitions(
+		PlacementGraphFingerprint.HopOccurrence readOccurrence, Set<Integer> definitions,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes) {
+		List<String> details = new ArrayList<>();
+		for(int definition : definitions) {
+			if(definition < 0 || definition >= occurrences.size()) {
+				details.add(definition + ":invalid");
+				continue;
+			}
+			PlacementGraphFingerprint.HopOccurrence source = occurrences.get(definition);
+			details.add(definition + ":hop=" + source.hop().getHopID() + ':' + source.hop().getOpString()
+				+ "|path=" + source.path() + "|states=" + nodes.get(definition).legalAlternatives()
+				+ "|inputs=" + source.hop().getInput().stream().map(Hop::getHopID).toList()
+				+ "|dependsOnRead=" + dependsOnExactHop(source.hop(), readOccurrence.hop(),
+					Collections.newSetFromMap(new IdentityHashMap<>())));
+		}
+		return List.copyOf(details);
+	}
+
+	private static boolean dependsOnExactHop(Hop current, Hop expected, Set<Hop> visited) {
+		if(current == expected)
+			return true;
+		if(current == null || !visited.add(current))
+			return false;
+		for(Hop input : current.getInput())
+			if(dependsOnExactHop(input, expected, visited))
+				return true;
+		return false;
+	}
+
+	private static void traceTransientReplay(PlacementGraphFingerprint.HopOccurrence readOccurrence,
+		String rejection) {
+		FederatedPlannerTrace.log(readOccurrence.hop(), "Neutral-TransientReplay",
+			"rejected=" + rejection + "|path=" + readOccurrence.path()
+				+ "|namespace=" + readOccurrence.namespace() + "|topology=" + readOccurrence.topology());
 	}
 
 	private Node buildExactLogicalTransientRead(Hop readHop, Node read, Node source, DurableAnchorKey anchor,
@@ -1099,7 +1245,8 @@ public final class NeutralPlacementGraphBuilder {
 		replayedFacts.add(logicalTransientReplayFact(readHop, federatedKey, federatedState, source, read,
 			anchor, federatedFType));
 		return new Node(read.key(), read.kind(), read.valueVersion(), read.emittedWork(),
-			List.of(localState, federatedState), read.exclusions(), read.anchors());
+			List.of(localState, federatedState), read.exclusions(),
+			anchor == null ? read.anchors() : List.of(anchor));
 	}
 
 	private CandidateRuleFact logicalTransientReplayFact(Hop readHop, CandidateRuleKey key, PlacementState state,
@@ -1218,11 +1365,22 @@ public final class NeutralPlacementGraphBuilder {
 						Node inputNode = exactBlockNodes.get(input);
 						return inputNode == null ? null : inputNode.key();
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
+					current.valueVersion().versionKind(), cfg);
 				Node replacement = buildNode(hop, current.key(), current.valueVersion(), current.anchors(),
 					inputAnchors, Collections.unmodifiableList(inputAnchorOwners),
 					factsByHop.get(hop), List.copyOf(inputShapes),
-					inputDomains(hop, exactBlockNodes, occurrence, occurrences,
-						current.valueVersion().versionKind(), cfg), replacementKeys, replacementFacts);
+					exactInputDomains, replacementKeys, replacementFacts);
+				if(FederatedPlannerTrace.shouldTrace(hop))
+					FederatedPlannerTrace.log(hop, "Neutral-PhysicalClosure",
+						"producerOrdinal=" + producerOrdinal + "|inputDomains=" + exactInputDomains
+							+ "|current=" + current.legalAlternatives()
+							+ "|replacement=" + replacement.legalAlternatives()
+							+ "|inputStates=" + hop.getInput().stream().map(input -> {
+								Node inputNode = exactBlockNodes.get(input);
+								return input.getHopID() + ":" + (inputNode == null ? "missing"
+									: inputNode.legalAlternatives().toString());
+							}).toList());
 				List<CandidateRuleKey> priorKeys = keysByOrdinal.get(consumerOrdinal);
 				List<CandidateRuleFact> priorFacts = factsByOrdinal.get(consumerOrdinal);
 				boolean changed = !replacement.equals(current) || !replacementKeys.equals(priorKeys)
