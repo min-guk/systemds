@@ -3717,6 +3717,62 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpLogRegKeepsInitialFederatedFormalForRowSumSquares() throws Exception {
+		String script = String.join("\n",
+			"X_LOCAL = matrix(1, rows=50000, cols=2100);",
+			"Y_LOCAL = matrix(1, rows=50000, cols=1);",
+			"X = federated(local_matrix=X_LOCAL, addresses=list(\"localhost:8001\"),",
+			"              ranges=list(list(0, 0), list(50000, 2100)));",
+			"Y = federated(local_matrix=Y_LOCAL, addresses=list(\"localhost:8001\"),",
+			"              ranges=list(list(0, 0), list(50000, 1)));",
+			"Y = (Y < 0) + 1;",
+			"B = multiLogReg(X=X, Y=Y, verbose=FALSE, maxi=30, maxii=5, tol=1e-9, icpt=0,",
+			"                numclasses=2, numrows=50000, numcols=2100);",
+			"write(B, \"tmp/logreg-dp-initial-formal.res\", format=\"csv\");",
+			"");
+
+		DpInvocationReceipt receipt = invokeDpPlannerRewriteScript(script);
+		List<HopOccurrenceProjection> rowSumSquares = receipt.analysis().occurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof AggUnaryOp)
+			.filter(occurrence -> {
+				AggUnaryOp aggregate = (AggUnaryOp) occurrence.hop();
+				return aggregate.getOp() == AggOp.SUM_SQ && aggregate.getDirection() == Direction.Row
+					&& !aggregate.getInput().isEmpty()
+					&& aggregate.getInput(0) instanceof DataOp
+					&& "X".equals(aggregate.getInput(0).getName());
+			})
+			.toList();
+
+		assertEquals("The LogReg fixture must retain exactly one rowSums(X^2) aggregate", 1,
+			rowSumSquares.size());
+		PlacementState selected = receipt.normalizedResult().selectedStates().get(rowSumSquares.get(0).key());
+		assertNotNull("DP must publish the exact LogReg row-sum-squares placement", selected);
+		assertEquals("The initial federated X path must not become a free CP/LOUT materialization",
+			ExecType.FED, selected.execType());
+		assertEquals(FederatedOutput.FOUT, selected.output());
+	}
+
+	@Test
+	public void testDpDecisionMapScoreCacheSeparatesStandardMapHashCollisions() throws Exception {
+		int collidingLongHash = FederatedOutput.LOUT.hashCode() ^ FederatedOutput.FOUT.hashCode();
+		Map<Long, FederatedOutput> local = Map.of(0L, FederatedOutput.LOUT);
+		Map<Long, FederatedOutput> federated =
+			Map.of(Integer.toUnsignedLong(collidingLongHash), FederatedOutput.FOUT);
+		assertEquals("fixture must collide under java.util.Map's order-independent hash",
+			local.hashCode(), federated.hashCode());
+
+		Class<?> keyClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$DecisionMapScoreKey");
+		Constructor<?> constructor = keyClass.getDeclaredConstructor(Map.class);
+		constructor.setAccessible(true);
+		Object localKey = constructor.newInstance(local);
+		Object federatedKey = constructor.newInstance(federated);
+		assertFalse("different decision maps must remain unequal", localKey.equals(federatedKey));
+		assertFalse("cache keys must not inherit java.util.Map's systematic collision",
+			localKey.hashCode() == federatedKey.hashCode());
+	}
+
+	@Test
 	public void testDpResolveOneHopConflictAccountsForSameOutputCompatibleVariantShift() throws Exception {
 		DataOp source = transientRead("XsourceCompat", ROWS, COLS);
 		UnaryOp target = new UnaryOp("targetCompat", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, source);

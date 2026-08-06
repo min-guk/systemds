@@ -109,6 +109,7 @@ public class FederatedPlannerDpMemoTable {
 	private final Map<Hop, Map<FederatedOutput, FedPlanVariants>> exactMemoByCarrier = new IdentityHashMap<>();
 	private final Map<Pair<Long, FederatedOutput>, Set<Hop>> carriersByLegacyCoordinate = new HashMap<>();
 	private final PlacementAnalysis analysis;
+	private final Set<HopOccurrenceProjection> ownedOccurrences;
 	private final Map<Hop, HopOccurrenceProjection> occurrenceByPlanCarrier = new IdentityHashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
 	private final Map<Long, Long> cloneToOrig = new HashMap<>();
@@ -126,10 +127,14 @@ public class FederatedPlannerDpMemoTable {
 
 	public FederatedPlannerDpMemoTable() {
 		analysis = null;
+		ownedOccurrences = Collections.emptySet();
 	}
 
 	public FederatedPlannerDpMemoTable(PlacementAnalysis analysis) {
 		this.analysis = java.util.Objects.requireNonNull(analysis, "analysis");
+		Set<HopOccurrenceProjection> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
+		occurrences.addAll(analysis.occurrences());
+		ownedOccurrences = Collections.unmodifiableSet(occurrences);
 	}
 
 	public PlacementAnalysis analysis() {
@@ -455,7 +460,7 @@ public class FederatedPlannerDpMemoTable {
 	private void assertOwnedOccurrence(HopOccurrenceProjection occurrence) {
 		if(analysis == null)
 			throw new IllegalStateException("Memo is not bound to a placement analysis");
-		if(occurrence == null || analysis.occurrences().stream().noneMatch(candidate -> candidate == occurrence)
+		if(occurrence == null || !ownedOccurrences.contains(occurrence)
 			|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
 			throw new IllegalArgumentException("Occurrence is not owned by the memo analysis");
 	}

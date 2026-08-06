@@ -38,6 +38,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -59,6 +61,25 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 			distinctCfgDefinitions(last));
 		Assert.assertNotEquals("sequential overwrite is not a branch phi", VersionKind.BRANCH_JOIN_PHI,
 			last.valueVersion().versionKind());
+	}
+
+	@Test
+	public void placementAnalysisPreindexesCanonicalCfgDefinitionSources() {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(
+			buildLinearOverwriteProgram());
+		Node read = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.TRANSIENT_READ)
+			.filter(node -> "X".equals(node.valueVersion().lexicalVariable()))
+			.filter(node -> node.valueVersion().predecessorVersions().stream()
+				.anyMatch(value -> value.startsWith("cfg-definition:")))
+			.findFirst().orElseThrow();
+
+		List<CompiledHopKey> first = analysis.cfgDefinitionSourcesInCanonicalOrder(read.key());
+		Assert.assertFalse("fixture must expose a resolved CFG definition source", first.isEmpty());
+		Assert.assertSame("immutable placement analysis must reuse its preindexed CFG relation",
+			first, analysis.cfgDefinitionSourcesInCanonicalOrder(read.key()));
+		Assert.assertEquals("preindexed sources must retain canonical order",
+			first.stream().sorted().toList(), first);
 	}
 
 	@Test
@@ -254,6 +275,10 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	 * the transient read whose reaching definition this contract must inspect.
 	 */
 	private static NeutralPlacementGraph buildLinearOverwriteFixture() {
+		return new NeutralPlacementGraphBuilder().build(buildLinearOverwriteProgram());
+	}
+
+	private static DMLProgram buildLinearOverwriteProgram() {
 		DMLProgram program = new DMLProgram();
 		DataOp firstX = transientWrite("X", new LiteralOp(1L));
 		DataOp secondX = transientWrite("X", new LiteralOp(2L));
@@ -261,7 +286,7 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 			OpOpData.TRANSIENTREAD, "X", 0, 0, -1, -1);
 		DataOp writeY = transientWrite("Y", readX);
 		program.setStatementBlocks(new ArrayList<>(List.of(block(firstX), block(secondX), block(writeY))));
-		return new NeutralPlacementGraphBuilder().build(program);
+		return program;
 	}
 
 	private static DataOp transientWrite(String variable, Hop input) {

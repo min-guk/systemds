@@ -749,6 +749,7 @@ public final class PlacementAnalysis {
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
+	private final Map<CompiledHopKey,List<CompiledHopKey>> cfgDefinitionSourcesByIdentity;
 	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>> logicalInputsByIdentity;
 	private final List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder;
@@ -838,6 +839,7 @@ public final class PlacementAnalysis {
 			analysisKeysByIdentity);
 		this.compiledInputEdgesInCanonicalOrder = validateCompiledInputEdges(compiledInputEdges);
 		this.inputEdgesByIdentity = indexCompiledInputEdges(this.compiledInputEdgesInCanonicalOrder);
+		this.cfgDefinitionSourcesByIdentity = indexCfgDefinitionSources(graph);
 		this.logicalTransientInputsInCanonicalOrder = validateLogicalTransientInputs(logicalTransientInputs,
 			analysisKeysByIdentity);
 		this.logicalInputsByIdentity = indexLogicalTransientInputs(this.logicalTransientInputsInCanonicalOrder);
@@ -1343,21 +1345,37 @@ public final class PlacementAnalysis {
 	public List<CompiledHopKey> cfgDefinitionSourcesInCanonicalOrder(CompiledHopKey key) {
 		NeutralPlacementGraph.Node target = graph.node(Objects.requireNonNull(key, "key"))
 			.orElseThrow(() -> new IllegalArgumentException("CFG definition target is outside the analysis"));
-		Set<String> references = target.valueVersion().predecessorVersions().stream()
-			.filter(value -> value.startsWith("cfg-definition:"))
-			.map(value -> value.substring("cfg-definition:".length()))
-			.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
-		if(references.isEmpty())
-			return List.of();
-		List<CompiledHopKey> sources = graph.nodes().stream()
-			.filter(node -> references.contains(node.valueVersion().cfgReferenceSignature()))
-			.map(NeutralPlacementGraph.Node::key).sorted().toList();
-		Set<String> resolved = sources.stream()
-			.map(source -> graph.node(source).orElseThrow().valueVersion().cfgReferenceSignature())
-			.collect(java.util.stream.Collectors.toSet());
-		if(!resolved.equals(references))
-			throw new IllegalStateException("CFG definition reference has no exact placement owner");
-		return sources;
+		return cfgDefinitionSourcesByIdentity.getOrDefault(target.key(), List.of());
+	}
+
+	private static Map<CompiledHopKey,List<CompiledHopKey>> indexCfgDefinitionSources(
+		NeutralPlacementGraph graph) {
+		Map<String,List<CompiledHopKey>> sourcesByReference = new java.util.HashMap<>();
+		for(NeutralPlacementGraph.Node node : graph.nodes())
+			sourcesByReference.computeIfAbsent(node.valueVersion().cfgReferenceSignature(),
+				ignored -> new java.util.ArrayList<>()).add(node.key());
+		for(List<CompiledHopKey> sources : sourcesByReference.values())
+			sources.sort(null);
+
+		Map<CompiledHopKey,List<CompiledHopKey>> indexed = new IdentityHashMap<>();
+		for(NeutralPlacementGraph.Node target : graph.nodes()) {
+			Set<String> references = target.valueVersion().predecessorVersions().stream()
+				.filter(value -> value.startsWith("cfg-definition:"))
+				.map(value -> value.substring("cfg-definition:".length()))
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+			if(references.isEmpty())
+				continue;
+			List<CompiledHopKey> sources = new java.util.ArrayList<>();
+			for(String reference : references) {
+				List<CompiledHopKey> owners = sourcesByReference.get(reference);
+				if(owners == null || owners.isEmpty())
+					throw new IllegalStateException("CFG definition reference has no exact placement owner");
+				sources.addAll(owners);
+			}
+			sources.sort(null);
+			indexed.put(target.key(), List.copyOf(sources));
+		}
+		return Collections.unmodifiableMap(indexed);
 	}
 
 	/**

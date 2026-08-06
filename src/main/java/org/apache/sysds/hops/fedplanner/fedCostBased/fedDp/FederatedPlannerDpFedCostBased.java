@@ -6212,12 +6212,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				breakdown.addContribution(entry.getValue(), rootHopID, additionalRootHopIDs.contains(rootHopID),
 					memoTable, selectedRootPlans, outputDecisions);
 			}
-			double transientLocalCost =
-				computeDecisionMapTransientReadLoutMaterializationCost(memoTable, rootPlan, outputDecisions);
-			double mixedFoutToCpLocalEdgeCost =
-				computeDecisionMapMixedFoutToCpLocalEdgeCost(memoTable, rootPlan, outputDecisions);
-			double cloneFamilyOverridePenalty =
-				computeDecisionMapCloneFamilyOutputOverridePenalty(memoTable, rootPlan, outputDecisions);
+			Map<Long, ConflictEntry> conflictCheckMap = outputDecisions == null || outputDecisions.isEmpty()
+				? Collections.emptyMap()
+				: collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
+			double transientLocalCost = computeDecisionMapTransientReadLoutMaterializationCost(
+				memoTable, outputDecisions, conflictCheckMap);
+			double mixedFoutToCpLocalEdgeCost = computeDecisionMapMixedFoutToCpLocalEdgeCost(
+				memoTable, rootPlan, outputDecisions, conflictCheckMap);
+			double cloneFamilyOverridePenalty = computeDecisionMapCloneFamilyOutputOverridePenalty(
+				memoTable, outputDecisions, conflictCheckMap);
 			breakdown.totalCost += transientLocalCost + mixedFoutToCpLocalEdgeCost + cloneFamilyOverridePenalty;
 			breakdown.additionalRootCost += transientLocalCost + mixedFoutToCpLocalEdgeCost
 				+ cloneFamilyOverridePenalty;
@@ -6334,15 +6337,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		private static double computeDecisionMapCloneFamilyOutputOverridePenalty(
 			FederatedPlannerDpMemoTable memoTable,
-			FederatedPlannerDpMemoTable.FedPlan rootPlan,
-			Map<Long, FederatedOutput> outputDecisions) {
+			Map<Long, FederatedOutput> outputDecisions,
+			Map<Long, ConflictEntry> conflictCheckMap) {
 
-			if (memoTable == null || rootPlan == null || outputDecisions == null || outputDecisions.isEmpty())
+			if (memoTable == null || outputDecisions == null || outputDecisions.isEmpty())
 				return 0.0;
-
-			Map<Long, ConflictEntry> conflictCheckMap =
-				collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
-			if (conflictCheckMap.isEmpty())
+			if (conflictCheckMap == null || conflictCheckMap.isEmpty())
 				return 0.0;
 
 			double penalty = 0.0;
@@ -6457,14 +6457,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		private static double computeDecisionMapTransientReadLoutMaterializationCost(
 			FederatedPlannerDpMemoTable memoTable,
-			FederatedPlannerDpMemoTable.FedPlan rootPlan,
-			Map<Long, FederatedOutput> outputDecisions) {
+			Map<Long, FederatedOutput> outputDecisions,
+			Map<Long, ConflictEntry> conflictCheckMap) {
 
-			if (memoTable == null || rootPlan == null || outputDecisions == null || outputDecisions.isEmpty())
+			if (memoTable == null || outputDecisions == null || outputDecisions.isEmpty())
 				return 0.0;
 			double cost = 0.0;
-			Map<Long, ConflictEntry> conflictCheckMap =
-				collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
 			LinkedHashSet<String> chargedMembers = new LinkedHashSet<>();
 			for (Map.Entry<Long, FederatedOutput> decision : outputDecisions.entrySet()) {
 				if (decision == null || decision.getValue() != FederatedOutput.LOUT)
@@ -6539,14 +6537,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			private static double computeDecisionMapMixedFoutToCpLocalEdgeCost(
 				FederatedPlannerDpMemoTable memoTable,
 				FederatedPlannerDpMemoTable.FedPlan rootPlan,
-			Map<Long, FederatedOutput> outputDecisions) {
+				Map<Long, FederatedOutput> outputDecisions,
+				Map<Long, ConflictEntry> conflictCheckMap) {
 
 			if (memoTable == null || rootPlan == null || outputDecisions == null || outputDecisions.isEmpty())
 				return 0.0;
 				double cost = 0.0;
 				int numWorkers = Math.max(1, memoTable.getNumWorkers());
-				Map<Long, ConflictEntry> conflictCheckMap =
-					collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
 				LinkedHashSet<String> chargedEdges = new LinkedHashSet<>();
 				Set<FederatedPlannerDpMemoTable.FedPlan> visitedPlans =
 					Collections.newSetFromMap(new IdentityHashMap<>());
@@ -9566,7 +9563,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Map<Long, FederatedOutput> lockedDecisions) {
 			this.baseDecisions = baseDecisions != null ? new HashMap<>(baseDecisions) : Collections.emptyMap();
 			this.lockedDecisions = lockedDecisions != null ? new HashMap<>(lockedDecisions) : Collections.emptyMap();
-			this.hash = 31 * this.baseDecisions.hashCode() + this.lockedDecisions.hashCode();
+			this.hash = 31 * unorderedDecisionMapHash(this.baseDecisions)
+				+ unorderedDecisionMapHash(this.lockedDecisions);
 		}
 
 		@Override
@@ -9616,7 +9614,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		DecisionMapScoreKey(Map<Long, FederatedOutput> outputDecisions) {
 			this.outputDecisions = outputDecisions != null ? new HashMap<>(outputDecisions) : Collections.emptyMap();
-			this.hash = this.outputDecisions.hashCode();
+			this.hash = unorderedDecisionMapHash(this.outputDecisions);
 		}
 
 		@Override
@@ -9633,6 +9631,29 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		public int hashCode() {
 			return hash;
 		}
+	}
+
+	private static int unorderedDecisionMapHash(Map<Long, FederatedOutput> decisions) {
+		if (decisions == null || decisions.isEmpty())
+			return 0;
+		long sum = 0L;
+		long xor = 0L;
+		for (Map.Entry<Long, FederatedOutput> entry : decisions.entrySet()) {
+			long hopID = entry.getKey() != null ? entry.getKey() : 0L;
+			long output = entry.getValue() != null ? entry.getValue().ordinal() + 1L : 0L;
+			long mixed = mixDecisionMapHash(hopID ^ output * 0x9E3779B97F4A7C15L);
+			sum += mixed;
+			xor ^= Long.rotateLeft(mixed, (int) (hopID & 63L));
+		}
+		long mixed = mixDecisionMapHash(sum ^ Long.rotateLeft(xor, 23)
+			^ decisions.size() * 0xD6E8FEB86659FD93L);
+		return (int) (mixed ^ mixed >>> 32);
+	}
+
+	private static long mixDecisionMapHash(long value) {
+		value = (value ^ value >>> 30) * 0xBF58476D1CE4E5B9L;
+		value = (value ^ value >>> 27) * 0x94D049BB133111EBL;
+		return value ^ value >>> 31;
 	}
 
 	private static final class OverlayDecisionMap extends AbstractMap<Long, FederatedOutput> {

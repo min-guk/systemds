@@ -59,3 +59,33 @@
 - **잠재 회귀 위험**: 실제 loop update를 identity로 오인하면 stale placement를 전달할 수 있다. exact HOP identity 입력과 동일 control path를 요구하고, 비-identity/ambiguous CFG 테스트로 감지한다.
 - **의사결정 근거**: TRead/TWrite 제약을 완화하지 않고 공통 CFG authority와 DP exact rewire를 일치시켰다.
 - **적용 원칙/제약**: `<CP,LOUT>`/`<FED,FOUT>` transient invariant, runtime fallback 금지, planner exact occurrence authority.
+
+## 5. LogReg DP worker=1의 오래된 결과가 현재 소스의 실행 계획으로 오인됨
+
+- **상태**: 해결
+- **환경/조건**: Docker `run_LAN_docker.sh`, WAN-light, DP, worker=1, LogReg. 비교 대상은 predecessor cell `065-82c324e4aa6b`와 current immutable stage `dcc70c65daaeef8bd9d740a6a02df41ff504cd38ef37f223fa32bee8bc0c4d7e`이다.
+- **재현 절차**: predecessor raw log `/home/mchoi/g014-one-pass-results-f9a307b-a32b188-20260805-v1/cells/065-82c324e4aa6b/phases/cell-1/warm-fresh-coordinator-jvm/raw_coordinator.log`와 current cold raw log `/home/mchoi/g014-wan-light-affected-abca6f9-20260806-v1/cells/logreg-dp-w1/phases/cell-1/cold-docker-e2e/raw_coordinator.log`를 비교한다. current 검증 row는 `/home/mchoi/g014-wan-light-affected-abca6f9-20260806-v1/cells/logreg-dp-w1/validated-row.json`이다.
+- **관측 증상**: predecessor는 `CP uarsqk+ X`를 선택해 warm `63.306s`, `uarsqk+` 단독 `54.878s`였다. 이 점을 current 결과로 읽으면 DP가 initial federated formal `X`를 무료 local materialization으로 잘못 취급하는 것처럼 보인다.
+- **원인 분석**: 해당 63초 점은 이전 source revision의 quarantined predecessor artifact였다. current revision의 fresh Docker log는 `FED uarsqk+ X ... FOUT`이며 cold/warm execution은 각각 `18.352s`/`16.045s`, heavy `fed_uarsqk+`는 `0.249s`이다. 즉 현재 DP placement bug가 아니라 서로 다른 revision 결과를 섞은 provenance 오류였다.
+- **해결 요약**: 정확한 LogReg 차원(`50000x2100`)과 `multiLogReg` 호출을 사용하는 planner integration regression을 추가해 `rowSums(X^2)`의 selected state가 반드시 `<FED,FOUT>`임을 고정했다. predecessor 점은 current 그래프/정렬 근거에서 제외한다. runtime fallback이나 candidate 변경은 없다.
+- **수정 파일**: `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+- **검증**: `testDpLogRegKeepsInitialFederatedFormalForRowSumSquares`가 `<FED,FOUT>`을 확인하며 통과했다. current immutable Docker cell의 fingerprint는 `+:1;<:1;ba+*:5;contains:1;fedinit:2;replace:1;uamin:1;uarsqk+:1`이고 semantic/runtime/network/lifecycle validator를 모두 통과했다.
+- **잔여 이슈**: placement/execution correctness에는 없음. 다만 fresh current Docker cold lifecycle에서 별도의 DP planner compile-time 병목이 발견돼 이 문서의 다음 이슈로 추적한다.
+- **잠재 회귀 위험**: 이후 mixed-revision overlay가 predecessor 점을 다시 current 점으로 채택할 수 있다. 모든 점의 stage id/systemds commit과 raw runtime-plan fingerprint를 함께 확인한다.
+- **의사결정 근거**: planner 동작을 추측으로 수정하지 않고 immutable Docker provenance와 exact selected state로 현재 동작을 판정했다.
+- **적용 원칙/제약**: 동일 Docker 조건, stale artifact 격리, planner가 계획하고 runtime은 그대로 실행.
+
+## 6. LogReg/StepLM DP decision-map 점수 계산의 반복 전역 스캔
+
+- **상태**: 진행중
+- **환경/조건**: DP planner, LogReg `50000x2100` integration fixture 및 StepLM decision-map closure fixture. 실행 성능과 별개인 compile/LopsBuild 구간이다.
+- **재현 절차**: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest#testDpLogRegKeepsInitialFederatedFormalForRowSumSquares test`를 실행한다. Docker 기준 로그는 `/home/mchoi/g014-wan-light-affected-abca6f9-20260806-v1/cells/logreg-dp-w1/phases/cell-1/cold-docker-e2e/raw_coordinator.log`이다.
+- **관측 증상**: 수정 전 current Docker cold는 total `210.540s`, compilation `192.187s`, FedPlanner `189.656s`, execution `18.352s`였다. 같은 selected-state integration test도 최초 `288.865s`였다. stack sample은 `cfgDefinitionSourcesInCanonicalOrder`의 전체 node scan, `DecisionMapScoreKey.equals`의 충돌 map 비교, 동일 score 안의 `collectConflictsSingleBFS` 반복, `assertOwnedOccurrence`의 전체 occurrence scan을 가리켰다.
+- **원인 분석**: immutable CFG definition 관계를 decision 후보마다 다시 `O(V)`로 역검색했다. 또한 standard `Map.hashCode()`가 `Long.hashCode() ^ FederatedOutput.hashCode()`의 XOR 상쇄 때문에 다른 one-entry decision map에 체계적으로 같은 hash를 만들었고, score/simulation cache bucket이 긴 equality chain이 됐다. 각 decision-map score는 동일 output map으로 conflict forest를 세 번 재구성했으며 occurrence ownership도 매 호출 선형 탐색이었다.
+- **해결 요약**: `PlacementAnalysis` 생성 시 CFG definition source를 exact identity별 immutable index로 만든다. decision/simulation cache는 equality 계약을 유지하면서 entry를 64-bit mixing한 order-independent hash를 사용한다. 한 score 안에서는 conflict forest를 한 번만 만들고 세 penalty 계산이 읽기 전용으로 공유한다. memo 소유 occurrence는 identity set으로 한 번 인덱싱한다. candidate, 비용 항, 선택 규칙은 변경하지 않았다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java`, `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`, `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpMemoTable.java`, `src/test/java/org/apache/sysds/test/component/federated/placement/core/NeutralPlacementGraphExactCfgIdentityTest.java`, `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+- **검증**: CFG index identity regression과 standard-map-hash collision regression은 각각 RED를 확인한 뒤 GREEN이다. LogReg selected-state test는 최종 변경에서 `101.871s`로 통과해 최초 `288.865s` 대비 64.7%, 직전 `177.496s` 대비 42.6% 감소했다. `CampaignBDpMemoOwnerContractTest`, `CampaignBG014DpStepLmDecisionMapClosureRedTest`, `NeutralPlacementGraphExactCfgIdentityTest` 묶음도 errors/failures 0이다.
+- **잔여 이슈**: 새 immutable Docker stage에서 current `FED uarsqk+` plan 보존과 cold FedPlanner 시간 감소를 아직 재측정하지 않았다. 해당 canary가 통과할 때 해결로 전환한다.
+- **잠재 회귀 위험**: mutable analysis graph에 index가 stale할 수 있으나 `PlacementAnalysis`/neutral graph는 생성 후 immutable contract다. shared conflict map을 score 항이 변경하면 상호 오염될 수 있으므로 세 소비 함수의 read-only 계약과 decision-map regression으로 감지한다. cache hash는 equality가 아니라 bucket 분산만 바꾸므로 collision이 남아도 correctness는 유지된다.
+- **의사결정 근거**: legal plan space나 cost semantics를 바꾸지 않고 동일 immutable planner facts의 반복 계산만 제거했다.
+- **적용 원칙/제약**: candidate-space 임의 축소 금지, runtime fallback 금지, 비용 의미론/DP local recurrence 철학 유지.
