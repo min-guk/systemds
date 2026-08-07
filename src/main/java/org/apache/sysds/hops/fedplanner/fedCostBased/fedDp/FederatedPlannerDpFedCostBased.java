@@ -5310,11 +5310,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 							conflictCheckMap);
 					boolean structureImproved =
 						hasBetterDecisionMapStructure(candidateScore, currentScore);
+					boolean currentClosureUnresolved =
+						!isDecisionMapClosureResolved(currentScore, closureHopIDs);
 					boolean keepAlternative =
 						isScorableDecisionMapScore(candidateScore)
 							&& closureResolved
 							&& (structureImproved
-								|| (hasSameDecisionMapStructure(candidateScore, currentScore)
+								// Required-output closure repairs an inconsistent exact forest; it
+								// must not turn DP's local hop/children choice into a global hill
+								// climb when the incumbent closure is already executable.
+								|| (currentClosureUnresolved
+									&& hasSameDecisionMapStructure(candidateScore, currentScore)
 									&& !cloneFamilyPrefersCurrent
 									&& (candidateScore.totalCost + 1e-9 < currentScore.totalCost
 										|| transientTiePrefersAlternative
