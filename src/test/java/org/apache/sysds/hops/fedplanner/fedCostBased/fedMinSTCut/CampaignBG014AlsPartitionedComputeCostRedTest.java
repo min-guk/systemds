@@ -13,6 +13,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -28,6 +29,20 @@ import org.junit.Test;
 /** Regression for WAN-light ALS inner-CG partitioned compute being priced as serial work. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014AlsPartitionedComputeCostRedTest {
+	@Test
+	public void alsWorkerCountChangesThePhysicalInputTopology() throws Exception {
+		try {
+			Assert.assertEquals("The one-worker campaign input must expose its exact FULL topology",
+				FType.FULL, sourceFType(1));
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			Assert.assertEquals("The multi-worker campaign input must expose its exact ROW topology",
+				FType.ROW, sourceFType(2));
+		}
+		finally {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
 	@Test
 	public void wanLightAlsMinStKeepsLargeInnerElementwiseWorkFederated() throws Exception {
 		Map<String,String> oldProperties = installWanLightCostProperties();
@@ -65,6 +80,20 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			restoreProperties(oldProperties);
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 		}
+	}
+
+	private static FType sourceFType(int workers) throws Exception {
+		DMLProgram program = als(workers);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		var source = analysis.graph().decisionNodes().stream()
+			.filter(node -> analysis.hop(node.key()).orElse(null) instanceof DataOp data
+				&& data.getOp() == OpOpData.FEDERATED)
+			.findFirst().orElseThrow();
+		List<FType> sourceTypes = source.anchors().stream().map(anchor -> anchor.fType())
+			.distinct().toList();
+		Assert.assertEquals("ALS source must publish one exact durable layout", 1, sourceTypes.size());
+		return sourceTypes.get(0);
 	}
 
 	private static List<CompiledHopKey> innerMaskReads(PlacementAnalysis analysis) {
@@ -123,9 +152,13 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			+ '|' + key.controlRegion().regionPath();
 	}
 
-	private static DMLProgram als(int workers) throws Exception {
+	static DMLProgram als(int workers) throws Exception {
+		return als(workers, 2);
+	}
+
+	static DMLProgram als(int workers, int maxi) throws Exception {
 		String script = federatedFeatures(workers) + String.join("\n",
-			"[U,V]=als(X=X,rank=10,regType=\"L2\",reg=0.000001,maxi=2,"
+			"[U,V]=als(X=X,rank=10,regType=\"L2\",reg=0.000001,maxi=" + maxi + ","
 				+ "check=FALSE,thr=0.0001,seed=1389632218,verbose=FALSE);",
 			"write(V,\"out\",format=\"csv\");") + "\n";
 		DMLProgram program = ParserFactory.createParser().parse(
@@ -184,7 +217,27 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 		return previous;
 	}
 
-	private static void restoreProperties(Map<String,String> previous) {
+	static Map<String,String> installWanMidCostProperties() {
+		Map<String,String> values = Map.ofEntries(
+			Map.entry("SYSDS_FED_COST_MEM_BW", "25000"),
+			Map.entry("SYSDS_FED_COST_NET_BW", "25"),
+			Map.entry("SYSDS_FED_COST_NET_BW_C2W", "25"),
+			Map.entry("SYSDS_FED_COST_NET_BW_W2C", "25"),
+			Map.entry("SYSDS_FED_COST_NET_SERDES_BW", "210"),
+			Map.entry("SYSDS_FED_COST_NET_SERDES_BW_C2W", "210"),
+			Map.entry("SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7"),
+			Map.entry("SYSDS_FED_COST_NET_LATENCY", "0.080"),
+			Map.entry("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0"),
+			Map.entry("SYSDS_FED_COST_FLOPS", "2147483648"));
+		Map<String,String> previous = new HashMap<>();
+		values.forEach((key, value) -> {
+			previous.put(key, System.getProperty(key));
+			System.setProperty(key, value);
+		});
+		return previous;
+	}
+
+	static void restoreProperties(Map<String,String> previous) {
 		previous.forEach((key, value) -> {
 			if(value == null)
 				System.clearProperty(key);

@@ -4571,8 +4571,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		TransientReadParentsCache transientReadParentsCache = new TransientReadParentsCache();
 		SimulationDecisionCache simulationDecisionCache = new SimulationDecisionCache();
 		DecisionMapScoreCache decisionMapScoreCache = new DecisionMapScoreCache(memoTable, rootPlan);
-		// Initial and locked maps may be partial. Only complete refinement candidates
-		// are eligible to become the incumbent returned by this search.
+		// Initial and locked maps may be partial. Keep an executable initial map only as
+		// a fallback: an executable refinement still takes precedence because it may add
+		// required virtual-root/family closure decisions. ALS exposed the fallback need
+		// when a refinement moved one exact conflict from a predicate to its TWrite
+		// without reducing the conflict count.
+		Map<Long, FederatedOutput> initialExecutableDecisions =
+			isExecutableDecisionMapScore(computeDecisionMapScoreBreakdown(
+				memoTable, rootPlan, decisions, decisionMapScoreCache))
+				? new HashMap<>(decisions) : null;
 		Map<Long, FederatedOutput> bestDecisions = null;
 
 		Map<Long, ConflictEntry> conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan, decisions);
@@ -4799,8 +4806,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			parentVariantDeltaCache.clear();
 		}
 
-			return bestDecisions != null ? bestDecisions : decisions;
-		}
+		return bestDecisions != null ? bestDecisions
+			: (initialExecutableDecisions != null ? initialExecutableDecisions : decisions);
+	}
 
 	/**
 	 * Align every exact formal occurrence owned by one synthetic function-input
@@ -4961,13 +4969,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		DecisionMapScoreBreakdown candidateScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidate, scoreCache);
-		boolean candidateValid = isScorableDecisionMapScore(candidateScore);
+		boolean candidateValid = isExecutableDecisionMapScore(candidateScore);
 		if (incumbent == null)
 			return candidateValid ? new HashMap<>(candidate) : null;
 
 		DecisionMapScoreBreakdown incumbentScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, incumbent, scoreCache);
-		boolean incumbentValid = isScorableDecisionMapScore(incumbentScore);
+		boolean incumbentValid = isExecutableDecisionMapScore(incumbentScore);
 		if (!candidateValid || (incumbentValid
 			&& !isBetterDecisionMapScore(candidateScore, incumbentScore)))
 			return new HashMap<>(incumbent);
