@@ -160,6 +160,7 @@ final class MinStExactPhysicalModel {
 		List<MinStExactCategoricalSolver.Factor> factors = new ArrayList<>();
 		addNeutralConstraintFactors(analysis.graph(), byDecision, factors);
 		addStrictTransientFactors(analysis, byDecision, factors);
+		addDerivedFoutAnchorFactors(analysis.graph(), byDecision, factors);
 		addInputAuthorityFactors(analysis, incoming, byDecision, factors);
 		return new MinStExactPhysicalModel(analysis, domains, factors);
 	}
@@ -523,6 +524,48 @@ final class MinStExactPhysicalModel {
 				return tuple && sameTuple ? 0.0 : Double.POSITIVE_INFINITY;
 			}));
 		}
+	}
+
+	/**
+	 * A selected derived-FOUT producer is executable only with the exact compiled
+	 * durable-anchor owner named by its graph-owned action. FType equality on some
+	 * other node is not residency authority. This factor mirrors emission
+	 * prevalidation so the exact optimizer cannot select a plan that the runtime
+	 * transaction must reject later.
+	 */
+	private static void addDerivedFoutAnchorFactors(NeutralPlacementGraph graph,
+		Map<CompiledHopKey,DecisionDomain> domains, List<MinStExactCategoricalSolver.Factor> factors) {
+		for(DerivedFoutMaterializationAction action : graph.derivedFoutMaterializationActions()) {
+			DecisionDomain producer = domains.get(action.key().producer());
+			DecisionDomain owner = domains.get(action.key().durableAnchorOwner());
+			if(producer == null || owner == null)
+				throw new IllegalArgumentException("MINST_PHYSICAL_DERIVED_FOUT_OWNER_DOMAIN_MISSING|action="
+					+ action.normalizedSignature());
+			if(producer == owner) {
+				factors.add(MinStExactCategoricalSolver.Factor.lazy(List.of(producer.variable()), values -> {
+					Alternative selected = producer.alternatives().get(values[0]);
+					return selected.derivedFoutAction() != action || derivedFoutOwnerSatisfied(action, selected)
+						? 0.0 : Double.POSITIVE_INFINITY;
+				}));
+			}
+			else {
+				factors.add(MinStExactCategoricalSolver.Factor.lazy(
+					List.of(producer.variable(), owner.variable()), values -> {
+						Alternative selectedProducer = producer.alternatives().get(values[0]);
+						Alternative selectedOwner = owner.alternatives().get(values[1]);
+						return selectedProducer.derivedFoutAction() != action
+							|| derivedFoutOwnerSatisfied(action, selectedOwner)
+							? 0.0 : Double.POSITIVE_INFINITY;
+					}));
+			}
+		}
+	}
+
+	private static boolean derivedFoutOwnerSatisfied(DerivedFoutMaterializationAction action,
+		Alternative owner) {
+		return owner.decision() == action.key().durableAnchorOwner()
+			&& owner.state().output() == FederatedOutput.FOUT
+			&& owner.state().fType() == action.key().durableAnchorOwnerFType();
 	}
 
 	private static void addInputAuthorityFactors(PlacementAnalysis analysis,

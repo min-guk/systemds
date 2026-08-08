@@ -40,7 +40,7 @@ import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Docker StepLM regression: function formal reads retain every exact caller placement candidate. */
+/** Docker StepLM regression: function formals retain every caller-supplyable boundary placement. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 	@Test
@@ -147,10 +147,19 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 						return state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 							|| state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT;
 					}));
-				if(isLegalTransient(sourceState))
-					Assert.assertTrue("Synthetic input boundary must retain exact caller state identity: " + formal,
-						boundary.legalAlternatives().stream().anyMatch(state -> state == sourceState));
 			}
+			for(PlacementState boundaryState : boundary.legalAlternatives()) {
+				Assert.assertTrue("Synthetic input boundary must obey transient placement legality: " + formal,
+					isLegalTransient(boundaryState));
+				Assert.assertTrue("Synthetic input boundary must retain an exact formal placement tuple: " + formal,
+					target.legalAlternatives().contains(boundaryState));
+				Assert.assertTrue("Every formal-owned boundary state must be supplyable by its caller: " + formal,
+					sourceCanSupply(source, boundaryState));
+			}
+			for(PlacementState targetState : target.legalAlternatives())
+				if(isLegalTransient(targetState) && sourceCanSupply(source, targetState))
+					Assert.assertTrue("Boundary must retain every caller-supplyable exact formal tuple: " + formal,
+						boundary.legalAlternatives().contains(targetState));
 			Set<CandidateInputState> actualInputs = new LinkedHashSet<>();
 			analysis.candidateRuleDomain().orderedRuleKeys().stream()
 				.filter(key -> key.parentOccurrence() == fact.targetRead())
@@ -194,6 +203,14 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 	private static boolean isLegalTransient(PlacementState state) {
 		return state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 			|| state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT;
+	}
+
+	private static boolean sourceCanSupply(Node source, PlacementState targetState) {
+		return source.legalAlternatives().stream().anyMatch(sourceState ->
+			targetState.output() == FederatedOutput.LOUT
+				? sourceState.output() == FederatedOutput.LOUT || sourceState.output() == FederatedOutput.FOUT
+				: sourceState.output() == FederatedOutput.FOUT
+					&& sourceState.fType() != null && sourceState.fType() == targetState.fType());
 	}
 
 	private static CandidateInputState candidateInput(PlacementState state) {

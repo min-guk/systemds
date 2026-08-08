@@ -516,7 +516,8 @@ public final class DpPlacementAdapter {
 			.filter(Objects::nonNull).map(PlacementEmissionState::placementState).distinct().toList();
 		if(selected.size() > 1)
 			throw new IllegalArgumentException("DP synthetic function input has conflicting selected formals: "
-				+ boundary.key().normalizedSignature());
+				+ boundary.key().normalizedSignature() + " states="
+				+ selected.stream().map(PlacementState::normalizedSignature).toList());
 		return selected.isEmpty() ? null : selected.get(0);
 	}
 
