@@ -117,7 +117,7 @@
 
 ## 5. FedAll/Heuristic 정책 선택 근거가 planning trace에 없던 문제
 
-- **상태**: 해결, 새 JAR Docker planning-only 재검증 필요
+- **상태**: 해결, 대표 workload 확대 감사 진행 중
 - **환경/조건**: `COMPILE_FED_ALL`, `COMPILE_FED_HEURISTIC`, 모든 planning-only workload
 - **재현 절차**: commit `cf87ae49ed...` immutable stage에서 LAN LogReg workers=2를 FedAll/Heuristic으로 planning-only 실행하고 trace stage를 집계한다.
 - **관측 증상**:
@@ -135,7 +135,32 @@
   - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBG014PlanningTraceContractTest.java`
   - harness `experiments/tools/planning_receipt.py`
   - harness `experiments/tests/test_planning_receipt.py`
-- **검증**: source contract는 `missing FedAll policy trace stage FedAll-PolicySummary`로 RED였고, harness는 FedAll/Heuristic summary 누락 fixture 2개를 잘못 허용해 RED였다. 구현 후 source의 trace/FedAll/Heuristic 관련 테스트와 harness 13 tests가 통과했다. 실제 Docker trace/receipt 검증은 새 immutable stage에서 수행한다.
+- **검증**: source contract는 `missing FedAll policy trace stage FedAll-PolicySummary`로 RED였고, harness는 FedAll/Heuristic summary 누락 fixture 2개를 잘못 허용해 RED였다. 구현 후 source의 trace/FedAll/Heuristic 관련 테스트와 harness 13 tests가 통과했다. commit `a7712ed3a2...`/JAR SHA-256 `d8e5be8e...c775`의 immutable Docker stage에서 LAN LogReg workers=2 planning-only를 검증했다. FedAll은 `fedCount=73`, `foutCount=65`, relocation 0을 선택했고, Heuristic은 demotion marker/local prefix 5개, FED 73, FOUT 63, relocation 2를 선택해 최종 runtime explain에 `fed_refed:2`가 추가됐다. 두 receipt 모두 `runtime_executed=false`, `execution_seconds=0.0`이었다.
 - **잔여 이슈**: 대표 workload에서 선택 score와 최종 emitted runtime plan의 관계를 대조해야 한다. 같은 plan hash 자체는 버그 증거가 아니며, 정책 objective·합법 후보·비용 선택이 그 결과를 각각 설명해야 한다.
 - **잠재 회귀 위험**: 정책 summary만 남고 hop 선택 trace가 제거되면 aggregate count와 실제 선택을 대조할 수 없다. source contract와 대표 Docker log의 stage count로 감지한다.
 - **의사결정 근거**: 후보 공간·오라클·비용·runtime을 변경하지 않고 planner-owned selection observability와 fail-closed receipt만 강화했다.
+
+## 6. 플래너 내부 선택과 최종 runtime explain 사이의 차이를 occurrence 단위로 대조할 수 없던 문제
+
+- **상태**: 진행중 — 공통 emission trace 구현/테스트 완료, 새 Docker planning-only 증거 대기
+- **환경/조건**: LAN, LogReg, workers=2, 네 compiled planner, planning-only
+- **재현 절차**: immutable stage의 네 planner receipt에서 policy summary와 `runtime_plan_sha256`를 비교한다. FedAll/MinST 로그는 각각 `FedAll-Select`와 `MinST-PhysicalSelect`를 집계한다.
+- **관측 증상**:
+  - FedAll은 내부적으로 FED 73/FOUT 65, MinST는 FED 72/FOUT 64를 선택했다.
+  - 그런데 FedAll·DP·MinST의 canonical runtime explain SHA-256은 모두 `738ce85c...d731`로 byte-identical했다.
+  - Hop ID로만 대조하면 MinST가 hop 287/427/786의 FED/LOUT FType을 ROW로, FedAll은 COL로 선택한 차이가 보였지만, 같은 Hop ID가 함수/재컴파일 occurrence에서 재사용되므로 정확한 차이인지 판정할 수 없었다.
+- **원인 분석**: planner별 trace 형식이 달랐다. FedAll은 `CompiledHopKey`를 독립 필드로 남겼지만 MinST는 매우 긴 alternative signature 내부에 중첩해 기록했고, 공통 emission 경계는 정규화 선택·synthetic/concrete 구분·실제 Hop/registry mutation 수를 기록하지 않았다. 따라서 “합법적인 synthetic/FType 메타데이터 차이”와 “projector/emission이 선택을 유실한 버그”를 로그만으로 구분할 수 없었다.
+- **해결 요약**:
+  - `PlacementEmissionTransaction`이 전체 prevalidation 뒤 첫 mutation 전에 모든 planner의 exact normalized authority를 공통 `Emission-Select`로 기록한다.
+  - 각 레코드에 planner, exact `CompiledHopKey`, node kind, emitted-work 여부, concrete compiled occurrence 여부, placement state와 derived-FOUT을 남긴다.
+  - `Emission-Summary`에 analysis/normalized-plan fingerprint, decision partition, FED/FOUT/derived 수, relocation/local materialization 수, 실제 Hop mutation과 registry write 수를 남긴다.
+  - planning-only receipt schema를 v3로 올리고 summary가 정확히 하나이며 configured planner identity·SHA-256·decision partition과 모든 정수 필드가 유효한지 fail-closed 검증한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBG014PlanningTraceContractTest.java`
+  - harness `experiments/tools/planning_receipt.py`
+  - harness `experiments/tests/test_planning_receipt.py`
+- **검증**: 새 source guard와 harness 누락-summary 테스트는 구현 전 각각 공통 emission stage 부재/누락 summary 허용으로 RED였다. 구현 후 emission/MinST/trace 관련 source 51 tests와 harness planning receipt 14 tests가 통과했다. 아직 새 JAR Docker planning-only 로그로 occurrence별 차이를 판정하지 않았으므로 플래너 의미론 수정은 하지 않았다.
+- **잔여 이슈**: 새 immutable stage에서 MinST LogReg 한 번만 다시 compile하여 기존 FedAll exact key와 대조한다. 차이가 synthetic 또는 downstream instruction에 영향 없는 FType authority이면 정상으로 문서화하고, concrete exec/output/registry authority가 emission에서 유실됐으면 회귀 테스트 후 projector/emission을 수정한다.
+- **잠재 회귀 위험**: 공통 trace가 hot loop로 이동하거나 `logGlobal` per-decision으로 바뀌면 감사 자체가 커질 수 있다. 현재 per-decision은 invocation-scoped stage budget의 `logLazy`를 사용하고 summary만 `logGlobal`이다. 실제 record/byte 상한으로 감지한다.
+- **의사결정 근거**: 아직 버그가 증명되지 않았으므로 candidate·cost·runtime을 바꾸지 않고, planner가 넘긴 exact authority와 emission mutation의 경계를 먼저 증명한다.

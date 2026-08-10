@@ -35,6 +35,7 @@ import java.util.Set;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
@@ -132,6 +133,7 @@ public final class PlacementEmissionTransaction {
 					throw new PlacementEmissionException("A different placement plan was already emitted");
 			}
 			PreparedEmission prepared = prevalidate(program, result);
+			tracePreparedEmission(result, prepared);
 
 			Map<Hop, HopSnapshot> currentHopSnapshots = snapshotHops(prepared.hopWrites());
 			if(existing != null)
@@ -354,6 +356,67 @@ public final class PlacementEmissionTransaction {
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(
 			analysis, occurrences, selected, relocations, derivedFoutMaterializations, locals);
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites));
+	}
+
+	/**
+	 * Exposes the exact normalized authority accepted by the emission boundary.
+	 * This is observational only: the records are produced after complete
+	 * prevalidation and before the first Hop or registry mutation.
+	 */
+	private static void tracePreparedEmission(NormalizedPlannerResult result, PreparedEmission prepared) {
+		if(!FederatedPlannerTrace.isEnabled())
+			return;
+		PlacementAnalysis analysis = result.analysis();
+		Map<CompiledHopKey, PlacementEmissionState> selected = result.selectedEmissionStates();
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences = occurrenceIndex(analysis);
+		List<Node> decisions = analysis.graph().decisionNodes().stream()
+			.sorted(Comparator.comparing(Node::key)).toList();
+		long compiledOccurrences = 0;
+		long emittedWork = 0;
+		long fed = 0;
+		long fout = 0;
+		long derivedFout = 0;
+		for(Node node : decisions) {
+			PlacementEmissionState emission = exactEmissionState(selected, node.key());
+			if(emission == null)
+				throw new PlacementEmissionException("Emission trace is missing an exact decision state");
+			boolean compiled = analysis.isCompiledHopOccurrence(node.key());
+			if(compiled)
+				compiledOccurrences++;
+			if(node.emittedWork())
+				emittedWork++;
+			if(emission.placementState().execType() == ExecType.FED)
+				fed++;
+			if(emission.placementState().output() == FederatedOutput.FOUT)
+				fout++;
+			if(emission.derivedFedFout())
+				derivedFout++;
+			HopOccurrenceProjection occurrence = occurrences.get(node.key());
+			if(occurrence == null)
+				throw new PlacementEmissionException("Emission trace is missing occurrence ownership");
+			FederatedPlannerTrace.logLazy(occurrence.hop(), "Emission-Select", () ->
+				"planner=" + result.plannerId()
+					+ " key=" + node.key().normalizedSignature()
+					+ " nodeKind=" + node.kind()
+					+ " emittedWork=" + node.emittedWork()
+					+ " compiledOccurrence=" + compiled
+					+ " selected=" + emission.placementState().normalizedSignature()
+					+ " derivedFedFout=" + emission.derivedFedFout());
+		}
+		FederatedPlannerTrace.logGlobal("Emission-Summary", "planner=" + result.plannerId()
+			+ " analysis=" + result.analysisFingerprint()
+			+ " planFingerprint=" + result.normalizedPlanFingerprint()
+			+ " decisions=" + decisions.size()
+			+ " compiledOccurrences=" + compiledOccurrences
+			+ " syntheticDecisions=" + (decisions.size() - compiledOccurrences)
+			+ " emittedWork=" + emittedWork
+			+ " selectedFED=" + fed
+			+ " selectedFOUT=" + fout
+			+ " selectedDerivedFOUT=" + derivedFout
+			+ " relocations=" + result.selectedRelocations().size()
+			+ " localMaterializations=" + result.selectedLocalMaterializations().size()
+			+ " hopMutations=" + prepared.hopWrites().size()
+			+ " registryWrites=" + prepared.registryWrites().size());
 	}
 
 	private static String validateAuthorityAndHash(DMLProgram program, NormalizedPlannerResult result) {

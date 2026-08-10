@@ -23,6 +23,8 @@ public class CampaignBG014PlanningTraceContractTest {
 	private static final Path IPA = MAIN.resolve("ipa/IPAPassRewriteFederatedPlan.java");
 	private static final Path TRANSLATOR = Path.of("src/main/java/org/apache/sysds/parser/DMLTranslator.java");
 	private static final Path TRACE = MAIN.resolve("fedplanner/fedCostBased/FederatedPlannerTrace.java");
+	private static final Path EMISSION = MAIN.resolve(
+		"fedplanner/placement/PlacementEmissionTransaction.java");
 	private static final Path DP = MAIN.resolve(
 		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
 	private static final Path DP_COST = MAIN.resolve(
@@ -81,6 +83,18 @@ public class CampaignBG014PlanningTraceContractTest {
 		assertTrue("Heuristic trace must expose its pathwise demotion policy",
 			heuristic.contains("markerCount=") && heuristic.contains("localPrefixCount=")
 				&& heuristic.contains("frontierEdgeCount="));
+	}
+
+	@Test
+	public void everyPlannerExposesExactEmissionAuthority() throws Exception {
+		String source = Files.readString(EMISSION);
+		assertTrue("emission audit lacks a bounded per-occurrence record",
+			source.contains("\"Emission-Select\""));
+		assertTrue("emission audit lacks one exact transaction summary",
+			source.contains("\"Emission-Summary\""));
+		for(String field : new String[] {"key=", "nodeKind=", "emittedWork=", "compiledOccurrence=",
+			"selected=", "planFingerprint=", "hopMutations=", "registryWrites="})
+			assertTrue("emission audit is missing field " + field, source.contains(field));
 	}
 
 	@Test
