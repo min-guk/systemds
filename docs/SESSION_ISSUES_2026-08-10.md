@@ -315,7 +315,7 @@
 
 ## 12. LM FedAll에서 선택된 REFED source hop이 MapMultChain fusion으로 사라짐
 
-- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **상태**: 해결
 - **환경/조건**: LAN planning-only, FedAll, P2P2D LM, workers=1; commit `fdf63b1458...` immutable stage
 - **재현 절차**:
   - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-fedall --alg lm ...`
@@ -334,13 +334,14 @@
   - 신규 회귀는 수정 전 selected intermediate source가 여전히 `XtXv`로 fusion되어 RED였고, 수정 후 `ChainType.NONE`을 반환해 GREEN이었다.
   - exact Dag/refed, emission/authority, FedAll/Heuristic/DP/MinST 대표 회귀를 포함한 최종 묶음 **48 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-planning-fixes-focused-final-20260810.log`).
   - `git diff --check` 통과.
-- **잔여 이슈**: 새 commit/JAR stage에서 기존 실패 셀 LM-w1 FedAll을 가장 먼저 planning-only로 실행해 receipt가 성공하고 `runtime_executed=false`, `execution_seconds=0.0`이며 selected REFED source가 최종 Lop/runtime-plan explain에 남는지 확인한다.
+  - commit `3d1e477c55...`, JAR SHA-256 `a5fb4e4e...` immutable Docker stage에서 LM-w1 FedAll planning-only가 성공했다. receipt는 `runtime_executed=false`, `execution_seconds=0.0`, runtime-plan SHA-256 `fd5b4a62...`, FED/FOUT `25/25`, relocation/local-materialization `3/3`을 기록했다.
+- **잔여 이슈**: 없음. 다른 workload에서 동일한 planner-selected fusion boundary가 나타나면 같은 registry/lowering invariant로 검증한다.
 - **잠재 회귀 위험**: planner registry가 남은 채 compile이 재사용되면 불필요하게 fusion을 막을 수 있다. registry lifecycle/transaction tests와 boundary가 없는 expression의 `XtXv` 유지 assertion으로 감지한다.
 - **의사결정 근거**: runtime fallback이나 후보 축소가 아니라, planner가 선택한 concrete relocation boundary를 후속 Hop→Lop rewrite가 지우지 못하도록 planner/runtime 경계 계약을 복원했다.
 
 ## 13. LogReg DP에서 optional formal overwrite의 함수 입력 pass-through가 CFG에서 소실됨
 
-- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **상태**: 해결
 - **환경/조건**: DP planning, LogReg 함수 내부 `if(hasNaNs) X=replace(X, ...)`처럼 else 없는 optional formal overwrite 이후 `rowSums(X^2)`를 사용하는 경로
 - **재현 절차**:
   - 최소 CFG 회귀: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.core.NeutralPlacementGraphExactCfgIdentityTest test`
@@ -367,13 +368,14 @@
   - production LogReg DP 회귀 **1 test, failures=0, errors=0** (`/tmp/g014-logreg-function-pass-through-green-final-20260810.log`). post-branch X TRead/TWrite와 `rowSums(X^2)`가 모두 exact `FED/FOUT`을 선택하고 두 CFG 경로 placement가 동일함을 확인한다.
   - 관련 FedAll/Heuristic/DP/MinST 및 emission/authority 회귀 **48 tests, failures=0, errors=0** (`/tmp/g014-planning-fixes-focused-final-20260810.log`).
   - `git diff --check` 통과.
-- **잔여 이슈**: 새 Docker stage에서 LogReg-w1 DP planning-only를 실행해 planner receipt, branch-phi selection trace, emitted/runtime plan fingerprint를 확인한다. 이후 같은 workload의 네 planner 전체와 나머지 workload를 DP→FedAll→Heuristic→MinST 순서로 planning-only 감사한다.
+  - commit `3d1e477c55...`, JAR SHA-256 `a5fb4e4e...` immutable Docker stage에서 LogReg-w1 DP planning-only가 성공했다. receipt는 `runtime_executed=false`, `execution_seconds=0.0`, runtime-plan SHA-256 `94838af8...`, FED/FOUT `51/45`, local-materialization `5`를 기록했다.
+- **잔여 이슈**: 같은 workload의 FedAll/Heuristic/MinST plan 차이 감사는 전체 planning-only matrix에서 계속한다.
 - **잠재 회귀 위험**: 다중 call-site, loop backedge, 서로 다른 worker pool에서 들어오는 optional overwrite에서 잘못된 anchor를 합성할 수 있다. exact predecessor/constraint tests와 worker-pool 교집합의 fail-closed 동작, Docker planning receipt로 감지한다.
 - **의사결정 근거**: DP의 국소 최적화 철학은 변경하지 않았다. 누락된 함수-entry CFG source와 물리 anchor authority만 복원했으며, runtime 지원 후보를 닫거나 TR/TW 규칙을 완화하지 않았다.
 
 ## 14. single-worker L2SVM의 function-input 재폐쇄가 CP/FOUT materialization을 비단조 축소로 오판함
 
-- **상태**: 소스 수정/회귀 검증 완료, Docker planning-only 재검증 진행 중
+- **상태**: 해결
 - **환경/조건**: LAN, workers=1, P2P2D L2SVM, `compile_cost_based`, planning-only, single-range `FType.FULL`
 - **재현 절차**:
   - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-cost --alg l2svm ...`
@@ -398,7 +400,9 @@
   - 신규 single-worker compile-only 회귀는 수정 전 동일 exception으로 RED였다 (`/tmp/g014-l2svm-single-worker-closure-red-20260810.log`).
   - 수정 후 신규 회귀가 GREEN이었다 (`/tmp/g014-l2svm-single-worker-closure-green1-20260810.log`).
   - CFG strict-refinement, CP/FOUT/derived-FOUT authority, MinST FType membership 관련 focused 묶음은 **31 tests, failures=0, errors=0, skipped=9**였다 (`/tmp/g014-l2svm-closure-focused-green2-20260810.log`; skipped는 고정된 PUBLIC 케이스).
-- **잔여 이슈**: 새 JAR immutable stage에서 실패했던 L2SVM-w1 DP planning-only 셀을 먼저 재실행하고 receipt의 `runtime_executed=false`, execution footer 0초, selected materialization/registry trace를 확인한다.
+  - commit `3d1e477c55...`, JAR SHA-256 `a5fb4e4e...` immutable Docker stage의 L2SVM-w1 DP planning-only가 성공했다. receipt는 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`, runtime-plan SHA-256 `252ed93d...`, FED/FOUT `13/11`, local-materialization `1`을 기록했다.
+  - 같은 stage에서 DP worker=1의 7 workload 전체가 planning-only로 성공했으며 모두 runtime 미실행이었다. LM/PCA/KMeans/LogReg의 runtime-plan SHA는 수정 전 성공 stage와 동일해 이 closure 수정이 무관한 기존 DP plan 철학을 바꾸지 않았음을 확인했다.
+- **잔여 이슈**: 없음. workers=2 L2SVM의 별도 component coherence 문제는 Issue 15에서 추적한다.
 - **잠재 회귀 위험**: native oracle emission까지 materialization delta로 오인하면 실제 불법 축소를 숨길 수 있다. helper는 action 없는 emission과 모든 rule evidence의 exact equality를 요구하며 기존 stale `PRESENT OTHER` 제거 회귀로 감지한다.
 - **의사결정 근거**: 후보를 닫거나 runtime fallback을 추가하지 않고, 이미 검증된 worker-pool materialization 후보의 올바른 고정점 재계산 순서만 복원했다.
 
@@ -415,3 +419,36 @@
 - **잔여 이슈**: DP component domain, TWrite/TRead logical authority, foreign fixed selection을 occurrence 단위로 대조해야 한다.
 - **잠재 회귀 위험**: 이를 단순 constraint 완화 또는 TWrite CP/FOUT 허용으로 우회하면 최상위 TR/TW 규칙을 위반한다. exact FED/FOUT TWrite carrier 복원 또는 component constraint propagation으로만 해결해야 한다.
 - **의사결정 근거**: baseline 문제를 새 수정의 회귀로 오인하지 않되 숨기지도 않고, worker=1 우선순위와 빠른 planning feedback loop를 유지하면서 후속 DP 수정 대상으로 명시했다.
+
+## 16. FedAll PCA의 multi-return `FUNCTIONOUTPUT` descriptor가 물리 consumer로 잘못 등록됨
+
+- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **환경/조건**: LAN, workers=1, P2P2D PCA, FedAll(`mkl-fout`), planning-only; commit `3d1e477c55...` immutable stage
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-fout --alg pca ...`
+  - 최소 회귀: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest#multiReturnFunctionOutputMaterializationTargetsTheExactPhysicalCallInput' test`
+  - 실패 로그: `/home/mchoi/g014-planning-audit-stage-715e910-3d1e477-20260810-v1/g007-stage-1e7c69e5d02f251eb4cd260cbb1b389f59bde58e3d89e120bcf451533c653dda/results/fed1/mkl-fout/pca_dataset-P2P2D_coordinator_mkl-fout_plan-3d1e477-lan-pca-w1-fedall-20260810-r1_lan_coordinator1.log`
+- **관측 증상**:
+  - FedAll은 hop 198을 `FED/FOUT/FULL`, multi-return `EIGEN` call과 두 output descriptor를 `CP/LOUT`으로 선택하고 local materialization을 명시적으로 계획했다.
+  - emission registry는 같은 source의 consumer를 `[hop39 output-0/input0, hop40 output-1/input0, hop41 FunctionOp/input0]`으로 기록했다.
+  - 실제 Lop DAG에는 source를 소비하는 `FunctionCallCP hop41/input0` 하나만 있어, runtime 진입 전 lowering이 `cannot project exact input authority through a fused or mismatched consumer hop=39`로 fail-closed 했다.
+- **원인 분석**:
+  - multi-return builtin의 concrete `DataOp(FUNCTIONOUTPUT)`은 결과 shape/name을 소유하는 논리 output descriptor이다. descriptor의 input은 결과 계산을 별도로 실행하는 물리 edge가 아니며, 실제 입력 Lop은 descriptor를 소유한 `FunctionOp`의 `FunctionCallCP`가 한 번 소비한다.
+  - neutral graph의 논리 compiled-input obligation을 registry의 물리 consumer identity로 내릴 때 이 차이를 투영하지 않고 descriptor hop ID를 그대로 사용했다.
+  - 따라서 선택 plan 자체보다 **planner emission의 logical→physical authority projection**이 잘못됐다. lowerer가 임의 parent를 찾거나 runtime fallback으로 보정할 문제가 아니다.
+- **해결 요약**:
+  - REFED/FOUT/LOCAL registry 세 경로가 공통으로 사용하는 exact physical-consumer projection을 추가했다.
+  - 일반 compiled input은 기존 `(consumerHopId,inputPosition)`을 그대로 보존한다.
+  - multi-return `FUNCTIONOUTPUT`만, 동일 source의 identity parent 중 해당 descriptor를 `getOutputs()`로 소유하는 `MULTIRETURN_BUILTIN FunctionOp`를 찾고, 같은 scope의 유일한 compiled FunctionOp occurrence와 exact compiled source edge를 모두 증명한 뒤 실제 call input으로 투영한다.
+  - 둘 이상이거나 0개이면 후보를 닫거나 추측하지 않고 emission 단계에서 fail-closed 한다. 두 output descriptor와 direct call obligation은 동일 물리 입력으로 canonical dedup된다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransactionRedTest.java`
+- **검증**:
+  - 신규 synthetic single-worker `eigen(X)` 회귀는 수정 전 local registry가 output hop 74/75와 call hop 76을 모두 기록해 RED였다 (`/tmp/g014-pca-fedall-physical-consumer-red-20260810.log`).
+  - 수정 후 registry가 오직 `FunctionOp hop76,input0`만 기록했고, Hop→Lop/Dag instruction 생성까지 runtime 실행 없이 GREEN이었다 (`/tmp/g014-pca-fedall-physical-consumer-green-20260810.log`).
+  - transaction, exact REFED projection, LOCAL lowering, multi-return owner 회귀 묶음은 **29 tests, failures=0, errors=0, skipped=0**였다 (`/tmp/g014-pca-fedall-physical-consumer-focused-20260810.log`).
+  - `mvn -q -DskipTests package`, `git diff --check` 통과. 수정 JAR SHA-256은 `4801e947...`이다.
+- **잔여 이슈**: 수정 commit/JAR로 immutable stage를 만든 뒤 실패했던 PCA-w1 FedAll을 먼저 planning-only 재실행하고, registry trace가 `localInputs=[hop41/input0]`만 포함하며 receipt의 `runtime_executed=false`, `execution_seconds=0.0`인지 확인한다. 그 다음 아직 실행하지 않은 FedAll workload부터 진행한다.
+- **잠재 회귀 위험**: 동일 source/output descriptor가 여러 FunctionOp에 부정확하게 공유되거나 compiled occurrence가 중복되면 잘못 dedup할 수 있다. projection은 FunctionOp/output identity, 동일 scope, exact compiled source edge, 유일성 네 조건을 모두 요구하며 모호한 경우 fail-closed한다. 일반 consumer는 기존 identity를 그대로 보존한다.
+- **의사결정 근거**: runtime fallback이나 유효 candidate 폐쇄 없이, planner가 선택한 논리 obligation을 compiler-owned 실제 `FunctionCallCP` 입력 authority로 정확히 내리는 emission 계약을 복원했다.

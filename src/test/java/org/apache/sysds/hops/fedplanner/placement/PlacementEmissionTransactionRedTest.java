@@ -18,6 +18,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -294,6 +295,44 @@ public class PlacementEmissionTransactionRedTest {
 					&& relocation.materializationFType() != FType.OTHER));
 	}
 
+	@Test
+	public void multiReturnFunctionOutputMaterializationTargetsTheExactPhysicalCallInput() throws Exception {
+		FixtureProgram program = FixtureProgram.adopt(compileMultiReturnMaterializationProgram());
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		NormalizedPlannerResult plan = new FedAllPlacementAdapter().select(analysis);
+		List<FunctionOp> calls = analysis.occurrences().stream().map(o -> o.hop())
+			.filter(FunctionOp.class::isInstance).map(FunctionOp.class::cast)
+			.filter(call -> call.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN)
+			.filter(call -> "eigen".equalsIgnoreCase(call.getFunctionName())).distinct().toList();
+		Assert.assertEquals("fixture requires one exact multi-return EIGEN call", 1, calls.size());
+		FunctionOp call = calls.get(0);
+		Hop source = call.getInput(0);
+		List<LocalMaterializationActionKey> sourceActions = new ArrayList<>();
+		for(Object rawAction : plan.selectedLocalMaterializations())
+			if(rawAction instanceof LocalMaterializationActionKey action
+				&& analysis.hop(action.sourceOccurrence()).orElseThrow() == source)
+				sourceActions.add(action);
+		Assert.assertEquals("FedAll must explicitly materialize the selected FED/FOUT EIGEN input locally",
+			1, sourceActions.size());
+		Assert.assertTrue("fixture must include the logical multi-return output descriptors",
+			sourceActions.get(0).obligations().stream().anyMatch(obligation ->
+				call.getOutputs().contains(analysis.hop(obligation.consumerOccurrence()).orElseThrow())));
+
+		program.install(analysis);
+		PlacementEmissionTransaction.emit(program, plan, FailureInjector.none());
+		long scope = analysis.occurrences().stream().filter(o -> o.hop() == source)
+			.mapToLong(PlacementAnalysis.HopOccurrenceProjection::scopeId).distinct().findFirst().orElseThrow();
+		FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec =
+			FederatedLocalMaterializeRegistry.snapshot(scope).get(source.getHopID());
+		Assert.assertNotNull("selected local materialization must be registered", spec);
+		Assert.assertEquals("logical FUNCTIONOUTPUT descriptors must project to the one physical FunctionCallCP input",
+			List.of(new FederatedLocalMaterializeRegistry.ConsumerInputSpec(call.getHopID(), 0)),
+			spec.getConsumerInputs());
+
+		List<String> instructions = instructionStringsFromProgram(program);
+		Assert.assertFalse("planning/lowering must produce instructions without executing them", instructions.isEmpty());
+	}
+
 
 	@Test
 	public void emittedTransactionRegistryRefedLowersThroughDagGetJobsToConcreteInstruction() throws Exception {
@@ -551,6 +590,22 @@ public class PlacementEmissionTransactionRedTest {
 			+ "S=rand(rows=50000,cols=2100,seed=7);\n"
 			+ "Y=XF+S;\n"
 			+ "write(Y,\"/tmp/g007-full-anchor-y\",format=\"binary\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileMultiReturnMaterializationProgram() throws Exception {
+		String script = "X=federated(addresses=list(\"worker1:8001/data/P2P2D_features.data\"),"
+			+ "ranges=list(list(0,0),list(4,4)));\n"
+			+ "[D,V]=eigen(X);\n"
+			+ "write(D,\"/tmp/g014-multireturn-d\",format=\"binary\");\n"
+			+ "write(V,\"/tmp/g014-multireturn-v\",format=\"binary\");\n";
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

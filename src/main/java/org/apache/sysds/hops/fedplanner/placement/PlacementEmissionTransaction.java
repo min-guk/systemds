@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
@@ -702,18 +703,10 @@ public final class PlacementEmissionTransaction {
 			// output incorrectly turned FED/LOUT input uploads into FOUT->LOUT downloads.
 			List<ConsumerInputSpec> consumerInputs = new ArrayList<>();
 			for(ObligationKey obligation : activeObligations) {
-				HopOccurrenceProjection consumer = exactConsumerOccurrence(occurrences, obligation);
-				try {
-					analysis.requireExactCompiledInputEdge(
-						sources.get(0).key(), obligation.consumer(), obligation.inputPosition());
-				}
-				catch(IllegalArgumentException noCompiledEdge) {
-					throw new PlacementEmissionException(
-						"Selected REFED obligation has no exact compiled input edge: "
-							+ obligation.normalizedSignature(), noCompiledEdge);
-				}
-				consumerInputs.add(new ConsumerInputSpec(
-					consumer.hop().getHopID(), obligation.inputPosition()));
+				PhysicalConsumerInput physical = exactPhysicalConsumerInput(analysis, occurrences,
+					sources.get(0).key(), obligation.consumer(), obligation.inputPosition(),
+					"Selected REFED obligation");
+				consumerInputs.add(new ConsumerInputSpec(physical.consumerHopId(), physical.inputPosition()));
 			}
 			RegistryWrite write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(),
 				anchor.hop().getHopID(), anchorKey, key.materializationFType().name(), consumerInputs);
@@ -722,10 +715,13 @@ public final class PlacementEmissionTransaction {
 		for(LocalMaterializationActionKey local : locals) {
 			HopOccurrenceProjection source = exactOccurrence(occurrences, local.sourceOccurrence());
 			List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> consumerInputs =
-				local.obligations().stream().map(obligation ->
-					new FederatedLocalMaterializeRegistry.ConsumerInputSpec(
-						exactOccurrence(occurrences, obligation.consumerOccurrence()).hop().getHopID(),
-						obligation.inputPosition())).distinct().sorted().toList();
+				local.obligations().stream().map(obligation -> {
+					PhysicalConsumerInput physical = exactPhysicalConsumerInput(analysis, occurrences,
+						local.sourceOccurrence(), obligation.consumerOccurrence(), obligation.inputPosition(),
+						"Selected local materialization obligation");
+					return new FederatedLocalMaterializeRegistry.ConsumerInputSpec(
+						physical.consumerHopId(), physical.inputPosition());
+				}).distinct().sorted().toList();
 			RegistryWrite write = RegistryWrite.local(source.scopeId(), source.hop().getHopID(), consumerInputs,
 				local.producerPlacement().fType().name(), local.durableProvenance());
 			if(writesBySlot.putIfAbsent(write.slot(), write) != null)
@@ -771,11 +767,9 @@ public final class PlacementEmissionTransaction {
 						&& obligation.inputPosition() == edge.inputPosition());
 			if(relocated)
 				continue;
-			HopOccurrenceProjection consumer = exactOccurrence(occurrences, edge.consumer());
-			if(consumer == null)
-				throw new PlacementEmissionException(
-					"Derived FOUT direct consumer occurrence is not compiled");
-			direct.add(new ConsumerInputSpec(consumer.hop().getHopID(), edge.inputPosition()));
+			PhysicalConsumerInput physical = exactPhysicalConsumerInput(analysis, occurrences,
+				producer, edge.consumer(), edge.inputPosition(), "Derived FOUT direct consumer");
+			direct.add(new ConsumerInputSpec(physical.consumerHopId(), physical.inputPosition()));
 		}
 		return direct.stream().distinct().sorted().toList();
 	}
@@ -859,12 +853,66 @@ public final class PlacementEmissionTransaction {
 		return List.copyOf(resolved);
 	}
 
-	private static HopOccurrenceProjection exactConsumerOccurrence(
-		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, ObligationKey obligation) {
-		HopOccurrenceProjection consumer = exactOccurrence(occurrences, obligation.consumer());
-		if(consumer == null)
-			throw new PlacementEmissionException("Relocation consumer is foreign to the analysis");
-		return consumer;
+	/**
+	 * Converts one analysis-owned logical Hop input edge into the exact physical Lop consumer input
+	 * recorded by the lowering registries.
+	 *
+	 * <p>A {@code FUNCTIONOUTPUT} Hop owned by a multi-return builtin is an output descriptor, not
+	 * a separately executed consumer. Its input Lop is physically consumed once by the owning
+	 * {@link FunctionOp}/{@code FunctionCallCP}. The projection is accepted only when the descriptor
+	 * has one identity-owned FunctionOp, that call consumes the same source at one exact position,
+	 * and the neutral analysis already owns that compiled input edge. No parent search fallback or
+	 * candidate repair is performed.</p>
+	 */
+	private static PhysicalConsumerInput exactPhysicalConsumerInput(PlacementAnalysis analysis,
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, CompiledHopKey sourceKey,
+		CompiledHopKey logicalConsumerKey, int logicalInputPosition, String authority) {
+		try {
+			analysis.requireExactCompiledInputEdge(sourceKey, logicalConsumerKey, logicalInputPosition);
+		}
+		catch(IllegalArgumentException noCompiledEdge) {
+			throw new PlacementEmissionException(authority + " has no exact compiled input edge", noCompiledEdge);
+		}
+		HopOccurrenceProjection source = exactOccurrence(occurrences, sourceKey);
+		HopOccurrenceProjection logicalConsumer = exactOccurrence(occurrences, logicalConsumerKey);
+		if(source == null || logicalConsumer == null)
+			throw new PlacementEmissionException(authority + " is foreign to the compiled analysis");
+		if(!PlacementCostSemantics.isMultiReturnFunctionOutput(logicalConsumer.hop()))
+			return new PhysicalConsumerInput(logicalConsumer.hop().getHopID(), logicalInputPosition);
+
+		List<PhysicalConsumerInput> exact = new ArrayList<>();
+		for(Hop parent : source.hop().getParent()) {
+			if(!(parent instanceof FunctionOp call)
+				|| call.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+				|| call.getOutputs() == null || !call.getOutputs().contains(logicalConsumer.hop()))
+				continue;
+			List<HopOccurrenceProjection> callOccurrences = occurrences.values().stream()
+				.filter(occurrence -> occurrence.hop() == call)
+				.filter(occurrence -> analysis.isCompiledHopOccurrence(occurrence.key()))
+				.filter(occurrence -> occurrence.scopeId() == logicalConsumer.scopeId()).toList();
+			if(callOccurrences.size() != 1)
+				throw new PlacementEmissionException(authority
+					+ " multi-return output has no unique compiled FunctionOp owner");
+			for(int inputPosition = 0; inputPosition < call.getInput().size(); inputPosition++) {
+				if(call.getInput(inputPosition) != source.hop())
+					continue;
+				try {
+					analysis.requireExactCompiledInputEdge(sourceKey,
+						callOccurrences.get(0).key(), inputPosition);
+				}
+				catch(IllegalArgumentException noCallEdge) {
+					throw new PlacementEmissionException(authority
+						+ " multi-return FunctionOp owner has no exact compiled source edge", noCallEdge);
+				}
+				exact.add(new PhysicalConsumerInput(call.getHopID(), inputPosition));
+			}
+		}
+		List<PhysicalConsumerInput> distinct = exact.stream().distinct().sorted().toList();
+		if(distinct.size() != 1)
+			throw new PlacementEmissionException(authority
+				+ " multi-return output does not project to one exact physical FunctionOp input: matches="
+				+ distinct.size());
+		return distinct.get(0);
 	}
 
 	private static void addRelocationRegistryWrite(Map<RegistrySlot, RegistryWrite> writesBySlot,
@@ -966,6 +1014,19 @@ public final class PlacementEmissionTransaction {
 	private enum RegistryKind { REFED, FOUT, LOCAL }
 
 	private record RegistrySlot(RegistryKind kind, long scopeId, long hopId) { }
+	private record PhysicalConsumerInput(long consumerHopId, int inputPosition)
+		implements Comparable<PhysicalConsumerInput> {
+		private PhysicalConsumerInput {
+			if(consumerHopId < 0 || inputPosition < 0)
+				throw new PlacementEmissionException("Physical consumer input identity is invalid");
+		}
+
+		@Override
+		public int compareTo(PhysicalConsumerInput that) {
+			int hopOrder = Long.compare(consumerHopId, that.consumerHopId);
+			return hopOrder != 0 ? hopOrder : Integer.compare(inputPosition, that.inputPosition);
+		}
+	}
 	private record SelectedRelocation(RelocationAction action, List<ObligationKey> obligations) { }
 	private record SelectedFoutMaterialization(DerivedFoutMaterializationActionKey action,
 		HopOccurrenceProjection producer, HopOccurrenceProjection anchor) { }
