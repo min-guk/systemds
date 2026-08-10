@@ -225,3 +225,36 @@
 - **잔여 이슈**: 새 Docker trace에서 실제 정책이 CP/FOUT을 선택하는 셀이 있으면 `Emission-Candidate.foutMaterializationAction`, `Emission-RegistryWrite kind=FOUT`, policy summary의 CP/FOUT count가 일치해야 한다. 그 후에만 runtime 실험을 재개한다.
 - **잠재 회귀 위험**: output action owner dependency로 exact-search component가 커질 수 있고 planning time이 증가할 수 있다. 이는 합법성 보존 비용이며 후보 skip으로 우회하지 않고 planning-time trace로 계측한다.
 - **의사결정 근거**: “planner가 실행 가능성을 완전히 계획하고 runtime은 그대로 실행한다”는 원칙에 따라 runtime fallback이나 CP/FOUT 후보 폐쇄 대신 누락된 exact placement authority를 복원했다.
+
+## 9. Heuristic 정책 투영이 합법적인 output-materialization 앵커 소유자를 제거함
+
+- **상태**: 소스 수정/회귀 검증 완료, 최종 immutable Docker planning-only 재검증 대기
+- **환경/조건**: LAN planning-only, LogReg, workers=2, `compile_fed_heuristic`, commit `18d7f05764...` stage
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 2 --dataset P2P2D --conf mkl-heuristic --alg logreg ...`
+  - 소스 회귀: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedHeuristic.CampaignBG014HeuristicLogRegFoutAnchorProjectionRedTest test`
+  - 실패 로그: `/home/mchoi/g014-planning-audit-harness-20260810-v2/sigmod2021-exdra-p523/experiments/results/fed2/mkl-heuristic/logreg_dataset-P2P2D_coordinator_mkl-heuristic_plan-18d7f05-lan-logreg-w2-heuristic-20260810-r1_lan_coordinator1.log`
+- **관측 증상**: runtime 실행 전 Heuristic filtered graph 생성 중 `Derived FOUT anchor owner cannot expose the required exact FOUT layout`로 종료했다. `Q`의 CP/LOUT→CP/FOUT action은 `fed-init:X`의 ROW worker/range 배치를 사용하지만, `durableAnchorOwner`가 직전 `ba(+*)` 중간 hop이었다. Heuristic local-prefix 투영이 그 중간 hop을 FED/LOUT만 남기자 action의 FOUT owner 제약이 깨졌다.
+- **원인 분석**:
+  - durable anchor 자체는 원본 federated DataOp의 실제 FederationMap에서 전파됐지만, output action 생성 시 owner를 immediate input node로 저장했다.
+  - 배치 메타데이터의 근원과 현재 dataflow predecessor를 혼동한 것이다. 중간 hop의 선택은 바뀔 수 있으므로 durable authority가 아니다.
+  - 처음 수정에서 모든 fallback owner가 직접 `Node.anchors`를 가져야 한다고 제한했으나, KMeans에는 다른 graph-owned action/relocation으로 권한을 잇는 합법 경로가 있어 과도하게 보수적이었다. focused tests가 이를 즉시 검출했고 기존 fallback 경로를 복원했다.
+  - canonical owner가 선택된 뒤 기존 bind 단계가 raw statement-block ID를 action fingerprint에 넣어 동일 소스의 fresh compilation 간 plan hash가 달라지는 별도 비결정성도 노출됐다.
+- **해결 요약**:
+  - whole-program graph에 같은 exact durable anchor를 가진 literal federated DataOp가 있으면 이를 canonical owner로 우선 결합한다. exact anchor source가 없을 때만 기존 graph-owned non-literal owner를 보존한다.
+  - Heuristic projection은 producer source/target뿐 아니라 owner의 exact FOUT/FType 상태도 남아 있는 action만 투영한다. 이것은 성능을 위한 후보 폐쇄가 아니라 graph-owned 실행 권한이 없는 target을 제거하는 전역 합법성 검사다.
+  - action scope identity는 raw SBID 대신 producer의 deterministic `ControlRegionKey.normalizedSignature()`를 사용한다. 실제 registry scope는 emission 시 `HopOccurrenceProjection.scopeId()`에서 계속 얻으므로 lowering 동작은 바뀌지 않는다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/HeuristicPlacementAdapter.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedHeuristic/CampaignBG014HeuristicLogRegFoutAnchorProjectionRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionDerivedAuthorityRedTest.java`
+- **검증**:
+  - 신규 LogReg 회귀는 수정 전 Docker와 동일한 exception으로 RED였고 수정 후 compile-only 성공, `Total execution time: 0.000 sec.`를 기록했다 (`/tmp/g014-heuristic-logreg-anchor-green3-20260810.log`).
+  - 첫 focused 묶음이 KMeans non-literal authority 과축소 3건과 fresh-compilation fingerprint 비결정성 1건을 검출했다. fallback 복원 및 deterministic scope 수정 후 해당 KMeans/FedAll, MinST oracle, Heuristic determinism 테스트가 각각 통과했다.
+  - 최종 관련 묶음은 **67 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-anchor-focused-final-20260810.log`).
+  - `mvn -q -DskipTests test-compile`, `mvn -q -DskipTests package`, `git diff --check` 통과.
+- **잔여 이슈**: 새 commit/JAR의 immutable stage에서 실패했던 Heuristic LogReg-w2부터 planning-only를 재실행하고, 대표 KMeans/ALS/StepLM 및 MinST의 action owner/selected plan/registry trace를 확인해야 한다. 실제 runtime campaign은 이 검증 전 시작하지 않는다.
+- **잠재 회귀 위험**: 동일 worker pool에 여러 literal anchors가 존재할 수 있다. resolver는 exact durable-anchor equality를 physical-pool equivalence보다 먼저 사용하며, 회귀 테스트는 모든 LogReg action owner가 exact anchor를 직접 소유하는 federated DataOp인지 확인한다. 향후 non-literal authority chain이 Heuristic projection에서 끊기면 filtered graph의 fail-closed validation 또는 source-reachability 검사로 검출된다.
+- **의사결정 근거**: runtime fallback이나 opcode 가드를 추가하지 않고, 실제 FederationMap metadata의 canonical 소유권과 deterministic planner authority를 바로잡았다.

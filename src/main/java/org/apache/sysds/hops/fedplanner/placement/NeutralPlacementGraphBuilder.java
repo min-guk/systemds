@@ -330,7 +330,7 @@ public final class NeutralPlacementGraphBuilder {
 		if(!functionClosureConverged)
 			throw new IllegalStateException("Logical function input candidate closure did not converge");
 			nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
-			candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes);
+			candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes, origins);
 			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, nodes);
 			// TRead/TWrite is a planner-wide legality boundary, not a MinST-only factor:
 			// the runtime accepts only the exact CP/LOUT or FED/FOUT tuple carried by
@@ -2334,7 +2334,7 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static List<CandidateRuleFact> bindExactDerivedFoutAuthorities(List<CandidateRuleFact> facts,
-		Map<CompiledHopKey,Long> scopes, List<Node> nodes) {
+		Map<CompiledHopKey,Long> scopes, List<Node> nodes, Map<CompiledHopKey,Hop> origins) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			if(nodesByKey.put(node.key(), node) != null)
@@ -2348,19 +2348,20 @@ public final class NeutralPlacementGraphBuilder {
 					emissions.add(emission);
 					continue;
 				}
-				Long scopeId = scopes.get(fact.key().parentOccurrence());
-				if(scopeId == null)
+				if(!scopes.containsKey(fact.key().parentOccurrence()))
 					throw new IllegalStateException("Derived FOUT candidate has no exact statement-block scope");
 				Node producer = nodesByKey.get(fact.key().parentOccurrence());
 				if(producer == null || provisional.producer() != producer.key()
 					|| !provisional.producerValueVersion().equals(producer.valueVersion()))
 					throw new IllegalStateException(
 						"Derived FOUT candidate has no structurally matching final producer authority");
-				String exactScope = scopeId + ":" + fact.key().parentOccurrence().functionNamespace();
+				CompiledHopKey anchorOwner = canonicalFederatedAnchorOwner(
+					provisional, nodes, nodesByKey, origins);
+				String exactScope = producer.key().controlRegion().normalizedSignature();
 				DerivedFoutMaterializationActionKey exact = new DerivedFoutMaterializationActionKey(
 					producer.key(), producer.valueVersion(), fact.key(),
 					provisional.sourcePlacement(), provisional.targetPlacement(),
-					provisional.durableAnchor(), provisional.durableAnchorOwner(),
+					provisional.durableAnchor(), anchorOwner,
 					provisional.durableAnchorOwnerFType(),
 					provisional.materializationFType(), exactScope);
 				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), exact));
@@ -2369,6 +2370,47 @@ public final class NeutralPlacementGraphBuilder {
 				fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(bound);
+	}
+
+	/**
+	 * Binds an output upload to the compiled node that owns the original runtime
+	 * FederationMap whenever that source is present in the whole-program graph.
+	 * Propagated anchors prove physical compatibility, but an intermediate hop is
+	 * not durable placement authority: a policy projection may legally demote it to
+	 * LOUT while the original federated source remains available.  Falling back to
+	 * the provisional owner preserves exact non-literal authorities; the projected
+	 * policy graph will subsequently remove the action if that owner is unavailable.
+	 */
+	private static CompiledHopKey canonicalFederatedAnchorOwner(
+		DerivedFoutMaterializationActionKey action, List<Node> nodes,
+		Map<CompiledHopKey,Node> nodesByKey, Map<CompiledHopKey,Hop> origins) {
+		List<Node> nativeOwners = nodes.stream()
+			.filter(node -> isSelectableFoutAnchorOwner(node, action))
+			.filter(node -> node.anchors().stream().anyMatch(anchor ->
+				PlacementIdentity.samePhysicalWorkerPool(anchor, action.durableAnchor())))
+			.filter(node -> {
+				Hop origin = origins.get(node.key());
+				return origin instanceof DataOp && ((DataOp) origin).getOp() == OpOpData.FEDERATED;
+			})
+			.sorted().toList();
+		List<Node> exactNativeOwners = nativeOwners.stream()
+			.filter(node -> node.anchors().contains(action.durableAnchor())).toList();
+		if(!exactNativeOwners.isEmpty())
+			return exactNativeOwners.get(0).key();
+		if(!nativeOwners.isEmpty())
+			return nativeOwners.get(0).key();
+		Node provisional = nodesByKey.get(action.durableAnchorOwner());
+		if(provisional == null || !isSelectableFoutAnchorOwner(provisional, action))
+			throw new IllegalStateException(
+				"Output materialization has no exact graph-owned FOUT anchor owner");
+		return provisional.key();
+	}
+
+	private static boolean isSelectableFoutAnchorOwner(Node node,
+		DerivedFoutMaterializationActionKey action) {
+		return node.legalAlternatives().stream().anyMatch(state ->
+			state.output() == FederatedOutput.FOUT
+				&& state.fType() == action.durableAnchorOwnerFType());
 	}
 
 	private record MaterializationAnchor(DurableAnchorKey anchor, CompiledHopKey owner,

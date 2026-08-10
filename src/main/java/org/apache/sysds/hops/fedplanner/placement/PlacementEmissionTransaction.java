@@ -841,7 +841,7 @@ public final class PlacementEmissionTransaction {
 			HopOccurrenceProjection producer = exactOccurrence(occurrences, node.key());
 			if(producer == null)
 				throw new PlacementEmissionException("Derived FOUT producer occurrence is not compiled");
-			String expectedScope = producer.scopeId() + ":" + node.key().functionNamespace();
+			String expectedScope = node.key().controlRegion().normalizedSignature();
 			if(!expectedScope.equals(action.statementBlockScope()))
 				throw new PlacementEmissionException("Derived FOUT statement-block scope differs");
 			Node anchorOwnerNode = analysis.graph().node(action.durableAnchorOwner()).orElse(null);

@@ -242,13 +242,20 @@ public final class HeuristicPlacementAdapter {
 		Map<CompiledHopKey, Node> byKey = new java.util.IdentityHashMap<>();
 		for(Node node : nodes)
 			byKey.put(node.key(), node);
+		// A policy projection may remove an intermediate FOUT owner. Retaining its
+		// dependent upload would create a plan with no exact runtime FederationMap.
 		return actions.stream().filter(action -> {
 			Node producer = byKey.get(action.key().producer());
+			Node anchorOwner = byKey.get(action.key().durableAnchorOwner());
 			return producer != null
 				&& producer.legalAlternatives().stream()
 					.anyMatch(state -> state == action.key().sourcePlacement())
 				&& producer.legalAlternatives().stream()
-					.anyMatch(state -> state == action.key().targetPlacement());
+					.anyMatch(state -> state == action.key().targetPlacement())
+				&& anchorOwner != null
+				&& anchorOwner.legalAlternatives().stream().anyMatch(state ->
+					state.output() == FederatedOutput.FOUT
+						&& state.fType() == action.key().durableAnchorOwnerFType());
 		}).toList();
 	}
 

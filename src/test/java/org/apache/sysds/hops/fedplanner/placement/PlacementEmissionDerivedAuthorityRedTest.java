@@ -397,7 +397,8 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 			List.of(new AnchorPartition("localhost:1234", List.of(0L, 0L), List.of(4L, 2L))));
 		CandidateRuleKey rule = new CandidateRuleKey(key, List.of());
 		DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
-			key, value, rule, FED_LOUT, FED_FOUT, anchor, anchorKey, FType.ROW, FType.ROW, "1:main");
+			key, value, rule, FED_LOUT, FED_FOUT, anchor, anchorKey, FType.ROW, FType.ROW,
+			region.normalizedSignature());
 		CandidateEmissionFact nativeEmission = new CandidateEmissionFact(
 			new PlacementEmissionState(FED_LOUT, false), FType.ROW);
 		CandidateEmissionFact emission = new CandidateEmissionFact(
