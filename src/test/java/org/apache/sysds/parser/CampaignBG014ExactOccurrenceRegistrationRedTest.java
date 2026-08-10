@@ -25,6 +25,7 @@ import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
@@ -231,7 +232,8 @@ public class CampaignBG014ExactOccurrenceRegistrationRedTest {
 	}
 
 	private static String runtimeKey(DurableAnchorKey anchor) {
-		String addresses = anchor.partitions().stream().map(partition -> partition.workerId() + ';')
+		String addresses = anchor.partitions().stream()
+			.map(partition -> FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()) + ';')
 			.reduce("", String::concat);
 		String ranges = anchor.partitions().stream().map(partition -> switch(anchor.fType()) {
 			case ROW -> partition.begin().get(0) + "," + partition.end().get(0) + ';';

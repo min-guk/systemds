@@ -1964,8 +1964,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	private static boolean isSyntheticFunctionBoundary(PlacementAnalysis analysis, CompiledHopKey key) {
 		Node node = analysis.graph().node(key).orElse(null);
-		return node != null && (node.kind() == NodeKind.FUNCTION_INPUT
-			|| node.kind() == NodeKind.FUNCTION_OUTPUT);
+		// Unknown builtin signatures create diagnostic-only <ABSENT> boundary nodes.
+		// They intentionally have no legal alternatives and no emitted authority, so
+		// requiring the exact join to assign them would reject every otherwise legal
+		// caller plan.  Only graph-owned, selectable boundaries can couple ordinary
+		// occurrences into a global legality component.
+		return node != null && node.emittedWork() && !node.legalAlternatives().isEmpty()
+			&& (node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT);
 	}
 
 	private static List<CompiledHopKey> collectWeakComponent(CompiledHopKey first,
@@ -4521,7 +4526,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> lockedDecisions,
 		SimulationDecisionCache simulationDecisionCache) {
 
-		if (simulationDecisionCache == null || FederatedPlannerTrace.isEnabled())
+		// Tracing is observational. It must not switch off the same production cache
+		// used by performance runs, otherwise planning-only audits exercise a different
+		// algorithmic path and can multiply an already expensive decision simulation.
+		if (simulationDecisionCache == null)
 			return simulateOutputDecisionsWithLocks(memoTable, rootPlan, baseDecisions, lockedDecisions);
 
 		SimulationDecisionKey key = new SimulationDecisionKey(baseDecisions, lockedDecisions);
@@ -9503,7 +9511,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		if (childPlan == null)
 			return 0.0;
-		if (transientReadPlanShareCache != null && !FederatedPlannerTrace.isEnabled()) {
+		// Keep trace-on and trace-off planning on the same cached computation path.
+		if (transientReadPlanShareCache != null) {
 			Double cached = transientReadPlanShareCache.get(childPlan);
 			if (cached != null)
 				return cached;
@@ -9513,7 +9522,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				childPlan, memoTable)
 			: FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
 				childPlan.getCumulativeCost(), childPlan);
-		if (transientReadPlanShareCache != null && !FederatedPlannerTrace.isEnabled())
+		if (transientReadPlanShareCache != null)
 			transientReadPlanShareCache.put(childPlan, share);
 		return share;
 	}

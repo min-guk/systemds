@@ -477,7 +477,8 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 	}
 
 	private static String runtimeKey(DurableAnchorKey anchor) {
-		String addresses = anchor.partitions().stream().map(partition -> partition.workerId() + ';')
+		String addresses = anchor.partitions().stream()
+			.map(partition -> FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()) + ';')
 			.reduce("", String::concat);
 		String ranges = anchor.partitions().stream().map(partition -> switch(anchor.fType()) {
 			case ROW -> partition.begin().get(0) + "," + partition.end().get(0) + ';';

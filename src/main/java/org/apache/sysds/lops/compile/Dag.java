@@ -205,10 +205,10 @@ public class Dag<N extends Lop>
 
 		IDagLinearizer dl = IDagLinearizerFactory.createDagLinearizer();
 		List<Lop> node_v = dl.linearize(nodes);
-		boolean modified = insertLocalMaterializeLops(node_v, sb);
+		boolean modified = insertLocalMaterializeLops(node_v, sb, logicalHopRoots);
 		modified |= prefetchFederated(node_v);
 		modified |= insertRefedLops(node_v, sb, logicalHopRoots);
-		modified |= insertFoutMaterializeLops(node_v, sb);
+		modified |= insertFoutMaterializeLops(node_v, sb, logicalHopRoots);
 
 		// The default linearizer for CP/Spark relies on lop IDs (creation order) to satisfy dependencies.
 		// Lops inserted in these post-processing passes are created after their consumers, so we must
@@ -230,6 +230,11 @@ public class Dag<N extends Lop>
 		if (lop instanceof Federated || lop instanceof FederatedRefed || lop instanceof FederatedFoutMaterialize)
 			return true;
 		FederatedOutput fedOut = lop.getFederatedOutput();
+		// Physical wrappers such as ReBlock retain an explicitly selected FOUT contract.
+		// Their concrete runtime instruction preserves the FederationMap, so the final Lop
+		// (rather than an earlier same-Hop Lop) is the exact materialization source.
+		if (fedOut != null && fedOut.isForcedFederated())
+			return true;
 		if (lop.getExecType() == ExecType.FED)
 			return fedOut == null || !fedOut.isForcedLocal();
 		// data lops may represent already-federated variables; honor explicit FED exec
@@ -293,6 +298,11 @@ public class Dag<N extends Lop>
 	}
 
 	private boolean insertLocalMaterializeLops(List<Lop> lops, StatementBlock sb) {
+		return insertLocalMaterializeLops(lops, sb, sb != null ? sb.getHops() : null);
+	}
+
+	private boolean insertLocalMaterializeLops(List<Lop> lops, StatementBlock sb,
+		List<Hop> logicalHopRoots) {
 		if (FederatedLocalMaterializeRegistry.isEmpty())
 			return false;
 		long sbId = (sb != null) ? sb.getSBID() : -1;
@@ -311,20 +321,68 @@ public class Dag<N extends Lop>
 				hopToLop.put(hopId, lop);
 		}
 
-		boolean inserted = false;
+		List<LocalInsertionPlan> plans = new ArrayList<>();
 		for (Map.Entry<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> e : entries.entrySet()) {
 			long producerHopId = e.getKey();
 			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = e.getValue();
+			boolean exact = !spec.getConsumerInputs().isEmpty()
+				&& spec.getConsumerInputs().stream().noneMatch(
+					FederatedLocalMaterializeRegistry.ConsumerInputSpec::allInputs);
 			Lop producer = hopToLop.get(producerHopId);
 			if (producer == null || !isFederatedMatrixLop(producer)) {
+				if(exact)
+					throw new LopsException("exact local materialization requires a federated producer lop for hop="
+						+ producerHopId + " sbId=" + sbId + " inputs=" + spec.getConsumerInputs()
+						+ " fType=" + spec.getFTypeHint() + " reason=" + spec.getReason()
+						+ " resolved=" + lopIdentity(producer) + " matches=" + lops.stream()
+							.filter(lop -> lop != null && lop.getHopID() == producerHopId)
+							.map(Dag::lopIdentity).toList());
 				if (LOG.isDebugEnabled())
 					LOG.debug("Skipping local materialize insertion for hop=" + producerHopId
 						+ " because producer lop is missing or not federated");
 				continue;
 			}
-			if (producer.getFederatedOutput() == FederatedOutput.LOUT)
+			if (producer.getFederatedOutput() == FederatedOutput.LOUT) {
+				if(exact)
+					throw new LopsException("exact local materialization source is not FED/FOUT for hop="
+						+ producerHopId + " sbId=" + sbId + " inputs=" + spec.getConsumerInputs()
+						+ " fType=" + spec.getFTypeHint() + " reason=" + spec.getReason()
+						+ " resolved=" + lopIdentity(producer));
 				continue;
+			}
 
+			if(exact) {
+				List<FederatedRefedRegistry.ConsumerInputSpec> selectedInputs = spec.getConsumerInputs().stream()
+					.map(input -> new FederatedRefedRegistry.ConsumerInputSpec(
+						input.consumerHopId(), input.inputPosition())).toList();
+				List<RefedConsumerEdge> consumers = resolveSelectedRefedConsumers(
+					lops, selectedInputs, producer, producerHopId, logicalHopRoots);
+				plans.add(LocalInsertionPlan.exact(producerHopId, producer, spec, consumers));
+				continue;
+			}
+
+			Set<Long> selectedConsumers = new HashSet<>(spec.getConsumerHopIds());
+			List<Lop> consumers = lops.stream()
+				.filter(consumer -> consumer != null && consumer != producer)
+				.filter(consumer -> selectedConsumers.isEmpty()
+					|| selectedConsumers.contains(consumer.getHopID()))
+				// Legacy consumer-only authority historically covered local consumers only.
+				.filter(consumer -> consumer.getExecType() != ExecType.FED)
+				.filter(consumer -> !inputPositions(consumer.getInputs(), producer).isEmpty()).toList();
+			if(consumers.isEmpty()) {
+				if (LOG.isDebugEnabled())
+					LOG.debug("Skipping local materialize insertion for hop=" + producerHopId
+						+ " because no selected local consumer was resolved; reason=" + spec.getReason());
+				continue;
+			}
+			plans.add(LocalInsertionPlan.legacy(producerHopId, producer, spec, consumers));
+		}
+
+		boolean inserted = false;
+		for(LocalInsertionPlan plan : plans) {
+			long producerHopId = plan.producerHopId;
+			Lop producer = plan.producer;
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = plan.spec;
 			UnaryCP materialize = new UnaryCP(producer, OpOp1.PREFETCH,
 				producer.getDataType(), producer.getValueType(), ExecType.CP);
 			materialize.getOutputParameters().setLabel(getNextUniqueVarname(materialize.getDataType()));
@@ -332,19 +390,28 @@ public class Dag<N extends Lop>
 				copyOutputParams(materialize.getOutputParameters(), producer.getOutputParameters());
 			materialize.setFederatedOutput(FederatedOutput.LOUT);
 
-			Set<Long> selectedConsumers = new HashSet<>(spec.getConsumerHopIds());
 			boolean rewiredAny = false;
 			int insertPos = -1;
-			List<Lop> candidates = new ArrayList<>(lops);
-			for (Lop consumer : candidates) {
-				if (consumer == null || consumer == producer || consumer == materialize)
-					continue;
-				if (!selectedConsumers.isEmpty() && !selectedConsumers.contains(consumer.getHopID()))
-					continue;
-				if (consumer.getExecType() == ExecType.FED)
-					continue;
-				boolean replaced = replaceProducerInput(consumer, producer, materialize);
-				if (!replaced)
+			if(plan.exactConsumers != null) {
+				for(RefedConsumerEdge edge : plan.exactConsumers) {
+					for(int inputPosition : edge.inputPositions) {
+						if(edge.consumer.getInput(inputPosition) != producer)
+							throw new LopsException(
+								"local materialization lowering lost selected exact input edge for hop="
+									+ producerHopId + " consumer=" + edge.consumer.getHopID()
+									+ " input=" + inputPosition);
+						edge.consumer.getInputs().set(inputPosition, materialize);
+						producer.removeOutput(edge.consumer);
+						materialize.addOutput(edge.consumer);
+					}
+					rewiredAny = true;
+					int idx = lops.indexOf(edge.consumer);
+					if (idx >= 0 && (insertPos < 0 || idx < insertPos))
+						insertPos = idx;
+				}
+			}
+			else for(Lop consumer : plan.legacyConsumers) {
+				if(!replaceProducerInput(consumer, producer, materialize))
 					continue;
 				rewiredAny = true;
 				int idx = lops.indexOf(consumer);
@@ -360,7 +427,6 @@ public class Dag<N extends Lop>
 			}
 
 			addNode(materialize);
-			producer.addOutput(materialize);
 			if (insertPos < 0)
 				insertPos = lops.indexOf(producer) + 1;
 			if (insertPos < 0)
@@ -369,8 +435,9 @@ public class Dag<N extends Lop>
 				lops.add(insertPos, materialize);
 			inserted = true;
 			if (LOG_LOP_MAPPING)
-				System.out.printf("MinST-D insert: producerHop=%d consumers=%s out=%s reason=%s%n",
-					producerHopId, selectedConsumers, materialize.getOutputParameters().getLabel(), spec.getReason());
+				System.out.printf("Local materialize insert: producerHop=%d inputs=%s out=%s reason=%s%n",
+					producerHopId, spec.getConsumerInputs(), materialize.getOutputParameters().getLabel(),
+					spec.getReason());
 		}
 		return inserted;
 	}
@@ -501,7 +568,8 @@ public class Dag<N extends Lop>
 		List<RefedInsertionPlan> plans = new ArrayList<>();
 		for (Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> e : refedEntries.entrySet()) {
 			long hopId = e.getKey();
-			if (materializeEntries.containsKey(hopId))
+			if (materializeEntries.containsKey(hopId)
+				&& !materializeEntries.get(hopId).hasExactConsumerAuthority())
 				continue;
 			Lop local = hopToLop.get(hopId);
 			if (local == null)
@@ -907,6 +975,35 @@ public class Dag<N extends Lop>
 		}
 	}
 
+	private static final class LocalInsertionPlan {
+		private final long producerHopId;
+		private final Lop producer;
+		private final FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec;
+		private final List<RefedConsumerEdge> exactConsumers;
+		private final List<Lop> legacyConsumers;
+
+		private LocalInsertionPlan(long producerHopId, Lop producer,
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec,
+			List<RefedConsumerEdge> exactConsumers, List<Lop> legacyConsumers) {
+			this.producerHopId = producerHopId;
+			this.producer = producer;
+			this.spec = spec;
+			this.exactConsumers = exactConsumers;
+			this.legacyConsumers = legacyConsumers;
+		}
+
+		private static LocalInsertionPlan exact(long producerHopId, Lop producer,
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec,
+			List<RefedConsumerEdge> consumers) {
+			return new LocalInsertionPlan(producerHopId, producer, spec, List.copyOf(consumers), null);
+		}
+
+		private static LocalInsertionPlan legacy(long producerHopId, Lop producer,
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec, List<Lop> consumers) {
+			return new LocalInsertionPlan(producerHopId, producer, spec, null, List.copyOf(consumers));
+		}
+	}
+
 	private static final class RefedAnchorAuthority {
 		private final Lop anchor;
 		private final String anchorKey;
@@ -974,7 +1071,8 @@ public class Dag<N extends Lop>
 		return lop.getDataType() != DataType.UNKNOWN && lop.getValueType() != ValueType.UNKNOWN;
 	}
 
-		private boolean insertFoutMaterializeLops(List<Lop> lops, StatementBlock sb) {
+		private boolean insertFoutMaterializeLops(List<Lop> lops, StatementBlock sb,
+			List<Hop> logicalHopRoots) {
 			if (FederatedFoutMaterializeRegistry.isEmpty())
 				return false;
 
@@ -1101,10 +1199,16 @@ public class Dag<N extends Lop>
 					}
 				}
 
-				boolean alreadyInserted = isSelectedFederatedTWrite
-					? (materializeInput instanceof FederatedRefed || materializeInput instanceof FederatedFoutMaterialize)
-					: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
-						|| out instanceof FederatedFoutMaterialize);
+				boolean alreadyInserted = spec.hasExactConsumerAuthority()
+					? (isSelectedFederatedTWrite
+						? materializeInput instanceof FederatedFoutMaterialize
+						: local.getOutputs().stream().anyMatch(
+							out -> out instanceof FederatedFoutMaterialize))
+					: (isSelectedFederatedTWrite
+						? (materializeInput instanceof FederatedRefed
+							|| materializeInput instanceof FederatedFoutMaterialize)
+						: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
+							|| out instanceof FederatedFoutMaterialize));
 					if (alreadyInserted) {
 						String localLabel = (local.getOutputParameters() != null)
 							? local.getOutputParameters().getLabel()
@@ -1114,6 +1218,13 @@ public class Dag<N extends Lop>
 								hopId, localLabel);
 						continue;
 					}
+
+				List<RefedConsumerEdge> exactFoutConsumers = null;
+				if(spec.hasExactConsumerAuthority()) {
+					exactFoutConsumers = spec.getConsumerInputs().isEmpty() ? List.of()
+						: resolveSelectedRefedConsumers(lops, spec.getConsumerInputs(),
+							materializeInput, hopId, logicalHopRoots);
+				}
 
 				FederatedFoutMaterialize fout = (anchor != null)
 					? new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint())
@@ -1128,155 +1239,114 @@ public class Dag<N extends Lop>
 					fout.addOutput(local);
 				}
 
-				// Rewire all FED consumers of the materialized input to consume the federated value.
-				//
-				// NOTE: We cannot rely solely on local.getOutputs() because certain lops (e.g., indexing /
-				// in-place updates) may introduce intermediate lops with the same hop id, which breaks
-				// strict object-identity based replacement. Scan the full lop list and match by hop id
-				// as a fallback to ensure the planned CP->FOUT is actually used by FED consumers.
-				final long materializeHopId = materializeInput.getHopID();
-				final String materializeLabel = (materializeInput.getOutputParameters() != null)
-					? materializeInput.getOutputParameters().getLabel()
-					: null;
-				final Set<String> aliasLabels = new HashSet<>();
-				if (materializeLabel != null)
-					aliasLabels.add(materializeLabel);
-				for (Lop candidate : lops) {
-					if (!(candidate instanceof Data))
-						continue;
-					Data data = (Data) candidate;
-					if (!data.isTransientWrite())
-						continue;
-					List<Lop> inputs = data.getInputs();
-					if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
-						continue;
-					Lop input = inputs.get(0);
-					boolean matchesInput = (input == materializeInput);
-					if (!matchesInput && materializeHopId >= 0)
-						matchesInput = (input.getHopID() == materializeHopId);
-					if (!matchesInput && materializeLabel != null) {
-						OutputParameters out = input.getOutputParameters();
-						String inLabel = (out != null) ? out.getLabel() : null;
-						matchesInput = materializeLabel.equals(inLabel);
-					}
-					if (!matchesInput)
-						continue;
-					OutputParameters out = data.getOutputParameters();
-					String label = (out != null) ? out.getLabel() : null;
-					if (label != null)
-						aliasLabels.add(label);
-				}
 				List<Lop> consumers = new ArrayList<>();
-				List<Lop> refedToRemove = new ArrayList<>();
-				String anchorVarLabel = (anchor != null && anchor.getOutputParameters() != null)
-					? anchor.getOutputParameters().getLabel()
-					: anchorKey;
-				for (Lop out : lops) {
-					if (out == null || out == fout)
-						continue;
-					// For transient writes, only consumers of the post-write value may be rewired to the
-					// materialized federated output. Ancestor consumers that participate in building the
-					// transient-write input still need the pre-write value; rewiring them would create a
-					// self-cycle such as X <- fed_fout(f(X)) where f(X) itself depends on X.
-					if (isTransientWrite
-						&& shouldSkipTransientWriteMaterializeConsumer(materializeInput, out)) {
-						if (LOG_LOP_MAPPING) {
-							System.out.printf("CP->FOUT transient-write skip: hop=%d producer=%d consumer=%d consumerType=%s%n",
-								hopId, materializeHopId, out.getHopID(), out.getType());
+				if(spec.hasExactConsumerAuthority()) {
+					// The normalized candidate receipt owns exact PRESENT/ABSENT_LOCAL input
+					// occurrences. Rewire only PRESENT inputs that use this source placement;
+					// selected REFED consumers were already handled by insertRefedLops.
+					for(RefedConsumerEdge edge : exactFoutConsumers) {
+						for(int inputPosition : edge.inputPositions) {
+							if(edge.consumer.getInput(inputPosition) != materializeInput)
+								throw new LopsException(
+									"FOUT lowering lost selected exact input edge for hop=" + hopId
+										+ " consumer=" + edge.consumer.getHopID()
+										+ " input=" + inputPosition);
+							edge.consumer.getInputs().set(inputPosition, fout);
+							materializeInput.removeOutput(edge.consumer);
+							fout.addOutput(edge.consumer);
 						}
-						continue;
+						consumers.add(edge.consumer);
 					}
-					// Never rewire the producer (or its same-hop-id aliases) to consume its own
-					// fed_fout output; this creates a self-cycle like target <- fed_fout(target).
-					if (out == materializeInput || (materializeHopId >= 0 && out.getHopID() == materializeHopId))
-						continue;
-					boolean isFedExec = out.getExecType() == ExecType.FED;
-					boolean isFoutTWrite = (out instanceof Data) && ((Data) out).isTransientWrite()
-						&& out.getFederatedOutput() == FederatedOutput.FOUT;
-					// Do not rewrite writes of the anchor variable itself. Otherwise loops like
-					// Y = rexpand(Y, ...) can become cyclic (Y <- fed_fout(rexpand(Y))).
-					if (isFoutTWrite && anchorVarLabel != null && out.getOutputParameters() != null
+				}
+				else {
+					// Legacy registrations predate exact candidate receipts. Preserve their
+					// historical best-effort scan, but never use it for common-planner output.
+					final long materializeHopId = materializeInput.getHopID();
+					final String materializeLabel = (materializeInput.getOutputParameters() != null)
+						? materializeInput.getOutputParameters().getLabel() : null;
+					final Set<String> aliasLabels = new HashSet<>();
+					if (materializeLabel != null)
+						aliasLabels.add(materializeLabel);
+					for (Lop candidate : lops) {
+						if (!(candidate instanceof Data))
+							continue;
+						Data data = (Data) candidate;
+						if (!data.isTransientWrite())
+							continue;
+						List<Lop> inputs = data.getInputs();
+						if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
+							continue;
+						Lop input = inputs.get(0);
+						boolean matchesInput = (input == materializeInput);
+						if (!matchesInput && materializeHopId >= 0)
+							matchesInput = (input.getHopID() == materializeHopId);
+						if (!matchesInput && materializeLabel != null) {
+							OutputParameters out = input.getOutputParameters();
+							matchesInput = materializeLabel.equals(out != null ? out.getLabel() : null);
+						}
+						if (matchesInput && data.getOutputParameters() != null
+							&& data.getOutputParameters().getLabel() != null)
+							aliasLabels.add(data.getOutputParameters().getLabel());
+					}
+					List<Lop> refedToRemove = new ArrayList<>();
+					String anchorVarLabel = (anchor != null && anchor.getOutputParameters() != null)
+						? anchor.getOutputParameters().getLabel() : anchorKey;
+					for (Lop out : lops) {
+						if (out == null || out == fout)
+							continue;
+						if (isTransientWrite
+							&& shouldSkipTransientWriteMaterializeConsumer(materializeInput, out))
+							continue;
+						if (out == materializeInput
+							|| (materializeHopId >= 0 && out.getHopID() == materializeHopId))
+							continue;
+						boolean isFoutTWrite = (out instanceof Data) && ((Data) out).isTransientWrite()
+							&& out.getFederatedOutput() == FederatedOutput.FOUT;
+						if (isFoutTWrite && anchorVarLabel != null && out.getOutputParameters() != null
 							&& anchorVarLabel.equals(out.getOutputParameters().getLabel()))
-						continue;
-					if (!isFedExec && !isFoutTWrite)
-						continue;
-					List<Lop> outInputs = out.getInputs();
-					if (outInputs == null || outInputs.isEmpty())
-						continue;
-					boolean replacedAny = false;
-					boolean usesFout = false;
-					String foutLabel = (fout.getOutputParameters() != null)
-						? fout.getOutputParameters().getLabel()
-						: null;
-					for (Lop in : new ArrayList<>(outInputs)) {
-						if (in == null)
 							continue;
-						if (in == fout) {
-							usesFout = true;
+						if (out.getExecType() != ExecType.FED && !isFoutTWrite)
 							continue;
-						}
-						String inLabel = (in.getOutputParameters() != null)
-							? in.getOutputParameters().getLabel()
-							: null;
-						if (foutLabel != null && foutLabel.equals(inLabel)) {
+						boolean replacedAny = false;
+						for (Lop in : new ArrayList<>(out.getInputs())) {
+							if (in == null || in == fout)
+								continue;
+							String inLabel = in.getOutputParameters() != null
+								? in.getOutputParameters().getLabel() : null;
+							boolean match = in == materializeInput
+								|| materializeLabel != null && materializeLabel.equals(inLabel)
+								|| inLabel != null && aliasLabels.contains(inLabel)
+								|| materializeHopId >= 0 && in.getHopID() == materializeHopId;
+							if (!match)
+								continue;
 							out.replaceInput(in, fout);
 							in.removeOutput(out);
 							fout.addOutput(out);
 							replacedAny = true;
-							usesFout = true;
-							continue;
 						}
-						if (in == materializeInput) {
-							out.replaceInput(in, fout);
-							in.removeOutput(out);
-							fout.addOutput(out);
-							replacedAny = true;
-							usesFout = true;
-							continue;
-						}
-						boolean sameLabel = (materializeLabel != null && materializeLabel.equals(inLabel));
-						boolean aliasLabel = (inLabel != null && aliasLabels.contains(inLabel));
-						boolean sameHopId = (materializeHopId >= 0 && in.getHopID() == materializeHopId);
-						if (sameLabel || aliasLabel || sameHopId) {
-							out.replaceInput(in, fout);
-							in.removeOutput(out);
-							fout.addOutput(out);
-							replacedAny = true;
-							usesFout = true;
-						}
-					}
 						if (replacedAny && out instanceof FederatedRefed) {
-							List<Lop> refedOutputs = new ArrayList<>(out.getOutputs());
-							for (Lop refOut : refedOutputs) {
-								if (refOut == null)
-									continue;
+							for (Lop refOut : new ArrayList<>(out.getOutputs())) {
 								refOut.replaceInput(out, fout);
 								out.removeOutput(refOut);
 								fout.addOutput(refOut);
 							}
 							refedToRemove.add(out);
-							continue;
 						}
-						if (usesFout)
+						else if (replacedAny)
 							consumers.add(out);
 					}
-
-				if (!refedToRemove.isEmpty()) {
 					for (Lop refed : refedToRemove) {
-						List<Lop> refedInputs = new ArrayList<>(refed.getInputs());
-						for (Lop in : refedInputs) {
-							if (in != null)
-								in.removeOutput(refed);
-						}
+						for (Lop in : new ArrayList<>(refed.getInputs()))
+							in.removeOutput(refed);
 						lops.remove(refed);
 						nodes.remove(refed);
 					}
-				}
-
-				if (consumers.isEmpty() && !fout.getOutputs().isEmpty()) {
-					java.util.LinkedHashSet<Lop> dedupedOutputs = new java.util.LinkedHashSet<>(fout.getOutputs());
-					dedupedOutputs.remove(local);
-					consumers.addAll(dedupedOutputs);
+					if (consumers.isEmpty() && !fout.getOutputs().isEmpty()) {
+						java.util.LinkedHashSet<Lop> dedupedOutputs =
+							new java.util.LinkedHashSet<>(fout.getOutputs());
+						dedupedOutputs.remove(local);
+						consumers.addAll(dedupedOutputs);
+					}
 				}
 
 				// A stale materialize registration can survive planner-side cleanup when a local-output
@@ -1290,7 +1360,8 @@ public class Dag<N extends Lop>
 				// therefore must write the materialized federated value. If the final TWrite stayed local,
 				// treat the registration as stale and skip it unless some other FED/FOUT consumer actually
 				// rewired to the materialized value.
-				if (!isSelectedFederatedTWrite && fout.getOutputs().isEmpty()) {
+				if (!spec.hasExactConsumerAuthority() && !isSelectedFederatedTWrite
+					&& fout.getOutputs().isEmpty()) {
 					if (LOG_LOP_MAPPING) {
 						String localLabel = (local.getOutputParameters() != null)
 							? local.getOutputParameters().getLabel()

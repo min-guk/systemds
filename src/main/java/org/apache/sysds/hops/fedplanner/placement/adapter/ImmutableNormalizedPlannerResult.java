@@ -111,7 +111,13 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 		for(int i = 1; i < locals.size(); i++)
 			if(locals.get(i - 1).normalizedSignature().equals(locals.get(i).normalizedSignature()))
 				throw new IllegalArgumentException("duplicate local materialization action");
-		selectedLocalMaterializations = Collections.unmodifiableList(locals);
+		List<LocalMaterializationActionKey> derivedLocals = NormalizedPlannerResults
+			.deriveLocalMaterializations(analysis, selectedStates, selectedEmissionStates,
+				selectedCandidateSelections);
+		if(!locals.isEmpty() && !locals.equals(derivedLocals))
+			throw new IllegalArgumentException(
+				"planner-supplied local materialization authority differs from the canonical projection");
+		selectedLocalMaterializations = Collections.unmodifiableList(derivedLocals);
 		normalizedPlanFingerprint = PlacementEmissionTransaction.canonicalPlanHash(this);
 	}
 

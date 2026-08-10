@@ -28,7 +28,6 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
@@ -41,7 +40,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAncho
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
-import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.hops.recompile.Recompiler;
@@ -125,11 +123,11 @@ public final class AnchorProvenanceLifecycleCapture {
 			contains(evidence, "cleanup.clearFedInitVars=invoked")
 				&& contains(evidence, "cleanup.resetFederatedPlannerRunState=invoked"),
 			contains(evidence, "clone.publicHopClone=invoked") || contains(evidence, "unroll.constructLopsConsumer=invoked"),
-			contains(evidence, "additional-roots.directDpRewriteProgram=invoked"),
+			contains(evidence, "additional-roots.constructLopsDpRewriteProgram=invoked"),
 			contains(evidence, "registry.clearRegisterSnapshotRemove=invoked")
 				&& contains(evidence, "registry.snapshotUnmodifiable=true"),
 			contains(evidence, "recompile.publicRecompiler=invoked")
-				&& contains(evidence, "recompile.directDpRewriteProgram=invoked"), evidence);
+				&& contains(evidence, "recompile.constructLopsDpRewriteProgram=invoked"), evidence);
 	}
 
 	public static AnchorSnapshot snapshot(PlacementAnalysis analysis, List<AnchorAccessForm> forms) {
@@ -237,9 +235,6 @@ public final class AnchorProvenanceLifecycleCapture {
 		evidence.add(stage + ".statementBlocks=" + program.getNumStatementBlocks());
 		if(finalBoundaryAnalysis[0] != null) {
 			evidence.add(stage + ".constructLopsDpRewriteProgram=invoked");
-			new FederatedPlannerDpFedCostBased().rewriteProgram(program, new FunctionCallGraph(program),
-				null, finalBoundaryAnalysis[0]);
-			evidence.add(stage + ".directDpRewriteProgram=invoked");
 		}
 		if("recompile".equals(stage)) {
 			var block = program.getStatementBlocks().stream().filter(sb -> sb.getHops() != null
@@ -325,10 +320,10 @@ public final class AnchorProvenanceLifecycleCapture {
 			case "unroll" -> contains(evidence, "unroll.constructLopsConsumer=invoked")
 				&& positive(evidence, "loopNodes=");
 			case "additional-roots" -> contains(evidence, "additional-roots.constructLopsConsumer=invoked")
-				&& contains(evidence, "additional-roots.directDpRewriteProgram=invoked")
+				&& contains(evidence, "additional-roots.constructLopsDpRewriteProgram=invoked")
 				&& positive(evidence, "additional-roots.statementBlocks=");
 			case "recompile" -> contains(evidence, "recompile.constructLopsConsumer=invoked")
-				&& contains(evidence, "recompile.directDpRewriteProgram=invoked")
+				&& contains(evidence, "recompile.constructLopsDpRewriteProgram=invoked")
 				&& contains(evidence, "recompile.publicRecompiler=invoked")
 				&& positive(evidence, "recompileCpFoutExclusions=");
 			default -> false;

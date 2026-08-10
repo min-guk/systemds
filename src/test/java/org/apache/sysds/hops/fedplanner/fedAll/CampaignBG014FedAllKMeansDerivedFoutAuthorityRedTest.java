@@ -10,6 +10,7 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -59,6 +60,29 @@ public class CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest {
 			Assert.assertEquals("FED_ALL", result.plannerId());
 			Assert.assertFalse("KMeans must exercise derived FOUT authority",
 				result.analysis().graph().derivedFoutMaterializationActions().isEmpty());
+			long selectedDerived = result.selectedEmissionStates().entrySet().stream()
+				.filter(entry -> entry.getValue().derivedFedFout()).count();
+			Assert.assertTrue("KMeans must select at least one physical FED/LOUT -> FOUT output",
+				selectedDerived > 0);
+			for(Object localValue : result.selectedLocalMaterializations()) {
+				Assert.assertTrue(localValue instanceof LocalMaterializationActionKey);
+				LocalMaterializationActionKey local = (LocalMaterializationActionKey) localValue;
+				Assert.assertFalse("A derived FOUT source already owns a physical local result and must not "
+					+ "request a second FOUT-to-local prefetch: " + local.normalizedSignature(),
+					result.selectedEmissionStates().get(local.sourceOccurrence()).derivedFedFout());
+			}
+			for(var selected : result.selectedEmissionStates().entrySet()) {
+				if(!selected.getValue().derivedFedFout()
+					|| !result.analysis().isCompiledHopOccurrence(selected.getKey()))
+					continue;
+				var occurrence = result.analysis().occurrences().stream()
+					.filter(candidate -> candidate.key() == selected.getKey()).findFirst().orElseThrow();
+				var spec = FederatedFoutMaterializeRegistry.snapshot(occurrence.scopeId())
+					.get(occurrence.hop().getHopID());
+				Assert.assertNotNull("Selected derived FOUT must own a lowering registration", spec);
+				Assert.assertTrue("Common planning must retain exact PRESENT consumer input authority",
+					spec.hasExactConsumerAuthority());
+			}
 			for(var action : result.analysis().graph().derivedFoutMaterializationActions()) {
 				var producer = result.analysis().graph().node(action.key().producer()).orElseThrow();
 				Assert.assertSame("Every derived FOUT action must retain the final graph-owned value version",

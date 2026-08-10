@@ -151,6 +151,10 @@ public class CampaignBG014PlanningTraceContractTest {
 				lazyCallContains(dpCostSource, stage));
 		assertFalse("enabling trace must not disable the production parent-variant cache",
 			dpSource.contains("if (!trace && parentVariantDeltaCache != null)"));
+		assertFalse("enabling trace must not disable the production decision-simulation cache",
+			dpSource.contains("simulationDecisionCache == null || FederatedPlannerTrace.isEnabled()"));
+		assertFalse("enabling trace must not disable the production transient-share cache",
+			dpSource.contains("transientReadPlanShareCache != null && !FederatedPlannerTrace.isEnabled()"));
 	}
 
 	private static boolean lazyCallContains(String source, String stage) {

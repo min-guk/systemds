@@ -39,6 +39,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.ConsumerInputSpec;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -92,7 +93,8 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		PlacementEmissionTransaction.emit(fixture.program(), result, FailureInjector.none());
 
 		FederatedLocalMaterializeRegistry.LocalMaterializeSpec expectedSpec =
-			new FederatedLocalMaterializeRegistry.LocalMaterializeSpec(fixture.consumerHopIds(),
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec.forConsumerInputs(
+				fixture.consumerInputs(),
 				fixture.producerFedFout().fType().name(), fixture.durableProvenance());
 		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> expectedScopes =
 			new LinkedHashMap<>(before.scopes());
@@ -111,6 +113,10 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_SCOPE_IS_EXACT", fixture.scopeId(), fixture.producer().scopeId());
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_CONSUMERS_ARE_EXACT_SORTED",
 			fixture.consumerHopIds(), spec.getConsumerHopIds());
+		Assert.assertEquals("TASK33_LOCAL_ENTRY_INPUT_OCCURRENCES_ARE_EXACT_SORTED",
+			fixture.consumerInputs(), spec.getConsumerInputs());
+		Assert.assertTrue("TASK33_PLANNER_LOCAL_ENTRY_FORBIDS_WILDCARD_INPUT_AUTHORITY",
+			spec.getConsumerInputs().stream().noneMatch(ConsumerInputSpec::allInputs));
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_FTYPE_IS_DERIVED_FROM_PRODUCER_PLACEMENT",
 			fixture.producerFedFout().fType().name(), spec.getFTypeHint());
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_REASON_IS_DURABLE_PROVENANCE",
@@ -427,6 +433,10 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		private long scopeId() { return producer.scopeId(); }
 		private List<Long> consumerHopIds() {
 			return List.of(firstConsumer.hop().getHopID(), secondConsumer.hop().getHopID()).stream().sorted().toList();
+		}
+		private List<ConsumerInputSpec> consumerInputs() {
+			return List.of(new ConsumerInputSpec(firstConsumer.hop().getHopID(), 0),
+				new ConsumerInputSpec(secondConsumer.hop().getHopID(), 0)).stream().sorted().toList();
 		}
 		private String durableProvenance() { return "fed-init:X"; }
 		private Object localAction(String scopeText) {

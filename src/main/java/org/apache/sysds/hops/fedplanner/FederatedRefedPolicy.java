@@ -919,23 +919,20 @@ public final class FederatedRefedPolicy {
 					continue;
 				boolean producerReachable = reachableHopIds.contains(producerHopId);
 				if (!producerReachable && preservedSbId == -1L) {
-					FederatedLocalMaterializeRegistry.register(-1L, producerHopId,
-						spec.getConsumerHopIds(), spec.getFTypeHint(), spec.getReason());
+					FederatedLocalMaterializeRegistry.registerSpec(-1L, producerHopId, spec);
 					continue;
 				}
 				if (!producerReachable)
 					continue;
-				List<Long> reachableConsumers = new ArrayList<>();
-				for (Long consumerHopId : spec.getConsumerHopIds()) {
-					if (consumerHopId != null && reachableHopIds.contains(consumerHopId))
-						reachableConsumers.add(consumerHopId);
-				}
-				if (!reachableConsumers.isEmpty())
-					FederatedLocalMaterializeRegistry.register(preservedSbId, producerHopId,
-						reachableConsumers, spec.getFTypeHint(), spec.getReason());
+				List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> reachableInputs =
+					spec.getConsumerInputs().stream()
+						.filter(input -> reachableHopIds.contains(input.consumerHopId())).toList();
+				if (!reachableInputs.isEmpty())
+					FederatedLocalMaterializeRegistry.registerSpec(preservedSbId, producerHopId,
+						FederatedLocalMaterializeRegistry.LocalMaterializeSpec.forConsumerInputs(
+							reachableInputs, spec.getFTypeHint(), spec.getReason()));
 				else if (preservedSbId == -1L)
-					FederatedLocalMaterializeRegistry.register(-1L, producerHopId,
-						spec.getConsumerHopIds(), spec.getFTypeHint(), spec.getReason());
+					FederatedLocalMaterializeRegistry.registerSpec(-1L, producerHopId, spec);
 			}
 		}
 	}
@@ -1670,8 +1667,13 @@ public final class FederatedRefedPolicy {
 					changed = true;
 				}
 				else if (!anchorHopRuntimeFed && usableAnchorKey) {
-					FederatedFoutMaterializeRegistry.register(sbId, entry.getKey(), -1, spec.getFTypeHint(),
-						spec.getAnchorLabel(), anchorKey);
+					if(spec.hasExactConsumerAuthority())
+						FederatedFoutMaterializeRegistry.registerConsumerInputs(sbId, entry.getKey(), -1,
+							spec.getFTypeHint(), spec.getAnchorLabel(), anchorKey,
+							spec.getConsumerInputs());
+					else
+						FederatedFoutMaterializeRegistry.register(sbId, entry.getKey(), -1,
+							spec.getFTypeHint(), spec.getAnchorLabel(), anchorKey);
 					changed = true;
 				}
 			}

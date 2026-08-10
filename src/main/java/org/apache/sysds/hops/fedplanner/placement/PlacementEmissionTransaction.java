@@ -352,9 +352,10 @@ public final class PlacementEmissionTransaction {
 		List<SelectedDerivedFout> derivedFoutMaterializations = exactDerivedFoutMaterializations(
 			analysis, occurrences, selected, selectedCandidates);
 		List<LocalMaterializationActionKey> locals = exactLocalMaterializations(analysis, occurrences,
-			selected, selectedLocals);
+			selected, selectedCandidates, selectedLocals);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(
-			analysis, occurrences, selected, relocations, derivedFoutMaterializations, locals);
+			analysis, occurrences, selected, selectedCandidates, relocations,
+			derivedFoutMaterializations, locals);
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites));
 	}
 
@@ -426,6 +427,24 @@ public final class PlacementEmissionTransaction {
 					+ " derivedFoutAction=" + (candidate.emission().derivedFoutAction() == null
 						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature())));
 		}
+		prepared.registryWrites().stream()
+			.sorted(Comparator.comparing(write -> write.slot().kind().name()
+				+ ':' + write.slot().scopeId() + ':' + write.slot().hopId()))
+			.forEach(write -> FederatedPlannerTrace.logGlobal("Emission-RegistryWrite",
+				"planner=" + result.plannerId()
+					+ " kind=" + write.slot().kind()
+					+ " scope=" + write.slot().scopeId()
+					+ " producerHop=" + write.slot().hopId()
+					+ " anchorHop=" + write.anchorHopId()
+					+ " fType=" + write.fType()
+					+ " refedInputs=" + (write.refedAuthority() == null ? List.of()
+						: write.refedAuthority().getConsumerInputs())
+					+ " foutInputs=" + (write.foutConsumerInputs() == null ? List.of()
+						: write.foutConsumerInputs())
+					+ " localInputs=" + (write.localConsumerInputs() == null ? List.of()
+						: write.localConsumerInputs())
+					+ " anchorKey=" + write.anchorKey()
+					+ " reason=" + write.reason()));
 		String candidateAuthority = String.join("\n", candidates.stream()
 			.map(CandidateSelectionReceipt::normalizedSignature).toList());
 		FederatedPlannerTrace.logGlobal("Emission-Summary", "planner=" + result.plannerId()
@@ -505,6 +524,7 @@ public final class PlacementEmissionTransaction {
 	private static List<LocalMaterializationActionKey> exactLocalMaterializations(PlacementAnalysis analysis,
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
 		Map<CompiledHopKey, PlacementEmissionState> selected,
+		List<CandidateSelectionReceipt> selectedCandidates,
 		List<LocalMaterializationActionKey> actions) {
 		Set<String> seen = new LinkedHashSet<>();
 		List<LocalMaterializationActionKey> resolved = new ArrayList<>();
@@ -520,6 +540,7 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException("LOCAL source value version differs");
 			PlacementEmissionState sourceState = exactEmissionState(selected, action.sourceOccurrence());
 			if(sourceState == null || !sourceState.placementState().equals(action.producerPlacement())
+				|| sourceState.derivedFedFout()
 				|| action.producerPlacement().execType() != ExecType.FED
 				|| action.producerPlacement().output() != FederatedOutput.FOUT
 				|| action.producerPlacement().fType() == null)
@@ -542,11 +563,8 @@ public final class PlacementEmissionTransaction {
 			List<LocalMaterializationObligation> expected = analysis.compiledInputEdgesInCanonicalOrder().stream()
 				.filter(edge -> edge.producer() == action.sourceOccurrence())
 				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
-				.filter(edge -> {
-					PlacementEmissionState consumer = exactEmissionState(selected, edge.consumer());
-					return consumer != null && consumer.placementState().execType() == ExecType.CP
-						&& consumer.placementState().output() == FederatedOutput.LOUT;
-				})
+				.filter(edge -> requiresLocalInput(selected, selectedCandidates,
+					edge.consumer(), edge.inputPosition()))
 				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
 					exactEmissionState(selected, edge.consumer()).placementState())).sorted().toList();
 			List<LocalMaterializationObligation> actual = action.obligations();
@@ -561,13 +579,38 @@ public final class PlacementEmissionTransaction {
 					obligation.inputPosition());
 				PlacementEmissionState consumer = exactEmissionState(selected, obligation.consumerOccurrence());
 				if(consumer == null || !consumer.placementState().equals(obligation.requiredPlacement())
-					|| obligation.requiredPlacement().execType() != ExecType.CP
-					|| obligation.requiredPlacement().output() != FederatedOutput.LOUT)
+					|| !requiresLocalInput(selected, selectedCandidates,
+						obligation.consumerOccurrence(), obligation.inputPosition()))
 					throw new PlacementEmissionException("LOCAL consumer placement authority differs");
 			}
 			resolved.add(action);
 		}
 		return resolved;
+	}
+
+	private static boolean requiresLocalInput(
+		Map<CompiledHopKey, PlacementEmissionState> selected,
+		List<CandidateSelectionReceipt> selectedCandidates,
+		CompiledHopKey consumerKey, int inputPosition) {
+		PlacementEmissionState selectedConsumer = exactEmissionState(selected, consumerKey);
+		if(selectedConsumer == null)
+			return false;
+		PlacementState consumer = selectedConsumer.placementState();
+		if(consumer.execType() == ExecType.CP && consumer.output() == FederatedOutput.LOUT)
+			return true;
+		if(consumer.execType() != ExecType.FED)
+			return false;
+		List<CandidateSelectionReceipt> exact = selectedCandidates.stream()
+			.filter(candidate -> candidate.rule().parentOccurrence() == consumerKey).toList();
+		if(exact.size() != 1)
+			throw new PlacementEmissionException(
+				"Federated LOCAL consumer requires one exact selected candidate");
+		CandidateSelectionReceipt candidate = exact.get(0);
+		if(!candidate.emission().emissionState().equals(selectedConsumer)
+			|| inputPosition < 0 || inputPosition >= candidate.rule().orderedInputs().size())
+			throw new PlacementEmissionException(
+				"Selected candidate does not cover the exact LOCAL consumer input");
+		return !candidate.rule().orderedInputs().get(inputPosition).present();
 	}
 
 	private static HopOccurrenceProjection exactOccurrence(
@@ -613,7 +656,9 @@ public final class PlacementEmissionTransaction {
 
 	private static List<RegistryWrite> prepareRegistryWrites(PlacementAnalysis analysis,
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
-		Map<CompiledHopKey, PlacementEmissionState> selected, List<SelectedRelocation> relocations,
+		Map<CompiledHopKey, PlacementEmissionState> selected,
+		List<CandidateSelectionReceipt> selectedCandidates,
+		List<SelectedRelocation> relocations,
 		List<SelectedDerivedFout> derivedFoutMaterializations,
 		List<LocalMaterializationActionKey> locals) {
 		Map<RegistrySlot, RegistryWrite> writesBySlot = new LinkedHashMap<>();
@@ -621,10 +666,13 @@ public final class PlacementEmissionTransaction {
 			DerivedFoutMaterializationActionKey action = selectedDerived.action();
 			HopOccurrenceProjection producer = selectedDerived.producer();
 			HopOccurrenceProjection anchor = selectedDerived.anchor();
+			List<ConsumerInputSpec> directConsumers = directFoutConsumerInputs(
+				analysis, occurrences, selectedCandidates, relocations,
+				action.producer(), action.producerValueVersion());
 			RegistryWrite write = RegistryWrite.fout(producer.scopeId(), producer.hop().getHopID(),
 				anchor.hop().getHopID(), action.materializationFType().name(),
 				action.durableAnchor().placementId(),
-				ExactPlacementRegistration.runtimeAnchorKey(action.durableAnchor()));
+				ExactPlacementRegistration.runtimeAnchorKey(action.durableAnchor()), directConsumers);
 			addRelocationRegistryWrite(writesBySlot, write);
 		}
 		for(SelectedRelocation selectedRelocation : relocations) {
@@ -641,51 +689,91 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException("Selected relocation has no active exact obligation");
 			HopOccurrenceProjection anchor = resolveAnchor(analysis, occurrences, key);
 			String anchorKey = ExactPlacementRegistration.runtimeAnchorKey(key.durableAnchor());
-			String fType = key.targetPlacement().fType() == null ? null : key.targetPlacement().fType().name();
-			RegistryWrite write;
-			if(key.targetPlacement().output() == FederatedOutput.LOUT) {
-				List<Long> consumerIds = activeObligations.stream()
-					.map(obligation -> exactConsumerOccurrence(occurrences, obligation).hop().getHopID())
-					.distinct().sorted().toList();
-				write = RegistryWrite.local(source.scopeId(), source.hop().getHopID(), consumerIds, fType,
-					"placement-transaction:" + key.statementBlockScope());
-			}
-			else if(key.targetPlacement().execType() == ExecType.CP) {
-				write = RegistryWrite.fout(source.scopeId(), source.hop().getHopID(), anchor.hop().getHopID(),
-					fType, key.durableAnchor().placementId(), anchorKey);
-			}
-			else {
-				List<ConsumerInputSpec> consumerInputs = new ArrayList<>();
-				for(ObligationKey obligation : activeObligations) {
-					HopOccurrenceProjection consumer = exactConsumerOccurrence(occurrences, obligation);
-					try {
-						analysis.requireExactCompiledInputEdge(
-							sources.get(0).key(), obligation.consumer(), obligation.inputPosition());
-					}
-					catch(IllegalArgumentException noCompiledEdge) {
-						throw new PlacementEmissionException(
-							"Selected REFED obligation has no exact compiled input edge: "
-								+ obligation.normalizedSignature(), noCompiledEdge);
-					}
-					consumerInputs.add(new ConsumerInputSpec(
-						consumer.hop().getHopID(), obligation.inputPosition()));
+			// A relocation action owns one exact PRESENT input of a FED consumer. Its
+			// targetPlacement is the consumer's output placement, not the direction of
+			// the source transfer. Consequently FED/LOUT and FED/FOUT consumers both
+			// require the same input-side operation: CP->FOUT for a local source, or
+			// FED->LOUT->FOUT for a source on another worker pool. FederatedRefed lowers
+			// both cases from the exact selected source edge. Branching on the consumer's
+			// output incorrectly turned FED/LOUT input uploads into FOUT->LOUT downloads.
+			List<ConsumerInputSpec> consumerInputs = new ArrayList<>();
+			for(ObligationKey obligation : activeObligations) {
+				HopOccurrenceProjection consumer = exactConsumerOccurrence(occurrences, obligation);
+				try {
+					analysis.requireExactCompiledInputEdge(
+						sources.get(0).key(), obligation.consumer(), obligation.inputPosition());
 				}
-				write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(), anchor.hop().getHopID(),
-					anchorKey, key.materializationFType().name(), consumerInputs);
+				catch(IllegalArgumentException noCompiledEdge) {
+					throw new PlacementEmissionException(
+						"Selected REFED obligation has no exact compiled input edge: "
+							+ obligation.normalizedSignature(), noCompiledEdge);
+				}
+				consumerInputs.add(new ConsumerInputSpec(
+					consumer.hop().getHopID(), obligation.inputPosition()));
 			}
+			RegistryWrite write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(),
+				anchor.hop().getHopID(), anchorKey, key.materializationFType().name(), consumerInputs);
 			addRelocationRegistryWrite(writesBySlot, write);
 		}
 		for(LocalMaterializationActionKey local : locals) {
 			HopOccurrenceProjection source = exactOccurrence(occurrences, local.sourceOccurrence());
-			List<Long> consumerIds = local.obligations().stream()
-				.map(obligation -> exactOccurrence(occurrences, obligation.consumerOccurrence()).hop().getHopID())
-				.distinct().sorted().toList();
-			RegistryWrite write = RegistryWrite.local(source.scopeId(), source.hop().getHopID(), consumerIds,
+			List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> consumerInputs =
+				local.obligations().stream().map(obligation ->
+					new FederatedLocalMaterializeRegistry.ConsumerInputSpec(
+						exactOccurrence(occurrences, obligation.consumerOccurrence()).hop().getHopID(),
+						obligation.inputPosition())).distinct().sorted().toList();
+			RegistryWrite write = RegistryWrite.local(source.scopeId(), source.hop().getHopID(), consumerInputs,
 				local.producerPlacement().fType().name(), local.durableProvenance());
 			if(writesBySlot.putIfAbsent(write.slot(), write) != null)
 				throw new PlacementEmissionException("Multiple actions target one registry slot");
 		}
 		return List.copyOf(writesBySlot.values());
+	}
+
+	/**
+	 * Projects only direct PRESENT consumers of one derived FOUT producer. An
+	 * ABSENT_LOCAL input must remain wired to the producer's physical FED/LOUT
+	 * result, while a PRESENT demand with an emitted relocation is owned by the
+	 * exact REFED registry instead of this source-pool materialization.
+	 */
+	private static List<ConsumerInputSpec> directFoutConsumerInputs(PlacementAnalysis analysis,
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
+		List<CandidateSelectionReceipt> selectedCandidates,
+		List<SelectedRelocation> relocations, CompiledHopKey producer,
+		PlacementIdentity.ValueVersionKey producerValueVersion) {
+		Map<CompiledHopKey,CandidateSelectionReceipt> candidates = new IdentityHashMap<>();
+		for(CandidateSelectionReceipt candidate : selectedCandidates)
+			if(candidates.put(candidate.rule().parentOccurrence(), candidate) != null)
+				throw new PlacementEmissionException(
+					"Derived FOUT consumer has duplicate selected candidate authority");
+		List<ConsumerInputSpec> direct = new ArrayList<>();
+		for(PlacementAnalysis.CompiledInputEdgeFact edge :
+			analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(edge.producer() != producer || analysis.isDmlFunctionCallBoundary(edge.consumer()))
+				continue;
+			CandidateSelectionReceipt candidate = candidates.get(edge.consumer());
+			if(candidate == null)
+				continue;
+			if(edge.inputPosition() < 0
+				|| edge.inputPosition() >= candidate.rule().orderedInputs().size())
+				throw new PlacementEmissionException(
+					"Derived FOUT candidate does not cover one exact compiled edge");
+			if(!candidate.rule().orderedInputs().get(edge.inputPosition()).present())
+				continue;
+			boolean relocated = relocations.stream().flatMap(relocation ->
+				relocation.obligations().stream()).anyMatch(obligation ->
+					obligation.sourceValueVersion().equals(producerValueVersion)
+						&& obligation.consumer() == edge.consumer()
+						&& obligation.inputPosition() == edge.inputPosition());
+			if(relocated)
+				continue;
+			HopOccurrenceProjection consumer = exactOccurrence(occurrences, edge.consumer());
+			if(consumer == null)
+				throw new PlacementEmissionException(
+					"Derived FOUT direct consumer occurrence is not compiled");
+			direct.add(new ConsumerInputSpec(consumer.hop().getHopID(), edge.inputPosition()));
+		}
+		return direct.stream().distinct().sorted().toList();
 	}
 
 	private static List<SelectedDerivedFout> exactDerivedFoutMaterializations(PlacementAnalysis analysis,
@@ -873,14 +961,17 @@ public final class PlacementEmissionTransaction {
 
 	private record RegistryWrite(RegistrySlot slot, long anchorHopId, List<Long> consumerHopIds,
 		String fType, String label, String anchorKey, String reason,
-		FederatedRefedRegistry.AnchorSpec refedAuthority) {
+		FederatedRefedRegistry.AnchorSpec refedAuthority,
+		List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> localConsumerInputs,
+		List<ConsumerInputSpec> foutConsumerInputs) {
 		private static RegistryWrite refed(long scopeId, long hopId, long anchorHopId, String anchorKey,
 			String materializationFType, List<ConsumerInputSpec> consumers) {
 			FederatedRefedRegistry.AnchorSpec authority = FederatedRefedRegistry.AnchorSpec.forConsumerInputs(
 				anchorHopId, anchorKey,
 				materializationFType == null ? null : FType.valueOf(materializationFType), consumers);
 			return new RegistryWrite(new RegistrySlot(RegistryKind.REFED, scopeId, hopId), anchorHopId,
-				authority.getConsumerHopIds(), materializationFType, null, anchorKey, null, authority);
+				authority.getConsumerHopIds(), materializationFType, null, anchorKey, null,
+				authority, null, null);
 		}
 
 		private static RegistryWrite refed(long scopeId, long hopId,
@@ -888,19 +979,25 @@ public final class PlacementEmissionTransaction {
 			return new RegistryWrite(new RegistrySlot(RegistryKind.REFED, scopeId, hopId),
 				authority.getAnchorHopId(), authority.getConsumerHopIds(),
 				authority.getMaterializationFType() == null ? null : authority.getMaterializationFType().name(),
-				null, authority.getAnchorKey(), null, authority);
+				null, authority.getAnchorKey(), null, authority, null, null);
 		}
 
 		private static RegistryWrite fout(long scopeId, long hopId, long anchorHopId, String fType,
-			String label, String anchorKey) {
+			String label, String anchorKey, List<ConsumerInputSpec> consumers) {
+			List<ConsumerInputSpec> exactConsumers = List.copyOf(
+				Objects.requireNonNull(consumers, "fout consumer inputs"));
 			return new RegistryWrite(new RegistrySlot(RegistryKind.FOUT, scopeId, hopId), anchorHopId,
-				List.of(), fType, label, anchorKey, null, null);
+				exactConsumers.stream().map(ConsumerInputSpec::consumerHopId).distinct().sorted().toList(),
+				fType, label, anchorKey, null, null, null, exactConsumers);
 		}
 
-		private static RegistryWrite local(long scopeId, long hopId, List<Long> consumers, String fType,
-			String reason) {
+		private static RegistryWrite local(long scopeId, long hopId,
+			List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> consumers,
+			String fType, String reason) {
 			return new RegistryWrite(new RegistrySlot(RegistryKind.LOCAL, scopeId, hopId), 0,
-				List.copyOf(consumers), fType, null, null, reason, null);
+				consumers.stream().map(FederatedLocalMaterializeRegistry.ConsumerInputSpec::consumerHopId)
+					.distinct().sorted().toList(),
+				fType, null, null, reason, null, List.copyOf(consumers), null);
 		}
 
 		private void apply() {
@@ -911,10 +1008,11 @@ public final class PlacementEmissionTransaction {
 							authority.getAnchorHopId(), authority.getAnchorKey(),
 							authority.getMaterializationFType(), authority.getConsumerInputs());
 				}
-				case FOUT -> FederatedFoutMaterializeRegistry.register(slot.scopeId(), slot.hopId(),
-					anchorHopId, fType, label, anchorKey);
-				case LOCAL -> FederatedLocalMaterializeRegistry.register(slot.scopeId(), slot.hopId(),
-					consumerHopIds, fType, reason);
+				case FOUT -> FederatedFoutMaterializeRegistry.registerConsumerInputs(
+					slot.scopeId(), slot.hopId(), anchorHopId, fType, label, anchorKey,
+					foutConsumerInputs);
+				case LOCAL -> FederatedLocalMaterializeRegistry.registerConsumerInputs(
+					slot.scopeId(), slot.hopId(), localConsumerInputs, fType, reason);
 			}
 		}
 	}

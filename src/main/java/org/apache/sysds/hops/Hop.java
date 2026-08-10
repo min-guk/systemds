@@ -458,6 +458,12 @@ public abstract class Hop implements ParseInfo {
 				reblock = new ReBlock(input, getBlocksize(), getDataType(), getValueType(), _outputEmptyBlocks, et);
 			}
 
+			// Reblock is a physical data-flow wrapper around this Hop. A federated reblock is
+			// dispatched through the supported ReblockFEDInstruction path and preserves the
+			// FederationMap, so do not erase an already selected FOUT/LOUT contract at this
+			// wrapper boundary. Exact planner lowering resolves the final Lop for the Hop.
+			reblock.setFederatedOutput(input.getFederatedOutput());
+
 			// replace this lop with the reblock instruction
 			setOutputDimensions(reblock);
 			setLineNumbers(reblock);

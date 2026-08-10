@@ -19,13 +19,13 @@
 
 package org.apache.sysds.lops.compile;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -75,6 +75,25 @@ public final class FederatedLocalMaterializeRegistry {
 			String reason) {
 		LOCAL_MATERIALIZE.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
 			.put(hopId, new LocalMaterializeSpec(consumerHopIds, fTypeHint, reason));
+	}
+
+	/** Registers planner-owned, input-occurrence-specific FOUT-to-local authority. */
+	public static void registerConsumerInputs(long sbId, long hopId,
+		List<ConsumerInputSpec> consumerInputs, String fTypeHint, String reason) {
+		if(consumerInputs == null || consumerInputs.isEmpty())
+			throw new IllegalArgumentException(
+				"local materialization requires at least one exact selected consumer input");
+		if(consumerInputs.stream().anyMatch(input -> input == null || input.allInputs()))
+			throw new IllegalArgumentException(
+				"exact local materialization does not accept null or ALL_INPUTS");
+		LOCAL_MATERIALIZE.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
+			.put(hopId, LocalMaterializeSpec.forConsumerInputs(consumerInputs, fTypeHint, reason));
+	}
+
+	/** Restores one already validated typed authority without degrading exact input positions. */
+	public static void registerSpec(long sbId, long hopId, LocalMaterializeSpec spec) {
+		LOCAL_MATERIALIZE.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
+			.put(hopId, copy(Objects.requireNonNull(spec, "localMaterializeSpec")));
 	}
 
 	public static void remove(long sbId, long hopId) {
@@ -142,23 +161,67 @@ public final class FederatedLocalMaterializeRegistry {
 
 	private static LocalMaterializeSpec copy(LocalMaterializeSpec spec) {
 		Objects.requireNonNull(spec, "localMaterializeSpec");
-		return new LocalMaterializeSpec(spec.getConsumerHopIds(), spec.getFTypeHint(), spec.getReason());
+		return LocalMaterializeSpec.copyOf(spec.getConsumerInputs(), spec.getFTypeHint(), spec.getReason());
+	}
+
+	/** Exact physical input identity; {@link #ALL_INPUTS} is retained for legacy registrations. */
+	public record ConsumerInputSpec(long consumerHopId, int inputPosition)
+		implements Comparable<ConsumerInputSpec> {
+		public static final int ALL_INPUTS = -1;
+
+		public ConsumerInputSpec {
+			if(consumerHopId < 0)
+				throw new IllegalArgumentException(
+					"local materialization consumer hop id must be non-negative");
+			if(inputPosition < ALL_INPUTS)
+				throw new IllegalArgumentException(
+					"local materialization input position must be -1 or non-negative");
+		}
+
+		public boolean allInputs() {
+			return inputPosition == ALL_INPUTS;
+		}
+
+		@Override
+		public int compareTo(ConsumerInputSpec that) {
+			int hopOrder = Long.compare(consumerHopId, that.consumerHopId);
+			return hopOrder != 0 ? hopOrder : Integer.compare(inputPosition, that.inputPosition);
+		}
 	}
 
 	public static final class LocalMaterializeSpec {
-		private final List<Long> _consumerHopIds;
+		private final List<ConsumerInputSpec> _consumerInputs;
 		private final String _fTypeHint;
 		private final String _reason;
 
 		public LocalMaterializeSpec(List<Long> consumerHopIds, String fTypeHint, String reason) {
-			_consumerHopIds = Collections.unmodifiableList(new ArrayList<>(
-				consumerHopIds != null ? consumerHopIds : Collections.emptyList()));
+			this(consumerInputsForHopIds(consumerHopIds), fTypeHint, reason, true);
+		}
+
+		private LocalMaterializeSpec(List<ConsumerInputSpec> consumerInputs,
+			String fTypeHint, String reason, boolean canonical) {
+			_consumerInputs = canonicalConsumerInputs(consumerInputs);
 			_fTypeHint = fTypeHint;
 			_reason = reason;
 		}
 
+		public static LocalMaterializeSpec forConsumerInputs(List<ConsumerInputSpec> consumerInputs,
+			String fTypeHint, String reason) {
+			return new LocalMaterializeSpec(consumerInputs, fTypeHint, reason, true);
+		}
+
+		private static LocalMaterializeSpec copyOf(List<ConsumerInputSpec> consumerInputs,
+			String fTypeHint, String reason) {
+			return new LocalMaterializeSpec(consumerInputs, fTypeHint, reason, true);
+		}
+
 		public List<Long> getConsumerHopIds() {
-			return _consumerHopIds;
+			return _consumerInputs.stream().map(ConsumerInputSpec::consumerHopId)
+				.distinct().sorted().toList();
+		}
+
+		public List<ConsumerInputSpec> getConsumerInputs() {
+			return _consumerInputs;
 		}
 
 		public String getFTypeHint() {
@@ -175,13 +238,33 @@ public final class FederatedLocalMaterializeRegistry {
 				return true;
 			if(!(obj instanceof LocalMaterializeSpec that))
 				return false;
-			return _consumerHopIds.equals(that._consumerHopIds) && Objects.equals(_fTypeHint, that._fTypeHint)
+			return _consumerInputs.equals(that._consumerInputs) && Objects.equals(_fTypeHint, that._fTypeHint)
 				&& Objects.equals(_reason, that._reason);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(_consumerHopIds, _fTypeHint, _reason);
+			return Objects.hash(_consumerInputs, _fTypeHint, _reason);
 		}
+	}
+
+	private static List<ConsumerInputSpec> consumerInputsForHopIds(List<Long> consumerHopIds) {
+		if(consumerHopIds == null || consumerHopIds.isEmpty())
+			return List.of();
+		return consumerHopIds.stream().filter(Objects::nonNull).distinct().sorted()
+			.map(consumerHopId -> new ConsumerInputSpec(consumerHopId, ConsumerInputSpec.ALL_INPUTS))
+			.toList();
+	}
+
+	private static List<ConsumerInputSpec> canonicalConsumerInputs(List<ConsumerInputSpec> consumerInputs) {
+		if(consumerInputs == null || consumerInputs.isEmpty())
+			return List.of();
+		TreeSet<ConsumerInputSpec> sorted = new TreeSet<>();
+		for(ConsumerInputSpec input : consumerInputs)
+			sorted.add(Objects.requireNonNull(input, "local materialization consumer input"));
+		java.util.Set<Long> wildcardConsumers = sorted.stream().filter(ConsumerInputSpec::allInputs)
+			.map(ConsumerInputSpec::consumerHopId).collect(java.util.stream.Collectors.toSet());
+		return sorted.stream().filter(input -> input.allInputs()
+			|| !wildcardConsumers.contains(input.consumerHopId())).toList();
 	}
 }

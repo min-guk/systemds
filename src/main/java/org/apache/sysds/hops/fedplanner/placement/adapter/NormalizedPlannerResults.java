@@ -7,6 +7,7 @@
  */
 package org.apache.sysds.hops.fedplanner.placement.adapter;
 
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,7 +56,7 @@ public final class NormalizedPlannerResults {
 			if(selected == null)
 				throw new IllegalArgumentException("Candidate selection has a foreign consumer");
 			PlacementEmissionState candidateEmission = candidate.emission().emissionState();
-			if(candidateEmission.placementState() != selected.placementState())
+			if(!candidateEmission.placementState().equals(selected.placementState()))
 				throw new IllegalArgumentException(
 					"Candidate emission differs from the exact selected placement");
 			result.put(consumer, candidateEmission);
@@ -145,21 +146,38 @@ public final class NormalizedPlannerResults {
 			selectedRelocationChoices, "selectedRelocationChoices"));
 		List<RelocationActionKey> relocations = RelocationSelections.emittedActions(
 			analysis, selectedStates, candidates, choices);
-		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(analysis, selectedStates);
+		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(
+			analysis, selectedStates, selectedEmissionStates, candidates);
 		NormalizedPlannerResult draft = new Draft(analysis, plannerId, analysis.analysisFingerprint(),
 			Map.copyOf(selectedStates), Map.copyOf(selectedEmissionStates), candidates, choices, relocations, locals,
 			objectiveCertificate);
 		return PlacementPlannerAdapter.normalize(analysis, draft);
 	}
 
-	private static List<LocalMaterializationActionKey> deriveLocalMaterializations(PlacementAnalysis analysis,
-		Map<CompiledHopKey, PlacementState> selected) {
+	/** Canonical lowering authority derived from exact selected placements and candidate rows. */
+	public static List<LocalMaterializationActionKey> deriveLocalMaterializations(PlacementAnalysis analysis,
+		Map<CompiledHopKey, PlacementState> selected,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<CandidateSelectionReceipt> selectedCandidates) {
+		Objects.requireNonNull(selectedEmissionStates, "selectedEmissionStates");
+		Map<CompiledHopKey,CandidateSelectionReceipt> candidatesByConsumer = new IdentityHashMap<>();
+		for(CandidateSelectionReceipt candidate : selectedCandidates)
+			if(candidatesByConsumer.put(candidate.rule().parentOccurrence(), candidate) != null)
+				throw new IllegalArgumentException("Selected candidate is duplicated for one consumer");
 		List<LocalMaterializationActionKey> result = new java.util.ArrayList<>();
 		for(var node : analysis.graph().decisionNodes()) {
 			PlacementState producer = selected.get(node.key());
+			PlacementEmissionState producerEmission = exactEmissionState(
+				selectedEmissionStates, node.key());
 			if(producer == null || producer.execType() != org.apache.sysds.common.Types.ExecType.FED
 				|| producer.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
-				|| producer.fType() == null)
+				|| producer.fType() == null || producerEmission == null)
+				continue;
+			// A derived FOUT producer physically computes FED/LOUT and then uploads that
+			// existing coordinator-local result. ABSENT_LOCAL and CP consumers already
+			// consume that base LOUT; inserting FOUT->LOUT PREFETCH would both double-count
+			// the transfer and erase the selected derived-output lowering contract.
+			if(producerEmission.derivedFedFout())
 				continue;
 			List<LocalMaterializationObligation> obligations = analysis.compiledInputEdgesInCanonicalOrder().stream()
 				.filter(edge -> edge.producer() == node.key())
@@ -167,11 +185,8 @@ public final class NormalizedPlannerResults {
 				// placement into the callee; treating the CP call placeholder as a local matrix
 				// consumer invents a full download that the selected plan neither priced nor needs.
 				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
-				.filter(edge -> {
-					PlacementState consumer = selected.get(edge.consumer());
-					return consumer != null && consumer.execType() == org.apache.sysds.common.Types.ExecType.CP
-						&& consumer.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT;
-				})
+				.filter(edge -> requiresLocalInput(selected.get(edge.consumer()),
+					candidatesByConsumer.get(edge.consumer()), edge.inputPosition()))
 				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
 					selected.get(edge.consumer()))).sorted().toList();
 			if(obligations.isEmpty()) continue;
@@ -182,6 +197,25 @@ public final class NormalizedPlannerResults {
 				durableLocalProvenance(node, producer)));
 		}
 		return result.stream().sorted().toList();
+	}
+
+	private static boolean requiresLocalInput(PlacementState consumer,
+		CandidateSelectionReceipt candidate, int inputPosition) {
+		if(consumer == null)
+			return false;
+		if(consumer.execType() == org.apache.sysds.common.Types.ExecType.CP
+			&& consumer.output()
+				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
+			return true;
+		if(consumer.execType() != org.apache.sysds.common.Types.ExecType.FED)
+			return false;
+		if(candidate == null || !candidate.emission().emissionState().placementState().equals(consumer))
+			throw new IllegalArgumentException(
+				"Federated consumer is missing its exact selected candidate authority");
+		if(inputPosition < 0 || inputPosition >= candidate.rule().orderedInputs().size())
+			throw new IllegalArgumentException(
+				"Selected candidate does not cover an exact compiled input edge");
+		return !candidate.rule().orderedInputs().get(inputPosition).present();
 	}
 
 	/** Exact analysis-owned provenance for one selected FED/FOUT source. */

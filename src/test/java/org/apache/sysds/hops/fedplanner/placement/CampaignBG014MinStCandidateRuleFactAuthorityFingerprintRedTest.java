@@ -66,10 +66,9 @@ public class CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest {
 		DMLProgram program = compileHermeticB11();
 		PlacementAnalysis original = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		CandidateRuleFact mutatedFact = firstAvailableRuleWithFedFoutEmission(original);
-		PlacementAnalysis mutated = reconstructWithOneMutatedEmissionFact(original, program, mutatedFact);
-
 		String originalFingerprint = MinStExactCostFactsProducer.physicalAuthorityFingerprint(original);
 		try {
+			PlacementAnalysis mutated = reconstructWithOneMutatedEmissionFact(original, program, mutatedFact);
 			String mutatedFingerprint = MinStExactCostFactsProducer.physicalAuthorityFingerprint(mutated);
 			Assert.assertNotEquals(
 				"MINST_EXACT_DERIVATION_MUST_BIND_CANDIDATE_EMISSION_AUTHORITY",

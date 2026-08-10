@@ -195,32 +195,45 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 	}
 
 	private static void assertBranchJoinForwardUsesOnlyNeutralAuthorizedState(DpInvocationReceipt receipt) {
-		List<RewireTransientForwardEdge> schedulingOnly = receipt.semanticConsumption().rewireSnapshot()
+		List<RewireTransientForwardEdge> rowSumsForwards = receipt.semanticConsumption().rewireSnapshot()
 			.transientForwardEdges().stream().filter(edge -> {
 				String writeName = receipt.analysis().hop(edge.writeOccurrence()).orElseThrow().getName();
 				String readName = receipt.analysis().hop(edge.readOccurrence()).orElseThrow().getName();
-				boolean hasPhysicalOwner = receipt.analysis().compiledInputEdgesInCanonicalOrder().stream()
-					.anyMatch(fact -> fact.producer() == edge.writeOccurrence()
-						&& fact.consumer() == edge.readOccurrence());
-				boolean hasLogicalOwner = receipt.analysis().logicalTransientInputsInCanonicalOrder().stream()
-					.anyMatch(fact -> fact.sourceWrite() == edge.writeOccurrence()
-						&& fact.targetRead() == edge.readOccurrence());
-				return "rowSums_X_sq".equals(writeName) && "rowSums_X_sq".equals(readName)
-					&& !hasPhysicalOwner && !hasLogicalOwner;
+				return "rowSums_X_sq".equals(writeName) && "rowSums_X_sq".equals(readName);
 			}).toList();
-		Assert.assertFalse("LogReg must retain the branch-join scheduling dependency", schedulingOnly.isEmpty());
-		for(RewireTransientForwardEdge edge : schedulingOnly) {
-			Assert.assertTrue("branch-join read must be neutral-authorized only as CP/LOUT",
-				receipt.analysis().graph().node(edge.readOccurrence()).orElseThrow().legalAlternatives().stream()
-					.allMatch(state -> state.execType() == ExecType.CP
-						&& state.output() == FederatedOutput.LOUT && state.fType() == null));
+		Assert.assertEquals("LogReg must retain one exact rowSums_X_sq forward", 1, rowSumsForwards.size());
+		for(RewireTransientForwardEdge edge : rowSumsForwards) {
+			Assert.assertFalse("A logical TRead/TWrite edge must not fabricate a physical Hop input",
+				receipt.analysis().compiledInputEdgesInCanonicalOrder().stream().anyMatch(fact ->
+					fact.producer() == edge.writeOccurrence() && fact.consumer() == edge.readOccurrence()));
+			var logicalOwners = receipt.analysis().logicalTransientInputsInCanonicalOrder().stream()
+				.filter(fact -> fact.sourceWrite() == edge.writeOccurrence()
+					&& fact.targetRead() == edge.readOccurrence()).toList();
+			Assert.assertEquals("The CFG-proven rowSums value must have one exact logical owner",
+				1, logicalOwners.size());
+			var logical = logicalOwners.get(0);
+			var legal = receipt.analysis().graph().node(edge.readOccurrence()).orElseThrow().legalAlternatives();
+			Assert.assertEquals("Logical TRead must expose exactly the source CP/LOUT and FED/FOUT states",
+				List.of(logical.localSourceState(), logical.federatedSourceState()), legal);
+			Assert.assertTrue("TRead/TWrite alternatives must obey the top-level placement contract",
+				legal.stream().allMatch(state -> state.execType() == ExecType.CP
+						&& state.output() == FederatedOutput.LOUT && state.fType() == null
+					|| state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+						&& state.fType() == logical.federatedFType()));
+			Assert.assertSame("The selected TWrite and TRead must retain one exact placement",
+				receipt.normalizedResult().selectedStates().get(edge.writeOccurrence()),
+				receipt.normalizedResult().selectedStates().get(edge.readOccurrence()));
 			List<CandidateDecisionReceipt> decisions = receipt.semanticConsumption().semanticBlock()
 				.candidateDecisionReceipts().stream()
 					.filter(decision -> decision.candidateSnapshot().parentOccurrence() == edge.readOccurrence())
 					.toList();
-			Assert.assertFalse("branch-join read must retain a local candidate", decisions.isEmpty());
-			Assert.assertTrue("scheduling-only edge must not manufacture FED/FOUT authority",
-				decisions.stream().noneMatch(decision -> decision.allowFEDFOUT()));
+			Assert.assertEquals("Logical TRead must retain its local and federated candidate rows",
+				2, decisions.size());
+			Assert.assertTrue("Logical TRead candidates must never permit CP/FOUT or FED/LOUT",
+				decisions.stream().noneMatch(decision -> decision.allowCPFOUT() || decision.allowFEDLOUT()));
+			Assert.assertTrue("Every logical TRead candidate must consume only graph-authorized states",
+				decisions.stream().flatMap(decision -> decision.allowedEmissionStates().stream())
+					.allMatch(state -> legal.contains(state.placementState())));
 		}
 	}
 
