@@ -258,3 +258,30 @@
 - **잔여 이슈**: 새 commit/JAR의 immutable stage에서 실패했던 Heuristic LogReg-w2부터 planning-only를 재실행하고, 대표 KMeans/ALS/StepLM 및 MinST의 action owner/selected plan/registry trace를 확인해야 한다. 실제 runtime campaign은 이 검증 전 시작하지 않는다.
 - **잠재 회귀 위험**: 동일 worker pool에 여러 literal anchors가 존재할 수 있다. resolver는 exact durable-anchor equality를 physical-pool equivalence보다 먼저 사용하며, 회귀 테스트는 모든 LogReg action owner가 exact anchor를 직접 소유하는 federated DataOp인지 확인한다. 향후 non-literal authority chain이 Heuristic projection에서 끊기면 filtered graph의 fail-closed validation 또는 source-reachability 검사로 검출된다.
 - **의사결정 근거**: runtime fallback이나 opcode 가드를 추가하지 않고, 실제 FederationMap metadata의 canonical 소유권과 deterministic planner authority를 바로잡았다.
+
+## 10. DP 부분 recurrence가 아직 선택되지 않은 전역 exact FOUT owner를 즉시 요구함
+
+- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **환경/조건**: LAN planning-only, DP, P2P2D; KMeans workers=2, ALS workers=3, StepLM workers=1; commit `1608be47ba...` stage
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --dataset P2P2D --conf mkl-cost --alg <kmeans|als|steplm> --workers <2|3|1> ...`
+  - 최소 회귀: `mvn -q -DskipTests=false -Dtest=PlacementEmissionDerivedAuthorityRedTest test`
+  - KMeans 실패 로그: `/home/mchoi/g014-planning-audit-stage-715e910-1608be4-20260810-v1/g007-stage-a03aabf18eb5eef88ab8a53dd99cab367d213901f21dde1d94c8d3144febae89/results/fed2/mkl-cost/kmeans_dataset-P2P2D_coordinator_mkl-cost_plan-1608be4-lan-kmeans-w2-dp-20260810-r1_lan_coordinator1.log`
+- **관측 증상**: 세 workload 모두 runtime 진입 전 DP의 exact relocation 선택에서 `Active exact candidate has no source-reachable row`로 실패했다. 선택된 derived `FED/FOUT` row는 합법적인 exact ROW anchor를 가졌지만, 그 canonical owner가 현재 parent/child closure 밖에 있었다.
+- **원인 분석**:
+  - DP recurrence는 현재 parent와 선택된 child closure만 부분 assignment에 포함한다.
+  - `resolveAndValidatePartial`이 완성 플랜용 `feasibleVariants`를 그대로 호출해, authority graph에는 존재하지만 현재 부분 assignment에는 아직 없는 canonical FOUT owner까지 즉시 `FED/FOUT`으로 선택돼 있어야 한다고 요구했다.
+  - 이는 런타임 제약이나 후보 불법성이 아니라 **부분 상태와 완성 상태 검증 시점의 혼동**이었다. whole-program graph validation은 owner와 exact anchor/FType의 존재·합법성을 이미 검증하고, 최종 normalization은 owner의 실제 선택 상태를 다시 엄격하게 검증한다.
+- **해결 요약**:
+  - public/full `feasibleVariants`와 `resolveAndValidate`는 기존처럼 owner가 exact FOUT/FType으로 선택됐음을 계속 요구한다.
+  - DP의 `resolveAndValidatePartial`에서만 owner가 assignment에 진짜로 미할당인 경우 검사를 유예한다. owner가 할당됐지만 잘못된 state/FType이면 유예하지 않는다.
+  - 새 회귀는 같은 derived-FOUT row가 부분 assignment에서는 유지되지만, owner가 빠진 완성 assignment에서는 반드시 실패함을 동시에 고정한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionDerivedAuthorityRedTest.java`
+- **검증**:
+  - 신규 회귀는 수정 전 `Active exact candidate has no source-reachable row`로 RED였다 (`/tmp/g014-dp-partial-owner-red-20260810.log`).
+  - 수정 후 exact authority/selector/DP/MinST/Heuristic/FedAll 관련 **33 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-dp-partial-owner-focused-20260810.log`).
+- **잔여 이슈**: 새 commit/JAR의 immutable Docker stage에서 기존에 실패한 DP KMeans-w2, ALS-w3, StepLM-w1을 runtime 없이 먼저 재검증한다. 이후 complete normalization receipt가 exact owner/action을 포함하는지 확인한다.
+- **잠재 회귀 위험**: 부분 recurrence가 owner와 불일치하는 row를 일시 보존할 수 있어 탐색량이 늘 수 있다. 그러나 owner가 나중에 다른 state/FType으로 선택되면 최종 full validation이 fail closed해야 하며, 신규 회귀가 이 경계를 감지한다.
+- **의사결정 근거**: 후보를 닫거나 runtime fallback을 추가하지 않고, DP의 국소 recurrence와 whole-program exact authority 사이의 올바른 partial-validation 의미를 복원했다.

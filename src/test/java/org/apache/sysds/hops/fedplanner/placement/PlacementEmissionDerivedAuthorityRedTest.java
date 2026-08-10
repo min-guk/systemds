@@ -161,6 +161,23 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 	}
 
 	@Test
+	public void partialCandidateValidationDefersOnlyAnUnassignedExactAnchorOwner() throws Exception {
+		ExactFixture exact = exactFixture();
+		CandidateSelectionReceipt selected = exact.plan().selectedCandidateSelections().get(0);
+		Map<CompiledHopKey,PlacementState> partial = Map.of(
+			selected.rule().parentOccurrence(), FED_FOUT);
+
+		Assert.assertEquals("DP local recurrence must retain a derived-FOUT row whose durable owner "
+			+ "is outside the currently assigned child closure", List.of(selected),
+			CandidateSelections.resolveAndValidatePartial(exact.analysis(), exact.analysis().graph(),
+				exact.analysis().graph().relocationActions(), partial, List.of(selected)));
+		Assert.assertThrows("Complete-plan validation must still require the exact durable owner state",
+			IllegalStateException.class, () -> CandidateSelections.resolveAndValidate(exact.analysis(),
+				exact.analysis().graph(), exact.analysis().graph().relocationActions(), partial,
+				List.of(selected)));
+	}
+
+	@Test
 	public void derivedFalseIsAppliedInsideTheSameTransaction() {
 		Fixture fixture = fixture(false);
 		fixture.firstHop().setFederatedOutputDerived(true);

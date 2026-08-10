@@ -158,6 +158,14 @@ public final class CandidateSelections {
 		PlacementAnalysis analysis, NeutralPlacementGraph authorityGraph,
 		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment) {
+		return feasibleVariants(analysis, authorityGraph, actionUniverse, assignment, false);
+	}
+
+	private static Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasibleVariants(
+		PlacementAnalysis analysis, NeutralPlacementGraph authorityGraph,
+		Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment,
+		boolean allowUnassignedDerivedFoutOwner) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
@@ -178,7 +186,8 @@ public final class CandidateSelections {
 				CandidateSelectionReceipt base = new CandidateSelectionReceipt(
 					fact.key(), emission, List.of());
 				activeRows.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
-				if(foutMaterializationActionReachable(authorityGraph, fact, base, assignment, false)
+				if(foutMaterializationActionReachable(authorityGraph, fact, base, assignment,
+					allowUnassignedDerivedFoutOwner)
 					&& receiptReachable(analysis, actionUniverse, assignment, base))
 					result.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
 			}
@@ -353,8 +362,12 @@ public final class CandidateSelections {
 		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> selections) {
+		// A DP recurrence owns only its current parent/child closure. The authority graph has
+		// already proven that a derived FOUT row names a legal durable owner, so defer that
+		// owner's placement only while it is genuinely absent from this partial assignment.
+		// Complete-plan validation remains strict through resolveAndValidate(...).
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible =
-			feasibleVariants(analysis, authorityGraph, actionUniverse, assignment);
+			feasibleVariants(analysis, authorityGraph, actionUniverse, assignment, true);
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
 		for(CandidateSelectionReceipt receipt : Objects.requireNonNull(selections, "selections")) {
 			Objects.requireNonNull(receipt, "candidate selection");
