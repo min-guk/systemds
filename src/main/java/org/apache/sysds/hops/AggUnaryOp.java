@@ -507,12 +507,15 @@ public class AggUnaryOp extends MultiThreadedHop
 
 	private static boolean hasPlannerMaterializationBoundary(Hop hop) {
 		long hopId = hop.getHopID();
-		// A selected relocation/materialization is an executable plan boundary. The
-		// ternary-aggregate rewrite must not erase an intermediate result whose exact
-		// movement was selected and costed by the planner.
+		// A selected relocation/materialization producer or consumer input is an
+		// executable plan boundary. Ternary fusion must not erase either endpoint of
+		// the exact movement edge selected and costed by the planner.
 		return FederatedRefedRegistry.hasEntry(hopId)
 			|| FederatedFoutMaterializeRegistry.hasEntry(hopId)
-			|| FederatedLocalMaterializeRegistry.hasEntry(hopId);
+			|| FederatedLocalMaterializeRegistry.hasEntry(hopId)
+			|| FederatedRefedRegistry.hasSelectedConsumerInput(hopId)
+			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(hopId)
+			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(hopId);
 	}
 	
 	private static boolean isCompareOperator(OpOp2 opOp2)

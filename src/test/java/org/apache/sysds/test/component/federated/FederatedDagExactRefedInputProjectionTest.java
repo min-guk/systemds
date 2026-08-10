@@ -20,6 +20,7 @@
 package org.apache.sysds.test.component.federated;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -29,16 +30,22 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.common.Types.ValueType;
-import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Data;
@@ -47,6 +54,8 @@ import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.MapMultChain.ChainType;
 import org.apache.sysds.lops.compile.Dag;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry.ConsumerInputSpec;
 import org.apache.sysds.parser.DMLProgram;
@@ -59,6 +68,8 @@ public class FederatedDagExactRefedInputProjectionTest {
 	@After
 	public void clearRegistry() {
 		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
 	}
 
 	@Test
@@ -150,6 +161,45 @@ public class FederatedDagExactRefedInputProjectionTest {
 			ChainType.NONE, outer.checkMapMultChain());
 	}
 
+	@Test
+	public void selectedLocalConsumerInsideBinaryTernaryAggregateRemainsExplicit() throws Exception {
+		DataOp x = localHop("X");
+		DataOp weights = localHop("weights");
+		BinaryOp squared = HopRewriteUtils.createBinary(x, new LiteralOp(2), OpOp2.POW);
+		BinaryOp product = HopRewriteUtils.createBinary(squared, weights, OpOp2.MULT);
+		AggUnaryOp sum = new AggUnaryOp("sum", DataType.SCALAR, ValueType.FP64,
+			AggOp.SUM, Direction.RowCol, product);
+
+		assertTrue("The unmodified expression should be eligible for ternary-aggregate fusion",
+			invokeTernaryAggregateRewriteApplicable(sum));
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, x.getHopID(),
+			List.of(new FederatedLocalMaterializeRegistry.ConsumerInputSpec(squared.getHopID(), 0)),
+			"FULL", "test-selected-local-consumer");
+
+		assertFalse("The selected X-to-square input must remain an explicit Lop boundary",
+			invokeTernaryAggregateRewriteApplicable(sum));
+	}
+
+	@Test
+	public void selectedLocalConsumerOnNaryTernaryAggregateRemainsExplicit() throws Exception {
+		DataOp left = localHop("left");
+		DataOp middle = localHop("middle");
+		DataOp selected = localHop("selected");
+		NaryOp product = new NaryOp("product", DataType.MATRIX, ValueType.FP64,
+			OpOpN.MULT, left, middle, selected);
+		AggUnaryOp sum = new AggUnaryOp("sum", DataType.SCALAR, ValueType.FP64,
+			AggOp.SUM, Direction.RowCol, product);
+
+		assertTrue("The unmodified n-ary expression should be eligible for ternary-aggregate fusion",
+			invokeTernaryAggregateRewriteApplicable(sum));
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, selected.getHopID(),
+			List.of(new FederatedLocalMaterializeRegistry.ConsumerInputSpec(product.getHopID(), 2)),
+			"FULL", "test-selected-local-consumer");
+
+		assertFalse("The selected input of the fused n-ary consumer must remain explicit",
+			invokeTernaryAggregateRewriteApplicable(sum));
+	}
+
 	private static Fixture fixture(boolean duplicateLocal, boolean reorderPhysicalInputs) {
 		DataOp localHop = localHop("L");
 		DataOp otherHop = localHop("R");
@@ -200,6 +250,12 @@ public class FederatedDagExactRefedInputProjectionTest {
 			List.class, StatementBlock.class, List.class);
 		insert.setAccessible(true);
 		return (boolean) insert.invoke(new Dag<>(), lops, null, logicalHopRoots);
+	}
+
+	private static boolean invokeTernaryAggregateRewriteApplicable(AggUnaryOp aggregate) throws Exception {
+		Method applicable = AggUnaryOp.class.getDeclaredMethod("isTernaryAggregateRewriteApplicable");
+		applicable.setAccessible(true);
+		return (boolean) applicable.invoke(aggregate);
 	}
 
 	private record Fixture(DataOp localHop, Hop consumerHop, Data localLop, Data otherLop,

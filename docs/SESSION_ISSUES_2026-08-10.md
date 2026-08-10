@@ -452,3 +452,38 @@
 - **잔여 이슈**: 수정 commit/JAR로 immutable stage를 만든 뒤 실패했던 PCA-w1 FedAll을 먼저 planning-only 재실행하고, registry trace가 `localInputs=[hop41/input0]`만 포함하며 receipt의 `runtime_executed=false`, `execution_seconds=0.0`인지 확인한다. 그 다음 아직 실행하지 않은 FedAll workload부터 진행한다.
 - **잠재 회귀 위험**: 동일 source/output descriptor가 여러 FunctionOp에 부정확하게 공유되거나 compiled occurrence가 중복되면 잘못 dedup할 수 있다. projection은 FunctionOp/output identity, 동일 scope, exact compiled source edge, 유일성 네 조건을 모두 요구하며 모호한 경우 fail-closed한다. 일반 consumer는 기존 identity를 그대로 보존한다.
 - **의사결정 근거**: runtime fallback이나 유효 candidate 폐쇄 없이, planner가 선택한 논리 obligation을 compiler-owned 실제 `FunctionCallCP` 입력 authority로 정확히 내리는 emission 계약을 복원했다.
+
+## 17. L2SVM FedAll의 ternary-aggregate fusion이 선택된 LOCAL consumer 입력 경계를 지움
+
+- **상태**: 소스 수정/최소 회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **환경/조건**: LAN, workers=1, P2P2D L2SVM, FedAll(`mkl-fout`), planning-only; commit `24f7826440...` immutable stage
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-fout --alg l2svm ...`
+  - 최소 회귀: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.FederatedDagExactRefedInputProjectionTest test`
+  - 실패 로그: `/home/mchoi/g014-planning-audit-stage-715e910-24f7826-20260810-v1/g007-stage-3e92545a202d43bf5f5e19d68adc06fd34426af617d1a62a732a1a05c02e05ba/results/fed1/mkl-fout/l2svm_dataset-P2P2D_coordinator_mkl-fout_plan-24f7826-lan-l2svm-w1-fedall-20260810-r1_lan_coordinator1.log`
+- **관측 증상**:
+  - FedAll은 source hop 163(`Xd`)을 `FED/FOUT/FULL`로, CP consumer hop 418(`Xd^2`)과 hop 420(`out * Y * Xd`)을 `CP/LOUT`으로 선택했다.
+  - emission line 744는 LOCAL authority를 정확히 `hop418/input0`과 `hop420/input2`에만 등록했다.
+  - 이후 unary aggregate rewrite가 두 식을 `TernaryAggregate`로 fusion하면서 hop 418/420 Lop을 지웠다. lowering은 runtime 진입 전에 line 958의 `cannot project exact input authority through a fused or mismatched consumer hop=418`로 fail-closed 했다.
+  - worker control은 planning-only로 skip됐고 execution-time footer도 생성되지 않아 실제 workload runtime은 실행되지 않았다.
+- **원인 분석**:
+  - 기존 fusion guard는 registry의 producer hop만 물리 경계로 인식했다.
+  - 그러나 exact movement는 `(producer hop, consumer hop, input position)` edge에 대한 계약이다. producer 자체가 아니라 선택된 consumer 입력이 fusion 내부에 있을 때도 그 consumer Lop을 지우면 exact authority를 투영할 수 없다.
+  - 이는 FedAll 선택 철학이나 L2SVM opcode 지원 문제가 아니라 planner emission 이후 Hop→Lop rewrite가 선택된 edge의 consumer endpoint를 소실한 문제다.
+- **해결 요약**:
+  - REFED/FOUT/LOCAL 세 registry에 특정 hop이 선택된 consumer 입력을 소유하는지 확인하는 typed query를 추가했다.
+  - ternary-aggregate rewrite boundary는 기존 selected producer뿐 아니라 selected consumer 입력도 검사한다.
+  - binary `sum((Xd^2) * sv)`와 n-ary `sum(out * Y * Xd)` 모두 선택된 consumer edge가 있으면 fusion만 억제하고, planner candidate/selection/cost는 변경하지 않는다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/AggUnaryOp.java`
+  - `src/main/java/org/apache/sysds/lops/compile/FederatedRefedRegistry.java`
+  - `src/main/java/org/apache/sysds/lops/compile/FederatedFoutMaterializeRegistry.java`
+  - `src/main/java/org/apache/sysds/lops/compile/FederatedLocalMaterializeRegistry.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedDagExactRefedInputProjectionTest.java`
+- **검증**:
+  - 신규 binary/n-ary 회귀 두 건은 수정 전 모두 fusion이 유지되어 RED였다 (`/tmp/g014-l2svm-ternary-consumer-boundary-red-20260810.log`).
+  - registry consumer-boundary 인식 수정 후 전체 test class **7 tests, failures=0, errors=0**로 GREEN이었다 (`/tmp/g014-l2svm-ternary-consumer-boundary-green-20260810.log`).
+  - 새 commit/JAR immutable stage의 실패 셀 우선 Docker planning-only 검증은 아직 남아 있다.
+- **잔여 이슈**: L2SVM-w1 FedAll을 새 stage에서 먼저 재실행해 hop 418/420이 explicit Lop으로 남고 LOCAL exact input rewiring이 성공하는지 확인한다. 성공 후 아직 미실행인 FedAll workload부터 Heuristic, MinST 순으로 planning-only 로그 감사를 계속한다.
+- **잠재 회귀 위험**: registry lifecycle이 잘못되어 stale consumer authority가 남으면 불필요하게 fusion을 막을 수 있다. 기존 registry clear/snapshot lifecycle 테스트, boundary 없는 expression이 여전히 fusion 대상이라는 신규 pre-registration assertion, immutable Docker plan fingerprint 비교로 감지한다.
+- **의사결정 근거**: runtime fallback이나 opcode별 후보 폐쇄를 추가하지 않고, planner가 선택·비용화한 exact movement edge를 후속 lowering 최적화가 지우지 못하도록 실행 계약을 보존했다.

@@ -117,6 +117,17 @@ public final class FederatedLocalMaterializeRegistry {
 		return false;
 	}
 
+	/** True when the planner selected at least one input of this consumer for local materialization. */
+	public static boolean hasSelectedConsumerInput(long consumerHopId) {
+		for(Map<Long, LocalMaterializeSpec> entries : LOCAL_MATERIALIZE.values())
+			if(entries != null)
+				for(LocalMaterializeSpec spec : entries.values())
+					if(spec.getConsumerInputs().stream()
+						.anyMatch(input -> input.consumerHopId() == consumerHopId))
+						return true;
+		return false;
+	}
+
 	public static Map<Long, LocalMaterializeSpec> snapshot(long sbId) {
 		Map<Long, LocalMaterializeSpec> defaults = LOCAL_MATERIALIZE.get(-1L);
 		Map<Long, LocalMaterializeSpec> entries = LOCAL_MATERIALIZE.get(sbId);

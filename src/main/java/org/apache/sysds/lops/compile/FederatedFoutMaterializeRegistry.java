@@ -120,6 +120,17 @@ public final class FederatedFoutMaterializeRegistry {
 		return false;
 	}
 
+	/** True when the planner selected at least one input of this consumer for FOUT materialization. */
+	public static boolean hasSelectedConsumerInput(long consumerHopId) {
+		for(Map<Long, MaterializeSpec> entries : MATERIALIZE_ANCHORS.values())
+			if(entries != null)
+				for(MaterializeSpec spec : entries.values())
+					if(spec.getConsumerInputs().stream()
+						.anyMatch(input -> input.consumerHopId() == consumerHopId))
+						return true;
+		return false;
+	}
+
 	public static Map<Long, MaterializeSpec> snapshot(long sbId) {
 		Map<Long, MaterializeSpec> entries = MATERIALIZE_ANCHORS.get(sbId);
 		if (entries == null || entries.isEmpty())

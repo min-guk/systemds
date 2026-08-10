@@ -278,6 +278,17 @@ public final class FederatedRefedRegistry {
 		return false;
 	}
 
+	/** True when the planner selected at least one input of this consumer for REFED materialization. */
+	public static boolean hasSelectedConsumerInput(long consumerHopId) {
+		for(Map<Long, AnchorSpec> anchors : REFED_ANCHORS.values())
+			if(anchors != null)
+				for(AnchorSpec spec : anchors.values())
+					if(spec.getConsumerInputs().stream()
+						.anyMatch(input -> input.consumerHopId() == consumerHopId))
+						return true;
+		return false;
+	}
+
 	public static Map<Long, AnchorSpec> snapshot(long sbId) {
 		Map<Long, AnchorSpec> anchors = REFED_ANCHORS.get(sbId);
 		if (anchors == null || anchors.isEmpty())
