@@ -90,10 +90,13 @@ public class CampaignBG014PlanningTraceContractTest {
 		String source = Files.readString(EMISSION);
 		assertTrue("emission audit lacks a bounded per-occurrence record",
 			source.contains("\"Emission-Select\""));
+		assertTrue("emission audit lacks a bounded exact candidate-row record",
+			source.contains("\"Emission-Candidate\""));
 		assertTrue("emission audit lacks one exact transaction summary",
 			source.contains("\"Emission-Summary\""));
 		for(String field : new String[] {"key=", "nodeKind=", "emittedWork=", "compiledOccurrence=",
-			"selected=", "planFingerprint=", "hopMutations=", "registryWrites="})
+			"selected=", "inputs=", "executionFType=", "selectedCandidates=", "planFingerprint=",
+			"placementFingerprint=", "candidateFingerprint=", "hopMutations=", "registryWrites="})
 			assertTrue("emission audit is missing field " + field, source.contains(field));
 	}
 

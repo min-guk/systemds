@@ -371,6 +371,9 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences = occurrenceIndex(analysis);
 		List<Node> decisions = analysis.graph().decisionNodes().stream()
 			.sorted(Comparator.comparing(Node::key)).toList();
+		List<CandidateSelectionReceipt> candidates = result.selectedCandidateSelections().stream()
+			.sorted().toList();
+		StringBuilder placementAuthority = new StringBuilder();
 		long compiledOccurrences = 0;
 		long emittedWork = 0;
 		long fed = 0;
@@ -391,6 +394,8 @@ public final class PlacementEmissionTransaction {
 				fout++;
 			if(emission.derivedFedFout())
 				derivedFout++;
+			placementAuthority.append(node.key().normalizedSignature()).append('=')
+				.append(emission.normalizedSignature()).append('\n');
 			HopOccurrenceProjection occurrence = occurrences.get(node.key());
 			if(occurrence == null)
 				throw new PlacementEmissionException("Emission trace is missing occurrence ownership");
@@ -403,9 +408,31 @@ public final class PlacementEmissionTransaction {
 					+ " selected=" + emission.placementState().normalizedSignature()
 					+ " derivedFedFout=" + emission.derivedFedFout());
 		}
+		for(CandidateSelectionReceipt candidate : candidates) {
+			HopOccurrenceProjection occurrence = exactOccurrence(occurrences,
+				candidate.rule().parentOccurrence());
+			if(occurrence == null)
+				throw new PlacementEmissionException("Emission candidate trace is missing occurrence ownership");
+			String inputs = String.join(",", candidate.rule().orderedInputs().stream()
+				.map(PlacementAnalysis.CandidateInputState::normalizedSignature).toList());
+			FederatedPlannerTrace.logLazy(occurrence.hop(), "Emission-Candidate", () ->
+				"planner=" + result.plannerId()
+					+ " key=" + candidate.rule().parentOccurrence().normalizedSignature()
+					+ " inputs=" + inputs
+					+ " emission=" + candidate.emission().emissionState().placementState().normalizedSignature()
+					+ " executionFType=" + (candidate.emission().executionFType() == null
+						? "-" : candidate.emission().executionFType().name())
+					+ " derivedFedFout=" + candidate.emission().emissionState().derivedFedFout()
+					+ " derivedFoutAction=" + (candidate.emission().derivedFoutAction() == null
+						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature())));
+		}
+		String candidateAuthority = String.join("\n", candidates.stream()
+			.map(CandidateSelectionReceipt::normalizedSignature).toList());
 		FederatedPlannerTrace.logGlobal("Emission-Summary", "planner=" + result.plannerId()
 			+ " analysis=" + result.analysisFingerprint()
 			+ " planFingerprint=" + result.normalizedPlanFingerprint()
+			+ " placementFingerprint=" + sha256(placementAuthority.toString())
+			+ " candidateFingerprint=" + sha256(candidateAuthority)
 			+ " decisions=" + decisions.size()
 			+ " compiledOccurrences=" + compiledOccurrences
 			+ " syntheticDecisions=" + (decisions.size() - compiledOccurrences)
@@ -415,6 +442,7 @@ public final class PlacementEmissionTransaction {
 			+ " selectedDerivedFOUT=" + derivedFout
 			+ " relocations=" + result.selectedRelocations().size()
 			+ " localMaterializations=" + result.selectedLocalMaterializations().size()
+			+ " selectedCandidates=" + candidates.size()
 			+ " hopMutations=" + prepared.hopWrites().size()
 			+ " registryWrites=" + prepared.registryWrites().size());
 	}
