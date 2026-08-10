@@ -6398,6 +6398,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 		if (traceTargets.isEmpty())
 			return;
+		// With no explicit hop filter every conflict hop would repeat the exact same
+		// root-score decomposition. Keep one deterministic representative; explicit
+		// operator-selected hop filters retain their requested targets.
+		if (!FederatedPlannerTrace.hasExplicitHopFilter() && traceTargets.size() > 1) {
+			Hop representative = traceTargets.iterator().next();
+			traceTargets.clear();
+			traceTargets.add(representative);
+		}
 
 		DecisionMapScoreBreakdown currentScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, currentDecisions, scoreCache);
@@ -6419,9 +6427,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				currentScore.incompatiblePlanCount, nextScore.incompatiblePlanCount,
 				currentScore.exactSelectionConflictHopIDs, nextScore.exactSelectionConflictHopIDs,
 				currentScore.rootContributions.size(), nextScore.rootContributions.size()));
+			int rootDetailBudget = FederatedPlannerTrace.getMaxEdgeLogsPerHop();
+			int rootDetails = 0;
+			int rootDetailsOmitted = 0;
 			for (RootContribution contribution : nextScore.rootContributions.values()) {
 				if (!contribution.additionalRoot && !contribution.virtualClone)
 					continue;
+				if (rootDetails >= rootDetailBudget) {
+					rootDetailsOmitted++;
+					continue;
+				}
 				FederatedPlannerTrace.log(traceHop, "DP-DecisionMap-Root", String.format(Locale.ROOT,
 					"iter=%d rootHop=%d rootOrig=%d additional=%s virtual=%s exec=%s out=%s "
 						+ "cost=%.6f mult=%.6f loop=%s",
@@ -6435,7 +6450,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					contribution.cost,
 					contribution.multiplicity,
 					contribution.loopContext));
+				rootDetails++;
 			}
+			if (rootDetailsOmitted > 0)
+				FederatedPlannerTrace.log(traceHop, "DP-DecisionMap-RootSummary",
+					"iter=" + iter + " logged=" + rootDetails + " omitted=" + rootDetailsOmitted);
 		}
 
 		logTransientAlternativeScores(
@@ -7204,9 +7223,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				altScore.additionalRootCost,
 				nextScore.virtualAdditionalRootCost,
 				altScore.virtualAdditionalRootCost));
+			int rootDetailBudget = FederatedPlannerTrace.getMaxEdgeLogsPerHop();
+			int rootDetails = 0;
+			int rootDetailsOmitted = 0;
 			for (RootContribution contribution : altScore.rootContributions.values()) {
 				if (!contribution.additionalRoot && !contribution.virtualClone)
 					continue;
+				if (rootDetails >= rootDetailBudget) {
+					rootDetailsOmitted++;
+					continue;
+				}
 				FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-AltRoot", String.format(Locale.ROOT,
 					"iter=%d alt=%s rootHop=%d rootOrig=%d additional=%s virtual=%s exec=%s out=%s "
 						+ "cost=%.6f mult=%.6f loop=%s",
@@ -7221,7 +7247,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					contribution.cost,
 					contribution.multiplicity,
 					contribution.loopContext));
+				rootDetails++;
 			}
+			if (rootDetailsOmitted > 0)
+				FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-AltRootSummary",
+					"iter=" + iter + " alt=" + alternative + " logged=" + rootDetails
+						+ " omitted=" + rootDetailsOmitted);
 		}
 
 		logTransientBundleAlternativeScores(
@@ -7303,8 +7334,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				nextScore.virtualAdditionalRootCost,
 				altScore.virtualAdditionalRootCost,
 				bundleHopIDs));
-			logDecisionMapRootDifferences(hopRef, "DP-DecisionMap-BundleRoot", iter, alternative, nextScore, altScore,
-				logAllRoots);
+			logDecisionMapRootDifferences(hopRef, "DP-DecisionMap-BundleRoot",
+				"DP-DecisionMap-BundleRootSummary", iter, alternative, nextScore, altScore, logAllRoots);
 
 			if (ENABLE_TRANSIENT_FAMILY_SCORING_TRACE && familyHopIDs.size() > 1) {
 				Map<Long, FederatedOutput> familyAltDecisions = new HashMap<>(nextDecisions);
@@ -7346,13 +7377,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					nextScore.virtualAdditionalRootCost,
 					familyAltScore.virtualAdditionalRootCost,
 					familyHopIDs));
-				logDecisionMapRootDifferences(hopRef, "DP-DecisionMap-FamilyRoot", iter, alternative, nextScore,
+				logDecisionMapRootDifferences(hopRef, "DP-DecisionMap-FamilyRoot",
+					"DP-DecisionMap-FamilyRootSummary", iter, alternative, nextScore,
 					familyAltScore, logFamilyRoots);
 			}
 		}
 	}
 
-	private static void logDecisionMapRootDifferences(Hop hopRef, String traceTag, int iter,
+	private static void logDecisionMapRootDifferences(Hop hopRef, String traceTag, String summaryTraceTag, int iter,
 		FederatedOutput alternative, DecisionMapScoreBreakdown chosenScore, DecisionMapScoreBreakdown altScore,
 		boolean logAllRoots) {
 
@@ -7366,11 +7398,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		LinkedHashSet<Long> rootHopIDs = new LinkedHashSet<>();
 		rootHopIDs.addAll(chosenByRootHopID.keySet());
 		rootHopIDs.addAll(altByRootHopID.keySet());
+		int rootDetailBudget = FederatedPlannerTrace.getMaxEdgeLogsPerHop();
+		int rootDetails = 0;
+		int rootDetailsOmitted = 0;
 		for (long rootHopID : rootHopIDs) {
 			RootContribution chosenContribution = chosenByRootHopID.get(rootHopID);
 			RootContribution altContribution = altByRootHopID.get(rootHopID);
 			if (!hasMeaningfulRootDifference(chosenContribution, altContribution))
 				continue;
+			if (rootDetails >= rootDetailBudget) {
+				rootDetailsOmitted++;
+				continue;
+			}
 			FederatedPlannerTrace.log(hopRef, traceTag, String.format(Locale.ROOT,
 				"iter=%d alt=%s rootHop=%d rootOrig=%d additional=%s virtual=%s "
 					+ "chosenExec=%s chosenOut=%s chosenCost=%.6f chosenMult=%.6f chosenLoop=%s "
@@ -7391,7 +7430,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				formatRootCost(altContribution),
 				formatRootMultiplicity(altContribution),
 				formatRootLoop(altContribution)));
+			rootDetails++;
 		}
+		if (rootDetailsOmitted > 0)
+			FederatedPlannerTrace.log(hopRef, summaryTraceTag,
+				"iter=" + iter + " alt=" + alternative + " logged=" + rootDetails
+					+ " omitted=" + rootDetailsOmitted);
 	}
 
 	private static Map<Long, RootContribution> indexRootContributionsByRootHop(

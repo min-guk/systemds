@@ -66,6 +66,11 @@ public final class FederatedPlannerTrace {
 		return TRACE_HOP_IDS.isEmpty() || TRACE_HOP_IDS.contains(hop.getHopID());
 	}
 
+	/** True when the operator intentionally restricted hop-level trace output. */
+	public static boolean hasExplicitHopFilter() {
+		return !TRACE_HOP_IDS.isEmpty();
+	}
+
 	public static int getMaxEdgeLogsPerHop() {
 		return TRACE_MAX_EDGES;
 	}

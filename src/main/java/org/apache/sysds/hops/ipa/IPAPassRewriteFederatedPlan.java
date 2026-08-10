@@ -27,6 +27,7 @@ import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator;
@@ -87,12 +88,21 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
 			FederatedPlanner.valueOf(splanner.toUpperCase()) :
 			FederatedPlanner.COMPILE_FED_HEURISTIC;
+		AFederatedPlanner implementation = Objects.requireNonNull(
+			FederatedPlannerFactory.create(planner), "compiled federated planner implementation");
+		FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + planner
+			+ " impl=" + implementation.getClass().getName()
+			+ " analysis=" + analysis.analysisFingerprint());
 		// run planner rewrite with forced federated exec types
 		long tFedPlanner = System.nanoTime();
 		AFederatedPlanner.PlannerInvocationReceipt receipt =
-			FederatedPlannerFactory.create(planner).rewriteProgram(prog, fgraph, fcallSizes, analysis);
+			implementation.rewriteProgram(prog, fgraph, fcallSizes, analysis);
 		if(receipt.analysis() != analysis)
 			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+		FederatedPlannerTrace.logGlobal("Planner-Complete", "planner=" + planner
+			+ " impl=" + implementation.getClass().getName()
+			+ " receipt=" + receipt.getClass().getName()
+			+ " analysis=" + analysis.analysisFingerprint());
 		PlacementShadowCoordinator.record(shadow.observe(prog));
 		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 		receiptConsumer.accept(receipt);
