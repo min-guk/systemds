@@ -286,11 +286,16 @@ public final class PlacementAnalysis {
 			if(emissionState.derivedFedFout()
 				&& (state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT))
 				throw new IllegalArgumentException("Derived FOUT authority requires a FED/FOUT emission state");
-			if(emissionState.derivedFedFout() != (derivedFoutAction != null))
-				throw new IllegalArgumentException("Derived FOUT emission requires one exact materialization action");
+			boolean cpFout = state.execType() == ExecType.CP
+				&& state.output() == FederatedOutput.FOUT;
+			if(emissionState.derivedFedFout() && derivedFoutAction == null)
+				throw new IllegalArgumentException("Derived FED/FOUT emission requires one exact materialization action");
+			if(derivedFoutAction != null && !emissionState.derivedFedFout() && !cpFout)
+				throw new IllegalArgumentException(
+					"Only CP/FOUT or derived FED/FOUT emissions may carry an output materialization action");
 			if(derivedFoutAction != null && (derivedFoutAction.targetPlacement() != state
 				|| derivedFoutAction.materializationFType() != state.fType()))
-				throw new IllegalArgumentException("Derived FOUT action and emission identities differ");
+				throw new IllegalArgumentException("FOUT materialization action and emission identities differ");
 		}
 
 		public String normalizedSignature() {

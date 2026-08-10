@@ -30,10 +30,11 @@ import org.junit.Test;
 /** Regression contract: exact ABSENT_LOCAL candidate inputs must survive lowering authority. */
 public class CampaignBG014AbsentLocalMaterializationLoweringRedTest {
 	@Test
-	public void fedAllRetainsExactLocalInputPreparationForFederatedConsumer() throws Exception {
+	public void fedAllPricesAndAvoidsOptionalLocalInputPreparation() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compileFixture());
+		FedAllPlacementAdapter.Result selection = new FedAllPlacementAdapter().select(analysis);
 		NormalizedPlannerResult plan = PlacementPlannerAdapter.normalize(
-			analysis, new FedAllPlacementAdapter().select(analysis));
+			analysis, selection);
 		Map<CompiledHopKey,CandidateSelectionReceipt> candidates = new IdentityHashMap<>();
 		for(CandidateSelectionReceipt candidate : plan.selectedCandidateSelections())
 			candidates.put(candidate.rule().parentOccurrence(), candidate);
@@ -50,19 +51,32 @@ public class CampaignBG014AbsentLocalMaterializationLoweringRedTest {
 					&& !candidate.rule().orderedInputs().get(edge.inputPosition()).present();
 			})
 			.toList();
-		Assert.assertFalse("fixture must select a FED candidate with an exact ABSENT_LOCAL matrix input",
+		long avoidableLocalRows = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> fact.status()
+				== PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE)
+			.filter(fact -> fact.allowedEmissionFacts().stream().anyMatch(emission ->
+				emission.emissionState().placementState().execType() == ExecType.FED))
+			.flatMap(fact -> java.util.stream.IntStream.range(0,
+				fact.key().orderedInputs().size()).filter(position ->
+					!fact.key().orderedInputs().get(position).present()).mapToObj(position ->
+						analysis.compiledInputEdgesInCanonicalOrder().stream().filter(edge ->
+							edge.consumer() == fact.key().parentOccurrence()
+								&& edge.inputPosition() == position).findFirst().orElse(null)))
+			.filter(java.util.Objects::nonNull)
+			.filter(edge -> analysis.graph().node(edge.producer()).orElseThrow().legalAlternatives()
+				.stream().anyMatch(state -> isFedFout(state))).count();
+		Assert.assertTrue("fixture must expose an optional exact ABSENT_LOCAL path",
+			avoidableLocalRows > 0);
+		Assert.assertTrue("FedAll must avoid optional FOUT-to-local transfers after FED/FOUT ties",
 			expected.isEmpty());
 
 		List<LocalMaterializationActionKey> locals = plan.selectedLocalMaterializations();
-		for(CompiledInputEdgeFact edge : expected)
-			Assert.assertTrue("selected ABSENT_LOCAL edge must own exact FOUT-to-local lowering authority: "
-				+ edge.producer().normalizedSignature() + " -> " + edge.consumer().normalizedSignature()
-				+ '@' + edge.inputPosition() + " locals=" + locals.stream()
-					.map(LocalMaterializationActionKey::normalizedSignature).toList(), locals.stream().anyMatch(local ->
-					local.sourceOccurrence() == edge.producer() && local.obligations().stream().anyMatch(obligation ->
-						obligation.consumerOccurrence() == edge.consumer()
-							&& obligation.inputPosition() == edge.inputPosition()
-							&& obligation.requiredPlacement().equals(plan.selectedStates().get(edge.consumer())))));
+		Assert.assertTrue("No optional local materialization may remain in the selected lowering",
+			locals.isEmpty());
+		Assert.assertEquals("FedAll's relocation objective must include every exact physical transfer "
+			+ "that canonical lowering will emit",
+			RelocationSelections.physicalEmissionCount(selection.selectedRelocations()) + locals.size(),
+			selection.score().relocationCount());
 	}
 
 	private static boolean isFedFout(PlacementState state) {

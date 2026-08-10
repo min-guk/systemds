@@ -349,13 +349,13 @@ public final class PlacementEmissionTransaction {
 
 		List<SelectedRelocation> relocations = exactRelocations(
 			analysis, selectedStates, selectedCandidates, selectedChoices, selectedRelocations);
-		List<SelectedDerivedFout> derivedFoutMaterializations = exactDerivedFoutMaterializations(
+		List<SelectedFoutMaterialization> foutMaterializations = exactFoutMaterializations(
 			analysis, occurrences, selected, selectedCandidates);
 		List<LocalMaterializationActionKey> locals = exactLocalMaterializations(analysis, occurrences,
 			selected, selectedCandidates, selectedLocals);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(
 			analysis, occurrences, selected, selectedCandidates, relocations,
-			derivedFoutMaterializations, locals);
+			foutMaterializations, locals);
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites));
 	}
 
@@ -424,7 +424,7 @@ public final class PlacementEmissionTransaction {
 					+ " executionFType=" + (candidate.emission().executionFType() == null
 						? "-" : candidate.emission().executionFType().name())
 					+ " derivedFedFout=" + candidate.emission().emissionState().derivedFedFout()
-					+ " derivedFoutAction=" + (candidate.emission().derivedFoutAction() == null
+					+ " foutMaterializationAction=" + (candidate.emission().derivedFoutAction() == null
 						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature())));
 		}
 		prepared.registryWrites().stream()
@@ -461,6 +461,10 @@ public final class PlacementEmissionTransaction {
 			+ " selectedDerivedFOUT=" + derivedFout
 			+ " relocations=" + result.selectedRelocations().size()
 			+ " localMaterializations=" + result.selectedLocalMaterializations().size()
+			+ " cpFoutMaterializations="
+				+ CandidateSelections.cpFoutPhysicalEmissionCount(candidates)
+			+ " derivedFoutMaterializations="
+				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidates)
 			+ " selectedCandidates=" + candidates.size()
 			+ " hopMutations=" + prepared.hopWrites().size()
 			+ " registryWrites=" + prepared.registryWrites().size());
@@ -659,13 +663,13 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, PlacementEmissionState> selected,
 		List<CandidateSelectionReceipt> selectedCandidates,
 		List<SelectedRelocation> relocations,
-		List<SelectedDerivedFout> derivedFoutMaterializations,
+		List<SelectedFoutMaterialization> foutMaterializations,
 		List<LocalMaterializationActionKey> locals) {
 		Map<RegistrySlot, RegistryWrite> writesBySlot = new LinkedHashMap<>();
-		for(SelectedDerivedFout selectedDerived : derivedFoutMaterializations) {
-			DerivedFoutMaterializationActionKey action = selectedDerived.action();
-			HopOccurrenceProjection producer = selectedDerived.producer();
-			HopOccurrenceProjection anchor = selectedDerived.anchor();
+		for(SelectedFoutMaterialization selectedFout : foutMaterializations) {
+			DerivedFoutMaterializationActionKey action = selectedFout.action();
+			HopOccurrenceProjection producer = selectedFout.producer();
+			HopOccurrenceProjection anchor = selectedFout.anchor();
 			List<ConsumerInputSpec> directConsumers = directFoutConsumerInputs(
 				analysis, occurrences, selectedCandidates, relocations,
 				action.producer(), action.producerValueVersion());
@@ -776,23 +780,30 @@ public final class PlacementEmissionTransaction {
 		return direct.stream().distinct().sorted().toList();
 	}
 
-	private static List<SelectedDerivedFout> exactDerivedFoutMaterializations(PlacementAnalysis analysis,
+	private static List<SelectedFoutMaterialization> exactFoutMaterializations(PlacementAnalysis analysis,
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
 		Map<CompiledHopKey, PlacementEmissionState> selected,
 		List<CandidateSelectionReceipt> selectedCandidates) {
-		List<SelectedDerivedFout> resolved = new ArrayList<>();
+		List<SelectedFoutMaterialization> resolved = new ArrayList<>();
 		for(Node node : analysis.graph().decisionNodes()) {
 			PlacementEmissionState selectedState = exactEmissionState(selected, node.key());
-			if(selectedState == null || !selectedState.derivedFedFout()
-				|| !analysis.isCompiledHopOccurrence(node.key()))
+			if(selectedState == null || !analysis.isCompiledHopOccurrence(node.key()))
 				continue;
 			List<CandidateSelectionReceipt> exactCandidates = selectedCandidates.stream()
 				.filter(candidate -> candidate.rule().parentOccurrence() == node.key())
 				.filter(candidate -> candidate.emission().emissionState().equals(selectedState))
 				.filter(candidate -> candidate.emission().derivedFoutAction() != null).toList();
+			boolean cpFout = selectedState.placementState().execType() == ExecType.CP
+				&& selectedState.placementState().output() == FederatedOutput.FOUT;
+			if(exactCandidates.isEmpty()) {
+				if(selectedState.derivedFedFout() || cpFout)
+					throw new PlacementEmissionException(
+						"Planner-created FOUT state requires one exact selected output materialization action");
+				continue;
+			}
 			if(exactCandidates.size() != 1)
 				throw new PlacementEmissionException(
-					"Compiled derived FED/FOUT state requires exactly one selected derived candidate action");
+					"Compiled planner-created FOUT state requires exactly one selected materialization action");
 			CandidateSelectionReceipt candidate = exactCandidates.get(0);
 			PlacementAnalysis.CandidateRuleFact exactFact;
 			try {
@@ -843,7 +854,7 @@ public final class PlacementEmissionTransaction {
 				|| selectedAnchorState.placementState().fType() != action.durableAnchorOwnerFType())
 				throw new PlacementEmissionException(
 					"Derived FOUT action does not name one selected exact compiled FOUT anchor owner");
-			resolved.add(new SelectedDerivedFout(action, producer, anchorOwner));
+			resolved.add(new SelectedFoutMaterialization(action, producer, anchorOwner));
 		}
 		return List.copyOf(resolved);
 	}
@@ -956,7 +967,7 @@ public final class PlacementEmissionTransaction {
 
 	private record RegistrySlot(RegistryKind kind, long scopeId, long hopId) { }
 	private record SelectedRelocation(RelocationAction action, List<ObligationKey> obligations) { }
-	private record SelectedDerivedFout(DerivedFoutMaterializationActionKey action,
+	private record SelectedFoutMaterialization(DerivedFoutMaterializationActionKey action,
 		HopOccurrenceProjection producer, HopOccurrenceProjection anchor) { }
 
 	private record RegistryWrite(RegistrySlot slot, long anchorHopId, List<Long> consumerHopIds,

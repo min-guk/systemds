@@ -383,7 +383,13 @@ public final class PlacementIdentity {
 		}
 	}
 
-	/** Exact graph-owned authority for materializing one derived FED/FOUT producer result. */
+	/**
+	 * Exact graph-owned authority for materializing one planner-created FOUT producer result.
+	 *
+	 * <p>The historical type name is retained for serialized/test compatibility. It covers both
+	 * CP/LOUT -&gt; CP/FOUT uploads and FED/LOUT -&gt; FED/FOUT uploads. A native FED/FOUT result
+	 * does not carry this action because it already owns a runtime FederationMap.</p>
+	 */
 	public record DerivedFoutMaterializationActionKey(CompiledHopKey producer, ValueVersionKey producerValueVersion,
 		CandidateRuleKey candidateRule, PlacementState sourcePlacement, PlacementState targetPlacement,
 		DurableAnchorKey durableAnchor, CompiledHopKey durableAnchorOwner,
@@ -406,13 +412,16 @@ public final class PlacementIdentity {
 				throw new IllegalArgumentException("Derived FOUT producer and value-version fingerprints differ");
 			if(!producer.programFingerprint().equals(durableAnchorOwner.programFingerprint()))
 				throw new IllegalArgumentException("Derived FOUT producer and anchor-owner fingerprints differ");
-			if(sourcePlacement.execType() != org.apache.sysds.common.Types.ExecType.FED
-				|| sourcePlacement.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
-				throw new IllegalArgumentException("Derived FOUT action source must be FED/LOUT");
-			if(targetPlacement.execType() != org.apache.sysds.common.Types.ExecType.FED
-				|| targetPlacement.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+			if(sourcePlacement.output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
+				|| targetPlacement.output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				|| sourcePlacement.execType() != targetPlacement.execType()
+				|| sourcePlacement.execType() != org.apache.sysds.common.Types.ExecType.CP
+					&& sourcePlacement.execType() != org.apache.sysds.common.Types.ExecType.FED
 				|| targetPlacement.fType() != materializationFType)
-				throw new IllegalArgumentException("Derived FOUT action target must be exact FED/FOUT materialization type");
+				throw new IllegalArgumentException(
+					"FOUT action must materialize an exact CP/LOUT or FED/LOUT result on the same execution side");
 		}
 
 		public String normalizedSignature() {

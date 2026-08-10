@@ -9,8 +9,10 @@ import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -64,6 +66,16 @@ public class CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest {
 				.filter(entry -> entry.getValue().derivedFedFout()).count();
 			Assert.assertTrue("KMeans must select at least one physical FED/LOUT -> FOUT output",
 				selectedDerived > 0);
+			int selectedDerivedActions = CandidateSelections.derivedFoutPhysicalEmissionCount(
+				result.selectedCandidateSelections());
+			Assert.assertTrue("KMeans must select at least one exact derived FOUT action",
+				selectedDerivedActions > 0);
+			int exactPhysicalTransfers = Math.addExact(Math.addExact(
+				RelocationSelections.physicalEmissionCount(result.selectedRelocations()),
+				result.selectedLocalMaterializations().size()), selectedDerivedActions);
+			Assert.assertTrue("FedAll's exact objective must count derived FOUT uploads as physical transfers: "
+				+ result.objectiveCertificate(), result.objectiveCertificate().contains(
+					"relocationCount=" + exactPhysicalTransfers + ","));
 			for(Object localValue : result.selectedLocalMaterializations()) {
 				Assert.assertTrue(localValue instanceof LocalMaterializationActionKey);
 				LocalMaterializationActionKey local = (LocalMaterializationActionKey) localValue;

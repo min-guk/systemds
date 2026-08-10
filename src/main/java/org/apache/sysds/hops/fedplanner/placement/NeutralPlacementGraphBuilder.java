@@ -2206,8 +2206,12 @@ public final class NeutralPlacementGraphBuilder {
 					&& !transientAccess && outType != null && outType != FType.PART && outType != FType.OTHER) {
 					PlacementState cpFout = addLegalCandidate(legal, excluded,
 						new PlacementState(ExecType.CP, FederatedOutput.FOUT, materializationFType, shapeDependent));
-					if(cpFout != null)
-						exactEmissionFacts.add(candidateEmissionFact(cpFout, false, null));
+					if(cpFout != null) {
+						DerivedFoutMaterializationActionKey action = derivedFoutAction(key, value, candidateKey,
+							exactLegalState(legal, cp), cpFout, materializationAnchor,
+							materialization.owner(), materialization.ownerFType(), materializationFType);
+						exactEmissionFacts.add(candidateEmissionFact(cpFout, false, null, action));
+					}
 					if(caps.placement() == FederatedOutput.LOUT) {
 						PlacementState derivedFout = addLegalCandidate(legal, excluded,
 							new PlacementState(ExecType.FED, FederatedOutput.FOUT, materializationFType, shapeDependent));
@@ -2754,8 +2758,16 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateRuleFact fact = closedFacts.get(entry.getKey());
 				List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts());
 				if(emissions.stream().noneMatch(emission ->
-					emission.emissionState().placementState().equals(exactCpFout)))
-					emissions.add(candidateEmissionFact(exactCpFout, false, null));
+					emission.emissionState().placementState().equals(exactCpFout))) {
+					PlacementState exactCpLout = closedNode.legalAlternatives().stream()
+						.filter(state -> state.execType() == ExecType.CP
+							&& state.output() == FederatedOutput.LOUT)
+						.findFirst().orElseThrow();
+					DerivedFoutMaterializationActionKey action = derivedFoutAction(node.key(), node.valueVersion(),
+						fact.key(), exactCpLout, exactCpFout, materializationAnchor,
+						entry.getValue().owner(), entry.getValue().ownerFType(), materializationFType);
+					emissions.add(candidateEmissionFact(exactCpFout, false, null, action));
+				}
 				CandidateEmissionFact nativeFedLout = exactNativeFedLout.get(entry.getKey());
 					if(nativeFedLout != null && exactDerivedFout != null
 						&& emissions.stream().noneMatch(emission ->

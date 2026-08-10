@@ -164,3 +164,64 @@
 - **잔여 이슈**: 새 immutable stage에서 MinST LogReg 한 번만 다시 compile하여 기존 FedAll exact key와 대조한다. 차이가 synthetic 또는 downstream instruction에 영향 없는 FType authority이면 정상으로 문서화하고, concrete exec/output/registry authority가 emission에서 유실됐으면 회귀 테스트 후 projector/emission을 수정한다.
 - **잠재 회귀 위험**: 공통 trace가 hot loop로 이동하거나 `logGlobal` per-decision으로 바뀌면 감사 자체가 커질 수 있다. 현재 per-decision은 invocation-scoped stage budget의 `logLazy`를 사용하고 summary만 `logGlobal`이다. 실제 record/byte 상한으로 감지한다.
 - **의사결정 근거**: 아직 버그가 증명되지 않았으므로 candidate·cost·runtime을 바꾸지 않고, planner가 넘긴 exact authority와 emission mutation의 경계를 먼저 증명한다.
+
+## 7. FedAll/Heuristic의 `MIN_RELOCATIONS`가 실제 물리 전송 일부를 세지 않던 문제
+
+- **상태**: 해결, 새 Docker planning-only 증거 대기
+- **환경/조건**: 공통 neutral graph, FedAll/Heuristic exact selector, candidate row에 `ABSENT_LOCAL` 또는 derived FED/FOUT이 포함되는 경우
+- **재현 절차**:
+  - `CampaignBG014AbsentLocalMaterializationLoweringRedTest`에서 동일 assignment 아래 candidate row만 바꿔 LOCAL lowering 수와 selector 점수를 비교한다.
+  - `CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest`에서 derived FOUT action이 선택된 경우 selector relocation score를 비교한다.
+- **관측 증상**:
+  - explicit REFED action만 `distinctRelocationCount`에 포함되어, FED/FOUT producer를 로컬로 받는 PREFETCH와 FED/LOUT→FOUT output materialization이 0-cost tie처럼 보였다.
+  - relocation effect만 같은 candidate row를 조기에 합치면서 PRESENT/ABSENT 입력 패턴과 native/derived emission 차이가 사라질 수 있었다.
+- **원인 분석**: selector의 3차 목적함수 이름은 `MIN_RELOCATIONS`였지만 구현은 `RelocationActionKey` 수만 집계했다. lowering 단계가 별도로 만드는 LOCAL/FOUT registry action이 selector score와 분리돼 있었다.
+- **해결 요약**:
+  - `LocalMaterializationSelections`를 canonical derivation으로 분리해 normalization과 selector가 동일한 exact obligation을 사용한다.
+  - candidate selection 결과에 explicit relocation, LOCAL materialization, planner-created FOUT materialization의 물리 action 수를 모두 보존한다.
+  - candidate row dedup key에 exact emission, PRESENT/ABSENT 입력 패턴, relocation effect를 모두 포함한다.
+  - exact-search component graph는 ABSENT_LOCAL edge와 output-materialization anchor owner까지 연결한다.
+  - FedAll/Heuristic adapter가 selector score와 canonical lowering action 합계가 다르면 fail closed 한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/LocalMaterializationSelections.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/ExactPlacementSelector.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/{FedAllPlacementAdapter,HeuristicPlacementAdapter,NormalizedPlannerResults}.java`
+  - 관련 FedAll/local/trace regression tests
+- **검증**: LOCAL undercount RED에서는 물리 전송 3개인데 selector score가 0이었고, derived-FOUT RED에서는 선택된 output upload가 score에서 누락됐다. 수정 후 관련 focused tests 및 최종 broad 묶음 79 tests가 모두 통과했다.
+- **잔여 이슈**: 새 immutable Docker stage에서 FedAll/Heuristic policy summary의 `relocationCount`가 explicit+LOCAL+CP/FOUT+derived-FOUT 합과 일치하는지 representative workload별로 확인해야 한다.
+- **잠재 회귀 위험**: exact component가 커져 planning 시간이 늘 수 있다. 후보를 닫지 않고 planning-only의 explored/pruned 및 planner time으로 감지한다.
+- **의사결정 근거**: runtime이 지원하는 후보를 제거하지 않고, 실제 lowering이 수행할 물리 전송을 선택 목적함수에 정확히 반영했다.
+
+## 8. 선택된 CP/FOUT이 exact FOUT materialization authority 없이 lowering되던 문제
+
+- **상태**: 해결, Docker planning-only 및 runtime 검증 대기
+- **환경/조건**: non-recompile matrix candidate, durable FederationMap anchor가 존재하고 `CP/LOUT → CP/FOUT`이 합법인 경우; B-11 shadow fixture
+- **재현 절차**: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.CampaignBG014CpFoutMaterializationAuthorityRedTest test`
+- **관측 증상**: 실제 builder가 만든 합법 total assignment에서 CP/FOUT을 선택해 transaction을 적용해도 producer의 `FederatedFoutMaterializeRegistry` entry가 없었다. 즉 Hop에는 CP/FOUT 비트만 찍히고, 실제 CP 결과를 어느 worker/range/FType으로 올릴지 authority가 유실됐다.
+- **원인 분석**:
+  - builder는 derived FED/LOUT→FED/FOUT에만 exact output action을 붙였다.
+  - CP/FOUT candidate를 만들 때 검증에 사용한 durable anchor/owner를 버렸다.
+  - emission transaction은 selected derived action만 FOUT registry로 내렸으므로 CP/FOUT은 runtime fallback 없이는 실행 의미가 완성되지 않았다.
+- **해결 요약**:
+  - 기존 serialized type 이름은 호환성을 위해 유지하되, graph-owned output materialization action의 의미를 CP/LOUT→CP/FOUT과 FED/LOUT→FED/FOUT 모두로 확장했다.
+  - builder가 모든 CP/FOUT candidate에 exact candidate rule, source placement, durable anchor, anchor owner/FType, statement-block scope를 결합한다.
+  - candidate reachability는 full assignment에서 anchor owner가 실제 FOUT/FType으로 선택됐는지 검증한다.
+  - transaction은 선택된 모든 planner-created FOUT action을 prevalidate한 뒤 동일 atomic FOUT registry write로 낮춘다.
+  - MinST physical domain/factor도 CP/FOUT action과 anchor owner를 함께 모델링한다.
+  - FedAll/Heuristic 물리 전송 점수와 trace에 CP/FOUT materialization을 별도 집계한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/{PlacementIdentity,PlacementAnalysis,NeutralPlacementGraphBuilder,CandidateSelections,PlacementEmissionTransaction}.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactPhysicalModel.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/ExactPlacementSelector.java`
+  - FedAll/Heuristic planner 및 adapter trace/score 파일
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/CampaignBG014CpFoutMaterializationAuthorityRedTest.java`
+- **검증**:
+  - 수정 전 신규 test는 `selected CP/FOUT must write exact producer FOUT materialization authority`로 RED였다.
+  - 수정 후 해당 test GREEN, derived-FOUT/transaction/MinST/FedAll focused tests GREEN.
+  - broad regression: **79 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-cpfout-broad-20260810.log`).
+  - `mvn -q -DskipTests test-compile` 및 `mvn -q -DskipTests package` 성공, `git diff --check` 성공.
+  - 전체 `mvn -q -DskipTests checkstyle:check`는 변경 파일과 무관한 기존/generated 소스까지 검사해 **358,852건의 baseline 위반**으로 실패했다. 따라서 이 저장소에서는 전체 checkstyle 결과를 변경분 판정 근거로 사용할 수 없고, 컴파일·관련 테스트·diff whitespace 검사를 검증 근거로 사용한다.
+- **잔여 이슈**: 새 Docker trace에서 실제 정책이 CP/FOUT을 선택하는 셀이 있으면 `Emission-Candidate.foutMaterializationAction`, `Emission-RegistryWrite kind=FOUT`, policy summary의 CP/FOUT count가 일치해야 한다. 그 후에만 runtime 실험을 재개한다.
+- **잠재 회귀 위험**: output action owner dependency로 exact-search component가 커질 수 있고 planning time이 증가할 수 있다. 이는 합법성 보존 비용이며 후보 skip으로 우회하지 않고 planning-time trace로 계측한다.
+- **의사결정 근거**: “planner가 실행 가능성을 완전히 계획하고 runtime은 그대로 실행한다”는 원칙에 따라 runtime fallback이나 CP/FOUT 후보 폐쇄 대신 누락된 exact placement authority를 복원했다.

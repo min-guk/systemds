@@ -32,6 +32,8 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -41,7 +43,9 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementScore;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
@@ -62,6 +66,13 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		List<CandidateSelectionReceipt> candidates = List.copyOf(selection.selectedCandidateSelections());
 		List<RelocationChoiceReceipt> choices = List.copyOf(selection.selectedRelocationChoices());
 		List<RelocationActionKey> relocations = immutableRelocations(selection.selectedRelocations());
+		int exactPhysicalTransfers = Math.addExact(Math.addExact(
+			RelocationSelections.physicalEmissionCount(relocations),
+			LocalMaterializationSelections.physicalEmissionCount(analysis, assignment, candidates)),
+			CandidateSelections.foutMaterializationPhysicalEmissionCount(candidates));
+		if(selection.score().distinctRelocationCount() != exactPhysicalTransfers)
+			throw new IllegalStateException(
+				"FedAll score differs from its canonical physical-transfer projection");
 		Score score = score(analysis.graph(), assignment, relocations, selection.score());
 		List<Bound> bounds = componentBounds(analysis.graph());
 		long explored = selection.certificate().exploredCount();
@@ -306,6 +317,12 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		}
 		@Override public String plannerId() { return "FED_ALL"; }
 		@Override public Map<CompiledHopKey, PlacementState> selectedStates() { return assignment; }
+		@Override public List<LocalMaterializationActionKey> selectedLocalMaterializations() {
+			return LocalMaterializationSelections.derive(analysis, assignment,
+				NormalizedPlannerResults.exactEmissionStates(
+					analysis, assignment, selectedCandidateSelections),
+				selectedCandidateSelections);
+		}
 		@Override public String objectiveCertificate() { return certificate.toString(); }
 	}
 }

@@ -74,7 +74,10 @@ public class CampaignBG014PlanningTraceContractTest {
 				fedAll.contains("\"" + stage + "\""));
 		assertTrue("FedAll trace must expose its lexicographic objective",
 			fedAll.contains("fedCount=") && fedAll.contains("foutCount=")
-				&& fedAll.contains("relocationCount="));
+				&& fedAll.contains("relocationCount=")
+				&& fedAll.contains("explicitRelocationCount=")
+				&& fedAll.contains("localMaterializationCount=")
+				&& fedAll.contains("derivedFoutMaterializationCount="));
 
 		String heuristic = Files.readString(HEURISTIC);
 		for(String stage : new String[] {"Heuristic-PolicySummary", "Heuristic-Select"})
@@ -82,7 +85,10 @@ public class CampaignBG014PlanningTraceContractTest {
 				heuristic.contains("\"" + stage + "\""));
 		assertTrue("Heuristic trace must expose its pathwise demotion policy",
 			heuristic.contains("markerCount=") && heuristic.contains("localPrefixCount=")
-				&& heuristic.contains("frontierEdgeCount="));
+				&& heuristic.contains("frontierEdgeCount=")
+				&& heuristic.contains("explicitRelocationCount=")
+				&& heuristic.contains("localMaterializationCount=")
+				&& heuristic.contains("derivedFoutMaterializationCount="));
 	}
 
 	@Test

@@ -23,6 +23,8 @@ import java.util.TreeMap;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
+import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -35,6 +37,7 @@ import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
@@ -65,6 +68,16 @@ public final class HeuristicPlacementAdapter {
 		List<CandidateSelectionReceipt> candidateReceipts = List.copyOf(selection.selectedCandidateSelections());
 		List<RelocationChoiceReceipt> choices = List.copyOf(selection.selectedRelocationChoices());
 		List<RelocationActionKey> relocations = selection.selectedRelocations().stream().sorted().toList();
+		int explicitRelocations = RelocationSelections.physicalEmissionCount(relocations);
+		int localMaterializations = LocalMaterializationSelections.physicalEmissionCount(
+			analysis, assignment, candidateReceipts);
+		int foutMaterializations = CandidateSelections.foutMaterializationPhysicalEmissionCount(
+			candidateReceipts);
+		if(selection.score().distinctRelocationCount()
+			!= Math.addExact(Math.addExact(explicitRelocations, localMaterializations),
+				foutMaterializations))
+			throw new IllegalStateException(
+				"Heuristic score differs from its canonical physical-transfer projection");
 		List<ObligationKey> obligations = RelocationSelections.resolveAndValidate(analysis, filtered,
 			filtered.relocationActions(), assignment, candidateReceipts, choices).stream()
 			.filter(RelocationSelections.ResolvedChoice::requiresEmission)
@@ -72,7 +85,14 @@ public final class HeuristicPlacementAdapter {
 		List<DurableAnchorKey> anchors = base.nodes().stream().flatMap(node -> node.anchors().stream())
 			.distinct().sorted().toList();
 		List<String> objective = List.of("FED=" + selection.score().emittedFedCount(),
-			"FOUT=" + selection.score().foutCount(), "RELOCATIONS=" + relocations.size());
+			"FOUT=" + selection.score().foutCount(),
+			"RELOCATIONS=" + selection.score().distinctRelocationCount(),
+			"EXPLICIT_RELOCATIONS=" + explicitRelocations,
+			"LOCAL_MATERIALIZATIONS=" + localMaterializations,
+			"FOUT_MATERIALIZATIONS=" + foutMaterializations,
+			"CP_FOUT_MATERIALIZATIONS=" + CandidateSelections.cpFoutPhysicalEmissionCount(candidateReceipts),
+			"DERIVED_FOUT_MATERIALIZATIONS="
+				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidateReceipts));
 		List<String> ties = List.of("MAX_FED", "MAX_FOUT", "MIN_RELOCATIONS", "NORMALIZED_ASSIGNMENT");
 		List<String> relationships = base.constraints().stream().filter(c -> isTransient(base, c.left())
 			|| isTransient(base, c.right())).map(NeutralPlacementGraph.Constraint::normalizedSignature).sorted().toList();
@@ -93,7 +113,7 @@ public final class HeuristicPlacementAdapter {
 			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions);
 		String incumbent = selection.score().normalizedSignature();
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
-			relocations.size(), incumbent);
+			selection.score().distinctRelocationCount(), incumbent);
 		List<Bound> boundComponents = componentBounds(filtered);
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
 			assignmentHash, candidateUniverse.size(), candidateUniverse.size(), 0, List.of("complete"), incumbent,
@@ -359,6 +379,12 @@ public final class HeuristicPlacementAdapter {
 			plannerFacts,certificate,score,value); }
 		@Override public String plannerId() { return "FED_HEURISTIC"; }
 		@Override public Map<CompiledHopKey, PlacementState> selectedStates() { return assignment; }
+		@Override public List<LocalMaterializationActionKey> selectedLocalMaterializations() {
+			return LocalMaterializationSelections.derive(analysis, assignment,
+				NormalizedPlannerResults.exactEmissionStates(
+					analysis, assignment, selectedCandidateSelections),
+				selectedCandidateSelections);
+		}
 		@Override public String objectiveCertificate() { return certificate.toString(); }
 	}
 }

@@ -84,7 +84,8 @@ public final class CandidateSelections {
 		boolean exactEmissionReachable = fact.allowedEmissionFacts().stream()
 			.filter(emission -> emission.emissionState().placementState().equals(selectedConsumer))
 			.map(emission -> new CandidateSelectionReceipt(fact.key(), emission, List.of()))
-			.anyMatch(receipt -> derivedFoutActionReachable(authorityGraph, fact, receipt));
+			.anyMatch(receipt -> foutMaterializationActionReachable(
+				authorityGraph, fact, receipt, partial, true));
 		if(!exactEmissionReachable)
 			return false;
 		// A DML FunctionOp is only a coordinator-side forwarding placeholder. Its
@@ -128,13 +129,20 @@ public final class CandidateSelections {
 
 	public record Selection(List<CandidateSelectionReceipt> candidates,
 		List<RelocationChoiceReceipt> relocationChoices,
-		List<RelocationActionKey> emittedActions, int materializedInputCount) {
+		List<RelocationActionKey> emittedActions, int materializedInputCount,
+		int localMaterializationActionCount, int foutMaterializationActionCount) {
 		public Selection {
 			candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
 			relocationChoices = List.copyOf(Objects.requireNonNull(relocationChoices, "relocationChoices"));
 			emittedActions = List.copyOf(Objects.requireNonNull(emittedActions, "emittedActions"));
 			if(materializedInputCount < 0)
 				throw new IllegalArgumentException("Materialized input count must be non-negative");
+			if(localMaterializationActionCount < 0)
+				throw new IllegalArgumentException(
+					"Local materialization action count must be non-negative");
+			if(foutMaterializationActionCount < 0)
+				throw new IllegalArgumentException(
+					"FOUT materialization action count must be non-negative");
 		}
 	}
 
@@ -170,7 +178,7 @@ public final class CandidateSelections {
 				CandidateSelectionReceipt base = new CandidateSelectionReceipt(
 					fact.key(), emission, List.of());
 				activeRows.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
-				if(derivedFoutActionReachable(authorityGraph, fact, base)
+				if(foutMaterializationActionReachable(authorityGraph, fact, base, assignment, false)
 					&& receiptReachable(analysis, actionUniverse, assignment, base))
 					result.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
 			}
@@ -236,23 +244,22 @@ public final class CandidateSelections {
 				.mapToInt(CandidateSelections::presentInputCount);
 			int optimum = maximize ? materializations.max().orElseThrow()
 				: materializations.min().orElseThrow();
-			Map<String,CandidateSelectionReceipt> byRelocationEffect = new LinkedHashMap<>();
+			Map<String,CandidateSelectionReceipt> byPhysicalEffect = new LinkedHashMap<>();
 			entry.getValue().stream().filter(receipt -> presentInputCount(receipt) == optimum)
-				.sorted().forEach(receipt -> byRelocationEffect.putIfAbsent(
-					relocationEffectSignature(analysis, authorityGraph, actionUniverse, assignment, receipt), receipt));
-			maximal.put(entry.getKey(), List.copyOf(byRelocationEffect.values()));
+				.sorted().forEach(receipt -> byPhysicalEffect.putIfAbsent(candidateEffectSignature(
+					analysis, authorityGraph, actionUniverse, assignment, receipt), receipt));
+			maximal.put(entry.getKey(), List.copyOf(byPhysicalEffect.values()));
 		}
 		return Collections.unmodifiableMap(maximal);
 	}
 
 	/**
-	 * Exact secondary-objective equivalence for one candidate row. Rows with the
-	 * same active demand/action alternatives produce the same relocation objective
-	 * and choice suffix. Once their primary materialization count is equal, only the
-	 * canonical candidate-row signature can distinguish them, so the smallest row
-	 * strictly dominates the others.
+	 * Rows can be collapsed only when their exact emission, ordered PRESENT/ABSENT
+	 * pattern, and explicit relocation alternatives are all identical. Including
+	 * the emission and input pattern preserves every possible local-download effect,
+	 * including whether this row publishes a native or derived FOUT producer.
 	 */
-	private static String relocationEffectSignature(PlacementAnalysis analysis,
+	private static String candidateEffectSignature(PlacementAnalysis analysis,
 		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment, CandidateSelectionReceipt receipt) {
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
@@ -270,7 +277,10 @@ public final class CandidateSelections {
 			}
 		}
 		Collections.sort(options);
-		return String.join("|", options);
+		return receipt.emission().normalizedSignature() + "|inputs="
+			+ receipt.rule().orderedInputs().stream()
+				.map(CandidateInputState::normalizedSignature).toList()
+			+ "|relocations=" + String.join("|", options);
 	}
 
 	/** Canonical native-first completion used only when a planner supplies no explicit row receipt. */
@@ -291,7 +301,10 @@ public final class CandidateSelections {
 		List<RelocationActionKey> emitted = RelocationSelections.emittedActions(
 			analysis, actionUniverse, assignment, selected, choices);
 		int materialized = selected.stream().mapToInt(CandidateSelections::presentInputCount).sum();
-		return new Selection(selected, choices, emitted, materialized);
+		int localMaterializations = LocalMaterializationSelections.physicalEmissionCount(
+			analysis, assignment, selected);
+		return new Selection(selected, choices, emitted, materialized, localMaterializations,
+			foutMaterializationPhysicalEmissionCount(selected));
 	}
 
 	public static List<CandidateSelectionReceipt> resolveAndValidate(PlacementAnalysis analysis,
@@ -426,25 +439,38 @@ public final class CandidateSelections {
 
 	static boolean derivedFoutActionReachable(NeutralPlacementGraph graph,
 		CandidateSelectionReceipt receipt) {
-		return derivedFoutActionReachable(graph, null, receipt);
+		return foutMaterializationActionReachable(graph, null, receipt, null, true);
 	}
 
-	private static boolean derivedFoutActionReachable(NeutralPlacementGraph graph,
-		CandidateRuleFact exactRule, CandidateSelectionReceipt receipt) {
-		if(!receipt.emission().emissionState().derivedFedFout())
+	private static boolean foutMaterializationActionReachable(NeutralPlacementGraph graph,
+		CandidateRuleFact exactRule, CandidateSelectionReceipt receipt,
+		Map<CompiledHopKey,PlacementState> assignment, boolean allowUnassignedOwner) {
+		PlacementState selected = receipt.emission().emissionState().placementState();
+		boolean cpFout = selected.execType() == org.apache.sysds.common.Types.ExecType.CP
+			&& selected.output()
+				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT;
+		boolean requiresAction = receipt.emission().emissionState().derivedFedFout() || cpFout;
+		if(!requiresAction)
 			return receipt.emission().derivedFoutAction() == null;
 		var expected = receipt.emission().derivedFoutAction();
 		if(expected == null || expected.candidateRule() != receipt.rule()
 			|| expected.producer() != receipt.rule().parentOccurrence()
-			|| expected.targetPlacement() != receipt.emission().emissionState().placementState())
+			|| expected.targetPlacement() != selected)
 			return false;
 		if(exactRule != null && (exactRule.key() != receipt.rule()
 			|| exactRule.allowedEmissionFacts().stream().noneMatch(source ->
-				!source.emissionState().derivedFedFout()
+				source.derivedFoutAction() == null
 					&& source.emissionState().placementState() == expected.sourcePlacement())))
 			return false;
-		return graph.derivedFoutMaterializationActions().stream()
-			.filter(action -> action.key() == expected).count() == 1;
+		if(graph.derivedFoutMaterializationActions().stream()
+			.filter(action -> action.key() == expected).count() != 1)
+			return false;
+		if(assignment == null)
+			return true;
+		PlacementState owner = assignment.get(expected.durableAnchorOwner());
+		return owner == null ? allowUnassignedOwner : owner.output()
+				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+			&& owner.fType() == expected.durableAnchorOwnerFType();
 	}
 
 	/**
@@ -607,7 +633,10 @@ public final class CandidateSelections {
 					.reduce((left, right) -> left + '|' + right).orElse("") + "#"
 					+ choices.stream().map(RelocationChoiceReceipt::normalizedSignature)
 						.reduce((left, right) -> left + '|' + right).orElse("");
-				Selection candidate = new Selection(selected, choices, emitted, materialized);
+				int localMaterializations = LocalMaterializationSelections.physicalEmissionCount(
+					analysis, assignment, selected);
+				Selection candidate = new Selection(selected, choices, emitted, materialized,
+					localMaterializations, foutMaterializationPhysicalEmissionCount(selected));
 				if(better(candidate, signature)) {
 					best = candidate;
 					bestSignature = signature;
@@ -630,12 +659,17 @@ public final class CandidateSelections {
 				if(materialization != 0)
 					return materialization > 0;
 			}
-			int emitted = Integer.compare(
-				RelocationSelections.physicalEmissionCount(candidate.emittedActions()),
-				RelocationSelections.physicalEmissionCount(best.emittedActions()));
+			int emitted = Integer.compare(totalPhysicalEmissions(candidate),
+				totalPhysicalEmissions(best));
 			if(emitted != 0)
 				return emitted < 0;
 			return signature.compareTo(bestSignature) < 0;
+		}
+
+		private static int totalPhysicalEmissions(Selection selection) {
+			return Math.addExact(Math.addExact(RelocationSelections.physicalEmissionCount(
+				selection.emittedActions()), selection.localMaterializationActionCount()),
+				selection.foutMaterializationActionCount());
 		}
 
 		private Selection requireBest() {
@@ -643,5 +677,29 @@ public final class CandidateSelections {
 				throw new IllegalStateException("Selected placement assignment has no exact candidate-row plan");
 			return best;
 		}
+	}
+
+	/** Number of exact planner-created FOUT uploads selected by candidate receipts. */
+	public static int foutMaterializationPhysicalEmissionCount(
+		Collection<CandidateSelectionReceipt> selectedCandidates) {
+		return (int) Objects.requireNonNull(selectedCandidates, "selectedCandidates").stream()
+			.map(candidate -> candidate.emission().derivedFoutAction())
+			.filter(Objects::nonNull).distinct().count();
+	}
+
+	/** Number of exact FED/LOUT-to-FOUT uploads selected by candidate receipts. */
+	public static int derivedFoutPhysicalEmissionCount(
+		Collection<CandidateSelectionReceipt> selectedCandidates) {
+		return (int) Objects.requireNonNull(selectedCandidates, "selectedCandidates").stream()
+			.filter(candidate -> candidate.emission().emissionState().derivedFedFout())
+			.map(candidate -> candidate.emission().derivedFoutAction())
+			.filter(Objects::nonNull).distinct().count();
+	}
+
+	/** Number of exact CP/LOUT-to-CP/FOUT uploads selected by candidate receipts. */
+	public static int cpFoutPhysicalEmissionCount(
+		Collection<CandidateSelectionReceipt> selectedCandidates) {
+		return foutMaterializationPhysicalEmissionCount(selectedCandidates)
+			- derivedFoutPhysicalEmissionCount(selectedCandidates);
 	}
 }

@@ -28,8 +28,10 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
@@ -112,6 +114,13 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 		HeuristicPlacementAdapter.Result result) {
 		if(!FederatedPlannerTrace.isEnabled())
 			return;
+		int explicitRelocations = RelocationSelections.physicalEmissionCount(
+			result.selectedRelocations());
+		int localMaterializations = result.selectedLocalMaterializations().size();
+		int cpFoutMaterializations = CandidateSelections.cpFoutPhysicalEmissionCount(
+			result.selectedCandidateSelections());
+		int derivedFoutMaterializations = CandidateSelections.derivedFoutPhysicalEmissionCount(
+			result.selectedCandidateSelections());
 		FederatedPlannerTrace.logGlobal("Heuristic-PolicySummary",
 			"markerCount=" + result.plannerFacts().get("markerCount")
 				+ " localPrefixCount=" + result.plannerFacts().get("localPrefixCount")
@@ -119,6 +128,10 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 				+ " fedCount=" + result.score().fedCount()
 				+ " foutCount=" + result.score().foutCount()
 				+ " relocationCount=" + result.score().relocationCount()
+				+ " explicitRelocationCount=" + explicitRelocations
+				+ " localMaterializationCount=" + localMaterializations
+				+ " cpFoutMaterializationCount=" + cpFoutMaterializations
+				+ " derivedFoutMaterializationCount=" + derivedFoutMaterializations
 				+ " selectedStates=" + result.selectedStates().size()
 				+ " planFingerprint=" + result.normalizedPlanFingerprint());
 		for(var fact : policyFacts.demotions()) {

@@ -574,13 +574,15 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				graph, relocationActions, assignment, choices));
 			return new PlacementScore(fed, fout,
 				RelocationSelections.physicalEmissionCount(relocations),
-				normalizedSignature(assignment, relocations, List.of(), choices));
+				normalizedSignature(assignment, relocations, List.of(), List.of()));
 		}
 		CandidateSelections.Selection exact = CandidateSelections.selectMaterializationMaximal(
 			analysis, graph, relocationActions, assignment);
 		Set<RelocationActionKey> relocations = new LinkedHashSet<>(exact.emittedActions());
 		return new PlacementScore(fed, fout,
-			RelocationSelections.physicalEmissionCount(relocations), normalizedSignature(
+			Math.addExact(Math.addExact(RelocationSelections.physicalEmissionCount(relocations),
+				exact.localMaterializationActionCount()),
+				exact.foutMaterializationActionCount()), normalizedSignature(
 			assignment, relocations, exact.candidates(), exact.relocationChoices()));
 	}
 
@@ -633,6 +635,10 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				connect(adjacency, constraint.left(), constraint.right());
 		for(RelocationAction action : graph.relocationActions())
 			connectAll(adjacency, relocationParticipants(decisions, decisionByKey, action));
+		for(var action : graph.derivedFoutMaterializationActions())
+			if(decisionByKey.containsKey(action.key().producer())
+				&& decisionByKey.containsKey(action.key().durableAnchorOwner()))
+				connect(adjacency, action.key().producer(), action.key().durableAnchorOwner());
 		for(CandidateDependencyEdge dependency : candidateDependencyEdges(analysis, decisionByKey))
 			connect(adjacency, dependency.producer(), dependency.consumer());
 
@@ -767,15 +773,13 @@ public final class ExactPlacementSelector implements PlacementSelector {
 						.anyMatch(state -> state == emission.emissionState().placementState())))
 				continue;
 			for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
-				if(!fact.key().orderedInputs().get(position).present())
-					continue;
 				final int inputPosition = position;
 				List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
 					.compiledInputEdgesInCanonicalOrder().stream()
 					.filter(edge -> edge.consumer() == fact.key().parentOccurrence()
 						&& edge.inputPosition() == inputPosition).toList();
 				if(edges.size() > 1)
-					throw new IllegalStateException("Candidate physical input edge is ambiguous while "
+					throw new IllegalStateException("Candidate exact input edge is ambiguous while "
 						+ "constructing exact-search components: consumer="
 						+ fact.key().parentOccurrence().normalizedSignature() + " input=" + inputPosition);
 				if(edges.size() == 1 && nodes.containsKey(edges.get(0).producer()))
@@ -795,8 +799,10 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		List<String> actions = relocations.stream().map(RelocationActionKey::normalizedSignature).sorted().toList();
 		List<String> rows = candidates.stream().map(CandidateSelectionReceipt::normalizedSignature).sorted().toList();
 		List<String> decisions = choices.stream().map(RelocationChoiceReceipt::normalizedSignature).sorted().toList();
-		return String.join("|", entries) + "#" + String.join("|", actions)
-			+ "#" + String.join("|", rows) + "#" + String.join("|", decisions);
+		String placementAndActions = String.join("|", entries) + "#" + String.join("|", actions);
+		return rows.isEmpty() && decisions.isEmpty() ? placementAndActions
+			: placementAndActions + "#" + String.join("|", rows)
+				+ "#" + String.join("|", decisions);
 	}
 
 	private static List<ComponentBound> componentBounds(PlacementAnalysis analysis,

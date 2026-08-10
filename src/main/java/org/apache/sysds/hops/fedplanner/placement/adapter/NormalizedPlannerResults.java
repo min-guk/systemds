@@ -7,18 +7,16 @@
  */
 package org.apache.sysds.hops.fedplanner.placement.adapter;
 
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationObligation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
@@ -159,79 +157,15 @@ public final class NormalizedPlannerResults {
 		Map<CompiledHopKey, PlacementState> selected,
 		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
 		List<CandidateSelectionReceipt> selectedCandidates) {
-		Objects.requireNonNull(selectedEmissionStates, "selectedEmissionStates");
-		Map<CompiledHopKey,CandidateSelectionReceipt> candidatesByConsumer = new IdentityHashMap<>();
-		for(CandidateSelectionReceipt candidate : selectedCandidates)
-			if(candidatesByConsumer.put(candidate.rule().parentOccurrence(), candidate) != null)
-				throw new IllegalArgumentException("Selected candidate is duplicated for one consumer");
-		List<LocalMaterializationActionKey> result = new java.util.ArrayList<>();
-		for(var node : analysis.graph().decisionNodes()) {
-			PlacementState producer = selected.get(node.key());
-			PlacementEmissionState producerEmission = exactEmissionState(
-				selectedEmissionStates, node.key());
-			if(producer == null || producer.execType() != org.apache.sysds.common.Types.ExecType.FED
-				|| producer.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
-				|| producer.fType() == null || producerEmission == null)
-				continue;
-			// A derived FOUT producer physically computes FED/LOUT and then uploads that
-			// existing coordinator-local result. ABSENT_LOCAL and CP consumers already
-			// consume that base LOUT; inserting FOUT->LOUT PREFETCH would both double-count
-			// the transfer and erase the selected derived-output lowering contract.
-			if(producerEmission.derivedFedFout())
-				continue;
-			List<LocalMaterializationObligation> obligations = analysis.compiledInputEdgesInCanonicalOrder().stream()
-				.filter(edge -> edge.producer() == node.key())
-				// DML FunctionOp is a logical forwarding boundary. The actual/formal facts carry
-				// placement into the callee; treating the CP call placeholder as a local matrix
-				// consumer invents a full download that the selected plan neither priced nor needs.
-				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
-				.filter(edge -> requiresLocalInput(selected.get(edge.consumer()),
-					candidatesByConsumer.get(edge.consumer()), edge.inputPosition()))
-				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
-					selected.get(edge.consumer()))).sorted().toList();
-			if(obligations.isEmpty()) continue;
-			var occurrence = analysis.occurrences().stream().filter(candidate -> candidate.key() == node.key())
-				.findFirst().orElseThrow();
-			result.add(new LocalMaterializationActionKey(node.key(), node.valueVersion(), producer,
-				obligations, occurrence.scopeId() + ":" + node.key().functionNamespace(),
-				durableLocalProvenance(node, producer)));
-		}
-		return result.stream().sorted().toList();
-	}
-
-	private static boolean requiresLocalInput(PlacementState consumer,
-		CandidateSelectionReceipt candidate, int inputPosition) {
-		if(consumer == null)
-			return false;
-		if(consumer.execType() == org.apache.sysds.common.Types.ExecType.CP
-			&& consumer.output()
-				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
-			return true;
-		if(consumer.execType() != org.apache.sysds.common.Types.ExecType.FED)
-			return false;
-		if(candidate == null || !candidate.emission().emissionState().placementState().equals(consumer))
-			throw new IllegalArgumentException(
-				"Federated consumer is missing its exact selected candidate authority");
-		if(inputPosition < 0 || inputPosition >= candidate.rule().orderedInputs().size())
-			throw new IllegalArgumentException(
-				"Selected candidate does not cover an exact compiled input edge");
-		return !candidate.rule().orderedInputs().get(inputPosition).present();
+		return LocalMaterializationSelections.derive(analysis, selected,
+			selectedEmissionStates, selectedCandidates);
 	}
 
 	/** Exact analysis-owned provenance for one selected FED/FOUT source. */
 	public static String durableLocalProvenance(
 		org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node node,
 		PlacementState producer) {
-		Objects.requireNonNull(node, "node");
-		Objects.requireNonNull(producer, "producer");
-		List<DurableAnchorKey> compatible = node.anchors().stream()
-			.filter(anchor -> anchor.fType() == producer.fType()).toList();
-		if(compatible.size() > 1)
-			throw new IllegalStateException("LOCAL source has ambiguous compatible durable anchors: " + node.key());
-		if(compatible.size() == 1)
-			return compatible.get(0).placementId();
-		return "selected-source:" + node.valueVersion().normalizedSignature()
-			+ ":occurrence:" + node.key().normalizedSignature();
+		return LocalMaterializationSelections.durableLocalProvenance(node, producer);
 	}
 
 	private record Draft(PlacementAnalysis analysis, String plannerId, String analysisFingerprint,

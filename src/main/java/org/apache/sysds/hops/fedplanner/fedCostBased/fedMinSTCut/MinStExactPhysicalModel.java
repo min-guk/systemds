@@ -84,11 +84,11 @@ final class MinStExactPhysicalModel {
 			Objects.requireNonNull(authorityKind, "authorityKind");
 			orderedInputs = List.copyOf(orderedInputs);
 			inputAuthorities = List.copyOf(inputAuthorities);
-			boolean derivedCandidate = candidateEmission != null
-				&& candidateEmission.emissionState().derivedFedFout();
-			if(derivedCandidate != (derivedFoutAction != null)
+			boolean materializedOutputCandidate = candidateEmission != null
+				&& candidateEmission.derivedFoutAction() != null;
+			if(materializedOutputCandidate != (derivedFoutAction != null)
 				|| derivedFoutAction != null && relocationAction != null)
-				throw new IllegalArgumentException("MINST_PHYSICAL_DERIVED_OUTPUT_AUTHORITY_INVALID");
+				throw new IllegalArgumentException("MINST_PHYSICAL_FOUT_OUTPUT_AUTHORITY_INVALID");
 			if(signature == null || signature.isBlank())
 				throw new IllegalArgumentException("MINST_PHYSICAL_ALTERNATIVE_SIGNATURE_INVALID");
 		}
@@ -235,8 +235,8 @@ final class MinStExactPhysicalModel {
 				if(node.legalAlternatives().stream().noneMatch(legal -> legal == state))
 					continue;
 				List<DerivedFoutMaterializationAction> outputActions =
-					derivedFoutMaterializationActions(analysis, node, rule, emission);
-				if(emission.emissionState().derivedFedFout()) {
+					foutMaterializationActions(analysis, node, rule, emission);
+				if(emission.derivedFoutAction() != null) {
 					for(DerivedFoutMaterializationAction outputAction : outputActions)
 						for(List<InputAuthority> bindings : inputAuthorityProducts(
 							analysis, rule, state, incoming))
@@ -290,9 +290,9 @@ final class MinStExactPhysicalModel {
 		return unique.values().stream().sorted(Comparator.comparing(Alternative::signature)).toList();
 	}
 
-	private static List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions(
+	private static List<DerivedFoutMaterializationAction> foutMaterializationActions(
 		PlacementAnalysis analysis, Node node, CandidateRuleFact rule, CandidateEmissionFact emission) {
-		if(!emission.emissionState().derivedFedFout())
+		if(emission.derivedFoutAction() == null)
 			return List.of();
 		return analysis.graph().derivedFoutMaterializationActions().stream()
 			.filter(action -> action.key().equals(emission.derivedFoutAction()))
@@ -318,7 +318,8 @@ final class MinStExactPhysicalModel {
 		List<InputAuthority> bindings) {
 		String signature = "CAPTURED|" + state.normalizedSignature() + "|rule="
 			+ rule.key().normalizedSignature() + "|emission=" + emission.normalizedSignature()
-			+ "|derivedFoutAction=" + (outputAction == null ? "-" : outputAction.normalizedSignature())
+			+ "|foutMaterializationAction="
+			+ (outputAction == null ? "-" : outputAction.normalizedSignature())
 			+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
 		return new Alternative(node.key(), state, AuthorityKind.CAPTURED_RULE, rule, emission,
 			null, null, null, null, outputAction, rule.key().orderedInputs(), bindings, signature);
@@ -527,7 +528,7 @@ final class MinStExactPhysicalModel {
 	}
 
 	/**
-	 * A selected derived-FOUT producer is executable only with the exact compiled
+	 * A selected planner-created FOUT producer is executable only with the exact compiled
 	 * durable-anchor owner named by its graph-owned action. FType equality on some
 	 * other node is not residency authority. This factor mirrors emission
 	 * prevalidation so the exact optimizer cannot select a plan that the runtime
@@ -539,7 +540,7 @@ final class MinStExactPhysicalModel {
 			DecisionDomain producer = domains.get(action.key().producer());
 			DecisionDomain owner = domains.get(action.key().durableAnchorOwner());
 			if(producer == null || owner == null)
-				throw new IllegalArgumentException("MINST_PHYSICAL_DERIVED_FOUT_OWNER_DOMAIN_MISSING|action="
+				throw new IllegalArgumentException("MINST_PHYSICAL_FOUT_OWNER_DOMAIN_MISSING|action="
 					+ action.normalizedSignature());
 			if(producer == owner) {
 				factors.add(MinStExactCategoricalSolver.Factor.lazy(List.of(producer.variable()), values -> {
