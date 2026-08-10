@@ -85,6 +85,7 @@ import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
@@ -352,12 +353,23 @@ public class DMLTranslator
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
+			AFederatedPlanner implementation = Objects.requireNonNull(
+				FederatedPlannerFactory.create(fedPlanner), "compiled federated planner implementation");
+			FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + fedPlanner
+				+ " impl=" + implementation.getClass().getName()
+				+ " boundary=final-hop"
+				+ " analysis=" + analysis.analysisFingerprint());
 			// fcallSizes are not recomputed here; planner uses null when unavailable.
 			long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
 			AFederatedPlanner.PlannerInvocationReceipt receipt =
-				FederatedPlannerFactory.create(fedPlanner).rewriteProgram(dmlp, fgraph, null, analysis);
+				implementation.rewriteProgram(dmlp, fgraph, null, analysis);
 			if(receipt.analysis() != analysis)
 				throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+			FederatedPlannerTrace.logGlobal("Planner-Complete", "planner=" + fedPlanner
+				+ " impl=" + implementation.getClass().getName()
+				+ " receipt=" + receipt.getClass().getName()
+				+ " boundary=final-hop"
+				+ " analysis=" + analysis.analysisFingerprint());
 			verifyFinalBoundaryEmission(dmlp, receipt);
 			if( DMLScript.STATISTICS )
 				Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);

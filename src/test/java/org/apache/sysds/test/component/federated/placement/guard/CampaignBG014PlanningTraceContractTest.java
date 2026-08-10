@@ -20,6 +20,7 @@ import org.junit.Test;
 public class CampaignBG014PlanningTraceContractTest {
 	private static final Path MAIN = Path.of("src/main/java/org/apache/sysds/hops");
 	private static final Path IPA = MAIN.resolve("ipa/IPAPassRewriteFederatedPlan.java");
+	private static final Path TRANSLATOR = Path.of("src/main/java/org/apache/sysds/parser/DMLTranslator.java");
 	private static final Path TRACE = MAIN.resolve("fedplanner/fedCostBased/FederatedPlannerTrace.java");
 	private static final Path DP = MAIN.resolve(
 		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
@@ -28,11 +29,17 @@ public class CampaignBG014PlanningTraceContractTest {
 
 	@Test
 	public void topLevelInvocationIdentifiesConfiguredPlannerAndImplementation() throws Exception {
-		String source = Files.readString(IPA);
-		assertTrue("planning trace lacks Planner-Invoke", source.contains("\"Planner-Invoke\""));
-		assertTrue("planning trace lacks Planner-Complete", source.contains("\"Planner-Complete\""));
-		assertTrue("planner implementation identity is not retained", source.contains("AFederatedPlanner implementation"));
-		assertTrue("planner implementation class is not logged", source.contains("implementation.getClass().getName()"));
+		for(Path entryPoint : new Path[] {IPA, TRANSLATOR}) {
+			String source = Files.readString(entryPoint);
+			assertTrue(entryPoint + " planning trace lacks Planner-Invoke",
+				source.contains("\"Planner-Invoke\""));
+			assertTrue(entryPoint + " planning trace lacks Planner-Complete",
+				source.contains("\"Planner-Complete\""));
+			assertTrue(entryPoint + " planner implementation identity is not retained",
+				source.contains("AFederatedPlanner implementation"));
+			assertTrue(entryPoint + " planner implementation class is not logged",
+				source.contains("implementation.getClass().getName()"));
+		}
 	}
 
 	@Test

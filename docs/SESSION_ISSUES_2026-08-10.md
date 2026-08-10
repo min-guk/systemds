@@ -37,23 +37,31 @@
 - **잠재 회귀 위험**: 새로운 DP 상세 stage가 별도 무제한 loop를 추가할 수 있다. source contract와 실제 log byte/record count 상한으로 감지한다.
 - **의사결정 근거**: 후보 공간·비용·선택은 변경하지 않고 observability만 bounded하게 만들었다.
 
-## 3. Receipt가 공통 전처리 trace를 특정 플래너 실행 증거로 오인
+## 3. Receipt가 공통 전처리 trace를 특정 플래너 실행 증거로 오인하고 실제 진입점 identity가 누락됨
 
 - **상태**: 해결, 새 JAR planning-only 재검증 필요
 - **환경/조건**: 모든 planning-only compiled planner
-- **재현 절차**: 기존 `planning_receipt.py --require-trace`에 `Neutral-*`/`PlannerRecompileState-*` trace만 포함된 log 입력
-- **관측 증상**: production MinST 선택 trace가 0개여도 receipt가 성공했다. 따라서 `compile_min_st_cut` config가 실제 MinST 구현을 호출했다는 실패-폐쇄 증명이 없었다.
-- **원인 분석**: receipt가 `[PlannerTrace]` 레코드의 존재 여부만 검사하고 config planner와 실행 implementation의 identity를 교차 검증하지 않았다.
+- **재현 절차**:
+  1. 기존 `planning_receipt.py --require-trace`에 `Neutral-*`/`PlannerRecompileState-*` trace만 포함된 log 입력
+  2. 수정 JAR `b858fa43448b20cc77c8e618c2337688f6420fb3f5d0bf59efa09f77f3ed6a01`로 LAN LogReg workers=2 MinST planning-only 실행
+- **관측 증상**:
+  - 기존 receipt는 production MinST 선택 trace가 0개여도 성공했다.
+  - v2 receipt를 적용한 첫 새-JAR canary는 `MinST-PhysicalOptimize/Complete`를 각각 1개 기록했지만 `Planner-Invoke`가 0개여서 정확히 거부됐다.
+  - 실패 로그: immutable stage `g014-planning-audit-stage-650d369-dde3371-20260810-v1/.../results/fed2/mkl-min-st-cut/logreg_dataset-P2P2D_coordinator_mkl-min-st-cut_plan-lan-logreg-w2-minst-20260810-v2_lan_coordinator1.log`.
+- **원인 분석**:
+  - receipt가 `[PlannerTrace]` 존재만 검사해 config planner와 실행 implementation identity를 교차 검증하지 않았다.
+  - 첫 identity 수정은 `IPAPassRewriteFederatedPlan`에만 적용했지만, 실제 benchmark production compile은 `DMLTranslator.runFederatedPlannerAtFinalHopBoundary`에서 factory 결과를 직접 실행한다. 따라서 사용되지 않는 진입점만 계측한 상태였다.
 - **해결 요약**:
-  - `IPAPassRewriteFederatedPlan`이 factory에서 얻은 동일 implementation instance의 `Planner-Invoke`/`Planner-Complete`를 기록한다.
+  - `IPAPassRewriteFederatedPlan`과 실제 final-hop production 진입점 모두 factory에서 얻은 동일 implementation instance의 `Planner-Invoke`/`Planner-Complete`를 기록한다.
   - receipt가 config의 `sysds.federated.planner`를 파싱하고 두 identity record가 정확히 하나이며 동일 planner인지 검사한다.
   - receipt schema를 v2로 올리고 `planner` 필드를 추가했다.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/ipa/IPAPassRewriteFederatedPlan.java`
+  - `src/main/java/org/apache/sysds/parser/DMLTranslator.java`
   - harness `experiments/tools/planning_receipt.py`
   - 양 저장소의 계약 테스트
-- **검증**: wrong-planner fixture와 identity 누락 fixture가 RED였고 구현 후 harness 160 tests 및 source 관련 20 tests가 통과했다.
-- **잔여 이슈**: top-level compile이 실제로 identity pair를 정확히 하나 생성하는지는 새 Docker planning-only run으로 검증한다.
+- **검증**: wrong-planner fixture와 identity 누락 fixture가 RED였다. 실제 canary도 identity 0건으로 fail-closed 거부됐다. `DMLTranslator` production entry 계측을 요구하는 source test가 RED(3 tests 중 1 failure)였고 수정 후 관련 source 20 tests가 통과했다. 최종 Docker 재검증은 다음 immutable JAR에서 수행한다.
+- **잔여 이슈**: 수정된 final-hop entry가 실제로 identity pair를 정확히 하나 생성하는지는 재빌드한 Docker planning-only canary로 검증한다.
 - **잠재 회귀 위험**: factory 호출과 로그 대상 instance가 분리되면 잘못된 구현을 기록할 수 있다. 현재 코드는 factory 결과를 지역 변수 하나로 유지하고 그 instance를 실행한다.
 - **의사결정 근거**: 플래너 선택 로직은 바꾸지 않고 실제 호출 identity를 실패-폐쇄 receipt로 강화했다.
 
