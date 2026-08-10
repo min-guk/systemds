@@ -312,3 +312,61 @@
 - **잔여 이슈**: 새 commit/JAR의 immutable Docker stage에서 StepLM workers=1의 FedAll과 Heuristic을 planning-only로 실행해 Heuristic marker가 1개 이상이고 exact emitted/runtime plan이 실제로 달라지는지 확인한다. 그 전에는 성능 runtime을 시작하지 않는다.
 - **잠재 회귀 위험**: FULL을 shape 확인 없이 모두 vector로 취급하면 matrix aggregate-binary까지 과도하게 demote할 수 있다. `isVector(shape)` 회귀와 실제 StepLM planning receipt로 감지한다.
 - **의사결정 근거**: candidate-space를 임의로 닫거나 runtime을 보정하지 않고, 기존 Heuristic 정책이 single-worker의 실제 `FType.FULL` 표현에도 동일하게 적용되도록 정확한 FType 지원을 복원했다.
+
+## 12. LM FedAll에서 선택된 REFED source hop이 MapMultChain fusion으로 사라짐
+
+- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **환경/조건**: LAN planning-only, FedAll, P2P2D LM, workers=1; commit `fdf63b1458...` immutable stage
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-fedall --alg lm ...`
+  - 실패 증거: `/home/mchoi/g014-planning-audit-stage-715e910-fdf63b1-20260810-v1/g007-stage-7fda686c9befa1d4d9a0afe18fdab664c330eefb5ec7f6307982af0477a50b87/results/failures/`
+  - 최소 회귀: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.FederatedDagExactRefedInputProjectionTest test`
+- **관측 증상**: runtime 실행 전 Lop lowering에서 `fed_refed lowering requires a local lop for hop=245`로 실패했다. planner는 LM의 중간 matrix multiply hop을 REFED source로 정확히 선택하고 registry에 기록했지만, 이후 `XtXv`/`XtwXv` MapMultChain fusion이 그 중간 hop의 Lop 자체를 제거했다.
+- **원인 분석**: `AggBinaryOp.checkMapMultChain()`은 planner가 부여한 explicit relocation/materialization boundary를 확인하지 않고 식 패턴만으로 fusion을 허용했다. 따라서 planner-selected authority와 physical lowering 최적화 사이의 계약이 깨졌다. 이는 잘못된 후보 선택이나 런타임 미지원이 아니라, 선택된 concrete hop을 후속 rewrite가 지운 문제다.
+- **해결 요약**:
+  - transpose, inner aggregate-binary, binary weight/residual hop 중 fusion으로 소실될 hop에 planner materialization boundary가 있으면 MapMultChain fusion을 적용하지 않는다.
+  - boundary가 없는 기존 expression은 계속 `XtXv`로 fusion되므로 일반 최적화는 유지한다.
+  - 후보를 닫거나 runtime fallback을 추가하지 않고, planner가 선택한 explicit physical boundary를 lowering까지 보존한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/AggBinaryOp.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedDagExactRefedInputProjectionTest.java`
+- **검증**:
+  - 신규 회귀는 수정 전 selected intermediate source가 여전히 `XtXv`로 fusion되어 RED였고, 수정 후 `ChainType.NONE`을 반환해 GREEN이었다.
+  - exact Dag/refed, emission/authority, FedAll/Heuristic/DP/MinST 대표 회귀를 포함한 최종 묶음 **48 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-planning-fixes-focused-final-20260810.log`).
+  - `git diff --check` 통과.
+- **잔여 이슈**: 새 commit/JAR stage에서 기존 실패 셀 LM-w1 FedAll을 가장 먼저 planning-only로 실행해 receipt가 성공하고 `runtime_executed=false`, `execution_seconds=0.0`이며 selected REFED source가 최종 Lop/runtime-plan explain에 남는지 확인한다.
+- **잠재 회귀 위험**: planner registry가 남은 채 compile이 재사용되면 불필요하게 fusion을 막을 수 있다. registry lifecycle/transaction tests와 boundary가 없는 expression의 `XtXv` 유지 assertion으로 감지한다.
+- **의사결정 근거**: runtime fallback이나 후보 축소가 아니라, planner가 선택한 concrete relocation boundary를 후속 Hop→Lop rewrite가 지우지 못하도록 planner/runtime 경계 계약을 복원했다.
+
+## 13. LogReg DP에서 optional formal overwrite의 함수 입력 pass-through가 CFG에서 소실됨
+
+- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **환경/조건**: DP planning, LogReg 함수 내부 `if(hasNaNs) X=replace(X, ...)`처럼 else 없는 optional formal overwrite 이후 `rowSums(X^2)`를 사용하는 경로
+- **재현 절차**:
+  - 최소 CFG 회귀: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.core.NeutralPlacementGraphExactCfgIdentityTest test`
+  - production-shape 회귀: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest#testDpLogRegKeepsInitialFederatedFormalForRowSumSquares' test`
+- **관측 증상**: optional replacement 뒤의 `X` TRead가 branch join이 아니라 branch TWrite 하나만 reaching definition으로 인식됐다. caller의 federated formal `X`가 no-write 경로에서 사라져 `rowSums(X^2)`가 값싼 `CP/LOUT`으로 선택됐고, 함수 입력의 실제 FederationMap authority와 비용이 반영되지 않았다.
+- **원인 분석**:
+  - CFG reaching-definition 분석은 function body 입구를 빈 state로 시작했다.
+  - else 없는 if에서 write branch는 `X` TWrite를 내보내고 no-write branch는 빈 state를 내보냈으므로, merge 결과에는 TWrite만 남았다.
+  - 이 때문에 function input과 branch definition이 함께 도달하는 정확한 phi, logical function-input fact, worker-pool 교집합 검증이 모두 생성되지 않았다.
+- **해결 요약**:
+  - 각 named function의 formal input을 explicit CFG entry definition으로 seed하고, occurrence ordinal과 충돌하지 않는 function-input sentinel을 별도 boolean authority로 분리한다.
+  - function-input + TWrite가 함께 도달하면 exact `BRANCH_JOIN_PHI`/`LOOP_HEAD_PHI`와 `cfg-function-input:<namespace>:<variable>` predecessor를 생성한다.
+  - logical function-input boundary와 CFG TWrite constraint를 둘 다 merged read에 결합한다.
+  - durable worker-pool authority는 function source와 모든 CFG definition이 같은 physical worker pool을 증명할 때만 교집합으로 보존한다. 어느 한쪽이 없거나 불일치하면 anchor를 만들지 않는다.
+  - DP adapter는 node-kind 추측이 아니라 이미 검증된 exact `LogicalFunctionInputFact`를 authority로 사용한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/core/NeutralPlacementGraphExactCfgIdentityTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+- **검증**:
+  - exact CFG suite **11 tests, failures=0, errors=0** (`/tmp/g014-cfg-function-pass-through-green-final-20260810.log`). 신규 test는 formal pass-through predecessor 1개, TWrite predecessor 1개, `BRANCH_JOIN_PHI`, SAME_PLACEMENT와 CONJUNCTIVE constraint를 모두 확인한다.
+  - production LogReg DP 회귀 **1 test, failures=0, errors=0** (`/tmp/g014-logreg-function-pass-through-green-final-20260810.log`). post-branch X TRead/TWrite와 `rowSums(X^2)`가 모두 exact `FED/FOUT`을 선택하고 두 CFG 경로 placement가 동일함을 확인한다.
+  - 관련 FedAll/Heuristic/DP/MinST 및 emission/authority 회귀 **48 tests, failures=0, errors=0** (`/tmp/g014-planning-fixes-focused-final-20260810.log`).
+  - `git diff --check` 통과.
+- **잔여 이슈**: 새 Docker stage에서 LogReg-w1 DP planning-only를 실행해 planner receipt, branch-phi selection trace, emitted/runtime plan fingerprint를 확인한다. 이후 같은 workload의 네 planner 전체와 나머지 workload를 DP→FedAll→Heuristic→MinST 순서로 planning-only 감사한다.
+- **잠재 회귀 위험**: 다중 call-site, loop backedge, 서로 다른 worker pool에서 들어오는 optional overwrite에서 잘못된 anchor를 합성할 수 있다. exact predecessor/constraint tests와 worker-pool 교집합의 fail-closed 동작, Docker planning receipt로 감지한다.
+- **의사결정 근거**: DP의 국소 최적화 철학은 변경하지 않았다. 누락된 함수-entry CFG source와 물리 anchor authority만 복원했으며, runtime 지원 후보를 닫거나 TR/TW 규칙을 완화하지 않았다.

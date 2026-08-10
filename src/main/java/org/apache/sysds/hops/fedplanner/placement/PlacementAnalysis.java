@@ -1066,8 +1066,7 @@ public final class PlacementAnalysis {
 			NeutralPlacementGraph.Node source = graph.node(fact.sourceArgument()).orElseThrow();
 			NeutralPlacementGraph.Node boundary = graph.node(fact.boundary()).orElseThrow();
 			NeutralPlacementGraph.Node read = graph.node(fact.targetRead()).orElseThrow();
-			if(boundary.kind() != NodeKind.FUNCTION_INPUT || read.kind() != NodeKind.TRANSIENT_READ
-				|| read.valueVersion().versionKind() != PlacementIdentity.VersionKind.FUNCTION_INPUT)
+			if(boundary.kind() != NodeKind.FUNCTION_INPUT || !isLogicalFunctionRead(read))
 				throw new IllegalArgumentException("Logical function input endpoints have wrong node kinds");
 			if(source.valueVersion() != fact.sourceValueVersion()
 				|| boundary.valueVersion() != fact.boundaryValueVersion()
@@ -1102,6 +1101,14 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Duplicate logical function input fact");
 		}
 		return List.copyOf(sorted);
+	}
+
+	private static boolean isLogicalFunctionRead(NeutralPlacementGraph.Node read) {
+		return (read.kind() == NodeKind.TRANSIENT_READ || read.kind() == NodeKind.BRANCH_JOIN
+			|| read.kind() == NodeKind.LOOP_PHI)
+			&& (read.valueVersion().versionKind() == PlacementIdentity.VersionKind.FUNCTION_INPUT
+				|| read.valueVersion().predecessorVersions().stream()
+					.anyMatch(value -> value.startsWith("cfg-function-input:")));
 	}
 
 	private static Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>>>

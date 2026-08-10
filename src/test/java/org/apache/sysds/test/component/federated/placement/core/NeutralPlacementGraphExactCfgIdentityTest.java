@@ -146,6 +146,37 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	}
 
 	@Test
+	public void optionalFormalOverwriteKeepsFunctionInputAsExactBranchPredecessor() throws Exception {
+		PlacementAnalysis analysis = buildAnalysis("f=function(matrix[double] X, boolean flag)"
+			+ "return(matrix[double] Y){if(flag){X=X+1;}Y=X+1;}"
+			+ "A=matrix(1,2,2);Y=f(A,FALSE);print(sum(Y));");
+		NeutralPlacementGraph graph = analysis.graph();
+		List<Node> feedingReads = readsFeeding(graph, "Y", "X");
+		Assert.assertEquals("expected one post-branch formal X read", 1, feedingReads.size());
+		Node read = feedingReads.get(0);
+		Assert.assertEquals("optional overwrite must produce a branch phi",
+			VersionKind.BRANCH_JOIN_PHI, read.valueVersion().versionKind());
+		Assert.assertEquals("the explicit branch write must remain a CFG predecessor", 1,
+			distinctCfgDefinitions(read).size());
+		Assert.assertEquals("the no-write branch must retain the incoming function value", 1,
+			read.valueVersion().predecessorVersions().stream()
+				.filter(value -> value.startsWith("cfg-function-input:")).count());
+		Assert.assertEquals("the caller boundary must own the incoming branch source", 1,
+			graph.constraints().stream().filter(constraint ->
+				constraint.kind() == ConstraintKind.SAME_PLACEMENT
+					&& constraint.right().equals(read.key())
+					&& "function-formal-input".equals(constraint.evidence())).count());
+		Assert.assertEquals("the branch write must constrain the same merged read", 1,
+			graph.constraints().stream().filter(constraint ->
+				constraint.kind() == ConstraintKind.CONJUNCTIVE
+					&& constraint.right().equals(read.key())
+					&& !"function-formal-input".equals(constraint.evidence())).count());
+		Assert.assertEquals("analysis must publish the caller argument as a logical input", 1,
+			analysis.logicalFunctionInputsInCanonicalOrder().stream()
+				.filter(fact -> fact.targetRead().equals(read.key())).count());
+	}
+
+	@Test
 	public void functionBoundariesAreExactlyIsolatedPerCallSiteAndPosition() throws Exception {
 		NeutralPlacementGraph graph = build("f=function(matrix[double] A)return(matrix[double] B){"
 			+ "B=A;i=1;while(i<2){B=B+1;i=i+1;}}"
@@ -259,13 +290,17 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	}
 
 	private static NeutralPlacementGraph build(String script) throws Exception {
+		return buildAnalysis(script).graph();
+	}
+
+	private static PlacementAnalysis buildAnalysis(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
 		translator.liveVariableAnalysis(program);
 		translator.validateParseTree(program);
 		translator.constructHops(program);
-		return new NeutralPlacementGraphBuilder().build(program);
+		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
 	}
 
 	/**

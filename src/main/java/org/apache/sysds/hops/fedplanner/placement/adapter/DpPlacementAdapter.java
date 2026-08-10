@@ -750,9 +750,7 @@ public final class DpPlacementAdapter {
 				.filter(fact -> fact.sourceArgument() == occurrence.key()
 					&& fact.targetRead() == parent.key() && fact.logicalPosition() == 0)
 				.toList();
-			if(remaining == 0 && !functionInputs.isEmpty() && parentHop.getInput().isEmpty()
-				&& context.analysis().graph().node(parent.key()).orElseThrow().kind()
-					== NeutralPlacementGraph.NodeKind.TRANSIENT_READ) {
+			if(remaining == 0 && !functionInputs.isEmpty() && parentHop.getInput().isEmpty()) {
 				if(functionInputs.size() != 1 || collectedHops.size() != 1 || !logicalEntries.isEmpty()
 					|| childPlan == null || childPlan.getSelectedPlacementState() == null)
 					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,

@@ -100,6 +100,8 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 
 /** Finite mutation-free construction of the planner-neutral shadow graph. */
 public final class NeutralPlacementGraphBuilder {
+	private static final int CFG_FUNCTION_INPUT_DEFINITION = -1;
+	private static final String CFG_FUNCTION_INPUT_PREFIX = "cfg-function-input:";
 	private final OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 
 	public List<String> selectedProjection(DMLProgram program) {
@@ -209,7 +211,7 @@ public final class NeutralPlacementGraphBuilder {
 				.put(hop, ordinal);
 			ownedHops.add(hop);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
-			if(anchors.isEmpty() && versionKind == VersionKind.FUNCTION_INPUT)
+			if(anchors.isEmpty() && cfg.reachingFunctionInputs().get(ordinal))
 				anchors = functionInputAnchors(hop, occurrence, occurrences, nodesByHop, cfg);
 			List<NodeShapeFact> inputShapeFacts = new ArrayList<>(hop.getInput().size());
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
@@ -240,7 +242,8 @@ public final class NeutralPlacementGraphBuilder {
 			Node node = buildNode(hop, key, value, exactAnchors,
 				Collections.unmodifiableList(new ArrayList<>(inputAnchors)),
 				Collections.unmodifiableList(new ArrayList<>(inputAnchorOwners)), shapeFact, inputShapeFacts,
-				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind, cfg),
+				inputDomains(hop, nodesByHop, occurrence, occurrences,
+					cfg.reachingFunctionInputs().get(ordinal), cfg),
 				candidateRuleDomainKeys, candidateRuleFacts);
 			nodes.add(node);
 			nodesByHop.put(hop, node);
@@ -531,6 +534,7 @@ public final class NeutralPlacementGraphBuilder {
 		for(int readOrdinal = 0; readOrdinal < occurrences.size(); readOrdinal++) {
 			HopOccurrenceProjection readProjection = projectionsByHop.get(occurrences.get(readOrdinal).hop());
 			if(readProjection == null || !isTransientRead(readProjection.hop())
+				|| cfg.reachingFunctionInputs().get(readOrdinal)
 				|| cfg.reachingDefinitions().get(readOrdinal).size() != 1
 				|| !supportedPathOccurrence(readProjection.key()))
 				continue;
@@ -697,8 +701,18 @@ public final class NeutralPlacementGraphBuilder {
 		Set<StatementBlock> loopHeaders = Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<StatementBlock> loopLatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		connectSequence(topLevelStatementBlocks, Set.of(), predecessors, loopHeaders, loopLatches);
-		for(FunctionStatementBlock function : program.getNamedNSFunctionStatementBlocks().values())
+		Map<StatementBlock,Map<String,Set<Integer>>> functionInputSeeds = new IdentityHashMap<>();
+		for(Map.Entry<String,FunctionStatementBlock> entry :
+			program.getNamedNSFunctionStatementBlocks().entrySet()) {
+			FunctionStatementBlock function = entry.getValue();
 			connectSequence(List.of(function), Set.of(), predecessors, loopHeaders, loopLatches);
+			FunctionStatement statement = (FunctionStatement) function.getStatement(0);
+			Map<String,Set<Integer>> seeds = new java.util.TreeMap<>();
+			for(var input : statement.getInputParams())
+				seeds.put(entry.getKey() + '\u0000' + input.getName(),
+					Set.of(CFG_FUNCTION_INPUT_DEFINITION));
+			functionInputSeeds.put(function, Collections.unmodifiableMap(seeds));
+		}
 		Map<StatementBlock,List<Integer>> byBlock = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++)
 			byBlock.computeIfAbsent(occurrences.get(i).block(), k -> new ArrayList<>()).add(i);
@@ -715,6 +729,7 @@ public final class NeutralPlacementGraphBuilder {
 			changed = false;
 			for(StatementBlock block : predecessors.keySet()) {
 				Map<String,Set<Integer>> state = new java.util.TreeMap<>();
+				mergeDefinitions(state, functionInputSeeds.get(block));
 				for(StatementBlock predecessor : predecessors.get(block))
 					mergeDefinitions(state, out.get(predecessor));
 				transfer(state, byBlock.getOrDefault(block, List.of()), occurrences);
@@ -725,17 +740,26 @@ public final class NeutralPlacementGraphBuilder {
 			}
 		} while(changed);
 		List<Set<Integer>> reaching = new ArrayList<>(occurrences.size());
-		for(int i = 0; i < occurrences.size(); i++) reaching.add(Set.of());
+		List<Boolean> reachingFunctionInputs = new ArrayList<>(occurrences.size());
+		for(int i = 0; i < occurrences.size(); i++) {
+			reaching.add(Set.of());
+			reachingFunctionInputs.add(false);
+		}
 		for(Map.Entry<StatementBlock,List<Integer>> entry : byBlock.entrySet()) {
 			Map<String,Set<Integer>> state = new java.util.TreeMap<>();
+			mergeDefinitions(state, functionInputSeeds.get(entry.getKey()));
 			for(StatementBlock predecessor : predecessors.getOrDefault(entry.getKey(), Set.of()))
 				mergeDefinitions(state, out.get(predecessor));
 			for(int index : entry.getValue()) {
 				PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(index);
 				String variable = occurrence.namespace() + '\u0000' + lexicalVariable(occurrence.hop(), index);
-				if(isTransientRead(occurrence.hop()))
-					reaching.set(index, Collections.unmodifiableSet(new java.util.TreeSet<>(
-						state.getOrDefault(variable, Set.of()))));
+				if(isTransientRead(occurrence.hop())) {
+					Set<Integer> raw = state.getOrDefault(variable, Set.of());
+					reachingFunctionInputs.set(index, raw.contains(CFG_FUNCTION_INPUT_DEFINITION));
+					Set<Integer> definitions = new java.util.TreeSet<>(raw);
+					definitions.remove(CFG_FUNCTION_INPUT_DEFINITION);
+					reaching.set(index, Collections.unmodifiableSet(definitions));
+				}
 				if(isDefinition(occurrence.hop())) state.put(variable, Set.of(index));
 			}
 		}
@@ -743,9 +767,10 @@ public final class NeutralPlacementGraphBuilder {
 		for(int i = 0; i < occurrences.size(); i++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(i);
 			VersionKind kind = VersionKind.ORDINARY;
-			if(isFormalFunctionInputRead(program, occurrence, reaching.get(i)))
+			int sourceCount = reaching.get(i).size() + (reachingFunctionInputs.get(i) ? 1 : 0);
+			if(isFormalFunctionInputRead(program, occurrence, reachingFunctionInputs.get(i), reaching.get(i)))
 				kind = VersionKind.FUNCTION_INPUT;
-			else if(isTransientRead(occurrence.hop()) && reaching.get(i).size() > 1)
+			else if(isTransientRead(occurrence.hop()) && sourceCount > 1)
 				kind = loopHeaders.contains(occurrence.block()) ? VersionKind.LOOP_HEAD_PHI
 					: branchDefinitionsDiffer(occurrence, predecessors, out)
 						? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
@@ -754,12 +779,13 @@ public final class NeutralPlacementGraphBuilder {
 			kinds.add(kind);
 		}
 		return new CfgAnalysis(Collections.unmodifiableList(ordinals), Collections.unmodifiableList(kinds),
-			Collections.unmodifiableList(reaching));
+			Collections.unmodifiableList(reaching), Collections.unmodifiableList(reachingFunctionInputs));
 	}
 
 	private static boolean isFormalFunctionInputRead(DMLProgram program,
-		PlacementGraphFingerprint.HopOccurrence occurrence, Set<Integer> reachingDefinitions) {
-		if(!isTransientRead(occurrence.hop()) || !reachingDefinitions.isEmpty()
+		PlacementGraphFingerprint.HopOccurrence occurrence, boolean reachesFunctionInput,
+		Set<Integer> reachingDefinitions) {
+		if(!isTransientRead(occurrence.hop()) || !reachesFunctionInput || !reachingDefinitions.isEmpty()
 			|| occurrence.namespace() == null || "main".equals(occurrence.namespace()))
 			return false;
 		FunctionStatementBlock function = program.getNamedNSFunctionStatementBlocks().get(occurrence.namespace());
@@ -846,7 +872,7 @@ public final class NeutralPlacementGraphBuilder {
 	private static boolean isDefinition(Hop hop) { return isTransientWrite(hop) || isFunctionOutput(hop); }
 
 	private record CfgAnalysis(List<Integer> definitionOrdinals, List<VersionKind> versionKinds,
-		List<Set<Integer>> reachingDefinitions) { }
+		List<Set<Integer>> reachingDefinitions, List<Boolean> reachingFunctionInputs) { }
 
 	private static String registrySentinel(DMLProgram program) {
 		List<String> rows = new ArrayList<>();
@@ -872,6 +898,9 @@ public final class NeutralPlacementGraphBuilder {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(i);
 			ValueVersionKey value = node.valueVersion();
 			Set<String> predecessors = new java.util.TreeSet<>(value.predecessorVersions());
+			if(cfg.reachingFunctionInputs().get(i))
+				predecessors.add(cfgFunctionInputReference(occurrence.namespace(),
+					value.lexicalVariable()));
 			for(int definition : cfg.reachingDefinitions().get(i))
 				predecessors.add("cfg-definition:" + valueReference(nodes.get(definition).valueVersion()));
 			ValueVersionKey closedValue = new ValueVersionKey(value.programFingerprint(), value.lexicalVariable(),
@@ -892,9 +921,11 @@ public final class NeutralPlacementGraphBuilder {
 		List<DurableAnchorKey> closedAnchors = new ArrayList<>(nodes.size());
 		for(int i = 0; i < nodes.size(); i++) {
 			DurableAnchorKey anchor = occurrenceAnchors.get(i);
-			if(anchor == null)
+			if(isTransientRead(occurrences.get(i).hop()) && (cfg.reachingFunctionInputs().get(i)
+				|| !cfg.reachingDefinitions().get(i).isEmpty()))
 				anchor = cfgTransientReadAnchor(occurrences.get(i).hop(), factsByHop.get(occurrences.get(i).hop()),
-					cfg.reachingDefinitions().get(i), occurrenceAnchors);
+					cfg.reachingDefinitions().get(i), cfg.reachingFunctionInputs().get(i), anchor,
+					occurrenceAnchors);
 			Node node = nodes.get(i);
 			closedNodes.add(new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
 				node.legalAlternatives(), node.exclusions(), anchor == null ? List.of() : List.of(anchor)));
@@ -909,11 +940,15 @@ public final class NeutralPlacementGraphBuilder {
 
 	// Durable-anchor propagation preserves an existing FederationMap identity only when the matrix inputs,
 	// output geometry, and Oracle profile all prove the same FType domain; it is not a runtime-capability closure.
-	private DurableAnchorKey cfgTransientReadAnchor(Hop hop, NodeShapeFact outputShape, Set<Integer> reachingDefinitions,
-		List<DurableAnchorKey> occurrenceAnchors) {
-		if(!isTransientRead(hop) || !hop.getInput().isEmpty() || reachingDefinitions.isEmpty())
+	private DurableAnchorKey cfgTransientReadAnchor(Hop hop, NodeShapeFact outputShape,
+		Set<Integer> reachingDefinitions, boolean reachesFunctionInput,
+		DurableAnchorKey functionInputAnchor, List<DurableAnchorKey> occurrenceAnchors) {
+		if(!isTransientRead(hop) || !hop.getInput().isEmpty()
+			|| !reachesFunctionInput && reachingDefinitions.isEmpty())
 			return null;
-		DurableAnchorKey anchor = null;
+		DurableAnchorKey anchor = reachesFunctionInput ? functionInputAnchor : null;
+		if(reachesFunctionInput && anchor == null)
+			return null;
 		for(int definition : reachingDefinitions) {
 			DurableAnchorKey definitionAnchor = occurrenceAnchors.get(definition);
 			if(definitionAnchor == null)
@@ -1064,6 +1099,11 @@ public final class NeutralPlacementGraphBuilder {
 		if(read.kind() != NodeKind.TRANSIENT_READ || !isTransientRead(readOccurrence.hop()))
 			return read;
 		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
+		if(cfg.reachingFunctionInputs().get(ordinal)) {
+			traceTransientReplay(readOccurrence,
+				"non-replayable-function-input-plus-definitions=" + definitions);
+			return read;
+		}
 		Integer loopPassThroughSource = definitions.size() > 1
 			? exactLoopPassThroughSource(ordinal, readOccurrence, read, definitions,
 				occurrences, nodes, factsByHop)
@@ -1369,7 +1409,7 @@ public final class NeutralPlacementGraphBuilder {
 						return inputNode == null ? null : inputNode.key();
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
-					current.valueVersion().versionKind(), cfg);
+					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
 				Node replacement = buildNode(hop, current.key(), current.valueVersion(), current.anchors(),
 					inputAnchors, Collections.unmodifiableList(inputAnchorOwners),
 					factsByHop.get(hop), List.copyOf(inputShapes),
@@ -1593,8 +1633,7 @@ public final class NeutralPlacementGraphBuilder {
 				continue;
 			Hop readHop = origins.get(current.key());
 			NodeShapeFact readShape = readHop == null ? null : factsByHop.get(readHop);
-			if(current.kind() != NodeKind.TRANSIENT_READ
-				|| current.valueVersion().versionKind() != VersionKind.FUNCTION_INPUT
+			if(!isFunctionInputReplayTarget(current)
 				|| readHop == null || readShape == null || !readHop.getInput().isEmpty())
 				throw new IllegalStateException("Function input replay target is not an exact formal TRead");
 			List<FType> exactDomain = logicalFunctionInputDomain(sources);
@@ -1773,7 +1812,7 @@ public final class NeutralPlacementGraphBuilder {
 						"function-argument:" + inputName.canonicalSourceOriginToken()));
 				if(inputName.isKnown())
 					for(Node formalInput : nodes)
-						if(formalInput.valueVersion().versionKind() == VersionKind.FUNCTION_INPUT
+						if(isFunctionInputReplayTarget(formalInput)
 							&& functionMatches(callOp, formalInput.key().functionNamespace())
 							&& inputName.name().equals(formalInput.valueVersion().lexicalVariable()))
 							constraints.add(new Constraint(ConstraintKind.SAME_PLACEMENT, input.key(),
@@ -2040,7 +2079,9 @@ public final class NeutralPlacementGraphBuilder {
 		List<Node> nodes, Set<Constraint> constraints, CfgAnalysis cfg) {
 		for(int i = 0; i < occurrences.size(); i++) {
 			Node target = nodes.get(i);
-			if(isTransientRead(occurrences.get(i).hop()) && cfg.reachingDefinitions().get(i).size() > 1) {
+			int sourceCount = cfg.reachingDefinitions().get(i).size()
+				+ (cfg.reachingFunctionInputs().get(i) ? 1 : 0);
+			if(isTransientRead(occurrences.get(i).hop()) && sourceCount > 1) {
 				for(int definition : cfg.reachingDefinitions().get(i))
 					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, nodes.get(definition).key(), target.key(),
 						-1, target.valueVersion().versionKind().name()));
@@ -2130,6 +2171,22 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static String valueReference(ValueVersionKey value) {
 		return value.cfgReferenceSignature();
+	}
+
+	private static String cfgFunctionInputReference(String namespace, String variable) {
+		return CFG_FUNCTION_INPUT_PREFIX + namespace + ':' + variable;
+	}
+
+	private static boolean hasCfgFunctionInputPredecessor(Node node) {
+		return node.valueVersion().predecessorVersions().stream()
+			.anyMatch(value -> value.startsWith(CFG_FUNCTION_INPUT_PREFIX));
+	}
+
+	private static boolean isFunctionInputReplayTarget(Node node) {
+		return (node.kind() == NodeKind.TRANSIENT_READ || node.kind() == NodeKind.BRANCH_JOIN
+			|| node.kind() == NodeKind.LOOP_PHI)
+			&& (node.valueVersion().versionKind() == VersionKind.FUNCTION_INPUT
+				|| hasCfgFunctionInputPredecessor(node));
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
@@ -3176,14 +3233,18 @@ public final class NeutralPlacementGraphBuilder {
 				return Set.of();
 			try {
 				Set<DurableAnchorKey> resolved = directAnchors(producer, fType);
-				if(resolved.isEmpty())
+				boolean mixedCfgFunctionSource = hasMixedCfgFunctionSources(producer);
+				if(resolved.isEmpty() && mixedCfgFunctionSource)
+					resolved = resolveMixedCfgFunctionInputs(producer, fType);
+				if(resolved.isEmpty() && !mixedCfgFunctionSource) {
 					resolved = derivedAnchors(producer, fType);
-				if(resolved.isEmpty())
-					resolved = resolveLogicalTransientInput(producer, fType);
-				if(resolved.isEmpty())
-					resolved = resolveFunctionInput(producer, fType);
-				if(resolved.isEmpty())
-					resolved = resolveCfgDefinitionInputs(producer, fType);
+					if(resolved.isEmpty())
+						resolved = resolveLogicalTransientInput(producer, fType);
+					if(resolved.isEmpty())
+						resolved = resolveFunctionInput(producer, fType);
+					if(resolved.isEmpty())
+						resolved = resolveCfgDefinitionInputs(producer, fType);
+				}
 				Set<DurableAnchorKey> immutable = Collections.unmodifiableSet(
 					canonicalWorkerPools(resolved));
 				byType.put(fType, immutable);
@@ -3346,6 +3407,28 @@ public final class NeutralPlacementGraphBuilder {
 			return common == null ? Set.of() : common;
 		}
 
+		private boolean hasMixedCfgFunctionSources(CompiledHopKey producer) {
+			Node node = nodesByKey.get(producer);
+			return node != null && hasCfgFunctionInputPredecessor(node)
+				&& node.valueVersion().predecessorVersions().stream()
+					.anyMatch(value -> value.startsWith("cfg-definition:"));
+		}
+
+		private Set<DurableAnchorKey> resolveMixedCfgFunctionInputs(CompiledHopKey producer,
+			FType fType) {
+			Set<DurableAnchorKey> functionPools = canonicalWorkerPools(
+				resolveFunctionInput(producer, fType));
+			Set<DurableAnchorKey> cfgPools = canonicalWorkerPools(
+				resolveCfgDefinitionInputs(producer, fType));
+			if(functionPools.isEmpty() || cfgPools.isEmpty())
+				return Set.of();
+			Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
+			for(DurableAnchorKey functionPool : functionPools)
+				if(cfgPools.stream().anyMatch(cfgPool -> sameWorkerPool(functionPool, cfgPool)))
+					compatible.add(functionPool);
+			return compatible;
+		}
+
 		/**
 		 * Resolves a branch/loop transient read only when every explicit CFG reaching
 		 * definition proves the same physical worker-pool layout.  The returned key is
@@ -3449,9 +3532,9 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static List<List<FType>> inputDomains(Hop hop, Map<Hop,Node> nodesByHop,
 		PlacementGraphFingerprint.HopOccurrence occurrence,
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, VersionKind versionKind,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, boolean reachesFunctionInput,
 		CfgAnalysis cfg) {
-		if(versionKind == VersionKind.FUNCTION_INPUT) {
+		if(reachesFunctionInput) {
 			Set<FType> callTypes = new LinkedHashSet<>();
 			boolean local = false;
 			for(PlacementGraphFingerprint.HopOccurrence candidate : occurrences) {

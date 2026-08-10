@@ -473,7 +473,8 @@ public class AggBinaryOp extends MultiThreadedHop {
 		Hop in2 = getInput().get(1);
 
 		//check for transpose left input (both chain types)
-		if (HopRewriteUtils.isTransposeOperation(in1)) {
+		if (HopRewriteUtils.isTransposeOperation(in1)
+				&& !hasPlannerMaterializationBoundary(in1)) {
 			Hop X = in1.getInput().get(0);
 
 			//check mapmultchain patterns
@@ -482,7 +483,11 @@ public class AggBinaryOp extends MultiThreadedHop {
 				Hop in3b = in2.getInput().get(1);
 				if (in3b instanceof AggBinaryOp) {
 					Hop in4 = in3b.getInput().get(0);
-					if (X == in4) //common input
+					// MapMultChain erases both intermediate hops. Preserve any explicit
+					// planner relocation/materialization boundary so Dag lowering can
+					// resolve the selected hop to a concrete Lop.
+					if (X == in4 && !hasPlannerMaterializationBoundary(in2)
+							&& !hasPlannerMaterializationBoundary(in3b)) //common input
 						chainType = ChainType.XtwXv;
 				}
 			}
@@ -492,14 +497,15 @@ public class AggBinaryOp extends MultiThreadedHop {
 				Hop in3b = in2.getInput().get(1);
 				if (in3a instanceof AggBinaryOp && in3b.getDataType() == DataType.MATRIX) {
 					Hop in4 = in3a.getInput().get(0);
-					if (X == in4) //common input
+					if (X == in4 && !hasPlannerMaterializationBoundary(in2)
+							&& !hasPlannerMaterializationBoundary(in3a)) //common input
 						chainType = ChainType.XtXvy;
 				}
 			}
 			//t(X)%*%(X%*%v)
 			else if (in2 instanceof AggBinaryOp) {
 				Hop in3 = in2.getInput().get(0);
-				if (X == in3) //common input
+				if (X == in3 && !hasPlannerMaterializationBoundary(in2)) //common input
 					chainType = ChainType.XtXv;
 			}
 		}

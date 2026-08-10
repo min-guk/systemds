@@ -3745,11 +3745,39 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		assertEquals("The LogReg fixture must retain exactly one rowSums(X^2) aggregate", 1,
 			rowSumSquares.size());
-		PlacementState selected = receipt.normalizedResult().selectedStates().get(rowSumSquares.get(0).key());
+		var rowSumOccurrence = rowSumSquares.get(0);
+		var rowSumInput = rowSumOccurrence.hop().getInput(0);
+		var xReadOccurrences = receipt.analysis().occurrences().stream()
+			.filter(occurrence -> occurrence.hop() == rowSumInput).toList();
+		assertEquals("rowSums(X^2) must consume one exact post-branch X read", 1,
+			xReadOccurrences.size());
+		var xReadOccurrence = xReadOccurrences.get(0);
+		var xReadNode = receipt.analysis().graph().node(xReadOccurrence.key()).orElseThrow();
+		assertEquals("the optional NaN replacement must leave an exact branch join",
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.BRANCH_JOIN,
+			xReadNode.kind());
+		assertTrue("the no-replacement path must retain the caller's formal X",
+			xReadNode.valueVersion().predecessorVersions().stream()
+				.anyMatch(value -> value.startsWith("cfg-function-input:")));
+		assertEquals("the replacement path must retain one exact TWrite X", 1,
+			receipt.analysis().cfgDefinitionSourcesInCanonicalOrder(xReadOccurrence.key()).size());
+		assertEquals("the caller X boundary must be published as a logical source", 1,
+			receipt.analysis().logicalFunctionInputsInCanonicalOrder().stream()
+				.filter(fact -> fact.targetRead() == xReadOccurrence.key()).count());
+		PlacementState selected = receipt.normalizedResult().selectedStates().get(rowSumOccurrence.key());
 		assertNotNull("DP must publish the exact LogReg row-sum-squares placement", selected);
 		assertEquals("The initial federated X path must not become a free CP/LOUT materialization",
 			ExecType.FED, selected.execType());
 		assertEquals(FederatedOutput.FOUT, selected.output());
+		PlacementState selectedRead = receipt.normalizedResult().selectedStates().get(xReadOccurrence.key());
+		assertNotNull("DP must publish the post-branch X placement", selectedRead);
+		assertEquals(ExecType.FED, selectedRead.execType());
+		assertEquals(FederatedOutput.FOUT, selectedRead.output());
+		var branchWrite = receipt.analysis().cfgDefinitionSourcesInCanonicalOrder(xReadOccurrence.key()).get(0);
+		PlacementState selectedWrite = receipt.normalizedResult().selectedStates().get(branchWrite);
+		assertNotNull("DP must publish the optional replacement TWrite placement", selectedWrite);
+		assertEquals("both CFG paths must agree on the exact transient placement",
+			selectedRead, selectedWrite);
 	}
 
 	@Test

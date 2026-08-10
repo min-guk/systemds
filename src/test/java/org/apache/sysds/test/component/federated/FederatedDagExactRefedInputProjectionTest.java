@@ -36,6 +36,7 @@ import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -44,6 +45,7 @@ import org.apache.sysds.lops.Data;
 import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
+import org.apache.sysds.lops.MapMultChain.ChainType;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry.ConsumerInputSpec;
@@ -130,6 +132,24 @@ public class FederatedDagExactRefedInputProjectionTest {
 			fusedPhysicalConsumer.getInputs().size());
 	}
 
+	@Test
+	public void selectedRefedSourceRemainsAnExplicitXtXvLopBoundary() {
+		DataOp x = localHop("X", 10, 4);
+		DataOp v = localHop("v", 4, 1);
+		AggBinaryOp inner = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(x, v);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(
+			HopRewriteUtils.createTranspose(x), inner);
+
+		assertEquals("The unmodified expression should be eligible for XtXv fusion",
+			ChainType.XtXv, outer.checkMapMultChain());
+		FederatedRefedRegistry.registerConsumerInputs(-1L, inner.getHopID(), -1L,
+			"fedinit://pool|FULL", FType.FULL,
+			List.of(new ConsumerInputSpec(outer.getHopID(), 1)));
+
+		assertEquals("A selected REFED source must not be erased by MapMultChain fusion",
+			ChainType.NONE, outer.checkMapMultChain());
+	}
+
 	private static Fixture fixture(boolean duplicateLocal, boolean reorderPhysicalInputs) {
 		DataOp localHop = localHop("L");
 		DataOp otherHop = localHop("R");
@@ -151,8 +171,12 @@ public class FederatedDagExactRefedInputProjectionTest {
 	}
 
 	private static DataOp localHop(String name) {
+		return localHop(name, 10, 10);
+	}
+
+	private static DataOp localHop(String name, long rows, long cols) {
 		DataOp hop = new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.TRANSIENTREAD,
-			null, 10, 10, -1, 1000);
+			null, rows, cols, -1, 1000);
 		hop.setForcedExecType(ExecType.CP);
 		hop.setFederatedOutput(FederatedOutput.LOUT);
 		return hop;
