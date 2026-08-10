@@ -355,16 +355,22 @@ public class DMLTranslator
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
 			AFederatedPlanner implementation = Objects.requireNonNull(
 				FederatedPlannerFactory.create(fedPlanner), "compiled federated planner implementation");
+			FederatedPlannerTrace.beginInvocation();
 			FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + fedPlanner
 				+ " impl=" + implementation.getClass().getName()
 				+ " boundary=final-hop"
 				+ " analysis=" + analysis.analysisFingerprint());
 			// fcallSizes are not recomputed here; planner uses null when unavailable.
 			long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
-			AFederatedPlanner.PlannerInvocationReceipt receipt =
-				implementation.rewriteProgram(dmlp, fgraph, null, analysis);
-			if(receipt.analysis() != analysis)
-				throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+			AFederatedPlanner.PlannerInvocationReceipt receipt;
+			try {
+				receipt = implementation.rewriteProgram(dmlp, fgraph, null, analysis);
+				if(receipt.analysis() != analysis)
+					throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+			}
+			finally {
+				FederatedPlannerTrace.completeInvocation();
+			}
 			FederatedPlannerTrace.logGlobal("Planner-Complete", "planner=" + fedPlanner
 				+ " impl=" + implementation.getClass().getName()
 				+ " receipt=" + receipt.getClass().getName()

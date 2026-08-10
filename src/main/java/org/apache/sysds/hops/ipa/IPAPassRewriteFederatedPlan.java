@@ -90,15 +90,21 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 			FederatedPlanner.COMPILE_FED_HEURISTIC;
 		AFederatedPlanner implementation = Objects.requireNonNull(
 			FederatedPlannerFactory.create(planner), "compiled federated planner implementation");
+		FederatedPlannerTrace.beginInvocation();
 		FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + planner
 			+ " impl=" + implementation.getClass().getName()
 			+ " analysis=" + analysis.analysisFingerprint());
 		// run planner rewrite with forced federated exec types
 		long tFedPlanner = System.nanoTime();
-		AFederatedPlanner.PlannerInvocationReceipt receipt =
-			implementation.rewriteProgram(prog, fgraph, fcallSizes, analysis);
-		if(receipt.analysis() != analysis)
-			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+		AFederatedPlanner.PlannerInvocationReceipt receipt;
+		try {
+			receipt = implementation.rewriteProgram(prog, fgraph, fcallSizes, analysis);
+			if(receipt.analysis() != analysis)
+				throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+		}
+		finally {
+			FederatedPlannerTrace.completeInvocation();
+		}
 		FederatedPlannerTrace.logGlobal("Planner-Complete", "planner=" + planner
 			+ " impl=" + implementation.getClass().getName()
 			+ " receipt=" + receipt.getClass().getName()

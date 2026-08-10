@@ -4600,9 +4600,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				FederatedOutput lockedChoice = lockedDecisions != null ? lockedDecisions.get(hopID) : null;
 				Hop hopRef = memoTable.resolveOriginalHop(hopID);
 				if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine) {
-					FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Entry", String.format(Locale.ROOT,
+					final int traceIter = iter;
+					FederatedPlannerTrace.logLazy(hopRef, "DP-OutputDecision-Entry", () -> String.format(Locale.ROOT,
 						"iter=%d seenLOUT=%s seenFOUT=%s canLOUT=%s canFOUT=%s members=%d parents=%d",
-						iter, entry.seenLOUT, entry.seenFOUT, entry.canChooseLOUT, entry.canChooseFOUT,
+						traceIter, entry.seenLOUT, entry.seenFOUT, entry.canChooseLOUT, entry.canChooseFOUT,
 						entry.memberHopIDs != null ? entry.memberHopIDs.size() : 0,
 						entry.parents != null ? entry.parents.size() : 0));
 				}
@@ -8941,12 +8942,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			double memberDelta = targetShare - currentShare;
 			Hop memberHopRef = memoTable.resolveOriginalHop(memberHopID);
 			if (FederatedPlannerTrace.shouldTrace(memberHopRef)) {
-				FederatedPlannerTrace.log(memberHopRef, "DP-OutputDecision-Member",
+				final FederatedPlannerDpMemoTable.FedPlan currentPlanForTrace = currentPlan;
+				final FederatedPlannerDpMemoTable.FedPlan targetPlanForTrace = targetPlan;
+				FederatedPlannerTrace.logLazy(memberHopRef, "DP-OutputDecision-Member", () ->
 					String.format(Locale.ROOT,
 						"orig=%d member=%d virtual=%s current=%s target=%s currentExec=%s targetExec=%s currentCost=%.6f targetCost=%.6f delta=%.6f multiplicity=%.6f loop=%s",
 						hopID, memberHopID, memoTable.isVirtualClone(memberHopID), currentOut, targetOut,
-						currentPlan.getExecType(), targetPlan.getExecType(), currentShare, targetShare,
-						memberDelta, targetPlan.getMultiplicity(), formatLoopContext(targetPlan.getLoopContext())));
+						currentPlanForTrace.getExecType(), targetPlanForTrace.getExecType(), currentShare, targetShare,
+						memberDelta, targetPlanForTrace.getMultiplicity(),
+						formatLoopContext(targetPlanForTrace.getLoopContext())));
 			}
 			delta += memberDelta;
 		}
@@ -9083,7 +9087,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			parentVariantDeltaCache);
 		if (Double.isFinite(parentVariantDelta)) {
 			if (trace) {
-				FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantDelta", String.format(Locale.ROOT,
+				FederatedPlannerTrace.logLazy(childHopRef, "DP-ParentVariantDelta", () -> String.format(Locale.ROOT,
 					"parentHop=%d parentExec=%s fromOut=%s toOut=%s delta=%.6f mode=%s rawParentVariant=%.6f childForwarding=%.6f",
 					parentPlan != null && parentPlan.getHopRef() != null ? parentPlan.getHopRef().getHopID() : -1L,
 					parentPlan != null ? parentPlan.getExecType() : null,
@@ -9093,7 +9097,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		if (trace) {
-			FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantDelta", String.format(Locale.ROOT,
+			FederatedPlannerTrace.logLazy(childHopRef, "DP-ParentVariantDelta", () -> String.format(Locale.ROOT,
 				"parentHop=%d parentExec=%s fromOut=%s toOut=%s delta=%.6f mode=child_forwarding fromCum=%.6f toCum=%.6f fromForward=%.6f toForward=%.6f",
 				parentPlan != null && parentPlan.getHopRef() != null ? parentPlan.getHopRef().getHopID() : -1L,
 				parentPlan != null ? parentPlan.getExecType() : null,
@@ -9158,7 +9162,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// different clone of the same logical child hop.
 		final long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
 		ParentVariantDeltaKey cacheKey = null;
-		if (!trace && parentVariantDeltaCache != null) {
+		if (parentVariantDeltaCache != null) {
 			cacheKey = new ParentVariantDeltaKey(
 				parentPlan, childOrigHopID, desiredChildOut, downstreamDemandOut, numWorkers);
 			Double cachedDelta = parentVariantDeltaCache.get(cacheKey);
@@ -9186,7 +9190,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (trace) {
 			int variantCountLOUT = variantsLOUT != null ? variantsLOUT.getFedPlanVariants().size() : 0;
 			int variantCountFOUT = variantsFOUT != null ? variantsFOUT.getFedPlanVariants().size() : 0;
-			FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantSearch", String.format(Locale.ROOT,
+			FederatedPlannerTrace.logLazy(childHopRef, "DP-ParentVariantSearch", () -> String.format(Locale.ROOT,
 				"parentHop=%d parentExec=%s parentOut=%s parentCost=%.6f childHop=%d childOrig=%d desiredOut=%s downstreamDemandOut=%s variantsLOUT=%d variantsFOUT=%d",
 				parentHopID, parentPlan.getExecType(), parentPlan.getFedOutType(), parentPlan.getCumulativeCost(),
 				childHopID, childOrigHopID, desiredChildOut, downstreamDemandOut, variantCountLOUT, variantCountFOUT));
@@ -9202,18 +9206,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				currentEdgeHopId = edge.getKey();
 				currentEdgeOut = edge.getValue();
 			}
-			}
-			if (!parentReferencesChild) {
-				if (cacheKey != null)
-					parentVariantDeltaCache.put(cacheKey, Double.NaN);
-				return Double.NaN;
-			}
+		}
+		if (!parentReferencesChild) {
+			if (cacheKey != null)
+				parentVariantDeltaCache.put(cacheKey, Double.NaN);
+			return Double.NaN;
+		}
 
 		double bestDelta = Double.POSITIVE_INFINITY;
 		int candidateLogs = 0;
 		int referencedChildVariants = 0;
 		int matchingDesiredVariants = 0;
-		for (FederatedPlannerDpMemoTable.FedPlanVariants variants : new FederatedPlannerDpMemoTable.FedPlanVariants[] {variantsLOUT, variantsFOUT}) {
+		for (FederatedPlannerDpMemoTable.FedPlanVariants variants :
+			new FederatedPlannerDpMemoTable.FedPlanVariants[] {variantsLOUT, variantsFOUT}) {
 			if (variants == null || variants.isEmpty())
 				continue;
 			for (FederatedPlannerDpMemoTable.FedPlan cand : variants.getFedPlanVariants()) {
@@ -9257,10 +9262,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				double adjustedDelta = rawDelta - childShareAdjustment
 					- overlappingParentShareAdjustment + downstreamForwardingDelta;
 				if (trace && candidateLogs < 6 && referencesChild) {
-					FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantCandidate", String.format(Locale.ROOT,
+					final long traceMatchedEdgeHopId = matchedEdgeHopId;
+					final boolean traceMatchesDesired = ok;
+					FederatedPlannerTrace.logLazy(childHopRef, "DP-ParentVariantCandidate", () -> String.format(Locale.ROOT,
 						"parentHop=%d candExec=%s candOut=%s candCost=%.6f edgeHop=%d edgeOrig=%d matchDesired=%s delta=%.6f rawDelta=%.6f childShareAdj=%.6f overlapParentShareAdj=%.6f downstreamForwardingDelta=%.6f",
 						parentHopID, cand.getExecType(), cand.getFedOutType(), cand.getCumulativeCost(),
-						matchedEdgeHopId, childOrigHopID, ok, adjustedDelta, rawDelta,
+						traceMatchedEdgeHopId, childOrigHopID, traceMatchesDesired, adjustedDelta, rawDelta,
 						childShareAdjustment, overlappingParentShareAdjustment, downstreamForwardingDelta));
 					candidateLogs++;
 				}
@@ -9270,26 +9277,30 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-			if (!Double.isFinite(bestDelta)) {
-				if (trace) {
-					FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantResult", String.format(Locale.ROOT,
-						"parentHop=%d result=no_compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d",
-						parentHopID, referencedChildVariants, matchingDesiredVariants));
-				}
-				if (cacheKey != null)
-					parentVariantDeltaCache.put(cacheKey, Double.NaN);
-				return Double.NaN;
-			}
-		double delta = bestDelta;
-		if (trace) {
-				FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantResult", String.format(Locale.ROOT,
-					"parentHop=%d result=compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d bestDelta=%.6f",
-					parentHopID, referencedChildVariants, matchingDesiredVariants, delta));
+		if (!Double.isFinite(bestDelta)) {
+			if (trace) {
+				final int traceReferencedChildVariants = referencedChildVariants;
+				final int traceMatchingDesiredVariants = matchingDesiredVariants;
+				FederatedPlannerTrace.logLazy(childHopRef, "DP-ParentVariantResult", () -> String.format(Locale.ROOT,
+					"parentHop=%d result=no_compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d",
+					parentHopID, traceReferencedChildVariants, traceMatchingDesiredVariants));
 			}
 			if (cacheKey != null)
-				parentVariantDeltaCache.put(cacheKey, delta);
-			return delta;
+				parentVariantDeltaCache.put(cacheKey, Double.NaN);
+			return Double.NaN;
 		}
+		double delta = bestDelta;
+		if (trace) {
+			final int traceReferencedChildVariants = referencedChildVariants;
+			final int traceMatchingDesiredVariants = matchingDesiredVariants;
+			FederatedPlannerTrace.logLazy(childHopRef, "DP-ParentVariantResult", () -> String.format(Locale.ROOT,
+				"parentHop=%d result=compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d bestDelta=%.6f",
+				parentHopID, traceReferencedChildVariants, traceMatchingDesiredVariants, delta));
+		}
+		if (cacheKey != null)
+			parentVariantDeltaCache.put(cacheKey, delta);
+		return delta;
+	}
 
 	private static FederatedOutput resolveObservedDownstreamOutputDemand(
 		FederatedPlannerDpMemoTable memoTable,

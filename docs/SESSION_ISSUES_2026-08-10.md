@@ -17,25 +17,37 @@
 - **잠재 회귀 위험**: benchmark 공통 옵션 정리 시 trace가 다시 꺼질 수 있다. `test_docker_planning_path_is_compile_only_trace_and_skips_worker_jvms`로 감지한다.
 - **의사결정 근거**: runtime을 완화하지 않고 실험 하네스의 관측 경로만 수정했다.
 
-## 2. DP 무필터 decision-map trace가 2.7 GB까지 폭증
+## 2. DP 무필터 planning trace가 수 GB까지 폭증하고 trace가 production cache를 비활성화
 
-- **상태**: 해결, 새 JAR planning-only 재검증 필요
+- **상태**: 해결, 새 JAR Docker planning-only 재검증 필요
 - **환경/조건**: DP, LAN, LogReg, workers=2, `SYSDS_FED_PLANNER_TRACE=1`, hop filter 없음
 - **재현 절차**: immutable stage `g014-planning-audit-stage-e65d367-20260810-v2/...`에서 planning-only DP 실행
-- **관측 증상**: runtime 시작 전 coordinator log가 `13,311,859`줄, `2,734,882,116`바이트까지 증가했다. 디스크 보호를 위해 원본을 중단·절단했고, head/tail 및 요약은 `results/planning-failures/plan-lan-logreg-w2-dp-20260810-v2`에 보존했다.
-- **원인 분석**: `logDecisionMapScoreBreakdown`이 동일한 전체 root contribution을 모든 conflict hop마다 반복했고, `DP-DecisionMap-AltRoot` 및 bundle/family root 차이도 상세 개수 제한이 없었다.
+- **관측 증상**:
+  - 첫 실패에서 runtime 시작 전 coordinator log가 `13,311,859`줄, `2,734,882,116`바이트까지 증가했다.
+  - 첫 제한 수정 뒤에도 최신 immutable stage의 LAN LogReg workers=2 DP planning-only가 runtime 진입 전 `6,304,812`줄, `1,475,908,193`바이트까지 다시 증가했다. 원본 SHA-256은 `45482dfdaa35e7909b9d69f26edd5b4b128493a10f6b6b6c8152859b912e12bc`이고, 보존 증거는 `/home/mchoi/g014-planning-audit-stage-650d369-895fd3e-20260810-v1/g007-stage-f5a4b91333c74ce0e00c7d4400785e949f91967f558b2a10ee659458870f1e33/results/planning-failures/plan-lan-logreg-w2-dp-20260810-v3/`이다.
+  - 두 번째 로그의 최다 stage는 `DP-OutputDecision-Member` 3,123,860건, `DP-ParentVariantCandidate` 1,022,287건, `DP-BoundaryShare` 442,152건, `DP-StableTRShare` 434,223건이었다.
+- **원인 분석**:
+  - 첫 수정은 decision-map 상세 일부만 제한했고, output decision/parent variant/boundary share 등 다른 hot-loop stage에는 전역 상한이 없었다.
+  - 더 심각하게 `computeParentVariantSwitchDelta`가 trace 활성 시 `ParentVariantDeltaCache`를 의도적으로 사용하지 않았다. 즉 관측 기능이 production 계산 경로와 planning time을 바꾸고 동일 후보를 대량 재계산했다.
 - **해결 요약**:
   - 명시적 hop filter가 없으면 동일 score breakdown은 결정적인 대표 hop 하나에만 기록한다.
   - root/alternative/bundle/family 상세는 `SYSDS_FED_PLANNER_TRACE_MAX_EDGES` 예산으로 제한한다.
   - 생략 개수를 `*Summary` stage로 남긴다.
+  - 모든 hop-detail stage에 invocation별 기본 4096건 상한을 적용하고, 생략 건수를 정렬된 `Trace-SuppressionSummary`로 남긴다.
+  - 최다 반복 DP stage는 `Supplier<String>` 기반 lazy trace로 바꿔 억제된 레코드의 `String.format` 비용도 없앴다.
+  - trace 여부와 무관하게 production `ParentVariantDeltaCache`를 항상 사용하도록 복원했다. 후보/비용/선택 로직과 cache key는 변경하지 않았다.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerTrace.java`
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java`
+  - `src/main/java/org/apache/sysds/hops/ipa/IPAPassRewriteFederatedPlan.java`
+  - `src/main/java/org/apache/sysds/parser/DMLTranslator.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerTraceBudgetTest.java`
   - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBG014PlanningTraceContractTest.java`
-- **검증**: 전체 main/test 소스 컴파일 성공, 관련 계약 테스트 포함 20 tests 통과. 실제 새 JAR 로그 크기는 다음 planning-only stage에서 확인한다.
+- **검증**: 새 계약 테스트는 `trace API lacks a per-stage record budget`으로 RED였고, 수정 후 trace budget·planner identity·MinST physical oracle 관련 23 tests가 통과했다. `mvn -DskipTests package`도 성공했으며 그 과정의 기본 10 tests가 추가 통과했다. 실제 새 JAR 로그 크기와 plan hash 동일성은 다음 immutable Docker planning-only stage에서 확인한다.
 - **잔여 이슈**: 반복 iteration 자체의 수는 유지된다. 이번 변경은 중복 상세만 제한하며 알고리즘 반복 횟수나 플랜을 바꾸지 않는다.
-- **잠재 회귀 위험**: 새로운 DP 상세 stage가 별도 무제한 loop를 추가할 수 있다. source contract와 실제 log byte/record count 상한으로 감지한다.
-- **의사결정 근거**: 후보 공간·비용·선택은 변경하지 않고 observability만 bounded하게 만들었다.
+- **잠재 회귀 위험**: `logGlobal`은 identity/objective receipt를 잃지 않도록 의도적으로 상한 밖이다. 향후 hot loop에서 `logGlobal`을 사용하면 다시 폭증할 수 있으므로 source contract와 실제 log byte/record count 상한으로 감지한다.
+- **의사결정 근거**: 후보 공간·비용·선택은 변경하지 않고 observability만 bounded하게 만들었으며, trace가 비활성화하던 production cache를 복원해 audit와 실제 planning 경로를 일치시켰다.
 
 ## 3. Receipt가 공통 전처리 trace를 특정 플래너 실행 증거로 오인하고 실제 진입점 identity가 누락됨
 

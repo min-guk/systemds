@@ -22,7 +22,12 @@ package org.apache.sysds.hops.fedplanner.fedCostBased;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import org.apache.sysds.conf.FederatedPlannerConfiguration;
 import org.apache.sysds.hops.Hop;
@@ -33,24 +38,33 @@ import org.apache.sysds.hops.Hop;
  *   - SYSDS_FED_PLANNER_TRACE=1
  *   - SYSDS_FED_PLANNER_TRACE_HOPS=12,34 (optional)
  *   - SYSDS_FED_PLANNER_TRACE_MAX_EDGES=8 (optional)
+ *   - SYSDS_FED_PLANNER_TRACE_MAX_RECORDS_PER_STAGE=4096 (optional)
  *
  * Matching system properties are also supported:
  *   - -Dsysds.fedplanner.trace=true
  *   - -Dsysds.fedplanner.trace.hops=12,34
  *   - -Dsysds.fedplanner.trace.max.edges=8
+ *   - -Dsysds.fedplanner.trace.max.records.per.stage=4096
  */
 public final class FederatedPlannerTrace {
 	private static final String ENV_TRACE = "SYSDS_FED_PLANNER_TRACE";
 	private static final String ENV_TRACE_HOPS = "SYSDS_FED_PLANNER_TRACE_HOPS";
 	private static final String ENV_TRACE_MAX_EDGES = "SYSDS_FED_PLANNER_TRACE_MAX_EDGES";
+	private static final String ENV_TRACE_MAX_RECORDS_PER_STAGE =
+		"SYSDS_FED_PLANNER_TRACE_MAX_RECORDS_PER_STAGE";
 
 	private static final String PROP_TRACE = "sysds.fedplanner.trace";
 	private static final String PROP_TRACE_HOPS = "sysds.fedplanner.trace.hops";
 	private static final String PROP_TRACE_MAX_EDGES = "sysds.fedplanner.trace.max.edges";
+	private static final String PROP_TRACE_MAX_RECORDS_PER_STAGE =
+		"sysds.fedplanner.trace.max.records.per.stage";
 
 	private static final boolean ENABLED = parseBoolean(resolveConfig(PROP_TRACE, ENV_TRACE), false);
 	private static final Set<Long> TRACE_HOP_IDS = parseHopIds(resolveConfig(PROP_TRACE_HOPS, ENV_TRACE_HOPS));
 	private static final int TRACE_MAX_EDGES = parsePositiveInt(resolveConfig(PROP_TRACE_MAX_EDGES, ENV_TRACE_MAX_EDGES), 8);
+	private static final int TRACE_MAX_RECORDS_PER_STAGE = parsePositiveInt(
+		resolveConfig(PROP_TRACE_MAX_RECORDS_PER_STAGE, ENV_TRACE_MAX_RECORDS_PER_STAGE), 4096);
+	private static final Map<String, StageRecordBudget> STAGE_RECORD_BUDGETS = new ConcurrentHashMap<>();
 
 	private FederatedPlannerTrace() {
 		// utility class
@@ -75,17 +89,91 @@ public final class FederatedPlannerTrace {
 		return TRACE_MAX_EDGES;
 	}
 
-	public static void log(Hop hop, String stage, String message) {
-		if (!shouldTrace(hop))
+	/** Reset bounded detail counters before one top-level planner invocation. */
+	public static void beginInvocation() {
+		if (ENABLED)
+			STAGE_RECORD_BUDGETS.clear();
+	}
+
+	/** Emit a deterministic receipt for every stage whose detail records were suppressed. */
+	public static void completeInvocation() {
+		if (!ENABLED)
 			return;
-		System.out.println("[PlannerTrace][" + stage + "] hop=" + hop.getHopID()
-				+ " (" + hop.getOpString() + ") " + message);
+		for (Map.Entry<String, StageRecordBudget> entry :
+			new TreeMap<>(STAGE_RECORD_BUDGETS).entrySet()) {
+			StageRecordBudget budget = entry.getValue();
+			long omitted = budget.getOmitted();
+			if (omitted > 0) {
+				logGlobal("Trace-SuppressionSummary", "stage=" + entry.getKey()
+					+ " emitted=" + budget.getEmitted()
+					+ " omitted=" + omitted
+					+ " maxRecordsPerStage=" + TRACE_MAX_RECORDS_PER_STAGE);
+			}
+		}
+	}
+
+	public static void log(Hop hop, String stage, String message) {
+		if (!shouldTrace(hop) || !tryAcquireStageRecord(stage))
+			return;
+		printHopRecord(hop, stage, message);
+	}
+
+	/**
+	 * Lazily construct a detail message only if its hop matches and its stage still
+	 * has record budget. This keeps audit tracing observational: suppressed records
+	 * do not pay formatting/allocation costs inside planner hot loops.
+	 */
+	public static void logLazy(Hop hop, String stage, Supplier<String> messageSupplier) {
+		if (!shouldTrace(hop) || !tryAcquireStageRecord(stage))
+			return;
+		printHopRecord(hop, stage, messageSupplier.get());
 	}
 
 	public static void logGlobal(String stage, String message) {
 		if (!ENABLED)
 			return;
 		System.out.println("[PlannerTrace][" + stage + "] " + message);
+	}
+
+	private static boolean tryAcquireStageRecord(String stage) {
+		String stageKey = stage != null ? stage : "Unknown";
+		return STAGE_RECORD_BUDGETS.computeIfAbsent(stageKey,
+			ignored -> new StageRecordBudget(TRACE_MAX_RECORDS_PER_STAGE)).tryAcquire();
+	}
+
+	private static void printHopRecord(Hop hop, String stage, String message) {
+		System.out.println("[PlannerTrace][" + stage + "] hop=" + hop.getHopID()
+			+ " (" + hop.getOpString() + ") " + message);
+	}
+
+	static final class StageRecordBudget {
+		private final long limit;
+		private final AtomicLong emitted = new AtomicLong();
+		private final AtomicLong omitted = new AtomicLong();
+
+		StageRecordBudget(long limit) {
+			this.limit = Math.max(1L, limit);
+		}
+
+		boolean tryAcquire() {
+			while (true) {
+				long current = emitted.get();
+				if (current >= limit) {
+					omitted.incrementAndGet();
+					return false;
+				}
+				if (emitted.compareAndSet(current, current + 1L))
+					return true;
+			}
+		}
+
+		long getEmitted() {
+			return emitted.get();
+		}
+
+		long getOmitted() {
+			return omitted.get();
+		}
 	}
 
 	private static String resolveConfig(String propKey, String envKey) {

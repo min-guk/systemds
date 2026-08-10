@@ -815,7 +815,7 @@ public class FederatedPlannerDpCostEstimator {
 		double materializationFactor = computeStableTransientReadLocalMaterializationFactor(childPlan, memoTable);
 		if (materializationFactor <= 1) {
 			if (trace) {
-				FederatedPlannerTrace.log(childHop, "DP-StableTRShare", String.format(Locale.ROOT,
+				FederatedPlannerTrace.logLazy(childHop, "DP-StableTRShare", () -> String.format(Locale.ROOT,
 					"factor=%.6f share=%.6f forwardingShare=0.000000 embeddedForwardingShare=0.000000 result=%.6f",
 					materializationFactor, share, share));
 			}
@@ -835,7 +835,7 @@ public class FederatedPlannerDpCostEstimator {
 		double embeddedForwardingShare = Math.min(Math.max(0.0, share), Math.max(0.0, forwardingShare));
 		double result = share - embeddedForwardingShare + embeddedForwardingShare / materializationFactor;
 		if (trace) {
-			FederatedPlannerTrace.log(childHop, "DP-StableTRShare", String.format(Locale.ROOT,
+			FederatedPlannerTrace.logLazy(childHop, "DP-StableTRShare", () -> String.format(Locale.ROOT,
 				"factor=%.6f share=%.6f forwardingShare=%.6f embeddedForwardingShare=%.6f result=%.6f",
 				materializationFactor, share, forwardingShare, embeddedForwardingShare, result));
 		}
@@ -933,7 +933,7 @@ public class FederatedPlannerDpCostEstimator {
 		double result = rawResult;
 		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
 		if (FederatedPlannerTrace.shouldTrace(childHop)) {
-			FederatedPlannerTrace.log(childHop, "DP-FoutCpShare", String.format(Locale.ROOT,
+			FederatedPlannerTrace.logLazy(childHop, "DP-FoutCpShare", () -> String.format(Locale.ROOT,
 				"parentHop=%d totalCost=%.6f raw=%.6f materializationFactor=%.6f priorLocalCache=%s cachedLocalAccess=%.6f repeatedLocalAccess=%.6f result=%.6f",
 				parentHop != null ? parentHop.getHopID() : -1L, totalCost, rawResult,
 				materializationFactor, priorLocalCache, cachedLocalAccess, repeatedLocalAccess, result));
@@ -973,7 +973,7 @@ public class FederatedPlannerDpCostEstimator {
 		double result = rawResult;
 		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
 		if (FederatedPlannerTrace.shouldTrace(childHop)) {
-			FederatedPlannerTrace.log(childHop, "DP-FoutCpShare", String.format(Locale.ROOT,
+			FederatedPlannerTrace.logLazy(childHop, "DP-FoutCpShare", () -> String.format(Locale.ROOT,
 				"parentHop=%d totalCost=%.6f raw=%.6f materializationFactor=%.6f priorLocalCache=%s cachedLocalAccess=%.6f repeatedLocalAccess=%.6f result=%.6f",
 				parentPlanHop != null ? parentPlanHop.getHopID() : -1L,
 				totalCost, rawResult, materializationFactor, priorLocalCache, cachedLocalAccess,
@@ -1396,7 +1396,7 @@ public class FederatedPlannerDpCostEstimator {
 		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
 		if (!FederatedPlannerTrace.shouldTrace(childHop))
 			return;
-		FederatedPlannerTrace.log(childHop, "DP-BoundaryShare", String.format(Locale.ROOT,
+		FederatedPlannerTrace.logLazy(childHop, "DP-BoundaryShare", () -> String.format(Locale.ROOT,
 			"parentHop=%d totalCost=%.6f producerWeight=%.6f parentDemand=%.6f totalDemand=%.6f charged=%.6f result=%.6f",
 			parentHop != null ? parentHop.getHopID() : -1L, totalCost, producerWeight,
 			parentDemand, totalDemand, chargedOccurrences, result));

@@ -1,6 +1,7 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.test.component.federated.placement.guard;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Files;
@@ -24,6 +25,8 @@ public class CampaignBG014PlanningTraceContractTest {
 	private static final Path TRACE = MAIN.resolve("fedplanner/fedCostBased/FederatedPlannerTrace.java");
 	private static final Path DP = MAIN.resolve(
 		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
+	private static final Path DP_COST = MAIN.resolve(
+		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java");
 	private static final Path MINST = MAIN.resolve(
 		"fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java");
 
@@ -71,5 +74,53 @@ public class CampaignBG014PlanningTraceContractTest {
 			"DP-DecisionMap-AltRootSummary", "DP-DecisionMap-BundleRootSummary"})
 			assertTrue("missing bounded-detail summary " + summary,
 				dpSource.contains("\"" + summary + "\""));
+	}
+
+	@Test
+	public void highVolumePlanningTraceIsInvocationScopedLazyAndStageBounded() throws Exception {
+		String traceSource = Files.readString(TRACE);
+		String dpSource = Files.readString(DP);
+		String dpCostSource = Files.readString(DP_COST);
+		assertTrue("trace API lacks a per-stage record budget",
+			traceSource.contains("TRACE_MAX_RECORDS_PER_STAGE"));
+		assertTrue("trace API eagerly formats messages that may be suppressed",
+			traceSource.contains("void logLazy(Hop hop, String stage, Supplier<String> messageSupplier)"));
+		assertTrue("trace budget is not reset for each planner invocation",
+			traceSource.contains("void beginInvocation()"));
+		assertTrue("trace budget does not emit an omission receipt",
+			traceSource.contains("void completeInvocation()")
+				&& traceSource.contains("Trace-SuppressionSummary"));
+
+		for(Path entryPoint : new Path[] {IPA, TRANSLATOR}) {
+			String source = Files.readString(entryPoint);
+			int begin = source.indexOf("FederatedPlannerTrace.beginInvocation()");
+			int invoke = source.indexOf("\"Planner-Invoke\"");
+			int complete = source.indexOf("FederatedPlannerTrace.completeInvocation()");
+			int receipt = source.indexOf("\"Planner-Complete\"");
+			assertTrue(entryPoint + " does not scope the trace budget around one planner invocation",
+				begin >= 0 && begin < invoke && complete > invoke && receipt > complete);
+		}
+
+		for(String stage : new String[] {"DP-OutputDecision-Member", "DP-ParentVariantCandidate",
+			"DP-ParentVariantSearch", "DP-ParentVariantResult", "DP-ParentVariantDelta",
+			"DP-OutputDecision-Entry"})
+			assertTrue("high-volume DP stage still eagerly logs: " + stage,
+				dpSource.contains("logLazy(") && lazyCallContains(dpSource, stage));
+		for(String stage : new String[] {"DP-BoundaryShare", "DP-StableTRShare", "DP-FoutCpShare"})
+			assertTrue("high-volume DP cost stage still eagerly logs: " + stage,
+				lazyCallContains(dpCostSource, stage));
+		assertFalse("enabling trace must not disable the production parent-variant cache",
+			dpSource.contains("if (!trace && parentVariantDeltaCache != null)"));
+	}
+
+	private static boolean lazyCallContains(String source, String stage) {
+		int offset = 0;
+		while((offset = source.indexOf("\"" + stage + "\"", offset)) >= 0) {
+			int callStart = source.lastIndexOf("FederatedPlannerTrace.", offset);
+			if(callStart >= 0 && source.substring(callStart, offset).contains("logLazy("))
+				return true;
+			offset += stage.length() + 2;
+		}
+		return false;
 	}
 }
