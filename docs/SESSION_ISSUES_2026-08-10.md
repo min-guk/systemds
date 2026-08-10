@@ -370,3 +370,48 @@
 - **잔여 이슈**: 새 Docker stage에서 LogReg-w1 DP planning-only를 실행해 planner receipt, branch-phi selection trace, emitted/runtime plan fingerprint를 확인한다. 이후 같은 workload의 네 planner 전체와 나머지 workload를 DP→FedAll→Heuristic→MinST 순서로 planning-only 감사한다.
 - **잠재 회귀 위험**: 다중 call-site, loop backedge, 서로 다른 worker pool에서 들어오는 optional overwrite에서 잘못된 anchor를 합성할 수 있다. exact predecessor/constraint tests와 worker-pool 교집합의 fail-closed 동작, Docker planning receipt로 감지한다.
 - **의사결정 근거**: DP의 국소 최적화 철학은 변경하지 않았다. 누락된 함수-entry CFG source와 물리 anchor authority만 복원했으며, runtime 지원 후보를 닫거나 TR/TW 규칙을 완화하지 않았다.
+
+## 14. single-worker L2SVM의 function-input 재폐쇄가 CP/FOUT materialization을 비단조 축소로 오판함
+
+- **상태**: 소스 수정/회귀 검증 완료, Docker planning-only 재검증 진행 중
+- **환경/조건**: LAN, workers=1, P2P2D L2SVM, `compile_cost_based`, planning-only, single-range `FType.FULL`
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-cost --alg l2svm ...`
+  - 소스 회귀: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpL2SvmRefedSourceLoweringRedTest#l2SvmSingleWorkerReclosesDerivedFoutCandidates' test`
+  - 실패 로그: immutable stage의 `results/fed1/mkl-cost/l2svm_dataset-P2P2D_coordinator_mkl-cost_plan-55ff7a3-lan-l2svm-w1-dp-20260810-r1_lan_coordinator1.log`
+- **관측 증상**:
+  - runtime 진입 전 `IllegalStateException: Post-CFG physical candidate closure is not monotone`로 planning receipt가 거부됐다.
+  - physical closure에서 hop 421이 `CP/LOUT`에서 `CP/LOUT + FED/FOUT/FULL`로 넓어진 뒤, 하위 hop 174를 재계산할 때 이전 worker-pool closure가 추가한 `CP/FOUT/FULL`만 임시로 빠졌다.
+  - coordinator log에는 execution-time footer가 없고 worker JVM/runtime workload는 실행되지 않았다.
+- **원인 분석**:
+  - function-input closure는 `buildNode`로 oracle-owned base candidate row를 먼저 재구축한 다음 worker-pool materialization closure를 다시 적용한다.
+  - 이전 pass의 `CP/FOUT`/derived `FED/FOUT` action은 base rebuild 동안 일시적으로 제거되는 것이 정상인데, 비단조성 검증은 같은 candidate key의 action-bearing emission delta를 인식하지 못했다.
+  - 따라서 native capability/input domain이 그대로인 합법 재계산까지 candidate-space 축소로 오판했다.
+- **해결 요약**:
+  - refined matrix predecessor가 실제로 있는 경우에만 같은 candidate row의 provisional materialization delta를 재계산 대상으로 인정한다.
+  - status/capability/shape proof/profile/failure code와 action이 없는 native emission은 모두 완전히 동일해야 한다. 차이가 허용되는 것은 exact `DerivedFoutMaterializationActionKey`가 붙은 CP/FOUT 또는 derived FED/FOUT emission뿐이다.
+  - 제거된 legal state도 그 action-bearing emission이 정확히 publish한 state인 경우에만 허용한다. 이후 기존 worker-pool closure와 final authority binding이 action/anchor owner를 다시 fail-closed 검증한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpL2SvmRefedSourceLoweringRedTest.java`
+- **검증**:
+  - 신규 single-worker compile-only 회귀는 수정 전 동일 exception으로 RED였다 (`/tmp/g014-l2svm-single-worker-closure-red-20260810.log`).
+  - 수정 후 신규 회귀가 GREEN이었다 (`/tmp/g014-l2svm-single-worker-closure-green1-20260810.log`).
+  - CFG strict-refinement, CP/FOUT/derived-FOUT authority, MinST FType membership 관련 focused 묶음은 **31 tests, failures=0, errors=0, skipped=9**였다 (`/tmp/g014-l2svm-closure-focused-green2-20260810.log`; skipped는 고정된 PUBLIC 케이스).
+- **잔여 이슈**: 새 JAR immutable stage에서 실패했던 L2SVM-w1 DP planning-only 셀을 먼저 재실행하고 receipt의 `runtime_executed=false`, execution footer 0초, selected materialization/registry trace를 확인한다.
+- **잠재 회귀 위험**: native oracle emission까지 materialization delta로 오인하면 실제 불법 축소를 숨길 수 있다. helper는 action 없는 emission과 모든 rule evidence의 exact equality를 요구하며 기존 stale `PRESENT OTHER` 제거 회귀로 감지한다.
+- **의사결정 근거**: 후보를 닫거나 runtime fallback을 추가하지 않고, 이미 검증된 worker-pool materialization 후보의 올바른 고정점 재계산 순서만 복원했다.
+
+## 15. 기존 two-worker L2SVM DP의 exact root-plan component coherence 실패
+
+- **상태**: 진행중 — 현재 single-worker 우선 planning audit와 분리해 보존
+- **환경/조건**: workers=2, L2SVM, `compile_cost_based`, compile-only; source baseline commit `55ff7a37...`와 현재 수정본 모두
+- **재현 절차**: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpL2SvmRefedSourceLoweringRedTest#l2SvmTwoWorkersLowersEverySelectedRefedSource' test`
+- **관측 증상**: `DP component has no locally ranked coherent exact root-plan forest`로 실패한다. branch TWrite `Y` component는 CP/LOUT root만 갖지만 외부의 exact TRead `Y`는 CFG CONJUNCTIVE constraint로 FED/FOUT/ROW에 고정돼 있다.
+- **원인 분석**: 아직 확정하지 않았다. baseline commit을 별도 detached worktree에서 실행해 동일 실패를 재현했으므로 Issue 14 수정으로 유발된 회귀는 아니다. DP component 분해가 foreign fixed logical source constraint를 root domain에 전달하지 못하거나, exact TWrite FED/FOUT carrier를 component domain에서 누락한 가능성이 있다.
+- **해결 요약**: 없음. single-worker 7-workload 한 바퀴의 빠른 feedback loop를 우선 유지하고, workers=2 audit 진입 전에 exact component/foreign-fixed receipt를 별도 회귀로 고정해 수정한다.
+- **수정 파일**: 없음
+- **검증**: baseline detached worktree 로그 `/tmp/g014-baseline-l2svm-two-worker-20260810.log`와 현재 로그 `/tmp/g014-l2svm-two-worker-after-closure-20260810.log`가 같은 failure class를 보인다.
+- **잔여 이슈**: DP component domain, TWrite/TRead logical authority, foreign fixed selection을 occurrence 단위로 대조해야 한다.
+- **잠재 회귀 위험**: 이를 단순 constraint 완화 또는 TWrite CP/FOUT 허용으로 우회하면 최상위 TR/TW 규칙을 위반한다. exact FED/FOUT TWrite carrier 복원 또는 component constraint propagation으로만 해결해야 한다.
+- **의사결정 근거**: baseline 문제를 새 수정의 회귀로 오인하지 않되 숨기지도 않고, worker=1 우선순위와 빠른 planning feedback loop를 유지하면서 후속 DP 수정 대상으로 명시했다.

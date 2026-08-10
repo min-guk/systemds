@@ -1475,6 +1475,10 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
 		if(blockOrdinals == null)
 			return false;
+		boolean refinedPhysicalInput = occurrence.hop().getInput().stream()
+			.filter(input -> input.getDataType() != null && input.getDataType().isMatrix())
+			.map(blockOrdinals::get).filter(Objects::nonNull).anyMatch(refinedOrdinals::contains);
+		List<CandidateEmissionFact> removedMaterializations = new ArrayList<>();
 		for(CandidateRuleKey key : priorKeys) {
 			CandidateRuleFact priorFact = priorByKey.get(key);
 			CandidateRuleFact replacementFact = replacementByKey.get(key);
@@ -1482,13 +1486,45 @@ public final class NeutralPlacementGraphBuilder {
 				if(!hasRefinedPredecessorInvalidation(key, occurrence, blockOrdinals, currentNodes, refinedOrdinals))
 					return false;
 			}
-			else if(!replacementFact.equals(priorFact))
-				return false;
+			else if(!replacementFact.equals(priorFact)) {
+				List<CandidateEmissionFact> removed = removedProvisionalMaterializations(priorFact, replacementFact);
+				if(!refinedPhysicalInput || removed == null)
+					return false;
+				removedMaterializations.addAll(removed);
+			}
 		}
 		for(PlacementState state : removedLegal)
-			if(removedKeys.stream().map(priorByKey::get).noneMatch(fact -> exactFactPublishesState(fact, state)))
+			if(removedKeys.stream().map(priorByKey::get).noneMatch(fact -> exactFactPublishesState(fact, state))
+				&& removedMaterializations.stream().noneMatch(emission ->
+					emission.emissionState().placementState().equals(state)))
 				return false;
 		return true;
+	}
+
+	/**
+	 * A prior worker-pool closure may have augmented an otherwise unchanged candidate row with
+	 * CP/FOUT or derived FED/FOUT materialization actions. Physical dependency closure deliberately
+	 * rebuilds the oracle-owned base row first and reruns worker-pool closure afterwards. Treat only
+	 * that exact action-bearing delta as recomputable; native emissions and all other rule evidence
+	 * must remain byte-for-byte equal.
+	 */
+	private static List<CandidateEmissionFact> removedProvisionalMaterializations(
+		CandidateRuleFact prior, CandidateRuleFact replacement) {
+		if(!prior.key().equals(replacement.key()) || prior.status() != replacement.status()
+			|| !Objects.equals(prior.capability(), replacement.capability())
+			|| !prior.shapeProof().equals(replacement.shapeProof())
+			|| !prior.profile().equals(replacement.profile())
+			|| !prior.failureCode().equals(replacement.failureCode()))
+			return null;
+		List<CandidateEmissionFact> priorNative = prior.allowedEmissionFacts().stream()
+			.filter(emission -> emission.derivedFoutAction() == null).toList();
+		List<CandidateEmissionFact> replacementNative = replacement.allowedEmissionFacts().stream()
+			.filter(emission -> emission.derivedFoutAction() == null).toList();
+		if(!priorNative.equals(replacementNative))
+			return null;
+		return prior.allowedEmissionFacts().stream()
+			.filter(emission -> emission.derivedFoutAction() != null)
+			.filter(emission -> !replacement.allowedEmissionFacts().contains(emission)).toList();
 	}
 
 	private static Map<CandidateRuleKey,CandidateRuleFact> factsByKey(List<CandidateRuleKey> keys,

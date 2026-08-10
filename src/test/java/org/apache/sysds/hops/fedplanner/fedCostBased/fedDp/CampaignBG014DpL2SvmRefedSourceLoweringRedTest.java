@@ -6,6 +6,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.conf.CompilerConfig;
@@ -27,6 +29,15 @@ import org.junit.Test;
 public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 	@Test
 	public void l2SvmTwoWorkersLowersEverySelectedRefedSource() throws Exception {
+		runCompileOnlyL2Svm(2);
+	}
+
+	@Test
+	public void l2SvmSingleWorkerReclosesDerivedFoutCandidates() throws Exception {
+		runCompileOnlyL2Svm(1);
+	}
+
+	private static void runCompileOnlyL2Svm(int workerCount) throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
@@ -35,27 +46,33 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 		int oldSeed = DMLScript.SEED;
 		boolean oldLocalSpark = DMLScript.USE_LOCAL_SPARK_CONFIG;
 		String oldParserPath = DMLScript.DML_FILE_PATH_ANTLR_PARSER;
-		int port1 = AutomatedTestBase.getRandomAvailablePort();
-		int port2 = AutomatedTestBase.getRandomAvailablePort();
-		while(port2 == port1)
-			port2 = AutomatedTestBase.getRandomAvailablePort();
-		Thread worker1 = null;
-		Thread worker2 = null;
-		Path root = Path.of("target/g014-dp-l2svm-refed-source-lowering");
+		List<Integer> ports = new ArrayList<>();
+		List<Thread> workers = new ArrayList<>();
+		Path root = Path.of("target/g014-dp-l2svm-refed-source-lowering-w" + workerCount);
 		try {
 			Files.createDirectories(root);
-			Path features1 = matrixMetadata(root.resolve("features-1.data"), 25000, 2100, 50025000);
-			Path features2 = matrixMetadata(root.resolve("features-2.data"), 25000, 2100, 50025000);
-			Path labels1 = matrixMetadata(root.resolve("labels-1.data"), 25000, 1, 25000);
-			Path labels2 = matrixMetadata(root.resolve("labels-2.data"), 25000, 1, 25000);
+			List<Path> features = new ArrayList<>();
+			List<Path> labels = new ArrayList<>();
+			for(int worker = 0; worker < workerCount; worker++) {
+				int port;
+				do port = AutomatedTestBase.getRandomAvailablePort();
+				while(ports.contains(port));
+				ports.add(port);
+				long begin = 50000L * worker / workerCount;
+				long end = 50000L * (worker + 1L) / workerCount;
+				features.add(matrixMetadata(root.resolve("features-" + (worker + 1) + ".data"),
+					end - begin, 2100, (end - begin) * 2100));
+				labels.add(matrixMetadata(root.resolve("labels-" + (worker + 1) + ".data"),
+					end - begin, 1, end - begin));
+			}
 			Path script = root.resolve("l2svm.dml");
 			Path config = root.resolve("SystemDS-config.xml");
-			Files.writeString(script, l2SvmScript(port1, port2, features1, features2, labels1, labels2,
+			Files.writeString(script, l2SvmScript(ports, features, labels,
 				root.resolve("result.csv")));
 			Files.writeString(config, config(root));
 
-			worker1 = AutomatedTestBase.startLocalFedWorkerThread(port1, 1000);
-			worker2 = AutomatedTestBase.startLocalFedWorkerThread(port2, 1000);
+			for(int port : ports)
+				workers.add(AutomatedTestBase.startLocalFedWorkerThread(port, 1000));
 			InfrastructureAnalyzer.setLocalMaxMemory(8L * 1024 * 1024 * 1024);
 			PrintStream originalOut = System.out;
 			ByteArrayOutputStream captured = new ByteArrayOutputStream();
@@ -85,7 +102,7 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 					countLines(explain, "FED ba+*", " X.MATRIX", " LOUT") >= 2);
 		}
 		finally {
-			TestUtils.shutdownThreads(worker1, worker2);
+			TestUtils.shutdownThreads(workers.toArray(Thread[]::new));
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);
 			ConfigurationManager.setGlobalConfig(oldCompiler);
@@ -123,16 +140,26 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 		return result;
 	}
 
-	private static String l2SvmScript(int port1, int port2, Path features1, Path features2,
-		Path labels1, Path labels2, Path output) {
-		return "X = federated(addresses=list(\"" + TestUtils.federatedAddress(port1, features1.toString())
-			+ "\", \"" + TestUtils.federatedAddress(port2, features2.toString()) + "\"), "
-			+ "ranges=list(list(0, 0), list(25000, 2100), list(25000, 0), list(50000, 2100)))\n"
-			+ "Y = federated(addresses=list(\"" + TestUtils.federatedAddress(port1, labels1.toString())
-			+ "\", \"" + TestUtils.federatedAddress(port2, labels2.toString()) + "\"), "
-			+ "ranges=list(list(0, 0), list(25000, 1), list(25000, 0), list(50000, 1)))\n\n"
+	private static String l2SvmScript(List<Integer> ports, List<Path> features,
+		List<Path> labels, Path output) {
+		return federatedInput("X", ports, features, 2100)
+			+ federatedInput("Y", ports, labels, 1) + "\n"
 			+ "m = l2svm(X=X, Y=Y, verbose=FALSE, epsilon = 1e-22, maxIterations = 30)\n"
 			+ "write(m, \"" + output + "\", format=\"csv\")\n";
+	}
+
+	private static String federatedInput(String name, List<Integer> ports, List<Path> inputs, long cols) {
+		List<String> addresses = new ArrayList<>();
+		List<String> ranges = new ArrayList<>();
+		for(int worker = 0; worker < ports.size(); worker++) {
+			long begin = 50000L * worker / ports.size();
+			long end = 50000L * (worker + 1L) / ports.size();
+			addresses.add("\"" + TestUtils.federatedAddress(ports.get(worker), inputs.get(worker).toString()) + "\"");
+			ranges.add("list(" + begin + ", 0)");
+			ranges.add("list(" + end + ", " + cols + ")");
+		}
+		return name + " = federated(addresses=list(" + String.join(", ", addresses)
+			+ "), ranges=list(" + String.join(", ", ranges) + "))\n";
 	}
 
 	private static String config(Path root) {
