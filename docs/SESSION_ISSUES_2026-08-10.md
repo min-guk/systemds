@@ -19,7 +19,7 @@
 
 ## 2. DP 무필터 planning trace가 수 GB까지 폭증하고 trace가 production cache를 비활성화
 
-- **상태**: 해결, 새 JAR Docker planning-only 재검증 필요
+- **상태**: 해결
 - **환경/조건**: DP, LAN, LogReg, workers=2, `SYSDS_FED_PLANNER_TRACE=1`, hop filter 없음
 - **재현 절차**: immutable stage `g014-planning-audit-stage-e65d367-20260810-v2/...`에서 planning-only DP 실행
 - **관측 증상**:
@@ -44,14 +44,14 @@
   - `src/main/java/org/apache/sysds/parser/DMLTranslator.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerTraceBudgetTest.java`
   - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBG014PlanningTraceContractTest.java`
-- **검증**: 새 계약 테스트는 `trace API lacks a per-stage record budget`으로 RED였고, 수정 후 trace budget·planner identity·MinST physical oracle 관련 23 tests가 통과했다. `mvn -DskipTests package`도 성공했으며 그 과정의 기본 10 tests가 추가 통과했다. 실제 새 JAR 로그 크기와 plan hash 동일성은 다음 immutable Docker planning-only stage에서 확인한다.
+- **검증**: 새 계약 테스트는 `trace API lacks a per-stage record budget`으로 RED였고, 수정 후 trace budget·planner identity·MinST physical oracle 관련 23 tests가 통과했다. `mvn -DskipTests package`도 성공했으며 그 과정의 기본 10 tests가 추가 통과했다. commit `cf87ae49ed2665e90e092d8988fa1b00887d0748`의 immutable Docker stage에서 LAN LogReg workers=2 DP planning-only가 성공했다. `runtime_executed=false`, `execution_seconds=0.0`, `Planner-Invoke/Complete=1/1`, runtime-plan SHA-256 `738ce85c9069fb1671b959ee4ec1a9283f94278e45b24c98ed1de5ac6ae9d731`로 기존 canonical plan과 같았다. coordinator log는 `18,123,598`바이트/`86,464`줄로, 직전 실패의 `1,475,908,193`바이트/`6,304,812`줄보다 크게 제한됐다. 생략된 hot-loop 상세는 14개의 정렬된 `Trace-SuppressionSummary`로 남았다.
 - **잔여 이슈**: 반복 iteration 자체의 수는 유지된다. 이번 변경은 중복 상세만 제한하며 알고리즘 반복 횟수나 플랜을 바꾸지 않는다.
 - **잠재 회귀 위험**: `logGlobal`은 identity/objective receipt를 잃지 않도록 의도적으로 상한 밖이다. 향후 hot loop에서 `logGlobal`을 사용하면 다시 폭증할 수 있으므로 source contract와 실제 log byte/record count 상한으로 감지한다.
 - **의사결정 근거**: 후보 공간·비용·선택은 변경하지 않고 observability만 bounded하게 만들었으며, trace가 비활성화하던 production cache를 복원해 audit와 실제 planning 경로를 일치시켰다.
 
 ## 3. Receipt가 공통 전처리 trace를 특정 플래너 실행 증거로 오인하고 실제 진입점 identity가 누락됨
 
-- **상태**: 해결, 새 JAR planning-only 재검증 필요
+- **상태**: 해결
 - **환경/조건**: 모든 planning-only compiled planner
 - **재현 절차**:
   1. 기존 `planning_receipt.py --require-trace`에 `Neutral-*`/`PlannerRecompileState-*` trace만 포함된 log 입력
@@ -73,7 +73,8 @@
   - harness `experiments/tools/planning_receipt.py`
   - 양 저장소의 계약 테스트
 - **검증**: wrong-planner fixture와 identity 누락 fixture가 RED였다. 실제 canary도 identity 0건으로 fail-closed 거부됐다. `DMLTranslator` production entry 계측을 요구하는 source test가 RED(3 tests 중 1 failure)였고 수정 후 관련 source 20 tests가 통과했다. 최종 Docker 재검증은 다음 immutable JAR에서 수행한다.
-- **잔여 이슈**: 수정된 final-hop entry가 실제로 identity pair를 정확히 하나 생성하는지는 재빌드한 Docker planning-only canary로 검증한다.
+- **검증 추가**: commit `cf87ae49ed...` immutable Docker stage의 LAN LogReg workers=2 네 플래너 모두 `Planner-Invoke/Complete=1/1`을 기록했고, config와 구현 identity가 일치하는 v2 receipt가 성공했다.
+- **잔여 이슈**: 없음. 향후 entry point 변경은 source contract와 Docker receipt가 fail-closed로 감지한다.
 - **잠재 회귀 위험**: factory 호출과 로그 대상 instance가 분리되면 잘못된 구현을 기록할 수 있다. 현재 코드는 factory 결과를 지역 변수 하나로 유지하고 그 instance를 실행한다.
 - **의사결정 근거**: 플래너 선택 로직은 바꾸지 않고 실제 호출 identity를 실패-폐쇄 receipt로 강화했다.
 
@@ -94,7 +95,7 @@
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java`
   - harness `experiments/tools/planning_receipt.py`
   - 양 저장소의 테스트
-- **검증**: `MinStExactPhysicalPlanSpaceOracleTest` 9개를 포함한 관련 20 tests 통과; full main/test compilation 성공. 실제 objective/selection trace와 plan hash는 새 stage 대표 셀에서 확인한다.
+- **검증**: `MinStExactPhysicalPlanSpaceOracleTest` 9개를 포함한 관련 20 tests 통과; full main/test compilation 성공. commit `cf87ae49ed...` immutable Docker stage의 LAN LogReg workers=2에서 `MinST-PhysicalOptimize/Complete=1/1`, `MinST-PhysicalSelect=489`, `MinST-PhysicalAlternative=792`를 기록했고 planning-only receipt가 성공했다.
 - **잔여 이슈**: `fixedOthersDelta`는 한 변수만 바꾼 조건부 차이이며, 해당 대안을 고정하고 나머지를 다시 최적화한 global marginal objective는 아니다. 전역 최적성 증명은 solver objective/certificate와 기존 oracle tests가 담당한다.
 - **잠재 회귀 위험**: trace 계산이 planning time을 오염시킬 수 있다. trace는 명시적으로 활성화한 planning-only 감사에서만 수행하고, 실제 성능 실험에서는 비활성화한다.
 - **의사결정 근거**: MinST cost surface·합법 plan space·optimizer 결과는 변경하지 않고 production 선택 근거만 노출했다.
@@ -113,3 +114,28 @@
 3. identity/MinST physical/DP bounded trace receipt와 plan hash 비교
 4. 로그로 증명된 비용·합법성 결함만 regression test 후 수정
 5. 최종 새 stage에서 WAN-light → WAN-mid → LAN 336-cell runtime 실험을 한 번만 실행
+
+## 5. FedAll/Heuristic 정책 선택 근거가 planning trace에 없던 문제
+
+- **상태**: 해결, 새 JAR Docker planning-only 재검증 필요
+- **환경/조건**: `COMPILE_FED_ALL`, `COMPILE_FED_HEURISTIC`, 모든 planning-only workload
+- **재현 절차**: commit `cf87ae49ed...` immutable stage에서 LAN LogReg workers=2를 FedAll/Heuristic으로 planning-only 실행하고 trace stage를 집계한다.
+- **관측 증상**:
+  - FedAll과 Heuristic 로그에는 `Planner-Invoke/Complete`와 공통 `Neutral-*` trace만 존재했다.
+  - 최종 runtime-plan SHA/fingerprint는 비교할 수 있었지만 FedAll의 `MAX_FED → MAX_FOUT → MIN_RELOCATIONS` 점수와 Heuristic의 demotion/local-prefix/re-entry 정책이 실제 선택에 적용됐는지 로그만으로 검증할 수 없었다.
+- **원인 분석**: 공통 analysis와 emission 경로를 일원화하면서 DP/MinST에는 선택 trace를 남겼으나, adapter 기반 FedAll/Heuristic entry에는 정책 결과 trace를 추가하지 않았다.
+- **해결 요약**:
+  - FedAll은 `FedAll-PolicySummary`에 FED/FOUT/relocation 점수, selected-state 수, exact-search explored/pruned, normalized plan fingerprint를 기록하고 `FedAll-Select`로 concrete hop별 선택을 기록한다.
+  - Heuristic은 `Heuristic-PolicySummary`에 marker/local-prefix/frontier 수와 FED/FOUT/relocation 점수, plan fingerprint를 기록하고 `Heuristic-Demotion` 및 `Heuristic-Select`로 정책 및 결과를 기록한다.
+  - hop별 상세는 공통 invocation/stage budget을 사용하므로 무필터 audit에서도 bounded하다.
+  - Docker planning receipt는 각 정책 summary가 정확히 하나 없으면 해당 planner audit를 거부한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAll.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedHeuristic/FederatedPlannerFedHeuristic.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBG014PlanningTraceContractTest.java`
+  - harness `experiments/tools/planning_receipt.py`
+  - harness `experiments/tests/test_planning_receipt.py`
+- **검증**: source contract는 `missing FedAll policy trace stage FedAll-PolicySummary`로 RED였고, harness는 FedAll/Heuristic summary 누락 fixture 2개를 잘못 허용해 RED였다. 구현 후 source의 trace/FedAll/Heuristic 관련 테스트와 harness 13 tests가 통과했다. 실제 Docker trace/receipt 검증은 새 immutable stage에서 수행한다.
+- **잔여 이슈**: 대표 workload에서 선택 score와 최종 emitted runtime plan의 관계를 대조해야 한다. 같은 plan hash 자체는 버그 증거가 아니며, 정책 objective·합법 후보·비용 선택이 그 결과를 각각 설명해야 한다.
+- **잠재 회귀 위험**: 정책 summary만 남고 hop 선택 trace가 제거되면 aggregate count와 실제 선택을 대조할 수 없다. source contract와 대표 Docker log의 stage count로 감지한다.
+- **의사결정 근거**: 후보 공간·오라클·비용·runtime을 변경하지 않고 planner-owned selection observability와 fail-closed receipt만 강화했다.

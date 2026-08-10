@@ -29,6 +29,10 @@ public class CampaignBG014PlanningTraceContractTest {
 		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java");
 	private static final Path MINST = MAIN.resolve(
 		"fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java");
+	private static final Path FEDALL = MAIN.resolve(
+		"fedplanner/fedAll/FederatedPlannerFedAll.java");
+	private static final Path HEURISTIC = MAIN.resolve(
+		"fedplanner/fedHeuristic/FederatedPlannerFedHeuristic.java");
 
 	@Test
 	public void topLevelInvocationIdentifiesConfiguredPlannerAndImplementation() throws Exception {
@@ -58,6 +62,25 @@ public class CampaignBG014PlanningTraceContractTest {
 			assertTrue("missing production MinST stage " + stage, source.contains("\"" + stage + "\""));
 		assertTrue("MinST trace must expose fixed-others alternative deltas",
 			source.contains("fixedOthersDelta"));
+	}
+
+	@Test
+	public void fedAllAndHeuristicPolicySelectionsAreAuditable() throws Exception {
+		String fedAll = Files.readString(FEDALL);
+		for(String stage : new String[] {"FedAll-PolicySummary", "FedAll-Select"})
+			assertTrue("missing FedAll policy trace stage " + stage,
+				fedAll.contains("\"" + stage + "\""));
+		assertTrue("FedAll trace must expose its lexicographic objective",
+			fedAll.contains("fedCount=") && fedAll.contains("foutCount=")
+				&& fedAll.contains("relocationCount="));
+
+		String heuristic = Files.readString(HEURISTIC);
+		for(String stage : new String[] {"Heuristic-PolicySummary", "Heuristic-Select"})
+			assertTrue("missing Heuristic policy trace stage " + stage,
+				heuristic.contains("\"" + stage + "\""));
+		assertTrue("Heuristic trace must expose its pathwise demotion policy",
+			heuristic.contains("markerCount=") && heuristic.contains("localPrefixCount=")
+				&& heuristic.contains("frontierEdgeCount="));
 	}
 
 	@Test

@@ -18,7 +18,9 @@ package org.apache.sysds.hops.fedplanner.fedAll;
 
 import java.util.Objects;
 
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
@@ -81,12 +83,31 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		analysis.assertCanonicalProgramAuthority(prog);
 		String fingerprintBefore = analysis.analysisFingerprint();
 		FedAllPlacementAdapter.Result result = select(analysis);
+		traceSelection(result);
 		NormalizedPlannerResult normalized = PlacementPlannerAdapter.normalize(analysis, result);
 		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none());
 		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
 		return new FedAllInvocationReceipt(analysis, result, counters,
 			fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
+	}
+
+	private static void traceSelection(FedAllPlacementAdapter.Result result) {
+		if(!FederatedPlannerTrace.isEnabled())
+			return;
+		FederatedPlannerTrace.logGlobal("FedAll-PolicySummary", "fedCount=" + result.score().fedCount()
+			+ " foutCount=" + result.score().foutCount()
+			+ " relocationCount=" + result.score().relocationCount()
+			+ " selectedStates=" + result.selectedStates().size()
+			+ " explored=" + result.certificate().exploredCount()
+			+ " pruned=" + result.certificate().prunedCount()
+			+ " planFingerprint=" + result.normalizedPlanFingerprint());
+		for(var entry : result.selectedStates().entrySet()) {
+			Hop hop = result.analysis().hop(entry.getKey()).orElse(null);
+			FederatedPlannerTrace.logLazy(hop, "FedAll-Select", () ->
+				"key=" + entry.getKey().normalizedSignature()
+					+ " selected=" + entry.getValue().normalizedSignature());
+		}
 	}
 
 	@Override

@@ -24,7 +24,9 @@ import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
@@ -97,12 +99,40 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 			policyFacts.demotions().stream().map(fact -> fact.valueVersion()).toList()));
 		String fingerprintBefore = analysis.analysisFingerprint();
 		HeuristicPlacementAdapter.Result result = select(analysis, markers);
+		traceSelection(policyFacts, result);
 		NormalizedPlannerResult normalized = PlacementPlannerAdapter.normalize(analysis, result);
 		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none());
 		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
 		return new HeuristicInvocationReceipt(analysis, policyFacts, markers, result, counters,
 			fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
+	}
+
+	private static void traceSelection(HeuristicPolicyFacts policyFacts,
+		HeuristicPlacementAdapter.Result result) {
+		if(!FederatedPlannerTrace.isEnabled())
+			return;
+		FederatedPlannerTrace.logGlobal("Heuristic-PolicySummary",
+			"markerCount=" + result.plannerFacts().get("markerCount")
+				+ " localPrefixCount=" + result.plannerFacts().get("localPrefixCount")
+				+ " frontierEdgeCount=" + result.plannerFacts().get("frontierEdgeCount")
+				+ " fedCount=" + result.score().fedCount()
+				+ " foutCount=" + result.score().foutCount()
+				+ " relocationCount=" + result.score().relocationCount()
+				+ " selectedStates=" + result.selectedStates().size()
+				+ " planFingerprint=" + result.normalizedPlanFingerprint());
+		for(var fact : policyFacts.demotions()) {
+			Hop hop = result.analysis().hop(fact.producer()).orElse(null);
+			FederatedPlannerTrace.logLazy(hop, "Heuristic-Demotion", () ->
+				"producer=" + fact.producer().normalizedSignature()
+					+ " value=" + fact.valueVersion().normalizedSignature());
+		}
+		for(var entry : result.selectedStates().entrySet()) {
+			Hop hop = result.analysis().hop(entry.getKey()).orElse(null);
+			FederatedPlannerTrace.logLazy(hop, "Heuristic-Select", () ->
+				"key=" + entry.getKey().normalizedSignature()
+					+ " selected=" + entry.getValue().normalizedSignature());
+		}
 	}
 
 	@Override
