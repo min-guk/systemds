@@ -66,7 +66,10 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 			1, 1, FType.ROW),
 		new VectorCase("COL_1x1", script(
 			"list(list(0,0),list(1,2),list(0,2),list(1,4))", "matrix(1,4,1)", "X%*%v"),
-			1, 1, FType.COL));
+			1, 1, FType.COL),
+		new VectorCase("FULL_4x1", fullScript(
+			"list(list(0,0),list(4,2))", "matrix(1,2,1)", "X%*%v"),
+			4, 1, FType.FULL));
 
 	@Test
 	public void knownShapeVectorsProduceTypedPolicyAndExactLocalSelection() throws Exception {
@@ -251,6 +254,12 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 	private static String script(String ranges, String vector, String expression) {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=" + ranges + ");",
+			"v=" + vector + ";", "z=" + expression + ";", "w=z+1;", "print(sum(w));") + "\n";
+	}
+
+	private static String fullScript(String ranges, String vector, String expression) {
+		return String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\"),ranges=" + ranges + ");",
 			"v=" + vector + ";", "z=" + expression + ";", "w=z+1;", "print(sum(w));") + "\n";
 	}
 

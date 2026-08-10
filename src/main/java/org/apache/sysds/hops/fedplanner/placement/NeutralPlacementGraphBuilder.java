@@ -665,7 +665,10 @@ public final class NeutralPlacementGraphBuilder {
 		if(!(hop instanceof AggBinaryOp) || !shape.knownPositiveMatrix())
 			return false;
 		return inputType == FType.ROW && shape.cols() == 1
-			|| inputType == FType.COL && shape.rows() == 1;
+			|| inputType == FType.COL && shape.rows() == 1
+			// A one-worker FULL map owns the complete matrix, so the vector result is
+			// orientation-independent but still follows the same forced-LOUT policy.
+			|| inputType == FType.FULL && isVector(shape);
 	}
 
 	private static FType exactAggregateBinaryVectorLocalType(Hop hop, NodeShapeFact shape,

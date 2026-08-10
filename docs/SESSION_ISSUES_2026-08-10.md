@@ -261,7 +261,7 @@
 
 ## 10. DP 부분 recurrence가 아직 선택되지 않은 전역 exact FOUT owner를 즉시 요구함
 
-- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **상태**: 해결
 - **환경/조건**: LAN planning-only, DP, P2P2D; KMeans workers=2, ALS workers=3, StepLM workers=1; commit `1608be47ba...` stage
 - **재현 절차**:
   - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --dataset P2P2D --conf mkl-cost --alg <kmeans|als|steplm> --workers <2|3|1> ...`
@@ -282,6 +282,33 @@
 - **검증**:
   - 신규 회귀는 수정 전 `Active exact candidate has no source-reachable row`로 RED였다 (`/tmp/g014-dp-partial-owner-red-20260810.log`).
   - 수정 후 exact authority/selector/DP/MinST/Heuristic/FedAll 관련 **33 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-dp-partial-owner-focused-20260810.log`).
-- **잔여 이슈**: 새 commit/JAR의 immutable Docker stage에서 기존에 실패한 DP KMeans-w2, ALS-w3, StepLM-w1을 runtime 없이 먼저 재검증한다. 이후 complete normalization receipt가 exact owner/action을 포함하는지 확인한다.
+  - commit `2c4bf98e23...`, JAR SHA-256 `1889225d...ab3`의 immutable Docker stage에서 기존 실패 셀을 runtime 없이 재검증했다. KMeans-w2, ALS-w3, StepLM-w1 모두 planning receipt가 성공했고 `runtime_executed=false`, `execution_seconds=0.0`이었다. emitted/runtime plan SHA-256은 각각 `160d3602...`/`2cc214a9...`, `7adeb92d...`/`16b81d5f...`, `a4b0ac71...`/`84d22ad6...`이었다.
+- **잔여 이슈**: 없음. 최종 성능 stage에서도 complete normalization과 receipt가 fail closed로 유지되는지 확인한다.
 - **잠재 회귀 위험**: 부분 recurrence가 owner와 불일치하는 row를 일시 보존할 수 있어 탐색량이 늘 수 있다. 그러나 owner가 나중에 다른 state/FType으로 선택되면 최종 full validation이 fail closed해야 하며, 신규 회귀가 이 경계를 감지한다.
 - **의사결정 근거**: 후보를 닫거나 runtime fallback을 추가하지 않고, DP의 국소 recurrence와 whole-program exact authority 사이의 올바른 partial-validation 의미를 복원했다.
+
+## 11. single-worker `FType.FULL` vector가 Heuristic demotion marker에서 누락됨
+
+- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **환경/조건**: LAN planning-only, Heuristic, P2P2D StepLM, workers=1; commit `1608be47ba...` stage
+- **재현 절차**:
+  - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --dataset P2P2D --conf mkl-heuristic --alg steplm --workers 1 ...`
+  - 최소 회귀: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.CampaignBHeuristicRealVectorPolicyRedTest test`
+- **관측 증상**:
+  - 실제 선택 로그에 aggregate-binary hop의 `FED/LOUT/FULL/SHAPE_DEPENDENT` 상태가 존재했지만 `Heuristic-PolicySummary markerCount=0, localPrefixCount=0`이었다.
+  - 같은 셀의 FedAll과 Heuristic은 exact placement/candidate/runtime plan fingerprint가 모두 같았다. 즉 단순 실행시간 잡음이 아니라 Heuristic 정책이 적용되지 않은 동일 계획이었다.
+- **원인 분석**: `NeutralPlacementGraphBuilder.isAggregateBinaryVectorInput(...)`이 vector 입력을 `FType.ROW`와 `FType.COL` 방향 규칙으로만 인식했다. single-worker federation의 전체 matrix를 소유하는 `FType.FULL`도 vector shape이면 같은 forced-LOUT 정책 대상이지만 누락됐다.
+- **해결 요약**:
+  - ROW/COL의 방향별 판정은 그대로 유지한다.
+  - `FType.FULL`은 one-worker whole-matrix placement이므로 orientation과 무관하게 `isVector(shape)`인 경우에만 aggregate-binary vector 입력으로 인식한다.
+  - scalar나 일반 matrix까지 marker로 확대하지 않도록 vector shape 조건을 유지한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBHeuristicRealVectorPolicyRedTest.java`
+- **검증**:
+  - 신규 `FULL_4x1` 회귀는 수정 전 `expected:<1> but was:<0>`으로 RED였다 (`/tmp/g014-heuristic-full-marker-red-20260810.log`).
+  - 수정 후 focused test가 통과했다 (`/tmp/g014-heuristic-full-marker-green-20260810.log`).
+  - Heuristic policy/provenance/re-entry, common emission/authority, DP/MinST/FedAll 대표 회귀를 포함한 **59 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-heuristic-full-broad-20260810.log`).
+- **잔여 이슈**: 새 commit/JAR의 immutable Docker stage에서 StepLM workers=1의 FedAll과 Heuristic을 planning-only로 실행해 Heuristic marker가 1개 이상이고 exact emitted/runtime plan이 실제로 달라지는지 확인한다. 그 전에는 성능 runtime을 시작하지 않는다.
+- **잠재 회귀 위험**: FULL을 shape 확인 없이 모두 vector로 취급하면 matrix aggregate-binary까지 과도하게 demote할 수 있다. `isVector(shape)` 회귀와 실제 StepLM planning receipt로 감지한다.
+- **의사결정 근거**: candidate-space를 임의로 닫거나 runtime을 보정하지 않고, 기존 Heuristic 정책이 single-worker의 실제 `FType.FULL` 표현에도 동일하게 적용되도록 정확한 FType 지원을 복원했다.
