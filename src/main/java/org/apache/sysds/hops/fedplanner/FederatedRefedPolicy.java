@@ -410,6 +410,8 @@ public final class FederatedRefedPolicy {
 			// observed federated value. Recompile may rebuild lowering registries from these observations,
 			// but must never rewrite the planner-selected ExecType/FederatedOutput pair.
 			boolean runtimeContext = (runtimeSignatures != null);
+			FederatedRefedRegistry.Snapshot preservedRefed =
+				snapshotRuntimeRefed(clearRegistry, runtimeContext);
 			Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preservedLocalMaterialize =
 				snapshotRuntimeLocalMaterialize(clearRegistry, runtimeContext, sbId);
 			if (clearRegistry)
@@ -456,6 +458,7 @@ public final class FederatedRefedPolicy {
 			List<Hop> all = collectAllHops(roots);
 			if (runtimeContext)
 				runtimePlannerPlacements = snapshotRuntimePlannerPlacements(all);
+			restoreRuntimeRefedAuthorities(preservedRefed, all, sbId);
 			restoreReachableRuntimeLocalMaterialize(preservedLocalMaterialize, all);
 			if (all != null && !all.isEmpty()) {
 				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
@@ -890,6 +893,109 @@ public final class FederatedRefedPolicy {
 		if (!clearRegistry || !runtimeContext || FederatedLocalMaterializeRegistry.isEmpty())
 			return Collections.emptyMap();
 		return new HashMap<>(FederatedLocalMaterializeRegistry.snapshotScopes(sbId));
+	}
+
+	private static FederatedRefedRegistry.Snapshot snapshotRuntimeRefed(
+			boolean clearRegistry, boolean runtimeContext) {
+		if (!clearRegistry || !runtimeContext || FederatedRefedRegistry.isEmpty())
+			return null;
+		return FederatedRefedRegistry.snapshotAll();
+	}
+
+	/**
+	 * Runtime recompilation rebuilds one statement-block DAG at a time, while the
+	 * exact placement transaction registers lowering authority for the complete
+	 * program. Preserve untouched scopes verbatim and re-project the active
+	 * scope's exact REFED inputs onto the recompiled DAG.
+	 *
+	 * <p>Only an already selected FED producer with a durable, typed placement
+	 * key is eligible. In particular, this does not revive CP/FOUT during
+	 * recompile and it never invents a replacement anchor. A reachable exact
+	 * consumer that no longer names the producer at the selected input position
+	 * is a planner/runtime-plan mismatch and fails closed.</p>
+	 */
+	private static void restoreRuntimeRefedAuthorities(FederatedRefedRegistry.Snapshot preserved,
+			List<Hop> hops, long sbId) {
+		if (preserved == null)
+			return;
+
+		FederatedRefedRegistry.restoreAll(preserved);
+		Map<Long, FederatedRefedRegistry.AnchorSpec> activeScope =
+			preserved.scopes().getOrDefault(sbId, Collections.emptyMap());
+		if (activeScope.isEmpty())
+			return;
+
+		Map<Long, Hop> hopById = new HashMap<>();
+		Set<Long> duplicateHopIds = new HashSet<>();
+		if (hops != null) {
+			for (Hop hop : hops) {
+				if (hop == null)
+					continue;
+				Hop prior = hopById.putIfAbsent(hop.getHopID(), hop);
+				if (prior != null && prior != hop)
+					duplicateHopIds.add(hop.getHopID());
+			}
+		}
+
+		for (Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> entry : activeScope.entrySet()) {
+			long producerHopId = entry.getKey();
+			FederatedRefedRegistry.remove(sbId, producerHopId);
+			Hop producer = hopById.get(producerHopId);
+			if (producer == null)
+				continue;
+			if (duplicateHopIds.contains(producerHopId))
+				throw invalidRuntimePlan(producer,
+					"preserved exact REFED authority has an ambiguous producer hop identity");
+			// Recompile CP/FOUT is forbidden. Exact authority is retained only for a
+			// planner-selected FED result that needs a selected relocation/materialization.
+			if (getPlannedExecType(producer) != ExecType.FED)
+				continue;
+
+			List<RestoredRefedAuthority> restored = new ArrayList<>();
+			boolean activeAuthorityCannotBeRestored = false;
+			for (FederatedRefedRegistry.AuthoritySpec authority : entry.getValue().getAuthorities()) {
+				List<ConsumerInputSpec> reachableInputs = authority.getConsumerInputs().stream()
+					.filter(input -> hopById.containsKey(input.consumerHopId())).toList();
+				if (reachableInputs.isEmpty())
+					continue;
+				String anchorKey = authority.getAnchorKey();
+				if (!isNonVarAnchorKey(anchorKey) || getFTypeFromAnchorKey(anchorKey) == null
+					|| reachableInputs.stream().anyMatch(ConsumerInputSpec::allInputs)) {
+					activeAuthorityCannotBeRestored = true;
+					break;
+				}
+				for (ConsumerInputSpec input : reachableInputs) {
+					Hop consumer = hopById.get(input.consumerHopId());
+					if (duplicateHopIds.contains(input.consumerHopId()))
+						throw invalidRuntimePlan(producer,
+							"preserved exact REFED authority has an ambiguous consumer hop identity");
+					int position = input.inputPosition();
+					if (consumer.getInput() == null || position < 0 || position >= consumer.getInput().size()
+						|| consumer.getInput().get(position) == null
+						|| consumer.getInput().get(position).getHopID() != producerHopId)
+						throw invalidRuntimePlan(producer,
+							"preserved exact REFED authority no longer matches consumer="
+								+ input.consumerHopId() + " input=" + position);
+				}
+				long anchorHopId = authority.getAnchorHopId();
+				Hop liveAnchor = hopById.get(anchorHopId);
+				if (liveAnchor == null || duplicateHopIds.contains(anchorHopId)
+					|| !isRuntimeFederatedInput(liveAnchor, null, null))
+					anchorHopId = -1L;
+				restored.add(new RestoredRefedAuthority(anchorHopId, anchorKey,
+					authority.getMaterializationFType(), reachableInputs));
+			}
+			if (activeAuthorityCannotBeRestored)
+				continue;
+			for (RestoredRefedAuthority authority : restored)
+				FederatedRefedRegistry.registerConsumerInputs(sbId, producerHopId,
+					authority.anchorHopId(), authority.anchorKey(), authority.materializationFType(),
+					authority.consumerInputs());
+		}
+	}
+
+	private record RestoredRefedAuthority(long anchorHopId, String anchorKey,
+		FType materializationFType, List<ConsumerInputSpec> consumerInputs) {
 	}
 
 	private static void restoreReachableRuntimeLocalMaterialize(

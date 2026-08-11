@@ -520,8 +520,8 @@
 
 ## 19. MinST L2SVM의 selected relocation action이 선택되지 않은 compatible consumer까지 전역 확장됨
 
-- **상태**: 진행중 — 소스/집중 회귀 수정 완료, 새 immutable Docker planning-only 검증 대기
-- **환경/조건**: LAN, workers=2, P2P2D L2SVM, MinST(`mkl-min-st-cut`), planning-only; predecessor source `c9418872a4...`, harness `639649e0bc...`
+- **상태**: 해결 — 소스/집중 회귀 및 새 immutable Docker 28/28 planning-only 검증 완료
+- **환경/조건**: LAN, workers=1–4, 7 workloads, MinST(`mkl-min-st-cut`), planning-only; source `8636539093...`, harness `639649e0bc...`
 - **재현 절차**:
   - Docker predecessor: `/tmp/g014_run_planning_matrix_639649e_c941887_20260811.sh minst 2`
   - 집중 회귀: `mvn -q -DskipTests=false -Dtest='CampaignBG014MinStL2SvmInternalEmissionCostRedTest,CampaignBMinStDuplicateObligationRedTest,MinStDownloadAuthorityAmbiguityRedTest,MinStExactPhysicalPlanSpaceOracleTest,MinStExactPhysicalModelCertificateTest,MinStExactProjectionAuthorityPreservationRedTest,MinStExactAnchorRelocationIdentityRedTest,CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest,CampaignBG014MinStKMeansWanRepeatedUploadRedTest,CampaignBG014MinStStepLmFunctionSourceLayoutRedTest' test`
@@ -544,14 +544,15 @@
   - 신규 assertion은 같은 source의 independent consumer들이 둘 이상의 durable anchor identity를 실제로 유지하는지 확인한다.
   - 관련 MinST 10개 class **32 tests, failures=0, errors=0, skipped=0**.
   - 전체 `MinStExactProductionTractabilityCertificateTest` **5 tests, failures=0, errors=0, skipped=0**, 1,455.815초 (`/tmp/g014-minst-production-tractability-green-20260811.xml`, SHA-256 `b265dcd1...d104`). 이 테스트는 7 workload × workers 1..4의 exact model/세 baseline/production projection을 검증하며 workload runtime을 실행하지 않는다.
-- **잔여 이슈**: 새 commit/JAR immutable stage에서 기존 실패 셀 MinST L2SVM-w2를 가장 먼저 planning-only canary로 실행하고, 이후 MinST 28개 셀을 중복 없이 완료해야 한다.
+  - 새 immutable stage의 기존 실패 셀 MinST L2SVM-w2 canary가 통과했고, 이어서 MinST **28/28** planning-only receipt가 성공했다. 전체 112셀 auditor에서 MinST objective finite/non-negative, required physical trace, receipt/log/config digest, runtime 미실행 불변식이 모두 통과했다.
+- **잔여 이슈**: planning-only 범위에서는 없음. 실제 runtime 336셀에서 worker 통신과 oracle 결과를 별도로 검증해야 한다.
 - **잠재 회귀 위험**: direct demand가 selected alternative input authority에서 누락되면 canonical completion이 잘못된 action을 고를 수 있다. exact input-authority coverage, duplicate-obligation/anchor-identity 회귀, Docker relocation receipt로 감지한다.
 - **의사결정 근거**: 후보 action이나 consumer를 닫지 않았다. MinST가 실제 선택한 edge-local authority와 후보 universe의 의미를 분리해 projector가 solver 선택을 그대로 실행하도록 복원했다.
 
 ## 20. DP decision-map 비용 비교가 neutral graph 전역 합법성을 누락해 불법 multi-write family를 재선택함
 
-- **상태**: 진행중 — 소스/집중 회귀 수정 완료, 새 immutable Docker planning-only 검증 대기
-- **환경/조건**: L2SVM, workers=1, DP(`compile_cost_based`), 기본 cost constant, final-hop immutable `PlacementAnalysis`; workload runtime 미실행
+- **상태**: 해결 — 소스/집중 회귀 및 새 immutable Docker DP 28/28 planning-only 검증 완료
+- **환경/조건**: 7 workloads, workers=1–4, DP(`compile_cost_based`), final-hop immutable `PlacementAnalysis`; workload runtime 미실행
 - **재현 절차**:
   - clean HEAD: `/tmp/g014-base-c941887-production-check`에서 `mvn -q -DskipTests=false -Dtest='MinStExactProductionTractabilityCertificateTest#sevenCampaignWorkloadsPublishExactPhysicalTractabilityCertificate' test`
   - 신규 회귀: `mvn -q -DskipTests=false -Dtest='MinStExactProductionTractabilityCertificateTest#l2SvmSingleWorkerDefaultCostsKeepsTransientConstraintsLegal' test`
@@ -576,7 +577,65 @@
   - 신규 default-cost L2SVM-w1 회귀는 selection 완료 후 normalized selected states가 graph의 모든 selected exact legality constraint를 만족함을 직접 검사하며 GREEN이다.
   - 전체 production tractability certificate **5/5 GREEN**; 관련 DP exact-component/L2SVM/LogReg 묶음 중 이번 변경 관련 **19 tests GREEN**.
   - Docker-equivalent L2SVM compile-only worker=1/2는 **2/2 GREEN**이며 출력에 `Total execution time: 0.000 sec.`가 기록됐다.
+  - 새 immutable stage에서 DP **28/28** planning-only receipt가 성공했다. 최종 112셀 auditor는 TRead/TWrite 9,872개와 recompile selection 32개를 감사했고 불법 placement, recompile CP/FOUT, fallback, DP legality override를 발견하지 않았다.
   - `CampaignBG014ProgramDynamicAuthorityParityRedTest#allCompiledPlannersResetRunStateAtSharedFinalHopBoundary`의 예상-message 비교 실패는 clean `c941887`에서도 byte-for-byte 같은 `MINST_PHYSICAL_PROJECTOR_EMISSION_STATE_CHANGED`로 재현돼 이번 변경의 회귀에서 격리했다.
-- **잔여 이슈**: 새 immutable Docker stage에서 DP L2SVM-w1 canary와 DP 28개 planning-only receipt를 검증한다. receipt마다 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`가 필수다.
+- **잔여 이슈**: planning-only 범위에서는 없음. DP가 MinST와 다른 local recurrence를 사용해 전역 비용 최적성이 낮을 수 있는 차이는 의도된 철학이며 실제 runtime에서 별도로 관측한다.
 - **잠재 회귀 위험**: neutral constraint 평가를 모든 candidate score에 추가하므로 큰 DP graph에서 planning 시간이 증가할 수 있다. 새 matrix의 `planning_seconds`, trace count, plan fingerprint를 predecessor와 비교하고 필요하면 immutable constraint-index cache로만 최적화한다. 합법성 검사를 생략하거나 candidate를 닫아 성능을 맞추지 않는다.
 - **의사결정 근거**: DP의 local 비용 recurrence는 그대로 유지했다. 비용 순위보다 먼저 planner-owned 전역 실행 합법성을 구조 score에 포함했을 뿐이며, MinST와 같은 전역 비용 optimizer로 바꾸지 않았다.
+
+## 21. Heuristic 최종 auditor가 모든 demotion marker를 FedAll의 FOUT으로 가정함
+
+- **상태**: 해결
+- **환경/조건**: commit `8636539093...`, immutable Docker planning-only 112셀; LM/LogReg workers=2–4 Heuristic와 FedAll exact occurrence 비교
+- **재현 절차**:
+  - `python3 /tmp/g014_audit_planning_matrix_639649e_8636539_20260811.py`
+  - 최초 출력: `/tmp/g014-audit-final-112-20260811.out` (SHA-256 `cc3ac9bb...c5d`)
+  - 수정 후 출력: `/tmp/g014-audit-final-112-corrected-20260811.out` (SHA-256 `f4b935f0...127`)
+- **관측 증상**: 112/112 receipt와 모든 기본 불변식은 성공했지만 LM workers=2–4 세 셀과 LogReg workers=2–4 세 셀에서 `marker projection mismatch` 6건이 발생했다. LM은 marker 3개/FOUT delta 2, LogReg은 marker 5개/FOUT delta 2였다.
+- **원인 분석**: auditor가 `markerCount == FedAll FOUT - Heuristic FOUT`을 강제했다. 그러나 marker는 “Heuristic이 이 producer를 FED/LOUT으로 유지하고 REFED하지 않는다”는 정책 사실이지, FedAll이 반드시 그 producer를 FOUT으로 선택했다는 사실이 아니다. exact key 대조에서 LM marker 1개, LogReg marker 3개는 FedAll도 이미 FED/LOUT이었다.
+- **해결 요약**:
+  - `Heuristic-Demotion`의 exact producer key를 파싱한다.
+  - 모든 marker가 emitted domain에 존재하고 Heuristic에서 `FED/LOUT`, `derivedFedFout=false`인지 검증한다.
+  - 현재 matrix처럼 `localPrefixCount == markerCount`, `frontierEdgeCount == 0`이면 변경 decision이 marker 부분집합인지 검사한다.
+  - FOUT delta를 전체 marker 수가 아니라 FedAll에서 실제 FOUT이었던 marker 수와 비교한다.
+  - exact decision 변화와 placement/runtime-plan fingerprint의 동치를 확인한다.
+- **수정 파일**: `/tmp/g014_audit_planning_matrix_639649e_8636539_20260811.py` (검증 도구; SystemDS 소스 변경 없음)
+- **검증**: 동일 112개 immutable receipt 재감사 결과 `validated_receipts=112/112`, `missing=0`, `errors=0`; transient selection 9,872개, recompile selection 32개, DP legality override 0개.
+- **잔여 이슈**: `localPrefixCount > markerCount` 또는 re-entry frontier가 실제로 등장하는 향후 workload는 prefix/frontier exact key trace를 추가해 더 강한 정책 투영 감사를 해야 한다.
+- **잠재 회귀 위험**: auditor 완화로 비-marker 변화가 누락될 위험이 있다. 현재 행렬에서는 non-marker difference가 0인지 직접 검사하며, 향후 prefix/frontier가 생기면 trace coverage가 없을 경우 fail-closed하도록 유지한다.
+- **의사결정 근거**: 플래너 정책을 감사식에 맞춰 변경하지 않고, Heuristic의 “LOUT 결정 producer만 no-REFED, 나머지는 FedAll 기반” 의미에 맞게 검증식을 바로잡았다.
+
+## 22. Heuristic KMeans runtime recompile이 planner-selected exact REFED authority를 지움
+
+- **상태**: 진행중 — 소스 수정·집중 회귀·패키징 완료, 새 immutable Docker 실패 셀 canary 대기
+- **환경/조건**: WAN-Light, workers=1, P2P2D KMeans, Heuristic(`mkl-heuristic`), Docker performance phase; source `8636539093...`, harness `639649e0bc...`
+- **재현 절차**:
+  - Docker 실패 셀: `/home/mchoi/g014-full-results-8636539-639649e-20260811-v1/cells/008-26a3d9502ecc`
+  - 최소 runtime 회귀: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.fedHeuristic.CampaignBG014HeuristicKMeansRuntimeRecompileRefedAuthorityRedTest' test`
+  - 수정 전 회귀 로그: `/tmp/g014-heuristic-kmeans-runtime-refed-red-20260811.log` (SHA-256 `f12f0ad1...649d`)
+- **관측 증상**:
+  - static placement transaction은 hop 263을 `FED/LOUT/FULL`로 선택하고 scope 4에 producer 263, anchor 165, durable placement key `worker1:8001;|0,0,50000,2100;|FULL`, exact consumer inputs `(277,1)`, `(286,1)`, `(840,0)`을 등록했다.
+  - function runtime recompile 이후 동일 hop이 planner-selected REFED authority를 잃고 live `VAR:` anchor 재추론 경로로 진입했다.
+  - runtime은 `Invalid planner-selected federated runtime plan: hopID=263 ... reason=selected CP/FOUT path resolved only to a non-federated VAR anchor`로 fail-closed했다. fallback/implicit repair는 실행되지 않았고 Docker teardown은 zero resources였다.
+- **원인 분석**:
+  - `FederatedRefedPolicy.registerFromHops(... clearRegistry=true, runtimeSignatures, ...)`는 전체 프로그램 placement transaction이 발행한 `FederatedRefedRegistry`를 runtime function block마다 전역 clear했다.
+  - 이후 runtime 관측으로 registry를 다시 추론했는데, 이미 선택된 exact consumer/input authority와 durable worker/range/FType placement metadata를 복원하지 못했다.
+  - 즉 planner 선택이 잘못된 것이 아니라, recompile lifecycle이 planner-owned exact lowering authority를 runtime 관측으로 대체했다. 이는 앵커를 살아있는 변수보다 durable placement metadata로 취급해야 한다는 원칙을 위반했다.
+- **해결 요약**:
+  - runtime clear 직전에 모든 REFED scope의 typed immutable snapshot을 저장하고 clear 후 복원한다.
+  - 현재 recompile scope는 그대로 신뢰하지 않고 새 DAG에 재투영한다. producer가 여전히 selected `FED`인지, durable non-`VAR:` anchor key와 FType이 있는지, exact consumer/input이 동일 producer를 직접 가리키는지 확인한다.
+  - 현재 DAG에서 사라진 live anchor hop은 `anchorHopId=-1`로 바꾸되 durable worker/range/FType key는 유지한다. 이는 새로운 anchor를 발명하지 않고 planner가 이미 선택한 실제 FederationMap identity만 보존한다.
+  - 현재 scope의 unreachable consumer authority는 제거하며, legacy `ALL_INPUTS`, duplicate hop identity, consumer/input mismatch는 fail-closed한다. 다른 statement-block scope의 exact authority는 전역 clear로 잃지 않도록 그대로 보존한다.
+  - recompile `<CP,FOUT>`을 되살리거나 runtime fallback·candidate 폐쇄·TR/TW 완화는 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedHeuristic/CampaignBG014HeuristicKMeansRuntimeRecompileRefedAuthorityRedTest.java`
+- **검증**:
+  - direct policy 회귀는 exact physical consumer/input, durable placement key, 다른 statement-block scope 보존을 확인하고 GREEN이다.
+  - Heuristic KMeans runtime 회귀와 기존 FedAll KMeans/ALS runtime-recompile 회귀를 함께 실행해 **4 tests, failures=0, errors=0** (`/tmp/g014-refed-runtime-regressions-final2-20260811.log`, SHA-256 `efee3b4f...987c`). Heuristic fixture는 실제 `fed_fed_refed` instruction 실행과 fallback/repair count 0을 검사한다.
+  - 전체 `FederatedRefedPolicyTest`의 새 테스트는 통과했다. 남은 3개 실패는 clean `8636539`에서도 동일하게 재현된 기존 broadcast-materialize baseline 결함이다 (`/tmp/g014-refed-policy-three-clean-head-20260811.log`, SHA-256 `363c275c...e62`).
+  - `git diff --check`와 `mvn -q -DskipTests package` 통과 (`/tmp/g014-refed-package-final-20260811.log`, SHA-256 `4ec5981b...8fda`). 생성 JAR SHA-256은 `1f81a3c0...e098`이다.
+- **잔여 이슈**: 새 commit/JAR로 immutable Docker stage를 만들고, 기존 실패 셀만 continuation campaign의 첫 셀로 재실행해야 한다. 성공 후 기존 성공 10개는 중복 실행하지 않고 아직 실행하지 않은 셀부터 WAN-Light → WAN-Mid → LAN 순으로 진행한다.
+- **잠재 회귀 위험**: stale exact authority를 잘못 복원하면 재작성된 DAG에 잘못된 relocation을 허용하거나 불필요하게 rewrite를 막을 수 있다. active-scope exact producer/consumer/input 재투영, non-`VAR:` typed key 요구, ambiguity/mismatch fail-closed, runtime heavy-hitter와 Docker receipt 감사로 감지한다.
+- **의사결정 근거**: runtime 관측으로 plan을 재작성하지 않고 planner가 이미 선택·비용화한 exact movement authority를 durable placement metadata로 보존했다. runtime은 선택된 계획을 그대로 실행한다는 원칙을 복원했다.

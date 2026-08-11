@@ -1663,6 +1663,51 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testRuntimeRecompilePreservesExactFedRefedAuthority() {
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		UnaryOp producer = HopRewriteUtils.createUnary(anchor, OpOp1.SQRT);
+		producer.setDim1(10);
+		producer.setDim2(10);
+		producer.setForcedExecType(ExecType.FED);
+		producer.setFederatedOutput(FederatedOutput.LOUT);
+		BinaryOp consumer = HopRewriteUtils.createBinary(producer, anchor, OpOp2.PLUS);
+		consumer.setDim1(10);
+		consumer.setDim2(10);
+		consumer.setForcedExecType(ExecType.FED);
+		consumer.setFederatedOutput(FederatedOutput.FOUT);
+
+		long scopeId = 42L;
+		String anchorKey = "worker1:8001/data/A;|0,0,10,10;|ROW";
+		ConsumerInputSpec selectedInput = new ConsumerInputSpec(consumer.getHopID(), 0);
+		FederatedRefedRegistry.registerConsumerInputs(scopeId, producer.getHopID(),
+			anchor.getHopID(), anchorKey, FType.ROW, List.of(selectedInput));
+		FederatedRefedRegistry.registerConsumerInputs(43L, 9001L, -1L,
+			anchorKey, FType.ROW, List.of(new ConsumerInputSpec(9002L, 0)));
+		FederatedRefedRegistry.AnchorSpec untouchedScope =
+			FederatedRefedRegistry.snapshot(43L).get(9001L);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+		fTypeMap.put(producer.getHopID(), FType.ROW);
+		fTypeMap.put(consumer.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = Map.of("A", "worker1:8001/data/A;|0,0,10,10;");
+		Map<String, FType> runtimeTypes = Map.of("A", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(List.of(consumer), true, fTypeMap, scopeId,
+			runtimeSignatures, runtimeTypes);
+
+		FederatedRefedRegistry.AnchorSpec restored =
+			FederatedRefedRegistry.snapshot(scopeId).get(producer.getHopID());
+		assertTrue("Runtime recompile must retain the selected exact REFED producer", restored != null);
+		assertEquals("Runtime recompile must retain only the selected physical input occurrence",
+			List.of(selectedInput), restored.getConsumerInputs());
+		assertEquals("Runtime recompile must retain the durable placement key",
+			anchorKey, restored.getAnchorKey());
+		assertEquals("Recompiling one block must not erase another block's planner authority",
+			untouchedScope, FederatedRefedRegistry.snapshot(43L).get(9001L));
+	}
+
+	@Test
 	public void testRuntimeRecompilePreservesReachableLocalMaterializeObligation() {
 		DataOp producer = createFederatedInput("A", 10, 10);
 		UnaryOp consumer = HopRewriteUtils.createUnary(producer, OpOp1.SQRT);
