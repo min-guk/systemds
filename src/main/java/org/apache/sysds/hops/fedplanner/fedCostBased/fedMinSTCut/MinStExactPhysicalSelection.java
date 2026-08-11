@@ -172,30 +172,20 @@ final class MinStExactPhysicalSelection {
 		PlacementAnalysis analysis, MinStExactPhysicalModel.PhysicalSelection physical,
 		Map<CompiledHopKey,PlacementState> selected,
 		List<CandidateSelectionReceipt> candidates) {
-		Map<CompiledHopKey,CandidateSelectionReceipt> candidateByConsumer = new IdentityHashMap<>();
-		for(CandidateSelectionReceipt candidate : candidates)
-			candidateByConsumer.put(candidate.rule().parentOccurrence(), candidate);
 		Map<RelocationDemandKey,RelocationActionKey> exact = new LinkedHashMap<>();
 		for(Alternative alternative : physical.alternativesInDecisionOrder())
 			for(var authority : alternative.inputAuthorities())
 				if(authority.relocationAction() != null)
 					bindExactAction(exact, authority.relocationAction(), alternative.decision(),
 						authority.inputPosition(), alternative.state());
-
-		// A derived output action is also exact authority.  Bind every currently active
-		// PRESENT endpoint it owns; inactive endpoints are not invented as demands.
-		for(RelocationAction action : physical.relocationActions())
-			for(ObligationKey obligation : action.obligations()) {
-				CandidateSelectionReceipt candidate = candidateByConsumer.get(obligation.consumer());
-				if(candidate == null || !obligation.requiredPlacement().equals(
-					selected.get(obligation.consumer()))
-					|| obligation.inputPosition() >= candidate.rule().orderedInputs().size()
-					|| !candidate.rule().orderedInputs().get(obligation.inputPosition()).present()
-					|| candidate.rule().orderedInputs().get(obligation.inputPosition()).fType()
-						!= action.key().materializationFType())
-					continue;
-				putExact(exact, RelocationDemandKey.from(obligation), action.key());
-			}
+		// RelocationAction.compatibleConsumers is an option universe, not a statement
+		// that every compatible endpoint selected the action.  In particular, two FED
+		// consumers may intentionally retain different durable pools and therefore pick
+		// different actions for the same source value.  Expanding an action selected by
+		// one input authority over all of its obligations overwrites those independent
+		// edge-local choices.  The selected alternatives above are the sole exact
+		// consumer-input authority; selectCanonical completes only genuinely unbound
+		// direct demands below.
 
 		Map<RelocationActionKey,RelocationAction> actions = new LinkedHashMap<>();
 		for(RelocationAction action : analysis.graph().relocationActions())
@@ -240,7 +230,8 @@ final class MinStExactPhysicalSelection {
 		RelocationActionKey prior = exact.putIfAbsent(demand, action);
 		if(prior != null && !prior.equals(action))
 			throw new IllegalArgumentException("MINST_PHYSICAL_RELOCATION_AUTHORITY_CONFLICT|demand="
-				+ demand.normalizedSignature());
+				+ demand.normalizedSignature() + "|first=" + prior.normalizedSignature()
+				+ "|current=" + action.normalizedSignature());
 	}
 
 	private static void completeSyntheticBoundaryStates(PlacementAnalysis analysis,

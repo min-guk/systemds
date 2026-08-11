@@ -517,3 +517,66 @@
 - **잔여 이슈**: 없음.
 - **잠재 회귀 위험**: 테스트가 production 구현을 그대로 복사하면 독립성이 약해질 수 있다. 현재 테스트는 private production helper를 호출하지 않고 analysis/memo 공개 receipt만으로 dependency DAG를 재구성하며, 구성·sink·coverage 검증을 별도로 유지해 감지한다.
 - **의사결정 근거**: exact parent가 child arm을 먼저 선언해야 한다는 planner-owned 실행 계약을 유지했으며, runtime fallback·후처리 재정렬·candidate 축소는 추가하지 않았다.
+
+## 19. MinST L2SVM의 selected relocation action이 선택되지 않은 compatible consumer까지 전역 확장됨
+
+- **상태**: 진행중 — 소스/집중 회귀 수정 완료, 새 immutable Docker planning-only 검증 대기
+- **환경/조건**: LAN, workers=2, P2P2D L2SVM, MinST(`mkl-min-st-cut`), planning-only; predecessor source `c9418872a4...`, harness `639649e0bc...`
+- **재현 절차**:
+  - Docker predecessor: `/tmp/g014_run_planning_matrix_639649e_c941887_20260811.sh minst 2`
+  - 집중 회귀: `mvn -q -DskipTests=false -Dtest='CampaignBG014MinStL2SvmInternalEmissionCostRedTest,CampaignBMinStDuplicateObligationRedTest,MinStDownloadAuthorityAmbiguityRedTest,MinStExactPhysicalPlanSpaceOracleTest,MinStExactPhysicalModelCertificateTest,MinStExactProjectionAuthorityPreservationRedTest,MinStExactAnchorRelocationIdentityRedTest,CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest,CampaignBG014MinStKMeansWanRepeatedUploadRedTest,CampaignBG014MinStStepLmFunctionSourceLayoutRedTest' test`
+  - predecessor stage: `/home/mchoi/g014-planning-audit-stage-639649e-c941887-20260811-v1/g007-stage-7e1bc87f728d1fc0f9a39dc91684dfe70954b82adeb638c8c9da6db571935232`
+- **관측 증상**:
+  - DP/FedAll/Heuristic 84개 planning-only receipt와 MinST worker=1 7개 receipt는 성공했으나 MinST worker=2 L2SVM은 receipt 발행 전 `MINST_PHYSICAL_RELOCATION_AUTHORITY_CONFLICT`로 fail-closed했다.
+  - 동일 source `Y`를 소비하는 서로 다른 FED consumer edge가 실제로는 `fed-init:X`와 `fed-init:Y`의 서로 다른 durable worker-pool anchor를 선택했는데, projector가 먼저 처리한 relocation action을 뒤의 edge에 덮어썼다.
+  - planning-only gate 때문에 worker control과 workload runtime은 실행되지 않았다.
+- **원인 분석**:
+  - `RelocationAction.compatibleConsumers`는 해당 action을 선택할 수 있는 **후보 endpoint universe**이다. 모든 endpoint가 그 action을 선택했다는 선택 증거가 아니다.
+  - `exactRelocationChoices()`는 selected alternative의 input authority를 edge-local하게 정확히 바인딩한 뒤, 별도 loop에서 선택된 action의 모든 compatible obligation을 다시 순회했다. 이 두 번째 전역 확장이 독립 edge 선택을 덮어써 authority conflict를 만들었다.
+- **해결 요약**:
+  - selected physical alternative의 ordered input authority를 exact consumer/input relocation 선택의 유일한 authority로 유지한다.
+  - `compatibleConsumers` 전역 확장 loop를 제거했다. 기존 `selectCanonical`은 selected alternative가 직접 바인딩하지 않은 genuinely-unbound direct demand만 완성한다.
+  - 서로 다른 action이 같은 exact demand를 주장하는 strict conflict 검사는 유지하고, 진단에 `first`/`current` action signature를 추가했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactPhysicalSelection.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStL2SvmInternalEmissionCostRedTest.java`
+- **검증**:
+  - 신규 assertion은 같은 source의 independent consumer들이 둘 이상의 durable anchor identity를 실제로 유지하는지 확인한다.
+  - 관련 MinST 10개 class **32 tests, failures=0, errors=0, skipped=0**.
+  - 전체 `MinStExactProductionTractabilityCertificateTest` **5 tests, failures=0, errors=0, skipped=0**, 1,455.815초 (`/tmp/g014-minst-production-tractability-green-20260811.xml`, SHA-256 `b265dcd1...d104`). 이 테스트는 7 workload × workers 1..4의 exact model/세 baseline/production projection을 검증하며 workload runtime을 실행하지 않는다.
+- **잔여 이슈**: 새 commit/JAR immutable stage에서 기존 실패 셀 MinST L2SVM-w2를 가장 먼저 planning-only canary로 실행하고, 이후 MinST 28개 셀을 중복 없이 완료해야 한다.
+- **잠재 회귀 위험**: direct demand가 selected alternative input authority에서 누락되면 canonical completion이 잘못된 action을 고를 수 있다. exact input-authority coverage, duplicate-obligation/anchor-identity 회귀, Docker relocation receipt로 감지한다.
+- **의사결정 근거**: 후보 action이나 consumer를 닫지 않았다. MinST가 실제 선택한 edge-local authority와 후보 universe의 의미를 분리해 projector가 solver 선택을 그대로 실행하도록 복원했다.
+
+## 20. DP decision-map 비용 비교가 neutral graph 전역 합법성을 누락해 불법 multi-write family를 재선택함
+
+- **상태**: 진행중 — 소스/집중 회귀 수정 완료, 새 immutable Docker planning-only 검증 대기
+- **환경/조건**: L2SVM, workers=1, DP(`compile_cost_based`), 기본 cost constant, final-hop immutable `PlacementAnalysis`; workload runtime 미실행
+- **재현 절차**:
+  - clean HEAD: `/tmp/g014-base-c941887-production-check`에서 `mvn -q -DskipTests=false -Dtest='MinStExactProductionTractabilityCertificateTest#sevenCampaignWorkloadsPublishExactPhysicalTractabilityCertificate' test`
+  - 신규 회귀: `mvn -q -DskipTests=false -Dtest='MinStExactProductionTractabilityCertificateTest#l2SvmSingleWorkerDefaultCostsKeepsTransientConstraintsLegal' test`
+  - 진단 trace: `-Dsysds.fedplanner.trace=true -Dsysds.fedplanner.trace.hops=378,379,385`
+- **관측 증상**:
+  - clean HEAD도 동일하게 `DP component has no locally ranked coherent exact root-plan forest`로 실패했다 (`/tmp/g014-base-production-test.log`, SHA-256 `f710016c...e89`).
+  - 선택 map은 같은 runtime transient `Y` family에서 TWrite 379=`CP/LOUT`, TRead 378=`FED/FOUT/FULL`, 다른 reaching TWrite 385=`FED/FOUT`을 동시에 보존했다. 이는 최상위 `<CP,LOUT>` 또는 `<FED,FOUT>` TR/TW 계약을 위반한다.
+  - 기존 multi-write normalization은 합법 all-LOUT map을 실제로 찾았지만, 뒤의 exact-occurrence refinement와 최종 `selectLowerCostDecisionMap`이 약간 더 싼 불법 split map을 다시 선택했다.
+- **원인 분석**:
+  - `countIncompatibleDecisionMapPlans()`는 selected forest의 parent/child output 호환성과 한 compiled occurrence의 중복 exact-state 충돌만 점수화했다.
+  - neutral placement graph가 소유하는 cross-root `SAME_PLACEMENT`/`SAME_FTYPE`/`CONJUNCTIVE` 합법성은 exact component join에서만 검사됐다. 따라서 비용 비교 단계에서는 불법 map도 `incompatiblePlanCount=0`으로 보였고 legal family normalization 결과를 이겼다.
+  - 이는 DP가 자기 hop/자식 hop만 보므로 MinST보다 전역 비용 최적성이 낮을 수 있다는 허용된 철학적 차이가 아니다. 비용 최적성과 무관하게 emitted runtime value 하나가 만족해야 하는 전역 합법성 누락이다.
+- **해결 요약**:
+  - decision-map selected traversal에서 수집한 exact occurrence state에 대해 neutral graph의 exact component legality constraint를 같은 구조 점수에 반영한다.
+  - 위반 constraint는 `incompatiblePlanCount`와 두 endpoint의 `exactSelectionConflictHopIDs`에 포함되어 기존 family simulation/exact conflict resolver가 다시 선택한다.
+  - all-LOUT/all-FOUT candidate는 그대로 열어 두고 기존 cost model로 비교한다. opcode/worker/workload guard, runtime fallback, TR/TW 완화는 추가하지 않았다.
+  - trace marker `DP-DecisionMap-NeutralConstraintConflict`로 위반 constraint와 양쪽 exact state를 planning log에서 확인할 수 있다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactProductionTractabilityCertificateTest.java`
+- **검증**:
+  - 신규 default-cost L2SVM-w1 회귀는 selection 완료 후 normalized selected states가 graph의 모든 selected exact legality constraint를 만족함을 직접 검사하며 GREEN이다.
+  - 전체 production tractability certificate **5/5 GREEN**; 관련 DP exact-component/L2SVM/LogReg 묶음 중 이번 변경 관련 **19 tests GREEN**.
+  - Docker-equivalent L2SVM compile-only worker=1/2는 **2/2 GREEN**이며 출력에 `Total execution time: 0.000 sec.`가 기록됐다.
+  - `CampaignBG014ProgramDynamicAuthorityParityRedTest#allCompiledPlannersResetRunStateAtSharedFinalHopBoundary`의 예상-message 비교 실패는 clean `c941887`에서도 byte-for-byte 같은 `MINST_PHYSICAL_PROJECTOR_EMISSION_STATE_CHANGED`로 재현돼 이번 변경의 회귀에서 격리했다.
+- **잔여 이슈**: 새 immutable Docker stage에서 DP L2SVM-w1 canary와 DP 28개 planning-only receipt를 검증한다. receipt마다 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`가 필수다.
+- **잠재 회귀 위험**: neutral constraint 평가를 모든 candidate score에 추가하므로 큰 DP graph에서 planning 시간이 증가할 수 있다. 새 matrix의 `planning_seconds`, trace count, plan fingerprint를 predecessor와 비교하고 필요하면 immutable constraint-index cache로만 최적화한다. 합법성 검사를 생략하거나 candidate를 닫아 성능을 맞추지 않는다.
+- **의사결정 근거**: DP의 local 비용 recurrence는 그대로 유지했다. 비용 순위보다 먼저 planner-owned 전역 실행 합법성을 구조 score에 포함했을 뿐이며, MinST와 같은 전역 비용 optimizer로 바꾸지 않았다.

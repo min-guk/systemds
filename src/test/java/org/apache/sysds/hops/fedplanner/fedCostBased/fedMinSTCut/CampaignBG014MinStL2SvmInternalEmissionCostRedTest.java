@@ -87,6 +87,14 @@ public class CampaignBG014MinStL2SvmInternalEmissionCostRedTest {
 				outerLoop.lines().anyMatch(line -> line.contains("FED ba+*")
 					&& line.contains(" X.MATRIX") && line.contains(" LOUT")));
 			var normalized = committedResult();
+			var anchorsBySource = normalized.selectedRelocationChoices().stream().collect(
+				java.util.stream.Collectors.groupingBy(choice -> choice.action().sourceValueVersion(),
+					java.util.stream.Collectors.mapping(choice -> choice.action().durableAnchor().placementId(),
+						java.util.stream.Collectors.toSet())));
+			Assert.assertTrue("Independent L2SVM consumers must retain their exact worker-pool authority "
+				+ "instead of expanding one selected action over every compatible obligation: "
+				+ anchorsBySource,
+				anchorsBySource.values().stream().anyMatch(anchors -> anchors.size() > 1));
 			Assert.assertFalse("MinST must not publish a relocation boundary on the loop-local X transpose",
 				normalized.selectedRelocations().stream().anyMatch(action -> {
 					var source = normalized.analysis().graph().nodes().stream()

@@ -6696,6 +6696,37 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					desiredChildOut != null ? desiredChildOut : childEdge.getValue()));
 			}
 		}
+
+		// Parent/child compatibility is necessary but not sufficient for an executable
+		// decision map.  The neutral placement graph also owns cross-root legality
+		// contracts (notably one runtime representation for a TWrite/TRead family).
+		// Score those contracts before cost ranking so a cheaper but globally illegal
+		// forest cannot replace a legal local-DP result.  This does not remove either
+		// output candidate: the existing family simulation still compares the legal
+		// all-LOUT and all-FOUT alternatives with the same cost model.
+		if (memoTable.analysis() != null) {
+			for (Constraint constraint : memoTable.analysis().graph().constraints()) {
+				if (!isExactComponentLegalityConstraint(constraint))
+					continue;
+				SelectedDpState left = requiredSelections.get(constraint.left());
+				SelectedDpState right = requiredSelections.get(constraint.right());
+				if (left == null || right == null
+					|| NeutralPlacementGraph.constraintSatisfied(
+						constraint, left.exactState(), right.exactState()))
+					continue;
+				incompatiblePlans++;
+				if (exactSelectionConflictHopIDs != null) {
+					exactSelectionConflictHopIDs.add(memoTable.resolveOriginalHopId(
+						memoTable.analysis().hop(constraint.left()).orElseThrow().getHopID()));
+					exactSelectionConflictHopIDs.add(memoTable.resolveOriginalHopId(
+						memoTable.analysis().hop(constraint.right()).orElseThrow().getHopID()));
+				}
+				FederatedPlannerTrace.logGlobal("DP-DecisionMap-NeutralConstraintConflict",
+					"constraint=" + constraint.normalizedSignature()
+						+ " left=" + left.exactState().normalizedSignature()
+						+ " right=" + right.exactState().normalizedSignature());
+			}
+		}
 		return incompatiblePlans;
 	}
 

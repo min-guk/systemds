@@ -22,8 +22,10 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ContributionKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityKind;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -165,6 +167,34 @@ public class MinStExactProductionTractabilityCertificateTest {
 			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
 		assertCandidateSelectionReachabilityParity(parityAnalysis, parityScope,
 			MinStExactCostFactsProducer.derive(parityAnalysis, parityScope));
+	}
+
+	@Test
+	public void l2SvmSingleWorkerDefaultCostsKeepsTransientConstraintsLegal() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = l2svm(1);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		NormalizedPlannerResult selected = new FederatedPlannerDpFedCostBased()
+			.selectProgram(program, null, null, analysis).normalizedResult();
+		long checked = 0L;
+		for(var constraint : analysis.graph().constraints()) {
+			if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
+				&& constraint.kind() != ConstraintKind.SAME_FTYPE
+				&& constraint.kind() != ConstraintKind.CONJUNCTIVE)
+				continue;
+			PlacementState left = selected.selectedStates().get(constraint.left());
+			PlacementState right = selected.selectedStates().get(constraint.right());
+			if(left == null || right == null)
+				continue;
+			checked++;
+			Assert.assertTrue("DP selected an illegal exact placement constraint: "
+				+ constraint.normalizedSignature() + "|left=" + left.normalizedSignature()
+				+ "|right=" + right.normalizedSignature(),
+				NeutralPlacementGraph.constraintSatisfied(constraint, left, right));
+		}
+		Assert.assertTrue("L2SVM must exercise at least one exact transient/placement constraint",
+			checked > 0L);
 	}
 
 	@Test
