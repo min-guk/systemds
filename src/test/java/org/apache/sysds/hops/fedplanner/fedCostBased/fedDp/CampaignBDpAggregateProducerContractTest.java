@@ -420,7 +420,8 @@ public class CampaignBDpAggregateProducerContractTest {
 		Set<CompiledHopKey> preCompletionCoverage=new HashSet<>(aggregateExplicitClosure);preCompletionCoverage.addAll(deferredKeys);
 		Assert.assertTrue("B-05 may omit disconnected receipts only when aggregate/deferred authority is complete",
 			!disconnectedReceipts.isEmpty()||preCompletionCoverage.containsAll(ordinaryKeys));
-		List<ComponentExpectation> components=disconnectedComponents(analysis,normalized,preCompletionCoverage);
+		List<ComponentExpectation> components=disconnectedComponents(
+			analysis,memo,normalized,preCompletionCoverage);
 		expectedApplications.addAll(validateDisconnectedReceipts(disconnectedReceipts,components,applied,
 			expected.size(),analysis,memo,normalized));
 		Set<CompiledHopKey> disconnectedCoverage=new HashSet<>();for(ComponentExpectation component:components)disconnectedCoverage.addAll(component.members());
@@ -467,7 +468,8 @@ public class CampaignBDpAggregateProducerContractTest {
 		}
 		return deferred;
 	}
-	private static List<ComponentExpectation> disconnectedComponents(PlacementAnalysis analysis,NormalizedPlannerResult normalized,
+	private static List<ComponentExpectation> disconnectedComponents(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memo,NormalizedPlannerResult normalized,
 		Set<CompiledHopKey> preCompletionCoverage) {
 		Set<CompiledHopKey> remaining=ordinaryNormalizedKeys(analysis,normalized);remaining.removeAll(preCompletionCoverage);
 		Map<CompiledHopKey,Set<CompiledHopKey>> undirected=new LinkedHashMap<>(),directed=new LinkedHashMap<>();
@@ -484,7 +486,46 @@ public class CampaignBDpAggregateProducerContractTest {
 				components.add(new ComponentExpectation(componentOrdinal,members,sink,occurrenceByKey(analysis,sink)));
 			componentOrdinal++;
 		}
-		return components;
+		return orderDisconnectedComponentsByExactDependencies(analysis,memo,components);
+	}
+	private static List<ComponentExpectation> orderDisconnectedComponentsByExactDependencies(
+		PlacementAnalysis analysis,FederatedPlannerDpMemoTable memo,List<ComponentExpectation> discovered) {
+		Map<Integer,List<ComponentExpectation>> groups=new LinkedHashMap<>();
+		for(ComponentExpectation component:discovered)
+			groups.computeIfAbsent(component.ordinal(),ignored->new ArrayList<>()).add(component);
+		Map<CompiledHopKey,Integer> owner=new HashMap<>();
+		for(var entry:groups.entrySet())for(CompiledHopKey member:entry.getValue().get(0).members())owner.put(member,entry.getKey());
+		Map<Integer,Set<Integer>> outgoing=new HashMap<>();Map<Integer,Integer> indegree=new HashMap<>();
+		for(Integer ordinal:groups.keySet()){outgoing.put(ordinal,new HashSet<>());indegree.put(ordinal,0);}
+		for(var entry:groups.entrySet())for(CompiledHopKey member:entry.getValue().get(0).members()) {
+			PlacementAnalysis.HopOccurrenceProjection occurrence=occurrenceByKey(analysis,member);
+			for(FederatedPlannerDpMemoTable.OccurrencePlanArm arm:memo.getAllExactPlanVariantsForOccurrence(occurrence))
+				for(FedPlan.ExactChildPlanEdge edge:arm.plan().getExactChildPlanEdges()) {
+					Integer child=owner.get(edge.occurrence());
+					if(child!=null&&!child.equals(entry.getKey())&&outgoing.get(entry.getKey()).add(child))
+						indegree.put(child,indegree.get(child)+1);
+				}
+		}
+		java.util.Comparator<Integer> canonical=java.util.Comparator.comparing(
+			ordinal->groups.get(ordinal).get(0).members().get(0));
+		java.util.PriorityQueue<Integer> ready=new java.util.PriorityQueue<>(canonical);
+		for(Integer ordinal:groups.keySet())if(indegree.get(ordinal)==0)ready.add(ordinal);
+		List<Integer> ordered=new ArrayList<>();
+		while(!ready.isEmpty()) {
+			Integer next=ready.remove();ordered.add(next);
+			for(Integer child:outgoing.get(next).stream().sorted(canonical).toList()) {
+				int remaining=indegree.get(child)-1;indegree.put(child,remaining);if(remaining==0)ready.add(child);
+			}
+		}
+		if(ordered.size()!=groups.size())for(Integer ordinal:groups.keySet().stream()
+			.filter(value->!ordered.contains(value)).sorted(canonical).toList())ordered.add(ordinal);
+		List<ComponentExpectation> result=new ArrayList<>();int ordinal=0;
+		for(Integer oldOrdinal:ordered) {
+			for(ComponentExpectation component:groups.get(oldOrdinal))result.add(new ComponentExpectation(
+				ordinal,component.members(),component.sinkRoot(),component.sinkRootOccurrence()));
+			ordinal++;
+		}
+		return result;
 	}
 	private static void addDisconnectedEdge(CompiledHopKey producer,CompiledHopKey consumer,Set<CompiledHopKey> remaining,
 		Map<CompiledHopKey,Set<CompiledHopKey>> undirected,Map<CompiledHopKey,Set<CompiledHopKey>> directed) {

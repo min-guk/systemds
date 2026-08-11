@@ -2062,7 +2062,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		List<CompiledHopKey> roots, OwnerComponentIndex ownerIndex,
 		TraversalDependencyLedger ledger, Map<Long,FederatedOutput> outputDecisions) {
 		Map<CompiledHopKey,SelectedDpState> fixed = ledger.exactJoinLocks(componentId);
-		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains = new IdentityHashMap<>();
+		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> preferredDomains =
+			new IdentityHashMap<>();
+		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> legalityDomains =
+			new IdentityHashMap<>();
+		boolean preferredDomainsComplete = true;
 		for(CompiledHopKey key : componentId.members) {
 			PlacementAnalysis.HopOccurrenceProjection occurrence = ownerIndex.occurrence(key);
 			if(occurrence == null)
@@ -2076,19 +2080,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					preferredOutput == null || plan.getFedOutType() == preferredOutput ? 0 : 1)
 				.thenComparingDouble(FederatedPlannerDpMemoTable.FedPlan::getCumulativeCost)
 				.thenComparing(exactPlanTieOrder());
-			List<FederatedPlannerDpMemoTable.FedPlan> arms = dependency != null ? List.of(dependency)
+			List<FederatedPlannerDpMemoTable.FedPlan> allArms = dependency != null ? List.of(dependency)
 				: global != null && global.retainedPlan() != null ? List.of(global.retainedPlan()) : memoTable
 				.getAllExactPlanVariantsForOccurrence(occurrence).stream()
 				.map(FederatedPlannerDpMemoTable.OccurrencePlanArm::plan)
 				.filter(plan -> plan != null && plan.getSelectedPlacementState() != null)
-				// The existing DP conflict resolver is the output-decision authority.
-				// Exact completion may choose a coherent retained arm within that output,
-				// but it must not reopen LOUT/FOUT as a second component-wide optimizer.
-				.filter(plan -> preferredOutput == null || plan.getFedOutType() == preferredOutput)
-				.filter(plan -> isCompatibleWithChildDecisions(memoTable, plan, outputDecisions))
 				.sorted(localDpOrder)
 				.toList();
-			if(arms.isEmpty())
+			if(allArms.isEmpty())
 				throw new IllegalStateException("DP memo omitted component member " + key
 					+ " preferred=" + preferredOutput
 					+ " dependency=" + compactPlanArm(dependency)
@@ -2098,14 +2097,50 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						.map(arm -> compactPlanArm(arm.plan()) + ":childrenCompatible="
 							+ isCompatibleWithChildDecisions(memoTable, arm.plan(), outputDecisions))
 						.toList());
-			domains.put(key, arms);
+			legalityDomains.put(key, allArms);
+			List<FederatedPlannerDpMemoTable.FedPlan> preferredArms =
+				dependency != null || global != null && global.retainedPlan() != null ? allArms : allArms.stream()
+					// The existing DP conflict resolver remains the output-decision authority
+					// whenever its decisions admit a graph-legal exact forest.
+					.filter(plan -> preferredOutput == null || plan.getFedOutType() == preferredOutput)
+					.filter(plan -> isCompatibleWithChildDecisions(memoTable, plan, outputDecisions))
+					.toList();
+			preferredDomains.put(key, preferredArms);
+			preferredDomainsComplete &= !preferredArms.isEmpty();
 		}
-		List<CompiledHopKey> order = prioritizeExactJoinRoots(
-			roots, exactJoinVariableOrder(componentId, domains));
+		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains =
+			preferredDomainsComplete ? preferredDomains : legalityDomains;
+		boolean usedLegalityDomains = !preferredDomainsComplete;
+		String legalityOverrideReason = usedLegalityDomains ? "empty-preferred-domain" : null;
+		List<CompiledHopKey> order = prioritizeExactJoinRoots(roots,
+			exactJoinVariableOrder(componentId, domains));
 		ExactComponentJoin[] best = {null};
 		searchExactComponentAssignment(analysis, memoTable, componentId, roots, order, domains,
 			fixed, 0, new IdentityHashMap<>(), new IdentityHashMap<>(), 0d,
 			new HashMap<>(), best);
+		if(best[0] == null && domains != legalityDomains) {
+			// DP is intentionally local and its output conflict resolver normally owns
+			// LOUT/FOUT. A graph-declared global legality constraint (notably exact
+			// TWrite/TRead coherence) may nevertheless make every locally preferred arm
+			// infeasible. In that case reopen the already enumerated legal arms, preserve
+			// the local preference as the first sort key, and choose the first coherent
+			// forest. This is legality repair, not a second global cost optimizer.
+			domains = legalityDomains;
+			usedLegalityDomains = true;
+			legalityOverrideReason = "no-coherent-preferred-output-forest";
+			order = prioritizeExactJoinRoots(roots,
+				exactJoinVariableOrder(componentId, domains));
+			searchExactComponentAssignment(analysis, memoTable, componentId, roots, order, domains,
+				fixed, 0, new IdentityHashMap<>(), new IdentityHashMap<>(), 0d,
+				new HashMap<>(), best);
+		}
+		if(best[0] != null && usedLegalityDomains && FederatedPlannerTrace.isEnabled())
+			for(CompiledHopKey member : componentId.members) {
+				PlacementAnalysis.HopOccurrenceProjection occurrence = ownerIndex.occurrence(member);
+				if(occurrence != null && FederatedPlannerTrace.shouldTrace(occurrence.hop()))
+					FederatedPlannerTrace.log(occurrence.hop(), "DP-ComponentLegalityOverride",
+						"component=" + componentId.ordinal + " reason=" + legalityOverrideReason);
+			}
 		if(best[0] == null)
 			throw new IllegalStateException("DP component has no locally ranked coherent exact root-plan forest: "
 				+ boundedSummary(componentId.members.stream()
@@ -2127,6 +2162,31 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						.stream().map(arm -> compactPlanArm(arm.plan())).toList();
 				}).toList(), 12));
 		return best[0];
+	}
+
+	private static void reconcileExactJoinOutputDecisions(FederatedPlannerDpMemoTable memoTable,
+		OrdinaryComponentId componentId, ExactComponentJoin join,
+		Map<Long,FederatedOutput> componentLocks, Map<Long,FederatedOutput> outputDecisions) {
+		Map<Long,FederatedOutput> joined = new LinkedHashMap<>();
+		for(Map.Entry<CompiledHopKey,SelectedDpState> entry : join.selections().entrySet()) {
+			PlacementAnalysis.HopOccurrenceProjection occurrence =
+				memoTable.requirePlanCarrierOccurrence(entry.getValue().retainedPlan().getHopRef());
+			if(occurrence.key() != entry.getKey())
+				throw new IllegalStateException("DP exact join output reconciliation has foreign authority: "
+					+ entry.getKey());
+			long originalHopId = memoTable.resolveOriginalHopId(occurrence.hop().getHopID());
+			FederatedOutput selected = entry.getValue().output();
+			FederatedOutput lock = componentLocks.get(originalHopId);
+			if(lock != null && lock != selected)
+				throw new IllegalStateException("DP exact join changed a committed component output: hop="
+					+ originalHopId + " locked=" + lock + " selected=" + selected);
+			FederatedOutput previous = joined.putIfAbsent(originalHopId, selected);
+			if(previous != null && previous != selected)
+				throw new IllegalStateException("DP exact join selected conflicting clone-family outputs: hop="
+					+ originalHopId + " first=" + previous + " second=" + selected
+					+ " component=" + componentId.ordinal);
+		}
+		outputDecisions.putAll(joined);
 	}
 
 	private static List<String> describeExactJoinConstraints(PlacementAnalysis analysis,
@@ -2669,6 +2729,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					+ " actual=" + localDecisions.get(lock.getKey()));
 		ExactComponentJoin join = selectLocallyRankedCoherentComponent(analysis, memoTable, componentId, roots,
 			ownerIndex, ledger, localDecisions);
+		reconcileExactJoinOutputDecisions(
+			memoTable, componentId, join, componentLocks, localDecisions);
 		List<FederatedPlannerDpMemoTable.FedPlan> rootPlans = join.roots();
 		ledger.installExactJoin(componentId, join.selections());
 		Map<Long, ConflictEntry> localConflicts = copyConflictEntries(rewriteConflictCheckMap);

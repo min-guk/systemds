@@ -289,7 +289,7 @@
 
 ## 11. single-worker `FType.FULL` vector가 Heuristic demotion marker에서 누락됨
 
-- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **상태**: 해결
 - **환경/조건**: LAN planning-only, Heuristic, P2P2D StepLM, workers=1; commit `1608be47ba...` stage
 - **재현 절차**:
   - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --dataset P2P2D --conf mkl-heuristic --alg steplm --workers 1 ...`
@@ -309,7 +309,9 @@
   - 신규 `FULL_4x1` 회귀는 수정 전 `expected:<1> but was:<0>`으로 RED였다 (`/tmp/g014-heuristic-full-marker-red-20260810.log`).
   - 수정 후 focused test가 통과했다 (`/tmp/g014-heuristic-full-marker-green-20260810.log`).
   - Heuristic policy/provenance/re-entry, common emission/authority, DP/MinST/FedAll 대표 회귀를 포함한 **59 tests, failures=0, errors=0, skipped=0** (`/tmp/g014-heuristic-full-broad-20260810.log`).
-- **잔여 이슈**: 새 commit/JAR의 immutable Docker stage에서 StepLM workers=1의 FedAll과 Heuristic을 planning-only로 실행해 Heuristic marker가 1개 이상이고 exact emitted/runtime plan이 실제로 달라지는지 확인한다. 그 전에는 성능 runtime을 시작하지 않는다.
+  - 최종 commit `2dcc68d8c8...`, JAR SHA-256 `97c2edc6...` immutable Docker stage에서 StepLM-w1 Heuristic planning-only가 성공했다. receipt는 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`, `Heuristic-Demotion=1`, FED/FOUT `64/62`, runtime-plan SHA-256 `7e0db475...`를 기록했다.
+  - 같은 stage의 FedAll은 FED/FOUT `64/63`, runtime-plan SHA-256 `3f6541f3...`여서 FULL-vector marker 하나가 실제 FOUT 하나를 demote하고 runtime plan을 변경했음을 확인했다.
+- **잔여 이슈**: 없음. workers=2..4에서도 같은 marker/FOUT delta 불변식은 전체 planning-only matrix 감사에서 계속 확인한다.
 - **잠재 회귀 위험**: FULL을 shape 확인 없이 모두 vector로 취급하면 matrix aggregate-binary까지 과도하게 demote할 수 있다. `isVector(shape)` 회귀와 실제 StepLM planning receipt로 감지한다.
 - **의사결정 근거**: candidate-space를 임의로 닫거나 runtime을 보정하지 않고, 기존 Heuristic 정책이 single-worker의 실제 `FType.FULL` 표현에도 동일하게 적용되도록 정확한 FType 지원을 복원했다.
 
@@ -406,23 +408,35 @@
 - **잠재 회귀 위험**: native oracle emission까지 materialization delta로 오인하면 실제 불법 축소를 숨길 수 있다. helper는 action 없는 emission과 모든 rule evidence의 exact equality를 요구하며 기존 stale `PRESENT OTHER` 제거 회귀로 감지한다.
 - **의사결정 근거**: 후보를 닫거나 runtime fallback을 추가하지 않고, 이미 검증된 worker-pool materialization 후보의 올바른 고정점 재계산 순서만 복원했다.
 
-## 15. 기존 two-worker L2SVM DP의 exact root-plan component coherence 실패
+## 15. two-worker L2SVM DP의 local output 선택이 전역 TR/TW 합법 carrier를 제거함
 
-- **상태**: 진행중 — 현재 single-worker 우선 planning audit와 분리해 보존
-- **환경/조건**: workers=2, L2SVM, `compile_cost_based`, compile-only; source baseline commit `55ff7a37...`와 현재 수정본 모두
+- **상태**: 진행중 — 소스/집중 회귀 수정 완료, 새 immutable Docker planning-only 검증 대기
+- **환경/조건**: workers=2, L2SVM, `compile_cost_based`, compile-only; 과거 baseline `55ff7a37...`, predecessor `2dcc68d8c8...`, 현재 수정본
 - **재현 절차**: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpL2SvmRefedSourceLoweringRedTest#l2SvmTwoWorkersLowersEverySelectedRefedSource' test`
-- **관측 증상**: `DP component has no locally ranked coherent exact root-plan forest`로 실패한다. branch TWrite `Y` component는 CP/LOUT root만 갖지만 외부의 exact TRead `Y`는 CFG CONJUNCTIVE constraint로 FED/FOUT/ROW에 고정돼 있다.
-- **원인 분석**: 아직 확정하지 않았다. baseline commit을 별도 detached worktree에서 실행해 동일 실패를 재현했으므로 Issue 14 수정으로 유발된 회귀는 아니다. DP component 분해가 foreign fixed logical source constraint를 root domain에 전달하지 못하거나, exact TWrite FED/FOUT carrier를 component domain에서 누락한 가능성이 있다.
-- **해결 요약**: 없음. single-worker 7-workload 한 바퀴의 빠른 feedback loop를 우선 유지하고, workers=2 audit 진입 전에 exact component/foreign-fixed receipt를 별도 회귀로 고정해 수정한다.
-- **수정 파일**: 없음
-- **검증**: baseline detached worktree 로그 `/tmp/g014-baseline-l2svm-two-worker-20260810.log`와 현재 로그 `/tmp/g014-l2svm-two-worker-after-closure-20260810.log`가 같은 failure class를 보인다.
-- **잔여 이슈**: DP component domain, TWrite/TRead logical authority, foreign fixed selection을 occurrence 단위로 대조해야 한다.
-- **잠재 회귀 위험**: 이를 단순 constraint 완화 또는 TWrite CP/FOUT 허용으로 우회하면 최상위 TR/TW 규칙을 위반한다. exact FED/FOUT TWrite carrier 복원 또는 component constraint propagation으로만 해결해야 한다.
-- **의사결정 근거**: baseline 문제를 새 수정의 회귀로 오인하지 않되 숨기지도 않고, worker=1 우선순위와 빠른 planning feedback loop를 유지하면서 후속 DP 수정 대상으로 명시했다.
+- **관측 증상**:
+  - predecessor JAR의 LAN Docker planning-only는 성공했지만, 동일 소스의 기본 cost constant 집중 회귀는 `DP component has no locally ranked coherent exact root-plan forest`로 실패했다.
+  - branch TWrite `Y`의 local conflict resolver는 LOUT을 선호했고, 뒤의 exact TRead `Y`는 CFG/TR-TW 제약 때문에 FED/FOUT/ROW로 고정됐다. memo에는 합법 FED/FOUT TWrite carrier가 남아 있었지만 exact component join의 domain filter가 local LOUT 선택만 보존해 모든 coherent forest를 제거했다.
+- **원인 분석**: 합법성 검사보다 local output filter가 먼저 적용되어, cost constant에 따라 우연히 local 선택과 전역 TR/TW 합법성이 일치할 때만 성공했다. 따라서 predecessor Docker LAN 성공은 구현의 비용환경 독립적 정확성을 증명하지 못했다. 이 문제는 DP가 전역 비용 최적해를 찾지 못하는 철학적 한계가 아니라, 이미 열거된 합법 arm을 전역 합법성 확인 전에 버린 구현 오류다.
+- **해결 요약**:
+  - exact component join을 두 단계로 실행한다. 먼저 기존 DP conflict resolver의 output과 child 결정에 맞는 domain만 검색해 기존 local 철학을 그대로 보존한다.
+  - 그 domain에 coherent forest가 없을 때만 이미 열거된 합법 arm 전체를 다시 열고, `local output 선호 → 누적 local DP cost → 기존 tie order` 순으로 첫 coherent forest를 선택한다. 이는 새 전역 cost optimizer가 아니라 전역 합법성 복구다.
+  - exact join이 합법성 때문에 output을 바꾼 경우 해당 선택을 component-local output decision map에 반영하며, 이미 commit된 component lock이나 clone-family output을 변경하면 fail-closed한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBDpAggregateProducerContractTest.java`
+- **검증**:
+  - 과거 baseline detached worktree 로그 `/tmp/g014-baseline-l2svm-two-worker-20260810.log`와 `/tmp/g014-l2svm-two-worker-after-closure-20260810.log`는 동일 failure class를 보존한다.
+  - predecessor `2dcc68d8c8...` LAN Docker planning-only L2SVM-w2 receipt는 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`, FED/FOUT `47/38`, runtime-plan SHA-256 `c31350eb...`로 성공했다. 반면 기본 cost 집중 회귀는 수정 전 실패했다 (`/tmp/g014-final-l2svm-w2-dp-focused-20260810.log`).
+  - 수정 후 위 집중 회귀가 GREEN이다 (`/tmp/g014-final-l2svm-w2-dp-legality-green1-20260810.log`). exact component/function boundary/transient-write/clone-family/aggregate receipt 묶음도 통과했다 (`/tmp/g014-dp-focused-isolated-20260810.log`, `/tmp/g014-dp-aggregate-contract-order-aware-20260810.log`).
+  - 최종 보완 후 관련 7개 회귀 class **26 tests, failures=0, errors=0** (`/tmp/g014-dp-legality-focused-final-20260810.log`), 알려진 clean-HEAD 기존 결함 3개 class를 제외한 DP 패키지 전체 **33 classes / 95 tests, failures=0, errors=0, skipped=3** (`/tmp/g014-dp-package-excluding-baseline-final-20260810.log`)이다. compile-only 통계에서 nonzero execution-time marker는 없었다.
+  - legality domain을 직접 사용한 경우도 관측 누락이 없도록 `DP-ComponentLegalityOverride`가 `empty-preferred-domain` 또는 `no-coherent-preferred-output-forest` 원인을 구분해 기록한다. 새 immutable Docker planning log에서 이 marker와 최종 plan receipt를 함께 감사한다.
+- **잔여 이슈**: 새 commit/JAR immutable stage에서 L2SVM workers=1..4 DP를 실패 셀 우선 planning-only로 재검증한 뒤, DP 7 workload 전체를 완료해야 한다. 그 전 predecessor Docker 성공을 최종 증거로 승격하지 않는다.
+- **잠재 회귀 위험**: legality fallback을 항상 실행하면 DP가 사실상 component 전역 cost optimizer로 변질될 수 있다. preferred-domain 우선 검색, fallback trace, component lock/clone-family fail-closed 회귀로 감지한다. TR/TW 제약 완화나 TWrite CP/FOUT 인정은 계속 금지한다.
+- **의사결정 근거**: DP의 local 비용 철학은 유지하되, local 선호가 전역 합법 forest를 제거할 수는 없으므로 graph-declared legality만 최소한으로 우선시했다. runtime fallback이나 candidate-space 폐쇄는 추가하지 않았다.
 
 ## 16. FedAll PCA의 multi-return `FUNCTIONOUTPUT` descriptor가 물리 consumer로 잘못 등록됨
 
-- **상태**: 소스 수정/회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **상태**: 해결
 - **환경/조건**: LAN, workers=1, P2P2D PCA, FedAll(`mkl-fout`), planning-only; commit `3d1e477c55...` immutable stage
 - **재현 절차**:
   - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-fout --alg pca ...`
@@ -449,13 +463,14 @@
   - 수정 후 registry가 오직 `FunctionOp hop76,input0`만 기록했고, Hop→Lop/Dag instruction 생성까지 runtime 실행 없이 GREEN이었다 (`/tmp/g014-pca-fedall-physical-consumer-green-20260810.log`).
   - transaction, exact REFED projection, LOCAL lowering, multi-return owner 회귀 묶음은 **29 tests, failures=0, errors=0, skipped=0**였다 (`/tmp/g014-pca-fedall-physical-consumer-focused-20260810.log`).
   - `mvn -q -DskipTests package`, `git diff --check` 통과. 수정 JAR SHA-256은 `4801e947...`이다.
-- **잔여 이슈**: 수정 commit/JAR로 immutable stage를 만든 뒤 실패했던 PCA-w1 FedAll을 먼저 planning-only 재실행하고, registry trace가 `localInputs=[hop41/input0]`만 포함하며 receipt의 `runtime_executed=false`, `execution_seconds=0.0`인지 확인한다. 그 다음 아직 실행하지 않은 FedAll workload부터 진행한다.
+  - 최종 commit `2dcc68d8c8...`, JAR SHA-256 `97c2edc6...` immutable Docker stage의 PCA-w1 FedAll planning-only가 성공했다. LOCAL registry는 source hop 198을 실제 `FunctionOp hop41/input0` 하나에만 기록했고, receipt는 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`, FED/FOUT `31/30`, runtime-plan SHA-256 `bb4637ee...`이다.
+- **잔여 이슈**: 없음. workers=2..4에서 같은 logical→physical projection을 전체 matrix로 재검증한다.
 - **잠재 회귀 위험**: 동일 source/output descriptor가 여러 FunctionOp에 부정확하게 공유되거나 compiled occurrence가 중복되면 잘못 dedup할 수 있다. projection은 FunctionOp/output identity, 동일 scope, exact compiled source edge, 유일성 네 조건을 모두 요구하며 모호한 경우 fail-closed한다. 일반 consumer는 기존 identity를 그대로 보존한다.
 - **의사결정 근거**: runtime fallback이나 유효 candidate 폐쇄 없이, planner가 선택한 논리 obligation을 compiler-owned 실제 `FunctionCallCP` 입력 authority로 정확히 내리는 emission 계약을 복원했다.
 
 ## 17. L2SVM FedAll의 ternary-aggregate fusion이 선택된 LOCAL consumer 입력 경계를 지움
 
-- **상태**: 소스 수정/최소 회귀 검증 완료, 새 immutable Docker planning-only 재검증 대기
+- **상태**: 해결
 - **환경/조건**: LAN, workers=1, P2P2D L2SVM, FedAll(`mkl-fout`), planning-only; commit `24f7826440...` immutable stage
 - **재현 절차**:
   - Docker: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile lan --workers 1 --dataset P2P2D --conf mkl-fout --alg l2svm ...`
@@ -483,7 +498,22 @@
 - **검증**:
   - 신규 binary/n-ary 회귀 두 건은 수정 전 모두 fusion이 유지되어 RED였다 (`/tmp/g014-l2svm-ternary-consumer-boundary-red-20260810.log`).
   - registry consumer-boundary 인식 수정 후 전체 test class **7 tests, failures=0, errors=0**로 GREEN이었다 (`/tmp/g014-l2svm-ternary-consumer-boundary-green-20260810.log`).
-  - 새 commit/JAR immutable stage의 실패 셀 우선 Docker planning-only 검증은 아직 남아 있다.
-- **잔여 이슈**: L2SVM-w1 FedAll을 새 stage에서 먼저 재실행해 hop 418/420이 explicit Lop으로 남고 LOCAL exact input rewiring이 성공하는지 확인한다. 성공 후 아직 미실행인 FedAll workload부터 Heuristic, MinST 순으로 planning-only 로그 감사를 계속한다.
+  - 최종 commit `2dcc68d8c8...`, JAR SHA-256 `97c2edc6...` immutable Docker stage의 L2SVM-w1 FedAll planning-only가 exact LOCAL rewiring/lowering까지 성공했다. receipt는 `runtime_executed=false`, `execution_seconds=0.0`, `forbidden_output_absent=true`, FED/FOUT `45/41`, local materialization `6`, runtime-plan SHA-256 `c8f32031...`이다.
+  - 대응 log에 `Planner-Complete=1`과 zero-time compile-only footer가 존재하며 `cannot project exact input authority` 예외는 없다.
+- **잔여 이슈**: 없음. workers=2..4의 동일 fused-boundary 형태는 전체 matrix에서 계속 fail-closed 감사한다.
 - **잠재 회귀 위험**: registry lifecycle이 잘못되어 stale consumer authority가 남으면 불필요하게 fusion을 막을 수 있다. 기존 registry clear/snapshot lifecycle 테스트, boundary 없는 expression이 여전히 fusion 대상이라는 신규 pre-registration assertion, immutable Docker plan fingerprint 비교로 감지한다.
 - **의사결정 근거**: runtime fallback이나 opcode별 후보 폐쇄를 추가하지 않고, planner가 선택·비용화한 exact movement edge를 후속 lowering 최적화가 지우지 못하도록 실행 계약을 보존했다.
+
+## 18. aggregate DP receipt 회귀가 exact component dependency 순서를 반영하지 않음
+
+- **상태**: 해결
+- **환경/조건**: `CampaignBDpAggregateProducerContractTest`, B-05 planning-only fixture, DP exact disconnected-component completion
+- **재현 절차**: `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBDpAggregateProducerContractTest' test`
+- **관측 증상**: Issue 15의 합법성 보정 후 aggregate receipt 테스트 두 건이 첫 disconnected component를 `TWrite i`로 기대했지만 실제 receipt는 `DataGen rand X`를 먼저 기록해 실패했다. 임시 진단으로 expected/actual 전체 component를 출력한 결과 7개 component의 **구성·sink는 완전히 동일하고 순서만 달랐다**.
+- **원인 분석**: production은 부모 component가 선택한 exact child arm을 ledger에 먼저 잠그기 위해 retained exact-plan dependency의 parent→child 위상 순서로 component를 실행한다. 이 순서는 2026-08-03부터 존재했지만, 7월에 작성된 독립 테스트는 compiled/transient weak component를 단순 역정렬한 오래된 규칙을 계속 사용했다. Issue 15 수정은 이전에 가려져 있던 disconnected coverage를 드러내 이 불일치를 노출했다.
+- **해결 요약**: production 순서를 바꾸거나 receipt 비교를 느슨하게 하지 않았다. 테스트가 memo의 모든 retained exact child edge에서 component dependency DAG를 독립 재구성하고, production과 같은 parent-before-child 의미를 검증하도록 보강했다. component member, sink root, analysis-owned occurrence, receipt/applied-plan identity, ordinal, 전체 coverage 검사는 그대로 유지한다.
+- **수정 파일**: `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBDpAggregateProducerContractTest.java`
+- **검증**: 전체 test class **11 tests, failures=0, errors=0** (`/tmp/g014-dp-aggregate-contract-order-aware-20260810.log`). 임시 진단 출력은 제거했고 `git diff --check`를 통과했다.
+- **잔여 이슈**: 없음.
+- **잠재 회귀 위험**: 테스트가 production 구현을 그대로 복사하면 독립성이 약해질 수 있다. 현재 테스트는 private production helper를 호출하지 않고 analysis/memo 공개 receipt만으로 dependency DAG를 재구성하며, 구성·sink·coverage 검증을 별도로 유지해 감지한다.
+- **의사결정 근거**: exact parent가 child arm을 먼저 선언해야 한다는 planner-owned 실행 계약을 유지했으며, runtime fallback·후처리 재정렬·candidate 축소는 추가하지 않았다.
