@@ -50,7 +50,7 @@
 - **상태**: 수정 및 worker=1 Docker runtime canary 검증 완료
 - **적용 원칙/제약**: runtime이 실제 지원하는 합법 후보를 닫지 않고 Oracle 누락을 보완한다. runtime fallback/암묵적 materialization은 추가하지 않는다.
 - **환경/조건**: Docker WAN-Light LogReg, P2P2D, FedAll, workers=1(FType.FULL) 대 workers=2..4(row partitioned), 수정 전 commit `b5ef1ae...`.
-- **재현 절차**: 수정 전 warm log `/home/mchoi/g014-full-results-b5ef1ae-639649e-20260811-v1/cells/044-b1e5e6cb9802/phases/cell-1/warm-fresh-coordinator-jvm/raw_coordinator.log`와 해당 planning receipt를 확인한다.
+- **재현 절차**: 수정 전 warm log `/home/mchoi/g014-full-results-b5ef1ae-639649e-20260811-v1/cells/056-6a95be49c473/phases/cell-1/warm-fresh-coordinator-jvm/raw_coordinator.log`와 해당 planning receipt를 확인한다.
 - **관측 증상**: workers=1 FedAll은 9204.099초인데 workers=2..4는 34.480~37.431초였다. runtime plan은 `FED r' X -> FOUT`, `CP prefetch transpose`, `FED ba+* local-transpose FOUT-RHS -> FOUT`을 만들었고, 약 840MB transpose를 coordinator로 내린 뒤 같은 worker로 다시 올렸다. `fed_ba+*` 누적이 8667초/532회였다.
 - **원인 분석**: `BinaryMMRule`은 FULL×local/local×FULL FOUT만 표현하고, 같은 single worker에 이미 존재하는 FULL×FULL 직접 FOUT capability를 누락했다. “가능한 FOUT을 모두 선택”하는 FedAll은 비용 기반 planner가 아니므로, FOUT을 유지할 수 있는 유일한 우회 후보인 거대 CP materialization+upload를 철학대로 선택했다. runtime `AggregateBinaryFEDInstruction`은 alignment와 complete co-location을 확인한 뒤 remote IDs로 FULL×FULL을 직접 실행할 수 있었다.
 - **해결 요약**: `ShapeHint.fullSinglePartition=true`인 FULL×FULL BinaryMM에 `FED/FOUT/FULL` capability를 추가했다. 기존 FULL×local/local×FULL도 동일한 single-partition 증거가 있을 때만 허용하도록 명시해 다중 range FULL을 과도하게 열지 않았다. runtime은 수정하지 않았다.
@@ -104,6 +104,21 @@
 - **잔여 이슈**: 새 harness commit으로 immutable stage를 다시 만들고 첫 KMeans 셀부터 재실행해야 한다. 이전 campaign의 성공 prefix는 0개다.
 - **잠재 회귀 위험**: 실제 runtime 오류가 `[PlannerTrace]` prefix로 잘못 출력된다면 scan에서 제외될 수 있다. planner trace는 compiler-owned structured prefix로만 사용하고, worker/coordinator exception은 기존 비-prefix runtime line 및 return code/semantic oracle로 감지한다.
 - **의사결정 근거**: fallback을 허용한 것이 아니라 증거 채널의 유형 오류를 수정했다.
+
+## 7. KMeans의 ROW×local BinaryMM 후보가 무관한 FULL multiplicity 증거 때문에 제거됨
+
+- **상태**: source 수정 및 37개 표적 회귀 통과, 새 Docker stage 재검증 예정
+- **적용 원칙/제약**: runtime이 지원하는 후보를 workload/opcode 가드로 닫지 않는다. 후보의 합법성과 무관한 unknown metadata 때문에 후보가 제거되면 shared Oracle의 fact consultation을 바로잡는다.
+- **환경/조건**: Docker WAN-Light KMeans, P2P2D, workers=2, planner DP/FedAll/Heuristic/MinST, source commit `f901376d29` 기반 stage. 중단한 campaign은 `/home/mchoi/g014-full-results-f901376-4f0b380-20260812-v2`이다.
+- **재현 절차**: `run_LAN_docker.sh --planning-only --net-profile wan_light --workers 2 --dataset P2P2D --alg kmeans`를 네 planner config로 실행하고 `scripts/builtin/kmeans.dml:134`의 `X %*% t(C)` candidate/selection trace를 확인한다. 중단 campaign의 runtime-plan fingerprint에서는 FedAll/Heuristic/DP 모두 `fedinit:1;uasqk+:1`만 남았다.
+- **관측 증상**: workers=2에서 FedAll/Heuristic/DP runtime plan이 사실상 동일했고 KMeans의 핵심 거리 계산 `ba(+*)`가 CP로 컴파일됐다. exact candidate는 input `[PRESENT:ROW, ABSENT_LOCAL]`, native capability `FED/FOUT/ROW`였지만 `missingRequiredFacts=[fullSinglePartition]` 때문에 neutral graph에서 배제됐다. 중단 campaign은 11/336에서 정지했으며 최종 결과로 사용하지 않는다.
+- **원인 분석**: `BinaryMMRule`이 input FType과 무관하게 `ShapeHint.fullSinglePartition()`을 항상 조회했다. ROW/COL 후보에는 필요 없는 FULL 전용 fact가 unknown이면 proof가 불완전한 것으로 기록되어 합법적인 ROW×local FED 후보까지 제거됐다. runtime `AggregateBinaryFEDInstruction`은 ROW×local MM을 RHS broadcast 후 FED 실행하고 non-vector output을 FOUT으로 유지하는 경로를 실제 지원한다.
+- **해결 요약**: `left` 또는 `right`가 `FType.FULL`인 경우에만 `fullSinglePartition`을 조회한다. ROW/local 및 local/ROW 후보는 FULL multiplicity와 독립적으로 기존 runtime capability를 유지한다. single-worker FULL×FULL에는 기존의 single-partition proof 요구를 그대로 보존했다. candidate-space 축소, runtime fallback, workload 특례는 추가하지 않았다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`, `src/test/java/org/apache/sysds/test/functions/fedplanner/rules/BinaryMMTsmmRuleTest.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllKMeansRuntimeRecompileDerivedFoutRedTest.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest.java`.
+- **검증**: rule 회귀는 ROW/local 결과가 `FED/FOUT/ROW`이고 proof가 `fullSinglePartition`을 consult하거나 missing으로 기록하지 않음을 검사한다. workers=2 runtime 회귀는 KMeans line 134 `ba(+*)`가 `FED/FOUT`으로 선택되고 실제 heavy hitter에 `fed_ba+*` 5회가 나타나며 fallback/repair가 0임을 검사한다. single-worker 회귀는 FULL direct `FED/FOUT` distance product를 검사하며, direct runtime support가 생긴 뒤에도 derived upload를 반드시 선택해야 한다는 낡은 기대값을 제거했다. 관련 10개 클래스 37 tests가 failures/errors/skips 0으로 통과했다.
+- **잔여 이슈**: 새 immutable JAR의 KMeans workers=1/2 네 planner planning-only receipt에서 실제 plan fingerprint와 policy 차이를 다시 확인하고, runtime canary 후 새 336-cell campaign을 처음부터 실행해야 한다.
+- **잠재 회귀 위험**: FULL 입력인데 multiplicity fact 조회가 누락되면 multi-range FULL을 single-worker FULL로 오판할 수 있다. `hasFullInput` 조건과 기존 multi-range FULL rule/runtime 회귀로 감지한다. 반대로 ROW/COL에서 다시 irrelevant fact가 required로 기록되면 KMeans plan collapse 회귀가 즉시 실패한다.
+- **의사결정 근거**: runtime 지원을 새로 주장하거나 후보를 닫은 것이 아니라, 이미 `FED/FOUT/ROW`인 shared Oracle 결과가 무관한 proof metadata로 폐기되는 분석 버그를 수정했다.
 
 ## 실행/검증 완료 조건
 

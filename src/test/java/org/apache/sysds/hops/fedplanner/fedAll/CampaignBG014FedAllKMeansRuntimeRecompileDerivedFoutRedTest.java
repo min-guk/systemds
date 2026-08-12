@@ -6,22 +6,26 @@ import java.nio.file.Path;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.io.MatrixWriterFactory;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.util.HDFSTool;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestUtils;
+import org.apache.sysds.utils.Statistics;
 import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 import org.junit.Assert;
 import org.junit.Test;
@@ -80,6 +84,23 @@ public class CampaignBG014FedAllKMeansRuntimeRecompileDerivedFoutRedTest {
 				.mapToLong(result -> result.analysis().graph().derivedFoutMaterializationActions().size())
 				.sum();
 			Assert.assertTrue("The runtime fixture must exercise a derived-FOUT action", derivedActions > 0);
+			long selectedRowPartitionedDistanceProducts = PlacementEmissionTransaction
+				.receiptSnapshotForTesting().keySet().stream()
+				.map(PlacementEmissionTransaction::currentNormalizedResult)
+				.filter(result -> result != null)
+				.flatMap(result -> result.selectedStates().entrySet().stream().filter(entry -> {
+					var hop = result.analysis().hop(entry.getKey()).orElse(null);
+					return hop != null && hop.getBeginLine() == 134 && "ba(+*)".equals(hop.getOpString())
+						&& entry.getValue().execType() == ExecType.FED
+						&& entry.getValue().output() == FederatedOutput.FOUT
+						&& entry.getValue().fType() == FType.ROW;
+				}))
+				.count();
+			Assert.assertTrue("Two-worker ROW KMeans must keep X %*% t(C) federated instead of "
+				+ "materializing X at the coordinator", selectedRowPartitionedDistanceProducts > 0);
+			Assert.assertTrue("The planner-selected KMeans matrix multiplication must lower to and execute "
+				+ "a federated aggregate-binary instruction",
+				Statistics.getCPHeavyHitterCount("fed_ba+*") > 0);
 			PlacementEmissionTransaction.ObservabilitySnapshot observability =
 				PlacementEmissionTransaction.observabilitySnapshot();
 			Assert.assertEquals("Runtime fallback is forbidden", 0, observability.runtimeFallbackCount());

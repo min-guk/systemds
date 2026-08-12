@@ -2827,7 +2827,12 @@ public final class Rulesets {
       // This change is shared (Oracle) and therefore applies fairly to both DP and MinST.
       boolean rightLocalLike = (right == null) || (right == FType.BROADCAST);
       boolean leftLocalLike = (left == null) || (left == FType.BROADCAST);
-      boolean fullSingle = hint != null && hint.fullSinglePartition().orElse(false);
+      // The single-partition proof is required only when it can enable a direct FULL FOUT path.
+      // Consulting it for ROW/COL or aligned COL x FULL LOUT candidates marks an irrelevant unknown
+      // as a missing required fact and causes the neutral graph to discard an otherwise legal MM.
+      boolean fullFoutCandidate = left == FType.FULL && (right == FType.FULL || rightLocalLike)
+        || right == FType.FULL && leftLocalLike;
+      boolean fullSingle = fullFoutCandidate && hint != null && hint.fullSinglePartition().orElse(false);
       if (left == FType.FULL && right == FType.FULL && fullSingle) {
         Guard.Result guard = Guard.eval(sig);
         return guardAwareFout(sig, FType.FULL, ReasonCode.OK, guard);

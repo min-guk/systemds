@@ -19,6 +19,7 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.List;
@@ -95,11 +96,27 @@ public class BinaryMMTsmmRuleTest {
 
   @Test
   public void colTAlignedColFullInputsAreFedLoutOnly() {
-    OpCaps caps = rule.caps(sig(Map.of("align", "COL_T")), Arrays.asList(FType.COL, FType.FULL), UNKNOWN);
+    ShapeHint unknownFullMultiplicity = new ShapeHint(100, 5, 1024);
+    OpCaps caps = rule.caps(sig(Map.of("align", "COL_T")),
+        Arrays.asList(FType.COL, FType.FULL), unknownFullMultiplicity);
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME, caps.reason());
+    assertTrue(unknownFullMultiplicity.proof().missingRequiredFacts().isEmpty());
+    assertFalse(unknownFullMultiplicity.proof().consultedFacts().containsKey("fullSinglePartition"));
+  }
+
+  @Test
+  public void rowLocalDoesNotRequireIrrelevantFullSinglePartitionMetadata() {
+    ShapeHint unknownFullMultiplicity = new ShapeHint(100, 5, 1024);
+    OpCaps caps = rule.caps(sig(Map.of("rc.guardOverride", "true")),
+        Arrays.asList(FType.ROW, null), unknownFullMultiplicity);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
+    assertEquals(FType.ROW, caps.foutFType().orElse(null));
+    assertTrue(unknownFullMultiplicity.proof().missingRequiredFacts().isEmpty());
+    assertFalse(unknownFullMultiplicity.proof().consultedFacts().containsKey("fullSinglePartition"));
   }
 
 	@Test

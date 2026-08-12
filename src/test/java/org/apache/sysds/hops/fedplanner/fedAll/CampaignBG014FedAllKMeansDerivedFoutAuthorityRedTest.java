@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
@@ -16,6 +17,7 @@ import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestUtils;
 import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
@@ -26,7 +28,7 @@ import org.junit.Test;
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest {
 	@Test
-	public void oneWorkerFedAllKMeansCommitsEveryDerivedFoutAuthority() throws Exception {
+	public void oneWorkerFedAllKMeansCommitsExactFoutAuthority() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
@@ -64,12 +66,21 @@ public class CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest {
 				result.analysis().graph().derivedFoutMaterializationActions().isEmpty());
 			long selectedDerived = result.selectedEmissionStates().entrySet().stream()
 				.filter(entry -> entry.getValue().derivedFedFout()).count();
-			Assert.assertTrue("KMeans must select at least one physical FED/LOUT -> FOUT output",
-				selectedDerived > 0);
 			int selectedDerivedActions = CandidateSelections.derivedFoutPhysicalEmissionCount(
 				result.selectedCandidateSelections());
-			Assert.assertTrue("KMeans must select at least one exact derived FOUT action",
-				selectedDerivedActions > 0);
+			Assert.assertEquals("Every selected derived FOUT state must own one exact physical action",
+				selectedDerived, selectedDerivedActions);
+			long selectedDirectFullDistanceProducts = result.selectedStates().entrySet().stream()
+				.filter(entry -> {
+					var hop = result.analysis().hop(entry.getKey()).orElse(null);
+					return hop != null && hop.getBeginLine() == 134 && "ba(+*)".equals(hop.getOpString())
+						&& entry.getValue().execType() == ExecType.FED
+						&& entry.getValue().output() == FederatedOutput.FOUT;
+				})
+				.count();
+			Assert.assertTrue("Single-worker FULL KMeans must use the runtime-supported direct FED/FOUT "
+				+ "distance product instead of forcing an unnecessary derived upload",
+				selectedDirectFullDistanceProducts > 0);
 			int exactPhysicalTransfers = Math.addExact(Math.addExact(
 				RelocationSelections.physicalEmissionCount(result.selectedRelocations()),
 				result.selectedLocalMaterializations().size()), selectedDerivedActions);
