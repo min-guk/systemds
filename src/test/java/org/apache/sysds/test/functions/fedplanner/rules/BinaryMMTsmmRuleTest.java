@@ -102,6 +102,17 @@ public class BinaryMMTsmmRuleTest {
     assertEquals(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME, caps.reason());
   }
 
+	@Test
+	public void coLocatedSinglePartitionFullInputsCanRemainFout() {
+		ShapeHint fullSingle = new ShapeHint(2, 4, 1024, true);
+		OpCaps caps = rule.caps(sig(Map.of("rc.guardOverride", "true")),
+			Arrays.asList(FType.FULL, FType.FULL), fullSingle);
+		assertEquals(ExecType.FED, caps.exec());
+		assertEquals(FederatedOutput.FOUT, caps.placement());
+		assertEquals(FType.FULL, caps.foutFType().orElse(null));
+		assertEquals(ReasonCode.OK, caps.reason());
+	}
+
   private static OpSig sig(Map<String,String> attrs) {
     return OpSig.of(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, attrs,
         InputKind.MATRIX, InputKind.MATRIX);

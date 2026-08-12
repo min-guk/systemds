@@ -203,6 +203,68 @@ public class FederatedPlannerDpRewireTransTableTest {
 			20.0, RewireConstants.estimateWhileLoopWeight(whileBlock, List.of(transTable)), 0.0);
 	}
 
+	@Test
+	public void testWhileLoopWeightTreatsInductionBoundAsCapWhenConvergenceCanExitEarly() {
+		Map<String, List<Hop>> transTable = new HashMap<>();
+		transTable.put("it", List.of(transientScalarWrite("it", new LiteralOp(0L))));
+		transTable.put("max_iter", List.of(transientScalarWrite("max_iter", new LiteralOp(2100L))));
+
+		BinaryOp inductionGuard = new BinaryOp("iteration_cap", DataType.SCALAR,
+			ValueType.BOOLEAN, OpOp2.LESS, transientScalarRead("it"), transientScalarRead("max_iter"));
+		DataOp convergenceGuard = new DataOp("continue_training", DataType.SCALAR,
+			ValueType.BOOLEAN, OpOpData.TRANSIENTREAD, null, 0, 0, 0, BLOCKSIZE);
+		BinaryOp predicate = new BinaryOp("while_pred", DataType.SCALAR,
+			ValueType.BOOLEAN, OpOp2.AND, inductionGuard, convergenceGuard);
+
+		BinaryOp increment = new BinaryOp("it_plus_1", DataType.SCALAR, ValueType.INT64,
+			OpOp2.PLUS, transientScalarRead("it"), new LiteralOp(1L));
+		StatementBlock body = new StatementBlock();
+		body.setHops(new ArrayList<>(List.of(transientScalarWrite("it", increment))));
+
+		WhileStatement whileStatement = new WhileStatement();
+		whileStatement.addStatementBlock(body);
+		WhileStatementBlock whileBlock = new WhileStatementBlock();
+		whileBlock.setPredicateHops(predicate);
+		whileBlock.addStatement(whileStatement);
+
+		assertEquals("a data-dependent early-exit predicate must not price its hard cap as the expected count",
+			RewireConstants.DEFAULT_LOOP_WEIGHT,
+			RewireConstants.estimateWhileLoopWeight(whileBlock, List.of(transTable)), 0.0);
+	}
+
+	@Test
+	public void testWhileLoopWeightUsesTightestConjoinedInductionBound() {
+		Map<String, List<Hop>> transTable = new HashMap<>();
+		transTable.put("i", List.of(transientScalarWrite("i", new LiteralOp(0L))));
+		transTable.put("j", List.of(transientScalarWrite("j", new LiteralOp(0L))));
+		transTable.put("i_cap", List.of(transientScalarWrite("i_cap", new LiteralOp(20L))));
+		transTable.put("j_cap", List.of(transientScalarWrite("j_cap", new LiteralOp(7L))));
+
+		BinaryOp iGuard = new BinaryOp("i_guard", DataType.SCALAR, ValueType.BOOLEAN,
+			OpOp2.LESS, transientScalarRead("i"), transientScalarRead("i_cap"));
+		BinaryOp jGuard = new BinaryOp("j_guard", DataType.SCALAR, ValueType.BOOLEAN,
+			OpOp2.LESS, transientScalarRead("j"), transientScalarRead("j_cap"));
+		BinaryOp predicate = new BinaryOp("while_pred", DataType.SCALAR,
+			ValueType.BOOLEAN, OpOp2.AND, iGuard, jGuard);
+
+		BinaryOp incrementI = new BinaryOp("i_plus_1", DataType.SCALAR, ValueType.INT64,
+			OpOp2.PLUS, transientScalarRead("i"), new LiteralOp(1L));
+		BinaryOp incrementJ = new BinaryOp("j_plus_1", DataType.SCALAR, ValueType.INT64,
+			OpOp2.PLUS, transientScalarRead("j"), new LiteralOp(1L));
+		StatementBlock body = new StatementBlock();
+		body.setHops(new ArrayList<>(List.of(
+			transientScalarWrite("i", incrementI), transientScalarWrite("j", incrementJ))));
+
+		WhileStatement whileStatement = new WhileStatement();
+		whileStatement.addStatementBlock(body);
+		WhileStatementBlock whileBlock = new WhileStatementBlock();
+		whileBlock.setPredicateHops(predicate);
+		whileBlock.addStatement(whileStatement);
+
+		assertEquals("a conjunction of exact counters exits at its tightest bound",
+			7.0, RewireConstants.estimateWhileLoopWeight(whileBlock, List.of(transTable)), 0.0);
+	}
+
 	private static DataOp transientRead(String name, long rows, long cols) {
 		return new DataOp(name, DataType.MATRIX, ValueType.FP64,
 			OpOpData.TRANSIENTREAD, null, rows, cols, rows * cols, BLOCKSIZE);

@@ -53,6 +53,8 @@ import org.junit.Test;
 
 public class AggregateBinaryFoutRuntimeTest {
 	private static class NoOpFederationMap extends FederationMap {
+		private final List<RequestType> observedRequestTypes = new ArrayList<>();
+
 		NoOpFederationMap(long id, List<Pair<FederatedRange, FederatedData>> fedMap, FType type) {
 			super(id, fedMap, type);
 		}
@@ -61,8 +63,11 @@ public class AggregateBinaryFoutRuntimeTest {
 		@SuppressWarnings("unchecked")
 		public Future<FederatedResponse>[] execute(long tid, boolean wait, FederatedRequest... requests) {
 			boolean retrievesOutput = false;
-			for (FederatedRequest request : requests)
+			for (FederatedRequest request : requests) {
+				if (request != null)
+					observedRequestTypes.add(request.getType());
 				retrievesOutput |= request != null && request.getType() == RequestType.GET_VAR;
+			}
 			Object result = retrievesOutput ? new MatrixBlock(2, 4, false) : Long.valueOf(0);
 			Future<FederatedResponse>[] responses = new Future[getSize()];
 			for (int i = 0; i < responses.length; i++)
@@ -73,7 +78,15 @@ public class AggregateBinaryFoutRuntimeTest {
 		@Override
 		public Future<FederatedResponse>[] execute(long tid, boolean wait, FederatedRequest[] slices,
 			FederatedRequest... requests) {
+			if (slices != null)
+				for (FederatedRequest request : slices)
+					if (request != null)
+						observedRequestTypes.add(request.getType());
 			return execute(tid, wait, requests);
+		}
+
+		boolean observed(RequestType type) {
+			return observedRequestTypes.contains(type);
 		}
 	}
 
@@ -99,6 +112,41 @@ public class AggregateBinaryFoutRuntimeTest {
 		assertEquals(FType.BROADCAST, out.getFedMapping().getType());
 		assertEquals(2, out.getNumRows());
 		assertEquals(4, out.getNumColumns());
+	}
+
+	@Test
+	public void testSingleWorkerFullByFullUsesRemoteIdsWithoutCoordinatorUpload() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		MatrixObject left = federatedMatrix("L", 2, 3, 15, FType.FULL, 1);
+		MatrixObject right = federatedMatrix("R", 3, 4, 16, FType.FULL, 1);
+		ec.setVariable("L", left);
+		ec.setVariable("R", right);
+		ec.setVariable("O", new MatrixObject(ValueType.FP64, "O",
+			new MetaData(new MatrixCharacteristics(2, 4, 1024))));
+
+		runForcedFoutMatMult(ec);
+
+		MatrixObject out = ec.getMatrixObject("O");
+		assertTrue("Co-located FULL inputs must execute directly on their worker", out.isFederated());
+		assertEquals(FType.FULL, out.getFedMapping().getType());
+		assertEquals(1, out.getFedMapping().getSize());
+		assertEquals(2, out.getNumRows());
+		assertEquals(4, out.getNumColumns());
+		FederatedRange outputRange = out.getFedMapping().getFederatedRanges()[0];
+		assertEquals(0, outputRange.getBeginDims()[0]);
+		assertEquals(0, outputRange.getBeginDims()[1]);
+		assertEquals(2, outputRange.getEndDims()[0]);
+		assertEquals(4, outputRange.getEndDims()[1]);
+		NoOpFederationMap leftMap = (NoOpFederationMap) left.getFedMapping();
+		NoOpFederationMap rightMap = (NoOpFederationMap) right.getFedMapping();
+		assertTrue("Direct FULL x FULL execution must not upload the left already-federated operand",
+			!leftMap.observed(RequestType.PUT_VAR));
+		assertTrue("Direct FULL x FULL execution must not upload the right already-federated operand",
+			!rightMap.observed(RequestType.PUT_VAR));
+		assertTrue("Direct FULL x FULL FOUT execution must not download the left operand",
+			!leftMap.observed(RequestType.GET_VAR));
+		assertTrue("Direct FULL x FULL FOUT execution must not download the right operand",
+			!rightMap.observed(RequestType.GET_VAR));
 	}
 
 	@Test

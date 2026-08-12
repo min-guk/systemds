@@ -51,11 +51,20 @@ public final class RewireConstants {
 
 	public static double estimateWhileLoopWeight(WhileStatementBlock wsb,
 			List<Map<String, List<Hop>>> transTableStack) {
-		double maxLiteralBound = -1;
-		Queue<Hop> queue = new ArrayDeque<>();
 		Hop predicate = wsb.getPredicateHops();
-		if (predicate != null)
-			queue.add(predicate);
+		Double predicateBound = predicate instanceof BinaryOp
+			? estimateInductionPredicateLoopWeight(wsb, (BinaryOp) predicate, transTableStack)
+			: null;
+		boolean exactCounterControlled = isPureInductionPredicate(wsb, predicate, transTableStack);
+
+		// A predicate made exclusively from resolvable induction comparisons is an exact
+		// counter-controlled loop.  Its derived iteration count is therefore stronger than
+		// any incidental numeric comparison found in the body.
+		if (exactCounterControlled && predicateBound != null && predicateBound > 0.0)
+			return predicateBound;
+
+		double maxIterationCap = predicateBound != null ? predicateBound : -1;
+		Queue<Hop> queue = new ArrayDeque<>();
 
 		// Heuristic: Many real-world algorithms (e.g., kmeans) use a predicate such as
 		// `term_code == 0` and enforce a max-iteration bound inside the loop body.
@@ -63,8 +72,9 @@ public final class RewireConstants {
 		// bound (max_iter), which causes systematic under-estimation of both compute
 		// and network costs inside the loop.
 		//
-		// To improve planning accuracy, also scan the loop body for scalar comparison
-		// predicates with literal bounds (e.g., `iter_count >= 60`).
+		// To improve planning accuracy, scan the loop body for scalar comparison caps
+		// (e.g., `iter_count >= 60`).  Such a body guard is an upper bound, not proof
+		// that a convergence-controlled loop will execute the maximum number of times.
 		WhileStatement wstmt = null;
 		if (wsb.getNumStatements() > 0 && wsb.getStatement(0) instanceof WhileStatement)
 			wstmt = (WhileStatement) wsb.getStatement(0);
@@ -87,23 +97,23 @@ public final class RewireConstants {
 
 				Double inductionBound = estimateInductionPredicateLoopWeight(wsb, bop, transTableStack);
 				if (inductionBound != null)
-					maxLiteralBound = Math.max(maxLiteralBound, inductionBound);
+					maxIterationCap = Math.max(maxIterationCap, inductionBound);
 
 				if (op == Types.OpOp2.LESS || op == Types.OpOp2.LESSEQUAL) {
 					if (right instanceof LiteralOp && !(left instanceof LiteralOp)) {
-						maxLiteralBound = Math.max(maxLiteralBound,
-								HopRewriteUtils.getDoubleValue((LiteralOp) right));
+						maxIterationCap = maxIterationCap(maxIterationCap,
+							HopRewriteUtils.getDoubleValue((LiteralOp) right));
 					} else if (left instanceof LiteralOp && !(right instanceof LiteralOp)) {
-						maxLiteralBound = Math.max(maxLiteralBound,
-								HopRewriteUtils.getDoubleValue((LiteralOp) left));
+						maxIterationCap = maxIterationCap(maxIterationCap,
+							HopRewriteUtils.getDoubleValue((LiteralOp) left));
 					}
 				} else if (op == Types.OpOp2.GREATER || op == Types.OpOp2.GREATEREQUAL) {
 					if (left instanceof LiteralOp && !(right instanceof LiteralOp)) {
-						maxLiteralBound = Math.max(maxLiteralBound,
-								HopRewriteUtils.getDoubleValue((LiteralOp) left));
+						maxIterationCap = maxIterationCap(maxIterationCap,
+							HopRewriteUtils.getDoubleValue((LiteralOp) left));
 					} else if (right instanceof LiteralOp && !(left instanceof LiteralOp)) {
-						maxLiteralBound = Math.max(maxLiteralBound,
-								HopRewriteUtils.getDoubleValue((LiteralOp) right));
+						maxIterationCap = maxIterationCap(maxIterationCap,
+							HopRewriteUtils.getDoubleValue((LiteralOp) right));
 					}
 				}
 			}
@@ -113,8 +123,32 @@ public final class RewireConstants {
 			}
 		}
 
-			return maxLiteralBound > 0 ? maxLiteralBound : DEFAULT_LOOP_WEIGHT;
-		}
+		// A convergence/data-dependent predicate can exit before its induction/body cap.
+		// Price it with the generic expected count, bounded by any smaller proven cap,
+		// rather than treating the hard safety cap as the expected execution count.
+		return maxIterationCap > 0.0
+			? Math.min(maxIterationCap, DEFAULT_LOOP_WEIGHT)
+			: DEFAULT_LOOP_WEIGHT;
+	}
+
+	private static boolean isPureInductionPredicate(WhileStatementBlock wsb, Hop predicate,
+			List<Map<String, List<Hop>>> transTableStack) {
+		if (!(predicate instanceof BinaryOp))
+			return false;
+		BinaryOp binary = (BinaryOp) predicate;
+		if (binary.getOp() == Types.OpOp2.AND)
+			return isPureInductionPredicate(wsb, binary.getInput().get(0), transTableStack)
+				&& isPureInductionPredicate(wsb, binary.getInput().get(1), transTableStack);
+		return estimateComparisonLoopWeight(wsb, binary, transTableStack) != null;
+	}
+
+	private static double maxIterationCap(double current, double candidate) {
+		// Iteration counters are integral and positive.  Ignoring sub-unit literals keeps
+		// convergence thresholds such as epsilon=1e-6 from masquerading as loop counts.
+		return Double.isFinite(candidate) && candidate >= 1.0
+			? Math.max(current, candidate)
+			: current;
+	}
 
 	private static Double estimateInductionPredicateLoopWeight(WhileStatementBlock wsb, BinaryOp predicate,
 			List<Map<String, List<Hop>>> transTableStack) {
@@ -128,7 +162,10 @@ public final class RewireConstants {
 				return right;
 			if (right == null)
 				return left;
-			return Math.max(left, right);
+			// Both conjuncts must remain true.  For exact induction guards, the
+			// first exhausted bound terminates the loop, so the tight upper bound
+			// is the smaller iteration count rather than the larger one.
+			return Math.min(left, right);
 		}
 		return estimateComparisonLoopWeight(wsb, predicate, transTableStack);
 	}
