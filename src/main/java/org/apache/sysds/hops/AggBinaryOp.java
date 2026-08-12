@@ -469,6 +469,15 @@ public class AggBinaryOp extends MultiThreadedHop {
 	public ChainType checkMapMultChain() {
 		ChainType chainType = ChainType.NONE;
 
+		// The federated MMChain runtime always GETs and aggregates the chain result at the
+		// coordinator.  Fusing a planner-selected direct FOUT outer multiply would therefore
+		// silently turn its federated result into a local matrix while downstream HOPs still
+		// compile for a federated input.  Keep the unfused, runtime-supported MM sequence in
+		// that case.  A derived FOUT remains eligible because its explicit LOUT->FOUT
+		// materialization is applied after the locally aggregated chain result.
+		if (getFederatedOutput() == FederatedOutput.FOUT && !isFederatedOutputDerived())
+			return chainType;
+
 		Hop in1 = getInput().get(0);
 		Hop in2 = getInput().get(1);
 

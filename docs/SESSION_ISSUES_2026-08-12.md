@@ -2,7 +2,7 @@
 
 ## 1. LM의 DP/MinST가 수렴 루프의 안전 상한을 실제 반복 횟수로 비용화함
 
-- **상태**: 수정 완료, 새 Docker JAR 검증 진행중
+- **상태**: 수정 완료, 새 Docker planning canary 검증 완료, 전체 runtime campaign 진행중
 - **적용 원칙/제약**: 후보를 workload/opcode 가드로 닫지 않고 공유 비용 사실을 수정한다. DP의 부모-자식 국소 최적성 한계는 허용하지만 DP/MinST가 공유하는 반복 비용의 오류는 허용하지 않는다.
 - **환경/조건**: Docker WAN-Light, P2P2D LM, workers=1..4, planner DP/MinST, 수정 전 source commit `b5ef1ae40bf8cbf78e054c6e0033f02ab121d009`.
 - **재현 절차**: `/home/mchoi/g014-full-results-b5ef1ae-639649e-20260811-v1/rows.jsonl`에서 LM 행을 조회한다. 계획만 재현하려면 격리 stage의 `run_LAN_docker.sh --planning-only --net-profile wan_light --workers <n> --dataset P2P2D --conf mkl-cost|mkl-min-st-cut --alg lm`을 사용한다.
@@ -32,7 +32,7 @@
 
 ## 2. KMeans 그래프에 16개 중 10개 점만 존재함
 
-- **상태**: planning canary 4/4 완료, 전체 immutable campaign 재측정 예정
+- **상태**: 새 immutable campaign의 KMeans 16/16 runtime 셀 검증 완료
 - **적용 원칙/제약**: 서로 다른 source commit의 결과를 한 그래프에 섞지 않는다. 실패/누락 셀을 과거 결과로 채우지 않고 동일 Docker/JAR에서 실행한다.
 - **환경/조건**: Docker WAN-Light, P2P2D KMeans, workers=1..4, planner 4종, 수정 전 source commit `b5ef1ae...`.
 - **재현 절차**: `/home/mchoi/g014-full-results-b5ef1ae-639649e-20260811-v1/rows.jsonl`에서 `profile=wan_light`, `workload=kmeans`, `systemds_commit=b5ef1ae...`만 집계한다.
@@ -40,8 +40,8 @@
 - **원인 분석**: plotting/NaN 문제가 아니라 immutable source boundary를 지키면서 아직 실행하지 않은 성능 셀이다. 과거 캠페인의 부분 재개가 commit 변경 시 성공 prefix를 재사용하지 못하도록 한 provenance 규칙이 정상 작동한 결과다.
 - **해결 요약**: 새 source/harness commit으로 생성한 하나의 immutable stage에서 전체 336 셀을 한 번씩 실행한다. 새 캠페인은 KMeans 16/16과 전체 matrix 336/336을 완료 조건으로 검사한다.
 - **수정 파일**: source 수정 없음. 최종 검사는 harness의 campaign row/receipt 감사기에 둔다.
-- **검증**: 수정 전 동일-commit completeness 10/16을 확인했다. 새 stage `25b292...`의 worker=1 planning-only에서 DP/FedAll/Heuristic/MinST 4/4가 모두 성공하고 서로 독립적인 인증 receipt를 생성했다.
-- **잔여 이슈**: 새 JAR runtime 16/16 완료 전까지 KMeans 성능 곡선은 검증 완료로 간주하지 않는다.
+- **검증**: 수정 전 동일-commit completeness 10/16을 확인했다. 최종 stage `8f6db132...`의 WAN-Light KMeans에서 workers=1..4 x DP/FedAll/Heuristic/MinST 16/16 runtime row가 생성되었고, 16개 모두 semantic oracle, runtime scan, cold/warm plan parity, authenticated planning receipt 검증을 통과했다. 네 플래너 모두 workers=1->4 runtime이 단조 감소했다. 실제 instruction fingerprint에는 모든 셀에서 `fed_ba+*` 92회 이상이 존재한다.
+- **잔여 이슈**: WAN-Mid/LAN KMeans 32셀과 나머지 workload의 전체 matrix는 진행 중이다. 최종 그래프는 336/336 완료 전까지 부분 결과로 표시한다.
 - **잠재 회귀 위험**: predecessor 결과를 조용히 합치면 누락은 사라져 보이지만 plan/JAR provenance가 깨진다. source/harness/stage digest와 cell key의 유일성으로 감지한다.
 - **의사결정 근거**: 플래너 로직 수정이 아니라 실험 provenance/completeness 문제로 분류했다.
 
@@ -77,7 +77,7 @@
 
 ## 5. 모든 성능 셀에서 planner 선택→emission→runtime plan 증거를 강제하지 않음
 
-- **상태**: harness 수정 및 단위 검증 완료, 실제 Docker cold-runtime canary 진행 예정
+- **상태**: harness 수정 완료, planning canary 18/18 및 성능 campaign prefix 검증 완료, 전체 campaign 진행중
 - **적용 원칙/제약**: primary runtime은 trace가 꺼진 warm fresh coordinator JVM으로 유지한다. 증거 수집이 metric을 오염시키지 않도록 traced cold phase와 metric warm phase를 분리한다.
 - **환경/조건**: 기존 `b5ef1ae` 캠페인은 `CAMPAIGN_PLAN_EXPLAIN=1`, `CAMPAIGN_PLANNER_TRACE=0`; runtime fingerprint는 있으나 planner policy trace가 없음.
 - **재현 절차**: 기존 row의 `cold_evidence`/`warm_evidence`와 Docker command environment를 확인한다. 새 harness에서는 한 cell의 cold phase 후 `results/planning/<cold-run-id>/<conf>.json`을 확인한다.
@@ -85,8 +85,8 @@
 - **원인 분석**: `distributedExpNew.sh`가 `BENCHMARK_PLANNER_TRACE`를 compile-only 분기 안에서만 반영했고 performance runner가 traced planner receipt를 셀 증거 계약으로 요구하지 않았다.
 - **해결 요약**: cold Docker runtime에만 planner trace를 켜고 warm primary runtime에는 끈다. cold log에서 runtime-mode planning receipt를 생성해 planner/config/profile/workers/workload, trace summary, emission digests, runtime-plan digest/fingerprint, raw-log/config checksum을 fail-closed 검증한다. campaign row와 predecessor resume 모두 이 receipt를 인증해야 한다.
 - **수정 파일**: harness `sigmod2021-exdra-p523/experiments/code/distributedExpNew.sh`, `run_LAN_docker.sh`, `tools/planning_receipt.py`, `tools/run_one_pass_performance.py`, `tests/test_planning_receipt.py`, `tests/test_one_pass_performance.py`.
-- **검증**: `python3 -m unittest -v tests.test_planning_receipt tests.test_one_pass_performance` 33 tests 통과, `python3 -m py_compile`, `bash -n`, `git diff --check` 통과. 실제 Docker cold-runtime receipt는 새 JAR canary에서 확인한다.
-- **잔여 이슈**: runtime dynamic recompile이 top-level planner invocation을 추가로 기록하는 workload에서는 “exactly one summary” 가정이 맞는지 canary로 확인해야 한다. 실제 합법 다중 invocation이면 invocation별 bounded receipt로 확장하고 trace를 약화하지 않는다.
+- **검증**: `python3 -m unittest -v tests.test_planning_receipt tests.test_one_pass_performance` 33 tests 통과, `python3 -m py_compile`, `bash -n`, `git diff --check` 통과. 최종 stage `8f6db132...`의 planning-only canary 18/18과 성능 campaign KMeans 16/16에서 runtime-mode receipt가 생성되었다. 각 성능 row는 receipt payload/log/config checksum, 정확한 cell binding, planner trace, emission summary, cold/warm runtime-plan parity를 fail-closed 재검증했다.
+- **잔여 이슈**: 현재 KMeans 16셀은 planner invocation/summary 계약을 모두 통과했다. 함수/while 동적 재컴파일이 더 많은 LM/L2SVM/LogReg 성능 셀에서도 동일 계약이 유지되는지는 전체 campaign에서 계속 fail-closed 확인한다.
 - **잠재 회귀 위험**: trace가 cold runtime에만 적용되지 않으면 warm timing이 오염되거나 로그가 폭증할 수 있다. phase별 JVM option, cold/warm plan digest parity, receipt trace count, bundle checksum으로 감지한다.
 - **의사결정 근거**: runtime fingerprint만으로 정책 철학을 추정하지 않고, 모든 실행에 선택→emission→runtime lineage를 보존한다.
 
@@ -107,18 +107,48 @@
 
 ## 7. KMeans의 ROW×local BinaryMM 후보가 무관한 FULL multiplicity 증거 때문에 제거됨
 
-- **상태**: source 수정 및 37개 표적 회귀 통과, 새 Docker stage 재검증 예정
+- **상태**: source 수정, 37개 표적 회귀 및 새 Docker KMeans 16/16 검증 완료
 - **적용 원칙/제약**: runtime이 지원하는 후보를 workload/opcode 가드로 닫지 않는다. 후보의 합법성과 무관한 unknown metadata 때문에 후보가 제거되면 shared Oracle의 fact consultation을 바로잡는다.
 - **환경/조건**: Docker WAN-Light KMeans, P2P2D, workers=2, planner DP/FedAll/Heuristic/MinST, source commit `f901376d29` 기반 stage. 중단한 campaign은 `/home/mchoi/g014-full-results-f901376-4f0b380-20260812-v2`이다.
 - **재현 절차**: `run_LAN_docker.sh --planning-only --net-profile wan_light --workers 2 --dataset P2P2D --alg kmeans`를 네 planner config로 실행하고 `scripts/builtin/kmeans.dml:134`의 `X %*% t(C)` candidate/selection trace를 확인한다. 중단 campaign의 runtime-plan fingerprint에서는 FedAll/Heuristic/DP 모두 `fedinit:1;uasqk+:1`만 남았다.
 - **관측 증상**: workers=2에서 FedAll/Heuristic/DP runtime plan이 사실상 동일했고 KMeans의 핵심 거리 계산 `ba(+*)`가 CP로 컴파일됐다. exact candidate는 input `[PRESENT:ROW, ABSENT_LOCAL]`, native capability `FED/FOUT/ROW`였지만 `missingRequiredFacts=[fullSinglePartition]` 때문에 neutral graph에서 배제됐다. 중단 campaign은 11/336에서 정지했으며 최종 결과로 사용하지 않는다.
 - **원인 분석**: `BinaryMMRule`이 input FType과 무관하게 `ShapeHint.fullSinglePartition()`을 항상 조회했다. ROW/COL 후보에는 필요 없는 FULL 전용 fact가 unknown이면 proof가 불완전한 것으로 기록되어 합법적인 ROW×local FED 후보까지 제거됐다. runtime `AggregateBinaryFEDInstruction`은 ROW×local MM을 RHS broadcast 후 FED 실행하고 non-vector output을 FOUT으로 유지하는 경로를 실제 지원한다.
-- **해결 요약**: `left` 또는 `right`가 `FType.FULL`인 경우에만 `fullSinglePartition`을 조회한다. ROW/local 및 local/ROW 후보는 FULL multiplicity와 독립적으로 기존 runtime capability를 유지한다. single-worker FULL×FULL에는 기존의 single-partition proof 요구를 그대로 보존했다. candidate-space 축소, runtime fallback, workload 특례는 추가하지 않았다.
+- **해결 요약**: `fullSinglePartition`은 direct FULL/FOUT을 실제로 열 수 있는 `FULL×FULL`, `FULL×local-like`, `local-like×FULL`에만 조회한다. ROW/local 및 local/ROW 후보뿐 아니라 aligned COL×FULL의 FED/LOUT 후보도 FULL multiplicity와 독립적으로 기존 runtime capability를 유지한다. single-worker FULL×FULL에는 기존의 single-partition proof 요구를 그대로 보존했다. candidate-space 축소, runtime fallback, workload 특례는 추가하지 않았다.
 - **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`, `src/test/java/org/apache/sysds/test/functions/fedplanner/rules/BinaryMMTsmmRuleTest.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllKMeansRuntimeRecompileDerivedFoutRedTest.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest.java`.
 - **검증**: rule 회귀는 ROW/local 결과가 `FED/FOUT/ROW`이고 proof가 `fullSinglePartition`을 consult하거나 missing으로 기록하지 않음을 검사한다. workers=2 runtime 회귀는 KMeans line 134 `ba(+*)`가 `FED/FOUT`으로 선택되고 실제 heavy hitter에 `fed_ba+*` 5회가 나타나며 fallback/repair가 0임을 검사한다. single-worker 회귀는 FULL direct `FED/FOUT` distance product를 검사하며, direct runtime support가 생긴 뒤에도 derived upload를 반드시 선택해야 한다는 낡은 기대값을 제거했다. 관련 10개 클래스 37 tests가 failures/errors/skips 0으로 통과했다.
-- **잔여 이슈**: 새 immutable JAR의 KMeans workers=1/2 네 planner planning-only receipt에서 실제 plan fingerprint와 policy 차이를 다시 확인하고, runtime canary 후 새 336-cell campaign을 처음부터 실행해야 한다.
+- **잔여 이슈**: WAN-Mid/LAN에서 동일 ROW/local capability와 비용 선택이 유지되는지는 진행 중인 336-cell campaign에서 확인한다. workers>=2에서 KMeans FedAll/Heuristic runtime plan이 동일한 것은 Heuristic policy trace의 `markerCount=0`과 일치하며 현재까지는 정책 버그가 아니라 동일 합법 선택으로 판정했다.
 - **잠재 회귀 위험**: FULL 입력인데 multiplicity fact 조회가 누락되면 multi-range FULL을 single-worker FULL로 오판할 수 있다. `hasFullInput` 조건과 기존 multi-range FULL rule/runtime 회귀로 감지한다. 반대로 ROW/COL에서 다시 irrelevant fact가 required로 기록되면 KMeans plan collapse 회귀가 즉시 실패한다.
 - **의사결정 근거**: runtime 지원을 새로 주장하거나 후보를 닫은 것이 아니라, 이미 `FED/FOUT/ROW`인 shared Oracle 결과가 무관한 proof metadata로 폐기되는 분석 버그를 수정했다.
+
+## 8. predecessor immutable stage 및 KMeans 16셀 runtime 감사
+
+- **상태**: KMeans 블록 해결/검증 완료, 후속 LM failure로 해당 campaign은 최종 집계에서 격리
+- **적용 원칙/제약**: 동일 Docker/JAR/data/reference에서 각 logical cell을 정확히 한 번 실행한다. 과거 commit의 성공 row를 합치지 않고, runtime 정렬만으로 플래너 철학을 추정하지 않으며 authenticated planner trace와 실제 instruction을 함께 검사한다.
+- **환경/조건**: source commit `1261bfbb56284701c777fc982cbbdf2d42288526`, harness commit `4f0b3805fec68893e8f45aca1efa29b3873a9cd0`, JAR SHA-256 `c8670072fe6a150d4e2b326f99e4faa824ff7412faccef0bd2b81f24d03a162e`, final stage `/home/mchoi/g014-planning-audit-stage-4f0b380-1261bfb-20260812-v1/g007-stage-8f6db13214748de96a18d3ec588bd53073918434626bf18728de7208b0e3b2ea`, campaign `/home/mchoi/g014-full-results-1261bfb-4f0b380-20260812-v1`, seed `2026072701`.
+- **재현 절차**: `python3 <stage>/harness/sigmod2021-exdra-p523/experiments/tools/run_one_pass_performance.py --stage <stage> --output /home/mchoi/g014-full-results-1261bfb-4f0b380-20260812-v1 --campaign-seed 2026072701`을 실행한다. 이미 인증된 ordered prefix는 in-place에서 검증 후 건너뛰므로 KMeans 16셀을 중복 실행하지 않는다.
+- **관측 증상**: 이전 그래프는 KMeans 10/16만 같은 commit이어서 6개 점이 비어 있었다. 이전 workers>1 plan은 핵심 거리 계산이 CP로 내려가 FedAll/Heuristic/DP 차이가 붕괴했다. 수정 후에도 workers>=2의 FedAll/Heuristic은 runtime plan이 동일해 보였으므로 정책 로그 확인이 필요했다.
+- **원인 분석**: 누락 점은 plotting 문제가 아니라 immutable provenance 때문에 predecessor rows를 제외한 결과였다. 핵심 MM의 CP 강등은 이슈 7의 무관한 `fullSinglePartition` fact consultation 때문이었다. 수정 후 FedAll/Heuristic 동일 plan은 workers>=2 KMeans에서 Heuristic marker가 실제로 0이라 demotion 대상이 없는 경우로, trace상 두 정책이 같은 합법 plan에 수렴한 것이다.
+- **해결 요약**: source/harness/JAR/reference를 새 immutable stage로 고정하고, KMeans 16셀을 첫 블록으로 실행했다. 모든 성능 cell의 cold phase에서 planner trace와 receipt를 생성하고, warm primary와 동일 runtime-plan digest인지 검사했다. workers=2..4 ROW/local MM은 불필요한 FULL proof 없이 `FED/FOUT/ROW`로 선택되며 실제 `fed_ba+*`가 실행된다.
+- **수정 파일**: 이슈 1~7에 기록된 source/harness 파일. 본 이슈에서는 추가 production 변경 없이 immutable stage와 campaign evidence를 생성했다.
+- **검증**: WAN-Light KMeans 16/16 row, 16/16 unique cell, 0 failure. 전부 semantic oracle=true, fallback=false, runtime scan clean, cold/warm instruction fingerprint 및 runtime-plan SHA 동일, authenticated receipt와 `Planner-Invoke`/`Planner-Complete`/`Emission-Summary` 존재. warm runtime은 workers=1에서 MinST 49.419, DP 49.685, FedAll 64.143, Heuristic 109.686초이며 workers=4에서 MinST 25.531, DP 26.020, FedAll 26.518, Heuristic 26.787초다. 네 플래너 모두 workers=1->2->3->4 단조 감소했다. 모든 셀의 actual instruction fingerprint에 `fed_ba+*` 92회 이상이 있다.
+- **잔여 이슈**: workers=2에서 MinST 34.499초가 DP 32.903초보다 4.85% 느렸고 Heuristic 34.379초와 0.35% 차이다. 플랜은 서로 다르고 MinST가 FED/FOUT 선택 수를 더 줄였으므로 한 번 측정만으로 optimizer 버그라 단정하지 않는다. 후보를 닫거나 정렬을 강제하지 않고 새 source commit의 WAN-Light/WAN-Mid/LAN receipt와 cost/runtime 상관을 다시 감사한다. 이 campaign은 44개 성공 row 뒤 이슈 9에서 실패했고 source 수정이 필요해졌으므로 최종 그래프나 336-cell completeness에는 포함하지 않는다.
+- **잠재 회귀 위험**: Heuristic marker가 0인 workload에서 FedAll과 동일 plan이 정상인데, 단순 digest 동일성만으로 정책 미작동으로 오판할 수 있다. 반대로 marker가 양수인데 동일 runtime plan이면 emission/lowering 오류다. `Heuristic-PolicySummary.markerCount`, `Heuristic-Demotion`, emission plan digest, runtime plan digest를 함께 비교해 구분한다.
+- **의사결정 근거**: 성능 정렬을 맞추기 위한 workload/opcode 가드가 아니라 shared Oracle/fact consultation과 lowering contract만 수정했고, 동일 계획은 policy trace로 정당성을 판정했다.
+
+## 9. LM worker=1 FedAll의 direct-FOUT 외부 MM이 MMChain fusion으로 local 출력이 됨
+
+- **상태**: source 수정 및 표적 회귀 42/42 통과, 새 Docker runtime canary 대기
+- **적용 원칙/제약**: planner가 선택한 합법적인 direct `FED/FOUT` 후보를 닫지 않는다. runtime fallback을 추가하지 않고, lowering이 planner의 출력 placement를 보존하게 한다. DP/MinST의 direct `FED/LOUT` MMChain 최적화는 유지한다.
+- **환경/조건**: Docker WAN-Light, P2P2D LM, workers=1, planner FedAll, predecessor source commit `1261bfbb56284701c777fc982cbbdf2d42288526`, campaign cell `045-03707bb93f1d`.
+- **재현 절차**: predecessor stage에서 `run_LAN_docker.sh --net-profile wan_light --workers 1 --dataset P2P2D --conf mkl-fout --alg lm`을 실행한다. 실패 로그는 `/home/mchoi/g014-full-results-1261bfb-4f0b380-20260812-v1/cells/045-03707bb93f1d`와 stage의 `results/fed1/mkl-fout/lm_dataset-P2P2D_coordinator_mkl-fout_dd91c72c745d5ce18b439b94cd4f177f_wan_light_coordinator1.log`에 있다.
+- **관측 증상**: planner trace는 LM의 `q = t(X) %*% (X %*% p)` 외부 MM을 direct `FED/FOUT/FULL`로 선택했지만 runtime program은 이를 `FED mmchain X p _mVar32 XtXv`로 fusion했다. FED MMChain은 결과를 coordinator에 GET/aggregate하여 local `_mVar32`를 만들고, 다음 `FED + _mVar32 _mVar33 ... FOUT`에는 두 local 입력만 남아 `FED binary op requires at least one federated input`으로 실패했다.
+- **원인 분석**: `AggBinaryOp.checkMapMultChain()`이 planner-selected output placement를 검사하지 않아 외부 MM의 direct FOUT 계약을, 항상 local aggregation을 수행하는 FED MMChain으로 바꿨다. planner/Oracle의 후보와 비용은 합법적이었지만 Lop fusion이 그 의미를 지웠다.
+- **해결 요약**: 외부 aggregate-binary가 planner-selected direct FOUT(`FOUT && !isFederatedOutputDerived()`)이면 MMChain fusion만 금지하고 명시적 FED matrix-multiply sequence로 lowering한다. derived FOUT은 local MMChain 뒤 명시적 LOUT→FOUT materialization이 있으므로 기존 fusion을 허용한다. direct LOUT도 기존 FED MMChain을 그대로 사용한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/AggBinaryOp.java`, `src/test/java/org/apache/sysds/test/component/federated/FederatedDagExactRefedInputProjectionTest.java`.
+- **검증**: 새 회귀는 수정 전 `checkMapMultChain()`이 `XtXv`여서 red였고, 수정 후 direct FOUT은 `ChainType.NONE`, 명시적 FED `ba+* ... FOUT`으로 lowering됨을 검사한다. direct LOUT은 계속 직접 parse 가능한 `FED mmchain`임을 함께 검사한다. `FederatedDagExactRefedInputProjectionTest`, `MMChainFEDInstructionCompileTest`, `MMChainRuleTest`, `AggregateBinaryFoutRuntimeTest`, `FederatedPlannerDpRewireTransTableTest`, `BinaryMMTsmmRuleTest`, FedAll KMeans runtime recompile 2개 클래스의 총 42 tests가 failures/errors/skips 0으로 통과했다.
+- **잔여 이슈**: 새 JAR/immutable stage의 LM worker=1 FedAll Docker runtime에서 실제 unfused `fed_ba+*` sequence, semantic oracle, cold/warm plan parity, authenticated planning receipt를 확인해야 한다. 통과 후 이전 44-row campaign을 재사용하지 않고 새 336-cell campaign을 처음부터 실행한다.
+- **잠재 회귀 위험**: FOUT이라는 이유만으로 모든 MMChain을 막으면 derived materialization 비용/성능을 잃고 DP/MinST LM 성능이 회귀할 수 있다. direct-vs-derived 분기 회귀와 새 Docker canary에서 FedAll은 unfused, DP/MinST LOUT은 `fed_mmchain`인지 함께 검사한다.
+- **의사결정 근거**: runtime 지원 후보를 닫거나 fallback을 넣지 않고, planner가 선택하고 비용화한 placement를 Lop lowering이 정확히 보존하도록 수정했다.
 
 ## 실행/검증 완료 조건
 

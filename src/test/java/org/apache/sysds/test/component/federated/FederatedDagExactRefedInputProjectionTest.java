@@ -184,6 +184,31 @@ public class FederatedDagExactRefedInputProjectionTest {
 	}
 
 	@Test
+	public void selectedDirectFoutXtXvRemainsUnfused() {
+		DataOp x = localHop("X", 10, 4);
+		DataOp v = localHop("v", 4, 1);
+		AggBinaryOp inner = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(x, v);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(
+			HopRewriteUtils.createTranspose(x), inner);
+		outer.setForcedExecType(ExecType.FED);
+		outer.setFederatedOutput(FederatedOutput.FOUT);
+
+		assertEquals("FED mmchain always aggregates its result locally, so it must not erase "
+			+ "a planner-selected direct FOUT outer matrix multiply",
+			ChainType.NONE, outer.checkMapMultChain());
+		Lop lop = outer.constructLops();
+		assertFalse("Direct FOUT must lower as the explicit matrix multiply selected by the planner",
+			lop instanceof org.apache.sysds.lops.MapMultChain);
+		Lop matrixMultiply = lop instanceof org.apache.sysds.lops.Transform ?
+			lop.getInputs().get(0) : lop;
+		assertTrue("The unfused transpose rewrite must retain an explicit matrix multiply",
+			matrixMultiply instanceof org.apache.sysds.lops.MatMultCP);
+		String instruction = matrixMultiply.getInstructions("Xt", "Xv", "out");
+		assertTrue(instruction.startsWith("FED" + Lop.OPERAND_DELIMITOR + "ba+*"));
+		assertTrue(instruction.endsWith(Lop.OPERAND_DELIMITOR + "FOUT"));
+	}
+
+	@Test
 	public void selectedLocalConsumerInsideBinaryTernaryAggregateRemainsExplicit() throws Exception {
 		DataOp x = localHop("X");
 		DataOp weights = localHop("weights");
