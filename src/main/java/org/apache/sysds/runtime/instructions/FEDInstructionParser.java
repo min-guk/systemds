@@ -36,6 +36,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
 import org.apache.sysds.runtime.instructions.fed.IndexingFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.MultiReturnParameterizedBuiltinFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.MMChainFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantilePickFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
@@ -69,6 +70,8 @@ public class FEDInstructionParser extends InstructionParser
 				return InitFEDInstruction.parseInstruction(str);
 			case AggregateBinary:
 				return AggregateBinaryFEDInstruction.parseInstruction(str);
+			case MMChain:
+				return MMChainFEDInstruction.parseInstruction(str);
 			case AggregateUnary:
 				return AggregateUnaryFEDInstruction.parseInstruction(str);
 			case TSMM:

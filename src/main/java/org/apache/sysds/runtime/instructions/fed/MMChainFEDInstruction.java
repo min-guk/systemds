@@ -53,9 +53,16 @@ public class MMChainFEDInstruction extends UnaryFEDInstruction {
 
 	public static MMChainFEDInstruction parseInstruction(MMChainCPInstruction inst, ExecutionContext ec) {
 		MatrixObject mo = ec.getMatrixObject(inst.input1);
-		if( mo.isFederated(FType.ROW) )
+		if( isSupportedMainInput(mo) )
 			return MMChainFEDInstruction.parseInstruction(inst);
 		return null;
+	}
+
+	private static boolean isSupportedMainInput(MatrixObject mo) {
+		if (mo == null || mo.getFedMapping() == null)
+			return false;
+		FType type = mo.getFedMapping().getType();
+		return type == FType.ROW || (type == FType.FULL && mo.getFedMapping().getSize() == 1);
 	}
 
 	private static MMChainFEDInstruction parseInstruction(MMChainCPInstruction instr) {
@@ -92,9 +99,10 @@ public class MMChainFEDInstruction extends UnaryFEDInstruction {
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
 		MatrixLineagePair mo3 = _type.isWeighted() ? ec.getMatrixLineagePair(input3) : null;
 		
-		if( !mo1.isFederated() )
-			throw new DMLRuntimeException("Federated MMChain: Federated main input expected, "
-				+ "but invoked w/ "+mo1.isFederated()+" "+mo2.isFederated());
+		if( !isSupportedMainInput(mo1) )
+			throw new DMLRuntimeException("Federated MMChain requires a ROW mapping or a single-range FULL mapping, "
+				+ "but invoked with " + (mo1.getFedMapping() == null ? "LOCAL"
+					: mo1.getFedMapping().getType() + "/ranges=" + mo1.getFedMapping().getSize()));
 
 		// broadcast vector mo2
 		FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);

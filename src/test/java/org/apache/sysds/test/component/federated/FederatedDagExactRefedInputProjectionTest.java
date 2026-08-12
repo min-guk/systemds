@@ -61,6 +61,8 @@ import org.apache.sysds.lops.compile.FederatedRefedRegistry.ConsumerInputSpec;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.instructions.FEDInstructionParser;
+import org.apache.sysds.runtime.instructions.fed.MMChainFEDInstruction;
 import org.junit.After;
 import org.junit.Test;
 
@@ -159,6 +161,26 @@ public class FederatedDagExactRefedInputProjectionTest {
 
 		assertEquals("A selected REFED source must not be erased by MapMultChain fusion",
 			ChainType.NONE, outer.checkMapMultChain());
+	}
+
+	@Test
+	public void selectedFederatedXtXvCompilesDirectlyToFederatedMMChain() {
+		DataOp x = localHop("X", 10, 4);
+		DataOp v = localHop("v", 4, 1);
+		AggBinaryOp inner = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(x, v);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(
+			HopRewriteUtils.createTranspose(x), inner);
+		outer.setForcedExecType(ExecType.FED);
+		outer.setFederatedOutput(FederatedOutput.LOUT);
+
+		Lop lop = outer.constructLops();
+		assertEquals("A planner-selected FED XtXv must survive Lop construction",
+			ExecType.FED, lop.getExecType());
+		String instruction = lop.getInstructions("X", "v", "out");
+		assertTrue("FED XtXv must be encoded as a directly parseable mmchain instruction",
+			instruction.startsWith("FED" + Lop.OPERAND_DELIMITOR + "mmchain"));
+		assertTrue(FEDInstructionParser.parseSingleInstruction(instruction)
+			instanceof MMChainFEDInstruction);
 	}
 
 	@Test

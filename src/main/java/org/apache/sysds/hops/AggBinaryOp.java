@@ -201,7 +201,7 @@ public class AggBinaryOp extends MultiThreadedHop {
 						constructCPLopsTSMM(mmtsj, et);
 						break;
 					case MAPMM_CHAIN:
-						constructCPLopsMMChain(chain);
+						constructCPLopsMMChain(chain, et);
 						break;
 					case PMM:
 						constructCPLopsPMM();
@@ -527,19 +527,22 @@ public class AggBinaryOp extends MultiThreadedHop {
 		setLops(matmultCP);
 	}
 
-	private void constructCPLopsMMChain(ChainType chain) {
+	private void constructCPLopsMMChain(ChainType chain, ExecType et) {
+		ExecType mmChainExecType = et == ExecType.FED ? ExecType.FED : ExecType.CP;
 		MapMultChain mapmmchain = null;
 		if (chain == ChainType.XtXv) {
 			Hop hX = getInput().get(0).getInput().get(0);
 			Hop hv = getInput().get(1).getInput().get(1);
-			mapmmchain = new MapMultChain(hX.constructLops(), hv.constructLops(), getDataType(), getValueType(), ExecType.CP);
+			mapmmchain = new MapMultChain(hX.constructLops(), hv.constructLops(), getDataType(), getValueType(),
+				mmChainExecType);
 		} else { //ChainType.XtwXv / ChainType.XtwXvy
 			int wix = (chain == ChainType.XtwXv) ? 0 : 1;
 			int vix = (chain == ChainType.XtwXv) ? 1 : 0;
 			Hop hX = getInput().get(0).getInput().get(0);
 			Hop hw = getInput().get(1).getInput().get(wix);
 			Hop hv = getInput().get(1).getInput().get(vix).getInput().get(1);
-			mapmmchain = new MapMultChain(hX.constructLops(), hv.constructLops(), hw.constructLops(), chain, getDataType(), getValueType(), ExecType.CP);
+			mapmmchain = new MapMultChain(hX.constructLops(), hv.constructLops(), hw.constructLops(), chain,
+				getDataType(), getValueType(), mmChainExecType);
 		}
 
 		//set degree of parallelism

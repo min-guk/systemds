@@ -122,7 +122,7 @@ public class MapMultChain extends Lop
 		sb.append(getExecType());
 		sb.append(Lop.OPERAND_DELIMITOR);
 		
-		if( getExecType()==ExecType.CP )
+		if( getExecType()==ExecType.CP || getExecType()==ExecType.FED )
 			sb.append(OPCODE_CP);
 		else
 			sb.append(OPCODE);
@@ -145,7 +145,7 @@ public class MapMultChain extends Lop
 		sb.append(_chainType);
 		
 		//append degree of parallelism for matrix multiplications
-		if( getExecType()==ExecType.CP ) {
+		if( getExecType()==ExecType.CP || getExecType()==ExecType.FED ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _numThreads );
 		}

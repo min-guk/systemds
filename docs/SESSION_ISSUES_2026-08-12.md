@@ -15,6 +15,21 @@
 - **잠재 회귀 위험**: 수렴이 느린 알고리즘은 cap보다 훨씬 작게 비용화될 수 있다. exact-counter와 convergence-counter 회귀를 분리하고, planner trace의 loop weight와 dynamic instruction multiplicity를 비교해 감지한다.
 - **의사결정 근거**: Oracle/후보 공간이 아니라 DP와 MinST가 공유하는 cost fact producer의 의미를 바로잡았다.
 
+## 1-1. LM에서 선택된 FED XtXv가 Lop 생성 중 CP mmchain으로 강등됨
+
+- **상태**: 수정 완료, 새 Docker JAR 검증 대기
+- **적용 원칙/제약**: runtime fallback 없이 planner가 선택한 실행 위치를 컴파일된 instruction이 그대로 보존해야 한다. 합법 후보를 닫지 않고 HOP→Lop lowering의 실행 위치 손실을 수정한다.
+- **환경/조건**: Docker WAN-Light LM, P2P2D, workers=1, planner DP/MinST, `-noFedRuntimeConversion`, source commit `537b788e3c`의 planning-only trace.
+- **재현 절차**: `run_LAN_docker.sh --planning-only --skip-net-check --net-profile wan_light --workers 1 --dataset P2P2D --conf mkl-cost --alg lm`을 실행하고 `lmCG.dml:129`의 `Emission-Select`와 출력된 runtime program의 `mmchain` instruction을 비교한다.
+- **관측 증상**: DP emission은 `t(X)`, 내부 `ba+*`, 외부 `ba+*`를 각각 `FED/FOUT`, `FED/FOUT`, `FED/LOUT`으로 선택했다. 그러나 runtime program에는 `CP mmchain X p ... XtXv`가 생성되었고, 이전 runtime instruction fingerprint에도 반복문의 `fed_mmchain`이 없었다. workers=1에서 DP/MinST가 약 59초인 반면 Heuristic/FedAll은 약 20초였다.
+- **원인 분석**: `AggBinaryOp.constructLops()`는 선택 exec type이 FED여도 MAPMM_CHAIN 경로에서 `constructCPLopsMMChain`을 호출했고, 이 메서드는 `MapMultChain`을 무조건 `ExecType.CP`로 생성했다. 일반 runtime conversion은 CP mmchain을 FED로 바꿀 수 있지만 본 실험은 planner 계획을 강제하기 위해 `-noFedRuntimeConversion`을 사용하므로 강등된 CP instruction이 그대로 실행됐다. 또한 직접 FED mmchain을 파싱하는 `FEDInstructionParser` 경로가 연결되지 않았다.
+- **해결 요약**: 선택된 `ExecType`을 `MapMultChain`까지 전달하고 FED일 때 `FED mmchain ...` instruction을 직접 생성하도록 했다. FED parser에 MMChain을 연결했다. 직접 FED mmchain은 정확한 `ROW` 또는 range가 하나인 정확한 `FULL`만 허용하며, `FType.isType`의 포함 관계를 사용하지 않아 multi-range FULL을 ROW로 오인하지 않는다. runtime conversion을 다시 켜거나 fallback을 추가하지 않았다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/AggBinaryOp.java`, `src/main/java/org/apache/sysds/lops/MapMultChain.java`, `src/main/java/org/apache/sysds/runtime/instructions/FEDInstructionParser.java`, `src/main/java/org/apache/sysds/runtime/instructions/fed/MMChainFEDInstruction.java`, `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`, `src/test/java/org/apache/sysds/test/component/federated/FederatedDagExactRefedInputProjectionTest.java`, `src/test/java/org/apache/sysds/test/component/federated/MMChainFEDInstructionCompileTest.java`, `src/test/java/org/apache/sysds/test/functions/fedplanner/rules/MMChainRuleTest.java`.
+- **검증**: planner-selected FED XtXv의 Lop exec type/instruction/parser를 검사하는 component 회귀와 `ROW`, single-range `FULL`, multi-range `FULL`, `COL` capability 회귀를 포함한 6개 표적 테스트 클래스가 통과했다. `mvn -DskipTests -Dcheckstyle.skip=false validate`와 `mvn -DskipTests package`도 통과했다. 새 immutable JAR의 LM planning-only runtime program과 Docker runtime은 아직 검증해야 한다.
+- **잔여 이슈**: weighted chain(XtwXv/XtXvy)도 동일 lowering 경로를 사용하지만 최종 canary에서 실제 workload instruction을 확인해야 한다. fused mmchain cost가 unfused 두 `ba+*` 비용과 얼마나 일치하는지도 runtime 결과와 비교한다.
+- **잠재 회귀 위험**: FED parser 형식이나 output placement가 어긋나면 compile/runtime failure가 난다. parser unit, planning receipt의 runtime-plan fingerprint, `-noFedRuntimeConversion` Docker canary로 감지한다.
+- **의사결정 근거**: planner/Oracle 선택은 이미 FED였으므로 비용이나 후보군을 왜곡하지 않고 lowering contract만 수정했다.
+
 ## 2. KMeans 그래프에 16개 중 10개 점만 존재함
 
 - **상태**: 원인 확정, 새 immutable campaign에서 재측정 예정
@@ -40,7 +55,7 @@
 - **원인 분석**: `BinaryMMRule`은 FULL×local/local×FULL FOUT만 표현하고, 같은 single worker에 이미 존재하는 FULL×FULL 직접 FOUT capability를 누락했다. “가능한 FOUT을 모두 선택”하는 FedAll은 비용 기반 planner가 아니므로, FOUT을 유지할 수 있는 유일한 우회 후보인 거대 CP materialization+upload를 철학대로 선택했다. runtime `AggregateBinaryFEDInstruction`은 alignment와 complete co-location을 확인한 뒤 remote IDs로 FULL×FULL을 직접 실행할 수 있었다.
 - **해결 요약**: `ShapeHint.fullSinglePartition=true`인 FULL×FULL BinaryMM에 `FED/FOUT/FULL` capability를 추가했다. 기존 FULL×local/local×FULL도 동일한 single-partition 증거가 있을 때만 허용하도록 명시해 다중 range FULL을 과도하게 열지 않았다. runtime은 수정하지 않았다.
 - **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`, `src/test/java/org/apache/sysds/test/functions/fedplanner/rules/BinaryMMTsmmRuleTest.java`, `src/test/java/org/apache/sysds/test/component/federated/AggregateBinaryFoutRuntimeTest.java`.
-- **검증**: Oracle rule test와 runtime direct-execution test가 통과했다. runtime test는 output이 1-range FULL 2×4이고 양쪽 input에 PUT_VAR/GET_VAR가 없음을 검사한다. 새 JAR planning trace에서 문제의 transpose CP prefetch가 사라지고 FULL×FULL direct FOUT이 선택되는지, workers=1 runtime 폭증이 제거되는지는 검증중이다.
+- **검증**: Oracle rule test와 runtime direct-execution test가 통과했다. runtime test는 output이 1-range FULL 2×4이고 양쪽 input에 PUT_VAR/GET_VAR가 없음을 검사한다. source commit `537b788e3c`의 Docker planning-only 로그에서 FedAll worker=1의 기존 `FED r' X -> CP prefetch(거대 transpose) -> FED ba+*` 경로가 사라지고 FULL×FULL direct FOUT이 선택됨을 확인했다. 새 lowering 수정까지 포함한 immutable JAR runtime에서 폭증 제거를 확인하는 단계는 남아 있다.
 - **잔여 이슈**: `fullSinglePartition`은 각 FULL input의 single range를 증명하지만 서로 다른 source worker 간 물리 co-location 자체는 별도 anchor/alignment fact다. 현재 workload generator는 X/Y를 같은 worker에 배치하고 runtime도 fail-fast alignment 검사를 한다. 일반 cross-source FULL co-location 증거는 별도 모델 확장 후보다.
 - **잠재 회귀 위험**: 서로 다른 worker의 single-range FULL 두 개를 planner가 compatible로 오판할 수 있다. 다른-address FULL×FULL runtime failure 회귀와 emitted anchor signature 비교로 감지한다.
 - **의사결정 근거**: planner gate를 완화한 것이 아니라 이미 runtime이 지원하는 co-located FULL×FULL capability를 shared Oracle에 표현했다.

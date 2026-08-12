@@ -3046,11 +3046,13 @@ public final class Rulesets {
             .build();
       }
 
-      // 2) main input X must be ROW-federated (runtime parser enforces this)
+      // 2) main input X must be ROW-federated, or a single-range FULL mapping.
       final FType X = typeAt(inFTypes, 0);
       if (X == null)
         return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
-      if (X != FType.ROW)
+      boolean fullSingle = X == FType.FULL && hint != null
+          && hint.fullSinglePartition().orElse(false);
+      if (X != FType.ROW && !fullSingle)
         return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
 
       // 3) valid FED pathway, but final output is local (LOUT) in all cases
