@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -53,10 +54,18 @@ public final class CandidateSelections {
 	public static boolean canStillBeReachable(PlacementAnalysis analysis,
 		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> partialAssignment) {
+		return unreachableConsumers(analysis, authorityGraph, actionUniverse, partialAssignment).isEmpty();
+	}
+
+	/** Deterministic fail-closed diagnostics for exact candidate-reachability pruning. */
+	public static List<String> unreachableConsumers(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> partialAssignment) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
 		Objects.requireNonNull(partialAssignment, "partialAssignment");
+		List<String> unreachable = new ArrayList<>();
 		for(NeutralPlacementGraph.Node consumer : authorityGraph.decisionNodes()) {
 			PlacementState selectedConsumer = partialAssignment.get(consumer.key());
 			if(selectedConsumer == null)
@@ -72,9 +81,52 @@ public final class CandidateSelections {
 			boolean reachable = active.stream().anyMatch(fact -> candidateRowCanStillBeReachable(
 				analysis, authorityGraph, actionUniverse, partialAssignment, selectedConsumer, fact));
 			if(!reachable)
-				return false;
+				unreachable.add(consumer.key().normalizedSignature() + '='
+					+ selectedConsumer.normalizedSignature() + "|activeRows=" + active.stream()
+						.map(fact -> fact.key().normalizedSignature() + candidateReachabilityDiagnostic(
+							analysis, authorityGraph, actionUniverse, partialAssignment,
+							selectedConsumer, fact)).sorted().toList());
 		}
-		return true;
+		return List.copyOf(unreachable);
+	}
+
+	private static String candidateReachabilityDiagnostic(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actions,
+		Map<CompiledHopKey,PlacementState> partial, PlacementState selectedConsumer,
+		CandidateRuleFact fact) {
+		List<String> inputs = new ArrayList<>();
+		for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+			CandidateInputState input = fact.key().orderedInputs().get(position);
+			if(!input.present())
+				continue;
+			final int inputPosition = position;
+			List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
+				.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == fact.key().parentOccurrence()
+					&& edge.inputPosition() == inputPosition).toList();
+			if(edges.size() != 1) {
+				inputs.add(position + ":edges=" + edges.size());
+				continue;
+			}
+			CompiledHopKey producer = edges.get(0).producer();
+			NeutralPlacementGraph.Node source = authorityGraph.node(producer).orElse(null);
+			List<String> receipts = actions.stream().filter(action ->
+				action.key().materializationFType() == input.fType()
+					&& action.key().targetPlacement().equals(selectedConsumer)
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == fact.key().parentOccurrence()
+							&& obligation.inputPosition() == inputPosition))
+				.map(action -> action.key().normalizedSignature() + "|direct="
+					+ action.directSourcePlacements().stream()
+						.map(PlacementState::normalizedSignature).toList()).toList();
+			inputs.add(position + ":producer=" + producer.normalizedSignature()
+				+ "|selected=" + (partial.get(producer) == null ? "-"
+					: partial.get(producer).normalizedSignature())
+				+ "|legal=" + (source == null ? List.of() : source.legalAlternatives().stream()
+					.map(PlacementState::normalizedSignature).toList())
+				+ "|receipts=" + receipts);
+		}
+		return "|reachabilityInputs=" + inputs;
 	}
 
 	private static boolean candidateRowCanStillBeReachable(PlacementAnalysis analysis,
@@ -120,7 +172,9 @@ public final class CandidateSelections {
 					&& action.obligations().stream().anyMatch(obligation ->
 						obligation.consumer() == fact.key().parentOccurrence()
 							&& obligation.inputPosition() == inputPosition));
-			if(!receipted && !singleParametricFormalReceiptReachable(
+			boolean direct = singlePhysicalInputDirectReachable(
+				analysis, fact.key(), inputPosition, input.fType(), partial, true);
+			if(!receipted && !direct && !singleParametricFormalReceiptReachable(
 				analysis, fact.key(), inputPosition, input.fType(), partial, true))
 				return false;
 		}
@@ -257,9 +311,62 @@ public final class CandidateSelections {
 			entry.getValue().stream().filter(receipt -> presentInputCount(receipt) == optimum)
 				.sorted().forEach(receipt -> byPhysicalEffect.putIfAbsent(candidateEffectSignature(
 					analysis, authorityGraph, actionUniverse, assignment, receipt), receipt));
-			maximal.put(entry.getKey(), List.copyOf(byPhysicalEffect.values()));
+			List<CandidateSelectionReceipt> effects = List.copyOf(byPhysicalEffect.values());
+			if(maximize && effects.size() > 1) {
+				List<CandidateSelectionReceipt> anchorAligned = effects.stream()
+					.filter(receipt -> allPresentRelocationsAnchorAligned(
+						analysis, actionUniverse, assignment, receipt)).toList();
+				if(!anchorAligned.isEmpty())
+					effects = anchorAligned;
+			}
+			maximal.put(entry.getKey(), effects);
 		}
 		return Collections.unmodifiableMap(maximal);
+	}
+
+	/**
+	 * FedAll/Heuristic tie-break for equal-materialization candidate rows. If every
+	 * PRESENT matrix input has an exact relocation whose upload layout equals the
+	 * durable anchor layout, that row cannot replicate or reshape more data than a
+	 * competing cross-layout row reaching the same selected consumer placement.
+	 * Cost-based planners never use this projection and retain every exact row.
+	 */
+	private static boolean allPresentRelocationsAnchorAligned(PlacementAnalysis analysis,
+		Collection<RelocationAction> actions, Map<CompiledHopKey,PlacementState> assignment,
+		CandidateSelectionReceipt receipt) {
+		if(receipt.emission().emissionState().placementState().execType() != ExecType.FED)
+			return true;
+		for(int position = 0; position < receipt.rule().orderedInputs().size(); position++) {
+			CandidateInputState input = receipt.rule().orderedInputs().get(position);
+			if(!input.present())
+				continue;
+			final int inputPosition = position;
+			List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
+				.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == receipt.rule().parentOccurrence()
+					&& edge.inputPosition() == inputPosition).toList();
+			if(edges.isEmpty())
+				continue;
+			if(edges.size() != 1)
+				return false;
+			CompiledHopKey producer = edges.get(0).producer();
+			PlacementState source = assignment.get(producer);
+			if(source != null && source.output()
+				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& source.fType() == input.fType())
+				continue;
+			boolean aligned = actions.stream().anyMatch(action ->
+				action.key().materializationFType() == input.fType()
+					&& action.key().materializationFType() == action.key().durableAnchor().fType()
+					&& action.key().targetPlacement().equals(
+						receipt.emission().emissionState().placementState())
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == receipt.rule().parentOccurrence()
+							&& obligation.inputPosition() == inputPosition));
+			if(!aligned)
+				return false;
+		}
+		return true;
 	}
 
 	/**
@@ -443,7 +550,9 @@ public final class CandidateSelections {
 					&& action.obligations().stream().anyMatch(obligation ->
 						obligation.consumer() == receipt.rule().parentOccurrence()
 							&& obligation.inputPosition() == inputPosition));
-			if(!receipted && !singleParametricFormalReceiptReachable(
+			boolean direct = singlePhysicalInputDirectReachable(
+				analysis, receipt.rule(), inputPosition, required, assignment, false);
+			if(!receipted && !direct && !singleParametricFormalReceiptReachable(
 				analysis, receipt.rule(), inputPosition, required, assignment, false))
 				return false;
 		}
@@ -517,6 +626,36 @@ public final class CandidateSelections {
 		return parametricFormalChainFoutCompatible(analysis, edges.get(0).producer(), required,
 			assignment, allowUnassigned,
 			Collections.newSetFromMap(new IdentityHashMap<CompiledHopKey,Boolean>()));
+	}
+
+	/**
+	 * A unary FED consumer can execute directly on its sole physical FOUT input; no upload/refed
+	 * action exists or is needed in that case. Multi-input rows deliberately remain action-backed
+	 * because matching FType alone does not prove that independent FederationMaps share a pool.
+	 */
+	private static boolean singlePhysicalInputDirectReachable(PlacementAnalysis analysis,
+		CandidateRuleKey rule, int inputPosition, FType required,
+		Map<CompiledHopKey,PlacementState> assignment, boolean allowUnassigned) {
+		if(rule.orderedInputs().stream().filter(CandidateInputState::present).count() != 1)
+			return false;
+		List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
+			.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == rule.parentOccurrence()
+				&& edge.inputPosition() == inputPosition).toList();
+		if(edges.size() != 1)
+			return false;
+		CompiledHopKey producer = edges.get(0).producer();
+		PlacementState selected = assignment.get(producer);
+		if(selected != null)
+			return selected.output()
+				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& selected.fType() == required;
+		if(!allowUnassigned)
+			return false;
+		return analysis.graph().node(producer).orElseThrow().legalAlternatives().stream().anyMatch(state ->
+			state.output()
+				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& state.fType() == required);
 	}
 
 	private static boolean parametricFormalChainFoutCompatible(PlacementAnalysis analysis,
@@ -611,6 +750,7 @@ public final class CandidateSelections {
 		private final Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants;
 		private final boolean maximizeMaterialization;
 		private final List<CandidateSelectionReceipt> current = new ArrayList<>();
+		private final int[] suffixMaximumMaterializations;
 		private Selection best;
 		private String bestSignature;
 
@@ -626,9 +766,25 @@ public final class CandidateSelections {
 			this.consumers = consumers;
 			this.variants = variants;
 			this.maximizeMaterialization = maximizeMaterialization;
+			this.suffixMaximumMaterializations = new int[consumers.size() + 1];
+			for(int index = consumers.size() - 1; index >= 0; index--) {
+				int maximum = variants.get(consumers.get(index)).stream()
+					.mapToInt(CandidateSelections::presentInputCount).max().orElseThrow();
+				suffixMaximumMaterializations[index] = Math.addExact(
+					suffixMaximumMaterializations[index + 1], maximum);
+			}
 		}
 
 		private void solve(int index, int materialized) {
+			// The primary candidate-row objective is the total number of explicit
+			// federated inputs. Once an incumbent reaches the exact suffix upper bound,
+			// this prefix cannot improve that primary score. For an equal primary score,
+			// every remaining row still needs full relocation/local-materialization
+			// evaluation; therefore prune only strictly smaller bounds.
+			if(maximizeMaterialization && best != null
+				&& Math.addExact(materialized, suffixMaximumMaterializations[index])
+					< best.materializedInputCount())
+				return;
 			if(index == consumers.size()) {
 				List<CandidateSelectionReceipt> selected = current.stream().sorted().toList();
 				RelocationSelections.Selection relocationSelection;

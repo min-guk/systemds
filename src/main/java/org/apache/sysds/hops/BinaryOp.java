@@ -382,7 +382,7 @@ public class BinaryOp extends MultiThreadedHop {
 				append.getOutputParameters().setDimensions(rlen, clen, getBlocksize(), getNnz());
 			}
 			else { //CP
-				Lop offset = createOffsetLop( getInput(0), cbind ); //offset 1st input
+				Lop offset = createOffsetLop(getInput(0), cbind, this); //offset 1st input
 				append = new Append(getInput(0).constructLops(), getInput(1).constructLops(),
 					offset, getDataType(), getValueType(), cbind, et);
 				append.getOutputParameters().setDimensions(rlen, clen, getBlocksize(), getNnz());
@@ -864,7 +864,7 @@ public class BinaryOp extends MultiThreadedHop {
 	{
 		Lop ret = null;
 		
-		Lop offset = createOffsetLop( left, cbind ); //offset 1st input
+		Lop offset = createOffsetLop(left, cbind, current); //offset 1st input
 		AppendMethod am = optFindAppendSPMethod(left.getDim1(), left.getDim2(), right.getDim1(), right.getDim2(), 
 				right.getBlocksize(), right.getNnz(), cbind, dt);
 	
@@ -884,7 +884,7 @@ public class BinaryOp extends MultiThreadedHop {
 			}	
 			case MR_GAPPEND:
 			{
-				Lop offset2 = createOffsetLop( right, cbind ); //offset second input
+				Lop offset2 = createOffsetLop(right, cbind, current); //offset second input
 				ret = new AppendG(left.constructLops(), right.constructLops(), offset, offset2, 
 						current.getDataType(), current.getValueType(), cbind, ExecType.SPARK);
 				break;

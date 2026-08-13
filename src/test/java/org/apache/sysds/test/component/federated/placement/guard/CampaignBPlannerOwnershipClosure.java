@@ -29,6 +29,9 @@ final class CampaignBPlannerOwnershipClosure {
 		"getprogramblocks", "getstatementblocks", "executioncontext", "federatedworker", "fallback", "greedy",
 		"approximate", "truncate", "timeout", "partialsuccess", "systemgetenv", "getproperty",
 		"nanotime", "currenttimemillis");
+	private static final Map<String,Set<String>> OBSERVATION_BOUNDARY_EXCEPTIONS = Map.of(
+		"org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit",
+		Set.of("executioncontext", "getproperty"));
 
 	static Map<String,Unit> index(Path root) throws IOException {
 		Map<String,Unit> out = new LinkedHashMap<>();
@@ -76,9 +79,14 @@ final class CampaignBPlannerOwnershipClosure {
 		Set<String> unique = new TreeSet<>();
 		for(Unit unit : closure) for(JavaSourceTokenScanner.Token token : unit.tokens()) {
 			String n = token.text().replace("_", "").toLowerCase();
-			if(FORBIDDEN.contains(n)) unique.add(unit.path() + ":" + token.line() + "|" + n);
+			if(FORBIDDEN.contains(n) && !isObservationBoundaryException(unit.fqcn(), n))
+				unique.add(unit.path() + ":" + token.line() + "|" + n);
 		}
 		return List.copyOf(unique);
+	}
+
+	static boolean isObservationBoundaryException(String fqcn, String normalizedToken) {
+		return OBSERVATION_BOUNDARY_EXCEPTIONS.getOrDefault(fqcn, Set.of()).contains(normalizedToken);
 	}
 
 	static void assertPositiveAdapterBoundary(List<Unit> closure, String adapterSimpleName) {

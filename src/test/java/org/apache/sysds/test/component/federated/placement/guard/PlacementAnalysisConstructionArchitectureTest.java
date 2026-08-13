@@ -61,6 +61,15 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	@Test
+	public void explicitDetachedConstructionBoundaryRemainsOneGuardedUniverse() {
+		Assert.assertEquals(List.of(), constructionViolations(validDetachedBuilder(), validShadow()));
+		String divergent = validDetachedBuilder().replace(
+			"return buildDetachedAnalysis(program);", "return new PlacementAnalysis(other, projections);");
+		Assert.assertTrue(constructionViolations(divergent, validShadow()).contains(
+			"buildAnalysis and buildDetachedAnalysis expose divergent construction paths"));
+	}
+
+	@Test
 	public void reverseDelegationAndDuplicateTraversalFixturesAreRejected() {
 		String reverse = validBuilder().replace("return buildAnalysis(program).graph();", "return graph;")
 			.replace("var occurrences = " + ORDERED_OCCURRENCES + ';',
@@ -345,17 +354,22 @@ public class PlacementAnalysisConstructionArchitectureTest {
 
 	private static boolean hasAnalysisExactKeyGuard(String source) {
 		String parameters = methodParameters(source, "PlacementAnalysis", "PlacementShapeFacts");
-		String body = JavaSourceBoundaryScanner.methodBody(source, "PlacementAnalysis", "PlacementShapeFacts");
 		String factsName = typedParameterName(parameters, "PlacementShapeFacts");
-		Matcher indexed = Pattern.compile("\\b(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:org\\.apache\\.sysds\\.hops\\.)?Hop\\s*>\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b")
-			.matcher(body);
-		if(factsName == null || !indexed.find() || !matches(body, "\\bIllegalArgumentException\\b")) return false;
-		String indexedName = indexed.group(1);
-		String factsKeys = "\\b" + Pattern.quote(factsName) + "\\s*\\.\\s*keys\\s*\\(\\s*\\)";
-		String indexedKeys = "\\b" + Pattern.quote(indexedName) + "\\s*\\.\\s*keySet\\s*\\(\\s*\\)";
-		return hasImmediateNegatedEqualityThrow(body,
-			factsKeys + "\\s*\\.\\s*equals\\s*\\(\\s*" + indexedKeys + "\\s*\\)",
-			indexedKeys + "\\s*\\.\\s*equals\\s*\\(\\s*" + factsKeys + "\\s*\\)");
+		if(factsName == null) return false;
+		for(String body : JavaSourceBoundaryScanner.methodBodies(
+			source, "PlacementAnalysis", "PlacementShapeFacts")) {
+			Matcher indexed = Pattern.compile("\\b(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:org\\.apache\\.sysds\\.hops\\.)?Hop\\s*>\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b")
+				.matcher(body);
+			if(!indexed.find() || !matches(body, "\\bIllegalArgumentException\\b")) continue;
+			String indexedName = indexed.group(1);
+			String factsKeys = "\\b" + Pattern.quote(factsName) + "\\s*\\.\\s*keys\\s*\\(\\s*\\)";
+			String indexedKeys = "\\b" + Pattern.quote(indexedName) + "\\s*\\.\\s*keySet\\s*\\(\\s*\\)";
+			if(hasImmediateNegatedEqualityThrow(body,
+				factsKeys + "\\s*\\.\\s*equals\\s*\\(\\s*" + indexedKeys + "\\s*\\)",
+				indexedKeys + "\\s*\\.\\s*equals\\s*\\(\\s*" + factsKeys + "\\s*\\)"))
+				return true;
+		}
+		return false;
 	}
 
 	private static boolean hasImmediateNegatedEqualityThrow(String body, String forward, String reverse) {
@@ -528,27 +542,39 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		String builderCode = JavaSourceBoundaryScanner.codeOnly(builderSource);
 		String build = JavaSourceBoundaryScanner.methodBody(builderSource, "build", "DMLProgram");
 		String analysis = JavaSourceBoundaryScanner.methodBody(builderSource, "buildAnalysis", "DMLProgram");
+		String detached = optionalMethodBody(builderSource, "buildDetachedAnalysis", "DMLProgram");
+		boolean explicitDetachedBoundary = compact(analysis).matches(
+			"(?s).*return(?:this\\.)?buildDetachedAnalysis\\(program\\);.*");
+		String constructionBody = explicitDetachedBoundary ? detached : analysis;
 		List<String> violations = new ArrayList<>();
 		if(!compact(build).matches("(?s).*return(?:this\\.)?buildAnalysis\\(program\\)\\.graph\\(\\);.*"))
 			violations.add("legacy build is not a forward delegate");
 		if(Pattern.compile("(?<![A-Za-z0-9_$])build\\s*\\(\\s*program\\s*\\)").matcher(analysis).find())
 			violations.add("buildAnalysis calls legacy build");
+		if(explicitDetachedBoundary && detached.isEmpty())
+			violations.add("buildAnalysis delegates to a missing detached construction boundary");
+		if(!detached.isEmpty() && !explicitDetachedBoundary)
+			violations.add("buildAnalysis and buildDetachedAnalysis expose divergent construction paths");
 		if(count(compact(builderCode), compact(ORDERED_OCCURRENCES)) != 1)
 			violations.add("builder must perform exactly one ordered occurrence pass");
 		if(count(compact(build), compact(ORDERED_OCCURRENCES)) != 0)
 			violations.add("legacy build must not traverse ordered occurrences");
-		if(count(compact(analysis), compact(ORDERED_OCCURRENCES)) != 1)
+		if(!explicitDetachedBoundary && count(compact(analysis), compact(ORDERED_OCCURRENCES)) != 1)
 			violations.add("buildAnalysis must perform exactly one ordered occurrence pass");
+		if(explicitDetachedBoundary && count(compact(analysis), compact(ORDERED_OCCURRENCES)) != 0)
+			violations.add("delegating buildAnalysis must not traverse ordered occurrences");
+		if(explicitDetachedBoundary && count(compact(detached), compact(ORDERED_OCCURRENCES)) != 1)
+			violations.add("buildDetachedAnalysis must perform exactly one ordered occurrence pass");
 		if(builderCode.matches("(?s).*\\bprojectConcreteOrigins\\b.*"))
 			violations.add("post-hoc origin projection helper is forbidden");
 		String originProjection = optionalMethodBody(builderSource, "projectConcreteOrigins", "DMLProgram");
 		if(originProjection.matches("(?s).*graph\\s*\\.\\s*nodes\\s*\\(\\)\\s*\\.\\s*stream\\s*\\(\\)"
 			+ ".*callSitePath\\s*\\(\\).*emittedHopInstance\\s*\\(\\).*canonicalSourceOrigin\\s*\\(\\).*"))
 			violations.add("post-hoc path/topology/source matching is forbidden");
-		int construction = analysisConstructionPosition(analysis);
-		if(!sentinelEncloses(analysis, "PlacementGraphFingerprint.capture(program)", construction))
+		int construction = analysisConstructionPosition(constructionBody);
+		if(!sentinelEncloses(constructionBody, "PlacementGraphFingerprint.capture(program)", construction))
 			violations.add("Hop mutation sentinel does not enclose and compare the analysis construction");
-		if(!sentinelEncloses(analysis, "registrySentinel(program)", construction))
+		if(!sentinelEncloses(constructionBody, "registrySentinel(program)", construction))
 			violations.add("registry mutation sentinel does not enclose and compare the analysis construction");
 		String shadowBuild = JavaSourceBoundaryScanner.methodBody(shadowSource, "build", "DMLProgram");
 		if(!compact(shadowBuild).contains("buildAnalysis(program).graph()")
@@ -656,6 +682,20 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		return "class Builder {"
 			+ " NeutralPlacementGraph build(DMLProgram program) { return buildAnalysis(program).graph(); }"
 			+ " PlacementAnalysis buildAnalysis(DMLProgram program) {"
+			+ " String before = PlacementGraphFingerprint.capture(program);"
+			+ " String registryBefore = registrySentinel(program);"
+			+ " var occurrences = " + ORDERED_OCCURRENCES + ';'
+			+ " PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
+			+ " if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;"
+			+ " if(!registryBefore.equals(registrySentinel(program))) throw failure;"
+			+ " return analysis; } }";
+	}
+
+	private static String validDetachedBuilder() {
+		return "class Builder {"
+			+ " NeutralPlacementGraph build(DMLProgram program) { return buildAnalysis(program).graph(); }"
+			+ " PlacementAnalysis buildAnalysis(DMLProgram program) { return buildDetachedAnalysis(program); }"
+			+ " PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {"
 			+ " String before = PlacementGraphFingerprint.capture(program);"
 			+ " String registryBefore = registrySentinel(program);"
 			+ " var occurrences = " + ORDERED_OCCURRENCES + ';'

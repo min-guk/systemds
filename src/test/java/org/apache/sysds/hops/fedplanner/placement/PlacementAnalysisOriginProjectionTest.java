@@ -106,6 +106,32 @@ public class PlacementAnalysisOriginProjectionTest {
 				.map(HopOccurrenceProjection::scopeId).collect(java.util.stream.Collectors.toSet()));
 	}
 
+	@Test
+	public void recompileOnceFunctionMarksEveryBodyOccurrenceAsRecompileContext() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-21");
+		Map.Entry<String,FunctionStatementBlock> function = program.getNamedNSFunctionStatementBlocks()
+			.entrySet().stream().findFirst().orElseThrow();
+		String before = PlacementGraphFingerprint.capture(program);
+		function.getValue().setRecompileOnce(true);
+		String after = PlacementGraphFingerprint.capture(program);
+		Assert.assertNotEquals("recompile-once is part of immutable placement-analysis authority", before, after);
+
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		List<HopOccurrenceProjection> body = analysis.occurrences().stream()
+			.filter(occurrence -> function.getKey().equals(occurrence.key().functionNamespace()))
+			.filter(occurrence -> !occurrence.key().canonicalSourceOrigin().startsWith("function-boundary:"))
+			.toList();
+		Assert.assertFalse("fixture must retain concrete function-body occurrences", body.isEmpty());
+		Assert.assertTrue("every instruction in a recompile-once function body must exclude CP/FOUT",
+			body.stream().allMatch(occurrence -> "recompile".equals(occurrence.key().recompileContext())));
+		Assert.assertTrue("recompile-once function body must publish the explicit CP/FOUT exclusion",
+			body.stream().filter(occurrence -> occurrence.hop().getDataType().isMatrix())
+				.map(occurrence -> analysis.graph().node(occurrence.key()).orElseThrow())
+				.filter(NeutralPlacementGraph.Node::emittedWork)
+				.allMatch(node -> node.exclusions().stream().anyMatch(exclusion ->
+					exclusion.reasonCode() == NeutralPlacementGraph.ReasonCode.RECOMPILE_CP_FOUT)));
+	}
+
 	private static DMLProgram sharedHopAcrossStatementBlocks(Hop shared) {
 		StatementBlock first = new StatementBlock();
 		first.setHops(new ArrayList<>(List.of(shared)));

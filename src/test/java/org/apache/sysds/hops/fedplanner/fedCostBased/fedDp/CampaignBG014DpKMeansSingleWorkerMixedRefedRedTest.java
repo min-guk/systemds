@@ -36,7 +36,7 @@ import org.junit.Test;
 public class CampaignBG014DpKMeansSingleWorkerMixedRefedRedTest {
 	@Test
 	public void oneWorkerDpKMeansPreservesAndLowersEveryConsumerSpecificRefedLayout() throws Exception {
-		Map<String,String> oldCostProperties = installDockerLanCostProperties();
+		Map<String,String> oldCostProperties = installDockerWanLightCostProperties();
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
@@ -87,6 +87,26 @@ public class CampaignBG014DpKMeansSingleWorkerMixedRefedRedTest {
 					choice.action().materializationFType() == FType.FULL));
 			Assert.assertTrue("The one-worker KMeans graph must not close BROADCAST relocation candidates",
 				legalTypes.values().stream().anyMatch(types -> types.contains(FType.BROADCAST)));
+			Assert.assertFalse("A runtime-recompile region must never admit CP/FOUT",
+				result.analysis().graph().nodes().stream()
+					.filter(node -> "recompile".equals(node.key().recompileContext()))
+					.flatMap(node -> node.legalAlternatives().stream())
+					.anyMatch(state -> state.execType() == org.apache.sysds.common.Types.ExecType.CP
+						&& state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT));
+			Assert.assertTrue("Recompile BROADCAST must be represented by FED/LOUT -> FED/FOUT, not CP/FOUT",
+				result.analysis().candidateRuleFacts().orderedFacts().stream()
+					.flatMap(fact -> fact.allowedEmissionFacts().stream())
+					.map(emission -> emission.derivedFoutAction())
+					.filter(java.util.Objects::nonNull)
+					.anyMatch(action -> action.sourcePlacement().execType()
+							== org.apache.sysds.common.Types.ExecType.FED
+						&& action.sourcePlacement().output()
+							== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
+						&& action.targetPlacement().execType()
+							== org.apache.sysds.common.Types.ExecType.FED
+						&& action.targetPlacement().output()
+							== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& action.materializationFType() == FType.BROADCAST));
 
 			Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey,
 				org.apache.sysds.hops.fedplanner.placement.PlacementState> assignment = new LinkedHashMap<>();
@@ -182,16 +202,16 @@ public class CampaignBG014DpKMeansSingleWorkerMixedRefedRedTest {
 		return data;
 	}
 
-	private static Map<String,String> installDockerLanCostProperties() {
+	private static Map<String,String> installDockerWanLightCostProperties() {
 		Map<String,String> values = Map.of(
 			"SYSDS_FED_COST_MEM_BW", "25000",
-			"SYSDS_FED_COST_NET_BW", "1250",
-			"SYSDS_FED_COST_NET_BW_C2W", "1250",
-			"SYSDS_FED_COST_NET_BW_W2C", "1250",
+			"SYSDS_FED_COST_NET_BW", "125",
+			"SYSDS_FED_COST_NET_BW_C2W", "125",
+			"SYSDS_FED_COST_NET_BW_W2C", "125",
 			"SYSDS_FED_COST_NET_SERDES_BW", "210",
 			"SYSDS_FED_COST_NET_SERDES_BW_C2W", "210",
 			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7",
-			"SYSDS_FED_COST_NET_LATENCY", "0.001",
+			"SYSDS_FED_COST_NET_LATENCY", "0.020",
 			"SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0",
 			"SYSDS_FED_COST_FLOPS", "2147483648");
 		Map<String,String> previous = new HashMap<>();

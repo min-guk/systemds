@@ -145,6 +145,11 @@ public class RewriteConstantFolding extends HopRewriteRule
 		
 		DataOp tmpWrite = new DataOp(TMP_VARNAME, bop.getDataType(),
 			bop.getValueType(), bop, OpOpData.TRANSIENTWRITE, TMP_VARNAME);
+		// Constant folding executes the selected scalar operation through the ordinary runtime.
+		// Its temporary result binding is a compiler helper, not another execution of the owner
+		// opcode. Preserve exact provenance only after planner selection.
+		if(bop.isPlannerPlacementSelected())
+			tmpWrite.setPlannerLoweringAuxiliary(bop, "CONSTANT_FOLD_RESULT_BIND");
 		
 		//generate runtime instruction
 		Dag<Lop> dag = new Dag<>();

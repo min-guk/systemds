@@ -133,6 +133,25 @@ public abstract class Lop
 	 * Optional hop id associated with this lop (set when constructed from a Hop).
 	 */
 	protected long _hopID = -1;
+
+	/** Stable planner-authority Hop identity retained across dynamic-recompile deep copies. */
+	protected long _plannerOriginHopID = -1;
+
+	/** Stable source-position identity used to reconnect recompiled Lops to planner authority. */
+	protected String _plannerRecompileSignature;
+
+	/** Exact normalized planner action that authorized this synthetic lowering Lop. */
+	protected String _plannerSyntheticActionKey;
+
+	/**
+	 * Exact compiler-owned helper emitted as part of one planner Hop's physical lowering.
+	 * This is not an independent planner decision (for example, the nrow/ncol offset used
+	 * by a CP append), but it still requires owner provenance and runtime auditing.
+	 */
+	protected String _plannerLoweringAuxiliaryKind;
+
+	/** Closed planner-owner to rewrite-replacement opcode contract. */
+	protected String _plannerRewriteReplacementKind;
 	
 	/**
 	 * refers to #lops whose input is equal to the output produced by this lop.
@@ -401,6 +420,46 @@ public abstract class Lop
 
 	public long getHopID() {
 		return _hopID;
+	}
+
+	public void setPlannerOriginHopID(long hopID) {
+		_plannerOriginHopID = hopID;
+	}
+
+	public long getPlannerOriginHopID() {
+		return _plannerOriginHopID;
+	}
+
+	public void setPlannerRecompileSignature(String signature) {
+		_plannerRecompileSignature = signature;
+	}
+
+	public String getPlannerRecompileSignature() {
+		return _plannerRecompileSignature;
+	}
+
+	public void setPlannerSyntheticActionKey(String actionKey) {
+		_plannerSyntheticActionKey = actionKey;
+	}
+
+	public String getPlannerSyntheticActionKey() {
+		return _plannerSyntheticActionKey;
+	}
+
+	public void setPlannerLoweringAuxiliaryKind(String kind) {
+		_plannerLoweringAuxiliaryKind = kind;
+	}
+
+	public String getPlannerLoweringAuxiliaryKind() {
+		return _plannerLoweringAuxiliaryKind;
+	}
+
+	public void setPlannerRewriteReplacementKind(String kind) {
+		_plannerRewriteReplacementKind = kind;
+	}
+
+	public String getPlannerRewriteReplacementKind() {
+		return _plannerRewriteReplacementKind;
 	}
 	
 	public void setConsumerCount(int cc) {

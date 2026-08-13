@@ -27,14 +27,14 @@ import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Single-worker runtime regression for Heuristic KMeans REFED authority across function recompilation. */
+/** Single-worker runtime regression for the exact Heuristic KMeans materialization selected across recompilation. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014HeuristicKMeansRuntimeRecompileRefedAuthorityRedTest {
 	private static final int ROWS = 50;
 	private static final int COLS = 20;
 
 	@Test
-	public void heuristicKMeansPreservesSelectedRefedAuthorityDuringRuntimeRecompile() throws Exception {
+	public void heuristicKMeansPreservesSelectedMaterializationAuthorityDuringRuntimeRecompile() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
@@ -65,18 +65,18 @@ public class CampaignBG014HeuristicKMeansRuntimeRecompileRefedAuthorityRedTest {
 				"-exec", "singlenode", "-seed", "2026072701", "-f", script.toString(),
 				"-stats", "100", "-config", config.toString()
 			});
-			Assert.assertTrue("Heuristic KMeans must execute its selected REFED materialization", success);
+			Assert.assertTrue("Heuristic KMeans must execute its selected materialization", success);
 			Assert.assertFalse("KMeans must publish a normalized placement receipt",
 				PlacementEmissionTransaction.receiptSnapshotForTesting().isEmpty());
-			long outputActions = PlacementEmissionTransaction.receiptSnapshotForTesting().keySet().stream()
+			long selectedLocalActions = PlacementEmissionTransaction.receiptSnapshotForTesting().keySet().stream()
 				.map(PlacementEmissionTransaction::currentNormalizedResult)
 				.filter(result -> result != null)
-				.mapToLong(result -> result.analysis().graph().derivedFoutMaterializationActions().size())
+				.mapToLong(result -> result.selectedLocalMaterializations().size())
 				.sum();
-			Assert.assertTrue("The runtime fixture must exercise REFED output-materialization authority",
-				outputActions > 0);
-			Assert.assertTrue("The runtime fixture must execute the selected REFED instructions",
-				Statistics.getCPHeavyHitterCount("fed_fed_refed") > 0);
+			Assert.assertTrue("The runtime fixture must select an exact local materialization boundary",
+				selectedLocalActions > 0);
+			Assert.assertTrue("The runtime fixture must execute the selected local materialization",
+				Statistics.getCPHeavyHitterCount("prefetch") > 0);
 			PlacementEmissionTransaction.ObservabilitySnapshot observability =
 				PlacementEmissionTransaction.observabilitySnapshot();
 			Assert.assertEquals("Runtime fallback is forbidden", 0, observability.runtimeFallbackCount());

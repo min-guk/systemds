@@ -63,6 +63,8 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -412,6 +414,8 @@ public final class FederatedRefedPolicy {
 			boolean runtimeContext = (runtimeSignatures != null);
 			FederatedRefedRegistry.Snapshot preservedRefed =
 				snapshotRuntimeRefed(clearRegistry, runtimeContext);
+			FederatedFoutMaterializeRegistry.Snapshot preservedFout =
+				snapshotRuntimeFout(clearRegistry, runtimeContext);
 			Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preservedLocalMaterialize =
 				snapshotRuntimeLocalMaterialize(clearRegistry, runtimeContext, sbId);
 			if (clearRegistry)
@@ -459,6 +463,7 @@ public final class FederatedRefedPolicy {
 			if (runtimeContext)
 				runtimePlannerPlacements = snapshotRuntimePlannerPlacements(all);
 			restoreRuntimeRefedAuthorities(preservedRefed, all, sbId);
+			restoreRuntimeFoutAuthorities(preservedFout, all, sbId);
 			restoreReachableRuntimeLocalMaterialize(preservedLocalMaterialize, all);
 			if (all != null && !all.isEmpty()) {
 				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
@@ -525,6 +530,30 @@ public final class FederatedRefedPolicy {
 									+ "dominating planner-approved FOUT TWrite exists");
 					}
 				}
+
+				/*
+				 * Dynamic recompilation is not a second placement-planning pass.  The common
+				 * planner has already selected every physical Hop placement and every exact
+				 * REFED/FOUT/LOCAL edge action.  The code below this branch is the legacy
+				 * planner-time policy that discovers anchors, classifies FED inputs, and may
+				 * create or demote materializations.  Running it against a recompiled DAG is
+				 * both redundant and unsound: its topology/shape heuristic can disagree with
+				 * the exact candidate row selected by the common planner (for example a FED
+				 * matrix multiply that deliberately accepts one ABSENT_LOCAL broadcast input).
+				 *
+				 * Runtime recompilation therefore performs only three operations:
+				 *   1. restore/re-project the immutable planner-owned action receipts above;
+				 *   2. validate observed transient values against the selected TRead/TWrite
+				 *      placements; and
+				 *   3. leave every selected Hop placement byte-for-byte unchanged.
+				 *
+				 * Lowering and execution are checked separately by
+				 * PlannerRuntimePlacementAudit.  Missing action authority fails there (or in
+				 * the exact registry projection); it is never inferred here.
+				 */
+				assertTransientBoundaryPlacements(all);
+				assertRuntimePlannerPlacementsUnchanged(runtimePlannerPlacements);
+				return;
 			}
 
 		// Clear stale anchor keys for variables that are locally overwritten in this block,
@@ -625,6 +654,11 @@ public final class FederatedRefedPolicy {
 						boolean inputLocal = inExec == ExecType.CP
 							|| (inExec == ExecType.FED && input.hasLocalOutput());
 						if (inputLocal) {
+							if (runtimeContext) {
+								requirePreservedRuntimeFoutAuthority(hop, sbId,
+									"selected FED/FOUT TWrite has a local input");
+								continue;
+							}
 							AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, true, false, blockAnchor);
 							if (selection == null || selection.key == null) {
 								if (runtimeContext)
@@ -890,16 +924,115 @@ public final class FederatedRefedPolicy {
 
 	private static Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>>
 		snapshotRuntimeLocalMaterialize(boolean clearRegistry, boolean runtimeContext, long sbId) {
-		if (!clearRegistry || !runtimeContext || FederatedLocalMaterializeRegistry.isEmpty())
+		if (!clearRegistry || !runtimeContext)
 			return Collections.emptyMap();
-		return new HashMap<>(FederatedLocalMaterializeRegistry.snapshotScopes(sbId));
+		return PlannerRuntimeActionRegistry.snapshot().local().scopes();
 	}
 
 	private static FederatedRefedRegistry.Snapshot snapshotRuntimeRefed(
 			boolean clearRegistry, boolean runtimeContext) {
-		if (!clearRegistry || !runtimeContext || FederatedRefedRegistry.isEmpty())
+		if (!clearRegistry || !runtimeContext)
 			return null;
-		return FederatedRefedRegistry.snapshotAll();
+		return PlannerRuntimeActionRegistry.snapshot().refed();
+	}
+
+	private static FederatedFoutMaterializeRegistry.Snapshot snapshotRuntimeFout(
+			boolean clearRegistry, boolean runtimeContext) {
+		if (!clearRegistry || !runtimeContext)
+			return null;
+		return PlannerRuntimeActionRegistry.snapshot().fout();
+	}
+
+	private record RuntimeHopIndex(Map<Long,Hop> byId, Map<Long,List<Hop>> byPlannerOrigin,
+		Map<String,List<Hop>> bySignature) { }
+
+	private static RuntimeHopIndex runtimeHopIndex(List<Hop> hops) {
+		Map<Long,Hop> byId = new HashMap<>();
+		Set<Long> duplicateIds = new HashSet<>();
+		Map<Long,List<Hop>> byPlannerOrigin = new HashMap<>();
+		Map<String,List<Hop>> bySignature = new HashMap<>();
+		if(hops != null) {
+			for(Hop hop : hops) {
+				if(hop == null)
+					continue;
+				Hop prior = byId.putIfAbsent(hop.getHopID(), hop);
+				if(prior != null && prior != hop)
+					duplicateIds.add(hop.getHopID());
+				// Lowering auxiliaries deliberately inherit their owner's planner origin,
+				// but they are not the physical owner of the selected planner action.
+				// Index only primary/replacement Hops for exact authority projection.
+				if(hop.getPlannerLoweringAuxiliaryKind() == null)
+					byPlannerOrigin.computeIfAbsent(hop.getPlannerOriginHopID(),
+						ignored -> new ArrayList<>()).add(hop);
+				String signature = FederatedPlannerUtils.plannerRecompileSignature(hop);
+				if(hop.getPlannerLoweringAuxiliaryKind() == null
+					&& signature != null && !signature.isBlank())
+					bySignature.computeIfAbsent(signature, ignored -> new ArrayList<>()).add(hop);
+			}
+		}
+		for(Long duplicate : duplicateIds)
+			byId.remove(duplicate);
+		return new RuntimeHopIndex(byId, byPlannerOrigin, bySignature);
+	}
+
+	/** Re-project one original planner Hop identity onto the current recompiled DAG. */
+	private static Hop resolveRuntimeHop(long plannerHopId, RuntimeHopIndex index) {
+		List<Hop> originMatches = index.byPlannerOrigin().getOrDefault(plannerHopId, List.of());
+		if(originMatches.size() == 1)
+			return originMatches.get(0);
+		if(originMatches.size() > 1) {
+			List<Hop> replacements = originMatches.stream()
+				.filter(hop -> hop.getPlannerRewriteReplacementKind() != null).toList();
+			if(replacements.size() == 1)
+				return replacements.get(0);
+			List<Hop> sameId = originMatches.stream()
+				.filter(hop -> hop.getHopID() == plannerHopId).toList();
+			if(replacements.isEmpty() && sameId.size() == 1)
+				return sameId.get(0);
+			throw invalidRuntimePlan(null,
+				"exact planner action has ambiguous planner-origin identity for originalHop="
+					+ plannerHopId + " matches=" + runtimeHopDescriptions(originMatches));
+		}
+
+		String selectedSignature =
+			FederatedPlannerUtils.getPlannerRecompileSignatureForHopId(plannerHopId);
+		if(selectedSignature != null) {
+			List<Hop> matches = index.bySignature().getOrDefault(selectedSignature, List.of());
+			if(matches.size() > 1)
+				throw invalidRuntimePlan(null,
+					"exact planner action has ambiguous recompile signature for originalHop="
+						+ plannerHopId + " signature=" + selectedSignature + " matches="
+						+ runtimeHopDescriptions(matches));
+			if(matches.size() == 1)
+				return matches.get(0);
+			Hop sameId = index.byId().get(plannerHopId);
+			if(sameId != null && selectedSignature.equals(
+				FederatedPlannerUtils.plannerRecompileSignature(sameId)))
+				return sameId;
+			// A reused numeric Hop id is not identity evidence. Once the planner
+			// recorded a stable signature, failure to find that signature in the
+			// active recompiled DAG means this original Hop is not reachable here.
+			return null;
+		}
+		return index.byId().get(plannerHopId);
+	}
+
+	private static List<String> runtimeHopDescriptions(List<Hop> hops) {
+		return hops.stream().map(hop -> hop.getHopID() + "/origin="
+			+ hop.getPlannerOriginHopID() + "/replacement="
+			+ hop.getPlannerRewriteReplacementKind()).toList();
+	}
+
+	private static void traceRuntimeAuthorityProjection(String kind, String status, long scopeId,
+		long selectedProducerHopId, Hop runtimeProducer, String plannerActionKey, int consumers) {
+		if(!PlannerRuntimePlacementAudit.isEnabled())
+			return;
+		System.out.println("[PlannerRuntimeAudit][AuthorityProjection] kind=" + kind
+			+ " status=" + status + " scope=" + scopeId + " selectedProducer="
+			+ selectedProducerHopId + " runtimeProducer="
+			+ (runtimeProducer != null ? runtimeProducer.getHopID() : "-") + " signature="
+			+ FederatedPlannerUtils.getPlannerRecompileSignatureForHopId(selectedProducerHopId)
+			+ " action=" + plannerActionKey + " consumers=" + consumers);
 	}
 
 	/**
@@ -918,84 +1051,166 @@ public final class FederatedRefedPolicy {
 			List<Hop> hops, long sbId) {
 		if (preserved == null)
 			return;
+		if(PlannerRuntimePlacementAudit.isEnabled())
+			System.out.println("[PlannerRuntimeAudit][AuthorityRestore] kind=REFED scope=" + sbId
+				+ " committedScopes=" + preserved.scopes().entrySet().stream()
+					.sorted(Map.Entry.comparingByKey())
+					.map(entry -> entry.getKey() + ":" + entry.getValue().size()).toList());
 
 		FederatedRefedRegistry.restoreAll(preserved);
-		Map<Long, FederatedRefedRegistry.AnchorSpec> activeScope =
-			preserved.scopes().getOrDefault(sbId, Collections.emptyMap());
-		if (activeScope.isEmpty())
+		if(preserved.scopes().isEmpty())
 			return;
 
-		Map<Long, Hop> hopById = new HashMap<>();
-		Set<Long> duplicateHopIds = new HashSet<>();
-		if (hops != null) {
-			for (Hop hop : hops) {
-				if (hop == null)
-					continue;
-				Hop prior = hopById.putIfAbsent(hop.getHopID(), hop);
-				if (prior != null && prior != hop)
-					duplicateHopIds.add(hop.getHopID());
+		RuntimeHopIndex hopIndex = runtimeHopIndex(hops);
+		for(Long existing : new ArrayList<>(FederatedRefedRegistry.snapshot(sbId).keySet()))
+			FederatedRefedRegistry.remove(sbId, existing);
+
+		for(Map.Entry<Long, Map<Long, FederatedRefedRegistry.AnchorSpec>> scopeEntry
+			: preserved.scopes().entrySet()) {
+		long selectedScopeId = scopeEntry.getKey();
+		for (Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> entry : scopeEntry.getValue().entrySet()) {
+			long selectedProducerHopId = entry.getKey();
+			Hop producer = resolveRuntimeHop(selectedProducerHopId, hopIndex);
+			if (producer == null) {
+				traceRuntimeAuthorityProjection("REFED", "UNREACHABLE", sbId,
+					selectedProducerHopId, null, "-", 0);
+				continue;
 			}
-		}
-
-		for (Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> entry : activeScope.entrySet()) {
-			long producerHopId = entry.getKey();
-			FederatedRefedRegistry.remove(sbId, producerHopId);
-			Hop producer = hopById.get(producerHopId);
-			if (producer == null)
-				continue;
-			if (duplicateHopIds.contains(producerHopId))
-				throw invalidRuntimePlan(producer,
-					"preserved exact REFED authority has an ambiguous producer hop identity");
-			// Recompile CP/FOUT is forbidden. Exact authority is retained only for a
-			// planner-selected FED result that needs a selected relocation/materialization.
-			if (getPlannedExecType(producer) != ExecType.FED)
-				continue;
-
 			List<RestoredRefedAuthority> restored = new ArrayList<>();
-			boolean activeAuthorityCannotBeRestored = false;
 			for (FederatedRefedRegistry.AuthoritySpec authority : entry.getValue().getAuthorities()) {
-				List<ConsumerInputSpec> reachableInputs = authority.getConsumerInputs().stream()
-					.filter(input -> hopById.containsKey(input.consumerHopId())).toList();
+				if (authority.getPlannerActionKey() == null)
+					throw invalidRuntimePlan(producer,
+						"runtime recompile encountered non-planner REFED authority");
+				List<ConsumerInputSpec> reachableInputs = new ArrayList<>();
+				for(ConsumerInputSpec input : authority.getConsumerInputs()) {
+					Hop consumer = resolveRuntimeHop(input.consumerHopId(), hopIndex);
+					if(consumer == null)
+						continue;
+					int position = input.inputPosition();
+					if(consumer.getInput() == null || position < 0 || position >= consumer.getInput().size()
+						|| consumer.getInput().get(position) != producer)
+						throw invalidRuntimePlan(producer,
+							"preserved exact REFED authority no longer matches consumer="
+								+ consumer.getHopID() + " input=" + position);
+					reachableInputs.add(new ConsumerInputSpec(consumer.getHopID(), position));
+				}
 				if (reachableInputs.isEmpty())
 					continue;
 				String anchorKey = authority.getAnchorKey();
 				if (!isNonVarAnchorKey(anchorKey) || getFTypeFromAnchorKey(anchorKey) == null
-					|| reachableInputs.stream().anyMatch(ConsumerInputSpec::allInputs)) {
-					activeAuthorityCannotBeRestored = true;
-					break;
-				}
-				for (ConsumerInputSpec input : reachableInputs) {
-					Hop consumer = hopById.get(input.consumerHopId());
-					if (duplicateHopIds.contains(input.consumerHopId()))
-						throw invalidRuntimePlan(producer,
-							"preserved exact REFED authority has an ambiguous consumer hop identity");
-					int position = input.inputPosition();
-					if (consumer.getInput() == null || position < 0 || position >= consumer.getInput().size()
-						|| consumer.getInput().get(position) == null
-						|| consumer.getInput().get(position).getHopID() != producerHopId)
-						throw invalidRuntimePlan(producer,
-							"preserved exact REFED authority no longer matches consumer="
-								+ input.consumerHopId() + " input=" + position);
-				}
+					|| reachableInputs.stream().anyMatch(ConsumerInputSpec::allInputs))
+					throw invalidRuntimePlan(producer,
+						"committed exact REFED authority cannot be re-projected from scope="
+							+ selectedScopeId + " action=" + authority.getPlannerActionKey());
 				long anchorHopId = authority.getAnchorHopId();
-				Hop liveAnchor = hopById.get(anchorHopId);
-				if (liveAnchor == null || duplicateHopIds.contains(anchorHopId)
+				Hop liveAnchor = resolveRuntimeHop(anchorHopId, hopIndex);
+				if (liveAnchor == null
 					|| !isRuntimeFederatedInput(liveAnchor, null, null))
 					anchorHopId = -1L;
+				else
+					anchorHopId = liveAnchor.getHopID();
 				restored.add(new RestoredRefedAuthority(anchorHopId, anchorKey,
-					authority.getMaterializationFType(), reachableInputs));
+					authority.getMaterializationFType(), reachableInputs,
+					authority.getPlannerActionKey(), authority.getRequiresLocalMaterialization()));
 			}
-			if (activeAuthorityCannotBeRestored)
-				continue;
 			for (RestoredRefedAuthority authority : restored)
-				FederatedRefedRegistry.registerConsumerInputs(sbId, producerHopId,
+				FederatedRefedRegistry.registerConsumerInputs(sbId, producer.getHopID(),
 					authority.anchorHopId(), authority.anchorKey(), authority.materializationFType(),
-					authority.consumerInputs());
+					authority.consumerInputs(), authority.plannerActionKey(),
+					authority.requiresLocalMaterialization());
+			for(RestoredRefedAuthority authority : restored)
+				traceRuntimeAuthorityProjection("REFED", "PROJECTED", sbId,
+					selectedProducerHopId, producer, authority.plannerActionKey(),
+					authority.consumerInputs().size());
+		}
 		}
 	}
 
 	private record RestoredRefedAuthority(long anchorHopId, String anchorKey,
-		FType materializationFType, List<ConsumerInputSpec> consumerInputs) {
+		FType materializationFType, List<ConsumerInputSpec> consumerInputs,
+		String plannerActionKey, Boolean requiresLocalMaterialization) {
+	}
+
+	/**
+	 * Restores only the exact FOUT action selected before dynamic recompilation. Runtime observations
+	 * may invalidate that action and fail compilation, but they may never choose a replacement anchor,
+	 * layout, or materialization kind.
+	 */
+	private static void restoreRuntimeFoutAuthorities(
+			FederatedFoutMaterializeRegistry.Snapshot preserved, List<Hop> hops, long sbId) {
+		if (preserved == null)
+			return;
+		if(PlannerRuntimePlacementAudit.isEnabled())
+			System.out.println("[PlannerRuntimeAudit][AuthorityRestore] kind=FOUT scope=" + sbId
+				+ " committedScopes=" + preserved.scopes().entrySet().stream()
+					.sorted(Map.Entry.comparingByKey())
+					.map(entry -> entry.getKey() + ":" + entry.getValue().size()).toList());
+		FederatedFoutMaterializeRegistry.restoreAll(preserved);
+		if(preserved.scopes().isEmpty())
+			return;
+
+		RuntimeHopIndex hopIndex = runtimeHopIndex(hops);
+		for(Long existing : new ArrayList<>(FederatedFoutMaterializeRegistry.snapshot(sbId).keySet()))
+			FederatedFoutMaterializeRegistry.remove(sbId, existing);
+
+		for(Map.Entry<Long, Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec>> scopeEntry
+			: preserved.scopes().entrySet()) {
+		for (Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> entry
+			: scopeEntry.getValue().entrySet()) {
+			long selectedProducerHopId = entry.getKey();
+			Hop producer = resolveRuntimeHop(selectedProducerHopId, hopIndex);
+			if (producer == null) {
+				traceRuntimeAuthorityProjection("FOUT", "UNREACHABLE", sbId,
+					selectedProducerHopId, null, entry.getValue().getPlannerActionKey(), 0);
+				continue;
+			}
+			FederatedFoutMaterializeRegistry.MaterializeSpec spec = entry.getValue();
+			if (!spec.hasExactConsumerAuthority() || spec.getPlannerActionKey() == null)
+				throw invalidRuntimePlan(producer,
+					"runtime recompile encountered non-planner FOUT materialization authority");
+			String anchorKey = spec.getAnchorKey();
+			if (!isNonVarAnchorKey(anchorKey) || getFTypeFromAnchorKey(anchorKey) == null)
+				throw invalidRuntimePlan(producer,
+					"preserved exact FOUT authority has no durable typed anchor");
+			List<ConsumerInputSpec> reachableInputs = new ArrayList<>();
+			for (ConsumerInputSpec input : spec.getConsumerInputs()) {
+				Hop consumer = resolveRuntimeHop(input.consumerHopId(), hopIndex);
+				if(consumer == null)
+					continue;
+				int position = input.inputPosition();
+				Hop materializedInput = producer;
+				if (producer instanceof DataOp dataOp && dataOp.getOp() == OpOpData.TRANSIENTWRITE
+					&& producer.getInput() != null && !producer.getInput().isEmpty())
+					materializedInput = producer.getInput().get(0);
+				if (consumer.getInput() == null || position < 0 || position >= consumer.getInput().size()
+					|| consumer.getInput().get(position) != materializedInput)
+					throw invalidRuntimePlan(producer,
+						"preserved exact FOUT authority no longer matches consumer="
+							+ consumer.getHopID() + " input=" + position);
+				reachableInputs.add(new ConsumerInputSpec(consumer.getHopID(), position));
+			}
+			long anchorHopId = spec.getAnchorHopId();
+			Hop liveAnchor = resolveRuntimeHop(anchorHopId, hopIndex);
+			if (liveAnchor == null || !isRuntimeFederatedInput(liveAnchor, null, null))
+				anchorHopId = -1L;
+			else
+				anchorHopId = liveAnchor.getHopID();
+			FederatedFoutMaterializeRegistry.registerConsumerInputs(sbId, producer.getHopID(),
+				anchorHopId, spec.getFTypeHint(), spec.getAnchorLabel(), anchorKey,
+				reachableInputs, spec.getPlannerActionKey());
+			traceRuntimeAuthorityProjection("FOUT", "PROJECTED", sbId,
+				selectedProducerHopId, producer, spec.getPlannerActionKey(), reachableInputs.size());
+		}
+		}
+	}
+
+	private static void requirePreservedRuntimeFoutAuthority(Hop hop, long sbId, String reason) {
+		long scopeId = sbId >= 0 ? sbId : DEFAULT_SBID;
+		FederatedFoutMaterializeRegistry.MaterializeSpec spec =
+			FederatedFoutMaterializeRegistry.snapshot(scopeId).get(hop.getHopID());
+		if (spec == null || !spec.hasExactConsumerAuthority() || spec.getPlannerActionKey() == null)
+			throw invalidRuntimePlan(hop, reason
+				+ " but no exact planner-selected FOUT action survived recompilation");
 	}
 
 	private static void restoreReachableRuntimeLocalMaterialize(
@@ -1004,41 +1219,60 @@ public final class FederatedRefedPolicy {
 		if (preserved == null || preserved.isEmpty() || hops == null || hops.isEmpty())
 			return;
 
-		Set<Long> reachableHopIds = new HashSet<>();
-		for (Hop hop : hops) {
-			if (hop != null)
-				reachableHopIds.add(hop.getHopID());
-		}
-		if (reachableHopIds.isEmpty())
+		RuntimeHopIndex hopIndex = runtimeHopIndex(hops);
+		if(hopIndex.byId().isEmpty() && hopIndex.bySignature().isEmpty())
 			return;
+
+		for(Map.Entry<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> existing
+			: new ArrayList<>(FederatedLocalMaterializeRegistry.snapshot(DEFAULT_SBID).entrySet()))
+			FederatedLocalMaterializeRegistry.remove(DEFAULT_SBID, existing.getKey());
 
 		for (Map.Entry<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> scopeEntry :
 				preserved.entrySet()) {
-			Long preservedSbId = scopeEntry.getKey();
+			Long selectedSbId = scopeEntry.getKey();
 			Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> entries = scopeEntry.getValue();
-			if (preservedSbId == null || entries == null || entries.isEmpty())
+			if (selectedSbId == null || entries == null || entries.isEmpty())
 				continue;
 			for (Map.Entry<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> entry : entries.entrySet()) {
 				Long producerHopId = entry.getKey();
 				FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = entry.getValue();
 				if (producerHopId == null || spec == null)
 					continue;
-				boolean producerReachable = reachableHopIds.contains(producerHopId);
-				if (!producerReachable && preservedSbId == -1L) {
-					FederatedLocalMaterializeRegistry.registerSpec(-1L, producerHopId, spec);
+				Hop producer = resolveRuntimeHop(producerHopId, hopIndex);
+				if (producer == null) {
+					traceRuntimeAuthorityProjection("LOCAL", "UNREACHABLE", selectedSbId,
+						producerHopId, null, spec.getPlannerActionKey(), 0);
 					continue;
 				}
-				if (!producerReachable)
-					continue;
-				List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> reachableInputs =
-					spec.getConsumerInputs().stream()
-						.filter(input -> reachableHopIds.contains(input.consumerHopId())).toList();
+				if (spec.getPlannerActionKey() == null)
+					throw invalidRuntimePlan(producer,
+						"runtime recompile encountered non-planner LOCAL materialization authority for hop="
+							+ producerHopId);
+				List<FederatedLocalMaterializeRegistry.ConsumerInputSpec> reachableInputs = new ArrayList<>();
+				for(FederatedLocalMaterializeRegistry.ConsumerInputSpec input : spec.getConsumerInputs()) {
+					Hop consumer = resolveRuntimeHop(input.consumerHopId(), hopIndex);
+					if(consumer == null)
+						continue;
+					int position = input.inputPosition();
+					if(input.allInputs())
+						throw invalidRuntimePlan(producer,
+							"planner-owned LOCAL authority lost exact consumer input identity");
+					if(consumer.getInput() == null || position < 0 || position >= consumer.getInput().size()
+						|| consumer.getInput().get(position) != producer)
+						throw invalidRuntimePlan(producer,
+							"preserved exact LOCAL authority no longer matches consumer="
+								+ consumer.getHopID() + " input=" + position);
+					reachableInputs.add(new FederatedLocalMaterializeRegistry.ConsumerInputSpec(
+						consumer.getHopID(), position));
+				}
 				if (!reachableInputs.isEmpty())
-					FederatedLocalMaterializeRegistry.registerSpec(preservedSbId, producerHopId,
+					FederatedLocalMaterializeRegistry.registerSpec(DEFAULT_SBID, producer.getHopID(),
 						FederatedLocalMaterializeRegistry.LocalMaterializeSpec.forConsumerInputs(
-							reachableInputs, spec.getFTypeHint(), spec.getReason()));
-				else if (preservedSbId == -1L)
-					FederatedLocalMaterializeRegistry.registerSpec(-1L, producerHopId, spec);
+							reachableInputs, spec.getFTypeHint(), spec.getReason(),
+							spec.getPlannerActionKey()));
+				traceRuntimeAuthorityProjection("LOCAL", reachableInputs.isEmpty()
+					? "NO_REACHABLE_CONSUMER" : "PROJECTED", selectedSbId,
+					producerHopId, producer, spec.getPlannerActionKey(), reachableInputs.size());
 			}
 		}
 	}
@@ -1567,7 +1801,8 @@ public final class FederatedRefedPolicy {
 				// recompile upload local actuals even when every executable hop remains CP.
 				if (isLogicalDmlFunctionBoundary(hop))
 					continue;
-				if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
+				if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor,
+					failOnInvalidRuntimePlan)) {
 					if (!failOnInvalidRuntimePlan && canDemoteUnsatisfiedFedHop(hop)) {
 						demoteUnsatisfiedFedHop(hop, fTypeMap, sbId);
 						demotedAny = true;
@@ -1729,7 +1964,8 @@ public final class FederatedRefedPolicy {
 						? authority.getAnchorHopId() : -1L;
 					FederatedRefedRegistry.registerConsumerInputs(sbId, entry.getKey(), anchorHopId,
 						authority.getAnchorKey(), authority.getMaterializationFType(),
-						authority.getConsumerInputs());
+						authority.getConsumerInputs(), authority.getPlannerActionKey(),
+						authority.getRequiresLocalMaterialization());
 				}
 				if(retained.isEmpty())
 					CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
@@ -1776,7 +2012,7 @@ public final class FederatedRefedPolicy {
 					if(spec.hasExactConsumerAuthority())
 						FederatedFoutMaterializeRegistry.registerConsumerInputs(sbId, entry.getKey(), -1,
 							spec.getFTypeHint(), spec.getAnchorLabel(), anchorKey,
-							spec.getConsumerInputs());
+							spec.getConsumerInputs(), spec.getPlannerActionKey());
 					else
 						FederatedFoutMaterializeRegistry.register(sbId, entry.getKey(), -1,
 							spec.getFTypeHint(), spec.getAnchorLabel(), anchorKey);
@@ -1975,7 +2211,7 @@ public final class FederatedRefedPolicy {
 	}
 
 	private static boolean ensureRequiredFederatedInputs(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
-			AnchorSelection blockAnchor) {
+			AnchorSelection blockAnchor, boolean failOnInvalidRuntimePlan) {
 		if (hop == null || hop.getInput() == null)
 			return true;
 		java.util.Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materialize =
@@ -2090,6 +2326,8 @@ public final class FederatedRefedPolicy {
 				consumerAnchor = selectAnchorWithinBlock(hop, fTypeMap, true, false, blockAnchor);
 		}
 
+			if (failOnInvalidRuntimePlan && !requiredIndices.isEmpty())
+				return false;
 			for (int idx : requiredIndices) {
 				Hop input = hop.getInput().get(idx);
 				AnchorSelection selection = null;
@@ -3769,6 +4007,9 @@ public final class FederatedRefedPolicy {
 		if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID())
 			|| FederatedRefedRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
 			return;
+		if (failOnInvalidRuntimePlan)
+			throw invalidRuntimePlan(hop,
+				"selected FOUT boundary has no exact planner materialization authority");
 		if (!hop.getDataType().isMatrix())
 			throw new DMLRuntimeException("CP->FOUT refed supports only matrix outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");

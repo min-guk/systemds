@@ -57,6 +57,11 @@ public class VariableFEDInstruction extends FEDInstruction implements LineageTra
 		_in = in;
 	}
 
+	@Override
+	public String getOutputVariableName() {
+		return _in.getOutputVariableName();
+	}
+
 	public static VariableFEDInstruction parseInstruction(VariableCPInstruction inst, ExecutionContext ec) {
 		if(inst.getVariableOpcode() == VariableOperationCode.Write && inst.getInput1().isMatrix() &&
 			inst.getInput3().getName().contains("federated")) {

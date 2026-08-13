@@ -43,6 +43,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.lops.Compression.CompressConfig;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.DMLRuntimeException;
@@ -639,6 +640,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 
 	private FederatedResponse execInstruction(FederatedRequest request, ExecutionContextMap ecm, EventStageModel eventStage) throws Exception {
 		final Instruction ins = InstructionParser.parseSingleInstruction((String) request.getParam(0));
+		PlannerRuntimePlacementAudit.attachWorkerFragment(request, ins);
 
 		eventStage.operation = ins.getExtendedOpcode();
 
@@ -870,6 +872,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 
 	private FederatedResponse execUDF(FederatedRequest request, ExecutionContextMap ecm, EventStageModel eventStage) {
 		checkNumParams(request.getNumParams(), 1);
+		PlannerRuntimePlacementAudit.validateWorkerUdf(request);
 		ExecutionContext ec = ecm.get(request.getTID());
 
 		// get function and input parameters
@@ -890,8 +893,10 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			// reuse or execute user-defined function
 			// reuse UDF outputs if available in lineage cache
 			FederatedResponse reuse = LineageCache.reuse(udf, ec);
-			if(reuse.isSuccessful())
+			if(reuse.isSuccessful()) {
+				PlannerRuntimePlacementAudit.recordSuccessfulWorkerUdf(request);
 				return reuse;
+			}
 
 			// else execute the UDF
 			long t0 = !ReuseCacheType.isNone() ? System.nanoTime() : 0;
@@ -899,6 +904,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			long t1 = !ReuseCacheType.isNone() ? System.nanoTime() : 0;
 			// cacheUDFOutputs(udf, inputs, t1-t0, ec);
 			LineageCache.putValue(udf, ec, t1 - t0);
+			PlannerRuntimePlacementAudit.recordSuccessfulWorkerUdf(request);
 			return res;
 		}
 		catch(FederatedWorkerHandlerException ex) {

@@ -59,6 +59,44 @@ public class FederatedRequest implements Serializable {
 	private List<Long> _checksums;
 	private long _pid;
 	private String _lineageTrace; // the serialized lineage trace of a put object
+	private PlannerRuntimeAuthority _plannerRuntimeAuthority;
+
+	/**
+	 * Serializable proof that this request was emitted while executing one exact, planner-proved
+	 * coordinator FED instruction.  Workers use this immutable descriptor to classify parsed CP
+	 * instructions/UDFs as implementation fragments of that parent instead of unplanned Hops.
+	 */
+	public static final class PlannerRuntimeAuthority implements Serializable {
+		private static final long serialVersionUID = 1L;
+
+		private final String _planHash;
+		private final String _parentAuditKey;
+		private final String _parentOpcode;
+		private final String _parentPhysical;
+		private final long _parentHopId;
+		private final long _parentLopId;
+		private final String _parentRecompileSignature;
+
+		public PlannerRuntimeAuthority(String planHash, String parentAuditKey,
+			String parentOpcode, String parentPhysical, long parentHopId, long parentLopId,
+			String parentRecompileSignature) {
+			_planHash = planHash;
+			_parentAuditKey = parentAuditKey;
+			_parentOpcode = parentOpcode;
+			_parentPhysical = parentPhysical;
+			_parentHopId = parentHopId;
+			_parentLopId = parentLopId;
+			_parentRecompileSignature = parentRecompileSignature;
+		}
+
+		public String getPlanHash() { return _planHash; }
+		public String getParentAuditKey() { return _parentAuditKey; }
+		public String getParentOpcode() { return _parentOpcode; }
+		public String getParentPhysical() { return _parentPhysical; }
+		public long getParentHopId() { return _parentHopId; }
+		public long getParentLopId() { return _parentLopId; }
+		public String getParentRecompileSignature() { return _parentRecompileSignature; }
+	}
 
 	public FederatedRequest(RequestType method) {
 		this(method, FederationUtils.getNextFedDataID(), new ArrayList<>());
@@ -124,8 +162,22 @@ public class FederatedRequest implements Serializable {
 		return _data.size();
 	}
 
+	public PlannerRuntimeAuthority getPlannerRuntimeAuthority() {
+		return _plannerRuntimeAuthority;
+	}
+
+	public void setPlannerRuntimeAuthority(PlannerRuntimeAuthority authority) {
+		_plannerRuntimeAuthority = authority;
+	}
+
 	public FederatedRequest deepClone() {
-		return new FederatedRequest(_method, _id, new ArrayList<>(_data));
+		FederatedRequest copy = new FederatedRequest(_method, _id, new ArrayList<>(_data));
+		copy._tid = _tid;
+		copy._pid = _pid;
+		copy._lineageTrace = _lineageTrace;
+		copy._checksums = _checksums == null ? null : new ArrayList<>(_checksums);
+		copy._plannerRuntimeAuthority = _plannerRuntimeAuthority;
+		return copy;
 	}
 
 	public void setChecksum() {

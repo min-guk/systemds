@@ -61,6 +61,7 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysds.runtime.instructions.CPInstructionParser;
@@ -219,8 +220,10 @@ public class Dag<N extends Lop>
 		// do greedy grouping of operations
 		ArrayList<Instruction> inst = doPlainInstructionGen(sb, node_v);
 
-		// cleanup instruction (e.g., create packed rmvar instructions)
-		return cleanupInstructions(inst);
+		// cleanup instruction (e.g., create packed rmvar instructions), then prove that
+		// the exact selected physical placement survived lowering before runtime sees it.
+		ArrayList<Instruction> cleaned = cleanupInstructions(inst);
+		return PlannerRuntimePlacementAudit.verifyLowering(logicalHopRoots, node_v, cleaned);
 	}
 
 	private static boolean isFederatedMatrixLop(Lop lop) {
@@ -385,6 +388,9 @@ public class Dag<N extends Lop>
 			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = plan.spec;
 			UnaryCP materialize = new UnaryCP(producer, OpOp1.PREFETCH,
 				producer.getDataType(), producer.getValueType(), ExecType.CP);
+			if(spec.getPlannerActionKey() != null)
+				materialize.setPlannerSyntheticActionKey(
+					PlannerRuntimePlacementAudit.syntheticActionKey(spec.getPlannerActionKey(), "LOCAL"));
 			materialize.getOutputParameters().setLabel(getNextUniqueVarname(materialize.getDataType()));
 			if (producer.getOutputParameters() != null)
 				copyOutputParams(materialize.getOutputParameters(), producer.getOutputParameters());
@@ -420,6 +426,11 @@ public class Dag<N extends Lop>
 			}
 
 			if (!rewiredAny) {
+				if(plan.spec.getPlannerActionKey() != null)
+					throw new LopsException(
+						"selected exact local materialization rewired no input for hop="
+							+ producerHopId + " action=" + plan.spec.getPlannerActionKey()
+							+ " inputs=" + plan.spec.getConsumerInputs());
 				if (LOG.isDebugEnabled())
 					LOG.debug("Skipping local materialize insertion for hop=" + producerHopId
 						+ " because no selected local consumer was rewired; reason=" + spec.getReason());
@@ -434,12 +445,32 @@ public class Dag<N extends Lop>
 			if (!lops.contains(materialize))
 				lops.add(insertPos, materialize);
 			inserted = true;
+			// Mutable lowering registries are one-compilation scratch state.  An exact runtime
+			// projection is commonly registered in the default (-1) scope because the recompiler
+			// owns a copied StatementBlock.  Leaving that entry behind lets an unrelated later
+			// block mistake this already-lowered action for its own producer and either duplicate
+			// the download or fail on a stale Hop id.  Durable planner authority remains in
+			// PlannerRuntimeActionRegistry and is re-projected on the next applicable recompile.
+			if(spec.getPlannerActionKey() != null)
+				consumeExactLocalMaterializeAuthority(sbId, producerHopId, spec);
 			if (LOG_LOP_MAPPING)
 				System.out.printf("Local materialize insert: producerHop=%d inputs=%s out=%s reason=%s%n",
 					producerHopId, spec.getConsumerInputs(), materialize.getOutputParameters().getLabel(),
 					spec.getReason());
 		}
 		return inserted;
+	}
+
+	private static void consumeExactLocalMaterializeAuthority(long sbId, long producerHopId,
+		FederatedLocalMaterializeRegistry.LocalMaterializeSpec consumed) {
+		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> scopes =
+			FederatedLocalMaterializeRegistry.snapshotScopes(sbId);
+		for(long scope : sbId == -1L ? new long[] {-1L} : new long[] {-1L, sbId}) {
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec registered =
+				scopes.getOrDefault(scope, Collections.emptyMap()).get(producerHopId);
+			if(consumed.equals(registered))
+				FederatedLocalMaterializeRegistry.remove(scope, producerHopId);
+		}
 	}
 
 	private static boolean replaceProducerInput(Lop consumer, Lop producer, Lop replacement) {
@@ -579,9 +610,23 @@ public class Dag<N extends Lop>
 					lops, spec.getConsumerInputs(), local, hopId, logicalHopRoots);
 				RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
 					lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
+				Boolean plannedLocalMaterialization = spec.getRequiresLocalMaterialization();
+				if(spec.getPlannerActionKey() != null && plannedLocalMaterialization == null)
+					throw new LopsException("selected exact fed_refed authority omits its local materialization stage"
+						+ " for hop=" + hopId + " action=" + spec.getPlannerActionKey());
+				// Exact common-planner authority owns this decision. In particular, a function-local
+				// transient read can shadow a top-level federated variable with the same label. The
+				// legacy isFederatedMatrixLop name lookup then reports a false FED source even though
+				// every exact caller arm selected CP/LOUT. Re-deriving the stage here would be an
+				// implicit lowering repair; use it only for legacy registrations without an action key.
+				boolean observedLocalMaterialization = plannedLocalMaterialization == null
+					&& isFederatedMatrixLop(local);
+				boolean requiresLocalMaterialization = plannedLocalMaterialization != null
+					? plannedLocalMaterialization : observedLocalMaterialization;
 
-				plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority,
-					spec.getMaterializationFType() == null ? null : spec.getMaterializationFType().name(), consumers));
+				plans.add(new RefedInsertionPlan(hopId, local, requiresLocalMaterialization, authority,
+					spec.getMaterializationFType() == null ? null : spec.getMaterializationFType().name(), consumers,
+					spec.getPlannerActionKey()));
 			}
 		}
 		validateDistinctRefedInputOwnership(plans);
@@ -596,6 +641,9 @@ public class Dag<N extends Lop>
 				// the selected source locally before uploading it to the target worker pool.
 				localMaterialize = new UnaryCP(plan.local, OpOp1.PREFETCH,
 					plan.local.getDataType(), plan.local.getValueType(), ExecType.CP);
+				if(plan.plannerActionKey != null)
+					localMaterialize.setPlannerSyntheticActionKey(
+						PlannerRuntimePlacementAudit.syntheticActionKey(plan.plannerActionKey, "REFED_LOCAL"));
 				localMaterialize.getOutputParameters().setLabel(
 					getNextUniqueVarname(localMaterialize.getDataType()));
 				copyOutputParams(localMaterialize.getOutputParameters(), plan.local.getOutputParameters());
@@ -607,6 +655,9 @@ public class Dag<N extends Lop>
 					refedInput.getDataType(), refedInput.getValueType(), plan.materializationFType)
 				: new FederatedRefed(refedInput, plan.authority.anchorKey,
 					refedInput.getDataType(), refedInput.getValueType(), plan.materializationFType);
+			if(plan.plannerActionKey != null)
+				refed.setPlannerSyntheticActionKey(
+					PlannerRuntimePlacementAudit.syntheticActionKey(plan.plannerActionKey, "REFED"));
 			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
 			copyOutputParams(refed.getOutputParameters(), refedInput.getOutputParameters());
 			refed.setFederatedOutput(FederatedOutput.FOUT);
@@ -962,16 +1013,18 @@ public class Dag<N extends Lop>
 		private final RefedAnchorAuthority authority;
 		private final String materializationFType;
 		private final List<RefedConsumerEdge> consumers;
+		private final String plannerActionKey;
 
 		private RefedInsertionPlan(long hopId, Lop local, boolean requiresLocalMaterialization,
 			RefedAnchorAuthority authority, String materializationFType,
-			List<RefedConsumerEdge> consumers) {
+			List<RefedConsumerEdge> consumers, String plannerActionKey) {
 			this.hopId = hopId;
 			this.local = local;
 			this.requiresLocalMaterialization = requiresLocalMaterialization;
 			this.authority = authority;
 			this.materializationFType = materializationFType;
 			this.consumers = consumers;
+			this.plannerActionKey = plannerActionKey;
 		}
 	}
 
@@ -1093,9 +1146,10 @@ public class Dag<N extends Lop>
 		}
 
 			boolean inserted = false;
-			for (Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> e : entries.entrySet()) {
-				long hopId = e.getKey();
-				FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
+				for (Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> e : entries.entrySet()) {
+					long hopId = e.getKey();
+					FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
+					boolean plannerExact = spec.getPlannerActionKey() != null;
 				Lop local = hopToLop.get(hopId);
 				long anchorHopId = spec.getAnchorHopId();
 				String anchorKey = spec.getAnchorKey();
@@ -1130,7 +1184,12 @@ public class Dag<N extends Lop>
 					anchor = null;
 				}
 				boolean missingAnchor = (anchor == null && anchorKey == null);
-				if (local == null || missingAnchor) {
+					if (local == null || missingAnchor) {
+						if(plannerExact)
+							throw new LopsException("selected exact FOUT materialization is not lowerable for hop="
+								+ hopId + " anchor=" + anchorHopId + " missingLocal=" + (local == null)
+								+ " missingAnchor=" + missingAnchor + " sbId=" + sbId
+								+ " action=" + spec.getPlannerActionKey());
 					if (LOG_LOP_MAPPING) {
 						System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
 							hopId, anchorHopId, local == null, missingAnchor, sbId);
@@ -1161,9 +1220,13 @@ public class Dag<N extends Lop>
 					&& local.getExecType() == ExecType.FED
 					&& local.getFederatedOutput() == FederatedOutput.FOUT;
 				Lop materializeInput = local;
-				if (isTransientWrite) {
-					List<Lop> inputs = local.getInputs();
-					if (inputs == null || inputs.isEmpty() || inputs.get(0) == null) {
+					if (isTransientWrite) {
+						List<Lop> inputs = local.getInputs();
+						if (inputs == null || inputs.isEmpty() || inputs.get(0) == null) {
+							if(plannerExact)
+								throw new LopsException(
+									"selected exact FOUT transient write has no materialization input for hop="
+										+ hopId + " action=" + spec.getPlannerActionKey());
 						if (LOG_LOP_MAPPING)
 							System.out.printf("CP->FOUT insert skip: hop=%d transientWrite=true missingInput=true sbId=%d%n",
 								hopId, sbId);
@@ -1174,7 +1237,11 @@ public class Dag<N extends Lop>
 
 				// If the input is already federated (e.g., produced by a FED op and written via TWrite),
 				// a fed_fout materialize would fail at runtime because it expects a local input.
-				if (isFederatedMatrixLop(materializeInput)) {
+					if (isFederatedMatrixLop(materializeInput)) {
+						if(plannerExact)
+							throw new LopsException("selected exact FOUT source is already FED/FOUT for hop="
+								+ hopId + " source=" + lopIdentity(materializeInput)
+								+ " action=" + spec.getPlannerActionKey());
 					if (LOG.isDebugEnabled()) {
 						LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
 							+ spec.getAnchorHopId() + " because input is already federated");
@@ -1210,6 +1277,20 @@ public class Dag<N extends Lop>
 						: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
 							|| out instanceof FederatedFoutMaterialize));
 					if (alreadyInserted) {
+						if(plannerExact) {
+							String expectedToken = PlannerRuntimePlacementAudit.syntheticActionKey(
+								spec.getPlannerActionKey(), "FOUT");
+							List<Lop> existing = isSelectedFederatedTWrite
+								? List.of(materializeInput)
+								: local.getOutputs().stream()
+									.filter(out -> out instanceof FederatedFoutMaterialize).toList();
+							if(existing.stream().noneMatch(out -> expectedToken.equals(
+								out.getPlannerSyntheticActionKey())))
+								throw new LopsException("selected exact FOUT action conflicts with an existing "
+									+ "materializer for hop=" + hopId + " action="
+									+ spec.getPlannerActionKey() + " existingTokens=" + existing.stream()
+										.map(Lop::getPlannerSyntheticActionKey).toList());
+						}
 						String localLabel = (local.getOutputParameters() != null)
 							? local.getOutputParameters().getLabel()
 							: "null";
@@ -1226,9 +1307,12 @@ public class Dag<N extends Lop>
 							materializeInput, hopId, logicalHopRoots);
 				}
 
-				FederatedFoutMaterialize fout = (anchor != null)
-					? new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint())
-					: new FederatedFoutMaterialize(materializeInput, anchorKey, spec.getFTypeHint());
+			FederatedFoutMaterialize fout = (anchor != null)
+				? new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint())
+				: new FederatedFoutMaterialize(materializeInput, anchorKey, spec.getFTypeHint());
+			if(spec.getPlannerActionKey() != null)
+				fout.setPlannerSyntheticActionKey(
+					PlannerRuntimePlacementAudit.syntheticActionKey(spec.getPlannerActionKey(), "FOUT"));
 				fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
 				copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
 				fout.setFederatedOutput(FederatedOutput.FOUT);
@@ -2086,12 +2170,10 @@ public class Dag<N extends Lop>
 					if(currInstr == null) {
 						 throw new LopsException("Error parsing the instruction:" + inst_string);
 					}
-					if (node._beginLine != 0)
-						currInstr.setLocation(node);
-					else if ( !node.getOutputs().isEmpty() )
-						currInstr.setLocation(node.getOutputs().get(0));
-					else if ( !node.getInputs().isEmpty() )
-						currInstr.setLocation(node.getInputs().get(0));
+					// The instruction must retain the exact Lop/Hop that serialized it. Falling
+					// back to a neighbouring Lop for synthetic source locations silently changes
+					// planner occurrence identity and makes lowering/runtime auditing unsound.
+					currInstr.setLocation(node);
 					
 					inst.add(currInstr);
 				} catch (Exception e) {
@@ -2312,6 +2394,7 @@ public class Dag<N extends Lop>
 						currInstr.setLocation(node);
 					else if ( !node.getInputs().isEmpty() )
 						currInstr.setLocation(node.getInputs().get(0));
+					currInstr.setPlannerLocation(node);
 					
 					out.addLastInstruction(currInstr);
 				}
@@ -2325,6 +2408,7 @@ public class Dag<N extends Lop>
 						currInstr.setLocation(node);
 					else if ( !node.getInputs().isEmpty() )
 						currInstr.setLocation(node.getInputs().get(0));
+					currInstr.setPlannerLocation(node);
 					
 					out.addLastInstruction(currInstr);
 				}
@@ -2444,6 +2528,7 @@ public class Dag<N extends Lop>
 						Lop useNode = (!node.getInputs().isEmpty() 
 							&& node.getInputs().get(0)._beginLine != 0) ? node.getInputs().get(0) : node; 
 						currInstr.setLocation(useNode);
+						currInstr.setPlannerLocation(node);
 						
 						out.addLastInstruction(currInstr);
 					}
@@ -2492,10 +2577,16 @@ public class Dag<N extends Lop>
 						&& ((VariableCPInstruction)last).isRemoveVariableNoFile()
 						&& ((VariableCPInstruction)last).getInputs().size() == 1
 						&& ((VariableCPInstruction)last).getInput1().getName().equals(inst1.getInput2().getName()))
-						ret.remove(ret.size()-1);
-					//add fused mvvar instruction
-					ret.add(VariableCPInstruction.prepMoveInstruction(
-						inst1.getInput1().getName(), inst1.getInput2().getName()));
+							ret.remove(ret.size()-1);
+						//add fused mvvar instruction
+						Instruction move = VariableCPInstruction.prepMoveInstruction(
+							inst1.getInput1().getName(), inst1.getInput2().getName());
+						// cleanup is a physical instruction rewrite, not a new logical operation.
+						// Preserve the exact TWrite/phi Hop occurrence so placement auditing and
+						// dynamic recompilation cannot mistake the fused binding for an unplanned
+						// runtime repair.
+						move.setLocation(inst1);
+						ret.add(move);
 				}
 				else {
 					ret.add(inst1);

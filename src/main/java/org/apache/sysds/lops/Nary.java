@@ -100,6 +100,10 @@ public class Nary extends Lop {
 			sb.append(OPERAND_DELIMITOR);
 		}
 		sb.append(prepOutputOperand(output));
+		if(getExecType() == ExecType.FED) {
+			sb.append(OPERAND_DELIMITOR);
+			sb.append(_fedOutput.name());
+		}
 
 		return sb.toString();
 	}

@@ -41,7 +41,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 
 	private FEDFoutInstruction(CPOperand input, CPOperand anchor, CPOperand output, FType fTypeHint, String opcode,
 		String istr) {
-		super(FEDType.Fout, opcode, istr);
+		super(FEDType.Fout, null, opcode, istr, FederatedOutput.FOUT);
 		_input = input;
 		_anchor = anchor;
 		_output = output;
@@ -57,6 +57,15 @@ public class FEDFoutInstruction extends FEDInstruction {
 		CPOperand output = new CPOperand(parts[3]);
 		FType fType = parseFType(parts[4]);
 		return new FEDFoutInstruction(input, anchor, output, fType, parts[0], str);
+	}
+
+	public FType getMaterializationFType() {
+		return _fTypeHint;
+	}
+
+	@Override
+	public String getOutputVariableName() {
+		return _output.getName();
 	}
 
 	private static FType parseFType(String fTypeLiteral) {

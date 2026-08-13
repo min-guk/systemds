@@ -83,9 +83,9 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	private static final Path TOKEN_SCANNER = Path.of(
 		"src/test/java/org/apache/sysds/test/component/federated/placement/guard/JavaSourceTokenScanner.java");
 	private static final String ARCHITECTURE_GUARD_SHA =
-		"2b860d601bafe5165bc6a4606d40ab0efd84b8b5941541ce1109414f69aee48c";
+		"8cc9d5640cd540dec3562fc213acfbbc0ceafa8e1d878638a0e55b2df56bff6a";
 	private static final String OWNERSHIP_CLOSURE_SHA =
-		"a6286fe39edad061225405023d707c676429bb6707fa84c852628db1185c57ab";
+		"f9665e7244c942ce85103f06385ae5ad6d3f921cf59c80e78065a2db1b31cd59";
 	private static final String TOKEN_SCANNER_SHA =
 		"a80bb1b061b07743fa283631097a2966a9cf946f54bf53468ead9bfab5ac33c3";
 	// Sole-verifier artifact authority; the test freezes its source machinery separately below.

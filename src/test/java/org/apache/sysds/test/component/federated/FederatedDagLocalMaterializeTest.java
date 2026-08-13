@@ -106,6 +106,30 @@ public class FederatedDagLocalMaterializeTest {
 	}
 
 	@Test
+	public void exactRuntimeProjectionIsConsumedAfterSuccessfulLowering() throws Exception {
+		Data producer = matrixData("fed", 111L, ExecType.FED, FederatedOutput.FOUT);
+		Data unrelated = matrixData("local", 112L, ExecType.CP, FederatedOutput.LOUT);
+		FunctionCallCP consumer = new FunctionCallCP(new ArrayList<>(List.of(unrelated, producer)),
+			DMLProgram.INTERNAL_NAMESPACE, "mock", new String[] {"left", "right"},
+			new String[] {"out"}, false, ExecType.CP);
+		consumer.setHopID(211L);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+		List<Lop> lops = new ArrayList<>(List.of(producer, unrelated, consumer));
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, producer.getHopID(),
+			List.of(new ConsumerInputSpec(consumer.getHopID(), 1)), "ROW", "runtime-projection",
+			"selected-local-action");
+
+		Method insert = Dag.class.getDeclaredMethod("insertLocalMaterializeLops",
+			List.class, StatementBlock.class, List.class);
+		insert.setAccessible(true);
+		assertTrue((boolean) insert.invoke(new Dag<>(), lops, null, null));
+
+		assertTrue("exact lowering scratch authority must not leak into the next block",
+			FederatedLocalMaterializeRegistry.snapshot(-1L).isEmpty());
+		assertTrue(consumer.getInput(1) instanceof UnaryCP);
+	}
+
+	@Test
 	public void derivedFoutRewiresOnlyExactPresentConsumerInput() throws Exception {
 		Data localResult = matrixData("local-result", 301L, ExecType.FED, FederatedOutput.LOUT);
 		Data anchor = matrixData("anchor", 302L, ExecType.FED, FederatedOutput.FOUT);

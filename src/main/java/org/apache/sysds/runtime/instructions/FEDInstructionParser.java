@@ -41,6 +41,7 @@ import org.apache.sysds.runtime.instructions.fed.ParameterizedBuiltinFEDInstruct
 import org.apache.sysds.runtime.instructions.fed.QuantilePickFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuaternaryFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.ReblockFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ReorgFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TernaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction;
@@ -87,6 +88,8 @@ public class FEDInstructionParser extends InstructionParser
 				return TernaryFEDInstruction.parseInstruction(str);
 			case Reorg:
 				return ReorgFEDInstruction.parseInstruction(str);
+			case Reblock:
+				return ReblockFEDInstruction.parseInstruction(str);
 			case Append:
 				return AppendFEDInstruction.parseInstruction(str);
 			case AggregateTernary:

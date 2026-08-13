@@ -86,9 +86,12 @@ public class CampaignBDpRewireOwnerContractTest {
 		assertIdentityList(real.fixture().analysis().occurrences(), receipt.occurrences(), "B-05 originals");
 		Assert.assertFalse(real.fixture().analysis().graph().nodes().stream()
 			.anyMatch(node -> node.kind() == NodeKind.CLONE));
-		Assert.assertFalse(real.fixture().analysis().graph().nodes().stream()
-			.flatMap(node -> node.exclusions().stream())
-			.anyMatch(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT));
+		List<Node> dynamicRegionNodes = real.fixture().analysis().graph().nodes().stream()
+			.filter(node -> "recompile".equals(node.key().recompileContext())).toList();
+		Assert.assertFalse("B-05 loop must retain its dynamic-recompile region", dynamicRegionNodes.isEmpty());
+		Assert.assertTrue("Every B-05 dynamic node must exclude recompile CP/FOUT",
+			dynamicRegionNodes.stream().allMatch(node -> node.exclusions().stream()
+				.anyMatch(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT)));
 		assertSnapshotSame(before, snapshot(real));
 	}
 

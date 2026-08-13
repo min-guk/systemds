@@ -233,8 +233,8 @@ public class FederatedPlannerDpCostEstimator {
 				double replacementBytes = latentWdivmmInputPreparationBytes(child);
 				if(replacementBytes < 0.0)
 					continue;
-				FederatedPlannerDpMemoTable.FedPlan childPlan = memo.getFedPlanAfterPrune(
-					child.getHopID(), FederatedOutput.LOUT);
+				FederatedPlannerDpMemoTable.FedPlan childPlan =
+					memo.getFedPlanAfterPruneForOccurrence(child, FederatedOutput.LOUT);
 				if(childPlan == null)
 					throw new IllegalArgumentException(
 						"Latent WDivMM input has no exact LOUT child plan");
@@ -474,16 +474,16 @@ public class FederatedPlannerDpCostEstimator {
 			Hop childHop = iterator.next();
 			long childHopID = childHop.getHopID();
 
-			FederatedPlannerDpMemoTable.FedPlan childFOutFedPlan = memoTable.getFedPlanAfterPrune(childHopID,
-					FederatedOutput.FOUT);
+			FederatedPlannerDpMemoTable.FedPlan childFOutFedPlan =
+				memoTable.getFedPlanAfterPruneForOccurrence(childHop, FederatedOutput.FOUT);
 			if (childFOutFedPlan == null) {
 				lOUTOnlyinputHops.add(childHop);
 				iterator.remove();
 				continue;
 			}
 
-			FederatedPlannerDpMemoTable.FedPlan childLOutFedPlan = memoTable.getFedPlanAfterPrune(childHopID,
-					FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan childLOutFedPlan =
+				memoTable.getFedPlanAfterPruneForOccurrence(childHop, FederatedOutput.LOUT);
 			if (childLOutFedPlan == null) {
 				fOUTOnlyinputHops.add(childHop);
 				iterator.remove();
@@ -557,8 +557,8 @@ public class FederatedPlannerDpCostEstimator {
 			Hop childHop = lOUTOnlyinputHops.get(i);
 			long childHopID = childHop.getHopID();
 
-			FederatedPlannerDpMemoTable.FedPlan childLOutFedPlan = memoTable.getFedPlanAfterPrune(childHopID,
-					FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan childLOutFedPlan =
+				memoTable.getFedPlanAfterPruneForOccurrence(childHop, FederatedOutput.LOUT);
 
 			if (childLOutFedPlan == null) {
 				throw new DMLRuntimeException("Missing LOUT federated plan for child hop " + childHopID + " ("
@@ -578,8 +578,8 @@ public class FederatedPlannerDpCostEstimator {
 			Hop childHop = fOUTOnlyinputHops.get(i);
 			long childHopID = childHop.getHopID();
 
-			FederatedPlannerDpMemoTable.FedPlan childFOutFedPlan = memoTable.getFedPlanAfterPrune(childHopID,
-					FederatedOutput.FOUT);
+			FederatedPlannerDpMemoTable.FedPlan childFOutFedPlan =
+				memoTable.getFedPlanAfterPruneForOccurrence(childHop, FederatedOutput.FOUT);
 
 			if (childFOutFedPlan == null) {
 				throw new DMLRuntimeException("Missing FOUT federated plan for child hop " + childHopID + " ("

@@ -1055,7 +1055,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	
 	private static Hop simplifyScalarMatrixMult(Hop parent, Hop hi, int pos)
 	{
-		if( HopRewriteUtils.isMatrixMultiply(hi) ) //X%*%Y
+		if( HopRewriteUtils.isMatrixMultiply(hi)
+			&& plannerRewriteCanRemainCpLocal(hi) ) //X%*%Y
 		{
 			Hop left = hi.getInput(0);
 			Hop right = hi.getInput(1);
@@ -1065,6 +1066,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				UnaryOp cast = HopRewriteUtils.createUnary(left, OpOp1.CAST_AS_SCALAR);
 				BinaryOp mult = HopRewriteUtils.createBinary(cast, right, OpOp2.MULT);
+				if(hi.isPlannerPlacementSelected()) {
+					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_SCALAR_MM_CAST");
+					mult.setPlannerRewriteReplacement(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
+				}
 				
 				//add mult to parent
 				HopRewriteUtils.replaceChildReference(parent, hi, mult, pos);
@@ -1078,6 +1083,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				UnaryOp cast = HopRewriteUtils.createUnary(right, OpOp1.CAST_AS_SCALAR);
 				BinaryOp mult = HopRewriteUtils.createBinary(cast, left, OpOp2.MULT);
+				if(hi.isPlannerPlacementSelected()) {
+					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_SCALAR_MM_CAST");
+					mult.setPlannerRewriteReplacement(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
+				}
 				
 				//add mult to parent
 				HopRewriteUtils.replaceChildReference(parent, hi, mult, pos);
@@ -1090,7 +1099,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		
 		return hi;
 	}
-	
+
 	private static Hop simplifyMatrixMultDiag(Hop parent, Hop hi, int pos) 
 	{
 		Hop hnew = null;
@@ -2383,12 +2392,19 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			}
 			
 			//perform actual rewrite (if necessary)
-			if( baLeft != null && baRight != null  )
+			if( baLeft != null && baRight != null
+				&& plannerRewriteCanRemainCpLocal(hi)
+				&& plannerFusionPreservesPlacement(hi, hi2) )
 			{
 				//create new operator chain
 				ReorgOp trans = HopRewriteUtils.createTranspose(baLeft);
 				AggBinaryOp mmult = HopRewriteUtils.createMatrixMultiply(trans, baRight);
 				UnaryOp cast = HopRewriteUtils.createUnary(mmult, OpOp1.CAST_AS_SCALAR);
+				if(hi.isPlannerPlacementSelected()) {
+					trans.setPlannerLoweringAuxiliary(hi, "DYNAMIC_DOT_PRODUCT_TRANSPOSE");
+					mmult.setPlannerRewriteReplacement(hi, "DYNAMIC_DOT_PRODUCT");
+					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_DOT_PRODUCT_SCALAR_CAST");
+				}
 				
 				//rehang new subdag under parent node
 				HopRewriteUtils.replaceChildReference(parent, hi, cast, pos);
@@ -2456,7 +2472,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			if( bop.getOp() == OpOp2.PLUS && left.getDataType()==DataType.MATRIX 
 				&& HopRewriteUtils.isScalarMatrixBinaryMult(right)
 				&& HopRewriteUtils.isEqualSize(left, right)
-				&& right.getParent().size() == 1 )           //single consumer s*Y
+				&& right.getParent().size() == 1
+				&& plannerFusionPreservesPlacement(bop, right) ) //single consumer s*Y
 			{
 				Hop smid = right.getInput().get( (right.getInput(0).getDataType()==DataType.SCALAR) ? 0 : 1); 
 				Hop mright = right.getInput().get( (right.getInput(0).getDataType()==DataType.SCALAR) ? 1 : 0);
@@ -2469,7 +2486,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			else if( bop.getOp() == OpOp2.PLUS && right.getDataType()==DataType.MATRIX 
 				&& HopRewriteUtils.isScalarMatrixBinaryMult(left)
 				&& HopRewriteUtils.isEqualSize(left, right)
-				&& left.getParent().size() == 1 )            //single consumer s*Y
+				&& left.getParent().size() == 1
+				&& plannerFusionPreservesPlacement(bop, left) ) //single consumer s*Y
 			{
 				Hop smid = left.getInput().get( (left.getInput(0).getDataType()==DataType.SCALAR) ? 0 : 1); 
 				Hop mright = left.getInput().get( (left.getInput(0).getDataType()==DataType.SCALAR) ? 1 : 0);
@@ -2482,7 +2500,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			else if( bop.getOp() == OpOp2.MINUS && left.getDataType()==DataType.MATRIX 
 				&& HopRewriteUtils.isScalarMatrixBinaryMult(right)
 				&& HopRewriteUtils.isEqualSize(left, right)
-				&& right.getParent().size() == 1 )           //single consumer s*Y
+				&& right.getParent().size() == 1
+				&& plannerFusionPreservesPlacement(bop, right) ) //single consumer s*Y
 			{
 				Hop smid = right.getInput().get( (right.getInput(0).getDataType()==DataType.SCALAR) ? 0 : 1); 
 				Hop mright = right.getInput().get( (right.getInput(0).getDataType()==DataType.SCALAR) ? 1 : 0);
@@ -2494,9 +2513,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			
 			//rewire parent-child operators if rewrite applied
 			if( ternop != null ) {
-				if (right.getForcedExecType() == Types.ExecType.FED)
-					ternop.setForcedExecType(Types.ExecType.FED);
 				Hop old = hi;
+				if(old.isPlannerPlacementSelected())
+					ternop.setPlannerRewriteReplacement(old,
+						bop.getOp() == OpOp2.MINUS ? "DYNAMIC_AXPY_MINUS_MULT" : "DYNAMIC_AXPY_PLUS_MULT");
 				HopRewriteUtils.rewireAllParentChildReferences(old, ternop);
 				if( sMult != null )
 					HopRewriteUtils.cleanupUnreferenced(old, sMult);
@@ -2508,7 +2528,34 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		
 		return hi;
 	}
-	
+
+	/**
+	 * Dynamic rewrites execute after a federated planner has selected physical placement.  A
+	 * rewrite may optimize an already-local operation, but it must not turn a selected FED
+	 * operation into an unplanned coordinator helper chain.  Unconstrained compilation keeps the
+	 * historical rewrite behavior.
+	 */
+	private static boolean plannerRewriteCanRemainCpLocal(Hop hop) {
+		if(!hop.isPlannerPlacementSelected())
+			return true;
+		ExecType exec = hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
+		return exec == ExecType.CP && hop.getFederatedOutput().isForcedLocal();
+	}
+
+	/** A fusion is legal only when it does not erase a selected physical placement boundary. */
+	private static boolean plannerFusionPreservesPlacement(Hop owner, Hop folded) {
+		if(!owner.isPlannerPlacementSelected() && !folded.isPlannerPlacementSelected())
+			return true;
+		if(owner.isPlannerPlacementSelected() != folded.isPlannerPlacementSelected())
+			return false;
+		ExecType ownerExec = owner.getForcedExecType() != null
+			? owner.getForcedExecType() : owner.getExecType();
+		ExecType foldedExec = folded.getForcedExecType() != null
+			? folded.getForcedExecType() : folded.getExecType();
+		return ownerExec == foldedExec
+			&& owner.getFederatedOutput() == folded.getFederatedOutput();
+	}
+
 	private static Hop simplifyEmptyBinaryOperation(Hop parent, Hop hi, int pos) 
 	{
 		if( hi instanceof BinaryOp ) //b(?) X Y
@@ -2737,6 +2784,11 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				//remove link to right child and introduce cast
 				UnaryOp cast = HopRewriteUtils.createUnary(right, OpOp1.CAST_AS_SCALAR);
+				// This cast is a physical type adapter introduced after planner selection, not an
+				// independent placement decision.  It is legal only as a CP/LOUT helper of this
+				// exact binary owner; the runtime audit enforces that closed contract.
+				if(hi.isPlannerPlacementSelected())
+					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_BINARY_SCALAR_CAST");
 				HopRewriteUtils.replaceChildReference(hi, right, cast, 1);			
 				
 				LOG.debug("Applied simplifyScalarMVBinaryOperation.");
@@ -2833,6 +2885,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				//create new hop
 				ParameterizedBuiltinOp pbop = HopRewriteUtils
 					.createParameterizedBuiltinOp(second, args, ParamBuiltinOp.REXPAND);
+				if(hi.isPlannerPlacementSelected())
+					pbop.setPlannerRewriteReplacement(hi, "DYNAMIC_TABLE_SEQ_REXPAND");
 				HopRewriteUtils.replaceChildReference(parent, hi, pbop, pos);
 				HopRewriteUtils.cleanupUnreferenced(hi);
 				hi = pbop;
@@ -2854,6 +2908,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				//create new hop
 				ParameterizedBuiltinOp pbop = HopRewriteUtils
 					.createParameterizedBuiltinOp(first, args, ParamBuiltinOp.REXPAND);
+				if(hi.isPlannerPlacementSelected())
+					pbop.setPlannerRewriteReplacement(hi, "DYNAMIC_TABLE_SEQ_REXPAND");
 				HopRewriteUtils.replaceChildReference(parent, hi, pbop, pos);
 				HopRewriteUtils.cleanupUnreferenced(hi);
 				hi = pbop;

@@ -29,6 +29,7 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.parser.ParseInfo;
@@ -230,6 +231,7 @@ public abstract class ProgramBlock implements ParseInfo {
 
 			// pre-process instruction (inst patching, listeners, lineage)
 			tmp = currInst.preprocessInstruction(ec);
+			PlannerRuntimePlacementAudit.validateExecution(tmp);
 			if (tmp instanceof FEDInstruction)
 				((FEDInstruction) tmp).setTID(ec.getTID());
 			if (instStats)
@@ -265,9 +267,10 @@ public abstract class ProgramBlock implements ParseInfo {
 				// }
 
 				// process actual instruction
-				ec.setCurrentInstruction(tmp);
-				try {
-					tmp.processInstruction(ec);
+					ec.setCurrentInstruction(tmp);
+					try(PlannerRuntimePlacementAudit.RuntimeExecutionScope ignored =
+						PlannerRuntimePlacementAudit.beginRuntimeExecution(tmp)) {
+						tmp.processInstruction(ec);
 					// cache result
 					LineageCache.putValue(tmp, ec, et0);
 					// post-process instruction (debug)
@@ -285,6 +288,9 @@ public abstract class ProgramBlock implements ParseInfo {
 				if (DMLScript.STATISTICS_NGRAMS)
 					Statistics.maintainNGramsFromLineage(tmp, ec, t0);
 			}
+			// This point is reached only after either successful physical execution or a
+			// successful lineage-cache reuse. Audit the value actually published in the EC.
+			PlannerRuntimePlacementAudit.recordSuccessfulExecution(tmp, ec);
 
 			if (instStats && t0 != 0)
 				execTime = System.nanoTime() - t0;

@@ -85,12 +85,17 @@ public abstract class SPInstruction extends Instruction {
 		if( tmp.requiresLabelUpdate() ) //update labels only if required
 		{
 			//note: no exchange of updated instruction as labels might change in the general case
+			Instruction original = tmp;
 			String updInst = CPInstruction.updateLabels(tmp.toString(), ec.getVariables());
 			tmp = SPInstructionParser.parseSingleInstruction(updInst);
+			tmp.setLocation(original);
 		}
 
 		//robustness federated instructions (runtime assignment)
+		Instruction original = tmp;
 		tmp = FEDInstructionUtils.checkAndReplaceSP(tmp, ec);
+		if(tmp != original)
+			tmp.setLocation(original);
 
 		return tmp;
 	}

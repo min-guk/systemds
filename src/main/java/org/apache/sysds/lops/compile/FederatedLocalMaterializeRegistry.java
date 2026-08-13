@@ -80,6 +80,13 @@ public final class FederatedLocalMaterializeRegistry {
 	/** Registers planner-owned, input-occurrence-specific FOUT-to-local authority. */
 	public static void registerConsumerInputs(long sbId, long hopId,
 		List<ConsumerInputSpec> consumerInputs, String fTypeHint, String reason) {
+		registerConsumerInputs(sbId, hopId, consumerInputs, fTypeHint, reason, null);
+	}
+
+	/** Registers exact common-planner authority together with its immutable action identity. */
+	public static void registerConsumerInputs(long sbId, long hopId,
+		List<ConsumerInputSpec> consumerInputs, String fTypeHint, String reason,
+		String plannerActionKey) {
 		if(consumerInputs == null || consumerInputs.isEmpty())
 			throw new IllegalArgumentException(
 				"local materialization requires at least one exact selected consumer input");
@@ -87,7 +94,8 @@ public final class FederatedLocalMaterializeRegistry {
 			throw new IllegalArgumentException(
 				"exact local materialization does not accept null or ALL_INPUTS");
 		LOCAL_MATERIALIZE.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
-			.put(hopId, LocalMaterializeSpec.forConsumerInputs(consumerInputs, fTypeHint, reason));
+			.put(hopId, LocalMaterializeSpec.forConsumerInputs(
+				consumerInputs, fTypeHint, reason, plannerActionKey));
 	}
 
 	/** Restores one already validated typed authority without degrading exact input positions. */
@@ -172,7 +180,8 @@ public final class FederatedLocalMaterializeRegistry {
 
 	private static LocalMaterializeSpec copy(LocalMaterializeSpec spec) {
 		Objects.requireNonNull(spec, "localMaterializeSpec");
-		return LocalMaterializeSpec.copyOf(spec.getConsumerInputs(), spec.getFTypeHint(), spec.getReason());
+		return LocalMaterializeSpec.copyOf(spec.getConsumerInputs(), spec.getFTypeHint(),
+			spec.getReason(), spec.getPlannerActionKey());
 	}
 
 	/** Exact physical input identity; {@link #ALL_INPUTS} is retained for legacy registrations. */
@@ -204,26 +213,33 @@ public final class FederatedLocalMaterializeRegistry {
 		private final List<ConsumerInputSpec> _consumerInputs;
 		private final String _fTypeHint;
 		private final String _reason;
+		private final String _plannerActionKey;
 
 		public LocalMaterializeSpec(List<Long> consumerHopIds, String fTypeHint, String reason) {
-			this(consumerInputsForHopIds(consumerHopIds), fTypeHint, reason, true);
+			this(consumerInputsForHopIds(consumerHopIds), fTypeHint, reason, true, null);
 		}
 
 		private LocalMaterializeSpec(List<ConsumerInputSpec> consumerInputs,
-			String fTypeHint, String reason, boolean canonical) {
+			String fTypeHint, String reason, boolean canonical, String plannerActionKey) {
 			_consumerInputs = canonicalConsumerInputs(consumerInputs);
 			_fTypeHint = fTypeHint;
 			_reason = reason;
+			_plannerActionKey = normalizePlannerActionKey(plannerActionKey);
 		}
 
 		public static LocalMaterializeSpec forConsumerInputs(List<ConsumerInputSpec> consumerInputs,
 			String fTypeHint, String reason) {
-			return new LocalMaterializeSpec(consumerInputs, fTypeHint, reason, true);
+			return forConsumerInputs(consumerInputs, fTypeHint, reason, null);
+		}
+
+		public static LocalMaterializeSpec forConsumerInputs(List<ConsumerInputSpec> consumerInputs,
+			String fTypeHint, String reason, String plannerActionKey) {
+			return new LocalMaterializeSpec(consumerInputs, fTypeHint, reason, true, plannerActionKey);
 		}
 
 		private static LocalMaterializeSpec copyOf(List<ConsumerInputSpec> consumerInputs,
-			String fTypeHint, String reason) {
-			return new LocalMaterializeSpec(consumerInputs, fTypeHint, reason, true);
+			String fTypeHint, String reason, String plannerActionKey) {
+			return new LocalMaterializeSpec(consumerInputs, fTypeHint, reason, true, plannerActionKey);
 		}
 
 		public List<Long> getConsumerHopIds() {
@@ -243,6 +259,10 @@ public final class FederatedLocalMaterializeRegistry {
 			return _reason;
 		}
 
+		public String getPlannerActionKey() {
+			return _plannerActionKey;
+		}
+
 		@Override
 		public boolean equals(Object obj) {
 			if(this == obj)
@@ -250,13 +270,18 @@ public final class FederatedLocalMaterializeRegistry {
 			if(!(obj instanceof LocalMaterializeSpec that))
 				return false;
 			return _consumerInputs.equals(that._consumerInputs) && Objects.equals(_fTypeHint, that._fTypeHint)
-				&& Objects.equals(_reason, that._reason);
+				&& Objects.equals(_reason, that._reason)
+				&& Objects.equals(_plannerActionKey, that._plannerActionKey);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(_consumerInputs, _fTypeHint, _reason);
+			return Objects.hash(_consumerInputs, _fTypeHint, _reason, _plannerActionKey);
 		}
+	}
+
+	private static String normalizePlannerActionKey(String plannerActionKey) {
+		return plannerActionKey == null || plannerActionKey.isBlank() ? null : plannerActionKey;
 	}
 
 	private static List<ConsumerInputSpec> consumerInputsForHopIds(List<Long> consumerHopIds) {

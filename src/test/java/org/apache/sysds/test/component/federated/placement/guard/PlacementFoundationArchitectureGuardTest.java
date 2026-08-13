@@ -36,16 +36,27 @@ public class PlacementFoundationArchitectureGuardTest {
 		String before = PlacementGraphFingerprint.capture(program);
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
 		PlacementAnalysis analysis = builder.buildAnalysis(program);
+		PlacementAnalysis detached = builder.buildDetachedAnalysis(program);
 		Assert.assertSame(analysis.graph(), analysis.graph());
+		Assert.assertNotSame(analysis, detached);
+		Assert.assertEquals(analysis.analysisFingerprint(), detached.analysisFingerprint());
 		Assert.assertEquals(analysis.graph().normalizedSignature(), builder.build(program).normalizedSignature());
 		Assert.assertEquals(before, PlacementGraphFingerprint.capture(program));
+		try {
+			builder.requireAuthoritativeAnalysis(program);
+			Assert.fail("unbound program unexpectedly exposed canonical placement authority");
+		}
+		catch(IllegalStateException expected) {
+			Assert.assertTrue(expected.getMessage().contains("authoritative placement analysis"));
+		}
 		List<String> entryPoints = Stream.of(NeutralPlacementGraphBuilder.class.getDeclaredMethods())
 			.filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
 			.filter(method -> method.getReturnType() == NeutralPlacementGraph.class
 				|| method.getReturnType() == PlacementAnalysis.class)
 			.map(method -> method.getName() + ':' + method.getReturnType().getSimpleName()).sorted()
 			.collect(Collectors.toList());
-		Assert.assertEquals(List.of("build:NeutralPlacementGraph", "buildAnalysis:PlacementAnalysis"), entryPoints);
+		Assert.assertEquals(List.of("build:NeutralPlacementGraph", "buildAnalysis:PlacementAnalysis",
+			"buildDetachedAnalysis:PlacementAnalysis", "requireAuthoritativeAnalysis:PlacementAnalysis"), entryPoints);
 	}
 
 	@Test

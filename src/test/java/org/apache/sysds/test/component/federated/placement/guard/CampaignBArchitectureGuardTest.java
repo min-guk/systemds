@@ -68,6 +68,17 @@ public class CampaignBArchitectureGuardTest {
 		Assert.assertFalse(ids.contains("fallback")); Assert.assertTrue(ids.contains("FederatedPlanMinSTGraph"));
 	}
 
+	@Test public void runtimeAuditObservationBoundaryExceptionIsExactAndCannotHidePlannerEscapeHatches() {
+		String audit = "org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit";
+		Assert.assertTrue(CampaignBPlannerOwnershipClosure.isObservationBoundaryException(audit, "executioncontext"));
+		Assert.assertTrue(CampaignBPlannerOwnershipClosure.isObservationBoundaryException(audit, "getproperty"));
+		for(String forbidden : List.of("fallback", "greedy", "timeout", "neutralplacementgraphbuilder",
+			"orderedoccurrences", "getstatementblocks"))
+			Assert.assertFalse(CampaignBPlannerOwnershipClosure.isObservationBoundaryException(audit, forbidden));
+		Assert.assertFalse(CampaignBPlannerOwnershipClosure.isObservationBoundaryException(
+			"org.apache.sysds.hops.fedplanner.placement.OtherAudit", "executioncontext"));
+	}
+
 	@Test public void closureIsFilesystemOrderIndependent() throws Exception {
 		Path dir = Files.createTempDirectory("r4-order"), pkg = dir.resolve("org/apache/sysds/hops/fedplanner/order");
 		Files.createDirectories(pkg);

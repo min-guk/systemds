@@ -53,6 +53,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
@@ -206,6 +207,7 @@ public class FederatedData {
 	 */
 	public static Future<FederatedResponse> executeFederatedOperation(InetSocketAddress address,
 		FederatedRequest... request) {
+		PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(request);
 		return executeFederatedOperation(address, 1, request);
 	}
 

@@ -40,6 +40,7 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.CompilerConfig.ConfigType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.cost.ComputeCost;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.hops.recompile.Recompiler.ResetType;
 import org.apache.sysds.lops.CSVReBlock;
@@ -79,6 +80,30 @@ public abstract class Hop implements ParseInfo {
 	private static IDSequence _seqHopID = new IDSequence();
 	
 	protected final long _ID;
+	/**
+	 * Stable identity of the Hop that was present when planner authority was established.
+	 * Recompiler deep copies receive a fresh {@link #_ID}, but retain this origin so their
+	 * lowered instructions can still be checked against the exact selected planner occurrence.
+	 * Newly introduced rewrite Hops keep their own ID as origin and therefore cannot silently
+	 * borrow authority from an unrelated source-position match.
+	 */
+	protected long _plannerOriginHopID;
+	/**
+	 * Compiler/rewrite-owned physical helper attached to another planner Hop.  Such a Hop is
+	 * deliberately not allowed to manufacture an independent planner decision: lowering carries
+	 * the owner's stable identity/signature plus this closed helper kind into the runtime audit.
+	 */
+	protected String _plannerLoweringAuxiliaryKind;
+	/**
+	 * Closed rewrite contract for a newly-created Hop that physically replaces one planner
+	 * operation.  Unlike {@link #_plannerLoweringAuxiliaryKind}, this Hop is the primary runtime
+	 * operation that discharges the owner's planner decision.  The runtime audit validates the
+	 * exact owner-opcode to replacement-opcode pair before accepting its placement.
+	 */
+	protected String _plannerRewriteReplacementKind;
+	protected String _plannerLoweringOwnerRecompileSignature;
+	/** True only after this Hop has received a committed planner placement decision. */
+	protected boolean _plannerPlacementSelected;
 	protected String _name;
 	protected DataType _dataType;
 	protected ValueType _valueType;
@@ -165,6 +190,7 @@ public abstract class Hop implements ParseInfo {
 	protected Hop(){
 		//default constructor for clone
 		_ID = getNextHopID();
+		_plannerOriginHopID = _ID;
 	}
 		
 	public Hop(String l, DataType dt, ValueType vt) {
@@ -181,6 +207,66 @@ public abstract class Hop implements ParseInfo {
 	
 	public long getHopID() {
 		return _ID;
+	}
+
+	public long getPlannerOriginHopID() {
+		return _plannerOriginHopID;
+	}
+
+	public String getPlannerLoweringAuxiliaryKind() {
+		return _plannerLoweringAuxiliaryKind;
+	}
+
+	public String getPlannerRewriteReplacementKind() {
+		return _plannerRewriteReplacementKind;
+	}
+
+	public boolean isPlannerPlacementSelected() {
+		return _plannerPlacementSelected;
+	}
+
+	public void setPlannerPlacementSelected(boolean selected) {
+		_plannerPlacementSelected = selected;
+	}
+
+	/**
+	 * Mark a rewrite-created Hop as an exact physical helper of {@code owner}.  This method is
+	 * intentionally explicit and package-independent because dynamic rewrites live below
+	 * {@code org.apache.sysds.hops.rewrite}; callers must still register a closed helper contract
+	 * in {@code PlannerRuntimePlacementAudit}.
+	 */
+	public void setPlannerLoweringAuxiliary(Hop owner, String kind) {
+		if(owner == null)
+			throw new IllegalArgumentException("Planner lowering auxiliary owner must not be null");
+		if(kind == null || kind.isBlank())
+			throw new IllegalArgumentException("Planner lowering auxiliary kind must not be blank");
+		_plannerOriginHopID = owner.getPlannerOriginHopID();
+		_plannerLoweringOwnerRecompileSignature =
+			FederatedPlannerUtils.plannerRecompileSignature(owner);
+		_plannerLoweringAuxiliaryKind = kind;
+		_plannerPlacementSelected = true;
+	}
+
+	/**
+	 * Mark this rewrite-created Hop as the primary physical replacement of {@code owner}.  This
+	 * transfers exact planner identity and placement; it does not authorize a new placement or a
+	 * runtime fallback.  Each {@code kind} must be admitted by a closed opcode contract in
+	 * {@code PlannerRuntimePlacementAudit}.
+	 */
+	public void setPlannerRewriteReplacement(Hop owner, String kind) {
+		if(owner == null)
+			throw new IllegalArgumentException("Planner rewrite replacement owner must not be null");
+		if(kind == null || kind.isBlank())
+			throw new IllegalArgumentException("Planner rewrite replacement kind must not be blank");
+		_plannerOriginHopID = owner.getPlannerOriginHopID();
+		_plannerLoweringOwnerRecompileSignature =
+			FederatedPlannerUtils.plannerRecompileSignature(owner);
+		_plannerRewriteReplacementKind = kind;
+		_plannerPlacementSelected = true;
+		_etype = owner.getExecType();
+		_etypeForced = owner.getForcedExecType();
+		_federatedOutput = owner.getFederatedOutput();
+		_federatedOutputDerived = owner.isFederatedOutputDerived();
 	}
 
 	public ExecType getExecType() {
@@ -447,6 +533,17 @@ public abstract class Hop implements ParseInfo {
 		if( _requiresReblock && et != ExecType.CP )
 		{
 			Lop input = getLops();
+			// A reblock around an explicitly selected FED/FOUT producer is itself a
+			// federated physical stage. Emitting SPARK here and relying on
+			// FEDInstructionUtils to replace it at runtime makes the runtime choose a
+			// placement that the compiler did not encode. Keep local reads on the
+			// native SPARK reblock path, but lower federated inputs directly to the
+			// supported ReblockFEDInstruction path.
+			// Federated init Lops intentionally encode their execution in the
+			// instruction string and may retain ExecType.INVALID. The forced FOUT
+			// contract is therefore the exact compiler signal at this boundary.
+			if(input.getFederatedOutput() == FederatedOutput.FOUT)
+				et = ExecType.FED;
 
 			Lop reblock = null;
 			if(this instanceof DataOp // CSV
@@ -468,6 +565,21 @@ public abstract class Hop implements ParseInfo {
 			setOutputDimensions(reblock);
 			setLineNumbers(reblock);
 			setLops(reblock);
+			if(this instanceof DataOp && ((DataOp) this).getOp() == OpOpData.PERSISTENTREAD) {
+				// A persistent read has no separate executable read instruction on the
+				// Spark data-flow path: the reblock is the primary stage that consumes
+				// the external source. Mark it as an exact physical replacement so it
+				// must discharge (rather than merely borrow) the PRead plan.
+				reblock.setPlannerRewriteReplacementKind(reblock instanceof CSVReBlock
+					? "PERSISTENT_READ_CSV_REBLOCK" : "PERSISTENT_READ_REBLOCK");
+			}
+			else {
+				// Other reblocks are additional physical stages owned by this Hop; they
+				// do not discharge its primary fedinit/operation decision. Carry a closed
+				// helper kind so the audit requires both instructions.
+				reblock.setPlannerLoweringAuxiliaryKind(reblock instanceof CSVReBlock
+					? "PHYSICAL_CSV_REBLOCK" : "PHYSICAL_REBLOCK");
+			}
 		}
 	}
 
@@ -558,7 +670,7 @@ public abstract class Hop implements ParseInfo {
 		return et;
 	}
 
-	public static Lop createOffsetLop( Hop hop, boolean repCols ) {
+	public static Lop createOffsetLop(Hop hop, boolean repCols, Hop owner) {
 		Lop offset = null;
 		if( ConfigurationManager.isDynamicRecompilation() && hop.dimsKnown() ) {
 			// If dynamic recompilation is enabled and dims are known, we can replace the ncol with 
@@ -573,6 +685,13 @@ public abstract class Hop implements ParseInfo {
 		
 		offset.getOutputParameters().setDimensions(0, 0, 0, -1);
 		offset.setAllPositions(hop.getFilename(), hop.getBeginLine(), hop.getBeginColumn(), hop.getEndLine(), hop.getEndColumn());
+		// The offset is a compiler helper of the append owner, not a standalone Hop. Retain
+		// exact owner identity so the runtime audit can prove this additional instruction
+		// instead of either losing it as hop=-1 or pretending it was an independent plan.
+		offset.setHopID(owner.getHopID());
+		offset.setPlannerOriginHopID(owner.getPlannerOriginHopID());
+		offset.setPlannerRecompileSignature(FederatedPlannerUtils.plannerRecompileSignature(owner));
+		offset.setPlannerLoweringAuxiliaryKind(repCols ? "APPEND_OFFSET_NCOL" : "APPEND_OFFSET_NROW");
 		return offset;
 	}
 	
@@ -1244,8 +1363,15 @@ public abstract class Hop implements ParseInfo {
 
 	public void setLops(Lop lops) {
 		_lops = lops;
-		if (_lops != null)
+		if (_lops != null) {
 			_lops.setHopID(getHopID());
+			_lops.setPlannerOriginHopID(getPlannerOriginHopID());
+			_lops.setPlannerRecompileSignature(_plannerLoweringOwnerRecompileSignature != null
+				? _plannerLoweringOwnerRecompileSignature
+				: FederatedPlannerUtils.plannerRecompileSignature(this));
+			_lops.setPlannerLoweringAuxiliaryKind(_plannerLoweringAuxiliaryKind);
+			_lops.setPlannerRewriteReplacementKind(_plannerRewriteReplacementKind);
+		}
 	}
 
 	public boolean isVisited() {
@@ -1569,6 +1695,11 @@ public abstract class Hop implements ParseInfo {
 		if( withRefs )
 			throw new CloneNotSupportedException( "Hops deep copy w/ lops/inputs/parents not supported." );
 		
+		_plannerOriginHopID = that._plannerOriginHopID;
+		_plannerLoweringAuxiliaryKind = that._plannerLoweringAuxiliaryKind;
+		_plannerRewriteReplacementKind = that._plannerRewriteReplacementKind;
+		_plannerLoweringOwnerRecompileSignature = that._plannerLoweringOwnerRecompileSignature;
+		_plannerPlacementSelected = that._plannerPlacementSelected;
 		_name = that._name;
 		_dataType = that._dataType;
 		_valueType = that._valueType;

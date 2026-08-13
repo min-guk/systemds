@@ -53,6 +53,7 @@ import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.MapMultChain.ChainType;
+import org.apache.sysds.lops.MMTSJ.MMTSJType;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -230,6 +231,42 @@ public class FederatedDagExactRefedInputProjectionTest {
 		String instruction = inner.getLops().getInstructions("X", "v", "Xv");
 		assertTrue(instruction.startsWith("FED" + Lop.OPERAND_DELIMITOR + "ba+*"));
 		assertTrue(instruction.endsWith(Lop.OPERAND_DELIMITOR + "FOUT"));
+	}
+
+	@Test
+	public void selectedDirectFoutTransposeRemainsExplicitInsteadOfTsmmFusion() {
+		DataOp x = localHop("X", 10, 4);
+		Hop transpose = HopRewriteUtils.createTranspose(x);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(transpose, x);
+		assertEquals("The unmodified expression should be eligible for TSMM fusion",
+			MMTSJType.LEFT, outer.checkTransposeSelf());
+		transpose.setForcedExecType(ExecType.FED);
+		transpose.setFederatedOutput(FederatedOutput.FOUT);
+		outer.setForcedExecType(ExecType.FED);
+		outer.setFederatedOutput(FederatedOutput.LOUT);
+
+		assertEquals("TSMM must not erase a planner-selected direct FOUT transpose",
+			MMTSJType.NONE, outer.checkTransposeSelf());
+	}
+
+	@Test
+	public void selectedDirectFoutNestedTernaryInputRemainsExplicit() throws Exception {
+		DataOp x = localHop("X");
+		DataOp weights = localHop("weights");
+		DataOp scale = localHop("scale");
+		BinaryOp squared = HopRewriteUtils.createBinary(x, new LiteralOp(2), OpOp2.POW);
+		BinaryOp weighted = HopRewriteUtils.createBinary(squared, weights, OpOp2.MULT);
+		BinaryOp product = HopRewriteUtils.createBinary(weighted, scale, OpOp2.MULT);
+		AggUnaryOp sum = new AggUnaryOp("sum", DataType.SCALAR, ValueType.FP64,
+			AggOp.SUM, Direction.RowCol, product);
+
+		assertTrue("The unmodified expression should be eligible for ternary-aggregate fusion",
+			invokeTernaryAggregateRewriteApplicable(sum));
+		squared.setForcedExecType(ExecType.FED);
+		squared.setFederatedOutput(FederatedOutput.FOUT);
+
+		assertFalse("A nested direct FOUT selected by the planner must not be erased by ternary fusion",
+			invokeTernaryAggregateRewriteApplicable(sum));
 	}
 
 	@Test

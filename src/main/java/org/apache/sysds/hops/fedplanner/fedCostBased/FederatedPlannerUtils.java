@@ -85,6 +85,7 @@ public class FederatedPlannerUtils {
 	private static final java.util.Set<String> FED_RMVAR_PROTECTED_VARS = ConcurrentHashMap.newKeySet();
 	private static final Map<String, PlannerRecompileState> PLANNER_RECOMPILE_STATES = new ConcurrentHashMap<>();
 	private static final java.util.Set<String> AMBIGUOUS_PLANNER_RECOMPILE_STATES = ConcurrentHashMap.newKeySet();
+	private static final Map<Long, String> PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID = new ConcurrentHashMap<>();
 
 
 	/** Immutable copy of one variable's federated planner metadata. */
@@ -507,6 +508,7 @@ public class FederatedPlannerUtils {
 	public static void clearPlannerRecompileStates() {
 		PLANNER_RECOMPILE_STATES.clear();
 		AMBIGUOUS_PLANNER_RECOMPILE_STATES.clear();
+		PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.clear();
 	}
 
 	public static String plannerRecompileSignature(Hop hop) {
@@ -533,6 +535,11 @@ public class FederatedPlannerUtils {
 		String signature = plannerRecompileSignature(hop);
 		if (signature == null || signature.isEmpty() || execType == null || fedOut == null)
 			return;
+		String priorHopSignature = PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.putIfAbsent(
+			hop.getHopID(), signature);
+		if(priorHopSignature != null && !priorHopSignature.equals(signature))
+			throw new IllegalStateException("One planner Hop id has conflicting recompile signatures: hop="
+				+ hop.getHopID());
 		boolean fedOutDerived = hop.isFederatedOutputDerived();
 		if (fedOutDerived && (execType != Types.ExecType.FED || fedOut != FederatedOutput.FOUT))
 			throw new IllegalArgumentException("Derived federated output requires FED/FOUT planner state");
@@ -590,6 +597,11 @@ public class FederatedPlannerUtils {
 		return PLANNER_RECOMPILE_STATES.get(signature);
 	}
 
+	/** Stable signature of the original planner-owned Hop, used to re-project exact edge actions. */
+	public static String getPlannerRecompileSignatureForHopId(long hopId) {
+		return PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.get(hopId);
+	}
+
 
 	public static Set<String> snapshotFedInitVars() {
 		return Collections.unmodifiableSet(new HashSet<>(FED_INIT_VARS));
@@ -638,6 +650,10 @@ public class FederatedPlannerUtils {
 		return Collections.unmodifiableSet(new HashSet<>(AMBIGUOUS_PLANNER_RECOMPILE_STATES));
 	}
 
+	public static Map<Long, String> snapshotPlannerRecompileHopSignatures() {
+		return Collections.unmodifiableMap(new HashMap<>(PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID));
+	}
+
 	/** Restore one exact planner-recompile registry snapshot for transactional emission rollback/replacement. */
 	public static void restorePlannerRecompileStates(
 		Map<String, PlannerRecompileStateSnapshot> states, Set<String> ambiguousSignatures) {
@@ -664,6 +680,19 @@ public class FederatedPlannerUtils {
 				throw new IllegalArgumentException("Ambiguous planner recompile signature must not be blank");
 			PLANNER_RECOMPILE_STATES.remove(signature);
 			AMBIGUOUS_PLANNER_RECOMPILE_STATES.add(signature);
+		}
+	}
+
+	/** Restore the reverse Hop-id projection retained by exact relocation/materialization actions. */
+	public static void restorePlannerRecompileHopSignatures(Map<Long, String> signatures) {
+		if(signatures == null)
+			throw new IllegalArgumentException("Planner Hop signature snapshot must not be null");
+		PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.clear();
+		for(Entry<Long,String> entry : signatures.entrySet()) {
+			if(entry.getKey() == null || entry.getKey() < 0 || entry.getValue() == null
+				|| entry.getValue().isBlank())
+				throw new IllegalArgumentException("Planner Hop signature snapshot contains an invalid entry");
+			PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.put(entry.getKey(), entry.getValue());
 		}
 	}
 

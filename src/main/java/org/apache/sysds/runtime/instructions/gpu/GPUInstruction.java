@@ -207,8 +207,10 @@ public abstract class GPUInstruction extends Instruction implements LineageTrace
 		//instruction patching
 		if( tmp.requiresLabelUpdate() ) { //update labels only if required
 			//note: no exchange of updated instruction as labels might change in the general case
+			Instruction original = tmp;
 			String updInst = CPInstruction.updateLabels(tmp.toString(), ec.getVariables());
 			tmp = GPUInstructionParser.parseSingleInstruction(updInst);
+			tmp.setLocation(original);
 		}
 		return tmp;
 	}

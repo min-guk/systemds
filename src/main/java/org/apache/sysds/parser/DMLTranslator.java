@@ -78,11 +78,6 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.codegen.SpoofCompiler.IntegrationType;
 import org.apache.sysds.hops.codegen.SpoofCompiler.PlanCachePolicy;
-import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
-import org.apache.sysds.hops.ipa.InterProceduralAnalysis;
-import org.apache.sysds.hops.recompile.Recompiler;
-import org.apache.sysds.hops.rewrite.HopRewriteUtils;
-import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
@@ -95,6 +90,12 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
+import org.apache.sysds.hops.ipa.InterProceduralAnalysis;
+import org.apache.sysds.hops.recompile.Recompiler;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.hops.rewrite.ProgramRewriter;
+import org.apache.sysds.hops.rewrite.RewriteFederatedPlannerPhysicalNormalization;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.compile.Dag;
@@ -342,13 +343,26 @@ public class DMLTranslator
 			.getTextValue(DMLConfig.FEDERATED_PLANNER);
 		if( !(OptimizerUtils.FEDERATED_COMPILATION
 			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
-			return;
-		synchronized(dmlp) {
+		return;
+			synchronized(dmlp) {
+			// The generic dynamic rewrite pass runs before final memory estimates are
+			// available.  Normalize lowering-level physical choices only now, while
+			// placement is still unbound but dimensions and memory costs are final.
+			dmlp.requirePlacementAnalysisUnboundForHopRewrite();
+			ProgramRewriter physicalNormalizer = new ProgramRewriter(
+				new RewriteFederatedPlannerPhysicalNormalization());
+			physicalNormalizer.rewriteProgramHopDAGs(dmlp, false);
+			resetHopsDAGVisitStatus(dmlp);
+			refreshMemEstimates(dmlp);
+			resetHopsDAGVisitStatus(dmlp);
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
 			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
 
 			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
 			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :

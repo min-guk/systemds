@@ -26,6 +26,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
@@ -199,6 +200,43 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 			Map.of(argument.key(), federatedArgument, call.key(), localCallPlaceholder), "fixture");
 		Assert.assertTrue("A DML FunctionOp is a logical forwarding boundary, not a local matrix consumer",
 			normalized.selectedLocalMaterializations().isEmpty());
+	}
+
+	@Test
+	public void localFormalMaterializesFederatedArgumentAtExactFunctionCallInput() throws Exception {
+		DMLProgram program = compile(SMALL_FUNCTION_SCRIPT);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis.LogicalFunctionInputFact fact = analysis.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(candidate -> analysis.hop(candidate.sourceArgument()).orElseThrow()
+				.getDataType().isMatrix()).findFirst().orElseThrow();
+		CompiledHopKey call = analysis.requireExactPhysicalFunctionInputConsumer(fact);
+		NeutralPlacementGraph.Node argument = analysis.graph().node(fact.sourceArgument()).orElseThrow();
+		NeutralPlacementGraph.Node formal = analysis.graph().node(fact.targetRead()).orElseThrow();
+		NeutralPlacementGraph.Node callNode = analysis.graph().node(call).orElseThrow();
+		PlacementState federatedArgument = argument.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT)
+			.findFirst().orElseThrow();
+		PlacementState localFormal = formal.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow();
+		PlacementState callState = callNode.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow();
+		Map<CompiledHopKey,PlacementState> selected = new java.util.IdentityHashMap<>();
+		selected.put(argument.key(), federatedArgument);
+		selected.put(formal.key(), localFormal);
+		selected.put(call, callState);
+		Map<CompiledHopKey,PlacementEmissionState> emissions = new java.util.IdentityHashMap<>();
+		selected.forEach((key, state) -> emissions.put(key, new PlacementEmissionState(state, false)));
+
+		List<LocalMaterializationActionKey> actions = LocalMaterializationSelections.derive(
+			analysis, selected, emissions, List.of());
+		Assert.assertEquals(1, actions.size());
+		Assert.assertSame(argument.key(), actions.get(0).sourceOccurrence());
+		Assert.assertEquals(1, actions.get(0).obligations().size());
+		Assert.assertSame(call, actions.get(0).obligations().get(0).consumerOccurrence());
+		Assert.assertEquals(fact.callInputPosition(), actions.get(0).obligations().get(0).inputPosition());
+		Assert.assertSame(callState, actions.get(0).obligations().get(0).requiredPlacement());
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

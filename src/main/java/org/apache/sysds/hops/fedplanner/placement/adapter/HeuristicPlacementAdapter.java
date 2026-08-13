@@ -58,11 +58,26 @@ public final class HeuristicPlacementAdapter {
 		List<String> exclusions = policy.exclusions();
 		List<Node> filteredNodes = filteredNodes(analysis, policy);
 		NeutralPlacementGraph filtered = new NeutralPlacementGraph(filteredNodes, policy.constraints(),
-			projectRelocations(filteredNodes, base.relocationActions()),
+			projectRelocations(filteredNodes, base.relocationActions(), policy),
 			projectDerivedFoutMaterializations(filteredNodes,
 				base.derivedFoutMaterializationActions()));
 		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
-		PlacementSelection selection = new ExactPlacementSelector().select(analysis, filtered);
+		PlacementSelection selection;
+		try {
+			selection = new ExactPlacementSelector().select(analysis, filtered);
+		}
+		catch(IllegalStateException failure) {
+			List<String> impossiblePairs = filtered.constraints().stream().filter(constraint -> {
+				Node left = filtered.node(constraint.left()).orElseThrow();
+				Node right = filtered.node(constraint.right()).orElseThrow();
+				return left.emittedWork() && right.emittedWork()
+					&& left.legalAlternatives().stream().noneMatch(leftState ->
+						right.legalAlternatives().stream().anyMatch(rightState ->
+							NeutralPlacementGraph.constraintSatisfied(constraint, leftState, rightState)));
+			}).map(NeutralPlacementGraph.Constraint::normalizedSignature).toList();
+			throw new IllegalStateException(failure.getMessage() + "|heuristicImpossiblePairs="
+				+ impossiblePairs, failure);
+		}
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
 		validateProjection(analysis, filtered, assignment);
 		List<CandidateSelectionReceipt> candidateReceipts = List.copyOf(selection.selectedCandidateSelections());
@@ -105,6 +120,7 @@ public final class HeuristicPlacementAdapter {
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
 			"policy", "PATHWISE_REENTRY_POLICY_V2", "markerCount", Integer.toString(policy.markers().size()),
 			"localPrefixCount", Integer.toString(policy.localPrefix().size()),
+			"downstreamMarkerCount", Integer.toString(policy.downstreamMarkers().size()),
 			"frontierEdgeCount", Integer.toString(policy.frontiers().size()), "search", "EXHAUSTIVE",
 			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
@@ -150,6 +166,7 @@ public final class HeuristicPlacementAdapter {
 	}
 
 	private record PolicyView(Set<CompiledHopKey> markers, Set<CompiledHopKey> localPrefix,
+		Set<CompiledHopKey> downstreamMarkers,
 		Set<FrontierEdge> frontiers, List<Constraint> constraints, List<String> exclusions) { }
 
 	private static PolicyView policyView(PlacementAnalysis analysis, List<CompiledHopKey> requestedMarkers) {
@@ -157,12 +174,16 @@ public final class HeuristicPlacementAdapter {
 		for(var fact : analysis.heuristicPolicyFacts().demotions())
 			if(requestedMarkers.contains(fact.producer())) typedMarkers.add(fact.producer());
 		Set<CompiledHopKey> local = new LinkedHashSet<>();
+		Set<CompiledHopKey> downstreamMarkers = new LinkedHashSet<>();
 		Set<FrontierEdge> frontiers = new java.util.TreeSet<>();
 		List<Constraint> constraints = new ArrayList<>(analysis.graph().constraints());
 		for(var path : analysis.heuristicPolicyFacts().paths()) {
 			if(!typedMarkers.contains(path.demotion().producer()))
 				continue;
 			local.addAll(path.localPrefix());
+			for(CompiledHopKey key : path.localPrefix())
+				if(key != path.demotion().producer() && typedMarkers.contains(key))
+					downstreamMarkers.add(key);
 			for(var fact : path.reentries()) {
 				frontiers.add(new FrontierEdge(fact.sourceValueVersion(), fact.consumer(), fact.inputPosition(),
 					fact.relocationAction()));
@@ -182,7 +203,8 @@ public final class HeuristicPlacementAdapter {
 			exclusions.add("REENTRY_FRONTIER|consumer=" + frontier.consumer().normalizedSignature()
 				+ "|input=" + frontier.inputPosition() + "|value=" + frontier.sourceValue().normalizedSignature()
 				+ "|relocation=" + frontier.relocation().normalizedSignature());
-		return new PolicyView(Set.copyOf(typedMarkers), Set.copyOf(local), Set.copyOf(frontiers),
+		return new PolicyView(Set.copyOf(typedMarkers), Set.copyOf(local), Set.copyOf(downstreamMarkers),
+			Set.copyOf(frontiers),
 			constraints.stream().distinct().sorted().toList(),
 			exclusions.stream().sorted().toList());
 	}
@@ -195,7 +217,13 @@ public final class HeuristicPlacementAdapter {
 		List<Node> nodes = new ArrayList<>(analysis.graph().nodes().size());
 		for(Node node : analysis.graph().nodes()) {
 			List<PlacementState> legal = node.legalAlternatives();
-			if(policy.markers().contains(node.key()))
+			if(policy.downstreamMarkers().contains(node.key()))
+				// A second aggregate-vector marker reached after the first demotion is
+				// already on the coordinator-local prefix. Forcing it back to FED/LOUT
+				// would require an unproven REFED and violate the pathwise policy.
+				legal = legal.stream().filter(state -> state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT).toList();
+			else if(policy.markers().contains(node.key()))
 				legal = legal.stream().filter(state -> state.execType() == ExecType.FED
 					&& state.output() == FederatedOutput.LOUT && state.fType() != null
 					&& state.shapeDependent()).toList();
@@ -215,23 +243,34 @@ public final class HeuristicPlacementAdapter {
 	}
 
 	private static List<RelocationAction> projectRelocations(List<Node> nodes,
-		List<RelocationAction> relocations) {
+		List<RelocationAction> relocations, PolicyView policy) {
 		Map<ValueVersionKey, Set<PlacementState>> legalBySourceValue = new LinkedHashMap<>();
+		Set<ValueVersionKey> localValues = new LinkedHashSet<>();
 		for(Node node : nodes)
 			legalBySourceValue.computeIfAbsent(node.valueVersion(), ignored -> new LinkedHashSet<>())
 				.addAll(node.legalAlternatives());
+		for(Node node : nodes)
+			if(policy.localPrefix().contains(node.key()))
+				localValues.add(node.valueVersion());
 		List<RelocationAction> projected = new ArrayList<>(relocations.size());
 		for(RelocationAction action : relocations) {
 			Set<PlacementState> legalSourceStates = legalBySourceValue.getOrDefault(
 				action.key().sourceValueVersion(), Set.of());
-			// A direct-source placement is a shortcut proving that relocation is unnecessary when
-			// that exact source state is selected. The Heuristic policy may deliberately remove the
-			// FOUT source state from its local prefix. Retaining the shortcut after that projection
-			// would reference a state outside the selector graph; deleting the relocation itself would
-			// instead hide the required and costed local-to-federated boundary.
 			List<PlacementState> directSources = action.directSourcePlacements().stream()
 				.filter(legalSourceStates::contains).toList();
-			projected.add(new RelocationAction(action.key(), action.obligations(), directSources));
+			List<ObligationKey> obligations = action.obligations();
+			if(localValues.contains(action.key().sourceValueVersion()))
+				obligations = obligations.stream().filter(obligation -> policy.frontiers().stream()
+					.anyMatch(frontier -> frontier.sourceValue().equals(obligation.sourceValueVersion())
+						&& frontier.consumer() == obligation.consumer()
+						&& frontier.inputPosition() == obligation.inputPosition()
+						&& frontier.relocation() == obligation.relocationAction())).toList();
+			// A path-local LOUT value may be uploaded only at an exact common-analysis
+			// frontier. Removing an unproven action is policy projection, not a runtime
+			// fallback or candidate-space guard.
+			if(obligations.isEmpty())
+				continue;
+			projected.add(new RelocationAction(action.key(), obligations, directSources));
 		}
 		return List.copyOf(projected);
 	}

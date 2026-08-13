@@ -308,10 +308,17 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 	}
 
 	public String getOutputVariableName(){
-		String ret = null;
-		if( output != null )
-			ret = output.getName();
-		return ret;
+		if(output != null)
+			return output.getName();
+		// assignvar/cpvar and the in-memory two-operand mvvar publish their value
+		// under input2.  Exposing that destination is required for exact runtime
+		// placement validation of TWrite/function/loop bindings.  A three-operand
+		// mvvar moves data to a file and does not publish a symbol-table value.
+		if(opcode == VariableOperationCode.AssignVariable
+			|| opcode == VariableOperationCode.CopyVariable
+			|| opcode == VariableOperationCode.MoveVariable && getInput3() == null)
+			return getInput2() == null ? null : getInput2().getName();
+		return null;
 	}
 
 	public CPOperand getOutput(){

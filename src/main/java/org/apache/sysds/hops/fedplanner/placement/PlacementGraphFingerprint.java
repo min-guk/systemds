@@ -40,25 +40,44 @@ public final class PlacementGraphFingerprint {
 	private PlacementGraphFingerprint() { }
 
 	public static String capture(DMLProgram program) {
+		return sha256(String.join("\n", canonicalRows(program, true)));
+	}
+
+	static List<String> canonicalRows(DMLProgram program) {
+		return canonicalRows(program, true);
+	}
+
+	/** Stable program authority, excluding only the traversal-scratch visited bit. */
+	static String captureProgramAuthority(DMLProgram program) {
+		return sha256(String.join("\n", canonicalRows(program, false)));
+	}
+
+	static List<String> canonicalProgramAuthorityRows(DMLProgram program) {
+		return canonicalRows(program, false);
+	}
+
+	private static List<String> canonicalRows(DMLProgram program, boolean includeVisitStatus) {
 		List<String> rows = new ArrayList<>();
-		walkBlocks(program.getStatementBlocks(), "main", rows, null, "main");
+		walkBlocks(program.getStatementBlocks(), "main", rows, null, "main", false, includeVisitStatus);
 		program.getNamedNSFunctionStatementBlocks().entrySet().stream()
 			.sorted(java.util.Map.Entry.comparingByKey())
-			.forEach(e -> walkBlock(e.getValue(), "function/" + e.getKey(), rows, null, e.getKey()));
+			.forEach(e -> walkBlock(e.getValue(), "function/" + e.getKey(), rows, null, e.getKey(), false,
+				includeVisitStatus));
 		Collections.sort(rows);
-		return sha256(String.join("\n", rows));
+		return List.copyOf(rows);
 	}
 
 	static record HopOccurrence(Hop hop, String path, String namespace, StatementBlock block,
-		List<String> regionPath, String topology) { }
+		List<String> regionPath, String topology, boolean dynamicRecompileRegion) { }
 
 	static List<HopOccurrence> orderedOccurrences(DMLProgram program) {
 		List<HopOccurrence> result = new ArrayList<>();
 		List<String> ignored = new ArrayList<>();
-		walkBlocks(program.getStatementBlocks(), "main", ignored, result, "main");
+		walkBlocks(program.getStatementBlocks(), "main", ignored, result, "main", false, true);
 		program.getNamedNSFunctionStatementBlocks().entrySet().stream()
 			.sorted(java.util.Map.Entry.comparingByKey())
-			.forEach(e -> walkBlock(e.getValue(), "function/" + e.getKey(), ignored, result, e.getKey()));
+			.forEach(e -> walkBlock(e.getValue(), "function/" + e.getKey(), ignored, result, e.getKey(), false,
+				true));
 		return result;
 	}
 
@@ -86,13 +105,22 @@ public final class PlacementGraphFingerprint {
 	}
 
 	private static void walkBlocks(List<StatementBlock> blocks, String path, List<String> rows,
-		List<HopOccurrence> out, String namespace) {
+		List<HopOccurrence> out, String namespace, boolean inheritedDynamicRecompile,
+		boolean includeVisitStatus) {
 		for(int i = 0; blocks != null && i < blocks.size(); i++)
-			walkBlock(blocks.get(i), path + "/" + i, rows, out, namespace);
+			walkBlock(blocks.get(i), path + "/" + i, rows, out, namespace, inheritedDynamicRecompile,
+				includeVisitStatus);
 	}
 
 	private static void walkBlock(StatementBlock sb, String path, List<String> rows,
-		List<HopOccurrence> out, String namespace) {
+		List<HopOccurrence> out, String namespace, boolean inheritedDynamicRecompile,
+		boolean includeVisitStatus) {
+		// A function/loop marked recompile-once is recompiled as an entire ProgramBlock
+		// hierarchy. Individual child Hops need not carry requiresRecompile(), so the
+		// dynamic-region fact must be inherited from the owning control block. Without
+		// this fact the placement oracle can admit CP/FOUT for code that is guaranteed
+		// to pass through runtime recompilation, where CP/FOUT is forbidden.
+		boolean dynamicRecompileRegion = inheritedDynamicRecompile || sb.isRecompileOnce();
 		List<Hop> roots = new ArrayList<>();
 		if(sb.getHops() != null) roots.addAll(sb.getHops());
 		if(sb instanceof IfStatementBlock) roots.add(((IfStatementBlock) sb).getPredicateHops());
@@ -106,32 +134,41 @@ public final class PlacementGraphFingerprint {
 		roots.sort(java.util.Comparator.comparing(PlacementGraphFingerprint::semanticStructuralKey));
 		Set<Hop> seen = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int i = 0; i < roots.size(); i++)
-			walkHop(roots.get(i), path, namespace, sb, List.of(path), "root-" + i, rows, out, seen);
+			walkHop(roots.get(i), path, namespace, sb, List.of(path), "root-" + i, rows, out, seen,
+				dynamicRecompileRegion, includeVisitStatus);
 		if(sb instanceof FunctionStatementBlock)
-			walkBlocks(((FunctionStatement) sb.getStatement(0)).getBody(), path + "/body", rows, out, namespace);
+			walkBlocks(((FunctionStatement) sb.getStatement(0)).getBody(), path + "/body", rows, out, namespace,
+				dynamicRecompileRegion, includeVisitStatus);
 		else if(sb instanceof WhileStatementBlock)
-			walkBlocks(((WhileStatement) sb.getStatement(0)).getBody(), path + "/loop-body", rows, out, namespace);
+			walkBlocks(((WhileStatement) sb.getStatement(0)).getBody(), path + "/loop-body", rows, out, namespace,
+				dynamicRecompileRegion, includeVisitStatus);
 		else if(sb instanceof ForStatementBlock)
-			walkBlocks(((ForStatement) sb.getStatement(0)).getBody(), path + "/loop-body", rows, out, namespace);
+			walkBlocks(((ForStatement) sb.getStatement(0)).getBody(), path + "/loop-body", rows, out, namespace,
+				dynamicRecompileRegion, includeVisitStatus);
 		else if(sb instanceof IfStatementBlock) {
 			IfStatement stmt = (IfStatement) sb.getStatement(0);
-			walkBlocks(stmt.getIfBody(), path + "/branch-if", rows, out, namespace);
-			walkBlocks(stmt.getElseBody(), path + "/branch-else", rows, out, namespace);
+			walkBlocks(stmt.getIfBody(), path + "/branch-if", rows, out, namespace, dynamicRecompileRegion,
+				includeVisitStatus);
+			walkBlocks(stmt.getElseBody(), path + "/branch-else", rows, out, namespace, dynamicRecompileRegion,
+				includeVisitStatus);
 		}
 	}
 
 	private static void walkHop(Hop hop, String path, String namespace, StatementBlock block,
-		List<String> regionPath, String topology, List<String> rows, List<HopOccurrence> out, Set<Hop> seen) {
+		List<String> regionPath, String topology, List<String> rows, List<HopOccurrence> out, Set<Hop> seen,
+		boolean dynamicRecompileRegion, boolean includeVisitStatus) {
 		if(!seen.add(hop)) return;
 		for(int i = 0; i < hop.getInput().size(); i++)
-			walkHop(hop.getInput(i), path, namespace, block, regionPath, topology + "/input-" + i, rows, out, seen);
+			walkHop(hop.getInput(i), path, namespace, block, regionPath, topology + "/input-" + i, rows, out,
+				seen, dynamicRecompileRegion, includeVisitStatus);
 		if(hop instanceof FunctionOp) {
 			List<Hop> outputs = ((FunctionOp) hop).getOutputs();
 			for(int i = 0; outputs != null && i < outputs.size(); i++) {
 				Hop output = outputs.get(i);
 				if(output != null)
 					walkHop(output, path, namespace, block, regionPath,
-						topology + "/function-output-" + i, rows, out, seen);
+						topology + "/function-output-" + i, rows, out, seen, dynamicRecompileRegion,
+						includeVisitStatus);
 			}
 		}
 		List<String> inputs = new ArrayList<>();
@@ -142,8 +179,11 @@ public final class PlacementGraphFingerprint {
 		rows.add(path + '|' + topology + '|' + structuralKey(hop) + '|' + String.join(",", inputs) + '|'
 			+ String.join(",", parents) + '|' + hop.getExecType() + '|' + hop.getForcedExecType() + '|'
 			+ hop.getFederatedOutput() + '|' + hop.isFederatedOutputDerived() + '|'
-			+ hop.requiresRecompile() + '|' + hop.isVisited());
-		if(out != null) out.add(new HopOccurrence(hop, path, namespace, block, regionPath, topology));
+			+ hop.requiresRecompile() + '|' + dynamicRecompileRegion
+			+ (includeVisitStatus ? "|" + hop.isVisited() : ""));
+		if(out != null)
+			out.add(new HopOccurrence(hop, path, namespace, block, regionPath, topology,
+				dynamicRecompileRegion));
 	}
 
 	static String semanticStructuralKey(Hop h) {

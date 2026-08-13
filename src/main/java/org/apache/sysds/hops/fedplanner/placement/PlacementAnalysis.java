@@ -765,6 +765,15 @@ public final class PlacementAnalysis {
 	private final Runnable programMutationGuard;
 	private final boolean guardedFunctionRoots;
 
+	/**
+	 * Opaque construction-boundary authority. PlacementAnalysis can validate or advance a
+	 * transaction-owned snapshot, but it cannot traverse the program or derive a second structural
+	 * universe. NeutralPlacementGraphBuilder owns the concrete fingerprint implementation.
+	 */
+	interface ProgramStructureAuthority extends Runnable {
+		void authorizeCommittedEmission();
+	}
+
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
 		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
 		PlacementShapeFacts shapeFacts, String analysisFingerprint,
@@ -946,7 +955,7 @@ public final class PlacementAnalysis {
 			.map(fact -> Objects.requireNonNull(fact, "logical transient input fact")).sorted().toList();
 		if(!sorted.equals(supplied))
 			throw new IllegalArgumentException("Logical transient input facts are not in canonical order");
-		Map<CompiledHopKey,Set<Integer>> slots = new IdentityHashMap<>();
+		Map<CompiledHopKey,Map<CompiledHopKey,Set<Integer>>> slots = new IdentityHashMap<>();
 		for(LogicalTransientInputFact fact : sorted) {
 			if(!analysisKeysByIdentity.containsKey(fact.sourceWrite())
 				|| !analysisKeysByIdentity.containsKey(fact.targetRead()))
@@ -1003,7 +1012,8 @@ public final class PlacementAnalysis {
 			if(compiledInputEdgesInCanonicalOrder.stream().anyMatch(edge -> edge.producer() == fact.sourceWrite()
 				&& edge.consumer() == fact.targetRead() && edge.inputPosition() == fact.logicalPosition()))
 				throw new IllegalArgumentException("Logical transient input fabricated a physical edge");
-			if(!slots.computeIfAbsent(fact.targetRead(), ignored -> new java.util.HashSet<>())
+			if(!slots.computeIfAbsent(fact.sourceWrite(), ignored -> new IdentityHashMap<>())
+				.computeIfAbsent(fact.targetRead(), ignored -> new java.util.HashSet<>())
 				.add(fact.logicalPosition()))
 				throw new IllegalArgumentException("Duplicate logical transient input slot");
 		}
@@ -1133,7 +1143,7 @@ public final class PlacementAnalysis {
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
 		this(graph, occurrences, List.of(), programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
 			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
-			List.of(), deriveCompiledInputEdges(graph, occurrences));
+			List.of(), deriveCompiledInputEdges(graph, occurrences, shapeFacts));
 	}
 
 	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
@@ -1175,7 +1185,8 @@ public final class PlacementAnalysis {
 
 	private List<CompiledInputEdgeFact> validateCompiledInputEdges(List<CompiledInputEdgeFact> facts) {
 		Objects.requireNonNull(facts, "compiledInputEdges");
-		List<CompiledInputEdgeFact> expected = deriveCompiledInputEdges(graph, compiledHopOccurrences());
+		List<CompiledInputEdgeFact> expected = deriveCompiledInputEdges(
+			graph, compiledHopOccurrences(), shapeFacts);
 		if(facts.size() != expected.size())
 			throw new IllegalArgumentException("Compiled input edge facts do not exactly cover compiled matrix inputs");
 		List<CompiledInputEdgeFact> copied = new java.util.ArrayList<>(facts.size());
@@ -1208,9 +1219,10 @@ public final class PlacementAnalysis {
 	}
 
 	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(NeutralPlacementGraph graph,
-		List<HopOccurrenceProjection> occurrences) {
+		List<HopOccurrenceProjection> occurrences, PlacementShapeFacts shapeFacts) {
 		Objects.requireNonNull(graph, "graph");
 		Objects.requireNonNull(occurrences, "occurrences");
+		Objects.requireNonNull(shapeFacts, "shapeFacts");
 		List<HopOccurrenceProjection> compiled = occurrences.stream()
 			.filter(occurrence -> isCompiledHopOccurrenceKey(occurrence.key(), graph.node(occurrence.key())
 				.orElseThrow(() -> new IllegalArgumentException("Occurrence has a foreign graph key")).kind())).toList();
@@ -1228,7 +1240,9 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Compiled-input constraint has a foreign compiled owner");
 			if(constraint.inputPosition() < 0)
 				throw new IllegalArgumentException("Compiled-input constraint has no exact input position");
-			if(producer.hop().getDataType() == null || !producer.hop().getDataType().isMatrix())
+			NodeShapeFact producerShape = shapeFacts.shapeFact(producer.key()).orElseThrow(() ->
+				new IllegalArgumentException("Compiled-input producer has no builder-owned shape fact"));
+			if(producerShape.dataType() != DataType.MATRIX)
 				continue;
 			Map<Integer,Constraint> byPosition = inputsByConsumer.computeIfAbsent(consumer.key(),
 				ignored -> new LinkedHashMap<>());
@@ -1319,6 +1333,14 @@ public final class PlacementAnalysis {
 	/** Fail closed if compiler-owned program structure changed after analysis. */
 	public void assertProgramStructureUnchanged() {
 		programMutationGuard.run();
+	}
+
+	/** Transaction-internal authorization of one completely committed exact planner emission. */
+	void authorizeCommittedProgramStructure() {
+		if(programMutationGuard instanceof ProgramStructureAuthority authority)
+			authority.authorizeCommittedEmission();
+		else
+			programMutationGuard.run();
 	}
 
 	public Optional<Hop> hop(CompiledHopKey key) {
@@ -1434,6 +1456,45 @@ public final class PlacementAnalysis {
 		return facts.get(0);
 	}
 
+	/**
+	 * Resolves the physical DML {@link FunctionOp} input that carries one exact logical
+	 * caller-argument/formal binding. Matrix arguments additionally require the frozen
+	 * compiled-input fact used by placement transfers. Scalar/control arguments are
+	 * validated against the concrete FunctionOp input itself because the compiled-input
+	 * index is intentionally matrix-only and no placement transfer exists for them.
+	 */
+	public CompiledHopKey requireExactPhysicalFunctionInputConsumer(LogicalFunctionInputFact supplied) {
+		Objects.requireNonNull(supplied, "logical function input fact");
+		LogicalFunctionInputFact fact = requireExactLogicalFunctionInput(
+			supplied.sourceArgument(), supplied.targetRead(), supplied.logicalPosition());
+		if(fact != supplied)
+			throw new IllegalArgumentException("Logical function input fact is not analysis-owned");
+		List<Constraint> owners = graph.constraints().stream().filter(constraint ->
+			constraint.kind() == ConstraintKind.DOMINATES
+				&& constraint.right() == fact.boundary()
+				&& constraint.inputPosition() == fact.callInputPosition()
+				&& "function-callsite-control".equals(constraint.evidence())).toList();
+		if(owners.size() != 1)
+			throw new IllegalArgumentException(
+				"Logical function input has no unique physical call-site authority");
+		CompiledHopKey consumer = owners.get(0).left();
+		if(!isDmlFunctionCallBoundary(consumer))
+			throw new IllegalArgumentException(
+				"Logical function input consumer is not a compiled DML FunctionOp");
+		Hop sourceHop = hopsByKey.get(fact.sourceArgument());
+		Hop consumerHop = hopsByKey.get(consumer);
+		if(sourceHop == null || !(consumerHop instanceof org.apache.sysds.hops.FunctionOp)
+			|| fact.callInputPosition() < 0 || fact.callInputPosition() >= consumerHop.getInput().size()
+			|| consumerHop.getInput(fact.callInputPosition()) != sourceHop)
+			throw new IllegalArgumentException(
+				"Logical function input does not match the exact physical FunctionOp operand");
+		NodeShapeFact sourceShape = shapeFacts.shapeFact(fact.sourceArgument()).orElseThrow(() ->
+			new IllegalArgumentException("Logical function input has no builder-owned shape fact"));
+		if(sourceShape.dataType() == DataType.MATRIX)
+			requireExactCompiledInputEdge(fact.sourceArgument(), consumer, fact.callInputPosition());
+		return consumer;
+	}
+
 	public CompiledInputEdgeFact requireExactCompiledInputEdge(CompiledHopKey producer,
 		CompiledHopKey consumer, int inputPosition) {
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> byConsumer = inputEdgesByIdentity.get(
@@ -1441,8 +1502,22 @@ public final class PlacementAnalysis {
 		Map<Integer,CompiledInputEdgeFact> byPosition = byConsumer == null ? null
 			: byConsumer.get(Objects.requireNonNull(consumer, "consumer"));
 		CompiledInputEdgeFact fact = byPosition == null ? null : byPosition.get(inputPosition);
-		if(fact == null)
-			throw new IllegalArgumentException("Exact compiled input edge fact is missing or foreign");
+		if(fact == null) {
+			boolean producerOwned = inputEdgesByIdentity.keySet().stream().anyMatch(key -> key == producer);
+			boolean producerValueMatch = inputEdgesByIdentity.keySet().stream().anyMatch(key -> key.equals(producer));
+			boolean consumerOwned = byConsumer != null
+				&& byConsumer.keySet().stream().anyMatch(key -> key == consumer);
+			boolean consumerValueMatch = byConsumer != null
+				&& byConsumer.keySet().stream().anyMatch(key -> key.equals(consumer));
+			throw new IllegalArgumentException(
+				"Exact compiled input edge fact is missing or foreign: producerOwned=" + producerOwned
+					+ " producerValueMatch=" + producerValueMatch
+					+ " consumerOwned=" + consumerOwned
+					+ " consumerValueMatch=" + consumerValueMatch
+					+ " inputPosition=" + inputPosition
+					+ " producer=" + producer.normalizedSignature()
+					+ " consumer=" + consumer.normalizedSignature());
+		}
 		return fact;
 	}
 

@@ -24,6 +24,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.hops.fedplanner.FederatedCompilationTimer;
 import org.apache.sysds.runtime.controlprogram.caching.CacheStatistics;
 import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
@@ -470,6 +471,7 @@ public class Statistics
 		DMLCompressionStatistics.reset();
 
 		FederatedStatistics.reset();
+		PlannerRuntimePlacementAudit.resetForTesting();
 
 		resetCompilePhaseTimes();
 
@@ -1147,6 +1149,7 @@ public class Statistics
 			sb.append(FederatedCompilationTimer.getStringRepresentation());
 		}
 		sb.append("Total execution time:\t\t" + String.format("%.3f", getRunTime()*1e-9) + " sec.\n"); // nanoSec --> sec
+		sb.append(PlannerRuntimePlacementAudit.display());
 		if( OptimizerUtils.isSparkExecutionMode() ) {
 			if( DMLScript.STATISTICS ) //moved into stats on Shiv's request
 				sb.append("Number of compiled Spark inst:\t" + getNoOfCompiledSPInst() + ".\n");

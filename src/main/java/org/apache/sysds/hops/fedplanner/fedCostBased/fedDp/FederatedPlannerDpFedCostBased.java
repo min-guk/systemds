@@ -338,6 +338,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		List<AppliedPlanReceipt> appliedPlans, List<AdditionalRootInvocationReceipt> additionalRootInvocations,
 		List<CompiledHopKey> appliedTraversalKeys,
 		List<DeferredOutputDecisionReceipt> deferredOutputDecisionReceipts,
+		List<CompiledHopKey> supersededPreCompletionKeys,
 		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts,
 		InvocationCounters counters,
 		String analysisFingerprintBefore, String analysisFingerprintAfter,
@@ -363,6 +364,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
 			appliedTraversalKeys = List.copyOf(appliedTraversalKeys);
 			deferredOutputDecisionReceipts = List.copyOf(deferredOutputDecisionReceipts);
+			supersededPreCompletionKeys = List.copyOf(supersededPreCompletionKeys);
 			disconnectedCompletionReceipts = List.copyOf(disconnectedCompletionReceipts);
 			if(memo.analysis() != analysis || analysis != exactSelection.analysis() || memo != exactSelection.memo()
 				|| legacyOptimalPlan != exactSelection.legacyOptimalPlan()
@@ -437,13 +439,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						"Applied traversal key is absent from the normalized result");
 				previousAppliedKey = key;
 			}
-			for(int i = 0; i < expectedAppliedOrdinal; i++) {
-				CompiledHopKey rootKey =
-					memo.requirePlanCarrierOccurrence(appliedPlans.get(i).plan().getHopRef()).key();
-				if(!aggregateExplicitClosure.contains(rootKey))
-					throw new IllegalArgumentException(
-						"Applied root is absent from exact traversal authority");
-			}
 			Set<CompiledHopKey> deferredKeys = Collections.newSetFromMap(new IdentityHashMap<>());
 			Set<PlacementAnalysis.HopOccurrenceProjection> deferredOccurrences =
 				Collections.newSetFromMap(new IdentityHashMap<>());
@@ -474,6 +469,24 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				if(aggregateExplicitClosure.contains(receipt.key()))
 					throw new IllegalArgumentException(
 						"Deferred output-decision overlaps aggregate/explicit plan closure");
+			}
+			Set<CompiledHopKey> supersededKeys = Collections.newSetFromMap(new IdentityHashMap<>());
+			CompiledHopKey previousSupersededKey = null;
+			for(CompiledHopKey key : supersededPreCompletionKeys) {
+				if(key == null || !containsCompiledKeyIdentity(analysis, key)
+					|| !supersededKeys.add(key))
+					throw new IllegalArgumentException(
+						"Superseded pre-completion authority contains foreign or duplicate identity");
+				if(previousSupersededKey != null && previousSupersededKey.compareTo(key) >= 0)
+					throw new IllegalArgumentException(
+						"Superseded pre-completion keys are not in canonical order");
+				if(aggregateExplicitClosure.contains(key) || deferredKeys.contains(key))
+					throw new IllegalArgumentException(
+						"Superseded pre-completion authority remains in an active receipt category");
+				if(identityMapValue(normalizedResult.selectedEmissionStates(), key) == null)
+					throw new IllegalArgumentException(
+						"Superseded pre-completion key is absent from the normalized result");
+				previousSupersededKey = key;
 			}
 			if(disconnectedCompletionReceipts.size() != appliedPlans.size() - expectedAppliedOrdinal)
 				throw new IllegalArgumentException(
@@ -525,6 +538,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 							+ " appliedPlanOrdinal=" + receipt.appliedPlanOrdinal()
 							+ " planningHopId=" + applied.planningHopId());
 			}
+			for(CompiledHopKey key : supersededKeys)
+				if(disconnectedCompletionReceipts.stream().noneMatch(receipt ->
+					receipt.componentMembers().stream().anyMatch(member -> member == key)))
+					throw new IllegalArgumentException(
+						"Superseded pre-completion key lacks final disconnected-component authority");
+			for(int i = 0; i < expectedAppliedOrdinal; i++) {
+				CompiledHopKey rootKey =
+					memo.requirePlanCarrierOccurrence(appliedPlans.get(i).plan().getHopRef()).key();
+				if(!aggregateExplicitClosure.contains(rootKey) && !supersededKeys.contains(rootKey))
+					throw new IllegalArgumentException(
+						"Applied root is absent from active or superseded traversal authority");
+			}
 			if(counters.enumerationCount() != 1 || counters.exactSelectionCount() != 1
 				|| counters.applicationPhaseCount() != 1 || counters.appliedPlanCount() != appliedPlans.size()
 				|| counters.additionalRootInvocationCount() != additionalRootInvocations.size()
@@ -553,6 +578,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		List<AdditionalRootInvocationReceipt> additionalRootInvocations,
 		List<CompiledHopKey> appliedTraversalKeys,
 		List<DeferredOutputDecisionReceipt> deferredOutputDecisionReceipts,
+		List<CompiledHopKey> supersededPreCompletionKeys,
 		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts,
 		String analysisFingerprintBefore, String analysisFingerprintAfterSelection,
 		NormalizedPlannerResult normalizedResult) {
@@ -571,6 +597,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
 			appliedTraversalKeys = List.copyOf(appliedTraversalKeys);
 			deferredOutputDecisionReceipts = List.copyOf(deferredOutputDecisionReceipts);
+			supersededPreCompletionKeys = List.copyOf(supersededPreCompletionKeys);
 			disconnectedCompletionReceipts = List.copyOf(disconnectedCompletionReceipts);
 			if(memo.analysis() != analysis || exactSelection.analysis() != analysis
 				|| finalPlanCertificate.analysis() != analysis || normalizedResult.analysis() != analysis)
@@ -664,6 +691,62 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		@Override public String toString() { return ordinal + ":" + members; }
 	}
 
+	private record OrdinaryComponentTopology(
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing,
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected) { }
+
+	/**
+	 * Exact-join search observes a child plan only through the value boundary that
+	 * the parent consumes.  Keep occurrence identity (not value equality) because
+	 * the join maps are identity-authoritative over one frozen PlacementAnalysis.
+	 */
+	private record ExactJoinChildBoundary(CompiledHopKey occurrence,
+		FederatedOutput output, FType fType) {
+		@Override
+		public boolean equals(Object obj) {
+			return obj instanceof ExactJoinChildBoundary other
+				&& occurrence == other.occurrence && output == other.output && fType == other.fType;
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * (31 * System.identityHashCode(occurrence) + output.hashCode())
+				+ Objects.hashCode(fType);
+		}
+	}
+
+	/**
+	 * Search-behavior identity for raw/recompile variants of one exact occurrence.
+	 * Carrier Hop identity and captured cost are deliberately absent: domains are
+	 * already ordered by the original DP preference/cost, and neither value changes
+	 * legality once direct authority and ordered child boundaries are identical.
+	 */
+	private record ExactJoinSemanticKey(PlacementState state, boolean derivedFedFout,
+		CandidateSelectionReceipt candidate, List<RelocationChoiceReceipt> relocations,
+		List<ExactJoinChildBoundary> children) {
+		private ExactJoinSemanticKey {
+			relocations = List.copyOf(relocations);
+			children = List.copyOf(children);
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			return obj instanceof ExactJoinSemanticKey other
+				&& state == other.state && derivedFedFout == other.derivedFedFout
+				&& Objects.equals(candidate, other.candidate)
+				&& relocations.equals(other.relocations) && children.equals(other.children);
+		}
+
+		@Override
+		public int hashCode() {
+			int result = System.identityHashCode(state);
+			result = 31 * result + Boolean.hashCode(derivedFedFout);
+			result = 31 * result + Objects.hashCode(candidate);
+			result = 31 * result + relocations.hashCode();
+			return 31 * result + children.hashCode();
+		}
+	}
+
 	private static final class OwnerComponentIndex {
 		private final PlacementAnalysis analysis;
 		private final String fingerprint;
@@ -706,6 +789,62 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			selections = Collections.unmodifiableMap(new IdentityHashMap<>(selections));
 			if(!Double.isFinite(objective) || objective < 0)
 				throw new IllegalArgumentException("DP exact component join objective is invalid");
+		}
+	}
+
+	/** Bounded proof trail for an unsatisfiable exact-component join. */
+	private static final class ExactJoinSearchDiagnostics {
+		private int deepestIndex = -1;
+		private CompiledHopKey deepestKey;
+		private long visitedPrefixes;
+		private final Map<String,Long> rejectionCounts = new LinkedHashMap<>();
+		private final Map<String,List<String>> rejectionExamples = new LinkedHashMap<>();
+		private final List<String> deepestExamples = new ArrayList<>();
+
+		private void visit(int index, CompiledHopKey key) {
+			visitedPrefixes++;
+			if(index > deepestIndex) {
+				deepestIndex = index;
+				deepestKey = key;
+				deepestExamples.clear();
+			}
+		}
+
+		private void reject(int index, CompiledHopKey key, String category, String detail) {
+			reject(index, key, category, () -> detail);
+		}
+
+		private void reject(int index, CompiledHopKey key, String category,
+			java.util.function.Supplier<String> detailSupplier) {
+			rejectionCounts.merge(category, 1L, Long::sum);
+			List<String> categoryExamples = rejectionExamples.computeIfAbsent(
+				category, ignored -> new ArrayList<>());
+			boolean retainCategoryExample = categoryExamples.size() < 2;
+			boolean retainDeepestExample = index >= deepestIndex && deepestExamples.size() < 8;
+			if(!retainCategoryExample && !retainDeepestExample)
+				return;
+			String detail = Objects.requireNonNull(detailSupplier, "detailSupplier").get();
+			if(retainCategoryExample)
+				categoryExamples.add(index + ":" + compactOccurrence(key) + ':' + detail);
+			if(!retainDeepestExample)
+				return;
+			if(index > deepestIndex) {
+				deepestIndex = index;
+				deepestKey = key;
+				deepestExamples.clear();
+			}
+			deepestExamples.add(category + ':' + detail);
+		}
+
+		private String summary(
+			Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains) {
+			return "visited=" + visitedPrefixes + ",deepest=" + deepestIndex + ':'
+				+ compactOccurrence(deepestKey) + ",counts=" + rejectionCounts
+				+ ",examples=" + deepestExamples + ",categoryExamples=" + rejectionExamples
+				+ ",domain="
+				+ (deepestKey == null || domains.get(deepestKey) == null ? "-"
+					: domains.get(deepestKey).stream().map(
+						FederatedPlannerDpFedCostBased::compactPlanArm).toList());
 		}
 	}
 
@@ -841,6 +980,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			// contradiction only after optimization.
 			locks.putAll(componentJoinLocks);
 			for(Map.Entry<CompiledHopKey,SelectedChildResolution> entry : dependencySelections.entrySet()) {
+				// A parent component owns only the value boundary consumed from its foreign
+				// child. The child owner must remain free to select its own internal exact
+				// arm, so do not turn an incoming boundary preference into an exact self-lock.
+				if(ownerIndex.owner(entry.getKey()) == component)
+					continue;
 				SelectedChildResolution dependency = entry.getValue();
 				FederatedPlannerDpMemoTable.FedPlan ownerPlan = dependency.canonicalOwnerPlan();
 				locks.put(entry.getKey(), new SelectedDpState(dependency.state().execType(),
@@ -1091,9 +1235,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(owner != null && owner != source) {
 				dependencies.add(child.key());
 				SelectedChildResolution previous = dependencySelections.putIfAbsent(child.key(), child);
-				if(previous != null && (previous.canonicalOwnerPlan() != child.canonicalOwnerPlan()
-					|| previous.occurrence() != child.occurrence() || previous.state() != child.state()
-					|| previous.derivedFedFout() != child.derivedFedFout()))
+				if(previous != null && (previous.occurrence() != child.occurrence()
+					|| !sameConsumableBoundary(selectedState(previous.canonicalOwnerPlan()),
+						selectedState(child.canonicalOwnerPlan()))))
 					throw new IllegalStateException("DP dependency has disagreeing exact selected arms: "
 						+ child.key());
 				matchDependencyReceipt(child.key(), child);
@@ -1113,28 +1257,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				? selection.canonicalOwnerPlan() : null;
 		}
 
-		private SelectedChildResolution declareForeignDependencyClosure(OrdinaryComponentId source,
+		private SelectedChildResolution declareForeignDependency(OrdinaryComponentId source,
 			SelectedChildResolution root, FederatedPlannerDpMemoTable memoTable,
-			Map<Long,FederatedOutput> outputDecisions, Map<Long,ConflictEntry> conflicts) {
-			Set<CompiledHopKey> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-			return declareForeignDependencyClosure(
-				source, root, memoTable, outputDecisions, conflicts, visited);
-		}
-
-		private SelectedChildResolution declareForeignDependencyClosure(OrdinaryComponentId source,
-			SelectedChildResolution current, FederatedPlannerDpMemoTable memoTable,
-			Map<Long,FederatedOutput> outputDecisions, Map<Long,ConflictEntry> conflicts,
-			Set<CompiledHopKey> visited) {
+			Map<Long,FederatedOutput> outputDecisions) {
+			SelectedChildResolution current = root;
 			if(current == null)
 				return null;
 			current = refineDependencyOwnerPlan(current, memoTable, outputDecisions);
-			if(!visited.add(current.key()))
-				return current;
 			FederatedPlannerDpMemoTable.FedPlan plan = current.canonicalOwnerPlan();
-			// A foreign owner can expose descendants that were not part of the source
-			// component's root simulation. Close that local subtree with the same DP
-			// conflict resolver while treating every already selected occurrence as a
-			// hard output boundary.
+			// The source component owns the direct child boundary selected by its local
+			// parent/child recurrence. It does not own the foreign child's descendants:
+			// recursively registering that subtree hard-locked TRead/TWrite and function
+			// families before their owner component could form a legal exact forest.
+			// Resolve and refine only this boundary root. The child owner will traverse
+			// and select its internal descendants under the declared boundary state.
 			Map<Long,FederatedOutput> resolved = resolveOutputDecisionsWithLocks(
 				memoTable, plan, outputDecisions, committedOutputLocks(memoTable));
 			outputDecisions.putAll(resolved);
@@ -1146,28 +1282,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			OrdinaryComponentId currentOwner = ownerIndex.owner(current.key());
 			if(currentOwner != null && currentOwner != source) {
 				dependencies.add(current.key());
-				SelectedChildResolution previous = dependencySelections.put(current.key(), current);
+				SelectedChildResolution previous = dependencySelections.putIfAbsent(current.key(), current);
 				if(previous != null && (previous.occurrence() != current.occurrence()
-					|| previous.state() != current.state()
-					|| previous.derivedFedFout() != current.derivedFedFout()
-					|| !sameExactAuthority(selectedState(previous.canonicalOwnerPlan()),
+					|| !sameConsumableBoundary(selectedState(previous.canonicalOwnerPlan()),
 						selectedState(current.canonicalOwnerPlan()))))
-					throw new IllegalStateException("DP transitive dependency has disagreeing exact arms: "
+					throw new IllegalStateException("DP direct dependency has disagreeing value boundaries: "
 						+ current.key() + " previous=" + describePlanArm(previous.canonicalOwnerPlan())
 						+ " required=" + describePlanArm(current.canonicalOwnerPlan()));
-				matchDependencyReceipt(current.key(), current);
-			}
-			for(int childOrdinal = 0; childOrdinal < plan.getExactChildPlanEdges().size(); childOrdinal++) {
-				SelectedChildResolution child = resolveExactTraversalChild(
-					memoTable, plan, childOrdinal, this, outputDecisions, conflicts);
-				if(child == null)
-					throw new IllegalStateException("DP transitive dependency closure conflicts at parent="
-						+ current.key() + " ordinal=" + childOrdinal + " parentPlan="
-						+ describePlanArm(plan) + " resolution=" + exactTraversalResolutionDiagnostic(
-							memoTable, plan.getExactChildPlanEdges().get(childOrdinal), this));
-				verifyBoundaryLock(child);
-				declareForeignDependencyClosure(
-					source, child, memoTable, outputDecisions, conflicts, visited);
+				matchDependencyReceipt(current.key(), previous == null ? current : previous);
 			}
 			return current;
 		}
@@ -1189,7 +1311,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				// incorrectly rejected legal CP/LOUT variants that consume a FOUT child.
 				if(boundary != null
 					? !sameExactAuthority(requestedAuthority, selectedState(candidate))
-					: !samePhysicalAuthority(requestedAuthority, selectedState(candidate)))
+					: !sameConsumableBoundary(requestedAuthority, selectedState(candidate)))
 					continue;
 				if(!isCompatibleWithChildDecisions(memoTable, candidate, outputDecisions))
 					continue;
@@ -1334,8 +1456,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(receipt.analysis != ownerIndex.analysis
 				|| !receipt.fingerprint.equals(ownerIndex.fingerprint)
 				|| receipt.owner != owner || receipt.occurrence != dependency.occurrence()
-				|| receipt.plan != dependency.canonicalOwnerPlan() || receipt.state != dependency.state()
-				|| receipt.derivedFedFout != dependency.derivedFedFout())
+				|| !sameConsumableBoundary(selectedState(receipt.plan),
+					selectedState(dependency.canonicalOwnerPlan())))
 				throw new IllegalStateException("DP dependency owner receipt differs: " + key
 					+ "|receiptOwner=" + receipt.owner + "|expectedOwner=" + owner
 					+ "|receiptPlan=" + describePlanArm(receipt.plan)
@@ -1593,17 +1715,23 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					seed.getFedOutType(), seed, seedHop, executableHopId, executableHop));
 		}
 
-		List<CompiledHopKey> appliedTraversalKeys =
+		List<CompiledHopKey> initialAppliedTraversalKeys =
 			selectedStates.keySet().stream().sorted().toList();
 		Set<CompiledHopKey> aggregateExplicitClosure =
 			Collections.newSetFromMap(new IdentityHashMap<>());
-		aggregateExplicitClosure.addAll(appliedTraversalKeys);
+		aggregateExplicitClosure.addAll(initialAppliedTraversalKeys);
 		applyDeferredOutputDecisionStates(
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates,
 			Collections.unmodifiableSet(aggregateExplicitClosure), deferredOutputDecisionReceipts);
-		completeDisconnectedDecisionAuthority(analysis, memoTable, outputDecisions, visitedPlanHops,
+		Set<CompiledHopKey> supersededPreCompletionSet = completeDisconnectedDecisionAuthority(
+			analysis, memoTable, outputDecisions, visitedPlanHops,
 			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates, appliedPlans,
 			disconnectedCompletionReceipts);
+		List<CompiledHopKey> supersededPreCompletionKeys =
+			reclassifySupersededPreCompletionAuthority(initialAppliedTraversalKeys,
+				deferredOutputDecisionReceipts, supersededPreCompletionSet, selectedStates);
+		List<CompiledHopKey> appliedTraversalKeys = initialAppliedTraversalKeys.stream()
+			.filter(key -> !supersededPreCompletionSet.contains(key)).toList();
 		reconcileDeferredOutputDecisionReceipts(
 			memoTable, selectedStates, deferredOutputDecisionReceipts);
 		FinalPlanCertificate finalPlanCertificate = certifyFinalPlanForest(analysis, memoTable, selectedStates);
@@ -1615,6 +1743,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return new DpPreEmissionSelection(analysis, memoTable, optimalPlan, exactSelection,
 			finalPlanCertificate, semanticConsumption, appliedPlans,
 			additionalRootInvocations, appliedTraversalKeys, deferredOutputDecisionReceipts,
+			supersededPreCompletionKeys,
 			disconnectedCompletionReceipts, fingerprintBefore, fingerprintAfter, normalized);
 	}
 
@@ -1632,6 +1761,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			selection.legacyOptimalPlan(), selection.exactSelection(), selection.finalPlanCertificate(),
 			selection.semanticConsumption(), selection.appliedPlans(), selection.additionalRootInvocations(),
 			selection.appliedTraversalKeys(), selection.deferredOutputDecisionReceipts(),
+			selection.supersededPreCompletionKeys(),
 			selection.disconnectedCompletionReceipts(), counters, selection.analysisFingerprintBefore(),
 			fingerprintAfter, selection.normalizedResult(), emission);
 	}
@@ -1730,7 +1860,56 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			.toList();
 	}
 
-	private void completeDisconnectedDecisionAuthority(PlacementAnalysis analysis,
+	private static OrdinaryComponentTopology ordinaryComponentTopology(PlacementAnalysis analysis,
+		List<CompiledHopKey> ordinaryKeys) {
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing = new LinkedHashMap<>();
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected = new LinkedHashMap<>();
+		Map<CompiledHopKey, CompiledHopKey> canonicalKeys = new HashMap<>();
+		for(CompiledHopKey key : ordinaryKeys) {
+			CompiledHopKey previous = canonicalKeys.putIfAbsent(key, key);
+			if(previous != null && previous != key)
+				throw new IllegalStateException(
+					"DP ordinary decision universe contains duplicate key identities: " + key);
+			outgoing.put(key, Collections.newSetFromMap(new IdentityHashMap<>()));
+			undirected.put(key, Collections.newSetFromMap(new IdentityHashMap<>()));
+		}
+		// The analysis-owned compiled graph is the stable component topology, except
+		// for FEDERATED-source constructor arguments: those inputs build the source's
+		// FederationMap but are deliberately not executable children of its fixed leaf
+		// plan. Keeping such an edge makes an owner component impossible to traverse.
+		for(PlacementAnalysis.CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			CompiledHopKey producerKey = canonicalKeys.get(edge.producer());
+			CompiledHopKey consumerKey = canonicalKeys.get(edge.consumer());
+			if(producerKey == null || consumerKey == null)
+				continue;
+			Hop consumer = analysis.hop(consumerKey).orElseThrow();
+			if(consumer instanceof DataOp
+				&& ((DataOp) consumer).getOp() == Types.OpOpData.FEDERATED)
+				continue;
+			addComponentEdge(producerKey, consumerKey, outgoing, undirected);
+		}
+		// Logical transient and function-input facts are frozen execution dependencies,
+		// not merely diagnostics. A legality repair must reopen the same weak component
+		// that disconnected completion will subsequently solve.
+		for(PlacementAnalysis.LogicalTransientInputFact edge :
+			analysis.logicalTransientInputsInCanonicalOrder()) {
+			CompiledHopKey sourceKey = canonicalKeys.get(edge.sourceWrite());
+			CompiledHopKey targetKey = canonicalKeys.get(edge.targetRead());
+			if(sourceKey != null && targetKey != null)
+				addComponentEdge(sourceKey, targetKey, outgoing, undirected);
+		}
+		for(PlacementAnalysis.LogicalFunctionInputFact edge :
+			analysis.logicalFunctionInputsInCanonicalOrder()) {
+			CompiledHopKey sourceKey = canonicalKeys.get(edge.sourceArgument());
+			CompiledHopKey targetKey = canonicalKeys.get(edge.targetRead());
+			if(sourceKey != null && targetKey != null)
+				addComponentEdge(sourceKey, targetKey, outgoing, undirected);
+		}
+		addComponentOwnershipEdges(analysis, undirected, canonicalKeys);
+		return new OrdinaryComponentTopology(outgoing, undirected);
+	}
+
+	private Set<CompiledHopKey> completeDisconnectedDecisionAuthority(PlacementAnalysis analysis,
 		FederatedPlannerDpMemoTable memoTable, Map<Long, FederatedOutput> outputDecisions,
 		Set<CompiledHopKey> visitedPlanHops, Map<Long, FType> fTypeMap,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
@@ -1738,39 +1917,36 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<CompiledHopKey, SelectedDpState> selectedStates,
 		List<AppliedPlanReceipt> appliedPlans,
 		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts) {
+		Set<CompiledHopKey> legalityRepairKeys = exactLegalityRepairClosure(
+			analysis, memoTable, selectedStates);
+		Set<CompiledHopKey> supersededPreCompletionKeys =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		if(!legalityRepairKeys.isEmpty()) {
+			// The aggregate/local DP traversal is a preference, not authority to emit an
+			// illegal exact tuple. Re-open the violated family's complete canonical owner
+			// component; unaffected components remain hard physical boundary locks.
+			for(CompiledHopKey key : legalityRepairKeys) {
+				if(selectedStates.containsKey(key))
+					supersededPreCompletionKeys.add(key);
+				PlacementAnalysis.HopOccurrenceProjection occurrence = analysis.occurrences().stream()
+					.filter(candidate -> candidate.key() == key).findFirst().orElseThrow();
+				long originalHopId = memoTable.resolveOriginalHopId(occurrence.hop().getHopID());
+				selectedStates.remove(key);
+				visitedPlanHops.remove(key);
+				fTypeMap.remove(originalHopId);
+			}
+			FederatedPlannerTrace.logGlobal("DP-ExactLegality-Reopen",
+				"componentCount=" + legalityRepairKeys.size()
+					+ " supersededCount=" + supersededPreCompletionKeys.size()
+					+ " members=" + boundedSummary(
+					legalityRepairKeys.stream().sorted()
+						.map(FederatedPlannerDpFedCostBased::compactOccurrence).toList(), 24));
+		}
 		List<CompiledHopKey> ordinaryKeys = ordinaryDecisionKeys(analysis).stream()
 			.filter(key -> !selectedStates.containsKey(key)).toList();
-		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing = new LinkedHashMap<>();
-		Map<CompiledHopKey, Set<CompiledHopKey>> undirected = new LinkedHashMap<>();
-		for(CompiledHopKey key : ordinaryKeys) {
-			outgoing.put(key, new HashSet<>());
-			undirected.put(key, new HashSet<>());
-		}
-		// The analysis-owned compiled graph is the stable component topology, except
-		// for FEDERATED-source constructor arguments: those inputs build the source's
-		// FederationMap but are deliberately not executable children of its fixed leaf
-		// plan. Keeping such an edge makes an owner component impossible to traverse.
-		for(PlacementAnalysis.CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
-			Hop consumer = analysis.hop(edge.consumer()).orElseThrow();
-			if(consumer instanceof DataOp
-				&& ((DataOp) consumer).getOp() == Types.OpOpData.FEDERATED)
-				continue;
-			addComponentEdge(edge.producer(), edge.consumer(), outgoing, undirected);
-		}
-		// Logical transient facts are part of the frozen analysis topology. They may
-		// expose multiple CFG predecessors; component completion schedules every sink
-		// root and the exact traversal ledger binds the selected arm for each occurrence.
-		for(PlacementAnalysis.LogicalTransientInputFact edge : analysis.logicalTransientInputsInCanonicalOrder())
-			addComponentEdge(edge.sourceWrite(), edge.targetRead(), outgoing, undirected);
-		// Function calls are part of DP's local HOP/child recurrence. Keep missing
-		// caller/formal occurrences in one completion component, but do not run a
-		// second whole-program cost optimizer over the enumerated DP memo.
-		for(PlacementAnalysis.LogicalFunctionInputFact edge : analysis.logicalFunctionInputsInCanonicalOrder())
-			addComponentEdge(edge.sourceArgument(), edge.targetRead(), outgoing, undirected);
-		// Co-locate only actual legality relations. This search may reject an illegal
-		// combination, but it must not replace DP's locally ranked choices with a
-		// globally cheaper forest.
-		addComponentOwnershipEdges(analysis, undirected);
+		OrdinaryComponentTopology topology = ordinaryComponentTopology(analysis, ordinaryKeys);
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing = topology.outgoing();
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected = topology.undirected();
 		Set<CompiledHopKey> assigned = Collections.newSetFromMap(new IdentityHashMap<>());
 		List<OrdinaryComponentId> components = new ArrayList<>();
 		for(int componentIndex = ordinaryKeys.size() - 1; componentIndex >= 0; componentIndex--) {
@@ -1823,6 +1999,79 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 		while(progressed);
+		return supersededPreCompletionKeys;
+	}
+
+	private static Set<CompiledHopKey> exactLegalityRepairClosure(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memoTable,
+		Map<CompiledHopKey, SelectedDpState> selectedStates) {
+		Set<CompiledHopKey> repair = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Constraint constraint : analysis.graph().constraints()) {
+			if(!isExactComponentLegalityConstraint(constraint))
+				continue;
+			SelectedDpState left = selectedStates.get(constraint.left());
+			SelectedDpState right = selectedStates.get(constraint.right());
+			if(left != null && right != null && !NeutralPlacementGraph.constraintSatisfied(
+				constraint, left.exactState(), right.exactState())) {
+				repair.add(constraint.left());
+				repair.add(constraint.right());
+			}
+		}
+		if(repair.isEmpty())
+			return repair;
+
+		boolean progressed;
+		do {
+			progressed = false;
+			for(Constraint constraint : analysis.graph().constraints()) {
+				if(!isExactComponentLegalityConstraint(constraint))
+					continue;
+				if(repair.contains(constraint.left()) && selectedStates.containsKey(constraint.right()))
+					progressed |= repair.add(constraint.right());
+				if(repair.contains(constraint.right()) && selectedStates.containsKey(constraint.left()))
+					progressed |= repair.add(constraint.left());
+			}
+			for(PlacementAnalysis.CompiledInputEdgeFact edge :
+				analysis.compiledInputEdgesInCanonicalOrder())
+				if(repair.contains(edge.producer()) && selectedStates.containsKey(edge.consumer()))
+					progressed |= repair.add(edge.consumer());
+			for(PlacementAnalysis.LogicalTransientInputFact edge :
+				analysis.logicalTransientInputsInCanonicalOrder())
+				if(repair.contains(edge.sourceWrite()) && selectedStates.containsKey(edge.targetRead()))
+					progressed |= repair.add(edge.targetRead());
+			for(PlacementAnalysis.LogicalFunctionInputFact edge :
+				analysis.logicalFunctionInputsInCanonicalOrder())
+				if(repair.contains(edge.sourceArgument()) && selectedStates.containsKey(edge.targetRead()))
+					progressed |= repair.add(edge.targetRead());
+
+			Set<Long> repairOrigins = repair.stream().map(key -> analysis.hop(key).orElseThrow())
+				.map(Hop::getHopID).map(memoTable::resolveOriginalHopId)
+				.collect(java.util.stream.Collectors.toSet());
+			for(CompiledHopKey key : selectedStates.keySet()) {
+				long originalHopId = memoTable.resolveOriginalHopId(
+					analysis.hop(key).orElseThrow().getHopID());
+				if(repairOrigins.contains(originalHopId))
+					progressed |= repair.add(key);
+			}
+		}
+		while(progressed);
+		// Reopening only the violated endpoints leaves their already-selected producers,
+		// consumers, transient family, or function family as hard boundary locks. The
+		// exact join then has no freedom to form a coherent forest. Expand through the
+		// exact topology used by component completion so every member of an affected
+		// owner component is a candidate again; foreign components remain immutable.
+		List<CompiledHopKey> ordinaryKeys = ordinaryDecisionKeys(analysis);
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected =
+			ordinaryComponentTopology(analysis, ordinaryKeys).undirected();
+		Set<CompiledHopKey> expanded = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CompiledHopKey seed : repair) {
+			if(!undirected.containsKey(seed))
+				throw new IllegalStateException(
+					"DP exact legality violation has no ordinary component owner: " + seed);
+			if(!expanded.contains(seed))
+				expanded.addAll(collectWeakComponent(seed, undirected));
+		}
+		return expanded;
 	}
 
 	/**
@@ -1934,23 +2183,26 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	 * remain the selection authority inside the resulting component.
 	 */
 	private static void addComponentOwnershipEdges(PlacementAnalysis analysis,
-		Map<CompiledHopKey, Set<CompiledHopKey>> undirected) {
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected,
+		Map<CompiledHopKey, CompiledHopKey> canonicalKeys) {
 		Map<CompiledHopKey, Set<CompiledHopKey>> ordinaryMembersBySynthetic = new IdentityHashMap<>();
 		for(Constraint constraint : analysis.graph().constraints()) {
 			if(!isExactComponentLegalityConstraint(constraint))
 				continue;
-			boolean leftOrdinary = undirected.containsKey(constraint.left());
-			boolean rightOrdinary = undirected.containsKey(constraint.right());
+			CompiledHopKey leftKey = canonicalKeys.get(constraint.left());
+			CompiledHopKey rightKey = canonicalKeys.get(constraint.right());
+			boolean leftOrdinary = leftKey != null;
+			boolean rightOrdinary = rightKey != null;
 			if(leftOrdinary && rightOrdinary) {
-				addComponentOwnershipEdge(constraint.left(), constraint.right(), undirected);
+				addComponentOwnershipEdge(leftKey, rightKey, undirected);
 				continue;
 			}
 			if(leftOrdinary && isSyntheticFunctionBoundary(analysis, constraint.right()))
 				ordinaryMembersBySynthetic.computeIfAbsent(constraint.right(), ignored ->
-					Collections.newSetFromMap(new IdentityHashMap<>())).add(constraint.left());
+					Collections.newSetFromMap(new IdentityHashMap<>())).add(leftKey);
 			if(rightOrdinary && isSyntheticFunctionBoundary(analysis, constraint.left()))
 				ordinaryMembersBySynthetic.computeIfAbsent(constraint.left(), ignored ->
-					Collections.newSetFromMap(new IdentityHashMap<>())).add(constraint.right());
+					Collections.newSetFromMap(new IdentityHashMap<>())).add(rightKey);
 		}
 		for(Set<CompiledHopKey> members : ordinaryMembersBySynthetic.values()) {
 			CompiledHopKey first = members.stream().sorted().findFirst().orElse(null);
@@ -1975,7 +2227,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	private static List<CompiledHopKey> collectWeakComponent(CompiledHopKey first,
 		Map<CompiledHopKey, Set<CompiledHopKey>> undirected) {
-		Set<CompiledHopKey> seen = new HashSet<>();
+		Set<CompiledHopKey> seen = Collections.newSetFromMap(new IdentityHashMap<>());
 		Queue<CompiledHopKey> queue = new ArrayDeque<>();
 		queue.add(first);
 		while(!queue.isEmpty()) {
@@ -2062,6 +2314,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		List<CompiledHopKey> roots, OwnerComponentIndex ownerIndex,
 		TraversalDependencyLedger ledger, Map<Long,FederatedOutput> outputDecisions) {
 		Map<CompiledHopKey,SelectedDpState> fixed = ledger.exactJoinLocks(componentId);
+		List<CompiledHopKey> ownBoundary = componentId.members.stream()
+			.filter(ledger.boundaryLocks::containsKey).toList();
+		List<CompiledHopKey> ownJoined = componentId.members.stream()
+			.filter(ledger.componentJoinLocks::containsKey).toList();
+		if(!ownBoundary.isEmpty() || !ownJoined.isEmpty())
+			throw new IllegalStateException("DP exact join component is already hard-locked: boundary="
+				+ boundedSummary(ownBoundary.stream().map(
+					FederatedPlannerDpFedCostBased::compactOccurrence).toList(), 16)
+				+ " joined=" + boundedSummary(ownJoined.stream().map(
+					FederatedPlannerDpFedCostBased::compactOccurrence).toList(), 16));
 		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> preferredDomains =
 			new IdentityHashMap<>();
 		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> legalityDomains =
@@ -2080,13 +2342,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					preferredOutput == null || plan.getFedOutType() == preferredOutput ? 0 : 1)
 				.thenComparingDouble(FederatedPlannerDpMemoTable.FedPlan::getCumulativeCost)
 				.thenComparing(exactPlanTieOrder());
-			List<FederatedPlannerDpMemoTable.FedPlan> allArms = dependency != null ? List.of(dependency)
-				: global != null && global.retainedPlan() != null ? List.of(global.retainedPlan()) : memoTable
+			List<FederatedPlannerDpMemoTable.FedPlan> allOccurrenceArms =
+				exactJoinDomainRepresentatives(memoTable
 				.getAllExactPlanVariantsForOccurrence(occurrence).stream()
 				.map(FederatedPlannerDpMemoTable.OccurrencePlanArm::plan)
 				.filter(plan -> plan != null && plan.getSelectedPlacementState() != null)
 				.sorted(localDpOrder)
-				.toList();
+				.toList());
+			List<FederatedPlannerDpMemoTable.FedPlan> allArms = dependency != null
+				? allOccurrenceArms.stream().filter(plan -> sameConsumableBoundary(
+					selectedState(dependency), selectedState(plan))).toList()
+				: global != null && global.retainedPlan() != null
+					? List.of(global.retainedPlan()) : allOccurrenceArms;
 			if(allArms.isEmpty())
 				throw new IllegalStateException("DP memo omitted component member " + key
 					+ " preferred=" + preferredOutput
@@ -2115,9 +2382,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		List<CompiledHopKey> order = prioritizeExactJoinRoots(roots,
 			exactJoinVariableOrder(componentId, domains));
 		ExactComponentJoin[] best = {null};
+		ExactJoinSearchDiagnostics searchDiagnostics = new ExactJoinSearchDiagnostics();
 		searchExactComponentAssignment(analysis, memoTable, componentId, roots, order, domains,
 			fixed, 0, new IdentityHashMap<>(), new IdentityHashMap<>(), 0d,
-			new HashMap<>(), best);
+			new HashMap<>(), best, searchDiagnostics);
 		if(best[0] == null && domains != legalityDomains) {
 			// DP is intentionally local and its output conflict resolver normally owns
 			// LOUT/FOUT. A graph-declared global legality constraint (notably exact
@@ -2130,9 +2398,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			legalityOverrideReason = "no-coherent-preferred-output-forest";
 			order = prioritizeExactJoinRoots(roots,
 				exactJoinVariableOrder(componentId, domains));
+			searchDiagnostics = new ExactJoinSearchDiagnostics();
 			searchExactComponentAssignment(analysis, memoTable, componentId, roots, order, domains,
 				fixed, 0, new IdentityHashMap<>(), new IdentityHashMap<>(), 0d,
-				new HashMap<>(), best);
+				new HashMap<>(), best, searchDiagnostics);
 		}
 		if(best[0] != null && usedLegalityDomains && FederatedPlannerTrace.isEnabled())
 			for(CompiledHopKey member : componentId.members) {
@@ -2155,6 +2424,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				+ " constraintLocks=" + describeExactJoinConstraintLocks(analysis, fixed, domains)
 				+ " syntheticBoundaryLocks="
 					+ describeSyntheticBoundaryLocks(analysis, fixed, domains)
+				+ " search=" + searchDiagnostics.summary(domains)
 				+ " domains=" + describeExactJoinDomains(domains)
 				+ " allCarriers=" + boundedSummary(componentId.members.stream().map(key -> {
 					PlacementAnalysis.HopOccurrenceProjection occurrence = ownerIndex.occurrence(key);
@@ -2162,6 +2432,39 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						.stream().map(arm -> compactPlanArm(arm.plan())).toList();
 				}).toList(), 12));
 		return best[0];
+	}
+
+	/**
+	 * Collapse only variants that are interchangeable to the exact legality join.
+	 * The input order is the DP output preference, cumulative cost, and stable tie
+	 * order, so retaining the first member preserves DP philosophy while avoiding a
+	 * Cartesian product over duplicate raw/recompile carriers.  Ordered child edges
+	 * remain in the key because operand order is executable semantics.
+	 */
+	private static List<FederatedPlannerDpMemoTable.FedPlan> exactJoinDomainRepresentatives(
+		List<FederatedPlannerDpMemoTable.FedPlan> orderedArms) {
+		Map<ExactJoinSemanticKey,FederatedPlannerDpMemoTable.FedPlan> unique = new LinkedHashMap<>();
+		for(FederatedPlannerDpMemoTable.FedPlan plan : orderedArms)
+			unique.putIfAbsent(exactJoinSemanticKey(plan), plan);
+		return List.copyOf(unique.values());
+	}
+
+	private static ExactJoinSemanticKey exactJoinSemanticKey(
+		FederatedPlannerDpMemoTable.FedPlan plan) {
+		SelectedDpState state = selectedState(plan);
+		List<ExactJoinChildBoundary> children = new ArrayList<>();
+		for(FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge edge :
+			plan.getExactChildPlanEdges()) {
+			SelectedDpState child = selectedState(edge.selectedPlan());
+			if(edge.output() != child.output())
+				throw new IllegalStateException("DP exact join child declaration differs from selected arm: "
+					+ edge.occurrence().normalizedSignature() + " declared=" + edge.output()
+					+ " selected=" + child.output());
+			children.add(new ExactJoinChildBoundary(edge.occurrence(), child.output(),
+				child.output() == FederatedOutput.FOUT ? child.fType() : null));
+		}
+		return new ExactJoinSemanticKey(state.exactState(), state.derivedFedFout(),
+			state.directCandidateSelection(), state.directRelocationChoices(), children);
 	}
 
 	private static void reconcileExactJoinOutputDecisions(FederatedPlannerDpMemoTable memoTable,
@@ -2309,6 +2612,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			+ ":relocations=" + plan.getDirectRelocationChoices().size();
 	}
 
+	private static String compactPlanArmWithExactChildren(
+		FederatedPlannerDpMemoTable.FedPlan plan) {
+		return compactPlanArm(plan) + ",edgeOwners=" + boundedSummary(
+			plan.getExactChildPlanEdges().stream().map(edge -> edge.output() + "->"
+				+ compactOccurrence(edge.occurrence()) + '{'
+				+ compactPlanArm(edge.selectedPlan()) + '}').toList(), 6);
+	}
+
 	private static String compactOccurrence(CompiledHopKey key) {
 		return key == null ? "external" : key.canonicalSourceOrigin() + '@' + key.emittedHopInstance();
 	}
@@ -2319,7 +2630,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<CompiledHopKey,SelectedDpState> fixed, int index,
 		Map<CompiledHopKey,SelectedDpState> selections,
 		Map<CompiledHopKey,FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> requirements,
-		double cost, Map<String,Double> prefixMemo, ExactComponentJoin[] best) {
+		double cost, Map<ExactJoinMemoKey,Double> prefixMemo, ExactComponentJoin[] best) {
+		searchExactComponentAssignment(analysis, memo, componentId, roots, order, domains, fixed,
+			index, selections, requirements, cost, prefixMemo, best, new ExactJoinSearchDiagnostics());
+	}
+
+	private static void searchExactComponentAssignment(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memo, OrdinaryComponentId componentId, List<CompiledHopKey> roots,
+		List<CompiledHopKey> order, Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains,
+		Map<CompiledHopKey,SelectedDpState> fixed, int index,
+		Map<CompiledHopKey,SelectedDpState> selections,
+		Map<CompiledHopKey,FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> requirements,
+		double cost, Map<ExactJoinMemoKey,Double> prefixMemo, ExactComponentJoin[] best,
+		ExactJoinSearchDiagnostics diagnostics) {
 		if(best[0] != null)
 			return;
 		if(index == order.size()) {
@@ -2329,23 +2652,35 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			best[0] = new ExactComponentJoin(selectedRoots, selections, cost, signature);
 			return;
 		}
-		String memoKey = exactJoinSearchState(analysis, memo, order, domains,
+		ExactJoinMemoKey memoKey = exactJoinSearchState(analysis, order, domains,
 			selections, requirements, index);
 		// Domains are ordered by the original DP output proposal and each HOP's
 		// cumulative local recurrence cost. For an identical future feasibility state,
 		// the first prefix is therefore the DP-preferred one; later prefixes must not
 		// replace it with a globally cheaper whole-component assignment.
-		if(prefixMemo.putIfAbsent(memoKey, cost) != null)
-			return;
-
 		CompiledHopKey key = order.get(index);
+		diagnostics.visit(index, key);
+		if(prefixMemo.putIfAbsent(memoKey, cost) != null) {
+			diagnostics.reject(index, key, "memo", "equivalent-future-state");
+			return;
+		}
+
 		FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge required = requirements.get(key);
 		SelectedDpState fixedState = fixed.get(key);
 		for(FederatedPlannerDpMemoTable.FedPlan plan : domains.get(key)) {
 			SelectedDpState proposed = selectedState(plan);
-			if(required != null && !sameConsumableBoundary(proposed, selectedState(required.selectedPlan()))
-				|| fixedState != null && !sameExactAuthority(fixedState, proposed))
+			if(required != null && !sameConsumableBoundary(proposed, selectedState(required.selectedPlan()))) {
+				diagnostics.reject(index, key, "required-boundary", () -> compactPlanArm(plan)
+					+ " required=" + compactPlanArm(required.selectedPlan())
+					+ " sources=" + exactRequirementSources(key, selections)
+					+ " sourceDomains=" + exactRequirementSourceDomains(key, selections, domains));
 				continue;
+			}
+			if(fixedState != null && !sameExactAuthority(fixedState, proposed)) {
+				diagnostics.reject(index, key, "fixed-authority", () -> compactPlanArm(plan)
+					+ " fixed=" + exactStateDiagnostic(fixedState));
+				continue;
+			}
 			Map<CompiledHopKey,FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> nextRequirements =
 				new IdentityHashMap<>(requirements);
 			boolean compatible = true;
@@ -2364,6 +2699,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					|| existingRequirement != null && !sameConsumableBoundary(
 						selectedState(existingRequirement.selectedPlan()),
 						edgeChild)) {
+					diagnostics.reject(index, key, "child-boundary", () -> compactPlanArm(plan)
+						+ " child=" + compactOccurrence(childKey)
+						+ " required=" + exactStateDiagnostic(edgeChild)
+						+ " assigned=" + exactStateDiagnostic(assignedChild)
+						+ " fixed=" + exactStateDiagnostic(boundaryChild));
+					compatible = false;
+					break;
+				}
+				if(assignedChild == null && boundaryChild == null && domains.containsKey(childKey)
+					&& domains.get(childKey).stream().map(FederatedPlannerDpFedCostBased::selectedState)
+						.noneMatch(candidate -> sameConsumableBoundary(candidate, edgeChild))) {
+					diagnostics.reject(index, key, "child-domain", () -> compactPlanArm(plan)
+						+ " child=" + compactOccurrence(childKey)
+						+ " required=" + exactStateDiagnostic(edgeChild));
 					compatible = false;
 					break;
 				}
@@ -2378,19 +2727,63 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 			Map<CompiledHopKey,SelectedDpState> nextSelections = new IdentityHashMap<>(selections);
 			nextSelections.put(key, proposed);
-			if(!exactJoinCanStillBeLegal(analysis, nextSelections, fixed))
+			ExactJoinLegalityViolation legalityViolation =
+				exactJoinLegalityViolation(analysis, nextSelections, fixed, domains);
+			if(legalityViolation != null) {
+				diagnostics.reject(index, key, "graph-legality", () -> legalityViolation.detail()
+					+ " plan=" + compactPlanArm(plan) + " requirementSources="
+					+ exactRequirementSources(key, selections) + " endpointDomains="
+					+ exactViolationEndpointDomains(legalityViolation.constraint(), domains));
 				continue;
+			}
 			searchExactComponentAssignment(analysis, memo, componentId, roots, order, domains, fixed,
 				index + 1, nextSelections, nextRequirements, cost + exactPlanLocalCost(plan),
-				prefixMemo, best);
+				prefixMemo, best, diagnostics);
 			if(best[0] != null)
 				return;
 		}
 	}
 
-	private static boolean exactJoinCanStillBeLegal(PlacementAnalysis analysis,
+	private static List<String> exactRequirementSources(CompiledHopKey requiredKey,
+		Map<CompiledHopKey,SelectedDpState> selections) {
+		return boundedSummary(selections.entrySet().stream().sorted(Map.Entry.comparingByKey())
+			.flatMap(entry -> entry.getValue().retainedPlan().getExactChildPlanEdges().stream()
+				.filter(edge -> edge.occurrence() == requiredKey)
+				.map(edge -> compactOccurrence(entry.getKey()) + "=>" + edge.output() + '/'
+					+ selectedState(edge.selectedPlan()).exactState().normalizedSignature()))
+			.toList(), 8);
+	}
+
+	private static List<String> exactRequirementSourceDomains(CompiledHopKey requiredKey,
 		Map<CompiledHopKey,SelectedDpState> selections,
-		Map<CompiledHopKey,SelectedDpState> fixed) {
+		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains) {
+		return boundedSummary(selections.entrySet().stream().sorted(Map.Entry.comparingByKey())
+			.filter(entry -> entry.getValue().retainedPlan().getExactChildPlanEdges().stream()
+				.anyMatch(edge -> edge.occurrence() == requiredKey))
+			.map(entry -> compactOccurrence(entry.getKey()) + "=>" + domains.getOrDefault(
+				entry.getKey(), List.of()).stream().map(FederatedPlannerDpFedCostBased::compactPlanArm).toList())
+			.toList(), 8);
+	}
+
+	private static List<String> exactViolationEndpointDomains(Constraint constraint,
+		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains) {
+		if(constraint == null)
+			return List.of("synthetic");
+		return List.of(constraint.left(), constraint.right()).stream().map(key -> {
+			List<FederatedPlannerDpMemoTable.FedPlan> endpoint = domains.get(key);
+			return compactOccurrence(key) + "=>" + (endpoint == null ? "fixed/external"
+				: boundedSummary(endpoint.stream().map(plan -> compactPlanArm(plan)
+					+ ",edgeOwners=" + boundedSummary(plan.getExactChildPlanEdges().stream()
+						.map(edge -> edge.output() + "->" + compactOccurrence(edge.occurrence())
+							+ "{" + compactPlanArm(edge.selectedPlan()) + "}").toList(), 6))
+					.toList(), 8));
+		}).toList();
+	}
+
+	private static ExactJoinLegalityViolation exactJoinLegalityViolation(PlacementAnalysis analysis,
+		Map<CompiledHopKey,SelectedDpState> selections,
+		Map<CompiledHopKey,SelectedDpState> fixed,
+		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains) {
 		Map<CompiledHopKey,List<SyntheticBoundaryIncident>> unresolvedSynthetic = new IdentityHashMap<>();
 		Set<CompiledHopKey> touchedSynthetic = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Constraint constraint : analysis.graph().constraints()) {
@@ -2398,6 +2791,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 			SelectedDpState currentLeft = selections.get(constraint.left());
 			SelectedDpState currentRight = selections.get(constraint.right());
+			// Validate the component prefix being extended, not unrelated exact locks
+			// captured by an earlier component. A pre-existing violation must be handled
+			// by its owner component; allowing it to reject an independent literal makes
+			// every later component unsatisfiable without changing the offending state.
+			if(currentLeft == null && currentRight == null)
+				continue;
 			SelectedDpState leftSelection = currentLeft;
 			if(leftSelection == null)
 				leftSelection = fixed.get(constraint.left());
@@ -2419,11 +2818,37 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					if(currentLeft != null)
 						touchedSynthetic.add(constraint.right());
 				}
+				if(leftSelection != null && rightSelection == null
+					&& domains.containsKey(constraint.right())
+					&& !isSyntheticFunctionBoundary(analysis, constraint.right())
+					&& !exactJoinConstraintHasSupport(constraint, leftSelection, true,
+						domains.get(constraint.right())))
+					return new ExactJoinLegalityViolation(constraint,
+						"forward-domain:" + constraint.kind() + "[evidence="
+							+ constraint.evidence() + "]:" + compactOccurrence(constraint.left()) + '='
+							+ leftSelection.exactState().normalizedSignature() + " -> "
+							+ compactOccurrence(constraint.right()) + " has no supported state");
+				if(rightSelection != null && leftSelection == null
+					&& domains.containsKey(constraint.left())
+					&& !isSyntheticFunctionBoundary(analysis, constraint.left())
+					&& !exactJoinConstraintHasSupport(constraint, rightSelection, false,
+						domains.get(constraint.left())))
+					return new ExactJoinLegalityViolation(constraint,
+						"forward-domain:" + constraint.kind() + "[evidence="
+							+ constraint.evidence() + "]:" + compactOccurrence(constraint.left())
+							+ " has no supported state -> "
+							+ compactOccurrence(constraint.right()) + '='
+							+ rightSelection.exactState().normalizedSignature());
 				continue;
 			}
 			if(!NeutralPlacementGraph.constraintSatisfied(constraint,
 				leftSelection.exactState(), rightSelection.exactState()))
-				return false;
+				return new ExactJoinLegalityViolation(constraint,
+					constraint.kind() + "[evidence=" + constraint.evidence() + "]:"
+					+ compactOccurrence(constraint.left()) + '='
+					+ leftSelection.exactState().normalizedSignature() + " -> "
+					+ compactOccurrence(constraint.right()) + '='
+					+ rightSelection.exactState().normalizedSignature());
 		}
 		for(Map.Entry<CompiledHopKey,List<SyntheticBoundaryIncident>> entry :
 			unresolvedSynthetic.entrySet()) {
@@ -2440,20 +2865,76 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					return NeutralPlacementGraph.constraintSatisfied(constraint, left, right);
 				}));
 			if(!feasible)
-				return false;
+				return new ExactJoinLegalityViolation(null,
+					"synthetic:" + compactOccurrence(entry.getKey()) + " alternatives="
+					+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList()
+					+ " neighbors=" + entry.getValue().stream()
+						.map(incident -> {
+							Constraint constraint = incident.constraint();
+							CompiledHopKey neighbor = constraint.left() == entry.getKey()
+								? constraint.right() : constraint.left();
+							return compactOccurrence(neighbor) + '='
+								+ incident.neighborState().normalizedSignature()
+								+ "[" + constraint.kind() + ":" + constraint.evidence() + ']'
+								+ " domain=" + boundedSummary(domains.getOrDefault(neighbor, List.of())
+									.stream().map(FederatedPlannerDpFedCostBased::compactPlanArmWithExactChildren)
+									.toList(), 6);
+						}).toList());
 		}
-		return true;
+		return null;
 	}
+
+	private static boolean exactJoinConstraintHasSupport(Constraint constraint,
+		SelectedDpState selected, boolean selectedIsLeft,
+		List<FederatedPlannerDpMemoTable.FedPlan> unselectedDomain) {
+		for(FederatedPlannerDpMemoTable.FedPlan candidatePlan : unselectedDomain) {
+			SelectedDpState candidate = selectedState(candidatePlan);
+			PlacementState left = selectedIsLeft ? selected.exactState() : candidate.exactState();
+			PlacementState right = selectedIsLeft ? candidate.exactState() : selected.exactState();
+			if(NeutralPlacementGraph.constraintSatisfied(constraint, left, right))
+				return true;
+		}
+		return false;
+	}
+
+	private record ExactJoinLegalityViolation(Constraint constraint, String detail) { }
 
 	private record SyntheticBoundaryIncident(Constraint constraint, PlacementState neighborState) { }
 
-	private static String exactJoinSearchState(PlacementAnalysis analysis,
-		FederatedPlannerDpMemoTable memo, List<CompiledHopKey> order,
+	private record ExactAuthorityMemoKey(PlacementState exactState, boolean derivedFedFout,
+		CandidateSelectionReceipt directCandidateSelection,
+		List<RelocationChoiceReceipt> directRelocationChoices) {
+		private ExactAuthorityMemoKey {
+			Objects.requireNonNull(exactState, "exactState");
+			directRelocationChoices = List.copyOf(directRelocationChoices);
+		}
+	}
+
+	private record ExactBoundaryMemoKey(FederatedOutput output, FType fType) {
+		private ExactBoundaryMemoKey {
+			Objects.requireNonNull(output, "output");
+			if(output == FederatedOutput.FOUT && fType == null || output == FederatedOutput.LOUT && fType != null)
+				throw new IllegalArgumentException("Exact boundary memo placement differs");
+		}
+	}
+
+	private record ExactJoinMemoKey(int index,
+		List<ExactAuthorityMemoKey> relevantSelections,
+		List<ExactBoundaryMemoKey> orderedRequirements,
+		Map<CompiledHopKey,ExactBoundaryMemoKey> foreignRequirements) {
+		private ExactJoinMemoKey {
+			relevantSelections = Collections.unmodifiableList(new ArrayList<>(relevantSelections));
+			orderedRequirements = Collections.unmodifiableList(new ArrayList<>(orderedRequirements));
+			foreignRequirements = Map.copyOf(foreignRequirements);
+		}
+	}
+
+	private static ExactJoinMemoKey exactJoinSearchState(PlacementAnalysis analysis,
+		List<CompiledHopKey> order,
 		Map<CompiledHopKey,List<FederatedPlannerDpMemoTable.FedPlan>> domains,
 		Map<CompiledHopKey,SelectedDpState> selections,
 		Map<CompiledHopKey,FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> requirements,
 		int index) {
-		StringBuilder state = new StringBuilder().append(index).append('|');
 		Set<CompiledHopKey> backwardReferenced = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int i = index; i < order.size(); i++)
 			for(FederatedPlannerDpMemoTable.FedPlan plan : domains.get(order.get(i)))
@@ -2472,30 +2953,35 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				&& !selections.containsKey(constraint.left()))
 				backwardReferenced.add(constraint.right());
 		}
+		List<ExactAuthorityMemoKey> relevantSelections = new ArrayList<>(order.size());
+		List<ExactBoundaryMemoKey> orderedRequirements = new ArrayList<>(order.size());
 		for(int i = 0; i < order.size(); i++) {
 			CompiledHopKey key = order.get(i);
 			SelectedDpState selected = selections.get(key);
-			if(i >= index || backwardReferenced.contains(key))
-				state.append(i).append(':').append(selected == null ? '-'
-					: exactAuthoritySignature(selected))
-					.append(':').append(exactChildRequirementSignature(memo, requirements.get(key))).append(';');
+			boolean relevant = i >= index || backwardReferenced.contains(key);
+			relevantSelections.add(relevant && selected != null ? exactAuthorityMemoKey(selected) : null);
+			orderedRequirements.add(relevant ? exactBoundaryMemoKey(requirements.get(key)) : null);
 		}
-		state.append("foreign{");
-		requirements.entrySet().stream()
-			.filter(entry -> !domains.containsKey(entry.getKey()))
-			.sorted(Map.Entry.comparingByKey())
-			.forEach(entry -> state.append(entry.getKey().normalizedSignature()).append('=')
-				.append(exactChildRequirementSignature(memo, entry.getValue())).append(';'));
-		state.append('}');
-		return state.toString();
+		Map<CompiledHopKey,ExactBoundaryMemoKey> foreignRequirements = new LinkedHashMap<>();
+		for(Map.Entry<CompiledHopKey,FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> entry :
+			requirements.entrySet())
+			if(!domains.containsKey(entry.getKey()))
+				foreignRequirements.put(entry.getKey(), exactBoundaryMemoKey(entry.getValue()));
+		return new ExactJoinMemoKey(index, relevantSelections, orderedRequirements, foreignRequirements);
 	}
 
-	private static String exactChildRequirementSignature(FederatedPlannerDpMemoTable memo,
+	private static ExactAuthorityMemoKey exactAuthorityMemoKey(SelectedDpState state) {
+		return new ExactAuthorityMemoKey(state.exactState(), state.derivedFedFout(),
+			state.directCandidateSelection(), state.directRelocationChoices());
+	}
+
+	private static ExactBoundaryMemoKey exactBoundaryMemoKey(
 		FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge requirement) {
 		if(requirement == null)
-			return "-";
-		return requirement.occurrence().normalizedSignature() + ':' + requirement.output() + ':'
-			+ exactPlanStableSignature(requirement.selectedPlan());
+			return null;
+		SelectedDpState selected = selectedState(requirement.selectedPlan());
+		return new ExactBoundaryMemoKey(requirement.output(),
+			selected.output() == FederatedOutput.FOUT ? selected.fType() : null);
 	}
 
 	private static List<CompiledHopKey> exactJoinVariableOrder(OrdinaryComponentId componentId,
@@ -2574,8 +3060,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private static String exactAuthoritySignature(SelectedDpState state) {
-		return exactPlanStableSignature(Objects.requireNonNull(state.retainedPlan(),
-			"Exact DP join selection lacks a retained plan"));
+		return state.exactState().normalizedSignature() + '|' + state.derivedFedFout() + '|'
+			+ (state.directCandidateSelection() == null ? "-"
+				: state.directCandidateSelection().normalizedSignature()) + '|'
+			+ state.directRelocationChoices().stream()
+				.map(RelocationChoiceReceipt::normalizedSignature).toList();
 	}
 
 	private static String exactEdgeAuthoritySignature(FederatedPlannerDpMemoTable.FedPlan plan) {
@@ -3358,8 +3847,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						effectivePlan.getExactChildPlanEdges().get(childOrdinal).output()));
 			OrdinaryComponentId childOwner = ownerIndex.owner(child.key());
 			if(childOwner != null && childOwner != component)
-				child = ledger.declareForeignDependencyClosure(
-					component, child, memoTable, outputDecisions, conflicts);
+				child = ledger.declareForeignDependency(
+					component, child, memoTable, outputDecisions);
 			ledger.verifyBoundaryLock(child);
 			ExactTraversalEdge scheduled = ledger.schedule(
 				component, effectivePlan, parentOccurrence, childOrdinal, declaration, child);
@@ -3686,6 +4175,47 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						selectedPlan.getCumulativeCost(), selectedPlan.getChildFedPlans()));
 			}
 		}
+	}
+
+	private static List<CompiledHopKey> reclassifySupersededPreCompletionAuthority(
+		List<CompiledHopKey> initialAppliedTraversalKeys,
+		List<DeferredOutputDecisionReceipt> deferredReceipts,
+		Set<CompiledHopKey> supersededKeys,
+		Map<CompiledHopKey, SelectedDpState> finalSelectedStates) {
+		if(supersededKeys.isEmpty())
+			return List.of();
+
+		Set<CompiledHopKey> appliedKeys = Collections.newSetFromMap(new IdentityHashMap<>());
+		appliedKeys.addAll(initialAppliedTraversalKeys);
+		Set<CompiledHopKey> deferredKeys = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(DeferredOutputDecisionReceipt receipt : deferredReceipts)
+			deferredKeys.add(receipt.key());
+		for(CompiledHopKey key : supersededKeys) {
+			if(!appliedKeys.contains(key) && !deferredKeys.contains(key))
+				throw new IllegalStateException(
+					"DP exact-legality repair reopened a key without pre-completion authority: " + key);
+			SelectedDpState selected = identityMapValue(finalSelectedStates, key);
+			if(selected == null)
+				throw new IllegalStateException(
+					"DP exact-legality repair did not replace a superseded authority: " + key);
+			FederatedPlannerTrace.logGlobal("DP-PreCompletion-LegalitySuperseded",
+				"key=" + compactOccurrence(key)
+					+ " category=" + (appliedKeys.contains(key) ? "APPLIED_TRAVERSAL" : "DEFERRED")
+					+ " final=" + selected.exactState().normalizedSignature());
+		}
+
+		List<DeferredOutputDecisionReceipt> retained = new ArrayList<>();
+		for(DeferredOutputDecisionReceipt receipt : deferredReceipts) {
+			if(supersededKeys.contains(receipt.key()))
+				continue;
+			retained.add(new DeferredOutputDecisionReceipt(
+				retained.size(), receipt.decisionHopId(), receipt.originalHopId(),
+				receipt.desiredOutput(), receipt.occurrence(), receipt.key(), receipt.plan(),
+				receipt.planningHop(), receipt.state(), receipt.derivedFedFout()));
+		}
+		deferredReceipts.clear();
+		deferredReceipts.addAll(retained);
+		return supersededKeys.stream().sorted().toList();
 	}
 
 	private static void reconcileDeferredOutputDecisionReceipts(
@@ -6697,36 +7227,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		// Parent/child compatibility is necessary but not sufficient for an executable
-		// decision map.  The neutral placement graph also owns cross-root legality
-		// contracts (notably one runtime representation for a TWrite/TRead family).
-		// Score those contracts before cost ranking so a cheaper but globally illegal
-		// forest cannot replace a legal local-DP result.  This does not remove either
-		// output candidate: the existing family simulation still compares the legal
-		// all-LOUT and all-FOUT alternatives with the same cost model.
-		if (memoTable.analysis() != null) {
-			for (Constraint constraint : memoTable.analysis().graph().constraints()) {
-				if (!isExactComponentLegalityConstraint(constraint))
-					continue;
-				SelectedDpState left = requiredSelections.get(constraint.left());
-				SelectedDpState right = requiredSelections.get(constraint.right());
-				if (left == null || right == null
-					|| NeutralPlacementGraph.constraintSatisfied(
-						constraint, left.exactState(), right.exactState()))
-					continue;
-				incompatiblePlans++;
-				if (exactSelectionConflictHopIDs != null) {
-					exactSelectionConflictHopIDs.add(memoTable.resolveOriginalHopId(
-						memoTable.analysis().hop(constraint.left()).orElseThrow().getHopID()));
-					exactSelectionConflictHopIDs.add(memoTable.resolveOriginalHopId(
-						memoTable.analysis().hop(constraint.right()).orElseThrow().getHopID()));
-				}
-				FederatedPlannerTrace.logGlobal("DP-DecisionMap-NeutralConstraintConflict",
-					"constraint=" + constraint.normalizedSignature()
-						+ " left=" + left.exactState().normalizedSignature()
-						+ " right=" + right.exactState().normalizedSignature());
-			}
-		}
+		// The decision map owns only Hop-family LOUT/FOUT closure and exact occurrence
+		// reuse. Neutral graph constraints are occurrence-level contracts over the full
+		// (exec, output, FType) tuple, so scoring them here can reject both output maps
+		// before the exact component join has selected their legal arms. The exact join
+		// and atomic emission prevalidation own those constraints instead.
 		return incompatiblePlans;
 	}
 

@@ -349,7 +349,7 @@ public enum Opcodes {
 	MAPMIN("mapmin", InstructionType.Binary),
 
 	//REBLOCK Instruction Opcodes
-	RBLK("rblk", null, InstructionType.Reblock, null, InstructionType.Reblock),
+	RBLK("rblk", null, InstructionType.Reblock, InstructionType.Reblock, InstructionType.Reblock),
 	CSVRBLK("csvrblk", InstructionType.CSVReblock),
 	LIBSVMRBLK("libsvmrblk", InstructionType.LIBSVMReblock),
 

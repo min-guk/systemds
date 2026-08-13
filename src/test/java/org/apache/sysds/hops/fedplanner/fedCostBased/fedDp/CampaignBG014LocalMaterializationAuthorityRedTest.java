@@ -33,6 +33,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.F
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.ObservabilitySnapshot;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -89,13 +90,16 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 	@Test
 	public void selectedLocalAuthorityEmitsOneExactSortedRegistryEntry() {
 		EmissionAwareResult result = fixture.result(List.of(fixture.localAction(fixture.scopeText())));
+		LocalMaterializationActionKey selectedAction =
+			(LocalMaterializationActionKey) result.selectedLocalMaterializations().get(0);
 		FederatedLocalMaterializeRegistry.Snapshot before = FederatedLocalMaterializeRegistry.snapshotAll();
 		PlacementEmissionTransaction.emit(fixture.program(), result, FailureInjector.none());
 
 		FederatedLocalMaterializeRegistry.LocalMaterializeSpec expectedSpec =
 			FederatedLocalMaterializeRegistry.LocalMaterializeSpec.forConsumerInputs(
 				fixture.consumerInputs(),
-				fixture.producerFedFout().fType().name(), fixture.durableProvenance());
+				fixture.producerFedFout().fType().name(), fixture.durableProvenance(),
+				selectedAction.normalizedSignature());
 		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> expectedScopes =
 			new LinkedHashMap<>(before.scopes());
 		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> expectedScopeEntries =
@@ -121,6 +125,8 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 			fixture.producerFedFout().fType().name(), spec.getFTypeHint());
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_REASON_IS_DURABLE_PROVENANCE",
 			fixture.durableProvenance(), spec.getReason());
+		Assert.assertEquals("TASK33_LOCAL_ENTRY_ACTION_IDENTITY_IS_EXACT",
+			selectedAction.normalizedSignature(), spec.getPlannerActionKey());
 	}
 
 	@Test

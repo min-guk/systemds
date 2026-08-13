@@ -124,6 +124,24 @@ final class MinStExactPhysicalSelection {
 
 		List<CandidateSelectionReceipt> candidates = exactCandidateReceipts(
 			analysis, physical, selected);
+		// An uncaptured decision can become an exact candidate only after the complete
+		// assignment is known.  In that case exactCandidateReceipts supplies the unique
+		// graph-owned emission object, while the preliminary alternative above carries a
+		// value-equivalent synthetic emission.  Promote the exact object into the physical
+		// certificate so the projector consumes one authority rather than observing two
+		// independently constructed representations of the same placement.
+		for(CandidateSelectionReceipt candidate : candidates) {
+			CompiledHopKey decision = candidate.rule().parentOccurrence();
+			PlacementEmissionState exactEmission = candidate.emission().emissionState();
+			PlacementState selectedState = selected.get(decision);
+			PlacementEmissionState prior = selectedEmissions.get(decision);
+			if(selectedState == null || exactEmission.placementState() != selectedState || prior == null
+				|| prior.placementState() != selectedState)
+				throw new IllegalArgumentException(
+					"MINST_PHYSICAL_COMPLETED_CANDIDATE_EMISSION_MISMATCH|key="
+						+ decision.normalizedSignature());
+			selectedEmissions.put(decision, exactEmission);
+		}
 		List<RelocationChoiceReceipt> choices = exactRelocationChoices(
 			analysis, physical, selected, candidates);
 		List<RelocationActionKey> emitted = RelocationSelections.emittedActions(

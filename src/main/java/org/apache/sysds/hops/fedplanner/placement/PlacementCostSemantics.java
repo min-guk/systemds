@@ -7,9 +7,11 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
@@ -25,9 +27,11 @@ import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -35,6 +39,74 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 public final class PlacementCostSemantics {
 	private PlacementCostSemantics() {
 		// utility class
+	}
+
+	/**
+	 * Whether one selected REFED action starts from a value that is still physically federated.
+	 *
+	 * <p>A selected FOUT state is direct.  A function-input value version is the other important
+	 * case: selecting a LOUT boundary state does not itself emit an instruction, so a value backed
+	 * by a durable FederationMap remains physically FOUT until the selected REFED action
+	 * materializes it.  The emitted relocation owner can be the boundary node itself or a structural
+	 * transient read carrying the same value version; consequently this rule must use version
+	 * provenance rather than only {@link NeutralPlacementGraph.NodeKind#FUNCTION_INPUT}. Keeping
+	 * the rule in the common planning layer prevents Dag lowering from inventing an uncosted
+	 * FED-to-local leg.</p>
+	 */
+	public static boolean requiresRefedLocalMaterialization(PlacementAnalysis analysis,
+		NeutralPlacementGraph.Node source,
+		Map<CompiledHopKey,PlacementEmissionState> selected) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(selected, "selected");
+		return requiresRefedLocalMaterialization(analysis, source, selected, new HashSet<>());
+	}
+
+	private static boolean requiresRefedLocalMaterialization(PlacementAnalysis analysis,
+		NeutralPlacementGraph.Node source,
+		Map<CompiledHopKey,PlacementEmissionState> selected, Set<CompiledHopKey> visiting) {
+		PlacementState selectedSource = exactSelectedState(selected, source.key());
+		if(selectedSource.output() == FederatedOutput.FOUT)
+			return true;
+		if(selectedSource.output() != FederatedOutput.LOUT)
+			throw new IllegalArgumentException("REFED source must be LOUT or FOUT");
+		if(source.valueVersion().versionKind() != VersionKind.FUNCTION_INPUT)
+			return false;
+		if(!visiting.add(source.key()))
+			throw new IllegalStateException("Cyclic logical function-input placement provenance: "
+				+ source.key().normalizedSignature());
+		try {
+			List<LogicalFunctionInputFact> incoming = analysis.logicalFunctionInputsInCanonicalOrder().stream()
+				.filter(fact -> fact.targetRead() == source.key() || fact.boundary() == source.key())
+				.toList();
+			if(incoming.isEmpty())
+				return !source.anchors().isEmpty();
+			Boolean physicallyFederated = null;
+			for(LogicalFunctionInputFact fact : incoming) {
+				NeutralPlacementGraph.Node argument = analysis.graph().node(fact.sourceArgument())
+					.orElseThrow(() -> new IllegalStateException(
+						"Logical function-input source is absent from the placement graph"));
+				boolean current = requiresRefedLocalMaterialization(
+					analysis, argument, selected, visiting);
+				if(physicallyFederated != null && physicallyFederated != current)
+					throw new IllegalStateException("One formal input has mixed physical caller placements: "
+						+ source.key().normalizedSignature());
+				physicallyFederated = current;
+			}
+			return Boolean.TRUE.equals(physicallyFederated);
+		}
+		finally {
+			visiting.remove(source.key());
+		}
+	}
+
+	private static PlacementState exactSelectedState(
+		Map<CompiledHopKey,PlacementEmissionState> selected, CompiledHopKey key) {
+		for(Map.Entry<CompiledHopKey,PlacementEmissionState> entry : selected.entrySet())
+			if(entry.getKey() == key)
+				return Objects.requireNonNull(entry.getValue(), "selected emission state").placementState();
+		throw new IllegalStateException("Logical placement provenance has no exact selected state: "
+			+ key.normalizedSignature());
 	}
 
 	public static double forwardingWeight(double networkWeight,

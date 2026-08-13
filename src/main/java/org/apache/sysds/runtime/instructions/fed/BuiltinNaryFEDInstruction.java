@@ -60,6 +60,11 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 		this.inputs = inputs;
 	}
 
+	@Override
+	public String getOutputVariableName() {
+		return output.getName();
+	}
+
 	public static BuiltinNaryFEDInstruction parseInstruction(BuiltinNaryCPInstruction inst, ExecutionContext ec) {
 		if (inst == null || ec == null)
 			return null;
@@ -74,7 +79,10 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 		}
 		if (!hasFederated)
 			return null;
-		String fedStr = InstructionUtils.concatOperands(inst.getInstructionString(), FederatedOutput.NONE.name());
+		// This runtime implementation always publishes a FederationMap. Encode that
+		// inherent FOUT contract explicitly instead of leaving placement as NONE for
+		// the runtime to infer after planning/lowering.
+		String fedStr = InstructionUtils.concatOperands(inst.getInstructionString(), FederatedOutput.FOUT.name());
 		return parseInstruction(fedStr);
 	}
 
@@ -88,12 +96,14 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 		String opcode = parts[0];
 		if (!isSupportedOpcode(opcode))
 			throw new DMLRuntimeException("Unsupported federated nary opcode: " + opcode);
-		FederatedOutput fedOut = FederatedOutput.NONE;
+		FederatedOutput fedOut = FederatedOutput.FOUT;
 		int end = parts.length;
 		if (end > 0 && isFederatedOutput(parts[end - 1])) {
 			fedOut = FederatedOutput.valueOf(parts[end - 1]);
 			end -= 1;
 		}
+		if(fedOut != FederatedOutput.FOUT)
+			throw new DMLRuntimeException("Federated nary ops only support FOUT, requested " + fedOut);
 		CPOperand out = new CPOperand(parts[end - 1]);
 		CPOperand[] in = new CPOperand[end - 2];
 		for (int i = 1; i < end - 1; i++)

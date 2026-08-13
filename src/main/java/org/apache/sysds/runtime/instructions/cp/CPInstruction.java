@@ -94,8 +94,10 @@ public abstract class CPInstruction extends Instruction {
 		//instruction patching
 		if( tmp.requiresLabelUpdate() ) { //update labels only if required
 			//note: no exchange of updated instruction as labels might change in the general case
+			Instruction original = tmp;
 			String updInst = updateLabels(tmp.toString(), ec.getVariables());
 			tmp = CPInstructionParser.parseSingleInstruction(updInst);
+			tmp.setLocation(original);
 			// Corrected lineage trace for patched instructions
 			if (DMLScript.LINEAGE)
 				ec.traceLineage(tmp);
@@ -103,7 +105,10 @@ public abstract class CPInstruction extends Instruction {
 		
 		//robustness federated instructions (runtime assignment)
 		if( ConfigurationManager.isFederatedRuntimePlanner() ) {
+			Instruction original = tmp;
 			tmp = FEDInstructionUtils.checkAndReplaceCP(tmp, ec);
+			if(tmp != original)
+				tmp.setLocation(original);
 			//NOTE: Retracing of lineage is not needed as the lineage trace
 			//is same for an instruction and its FED version.
 		}

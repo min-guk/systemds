@@ -70,6 +70,23 @@ public abstract class Instruction
 	protected int endCol = -1;
 	protected long hopID = -1;
 	protected long lopID = -1;
+	private long plannerOriginHopID = -1;
+	private String plannerRecompileSignature;
+	private String plannerSyntheticActionKey;
+	private String plannerLoweringAuxiliaryKind;
+	private String plannerRewriteReplacementKind;
+	private String plannerAuditKey;
+	private PlannerWorkerFragment plannerWorkerFragment;
+
+	/**
+	 * Exact coordinator-plan authority carried by an instruction fragment executed inside a
+	 * federated worker.  A worker fragment is an implementation detail of one already-proved
+	 * coordinator {@code FED} instruction; it is not a second planner Hop and must therefore be
+	 * audited against its parent rather than compared as an independent {@code CP/LOUT} plan.
+	 */
+	public record PlannerWorkerFragment(String planHash, String parentAuditKey,
+		String parentOpcode, String parentPhysical, long parentHopId, long parentLopId,
+		String parentRecompileSignature, String requestType, String fragmentOpcode) { }
 	
 	public String getFilename() {
 		return filename;
@@ -98,6 +115,73 @@ public abstract class Instruction
 	public long getLopID() {
 		return lopID;
 	}
+
+	public long getPlannerOriginHopID() {
+		return plannerOriginHopID;
+	}
+
+	public void setPlannerOriginHopID(long originHopID) {
+		plannerOriginHopID = originHopID;
+	}
+
+	public String getPlannerRecompileSignature() {
+		return plannerRecompileSignature;
+	}
+
+	public void setPlannerRecompileSignature(String signature) {
+		plannerRecompileSignature = signature;
+	}
+
+	public String getPlannerSyntheticActionKey() {
+		return plannerSyntheticActionKey;
+	}
+
+	public void setPlannerSyntheticActionKey(String actionKey) {
+		plannerSyntheticActionKey = actionKey;
+	}
+
+	public String getPlannerLoweringAuxiliaryKind() {
+		return plannerLoweringAuxiliaryKind;
+	}
+
+	public void setPlannerLoweringAuxiliaryKind(String kind) {
+		plannerLoweringAuxiliaryKind = kind;
+	}
+
+	public String getPlannerRewriteReplacementKind() {
+		return plannerRewriteReplacementKind;
+	}
+
+	public void setPlannerRewriteReplacementKind(String kind) {
+		plannerRewriteReplacementKind = kind;
+	}
+
+	public String getPlannerAuditKey() {
+		return plannerAuditKey;
+	}
+
+	public void setPlannerAuditKey(String key) {
+		plannerAuditKey = key;
+	}
+
+	public PlannerWorkerFragment getPlannerWorkerFragment() {
+		return plannerWorkerFragment;
+	}
+
+	public void setPlannerWorkerFragment(PlannerWorkerFragment fragment) {
+		plannerWorkerFragment = fragment;
+	}
+
+	/**
+	 * Runtime output identity used by fail-closed planner placement auditing. Computation
+	 * instructions already override this method through their existing public method; instructions
+	 * with bespoke operand layouts override it explicitly.
+	 *
+	 * @return output variable name, or {@code null} for control/side-effect-only instructions
+	 */
+	public String getOutputVariableName() {
+		return null;
+	}
 	
 	public abstract IType getType();
 	
@@ -109,6 +193,13 @@ public abstract class Instruction
 		this.endCol = endCol;
 		this.hopID = -1;
 		this.lopID = -1;
+		this.plannerOriginHopID = -1;
+		this.plannerRecompileSignature = null;
+		this.plannerSyntheticActionKey = null;
+		this.plannerLoweringAuxiliaryKind = null;
+		this.plannerRewriteReplacementKind = null;
+		this.plannerAuditKey = null;
+		this.plannerWorkerFragment = null;
 	}
 	
 	public void setLocation(Lop lop) {
@@ -120,6 +211,35 @@ public abstract class Instruction
 			this.endCol = lop._endColumn;
 			this.hopID = lop.getHopID();
 			this.lopID = lop.getID();
+			this.plannerOriginHopID = lop.getPlannerOriginHopID();
+			this.plannerRecompileSignature = lop.getPlannerRecompileSignature();
+			this.plannerSyntheticActionKey = lop.getPlannerSyntheticActionKey();
+			this.plannerLoweringAuxiliaryKind = lop.getPlannerLoweringAuxiliaryKind();
+			this.plannerRewriteReplacementKind = lop.getPlannerRewriteReplacementKind();
+			this.plannerAuditKey = null;
+			this.plannerWorkerFragment = null;
+		}
+	}
+
+	/**
+	 * Replace only the compiler/planner identity of this instruction while retaining the
+	 * user-facing source location selected by legacy lowering. Some Data instructions use their
+	 * input Lop for a more useful DML line number, but the physical instruction is owned by the
+	 * Data Lop itself.
+	 *
+	 * @param lop exact Lop that physically owns the emitted instruction
+	 */
+	public void setPlannerLocation(Lop lop) {
+		if(lop != null) {
+			this.hopID = lop.getHopID();
+			this.lopID = lop.getID();
+			this.plannerOriginHopID = lop.getPlannerOriginHopID();
+			this.plannerRecompileSignature = lop.getPlannerRecompileSignature();
+			this.plannerSyntheticActionKey = lop.getPlannerSyntheticActionKey();
+			this.plannerLoweringAuxiliaryKind = lop.getPlannerLoweringAuxiliaryKind();
+			this.plannerRewriteReplacementKind = lop.getPlannerRewriteReplacementKind();
+			this.plannerAuditKey = null;
+			this.plannerWorkerFragment = null;
 		}
 	}
 	
@@ -132,6 +252,13 @@ public abstract class Instruction
 			this.endCol = id.getEndColumn();
 			this.hopID = -1;
 			this.lopID = -1;
+			this.plannerOriginHopID = -1;
+			this.plannerRecompileSignature = null;
+			this.plannerSyntheticActionKey = null;
+			this.plannerLoweringAuxiliaryKind = null;
+			this.plannerRewriteReplacementKind = null;
+			this.plannerAuditKey = null;
+			this.plannerWorkerFragment = null;
 		}
 	}
 	
@@ -144,6 +271,13 @@ public abstract class Instruction
 			this.endCol = oldInst.endCol;
 			this.hopID = oldInst.hopID;
 			this.lopID = oldInst.lopID;
+			this.plannerOriginHopID = oldInst.plannerOriginHopID;
+			this.plannerRecompileSignature = oldInst.plannerRecompileSignature;
+			this.plannerSyntheticActionKey = oldInst.plannerSyntheticActionKey;
+			this.plannerLoweringAuxiliaryKind = oldInst.plannerLoweringAuxiliaryKind;
+			this.plannerRewriteReplacementKind = oldInst.plannerRewriteReplacementKind;
+			this.plannerAuditKey = oldInst.plannerAuditKey;
+			this.plannerWorkerFragment = oldInst.plannerWorkerFragment;
 		}
 	}
 

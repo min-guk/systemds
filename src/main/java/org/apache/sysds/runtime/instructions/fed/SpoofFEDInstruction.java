@@ -69,6 +69,11 @@ public class SpoofFEDInstruction extends FEDInstruction
 		_output = out;
 	}
 
+	@Override
+	public String getOutputVariableName() {
+		return _output.getName();
+	}
+
 	public static SpoofFEDInstruction parseInstruction(SpoofCPInstruction inst, ExecutionContext ec){
 		Class<?> scla = inst.getOperatorClass().getSuperclass();
 		if(((scla == SpoofCellwise.class || scla == SpoofMultiAggregate.class || scla == SpoofOuterProduct.class)

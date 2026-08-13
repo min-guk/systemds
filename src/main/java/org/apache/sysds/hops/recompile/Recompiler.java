@@ -598,7 +598,7 @@ public class Recompiler {
 			if (hop == null || !visited.add(hop))
 				continue;
 			HopState hs = new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput(),
-				hop.isFederatedOutputDerived(), signatureOf(hop));
+				hop.isFederatedOutputDerived(), hop.isPlannerPlacementSelected(), signatureOf(hop));
 			states.put(hop.getHopID(), hs);
 			// Debug aid for diagnosing recompile-time plan drift on key transient vars / PCA hot path hops.
 			if (LOG_RECOMPILE_NEW_HOPS && shouldDebugRecompileHop(hop.getName())) {
@@ -663,32 +663,51 @@ public class Recompiler {
 			if (hop == null || !visited.add(hop))
 				continue;
 			String sig = signatureOf(hop);
+			HopState idState = (cloneIdStates != null) ? cloneIdStates.get(hop.getHopID()) : null;
+			if (idState == null)
+				idState = baseStates.get(hop.getHopID());
+			// Dynamic rewrites can replace a selected Hop with a different opcode at the same
+			// source location as another planned Hop.  In that case signature lookup is not an
+			// identity relation (for example, a CP/LOUT aggregate rewritten to ba(+*) can collide
+			// with a distinct FED/FOUT ba(+*) in the original expression).  The explicit rewrite
+			// origin is the only exact authority and must take precedence over signature replay.
+			HopState rewriteOriginState = hop.getPlannerRewriteReplacementKind() != null
+				? baseStates.get(hop.getPlannerOriginHopID()) : null;
+			HopState exactState = rewriteOriginState != null ? rewriteOriginState : idState;
 			FederatedPlannerUtils.PlannerRecompileState plannerState =
 				FederatedPlannerUtils.getPlannerRecompileState(sig);
-			HopState state = plannerState != null
+			HopState plannerSignatureState = plannerState != null
 				? new HopState(plannerState.getExecType(), plannerState.getExecType(),
-					plannerState.getFederatedOutput(), plannerState.isFederatedOutputDerived(), sig)
+					plannerState.getFederatedOutput(), plannerState.isFederatedOutputDerived(), true, sig)
 				: null;
-			if (state == null) {
-				HopState idState = (cloneIdStates != null) ? cloneIdStates.get(hop.getHopID()) : null;
-				if (idState == null)
-					idState = baseStates.get(hop.getHopID());
-				HopState signatureState = null;
-				if (sig != null && !sig.isEmpty())
-					signatureState = signatureIndex.get(sig);
-				state = selectRestoreState(hop, idState, signatureState);
-			}
+			HopState signatureState = null;
+			if (sig != null && !sig.isEmpty())
+				signatureState = signatureIndex.get(sig);
+			HopState state = exactState != null && exactState.plannerPlacementSelected
+				? exactState
+				: plannerSignatureState != null
+					? plannerSignatureState
+					: selectRestoreState(hop, exactState, signatureState);
 			if (state != null) {
 				ExecType beforeExec = hop.getExecType();
 				ExecType beforeForced = hop.getForcedExecType();
 				FederatedOutput beforeFedOut = hop.getFederatedOutput();
-				if (state.execType != null && hop.getForcedExecType() == null)
+				if (state.plannerPlacementSelected) {
+					// Restore an exact selected placement, including a null forced type.  Retaining a
+					// stale forced type here would silently mutate the planner's physical decision.
 					hop.setExecType(state.execType);
-				if (state.forcedExecType != null)
 					hop.setForcedExecType(state.forcedExecType);
+				}
+				else {
+					if (state.execType != null && hop.getForcedExecType() == null)
+						hop.setExecType(state.execType);
+					if (state.forcedExecType != null)
+						hop.setForcedExecType(state.forcedExecType);
+				}
 				if (state.fedOut != null)
 					hop.setFederatedOutput(state.fedOut);
 				hop.setFederatedOutputDerived(state.fedOutDerived);
+				hop.setPlannerPlacementSelected(state.plannerPlacementSelected);
 				if (LOG_RECOMPILE_NEW_HOPS && plannerState != null) {
 					System.out.println("[RecompilePlannerStateRestore] hopID=" + hop.getHopID()
 						+ " name=" + String.valueOf(hop.getName())
@@ -848,7 +867,7 @@ public class Recompiler {
 				FederatedPlannerUtils.getPlannerRecompileState(sig);
 			if (plannerState != null) {
 				matchedState = new HopState(plannerState.getExecType(), plannerState.getExecType(),
-					plannerState.getFederatedOutput(), plannerState.isFederatedOutputDerived(), sig);
+					plannerState.getFederatedOutput(), plannerState.isFederatedOutputDerived(), true, sig);
 			}
 			if (baseStates != null) {
 				if (matchedState == null)
@@ -903,14 +922,16 @@ public class Recompiler {
 		private final ExecType forcedExecType;
 		private final FederatedOutput fedOut;
 		private final boolean fedOutDerived;
+		private final boolean plannerPlacementSelected;
 		private final String signature;
 
 		private HopState(ExecType execType, ExecType forcedExecType, FederatedOutput fedOut,
-			boolean fedOutDerived, String signature) {
+			boolean fedOutDerived, boolean plannerPlacementSelected, String signature) {
 			this.execType = execType;
 			this.forcedExecType = forcedExecType;
 			this.fedOut = fedOut;
 			this.fedOutDerived = fedOutDerived;
+			this.plannerPlacementSelected = plannerPlacementSelected;
 			this.signature = signature;
 		}
 	}
@@ -959,7 +980,8 @@ public class Recompiler {
 		return a.execType == b.execType
 			&& a.forcedExecType == b.forcedExecType
 			&& a.fedOut == b.fedOut
-			&& a.fedOutDerived == b.fedOutDerived;
+			&& a.fedOutDerived == b.fedOutDerived
+			&& a.plannerPlacementSelected == b.plannerPlacementSelected;
 	}
 
 	private static void inferFTypeIfNeeded(Hop hop, Map<Long, FType> fTypeMap, Set<Hop> done, Set<Hop> stack) {

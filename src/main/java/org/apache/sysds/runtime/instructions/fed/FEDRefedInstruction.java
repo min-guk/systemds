@@ -42,7 +42,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 
 	private FEDRefedInstruction(CPOperand input, CPOperand anchor, CPOperand output,
 		FType materializationFType, String opcode, String istr) {
-		super(FEDType.Refed, opcode, istr);
+		super(FEDType.Refed, null, opcode, istr, FederatedOutput.FOUT);
 		_input = input;
 		_anchor = anchor;
 		_output = output;
@@ -66,6 +66,15 @@ public class FEDRefedInstruction extends FEDInstruction {
 			}
 		}
 		return new FEDRefedInstruction(input, anchor, output, materializationFType, parts[0], str);
+	}
+
+	public FType getMaterializationFType() {
+		return _materializationFType;
+	}
+
+	@Override
+	public String getOutputVariableName() {
+		return _output.getName();
 	}
 
 	@Override

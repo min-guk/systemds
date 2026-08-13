@@ -68,8 +68,9 @@ public class NeutralPlacementGraphCfgCoreTest {
 		Assert.assertTrue("loop head identity missing", graph.nodes().stream()
 			.anyMatch(n -> n.valueVersion().versionKind() == VersionKind.LOOP_HEAD_PHI
 				&& n.valueVersion().predecessorVersions().size() >= 2));
-		Assert.assertTrue("branch conjunction missing", graph.constraints().stream()
-			.anyMatch(c -> c.kind() == ConstraintKind.CONJUNCTIVE));
+		Assert.assertTrue("exact CFG transient placement equality missing", graph.constraints().stream()
+			.anyMatch(c -> c.kind() == ConstraintKind.SAME_PLACEMENT
+				&& c.evidence().startsWith("cfg-transient-value:")));
 	}
 
 	@Test

@@ -461,34 +461,14 @@ public final class NeutralPlacementGraph {
 			return !left.normalizedSignature().equals(pair[0])
 				|| !right.normalizedSignature().equals(pair[1]);
 		}
-		if(isFunctionValueBoundary(constraint.evidence())) {
-			// A function boundary is a value-transfer boundary, not an execution alias.
-			// Any LOUT boundary can materialize either a local or federated source at the
-			// coordinator (with the planner charging the download). A FOUT boundary, on
-			// the other hand, may only forward an already-resident exact layout. Shape
-			// dependence is oracle provenance for how an opcode's FType was established;
-			// it is not part of the runtime layout carried across a function boundary.
-			// This is deliberately asymmetric and preserves the legal FOUT -> LOUT call.
-			if(right.execType() == org.apache.sysds.common.Types.ExecType.CP
-				&& right.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
-				&& right.fType() == null && !right.shapeDependent())
-				return left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
-					|| left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT;
-			return right.execType() == org.apache.sysds.common.Types.ExecType.FED
-				&& right.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
-				&& left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
-				&& left.fType() != null && left.fType() == right.fType();
-		}
+		// A conjunctive value edge is directional. A local target can consume either a
+		// local source or an explicitly materialized federated source; a federated target
+		// requires an exact same-layout federated source. Function actual/formal edges use
+		// the same contract because FunctionCallCP owns a physical input Lop that lowering
+		// can rewire to the selected FOUT->LOUT materialization.
 		return right.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 			|| left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 				&& Objects.equals(left.fType(), right.fType());
-	}
-
-	private static boolean isFunctionValueBoundary(String evidence) {
-		return evidence.startsWith("function-argument:")
-			|| evidence.startsWith("function-result:")
-			|| evidence.startsWith("inlined-function-argument:")
-			|| evidence.startsWith("inlined-function-result:");
 	}
 
 	private static String normalizeAssignment(Map<CompiledHopKey, PlacementState> assignment) {

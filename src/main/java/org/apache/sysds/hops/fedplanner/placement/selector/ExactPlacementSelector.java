@@ -154,6 +154,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		private PlacementScore bestScore;
 		private long explored;
 		private long pruned;
+		private List<String> firstCandidateRejection = List.of();
 
 		private Search(PlacementAnalysis analysis, NeutralPlacementGraph graph,
 			List<Node> decisions, List<Constraint> constraints,
@@ -203,6 +204,19 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				enumerateWithPropagation();
 			else
 				enumerateCartesian(0);
+			if(bestAssignment == null && !firstCandidateRejection.isEmpty())
+				throw new IllegalStateException("neutral placement graph has no candidate-reachable total assignment"
+					+ "|firstCandidateRejection=" + firstCandidateRejection);
+		}
+
+		private boolean candidatesReachable() {
+			if(analysis == null)
+				return true;
+			List<String> unreachable = CandidateSelections.unreachableConsumers(
+				analysis, graph, relocationActions, current);
+			if(!unreachable.isEmpty() && firstCandidateRejection.isEmpty())
+				firstCandidateRejection = unreachable;
+			return unreachable.isEmpty();
 		}
 
 		private void enumerateCartesian(int index) {
@@ -215,9 +229,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 			Collections.sort(alternatives);
 			for(PlacementState state : alternatives) {
 				group.assign(current, state);
-				if(canStillBeLegal(constraints, current)
-					&& (analysis == null || CandidateSelections.canStillBeReachable(
-						analysis, graph, relocationActions, current)))
+				if(canStillBeLegal(constraints, current) && candidatesReachable())
 					enumerateCartesian(index + 1);
 				else
 					pruned++;
@@ -298,9 +310,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				List<PlacementState> feasible = new ArrayList<>();
 				for(PlacementState state : group.legalAlternatives()) {
 					group.assign(current, state);
-					boolean completable = canStillBeLegal(constraints, current)
-						&& (analysis == null || CandidateSelections.canStillBeReachable(
-							analysis, graph, relocationActions, current));
+					boolean completable = canStillBeLegal(constraints, current) && candidatesReachable();
 					group.remove(current);
 					if(completable)
 						feasible.add(state);

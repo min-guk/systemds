@@ -39,7 +39,10 @@ public class ReblockFEDInstruction extends UnaryFEDInstruction {
 
 	private ReblockFEDInstruction(Operator op, CPOperand in, CPOperand out, int blen, boolean emptyBlocks,
 		String opcode, String instr) {
-		super(FEDInstruction.FEDType.Reblock, op, in, out, opcode, instr);
+		// Reblock preserves the input FederationMap and always publishes a new
+		// federated variable. Declare this inherent output explicitly so lowering
+		// and runtime placement audits do not depend on NONE/runtime heuristics.
+		super(FEDInstruction.FEDType.Reblock, op, in, out, opcode, instr, FederatedOutput.FOUT);
 		this.blen = blen;
 	}
 

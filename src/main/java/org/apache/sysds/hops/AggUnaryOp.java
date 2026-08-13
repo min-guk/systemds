@@ -39,6 +39,7 @@ import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
@@ -151,6 +152,7 @@ public class AggUnaryOp extends MultiThreadedHop
 				setOutputDimensions(agg1);
 				setLineNumbers(agg1);
 				setLops(agg1);
+				markPlannerTernaryAggregateReplacement(agg1);
 				
 				if (getDataType() == DataType.SCALAR)
 					agg1.getOutputParameters().setDimensions(1, 1, getBlocksize(), getNnz());
@@ -164,6 +166,7 @@ public class AggUnaryOp extends MultiThreadedHop
 					setOutputDimensions(aggregate); //0x0 (scalar)
 					setLineNumbers(aggregate);
 					setLops(aggregate);
+					markPlannerTernaryAggregateReplacement(aggregate);
 				}
 				else if( isUnaryAggregateOuterSPRewriteApplicable() ) 
 				{
@@ -215,6 +218,16 @@ public class AggUnaryOp extends MultiThreadedHop
 
 		//return created lops
 		return getLops();
+	}
+
+	/**
+	 * TernaryAggregate is a primary physical fusion of this exact aggregate Hop,
+	 * not an independent placement decision. Preserve that compiler-owned identity
+	 * so the fail-closed runtime audit can prove the closed ua(+rc/c) -> ta+* contract.
+	 */
+	private void markPlannerTernaryAggregateReplacement(Lop lop) {
+		if(lop instanceof TernaryAggregate && isPlannerPlacementSelected())
+			lop.setPlannerRewriteReplacementKind("PHYSICAL_TERNARY_AGGREGATE_FUSION");
 	}
 
 	
@@ -495,13 +508,31 @@ public class AggUnaryOp extends MultiThreadedHop
 	}
 
 	private static boolean hasTernaryAggregatePlannerBoundary(Hop aggregateInput) {
-		if(hasPlannerMaterializationBoundary(aggregateInput))
+		return containsTernaryAggregatePlannerBoundary(aggregateInput);
+	}
+
+	/**
+	 * Walk only the intermediate expression nodes that ternary-aggregate lowering
+	 * removes. Leaf matrix inputs remain explicit operands of the fused instruction
+	 * and therefore are not materialization boundaries of this rewrite.
+	 */
+	private static boolean containsTernaryAggregatePlannerBoundary(Hop current) {
+		if(hasPlannerMaterializationBoundary(current))
 			return true;
-		if(aggregateInput instanceof BinaryOp && ((BinaryOp) aggregateInput).getOp() == OpOp2.MULT)
-			for(Hop input : aggregateInput.getInput())
-				if(HopRewriteUtils.isBinary(input, OpOp2.MULT, OpOp2.POW)
-					&& hasPlannerMaterializationBoundary(input))
+		if(current instanceof BinaryOp
+			&& HopRewriteUtils.isBinary(current, OpOp2.MULT, OpOp2.POW)) {
+			for(Hop input : current.getInput())
+				if(input instanceof BinaryOp
+					&& HopRewriteUtils.isBinary(input, OpOp2.MULT, OpOp2.POW)
+					&& containsTernaryAggregatePlannerBoundary(input))
 					return true;
+		}
+		else if(current instanceof NaryOp && ((NaryOp) current).getOp() == Types.OpOpN.MULT) {
+			for(Hop input : current.getInput())
+				if(input instanceof BinaryOp || input instanceof NaryOp)
+					if(containsTernaryAggregatePlannerBoundary(input))
+						return true;
+		}
 		return false;
 	}
 
@@ -510,7 +541,9 @@ public class AggUnaryOp extends MultiThreadedHop
 		// A selected relocation/materialization producer or consumer input is an
 		// executable plan boundary. Ternary fusion must not erase either endpoint of
 		// the exact movement edge selected and costed by the planner.
-		return FederatedRefedRegistry.hasEntry(hopId)
+		boolean directFout = hop.getFederatedOutput() == FederatedOutput.FOUT
+			&& !hop.isFederatedOutputDerived();
+		return directFout || FederatedRefedRegistry.hasEntry(hopId)
 			|| FederatedFoutMaterializeRegistry.hasEntry(hopId)
 			|| FederatedLocalMaterializeRegistry.hasEntry(hopId)
 			|| FederatedRefedRegistry.hasSelectedConsumerInput(hopId)

@@ -221,8 +221,9 @@ public final class DpPlacementAdapter {
 				throw new IllegalArgumentException("Non-available construction cannot publish a snapshot");
 			if(!ownsCandidateKey(context.analysis(), parentOccurrence))
 				throw new IllegalArgumentException("Parent occurrence is not owned by the analysis");
+			List<OracleInputState> logicalOracleInputs = groupedLogicalOracleInputs(logicalEntries);
 			if(rawEntries.size() != promotedEntries.size()
-				|| promotedEntries.size() + logicalEntries.size() != orderedOracleInputs.size())
+				|| promotedEntries.size() + logicalOracleInputs.size() != orderedOracleInputs.size())
 				throw new IllegalArgumentException("Candidate entry counts differ");
 			for(int i = 0; i < rawEntries.size(); i++) {
 				CandidateMapEntry raw = rawEntries.get(i);
@@ -234,18 +235,32 @@ public final class DpPlacementAdapter {
 			}
 			DpPlacementAdapter.orderedOracleInputs(context, parentOccurrence, rawEntries,
 				rawEntries.stream().map(CandidateMapEntry::oracleInputState).toList());
-			for(int i = 0; i < logicalEntries.size(); i++) {
-				LogicalCandidateInputEntry logical = logicalEntries.get(i);
+			Set<LogicalCandidateInputFact> exactLogicalFacts =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			for(LogicalCandidateInputEntry logical : logicalEntries) {
 				boolean exactFact = logical.fact() instanceof LogicalTransientInputFact transientFact
 					? context.analysis().requireExactLogicalTransientInput(logical.sourceOccurrence(),
-						parentOccurrence, i) == transientFact
+						parentOccurrence, logical.logicalPosition()) == transientFact
 					: logical.fact() instanceof LogicalFunctionInputFact functionFact
 						&& context.analysis().requireExactLogicalFunctionInput(logical.sourceOccurrence(),
-							parentOccurrence, i) == functionFact;
-				if(logical.fact().targetRead() != parentOccurrence || logical.logicalPosition() != i
-					|| !exactFact || orderedOracleInputs.get(rawEntries.size() + i) != logical.oracleInputState())
+							parentOccurrence, logical.logicalPosition()) == functionFact;
+				if(logical.fact().targetRead() != parentOccurrence || !exactFact
+					|| !exactLogicalFacts.add(logical.fact())
+					|| orderedOracleInputs.get(rawEntries.size() + logical.logicalPosition())
+						!= logical.oracleInputState())
 					throw new IllegalArgumentException("Logical candidate input order or identity differs");
 			}
+			List<LogicalTransientInputFact> expectedTransientInputs = context.analysis()
+				.logicalTransientInputsInCanonicalOrder().stream()
+				.filter(fact -> fact.targetRead() == parentOccurrence).toList();
+			List<LogicalTransientInputFact> actualTransientInputs = logicalEntries.stream()
+				.map(LogicalCandidateInputEntry::fact)
+				.filter(LogicalTransientInputFact.class::isInstance)
+				.map(LogicalTransientInputFact.class::cast).toList();
+			if(!actualTransientInputs.isEmpty()
+				&& (actualTransientInputs.size() != expectedTransientInputs.size()
+					|| !sameIdentityOrder(actualTransientInputs, expectedTransientInputs)))
+				throw new IllegalArgumentException("Logical transient source set differs");
 			Set<CompiledHopKey> carrierSources = Collections.newSetFromMap(new IdentityHashMap<>());
 			rawEntries.forEach(entry -> carrierSources.add(entry.occurrence()));
 			logicalEntries.forEach(entry -> carrierSources.add(entry.sourceOccurrence()));
@@ -292,6 +307,32 @@ public final class DpPlacementAdapter {
 					: CandidateInputState.present(FType.valueOf(input.name()))).toList();
 			context.analysis().candidateRuleFacts().requireExact(parentOccurrence, factInputs);
 		}
+	}
+
+	private static List<OracleInputState> groupedLogicalOracleInputs(
+		List<LogicalCandidateInputEntry> logicalEntries) {
+		LinkedHashMap<Integer,OracleInputState> byPosition = new LinkedHashMap<>();
+		int nextPosition = 0;
+		for(LogicalCandidateInputEntry logical : logicalEntries) {
+			OracleInputState existing = byPosition.get(logical.logicalPosition());
+			if(existing == null) {
+				if(logical.logicalPosition() != nextPosition++)
+					throw new IllegalArgumentException("Logical candidate positions are not contiguous");
+				byPosition.put(logical.logicalPosition(), logical.oracleInputState());
+			}
+			else if(existing != logical.oracleInputState())
+				throw new IllegalArgumentException("Logical candidate sources disagree on placement");
+		}
+		return List.copyOf(byPosition.values());
+	}
+
+	private static boolean sameIdentityOrder(List<? extends Object> left, List<? extends Object> right) {
+		if(left.size() != right.size())
+			return false;
+		for(int i = 0; i < left.size(); i++)
+			if(left.get(i) != right.get(i))
+				return false;
+		return true;
 	}
 
 	public record PreSelectionSemanticBlock(NeutralEnumerationContext context,
@@ -710,7 +751,7 @@ public final class DpPlacementAdapter {
 
 		List<CandidateMapEntry> rawEntries = new ArrayList<>(collectedHops.size());
 		List<CandidateMapEntry> promotedEntries = new ArrayList<>(collectedHops.size());
-		List<LogicalCandidateInputEntry> logicalEntries = new ArrayList<>(1);
+		List<LogicalCandidateInputEntry> logicalEntries = new ArrayList<>(collectedHops.size());
 		List<TransientForwardDependencyEntry> transientForwardDependencies = new ArrayList<>(1);
 		List<FunctionOutputDependencyEntry> functionOutputDependencies = new ArrayList<>(1);
 		List<OracleInputState> rawOrderOracleStates = new ArrayList<>(collectedHops.size());
@@ -721,6 +762,12 @@ public final class DpPlacementAdapter {
 		Hop parentHop = context.analysis().hop(parent.key()).orElseThrow(() ->
 			failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
 				"CANDIDATE_PARENT_STALE"));
+		List<LogicalFunctionInputFact> parentFunctionInputs = context.analysis()
+			.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == parent.key()).toList();
+		List<LogicalTransientInputFact> parentTransientInputs = context.analysis()
+			.logicalTransientInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == parent.key()).toList();
 		for(Hop input : parentHop.getInput()) {
 			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(input);
 			if(occurrence == null)
@@ -783,8 +830,7 @@ public final class DpPlacementAdapter {
 				logicalEntries.add(new LogicalCandidateInputEntry(fact, occurrence.key(), 0, selected, oracle));
 				continue;
 			}
-			boolean hasLogicalTransientInput = context.analysis().logicalTransientInputsInCanonicalOrder().stream()
-				.anyMatch(fact -> fact.targetRead() == parent.key());
+			boolean hasLogicalTransientInput = !parentTransientInputs.isEmpty();
 			if(remaining == 0 && hasLogicalTransientInput && parentHop.getInput().isEmpty()
 				&& context.analysis().graph().node(parent.key()).orElseThrow().kind()
 					== NeutralPlacementGraph.NodeKind.TRANSIENT_READ) {
@@ -796,10 +842,7 @@ public final class DpPlacementAdapter {
 					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
 						"LOGICAL_TRANSIENT_FACT_MISSING");
 				}
-				if(collectedHops.size() != 1 || !logicalEntries.isEmpty()
-					|| context.rewireSnapshot().transientForwardEdges().stream()
-						.filter(forward -> forward.writeOccurrence() == occurrence.key()
-							&& forward.readOccurrence() == parent.key()).count() != 1
+				if(logicalEntries.stream().anyMatch(entry -> entry.fact() == fact)
 					|| childPlan == null || childPlan.getSelectedPlacementState() == null)
 					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
 						"LOGICAL_TRANSIENT_SELECTION_STALE");
@@ -826,6 +869,14 @@ public final class DpPlacementAdapter {
 				else
 					throw failure(context.analysis(), parent.key(), ConstructionDisposition.FOREIGN_CONTEXT,
 						"LOGICAL_TRANSIENT_SOURCE_STATE_FOREIGN");
+				if(rawContainsKey != (effectiveType != null)
+					|| rawContainsKey && rawType != effectiveType || collectedType != effectiveType)
+					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+						"LOGICAL_TRANSIENT_CARRIER_STATE_DIFFERS");
+				if(logicalEntries.stream().anyMatch(entry -> entry.logicalPosition() == fact.logicalPosition()
+					&& entry.oracleInputState() != oracle))
+					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+						"LOGICAL_TRANSIENT_JOIN_STATE_MISMATCH");
 				effectiveCollectedFTypes.set(i, effectiveType);
 				logicalEntries.add(new LogicalCandidateInputEntry(fact, occurrence.key(), 0, selected, oracle));
 				continue;
@@ -922,9 +973,18 @@ public final class DpPlacementAdapter {
 		if(!remainingPhysicalInputs.isEmpty())
 			throw failure(context.analysis(), parent.key(), ConstructionDisposition.REORDERED_EDGE,
 				"CANDIDATE_DIRECT_INPUT_MISSING");
+		if(parentFunctionInputs.isEmpty() && !parentTransientInputs.isEmpty()) {
+			List<LogicalTransientInputFact> selectedTransientInputs = logicalEntries.stream()
+				.map(LogicalCandidateInputEntry::fact)
+				.filter(LogicalTransientInputFact.class::isInstance)
+				.map(LogicalTransientInputFact.class::cast).toList();
+			if(!sameIdentityOrder(selectedTransientInputs, parentTransientInputs))
+				throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+					"LOGICAL_TRANSIENT_SOURCE_SET_STALE");
+		}
 		orderedOracleInputs.addAll(orderedOracleInputs(
 			context, parent.key(), rawEntries, rawOrderOracleStates));
-		logicalEntries.forEach(entry -> orderedOracleInputs.add(entry.oracleInputState()));
+		orderedOracleInputs.addAll(groupedLogicalOracleInputs(logicalEntries));
 
 		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
 			promotedEntries, logicalEntries, transientForwardDependencies, functionOutputDependencies, orderedOracleInputs,

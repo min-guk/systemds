@@ -51,6 +51,10 @@ public class CampaignBHeuristicPathwiseReentryTest {
 			FederatedOutput.FOUT, result.assignment().get(obligation.consumer()).output());
 		Assert.assertSame("selected obligation uses the existing analysis relocation",
 			obligation.relocationAction(), result.selectedRelocations().get(0));
+		Assert.assertEquals("when both partition-aligned and broadcast uploads are legal, the heuristic"
+			+ " must choose the non-replicating anchor-aligned frontier",
+			obligation.relocationAction().durableAnchor().fType(),
+			obligation.relocationAction().materializationFType());
 		Node sibling = analysis.compiledInputEdgesInCanonicalOrder().stream()
 			.filter(edge -> edge.consumer() == obligation.consumer()
 				&& edge.inputPosition() != obligation.inputPosition())
@@ -172,7 +176,7 @@ public class CampaignBHeuristicPathwiseReentryTest {
 	}
 
 	@Test
-	public void lmLocalPrefixProjectsDirectRelocationSourcesIntoTheFilteredGraph() throws Exception {
+	public void lmNestedDemotionsStayLocalWithoutUnprovenRefed() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(lmScript()));
 		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
 			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
@@ -193,9 +197,12 @@ public class CampaignBHeuristicPathwiseReentryTest {
 			conflictingBaseActions.isEmpty());
 
 		var result = new HeuristicPlacementAdapter().select(analysis, markers);
-		Assert.assertEquals("relocation keys must survive policy projection",
-			analysis.graph().relocationActions().stream().map(action -> action.key()).sorted().toList(),
-			result.selectorGraph().relocationActions().stream().map(action -> action.key()).sorted().toList());
+		Assert.assertEquals("LM has no proven exact re-entry frontier", "0",
+			result.plannerFacts().get("frontierEdgeCount"));
+		Assert.assertTrue("No local-prefix relocation may survive without an exact frontier",
+			result.selectedRelocations().isEmpty());
+		Assert.assertTrue("No local-prefix obligation may survive without an exact frontier",
+			result.selectedObligations().isEmpty());
 		for(var action : result.selectorGraph().relocationActions()) {
 			Set<org.apache.sysds.hops.fedplanner.placement.PlacementState> legalSourceStates =
 				result.selectorGraph().nodes().stream()
@@ -206,12 +213,21 @@ public class CampaignBHeuristicPathwiseReentryTest {
 				legalSourceStates.containsAll(action.directSourcePlacements()));
 		}
 		for(var baseAction : conflictingBaseActions) {
-			var projected = result.selectorGraph().relocationActions().stream()
-				.filter(action -> action.key().equals(baseAction.key())).findFirst().orElseThrow();
-			Assert.assertEquals("policy projection must preserve exact obligations",
-				baseAction.obligations(), projected.obligations());
-			Assert.assertTrue("filtered local source cannot retain an impossible direct-FOUT bypass",
-				projected.directSourcePlacements().isEmpty());
+			Assert.assertTrue("an unproven local-prefix relocation must be removed from the selector graph",
+				result.selectorGraph().relocationActions().stream()
+					.noneMatch(action -> action.key().equals(baseAction.key())));
+		}
+		var nestedMarkers = analysis.heuristicPolicyFacts().paths().stream()
+			.flatMap(path -> path.localPrefix().stream()
+				.filter(key -> key != path.demotion().producer()))
+			.filter(key -> analysis.heuristicPolicyFacts().demotions().stream()
+				.anyMatch(marker -> marker.producer() == key))
+			.collect(java.util.stream.Collectors.toSet());
+		Assert.assertFalse("LM must expose at least one downstream nested demotion", nestedMarkers.isEmpty());
+		for(var nested : nestedMarkers) {
+			var state = result.assignment().get(nested);
+			Assert.assertEquals("downstream nested demotion continues locally", ExecType.CP, state.execType());
+			Assert.assertEquals(FederatedOutput.LOUT, state.output());
 		}
 	}
 

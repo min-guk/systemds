@@ -63,16 +63,33 @@ public final class LocalMaterializationSelections {
 			// coordinator-local value. Its local consumers already use the base LOUT.
 			if(producerEmission.derivedFedFout())
 				continue;
-			List<LocalMaterializationObligation> obligations = analysis
+			List<LocalMaterializationObligation> obligations = new ArrayList<>(analysis
 				.compiledInputEdgesInCanonicalOrder().stream()
 				.filter(edge -> edge.producer() == node.key())
-				// A DML FunctionOp is a logical forwarding boundary; actual/formal facts
-				// carry placement without a physical coordinator matrix consumption.
+				// FunctionOp placement is a call placeholder. Its local-input demand is
+				// determined by the selected formal below, not by the call's own state.
 				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
 				.filter(edge -> requiresLocalInput(selected.get(edge.consumer()),
 					candidatesByConsumer.get(edge.consumer()), edge.inputPosition()))
 				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
-					selected.get(edge.consumer()))).sorted().toList();
+					selected.get(edge.consumer()))).toList());
+			for(PlacementAnalysis.LogicalFunctionInputFact fact :
+				analysis.logicalFunctionInputsInCanonicalOrder()) {
+				if(fact.sourceArgument() != node.key())
+					continue;
+				PlacementState formal = selected.get(fact.targetRead());
+				if(formal == null || formal.execType() != ExecType.CP
+					|| formal.output() != FederatedOutput.LOUT)
+					continue;
+				CompiledHopKey call = analysis.requireExactPhysicalFunctionInputConsumer(fact);
+				PlacementState callState = selected.get(call);
+				if(callState == null)
+					throw new IllegalArgumentException(
+						"Selected local function formal has no selected physical call owner");
+				obligations.add(new LocalMaterializationObligation(
+					call, fact.callInputPosition(), callState));
+			}
+			obligations = obligations.stream().distinct().sorted().toList();
 			if(obligations.isEmpty())
 				continue;
 			var occurrence = analysis.occurrences().stream()

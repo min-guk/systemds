@@ -25,8 +25,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInp
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -47,6 +49,8 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 	public void stepLmDpRetainsExactFunctionInputCandidates() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
+		String oldRuntimeAudit = System.getProperty(PlannerRuntimePlacementAudit.PROPERTY);
+		System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, Boolean.TRUE.toString());
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
 		DMLConfig config = new DMLConfig(oldGlobal);
 		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
@@ -75,7 +79,14 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 				Assert.assertTrue("StepLM must use the DP planner, receipt=" + captured.get(),
 					captured.get() instanceof DpInvocationReceipt);
 				assertLinearRegressionFunctionInputClosure((DpInvocationReceipt) captured.get());
+				assertFunctionInputAliasBodyReadRetainsFout((DpInvocationReceipt) captured.get());
+				assertSelectedFunctionInputTransfersAreExplicit((DpInvocationReceipt) captured.get());
 				translator.getRuntimeProgram(program, config);
+				String audit = PlannerRuntimePlacementAudit.display();
+				Assert.assertTrue("StepLM must lower every selected physical operation: " + audit,
+					audit.contains("missingPhysicalHops=0"));
+				Assert.assertTrue("StepLM lowering audit must have no mismatch: " + audit,
+					audit.contains("mismatches=0"));
 				assertFinalRecompileStatesMatchExecutableHops((DpInvocationReceipt) captured.get());
 		}
 		finally {
@@ -90,6 +101,52 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 			FederatedRefedRegistry.clear();
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedLocalMaterializeRegistry.clear();
+			if(oldRuntimeAudit == null)
+				System.clearProperty(PlannerRuntimePlacementAudit.PROPERTY);
+			else
+				System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, oldRuntimeAudit);
+		}
+	}
+
+	private static void assertSelectedFunctionInputTransfersAreExplicit(DpInvocationReceipt receipt) {
+		PlacementAnalysis analysis = receipt.analysis();
+		var selected = receipt.normalizedResult().selectedStates();
+		List<LocalMaterializationActionKey> actions = receipt.normalizedResult()
+			.selectedLocalMaterializations().stream()
+			.map(action -> (LocalMaterializationActionKey) action).toList();
+		int transfers = 0;
+		for(LogicalFunctionInputFact fact : analysis.logicalFunctionInputsInCanonicalOrder()) {
+			PlacementState source = selected.get(fact.sourceArgument());
+			PlacementState formal = selected.get(fact.targetRead());
+			if(source == null || formal == null || source.output() != FederatedOutput.FOUT
+				|| formal.execType() != ExecType.CP || formal.output() != FederatedOutput.LOUT)
+				continue;
+			transfers++;
+			CompiledHopKey call = analysis.requireExactPhysicalFunctionInputConsumer(fact);
+			Assert.assertTrue("Every selected function FOUT->LOUT transfer must own an exact call-input action",
+				actions.stream().anyMatch(action -> action.sourceOccurrence() == fact.sourceArgument()
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumerOccurrence() == call
+							&& obligation.inputPosition() == fact.callInputPosition())));
+		}
+		Assert.assertTrue("StepLM fixture must exercise at least one explicit function-input download",
+			transfers > 0);
+	}
+
+	private static void assertFunctionInputAliasBodyReadRetainsFout(DpInvocationReceipt receipt) {
+		List<PlacementAnalysis.HopOccurrenceProjection> reads = receipt.analysis().occurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof org.apache.sysds.hops.DataOp)
+			.filter(occurrence -> ((org.apache.sysds.hops.DataOp) occurrence.hop()).getOp()
+				== org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD)
+			.filter(occurrence -> occurrence.hop().getBeginLine() == 98)
+			.filter(occurrence -> "y".equals(occurrence.hop().getName())).toList();
+		Assert.assertFalse("StepLM line-98 y read must be present", reads.isEmpty());
+		for(PlacementAnalysis.HopOccurrenceProjection read : reads) {
+			Assert.assertTrue("A function-input identity alias must retain the caller's FED/FOUT arm: "
+				+ read.key().normalizedSignature(),
+				receipt.memo().getExactPlanArmsForOccurrence(read).stream()
+					.anyMatch(arm -> arm.plan().getSelectedPlacementState().output()
+						== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT));
 		}
 	}
 

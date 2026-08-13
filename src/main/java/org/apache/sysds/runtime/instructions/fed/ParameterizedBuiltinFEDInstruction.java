@@ -93,8 +93,17 @@ public class ParameterizedBuiltinFEDInstruction extends ComputationFEDInstructio
 
 	protected ParameterizedBuiltinFEDInstruction(Operator op, HashMap<String, String> paramsMap, CPOperand out,
 		String opcode, String istr) {
-		super(FEDType.ParameterizedBuiltin, op, null, null, out, opcode, istr);
+		super(FEDType.ParameterizedBuiltin, op, null, null, out, opcode, istr,
+			physicalFederatedOutput(opcode));
 		params = paramsMap;
+	}
+
+	private static FederatedOutput physicalFederatedOutput(String opcode) {
+		// contains aggregates worker scalars at the coordinator. Every other
+		// supported federated parameterized builtin below installs a FederationMap
+		// on its output and therefore physically publishes FOUT. Expose that runtime
+		// contract explicitly instead of leaving audit/diagnostics at NONE.
+		return "contains".equalsIgnoreCase(opcode) ? FederatedOutput.LOUT : FederatedOutput.FOUT;
 	}
 
 	public static ParameterizedBuiltinFEDInstruction parseInstruction(String str) {

@@ -448,12 +448,14 @@ public class AggBinaryOp extends MultiThreadedHop {
 		Hop in2 = getInput().get(1);
 
 		if (HopRewriteUtils.isTransposeOperation(in1)
-				&& in1.getInput().get(0) == in2) {
+				&& in1.getInput().get(0) == in2
+				&& !hasPlannerMaterializationBoundary(in1)) {
 			ret = MMTSJType.LEFT;
 		}
 
 		if (HopRewriteUtils.isTransposeOperation(in2)
-				&& in2.getInput().get(0) == in1) {
+				&& in2.getInput().get(0) == in1
+				&& !hasPlannerMaterializationBoundary(in2)) {
 			ret = MMTSJType.RIGHT;
 		}
 
@@ -655,6 +657,18 @@ public class AggBinaryOp extends MultiThreadedHop {
 			&& !hasPlannerMaterializationBoundary(getInput().get(0))
 			&& !hasPlannerMaterializationBoundary(getInput().get(1))
 			&& isLeftTransposeRewriteApplicable(true);
+	}
+
+	/**
+	 * Exposes the exact historical CP/FED left-transpose cost predicate to the
+	 * pre-planner HOP normalization pass.  The normalization expands
+	 * {@code t(X) %*% Y} into {@code t(t(Y) %*% X)} before placement analysis, so
+	 * every planner prices the same physical operations that lowering will emit.
+	 * This method deliberately contains no planner-placement exception: it is
+	 * called only while placement analysis is still unbound.
+	 */
+	public boolean isLeftTransposeRewriteApplicableForPlannerNormalization() {
+		return isLeftTransposeRewriteApplicable(true);
 	}
 
 	private static boolean hasPlannerMaterializationBoundary(Hop input) {

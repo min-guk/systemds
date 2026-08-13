@@ -110,6 +110,7 @@ public class FederatedPlannerDpMemoTable {
 	private final Map<Pair<Long, FederatedOutput>, Set<Hop>> carriersByLegacyCoordinate = new HashMap<>();
 	private final PlacementAnalysis analysis;
 	private final Set<HopOccurrenceProjection> ownedOccurrences;
+	private final Set<CompiledHopKey> exactConstraintSensitiveOccurrences;
 	private final Map<Hop, HopOccurrenceProjection> occurrenceByPlanCarrier = new IdentityHashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
 	private final Map<Long, Long> cloneToOrig = new HashMap<>();
@@ -128,6 +129,7 @@ public class FederatedPlannerDpMemoTable {
 	public FederatedPlannerDpMemoTable() {
 		analysis = null;
 		ownedOccurrences = Collections.emptySet();
+		exactConstraintSensitiveOccurrences = Collections.emptySet();
 	}
 
 	public FederatedPlannerDpMemoTable(PlacementAnalysis analysis) {
@@ -135,6 +137,15 @@ public class FederatedPlannerDpMemoTable {
 		Set<HopOccurrenceProjection> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
 		occurrences.addAll(analysis.occurrences());
 		ownedOccurrences = Collections.unmodifiableSet(occurrences);
+		Set<CompiledHopKey> sensitive = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(NeutralPlacementGraph.Constraint constraint : analysis.graph().constraints())
+			if(constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT
+				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_FTYPE
+				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE) {
+				sensitive.add(constraint.left());
+				sensitive.add(constraint.right());
+			}
+		exactConstraintSensitiveOccurrences = Collections.unmodifiableSet(sensitive);
 	}
 
 	public PlacementAnalysis analysis() {
@@ -276,6 +287,26 @@ public class FederatedPlannerDpMemoTable {
 		return variants == null || variants.isEmpty() ? null : selectPrimaryVariantAfterPrune(variants);
 	}
 
+	/**
+	 * Resolve a child arm from its exact analysis occurrence when the concrete compiled
+	 * carrier itself has no retained arm. Recompile/unrolled carriers are alternative
+	 * physical representations of that same occurrence and must not be lost through a
+	 * legacy Hop-ID lookup. Legacy unbound memo tables retain their original ID behavior.
+	 */
+	public FedPlan getFedPlanAfterPruneForOccurrence(Hop carrier, FederatedOutput output) {
+		Objects.requireNonNull(carrier, "carrier");
+		Objects.requireNonNull(output, "output");
+		FedPlan exact = getFedPlanAfterPrune(carrier, output);
+		if(exact != null)
+			return exact;
+		if(analysis == null)
+			return getFedPlanAfterPrune(carrier.getHopID(), output);
+		HopOccurrenceProjection occurrence = occurrenceByPlanCarrier.get(carrier);
+		if(occurrence == null)
+			occurrence = requireOccurrence(carrier);
+		return getFedPlanAfterPrune(occurrence, output);
+	}
+
 	public FedPlan getFedPlanAfterPrune(HopOccurrenceProjection occurrence, FederatedOutput federatedOutput) {
 		assertOwnedOccurrence(occurrence);
 		FedPlan best = null;
@@ -291,6 +322,19 @@ public class FederatedPlannerDpMemoTable {
 				best = candidate;
 		}
 		return hasExplicitCarrier ? best : getFedPlanAfterPrune(occurrence.hop().getHopID(), federatedOutput);
+	}
+
+	public List<FedPlan> getExactPlansAfterPrune(HopOccurrenceProjection occurrence,
+		FederatedOutput federatedOutput) {
+		assertOwnedOccurrence(occurrence);
+		List<FedPlan> plans = new ArrayList<>();
+		Set<FedPlan> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(OccurrencePlanArm arm : getAllExactPlanVariantsForOccurrence(occurrence))
+			if(arm.output() == federatedOutput && seen.add(arm.plan()))
+				plans.add(arm.plan());
+		plans.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost)
+			.thenComparingLong(FedPlan::getHopID));
+		return List.copyOf(plans);
 	}
 
 	public Hop resolveExecutableHop(HopOccurrenceProjection occurrence) {
@@ -376,6 +420,101 @@ public class FederatedPlannerDpMemoTable {
 				}
 			}
 		return List.copyOf(arms);
+	}
+
+	/**
+	 * Canonical semantic snapshot of the complete exact DP frontier.
+	 *
+	 * <p>The production rewire graph can contain loop-carried TRead/TWrite cycles.
+	 * A single depth-first enumeration pass is then only a seed: an early TRead can
+	 * observe the previous pass' TWrite frontier while a later TWrite already observes
+	 * the new TRead frontier.  Comparing object identities cannot detect convergence
+	 * because every closure pass allocates fresh {@link FedPlan} objects.  This method
+	 * therefore records every execution-relevant field using exact occurrence authority,
+	 * placement/candidate/relocation receipts, ordered child boundaries, and exact cost
+	 * bits.  It deliberately excludes Java object identity while retaining carrier IDs,
+	 * so semantically identical recomputation is stable but a changed executable carrier
+	 * or cost is not.</p>
+	 */
+	String exactSemanticFrontierFingerprint() {
+		if(analysis == null)
+			throw new IllegalStateException("Memo is not bound to a placement analysis");
+		StringBuilder fingerprint = new StringBuilder();
+		for(HopOccurrenceProjection occurrence : analysis.occurrences().stream()
+			.sorted(Comparator.comparing(HopOccurrenceProjection::key)).toList()) {
+			fingerprint.append("occ=").append(occurrence.key().normalizedSignature()).append('{');
+			List<String> arms = getAllExactPlanVariantsForOccurrence(occurrence).stream()
+				.map(FederatedPlannerDpMemoTable::exactSemanticArmSignature)
+				.distinct().sorted().toList();
+			for(String arm : arms)
+				fingerprint.append(arm).append(';');
+			fingerprint.append('}');
+		}
+		return fingerprint.toString();
+	}
+
+	void assertNoExactFrontierSeeds() {
+		for(HopOccurrenceProjection occurrence : analysis.occurrences())
+			for(OccurrencePlanArm arm : getAllExactPlanVariantsForOccurrence(occurrence))
+				if(arm.plan().isExactFrontierSeed())
+					throw new IllegalStateException("Unresolved exact DP frontier seed for "
+						+ occurrence.key().normalizedSignature() + " carrier="
+						+ arm.carrier().getHopID() + " output=" + arm.output());
+	}
+
+	boolean pruneExactFedPlanVariants(HopOccurrenceProjection occurrence,
+		FedPlanVariants variants) {
+		assertOwnedOccurrence(occurrence);
+		Objects.requireNonNull(variants, "variants");
+		return variants.pruneFedPlans(
+			exactConstraintSensitiveOccurrences.contains(occurrence.key()),
+			exactConstraintSensitiveOccurrences);
+	}
+
+	private static String exactSemanticArmSignature(OccurrencePlanArm arm) {
+		FedPlan plan = arm.plan();
+		PlacementState state = plan.getSelectedPlacementState();
+		StringBuilder signature = new StringBuilder()
+			.append("carrier=").append(arm.carrier().getHopID())
+			.append("|output=").append(arm.output())
+			.append("|seed=").append(plan.isExactFrontierSeed())
+			.append("|exec=").append(plan.getExecType())
+			.append("|ftype=").append(plan.getFType())
+			.append("|cpFout=").append(plan.getCpFoutType())
+			.append("|state=").append(state == null ? "null" : state.normalizedSignature())
+			.append("|derived=").append(plan.isDerivedFedFout())
+			.append("|materialized=").append(plan.isFoutMaterializationAccounted())
+			.append("|cumulative=").append(Double.toHexString(plan.getCumulativeCost()))
+			.append("|self=").append(Double.toHexString(plan.getSelfCost()))
+			.append("|forwarding=").append(Double.toHexString(plan.getForwardingCost()));
+		if(plan.hasExactRecurrenceCosts())
+			signature.append("|recurrence=")
+				.append(Double.toHexString(plan.getEmbeddedChildRecurrenceCost())).append('/')
+				.append(Double.toHexString(plan.getPhysicalChildBoundaryCost()));
+		else
+			signature.append("|recurrence=absent");
+		CandidateSelectionReceipt candidate = plan.getDirectCandidateSelection();
+		signature.append("|candidate=")
+			.append(candidate == null ? "null" : candidate.normalizedSignature());
+		for(RelocationChoiceReceipt relocation : plan.getDirectRelocationChoices())
+			signature.append("|relocation=").append(relocation.normalizedSignature());
+		for(Map.Entry<RelocationActionKey,Double> cost : plan.getDirectRelocationActionCosts().entrySet())
+			signature.append("|relocationCost=").append(cost.getKey().normalizedSignature())
+				.append('@').append(Double.toHexString(cost.getValue()));
+		for(FedPlan.ExactChildPlanEdge edge : plan.getExactChildPlanEdges()) {
+			FedPlan child = edge.selectedPlan();
+			PlacementState childState = child.getSelectedPlacementState();
+			CandidateSelectionReceipt childCandidate = child.getDirectCandidateSelection();
+			signature.append("|child=").append(edge.occurrence().normalizedSignature())
+				.append('@').append(edge.carrier().getHopID())
+				.append('/').append(edge.output())
+				.append('/').append(childState == null ? "null" : childState.normalizedSignature())
+				.append("/derived=").append(child.isDerivedFedFout())
+				.append("/cost=").append(Double.toHexString(child.getCumulativeCost()))
+				.append("/candidate=")
+				.append(childCandidate == null ? "null" : childCandidate.normalizedSignature());
+		}
+		return signature.toString();
 	}
 
 	/** Selects the minimum-cost memo arm for an exact neutral occurrence, including disconnected regions. */
@@ -549,11 +688,7 @@ public class FederatedPlannerDpMemoTable {
 	}
 
 	public boolean containsPlanForCarrier(Hop carrier, FederatedOutput fedOutType) {
-		if(carrier == null)
-			return false;
-		FedPlanVariants variants = hopMemoTable.get(new ImmutablePair<>(carrier.getHopID(), fedOutType));
-		return variants != null && variants.hopCommon != null
-			&& variants.hopCommon.getHopRef() == carrier;
+		return carrier != null && getFedPlanVariants(carrier, fedOutType) != null;
 	}
 
 	public void registerHopRefs(Map<Long, HopCommon> hopCommonTable) {
@@ -757,6 +892,7 @@ public class FederatedPlannerDpMemoTable {
 				private Map<RelocationActionKey,Double> directRelocationActionCosts = Map.of();
 				private double embeddedChildRecurrenceCost = Double.NaN;
 				private double physicalChildBoundaryCost = Double.NaN;
+				private boolean exactFrontierSeed;
 
 		public FedPlan(double cumulativeCost, FedPlanVariants fedPlanVariants,
 				List<Pair<Long, FederatedOutput>> childFedPlans) {
@@ -779,6 +915,14 @@ public class FederatedPlannerDpMemoTable {
 
 		public double getCumulativeCost() {
 			return cumulativeCost;
+		}
+
+		void markExactFrontierSeed() {
+			exactFrontierSeed = true;
+		}
+
+		boolean isExactFrontierSeed() {
+			return exactFrontierSeed;
 		}
 
 		public double getCumulativeCostPerParents() {
@@ -1073,6 +1217,11 @@ public class FederatedPlannerDpMemoTable {
 		}
 
 		public boolean pruneFedPlans() {
+			return pruneFedPlans(false, Collections.emptySet());
+		}
+
+		private boolean pruneFedPlans(boolean exactParentSensitive,
+			Set<CompiledHopKey> exactSensitiveOccurrences) {
 			if (_fedPlanVariants.isEmpty())
 				return false;
 
@@ -1104,10 +1253,51 @@ public class FederatedPlannerDpMemoTable {
 			if(bestFED != null)
 				kept.add(bestFED);
 			kept.addAll(selectMaterializationSensitiveCpVariants(_fedPlanVariants));
+			kept.addAll(selectExactConstraintBoundaryRepresentatives(_fedPlanVariants,
+				exactParentSensitive, exactSensitiveOccurrences));
 			_fedPlanVariants.clear();
 			_fedPlanVariants.addAll(kept);
 			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
 			return true;
+		}
+
+		private static List<FedPlan> selectExactConstraintBoundaryRepresentatives(
+			List<FedPlan> variants, boolean exactParentSensitive,
+			Set<CompiledHopKey> exactSensitiveOccurrences) {
+			if(!exactParentSensitive && exactSensitiveOccurrences.isEmpty())
+				return List.of();
+			Map<String,FedPlan> bestByBoundary = new LinkedHashMap<>();
+			for(FedPlan plan : variants) {
+				String signature = exactConstraintBoundarySignature(
+					plan, exactParentSensitive, exactSensitiveOccurrences);
+				if(signature != null)
+					bestByBoundary.putIfAbsent(signature, plan);
+			}
+			return List.copyOf(bestByBoundary.values());
+		}
+
+		private static String exactConstraintBoundarySignature(FedPlan plan,
+			boolean exactParentSensitive, Set<CompiledHopKey> exactSensitiveOccurrences) {
+			StringBuilder signature = new StringBuilder();
+			if(exactParentSensitive) {
+				PlacementState state = plan.getSelectedPlacementState();
+				if(state == null)
+					throw new IllegalStateException(
+						"Exact-constraint DP frontier plan lacks a placement state");
+				signature.append("parent=").append(state.normalizedSignature());
+			}
+			for(FedPlan.ExactChildPlanEdge edge : plan.getExactChildPlanEdges()) {
+				if(!exactSensitiveOccurrences.contains(edge.occurrence()))
+					continue;
+				PlacementState childState = edge.selectedPlan().getSelectedPlacementState();
+				if(childState == null)
+					throw new IllegalStateException(
+						"Exact-constraint DP child frontier lacks a placement state");
+				signature.append("|child=").append(edge.occurrence().normalizedSignature())
+					.append('=').append(childState.normalizedSignature())
+					.append("/derived=").append(edge.selectedPlan().isDerivedFedFout());
+			}
+			return signature.length() == 0 ? null : signature.toString();
 		}
 
 		/**

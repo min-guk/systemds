@@ -130,9 +130,11 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 			.filter(n -> distinctCfgDefinitions(n).size() > 1).collect(Collectors.toList());
 		Assert.assertTrue("fixture must expose body/head/post-loop multi-reaching reads", reads.size() >= 3);
 		for(Node read : reads) {
-			long typed = graph.constraints().stream().filter(c -> c.kind() == ConstraintKind.CONJUNCTIVE
+			long typed = graph.constraints().stream().filter(c -> c.kind() == ConstraintKind.SAME_PLACEMENT
+				&& c.evidence().startsWith("cfg-transient-value:")
 				&& c.right().equals(read.key())).map(c -> c.left()).distinct().count();
-			Assert.assertEquals("missing typed CFG constraints for " + read.key().normalizedSignature(),
+			Assert.assertEquals("missing exact CFG value-placement constraints for "
+				+ read.key().normalizedSignature(),
 				distinctCfgDefinitions(read).size(), typed);
 		}
 	}
@@ -168,9 +170,9 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 					&& "function-formal-input".equals(constraint.evidence())).count());
 		Assert.assertEquals("the branch write must constrain the same merged read", 1,
 			graph.constraints().stream().filter(constraint ->
-				constraint.kind() == ConstraintKind.CONJUNCTIVE
+				constraint.kind() == ConstraintKind.SAME_PLACEMENT
 					&& constraint.right().equals(read.key())
-					&& !"function-formal-input".equals(constraint.evidence())).count());
+					&& constraint.evidence().startsWith("cfg-transient-value:")).count());
 		Assert.assertEquals("analysis must publish the caller argument as a logical input", 1,
 			analysis.logicalFunctionInputsInCanonicalOrder().stream()
 				.filter(fact -> fact.targetRead().equals(read.key())).count());

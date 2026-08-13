@@ -23,6 +23,7 @@ import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 import org.apache.sysds.runtime.lineage.LineageItem;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.util.CommonThreadPool;
 
@@ -43,6 +44,27 @@ public class PrefetchCPInstruction extends UnaryCPInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		/*
+		 * A planner-selected LOCAL/REFED_LOCAL action is a physical placement
+		 * boundary, not an asynchronous performance hint.  The ordinary prefetch
+		 * implementation aliases the input MatrixObject and merely schedules an
+		 * acquire in the background; a federated input therefore continues to
+		 * publish its FederationMap through the output name.  That is unsafe for an
+		 * exact planner boundary followed by a cpvar or another non-materializing
+		 * consumer.  Materialize synchronously and publish a distinct local output;
+		 * ExecutionContext clears any pre-created output FederationMap.
+		 *
+		 * Prefetches without planner authority retain their historical asynchronous
+		 * behavior below.
+		 */
+		if(getPlannerSyntheticActionKey() != null) {
+			LineageItem li = !LineageCacheConfig.ReuseCacheType.isNone()
+				? getLineageItem(ec).getValue() : null;
+			MatrixBlock materialized = ec.getMatrixObject(input1).acquireReadAndRelease();
+			ec.setMatrixOutputAndLineage(output.getName(), materialized, li);
+			return;
+		}
+
 		// TODO: handle non-matrix objects
 		ec.setVariable(output.getName(), ec.getMatrixObject(input1));
 		LineageItem li = !LineageCacheConfig.ReuseCacheType.isNone() ? getLineageItem(ec).getValue() : null;

@@ -88,9 +88,17 @@ public final class FederatedFoutMaterializeRegistry {
 	public static void registerConsumerInputs(long sbId, long hopId, long anchorHopId,
 		String fTypeHint, String anchorLabel, String anchorKey,
 		List<ConsumerInputSpec> consumerInputs) {
+		registerConsumerInputs(sbId, hopId, anchorHopId, fTypeHint, anchorLabel,
+			anchorKey, consumerInputs, null);
+	}
+
+	/** Registers exact common-planner authority together with its immutable action identity. */
+	public static void registerConsumerInputs(long sbId, long hopId, long anchorHopId,
+		String fTypeHint, String anchorLabel, String anchorKey,
+		List<ConsumerInputSpec> consumerInputs, String plannerActionKey) {
 		MATERIALIZE_ANCHORS.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
 			.put(hopId, MaterializeSpec.forConsumerInputs(anchorHopId, fTypeHint,
-				anchorLabel, anchorKey, consumerInputs));
+				anchorLabel, anchorKey, consumerInputs, plannerActionKey));
 	}
 
 	/** Restores one typed registration without degrading exact input authority. */
@@ -155,7 +163,8 @@ public final class FederatedFoutMaterializeRegistry {
 	private static MaterializeSpec copy(MaterializeSpec spec) {
 		Objects.requireNonNull(spec, "materializeSpec");
 		return new MaterializeSpec(spec.getAnchorHopId(), spec.getFTypeHint(), spec.getAnchorLabel(),
-			spec.getAnchorKey(), spec.getConsumerInputs(), spec.hasExactConsumerAuthority());
+			spec.getAnchorKey(), spec.getConsumerInputs(), spec.hasExactConsumerAuthority(),
+			spec.getPlannerActionKey());
 	}
 
 	public static final class MaterializeSpec {
@@ -165,13 +174,14 @@ public final class FederatedFoutMaterializeRegistry {
 		private final String _anchorKey;
 		private final List<ConsumerInputSpec> _consumerInputs;
 		private final boolean _exactConsumerAuthority;
+		private final String _plannerActionKey;
 
 		public MaterializeSpec(long anchorHopId, String fTypeHint, String anchorLabel, String anchorKey) {
-			this(anchorHopId, fTypeHint, anchorLabel, anchorKey, List.of(), false);
+			this(anchorHopId, fTypeHint, anchorLabel, anchorKey, List.of(), false, null);
 		}
 
 		private MaterializeSpec(long anchorHopId, String fTypeHint, String anchorLabel, String anchorKey,
-			List<ConsumerInputSpec> consumerInputs, boolean exactConsumerAuthority) {
+			List<ConsumerInputSpec> consumerInputs, boolean exactConsumerAuthority, String plannerActionKey) {
 			_anchorHopId = anchorHopId;
 			_fTypeHint = fTypeHint;
 			_anchorLabel = anchorLabel;
@@ -179,18 +189,20 @@ public final class FederatedFoutMaterializeRegistry {
 			_exactConsumerAuthority = exactConsumerAuthority;
 			_consumerInputs = exactConsumerAuthority
 				? canonicalExactConsumerInputs(consumerInputs) : List.of();
+			_plannerActionKey = normalizePlannerActionKey(plannerActionKey);
 		}
 
 		private static MaterializeSpec legacy(long anchorHopId, String fTypeHint,
 			String anchorLabel, String anchorKey) {
 			return new MaterializeSpec(anchorHopId, fTypeHint, anchorLabel, anchorKey,
-				List.of(), false);
+				List.of(), false, null);
 		}
 
 		private static MaterializeSpec forConsumerInputs(long anchorHopId, String fTypeHint,
-			String anchorLabel, String anchorKey, List<ConsumerInputSpec> consumerInputs) {
+			String anchorLabel, String anchorKey, List<ConsumerInputSpec> consumerInputs,
+			String plannerActionKey) {
 			return new MaterializeSpec(anchorHopId, fTypeHint, anchorLabel, anchorKey,
-				consumerInputs, true);
+				consumerInputs, true, plannerActionKey);
 		}
 
 		public long getAnchorHopId() {
@@ -217,6 +229,10 @@ public final class FederatedFoutMaterializeRegistry {
 			return _exactConsumerAuthority;
 		}
 
+		public String getPlannerActionKey() {
+			return _plannerActionKey;
+		}
+
 		@Override
 		public boolean equals(Object obj) {
 			if(this == obj)
@@ -226,14 +242,19 @@ public final class FederatedFoutMaterializeRegistry {
 			return _anchorHopId == that._anchorHopId && Objects.equals(_fTypeHint, that._fTypeHint)
 				&& Objects.equals(_anchorLabel, that._anchorLabel) && Objects.equals(_anchorKey, that._anchorKey)
 				&& _exactConsumerAuthority == that._exactConsumerAuthority
-				&& _consumerInputs.equals(that._consumerInputs);
+				&& _consumerInputs.equals(that._consumerInputs)
+				&& Objects.equals(_plannerActionKey, that._plannerActionKey);
 		}
 
 		@Override
 		public int hashCode() {
 			return Objects.hash(_anchorHopId, _fTypeHint, _anchorLabel, _anchorKey,
-				_consumerInputs, _exactConsumerAuthority);
+				_consumerInputs, _exactConsumerAuthority, _plannerActionKey);
 		}
+	}
+
+	private static String normalizePlannerActionKey(String plannerActionKey) {
+		return plannerActionKey == null || plannerActionKey.isBlank() ? null : plannerActionKey;
 	}
 
 	private static List<ConsumerInputSpec> canonicalExactConsumerInputs(

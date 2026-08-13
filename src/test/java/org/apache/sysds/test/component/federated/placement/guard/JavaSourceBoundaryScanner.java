@@ -34,10 +34,18 @@ final class JavaSourceBoundaryScanner {
 	}
 
 	static String methodBody(String source, String methodName, String parameterToken) {
+		List<String> bodies = methodBodies(source, methodName, parameterToken);
+		if(!bodies.isEmpty())
+			return bodies.get(0);
+		throw new IllegalArgumentException("Method not found: " + methodName + '(' + parameterToken + ')');
+	}
+
+	static List<String> methodBodies(String source, String methodName, String parameterToken) {
 		String code = codeOnly(source);
 		Pattern declaration = Pattern.compile("\\b" + Pattern.quote(methodName)
 			+ "\\s*\\(([^)]*)\\)\\s*(?:throws\\s+[^\\{]+)?\\{");
 		Matcher matcher = declaration.matcher(code);
+		List<String> bodies = new ArrayList<>();
 		while(matcher.find()) {
 			if(!matcher.group(1).contains(parameterToken))
 				continue;
@@ -46,12 +54,15 @@ final class JavaSourceBoundaryScanner {
 			for(int i = openingBrace + 1; i < code.length(); i++) {
 				char current = code.charAt(i);
 				if(current == '{') depth++;
-				else if(current == '}' && --depth == 0)
-					return code.substring(openingBrace + 1, i);
+				else if(current == '}' && --depth == 0) {
+					bodies.add(code.substring(openingBrace + 1, i));
+					break;
+				}
 			}
-			throw new IllegalArgumentException("Unclosed method body: " + methodName);
+			if(depth != 0)
+				throw new IllegalArgumentException("Unclosed method body: " + methodName);
 		}
-		throw new IllegalArgumentException("Method not found: " + methodName + '(' + parameterToken + ')');
+		return List.copyOf(bodies);
 	}
 
 	private static LexedSource lex(String source) {

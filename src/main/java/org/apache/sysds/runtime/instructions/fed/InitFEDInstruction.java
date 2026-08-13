@@ -76,7 +76,10 @@ public class InitFEDInstruction extends FEDInstruction implements LineageTraceab
 
 	public InitFEDInstruction(CPOperand type, CPOperand addresses, CPOperand ranges, CPOperand out, String opcode,
 		String instr) {
-		super(FEDType.Init, opcode, instr);
+		// A federated init always publishes a FederationMap-backed value. Keep this
+		// physical output contract explicit so planner/runtime placement auditing does
+		// not have to infer FOUT from the instruction subtype.
+		super(FEDType.Init, null, opcode, instr, FederatedOutput.FOUT);
 		_type = type;
 		_addresses = addresses;
 		_ranges = ranges;
@@ -87,6 +90,11 @@ public class InitFEDInstruction extends FEDInstruction implements LineageTraceab
 		String instr) {
 		this(type, addresses, ranges, out, opcode, instr);
 		_localObject = object;
+	}
+
+	@Override
+	public String getOutputVariableName() {
+		return _output.getName();
 	}
 
 	public static InitFEDInstruction parseInstruction(String str) {

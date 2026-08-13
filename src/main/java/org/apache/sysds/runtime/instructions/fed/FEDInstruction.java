@@ -111,6 +111,10 @@ public abstract class FEDInstruction extends Instruction {
 		return _fedType;
 	}
 
+	public FederatedOutput getFederatedOutput() {
+		return _fedOut;
+	}
+
 	public long getTID() {
 		return _tid;
 	}
@@ -123,10 +127,12 @@ public abstract class FEDInstruction extends Instruction {
 	public Instruction preprocessInstruction(ExecutionContext ec) {
 		Instruction tmp = super.preprocessInstruction(ec);
 		if (tmp.requiresLabelUpdate()) {
+			Instruction original = tmp;
 			String originalInst = tmp.toString();
 			String updInst = CPInstruction.updateLabels(originalInst, ec.getVariables());
 			updInst = markPatchedScalarOperandsAsLiterals(originalInst, updInst);
 			tmp = FEDInstructionParser.parseSingleInstruction(updInst);
+			tmp.setLocation(original);
 			if (DMLScript.LINEAGE)
 				ec.traceLineage(tmp);
 		}
