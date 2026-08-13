@@ -659,10 +659,12 @@ public class AggBinaryOp extends MultiThreadedHop {
 
 	private static boolean hasPlannerMaterializationBoundary(Hop input) {
 		long hopId = input.getHopID();
-		// A selected relocation/materialization is an executable plan boundary. Lop-level
-		// transpose fusion must not erase it, otherwise the registry can neither lower the
-		// selected operation nor preserve the planner's costed data movement.
-		return FederatedRefedRegistry.hasEntry(hopId)
+		// A selected direct FOUT or explicit relocation/materialization is an executable
+		// plan boundary. Lop-level fusion must not erase it, otherwise lowering silently
+		// changes the selected output placement or loses the planner's costed data movement.
+		boolean directFout = input.getFederatedOutput() == FederatedOutput.FOUT
+			&& !input.isFederatedOutputDerived();
+		return directFout || FederatedRefedRegistry.hasEntry(hopId)
 			|| FederatedFoutMaterializeRegistry.hasEntry(hopId)
 			|| FederatedLocalMaterializeRegistry.hasEntry(hopId);
 	}

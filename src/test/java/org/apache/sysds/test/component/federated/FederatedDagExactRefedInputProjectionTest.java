@@ -209,6 +209,30 @@ public class FederatedDagExactRefedInputProjectionTest {
 	}
 
 	@Test
+	public void selectedDirectFoutInnerXtXvRemainsUnfused() {
+		DataOp x = localHop("X", 10, 4);
+		DataOp v = localHop("v", 4, 1);
+		AggBinaryOp inner = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(x, v);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(
+			HopRewriteUtils.createTranspose(x), inner);
+		inner.setForcedExecType(ExecType.FED);
+		inner.setFederatedOutput(FederatedOutput.FOUT);
+		outer.setForcedExecType(ExecType.FED);
+		outer.setFederatedOutput(FederatedOutput.LOUT);
+
+		assertEquals("MapMultChain must not erase a planner-selected direct FOUT inner matrix multiply",
+			ChainType.NONE, outer.checkMapMultChain());
+		Lop lop = outer.constructLops();
+		assertFalse("The direct FOUT inner result must remain an explicit Lop boundary",
+			lop instanceof org.apache.sysds.lops.MapMultChain);
+		assertTrue("The selected inner matrix multiply must be lowered explicitly",
+			inner.getLops() instanceof org.apache.sysds.lops.MatMultCP);
+		String instruction = inner.getLops().getInstructions("X", "v", "Xv");
+		assertTrue(instruction.startsWith("FED" + Lop.OPERAND_DELIMITOR + "ba+*"));
+		assertTrue(instruction.endsWith(Lop.OPERAND_DELIMITOR + "FOUT"));
+	}
+
+	@Test
 	public void selectedLocalConsumerInsideBinaryTernaryAggregateRemainsExplicit() throws Exception {
 		DataOp x = localHop("X");
 		DataOp weights = localHop("weights");
