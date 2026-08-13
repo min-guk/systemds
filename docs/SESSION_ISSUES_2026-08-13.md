@@ -31,3 +31,18 @@
 - **잔여 이슈**: 없음. 전체 campaign은 `run_one_pass_performance.py`가 lifecycle request와 explain 계약을 자동 생성하므로 동일 누락이 발생하지 않는다.
 - **잠재 회귀 위험**: 임의 direct canary를 다시 실행할 때 환경 변수를 누락할 수 있다. planning receipt가 fail-closed하므로 잘못된 실행은 최종 row로 인증되지 않는다.
 - **의사결정 근거**: 검증 계약을 완화하지 않고 호출을 수정했다.
+
+## 3. LM lowering 수정 후 전체 Docker campaign을 predecessor 재사용 없이 재시작
+
+- **상태**: 진행중; 새 336-cell campaign 시작 및 첫 셀 end-to-end 인증 완료
+- **적용 원칙/제약**: lowering 변경 전 생성된 predecessor row는 새 source의 runtime-plan 근거로 재사용하지 않는다. 모든 성능 row는 동일 immutable stage, 고정 seed/data, Docker cold/warm lifecycle, semantic oracle 및 runtime-plan parity를 통과해야 한다.
+- **환경/조건**: source commit `5ea324bbc59be05f8e930b0381c7bd8d8b6384fb`, harness commit `4f0b3805fec68893e8f45aca1efa29b3873a9cd0`, immutable stage `g007-stage-bebc4325fa072984a1d0282fadd296211d32004a64f6567a2bac339a5e36459f`, campaign seed `2026072701`. 결과 경로는 `/home/mchoi/g014-full-results-5ea324b-4f0b380-20260813-v1`이다.
+- **재현 절차**: stage의 `harness/sigmod2021-exdra-p523/experiments/tools/run_one_pass_performance.py`를 `--stage <immutable-stage> --output /home/mchoi/g014-full-results-5ea324b-4f0b380-20260813-v1 --campaign-seed 2026072701`로 실행한다. `--predecessor-output`은 사용하지 않는다.
+- **관측 증상**: predecessor campaign은 LM inner FOUT 소실 수정 전 source로 64/336까지 실행됐으므로 새 source와 runtime-plan 의미가 다르다. 이를 섞으면 정책별 fingerprint와 실행시간 비교가 오염된다.
+- **원인 분석**: source lowering 변화는 planner emission이 같더라도 실제 runtime instruction sequence를 바꿀 수 있으므로 이전 row의 commit/JAR identity만 다른 수준이 아니라 측정 대상 plan 자체가 다르다.
+- **해결 요약**: predecessor를 격리하고 336개 모든 configuration을 WAN-Light -> WAN-Mid -> LAN 순서로 새 stage에서 한 번씩 실행하도록 fresh campaign을 시작했다. 이미 성공한 새 campaign cell만 `rows.jsonl`에 append하며 실패 시 해당 cell에서 fail-closed한다.
+- **수정 파일**: source 변경 없음; 이 문서만 갱신. 실행 산출물은 `/home/mchoi/g014-full-results-5ea324b-4f0b380-20260813-v1` 아래에 기록된다.
+- **검증**: 첫 셀 `workers=1|planner=DP|workload=kmeans|profile=wan_light`가 `success=true`, `oracle_passed=true`, `runtime_scan_clean=true`, `fallback=false`, `teardown_zero_resources=true`로 인증됐다. warm primary execution은 `48.561`초이고 cold/warm runtime-plan SHA-256은 모두 `d8448a76b7c76cc489e5158736c005c53ab3e9b410be31fa3b34116fe9d14d25`로 동일하다. cold/warm instruction fingerprint도 동일하며 progress는 `1/336`이다. campaign은 다음 셀 `workers=1|planner=FedAll|workload=kmeans|profile=wan_light`로 자동 진행했다.
+- **잔여 이슈**: 나머지 335개 cell의 semantic/runtime/parity 검증과, workload/profile/worker별 planner 정렬 및 정책별 planning-log 감사를 완료해야 한다.
+- **잠재 회귀 위험**: 후속 cell에서 planner/runtime capability 누락, semantic mismatch, worker scaling 요동 또는 정책 plan collapse가 드러날 수 있다. 각 cell의 fail-closed receipt와 planning/runtime fingerprint를 통해 최초 실패 지점에서 감지하고, 성공 row를 중복 실행하지 않은 채 원인 수정 후 재개한다.
+- **의사결정 근거**: 결과 병합 편의보다 동일 코드/동일 stage의 실험 정합성을 우선했다. 물리 LAN 실행이나 runtime fallback은 사용하지 않는다.
