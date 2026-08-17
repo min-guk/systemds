@@ -21,11 +21,13 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.concurrent.Future;
 
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
+import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.BinaryMatrixScalarCPInstruction;
@@ -78,11 +80,34 @@ public class BinaryMatrixScalarFEDInstruction extends BinaryFEDInstruction
 		else {
 			ffr = mo.getFedMapping().execute(getTID(), true, fr2);
 		}
-		
+
+		long nnz = FederationUtils.sumNonZeros(ffr);
+		// The serialized LOUT flag is planner authority, not a hint. Matrix-scalar
+		// operations execute partition-wise, so forced-local output must retrieve and
+		// bind those exact worker results before returning to the coordinator.
+		if(_fedOut != null && _fedOut.isForcedLocal()) {
+			FederationMap outMap = mo.getFedMapping();
+			if(outMap.getSize() == 0)
+				throw new DMLRuntimeException(
+					"FED matrix-scalar cannot produce local output without a federated mapping");
+
+			long outId = fr2.getID();
+			FederatedRequest frG = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, outId);
+			FederatedRequest frC = outMap.cleanup(getTID(), outId);
+			Future<FederatedResponse>[] ffrGet = outMap.execute(getTID(), frG, frC);
+			org.apache.sysds.runtime.matrix.data.MatrixBlock ret;
+			if(outMap.getType() == FType.BROADCAST)
+				ret = FederationUtils.getResults(ffrGet)[0];
+			else
+				ret = FederationUtils.bind(ffrGet, outMap.getType() == FType.COL);
+			ec.setMatrixOutput(output.getName(), ret);
+			return;
+		}
+
 		//derive new fed mapping for output
 		MatrixObject out = ec.getMatrixObject(output);
 		out.getDataCharacteristics().set(mo.getDataCharacteristics())
-			.setNonZeros(FederationUtils.sumNonZeros(ffr));
+			.setNonZeros(nnz);
 		out.setFedMapping(mo.getFedMapping().copyWithNewID(fr2.getID()));
 	}
 }

@@ -72,8 +72,12 @@ public class AnchorProvenanceLifecycleDurabilityContractTest {
 
 		Assert.assertEquals("G014_A2_RECOMPILE_FIXTURE", "B-09", recompile.fixtureId());
 		Assert.assertTrue("G014_A2_RECOMPILE_REAL_EVIDENCE", recompile.realLifecycleEvidence());
-		Assert.assertTrue("G014_A2_RECOMPILE_EXCLUSION_EVIDENCE",
-			recompile.evidence().contains("recompileCpFoutExclusions=1"));
+		long recompileCpFoutExclusions = recompile.evidence().stream()
+			.filter(value -> value.startsWith("recompileCpFoutExclusions="))
+			.mapToLong(value -> Long.parseLong(value.substring(value.indexOf('=') + 1)))
+			.findFirst().orElse(0L);
+		Assert.assertTrue("G014_A2_RECOMPILE_EXCLUSION_EVIDENCE|" + recompile.evidence(),
+			recompileCpFoutExclusions > 0L);
 		Assert.assertFalse("G014_A2_NO_PRODUCTION_CPFOUT_RECOMPILE_ESCAPE",
 			recompile.allowedCpFoutInRecompile());
 	}

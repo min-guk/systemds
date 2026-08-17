@@ -385,6 +385,8 @@ public final class MinStExactCostFactsProducer {
 			double weight, boolean forwarded) { }
 		record Key(Direction direction, FType type, BoundaryMode boundary,
 			String physicalEmissionIdentity) { }
+		record IndexedDemand(int consumerIndex, boolean[] activeConsumerAlternatives,
+			double[] sourcePrices) { }
 		for(MinStExactPhysicalModel.DecisionDomain producer : orderedDomains) {
 			if(producer.node().kind() == NodeKind.FUNCTION_INPUT
 				|| producer.node().kind() == NodeKind.FUNCTION_OUTPUT)
@@ -397,6 +399,9 @@ public final class MinStExactCostFactsProducer {
 			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.producer() != producer.node().key()
 					|| analysis.graph().node(edge.consumer()).orElseThrow().kind() == NodeKind.FUNCTION_CALL)
+					continue;
+				if(PlacementCostSemantics.isLatentWdivmmTransposePairBoundary(
+					analysis, edge.producer(), edge.consumer(), edge.inputPosition()))
 					continue;
 				MinStExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
 				if(consumer == null)
@@ -445,41 +450,66 @@ public final class MinStExactCostFactsProducer {
 				demands.forEach(d -> scopeSet.add(d.consumer()));
 				List<MinStExactPhysicalModel.DecisionDomain> scope = List.copyOf(scopeSet);
 				Key key = entry.getKey();
+				IdentityHashMap<MinStExactPhysicalModel.DecisionDomain,Integer> scopeIndexes =
+					new IdentityHashMap<>();
+				for(int index = 0; index < scope.size(); index++)
+					scopeIndexes.put(scope.get(index), index);
+				boolean[] activeSourceAlternatives = new boolean[producer.alternatives().size()];
+				for(int value = 0; value < activeSourceAlternatives.length; value++) {
+					PlacementState state = producer.alternatives().get(value).state();
+					activeSourceAlternatives[value] = key.direction() == Direction.UPLOAD
+						|| state.output() == FederatedOutput.FOUT && state.fType() == key.type();
+				}
+				List<IndexedDemand> indexedDemands = new ArrayList<>(demands.size());
+				for(Demand demand : demands) {
+					boolean[] activeConsumers = new boolean[demand.consumer().alternatives().size()];
+					for(int value = 0; value < activeConsumers.length; value++) {
+						MinStExactPhysicalModel.Alternative consumer =
+							demand.consumer().alternatives().get(value);
+						if(key.direction() == Direction.DOWNLOAD)
+							activeConsumers[value] = consumer.state().execType() == ExecType.CP;
+						else
+							activeConsumers[value] = consumer.inputAuthorities().stream().anyMatch(authority ->
+								authority.inputPosition() == demand.edge().inputPosition()
+									&& authority.kind()
+										== MinStExactPhysicalModel.InputAuthorityKind.RELOCATION
+									&& authority.expectedFType() == key.type()
+									&& authority.relocationAction().key().sourceValueVersion()
+										.equals(producer.node().valueVersion())
+									&& RelocationSelections.physicalEmissionIdentity(
+										authority.relocationAction().key())
+										.equals(key.physicalEmissionIdentity()));
+					}
+					double[] sourcePrices = new double[producer.alternatives().size()];
+					for(int value = 0; value < sourcePrices.length; value++) {
+						double price = demand.cost();
+						PlacementState source = producer.alternatives().get(value).state();
+						if(key.direction() == Direction.UPLOAD
+							&& source.output() == FederatedOutput.FOUT) {
+							FType sourceType = Objects.requireNonNull(source.fType(),
+								"FOUT relocation source has no exact FType");
+							price = requireCost(price + demand.weight()
+								* (demand.forwarded()
+									? FederatedCostModel.computeDownloadNetworkCost(bytes)
+									: FederatedCostModel.computeDownloadNetworkCost(
+										bytes, sourceType, workers)),
+								"MINST_PHYSICAL_REFED_DOWNLOAD_COST_UNPROVEN");
+						}
+						sourcePrices[value] = price;
+					}
+					indexedDemands.add(new IndexedDemand(scopeIndexes.get(demand.consumer()),
+						activeConsumers, sourcePrices));
+				}
 				factors.add(MinStExactCategoricalSolver.Factor.lazy(
 					scope.stream().map(MinStExactPhysicalModel.DecisionDomain::variable).toList(), values -> {
-						MinStExactPhysicalModel.Alternative source = scope.get(0).alternatives().get(values[0]);
+						int sourceValue = values[0];
+						if(!activeSourceAlternatives[sourceValue])
+							return 0.0;
 						double activePrice = 0.0;
-						for(Demand demand : demands) {
-							int consumerIndex = scope.indexOf(demand.consumer());
-							MinStExactPhysicalModel.Alternative consumer = demand.consumer().alternatives()
-								.get(values[consumerIndex]);
-							boolean active = key.direction() == Direction.DOWNLOAD
-								? source.state().output() == FederatedOutput.FOUT
-									&& source.state().fType() == key.type()
-									&& consumer.state().execType() == ExecType.CP
-								: consumer.inputAuthorities().stream().anyMatch(authority ->
-									authority.inputPosition() == demand.edge().inputPosition()
-										&& authority.kind() == MinStExactPhysicalModel.InputAuthorityKind.RELOCATION
-										&& authority.expectedFType() == key.type()
-										&& authority.relocationAction().key().sourceValueVersion()
-											.equals(producer.node().valueVersion())
-										&& RelocationSelections.physicalEmissionIdentity(
-											authority.relocationAction().key())
-											.equals(key.physicalEmissionIdentity()));
-							if(!active)
+						for(IndexedDemand demand : indexedDemands) {
+							if(!demand.activeConsumerAlternatives()[values[demand.consumerIndex()]])
 								continue;
-							double demandPrice = demand.cost();
-							if(key.direction() == Direction.UPLOAD
-								&& source.state().output() == FederatedOutput.FOUT) {
-								FType sourceType = Objects.requireNonNull(source.state().fType(),
-									"FOUT relocation source has no exact FType");
-								demandPrice = requireCost(demandPrice + demand.weight()
-									* (demand.forwarded()
-										? FederatedCostModel.computeDownloadNetworkCost(bytes)
-										: FederatedCostModel.computeDownloadNetworkCost(bytes, sourceType, workers)),
-									"MINST_PHYSICAL_REFED_DOWNLOAD_COST_UNPROVEN");
-							}
-							activePrice = Math.max(activePrice, demandPrice);
+							activePrice = Math.max(activePrice, demand.sourcePrices()[sourceValue]);
 						}
 						return activePrice;
 					}));
@@ -544,10 +574,17 @@ public final class MinStExactCostFactsProducer {
 								&& authority.kind()
 									== MinStExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
 						return 0.0;
+					if(PlacementCostSemantics.isLatentWdivmmTransposePairBoundary(
+						analysis, edge.producer(), edge.consumer(), edge.inputPosition()))
+						return 0.0;
 					CandidateEmissionFact emission = target.captured()
 						? target.candidateEmission() : target.executionEmission();
 					FType executionFType = emission == null ? target.state().fType()
 						: emission.executionFType();
+					PlacementCostSemantics.NativeLocalInputTransferEstimate boundedElementwise =
+						PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
+							analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
+							executionFType, workers);
 					List<FType> inputFTypes = target.orderedInputs().stream()
 						.map(input -> input.present() ? input.fType() : null).toList();
 					FederatedCostModel.MixedFedLocalCost mixed =
@@ -561,13 +598,18 @@ public final class MinStExactCostFactsProducer {
 					else if(fusedInputPreparationBytes >= 0.0)
 						cost = FederatedCostModel.computeInBandUploadPayloadCost(
 							fusedInputPreparationBytes, FType.BROADCAST, workers);
+					else if(boundedElementwise != null)
+						cost = boundedElementwise.uploadPayloadCostUpperBound();
 					else
 						cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
 							executionFType, workers);
 					if(source.state().output() == FederatedOutput.FOUT) {
 						FType sourceType = Objects.requireNonNull(source.state().fType(),
 							"FOUT native-local source has no exact FType");
-						cost += FederatedCostModel.computeDownloadNetworkCost(bytes, sourceType, workers);
+						double sourceBytes = boundedElementwise == null ? bytes
+							: boundedElementwise.logicalBytesUpperBound();
+						cost += FederatedCostModel.computeDownloadNetworkCost(
+							sourceBytes, sourceType, workers);
 					}
 					return requireCost(weight * cost,
 						"MINST_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
@@ -2046,8 +2088,8 @@ public final class MinStExactCostFactsProducer {
 		double outputBytes = effectiveOutputBytes(analysis, decision.key(), hop);
 		double uploadBytes = effectiveUploadBytes(analysis, decision.key(), hop);
 		FedCostProjection fedProjection = fed
-			? fedCostProjection(hop, inputFTypes, executionFType, workers, execWeight,
-				base, outputBytes, uploadBytes)
+			? fedCostProjection(analysis, decision.key(), hop, inputFTypes, executionFType,
+				workers, execWeight, base, outputBytes, uploadBytes)
 			: FedCostProjection.none();
 		double fedCost = fedProjection.fedUnaryCost();
 		double resultDownload = fedProjection.resultDownloadCost();
@@ -2098,22 +2140,26 @@ public final class MinStExactCostFactsProducer {
 		CompiledHopKey key, Hop hop, List<FType> inputFTypes, FType executionFType,
 		int workers, double executionWeight) {
 		double base = cpUnaryCost(analysis, key, hop, executionWeight);
-		return fedCostProjection(hop, inputFTypes, executionFType, workers, executionWeight,
-			base, effectiveOutputBytes(analysis, key, hop), effectiveUploadBytes(analysis, key, hop));
+		return fedCostProjection(analysis, key, hop, inputFTypes, executionFType, workers,
+			executionWeight, base, effectiveOutputBytes(analysis, key, hop),
+			effectiveUploadBytes(analysis, key, hop));
 	}
 
 	/** Shared exact FED arm cost used both by cut edges and by safe internal-arm reduction. */
-	private static FedCostProjection fedCostProjection(Hop hop, List<FType> inputFTypes,
-		FType executionFType, int workers, double executionWeight, double base,
-		double outputBytes, double uploadBytes) {
+	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
+		CompiledHopKey key, Hop hop, List<FType> inputFTypes, FType executionFType,
+		int workers, double executionWeight, double base, double outputBytes,
+		double uploadBytes) {
 		if(executionFType == null)
 			throw new IllegalArgumentException("MINST_FED_EXECUTION_LAYOUT_UNPROVEN");
 		boolean federatedSource = hop instanceof DataOp
 			&& ((DataOp)hop).getOp() == OpOpData.FEDERATED;
 		boolean broadcastOnlyFedCompute = !federatedSource
-			&& broadcastOnlyMatrixInputs(hop, inputFTypes);
-		double fedCompute = FederatedCostModel.computeFederatedComputeCost(
-			hop, base, workers, broadcastOnlyFedCompute);
+			&& broadcastOnlyMatrixInputs(hop, inputFTypes)
+			&& !PlacementCostSemantics.hasPartitionedLatentWdivmmRuntimeInput(
+				analysis, key);
+		double fedCompute = PlacementCostSemantics.analysisAwareFederatedComputeCost(
+			analysis, key, base, workers, broadcastOnlyFedCompute);
 		fedCompute = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
 			hop, executionFType, fedCompute);
 		fedCompute = FederatedCostModel.computeNativeFederatedIndexingCost(
@@ -2141,6 +2187,8 @@ public final class MinStExactCostFactsProducer {
 				hop, executionFType, outputBytes, workers, resultDownloadUnit);
 			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
 				hop, executionFType, outputBytes, workers, resultDownloadUnit);
+			resultDownloadUnit = PlacementCostSemantics.analysisAwareNativeFederatedLoutResultCost(
+				analysis, key, outputBytes, workers, resultDownloadUnit);
 			if(mixed.hasCoordinatorPhase())
 				resultDownloadUnit = mixed.getCoordinatorPhaseCost();
 		}
@@ -2549,6 +2597,12 @@ public final class MinStExactCostFactsProducer {
 				addHardEquality(edges, left.placementNodeId(), right.placementNodeId(),
 					ContributionKind.HARD_OUTPUT, left.key(), right.key(), constraint.inputPosition(),
 					"neutral-same-placement-output");
+			}
+			else if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT) {
+				validateFoutTypeCompatibility(left, right, representatives, constraint);
+				addHardEquality(edges, left.placementNodeId(), right.placementNodeId(),
+					ContributionKind.HARD_OUTPUT, left.key(), right.key(), constraint.inputPosition(),
+					"neutral-same-value-placement-output");
 			}
 			else if(constraint.kind() == ConstraintKind.SAME_FTYPE) {
 				validateFoutTypeCompatibility(left, right, representatives, constraint);

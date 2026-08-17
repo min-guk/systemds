@@ -225,7 +225,10 @@ public class CampaignBAllPlannerAnalysisContractTest {
 			: R4SharedFedAllAdapterBridge.select(h,a);
 	}
 	private static void recordMissing(List<String> out,String id,AssertionError e) {
-		if(e.getMessage()!=null&&e.getMessage().startsWith("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING")) out.add(id+'|'+e.getMessage()); else throw e;
+		if(e.getMessage()!=null&&e.getMessage().startsWith("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING"))
+			out.add(id+'|'+e.getMessage());
+		else
+			throw new AssertionError("CAMPAIGN_B_CASE_FAILURE|id=" + id + '|' + e.getMessage(), e);
 	}
 	@SuppressWarnings({"rawtypes","unchecked"}) private static List raw(List<?> list){return (List)list;}
 	private static void expectUoe(Runnable r){try{r.run();Assert.fail("R4_INPUT_MUTABILITY");}catch(UnsupportedOperationException expected){}}

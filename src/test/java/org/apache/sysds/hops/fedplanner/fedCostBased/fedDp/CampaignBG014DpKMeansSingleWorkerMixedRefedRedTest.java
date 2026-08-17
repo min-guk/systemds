@@ -12,19 +12,23 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestUtils;
 import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
@@ -70,6 +74,22 @@ public class CampaignBG014DpKMeansSingleWorkerMixedRefedRedTest {
 			NormalizedPlannerResult result = PlacementEmissionTransaction.currentNormalizedResult(
 				PlacementEmissionTransaction.receiptSnapshotForTesting().keySet().iterator().next());
 			Assert.assertEquals("DP", result.plannerId());
+			assertCfgTransientOutputsAreCoherent(result);
+			assertSelectedState(result, 70, "ba(+*)", "X_samples",
+				ExecType.FED, FederatedOutput.FOUT);
+			assertSelectedState(result, 70, "TWrite X_samples", "X_samples",
+				ExecType.CP, FederatedOutput.LOUT);
+			assertSelectedState(result, 109, "TRead X_samples", "X_samples",
+				ExecType.CP, FederatedOutput.LOUT);
+			for(int line : List.of(100, 105, 109, 110))
+				Assert.assertTrue("The WAN-light worker=1 repeated KMeans loop must stay local after "
+					+ "the one-time X_samples materialization at source line " + line,
+					result.analysis().compiledHopOccurrences().stream()
+						.filter(occurrence -> occurrence.hop().getBeginLine() == line)
+						.filter(occurrence -> result.selectedStates().containsKey(occurrence.key()))
+						.map(occurrence -> result.selectedStates().get(occurrence.key()))
+						.anyMatch(state -> state.execType() == ExecType.CP
+							&& state.output() == FederatedOutput.LOUT));
 
 			Map<RelocationDemandKey,Set<FType>> legalTypes = new LinkedHashMap<>();
 			result.analysis().graph().relocationActions().forEach(action -> action.obligations().forEach(obligation ->
@@ -171,6 +191,38 @@ public class CampaignBG014DpKMeansSingleWorkerMixedRefedRedTest {
 			FederatedLocalMaterializeRegistry.clear();
 			restoreProperties(oldCostProperties);
 		}
+	}
+
+	private static void assertCfgTransientOutputsAreCoherent(NormalizedPlannerResult result) {
+		PlacementAnalysis analysis = result.analysis();
+		for(HopOccurrenceProjection target : analysis.compiledHopOccurrences()) {
+			PlacementState targetState = result.selectedStates().get(target.key());
+			if(targetState == null || !target.hop().getOpString().startsWith("TRead "))
+				continue;
+			for(var sourceKey : analysis.cfgDefinitionSourcesInCanonicalOrder(target.key())) {
+				PlacementState sourceState = result.selectedStates().get(sourceKey);
+				if(sourceState == null)
+					continue;
+				Assert.assertEquals("A planner decision map must not defer a known TWrite/TRead output "
+					+ "mismatch to the exact legality join: " + sourceKey + " -> " + target.key(),
+					sourceState.output(), targetState.output());
+			}
+		}
+	}
+
+	private static void assertSelectedState(NormalizedPlannerResult result, int line,
+		String op, String name, ExecType execType, FederatedOutput output) {
+		List<PlacementState> states = result.analysis().compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop().getBeginLine() == line)
+			.filter(occurrence -> op.equals(occurrence.hop().getOpString()))
+			.filter(occurrence -> name.equals(occurrence.hop().getName()))
+			.map(occurrence -> result.selectedStates().get(occurrence.key()))
+			.filter(java.util.Objects::nonNull)
+			.toList();
+		Assert.assertEquals("Expected one exact KMeans occurrence for " + line + ':' + op,
+			1, states.size());
+		Assert.assertEquals(execType, states.get(0).execType());
+		Assert.assertEquals(output, states.get(0).output());
 	}
 
 	private static String kmeansSingleFullWorkerScript(int port, Path input, Path output) {

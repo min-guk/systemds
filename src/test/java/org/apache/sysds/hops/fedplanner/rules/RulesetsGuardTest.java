@@ -81,15 +81,16 @@ public class RulesetsGuardTest {
   public void mmFullBroadcastRetainsSingleWorkerFout() {
     Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
     OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, Map.of());
+	ShapeHint singleWorkerShape = new ShapeHint(10, 10, 1000, true);
 
-    OpCaps capsLeftFull = rule.caps(sig, List.of(FType.FULL, FType.BROADCAST), KNOWN_SHAPE);
+    OpCaps capsLeftFull = rule.caps(sig, List.of(FType.FULL, FType.BROADCAST), singleWorkerShape);
     assertEquals(ExecType.FED, capsLeftFull.exec());
     assertEquals(FederatedOutput.FOUT, capsLeftFull.placement());
     assertTrue(capsLeftFull.foutEnabled());
     assertEquals(FType.FULL, capsLeftFull.foutFType().orElse(null));
     assertEquals(ReasonCode.OK, capsLeftFull.reason());
 
-    OpCaps capsRightFull = rule.caps(sig, List.of(FType.BROADCAST, FType.FULL), KNOWN_SHAPE);
+    OpCaps capsRightFull = rule.caps(sig, List.of(FType.BROADCAST, FType.FULL), singleWorkerShape);
     assertEquals(ExecType.FED, capsRightFull.exec());
     assertEquals(FederatedOutput.FOUT, capsRightFull.placement());
     assertTrue(capsRightFull.foutEnabled());
@@ -97,7 +98,7 @@ public class RulesetsGuardTest {
       FType.BROADCAST, capsRightFull.foutFType().orElse(null));
     assertEquals(ReasonCode.OK, capsRightFull.reason());
 
-    OpCaps capsLocalLeft = rule.caps(sig, java.util.Arrays.asList(null, FType.FULL), KNOWN_SHAPE);
+    OpCaps capsLocalLeft = rule.caps(sig, java.util.Arrays.asList(null, FType.FULL), singleWorkerShape);
     assertEquals(ExecType.FED, capsLocalLeft.exec());
     assertEquals(FederatedOutput.FOUT, capsLocalLeft.placement());
     assertEquals(FType.FULL, capsLocalLeft.foutFType().orElse(null));

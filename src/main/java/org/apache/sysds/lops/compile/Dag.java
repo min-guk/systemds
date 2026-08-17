@@ -951,6 +951,42 @@ public class Dag<N extends Lop>
 			+ ",physical=" + physical + '}';
 	}
 
+	private static String describeMissingFoutContext(List<Lop> lops, List<Hop> logicalHopRoots,
+		long producerHopId, FederatedFoutMaterializeRegistry.MaterializeSpec spec) {
+		Set<Long> selectedConsumers = spec.getConsumerInputs().stream()
+			.map(FederatedRefedRegistry.ConsumerInputSpec::consumerHopId)
+			.collect(Collectors.toSet());
+		List<String> logical = new ArrayList<>();
+		if(logicalHopRoots != null)
+			for(Hop hop : collectLogicalHops(logicalHopRoots)) {
+				boolean selected = hop.getHopID() == producerHopId
+					|| selectedConsumers.contains(hop.getHopID())
+					|| hop.getInput().stream().anyMatch(input -> input != null
+						&& input.getHopID() == producerHopId);
+				if(!selected)
+					continue;
+				logical.add(hop.getHopID() + ":" + hop.getClass().getSimpleName() + ':'
+					+ hop.getOpString() + ':' + hop.getName() + ":dims=" + hop.getDim1() + 'x'
+					+ hop.getDim2() + ":placement=" + hop.getExecType() + '/'
+					+ hop.getFederatedOutput() + ":derived=" + hop.isFederatedOutputDerived()
+					+ ":lop=" + lopIdentity(hop.getLops()) + ":inputs=" + hop.getInput().stream()
+						.map(input -> input == null ? "null" : input.getHopID() + "/"
+							+ input.getClass().getSimpleName() + '/' + lopIdentity(input.getLops()))
+						.toList() + ":parents=" + hop.getParent().stream()
+						.map(parent -> parent.getHopID() + "/" + parent.getClass().getSimpleName()
+							+ '/' + lopIdentity(parent.getLops())).toList());
+			}
+		List<String> physical = lops.stream()
+			.filter(lop -> lop.getHopID() == producerHopId || selectedConsumers.contains(lop.getHopID())
+				|| lop.getInputs().stream().anyMatch(input -> input != null
+					&& input.getHopID() == producerHopId))
+			.map(lop -> lopIdentity(lop) + ":inputs=" + lop.getInputs().stream()
+				.map(Dag::lopIdentity).toList() + ":outputs=" + lop.getOutputs().stream()
+				.map(Dag::lopIdentity).toList())
+			.toList();
+		return " foutContext={logical=" + logical + ",physical=" + physical + '}';
+	}
+
 	private static String lopIdentity(Lop lop) {
 		return lop == null ? "null" : lop.getClass().getSimpleName() + '#' + lop.getID()
 			+ "/hop=" + lop.getHopID() + '/' + lop.getExecType() + '/' + lop.getFederatedOutput();
@@ -1183,13 +1219,37 @@ public class Dag<N extends Lop>
 					}
 					anchor = null;
 				}
-				boolean missingAnchor = (anchor == null && anchorKey == null);
-					if (local == null || missingAnchor) {
-						if(plannerExact)
-							throw new LopsException("selected exact FOUT materialization is not lowerable for hop="
-								+ hopId + " anchor=" + anchorHopId + " missingLocal=" + (local == null)
-								+ " missingAnchor=" + missingAnchor + " sbId=" + sbId
-								+ " action=" + spec.getPlannerActionKey());
+				// An exact durable FOUT action may name a computed occurrence as the metadata owner
+				// because placement provenance flows through the neutral graph. That occurrence is not
+				// itself a usable runtime anchor unless its Lop already serializes a concrete federated
+				// value. Passing such a Lop as the second fed_fout input both invents an unavailable
+				// FederationMap and makes the materializer appear as an output materializer of the anchor.
+				// Preserve the selected action through its own durable placement key instead; this is
+				// planner authority, not a lowering fallback or replacement-anchor choice.
+				if (plannerExact && anchor != null && !serializesConcreteFederatedAnchor(anchor)) {
+					if (!isConcreteAnchorKey(anchorKey))
+						throw new LopsException("selected exact FOUT materialization has a non-concrete live anchor "
+							+ "and no durable placement key for hop=" + hopId + " anchor=" + anchorHopId
+							+ " action=" + spec.getPlannerActionKey());
+					if (LOG_LOP_MAPPING)
+						System.out.printf("CP->FOUT non-concrete anchor: hop=%d anchorHop=%d "
+							+ "usingAnchorKey=%s%n", hopId, anchorHopId, anchorKey);
+					anchor = null;
+				}
+					boolean missingAnchor = (anchor == null && anchorKey == null);
+						if (local == null || missingAnchor) {
+							if(plannerExact)
+								throw new LopsException("selected exact FOUT materialization is not lowerable for hop="
+									+ hopId + " anchor=" + anchorHopId + " missingLocal=" + (local == null)
+									+ " missingAnchor=" + missingAnchor + " sbId=" + sbId
+									+ " logicalRoots=" + (logicalHopRoots == null ? List.of()
+										: logicalHopRoots.stream().map(Hop::getHopID).toList())
+									+ " logicalContainsProducer=" + (logicalHopRoots != null
+										&& collectLogicalHops(logicalHopRoots).stream()
+											.anyMatch(hop -> hop.getHopID() == hopId))
+									+ " lopHopIds=" + hopToLop.keySet().stream().sorted().toList()
+									+ describeMissingFoutContext(lops, logicalHopRoots, hopId, spec)
+									+ " action=" + spec.getPlannerActionKey());
 					if (LOG_LOP_MAPPING) {
 						System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
 							hopId, anchorHopId, local == null, missingAnchor, sbId);

@@ -47,6 +47,8 @@ public class PlannerRuntimePlacementAuditTest {
 		ExecType.CP, FEDInstruction.FederatedOutput.LOUT, null, false);
 	private static final PlacementState FED_FOUT = new PlacementState(
 		ExecType.FED, FEDInstruction.FederatedOutput.FOUT, null, false);
+	private static final PlacementState FED_LOUT = new PlacementState(
+		ExecType.FED, FEDInstruction.FederatedOutput.LOUT, null, false);
 
 	@Before
 	public void setUp() {
@@ -316,6 +318,82 @@ public class PlannerRuntimePlacementAuditTest {
 		assertTrue(report.contains("status=REWRITE_MATCH"));
 		assertTrue(report.contains("kind=DYNAMIC_AXPY_MINUS_MULT"));
 		assertTrue(report.contains("replacementOpcode=-*"));
+	}
+
+	@Test
+	public void dynamicWeightedDivMmReplacementRetainsExactFederatedOwnerAuthority() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(69, "wdivmm-owner", "ba+*", FED_FOUT, FED_FOUT, true, NodeKind.OPERATION)));
+		AuditFedInstruction replacement = new AuditFedInstruction(
+			"wdivmm", FEDInstruction.FederatedOutput.FOUT);
+		replacement.setAuditLocation(1069, "wdivmm-owner");
+		replacement.setPlannerOriginHopID(69);
+		replacement.setPlannerRewriteReplacementKind("DYNAMIC_WEIGHTED_DIV_MM");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(replacement)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_WEIGHTED_DIV_MM"));
+		assertTrue(report.contains("replacementOpcode=wdivmm"));
+		assertTrue(report.contains("plannedPhysical=FED/FOUT"));
+	}
+
+	@Test
+	public void dynamicWeightedDivMmReplacementCannotBorrowANonFusionOwner() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(70, "non-fusion-owner", "+", FED_FOUT, FED_FOUT, true, NodeKind.OPERATION)));
+		AuditFedInstruction replacement = new AuditFedInstruction(
+			"wdivmm", FEDInstruction.FederatedOutput.FOUT);
+		replacement.setAuditLocation(1070, "non-fusion-owner");
+		replacement.setPlannerOriginHopID(70);
+		replacement.setPlannerRewriteReplacementKind("DYNAMIC_WEIGHTED_DIV_MM");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(), new ArrayList<>(List.of(replacement))));
+		assertTrue(failure.getMessage().contains("LOWERING_REWRITE_OPCODE_MISMATCH"));
+	}
+
+	@Test
+	public void dynamicWeightedDivMmTransposePairRetainsOuterFederatedLocalAuthority() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(71, "outer-transpose-owner", "r'", FED_FOUT, FED_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditFedInstruction replacement = new AuditFedInstruction(
+			"wdivmm", FEDInstruction.FederatedOutput.LOUT);
+		replacement.setAuditLocation(1071, "outer-transpose-owner");
+		replacement.setPlannerOriginHopID(71);
+		replacement.setPlannerRewriteReplacementKind(
+			"DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(replacement)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR"));
+		assertTrue(report.contains("replacementOpcode=wdivmm"));
+		assertTrue(report.contains("plannedPhysical=FED/LOUT"));
+	}
+
+	@Test
+	public void dynamicWeightedDivMmTransposePairCannotBorrowAMatrixMultiplyOwner() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(72, "inner-mm-owner", "ba+*", FED_FOUT, FED_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditFedInstruction replacement = new AuditFedInstruction(
+			"wdivmm", FEDInstruction.FederatedOutput.LOUT);
+		replacement.setAuditLocation(1072, "inner-mm-owner");
+		replacement.setPlannerOriginHopID(72);
+		replacement.setPlannerRewriteReplacementKind(
+			"DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(), new ArrayList<>(List.of(replacement))));
+		assertTrue(failure.getMessage().contains("LOWERING_REWRITE_OPCODE_MISMATCH"));
 	}
 
 	@Test

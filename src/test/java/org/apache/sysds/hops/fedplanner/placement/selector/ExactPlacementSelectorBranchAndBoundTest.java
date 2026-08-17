@@ -34,6 +34,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -77,6 +78,29 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 		Assert.assertEquals(TerminationReason.TIGHT_BOUND_EQUALITY,
 			selection.certificate().terminationReason());
 		Assert.assertEquals(1, selection.certificate().exploredCount());
+		Assert.assertTrue(selection.certificate().prunedCount() > 0);
+	}
+
+	@Test
+	public void wideTernaryDomainUsesExactBranchAndBoundBelowTheLegacyNodeThreshold() {
+		String fingerprint = "exact-selector-wide-ternary-domain";
+		List<Node> nodes = new ArrayList<>();
+		for(int i = 0; i < 14; i++) {
+			Node node = decisionNode(fingerprint, "hop-" + i, i);
+			nodes.add(new Node(node.key(), node.kind(), node.valueVersion(), true,
+				List.of(LOCAL, FED, FED_COL), List.of(), List.of()));
+		}
+
+		PlacementSelection selection = new ExactPlacementSelector().select(
+			new NeutralPlacementGraph(nodes, List.of(), List.of()));
+
+		Assert.assertEquals(14, selection.score().emittedFedCount());
+		Assert.assertEquals(14, selection.score().foutCount());
+		Assert.assertTrue(selection.assignment().values().stream().allMatch(FED_COL::equals));
+		Assert.assertEquals("3^14 must not enter complete Cartesian enumeration",
+			TerminationReason.TIGHT_BOUND_EQUALITY, selection.certificate().terminationReason());
+		Assert.assertTrue("independent exact components must remain bounded",
+			selection.certificate().exploredCount() < 100);
 		Assert.assertTrue(selection.certificate().prunedCount() > 0);
 	}
 
@@ -255,6 +279,73 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 			selection.assignment(), selection.selectedCandidateSelections());
 	}
 
+	@Test
+	public void indexedPartialReachabilityMatchesTheDiagnosticOracle() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(
+			ProductionShadowFixtureFactory.compile("B-11"));
+		var indexed = CandidateSelections.partialReachabilityIndex(
+			analysis, analysis.graph(), analysis.graph().relocationActions());
+		java.util.Random random = new java.util.Random(2026081401L);
+		for(int sample = 0; sample < 256; sample++) {
+			Map<CompiledHopKey,PlacementState> partial = new IdentityHashMap<>();
+			for(Node node : analysis.graph().decisionNodes())
+				if(random.nextInt(4) == 0)
+					partial.put(node.key(), node.legalAlternatives().get(
+						random.nextInt(node.legalAlternatives().size())));
+			boolean diagnostic = CandidateSelections.canStillBeReachable(
+				analysis, analysis.graph(), analysis.graph().relocationActions(), partial);
+			Assert.assertEquals("indexed pruning must be exactly equivalent for sample " + sample,
+				diagnostic, indexed.canStillBeReachable(partial));
+			for(Node changed : analysis.graph().decisionNodes()) {
+				var probe = indexed.changedNodesProbe(List.of(changed));
+				Assert.assertEquals("precompiled changed-node probe must preserve exact reachability",
+					indexed.canStillBeReachableForChangedNodes(partial, List.of(changed)),
+					indexed.canStillBeReachable(partial, probe));
+			}
+		}
+	}
+
+	@Test
+	public void indexedCompleteCandidateScoringMatchesTheCanonicalOracle() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(
+			ProductionShadowFixtureFactory.compile("B-11"));
+		var actions = analysis.graph().relocationActions();
+		var order = RelocationSelections.canonicalOrderIndex(actions);
+		var indexed = CandidateSelections.partialReachabilityIndex(
+			analysis, analysis.graph(), actions);
+		java.util.Random random = new java.util.Random(2026081402L);
+		int compared = 0;
+		for(int sample = 0; sample < 512; sample++) {
+			Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
+			for(Node node : analysis.graph().decisionNodes())
+				assignment.put(node.key(), node.legalAlternatives().get(
+					random.nextInt(node.legalAlternatives().size())));
+			if(!indexed.canStillBeReachable(assignment))
+				continue;
+			var canonical = CandidateSelections.selectMaterializationMaximal(
+				analysis, analysis.graph(), actions, assignment, order);
+			var optimized = CandidateSelections.selectMaterializationMaximal(
+				analysis, analysis.graph(), actions, assignment, order, indexed);
+			Assert.assertEquals("indexed physical effects must preserve candidate rows",
+				canonical.candidates().stream().sorted().toList(),
+				optimized.candidates().stream().sorted().toList());
+			Assert.assertEquals("indexed physical effects must preserve relocation choices",
+				canonical.relocationChoices(), optimized.relocationChoices());
+			Assert.assertEquals("indexed physical effects must preserve emitted actions",
+				canonical.emittedActions(), optimized.emittedActions());
+			Assert.assertEquals(canonical.materializedInputCount(),
+				optimized.materializedInputCount());
+			Assert.assertEquals(canonical.relocationPhysicalEmissionCount(),
+				optimized.relocationPhysicalEmissionCount());
+			Assert.assertEquals(canonical.localMaterializationActionCount(),
+				optimized.localMaterializationActionCount());
+			Assert.assertEquals(canonical.foutMaterializationActionCount(),
+				optimized.foutMaterializationActionCount());
+			compared++;
+		}
+		Assert.assertTrue("fixture must expose reachable complete assignments", compared > 0);
+	}
+
 	private static CandidateDependency directCandidateDependency() throws Exception {
 		PlacementAnalysis source = new NeutralPlacementGraphBuilder().buildAnalysis(
 			ProductionShadowFixtureFactory.compile("B-11"));
@@ -318,6 +409,7 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 			adjacency.put(node.key(), java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
 		for(Constraint constraint : graph.constraints())
 			if((constraint.kind() == ConstraintKind.SAME_PLACEMENT
+				|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
 				|| constraint.kind() == ConstraintKind.SAME_FTYPE
 				|| constraint.kind() == ConstraintKind.CONJUNCTIVE)
 				&& adjacency.containsKey(constraint.left()) && adjacency.containsKey(constraint.right()))

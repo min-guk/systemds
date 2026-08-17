@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.function.IntFunction;
 
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
@@ -34,8 +35,9 @@ final class CampaignASharedResultBehavioralProbe {
 		PlacementAnalysis foreign = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(selected.production());
 		Map<CompiledHopKey, PlacementState> states = new LinkedHashMap<>();
 		exact.graph().nodes().forEach(n -> states.put(n.key(), n.legalAlternatives().get(0)));
-		List<RelocationActionKey> relocations = exact.graph().relocationActions().stream()
-			.map(a -> a.key()).sorted(STABLE_ORDER).toList();
+		List<RelocationActionKey> relocations = CandidateSelections.selectNativeCanonical(
+			exact, exact.graph().relocationActions(), states).emittedActions().stream()
+			.sorted(STABLE_ORDER).toList();
 		if(exact == foreign || !exact.analysisFingerprint().equals(foreign.analysisFingerprint())
 			|| states.isEmpty() || relocations.size() < 2)
 			throw new AssertionError("A_FIXTURE_NONEMPTY_IDENTITY_TRAP");

@@ -19,6 +19,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
@@ -41,10 +42,13 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 	@Test
 	public void logRegDpKeepsExactTransientForwardAuthority() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
+		String oldRuntimeAudit = System.getProperty(PlannerRuntimePlacementAudit.PROPERTY);
 		DMLConfig config = new DMLConfig(oldGlobal);
 		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 		ConfigurationManager.setGlobalConfig(config);
 		ConfigurationManager.setLocalConfig(config);
+		System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, Boolean.TRUE.toString());
+		PlannerRuntimePlacementAudit.resetForTesting();
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		PlacementEmissionTransaction.resetForTesting();
 		int port = AutomatedTestBase.getRandomAvailablePort();
@@ -61,8 +65,18 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 			translator.constructLops(program, captured::set);
 			Assert.assertTrue("LogReg must use the DP planner, receipt=" + captured.get(),
 				captured.get() instanceof DpInvocationReceipt);
-			assertBranchJoinForwardUsesOnlyNeutralAuthorizedState((DpInvocationReceipt) captured.get());
+			DpInvocationReceipt receipt = (DpInvocationReceipt) captured.get();
+			assertBranchJoinForwardUsesOnlyNeutralAuthorizedState(receipt);
+			Assert.assertFalse("The one-worker LogReg fixture must select an exact LOCAL materialization",
+				receipt.normalizedResult().selectedLocalMaterializations().isEmpty());
 			translator.getRuntimeProgram(program, config);
+			String runtimeAudit = PlannerRuntimePlacementAudit.display();
+			Assert.assertTrue("The selected LOCAL transfer must lower as its own synthetic prefetch",
+				runtimeAudit.contains("[Lowering-Synthetic] status=MATCH")
+					&& runtimeAudit.contains("stage=LOCAL"));
+			Assert.assertTrue("A CP/LOUT consumer behind the exact LOCAL transfer may be fused into "
+				+ "a same-placement parent after the prefetch edge is proved",
+				runtimeAudit.contains("status=FUSED_MATCH"));
 		}
 		finally {
 			TestUtils.shutdownThreads(worker);
@@ -73,6 +87,11 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 			FederatedRefedRegistry.clear();
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedLocalMaterializeRegistry.clear();
+			PlannerRuntimePlacementAudit.resetForTesting();
+			if(oldRuntimeAudit == null)
+				System.clearProperty(PlannerRuntimePlacementAudit.PROPERTY);
+			else
+				System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, oldRuntimeAudit);
 		}
 	}
 

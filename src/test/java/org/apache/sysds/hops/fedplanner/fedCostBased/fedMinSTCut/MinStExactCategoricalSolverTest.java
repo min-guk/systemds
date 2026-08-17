@@ -130,6 +130,23 @@ public class MinStExactCategoricalSolverTest {
 	}
 
 	@Test
+	public void domainWeightedOrderAvoidsMinFillMaterializationBlowup() {
+		var a = variable("a", 2);
+		var b = variable("b", 100);
+		var c = variable("c", 2);
+		var d = variable("d", 2);
+		List<MinStExactCategoricalSolver.Factor> factors = List.of(
+			MinStExactCategoricalSolver.Factor.lazy(List.of(a, b), values -> 0d),
+			MinStExactCategoricalSolver.Factor.lazy(List.of(b, c), values -> 0d),
+			MinStExactCategoricalSolver.Factor.lazy(List.of(b, d), values -> 0d));
+		var stats = MinStExactCategoricalSolver.analyze(List.of(a, b, c, d), factors,
+			new MinStExactCategoricalSolver.Limits(1_000, 700));
+		Assert.assertEquals(List.of("b", "a", "c", "d"), stats.eliminationOrder());
+		Assert.assertEquals(200L, stats.maximumFactorCells());
+		Assert.assertEquals(615L, stats.materializedFactorCells());
+	}
+
+	@Test
 	public void finiteObjectiveOverflowFailsClosed() {
 		var a = variable("a", 1);
 		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,

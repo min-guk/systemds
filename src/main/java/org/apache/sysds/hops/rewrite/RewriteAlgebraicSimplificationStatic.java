@@ -37,6 +37,7 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
@@ -45,6 +46,7 @@ import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpN;
@@ -2046,6 +2048,7 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 			if( hi2 instanceof ReorgOp && ((ReorgOp)hi2).getOp()==firstOp ) //second reorg w/ same type
 			{
 				Hop hi3 = hi2.getInput(0);
+				inheritCollapsedWeightedDivMmPlacement(hi, hi2, hi3);
 				//remove unnecessary chain of t(t())
 				HopRewriteUtils.replaceChildReference(parent, hi, hi3, pos);
 				HopRewriteUtils.cleanupUnreferenced(hi, hi2);
@@ -2056,6 +2059,24 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 		}
 
 		return hi;
+	}
+
+	/**
+	 * Dynamic WDIVMM patterns 1/3/5 replace an inner matrix multiply with a
+	 * transpose-wrapped quaternary operator. A source-level outer transpose then
+	 * cancels that wrapper. The surviving WDIVMM represents the outer transpose's
+	 * value and must therefore inherit that exact planner owner, including the
+	 * derived-FOUT bit that lowers to FED/LOUT. The marker on the inner transpose
+	 * closes this transfer to the known two-stage rewrite rather than authorizing
+	 * arbitrary source-less WDIVMM hops.
+	 */
+	private static void inheritCollapsedWeightedDivMmPlacement(Hop outer, Hop inner, Hop replacement) {
+		if( outer.isPlannerPlacementSelected()
+			&& "DYNAMIC_WEIGHTED_DIV_MM".equals(inner.getPlannerRewriteReplacementKind())
+			&& replacement instanceof QuaternaryOp
+			&& ((QuaternaryOp) replacement).getOp() == OpOp4.WDIVMM )
+			replacement.setPlannerRewriteReplacement(outer,
+				"DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR");
 	}
 
 	/*

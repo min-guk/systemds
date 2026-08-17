@@ -387,12 +387,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter))
 				throw new IllegalArgumentException("Supplied analysis changed during planning");
 			Set<FederatedPlannerDpMemoTable.FedPlan> plans = Collections.newSetFromMap(new IdentityHashMap<>());
-			Set<Hop> planningHops = Collections.newSetFromMap(new IdentityHashMap<>());
-			Set<Long> planningIds = new HashSet<>();
 			for(int i = 0; i < appliedPlans.size(); i++) {
 				AppliedPlanReceipt applied = appliedPlans.get(i);
-				if(applied.ordinal() != i || !plans.add(applied.plan()) || !planningHops.add(applied.planningHop())
-					|| !planningIds.add(applied.planningHopId()))
+				boolean uniquePlan = plans.add(applied.plan());
+				if(applied.ordinal() != i || !uniquePlan)
 					throw new IllegalArgumentException("Applied plan order or identity is duplicated at ordinal=" + i
 						+ " planningHopId=" + applied.planningHopId() + " additional=" + applied.additionalRoot()
 						+ " sequence=" + appliedPlans.stream().map(value -> value.planningHopId() + ":" + value.additionalRoot()).toList());
@@ -543,6 +541,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					receipt.componentMembers().stream().anyMatch(member -> member == key)))
 					throw new IllegalArgumentException(
 						"Superseded pre-completion key lacks final disconnected-component authority");
+			validateAppliedPlanningIdentityReuse(appliedPlans, expectedAppliedOrdinal,
+				supersededKeys, disconnectedCompletionReceipts, memo);
 			for(int i = 0; i < expectedAppliedOrdinal; i++) {
 				CompiledHopKey rootKey =
 					memo.requirePlanCarrierOccurrence(appliedPlans.get(i).plan().getHopRef()).key();
@@ -558,6 +558,57 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				|| counters.reenumerationCount() != 0 || counters.repairCount() != 0
 				|| counters.fallbackCount() != 0 || counters.doubleApplicationCount() != 0)
 				throw new IllegalArgumentException("DP invocation counters differ");
+		}
+	}
+
+	/**
+	 * Applied-plan receipts normally have a unique planning Hop and Hop ID. The sole
+	 * exception is a pre-completion root whose exact authority was explicitly
+	 * superseded by legality repair and then replaced by the final disconnected
+	 * component sink. Selection is still emitted transactionally once from the final
+	 * normalized result; this pair records preference replacement, not runtime double
+	 * application. Every other partial, cross-carrier, or repeated collision remains
+	 * fail-closed.
+	 */
+	private static void validateAppliedPlanningIdentityReuse(
+		List<AppliedPlanReceipt> appliedPlans, int preCompletionCount,
+		Set<CompiledHopKey> supersededKeys,
+		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts,
+		FederatedPlannerDpMemoTable memo) {
+		Map<Hop, AppliedPlanReceipt> firstByHop = new IdentityHashMap<>();
+		Map<Long, AppliedPlanReceipt> firstById = new HashMap<>();
+		Set<AppliedPlanReceipt> replaced = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(AppliedPlanReceipt applied : appliedPlans) {
+			AppliedPlanReceipt priorHop = firstByHop.putIfAbsent(applied.planningHop(), applied);
+			AppliedPlanReceipt priorId = firstById.putIfAbsent(applied.planningHopId(), applied);
+			if(priorHop == null && priorId == null)
+				continue;
+			boolean samePrior = priorHop != null && priorHop == priorId;
+			PlacementAnalysis.HopOccurrenceProjection priorOccurrence = samePrior
+				? memo.requirePlanCarrierOccurrence(priorHop.planningHop()) : null;
+			PlacementAnalysis.HopOccurrenceProjection replacementOccurrence = samePrior
+				? memo.requirePlanCarrierOccurrence(applied.planningHop()) : null;
+			CompiledHopKey replacementKey = replacementOccurrence == null
+				? null : replacementOccurrence.key();
+			long replacementReceipts = disconnectedCompletionReceipts.stream()
+				.filter(receipt -> receipt.appliedPlan() == applied
+					&& receipt.sinkRoot() == replacementKey).count();
+			boolean validSupersededReplacement = samePrior
+				&& priorHop.ordinal() < preCompletionCount
+				&& applied.ordinal() >= preCompletionCount
+				&& applied.additionalRoot()
+				&& priorHop.plan() != applied.plan()
+				&& priorOccurrence == replacementOccurrence
+				&& supersededKeys.contains(replacementKey)
+				&& replacementReceipts == 1
+				&& replaced.add(priorHop);
+			if(!validSupersededReplacement)
+				throw new IllegalArgumentException(
+					"Applied planning Hop/ID reuse is not an exact superseded-root replacement: prior="
+						+ (priorHop == null ? "-" : priorHop.ordinal() + ":" + priorHop.planningHopId())
+						+ " priorById=" + (priorId == null ? "-" : priorId.ordinal() + ":" + priorId.planningHopId())
+						+ " replacement=" + applied.ordinal() + ":" + applied.planningHopId()
+						+ " replacementReceipts=" + replacementReceipts);
 		}
 	}
 
@@ -2013,8 +2064,45 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			SelectedDpState right = selectedStates.get(constraint.right());
 			if(left != null && right != null && !NeutralPlacementGraph.constraintSatisfied(
 				constraint, left.exactState(), right.exactState())) {
-				repair.add(constraint.left());
-				repair.add(constraint.right());
+				boolean ordinaryOwner = false;
+				if(!isSyntheticFunctionBoundary(analysis, constraint.left())) {
+					repair.add(constraint.left());
+					ordinaryOwner = true;
+				}
+				if(!isSyntheticFunctionBoundary(analysis, constraint.right())) {
+					repair.add(constraint.right());
+					ordinaryOwner = true;
+				}
+				if(!ordinaryOwner)
+					throw new IllegalStateException(
+						"DP exact legality violation has no ordinary function-boundary owner");
+			}
+		}
+		Map<CompiledHopKey,List<SyntheticBoundaryIncident>> selectedSyntheticIncidents =
+			new IdentityHashMap<>();
+		for(Constraint constraint : analysis.graph().constraints()) {
+			if(!isExactComponentLegalityConstraint(constraint))
+				continue;
+			SelectedDpState right = selectedStates.get(constraint.right());
+			if(right != null && isSyntheticFunctionBoundary(analysis, constraint.left()))
+				selectedSyntheticIncidents.computeIfAbsent(constraint.left(), ignored -> new ArrayList<>())
+					.add(new SyntheticBoundaryIncident(constraint, right.exactState()));
+			SelectedDpState left = selectedStates.get(constraint.left());
+			if(left != null && isSyntheticFunctionBoundary(analysis, constraint.right()))
+				selectedSyntheticIncidents.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+					.add(new SyntheticBoundaryIncident(constraint, left.exactState()));
+		}
+		for(Map.Entry<CompiledHopKey,List<SyntheticBoundaryIncident>> entry :
+			selectedSyntheticIncidents.entrySet()) {
+			Node boundary = analysis.graph().node(entry.getKey()).orElseThrow();
+			if(syntheticBoundaryHasFeasibleState(entry.getKey(), boundary, entry.getValue()))
+				continue;
+			for(SyntheticBoundaryIncident incident : entry.getValue()) {
+				Constraint constraint = incident.constraint();
+				CompiledHopKey neighbor = constraint.left() == entry.getKey()
+					? constraint.right() : constraint.left();
+				if(selectedStates.containsKey(neighbor))
+					repair.add(neighbor);
 			}
 		}
 		if(repair.isEmpty())
@@ -2027,9 +2115,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				if(!isExactComponentLegalityConstraint(constraint))
 					continue;
 				if(repair.contains(constraint.left()) && selectedStates.containsKey(constraint.right()))
-					progressed |= repair.add(constraint.right());
+					if(!isSyntheticFunctionBoundary(analysis, constraint.right()))
+						progressed |= repair.add(constraint.right());
 				if(repair.contains(constraint.right()) && selectedStates.containsKey(constraint.left()))
-					progressed |= repair.add(constraint.left());
+					if(!isSyntheticFunctionBoundary(analysis, constraint.left()))
+						progressed |= repair.add(constraint.left());
 			}
 			for(PlacementAnalysis.CompiledInputEdgeFact edge :
 				analysis.compiledInputEdgesInCanonicalOrder())
@@ -2163,6 +2253,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	private static boolean isExactComponentLegalityConstraint(Constraint constraint) {
 		return constraint.kind() == ConstraintKind.SAME_PLACEMENT
+			|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
 			|| constraint.kind() == ConstraintKind.SAME_FTYPE
 			|| constraint.kind() == ConstraintKind.CONJUNCTIVE;
 	}
@@ -2387,6 +2478,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			fixed, 0, new IdentityHashMap<>(), new IdentityHashMap<>(), 0d,
 			new HashMap<>(), best, searchDiagnostics);
 		if(best[0] == null && domains != legalityDomains) {
+			if(FederatedPlannerTrace.isEnabled()) {
+				String preferredFailure = "component=" + componentId.ordinal
+					+ " search=" + searchDiagnostics.summary(domains)
+					+ " constraints=" + describeExactJoinConstraints(analysis, domains)
+					+ " syntheticBoundaryLocks="
+						+ describeSyntheticBoundaryLocks(analysis, fixed, domains);
+				FederatedPlannerTrace.logGlobal(
+					"DP-ComponentPreferredForestInfeasible", preferredFailure);
+			}
 			// DP is intentionally local and its output conflict resolver normally owns
 			// LOUT/FOUT. A graph-declared global legality constraint (notably exact
 			// TWrite/TRead coherence) may nevertheless make every locally preferred arm
@@ -2791,12 +2891,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 			SelectedDpState currentLeft = selections.get(constraint.left());
 			SelectedDpState currentRight = selections.get(constraint.right());
-			// Validate the component prefix being extended, not unrelated exact locks
-			// captured by an earlier component. A pre-existing violation must be handled
-			// by its owner component; allowing it to reject an independent literal makes
-			// every later component unsatisfiable without changing the offending state.
-			if(currentLeft == null && currentRight == null)
-				continue;
 			SelectedDpState leftSelection = currentLeft;
 			if(leftSelection == null)
 				leftSelection = fixed.get(constraint.left());
@@ -2818,6 +2912,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					if(currentLeft != null)
 						touchedSynthetic.add(constraint.right());
 				}
+				// Fixed-only incidents are deliberately collected above: once this component
+				// touches the same latent boundary they constrain its shared exact state. They
+				// must not, however, reject an unrelated component on their own.
+				if(currentLeft == null && currentRight == null)
+					continue;
 				if(leftSelection != null && rightSelection == null
 					&& domains.containsKey(constraint.right())
 					&& !isSyntheticFunctionBoundary(analysis, constraint.right())
@@ -2841,6 +2940,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 							+ rightSelection.exactState().normalizedSignature());
 				continue;
 			}
+			// Validate the component prefix being extended, not unrelated exact locks
+			// captured by an earlier component. A pre-existing violation must be handled
+			// by its owner component; allowing it to reject an independent literal makes
+			// every later component unsatisfiable without changing the offending state.
+			if(currentLeft == null && currentRight == null)
+				continue;
 			if(!NeutralPlacementGraph.constraintSatisfied(constraint,
 				leftSelection.exactState(), rightSelection.exactState()))
 				return new ExactJoinLegalityViolation(constraint,
@@ -2855,15 +2960,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(!touchedSynthetic.contains(entry.getKey()))
 				continue;
 			Node boundary = analysis.graph().node(entry.getKey()).orElseThrow();
-			boolean feasible = boundary.legalAlternatives().stream().anyMatch(boundaryState ->
-				entry.getValue().stream().allMatch(incident -> {
-					Constraint constraint = incident.constraint();
-					PlacementState left = constraint.left() == entry.getKey()
-						? boundaryState : incident.neighborState();
-					PlacementState right = constraint.right() == entry.getKey()
-						? boundaryState : incident.neighborState();
-					return NeutralPlacementGraph.constraintSatisfied(constraint, left, right);
-				}));
+			boolean feasible = syntheticBoundaryHasFeasibleState(
+				entry.getKey(), boundary, entry.getValue());
 			if(!feasible)
 				return new ExactJoinLegalityViolation(null,
 					"synthetic:" + compactOccurrence(entry.getKey()) + " alternatives="
@@ -2882,6 +2980,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						}).toList());
 		}
 		return null;
+	}
+
+	private static boolean syntheticBoundaryHasFeasibleState(CompiledHopKey boundaryKey,
+		Node boundary, List<SyntheticBoundaryIncident> incidents) {
+		return boundary.legalAlternatives().stream().anyMatch(boundaryState ->
+			incidents.stream().allMatch(incident -> {
+				Constraint constraint = incident.constraint();
+				PlacementState left = constraint.left() == boundaryKey
+					? boundaryState : incident.neighborState();
+				PlacementState right = constraint.right() == boundaryKey
+					? boundaryState : incident.neighborState();
+				return NeutralPlacementGraph.constraintSatisfied(constraint, left, right);
+			}));
 	}
 
 	private static boolean exactJoinConstraintHasSupport(Constraint constraint,
@@ -2953,6 +3064,35 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				&& !selections.containsKey(constraint.left()))
 				backwardReferenced.add(constraint.right());
 		}
+		// A synthetic function boundary is an unassigned latent variable shared by
+		// every formal-input occurrence.  Until its last incident occurrence has been
+		// selected, the memo state must retain all already selected neighbors: their
+		// intersection determines which boundary alternatives remain feasible.  The
+		// former key omitted these neighbors because the synthetic node is not in the
+		// component domain, merging (for example) an earlier CP/LOUT Y read with an
+		// earlier FED/FOUT Y read and incorrectly pruning the coherent L2SVM forest.
+		Set<CompiledHopKey> pendingSynthetic = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Constraint constraint : analysis.graph().constraints()) {
+			if(!isExactComponentLegalityConstraint(constraint))
+				continue;
+			if(isSyntheticFunctionBoundary(analysis, constraint.left())
+				&& domains.containsKey(constraint.right()) && !selections.containsKey(constraint.right()))
+				pendingSynthetic.add(constraint.left());
+			if(isSyntheticFunctionBoundary(analysis, constraint.right())
+				&& domains.containsKey(constraint.left()) && !selections.containsKey(constraint.left()))
+				pendingSynthetic.add(constraint.right());
+		}
+		if(!pendingSynthetic.isEmpty())
+			for(Constraint constraint : analysis.graph().constraints()) {
+				if(!isExactComponentLegalityConstraint(constraint))
+					continue;
+				if(pendingSynthetic.contains(constraint.left())
+					&& selections.containsKey(constraint.right()))
+					backwardReferenced.add(constraint.right());
+				if(pendingSynthetic.contains(constraint.right())
+					&& selections.containsKey(constraint.left()))
+					backwardReferenced.add(constraint.left());
+			}
 		List<ExactAuthorityMemoKey> relevantSelections = new ArrayList<>(order.size());
 		List<ExactBoundaryMemoKey> orderedRequirements = new ArrayList<>(order.size());
 		for(int i = 0; i < order.size(); i++) {
@@ -3937,14 +4077,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			boolean foreignBoundary = traversalContext.incomingEdge != null
 				&& traversalContext.incomingEdge.owner != null
 				&& traversalContext.incomingEdge.owner != traversalContext.component;
-			// A parent component consumes only the foreign child's physical boundary.
-			// The child owner may select a different internal candidate/relocation arm
-			// with the same state in order to satisfy its own locally visible children.
+			// A parent component consumes only the foreign child's value boundary.  In
+			// particular, CP/LOUT and FED/LOUT are the same local input contract even
+			// though the foreign owner must later capture exactly one of those producer
+			// states.  The consumed edge above retains the raw parent arm, while the owner
+			// receipt independently verifies the canonical producer authority.  Comparing
+			// producer ExecType here therefore rejects a coherent cross-component forest.
 			if(scheduledLock != null && !(foreignBoundary
-				? samePhysicalAuthority(scheduledLock, selectedState(plan))
+				? sameConsumableBoundary(scheduledLock, selectedState(plan))
 				: sameExactAuthority(scheduledLock, selectedState(plan))))
 				throw new IllegalStateException("DP scheduled exact arm drifted before capture: "
-					+ scheduledOccurrence.key());
+					+ scheduledOccurrence.key() + " foreignBoundary=" + foreignBoundary
+					+ " scheduled={" + exactStateDiagnostic(scheduledLock) + "} actual={"
+					+ exactStateDiagnostic(selectedState(plan)) + "}");
 			effectivePlan = plan;
 		}
 		else
@@ -5283,14 +5428,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 									: "compatible_variant_shift_or_alt_output_cheaper"));
 					}
 						if (entry.seenLOUT && !entry.seenFOUT) {
-							chosen = forceSeenOnlyReeval
+								chosen = forceSeenOnlyReeval
 								? resolveOneHopConflict(
 									memoTable, hopID, entry,
 									tentativeDecisions != null ? tentativeDecisions
 										: buildTentativeDecisionSnapshot(decisions, nextDecisions),
 									numWorkers, conflictCheckMap, parentVariantDeltaCache)
-								: (entry.canChooseLOUT ? FederatedOutput.LOUT
-									: (entry.canChooseFOUT ? FederatedOutput.FOUT : null));
+									: (entry.canChooseLOUT ? FederatedOutput.LOUT
+										: (entry.canChooseFOUT ? FederatedOutput.FOUT : null));
 						}
 						else if (!entry.seenLOUT && entry.seenFOUT) {
 							chosen = forceSeenOnlyReeval
@@ -5299,8 +5444,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 									tentativeDecisions != null ? tentativeDecisions
 										: buildTentativeDecisionSnapshot(decisions, nextDecisions),
 									numWorkers, conflictCheckMap, parentVariantDeltaCache)
-								: (entry.canChooseFOUT ? FederatedOutput.FOUT
-									: (entry.canChooseLOUT ? FederatedOutput.LOUT : null));
+									: (entry.canChooseFOUT ? FederatedOutput.FOUT
+										: (entry.canChooseLOUT ? FederatedOutput.LOUT : null));
 						}
 						else {
 							if (tentativeDecisions == null)
@@ -5369,6 +5514,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				nextDecisions = alignTransientReadsWithProducerDecisions(
 					memoTable, finalConflictCheckMap, nextDecisions, lockedDecisions,
 					transientReadParentsCache, iter);
+				Map<Long, ConflictEntry> alignedConflictCheckMap =
+					collectConflictsSingleBFS(memoTable, rootPlan, nextDecisions);
+				refreshConflictChoiceFeasibility(alignedConflictCheckMap, memoTable);
+				nextDecisions = refineRequiredOutputClosureDecisions(
+					memoTable, rootPlan, alignedConflictCheckMap, nextDecisions, lockedDecisions,
+					iter, decisionMapScoreCache);
+				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				// The family alignment above can expose a parent whose previously selected
 				// exact arm requires the superseded TRead output. Feed that newly visible
 				// incompatibility back through DP's existing exact-conflict detector/resolver
@@ -5377,8 +5529,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					memoTable, rootPlan, nextDecisions, lockedDecisions, iter, decisionMapScoreCache);
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				nextDecisions = alignTransientReadsWithProducerDecisions(
-					memoTable, finalConflictCheckMap, nextDecisions, lockedDecisions,
+					memoTable, alignedConflictCheckMap, nextDecisions, lockedDecisions,
 					transientReadParentsCache, iter);
+				Map<Long, ConflictEntry> finalAlignedConflictCheckMap =
+					collectConflictsSingleBFS(memoTable, rootPlan, nextDecisions);
+				refreshConflictChoiceFeasibility(finalAlignedConflictCheckMap, memoTable);
+				nextDecisions = refineRequiredOutputClosureDecisions(
+					memoTable, rootPlan, finalAlignedConflictCheckMap, nextDecisions, lockedDecisions,
+					iter, decisionMapScoreCache);
+				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
+				nextDecisions = refineExactOccurrenceSelectionDecisions(
+					memoTable, rootPlan, nextDecisions, lockedDecisions, iter, decisionMapScoreCache);
+				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				// A synthetic function-input boundary may feed multiple exact formal
 				// TRead occurrences that are not one transient TWrite/TRead family. The
 				// neutral graph nevertheless proves that those formals are aliases of one
@@ -5620,9 +5782,44 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 			Map<Long, FederatedOutput> bestCandidate = null;
 			DecisionMapScoreBreakdown bestScore = currentScore;
-			long selectedHopID = -1L;
+			List<Long> selectedHopIDs = Collections.emptyList();
 			FederatedOutput selectedOutput = null;
+			LinkedHashSet<Long> occurrenceFamilyHopIDs = new LinkedHashSet<>();
+			for (ExactOccurrenceConflict conflict : currentScore.exactOccurrenceConflicts) {
+				List<Long> familyHopIDs = conflict.decisionHopIDs();
+				occurrenceFamilyHopIDs.addAll(familyHopIDs);
+				for (FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+					Map<Long, FederatedOutput> candidate = applyExactOccurrenceFamilyOutput(
+						refinedDecisions, lockedDecisions, familyHopIDs, output);
+					if (candidate == null)
+						continue;
+					DecisionMapScoreBreakdown candidateScore =
+						computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidate, scoreCache);
+					Hop hopRef = familyHopIDs.isEmpty() ? null : memoTable.resolveOriginalHop(familyHopIDs.get(0));
+					if (FederatedPlannerTrace.shouldTrace(hopRef))
+						FederatedPlannerTrace.log(hopRef, "DP-ExactOccurrenceFamilyDecision-Candidate",
+							"iter=" + iter + " refinement=" + refinement + " occurrence="
+								+ conflict.occurrenceKey() + " family=" + familyHopIDs + " output=" + output
+								+ " incompatibleBefore=" + currentScore.incompatiblePlanCount
+								+ " incompatibleAfter=" + candidateScore.incompatiblePlanCount
+								+ " conflictsBefore=" + currentScore.exactSelectionConflictHopIDs
+								+ " conflictsAfter=" + candidateScore.exactSelectionConflictHopIDs
+								+ " totalBefore=" + currentScore.totalCost
+								+ " totalAfter=" + candidateScore.totalCost);
+					if (!isScorableDecisionMapScore(candidateScore)
+						|| !hasBetterDecisionMapStructure(candidateScore, currentScore))
+						continue;
+					if (bestCandidate == null || isBetterDecisionMapScore(candidateScore, bestScore)) {
+						bestCandidate = candidate;
+						bestScore = candidateScore;
+						selectedHopIDs = familyHopIDs;
+						selectedOutput = output;
+					}
+				}
+			}
 			for (long hopID : currentScore.exactSelectionConflictHopIDs) {
+				if (occurrenceFamilyHopIDs.contains(hopID))
+					continue;
 				FederatedOutput lockedOutput = lockedDecisions != null ? lockedDecisions.get(hopID) : null;
 				for (FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
 					if (lockedOutput != null && lockedOutput != output)
@@ -5648,7 +5845,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					if (bestCandidate == null || isBetterDecisionMapScore(candidateScore, bestScore)) {
 						bestCandidate = candidate;
 						bestScore = candidateScore;
-						selectedHopID = hopID;
+						selectedHopIDs = List.of(hopID);
 						selectedOutput = output;
 					}
 				}
@@ -5657,7 +5854,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (bestCandidate == null)
 				break;
 			FederatedPlannerTrace.logGlobal("DP-ExactOccurrenceDecision-Selected",
-				"iter=" + iter + " refinement=" + refinement + " hop=" + selectedHopID
+				"iter=" + iter + " refinement=" + refinement + " hops=" + selectedHopIDs
 					+ " output=" + selectedOutput + " incompatibleBefore="
 					+ currentScore.incompatiblePlanCount + " incompatibleAfter="
 					+ bestScore.incompatiblePlanCount + " totalBefore=" + currentScore.totalCost
@@ -5665,6 +5862,26 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			refinedDecisions = bestCandidate;
 		}
 		return refinedDecisions;
+	}
+
+	private static Map<Long, FederatedOutput> applyExactOccurrenceFamilyOutput(
+		Map<Long, FederatedOutput> decisions,
+		Map<Long, FederatedOutput> lockedDecisions,
+		List<Long> familyHopIDs,
+		FederatedOutput output) {
+
+		if (familyHopIDs == null || familyHopIDs.isEmpty() || output == null)
+			return null;
+		for (long hopID : familyHopIDs) {
+			FederatedOutput lockedOutput = lockedDecisions != null ? lockedDecisions.get(hopID) : null;
+			if (lockedOutput != null && lockedOutput != output)
+				return null;
+		}
+		Map<Long, FederatedOutput> candidate =
+			decisions != null ? new HashMap<>(decisions) : new HashMap<>();
+		for (long hopID : familyHopIDs)
+			candidate.put(hopID, output);
+		return applyLockedOutputDecisions(candidate, lockedDecisions);
 	}
 
 	private static boolean hasBetterDecisionMapStructure(
@@ -7099,7 +7316,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		breakdown.incompatiblePlanCount = countIncompatibleDecisionMapPlans(
-			memoTable, rootPlan, outputDecisions, breakdown.exactSelectionConflictHopIDs);
+			memoTable, rootPlan, outputDecisions, breakdown.exactSelectionConflictHopIDs,
+			breakdown.exactOccurrenceConflicts);
 
 			for (Map.Entry<Long, FederatedPlannerDpMemoTable.FedPlan> entry : selectedRootPlans.entrySet()) {
 				long rootHopID = entry.getKey();
@@ -7127,7 +7345,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, FederatedOutput> outputDecisions,
-		Set<Long> exactSelectionConflictHopIDs) {
+		Set<Long> exactSelectionConflictHopIDs,
+		List<ExactOccurrenceConflict> exactOccurrenceConflicts) {
 
 		if (memoTable == null || rootPlan == null)
 			return 0;
@@ -7203,11 +7422,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					|| previous.derivedFedFout() != proposed.derivedFedFout())
 					&& disagreeingSelections.add(occurrenceKey)) {
 					incompatiblePlans++;
+					LinkedHashSet<Long> familyHopIDs = new LinkedHashSet<>(
+						memoTable.getOriginalDecisionHopIdsForOccurrence(occurrence));
+					familyHopIDs.add(memoTable.resolveOriginalHopId(previous.retainedPlan().getHopID()));
+					familyHopIDs.add(memoTable.resolveOriginalHopId(proposed.retainedPlan().getHopID()));
+					familyHopIDs.add(memoTable.resolveOriginalHopId(selectedPlan.getHopID()));
+					familyHopIDs.add(memoTable.resolveOriginalHopId(state.getKey()));
+					List<Long> exactFamily = familyHopIDs.stream().sorted().toList();
 					if (exactSelectionConflictHopIDs != null)
-						exactSelectionConflictHopIDs.add(
-							memoTable.resolveOriginalHopId(occurrence.hop().getHopID()));
+						exactSelectionConflictHopIDs.addAll(exactFamily);
+					if (exactOccurrenceConflicts != null)
+						exactOccurrenceConflicts.add(new ExactOccurrenceConflict(occurrenceKey, exactFamily));
 					FederatedPlannerTrace.logGlobal("DP-DecisionMap-ExactSelectionConflict",
 						"occurrence=" + occurrenceKey + " previous=" + previous + " proposed=" + proposed
+							+ " family=" + exactFamily
 							+ " stateHop=" + state.getKey() + " stateOut=" + state.getValue()
 							+ " explicitDecision=" + (outputDecisions != null ? outputDecisions.get(
 								memoTable.resolveOriginalHopId(state.getKey())) : null));
@@ -7227,12 +7455,68 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		// The decision map owns only Hop-family LOUT/FOUT closure and exact occurrence
-		// reuse. Neutral graph constraints are occurrence-level contracts over the full
-		// (exec, output, FType) tuple, so scoring them here can reject both output maps
-		// before the exact component join has selected their legal arms. The exact join
-		// and atomic emission prevalidation own those constraints instead.
+		// The exact join still owns full (exec, output, FType) legality. One strictly
+		// earlier fact is already decidable here, however: a runtime transient value
+		// cannot be written as FOUT and read as LOUT (or vice versa). No later choice of
+		// exec type or FType can repair that output mismatch. Score these analysis-owned
+		// reaching-definition conflicts structurally so a final local refinement cannot
+		// undo multi-write normalization and force the whole component into the generic
+		// legality fallback. This does not close either output candidate; it makes the
+		// existing DP conflict resolver compare the two complete legal families.
+		incompatiblePlans += countSelectedTransientOutputConflicts(
+			memoTable, requiredSelections, exactSelectionConflictHopIDs);
 		return incompatiblePlans;
+	}
+
+	private static int countSelectedTransientOutputConflicts(
+		FederatedPlannerDpMemoTable memoTable,
+		Map<CompiledHopKey,SelectedDpState> selected,
+		Set<Long> exactSelectionConflictHopIDs) {
+
+		if(memoTable == null || memoTable.analysis() == null || selected == null
+			|| selected.isEmpty())
+			return 0;
+		PlacementAnalysis analysis = memoTable.analysis();
+		Set<String> observed = new LinkedHashSet<>();
+		int conflicts = 0;
+		String firstConflict = null;
+		for(PlacementAnalysis.HopOccurrenceProjection target : analysis.compiledHopOccurrences()) {
+			Hop targetHop = target.hop();
+			if(!(targetHop instanceof DataOp)
+				|| ((DataOp)targetHop).getOp() != Types.OpOpData.TRANSIENTREAD)
+				continue;
+			SelectedDpState targetState = selected.get(target.key());
+			if(targetState == null)
+				continue;
+			for(CompiledHopKey sourceKey :
+				analysis.cfgDefinitionSourcesInCanonicalOrder(target.key())) {
+				Hop sourceHop = analysis.hop(sourceKey).orElse(null);
+				SelectedDpState sourceState = selected.get(sourceKey);
+				if(!(sourceHop instanceof DataOp)
+					|| ((DataOp)sourceHop).getOp() != Types.OpOpData.TRANSIENTWRITE
+					|| sourceState == null || sourceState.output() == targetState.output())
+					continue;
+				String relation = sourceKey.normalizedSignature() + "->"
+					+ target.key().normalizedSignature();
+				if(!observed.add(relation))
+					continue;
+				conflicts++;
+				long sourceHopID = memoTable.resolveOriginalHopId(sourceHop.getHopID());
+				long targetHopID = memoTable.resolveOriginalHopId(targetHop.getHopID());
+				if(exactSelectionConflictHopIDs != null) {
+					exactSelectionConflictHopIDs.add(sourceHopID);
+					exactSelectionConflictHopIDs.add(targetHopID);
+				}
+				if(firstConflict == null)
+					firstConflict = "source=" + compactOccurrence(sourceKey) + ':' + sourceState.output()
+						+ " target=" + compactOccurrence(target.key()) + ':' + targetState.output()
+						+ " sourceHop=" + sourceHopID + " targetHop=" + targetHopID;
+			}
+		}
+		if(conflicts > 0)
+			FederatedPlannerTrace.logGlobal("DP-DecisionMap-TransientOutputConflict",
+				"count=" + conflicts + " first={" + firstConflict + '}');
+		return conflicts;
 	}
 
 		private static double computeDecisionMapCloneFamilyOutputOverridePenalty(
@@ -10690,6 +10974,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		int missingRootCount;
 		int incompatiblePlanCount;
 		final LinkedHashSet<Long> exactSelectionConflictHopIDs = new LinkedHashSet<>();
+		final List<ExactOccurrenceConflict> exactOccurrenceConflicts = new ArrayList<>();
 		final LinkedHashMap<String, RootContribution> rootContributions = new LinkedHashMap<>();
 		final IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan, Double> compatibleChildAdjustmentCache =
 			new IdentityHashMap<>();
@@ -10735,6 +11020,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					cost,
 					plan.getMultiplicity(),
 					formatLoopContext(plan.getLoopContext())));
+		}
+	}
+
+	private record ExactOccurrenceConflict(CompiledHopKey occurrenceKey, List<Long> decisionHopIDs) {
+		private ExactOccurrenceConflict {
+			Objects.requireNonNull(occurrenceKey, "occurrenceKey");
+			decisionHopIDs = List.copyOf(Objects.requireNonNull(decisionHopIDs, "decisionHopIDs"));
+			if (decisionHopIDs.isEmpty())
+				throw new IllegalArgumentException("Exact occurrence conflict has no decision coordinates");
 		}
 	}
 

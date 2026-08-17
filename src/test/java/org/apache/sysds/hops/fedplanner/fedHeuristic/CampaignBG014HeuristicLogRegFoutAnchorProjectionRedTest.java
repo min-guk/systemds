@@ -68,6 +68,10 @@ public class CampaignBG014HeuristicLogRegFoutAnchorProjectionRedTest {
 				PlacementEmissionTransaction.receiptSnapshotForTesting().size());
 			NormalizedPlannerResult normalized = PlacementEmissionTransaction.currentNormalizedResult(
 				PlacementEmissionTransaction.receiptSnapshotForTesting().keySet().iterator().next());
+			Assert.assertTrue("Loop-local Grad/HV values must not be reuploaded after their demotion",
+				normalized.selectedRelocations().stream().noneMatch(action ->
+					"Grad".equals(action.sourceValueVersion().lexicalVariable())
+						|| "HV".equals(action.sourceValueVersion().lexicalVariable())));
 			Assert.assertEquals("The Docker-equivalent fixture must use the Heuristic planner",
 				"FED_HEURISTIC", normalized.plannerId());
 			Assert.assertFalse("The fixture must exercise output materialization authority",
@@ -76,7 +80,9 @@ public class CampaignBG014HeuristicLogRegFoutAnchorProjectionRedTest {
 				var owner = normalized.analysis().hop(action.key().durableAnchorOwner()).orElseThrow();
 				var ownerNode = normalized.analysis().graph()
 					.node(action.key().durableAnchorOwner()).orElseThrow();
-				Assert.assertTrue("Literal FederationMap sources must own propagated durable anchors",
+				Assert.assertTrue("Literal FederationMap sources must own propagated durable anchors: action="
+					+ action.key().normalizedSignature() + ", owner=" + owner + ", ownerStates="
+					+ ownerNode.legalAlternatives() + ", ownerAnchors=" + ownerNode.anchors(),
 					owner instanceof DataOp && ((DataOp) owner).getOp() == OpOpData.FEDERATED);
 				Assert.assertTrue("The canonical owner must carry the exact durable anchor",
 					ownerNode.anchors().contains(action.key().durableAnchor()));

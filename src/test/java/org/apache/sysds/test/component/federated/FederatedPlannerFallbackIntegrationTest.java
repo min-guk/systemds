@@ -3656,7 +3656,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 			result.rewireSnapshot().candidateOccurrences().stream().anyMatch(value -> value == outputCarrier));
 		assertTrue("The neutral graph must bind the emitted result carrier to the mapped function output role",
 			analysis.graph().constraints().stream().anyMatch(value ->
-				value.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+					value.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
 					&& value.left() == outputCarrier.key() && value.right() == outputBoundary.key()
 					&& value.inputPosition() == 0 && "inlined-function-result:B".equals(value.evidence())));
 		assertTrue("DP semantic capture must enumerate the exact emitted output carrier",
@@ -6906,8 +6906,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 			boolean hasFourInputSlot, String input4Name) {
 		assertTrue("QuaternaryOp should advertise existing FED runtime support", hop.supportsFederatedExecution());
 		hop.setForcedExecType(ExecType.FED);
+		FederatedOutput expectedOutput = hop.getDataType() == DataType.SCALAR
+			? FederatedOutput.LOUT : FederatedOutput.FOUT;
+		hop.setFederatedOutput(expectedOutput);
 		Lop lop = hop.constructLops();
 		assertEquals("Expected direct FED lop lowering", ExecType.FED, lop.getExecType());
+		assertEquals("Quaternary HOP output authority must reach its direct FED LOP",
+			expectedOutput, lop.getFederatedOutput());
 		String instruction = hasFourInputSlot
 			? lop.getInstructions("X", "U", "V", input4Name, "OUT")
 			: lop.getInstructions("X", "U", "V", "OUT");
@@ -6918,6 +6923,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 		Instruction parsed = FEDInstructionParser.parseSingleInstruction(instruction);
 		assertTrue("FED parser should dispatch quaternary instruction: " + instruction,
 			parsed instanceof QuaternaryFEDInstruction);
+		assertEquals("Direct FED quaternary lowering must preserve planner-selected output authority",
+			expectedOutput, ((QuaternaryFEDInstruction) parsed).getFederatedOutput());
 	}
 
 	private static HopCommon registerHopCommon(Map<Long, HopCommon> table, Hop hop) {

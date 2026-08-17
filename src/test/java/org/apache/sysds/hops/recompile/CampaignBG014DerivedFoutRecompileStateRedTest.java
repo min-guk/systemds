@@ -11,20 +11,158 @@ import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.rewrite.RewriteAlgebraicSimplificationDynamic;
+import org.apache.sysds.hops.rewrite.RewriteAlgebraicSimplificationStatic;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
 /** Regression for the exact derived-FOUT bit used by conflict resolution and runtime recompilation. */
 public class CampaignBG014DerivedFoutRecompileStateRedTest {
+	@Test
+	public void dynamicWeightedDivMmTransposePairCarriesOuterPlannerAuthority() throws Exception {
+		Hop x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		Hop u = new DataOp("U", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "U", 100, 10, 1000, 1000);
+		Hop v = new DataOp("V", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "V", 20, 10, 200, 1000);
+		Hop innerOwner = new AggBinaryOp("planned-mm", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, x, v);
+		innerOwner.setExecType(ExecType.FED);
+		innerOwner.setForcedExecType(ExecType.FED);
+		innerOwner.setFederatedOutput(FederatedOutput.FOUT);
+		innerOwner.setFederatedOutputDerived(true);
+		innerOwner.setPlannerPlacementSelected(true);
+		Hop weightedDivMm = new QuaternaryOp("wdivmm", DataType.MATRIX, ValueType.FP64,
+			OpOp4.WDIVMM, x, u, v, new LiteralOp(-1), 1, true, true);
+		ReorgOp replacementTranspose = HopRewriteUtils.createTranspose(weightedDivMm);
+
+		Method inheritWeighted = RewriteAlgebraicSimplificationDynamic.class.getDeclaredMethod(
+			"inheritWeightedDivMmReplacementPlacement", Hop.class, Hop.class);
+		inheritWeighted.setAccessible(true);
+		inheritWeighted.invoke(null, innerOwner, replacementTranspose);
+		Assert.assertEquals("DYNAMIC_WEIGHTED_DIV_MM",
+			replacementTranspose.getPlannerRewriteReplacementKind());
+
+		ReorgOp outerOwner = HopRewriteUtils.createTranspose(replacementTranspose);
+		outerOwner.setExecType(ExecType.FED);
+		outerOwner.setForcedExecType(ExecType.FED);
+		outerOwner.setFederatedOutput(FederatedOutput.FOUT);
+		outerOwner.setFederatedOutputDerived(true);
+		outerOwner.setPlannerPlacementSelected(true);
+		DataOp parent = new DataOp("HS", DataType.MATRIX, ValueType.FP64,
+			outerOwner, OpOpData.TRANSIENTWRITE, null);
+
+		Method collapse = RewriteAlgebraicSimplificationStatic.class.getDeclaredMethod(
+			"removeUnnecessaryReorgOperation", Hop.class, Hop.class, int.class);
+		collapse.setAccessible(true);
+		Hop collapsed = (Hop) collapse.invoke(null, parent, outerOwner, 0);
+
+		Assert.assertSame(weightedDivMm, collapsed);
+		Assert.assertSame(weightedDivMm, parent.getInput(0));
+		Assert.assertEquals(outerOwner.getPlannerOriginHopID(), weightedDivMm.getPlannerOriginHopID());
+		Assert.assertEquals("DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR",
+			weightedDivMm.getPlannerRewriteReplacementKind());
+		Assert.assertEquals(ExecType.FED, weightedDivMm.getForcedExecType());
+		Assert.assertEquals(FederatedOutput.FOUT, weightedDivMm.getFederatedOutput());
+		Assert.assertTrue(weightedDivMm.isFederatedOutputDerived());
+		Assert.assertTrue(weightedDivMm.isPlannerPlacementSelected());
+	}
+
+	@Test
+	public void prePlannerWeightedDivMmTransposePairDoesNotManufactureAuthority() throws Exception {
+		Hop x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		Hop u = new DataOp("U", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "U", 100, 10, 1000, 1000);
+		Hop v = new DataOp("V", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "V", 20, 10, 200, 1000);
+		Hop weightedDivMm = new QuaternaryOp("wdivmm", DataType.MATRIX, ValueType.FP64,
+			OpOp4.WDIVMM, x, u, v, new LiteralOp(-1), 1, true, true);
+		ReorgOp inner = HopRewriteUtils.createTranspose(weightedDivMm);
+		ReorgOp outer = HopRewriteUtils.createTranspose(inner);
+		DataOp parent = new DataOp("HS", DataType.MATRIX, ValueType.FP64,
+			outer, OpOpData.TRANSIENTWRITE, null);
+		long replacementIdentity = weightedDivMm.getPlannerOriginHopID();
+
+		Method collapse = RewriteAlgebraicSimplificationStatic.class.getDeclaredMethod(
+			"removeUnnecessaryReorgOperation", Hop.class, Hop.class, int.class);
+		collapse.setAccessible(true);
+		collapse.invoke(null, parent, outer, 0);
+
+		Assert.assertEquals(replacementIdentity, weightedDivMm.getPlannerOriginHopID());
+		Assert.assertNull(weightedDivMm.getPlannerRewriteReplacementKind());
+		Assert.assertFalse(weightedDivMm.isPlannerPlacementSelected());
+	}
+
+	@Test
+	public void dynamicWeightedDivMmFusionCarriesExactPlannerOrigin() throws Exception {
+		Hop x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		Hop u = new DataOp("U", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "U", 100, 10, 1000, 1000);
+		Hop v = new DataOp("V", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "V", 20, 10, 200, 1000);
+		Hop owner = new AggBinaryOp("planned-mm", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, x, v);
+		owner.setExecType(ExecType.FED);
+		owner.setForcedExecType(ExecType.FED);
+		owner.setFederatedOutput(FederatedOutput.FOUT);
+		owner.setPlannerPlacementSelected(true);
+		Hop replacement = new QuaternaryOp("wdivmm", DataType.MATRIX, ValueType.FP64,
+			OpOp4.WDIVMM, x, u, v, new LiteralOp(-1), 2, false, false);
+
+		Method inherit = RewriteAlgebraicSimplificationDynamic.class.getDeclaredMethod(
+			"inheritExactReplacementPlacement", Hop.class, Hop.class);
+		inherit.setAccessible(true);
+		inherit.invoke(null, owner, replacement);
+
+		Assert.assertEquals(owner.getPlannerOriginHopID(), replacement.getPlannerOriginHopID());
+		Assert.assertEquals("DYNAMIC_WEIGHTED_DIV_MM",
+			replacement.getPlannerRewriteReplacementKind());
+		Assert.assertEquals(ExecType.FED, replacement.getForcedExecType());
+		Assert.assertEquals(FederatedOutput.FOUT, replacement.getFederatedOutput());
+		Assert.assertTrue(replacement.isPlannerPlacementSelected());
+	}
+
+	@Test
+	public void prePlannerWeightedDivMmFusionDoesNotManufacturePlannerAuthority() throws Exception {
+		Hop x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		Hop u = new DataOp("U", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "U", 100, 10, 1000, 1000);
+		Hop v = new DataOp("V", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "V", 20, 10, 200, 1000);
+		Hop owner = new AggBinaryOp("unplanned-mm", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, x, v);
+		Hop replacement = new QuaternaryOp("wdivmm", DataType.MATRIX, ValueType.FP64,
+			OpOp4.WDIVMM, x, u, v, new LiteralOp(-1), 2, false, false);
+		long replacementIdentity = replacement.getPlannerOriginHopID();
+
+		Method inherit = RewriteAlgebraicSimplificationDynamic.class.getDeclaredMethod(
+			"inheritExactReplacementPlacement", Hop.class, Hop.class);
+		inherit.setAccessible(true);
+		inherit.invoke(null, owner, replacement);
+
+		Assert.assertEquals(replacementIdentity, replacement.getPlannerOriginHopID());
+		Assert.assertNull(replacement.getPlannerRewriteReplacementKind());
+		Assert.assertFalse(replacement.isPlannerPlacementSelected());
+	}
+
 	@Test
 	public void rewriteOriginOutranksACollidingPlannerSignature() throws Exception {
 		FederatedPlannerUtils.clearPlannerRecompileStates();

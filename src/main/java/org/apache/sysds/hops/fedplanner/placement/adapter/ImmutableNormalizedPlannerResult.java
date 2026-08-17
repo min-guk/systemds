@@ -93,6 +93,10 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 		for(RelocationActionKey key : Objects.requireNonNull(draft.selectedRelocations(), "selectedRelocations"))
 			suppliedRelocations.add(Objects.requireNonNull(key, "relocation"));
 		suppliedRelocations.sort(RELOCATION_ORDER);
+		for(int i = 1; i < suppliedRelocations.size(); i++)
+			if(suppliedRelocations.get(i - 1).normalizedSignature()
+				.equals(suppliedRelocations.get(i).normalizedSignature()))
+				throw new IllegalArgumentException("duplicate relocation action");
 		if(!relocations.equals(suppliedRelocations))
 			throw new IllegalArgumentException("relocation choices and emitted action projection differ");
 		relocations.sort(RELOCATION_ORDER);

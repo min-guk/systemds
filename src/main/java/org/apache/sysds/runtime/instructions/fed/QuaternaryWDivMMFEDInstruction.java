@@ -40,6 +40,7 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.DoubleObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.operators.QuaternaryOperator;
 
 import java.util.ArrayList;
@@ -70,6 +71,14 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 		CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4, CPOperand out, String opcode, String instruction_str)
 	{
 		super(FEDType.Quaternary, operator, in1, in2, in3, in4, out, opcode, instruction_str);
+		_qop = operator;
+	}
+
+	protected QuaternaryWDivMMFEDInstruction(QuaternaryOperator operator,
+		CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4, CPOperand out, String opcode,
+		String instruction_str, FederatedOutput fedOut)
+	{
+		super(FEDType.Quaternary, operator, in1, in2, in3, in4, out, opcode, instruction_str, fedOut);
 		_qop = operator;
 	}
 
@@ -108,6 +117,9 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 
 		if(X.isFederated()) {
 			FederationMap fedMap = X.getFedMapping();
+			boolean requiresLocalAggregation = requiresLocalAggregation(wdivmm_type, fedMap.getType());
+			boolean requiresLocalMaterialization = requiresLocalAggregation
+				|| getFederatedOutput().isForcedLocal();
 			ArrayList<FederatedRequest[]> frSliced = new ArrayList<>();
 			ArrayList<FederatedRequest> frB = new ArrayList<>(); // FederatedRequests of broadcasts
 			long[] varNewIn = new long[_qop.hasFourInputs() ? 4 : 3];
@@ -174,8 +186,7 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 			FederatedRequest frGet = null;
 
 			FederatedRequest frC = null;
-			if((wdivmm_type.isLeft() && X.isFederated(FType.ROW))
-				|| (wdivmm_type.isRight() && X.isFederated(FType.COL))) { // output needs local aggregation
+			if(requiresLocalMaterialization) {
 				// get partial results from federated workers
 				frGet = new FederatedRequest(RequestType.GET_VAR, frComp.getID());
 				// cleanup the federated request of the instruction call
@@ -191,11 +202,17 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 				fedMap.execute(getTID(), true, frAll) : fedMap.executeMultipleSlices(
 					getTID(), true, frSliced.toArray(new FederatedRequest[0][]), frAll);
 
-			if((wdivmm_type.isLeft() && X.isFederated(FType.ROW))
-				|| (wdivmm_type.isRight() && X.isFederated(FType.COL))) { // local aggregation
+			if(requiresLocalAggregation) {
 				// aggregate partial results from federated responses
 				AggregateUnaryOperator aop = InstructionUtils.parseBasicAggregateUnaryOperator("uak+");
 				ec.setMatrixOutput(output.getName(), FederationUtils.aggMatrix(aop, response, fedMap));
+			}
+			else if(getFederatedOutput().isForcedLocal()) {
+				// The serialized LOUT placement is planner authority, not a runtime hint. For
+				// partition-preserving WDivMM variants the worker results are non-overlapping,
+				// so materialize those exact results locally instead of registering an FOUT map.
+				ec.setMatrixOutput(output.getName(), FederationUtils.bind(response,
+					producesColumnPartitionedOutput(wdivmm_type, fedMap.getType())));
 			}
 			else if(wdivmm_type.isLeft() || wdivmm_type.isRight() || wdivmm_type.isBasic()) {
 				setFederatedOutput(X, U.getMO(), V.getMO(), ec, frComp.getID());
@@ -208,6 +225,18 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 			throw new DMLRuntimeException("Unsupported federated inputs (X, U, V) = ("
 				+ X.isFederated() + ", " + U.isFederated() + ", " + V.isFederated() + ")");
 		}
+	}
+
+	private static boolean requiresLocalAggregation(WDivMMType type, FType inputType) {
+		return (type.isLeft() && inputType == FType.ROW)
+			|| (type.isRight() && inputType == FType.COL);
+	}
+
+	private static boolean producesColumnPartitionedOutput(WDivMMType type, FType inputType) {
+		// BASIC preserves X's partition axis. Non-overlapping LEFT/RIGHT variants both
+		// produce row-partitioned outputs: LEFT transposes a COL axis into output rows,
+		// while RIGHT preserves X's ROW axis.
+		return type.isBasic() && inputType == FType.COL;
 	}
 
 	/**

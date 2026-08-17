@@ -2099,14 +2099,12 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		//relink new hop into original position
 		if( hnew != null ) {
 			// Runtime recompilation may discover this fusion only after the federated
-			// planner selected the equivalent matrix-multiply producer. A direct
-			// WDIVMM replacement is the same physical output boundary, so preserve the
-			// exact selected placement on that replacement. Do not use a synthetic
-			// source-position signature: it would alias unrelated rewrite-created
-			// WDIVMM hops. Transpose-wrapped variants are intentionally excluded
-			// because their inner/outer placement states require separate translation.
-			if( hnew instanceof QuaternaryOp )
-				inheritExactReplacementPlacement(hi, hnew);
+			// planner selected the equivalent matrix-multiply producer. Preserve the
+			// exact owner on either the direct WDIVMM or the transpose wrapper emitted
+			// by left-oriented patterns. If a surrounding source transpose later
+			// cancels that wrapper, the static rewrite transfers the outer transpose's
+			// exact authority to the surviving WDIVMM.
+			inheritWeightedDivMmReplacementPlacement(hi, hnew);
 			HopRewriteUtils.replaceChildReference(parent, hi, hnew, pos);
 			hi = hnew;
 		}
@@ -2114,13 +2112,34 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		return hi;
 	}
 
+	private static void inheritWeightedDivMmReplacementPlacement(Hop replaced, Hop replacementRoot) {
+		Hop physicalReplacement = replacementRoot;
+		if( HopRewriteUtils.isTransposeOperation(replacementRoot) )
+			physicalReplacement = replacementRoot.getInput(0);
+		if( physicalReplacement instanceof QuaternaryOp
+			&& ((QuaternaryOp) physicalReplacement).getOp() == OpOp4.WDIVMM )
+			inheritExactReplacementPlacement(replaced, replacementRoot);
+	}
+
 	private static void inheritExactReplacementPlacement(Hop replaced, Hop replacement) {
 		if( replaced == null || replacement == null )
 			return;
-		replacement.setExecType(replaced.getExecType());
-		replacement.setForcedExecType(replaced.getForcedExecType());
-		replacement.setFederatedOutput(replaced.getFederatedOutput());
-		replacement.setFederatedOutputDerived(replaced.isFederatedOutputDerived());
+		if( replaced.isPlannerPlacementSelected() ) {
+			// During dynamic recompilation this fusion is a physical replacement of the
+			// exact planner-selected owner, not a new planner decision. Carry its ultimate
+			// origin and selected placement so a source-less WDIVMM cannot borrow authority
+			// from another syntactically similar weighted-quaternary occurrence.
+			replacement.setPlannerRewriteReplacement(replaced, "DYNAMIC_WEIGHTED_DIV_MM");
+		}
+		else {
+			// The same rewrite also runs before planning. Preserve the historical physical
+			// hints in that phase, but do not manufacture planner authority before a planner
+			// has selected the owner.
+			replacement.setExecType(replaced.getExecType());
+			replacement.setForcedExecType(replaced.getForcedExecType());
+			replacement.setFederatedOutput(replaced.getFederatedOutput());
+			replacement.setFederatedOutputDerived(replaced.isFederatedOutputDerived());
+		}
 	}
 
 	private static Hop simplifyWeightedCrossEntropy(Hop parent, Hop hi, int pos) 

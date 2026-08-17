@@ -44,12 +44,12 @@ import org.junit.Test;
  */
 public class MinStExactPhysicalPlanSpaceOracleTest {
 	@Test
-	public void multiDefinitionTransientConstraintsForbidEveryCrossTuple() throws Exception {
+	public void multiDefinitionTransientConstraintsRequireExactSamePlacement() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildAnalysis(ProductionShadowFixtureFactory.compile("B-03"));
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 		var constraints = analysis.graph().constraints().stream()
-			.filter(constraint -> constraint.kind() == ConstraintKind.CONJUNCTIVE)
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_PLACEMENT)
 			.filter(constraint -> analysis.graph().node(constraint.left()).orElseThrow().kind()
 				== NodeKind.TRANSIENT_WRITE)
 			.filter(constraint -> analysis.graph().node(constraint.right()).orElseThrow().kind()
@@ -66,10 +66,8 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 				.filter(domain -> domain.node().key() == constraint.right()).findFirst().orElseThrow();
 			for(var left : write.alternatives())
 				for(var right : join.alternatives()) {
-					boolean expected = right.state().output() != FederatedOutput.FOUT
-						|| left.state().output() == FederatedOutput.FOUT
-							&& java.util.Objects.equals(left.state().fType(), right.state().fType());
-					Assert.assertEquals("every reaching definition must constrain every join tuple",
+					boolean expected = left.state().equals(right.state());
+					Assert.assertEquals("every reaching definition must require the exact same TWrite/TRead placement",
 						expected, MinStExactPhysicalModel.constraintSatisfied(
 							constraint, left.state(), right.state()));
 				}

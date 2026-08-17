@@ -181,7 +181,18 @@ public final class PlannerRuntimePlacementAudit {
 		}
 	}
 
-	private record PlanEntry(PlannedHop plan, Hop hop) { }
+	/**
+	 * Exact lowering authority for one planner Hop. A LOCAL materialization belongs to the
+	 * selected producer-to-consumer edge, not to an independently executable consumer Hop.
+	 * The consumer may therefore participate in normal same-placement Lop fusion, but only
+	 * after every synthetic prefetch token for that exact edge has itself been proved.
+	 */
+	private record PlanEntry(PlannedHop plan, Hop hop, List<String> fusedInputBoundaryTokens) {
+		private PlanEntry {
+			fusedInputBoundaryTokens = List.copyOf(
+				Objects.requireNonNull(fusedInputBoundaryTokens, "fusedInputBoundaryTokens"));
+		}
+	}
 	private record LoweredExpectation(String key, String planHash, List<PlannedHop> plans,
 		PlannedSyntheticAction synthetic,
 		ExecType exec, FederatedOutput output, FType fType, String opcode, long hopId, long lopId,
@@ -289,13 +300,17 @@ public final class PlannerRuntimePlacementAudit {
 			relocationSources.add(choice.demand().sourceValueVersion());
 		}
 		List<LocalMaterializationActionKey> selectedLocals = new ArrayList<>();
-		Set<CompiledHopKey> localBoundaries = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<CompiledHopKey> localMaterializationSources =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<CompiledHopKey,List<String>> localInputBoundaryTokens = new IdentityHashMap<>();
 		for(Object raw : result.selectedLocalMaterializations()) {
 			if(!(raw instanceof LocalMaterializationActionKey action))
 				throw new IllegalArgumentException("Planner runtime audit received an untyped local action");
 			selectedLocals.add(action);
-			localBoundaries.add(action.sourceOccurrence());
-			action.obligations().forEach(obligation -> localBoundaries.add(obligation.consumerOccurrence()));
+			localMaterializationSources.add(action.sourceOccurrence());
+			String token = syntheticActionKey(action.normalizedSignature(), "LOCAL");
+			action.obligations().forEach(obligation -> localInputBoundaryTokens
+				.computeIfAbsent(obligation.consumerOccurrence(), ignored -> new ArrayList<>()).add(token));
 		}
 		Map<CompiledHopKey,HopOccurrenceProjection> occurrences = new IdentityHashMap<>();
 		for(HopOccurrenceProjection occurrence : analysis.occurrences())
@@ -355,9 +370,11 @@ public final class PlannerRuntimePlacementAudit {
 				|| target.placementState().output() != physicalOutput
 				|| relocationConsumers.contains(node.key())
 				|| relocationSources.contains(node.valueVersion())
-				|| localBoundaries.contains(node.key());
+				|| localMaterializationSources.contains(node.key());
 			boolean physicalOperation = node.kind() == NodeKind.OPERATION || node.kind() == NodeKind.CLONE;
 			boolean requiresOwnInstruction = physicalOperation && materializationBoundary;
+			List<String> fusedInputBoundaryTokens = localInputBoundaryTokens
+				.getOrDefault(node.key(), List.of()).stream().distinct().sorted().toList();
 			String signature = FederatedPlannerUtils.plannerRecompileSignature(occurrence.hop());
 			PlannedHop plan = new PlannedHop(occurrence.hop().getHopID(), signature,
 				result.plannerId(), shortHash(node.key().normalizedSignature()), opcode, node.kind(),
@@ -366,7 +383,7 @@ public final class PlannerRuntimePlacementAudit {
 				occurrence.hop().getInput().stream().map(PlannerRuntimePlacementAudit::describeHop).toList(),
 				node.emittedWork(), target, physicalExec, physicalOutput, physicalFType,
 				requiresOwnInstruction, occurrence.hop().requiresReblock());
-			entries.add(new PlanEntry(plan, occurrence.hop()));
+			entries.add(new PlanEntry(plan, occurrence.hop(), fusedInputBoundaryTokens));
 		}
 		List<PlannedSyntheticAction> syntheticActions = new ArrayList<>();
 		for(RelocationActionKey action : result.selectedRelocations().stream().distinct().sorted().toList()) {
@@ -482,7 +499,7 @@ public final class PlannerRuntimePlacementAudit {
 	/** Test-only authority replacement with an explicit generation identity. */
 	static void installForTesting(String planHash, List<PlannedHop> plans,
 		List<PlannedSyntheticAction> syntheticActions) {
-		List<PlanEntry> entries = plans.stream().map(plan -> new PlanEntry(plan, null)).toList();
+		List<PlanEntry> entries = plans.stream().map(plan -> new PlanEntry(plan, null, List.of())).toList();
 		commitAuthority(new Authority(planHash, entries, syntheticActions));
 	}
 
@@ -505,7 +522,8 @@ public final class PlannerRuntimePlacementAudit {
 	private static void carryForwardUnchangedLowering(Authority previous, Authority next) {
 		for(PlanEntry current : next.byPlanKey.values()) {
 			PlanEntry prior = previous.byKeyHash.get(current.plan().keyHash());
-			if(prior == null || !samePlanAuthority(prior.plan(), current.plan()))
+			if(prior == null || !samePlanAuthority(prior.plan(), current.plan())
+				|| !prior.fusedInputBoundaryTokens().equals(current.fusedInputBoundaryTokens()))
 				continue;
 			String oldKey = planKey(previous.planHash, prior.plan());
 			if(!LOWERED_PLAN_KEYS.contains(oldKey))
@@ -711,11 +729,27 @@ public final class PlannerRuntimePlacementAudit {
 				continue;
 			}
 			FusedResolution fused = coveredAncestor(authority, entry, coveredHopObjects);
-			if(!entry.plan().requiresOwnInstruction() && fused != null && fused.samePhysical()) {
+			boolean fusedInputBoundariesProved = entry.fusedInputBoundaryTokens().stream().allMatch(token ->
+				LOWERED_SYNTHETIC_KEYS.contains(syntheticPlanKey(authority.planHash, token)));
+			if(!entry.plan().requiresOwnInstruction() && fused != null && fused.samePhysical()
+				&& fusedInputBoundariesProved) {
 				observeLowering(authority.planHash, key, entry.plan(), null, "FUSED_MATCH",
-					"runtimeAuditKey=" + fused.runtimeAuditKey());
+					"runtimeAuditKey=" + fused.runtimeAuditKey() + " inputBoundaries="
+						+ entry.fusedInputBoundaryTokens().stream()
+							.map(PlannerRuntimePlacementAudit::shortHash).toList());
 				continue;
 			}
+			if(fused != null && fused.samePhysical() && !fusedInputBoundariesProved)
+				throw new IllegalStateException(
+					"[PlannerRuntimeAudit] LOWERING_FUSION_INPUT_BOUNDARY_MISSING planner="
+						+ entry.plan().plannerId() + " hop=" + entry.plan().hopId() + " key="
+						+ entry.plan().keyHash() + " requiredSynthetic="
+						+ entry.fusedInputBoundaryTokens().stream()
+							.map(PlannerRuntimePlacementAudit::shortHash).toList()
+						+ " loweredSynthetic=" + entry.fusedInputBoundaryTokens().stream()
+							.filter(token -> LOWERED_SYNTHETIC_KEYS.contains(
+								syntheticPlanKey(authority.planHash, token)))
+							.map(PlannerRuntimePlacementAudit::shortHash).toList());
 			if(fused != null)
 				throw new IllegalStateException("[PlannerRuntimeAudit] LOWERING_FUSION_MISMATCH planner="
 					+ entry.plan().plannerId() + " hop=" + entry.plan().hopId() + " key="
@@ -1010,6 +1044,12 @@ public final class PlannerRuntimePlacementAudit {
 				"-".equals(entry.plan().opcode()) && "-*".equals(actualOpcode);
 			case "DYNAMIC_DOT_PRODUCT" -> isFullSumAggregateOpcode(entry.plan().opcode())
 				&& ("ba+*".equals(actualOpcode) || "tsmm".equals(actualOpcode));
+			case "DYNAMIC_WEIGHTED_DIV_MM" ->
+				(isAggregateBinaryOpcode(entry.plan().opcode())
+					|| "*".equals(entry.plan().opcode()))
+					&& "wdivmm".equals(actualOpcode);
+			case "DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR" ->
+				"r'".equals(entry.plan().opcode()) && "wdivmm".equals(actualOpcode);
 			case "PHYSICAL_TERNARY_AGGREGATE_FUSION" ->
 				isExactTernaryAggregateFusion(entry.plan().opcode(), actualOpcode);
 			case "DYNAMIC_TABLE_SEQ_REXPAND" ->

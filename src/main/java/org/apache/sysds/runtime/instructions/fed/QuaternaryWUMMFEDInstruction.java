@@ -34,6 +34,7 @@ import org.apache.sysds.runtime.controlprogram.federated.MatrixLineagePair;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.QuaternaryCPInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.spark.QuaternarySPInstruction;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 
@@ -56,6 +57,11 @@ public class QuaternaryWUMMFEDInstruction extends QuaternaryFEDInstruction {
 	protected QuaternaryWUMMFEDInstruction(Operator operator, CPOperand in1, CPOperand in2, CPOperand in3,
 		CPOperand out, String opcode, String instruction_str) {
 		super(FEDType.Quaternary, operator, in1, in2, in3, out, opcode, instruction_str);
+	}
+
+	protected QuaternaryWUMMFEDInstruction(Operator operator, CPOperand in1, CPOperand in2, CPOperand in3,
+		CPOperand out, String opcode, String instruction_str, FederatedOutput fedOut) {
+		super(FEDType.Quaternary, operator, in1, in2, in3, out, opcode, instruction_str, fedOut);
 	}
 
 	public static QuaternaryWUMMFEDInstruction parseInstruction(QuaternaryCPInstruction instr) {

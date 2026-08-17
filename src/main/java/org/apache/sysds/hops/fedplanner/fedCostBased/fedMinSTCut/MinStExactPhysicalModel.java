@@ -162,6 +162,7 @@ final class MinStExactPhysicalModel {
 		addStrictTransientFactors(analysis, byDecision, factors);
 		addDerivedFoutAnchorFactors(analysis.graph(), byDecision, factors);
 		addInputAuthorityFactors(analysis, incoming, byDecision, factors);
+		addLatentWdivmmRuntimeInputFactors(analysis, byDecision, factors);
 		return new MinStExactPhysicalModel(analysis, domains, factors);
 	}
 
@@ -461,6 +462,10 @@ final class MinStExactPhysicalModel {
 	private static Map<CompiledHopKey,List<Link>> incomingLinks(PlacementAnalysis analysis) {
 		Map<CompiledHopKey,List<Link>> incoming = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+				.isLatentWdivmmTransposePairBoundary(analysis, edge.producer(), edge.consumer(),
+					edge.inputPosition()))
+				continue;
 			// FunctionOp candidate rows describe the actual call-site argument layout and
 			// therefore need the same exact source authority as every other compiled
 			// consumer.  Logical function-input links below additionally constrain the
@@ -484,6 +489,42 @@ final class MinStExactPhysicalModel {
 		return incoming;
 	}
 
+	/**
+	 * The source inner-MM edge disappears when the transpose pair becomes WDivMM.
+	 * Its exact runtime FederationMap input is the fused weight matrix instead, so a
+	 * FED owner is legal only when that occurrence selects the proven ROW/COL FOUT.
+	 */
+	private static void addLatentWdivmmRuntimeInputFactors(PlacementAnalysis analysis,
+		Map<CompiledHopKey,DecisionDomain> domains,
+		List<MinStExactCategoricalSolver.Factor> factors) {
+		for(Node ownerNode : analysis.graph().decisionNodes()) {
+			DecisionDomain owner = domains.get(ownerNode.key());
+			if(owner == null)
+				continue;
+			org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+				.LatentWdivmmTransposePairFact runtime =
+				org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+					.latentWdivmmTransposePairFact(analysis, owner.node().key());
+			if(runtime == null || runtime.partitionedInputFType() == null)
+				continue;
+			DecisionDomain weights = domains.get(runtime.weights());
+			if(weights == null)
+				throw new IllegalArgumentException(
+					"MINST_LATENT_WDIVMM_RUNTIME_INPUT_DOMAIN_MISSING|owner="
+						+ owner.node().key().normalizedSignature());
+			factors.add(MinStExactCategoricalSolver.Factor.lazy(
+				List.of(owner.variable(), weights.variable()), values -> {
+					PlacementState selectedOwner = owner.alternatives().get(values[0]).state();
+					if(selectedOwner.execType() != ExecType.FED)
+						return 0.0;
+					PlacementState selectedWeights = weights.alternatives().get(values[1]).state();
+					return selectedWeights.output() == FederatedOutput.FOUT
+						&& selectedWeights.fType() == runtime.partitionedInputFType()
+						? 0.0 : Double.POSITIVE_INFINITY;
+				}));
+		}
+	}
+
 	private static void addNeutralConstraintFactors(NeutralPlacementGraph graph,
 		Map<CompiledHopKey,DecisionDomain> domains, List<MinStExactCategoricalSolver.Factor> factors) {
 		for(Constraint constraint : graph.constraints()) {
@@ -492,6 +533,7 @@ final class MinStExactPhysicalModel {
 			if(left == null || right == null || left == right)
 				continue;
 			if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
+				&& constraint.kind() != ConstraintKind.SAME_VALUE_PLACEMENT
 				&& constraint.kind() != ConstraintKind.SAME_FTYPE
 				&& constraint.kind() != ConstraintKind.CONJUNCTIVE)
 				continue;

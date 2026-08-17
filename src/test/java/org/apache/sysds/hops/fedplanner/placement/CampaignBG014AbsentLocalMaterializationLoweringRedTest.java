@@ -73,9 +73,14 @@ public class CampaignBG014AbsentLocalMaterializationLoweringRedTest {
 		List<LocalMaterializationActionKey> locals = plan.selectedLocalMaterializations();
 		Assert.assertTrue("No optional local materialization may remain in the selected lowering",
 			locals.isEmpty());
+		int foutMaterializations = CandidateSelections.foutMaterializationPhysicalEmissionCount(
+			plan.selectedCandidateSelections());
+		Assert.assertTrue("fixture must exercise an exact planner-created FOUT transfer",
+			foutMaterializations > 0);
 		Assert.assertEquals("FedAll's relocation objective must include every exact physical transfer "
 			+ "that canonical lowering will emit",
-			RelocationSelections.physicalEmissionCount(selection.selectedRelocations()) + locals.size(),
+			RelocationSelections.physicalEmissionCount(selection.selectedRelocations()) + locals.size()
+				+ foutMaterializations,
 			selection.score().relocationCount());
 	}
 

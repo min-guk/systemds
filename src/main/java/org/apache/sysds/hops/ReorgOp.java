@@ -27,6 +27,10 @@ import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.lops.Transform;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
@@ -135,7 +139,8 @@ public class ReorgOp extends MultiThreadedHop
 			case TRANS:
 			{
 				Lop lin = getInput().get(0).constructLops();
-				if( lin instanceof Transform && ((Transform)lin).getOp()==ReOrgOp.TRANS )
+				if( lin instanceof Transform && ((Transform)lin).getOp()==ReOrgOp.TRANS
+					&& !hasPlannerMaterializationBoundary(getInput().get(0), this) )
 					setLops(lin.getInputs().get(0)); //if input is already a transpose, avoid redundant transpose ops
 				else if( getDim1()==1 && getDim2()==1 )
 					setLops(lin); //if input of size 1x1, avoid unnecessary transpose
@@ -217,6 +222,24 @@ public class ReorgOp extends MultiThreadedHop
 		constructAndSetLopsDataFlowProperties();
 
 		return getLops();
+	}
+
+	/**
+	 * A selected relocation/materialization between two otherwise redundant transposes is a
+	 * physical plan boundary. Reusing the grandchild Lop would erase the selected producer and
+	 * overwrite its Hop identity when {@link Hop#setLops(Lop)} binds the consumer.
+	 */
+	private static boolean hasPlannerMaterializationBoundary(Hop producer, Hop consumer) {
+		long producerHopId = producer.getHopID();
+		long consumerHopId = consumer.getHopID();
+		boolean directFout = producer.getFederatedOutput() == FederatedOutput.FOUT
+			&& !producer.isFederatedOutputDerived();
+		return directFout || FederatedRefedRegistry.hasEntry(producerHopId)
+			|| FederatedFoutMaterializeRegistry.hasEntry(producerHopId)
+			|| FederatedLocalMaterializeRegistry.hasEntry(producerHopId)
+			|| FederatedRefedRegistry.hasSelectedConsumerInput(consumerHopId)
+			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(consumerHopId)
+			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(consumerHopId);
 	}
 
 

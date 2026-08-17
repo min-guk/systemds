@@ -38,6 +38,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalCandidateInputFact;
@@ -454,39 +455,29 @@ public final class DpPlacementAdapter {
 
 	/** Exact compiler-owned authority for one carrierless synthetic function boundary. */
 	public record SyntheticBoundaryReceipt(PlacementAnalysis analysis,
-		NeutralPlacementGraph.Node boundary, NeutralPlacementGraph.Constraint authority,
-		CompiledHopKey sourceKey, PlacementEmissionState sourceEmissionState,
+		NeutralPlacementGraph.Node boundary, List<NeutralPlacementGraph.Constraint> authorities,
+		Map<CompiledHopKey,PlacementEmissionState> sourceEmissionStates,
 		PlacementEmissionState selectedEmissionState) {
 		public SyntheticBoundaryReceipt {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(boundary, "boundary");
-			Objects.requireNonNull(authority, "authority");
-			Objects.requireNonNull(sourceKey, "sourceKey");
-			Objects.requireNonNull(sourceEmissionState, "sourceEmissionState");
+			authorities = List.copyOf(Objects.requireNonNull(authorities, "authorities"));
+			sourceEmissionStates = Collections.unmodifiableMap(new IdentityHashMap<>(
+				Objects.requireNonNull(sourceEmissionStates, "sourceEmissionStates")));
 			Objects.requireNonNull(selectedEmissionState, "selectedEmissionState");
 			if(boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
 				&& boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
 				throw new IllegalArgumentException("DP synthetic receipt requires a function boundary");
-			NeutralPlacementGraph.Node source = analysis.graph().node(sourceKey).orElse(null);
-			if(analysis.graph().node(boundary.key()).orElse(null) != boundary || source == null)
+			if(analysis.graph().node(boundary.key()).orElse(null) != boundary || authorities.isEmpty())
 				throw new IllegalArgumentException("DP synthetic receipt contains a foreign graph node");
-			if(authority.kind() != NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-				|| authority.left() != sourceKey || authority.right() != boundary.key()
-				|| analysis.graph().constraints().stream().noneMatch(candidate -> candidate == authority))
-				throw new IllegalArgumentException("DP synthetic receipt contains foreign authority");
-			if(source.legalAlternatives().stream()
-				.noneMatch(state -> state == sourceEmissionState.placementState()))
-				throw new IllegalArgumentException("DP synthetic receipt source state is not analysis-owned");
 			if(boundary.legalAlternatives().stream()
 				.noneMatch(state -> state == selectedEmissionState.placementState()))
 				throw new IllegalArgumentException(
 					"DP synthetic boundary did not retain its exact normalized state identity: kind="
 						+ boundary.kind() + ", boundary=" + boundary.key().normalizedSignature()
-						+ ", source=" + sourceKey.normalizedSignature() + ", sourceState="
-						+ sourceEmissionState.normalizedSignature() + ", selected="
+						+ ", sources=" + sourceEmissionStates + ", selected="
 						+ selectedEmissionState.placementState().normalizedSignature() + ", alternatives="
 						+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
-			PlacementState sourceState = sourceEmissionState.placementState();
 			PlacementState boundaryState = selectedEmissionState.placementState();
 			boolean legalTransientTuple = boundaryState.execType() == ExecType.CP
 				&& boundaryState.output() == FederatedOutput.LOUT
@@ -494,14 +485,30 @@ public final class DpPlacementAdapter {
 				|| boundaryState.execType() == ExecType.FED
 					&& boundaryState.output() == FederatedOutput.FOUT
 					&& boundaryState.fType() != null;
-			boolean expectedDerivedFedFout = boundaryState.output() == FederatedOutput.FOUT
-				&& sourceEmissionState.derivedFedFout();
-			if(!legalTransientTuple
-				|| !NeutralPlacementGraph.constraintSatisfied(authority, sourceState, boundaryState)
-				|| selectedEmissionState.derivedFedFout() != expectedDerivedFedFout)
-				throw new IllegalArgumentException("DP synthetic boundary projection semantics differ: source="
-					+ sourceEmissionState.normalizedSignature() + ", boundary="
-					+ selectedEmissionState.normalizedSignature());
+			Boolean expectedDerivedFedFout = null;
+			for(NeutralPlacementGraph.Constraint authority : authorities) {
+				boolean expectedKind = boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+					? authority.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+					: authority.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT;
+				PlacementEmissionState sourceEmissionState = sourceEmissionStates.get(authority.left());
+				NeutralPlacementGraph.Node source = analysis.graph().node(authority.left()).orElse(null);
+				if(!expectedKind || authority.right() != boundary.key() || source == null
+					|| analysis.graph().constraints().stream().noneMatch(candidate -> candidate == authority)
+					|| sourceEmissionState == null || source.legalAlternatives().stream()
+						.noneMatch(state -> state == sourceEmissionState.placementState())
+					|| !NeutralPlacementGraph.constraintSatisfied(authority,
+						sourceEmissionState.placementState(), boundaryState))
+					throw new IllegalArgumentException("DP synthetic receipt contains foreign or incompatible authority");
+				boolean derived = boundaryState.output() == FederatedOutput.FOUT
+					&& sourceEmissionState.derivedFedFout();
+				if(expectedDerivedFedFout != null && expectedDerivedFedFout != derived)
+					throw new IllegalArgumentException("DP synthetic output authorities disagree on derived FOUT");
+				expectedDerivedFedFout = derived;
+			}
+			if(!legalTransientTuple || selectedEmissionState.derivedFedFout()
+				!= Boolean.TRUE.equals(expectedDerivedFedFout))
+				throw new IllegalArgumentException("DP synthetic boundary projection semantics differ: sources="
+					+ sourceEmissionStates + ", boundary=" + selectedEmissionState.normalizedSignature());
 		}
 	}
 
@@ -529,19 +536,36 @@ public final class DpPlacementAdapter {
 			&& boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
 			throw new IllegalArgumentException("DP synthetic projection requires a function boundary");
 		List<NeutralPlacementGraph.Constraint> authorities = analysis.graph().constraints().stream()
-			.filter(constraint -> constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-				&& constraint.right() == boundary.key()).toList();
-		if(authorities.size() != 1)
-			throw new IllegalStateException("DP synthetic boundary requires one exact conjunctive authority: "
-				+ boundary.key());
-		NeutralPlacementGraph.Constraint authority = authorities.get(0);
-		PlacementEmissionState source = selectedEmissionStates.get(authority.left());
-		if(source == null)
-			return null;
-		PlacementEmissionState selected = selectedBoundaryState == null
-			? normalizeSyntheticBoundaryEmission(boundary, source)
-			: normalizeSyntheticBoundaryEmission(boundary, source, selectedBoundaryState);
-		return new SyntheticBoundaryReceipt(analysis, boundary, authority, authority.left(), source, selected);
+			.filter(constraint -> constraint.right() == boundary.key())
+			.filter(constraint -> boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+				? constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+					&& (constraint.evidence().startsWith("function-argument:")
+						|| constraint.evidence().startsWith("inlined-function-argument:"))
+				: constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
+					&& (constraint.evidence().startsWith("function-result:")
+						|| constraint.evidence().startsWith("inlined-function-result:")))
+			.sorted().toList();
+		if(authorities.isEmpty() || boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+			&& authorities.size() != 1)
+			throw new IllegalStateException("DP synthetic boundary has invalid exact authority cardinality: kind="
+				+ boundary.kind() + ", key=" + boundary.key() + ", authorities=" + authorities.size());
+		Map<CompiledHopKey,PlacementEmissionState> sources = new IdentityHashMap<>();
+		PlacementEmissionState selected = null;
+		for(NeutralPlacementGraph.Constraint authority : authorities) {
+			PlacementEmissionState source = selectedEmissionStates.get(authority.left());
+			if(source == null)
+				return null;
+			sources.put(authority.left(), source);
+			PlacementEmissionState projected = selectedBoundaryState == null
+				? normalizeSyntheticBoundaryEmission(boundary, source)
+				: normalizeSyntheticBoundaryEmission(boundary, source, selectedBoundaryState);
+			if(selected == null)
+				selected = projected;
+			else if(!selected.equals(projected))
+				throw new IllegalArgumentException("DP synthetic output authorities select different value placements: "
+					+ boundary.key().normalizedSignature());
+		}
+		return new SyntheticBoundaryReceipt(analysis, boundary, authorities, sources, selected);
 	}
 
 	private static PlacementState selectedFunctionInputState(PlacementAnalysis analysis,
@@ -585,7 +609,8 @@ public final class DpPlacementAdapter {
 			.filter(state -> state.execType() == boundaryExec)
 			.filter(state -> state.output() == source.output())
 			.filter(state -> state.fType() == boundaryFType)
-			.filter(state -> state.shapeDependent() == boundaryShapeDependent)
+			.filter(state -> boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT
+				|| state.shapeDependent() == boundaryShapeDependent)
 			.toList();
 		if(matches.size() != 1)
 			throw new IllegalArgumentException("DP synthetic boundary has no unique normalized source state: kind="
@@ -955,15 +980,23 @@ public final class DpPlacementAdapter {
 				rawEntries.add(project(occurrence.key(), filteredOrdinal, rawContainsKey, rawType));
 				promotedEntries.add(project(occurrence.key(), filteredOrdinal,
 					effectiveType != null, effectiveType));
-				boolean nativeFederatedFout = edge.getRight() == FederatedOutput.FOUT && childPlan != null
-					&& childPlan.getExecType() == ExecType.FED && !childPlan.isDerivedFedFout()
+				PlacementState selectedChildState = childPlan == null ? null
+					: childPlan.getSelectedPlacementState();
+				// A selected graph-owned FOUT is a federated input regardless of whether it was
+				// emitted natively or materialized from CP/LOUT or FED/LOUT. Excluding a derived
+				// FOUT here closes an otherwise runtime-supported immediate parent-child plan.
+				boolean exactMaterializedFout = edge.getRight() == FederatedOutput.FOUT
+					&& childPlan != null && childPlan.getFedOutType() == FederatedOutput.FOUT
+					&& selectedChildState != null
+					&& childPlan.getExecType() == selectedChildState.execType()
+					&& selectedChildState.output() == FederatedOutput.FOUT
+					&& selectedChildState.fType() != null
+					&& childPlan.getFType() == selectedChildState.fType()
 					&& context.analysis().graph().node(occurrence.key()).stream()
 						.flatMap(node -> node.legalAlternatives().stream())
-						.anyMatch(state -> state.execType() == ExecType.FED
-							&& state.output() == FederatedOutput.FOUT
-							&& state.fType() == childPlan.getFType());
-				rawOrderOracleStates.add(nativeFederatedFout && childPlan.getFType() != null
-					? oracleState(true, childPlan.getFType()) : OracleInputState.ABSENT_LOCAL);
+						.anyMatch(state -> state == selectedChildState);
+				rawOrderOracleStates.add(exactMaterializedFout
+					? oracleState(true, selectedChildState.fType()) : OracleInputState.ABSENT_LOCAL);
 				if(remaining == 1)
 					remainingPhysicalInputs.remove(occurrence.key());
 				else
@@ -990,6 +1023,163 @@ public final class DpPlacementAdapter {
 			promotedEntries, logicalEntries, transientForwardDependencies, functionOutputDependencies, orderedOracleInputs,
 			ConstructionDisposition.AVAILABLE, "AVAILABLE");
 		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
+	}
+
+	/**
+	 * Enumerates the literal selected-child row and, when exact graph-owned relocation
+	 * actions prove it, every reachable materialized input row. A LOUT memo arm
+	 * may retain an exact {@code cpFoutType} even though TRead/TWrite coherence prevents
+	 * that producer from remaining FOUT. The ordinary child-output bit enumeration then
+	 * exposes only the literal ABSENT_LOCAL row and would otherwise close the legal
+	 * LOUT-to-FOUT relocation before a FED consumer.
+	 *
+	 * This method only adds rows already present in the immutable candidate-rule domain,
+	 * and only when every changed physical input has an exact relocation obligation for
+	 * every FED emission of that row. It therefore expands DP to the existing runtime
+	 * authority; it neither invents an anchor nor relaxes candidate legality.
+	 */
+	public static List<NormalizedCandidateInputs> normalizeCandidateInputAlternatives(
+		NeutralEnumerationContext context, HopOccurrenceProjection parent,
+		List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
+		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap,
+		FederatedPlannerDpMemoTable memo) {
+		NormalizedCandidateInputs literal = normalizeCandidateInputs(context, parent,
+			planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memo);
+		CandidateOccurrenceSnapshot base = literal.snapshot();
+		if(base.rawEntries().isEmpty())
+			return List.of(literal);
+
+		int physicalArity = base.rawEntries().size();
+		List<OracleInputState> literalPhysical = base.orderedOracleInputs().subList(0, physicalArity);
+		List<OracleInputState> literalLogical = base.orderedOracleInputs().subList(
+			physicalArity, base.orderedOracleInputs().size());
+		List<NormalizedCandidateInputs> alternatives = new ArrayList<>();
+		alternatives.add(literal);
+		for(CandidateRuleFact fact : context.analysis().candidateRuleFacts().orderedFactsForParent(parent.key())) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
+				|| fact.key().orderedInputs().size() != base.orderedOracleInputs().size())
+				continue;
+			List<OracleInputState> candidateOrdered = fact.key().orderedInputs().stream()
+				.map(input -> input.present() ? OracleInputState.valueOf(input.fType().name())
+					: OracleInputState.ABSENT_LOCAL)
+				.toList();
+			if(!candidateOrdered.subList(physicalArity, candidateOrdered.size()).equals(literalLogical)
+				|| candidateOrdered.equals(base.orderedOracleInputs()))
+				continue;
+			List<PlacementState> fedTargets = fact.allowedEmissionFacts().stream()
+				.map(CandidateEmissionFact::emissionState)
+				.map(PlacementEmissionState::placementState)
+				.filter(state -> state.execType() == ExecType.FED).toList();
+			if(fedTargets.isEmpty())
+				continue;
+
+			boolean reachable = true;
+			for(int inputPosition = 0; inputPosition < physicalArity && reachable; inputPosition++) {
+				OracleInputState before = literalPhysical.get(inputPosition);
+				OracleInputState after = candidateOrdered.get(inputPosition);
+				if(before == after)
+					continue;
+				// A selected FOUT may be consumed locally, but that is already represented by
+				// the literal row. Materialized alternatives only add exact FED input paths.
+				if(after == OracleInputState.ABSENT_LOCAL) {
+					reachable = false;
+					break;
+				}
+				FType required = FType.valueOf(after.name());
+				final int exactInputPosition = inputPosition;
+				for(PlacementState target : fedTargets) {
+					boolean exactAction = context.analysis().graph().relocationActions().stream()
+						.filter(action -> action.key().materializationFType() == required
+							&& action.key().targetPlacement().equals(target))
+						.flatMap(action -> action.obligations().stream())
+						.anyMatch(obligation -> obligation.consumer() == parent.key()
+							&& obligation.inputPosition() == exactInputPosition);
+					if(!exactAction) {
+						reachable = false;
+						break;
+					}
+				}
+			}
+			if(!reachable)
+				continue;
+
+			List<OracleInputState> candidateRawOrder = candidateStatesInRawEntryOrder(
+				context, parent.key(), base.rawEntries(), candidateOrdered.subList(0, physicalArity));
+			List<CandidateMapEntry> candidatePromotedEntries = new ArrayList<>(physicalArity);
+			for(int rawIndex = 0; rawIndex < physicalArity; rawIndex++) {
+				OracleInputState state = candidateRawOrder.get(rawIndex);
+				FType type = state == OracleInputState.ABSENT_LOCAL ? null : FType.valueOf(state.name());
+				candidatePromotedEntries.add(project(base.rawEntries().get(rawIndex).occurrence(),
+					rawIndex, type != null, type));
+			}
+			List<FType> effectiveTypes = new ArrayList<>(literal.effectiveCollectedFTypes());
+			int physicalIndex = 0;
+			for(int collectedIndex = 0; collectedIndex < literal.exactCollectedHops().size()
+				&& physicalIndex < candidatePromotedEntries.size(); collectedIndex++) {
+				HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(
+					literal.exactCollectedHops().get(collectedIndex));
+				if(occurrence != null && occurrence.key()
+					== candidatePromotedEntries.get(physicalIndex).occurrence()) {
+					effectiveTypes.set(collectedIndex,
+						candidatePromotedEntries.get(physicalIndex).rawFType());
+					physicalIndex++;
+				}
+			}
+			if(physicalIndex != candidatePromotedEntries.size())
+				throw failure(context.analysis(), parent.key(), ConstructionDisposition.REORDERED_EDGE,
+					"MATERIALIZED_CANDIDATE_CARRIER_MISSING");
+			LinkedHashMap<Long,FType> effectiveMap = new LinkedHashMap<>();
+			for(int collectedIndex = 0; collectedIndex < effectiveTypes.size(); collectedIndex++) {
+				FType type = effectiveTypes.get(collectedIndex);
+				if(type == null)
+					continue;
+				long hopId = literal.exactCollectedHops().get(collectedIndex).getHopID();
+				FType prior = effectiveMap.putIfAbsent(hopId, type);
+				if(prior != null && prior != type) {
+					reachable = false;
+					break;
+				}
+			}
+			if(!reachable)
+				continue;
+			CandidateOccurrenceSnapshot materializedSnapshot = new CandidateOccurrenceSnapshot(
+				context, parent.key(), base.rawEntries(), candidatePromotedEntries, base.logicalEntries(),
+				base.transientForwardDependencies(), base.functionOutputDependencies(), candidateOrdered,
+				ConstructionDisposition.AVAILABLE, "AVAILABLE");
+			alternatives.add(new NormalizedCandidateInputs(materializedSnapshot, effectiveMap,
+				effectiveTypes, literal.exactCollectedHops()));
+		}
+		return List.copyOf(alternatives);
+	}
+
+	private static List<OracleInputState> candidateStatesInRawEntryOrder(
+		NeutralEnumerationContext context, CompiledHopKey parentOccurrence,
+		List<CandidateMapEntry> rawEntries, List<OracleInputState> orderedPhysicalStates) {
+		Hop parent = context.analysis().hop(parentOccurrence).orElseThrow(() ->
+			failure(context.analysis(), parentOccurrence, ConstructionDisposition.STALE_CONTEXT,
+				"CANDIDATE_PARENT_STALE"));
+		if(parent.getInput().size() != orderedPhysicalStates.size())
+			throw failure(context.analysis(), parentOccurrence, ConstructionDisposition.REORDERED_EDGE,
+				"CANDIDATE_ORACLE_INPUT_ARITY");
+		List<OracleInputState> rawOrder = new ArrayList<>(Collections.nCopies(rawEntries.size(), null));
+		boolean[] consumed = new boolean[rawEntries.size()];
+		for(int inputPosition = 0; inputPosition < parent.getInput().size(); inputPosition++) {
+			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(
+				parent.getInput(inputPosition));
+			int match = -1;
+			for(int rawIndex = 0; rawIndex < rawEntries.size(); rawIndex++)
+				if(!consumed[rawIndex] && occurrence != null
+					&& rawEntries.get(rawIndex).occurrence() == occurrence.key()) {
+					match = rawIndex;
+					break;
+				}
+			if(match < 0)
+				throw failure(context.analysis(), parentOccurrence, ConstructionDisposition.REORDERED_EDGE,
+					"CANDIDATE_DIRECT_INPUT_MISSING");
+			consumed[match] = true;
+			rawOrder.set(match, orderedPhysicalStates.get(inputPosition));
+		}
+		return List.copyOf(rawOrder);
 	}
 
 	public static CandidateDecisionReceipt resolveCandidateDecision(NeutralEnumerationContext context,
@@ -1037,8 +1227,12 @@ public final class DpPlacementAdapter {
 				? placement.allowCP_LOUT : state.execType() == ExecType.CP && state.output() == FederatedOutput.FOUT
 				? placement.allowCP_FOUT : state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT
 				? placement.allowFED_LOUT : placement.allowFED_FOUT;
-			if(allowed && catalog.putIfAbsent(new CandidatePlacementArm(emissionFact), emissionFact) != null)
-				throw new IllegalArgumentException("Candidate arm maps to multiple exact legal states");
+			if(allowed) {
+				CandidatePlacementArm arm = new CandidatePlacementArm(emissionFact);
+				if(catalog.containsKey(arm))
+					throw new IllegalArgumentException("Candidate arm maps to multiple exact legal states");
+				catalog.put(arm, emissionFact);
+			}
 		}
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),

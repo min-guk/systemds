@@ -217,6 +217,25 @@ public class FederatedPlannerDpCostEstimator {
 			return FederatedPlannerDpCostEstimator.computeHopCost(common, modeledLocalCost);
 		}
 
+		public double computeFederatedHopCost(Hop hop, double baseSelfCost, int workers,
+			boolean broadcastOnlyFedCompute) {
+			if(hop == null || memo.requirePlanCarrierOccurrence(hop) != occurrence)
+				throw new IllegalArgumentException(
+					"Estimator federated cost Hop is not owned by the exact occurrence");
+			return PlacementCostSemantics.analysisAwareFederatedComputeCost(
+				analysis, occurrence.key(), baseSelfCost, workers, broadcastOnlyFedCompute);
+		}
+
+		public double nativeFederatedLoutResultCost(Hop hop, double outputMemEstimate,
+			int workers, double genericResultDownloadCost) {
+			if(hop == null || memo.requirePlanCarrierOccurrence(hop) != occurrence)
+				throw new IllegalArgumentException(
+					"Estimator result cost Hop is not owned by the exact occurrence");
+			return PlacementCostSemantics.analysisAwareNativeFederatedLoutResultCost(
+				analysis, occurrence.key(), outputMemEstimate, workers,
+				genericResultDownloadCost);
+		}
+
 		public void getChildCosts(FederatedPlannerDpMemoTable.HopCommon common,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> commonTable, List<Hop> inputs,
 			double[][] cumulative, double[] toCP, double[] toFED, double[] foutToFED,
@@ -228,8 +247,19 @@ public class FederatedPlannerDpCostEstimator {
 			FederatedPlannerDpCostEstimator.getChildCosts(common, memo, commonTable, inputs, cumulative, toCP,
 				toFED, foutToFED, loutOnly, loutCumulative, loutToFED, foutOnly, foutCumulative,
 				foutToCP, foutOnlyToFED, workers);
+			for(int index = 0; index < inputs.size(); index++) {
+				if(!isLatentWdivmmRemovedBoundary(inputs.get(index)))
+					continue;
+				toCP[index] = 0.0;
+				toFED[index] = 0.0;
+				foutToFED[index] = 0.0;
+			}
 			for(int index = 0; index < loutOnly.size(); index++) {
 				Hop child = loutOnly.get(index);
+				if(isLatentWdivmmRemovedBoundary(child)) {
+					loutToFED.set(index, 0.0);
+					continue;
+				}
 				double replacementBytes = latentWdivmmInputPreparationBytes(child);
 				if(replacementBytes < 0.0)
 					continue;
@@ -243,6 +273,25 @@ public class FederatedPlannerDpCostEstimator {
 				loutToFED.set(index, computeBoundaryTransferShareForParent(
 					upload, childPlan, common, commonTable, memo));
 			}
+			for(int index = 0; index < foutOnly.size(); index++) {
+				if(!isLatentWdivmmRemovedBoundary(foutOnly.get(index)))
+					continue;
+				foutToCP.set(index, 0.0);
+				foutOnlyToFED.set(index, 0.0);
+			}
+		}
+
+		private boolean isLatentWdivmmRemovedBoundary(Hop child) {
+			HopOccurrenceProjection childOccurrence = memo.requirePlanCarrierOccurrence(child);
+			List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
+				.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.producer() == childOccurrence.key()
+					&& edge.consumer() == occurrence.key())
+				.toList();
+			return edges.size() == 1
+				&& PlacementCostSemantics.isLatentWdivmmTransposePairBoundary(
+					analysis, childOccurrence.key(), occurrence.key(),
+					edges.get(0).inputPosition());
 		}
 
 		private double latentWdivmmInputPreparationBytes(Hop child) {

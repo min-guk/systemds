@@ -157,9 +157,24 @@ public class FederatedPlannerDpCostEnumerator {
 	private static final DpEnumerationObserver NO_OP_OBSERVER = new DpEnumerationObserver() { };
 	private static final int MAX_EXACT_FRONTIER_CLOSURE_PASSES = 64;
 
+	/**
+	 * One locally enumerated arm selected incompatible states for the same immutable
+	 * occurrence/value in its exact child closure.  This is a documented global
+	 * legality failure of that arm, not a missing runtime capability and not a reason
+	 * to abort enumeration of the remaining legal arms.
+	 */
+	private static final class ExactPlanClosureConflict extends RuntimeException {
+		private static final long serialVersionUID = 1L;
+
+		private ExactPlanClosureConflict(String message) {
+			super(message);
+		}
+	}
+
 	private static final class EnumerationCapture {
 		private final NeutralEnumerationContext context;
 		private final DpEnumerationObserver observer;
+		private final RelocationSelections.CanonicalOrderIndex relocationOrder;
 		private final boolean sharedFunctionInputClosure;
 		private final boolean seedExactTransientFrontier;
 		private final List<CapturedCandidate> candidates = new ArrayList<>();
@@ -178,6 +193,8 @@ public class FederatedPlannerDpCostEnumerator {
 			boolean seedExactTransientFrontier) {
 			this.context = context;
 			this.observer = observer == null ? NO_OP_OBSERVER : observer;
+			this.relocationOrder = RelocationSelections.canonicalOrderIndex(
+				context.analysis().graph().relocationActions());
 			this.sharedFunctionInputClosure = sharedFunctionInputClosure;
 			this.seedExactTransientFrontier = seedExactTransientFrontier;
 			if(sharedFunctionInputClosure && seedExactTransientFrontier)
@@ -1081,7 +1098,8 @@ public class FederatedPlannerDpCostEnumerator {
 			boolean sawAllowCpFout = false;
 			boolean sawAllowFedLout = false;
 
-				for (long i = 0; i < enumerationLimit; i++) {
+					long nextCandidateVariantOrdinal = 0;
+					for (long i = 0; i < enumerationLimit; i++) {
 					List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
 					List<FType> collectedFTypes = new ArrayList<>();
 					List<Hop> collectedHops = new ArrayList<>();
@@ -1091,13 +1109,7 @@ public class FederatedPlannerDpCostEnumerator {
 				FederatedOutput tWriteOut = null;
 				boolean tWriteConflict = false;
 				boolean tWriteSeen = false;
-			// Costs from children, split by the parent's ExecType semantics.
-			double childCostCPExec = 0; // Parent executes in CP; forwarding only from FOUT children.
-			double childCostFEDExec = 0; // Parent executes in FED; forwarding only from LOUT children.
-			double childBoundaryCPExec = 0;
-			double childBoundaryFEDExec = 0;
-
-				for (int j = 0; j < numBothOutInputs; j++) {
+					for (int j = 0; j < numBothOutInputs; j++) {
 					Hop inputHop = lOutfOutChildHops.get(j);
 					final int bit = (i & (1L << j)) != 0 ? 1 : 0;
 					selectedBits[j] = bit;
@@ -1190,13 +1202,25 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 
-					NormalizedCandidateInputs normalizedCandidateInputs = DpPlacementAdapter.normalizeCandidateInputs(
+					List<NormalizedCandidateInputs> normalizedCandidateAlternatives =
+						DpPlacementAdapter.normalizeCandidateInputAlternatives(
 							capture.context, findOccurrence(capture, hop),
 							planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
-					capture.capture(normalizedCandidateInputs.snapshot(), i);
+					for(int candidateInputVariant = 0;
+						candidateInputVariant < normalizedCandidateAlternatives.size(); candidateInputVariant++) {
+						final boolean literalCandidateInputs = candidateInputVariant == 0;
+						final long exactVariantOrdinal = nextCandidateVariantOrdinal++;
+						double childCostCPExec = 0;
+						double childCostFEDExec = 0;
+						double childBoundaryCPExec = 0;
+						double childBoundaryFEDExec = 0;
+						NormalizedCandidateInputs normalizedCandidateInputs =
+							normalizedCandidateAlternatives.get(candidateInputVariant);
+					capture.capture(normalizedCandidateInputs.snapshot(), exactVariantOrdinal);
 					DpPlacementAdapter.CandidateDecisionReceipt candidateDecisionReceipt =
-						DpPlacementAdapter.resolveCandidateDecision(capture.context, normalizedCandidateInputs, i);
-					capture.captureDecisionReceipt(candidateDecisionReceipt, i);
+						DpPlacementAdapter.resolveCandidateDecision(capture.context, normalizedCandidateInputs,
+							exactVariantOrdinal);
+					capture.captureDecisionReceipt(candidateDecisionReceipt, exactVariantOrdinal);
 					Privacy capturedPrivacy = candidateDecisionReceipt.privacy();
 					if(capturedPrivacy != privacyConstraint)
 						throw new IllegalStateException("Candidate receipt privacy differs from captured enumeration privacy");
@@ -1210,7 +1234,7 @@ public class FederatedPlannerDpCostEnumerator {
 				Map<Long, FType> effectiveNonNullFTypeMap = effectiveInputs.fedInputTypeMap();
 				boolean broadcastOnlyFedCompute = FederatedCostModel.hasOnlyBroadcastMatrixInputs(
 					exactCollectedHops, effectiveCollectedFTypes);
-				double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+				double defaultFedComputeCost = exactEstimator.computeFederatedHopCost(
 					hop, baseSelfCost, numOfWorkers, broadcastOnlyFedCompute);
 
 			if (enforceTReadConsistency) {
@@ -1264,10 +1288,12 @@ public class FederatedPlannerDpCostEnumerator {
 								FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
 										hop, oracleLogicalFType, outputMemEstimate, numOfWorkers,
 										genericResultDownloadCost);
-						double nativeResultDownloadCost =
-								FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
-										hop, oracleLogicalFType, outputMemEstimate, numOfWorkers,
-										nativeAggUnaryResultDownloadCost);
+					double nativeResultDownloadCost =
+							FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+									hop, oracleLogicalFType, outputMemEstimate, numOfWorkers,
+									nativeAggUnaryResultDownloadCost);
+					nativeResultDownloadCost = exactEstimator.nativeFederatedLoutResultCost(
+						hop, outputMemEstimate, numOfWorkers, nativeResultDownloadCost);
 						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
 								FederatedCostModel.computeMixedFedLocalCost(
 										hop, exactCollectedHops, effectiveCollectedFTypes, oracleLogicalFType,
@@ -1326,8 +1352,10 @@ public class FederatedPlannerDpCostEnumerator {
 						&& candidateDecisionReceipt.capabilityFact().nativeOutput() == FederatedOutput.FOUT) {
 						sawOracleFedFout = true;
 					}
-					sawAllowCpLout |= candidateDecisionReceipt.allowCPLOUT();
-					sawAllowCpFout |= candidateDecisionReceipt.allowCPFOUT();
+					if(literalCandidateInputs) {
+						sawAllowCpLout |= candidateDecisionReceipt.allowCPLOUT();
+						sawAllowCpFout |= candidateDecisionReceipt.allowCPFOUT();
+					}
 					sawAllowFedLout |= candidateDecisionReceipt.allowFEDLOUT();
 					sawAllowFedFout |= candidateDecisionReceipt.allowFEDFOUT();
 				sawCanSatisfyFedInputs |= canSatisfyFedInputs;
@@ -1373,10 +1401,16 @@ public class FederatedPlannerDpCostEnumerator {
 							&& allowFedFoutCandidate) {
 							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
 								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
-							ExactRelocationCost relocation = exactRelocationCost(capture,
-								candidateDecisionReceipt, candidateSelection, exactState, planChilds, exactCollectedHops,
-								memoTable, hopCommon, hopCommonTable, exactEstimator, hop, numOfWorkers,
-								legacyFedBoundaryCosts);
+								ExactRelocationCost relocation;
+								try {
+									relocation = exactRelocationCost(capture,
+										candidateDecisionReceipt, candidateSelection, exactState, planChilds,
+										exactCollectedHops, memoTable, hopCommon, hopCommonTable, exactEstimator,
+										hop, numOfWorkers, legacyFedBoundaryCosts);
+								}
+								catch(ExactPlanClosureConflict conflict) {
+									continue;
+								}
 							double exactChildCostFEDExec = replaceLegacyRelocationCost(
 								childCostFEDExec, relocation);
 							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
@@ -1405,10 +1439,16 @@ public class FederatedPlannerDpCostEnumerator {
 							&& allowFedLoutCandidate) {
 							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
 								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
-							ExactRelocationCost relocation = exactRelocationCost(capture,
-								candidateDecisionReceipt, candidateSelection, exactState, planChilds, exactCollectedHops,
-								memoTable, hopCommon, hopCommonTable, exactEstimator, hop, numOfWorkers,
-								legacyFedBoundaryCosts);
+								ExactRelocationCost relocation;
+								try {
+									relocation = exactRelocationCost(capture,
+										candidateDecisionReceipt, candidateSelection, exactState, planChilds,
+										exactCollectedHops, memoTable, hopCommon, hopCommonTable, exactEstimator,
+										hop, numOfWorkers, legacyFedBoundaryCosts);
+								}
+								catch(ExactPlanClosureConflict conflict) {
+									continue;
+								}
 							double exactChildCostFEDExec = replaceLegacyRelocationCost(
 								childCostFEDExec, relocation);
 							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
@@ -1432,7 +1472,7 @@ public class FederatedPlannerDpCostEnumerator {
 							lOutFedPlanVariants.addFedPlan(fedLOutPlan);
 						}
 						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.LOUT
-							&& allowCpLoutCandidate) {
+							&& allowCpLoutCandidate && literalCandidateInputs) {
 							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
 								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
 							FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
@@ -1448,7 +1488,7 @@ public class FederatedPlannerDpCostEnumerator {
 							lOutFedPlanVariants.addFedPlan(cpLOutPlan);
 						}
 						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.FOUT
-							&& allowCpFoutCandidate) {
+							&& allowCpFoutCandidate && literalCandidateInputs) {
 							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
 								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
 							double entryCpUploadCost = hopPlacementWeight
@@ -1493,6 +1533,7 @@ public class FederatedPlannerDpCostEnumerator {
 							allowCpLoutCandidate, allowCpFoutCandidate, allowFedLoutCandidate, allowFedFoutCandidate,
 							canSatisfyFedInputs, cpLoutCost, cpFoutCost, fedLoutCost, fedFoutCost, derivedFedFout,
 							childBreakdown));
+					}
 				}
 			}
 
@@ -1644,13 +1685,6 @@ public class FederatedPlannerDpCostEnumerator {
 					+ producer.normalizedSignature());
 		}
 
-		List<RelocationAction> candidateActions = capture.context.analysis().graph().relocationActions().stream()
-			.filter(action -> action.obligations().stream().anyMatch(obligation ->
-				obligation.consumer() == candidate.candidateSnapshot().parentOccurrence()
-					&& obligation.requiredPlacement().equals(target)))
-			.toList();
-		if(candidateActions.isEmpty())
-			return new ExactRelocationCost(List.of(), Map.of(), 0.0, 0.0);
 		// CandidateSelections validates every assigned operation consumer, including an
 		// immediate child whose already-costed memo arm may itself require relocation.
 		// Keep the complete graph-owned universe for that reachability validation.  The
@@ -1663,6 +1697,7 @@ public class FederatedPlannerDpCostEnumerator {
 		try {
 			selection = RelocationSelections.selectMinimumCost(
 				capture.context.analysis(), actionUniverse, assignment, List.of(candidateSelection),
+					capture.relocationOrder,
 					action -> exactRelocationActionCost(action, selectedSources, exactEstimator,
 						parentHop, parentCommon, hopCommonTable, memoTable, numWorkers));
 		}
@@ -1713,7 +1748,7 @@ public class FederatedPlannerDpCostEnumerator {
 		HopOccurrenceProjection occurrence = memoTable.requirePlanCarrierOccurrence(plan.getHopRef());
 		PlacementState previousState = assignment.putIfAbsent(occurrence.key(), state);
 		if(previousState != null && !previousState.equals(state))
-			throw new IllegalStateException("DP exact relocation plan closure has conflicting occurrence states: "
+			throw new ExactPlanClosureConflict("DP exact relocation plan closure has conflicting occurrence states: "
 				+ occurrence.key().normalizedSignature() + " previous=" + previousState.normalizedSignature()
 				+ " proposed=" + state.normalizedSignature() + " proposedPlan=" + plan.getHopRef());
 		Hop exactHop = analysis.hop(occurrence.key()).orElseThrow(() ->
@@ -1723,11 +1758,11 @@ public class FederatedPlannerDpCostEnumerator {
 		SelectedRelocationSource previousOccurrence =
 			selectedSourcesByOccurrence.putIfAbsent(occurrence.key(), proposed);
 		if(previousOccurrence != null && !previousOccurrence.state().equals(state))
-			throw new IllegalStateException("DP exact relocation occurrence has conflicting source states: "
+			throw new ExactPlanClosureConflict("DP exact relocation occurrence has conflicting source states: "
 				+ occurrence.key().normalizedSignature());
 		SelectedRelocationSource previous = selectedSources.putIfAbsent(sourceValue, proposed);
 		if(previous != null && !previous.state().equals(state))
-			throw new IllegalStateException("DP exact relocation value version has conflicting source states: "
+			throw new ExactPlanClosureConflict("DP exact relocation value version has conflicting source states: "
 				+ sourceValue.normalizedSignature());
 		CandidateSelectionReceipt direct = plan.getDirectCandidateSelection();
 		if(direct == null)
@@ -3017,7 +3052,7 @@ public class FederatedPlannerDpCostEnumerator {
 		FType executionFType, FType materializationFType) {
 		boolean broadcastOnlyFedCompute = FederatedCostModel.hasOnlyBroadcastMatrixInputs(
 			exactCollectedHops, effectiveCollectedFTypes);
-		double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+		double defaultFedComputeCost = exactEstimator.computeFederatedHopCost(
 			hop, baseSelfCost, numOfWorkers, broadcastOnlyFedCompute);
 		double genericResultDownloadCost = exactEstimator.download(outputMemEstimate, executionFType, numOfWorkers);
 		double nativeAggUnaryResultDownloadCost =
@@ -3025,6 +3060,8 @@ public class FederatedPlannerDpCostEnumerator {
 				hop, executionFType, outputMemEstimate, numOfWorkers, genericResultDownloadCost);
 		double nativeResultDownloadCost = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
 			hop, executionFType, outputMemEstimate, numOfWorkers, nativeAggUnaryResultDownloadCost);
+		nativeResultDownloadCost = exactEstimator.nativeFederatedLoutResultCost(
+			hop, outputMemEstimate, numOfWorkers, nativeResultDownloadCost);
 		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost = FederatedCostModel.computeMixedFedLocalCost(
 			hop, exactCollectedHops, effectiveCollectedFTypes, executionFType, baseSelfCost, outputMemEstimate,
 			numOfWorkers);

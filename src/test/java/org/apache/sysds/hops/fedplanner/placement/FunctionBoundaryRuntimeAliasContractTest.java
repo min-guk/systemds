@@ -29,6 +29,21 @@ public class FunctionBoundaryRuntimeAliasContractTest {
 		assertFalse(NeutralPlacementGraph.constraintSatisfied(boundary, local, full));
 	}
 
+	@Test
+	public void functionOutputIsAnExactAliasUntilRuntimeOwnsAnExplicitMaterialization() {
+		Constraint boundary = new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, key("returned"), key("bound"),
+			0, "function-result:X");
+		PlacementState local = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState fedLocal = new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, true);
+		PlacementState full = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
+
+		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, local, local));
+		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, fedLocal, local));
+		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, full, full));
+		assertFalse(NeutralPlacementGraph.constraintSatisfied(boundary, full, local));
+		assertFalse(NeutralPlacementGraph.constraintSatisfied(boundary, local, full));
+	}
+
 	private static CompiledHopKey key(String name) {
 		ControlRegionKey region = new ControlRegionKey("program", "main", java.util.List.of("root"),
 			"root", "static");

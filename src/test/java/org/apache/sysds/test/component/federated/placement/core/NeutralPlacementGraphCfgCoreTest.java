@@ -20,6 +20,7 @@ package org.apache.sysds.test.component.federated.placement.core;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
@@ -84,6 +85,83 @@ public class NeutralPlacementGraphCfgCoreTest {
 		Assert.assertTrue("two call sites require distinct function outputs: " + graph.normalizedValueVersions(), outputs >= 2);
 		Assert.assertTrue("call sites require distinct-context relation", graph.constraints().stream()
 			.anyMatch(c -> c.kind() == ConstraintKind.DISTINCT_CONTEXT));
+		List<Constraint> outputAliases = graph.constraints().stream()
+			.filter(c -> c.evidence().startsWith("function-result:")
+				|| c.evidence().startsWith("inlined-function-result:"))
+			.toList();
+		Assert.assertFalse("function outputs require an explicit runtime alias relation", outputAliases.isEmpty());
+		Assert.assertTrue("FunctionCallCP binds the returned Data object without materializing it",
+			outputAliases.stream().allMatch(c -> c.kind() == ConstraintKind.SAME_VALUE_PLACEMENT));
+	}
+
+	@Test
+	public void dmlFunctionOutputsAliasTheirOwnFormalExitValuesByPosition() throws Exception {
+		NeutralPlacementGraph graph = build("f=function(matrix[double] A)"
+			+ "return(matrix[double] B,matrix[double] C){B=A+1;C=t(A);i=1;while(i<2){i=i+1;}}"
+			+ "X=matrix(1,2,2);[Y,Z]=f(X);print(sum(Y)+sum(Z));", false);
+		Node y = graph.nodes().stream().filter(node -> node.kind() == NodeKind.FUNCTION_OUTPUT
+			&& "Y".equals(node.valueVersion().lexicalVariable())).findFirst().orElseThrow();
+		Node z = graph.nodes().stream().filter(node -> node.kind() == NodeKind.FUNCTION_OUTPUT
+			&& "Z".equals(node.valueVersion().lexicalVariable())).findFirst().orElseThrow();
+		List<Constraint> yAliases = graph.constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.right() == y.key()).toList();
+		List<Constraint> zAliases = graph.constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.right() == z.key()).toList();
+		Assert.assertEquals("first caller output must have one exact formal authority", 1, yAliases.size());
+		Assert.assertEquals("second caller output must have one exact formal authority", 1, zAliases.size());
+		Assert.assertEquals("B", graph.node(yAliases.get(0).left()).orElseThrow()
+			.valueVersion().lexicalVariable());
+		Assert.assertEquals("C", graph.node(zAliases.get(0).left()).orElseThrow()
+			.valueVersion().lexicalVariable());
+		Assert.assertNotEquals(NodeKind.FUNCTION_CALL,
+			graph.node(yAliases.get(0).left()).orElseThrow().kind());
+		Assert.assertNotEquals(NodeKind.FUNCTION_CALL,
+			graph.node(zAliases.get(0).left()).orElseThrow().kind());
+	}
+
+	@Test
+	public void dmlFunctionOutputAliasesEveryPossibleCfgExitDefinition() throws Exception {
+		NeutralPlacementGraph graph = build("f=function(matrix[double] A)return(matrix[double] B){"
+			+ "if(sum(A)>0){B=A+1;}else{B=A-1;}}"
+			+ "X=matrix(1,2,2);Y=f(X);print(sum(Y));", false);
+		Node output = graph.nodes().stream().filter(node -> node.kind() == NodeKind.FUNCTION_OUTPUT
+			&& "Y".equals(node.valueVersion().lexicalVariable())).findFirst().orElseThrow();
+		List<Constraint> aliases = graph.constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.right() == output.key()).toList();
+		Assert.assertEquals("both branch definitions can reach FunctionCallCP's returned Data binding",
+			2, aliases.size());
+		Assert.assertTrue(aliases.stream().allMatch(constraint -> "B".equals(graph.node(constraint.left())
+			.orElseThrow().valueVersion().lexicalVariable())));
+	}
+
+	@Test
+	public void callerTReadReplaysExactFunctionReturnPlacementDomain() throws Exception {
+		NeutralPlacementGraph graph = build("f=function(matrix[double] A)return(matrix[double] B){"
+			+ "B=A;i=1;while(i<2){i=i+1;}}"
+			+ "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));"
+			+ "Y=f(X);Z=Y+1;print(sum(Z));", false);
+		Node output = graph.nodes().stream().filter(node -> node.kind() == NodeKind.FUNCTION_OUTPUT
+			&& "Y".equals(node.valueVersion().lexicalVariable())).findFirst().orElseThrow();
+		Node read = graph.nodes().stream().filter(node -> "Y".equals(node.valueVersion().lexicalVariable())
+			&& (node.kind() == NodeKind.TRANSIENT_READ || node.kind() == NodeKind.BRANCH_JOIN
+				|| node.kind() == NodeKind.LOOP_PHI)
+			&& node.valueVersion().predecessorVersions().stream()
+				.anyMatch(value -> value.startsWith("cfg-function-output:")))
+			.findFirst().orElseThrow();
+		Assert.assertTrue("function return must retain its legal federated value placement",
+			valuePlacements(output).stream().anyMatch(value -> value.startsWith("FOUT/")));
+		Assert.assertEquals("FunctionCallCP aliases one Data object; caller TRead must expose the same value domain",
+			valuePlacements(output), valuePlacements(read));
+		Assert.assertEquals("caller TRead must retain the exact returned-value anchor intersection",
+			output.anchors(), read.anchors());
+		Assert.assertTrue("CFG return alias must be explicit in the neutral graph", graph.constraints().stream()
+			.anyMatch(constraint -> constraint.kind() == ConstraintKind.SAME_PLACEMENT
+				&& constraint.left() == output.key() && constraint.right() == read.key()
+				&& constraint.evidence().startsWith("cfg-function-output-value:")));
 	}
 
 	@Test
@@ -144,6 +222,11 @@ public class NeutralPlacementGraphCfgCoreTest {
 	private static Node node(CompiledHopKey key, PlacementState... states) {
 		return new Node(key, NodeKind.OPERATION, value(key, VersionKind.ORDINARY, List.of()), true,
 			List.of(states), List.of(), List.of());
+	}
+
+	private static Set<String> valuePlacements(Node node) {
+		return node.legalAlternatives().stream().map(state -> state.output() + "/" + state.fType())
+			.collect(java.util.stream.Collectors.toSet());
 	}
 
 	private static ValueVersionKey value(CompiledHopKey key, VersionKind kind, List<String> predecessors) {

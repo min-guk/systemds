@@ -246,7 +246,7 @@ public final class MinStExactCategoricalSolver {
 			scopes.add(scope);
 		}
 
-		Plan plan = minFillPlan(canonical, domains, scopes);
+		Plan plan = minimumMaterializationPlan(canonical, domains, scopes);
 		long totalCells = inputCells;
 		long maximumCells = 0;
 		for(int[] scope : scopes)
@@ -280,7 +280,71 @@ public final class MinStExactCategoricalSolver {
 		return new Prepared(canonical, domains, scopes, plan.steps, statistics);
 	}
 
-	private static Plan minFillPlan(List<Variable> variables, int[] domains, List<int[]> initialScopes) {
+	/**
+	 * Chooses between deterministic exact variable-elimination orders without changing
+	 * variables, domains, factors, or objective semantics. Classical min-fill ignores
+	 * categorical domain cardinalities and can therefore create a smaller-width but
+	 * substantially larger dense factor. Evaluate a small fixed portfolio of greedy
+	 * orders symbolically and retain the order with the lowest actual dense-factor
+	 * footprint before any factor is materialized.
+	 */
+	private static Plan minimumMaterializationPlan(List<Variable> variables, int[] domains,
+		List<int[]> initialScopes) {
+		List<PlanOrdering> orderings = List.of(
+			PlanOrdering.MIN_FILL,
+			PlanOrdering.MIN_SEPARATOR_CELLS,
+			PlanOrdering.MIN_ELIMINATION_ASSIGNMENTS,
+			PlanOrdering.MIN_DEGREE);
+		ScoredPlan best = null;
+		for(int priority = 0; priority < orderings.size(); priority++) {
+			Plan plan = eliminationPlan(variables, domains, initialScopes, orderings.get(priority));
+			ScoredPlan candidate = new ScoredPlan(plan, planMetrics(plan, domains), priority);
+			if(best == null || compare(candidate, best) < 0)
+				best = candidate;
+		}
+		return Objects.requireNonNull(best, "best elimination plan").plan;
+	}
+
+	private static int compare(ScoredPlan left, ScoredPlan right) {
+		int comparison = Long.compare(left.metrics.maximumFactorCells,
+			right.metrics.maximumFactorCells);
+		if(comparison != 0)
+			return comparison;
+		comparison = Long.compare(left.metrics.materializedFactorCells,
+			right.metrics.materializedFactorCells);
+		if(comparison != 0)
+			return comparison;
+		comparison = Long.compare(left.metrics.maximumEliminationAssignments,
+			right.metrics.maximumEliminationAssignments);
+		if(comparison != 0)
+			return comparison;
+		comparison = Long.compare(left.metrics.eliminationAssignments,
+			right.metrics.eliminationAssignments);
+		if(comparison != 0)
+			return comparison;
+		comparison = Integer.compare(left.plan.inducedWidth, right.plan.inducedWidth);
+		return comparison != 0 ? comparison : Integer.compare(left.priority, right.priority);
+	}
+
+	private static PlanMetrics planMetrics(Plan plan, int[] domains) {
+		long maximumFactorCells = 0L;
+		long materializedFactorCells = 0L;
+		long maximumEliminationAssignments = 0L;
+		long eliminationAssignments = 0L;
+		for(Step step : plan.steps) {
+			long cells = saturatedCells(step.separator, domains);
+			long assignments = saturatedMultiply(cells, domains[step.variable]);
+			maximumFactorCells = Math.max(maximumFactorCells, cells);
+			materializedFactorCells = saturatedAdd(materializedFactorCells, cells);
+			maximumEliminationAssignments = Math.max(maximumEliminationAssignments, assignments);
+			eliminationAssignments = saturatedAdd(eliminationAssignments, assignments);
+		}
+		return new PlanMetrics(maximumFactorCells, materializedFactorCells,
+			maximumEliminationAssignments, eliminationAssignments);
+	}
+
+	private static Plan eliminationPlan(List<Variable> variables, int[] domains,
+		List<int[]> initialScopes, PlanOrdering ordering) {
 		List<Set<Integer>> graph = new ArrayList<>(variables.size());
 		for(int i = 0; i < variables.size(); i++)
 			graph.add(new HashSet<>());
@@ -296,9 +360,24 @@ public final class MinStExactCategoricalSolver {
 		List<Step> steps = new ArrayList<>(variables.size());
 		int width = 0;
 		while(!remaining.isEmpty()) {
-			int selected = remaining.stream().min(Comparator
-				.comparingLong((Integer variable) -> fillEdges(variable, graph, remaining))
-				.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains))
+			Comparator<Integer> comparator = switch(ordering) {
+				case MIN_FILL -> Comparator
+					.comparingLong((Integer variable) -> fillEdges(variable, graph, remaining))
+					.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains));
+				case MIN_SEPARATOR_CELLS -> Comparator
+					.comparingLong((Integer variable) -> neighborCells(variable, graph, remaining, domains))
+					.thenComparingLong(variable -> fillEdges(variable, graph, remaining));
+				case MIN_ELIMINATION_ASSIGNMENTS -> Comparator
+					.comparingLong((Integer variable) -> eliminationAssignments(
+						variable, graph, remaining, domains))
+					.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains))
+					.thenComparingLong(variable -> fillEdges(variable, graph, remaining));
+				case MIN_DEGREE -> Comparator
+					.comparingLong((Integer variable) -> remainingDegree(variable, graph, remaining))
+					.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains))
+					.thenComparingLong(variable -> fillEdges(variable, graph, remaining));
+			};
+			int selected = remaining.stream().min(comparator
 				.thenComparing(variable -> variables.get(variable).key())).orElseThrow();
 			int[] separator = graph.get(selected).stream().filter(remaining::contains)
 				.sorted().mapToInt(Integer::intValue).toArray();
@@ -312,6 +391,16 @@ public final class MinStExactCategoricalSolver {
 			steps.add(new Step(selected, separator));
 		}
 		return new Plan(List.copyOf(steps), width);
+	}
+
+	private static long eliminationAssignments(int variable, List<Set<Integer>> graph,
+		Set<Integer> remaining, int[] domains) {
+		return saturatedMultiply(neighborCells(variable, graph, remaining, domains), domains[variable]);
+	}
+
+	private static long remainingDegree(int variable, List<Set<Integer>> graph,
+		Set<Integer> remaining) {
+		return graph.get(variable).stream().filter(remaining::contains).count();
 	}
 
 	private static long fillEdges(int variable, List<Set<Integer>> graph, Set<Integer> remaining) {
@@ -336,6 +425,21 @@ public final class MinStExactCategoricalSolver {
 			cells *= domains[neighbor];
 		}
 		return cells;
+	}
+
+	private static long saturatedCells(int[] scope, int[] domains) {
+		long cells = 1L;
+		for(int variable : scope)
+			cells = saturatedMultiply(cells, domains[variable]);
+		return cells;
+	}
+
+	private static long saturatedMultiply(long left, long right) {
+		return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
+	}
+
+	private static long saturatedAdd(long left, long right) {
+		return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
 	}
 
 	private static List<DenseFactor> materializeInputs(Prepared prepared, List<Factor> factors) {
@@ -416,6 +520,15 @@ public final class MinStExactCategoricalSolver {
 		Step { separator = separator.clone(); }
 	}
 	private record Plan(List<Step> steps, int inducedWidth) { }
+	private enum PlanOrdering {
+		MIN_FILL,
+		MIN_SEPARATOR_CELLS,
+		MIN_ELIMINATION_ASSIGNMENTS,
+		MIN_DEGREE
+	}
+	private record PlanMetrics(long maximumFactorCells, long materializedFactorCells,
+		long maximumEliminationAssignments, long eliminationAssignments) { }
+	private record ScoredPlan(Plan plan, PlanMetrics metrics, int priority) { }
 	private record Prepared(List<Variable> variables, int[] domains, List<int[]> scopes,
 		List<Step> steps, Statistics statistics) { }
 	private record Backpointer(int variable, int[] separator, int[] choices) { }

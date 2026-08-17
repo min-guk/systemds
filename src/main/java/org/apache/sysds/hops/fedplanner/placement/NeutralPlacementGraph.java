@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -58,6 +59,12 @@ public final class NeutralPlacementGraph {
 
 	public enum ConstraintKind {
 		SAME_PLACEMENT,
+		/**
+		 * Exact runtime value alias. The producer may execute in CP or FED, but the
+		 * bound value must retain the same output placement; federated values must
+		 * additionally retain their exact FederationMap layout.
+		 */
+		SAME_VALUE_PLACEMENT,
 		SAME_FTYPE,
 		DOMINATES,
 		CONJUNCTIVE,
@@ -218,6 +225,8 @@ public final class NeutralPlacementGraph {
 	private final List<RelocationAction> relocationActions;
 	private final List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions;
 	private final Map<CompiledHopKey, Node> nodesByKey;
+	private final Map<ValueVersionKey,List<Node>> nodesByValueVersion;
+	private final Map<DerivedFoutMaterializationActionKey,Integer> derivedFoutActionCounts;
 
 	public NeutralPlacementGraph(Collection<Node> nodes, Collection<Constraint> constraints,
 		Collection<RelocationAction> relocationActions) {
@@ -233,6 +242,11 @@ public final class NeutralPlacementGraph {
 		this.derivedFoutMaterializationActions = sorted(derivedFoutMaterializationActions,
 			"derivedFoutMaterializationActions");
 		nodesByKey = indexNodes(this.nodes);
+		nodesByValueVersion = indexNodesByValueVersion(this.nodes);
+		Map<DerivedFoutMaterializationActionKey,Integer> actionCounts = new IdentityHashMap<>();
+		for(DerivedFoutMaterializationAction action : this.derivedFoutMaterializationActions)
+			actionCounts.merge(action.key(), 1, Integer::sum);
+		derivedFoutActionCounts = Collections.unmodifiableMap(actionCounts);
 		validateReferences();
 	}
 
@@ -274,13 +288,16 @@ public final class NeutralPlacementGraph {
 		Objects.requireNonNull(action, "action");
 		Objects.requireNonNull(assignment, "assignment");
 		Objects.requireNonNull(selectedCandidates, "selectedCandidates");
-		boolean requiredByConsumer = action.obligations().stream().anyMatch(obligation ->
-			obligation.requiredPlacement().equals(assignment.get(obligation.consumer())));
+		boolean requiredByConsumer = false;
+		for(ObligationKey obligation : action.obligations())
+			if(obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))) {
+				requiredByConsumer = true;
+				break;
+			}
 		if(!requiredByConsumer)
 			return false;
-		for(Node source : nodes) {
-			if(!source.valueVersion().equals(action.key().sourceValueVersion()))
-				continue;
+		for(Node source : nodesByValueVersion.getOrDefault(
+			action.key().sourceValueVersion(), List.of())) {
 			PlacementState sourceState = assignment.get(source.key());
 			if(sourceState != null && action.directSourcePlacements().contains(sourceState))
 				return false;
@@ -294,13 +311,21 @@ public final class NeutralPlacementGraph {
 					|| !PlacementIdentity.samePhysicalWorkerPool(
 						derived.durableAnchor(), action.key().durableAnchor()))
 					continue;
-				long owned = derivedFoutMaterializationActions.stream()
-					.filter(graphAction -> graphAction.key() == derived).count();
+				int owned = derivedFoutActionCounts.getOrDefault(derived, 0);
 				if(owned == 1)
 					return false;
 			}
 		}
 		return true;
+	}
+
+	private static Map<ValueVersionKey,List<Node>> indexNodesByValueVersion(List<Node> nodes) {
+		Map<ValueVersionKey,List<Node>> grouped = new LinkedHashMap<>();
+		for(Node node : nodes)
+			grouped.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>()).add(node);
+		Map<ValueVersionKey,List<Node>> result = new LinkedHashMap<>();
+		grouped.forEach((version, owners) -> result.put(version, List.copyOf(owners)));
+		return Collections.unmodifiableMap(result);
 	}
 
 	public List<String> normalizedCandidateUniverse() {
@@ -448,6 +473,11 @@ public final class NeutralPlacementGraph {
 		Objects.requireNonNull(right, "right");
 		if(constraint.kind() == ConstraintKind.SAME_PLACEMENT)
 			return left.equals(right);
+		if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
+			return left.output() == right.output()
+				&& (left.output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					|| Objects.equals(left.fType(), right.fType()));
 		if(constraint.kind() == ConstraintKind.SAME_FTYPE)
 			return Objects.equals(left.fType(), right.fType());
 		if(constraint.kind() != ConstraintKind.CONJUNCTIVE)

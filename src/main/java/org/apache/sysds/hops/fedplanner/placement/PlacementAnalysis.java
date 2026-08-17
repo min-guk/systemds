@@ -16,6 +16,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -358,6 +359,7 @@ public final class PlacementAnalysis {
 	public static final class CandidateRuleFacts {
 		private final List<CandidateRuleFact> orderedFacts;
 		private final Map<CandidateRuleKey,CandidateRuleFact> factsByKey;
+		private final Map<CompiledHopKey,List<CandidateRuleFact>> factsByParent;
 		private final CandidateRuleDomain domain;
 
 		public CandidateRuleFacts(CandidateRuleDomain domain, List<CandidateRuleFact> facts) {
@@ -378,9 +380,21 @@ public final class PlacementAnalysis {
 			}
 			orderedFacts = List.copyOf(indexed.values());
 			factsByKey = Collections.unmodifiableMap(indexed);
+			Map<CompiledHopKey,List<CandidateRuleFact>> parentIndex = new IdentityHashMap<>();
+			for(CandidateRuleFact fact : orderedFacts)
+				parentIndex.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+			parentIndex.replaceAll((ignored, parentFacts) -> List.copyOf(parentFacts));
+			factsByParent = Collections.unmodifiableMap(parentIndex);
 		}
 
 		public List<CandidateRuleFact> orderedFacts() { return orderedFacts; }
+
+		/** Exact candidate rows for one analysis-owned parent in canonical domain order. */
+		public List<CandidateRuleFact> orderedFactsForParent(CompiledHopKey parentOccurrence) {
+			if(parentOccurrence == null || !domain.containsExactParent(parentOccurrence))
+				return List.of();
+			return factsByParent.getOrDefault(parentOccurrence, List.of());
+		}
 
 		public CandidateRuleFact requireExact(CompiledHopKey parentOccurrence,
 			List<CandidateInputState> orderedInputs) {
@@ -768,7 +782,7 @@ public final class PlacementAnalysis {
 	/**
 	 * Opaque construction-boundary authority. PlacementAnalysis can validate or advance a
 	 * transaction-owned snapshot, but it cannot traverse the program or derive a second structural
-	 * universe. NeutralPlacementGraphBuilder owns the concrete fingerprint implementation.
+	 * universe. The canonical construction boundary owns the concrete fingerprint implementation.
 	 */
 	interface ProgramStructureAuthority extends Runnable {
 		void authorizeCommittedEmission();
@@ -889,7 +903,8 @@ public final class PlacementAnalysis {
 				else if(producer.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE
 					|| consumer.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_READ
 					|| edge.inputPosition() != 0)
-					throw new IllegalArgumentException("Heuristic CFG edge is not an exact transient forward");
+					throw new IllegalArgumentException("Heuristic CFG edge is not an exact transient forward: "
+						+ edge + ", producerKind=" + producer.kind() + ", consumerKind=" + consumer.kind());
 			}
 			for(HeuristicPathwiseReentryFact fact : path.reentries())
 				validateHeuristicReentry(path, fact, analysisKeysByIdentity);

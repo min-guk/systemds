@@ -111,7 +111,7 @@ final class R4SharedFedAllAdapterBridge {
 	private static Object call(Object value, String name) throws ReflectiveOperationException { return value.getClass().getMethod(name).invoke(value); }
 	private static AssertionError contract(Planner planner, String field, Throwable cause) {
 		return new AssertionError("CAMPAIGN_B_RUNTIME_CONTRACT|planner=" + planner + "|field=" + field
-			+ "|reason=" + cause.getClass().getSimpleName());
+			+ "|reason=" + cause.getClass().getSimpleName() + "|detail=" + cause.getMessage(), cause);
 	}
 	@SuppressWarnings({"rawtypes","unchecked"}) private static void assertImmutableMap(Map map, String field) {
 		try { map.put(null,null); throw new AssertionError("R4_RESULT_MUTABILITY|" + field); }

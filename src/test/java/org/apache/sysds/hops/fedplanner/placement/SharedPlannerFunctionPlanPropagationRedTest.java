@@ -237,6 +237,10 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 		Assert.assertSame(call, actions.get(0).obligations().get(0).consumerOccurrence());
 		Assert.assertEquals(fact.callInputPosition(), actions.get(0).obligations().get(0).inputPosition());
 		Assert.assertSame(callState, actions.get(0).obligations().get(0).requiredPlacement());
+		Assert.assertFalse("The selected function-call LOCAL action makes the CP/LOUT formal physically local",
+			PlacementCostSemantics.requiresRefedLocalMaterialization(analysis, formal, emissions));
+		Assert.assertTrue("A direct FED/FOUT source still needs the explicit FED-to-local REFED pre-stage",
+			PlacementCostSemantics.requiresRefedLocalMaterialization(analysis, argument, emissions));
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

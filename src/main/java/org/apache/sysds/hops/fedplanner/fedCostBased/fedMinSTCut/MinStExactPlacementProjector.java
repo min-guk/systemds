@@ -290,19 +290,41 @@ public final class MinStExactPlacementProjector {
 					&& node.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
 					continue;
 				List<CompiledHopKey> authorities = analysis.graph().constraints().stream()
-					.filter(constraint -> constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-						&& constraint.right() == node.key())
+					.filter(constraint -> constraint.right() == node.key())
+					.filter(constraint -> node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+						? constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+						: constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT)
 					.map(constraint -> constraint.left()).toList();
-				if(authorities.size() != 1)
+				if(authorities.isEmpty() || node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+					&& authorities.size() != 1)
 					throw new IllegalArgumentException("MINST_PROJECTOR_BOUNDARY_AUTHORITY_CARDINALITY|key="
 						+ node.key().normalizedSignature());
-				PlacementState source = selectedStates.get(authorities.get(0));
-				if(source == null)
+				List<PlacementState> sources = authorities.stream().map(selectedStates::get).toList();
+				if(sources.stream().anyMatch(java.util.Objects::isNull))
 					continue;
-				if(node.legalAlternatives().stream().noneMatch(state -> state == source))
-					throw new IllegalArgumentException("MINST_PROJECTOR_BOUNDARY_EXACT_STATE_IDENTITY|key="
-						+ node.key().normalizedSignature());
-				selectedStates.put(node.key(), source);
+				PlacementState boundaryState;
+				if(node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT) {
+					boundaryState = sources.get(0);
+					if(node.legalAlternatives().stream().noneMatch(state -> state == boundaryState))
+						throw new IllegalArgumentException("MINST_PROJECTOR_BOUNDARY_EXACT_STATE_IDENTITY|key="
+							+ node.key().normalizedSignature());
+				}
+				else {
+					PlacementState first = sources.get(0);
+					if(sources.stream().anyMatch(source -> source.output() != first.output()
+						|| source.output() == FederatedOutput.FOUT && source.fType() != first.fType()))
+						throw new IllegalArgumentException("MINST_PROJECTOR_OUTPUT_ALIAS_CONFLICT|key="
+							+ node.key().normalizedSignature());
+					List<PlacementState> matches = node.legalAlternatives().stream()
+						.filter(state -> state.output() == first.output())
+						.filter(state -> state.output() != FederatedOutput.FOUT || state.fType() == first.fType())
+						.toList();
+					if(matches.size() != 1)
+						throw new IllegalArgumentException("MINST_PROJECTOR_OUTPUT_ALIAS_STATE_AMBIGUOUS|key="
+							+ node.key().normalizedSignature());
+					boundaryState = matches.get(0);
+				}
+				selectedStates.put(node.key(), boundaryState);
 				progressed = true;
 			}
 		}

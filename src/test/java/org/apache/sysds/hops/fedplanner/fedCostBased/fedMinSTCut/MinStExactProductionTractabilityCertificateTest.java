@@ -34,6 +34,8 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.adapter.PlacementPlannerAdapter;
+import org.apache.sysds.hops.rewrite.ProgramRewriter;
+import org.apache.sysds.hops.rewrite.RewriteFederatedPlannerPhysicalNormalization;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -165,8 +167,11 @@ public class MinStExactProductionTractabilityCertificateTest {
 		PlacementAnalysis parityAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(kmeans());
 		List<CompiledHopKey> parityScope = parityAnalysis.compiledHopOccurrences().stream()
 			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		assertCandidateSelectionReachabilityParity(parityAnalysis, parityScope,
-			MinStExactCostFactsProducer.derive(parityAnalysis, parityScope));
+		// KMeans intentionally has more than one physical emission for a coarse
+		// FED/FOUT membership (for example direct ROW and derived BROADCAST).  An
+		// unpreferred legacy derivation must fail rather than erase that distinction;
+		// parity is therefore certified one exact graph-owned row at a time below.
+		assertCandidateSelectionReachabilityParity(parityAnalysis, parityScope);
 	}
 
 	@Test
@@ -180,6 +185,7 @@ public class MinStExactProductionTractabilityCertificateTest {
 		long checked = 0L;
 		for(var constraint : analysis.graph().constraints()) {
 			if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
+				&& constraint.kind() != ConstraintKind.SAME_VALUE_PLACEMENT
 				&& constraint.kind() != ConstraintKind.SAME_FTYPE
 				&& constraint.kind() != ConstraintKind.CONJUNCTIVE)
 				continue;
@@ -198,9 +204,129 @@ public class MinStExactProductionTractabilityCertificateTest {
 	}
 
 	@Test
+	public void l2SvmTwoWorkerDpBaselineSelectsFromTheUnmodifiedFinalBoundary() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = l2svm(2);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		NormalizedPlannerResult selected = new FederatedPlannerDpFedCostBased()
+			.selectProgram(program, null, null, analysis).normalizedResult();
+		Assert.assertEquals("DP must select every exact two-worker L2SVM decision",
+			analysis.graph().decisionNodes().size(), selected.selectedStates().size());
+	}
+
+	@Test
+	public void logRegFourWorkerDpAcceptsEquivalentForeignLocalValueBoundaries() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = logreg(4);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		NormalizedPlannerResult selected = new FederatedPlannerDpFedCostBased()
+			.selectProgram(program, null, null, analysis).normalizedResult();
+		Assert.assertEquals("DP must select every exact four-worker LogReg decision",
+			analysis.graph().decisionNodes().size(), selected.selectedStates().size());
+	}
+
+	@Test(timeout = 120_000L)
+	public void logRegSingleWorkerFedAllFindsAnExactIncumbentWithoutPrefixExplosion() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = logregCampaignShape(1);
+		new ProgramRewriter(new RewriteFederatedPlannerPhysicalNormalization())
+			.rewriteProgramHopDAGs(program, false);
+		DMLTranslator.resetHopsDAGVisitStatus(program);
+		DMLTranslator.refreshMemEstimates(program);
+		DMLTranslator.resetHopsDAGVisitStatus(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+
+		FedAllPlacementAdapter.Result selected = new FedAllPlacementAdapter().select(analysis);
+
+		Assert.assertEquals("FedAll must select every exact one-worker LogReg decision",
+			analysis.graph().decisionNodes().size(), selected.selectedStates().size());
+		Assert.assertEquals("FedAll must finish with an exact bound",
+			selected.score(), selected.certificate().finalUpperBound());
+		Assert.assertEquals("FedAll must prove the production exact-search bound",
+			"TIGHT_BOUND_EQUALITY", selected.certificate().terminationReason());
+		Assert.assertFalse("FedAll exact search must not use fallback",
+			selected.certificate().fallbackUsed());
+	}
+
+	@Test
+	public void pcaFunctionOutputsAliasExactFormalExitValuesAcrossAllPlanners() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = pca(2);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		List<NeutralPlacementGraph.Node> callerOutputs = analysis.graph().decisionNodes().stream()
+			.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+			.filter(node -> Set.of("Xout", "Mout").contains(node.valueVersion().lexicalVariable()))
+			.toList();
+		Assert.assertEquals("PCA must expose both positional caller output aliases", 2, callerOutputs.size());
+		for(NeutralPlacementGraph.Node output : callerOutputs) {
+			List<NeutralPlacementGraph.Constraint> authorities = analysis.graph().constraints().stream()
+				.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.right() == output.key()
+					&& constraint.evidence().startsWith("function-result:"))
+				.toList();
+			Assert.assertFalse("PCA output must have an exact formal-exit authority", authorities.isEmpty());
+			Assert.assertTrue("PCA output must not alias the aggregate FunctionOp node",
+				authorities.stream().allMatch(constraint -> analysis.graph().node(constraint.left())
+					.orElseThrow().kind() != NeutralPlacementGraph.NodeKind.FUNCTION_CALL));
+		}
+
+		NormalizedPlannerResult dp = new FederatedPlannerDpFedCostBased()
+			.selectProgram(program, null, null, analysis).normalizedResult();
+		NormalizedPlannerResult fedAll = PlacementPlannerAdapter.normalize(analysis,
+			new FedAllPlacementAdapter().select(analysis));
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
+			new LinkedHashSet<>(analysis.heuristicPolicyFacts().demotions().stream()
+				.map(fact -> fact.valueVersion()).toList());
+		NormalizedPlannerResult heuristic = PlacementPlannerAdapter.normalize(analysis,
+			new HeuristicPlacementAdapter().select(analysis, markers));
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		MinStExactPhysicalSelection minStSelection = MinStExactPhysicalSelection.create(model,
+			MinStExactPhysicalOptimizer.optimize(model, surface,
+				MinStExactPhysicalOptimizer.PRODUCTION_LIMITS));
+		NormalizedPlannerResult minSt = MinStExactPhysicalPlacementProjector.project(minStSelection)
+			.normalizedResult();
+
+		for(NormalizedPlannerResult plan : List.of(dp, fedAll, heuristic, minSt))
+			for(NeutralPlacementGraph.Node output : callerOutputs) {
+				PlacementState outputState = plan.selectedStates().get(output.key());
+				Assert.assertNotNull(plan.plannerId() + " must select the PCA output boundary", outputState);
+				List<NeutralPlacementGraph.Constraint> authorities = analysis.graph().constraints().stream()
+					.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+						&& constraint.right() == output.key()
+						&& constraint.evidence().startsWith("function-result:"))
+					.toList();
+				for(NeutralPlacementGraph.Constraint authority : authorities) {
+					PlacementState sourceState = plan.selectedStates().get(authority.left());
+					Assert.assertNotNull(plan.plannerId() + " must select every PCA formal-exit authority",
+						sourceState);
+					Assert.assertEquals(plan.plannerId() + " must pass the exact PCA value placement to runtime",
+						valuePlacement(sourceState), valuePlacement(outputState));
+				}
+			}
+	}
+
+	private static String valuePlacement(PlacementState state) {
+		return state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+			? "FOUT/" + state.fType() : "LOUT/-";
+	}
+
+	@Test
 	public void sevenCampaignWorkloadsPublishExactPhysicalTractabilityCertificate() throws Exception {
+		String workloadFilter = System.getProperty("g014.tractability.workload", "");
+		int workerFilter = Integer.getInteger("g014.tractability.workers", 0);
+		int selectedCases = 0;
 		for(int workers = 1; workers <= 4; workers++)
 		for(Workload workload : campaignWorkloads(workers)) {
+			if(!workloadFilter.isEmpty() && !workload.name().equalsIgnoreCase(workloadFilter)
+				|| workerFilter > 0 && workers != workerFilter)
+				continue;
+			selectedCases++;
 				// Mirror DMLTranslator.runFederatedPlannerAtFinalHopBoundary: the analysis
 				// must be bound only after clearing metadata published by the preceding
 				// compiled program in this same JVM.
@@ -307,6 +433,7 @@ public class MinStExactProductionTractabilityCertificateTest {
 								&& alternative.candidateEmission() == reachable.emission()));
 					}
 		}
+		Assert.assertTrue("tractability filter selected no campaign case", selectedCases > 0);
 	}
 
 	@Test
@@ -390,7 +517,11 @@ public class MinStExactProductionTractabilityCertificateTest {
 	}
 
 	private static void assertCandidateSelectionReachabilityParity(PlacementAnalysis analysis,
-		List<CompiledHopKey> scope, MinStExactCostFacts baseline) {
+		List<CompiledHopKey> scope) {
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		Assert.assertEquals("exact physical model must cover the requested occurrence scope",
+			scope.size(), model.domains().stream()
+				.filter(domain -> scope.stream().anyMatch(key -> key == domain.node().key())).count());
 		var plan = new FedAllPlacementAdapter().select(analysis);
 		List<CandidateSelectionReceipt> reachableRows = new ArrayList<>();
 		for(var node : analysis.graph().decisionNodes())
@@ -438,35 +569,43 @@ public class MinStExactProductionTractabilityCertificateTest {
 			}
 			if(!useful)
 				continue;
-			RepresentativePreference preference = preferenceForReceipt(analysis, receipt);
-			MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(
-				analysis, scope, List.of(preference));
-			var decision = facts.decisionFactsInScopeOrder().stream()
-				.filter(candidate -> candidate.key() == receipt.rule().parentOccurrence()).findFirst().orElseThrow();
-			var selectedAuthority = MinStExactCostFactsProducer.selectedFedAuthority(analysis, decision,
-				facts.membershipRepresentativesInCanonicalOrder(),
-				List.of(preference));
-			var representative = selectedAuthority.executionRepresentative();
-			Assert.assertSame("MINST_SELECTED_RULE_MUST_MATCH_FEASIBLE_VARIANT", receipt.rule(),
-				representative.candidateRuleFactOrNull().key());
-			Assert.assertSame("MINST_SELECTED_EMISSION_MUST_MATCH_FEASIBLE_VARIANT", receipt.emission(),
-				selectedAuthority.normalizedEmissionOrNull());
+			var domain = model.domains().stream()
+				.filter(candidate -> candidate.node().key() == receipt.rule().parentOccurrence())
+				.findFirst().orElseThrow();
+			var exactRows = domain.alternatives().stream()
+				.filter(alternative -> alternative.captured()
+					&& alternative.candidateRule().key() == receipt.rule()
+					&& alternative.candidateEmission() == receipt.emission())
+				.toList();
+			Assert.assertFalse("MINST_EXACT_MODEL_MUST_RETAIN_FEASIBLE_RULE_EMISSION",
+				exactRows.isEmpty());
 			for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.consumer() != receipt.rule().parentOccurrence()
 					|| edge.inputPosition() >= receipt.rule().orderedInputs().size())
 					continue;
 				var input = receipt.rule().orderedInputs().get(edge.inputPosition());
-				boolean upload = facts.auxiliaryGroupsInCanonicalOrder().stream()
-					.filter(group -> group.direction() == Direction.UPLOAD)
-					.flatMap(group -> group.endpointsInCanonicalOrder().stream())
-					.anyMatch(endpoint -> endpoint.consumerKey() == edge.consumer()
-						&& endpoint.producerKey() == edge.producer()
-						&& endpoint.inputPosition() == edge.inputPosition());
+				boolean nativeLocal = exactRows.stream().flatMap(alternative ->
+					alternative.inputAuthorities().stream()).anyMatch(authority ->
+						authority.inputPosition() == edge.inputPosition()
+							&& authority.kind() == MinStExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL);
+				boolean exactDirect = exactRows.stream().flatMap(alternative ->
+					alternative.inputAuthorities().stream()).anyMatch(authority ->
+						authority.inputPosition() == edge.inputPosition()
+							&& authority.kind() == MinStExactPhysicalModel.InputAuthorityKind.DIRECT_FOUT);
+				boolean exactRelocated = exactRows.stream().flatMap(alternative ->
+					alternative.inputAuthorities().stream()).anyMatch(authority ->
+						authority.inputPosition() == edge.inputPosition()
+							&& authority.kind() == MinStExactPhysicalModel.InputAuthorityKind.RELOCATION
+							&& authority.relocationAction() != null
+							&& authority.sourceDecision() == edge.producer()
+							&& authority.relocationAction().obligations().stream().anyMatch(obligation ->
+								obligation.consumer() == edge.consumer()
+									&& obligation.inputPosition() == edge.inputPosition()));
 				if(!input.present()) {
 					if(absentNative > 0)
 						continue;
 					absentNative = 1;
-					Assert.assertFalse("CANDIDATE_SELECTION_ABSENT_NATIVE_PARITY", upload);
+					Assert.assertTrue("CANDIDATE_SELECTION_ABSENT_NATIVE_PARITY", nativeLocal);
 					continue;
 				}
 				var source = analysis.graph().node(edge.producer()).orElseThrow();
@@ -483,20 +622,12 @@ public class MinStExactProductionTractabilityCertificateTest {
 								&& obligation.inputPosition() == edge.inputPosition()));
 				if(direct) {
 					presentDirect = 1;
+					Assert.assertTrue("CANDIDATE_SELECTION_PRESENT_DIRECT_PARITY", exactDirect);
 				}
 				if(relocated) {
 					boolean postMaterialized = hasAbsentSeedRow(analysis, receipt, edge.inputPosition());
 					presentRelocated = 1;
-					Assert.assertTrue("CANDIDATE_SELECTION_PRESENT_RELOCATION_PARITY", upload);
-					Assert.assertTrue("MINST_PRESENT_RELOCATION_RECEIPT_PARITY",
-						facts.transferAuthoritiesInCanonicalOrder().stream().anyMatch(authority ->
-							authority.authorityKind() == TransferAuthorityKind.RELOCATION_OBLIGATION
-								&& authority.endpoint().consumerKey() == edge.consumer()
-								&& authority.endpoint().producerKey() == edge.producer()
-								&& authority.endpoint().inputPosition() == edge.inputPosition()
-								&& authority.requiredPlacement()
-									.equals(receipt.emission().emissionState().placementState())
-								&& authority.group().conversionType() == input.fType()));
+					Assert.assertTrue("CANDIDATE_SELECTION_PRESENT_RELOCATION_PARITY", exactRelocated);
 					if(postMaterialized)
 						postMaterializedPresent = 1;
 				}
@@ -509,15 +640,6 @@ public class MinStExactProductionTractabilityCertificateTest {
 			Assert.assertTrue("PARITY_FIXTURE_MUST_EXERCISE_POST_MATERIALIZED_PRESENT",
 				postMaterializedPresent > 0);
 		}
-	}
-
-	private static RepresentativePreference preferenceForReceipt(PlacementAnalysis analysis,
-		CandidateSelectionReceipt receipt) {
-		var fact = analysis.candidateRuleFacts().orderedFacts().stream()
-			.filter(candidate -> candidate.key() == receipt.rule()).findFirst().orElseThrow();
-		PlacementState state = receipt.emission().emissionState().placementState();
-		return new RepresentativePreference(receipt.rule().parentOccurrence(), state.execType(),
-			state.output(), receipt.rule().orderedInputs(), state, fact, receipt.emission());
 	}
 
 	private static boolean hasAbsentSeedRow(PlacementAnalysis analysis,
@@ -696,6 +818,15 @@ public class MinStExactProductionTractabilityCertificateTest {
 			"Y=(Y<0)+1;",
 			"B=multiLogReg(X=X,Y=Y,verbose=FALSE,maxi=30,maxii=5,tol=1e-9,icpt=0,"
 				+ "numclasses=2,numrows=50000,numcols=2100);",
+			"write(B,\"out\",format=\"csv\");") + "\n");
+	}
+
+	private static DMLProgram logregCampaignShape(int workers) throws Exception {
+		return compile(String.join("\n",
+			"N=50000;", "D=2100;", dataPrelude(workers),
+			"Y=(Y<0)+1;",
+			"B=multiLogReg(X=X,Y=Y,verbose=FALSE,maxi=30,maxii=5,tol=1e-9,icpt=0,"
+				+ "numclasses=2,numrows=N,numcols=D);",
 			"write(B,\"out\",format=\"csv\");") + "\n");
 	}
 

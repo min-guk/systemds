@@ -140,6 +140,7 @@ public class FederatedPlannerDpMemoTable {
 		Set<CompiledHopKey> sensitive = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(NeutralPlacementGraph.Constraint constraint : analysis.graph().constraints())
 			if(constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT
+				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
 				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_FTYPE
 				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE) {
 				sensitive.add(constraint.left());
@@ -537,6 +538,23 @@ public class FederatedPlannerDpMemoTable {
 			if(entry.getValue() == occurrence)
 				descriptions.add(entry.getKey().getHopID() + ":" + entry.getKey().getOpString());
 		return descriptions.toString();
+	}
+
+	/**
+	 * Returns every legacy output-decision coordinate that can select a carrier for
+	 * one exact compiled occurrence. Recompile/unrolled carriers can resolve to
+	 * different original Hop IDs even though rewrite emits exactly one runtime value
+	 * for the occurrence, so exact-occurrence closure must update these coordinates
+	 * atomically rather than moving the conflict from one carrier to another.
+	 */
+	public List<Long> getOriginalDecisionHopIdsForOccurrence(HopOccurrenceProjection occurrence) {
+		assertOwnedOccurrence(occurrence);
+		java.util.SortedSet<Long> decisionHopIDs = new java.util.TreeSet<>();
+		decisionHopIDs.add(resolveOriginalHopId(occurrence.hop().getHopID()));
+		for(Map.Entry<Hop, HopOccurrenceProjection> entry : occurrenceByPlanCarrier.entrySet())
+			if(entry.getValue() == occurrence)
+				decisionHopIDs.add(resolveOriginalHopId(entry.getKey().getHopID()));
+		return List.copyOf(decisionHopIDs);
 	}
 
 	/** Exact retained DP dependency between two analysis-owned occurrences. */

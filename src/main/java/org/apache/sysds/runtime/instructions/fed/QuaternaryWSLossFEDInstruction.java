@@ -34,6 +34,7 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.QuaternaryCPInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.spark.QuaternarySPInstruction;
 import org.apache.sysds.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysds.runtime.matrix.operators.Operator;
@@ -61,6 +62,11 @@ public class QuaternaryWSLossFEDInstruction extends QuaternaryFEDInstruction {
 	protected QuaternaryWSLossFEDInstruction(Operator operator, CPOperand in1, CPOperand in2, CPOperand in3,
 		CPOperand in4, CPOperand out, String opcode, String instruction_str) {
 		super(FEDType.Quaternary, operator, in1, in2, in3, in4, out, opcode, instruction_str);
+	}
+
+	protected QuaternaryWSLossFEDInstruction(Operator operator, CPOperand in1, CPOperand in2, CPOperand in3,
+		CPOperand in4, CPOperand out, String opcode, String instruction_str, FederatedOutput fedOut) {
+		super(FEDType.Quaternary, operator, in1, in2, in3, in4, out, opcode, instruction_str, fedOut);
 	}
 
 	public static QuaternaryWSLossFEDInstruction parseInstruction(QuaternaryCPInstruction instr) {

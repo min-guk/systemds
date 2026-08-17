@@ -292,3 +292,330 @@
 - **잔여 이슈**: 새 immutable JAR/stage의 Docker canary에서 frozen analysis fingerprint, selected plan, lowering/execution receipt가 동일 generation으로 연결되는지 검증한다.
 - **잠재 회귀 위험**: 새 shape consumer가 Hop getter를 직접 사용하거나 audit 관측 예외가 넓어지면 두 번째 universe가 재생길 수 있다. architecture scanner와 exact exception negative test가 이를 fail-closed한다.
 - **의사결정 근거**: capability/후보/비용 정책은 변경하지 않고, 공통 전처리의 단일 소유권과 실행 감사 정합성을 강화했다.
+
+## 20. MinST transient exact-oracle 회귀가 현재 `SAME_PLACEMENT` 계약 대신 과거 pairwise 조건을 기대함
+
+- **상태**: 해결; focused exact physical oracle 통과
+- **적용 원칙/제약**: TRead/TWrite와 전역 transient family는 `<CP,LOUT>` 또는 `<FED,FOUT>`의 exact placement identity를 공유한다. 테스트를 위해 제약을 완화하지 않는다.
+- **환경/조건**: `MinStExactPhysicalPlanSpaceOracleTest`, branch/loop transient value가 둘 이상의 occurrence로 전개되는 exact categorical model.
+- **재현 절차**: `mvn -q -DforkCount=0 -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalPlanSpaceOracleTest test`.
+- **관측 증상**: production graph는 `SAME_PLACEMENT`를 게시하지만 oracle fixture가 과거 `CONJUNCTIVE` pair 판정으로 합법 assignment를 열어 model/oracle plan-space parity가 깨졌다.
+- **원인 분석**: runtime capability 변화가 아니라 오래된 테스트의 transient legality semantics가 현재 최상위 TR/TW 규칙보다 약했다.
+- **해결 요약**: oracle의 transient assignment 판정을 production graph와 같은 exact placement equality로 맞췄다. candidate/domain/비용은 변경하지 않았다.
+- **수정 파일**: `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactPhysicalPlanSpaceOracleTest.java`.
+- **검증**: focused physical plan-space oracle 및 후속 exact selector/MinST model 회귀 통과.
+- **잔여 이슈**: Docker dynamic-recompile cell에서 같은 transient family의 selected/lowered/runtime placement를 exact action audit로 재확인한다.
+- **잠재 회귀 위험**: 향후 새 transient constraint kind가 추가되면 fixture가 production graph를 다시 축약할 수 있다. graph-owned constraint를 직접 대조하는 parity assertion으로 감지한다.
+- **의사결정 근거**: planner/runtime gate를 완화하지 않고 테스트 oracle을 최상위 TR/TW 제약에 맞췄다.
+
+## 21. MinST variable-elimination의 단일 min-fill 순서가 production separator 한도를 초과함
+
+- **상태**: 해결; exact categorical/model focused 회귀 통과
+- **적용 원칙/제약**: MinST는 encoded legal physical plan space와 cost surface의 global optimum을 유지한다. factor/domain을 버리거나 근사 solver로 대체하지 않는다.
+- **환경/조건**: production LogReg/다중 workload exact categorical factor graph, `maximumFactorCells=10,000,000`.
+- **재현 절차**: filtered `MinStExactProductionTractabilityCertificateTest` 및 `MinStExactCategoricalSolverTest` 실행.
+- **관측 증상**: 단일 min-fill tie-break가 11,698,176-cell separator를 만들어 production limit을 넘었다. 같은 exact model에도 elimination order만으로 tractability가 달라졌다.
+- **원인 분석**: fill-edge 수 하나만 최소화하면 domain cardinality가 큰 separator/assignment product를 과소평가한다.
+- **해결 요약**: min-fill, separator cells, assignment product, degree를 각각 우선하는 deterministic exact order portfolio를 평가해 한도 안의 순서를 선택한다. 어느 order도 exact 한도를 만족하지 못하면 fail-closed한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCategoricalSolver.java`, 대응 solver tests.
+- **검증**: exact categorical/model tests 통과. objective와 선택 plan parity를 유지했다.
+- **추가 검증**: 7 workload × workers 1–4의 28-case exact production certificate가 `/tmp/g014-minst-tractability-28cases-v218.log`에서 440.45초, RC=0으로 통과했다. 동일 common analysis에서 exact MinST optimum, DP/FedAll/Heuristic baseline legality/cost dominance, normalized projection 및 emission receipt를 함께 검증했다.
+- **잔여 이슈**: Docker MinST campaign은 아직 미완료다.
+- **잠재 회귀 위험**: portfolio 수가 늘면 order 선택 자체 비용이 증가할 수 있다. 각 order의 predicted/materialized cell 통계를 certificate에 남겨 감지한다.
+- **의사결정 근거**: 후보공간을 닫지 않고 동일 exact factorization의 계산 순서만 개선했다.
+
+## 22. MinST physical transfer factor가 반복 평가 때 동일 구조 join을 재계산함
+
+- **상태**: 해결; bit-exact physical/legacy objective 회귀 통과
+- **적용 원칙/제약**: DP/MinST는 같은 compute/size/network primitive을 사용하고 MinST는 모든 exact physical contribution을 빠짐없이 합산한다.
+- **환경/조건**: `MinStExactCostFactsProducer.physicalCostSurface`와 categorical assignment 반복 평가.
+- **재현 절차**: `MinStExactProductionTractabilityCertificateTest#physicalAlternativeFactorsAreBitExactWithLegacyCutOnSmallFixture`.
+- **관측 증상**: factor 평가마다 transfer authority와 domain alternative를 구조적으로 다시 찾아 exact solver hot loop에서 중복 비용이 발생했다.
+- **원인 분석**: immutable physical contribution과 variable/domain index의 join이 evaluation 밖으로 hoist되지 않았다.
+- **해결 요약**: contribution별 variable/domain/physical transfer index를 surface 생성 시 한 번 구성하고 assignment 평가에서는 정수 index만 조회한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`.
+- **검증**: legacy cut과 canonical physical objective bit parity 및 deterministic contribution fingerprint 통과.
+- **잔여 이슈**: production certificate 전체 wall-clock 재측정.
+- **잠재 회귀 위험**: model/domain identity가 재생성되면 stale index가 될 수 있다. owner fingerprint와 domain bounds validation으로 즉시 실패시킨다.
+- **의사결정 근거**: 비용 값/후보/최적성은 바꾸지 않고 불변 join만 사전 계산했다.
+
+## 23. DP relocation 선택이 같은 canonical action order를 plan arm마다 재구축함
+
+- **상태**: 해결; DP focused exact relocation 회귀 통과
+- **적용 원칙/제약**: DP의 자신–직접 자식 local recurrence 철학은 유지한다. occurrence/action 합법성과 물리 전송 비용만 exact authority로 계산한다.
+- **환경/조건**: `FederatedPlannerDpCostEnumerator`, 여러 DP arm이 같은 relocation action universe를 평가하는 workload.
+- **재현 절차**: DP ordered regression 및 relocation selection focused tests.
+- **관측 증상**: 같은 immutable action universe의 `RelocationDemandKey`/choice canonical order를 arm별로 정렬·해시해 compile overhead가 커졌다.
+- **원인 분석**: exact canonical order가 enumerator invocation 범위에서 공유되지 않았다.
+- **해결 요약**: `RelocationSelections.CanonicalOrderIndex`를 DP enumerator가 한 번 만들고 모든 arm/score evaluation에 재사용한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`, `RelocationSelections.java`.
+- **검증**: DP focused/ordered regression에서 동일 selected receipts/actions와 green 결과 확인.
+- **잔여 이슈**: ordered DP 전체 bundle을 최신 dirty candidate에서 다시 실행한다.
+- **잠재 회귀 위험**: action universe가 emission 중 변하면 index가 stale해진다. analysis/emission transaction fingerprint가 이를 차단한다.
+- **의사결정 근거**: DP objective/recurrence를 변경하지 않은 순수 immutable-index 재사용이다.
+
+## 24. FedAll complete leaf scoring이 candidate physical effect와 canonical certificate를 반복 재구축함
+
+- **상태**: 해결; canonical/indexed 512-assignment parity와 exact selector 12 tests 통과
+- **적용 원칙/제약**: FedAll의 exact `(FED 최대, FOUT 최대, distinct physical emission 최소)` objective와 전체 runtime-supported candidate space를 보존한다.
+- **환경/조건**: LogReg 168 decisions/59 equality groups, 수천 개 complete exact assignment에서 candidate row/relocation/local materialization을 score.
+- **재현 절차**: `ExactPlacementSelectorBranchAndBoundTest#indexedCompleteCandidateScoringMatchesTheCanonicalOracle` 및 전체 test class.
+- **관측 증상**: 매 complete leaf에서 action/obligation/source/derived suppressor join과 canonical relocation choice certificate를 재구축했다.
+- **원인 분석**: assignment-independent physical-effect 구조와 winner-only certificate가 exponential hot loop 안에 있었다.
+- **해결 요약**: `PartialReachabilityIndex`가 receipt별 physical effect seed를 identity-index하고 assignment마다 source state만 평가한다. search는 정확한 count와 row order로 incumbent를 비교하고 canonical relocation/local receipt는 최종 winner에 대해 한 번만 복원·검증한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java`, `ExactPlacementSelector.java`, 대응 branch-and-bound tests.
+- **검증**: `/tmp/g014-candidate-effect-index-parity-v174.log`, `/tmp/g014-exact-selector-effect-index-v175.log`, `/tmp/g014-exact-selector-deferred-canonical-v178.log` 전부 PASS.
+- **잔여 이슈**: worker=1 LogReg production residual search는 다른 prefix lower-bound/tie-break 병목 때문에 아직 300초 안에 끝나지 않았다.
+- **잠재 회귀 위험**: derived suppression 또는 physical sharing identity를 index에서 빠뜨리면 objective가 달라진다. seeded canonical parity와 final winner revalidation으로 감지한다.
+- **의사결정 근거**: candidate를 제거하지 않고 동일 exact effect를 불변/가변 부분으로 분해했다.
+
+## 25. FedAll canonical relocation demand가 complete assignment마다 깊은 structural hash를 반복함
+
+- **상태**: 해결; exact selector focused 회귀 통과
+- **적용 원칙/제약**: exact relocation demand/choice order와 physical sharing semantics를 그대로 유지한다.
+- **환경/조건**: `RelocationSelections.CandidateProblemIndex`, exact candidate universe가 assignment마다 달라지는 outer search.
+- **재현 절차**: full `ExactPlacementSelectorBranchAndBoundTest`.
+- **관측 증상**: `RelocationDemandKey.hashCode()`가 durable anchor/partition/value-version 전체를 매 leaf 반복 순회했다.
+- **원인 분석**: canonical demand identity를 이미 action-universe order가 알고 있는데도 candidate problem이 구조 key를 다시 만들었다.
+- **해결 요약**: `CanonicalOrderIndex`에 obligation identity→demand 및 integer demand rank를 보존하고 candidate problem은 rank로 group/sort한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java`.
+- **검증**: `/tmp/g014-exact-selector-demand-rank-v180.log` PASS.
+- **잔여 이슈**: production worker=1 case 재측정.
+- **잠재 회귀 위험**: 동일 action universe 밖 obligation이 들어오면 rank가 없다. fail-closed lookup과 focused canonical parity로 감지한다.
+- **의사결정 근거**: canonical identity의 표현만 structural key에서 prevalidated integer rank로 바꿨다.
+
+## 26. FedAll workers=1 LogReg에서 prefix lower-bound와 canonical tie-break가 compile time을 지배함
+
+- **상태**: 해결; focused exact parity, filtered production certificate 및 전체 28-case certificate 통과
+- **적용 원칙/제약**: runtime-supported 조합을 닫거나 greedy approximation으로 바꾸지 않는다. exact objective를 유지하는 index/decomposition만 허용한다.
+- **환경/조건**: `-Dg014.tractability.workload=LOGREG -Dg014.tractability.workers=1`, MinST production certificate가 FedAll baseline을 동일 analysis에서 평가하는 단계.
+- **재현 절차**: `mvn -q -DforkCount=0 -Dg014.tractability.workload=LOGREG -Dg014.tractability.workers=1 -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactProductionTractabilityCertificateTest#sevenCampaignWorkloadsPublishExactPhysicalTractabilityCertificate test`.
+- **관측 증상**: `/tmp/g014-minst-tractability-logreg-w1-v183.log`와 v185가 각각 300초 timeout. JFR `/tmp/g014-v183-profile.jfr`는 prefix별 candidate-aware physical lower bound와 leaf candidate index를, 후속 thread dump `/tmp/g014-minst-tractability-logreg-w1-v185.thread.txt`는 group tie-break 때 `CompiledHopKey.normalizedSignature()` 문자열 생성을 지목했다. 격리 v202는 180초 동안 2,097,152 prefix를 방문했지만 끝나지 않았고 첫 경로의 physical score가 63이었다.
+- **원인 분석**: exact search의 의미적 난이도 외에 (a) state domain마다 candidate row/action join 재계산, (b) row별 stream/hash allocation, (c) every-prefix canonical group/state 문자열 비교, (d) 물리전송이 큰 complete assignment부터 방문해 약한 incumbent를 만드는 DFS 순서가 결합됐다.
+- **해결 요약**: candidate row를 selected state별로 index하고, lower-bound relocation option/direct-source join을 receipt identity cache로 hoist했다. stream 기반 hot loop를 imperative scan으로 바꾸고 group canonical rank와 allocation-free placement-state comparator를 사용한다. optimistic assignment도 임시 map을 만들지 않는다. 마지막으로 첫 incumbent가 생기기 전까지만, 동일 FED/FOUT primary contribution을 가진 state를 admissible physical-emission lower bound 오름차순으로 방문한다. 후보/목적함수/합법성/pruning 조건은 바꾸지 않았다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java`, `src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/ExactPlacementSelector.java`.
+- **검증**: `/tmp/g014-exact-selector-bound-row-index-v184.log`, `/tmp/g014-exact-selector-canonical-rank-v186.log`, `/tmp/g014-exact-selector-incumbent-order-v203.log` focused PASS. 격리 v204는 exact search 22.702초/376,216 prefixes/1,467 leaves, 전체 29.62초로 통과했다. 실제 filtered production v205도 76.39초, RC=0이다.
+- **추가 검증**: 전체 28-case certificate가 `/tmp/g014-minst-tractability-28cases-v218.log`에서 440.45초, RC=0으로 통과했다. 최신 dirty candidate의 ordered source 회귀도 DP 36 classes(`/tmp/g014-ordered-dp-regression-v219.log`), FedAll 7 classes(`/tmp/g014-ordered-fedall-regression-v220.log`), Heuristic 2 classes(`/tmp/g014-ordered-heuristic-regression-v221.log`), MinST 21 classes+focused production(`/tmp/g014-ordered-minst-regression-v222.log`, `/tmp/g014-minst-exact-candidate-reachability-v226.log`, `/tmp/g014-ordered-minst-production-focused-v227.log`) 모두 RC=0이다.
+- **잔여 이슈**: fresh immutable JAR/stage의 Docker campaign으로 확장한다.
+- **잠재 회귀 위험**: preindexed row/action order가 canonical public order와 달라질 수 있다. exact selector/brute-force parity와 최종 canonical winner revalidation으로 감지한다.
+- **의사결정 근거**: 후보공간/비용/목적함수는 그대로 두고 immutable exact facts의 반복 파생만 제거했다.
+
+## 27. DP exact-component memo가 미완료 synthetic function boundary의 과거 선택을 소실함
+
+- **상태**: 해결; 직접 red/green, 실제 compile/lowering 회귀, L2SVM filtered 및 28-case certificate 통과
+- **적용 원칙/제약**: DP는 자신과 직접 자식의 local recurrence 철학을 유지하되, TRead/TWrite 및 function formal family의 전역 합법성은 exact component join이 보존해야 한다. 후보를 닫거나 `<CP,FOUT>`을 허용하거나 runtime fallback을 추가하지 않는다.
+- **환경/조건**: L2SVM, workers=2, final common `PlacementAnalysis`에서 DP baseline을 직접 선택하는 경로. MinST production certificate의 동일-analysis cross-planner 비교 단계.
+- **재현 절차**: `mvn -q -DforkCount=0 -Dtest=MinStExactProductionTractabilityCertificateTest#l2SvmTwoWorkerDpBaselineSelectsFromTheUnmodifiedFinalBoundary test`. 수정 전 로그는 `/tmp/g014-dp-l2svm-w2-direct-v209.log`, filtered certificate는 `/tmp/g014-minst-tractability-l2svm-w2-isolated-v208.log`이다.
+- **관측 증상**: DP exact join이 `visited=520`, `deepest=10`, rejection `graph-legality=162`, `required-boundary=282`, `child-boundary=94`, `memo=283` 후 합법 forest를 찾지 못했다. 같은 synthetic function-input boundary에 연결된 여러 `Y` TRead가 `<CP,LOUT>`/`<FED,FOUT>` 중 하나로 일치해야 하지만, 서로 다른 prefix가 같은 memo state로 합쳐졌다.
+- **원인 분석**: `exactJoinSearchState(...)`가 이미 선택된 endpoint를 “향후 unselected ordinary domain node와 직접 연결된 경우”에만 memo key에 남겼다. synthetic function boundary는 domain에 직접 assign되지 않는 latent legality node이므로, 아직 다른 incident endpoint가 남았는데도 먼저 선택한 TRead의 placement가 key에서 사라졌다. 그 결과 합법성 의미가 다른 prefix가 동일하다고 잘못 판정됐다.
+- **해결 요약**: 아직 unselected incident domain endpoint가 있는 synthetic function boundary를 `pendingSynthetic`으로 식별하고, 그 boundary에 이미 선택된 모든 incident endpoint를 memo의 `backwardReferenced` authority에 포함시켰다. 마지막 incident occurrence가 결정될 때까지 feasible placement intersection이 memo key에 보존된다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactProductionTractabilityCertificateTest.java`.
+- **검증**: 직접 회귀 `/tmp/g014-dp-l2svm-w2-synthetic-memo-fix-v210.log` RC=0(39.43초), 기존 DML compile/lowering worker=1/2 회귀 `/tmp/g014-dp-l2svm-w1-w2-synthetic-memo-regression-v211.log` RC=0, filtered full certificate `/tmp/g014-minst-tractability-l2svm-w2-isolated-v211.log` RC=0, 전체 28-case `/tmp/g014-minst-tractability-28cases-v218.log` RC=0.
+- **잔여 이슈**: Docker L2SVM에서 selected TRead/TWrite/function-boundary generation과 lowered/runtime authority를 audit-v2로 확인한다.
+- **잠재 회귀 위험**: memo key가 더 커져 DP compile time/메모리가 증가할 수 있다. exact join prefix 통계, ordered DP compile time 및 Docker compile graph로 감지한다.
+- **의사결정 근거**: 후보/비용/DP local recurrence가 아니라 memo equivalence가 불완전했다. 합법 prefix를 보존하는 state 표현만 수정했다.
+
+## 28. DP foreign component의 local value boundary를 producer ExecType equality로 잘못 검증함
+
+- **상태**: 해결; LogReg workers=4 직접/filtered/28-case certificate 통과
+- **적용 원칙/제약**: 부모가 소비하는 `LOUT`은 producer가 `CP/LOUT` 또는 `FED/LOUT`으로 계산했는지와 무관한 local value boundary다. 실제 producer의 exact exec/candidate/relocation authority는 owner component receipt가 별도로 검증하며 runtime 보정은 없다.
+- **환경/조건**: LogReg workers=4, DP exact component traversal. 부모 retained edge는 `CP/LOUT`, foreign owner의 canonical producer 선택은 `FED/LOUT/ROW`인 합법 forest.
+- **재현 절차**: `mvn -q -DforkCount=0 -Dtest=MinStExactProductionTractabilityCertificateTest#logRegFourWorkerDpAcceptsEquivalentForeignLocalValueBoundaries test`. 수정 전 full/filtered 로그는 `/tmp/g014-minst-tractability-28cases-v212.log`, `/tmp/g014-minst-tractability-logreg-w4-diagnostic-v213.log`이다.
+- **관측 증상**: `DP scheduled exact arm drifted before capture`가 발생했다. 진단은 `foreignBoundary=true`, scheduled owner `FED/LOUT/ROW`, raw parent child arm `CP/LOUT`을 보여줬다. 두 arm의 runtime input contract는 모두 LOUT인데 `samePhysicalAuthority`가 ExecType까지 같아야 한다고 거부했다.
+- **원인 분석**: `resolveExactTraversalChild`와 component search는 foreign parent가 value boundary만 소비한다는 `sameConsumableBoundary` 규칙을 사용했지만, capture 직전 한 검증만 더 강한 producer-state equality를 사용해 내부 계약이 불일치했다.
+- **해결 요약**: foreign boundary 검증은 `sameConsumableBoundary`를 사용한다. consumed edge identity는 raw parent arm을 exact하게 검증하고, foreign owner capture/receipt는 canonical producer의 exact state와 physical authority를 독립적으로 검증한다. 같은 component 내부에는 기존 `sameExactAuthority`를 유지한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactProductionTractabilityCertificateTest.java`.
+- **검증**: 직접 회귀 `/tmp/g014-dp-logreg-w4-foreign-local-boundary-fix-v214.log` RC=0(69.20초), filtered cross-planner certificate `/tmp/g014-minst-tractability-logreg-w4-fixed-v215.log` RC=0(54.02초), 전체 28-case `/tmp/g014-minst-tractability-28cases-v218.log` RC=0.
+- **잔여 이슈**: Docker LogReg w4에서 parent local input과 foreign owner `FED/LOUT` instruction이 각각 audit generation과 일치하는지 확인한다.
+- **잠재 회귀 위험**: LOUT 동치 판정을 producer 선택 완화로 오해해 owner authority 검증이 약해질 수 있다. owner receipt/canonical producer exact-state assertion과 unplanned-runtime scan으로 감지한다.
+- **의사결정 근거**: parent value contract와 producer implementation state를 분리했다. TRead/TWrite 제약, 후보 공간, 비용, 선택은 변경하지 않았다.
+
+## 29. KMeans candidate reachability 테스트가 expanded physical state를 coarse legacy derivation으로 축약함
+
+- **상태**: 해결; test-only exact physical parity 전환 및 MinST ordered 회귀 통과
+- **적용 원칙/제약**: 동일 `FED/FOUT` membership이라도 direct `ROW`와 derived `BROADCAST`처럼 runtime action/비용이 다른 emission은 exact domain에서 별도 대안으로 보존한다. 모호성을 임의 tie-break로 숨기지 않는다.
+- **환경/조건**: `MinStExactProductionTractabilityCertificateTest#legacyCandidateSelectionReachabilityParityRemainsExplicit`, KMeans workers=2 fixture.
+- **재현 절차**: 수정 전 `/tmp/g014-ordered-minst-production-focused-v223.log` 또는 v225를 실행한다.
+- **관측 증상**: `MINST_EXACT_MEMBERSHIP_RULE_EMISSION_AMBIGUOUS`가 발생했다. 한 membership에 direct `FED/FOUT/ROW`와 derived `FED/FOUT/BROADCAST` emission이 존재해 preference 없는 coarse derivation이 의도대로 fail-closed했다.
+- **원인 분석**: 테스트가 한 receipt의 preference만 주고 나머지 decision을 coarse membership으로 유도했다. production MinST는 모든 ambiguous group의 Cartesian exact physical alternatives를 풀지만 테스트는 이전 2-state bridge를 계속 사용했다.
+- **해결 요약**: 테스트를 exact `MinStExactPhysicalModel` 기준으로 변경했다. reachable candidate receipt마다 graph-owned candidate rule/emission identity가 domain에 존재하는지, matrix input마다 `NATIVE_LOCAL`, `DIRECT_FOUT`, `RELOCATION` authority와 exact obligation/source가 보존되는지를 직접 검증한다.
+- **수정 파일**: `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactProductionTractabilityCertificateTest.java`.
+- **검증**: focused exact candidate reachability `/tmp/g014-minst-exact-candidate-reachability-v226.log` RC=0, 나머지 production focused `/tmp/g014-ordered-minst-production-focused-v227.log` RC=0, MinST 21-class bundle `/tmp/g014-ordered-minst-regression-v222.log` RC=0.
+- **잔여 이슈**: 테스트 이름에 `legacy`가 남아 있으나 동작은 exact physical parity다. 추후 API rename은 의미 변경 없는 정리 작업으로 분리한다.
+- **잠재 회귀 위험**: exact alternative가 candidate row는 갖지만 relocation authority를 빠뜨릴 수 있다. input authority kind/source/obligation assertions으로 즉시 감지한다.
+- **의사결정 근거**: production gate를 완화하지 않고, 오래된 테스트 oracle을 현재 exact physical plan-space 계약에 맞췄다.
+
+## 30. 최신 dirty candidate를 기존 staged reference 복사본과 dirty worktree identity로 봉인하려 한 staging 시도가 fail-closed함
+
+- **상태**: 해결; 잘못된 세 staging 입력은 Docker 시작 전 거부됐고 clean snapshot/JAR/stage replay 완료
+- **적용 원칙/제약**: 성능 실험은 exact source/JAR/harness/data/reference identity를 가진 immutable Docker stage만 사용한다. active dirty source를 reset/revert하거나 기존 stage/JAR로 재라벨하지 않는다.
+- **환경/조건**: source `/home/mchoi/g014-planning-audit-source-20260810-v1`, HEAD `a922bee6d16d6514192ece17a4ca462c0c1ecd16`, harness `d712daf82d3023f8f136bb8c348cc04521b72335`, 첫 빌드 JAR SHA-256 `6d65034a9e40a2f21c36a03070da127a03cb2cac3517211457169a457c7a720f`.
+- **재현 절차**: `stage_campaign.py`에 (1) 이전 immutable stage 내부의 copied `references/`를 전달하거나, (2) 인증 원본 reference bundle을 사용하되 dirty active source repo를 `--systemds-repo`로 전달한다. 로그는 `/tmp/g014-stage-v231.log`, `/tmp/g014-stage-v232.log`이다.
+- **관측 증상**: 첫 시도는 `published CP manifest diverged from descriptor`, 두 번째는 `tracked worktree is not clean`, clean snapshot의 tracked `target` symlink를 직접 JAR 경로로 준 세 번째 시도는 `JAR path contains symlink component`로 종료했다. 셋 모두 stage publication/Docker create 이전 RC=1이었다.
+- **원인 분석**: CP lifecycle descriptor는 원본 publication의 `manifest.json` 절대 경로/해시를 인증하므로 stage 안의 복사본은 publisher 입력이 아니다. 또한 stage identity는 clean git commit/tree를 요구해 dirty worktree를 source authority로 허용하지 않는다.
+- **해결 요약**: lifecycle descriptor가 가리키는 인증 원본 reference bundle을 사용했다. active source의 tracked diff와 non-ignored untracked 파일을 별도 repo에 exact overlay해 clean snapshot commit으로 봉인했다. snapshot에서 재빌드한 JAR과 동일한 실파일 artifact 경로(JAR+lib)를 stage input으로 사용했다.
+- **수정 파일**: 본 문서와 두 FED planning 보고서의 provenance/status 절; production planner/runtime/harness 코드는 변경하지 않는다.
+- **검증**: active dirty 27개 경로와 snapshot의 byte parity 통과. snapshot commit `506368fee1c7da4b2c5dc94ce3db16ba91431daf`, tree `d198e20f39b793b3da1b5435a7c91e51dd61ae9d`, clean status. `/tmp/g014-snapshot-package-v234.log` RC=0, JAR SHA-256 `6d65034a9e40a2f21c36a03070da127a03cb2cac3517211457169a457c7a720f`. immutable stage `/home/mchoi/g014-planning-audit-stage-506368f-d712daf-20260814-v1/g007-stage-4b9bb12cf7030686407de0b4b0144301c547a2cc16970976f0a8786a0cead4f5` 생성 및 stage-local descriptor replay RC=0(`/tmp/g014-stage-replay-v237.json`), staged JAR hash 일치. staging 동안 campaign Docker resource 0.
+- **잔여 이슈**: 해당 stage로 Docker WAN-Light DP→FedAll→Heuristic→MinST audit 및 이후 WAN-Mid→LAN 336-cell 완료.
+- **잠재 회귀 위험**: dirty 변경 일부가 snapshot에서 빠지거나 이전 JAR이 재사용되면 source/JAR provenance가 거짓이 된다. 전체 tracked-file SHA parity, JAR build timestamp/class inventory, descriptor `systemds_commit/tree` 및 `jar_sha256`으로 감지한다.
+- **의사결정 근거**: staging validator를 완화하지 않고 정확한 source authority를 새 immutable snapshot으로 만든다.
+
+## 31. Fresh immutable Docker 첫 cell의 planner→runtime 전수감사
+
+- **상태**: 진행중; DP/KMeans/worker=1/WAN-Light는 해결·인증, 나머지 335개 logical cell 미완료
+- **적용 원칙/제약**: planner 계획을 runtime이 그대로 실행해야 하며 fallback/repair는 0이어야 한다. 성능 실험은 run_LAN_docker.sh만 사용한다.
+- **환경/조건**: source snapshot 506368fee1c7da4b2c5dc94ce3db16ba91431daf, harness d712daf82d3023f8f136bb8c348cc04521b72335, JAR SHA-256 6d65034a9e40a2f21c36a03070da127a03cb2cac3517211457169a457c7a720f, immutable stage ID 4b9bb12cf7030686407de0b4b0144301c547a2cc16970976f0a8786a0cead4f5.
+- **재현 절차**: stage-local tools/run_one_pass_performance.py --stage STAGE --output /home/mchoi/g014-full-results-506368f-d712daf-20260814-v1 --campaign-seed 2026072701 --max-new-cells 1.
+- **관측 증상**: 첫 row는 warm 84.868초, cold 91.862초로 성공했다. planner emission 327 decisions, selected FED 35, selected FOUT 31. coordinator cold/warm 각각 planned/lowered physical Hop 140/140, missing physical/synthetic 0, mismatch 0, execution kinds 284, FED dispatch kinds 45. worker audit는 두 phase summary와 final fragment kinds 62를 확인했다.
+- **원인 분석**: 해당 cell에서는 과거의 planner→fusion/lowering→runtime authority 단절이 재현되지 않았다. 두 coordinator plan authority hash 차이는 phase별 PWrite 1개와 literal identity 4개에서만 발생했고 normalized runtime plan/dispatch는 동일했다.
+- **해결 요약**: normalized planner result, atomic emission transaction, exact lowering/runtime/worker audit를 동일 cell artifact로 묶고 cold/warm semantic oracle와 plan identity를 fail-closed 검증했다.
+- **수정 파일**: docs/FEDPLAN_RUNTIME_FIDELITY_REPORT_2026-08-14.md, docs/FED_PLANNER_ARCHITECTURE_AND_FEDALL_COMPLEXITY_REPORT_2026-08-14.md, 본 문서. 이 canary 때문에 production 코드는 추가 변경하지 않았다.
+- **검증**: /home/mchoi/g014-full-results-506368f-d712daf-20260814-v1/rows.jsonl, cell bundle cells/001-1d2a37e2ae1b, runtime audit JSON 3개, semantic oracle cold/warm 모두 PASS, fallback=false, teardown zero resources=true.
+- **잔여 이슈**: FedAll부터 나머지 335 logical cell을 실행하고 모든 row에서 동일 audit invariant와 planner 철학별 plan 차이를 검증한다.
+- **잠재 회귀 위험**: aggregate count만 같고 특정 occurrence/action이 바뀔 수 있다. per-occurrence audit key, action token, normalized runtime-plan SHA 및 worker parent authority로 감지한다.
+- **의사결정 근거**: runtime fallback 없이 planner authority를 lowering·execution·worker dispatch까지 추적한다.
+
+## 32. 사용자 systemd continuation이 Docker supplementary group을 잃어 false resource failure를 생성함
+
+- **상태**: 해결; 잘못된 launcher는 중단됐고 성공 prefix를 중복하지 않는 predecessor continuation으로 교체
+- **적용 원칙/제약**: 권한/인프라 실패를 planner 실패나 성공으로 재분류하지 않는다. 실패 cell부터 재개하되 인증된 성공 cell은 다시 실행하지 않는다.
+- **환경/조건**: transient unit g014-audit-506368f-d712daf-20260814.service, 실패 output /home/mchoi/g014-full-results-506368f-d712daf-20260814-v1.
+- **재현 절차**: user systemd unit에서 stage-local one-pass runner를 실행한다.
+- **관측 증상**: 두 번째 logical cell FedAll/KMeans/worker=1/WAN-Light가 “permission denied while trying to connect to the docker API at unix:///var/run/docker.sock”로 Docker create 전에 resource_invalid 처리됐다. unit은 exit 1, Docker resource는 0이었다.
+- **원인 분석**: 현재 로그인 셸은 groups employees,docker이고 docker info가 성공하지만 오래 실행 중인 user systemd manager는 갱신된 supplementary docker group을 상속하지 않았다.
+- **해결 요약**: unit 재시도를 하지 않고 현재 셸의 group set을 상속하는 detached nohup setsid runner를 시작했다. 새 output /home/mchoi/g014-full-results-506368f-d712daf-20260814-v2는 --predecessor-output ...-v1로 첫 성공 row를 재검증·skip하고 실패 cell을 첫 실행 대상으로 삼는다.
+- **수정 파일**: production/harness 소스 변경 없음. 운영 launcher /home/mchoi/g014-campaign-launch-506368f-d712daf-20260814.sh, 로그 /tmp/g014-campaign-continuation-v241.log, PID /tmp/g014-campaign-continuation-v241.pid.
+- **검증**: 현재 셸 docker info 성공, runner가 PPID 1/SID self인 detached process로 생존, 새 request의 첫 cell이 정확히 FedAll/KMeans/worker=1/WAN-Light.
+- **잔여 이슈**: 첫 재개 cell의 Docker create와 full audit 성공 확인; 이후 campaign 지속 감시.
+- **잠재 회귀 위험**: 세션 종료 또는 host reboot 시 detached process가 종료될 수 있다. PID liveness, progress.json, Docker resource, log tail을 함께 감시하고 authenticated predecessor로 이어간다.
+- **의사결정 근거**: staging/runtime gate를 완화하지 않고 실행 주체의 권한 상속만 바로잡았다.
+
+### 이슈 31/32 후속 검증
+
+- predecessor continuation의 첫 cell FedAll/KMeans/worker=1/WAN-Light가 성공해 combined progress 2/336이 됐다.
+- current-shell launcher에서 Docker create, coordinator/worker 실행, teardown 모두 정상 동작했다. 따라서 이슈 32의 supplementary-group 원인과 launcher 교체는 실제 Docker 경계까지 검증됐다.
+- FedAll row는 planned/lowered physical Hop 140/140, missing physical/synthetic 0, mismatch 0, semantic oracle PASS, fallback=false다.
+- DP와 달리 selectedFED=52, selectedFOUT=48, fed_fed_fout=51 executions, dispatch kinds=74, worker fragment kinds=94가 관측되어 planner plan 차이가 runtime 차이로 이어졌다.
+- warm runtime은 59.737초, FedPlanner compile phase는 3.113008초였다.
+### 이슈 31 후속 검증: KMeans worker=1 네 플래너 완료
+
+- combined progress는 4/336이다. 동일 immutable stage에서 DP, FedAll, MinST, Heuristic KMeans/worker=1/WAN-Light가 모두 성공했다.
+- 네 row 모두 semantic oracle PASS, fallback=false, runtime scan clean, cold/warm normalized runtime plan 동일, planned/lowered physical Hop 140/140, missing physical/synthetic 0, mismatch 0을 만족했다.
+- warm runtime: MinST 46.028초, FedAll 59.737초, DP 84.868초, Heuristic 95.024초.
+- selected FED/FOUT: DP 35/31, FedAll 52/48, Heuristic 48/44, MinST 24/19.
+- runtime `fed_fout` 반복 및 FED dispatch kinds: DP 0/45, FedAll 51/74, Heuristic 1/64, MinST 0/38.
+- worker instruction rows: DP 2,810, FedAll 5,734, Heuristic 4,634, MinST 2,102. emission placement SHA와 normalized runtime-plan SHA도 네 planner 모두 서로 다르다.
+- **판정**: 이 configuration에서는 planner plan이 lowering/runtime에서 동일 plan으로 붕괴하지 않았고 실제 worker workload까지 달라졌다. 단 worker=1 KMeans 한 점이므로 전체 planner 정렬이나 scaling 문제의 해결로 일반화하지 않는다.
+- **현재 실행**: predecessor continuation은 KMeans worker=2부터 이어서 수행 중이다. PID `/tmp/g014-campaign-continuation-v241.pid`, output `/home/mchoi/g014-full-results-506368f-d712daf-20260814-v2`.
+### 이슈 31 후속 검증: KMeans worker=2 네 플래너 완료
+
+- combined progress 8/336 시점에서 worker=2 네 planner도 semantic/audit/fallback/cold-warm gate를 모두 통과했다.
+- warm runtime: DP 34.511초, FedAll 37.225초, Heuristic 37.146초, MinST 33.008초.
+- FedAll과 Heuristic은 동일 emission/runtime plan이다. Heuristic receipt의 markerCount/localPrefixCount/frontierEdgeCount가 모두 0이므로 정책상 의도된 동일성이다. worker=1에서는 marker 1로 분리됐으므로 marker pipeline 전체 소실은 아니다.
+- DP와 MinST는 dispatch 38로 같아도 exact emission/runtime plan SHA가 다르며 MinST가 더 짧았다.
+- **잔여 이슈**: known heuristic marker workload인 LM/LogReg/L2SVM에서 marker 계산과 실제 no-REFED lowering을 계속 전수감사한다.
+
+## 33. 비인라인 DML 함수의 여러 출력이 aggregate `FunctionOp` 하나의 placement로 합쳐짐
+
+- **상태**: source-level 해결; 새 immutable Docker PCA 전수 검증은 미완료
+- **적용 원칙/제약**: `FunctionCallCP`의 반환은 새 연산 결과가 아니라 함수 formal exit가 가리키는 실제 `Data` 객체의 alias다. 런타임이 만들지 않는 함수 aggregate 출력 placement를 플래너가 발명하지 않는다. TRead/TWrite의 `<CP,LOUT>`/`<FED,FOUT>` 규칙과 runtime fallback 금지는 그대로 유지한다.
+- **환경/조건**: PCA처럼 한 DML 함수가 `Xout`, `Mout` 등 서로 다른 formal output을 반환하는 비인라인 호출; DP/FedAll/Heuristic/MinST 공통 graph.
+- **재현 절차**: `NeutralPlacementGraphCfgCoreTest#functionInputsAndOutputsAreSeparatedPerCallSite`를 실행한다. 수정 전 RED는 `/tmp/g014-function-output-alias-red-v243.log`이다. PCA 실물 검증은 `MinStExactProductionTractabilityCertificateTest#pcaFunctionOutputsAliasExactFormalExitValuesAcrossAllPlanners`다.
+- **관측 증상**: 각 positional `FUNCTION_OUTPUT` boundary가 실제 formal exit definition이 아니라 aggregate `FunctionOp` node의 legal alternatives와 anchor를 복제했고 `CONJUNCTIVE`로 연결됐다. 따라서 서로 다른 출력이 하나의 placement authority를 공유하고, 실제 반환값과 다른 FED/FOUT 또는 CP/LOUT 계획을 네 플래너가 합법으로 볼 수 있었다.
+- **원인 분석**: 공통 CFG 분석이 TWrite/TRead reaching definition만 추적하고 함수 exit의 formal output definition, nested function output, formal-input passthrough를 별도 값 authority로 보존하지 않았다. 그 결과 synthetic output boundary를 만들 때 선택할 exact returned-value source가 없었다.
+- **해결 요약**: CFG에 함수 호출별 positional output definition token과 함수 exit value를 추가했다. 각 output은 모든 exit에서 도달 가능한 ordinary definition, nested function output, 또는 formal-input boundary를 exact authority로 해석한다. 새 `SAME_VALUE_PLACEMENT`는 producer의 CP/FED 실행 위치가 아니라 반환값의 `LOUT` 또는 exact `FOUT/FType`을 동일하게 강제한다. branch의 여러 exit는 공통 value-placement 교집합만 허용하며, nested call은 의존 순서가 풀릴 때까지 고정점으로 확장한다. 함수 본문이 아예 없는 synthetic fixture는 aggregate call authority로 되돌리지 않고 `UNKNOWN_METADATA`의 non-emitted/zero-domain boundary로 fail closed하며, call-site 소유 관계만 placement 의미가 없는 `DOMINATES` edge로 보존한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraph.java`, `NeutralPlacementGraphBuilder.java`, `PlacementAnalysis.java`, `placement/adapter/DpPlacementAdapter.java`, `fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`, `FederatedPlannerDpMemoTable.java`, `fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`, `MinStExactPhysicalModel.java`, `MinStExactPlacementProjector.java`, `placement/selector/ExactPlacementSelector.java` 및 함수 경계/CFG/네 플래너 회귀 테스트.
+- **검증**: 최초 RED `/tmp/g014-function-output-alias-red-v243.log`; DP 전체에서 StepLM exit-definition 누락 3건을 드러낸 `/tmp/g014-ordered-dp-function-output-alias-v244.log`; 수정 후 DP 119 tests `/tmp/g014-ordered-dp-function-output-alias-v245.log` RC=0. PCA의 두 output이 aggregate call이 아닌 exact formal exit를 alias하고 네 플래너 모두 동일 value placement를 선택하는 회귀는 `/tmp/g014-pca-function-output-all-planners-v257.log` RC=0, PCA workers 1–4 exact production 검증은 `/tmp/g014-minst-pca-tractability-function-output-v258.log` RC=0이다. 누락된 DML body fixture와 call-site boundary ownership까지 포함한 focused 20 tests는 `/tmp/g014-function-output-regression-focused-v260.log`, 전체 shared placement/core 33 classes, 200 tests는 `/tmp/g014-placement-core-function-output-tread-v261.log`에서 모두 통과했다.
+- **잔여 이슈**: 이전 immutable stage의 PCA 다섯 row는 이 수정 전 authority로 생성되어 공식 결과에서 격리한다. 새 source/JAR/stage로 PCA 포함 336-cell Docker audit를 다시 수행해야 한다.
+- **잠재 회귀 위험**: branch별 반환 FType 교집합이 비면 잘못된 임의 state를 선택하거나 nested call cycle에서 무한 반복할 수 있다. exact-exit 수, alias constraint, bounded fixed-point convergence, zero-domain fail-closed fixture와 각 planner projection parity로 감지한다.
+- **의사결정 근거**: 플래너 후보를 편의상 닫거나 runtime 보정을 추가하지 않고, 공통 graph의 값 identity를 실제 FunctionCallCP 반환 semantics에 맞췄다.
+
+## 34. 함수 output boundary 수정 후 caller TRead의 후보·anchor가 과거 CP-only 상태로 남음
+
+- **상태**: source-level 해결; fresh Docker function workload 검증은 미완료
+- **적용 원칙/제약**: 함수 반환 뒤 caller의 TRead는 반환된 동일 `Data` 객체의 exact placement와 durable anchor를 받아야 한다. 가짜 입력 edge, implicit upload, runtime fallback을 추가하지 않는다.
+- **환경/조건**: 함수 호출 결과 변수 `Y=f(X)`를 후속 Hop이 `TRead Y`로 읽는 ALS/StepLM/LogReg/PCA 및 loop/function 조합.
+- **재현 절차**: `FederatedPlannerFallbackIntegrationTest`의 ALS/StepLM/LogReg DP 세 메서드를 실행한다. 수정 전 `/tmp/g014-function-output-boundary-focused-v248.log`에서 `requested=[]`, `available=[ABSENT_LOCAL]`인 `CandidateRuleLookupException` 3건이 재현된다. 최소 회귀는 `NeutralPlacementGraphCfgCoreTest#callerTReadReplaysExactFunctionReturnPlacementDomain`이다.
+- **관측 증상**: formal exit→synthetic `FUNCTION_OUTPUT`은 FED/FOUT을 보존하도록 고쳤지만, caller TRead candidate는 그 boundary가 생성되기 전 원래 CFG 순서에서 이미 CP/LOUT/absent-local로 계산돼 있었다. output state와 anchor가 나중에 바뀌어도 TRead와 하위 candidate/materialization facts가 재계산되지 않았다.
+- **원인 분석**: 함수 input candidate closure만 고정점으로 반복했고, 함수 output boundary→CFG TRead→descendant physical candidate/worker-pool materialization의 역방향·후속 전파가 closure에 포함되지 않았다. 또한 `FunctionCallCP` 반환 alias를 일반 Hop input처럼 한 칸짜리 가짜 ordered input으로 표현하면 실제 zero-input TRead lookup과 불일치했다.
+- **해결 요약**: 각 closure pass를 `formal-input closure → descendant/materialization replay → exact output refresh → caller TRead exact-source 교집합 → descendant/materialization replay → output refresh` 순으로 반복하고 nodes/candidate keys/facts가 모두 같을 때만 종료한다. caller TRead domain은 ordinary CFG definition, synthetic function output, formal-input passthrough의 exact value-placement 교집합과 공통 anchor로 만든다. FunctionCallCP는 입력 materialization을 만들지 않으므로 candidate key는 실제와 같은 empty ordered-input 하나이며, 그 하나의 fact가 가능한 CP/LOUT 및 FED/FOUT emission들을 명시한다. 이 exact alias domain은 opcode oracle의 지원 domain과 같을 필요는 없고 그 부분집합이어야 하므로, oracle가 exact state를 모두 지원하는지만 확인한 뒤 caller TRead의 legal domain을 exact 교집합으로 축소하고 oracle의 나머지 후보는 `CONSTRAINT_CONFLICT`로 기록한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`, `src/test/java/org/apache/sysds/test/component/federated/placement/core/NeutralPlacementGraphCfgCoreTest.java`, `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`, `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactProductionTractabilityCertificateTest.java`.
+- **검증**: 최소 CFG 회귀 `/tmp/g014-function-output-tread-focused-v247.log` RC=0. 수정 전 세 통합 오류는 `/tmp/g014-function-output-boundary-focused-v248.log`, 수정 후 동일 세 메서드는 `/tmp/g014-function-output-dp-three-v250.log`, function boundary+CFG+fallback 156 tests는 `/tmp/g014-function-output-boundary-focused-v251.log`에서 통과했다. 최종 shared placement/core는 33 classes/200 tests(`/tmp/g014-placement-core-function-output-tread-v261.log`), ordered planner 회귀는 DP 119(`/tmp/g014-ordered-dp-function-output-tread-v262.log`), FedAll 7(`/tmp/g014-ordered-fedall-function-output-tread-v263.log`), Heuristic 2(`/tmp/g014-ordered-heuristic-function-output-tread-v264.log`), MinST short 80(`/tmp/g014-ordered-minst-function-output-tread-v265.log`) 모두 RC=0이다. KMeans의 exact source가 CP-only인데 TRead oracle가 CP+FED를 지원하는 부분집합 사례는 최초 전체 증명 `/tmp/g014-minst-production-tractability-function-output-v266.log`에서 RED였고, 수정 후 `/tmp/g014-function-output-tread-exact-domain-v267.log` RC=0이다.
+- **잔여 이슈**: 공통 lowering/runtime bundle과 ordered planner 회귀를 최신 변경 위에서 다시 완료한 뒤 immutable snapshot을 만들어야 한다. Docker에서는 함수 output plan hash와 TRead/lowered/runtime action identity가 같은지 PCA/ALS/StepLM/LogReg cell에서 확인한다.
+- **잠재 회귀 위험**: 여러 branch source의 anchor 교집합이 잘못 union되거나 closure가 fingerprint 순서에 따라 달라질 수 있다. exact set equality, common-anchor assertion, deterministic convergence, four-planner output parity, cold/warm runtime-plan audit로 감지한다.
+- **의사결정 근거**: candidate-space를 줄인 것이 아니라 늦게 만들어진 exact function value authority를 기존 공통 후보·물리 action 분석에 완전히 전파했다.
+
+## 35. DP가 아직 투영되지 않은 function-output latent boundary의 합법성을 초기 local 선택에서 놓침
+
+- **상태**: source-level/ordered/lowering 회귀와 28-case production certificate 통과; Docker KMeans 재검증 진행중
+- **적용 원칙/제약**: DP는 자신 Hop과 직접 자식의 local recurrence를 유지하지만, 선택 결과는 공통 graph의 exact 함수 값 alias 제약을 반드시 만족해야 한다. candidate를 닫거나 함수 output boundary를 넓히거나 runtime fallback으로 보정하지 않는다.
+- **환경/조건**: KMeans workers=1/2 production analysis, builtin `m_kmeans`의 output `Y`가 여러 formal exit definition을 가지며 그 exact 교집합이 `<CP,LOUT>` 하나인 경우.
+- **재현 절차**: `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactProductionTractabilityCertificateTest#kmeansWorkerCountTransitionRetainsExactDpPlacementCarriers test`. 최초 전체 재실행 로그는 `/tmp/g014-minst-production-tractability-function-output-v266.log`이다.
+- **관측 증상**: synthetic `FUNCTION_OUTPUT(Y)`의 legal alternatives는 `[CP/LOUT]`인데, DP local traversal이 반환 authority 하나를 `FED/FOUT/ROW`로 먼저 고정했다. boundary는 ordinary DP memo arm이 아니어서 이 시점에는 selected state가 없었고, 기존 repair는 constraint 양 끝이 모두 selected인 경우만 검사했다. 마지막 projection에서야 `DP synthetic boundary has no unique normalized source state`로 실패했다.
+- **원인 분석**: exact legality repair가 synthetic boundary를 “나중에 투영할 latent variable”로 모델링하지 않았다. 따라서 이미 선택된 모든 incident ordinary source를 동시에 만족하는 boundary alternative가 존재하는지 검사하지 못했고, 해당 source의 owner component를 재개방할 기회가 사라졌다.
+- **해결 요약**: repair 시작 시 selectable `FUNCTION_INPUT/FUNCTION_OUTPUT`별로 현재 선택된 incident source state를 모아, boundary legal domain에 모든 exact constraint를 동시에 만족하는 state가 있는지 검사한다. 없으면 synthetic node 자체가 아니라 선택된 ordinary neighbor들을 repair seed로 넣고 기존 canonical owner-component closure 전체를 재개방한다. exact join과 동일한 feasibility helper를 공유하며, 그 안에서는 기존 DP output preference와 local cumulative-cost 순서를 그대로 사용한다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`.
+- **검증**: 최초 RED는 `/tmp/g014-minst-production-tractability-function-output-v266.log`의 3 errors 중 KMeans 두 경로다. focused worker-transition은 `/tmp/g014-kmeans-dp-output-boundary-repair-v268.log`, KMeans workers=2 production certificate의 DP baseline+MinST exact path는 `/tmp/g014-kmeans-w2-production-certificate-v269.log`에서 모두 RC=0이다. 전체 8-method/28-case production tractability 재실행은 `/tmp/g014-minst-production-tractability-function-output-v270.log`에서 failures=0, errors=0, skipped=0, 515.509초, RC=0으로 통과했다. 최신 shared/core 200, DP 119, FedAll 7, Heuristic 2, MinST-short 80은 각각 `/tmp/g014-placement-core-latent-boundary-v271.log`부터 v275까지 모두 RC=0이고, fallback/lowering 145+13 tests는 `/tmp/g014-function-output-runtime-lowering-v276.log`에서 RC=0이다.
+- **잔여 이슈**: fresh immutable Docker KMeans plan/runtime audit와 이후 336-cell campaign을 완료한다.
+- **잠재 회귀 위험**: synthetic boundary에 연결된 여러 owner component를 과도하게 하나로 재개방하면 DP compile 시간이 증가할 수 있다. repair trace의 member count, exact component diagnostics, KMeans/LM/L2SVM production certificate wall-clock으로 감지한다.
+- **의사결정 근거**: DP를 global optimizer로 바꾸지 않고, 이미 graph에 선언된 전역 값 합법성을 만족시키기 위해 불법인 local 선택 family만 다시 푼다.
+
+## 36. DP exact join이 현재 component가 건드린 synthetic incident만 보고 이전 component의 fixed incident를 누락함
+
+- **상태**: 해결; focused/ordered/common-lowering/28-case production certificate 재검증 완료
+- **적용 원칙/제약**: synthetic function boundary는 여러 ordinary occurrence가 공유하는 하나의 latent exact placement다. component를 순차 처리하더라도 이미 확정된 incident와 현재 선택 중 incident를 같은 교집합으로 검사해야 하며, DP의 local recurrence 순서는 그대로 유지한다.
+- **환경/조건**: 하나의 `FUNCTION_INPUT` 또는 `FUNCTION_OUTPUT` boundary에 이전 component에서 확정된 ordinary source와 현재 exact join에서 선택하는 source가 동시에 연결되는 함수/CFG 계획.
+- **재현 절차**: KMeans/L2SVM/LogReg의 DP production focused 경로를 묶어 실행한다: `MinStExactProductionTractabilityCertificateTest#kmeansWorkerCountTransitionRetainsExactDpPlacementCarriers+l2SvmTwoWorkerDpBaselineSelectsFromTheUnmodifiedFinalBoundary+logRegFourWorkerDpAcceptsEquivalentForeignLocalValueBoundaries`.
+- **관측 증상**: 코드 검토에서 `exactJoinLegalityViolation(...)`가 `currentLeft == null && currentRight == null`이면 즉시 건너뛰어, fixed ordinary source→synthetic boundary incident를 수집하지 않는 것을 확인했다. 현재 component의 source가 같은 boundary를 touch해도 final feasibility intersection에는 현재 source만 들어가므로, boundary가 CP와 FED를 모두 지원할 때 서로 다른 fixed/current placement를 합법으로 오판할 수 있었다.
+- **원인 분석**: “관련 없는 이전 lock이 독립 component를 거부하면 안 된다”는 early-return과 “현재 component가 같은 latent boundary를 touch하면 모든 fixed incident가 관련된다”는 조건이 분리되지 않았다.
+- **해결 요약**: fixed-only synthetic incident도 먼저 수집하되, 현재 component endpoint가 같은 boundary를 touch한 경우에만 그 전체 incident set을 평가한다. ordinary-ordinary fixed constraint는 기존처럼 독립 component를 거부하지 않는다. legality repair seed도 synthetic node를 넣지 않고 canonical ordinary owner만 넣어 component projection 전제와 일치시켰다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`.
+- **검증**: KMeans/L2SVM/LogReg focused 묶음 `/tmp/g014-dp-synthetic-fixed-incidents-v277.log` RC=0, DP 전체 36 classes/119 tests `/tmp/g014-ordered-dp-synthetic-fixed-incidents-v278.log` RC=0. 당시 전체 certificate `/tmp/g014-minst-production-synthetic-fixed-incidents-v279.log`도 8 JUnit methods 내부의 7 workload × workers 1–4 전수 28 case, failures/errors/skips 0, 489.602초, RC=0으로 끝났다. 이후 이슈 37/38 수정까지 포함한 최종 fresh 검증은 DP 36 classes/119 tests(`/tmp/g014-ordered-dp-current-v292.log`, SHA-256 `b806484bc11a45aea7b318808c21f817699b4c4716b821bef9fb6f9822823910`), 공통 lowering 158 tests(`/tmp/g014-function-output-runtime-lowering-current-v297.log`, SHA-256 `0af622f1f6d45601583444523de14f0d0e31633197c8f3425da08e458924fee9`), production 전수(`/tmp/g014-minst-production-synthetic-current-v298.log`, 512.072 test-sec/520 wall-sec, RC=0, SHA-256 `35bba66a9d6f8bd40729255e1e8c38c4d67eeb8df3314770cfa09478be91504d`)까지 통과했다.
+- **잔여 이슈**: 새 immutable JAR/stage에서 Docker plan/runtime hash parity와 336-cell 전수 실행을 확인한다.
+- **잠재 회귀 위험**: unrelated fixed incident까지 무조건 평가하면 처리 순서에 따라 독립 component가 거부될 수 있다. `touchedSynthetic` gate와 KMeans/L2SVM/LogReg 다중 component certificate로 감지한다.
+- **의사결정 근거**: candidate/domain/cost를 바꾸지 않고 동일 latent variable의 누락된 fixed constraint만 exact join에 포함했다.
+
+## 37. candidate row가 없는 synthetic exact graph에서 FedAll/Heuristic relocation demand가 사라짐
+
+- **상태**: 해결; 직접 adapter 회귀와 네 플래너 분석 계약 재검증 완료
+- **적용 원칙/제약**: graph-only synthetic fixture에서는 graph의 relocation obligation이 완전한 물리 authority다. candidate row가 존재하는 production analysis에서만 row-aware candidate/action projection을 사용하며, runtime fallback이나 후보 폐쇄를 추가하지 않는다.
+- **환경/조건**: `CampaignBFedAllExactAdapterContractTest`, `CampaignBAllPlannerAnalysisContractTest`가 만드는 `PlacementAnalysis`는 graph와 analysis identity는 제공하지만 `candidateRuleFacts`가 비어 있다.
+- **재현 절차**: `mvn -q -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBFedAllExactAdapterContractTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBAllPlannerAnalysisContractTest test`. 수정 전 로그는 `/tmp/g014-current-only-regressions-v285.log`이다.
+- **관측 증상**: FedAll exact adapter는 한 개여야 하는 relocation 선택을 빈 목록으로 반환했고, Heuristic은 `Relocation choices do not cover every active exact demand`로 실패했다.
+- **원인 분석**: `ExactPlacementSelector.select(analysis, graph)`가 `analysis != null`만으로 row-aware scorer를 선택했다. 그러나 synthetic analysis에는 candidate row가 전혀 없으므로 row projection이 graph-owned relocation demand를 모두 지웠다. 이는 production candidate가 없다는 뜻이 아니라, 해당 fixture의 authority 표현이 graph-only라는 뜻이다.
+- **해결 요약**: `analysis.candidateRuleFacts().orderedFacts()`가 비어 있지 않을 때만 `candidateAnalysis`로 row-aware solve/bound/projection을 수행한다. 행이 없으면 기존 graph-owned exact path로 canonical relocation choice를 계산하되 adapter result에는 원래 analysis 객체를 그대로 보존한다. 테스트 bridge는 실패 시 실제 cause와 case id를 노출하도록 진단만 강화했다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/ExactPlacementSelector.java`, `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4SharedFedAllAdapterBridge.java`, `CampaignBAllPlannerAnalysisContractTest.java`.
+- **검증**: focused `/tmp/g014-fedall-heuristic-graphonly-fix-v287.log`에서 FedAll 3/3 및 all-planner 선택 계약 1/1 통과. 통합 current-only bundle `/tmp/g014-current-only-regressions-fixed-v290.log`은 3 classes/17 tests, failures/errors/skips 0, SHA-256 `9fdf2c551c997edd5c63a4e30385f00628d539b8b5b27cd079a510fa29f24953`. 이후 FedAll 7/7(`/tmp/g014-ordered-fedall-current-v293.log`, SHA-256 `2973176ccbe639a32d53eda1948339dd374512e275a7555ce32fa6c563efa732`)와 Heuristic 2/2(`/tmp/g014-ordered-heuristic-current-v294.log`, SHA-256 `e12e9b0f58bdfe618807475b48a451945025e45dbe6512428b82e119af2b9d0c`)가 통과했다.
+- **잔여 이슈**: Docker production analysis에서는 candidate row가 항상 존재하는지 cell receipt에서 fail-closed 확인한다.
+- **잠재 회귀 위험**: production analysis가 결함으로 빈 candidate row를 만들었는데 graph-only로 오인하면 오류가 늦게 드러날 수 있다. production builder의 candidate coverage 검증과 336-cell emission/runtime audit로 감지한다.
+- **의사결정 근거**: runtime-supported candidate를 닫지 않고 두 입력 표현의 실제 authority 소유권을 구분했다.
+
+## 38. qualified function namespace 충돌과 recursive output alias cycle이 exact 함수 경계를 깨뜨림
+
+- **상태**: 해결; namespace/recursive/function-occurrence 회귀 및 28-case production certificate 통과
+- **적용 원칙/제약**: 함수 output은 정확히 그 namespace의 formal exit value를 alias해야 한다. 재귀 함수는 임의 depth로 펼치지 않고 유한한 call-carrier placement domain과 CFG value equation으로 표현하며, MinST의 재귀 occurrence 비용이 지원되지 않으면 typed applicability reason으로 거부한다.
+- **환경/조건**: 동일 함수명 `a::f`, `b::f`; direct recursion 및 mutual recursion; `CampaignBR4MinStOccurrenceDemandRedTest`.
+- **재현 절차**: `mvn -q -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBR4MinStOccurrenceDemandRedTest test`. 수정 전 `/tmp/g014-current-only-regressions-v285.log`에서 namespace 합침과 recursive output alias cycle이 재현됐다.
+- **관측 증상**: CFG exit lookup이 unqualified function name을 사용해 서로 다른 namespace의 `f`를 같은 exit authority로 찾았다. 재귀 호출은 output boundary를 topological 순서로만 생성하려 해 어느 call도 ready가 되지 않았고 expansion이 멈췄다.
+- **원인 분석**: function-body registry의 key는 default namespace만 bare name이고 그 외에는 `namespace::name`인데 lookup은 항상 bare name을 사용했다. 또한 recursive SCC에는 본질적으로 topological output-boundary 생성 순서가 없다.
+- **해결 요약**: CFG exit lookup을 default namespace일 때만 bare name, 그 외에는 `DMLProgram.constructFunctionKey(namespace,name)`으로 맞췄다. output expansion이 진행되지 않으면 unresolved recursive set 전체에 call node의 유한 transient placement domain/anchor를 동시에 seed하고, exact CFG `SAME_VALUE_PLACEMENT` 식을 연결한 뒤 기존 fixed-point refresh가 교집합만 취하게 했다. 임의 recursion depth나 새 placement를 만들지 않는다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java` 및 기존 `CampaignBR4MinStOccurrenceDemandRedTest` 회귀.
+- **검증**: `/tmp/g014-minst-function-boundary-fix-v289.log` 9/9 통과(SHA-256 `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`). 공통 placement/core 33 classes/200 tests(`/tmp/g014-placement-core-current-v296.log`, SHA-256 `4bbb666fe7c6ecce5d38bf2bc55abe063fff70e0ebfca0e569d2b9babf578c95`), MinST-short 21 classes/80 tests(`/tmp/g014-ordered-minst-short-current-v295.log`, SHA-256 `ab009b15aca722be244a2b61029b575ba88ba2fdf598488519c0c3d682c0f567`) 및 이슈 36의 fresh production 전수가 통과했다.
+- **잔여 이슈**: 실제 7 workload에는 사용자 정의 mutual recursion workload가 없으므로 Docker 전수는 일반 함수/recompile 전달만 검증한다. 재귀 비용 최적화 자체는 현재 typed unsupported 범위다.
+- **잠재 회귀 위험**: provisional recursive domain이 너무 넓으면 selector 비용이 증가하고, 너무 좁으면 합법 placement를 잃는다. call carrier domain 부분집합, exact CFG equation, deterministic convergence와 typed MinST rejection 회귀로 감지한다.
+- **의사결정 근거**: 후보를 닫거나 재귀를 유한 depth로 근사하지 않고 실제 함수 namespace/CFG value identity를 복원했다.
+
+## 39. 광범위 placement guard의 역사적 RED를 현재 회귀로 오판할 위험
+
+- **상태**: 해결(분류/검증 기준); 역사적 RED 자체는 별도 과제로 유지
+- **적용 원칙/제약**: 테스트를 무조건 GREEN으로 만들기 위해 production 후보·비용·runtime 규칙을 약화하지 않는다. 현재 변경의 회귀 판정은 동일 명령을 clean HEAD와 실행한 baseline-relative 결과와 최신 표적 GREEN을 함께 사용한다.
+- **환경/조건**: `org.apache.sysds.test.component.federated.placement.guard.*Test`와 `RulesetsGuardTest` 전체.
+- **재현 절차**: current와 clean HEAD `a922bee6d1`에서 동일 Maven selector를 실행한다. current 로그 `/tmp/g014-placement-architecture-guards-rerun-v291.log`, clean baseline `/tmp/g014-head-architecture-guards-baseline-v281.log`.
+- **관측 증상**: 전체 명령은 양쪽 모두 228 tests, failures 12, errors 26, skipped 13으로 실패한다. 실패에는 오래된 source literal, stale hash fixture, legacy MinST membership ambiguity, 과거 architecture scanner 등이 포함된다.
+- **원인 분석**: guard 디렉터리는 현재 acceptance suite뿐 아니라 의도적으로 남은 RED/구형 migration contract를 함께 보유한다. 이를 절대 GREEN gate로 사용하면 신규 기능과 무관한 테스트 기대값에 맞추려고 올바른 production 의미를 되돌릴 위험이 있다.
+- **해결 요약**: source가 존재하는 49개 class report만 비교하는 baseline receipt를 생성했다. current와 clean HEAD의 클래스별 `(tests,failures,errors,skipped)` map이 byte-equivalent이며 current-only bad class는 0이다. source가 이미 삭제된 stale XML 한 개는 양쪽에서 명시적으로 제외했다.
+- **수정 파일**: production 변경 없음. 비교 receipt `/tmp/g014-broad-guard-baseline-comparison-v291.json`.
+- **검증**: comparison schema `g014-broad-guard-baseline-comparison-v2`, exact equality `true`, 양쪽 totals `228/12/26/13`, SHA-256 `2a4ca00451bb510f1f77301ea90d51db84cb217d66752ce1e968298f5d06372c`. 현재 변경으로 실제 발생했던 17개 회귀는 이슈 37/38의 `/tmp/g014-current-only-regressions-fixed-v290.log`에서 모두 GREEN이다.
+- **잔여 이슈**: 역사적 RED는 각각의 승인된 migration/architecture 작업에서 별도로 갱신한다. 현재 Docker campaign gate에는 포함하지 않는다.
+- **잠재 회귀 위험**: baseline-relative 비교만 쓰면 양쪽에 공통인 진짜 결함을 놓칠 수 있다. 따라서 공통/ordered/lowering/production 표적 GREEN과 Docker fail-closed audit를 반드시 함께 요구한다.
+- **의사결정 근거**: 실패 테스트를 맞추기 위한 후보 폐쇄나 계약 완화 대신 evidence provenance를 분리했다.

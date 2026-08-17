@@ -42,6 +42,7 @@ import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.QuaternaryCPInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.spark.QuaternarySPInstruction;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.matrix.operators.QuaternaryOperator;
@@ -51,12 +52,22 @@ public abstract class QuaternaryFEDInstruction extends ComputationFEDInstruction
 
 	protected QuaternaryFEDInstruction(FEDInstruction.FEDType type, Operator operator, CPOperand in1, CPOperand in2,
 		CPOperand in3, CPOperand out, String opcode, String instruction_str) {
-		super(type, operator, in1, in2, in3, out, opcode, instruction_str);
+		this(type, operator, in1, in2, in3, out, opcode, instruction_str, FederatedOutput.NONE);
+	}
+
+	protected QuaternaryFEDInstruction(FEDInstruction.FEDType type, Operator operator, CPOperand in1, CPOperand in2,
+		CPOperand in3, CPOperand out, String opcode, String instruction_str, FederatedOutput fedOut) {
+		super(type, operator, in1, in2, in3, out, opcode, instruction_str, fedOut);
 	}
 
 	protected QuaternaryFEDInstruction(FEDInstruction.FEDType type, Operator operator, CPOperand in1, CPOperand in2,
 		CPOperand in3, CPOperand in4, CPOperand out, String opcode, String instruction_str) {
-		super(type, operator, in1, in2, in3, out, opcode, instruction_str);
+		this(type, operator, in1, in2, in3, in4, out, opcode, instruction_str, FederatedOutput.NONE);
+	}
+
+	protected QuaternaryFEDInstruction(FEDInstruction.FEDType type, Operator operator, CPOperand in1, CPOperand in2,
+		CPOperand in3, CPOperand in4, CPOperand out, String opcode, String instruction_str, FederatedOutput fedOut) {
+		super(type, operator, in1, in2, in3, out, opcode, instruction_str, fedOut);
 		_input4 = in4;
 	}
 
@@ -119,7 +130,10 @@ public abstract class QuaternaryFEDInstruction extends ComputationFEDInstruction
 			opcode.equals(WeightedDivMM.OPCODE_CP)) ? 1 : 0;
 		int addUOpcode = (opcode.equals(WeightedUnaryMM.OPCODE_CP) ? 1 : 0);
 
-		InstructionUtils.checkNumFields(parts, 6 + addInput4 + addUOpcode);
+		int baseFields = 6 + addInput4 + addUOpcode;
+		int numFields = InstructionUtils.checkNumFields(parts, baseFields, baseFields + 1);
+		FederatedOutput fedOut = numFields == baseFields + 1
+			? FederatedOutput.valueOf(parts[parts.length - 1]) : FederatedOutput.NONE;
 
 		CPOperand in1 = new CPOperand(parts[1 + addUOpcode]);
 		CPOperand in2 = new CPOperand(parts[2 + addUOpcode]);
@@ -139,33 +153,33 @@ public abstract class QuaternaryFEDInstruction extends ComputationFEDInstruction
 					checkDataTypes(new DataType[] {DataType.SCALAR, DataType.MATRIX}, in4);
 				qop = (wcemm_type.hasFourInputs() ? new QuaternaryOperator(wcemm_type,
 					Double.parseDouble(in4.getName())) : new QuaternaryOperator(wcemm_type));
-				return new QuaternaryWCeMMFEDInstruction(qop, in1, in2, in3, in4, out, opcode, str);
+				return new QuaternaryWCeMMFEDInstruction(qop, in1, in2, in3, in4, out, opcode, str, fedOut);
 			}
 			else if(opcode.equals(WeightedDivMM.OPCODE_CP)) {
 				final WDivMMType wdivmm_type = WDivMMType.valueOf(parts[6]);
 				if(wdivmm_type.hasFourInputs())
 					checkDataTypes(new DataType[] {DataType.SCALAR, DataType.MATRIX}, in4);
 				qop = new QuaternaryOperator(wdivmm_type);
-				return new QuaternaryWDivMMFEDInstruction(qop, in1, in2, in3, in4, out, opcode, str);
+				return new QuaternaryWDivMMFEDInstruction(qop, in1, in2, in3, in4, out, opcode, str, fedOut);
 			}
 			else if(opcode.equals(WeightedSquaredLoss.OPCODE_CP)) {
 				final WeightsType weights_type = WeightsType.valueOf(parts[6]);
 				if(weights_type.hasFourInputs())
 					checkDataTypes(DataType.MATRIX, in4);
 				qop = new QuaternaryOperator(weights_type);
-				return new QuaternaryWSLossFEDInstruction(qop, in1, in2, in3, in4, out, opcode, str);
+				return new QuaternaryWSLossFEDInstruction(qop, in1, in2, in3, in4, out, opcode, str, fedOut);
 			}
 		}
 		else if(opcode.equals(WeightedSigmoid.OPCODE_CP)) {
 			final WSigmoidType wsigmoid_type = WSigmoidType.valueOf(parts[5]);
 			qop = new QuaternaryOperator(wsigmoid_type);
-			return new QuaternaryWSigmoidFEDInstruction(qop, in1, in2, in3, out, opcode, str);
+			return new QuaternaryWSigmoidFEDInstruction(qop, in1, in2, in3, out, opcode, str, fedOut);
 		}
 		else if(opcode.equals(WeightedUnaryMM.OPCODE_CP)) {
 			final WUMMType wumm_type = WUMMType.valueOf(parts[6]);
 			String uopcode = parts[1];
 			qop = new QuaternaryOperator(wumm_type, uopcode);
-			return new QuaternaryWUMMFEDInstruction(qop, in1, in2, in3, out, opcode, str);
+			return new QuaternaryWUMMFEDInstruction(qop, in1, in2, in3, out, opcode, str, fedOut);
 		}
 
 		throw new DMLRuntimeException("Unsupported opcode (" + opcode + ") for QuaternaryFEDInstruction.");

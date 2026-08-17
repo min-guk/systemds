@@ -250,6 +250,25 @@ public class FederatedDagExactRefedInputProjectionTest {
 	}
 
 	@Test
+	public void selectedFoutEdgePreventsRedundantTransposeFromOverwritingProducerLopIdentity() {
+		DataOp x = localHop("X", 10, 4);
+		Hop firstTranspose = HopRewriteUtils.createTranspose(x);
+		Hop secondTranspose = HopRewriteUtils.createTranspose(firstTranspose);
+		FederatedFoutMaterializeRegistry.registerConsumerInputs(-1L, firstTranspose.getHopID(),
+			x.getHopID(), "FULL", "X", "worker:1;|0,10;0,4;|FULL",
+			List.of(new ConsumerInputSpec(secondTranspose.getHopID(), 0)), "selected-fout-edge");
+
+		Lop outer = secondTranspose.constructLops();
+
+		assertTrue("The selected FOUT edge must keep the consuming transpose explicit",
+			outer instanceof org.apache.sysds.lops.Transform);
+		assertSame("The consuming transpose must retain the selected producer Lop as its exact input",
+			firstTranspose.getLops(), outer.getInput(0));
+		assertEquals("The producer Lop identity must not be overwritten by redundant-transpose elimination",
+			firstTranspose.getHopID(), firstTranspose.getLops().getHopID());
+	}
+
+	@Test
 	public void selectedDirectFoutNestedTernaryInputRemainsExplicit() throws Exception {
 		DataOp x = localHop("X");
 		DataOp weights = localHop("weights");
