@@ -213,3 +213,32 @@ targeted tests, package, `git diff --check`를 사용했다.
 - `/tmp/g007-bb30-fresh-target-20260727`를 다시 생성한 뒤 test-compile/package를 성공시켰다.
 - **잠재 회귀 위험**: 다시 `mvn clean`하면 동일 현상이 발생할 수 있다. 이 checkout에서는 clean 대신
   target directory 존재를 확인하고 incremental `test-compile`/`package`를 사용한다.
+
+## 공통 privacy metadata 획득이 runtime CLEAR target을 중복 등록한 문제
+
+- **상태**: 해결
+- **환경/조건**: Docker canary, DP/KMeans/WAN-light/1 worker, cold/warm 두 phase
+- **관측 증상**: semantic oracle와 coordinator runtime placement audit는 모두 통과했고 이전 성공 실행과
+  `runtime_plan_sha256` 및 FED opcode fingerprint도 같았지만, worker audit summary가 phase당 두 번씩
+  출력되어 총 4 blocks가 되었다. harness의 exact two-phase evidence 검증은 이를 거부했다.
+
+### 원인 분석
+
+- 공통 pre-selector source metadata는 DNS를 privacy RPC 전제조건으로 만들지 않기 위해 unresolved
+  `InetSocketAddress`를 사용했다.
+- 그러나 일반 `FederatedData` 생성자는 endpoint를 runtime cleanup 전역 집합 `_allFedSites`에 즉시
+  등록한다. 이후 실제 `fedinit`은 resolved endpoint를 별도 entry로 등록했다.
+- Java에서 unresolved/resolved socket address는 같은 host/port라도 같은 set entry가 아니므로,
+  `clearFederatedWorkers()`가 동일 worker에 CLEAR를 두 번 보냈다. 선택된 physical plan은 바뀌지 않았다.
+
+### 해결 및 회귀 검증
+
+- `FederatedData.forPlannerMetadata(...)`를 추가해 planner-time lookup metadata를 runtime cleanup
+  target으로 publish하지 않도록 했다. 실제 runtime data는 기존 registering constructor를 계속 쓴다.
+- `FederatedPlannerUtils.resolveFederatedSourceMetadata(...)`는 이 side-effect-free factory를 사용한다.
+- `SharedPrivacyPlacementAnalysisContractTest#plannerMetadataResolutionDoesNotRegisterRuntimeCleanupSites`는
+  수정 전 등록 site 수 2로 실패했고, 수정 후 0을 검증한다.
+- shared privacy/four-planner/current-Exact focused suite를 재실행해 종료 코드 0을 확인했다.
+- 실패 증거 stage/output은 삭제하지 않는다.
+  - stage: `g014-planning-audit-stage-5f01c2c-d712daf-20260818-r13`
+  - output: `g014-full-results-5f01c2c-d712daf-20260818-v1`

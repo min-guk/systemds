@@ -18,6 +18,7 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -45,6 +46,7 @@ import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -100,6 +102,23 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 				Assert.assertEquals(ExecType.FED, state.execType());
 				Assert.assertEquals(FederatedOutput.FOUT, state.output());
 			});
+	}
+
+	@Test
+	public void plannerMetadataResolutionDoesNotRegisterRuntimeCleanupSites() throws Exception {
+		DMLProgram program = compile(FEDERATED_SOURCE + "print(sum(A));\n", false);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		DataOp source = federatedSource(program);
+
+		FederatedData.resetFederatedSites();
+		try {
+			FederatedPlannerUtils.resolveFederatedSourceMetadata(source);
+			Assert.assertEquals("pre-selector metadata must not create runtime CLEAR targets",
+				0, registeredFederatedSiteCount());
+		}
+		finally {
+			FederatedData.resetFederatedSites();
+		}
 	}
 
 	@Test
@@ -183,5 +202,11 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 			pending.addAll(hop.getInput());
 		}
 		throw new IllegalStateException("Fixture has no federated source");
+	}
+
+	private static int registeredFederatedSiteCount() throws Exception {
+		Field sites = FederatedData.class.getDeclaredField("_allFedSites");
+		sites.setAccessible(true);
+		return ((Set<?>) sites.get(null)).size();
 	}
 }

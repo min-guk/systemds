@@ -124,6 +124,22 @@ public class FederatedData {
 		_varID = varID;
 	}
 
+	/**
+	 * Create transport metadata for a planner-time lookup without publishing the
+	 * endpoint as a runtime cleanup target. Runtime federated data must continue to
+	 * use the registering constructor so that {@link #clearFederatedWorkers()} can
+	 * release worker execution contexts exactly once.
+	 *
+	 * @param dataType federated data type
+	 * @param address worker endpoint
+	 * @param filepath worker-local data path
+	 * @return uninitialized metadata that is not registered in {@code _allFedSites}
+	 */
+	public static FederatedData forPlannerMetadata(Types.DataType dataType,
+		InetSocketAddress address, String filepath) {
+		return new FederatedData(dataType, address, filepath, -1);
+	}
+
 	public InetSocketAddress getAddress() {
 		return _address;
 	}

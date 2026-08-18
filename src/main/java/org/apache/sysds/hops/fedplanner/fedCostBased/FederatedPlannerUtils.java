@@ -408,7 +408,7 @@ public class FederatedPlannerUtils {
 			// Keep worker identity symbolic while constructing placement authority. DNS is
 			// a transport concern and must not precede a successful local-metadata lookup;
 			// an actual privacy RPC still resolves (or fails) at the network boundary.
-			FederatedData federatedData = new FederatedData(fedDataType,
+			FederatedData federatedData = FederatedData.forPlannerMetadata(fedDataType,
 				InetSocketAddress.createUnresolved(host, port), filePath);
 			FederatedRange range = new FederatedRange(beginRange, endRange);
 			Pair<FederatedRange, FederatedData> pair = new ImmutablePair<>(range, federatedData);
