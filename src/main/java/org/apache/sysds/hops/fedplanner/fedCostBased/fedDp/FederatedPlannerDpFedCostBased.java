@@ -3414,7 +3414,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						effectiveRootOccurrence.key(), effectiveRootOccurrence));
 				}
 			}
-			rewriteHop(rootPlan, memoTable, localDecisions, localVisited, localFTypes,
+			// Scheduling, receipts, and capture must consume the same exact arm. A
+			// boundary lock may replace the seed with an arm that has the same output
+			// state but different candidate, relocation, and input contracts.
+			rewriteHop(effectiveRoot, memoTable, localDecisions, localVisited, localFTypes,
 				localConflicts, true, localRequests, localSelected,
 				new CaptureTraversalContext(componentId, ledger,
 					scheduledRoots.get(rootOrdinal), null));
@@ -3745,8 +3748,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable.requirePlanCarrierOccurrence(selected.getHopRef());
 		if(ledger != null) {
 			SelectedDpState lock = ledger.selectionLock(occurrence.key());
-			if(lock != null && (selected.getSelectedPlacementState() != lock.exactState()
-				|| selected.isDerivedFedFout() != lock.derivedFedFout())) {
+			// One occurrence can retain multiple candidate/relocation arms with the
+			// same FED/FOUT state. Rebind the raw or recompile carrier to the exact
+			// component-join authority before scheduling and capture.
+			if(lock != null && !sameExactAuthority(lock, selectedState(selected))) {
 				FederatedPlannerDpMemoTable.FedPlan locked = ledger.exactBoundaryPlan(
 					memoTable, occurrence, declaration.getKey(), outputDecisions);
 				selected = locked;
@@ -4106,7 +4111,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				coalesceSelectedState(selectedStates, occurrenceKey, selectedState(effectivePlan));
 			else {
 				if(traversalContext.incomingRoot != null)
-					traversalContext.ledger.consumeRoot(traversalContext.incomingRoot, plan,
+					traversalContext.ledger.consumeRoot(traversalContext.incomingRoot,
+						traversalContext.incomingRoot.seedPlan,
 						effectivePlan, effectiveOccurrence);
 				OrdinaryComponentId owner = traversalContext.ledger.ownerIndex.owner(occurrenceKey);
 				boolean exactVisitedRevisit = visitedPlanHops != null && visitedPlanHops.contains(occurrenceKey);

@@ -96,10 +96,15 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 			int materializedTransposes = count(explain, "FED r' X.MATRIX");
 			Assert.assertTrue("DP must not rematerialize the loop-invariant X transpose; runtime explain:\n"
 				+ explain, materializedTransposes <= 1);
-			if(materializedTransposes == 0)
-				Assert.assertTrue("Without an explicit X transpose boundary, DP must use the legal native "
-					+ "local-vector x federated-X LOUT plan; runtime explain:\n" + explain,
-					countLines(explain, "FED ba+*", " X.MATRIX", " LOUT") >= 2);
+			if(materializedTransposes == 0) {
+				int nativeLout = countLines(explain, "FED ba+*", " X.MATRIX", " LOUT");
+				boolean loweredFoutRelocation = countLines(explain, "FED fed_refed") >= 1
+					&& countLines(explain, "FED ba+*", " X.MATRIX", " FOUT") >= 1;
+				Assert.assertTrue("Without an explicit X transpose boundary, every affected multiply must "
+					+ "either use the native local-vector x federated-X LOUT path or an explicitly lowered "
+					+ "REFED/FOUT path; runtime explain:\n" + explain,
+					nativeLout >= 2 || nativeLout >= 1 && loweredFoutRelocation);
+			}
 		}
 		finally {
 			TestUtils.shutdownThreads(workers.toArray(Thread[]::new));
