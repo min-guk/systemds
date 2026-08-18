@@ -7,6 +7,8 @@ import java.util.List;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -155,7 +157,7 @@ public class MinStExactPhysicalModelCertificateTest {
 
 	@Test
 	public void conjunctiveForbidPairMatchesExactSelectorSemantics() throws Exception {
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(pca());
+		PlacementAnalysis analysis = boundedAnalysis();
 		var nodes = analysis.graph().decisionNodes();
 		PlacementState left = nodes.get(0).legalAlternatives().get(0);
 		PlacementState right = nodes.get(1).legalAlternatives().get(0);
@@ -170,7 +172,7 @@ public class MinStExactPhysicalModelCertificateTest {
 
 	@Test
 	public void boundedFixtureVariableEliminationMatchesUnquotientedBruteForce() throws Exception {
-		PlacementAnalysis analysis = R4ExactPrivateCostMinstFixtures.all().get(0).analysis();
+		PlacementAnalysis analysis = boundedAnalysis();
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 		long combinations = model.domains().stream().mapToLong(domain -> domain.alternatives().size())
 			.reduce(1L, Math::multiplyExact);
@@ -193,7 +195,7 @@ public class MinStExactPhysicalModelCertificateTest {
 
 	@Test
 	public void optimizerRefusesToInventMissingCanonicalCosts() throws Exception {
-		PlacementAnalysis analysis = R4ExactPrivateCostMinstFixtures.all().get(0).analysis();
+		PlacementAnalysis analysis = boundedAnalysis();
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
 			() -> MinStExactPhysicalOptimizer.optimize(model, null, CAMPAIGN_LIMITS));
@@ -202,7 +204,7 @@ public class MinStExactPhysicalModelCertificateTest {
 
 	@Test
 	public void physicalSelectionAndProjectorPreserveExactReceipts() throws Exception {
-		PlacementAnalysis analysis = R4ExactPrivateCostMinstFixtures.all().get(0).analysis();
+		PlacementAnalysis analysis = boundedAnalysis();
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 		MinStExactCostFactsProducer.PhysicalCostSurface surface =
 			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
@@ -333,9 +335,16 @@ public class MinStExactPhysicalModelCertificateTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return program;
 	}
 
 	private record Workload(String name, DMLProgram program) { }
 	private record BruteForce(double objective, List<Integer> assignment) { }
+	private static PlacementAnalysis boundedAnalysis() throws Exception {
+		PlacementAnalysis full = CampaignBPlacementAnalysisFixtureBridge.build(
+			ProductionShadowFixtureFactory.compile("B-01"));
+		return CampaignBPlacementAnalysisFixtureBridge.prefix(full, 4);
+	}
+
 }

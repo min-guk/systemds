@@ -120,7 +120,7 @@ public final class PlacementCandidateRuleResolver {
 
 	public enum CapturedResolutionFailure {
 		FOREIGN_CONTEXT, STALE_FACT, PARENT_OUTSIDE_CANDIDATE_DOMAIN, MISSING_FACT,
-		RULE_EVALUATION_FAILED, PRODUCER_PROFILE_EVALUATION_FAILED, MISSING_CONSUMER_PROFILE,
+		PRIVACY_EXCLUDED, RULE_EVALUATION_FAILED, PRODUCER_PROFILE_EVALUATION_FAILED, MISSING_CONSUMER_PROFILE,
 		CONSUMER_PROFILE_EVALUATION_FAILED, AMBIGUOUS_TRANSIENT_FORWARD, REORDERED_CONSUMER_EDGE
 	}
 
@@ -164,6 +164,8 @@ public final class PlacementCandidateRuleResolver {
 		}
 		if(fact.status() == CandidateEvaluationStatus.RULE_ERROR || fact.capability() == null)
 			throw failure(CapturedResolutionFailure.RULE_EVALUATION_FAILED, request, fact.failureCode());
+		if(fact.status() == CandidateEvaluationStatus.PRIVACY_EXCLUDED)
+			throw failure(CapturedResolutionFailure.PRIVACY_EXCLUDED, request, fact.failureCode());
 		if(fact.status() == CandidateEvaluationStatus.PROFILE_ERROR || !fact.profile().available())
 			throw failure(CapturedResolutionFailure.PRODUCER_PROFILE_EVALUATION_FAILED, request,
 				fact.failureCode());

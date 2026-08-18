@@ -32,6 +32,7 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -205,7 +206,7 @@ public final class PlacementAnalysis {
 		public boolean available() { return evaluationFailure.isEmpty(); }
 	}
 
-	public enum CandidateEvaluationStatus { AVAILABLE, RULE_ERROR, PROFILE_ERROR }
+	public enum CandidateEvaluationStatus { AVAILABLE, PRIVACY_EXCLUDED, RULE_ERROR, PROFILE_ERROR }
 
 	public static final class CandidateConsumerProfileFact {
 		private final CandidateConsumerProfileKey key;
@@ -321,6 +322,9 @@ public final class PlacementAnalysis {
 			if(status == CandidateEvaluationStatus.AVAILABLE
 					&& (capability == null || !profile.available() || !failureCode.isEmpty()
 						|| allowedEmissionFacts.isEmpty())
+				|| status == CandidateEvaluationStatus.PRIVACY_EXCLUDED
+					&& (capability == null || !profile.available() || failureCode.isEmpty()
+						|| !allowedEmissionFacts.isEmpty())
 				|| status == CandidateEvaluationStatus.RULE_ERROR
 					&& (profile.available() || failureCode.isEmpty() || !allowedEmissionFacts.isEmpty())
 				|| status == CandidateEvaluationStatus.PROFILE_ERROR
@@ -688,7 +692,6 @@ public final class PlacementAnalysis {
 			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
 			Objects.requireNonNull(readValueVersion, "readValueVersion");
 			Objects.requireNonNull(federatedFType, "federatedFType");
-			Objects.requireNonNull(localSourceState, "localSourceState");
 			Objects.requireNonNull(federatedSourceState, "federatedSourceState");
 			Objects.requireNonNull(localInput, "localInput");
 			Objects.requireNonNull(federatedInput, "federatedInput");
@@ -760,6 +763,7 @@ public final class PlacementAnalysis {
 	private final List<StatementBlock> topLevelStatementBlocks;
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
+	private final PlacementPrivacyFacts privacyFacts;
 	private final String analysisFingerprint;
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
 	private final CandidateRuleDomain candidateRuleDomain;
@@ -828,7 +832,25 @@ public final class PlacementAnalysis {
 		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges,
 		List<LogicalTransientInputFact> logicalTransientInputs, Runnable programMutationGuard) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
+			compiledInputEdges, logicalTransientInputs, defaultPrivacyFacts(graph), programMutationGuard);
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		Runnable programMutationGuard) {
 		this.graph = Objects.requireNonNull(graph, "graph");
+		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
 		this.programOwner = programOwner;
 		this.programMutationGuard = programMutationGuard == null ? () -> { } : programMutationGuard;
 		this.guardedFunctionRoots = programOwner != null && programMutationGuard != null;
@@ -852,7 +874,7 @@ public final class PlacementAnalysis {
 			throw new IllegalArgumentException("analysisFingerprint must not be blank");
 		this.analysisFingerprint = canonicalizeSuppliedAnalysisFingerprint(analysisFingerprint);
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
-		this.candidateRuleDomain = new CandidateRuleDomain(analysisFingerprint, candidateRuleDomainKeys,
+		this.candidateRuleDomain = new CandidateRuleDomain(this.analysisFingerprint, candidateRuleDomainKeys,
 			candidateConsumerDomainKeys);
 		Map<CompiledHopKey,Boolean> analysisKeysByIdentity = new IdentityHashMap<>();
 		for(HopOccurrenceProjection occurrence : this.occurrences)
@@ -991,12 +1013,13 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Logical transient input anchor differs");
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
 				throw new IllegalArgumentException("Logical transient read has physical inputs");
-			if(source.legalAlternatives().stream().noneMatch(state -> state == fact.localSourceState())
+			if(fact.localSourceState() != null
+					&& source.legalAlternatives().stream().noneMatch(state -> state == fact.localSourceState())
 				|| source.legalAlternatives().stream().noneMatch(state -> state == fact.federatedSourceState()))
 				throw new IllegalArgumentException("Logical transient input source state is not analysis-owned");
-			if(fact.localSourceState().execType() != ExecType.CP
+			if(fact.localSourceState() != null && (fact.localSourceState().execType() != ExecType.CP
 				|| fact.localSourceState().output() != FederatedOutput.LOUT
-				|| fact.localSourceState().fType() != null || fact.localSourceState().shapeDependent()
+				|| fact.localSourceState().fType() != null || fact.localSourceState().shapeDependent())
 				|| fact.federatedSourceState().execType() != ExecType.FED
 				|| fact.federatedSourceState().output() != FederatedOutput.FOUT
 				|| fact.federatedSourceState().fType() != fact.federatedFType()
@@ -1010,17 +1033,21 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Logical transient candidate domain differs");
 			CandidateRuleFact localFact = candidateRuleFacts.requireExact(fact.targetRead(), expected.get(0));
 			CandidateRuleFact federatedFact = candidateRuleFacts.requireExact(fact.targetRead(), expected.get(1));
-			if(localFact.status() != CandidateEvaluationStatus.AVAILABLE
-				|| localFact.capability().nativeExec() != ExecType.CP
-				|| localFact.capability().nativeOutput() != FederatedOutput.LOUT
-				|| localFact.capability().nativeFoutFType() != null
+			if((fact.localSourceState() != null
+					&& (localFact.status() != CandidateEvaluationStatus.AVAILABLE
+						|| localFact.capability().nativeExec() != ExecType.CP
+						|| localFact.capability().nativeOutput() != FederatedOutput.LOUT
+						|| localFact.capability().nativeFoutFType() != null)
+				|| fact.localSourceState() == null
+					&& localFact.status() != CandidateEvaluationStatus.PRIVACY_EXCLUDED)
 				|| federatedFact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| federatedFact.capability().nativeExec() != ExecType.FED
 				|| federatedFact.capability().nativeOutput() != FederatedOutput.FOUT
 				|| federatedFact.capability().nativeFoutFType() != fact.federatedFType())
 				throw new IllegalArgumentException("Logical transient candidate capability differs");
-			if(read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.CP
-				&& state.output() == FederatedOutput.LOUT && state.fType() == null)
+			if(fact.localSourceState() != null
+					&& read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.CP
+						&& state.output() == FederatedOutput.LOUT && state.fType() == null)
 				|| read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
 					&& state.output() == FederatedOutput.FOUT && state.fType() == fact.federatedFType()))
 				throw new IllegalArgumentException("Logical transient read legal tuples differ");
@@ -1177,7 +1204,16 @@ public final class PlacementAnalysis {
 		List<String> projectionSignatures = occurrences.stream()
 			.map(occurrence -> stableSignature(occurrence.normalizedSignature())).sorted().toList();
 		return sha256(stableSignature(graphSignature) + '\n'
-			+ String.join("\n", projectionSignatures));
+			+ String.join("\n", projectionSignatures) + '\n'
+			+ stableSignature(privacyFacts.normalizedSignature()));
+	}
+
+	private static PlacementPrivacyFacts defaultPrivacyFacts(NeutralPlacementGraph graph) {
+		Objects.requireNonNull(graph, "graph");
+		List<PlacementPrivacyFacts.PrivacyFact> facts = graph.nodes().stream()
+			.map(node -> new PlacementPrivacyFacts.PrivacyFact(node.key(), node.valueVersion(),
+				Privacy.PUBLIC, List.of())).toList();
+		return new PlacementPrivacyFacts(graph.nodes(), facts, 0);
 	}
 
 	private static String stableSignature(String signature) {
@@ -1364,6 +1400,22 @@ public final class PlacementAnalysis {
 
 	public Optional<NodeShapeFact> shapeFact(CompiledHopKey key) {
 		return shapeFacts.shapeFact(key);
+	}
+
+	public PlacementPrivacyFacts privacyFactAuthority() {
+		return privacyFacts;
+	}
+
+	public Map<CompiledHopKey,Privacy> privacyFacts() {
+		return privacyFacts.asMap();
+	}
+
+	public Privacy requirePrivacy(CompiledHopKey key) {
+		return privacyFacts.requirePrivacy(key);
+	}
+
+	public int numWorkers() {
+		return privacyFacts.numWorkers();
 	}
 
 	public String analysisFingerprint() {

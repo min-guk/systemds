@@ -39,6 +39,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -109,6 +110,33 @@ public final class ExecPlacementPolicy {
 		ExecType oracleExec = (caps != null) ? caps.exec() : ExecType.CP;
 		FederatedOutput placement = (caps != null) ? caps.placement() : FederatedOutput.LOUT;
 		return decide(hop, privacy, fType, oracleExec, placement);
+	}
+
+	/**
+	 * Construction-time privacy gate over immutable candidate evidence. This is the
+	 * analysis-free kernel used before a PlacementAnalysis can exist.
+	 */
+	public static boolean allowsCandidateEmission(Hop hop, Privacy privacy,
+		CandidateRuleFact candidate, CandidateEmissionFact emission) {
+		Objects.requireNonNull(candidate, "candidate");
+		Objects.requireNonNull(emission, "emission");
+		CandidateCapabilityFact capability = Objects.requireNonNull(candidate.capability(), "capability");
+		FType logicalFType = emission.emissionState().placementState().fType() != null
+			? emission.emissionState().placementState().fType() : emission.executionFType();
+		Decision decision = decide(hop, privacy, logicalFType,
+			capability.nativeExec(), capability.nativeOutput());
+		ExecType exec = emission.emissionState().placementState().execType();
+		FederatedOutput output = emission.emissionState().placementState().output();
+		if(exec == ExecType.CP && output == FederatedOutput.LOUT)
+			return decision.allowCP_LOUT;
+		if(exec == ExecType.CP && output == FederatedOutput.FOUT)
+			return decision.allowCP_FOUT;
+		if(exec == ExecType.FED && output == FederatedOutput.LOUT)
+			return decision.allowFED_LOUT;
+		if(exec == ExecType.FED && output == FederatedOutput.FOUT)
+			return decision.allowFED_FOUT || emission.emissionState().derivedFedFout()
+				&& decision.allowFED_LOUT;
+		return false;
 	}
 
 	public static Decision decideCaptured(CapturedPlacementRequest request) {

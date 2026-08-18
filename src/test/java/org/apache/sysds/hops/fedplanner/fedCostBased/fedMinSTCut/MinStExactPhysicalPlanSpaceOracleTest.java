@@ -18,6 +18,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer.PlannedSelection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer.RepresentativePreference;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -150,7 +151,7 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 
 	@Test
 	public void outerRowsComposeWithIndependentAllBitAssignmentObjectiveOracle() throws Exception {
-		PlacementAnalysis analysis = R4ExactPrivateCostMinstFixtures.all().get(0).analysis();
+		PlacementAnalysis analysis = boundedAnalysis();
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 		MinStExactCostFactsProducer.PhysicalCostSurface surface =
 			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
@@ -172,7 +173,7 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 
 	@Test
 	public void everyHardLegalBoundedAssignmentProjectsThroughRuntimeAuthorityValidators() throws Exception {
-		PlacementAnalysis analysis = R4ExactPrivateCostMinstFixtures.all().get(0).analysis();
+		PlacementAnalysis analysis = boundedAnalysis();
 		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 		MinStExactCostFactsProducer.PhysicalCostSurface surface =
 			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
@@ -678,6 +679,13 @@ public class MinStExactPhysicalPlanSpaceOracleTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return program;
 	}
+	private static PlacementAnalysis boundedAnalysis() throws Exception {
+		PlacementAnalysis full = CampaignBPlacementAnalysisFixtureBridge.build(
+			ProductionShadowFixtureFactory.compile("B-01"));
+		return CampaignBPlacementAnalysisFixtureBridge.prefix(full, 4);
+	}
+
 }

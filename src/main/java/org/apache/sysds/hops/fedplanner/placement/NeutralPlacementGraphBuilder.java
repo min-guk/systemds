@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggBinaryOp;
@@ -32,9 +34,12 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.FederatedSourceMetadata;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
@@ -94,6 +99,9 @@ import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -425,21 +433,26 @@ public final class NeutralPlacementGraphBuilder {
 				break;
 			}
 		}
-			if(!functionClosureConverged)
-				throw new IllegalStateException("Logical function boundary candidate closure did not converge");
-				candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
-			candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes, origins);
-			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, nodes);
-			// TRead/TWrite is a planner-wide legality boundary, not a MinST-only factor:
-			// the runtime accepts only the exact CP/LOUT or FED/FOUT tuple carried by
-			// the unique logical source. Publishing it in the neutral graph prevents
-			// FedAll/Heuristic from selecting a mismatched read/write pair.
-			for(LogicalTransientInputFact input : logicalTransientInputs)
-				constraints.add(new Constraint(ConstraintKind.SAME_PLACEMENT,
-					input.sourceWrite(), input.targetRead(), input.logicalPosition(),
-					"logical-transient-input"));
-			List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
-				nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop);
+		if(!functionClosureConverged)
+			throw new IllegalStateException("Logical function boundary candidate closure did not converge");
+		PrivacyClosure privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+			constraints, origins);
+		nodes = privacyClosure.nodes();
+		candidateRuleFacts = privacyClosure.candidateRuleFacts();
+		PlacementPrivacyFacts privacyFacts = privacyClosure.privacyFacts();
+		candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
+		candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes, origins);
+		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, nodes);
+		// TRead/TWrite is a planner-wide legality boundary, not a MinST-only factor:
+		// the runtime accepts only the exact CP/LOUT or FED/FOUT tuple carried by
+		// the unique logical source. Publishing it in the neutral graph prevents
+		// FedAll/Heuristic from selecting a mismatched read/write pair.
+		for(LogicalTransientInputFact input : logicalTransientInputs)
+			constraints.add(new Constraint(ConstraintKind.SAME_PLACEMENT,
+				input.sourceWrite(), input.targetRead(), input.logicalPosition(),
+				"logical-transient-input"));
+		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
+			nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop);
 		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions = candidateRuleFacts.stream()
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.map(CandidateEmissionFact::derivedFoutAction).filter(Objects::nonNull).distinct()
@@ -475,13 +488,205 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
-			compiledInputEdges, logicalTransientInputs, programStructureGuard);
+			compiledInputEdges, logicalTransientInputs, privacyFacts, programStructureGuard);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
 		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return analysis;
+	}
+
+	private record PrivacyClosure(List<Node> nodes, List<CandidateRuleFact> candidateRuleFacts,
+		PlacementPrivacyFacts privacyFacts) { }
+
+	/**
+	 * Resolve one occurrence-scoped privacy lattice before any planner selector is
+	 * created, then remove candidate emissions that violate that common authority.
+	 */
+	private static PrivacyClosure closePrivacyDomains(List<Node> nodes,
+		List<CandidateRuleFact> candidateRuleFacts, Set<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins) {
+		Map<CompiledHopKey,List<CompiledHopKey>> predecessors = new IdentityHashMap<>();
+		for(Node node : nodes) {
+			predecessors.put(node.key(), new ArrayList<>());
+		}
+		for(Constraint constraint : constraints)
+			if(carriesPrivacyValue(constraint))
+				addPrivacyPredecessor(predecessors, constraint.right(), constraint.left());
+
+		Map<String,List<CompiledHopKey>> cfgSources = new java.util.HashMap<>();
+		for(Node node : nodes)
+			cfgSources.computeIfAbsent(node.valueVersion().cfgReferenceSignature(),
+				ignored -> new ArrayList<>()).add(node.key());
+		for(Node node : nodes)
+			for(String predecessor : node.valueVersion().predecessorVersions())
+				if(predecessor.startsWith("cfg-definition:")) {
+					String reference = predecessor.substring("cfg-definition:".length());
+					List<CompiledHopKey> sources = cfgSources.get(reference);
+					if(sources == null || sources.isEmpty())
+						throw new IllegalStateException("Privacy CFG definition has no occurrence owner: "
+							+ reference);
+					for(CompiledHopKey source : sources)
+						addPrivacyPredecessor(predecessors, node.key(), source);
+				}
+		for(List<CompiledHopKey> inputs : predecessors.values())
+			inputs.sort(null);
+
+		Map<DataOp,FederatedSourceMetadata> sourceMetadata = new IdentityHashMap<>();
+		List<Pair<FederatedRange,FederatedData>> allPartitions = new ArrayList<>();
+		Map<CompiledHopKey,Privacy> effective = new IdentityHashMap<>();
+		for(Node node : nodes) {
+			Hop hop = origins.get(node.key());
+			if(hop == null)
+				throw new IllegalStateException("Privacy occurrence has no compiled Hop origin");
+			if(isFederatedSource(hop)) {
+				DataOp source = (DataOp) hop;
+				FederatedSourceMetadata metadata = sourceMetadata.get(source);
+				if(metadata == null) {
+					metadata = FederatedPlannerUtils.resolveFederatedSourceMetadata(source);
+					sourceMetadata.put(source, metadata);
+					allPartitions.addAll(metadata.partitions());
+				}
+				effective.put(node.key(), metadata.privacy());
+			}
+			else
+				effective.put(node.key(), Privacy.PUBLIC);
+		}
+
+		boolean changed;
+		int pass = 0;
+		int maxPasses = Math.max(1, nodes.size() * (Privacy.values().length + 1));
+		do {
+			changed = false;
+			for(Node node : nodes) {
+				Hop hop = origins.get(node.key());
+				Privacy derived;
+				if(isFederatedSource(hop))
+					derived = sourceMetadata.get((DataOp) hop).privacy();
+				else {
+					List<Privacy> inputPrivacy = predecessors.get(node.key()).stream()
+						.map(effective::get).toList();
+					derived = node.kind() == NodeKind.FUNCTION_INPUT
+						|| node.kind() == NodeKind.FUNCTION_OUTPUT
+						? strongestPrivacy(inputPrivacy)
+						: FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
+				}
+				Privacy prior = effective.get(node.key());
+				Privacy next = FederatedPlannerUtils.joinPrivacy(prior, derived);
+				if(next != prior) {
+					effective.put(node.key(), next);
+					changed = true;
+				}
+			}
+			pass++;
+		}
+		while(changed && pass < maxPasses);
+		if(changed)
+			throw new IllegalStateException("Whole-program privacy propagation did not converge");
+
+		Map<CompiledHopKey,Set<PlacementState>> candidateStates = new IdentityHashMap<>();
+		Map<CompiledHopKey,Set<PlacementState>> retainedStates = new IdentityHashMap<>();
+		List<CandidateRuleFact> filteredFacts = new ArrayList<>(candidateRuleFacts.size());
+		for(CandidateRuleFact fact : candidateRuleFacts) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
+				filteredFacts.add(fact);
+				continue;
+			}
+			Hop hop = origins.get(fact.key().parentOccurrence());
+			Privacy privacy = effective.get(fact.key().parentOccurrence());
+			if(hop == null || privacy == null)
+				throw new IllegalStateException("Candidate privacy authority is incomplete");
+			Set<PlacementState> seen = candidateStates.computeIfAbsent(
+				fact.key().parentOccurrence(), ignored -> new LinkedHashSet<>());
+			Set<PlacementState> retained = retainedStates.computeIfAbsent(
+				fact.key().parentOccurrence(), ignored -> new LinkedHashSet<>());
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				PlacementState state = emission.emissionState().placementState();
+				seen.add(state);
+				if(ExecPlacementPolicy.allowsCandidateEmission(hop, privacy, fact, emission)) {
+					emissions.add(emission);
+					retained.add(state);
+				}
+			}
+			if(emissions.isEmpty()) {
+				String failure = "PRIVACY:" + privacy.name();
+				filteredFacts.add(new CandidateRuleFact(fact.key(),
+					CandidateEvaluationStatus.PRIVACY_EXCLUDED, fact.capability(), fact.shapeProof(),
+					fact.profile(), List.of(), failure));
+			}
+			else
+				filteredFacts.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+					fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
+		}
+
+		List<Node> filteredNodes = new ArrayList<>(nodes.size());
+		for(Node node : nodes) {
+			Privacy privacy = effective.get(node.key());
+			Set<PlacementState> seen = candidateStates.getOrDefault(node.key(), Set.of());
+			Set<PlacementState> retained = retainedStates.getOrDefault(node.key(), Set.of());
+			List<PlacementState> legal = new ArrayList<>();
+			Map<PlacementState,Exclusion> exclusions = new java.util.TreeMap<>();
+			for(Exclusion exclusion : node.exclusions())
+				exclusions.put(exclusion.state(), exclusion);
+			for(PlacementState state : node.legalAlternatives()) {
+				boolean denied = privacy == Privacy.PRIVATE
+					&& !(state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT);
+				denied |= seen.contains(state) && !retained.contains(state);
+				if(denied)
+					exclusions.putIfAbsent(state, new Exclusion(state, ReasonCode.PRIVACY,
+						"effectivePrivacy=" + privacy.name()));
+				else
+					legal.add(state);
+			}
+			if(node.emittedWork() && legal.isEmpty())
+				throw new DMLRuntimeException("No privacy-safe physical placement for occurrence "
+					+ node.key().normalizedSignature() + " (privacy=" + privacy + ")");
+			filteredNodes.add(new Node(node.key(), node.kind(), node.valueVersion(),
+				!legal.isEmpty(), legal, new ArrayList<>(exclusions.values()), node.anchors()));
+		}
+
+		List<PlacementPrivacyFacts.PrivacyFact> privacyFacts = new ArrayList<>(filteredNodes.size());
+		for(Node node : filteredNodes)
+			privacyFacts.add(new PlacementPrivacyFacts.PrivacyFact(node.key(), node.valueVersion(),
+				effective.get(node.key()), predecessors.get(node.key())));
+		PlacementPrivacyFacts authority = new PlacementPrivacyFacts(filteredNodes, privacyFacts,
+			FederatedWorkerUtils.countDistinctWorkers(allPartitions));
+		return new PrivacyClosure(List.copyOf(filteredNodes), List.copyOf(filteredFacts), authority);
+	}
+
+	private static boolean isFederatedSource(Hop hop) {
+		return hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED;
+	}
+
+	private static Privacy strongestPrivacy(List<Privacy> inputPrivacy) {
+		Privacy result = Privacy.PUBLIC;
+		for(Privacy privacy : inputPrivacy)
+			result = FederatedPlannerUtils.joinPrivacy(result, privacy);
+		return result;
+	}
+
+	private static void addPrivacyPredecessor(
+		Map<CompiledHopKey,List<CompiledHopKey>> predecessors,
+		CompiledHopKey target, CompiledHopKey source) {
+		List<CompiledHopKey> inputs = predecessors.get(target);
+		if(inputs == null || !predecessors.containsKey(source))
+			throw new IllegalStateException("Privacy flow references a foreign occurrence");
+		if(inputs.stream().noneMatch(existing -> existing == source))
+			inputs.add(source);
+	}
+
+	private static boolean carriesPrivacyValue(Constraint constraint) {
+		String evidence = constraint.evidence();
+		return "data-input".equals(evidence) || "function-input-binding".equals(evidence)
+			|| evidence.startsWith("cfg-transient-value:")
+			|| evidence.startsWith("cfg-function-output-value:")
+			|| evidence.startsWith("function-argument:")
+			|| evidence.startsWith("inlined-function-argument:")
+			|| "function-formal-input".equals(evidence)
+			|| evidence.startsWith("function-result:")
+			|| evidence.startsWith("inlined-function-result:");
 	}
 
 	private static List<LogicalTransientInputFact> bindExactLogicalTransientSourceStates(
@@ -495,8 +700,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(source == null)
 				throw new IllegalStateException("Logical transient source disappeared before final binding");
 			PlacementState local = source.legalAlternatives().stream()
-				.filter(fact.localSourceState()::equals).findFirst().orElseThrow(() ->
-					new IllegalStateException("Logical transient local source state disappeared before final binding"));
+				.filter(fact.localSourceState()::equals).findFirst().orElse(null);
 			PlacementState federated = source.legalAlternatives().stream()
 				.filter(fact.federatedSourceState()::equals).findFirst().orElseThrow(() ->
 					new IllegalStateException(

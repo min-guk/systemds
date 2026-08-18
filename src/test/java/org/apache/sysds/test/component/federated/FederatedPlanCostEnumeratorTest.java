@@ -38,14 +38,10 @@ import org.apache.sysds.common.Types;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
-import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCostEstimator;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTRewire;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -63,8 +59,6 @@ import org.apache.sysds.parser.ParserWrapper;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestConfiguration;
@@ -149,20 +143,6 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		runTestWithUnrollCheck("FederatedPlanCostEnumeratorTest19.dml", true, true, true, true);
 	}
 
-	@Test
-	public void testFederatedPlanMinSTLoopCarry17() {
-		runMinSTLoopCarryTest("FederatedPlanCostEnumeratorTest17.dml", 5.0, 24.0);
-	}
-
-	@Test
-	public void testFederatedPlanMinSTLoopCarry18() {
-		runMinSTLoopCarryTest("FederatedPlanCostEnumeratorTest18.dml", 5.0, 24.0);
-	}
-
-	@Test
-	public void testFederatedPlanMinSTLoopCarry19() {
-		runMinSTLoopCarryTest("FederatedPlanCostEnumeratorTest19.dml", 5.0, 24.0);
-	}
 
 	private void runTest(String scriptFilename) {
 		try {
@@ -174,37 +154,6 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		}
 	}
 
-	private void runMinSTLoopCarryTest(String scriptFilename, double expectedOuterWeight,
-			double expectedInnerWeight) {
-		try {
-			DMLProgram prog = parseAndRewrite(scriptFilename, "compile_min_st_cut");
-
-			Map<Long, List<Hop>> rewireTable = new HashMap<>();
-			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-			List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
-			Set<Long> unRefTwriteSet = new HashSet<>();
-			Set<Long> unRefSet = new HashSet<>();
-			Set<Hop> progRootHopSet = new HashSet<>();
-			RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
-			OracleFacade oracleFacade = new OracleFacade(registry);
-
-			FederatedPlanMinSTRewire.rewireProgram(
-					prog, rewireTable, graph, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, oracleFacade);
-
-			FederatedPlanMinSTCostEstimator.estimateProgram(prog, graph, rewireTable, true);
-
-			List<FederatedPlanMinSTGraph.LoopCarryEdge> loopEdges = graph.getLoopCarryEdges();
-			Assert.assertFalse("Expected loop-carry edges for " + scriptFilename, loopEdges.isEmpty());
-			assertLoopCarryEdgesMatchVar(loopEdges, graph, scriptFilename);
-			assertHasLoopCarryWeight(loopEdges, expectedOuterWeight, scriptFilename);
-			assertHasLoopCarryWeight(loopEdges, expectedInnerWeight, scriptFilename);
-			assertLoopCarryCapacities(loopEdges, graph, scriptFilename);
-		}
-		catch (Exception e) {
-			e.printStackTrace();
-			Assert.fail(e.getMessage());
-		}
-	}
 
 	private void runTestWithUnrollCheck(String scriptFilename, boolean expectUnroll) {
 		runTestWithUnrollCheck(scriptFilename, expectUnroll, false);
@@ -221,8 +170,6 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 
 			Map<Long, List<Hop>> rewireTable = new HashMap<>();
 			Map<Long, HopCommon> hopCommonTable = new HashMap<>();
-			Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
-			List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
 			Set<Long> unRefTwriteSet = new HashSet<>();
 			Set<Long> unRefSet = new HashSet<>();
 			Set<Hop> progRootHopSet = new HashSet<>();
@@ -231,7 +178,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(prog);
 			FederatedPlannerDpRewireTransTable.rewireProgram(analysis, prog, rewireTable,
-				hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
+				hopCommonTable, unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
 
 			boolean hasUnroll = !unrollCtx.getCloneToOrig().isEmpty() || !unrollCtx.getIter1Roots().isEmpty();
 			Assert.assertEquals("Unexpected unroll decision for " + scriptFilename, expectUnroll, hasUnroll);
@@ -294,66 +241,6 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		return prog;
 	}
 
-	private void assertLoopCarryEdgesMatchVar(List<FederatedPlanMinSTGraph.LoopCarryEdge> edges,
-			FederatedPlanMinSTGraph graph, String scriptFilename) {
-		for (FederatedPlanMinSTGraph.LoopCarryEdge edge : edges) {
-			Hop endWriter = graph.getHopRef(edge.getEndWriterHopId());
-			Hop frontReader = graph.getHopRef(edge.getFrontReaderHopId());
-			Assert.assertNotNull("Missing endWriter for " + scriptFilename, endWriter);
-			Assert.assertNotNull("Missing frontReader for " + scriptFilename, frontReader);
-			Assert.assertTrue("Expected TWRITE endWriter for " + scriptFilename,
-					endWriter instanceof DataOp
-					&& ((DataOp) endWriter).getOp() == Types.OpOpData.TRANSIENTWRITE);
-			Assert.assertTrue("Expected TREAD frontReader for " + scriptFilename,
-					frontReader instanceof DataOp
-					&& ((DataOp) frontReader).getOp() == Types.OpOpData.TRANSIENTREAD);
-			Assert.assertEquals("Loop-carry var mismatch for " + scriptFilename,
-					endWriter.getName(), frontReader.getName());
-		}
-	}
-
-	private void assertHasLoopCarryWeight(List<FederatedPlanMinSTGraph.LoopCarryEdge> edges,
-			double expected, String scriptFilename) {
-		final double eps = 1e-9;
-		for (FederatedPlanMinSTGraph.LoopCarryEdge edge : edges) {
-			if (Math.abs(edge.getWeight() - expected) <= eps) {
-				return;
-			}
-		}
-		StringBuilder weights = new StringBuilder();
-		for (FederatedPlanMinSTGraph.LoopCarryEdge edge : edges) {
-			if (weights.length() > 0) {
-				weights.append(", ");
-			}
-			weights.append(edge.getWeight());
-		}
-		Assert.fail("Expected loop-carry weight " + expected + " for " + scriptFilename
-				+ " but got [" + weights + "]");
-	}
-
-	private void assertLoopCarryCapacities(List<FederatedPlanMinSTGraph.LoopCarryEdge> edges,
-			FederatedPlanMinSTGraph graph, String scriptFilename) {
-		Map<Pair<Long, Long>, Double> expectedUpload = new HashMap<>();
-		Map<Pair<Long, Long>, Double> expectedDownload = new HashMap<>();
-		for (FederatedPlanMinSTGraph.LoopCarryEdge edge : edges) {
-			FederatedPlanMinSTGraph.Vertex readerVertex = graph.getVertex(edge.getFrontReaderHopId());
-			FederatedPlanMinSTGraph.Vertex writerVertex = graph.getVertex(edge.getEndWriterHopId());
-			Assert.assertNotNull("Missing frontReader vertex for " + scriptFilename, readerVertex);
-			Assert.assertNotNull("Missing endWriter vertex for " + scriptFilename, writerVertex);
-			double uploadWeighted = edge.getWeight() * readerVertex.getUploadCostWithoutWeight();
-			double downloadWeighted = edge.getWeight() * readerVertex.getDownloadCostWithoutWeight();
-			long readerC = computeId(edge.getFrontReaderHopId());
-			long writerP = placementId(edge.getEndWriterHopId());
-			Pair<Long, Long> uploadKey = Pair.of(readerC, writerP);
-			Pair<Long, Long> downloadKey = Pair.of(writerP, readerC);
-			expectedUpload.put(uploadKey, expectedUpload.getOrDefault(uploadKey, 0.0) + uploadWeighted);
-			expectedDownload.put(downloadKey, expectedDownload.getOrDefault(downloadKey, 0.0) + downloadWeighted);
-		}
-
-		Graph<Long, DefaultWeightedEdge> minGraph = graph.getGraph();
-		assertEdgeWeights(minGraph, expectedUpload, scriptFilename, "upload");
-		assertEdgeWeights(minGraph, expectedDownload, scriptFilename, "download");
-	}
 
 	private void assertEdgeWeights(Graph<Long, DefaultWeightedEdge> graph,
 			Map<Pair<Long, Long>, Double> expected,
@@ -369,16 +256,6 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 			Assert.assertEquals("Loop-carry " + directionLabel + " weight mismatch for " + scriptFilename
 					+ " (" + key.getLeft() + " -> " + key.getRight() + ")", expectedWeight, actual, eps);
 		}
-	}
-
-	private long computeId(long hopId) {
-		// Keep in sync with FederatedPlanMinSTPlanner.computeId (MinST uses 3 decision nodes per hop).
-		return hopId << 2;
-	}
-
-	private long placementId(long hopId) {
-		// Keep in sync with FederatedPlanMinSTPlanner.placementId (MinST uses 3 decision nodes per hop).
-		return (hopId << 2) | 1;
 	}
 
 	private void assertAcyclicFederatedDag(DMLProgram prog, Map<Long, List<Hop>> rewireTable,

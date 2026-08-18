@@ -32,11 +32,16 @@ public class CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest {
 		Map<String,String> oldCostProperties = installDockerLanCostProperties();
 		Path script = Path.of("target/g014-minst-kmeans-cli.dml");
 		Path config = Path.of("target/g014-minst-kmeans-cli.xml");
+		Path x1 = Path.of("target/g014-minst-kmeans-x-1.data");
+		Path x2 = Path.of("target/g014-minst-kmeans-x-2.data");
 		Files.createDirectories(script.getParent());
+		String x1Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker1", 8001, x1, 25000, 2100, 25000L * 2100);
+		String x2Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker2", 8002, x2, 25000, 2100, 25000L * 2100);
 		Files.writeString(script, String.join("\n",
 			"X = federated(addresses=list("
-				+ "\"worker1:8001/data/P2P2D_features_2_1.data\", "
-				+ "\"worker2:8002/data/P2P2D_features_2_2.data\"), "
+				+ "\"" + x1Address + "\", \"" + x2Address + "\"), "
 				+ "ranges=list(list(0, 0), list(25000, 2100), list(25000, 0), list(50000, 2100)))",
 			"",
 			"[C, Y] = kmeans(X=X, k=50, is_verbose=FALSE, runs=1, eps=1e-9, max_iter=60, "
@@ -57,6 +62,7 @@ public class CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest {
 		finally {
 			Files.deleteIfExists(script);
 			Files.deleteIfExists(config);
+			MinStExactCliMetadataFixture.delete(x1, x2);
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);
 			ConfigurationManager.setGlobalConfig(oldCompiler);

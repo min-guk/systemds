@@ -20,19 +20,30 @@ package org.apache.sysds.test.component.federated.placement.shadow;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ForStatement;
+import org.apache.sysds.parser.ForStatementBlock;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.IfStatement;
+import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 
 /** Independently compiled production inputs for the B-01..B-22 shadow corpus. */
 public final class ProductionShadowFixtureFactory {
@@ -58,7 +69,59 @@ public final class ProductionShadowFixtureFactory {
 			translator.rewriteHopsDAG(program);
 		if("B-09".equals(id))
 			addExplicitRecompileClone(program);
+		registerHermeticSourcePrivacy(program);
 		return program;
+	}
+
+	public static void registerHermeticSourcePrivacy(DMLProgram program) {
+		registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
+	}
+
+	public static void registerHermeticSourcePrivacy(DMLProgram program, Privacy privacy) {
+		java.util.Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		registerHermeticSourcePrivacy(program.getStatementBlocks(), privacy, visited);
+		for(FunctionStatementBlock function : program.getNamedNSFunctionStatementBlocks().values())
+			registerHermeticSourcePrivacy(List.of(function), privacy, visited);
+	}
+
+	private static void registerHermeticSourcePrivacy(List<StatementBlock> blocks, Privacy privacy,
+		java.util.Set<Hop> visited) {
+		for(StatementBlock block : blocks) {
+			if(block.getHops() != null)
+				for(Hop root : block.getHops())
+					registerHermeticSourcePrivacy(root, privacy, visited);
+			if(block instanceof IfStatementBlock ifBlock) {
+				registerHermeticSourcePrivacy(ifBlock.getPredicateHops(), privacy, visited);
+				IfStatement statement = (IfStatement) ifBlock.getStatement(0);
+				registerHermeticSourcePrivacy(statement.getIfBody(), privacy, visited);
+				registerHermeticSourcePrivacy(statement.getElseBody(), privacy, visited);
+			}
+			else if(block instanceof WhileStatementBlock whileBlock) {
+				registerHermeticSourcePrivacy(whileBlock.getPredicateHops(), privacy, visited);
+				registerHermeticSourcePrivacy(((WhileStatement) whileBlock.getStatement(0)).getBody(),
+					privacy, visited);
+			}
+			else if(block instanceof ForStatementBlock forBlock) {
+				registerHermeticSourcePrivacy(forBlock.getFromHops(), privacy, visited);
+				registerHermeticSourcePrivacy(forBlock.getToHops(), privacy, visited);
+				registerHermeticSourcePrivacy(forBlock.getIncrementHops(), privacy, visited);
+				registerHermeticSourcePrivacy(((ForStatement) forBlock.getStatement(0)).getBody(),
+					privacy, visited);
+			}
+			else if(block instanceof FunctionStatementBlock functionBlock)
+				registerHermeticSourcePrivacy(
+					((FunctionStatement) functionBlock.getStatement(0)).getBody(), privacy, visited);
+		}
+	}
+
+	private static void registerHermeticSourcePrivacy(Hop hop, Privacy privacy,
+		java.util.Set<Hop> visited) {
+		if(hop == null || !visited.add(hop))
+			return;
+		if(hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
+			FederatedPlannerUtils.setFederatedSourcePrivacyForTesting(data, privacy);
+		for(Hop input : hop.getInput())
+			registerHermeticSourcePrivacy(input, privacy, visited);
 	}
 
 	private static void addExplicitRecompileClone(DMLProgram program) {

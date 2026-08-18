@@ -29,11 +29,17 @@ public class CampaignBG014MinStStepLmFunctionSourceLayoutRedTest {
 		String oldParserPath = DMLScript.DML_FILE_PATH_ANTLR_PARSER;
 		Path script = Path.of("target/g014-minst-steplm-cli.dml");
 		Path config = Path.of("target/g014-minst-steplm-cli.xml");
+		Path x = Path.of("target/g014-minst-steplm-x.data");
+		Path y = Path.of("target/g014-minst-steplm-y.data");
 		Files.createDirectories(script.getParent());
+		String xAddress = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker1", 8001, x, 50000, 2100, 50000L * 2100);
+		String yAddress = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker1", 8001, y, 50000, 1, 50000);
 		Files.writeString(script, String.join("\n",
-			"X = federated(addresses=list(\"worker1:8001/data/P2P2D_features.data\"), "
+			"X = federated(addresses=list(\"" + xAddress + "\"), "
 				+ "ranges=list(list(0, 0), list(50000, 2100)))",
-			"Y = federated(addresses=list(\"worker1:8001/data/P2P2D_labels.data\"), "
+			"Y = federated(addresses=list(\"" + yAddress + "\"), "
 				+ "ranges=list(list(0, 0), list(50000, 1)))",
 			"",
 			"[B, S] = steplm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=20, verbose=FALSE)",
@@ -54,6 +60,7 @@ public class CampaignBG014MinStStepLmFunctionSourceLayoutRedTest {
 		finally {
 			Files.deleteIfExists(script);
 			Files.deleteIfExists(config);
+			MinStExactCliMetadataFixture.delete(x, y);
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);
 			ConfigurationManager.setGlobalConfig(oldCompiler);

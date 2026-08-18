@@ -33,14 +33,26 @@ public class CampaignBG014MinStDerivedFoutAnchorSelectionRedTest {
 		Path root = Path.of("target/g014-minst-derived-fout-anchor");
 		Path script = root.resolve("steplm.dml");
 		Path config = root.resolve("SystemDS-config.xml");
+		Path x1 = root.resolve("x-1.data");
+		Path x2 = root.resolve("x-2.data");
+		Path y1 = root.resolve("y-1.data");
+		Path y2 = root.resolve("y-2.data");
 		try {
 			Files.createDirectories(root);
+			String x1Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+				"worker1", 8001, x1, 25000, 2100, 25000L * 2100);
+			String x2Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+				"worker2", 8002, x2, 25000, 2100, 25000L * 2100);
+			String y1Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+				"worker1", 8001, y1, 25000, 1, 25000);
+			String y2Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+				"worker2", 8002, y2, 25000, 1, 25000);
 			Files.writeString(script, String.join("\n",
-				"X = federated(addresses=list(\"worker1:8001/data/P2P2D_features.data\", "
-					+ "\"worker2:8002/data/P2P2D_features.data\"), ranges=list(list(0, 0), "
+				"X = federated(addresses=list(\"" + x1Address + "\", \"" + x2Address
+					+ "\"), ranges=list(list(0, 0), "
 					+ "list(25000, 2100), list(25000, 0), list(50000, 2100)))",
-				"Y = federated(addresses=list(\"worker1:8001/data/P2P2D_labels.data\", "
-					+ "\"worker2:8002/data/P2P2D_labels.data\"), ranges=list(list(0, 0), "
+				"Y = federated(addresses=list(\"" + y1Address + "\", \"" + y2Address
+					+ "\"), ranges=list(list(0, 0), "
 					+ "list(25000, 1), list(25000, 0), list(50000, 1)))",
 				"",
 				"[B, S] = steplm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=20, verbose=FALSE)",
@@ -61,6 +73,7 @@ public class CampaignBG014MinStDerivedFoutAnchorSelectionRedTest {
 				}));
 		}
 		finally {
+			MinStExactCliMetadataFixture.delete(x1, x2, y1, y2);
 			restoreProperties(oldProperties);
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);

@@ -76,25 +76,30 @@ public class CampaignBG014DpEnumeratorOracleOwnershipRedTest {
 		int federatedLoop = sequence(canonicalTokens, Math.max(0, localLoop + 1), "for", "(", "int", "j", "=", "0",
 			";", "j", "<", "numFoutOnlyInputs", ";");
 		int normalization = sequence(canonicalTokens, Math.max(0, federatedLoop + 1),
-			"DpPlacementAdapter", ".", "normalizeCandidateInputs", "(");
-		int capture = sequence(canonicalTokens, Math.max(0, normalization + 1), "capture", ".", "capture", "(",
-			"normalizedCandidateInputs", ".", "snapshot", "(", ")", ",", "i", ")");
+			"DpPlacementAdapter", ".", "normalizeCandidateInputAlternatives", "(");
+		int alternativeLoop = sequence(canonicalTokens, Math.max(0, normalization + 1), "for", "(", "int",
+			"candidateInputVariant", "=", "0", ";", "candidateInputVariant", "<",
+			"normalizedCandidateAlternatives", ".", "size", "(", ")", ";");
+		int localOrdinal = sequence(canonicalTokens, Math.max(0, alternativeLoop + 1), "final", "long",
+			"exactVariantOrdinal", "=", "nextCandidateVariantOrdinal", "+", "+", ";");
+		int capture = sequence(canonicalTokens, Math.max(0, localOrdinal + 1), "capture", ".", "capture", "(",
+			"normalizedCandidateInputs", ".", "snapshot", "(", ")", ",", "exactVariantOrdinal", ")");
 		int receipt = sequence(canonicalTokens, Math.max(0, capture + 1), "DpPlacementAdapter", ".",
 			"CandidateDecisionReceipt");
 		if(!(bothLoop >= 0 && localLoop > bothLoop && federatedLoop > localLoop && normalization > federatedLoop
-			&& capture > normalization))
-			missing.add("canonical.normalizeThenCaptureAfterExactThreeChildLoops");
+			&& alternativeLoop > normalization && localOrdinal > alternativeLoop && capture > localOrdinal))
+			missing.add("canonical.normalizeAlternativesThenCaptureAfterExactThreeChildLoops");
 		if(receipt < 0)
 			missing.add("canonical.typedCandidateDecisionReceipt");
 		else {
 			String receiptVariable = token(canonicalTokens, receipt + 3);
 			int initializer = sequence(canonicalTokens, receipt, "=", "DpPlacementAdapter", ".",
 				"resolveCandidateDecision", "(", "capture", ".", "context", ",", "normalizedCandidateInputs",
-				",", "i", ")");
+				",", "exactVariantOrdinal", ")");
 			if(initializer < 0)
 				missing.add("canonical.exactContextNormalizedAndLocalOrdinalResolver");
 			if(sequence(canonicalTokens, Math.max(receipt, initializer), "capture", ".", "captureDecisionReceipt",
-				"(", receiptVariable, ",", "i", ")") < 0)
+				"(", receiptVariable, ",", "exactVariantOrdinal", ")") < 0)
 				missing.add("canonical.retainExactLocalOrdinalReceipt");
 			if(sequence(canonicalTokens, receipt, "new", "CandidateDecisionReceipt") >= 0)
 				opaque.add("enumerator:new CandidateDecisionReceipt");

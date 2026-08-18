@@ -1260,12 +1260,11 @@ public final class DpPlacementAdapter {
 	}
 
 	public static NeutralEnumerationContext captureNeutralEnumerationContext(PlacementAnalysis analysis,
-		RewireOccurrenceSnapshot rewireSnapshot, int numWorkers, Map<Long, Privacy> privacyByHop,
-		Set<Long> terminalTransientWriteHopIds) {
+		RewireOccurrenceSnapshot rewireSnapshot, Set<Long> terminalTransientWriteHopIds) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
-		Objects.requireNonNull(privacyByHop, "privacyByHop");
 		Objects.requireNonNull(terminalTransientWriteHopIds, "terminalTransientWriteHopIds");
+		int numWorkers = Math.max(1, analysis.numWorkers());
 		Set<CompiledHopKey> forwardWrites = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(RewireTransientForwardEdge forward : rewireSnapshot.transientForwardEdges())
 			forwardWrites.add(forward.writeOccurrence());
@@ -1291,7 +1290,7 @@ public final class DpPlacementAdapter {
 			InvocationEvidence projection = invocationEvidence(hop, numWorkers);
 			invocations.put(occurrence.key(), occurrenceInvocationEvidence(
 				analysis, rewireSnapshot, occurrence.key(), projection, terminalTransientWrites));
-			privacy.put(occurrence.key(), privacyByHop.getOrDefault(hop.getHopID(), Privacy.PUBLIC));
+			privacy.put(occurrence.key(), analysis.requirePrivacy(occurrence.key()));
 		}
 		return new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint(),
 			Math.max(1, numWorkers), invocations, privacy);

@@ -322,6 +322,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		HeuristicPolicyFacts facts = analysis.heuristicPolicyFacts();
 		Assert.assertEquals("HEURISTIC_VECTOR_FIXTURE_TYPED_FACT_COUNT", 1, facts.demotions().size());

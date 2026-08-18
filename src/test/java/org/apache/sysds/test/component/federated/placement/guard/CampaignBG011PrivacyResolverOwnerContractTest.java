@@ -35,6 +35,17 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 		"src/main/java/org/apache/sysds/runtime/controlprogram/federated/FederatedPrivacyConstraintResolver.java");
 	private static final Path PLANNER_UTILS = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerUtils.java");
+	private static final Path PLACEMENT_BUILDER = ROOT.resolve(
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java");
+	private static final Path DML_TRANSLATOR = ROOT.resolve(
+		"src/main/java/org/apache/sysds/parser/DMLTranslator.java");
+	private static final List<Path> SELECTOR_SIDE_SOURCES = List.of(
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAll.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedHeuristic/FederatedPlannerFedHeuristic.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpRewireTransTable.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java"));
 
 	@Rule
 	public final TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -53,7 +64,7 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 		}
 
 		String plannerBody = JavaSourceBoundaryScanner.methodBody(
-			Files.readString(PLANNER_UTILS), "getFedWorkerMetaData", "List<Pair<FederatedRange, FederatedData>> fedMap");
+			Files.readString(PLANNER_UTILS), "resolveFederatedSourceMetadata", "DataOp initFedOp");
 		List<JavaSourceTokenScanner.Token> plannerTokens = JavaSourceTokenScanner.tokens(plannerBody);
 		int delegations = countSequence(plannerTokens,
 			"FederatedPrivacyConstraintResolver", ".", "resolve", "(");
@@ -69,9 +80,10 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	}
 
 	@Test
-	public void plannerRetainsFatalMergeLoggingAndRegistersOnlyAfterResolution() throws Exception {
+	public void commonSourceResolverRetainsFatalMergeLoggingWithoutPlannerRegistryMutation() throws Exception {
+		String source = Files.readString(PLANNER_UTILS);
 		String plannerBody = JavaSourceBoundaryScanner.methodBody(
-			Files.readString(PLANNER_UTILS), "getFedWorkerMetaData", "List<Pair<FederatedRange, FederatedData>> fedMap");
+			source, "resolveFederatedSourceMetadata", "DataOp initFedOp");
 		List<JavaSourceTokenScanner.Token> tokens = JavaSourceTokenScanner.tokens(plannerBody);
 		List<String> failures = new ArrayList<>();
 
@@ -85,11 +97,14 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 			"FederatedPlannerLogger", ".", "logErrorMessage", "(");
 		int fatalThrow = sequence(tokens, Math.max(0, fatalCheck),
 			"throw", "new", "DMLRuntimeException", "(", "errorMsg", ")", ";");
-		int register = sequence(tokens, Math.max(0, fatalCheck), "registerFedInitVar", "(");
-		if(!(fatalCheck >= 0 && fatalLog > fatalCheck && fatalThrow > fatalLog && register > fatalThrow))
-			failures.add("fatalLogThrowMustPrecedeRegistration");
-		if(countIdentifier(tokens, "registerFedInitVar") != 1)
-			failures.add("fedInitRegistrations=" + countIdentifier(tokens, "registerFedInitVar"));
+		if(!(fatalCheck >= 0 && fatalLog > fatalCheck && fatalThrow > fatalLog))
+			failures.add("fatalLogMustPrecedeThrow");
+		if(countIdentifier(tokens, "registerFedInitVar") != 0)
+			failures.add("sourceResolutionMustNotMutatePlannerRegistry");
+		if(source.contains("getFedWorkerMetaData("))
+			failures.add("legacyPlannerSpecificAcquisitionWrapperStillExists");
+		if(source.contains("getPrivacyConstraint("))
+			failures.add("legacyHopIdPrivacyPropagationStillExists");
 
 		Assert.assertEquals("G011_PRIVACY_PLANNER_RETAINED_BOUNDARIES", List.of(), failures);
 	}
@@ -103,6 +118,42 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 			merge(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, "private-aggregate"));
 		Assert.assertEquals(Privacy.PRIVATE, merge(Privacy.PRIVATE_AGGREGATE, "private"));
 		Assert.assertEquals(Privacy.PRIVATE, merge(Privacy.PRIVATE, "public"));
+	}
+
+	@Test
+	public void placementAnalysisOwnsPrivacyBeforeEveryPlannerSelector() throws Exception {
+		String builderSource = Files.readString(PLACEMENT_BUILDER);
+		String closure = JavaSourceBoundaryScanner.methodBody(builderSource,
+			"closePrivacyDomains", "List<Node> nodes");
+		String translator = JavaSourceBoundaryScanner.methodBody(Files.readString(DML_TRANSLATOR),
+			"runFederatedPlannerAtFinalHopBoundary", "DMLProgram dmlp");
+		List<String> failures = new ArrayList<>();
+
+		if(countSequence(JavaSourceTokenScanner.tokens(closure),
+			"FederatedPlannerUtils", ".", "resolveFederatedSourceMetadata", "(") != 1)
+			failures.add("commonAnalysisMustOwnOneSourceAcquisitionCall");
+		if(!closure.contains("derivePrivacyConstraint") || !closure.contains("PRIVACY_EXCLUDED")
+			|| !closure.contains("ReasonCode.PRIVACY"))
+			failures.add("commonAnalysisPrivacyPropagationOrExclusionMissing");
+		int bind = translator.indexOf("bindPlacementAnalysisAtFinalHopBoundary");
+		int create = translator.indexOf("FederatedPlannerFactory.create");
+		if(bind < 0 || create <= bind)
+			failures.add("placementAnalysisMustPrecedePlannerFactory");
+
+		for(Path sourcePath : SELECTOR_SIDE_SOURCES) {
+			String source = Files.readString(sourcePath);
+			for(String forbidden : List.of("resolveFederatedSourceMetadata(",
+				"getFedWorkerMetaData(", "getPrivacyConstraint("))
+				if(source.contains(forbidden))
+					failures.add(sourcePath.getFileName() + "StillAcquiresOrPropagatesPrivacy:" + forbidden);
+		}
+		String dpEnumerator = Files.readString(SELECTOR_SIDE_SOURCES.get(2));
+		String dpAdapter = Files.readString(SELECTOR_SIDE_SOURCES.get(4));
+		if(!dpEnumerator.contains("analysis().requirePrivacy(")
+			|| !dpAdapter.contains("analysis.requirePrivacy("))
+			failures.add("dpMustConsumeExactAnalysisPrivacyFacts");
+
+		Assert.assertEquals("G011_COMMON_PRE_SELECTOR_PRIVACY_AUTHORITY", List.of(), failures);
 	}
 
 	@Test

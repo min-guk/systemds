@@ -80,7 +80,7 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 			source.candidateConsumerProfileFacts().orderedFacts(),
 			source.detachedConsumerProfileFacts().orderedFacts(),
 			reorderedCompiledInputEdges(source, projections),
-			source.logicalTransientInputsInCanonicalOrder(), null);
+			source.logicalTransientInputsInCanonicalOrder(), source.privacyFactAuthority(), null);
 	}
 
 	private static List<PlacementAnalysis.CompiledInputEdgeFact> reorderedCompiledInputEdges(
@@ -194,8 +194,14 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		}
 		if(!duplicate) throw new AssertionError("R4_SAME_HOP_CONTEXT|no-repeated-B17-origin");
 		PlacementShapeFacts shapeFacts = copiedShapeFacts(source, projections);
-		return new PlacementAnalysis(source.graph(), projections, null, shapeFacts,
-			testFingerprint(source.graph(), projections), new HeuristicPolicyFacts(List.of()));
+		return new PlacementAnalysis(source.graph(), projections, List.of(), null, shapeFacts,
+			testFingerprint(source.graph(), projections), new HeuristicPolicyFacts(List.of()),
+			source.candidateRuleDomain().orderedRuleKeys(), source.candidateRuleFacts().orderedFacts(),
+			source.candidateRuleDomain().orderedConsumerKeys(),
+			source.candidateConsumerProfileFacts().orderedFacts(),
+			source.detachedConsumerProfileFacts().orderedFacts(),
+			source.compiledInputEdgesInCanonicalOrder(), source.logicalTransientInputsInCanonicalOrder(),
+			source.privacyFactAuthority(), null);
 	}
 
 	public static PlacementAnalysis replaceGraph(PlacementAnalysis source, NeutralPlacementGraph graph) {

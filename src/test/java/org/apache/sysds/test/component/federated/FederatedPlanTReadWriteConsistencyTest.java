@@ -46,19 +46,12 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCostEstimator;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.jgrapht.Graph;
-import org.jgrapht.graph.DefaultWeightedEdge;
 
 public class FederatedPlanTReadWriteConsistencyTest {
-	private static final double HARD_CONSTRAINT = 1e15;
 
 	@Test
 	@Ignore("Legacy public-privacy fixture has no exact neutral-analysis authority; public cases are excluded by the campaign contract")
@@ -172,44 +165,6 @@ public class FederatedPlanTReadWriteConsistencyTest {
 					}
 	}
 
-	@Test
-	public void testMinSTAddsHardConstraintEdgesForMultipleTWrites() throws Exception {
-		DataOp op1 = createTransientRead("op1");
-		DataOp op2 = createTransientRead("op2");
-		DataOp tw1 = createTransientWrite("X", op1);
-		DataOp tw2 = createTransientWrite("X", op2);
-		DataOp tr = createTransientRead("X");
-
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		addVertex(graph, tw1);
-		addVertex(graph, tw2);
-		addVertex(graph, tr);
-
-		Map<Long, List<Hop>> rewireTable = new HashMap<>();
-		rewireTable.put(tr.getHopID(), Arrays.asList(tw1, tw2));
-
-		invokeEstimateHop(tr, graph, rewireTable);
-
-		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
-		// MinST encodes TR/TW consistency by forcing TW.P, TR.C, and TR.P on the same cut side.
-		// (TW.C is already coupled to TW.P via transient placement restrictions.)
-		assertConstraintEdge(g, placementId(tw1.getHopID()), computeId(tr.getHopID()));
-		assertConstraintEdge(g, computeId(tr.getHopID()), placementId(tw1.getHopID()));
-		assertConstraintEdge(g, placementId(tw2.getHopID()), computeId(tr.getHopID()));
-		assertConstraintEdge(g, computeId(tr.getHopID()), placementId(tw2.getHopID()));
-		assertConstraintEdge(g, placementId(tw1.getHopID()), placementId(tr.getHopID()));
-		assertConstraintEdge(g, placementId(tr.getHopID()), placementId(tw1.getHopID()));
-		assertConstraintEdge(g, placementId(tw2.getHopID()), placementId(tr.getHopID()));
-		assertConstraintEdge(g, placementId(tr.getHopID()), placementId(tw2.getHopID()));
-	}
-
-	private static void assertConstraintEdge(Graph<Long, DefaultWeightedEdge> graph, long from, long to) {
-		DefaultWeightedEdge edge = graph.getEdge(from, to);
-		Assert.assertNotNull("Missing constraint edge " + from + " -> " + to, edge);
-		Assert.assertTrue("Constraint edge below hard lower bound for edge " + from + " -> " + to,
-			graph.getEdgeWeight(edge) >= HARD_CONSTRAINT);
-	}
-
 	private static void invokeEnumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyMap, Set<Long> unref, int numWorkers,
@@ -221,13 +176,6 @@ public class FederatedPlanTReadWriteConsistencyTest {
 		method.invoke(null, hop, memoTable, hopCommonTable, rewireTable, privacyMap, unref, numWorkers, oracleFacade);
 	}
 
-	private static void invokeEstimateHop(Hop hop, FederatedPlanMinSTGraph graph,
-			Map<Long, List<Hop>> rewireTable) throws Exception {
-		Method method = FederatedPlanMinSTCostEstimator.class.getDeclaredMethod(
-			"estimateHop", Hop.class, FederatedPlanMinSTGraph.class, Map.class);
-		method.setAccessible(true);
-		method.invoke(null, hop, graph, rewireTable);
-	}
 
 	private static DpScenario buildDpScenario(boolean mixed) {
 		DataOp op1 = createTransientRead("op1");
@@ -290,22 +238,6 @@ public class FederatedPlanTReadWriteConsistencyTest {
 
 	private static DataOp createTransientWrite(String name, Hop input) {
 		return new DataOp(name, DataType.MATRIX, ValueType.FP64, input, OpOpData.TRANSIENTWRITE, null);
-	}
-
-	private static void addVertex(FederatedPlanMinSTGraph graph, Hop hop) {
-		ExecPlacementCaps caps = new ExecPlacementCaps();
-		Vertex vertex = new Vertex(hop, Privacy.PUBLIC, null, caps);
-		vertex.setMetadata(1.0, 1.0, new ArrayList<>());
-		graph.addVertex(vertex);
-	}
-
-	private static long computeId(long hopId) {
-		// Keep consistent with FederatedPlanMinSTPlanner: 2-bit node role encoding.
-		return hopId << 2;
-	}
-
-	private static long placementId(long hopId) {
-		return (hopId << 2) | 1;
 	}
 
 	private static final class DpScenario {

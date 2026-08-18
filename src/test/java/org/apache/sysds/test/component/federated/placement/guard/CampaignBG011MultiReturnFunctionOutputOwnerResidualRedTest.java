@@ -28,8 +28,6 @@ public class CampaignBG011MultiReturnFunctionOutputOwnerResidualRedTest {
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerUtils.java");
 	private static final Path DP = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java");
-	private static final Path MIN_ST = ROOT.resolve(
-		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCostEstimator.java");
 	private static final Path FED_PLANNER = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner");
 
@@ -38,7 +36,6 @@ public class CampaignBG011MultiReturnFunctionOutputOwnerResidualRedTest {
 		String functionOp = compact(Files.readString(FUNCTION_OP));
 		String plannerUtils = compact(Files.readString(PLANNER_UTILS));
 		String dp = compact(Files.readString(DP));
-		String minST = compact(Files.readString(MIN_ST));
 		String declaration = "public static Hop " + METHOD
 			+ "(DataOp transientRead, List<Hop> sourceHops)";
 		String ownerCall = "FunctionOp." + METHOD + "(";
@@ -53,8 +50,6 @@ public class CampaignBG011MultiReturnFunctionOutputOwnerResidualRedTest {
 			failures.add("FederatedPlannerUtils.legacyDeclarationRemains");
 		if(!dp.contains(ownerCall) || dp.contains(legacyCall))
 			failures.add("DP.mustCallFunctionOpDirectly");
-		if(!minST.contains(ownerCall) || minST.contains(legacyCall))
-			failures.add("MinST.mustCallFunctionOpDirectly");
 		try(var sources = Files.walk(FED_PLANNER)) {
 			List<String> wrappers = sources.filter(path -> path.toString().endsWith(".java"))
 				.filter(path -> {

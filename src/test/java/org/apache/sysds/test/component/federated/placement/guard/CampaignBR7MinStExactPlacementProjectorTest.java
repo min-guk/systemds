@@ -257,6 +257,7 @@ public class CampaignBR7MinStExactPlacementProjectorTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
 	}
 

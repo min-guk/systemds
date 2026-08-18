@@ -65,7 +65,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
@@ -112,8 +111,6 @@ import org.apache.sysds.parser.VariableSet;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.util.UtilFunctions;
@@ -437,10 +434,7 @@ public class FederatedPlannerDpCostEnumerator {
 		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable = new HashMap<>();
 		FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx = new FederatedPlannerDpRewireTransTable.UnrollContext();
 
-		Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
-		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
-
-		FederatedPlannerDpRewireTransTable.rewireProgram(analysis, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
+		FederatedPlannerDpRewireTransTable.rewireProgram(analysis, prog, rewireTable, hopCommonTable,
 				unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
 		RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 			analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
@@ -451,21 +445,21 @@ public class FederatedPlannerDpCostEnumerator {
 		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, unrollCtx.getIter1Roots());
 		populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 
-		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+		int numOfWorkers = Math.max(1, analysis.numWorkers());
 		memoTable.setNumWorkers(numOfWorkers);
 		NeutralEnumerationContext enumerationContext = DpPlacementAdapter.captureNeutralEnumerationContext(
-			analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet);
+			analysis, rewireSnapshot, unRefTwriteSet);
 
 		addUnreferencedTWriteRoots(progRootHopSet, unRefTwriteSet, hopCommonTable);
 		boolean closeExactFrontier = requiresExactFrontierClosure(analysis);
 		if(closeExactFrontier)
 			enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
-				privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, numOfWorkers,
+				parentChildUploadHints, unRefTwriteSet, numOfWorkers,
 				unrollCtx, new EnumerationCapture(
 					enumerationContext, memoTable, NO_OP_OBSERVER, false, true));
 		if(closeExactFrontier)
 			closeExactMemoFrontier(prog, memoTable, analysis, hopCommonTable, rewireTable,
-				privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, numOfWorkers,
+				parentChildUploadHints, unRefTwriteSet, numOfWorkers,
 				unrollCtx, enumerationContext);
 		if(closeExactFrontier)
 			memoTable.assertNoExactFrontierSeeds();
@@ -474,7 +468,7 @@ public class FederatedPlannerDpCostEnumerator {
 		String stableFrontier = closeExactFrontier
 			? memoTable.exactSemanticFrontierFingerprint() : null;
 		enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
-			privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, numOfWorkers,
+			parentChildUploadHints, unRefTwriteSet, numOfWorkers,
 			unrollCtx, capture);
 		if(closeExactFrontier) {
 			String observedFrontier = memoTable.exactSemanticFrontierFingerprint();
@@ -543,7 +537,7 @@ public class FederatedPlannerDpCostEnumerator {
 	private static void closeExactMemoFrontier(DMLProgram prog,
 		FederatedPlannerDpMemoTable memoTable, PlacementAnalysis analysis,
 		Map<Long,FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-		Map<Long,List<Hop>> rewireTable, Map<Long,Privacy> privacyConstraintMap,
+		Map<Long,List<Hop>> rewireTable,
 		Map<Long,Set<Long>> parentChildUploadHints, Set<Long> unRefTwriteSet,
 		int numOfWorkers, FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx,
 		NeutralEnumerationContext enumerationContext) {
@@ -552,7 +546,7 @@ public class FederatedPlannerDpCostEnumerator {
 			EnumerationCapture closure = new EnumerationCapture(
 				enumerationContext, memoTable, NO_OP_OBSERVER, true);
 			enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
-				privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, numOfWorkers,
+				parentChildUploadHints, unRefTwriteSet, numOfWorkers,
 				unrollCtx, closure);
 			String current = memoTable.exactSemanticFrontierFingerprint();
 			if(FederatedPlannerTrace.isEnabled())
@@ -579,18 +573,18 @@ public class FederatedPlannerDpCostEnumerator {
 
 	private static void enumerateProgramPass(DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 		PlacementAnalysis analysis, Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-		Map<Long,List<Hop>> rewireTable, Map<Long,Privacy> privacyConstraintMap,
+		Map<Long,List<Hop>> rewireTable,
 		Map<Long,Set<Long>> parentChildUploadHints, Set<Long> unRefTwriteSet, int numOfWorkers,
 		FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx, EnumerationCapture capture) {
 		Set<String> fnStack = new HashSet<>();
 		Set<Hop> visitedHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(StatementBlock sb : analysis.topLevelStatementBlocks())
-			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable,
 				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		for(Hop iter1Root : unrollCtx.getIter1Roots()) {
 			if(iter1Root == null)
 				continue;
-			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable,
 				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 	}
@@ -607,14 +601,10 @@ public class FederatedPlannerDpCostEnumerator {
 		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable = new HashMap<>();
 		FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx = new FederatedPlannerDpRewireTransTable.UnrollContext();
 
-		Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
-		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
-
 		DMLProgram prog = function.getDMLProg();
 			FederatedPlannerDpRewireTransTable.rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable,
-					privacyConstraintMap,
-					fedMap, unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
-				int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+					unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
+				int numOfWorkers = Math.max(1, analysis.numWorkers());
 				memoTable.setNumWorkers(numOfWorkers);
 				analysis.assertProgramOwner(prog);
 				Set<Long> activeScopeIds = FederatedPlannerDpRewireTransTable.collectExecutableScopeIds(function);
@@ -639,17 +629,17 @@ public class FederatedPlannerDpCostEnumerator {
 		Set<String> fnStack = new HashSet<>();
 		Set<Hop> visitedHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		NeutralEnumerationContext capturedContext = DpPlacementAdapter.captureNeutralEnumerationContext(
-			analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet);
+			analysis, rewireSnapshot, unRefTwriteSet);
 		EnumerationCapture capture = new EnumerationCapture(
 			new NeutralEnumerationContext(capturedContext.analysis(), capturedContext.rewireSnapshot(),
 				capturedContext.analysisFingerprint(), capturedContext.numWorkers(),
 				capturedContext.invocationEvidence(), capturedContext.privacy()), memoTable, NO_OP_OBSERVER);
-		enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+		enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable,
 				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
 			if (iter1Root == null)
 				continue;
-			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, collectPredicateWriteRoots(hopCommonTable));
@@ -681,16 +671,16 @@ public class FederatedPlannerDpCostEnumerator {
 	 */
 	public static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
-			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
+			Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
 			int numOfWorkers, Set<Hop> visitedHops) {
-		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable,
 			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, null);
 	}
 
 	private static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
-			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
+			Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
 			int numOfWorkers, Set<Hop> visitedHops, EnumerationCapture capture) {
 		if (sb instanceof IfStatementBlock) {
@@ -698,47 +688,40 @@ public class FederatedPlannerDpCostEnumerator {
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
 
 			enumerateHopDAG(isb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
-					privacyConstraintMap,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
-						privacyConstraintMap,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 
 			for (StatementBlock innerIsb : istmt.getElseBody())
 				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
-						privacyConstraintMap,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else if (sb instanceof ForStatementBlock) { // incl parfor
 			ForStatementBlock fsb = (ForStatementBlock) sb;
 			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
 
-			enumerateHopDAG(fsb.getFromHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			enumerateHopDAG(fsb.getFromHops(), prog, memoTable, hopCommonTable, rewireTable,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
-			enumerateHopDAG(fsb.getToHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			enumerateHopDAG(fsb.getToHops(), prog, memoTable, hopCommonTable, rewireTable,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			if (fsb.getIncrementHops() != null) {
 				enumerateHopDAG(fsb.getIncrementHops(), prog, memoTable, hopCommonTable, rewireTable,
-						privacyConstraintMap,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			}
 
 			for (StatementBlock innerFsb : fstmt.getBody())
 				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
-						privacyConstraintMap,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
 			enumerateHopDAG(wsb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
-					privacyConstraintMap,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 
 			for (StatementBlock innerWsb : wstmt.getBody())
 				enumerateStatementBlock(innerWsb, prog, memoTable, hopCommonTable, rewireTable,
-						privacyConstraintMap,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else if (sb instanceof FunctionStatementBlock) {
 			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
@@ -746,12 +729,11 @@ public class FederatedPlannerDpCostEnumerator {
 
 			for (StatementBlock innerFsb : fstmt.getBody())
 				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
-						privacyConstraintMap,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else { // generic (last-level)
 			if (sb.getHops() != null) {
 				for (Hop c : sb.getHops())
-					enumerateHopDAG(c, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					enumerateHopDAG(c, prog, memoTable, hopCommonTable, rewireTable,
 							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			}
 		}
@@ -764,7 +746,7 @@ public class FederatedPlannerDpCostEnumerator {
 	 */
 	private static void enumerateHopDAG(Hop hop, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
-			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
+			Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet,
 			Set<String> fnStack, int numOfWorkers, Set<Hop> visitedHops, EnumerationCapture capture) {
 		// Process all input nodes first if not already in memo table
@@ -818,7 +800,7 @@ public class FederatedPlannerDpCostEnumerator {
 				if(physicalChildren.contains(inputHop)
 					|| !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.FOUT)
 						&& !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.LOUT))
-					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable,
 						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 				continue;
 			}
@@ -826,7 +808,7 @@ public class FederatedPlannerDpCostEnumerator {
 					&& !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.LOUT)) {
 				if (!visitedHops.contains(inputHop)) {
 					visitedHops.add(inputHop);
-					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable,
 							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 				}
 			}
@@ -856,8 +838,7 @@ public class FederatedPlannerDpCostEnumerator {
 									"[FederatedCost] Function " + fkey
 											+ " not found in DMLProgram; skipping nested planning");
 						} else {
-							enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable,
-									privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers,
+							enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable, parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers,
 									visitedHops, capture);
 						}
 					}
@@ -868,10 +849,10 @@ public class FederatedPlannerDpCostEnumerator {
 		// Enumerate the federated plan for the current Hop
 		if(capture.sharedFunctionInputClosure)
 			memoTable.removeFedPlanVariantsForCarrier(hop);
-		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+		enumerateHop(hop, memoTable, hopCommonTable, rewireTable,
 				parentChildUploadHints, unRefTwriteSet, numOfWorkers, capture);
 
-		// FederatedPlannerDpRewireTransTable.logHopInfo(hop, privacyConstraintMap,
+		// FederatedPlannerDpRewireTransTable.logHopInfo(hop,
 		// "enumerateHopDAG");
 
 	}
@@ -908,7 +889,7 @@ public class FederatedPlannerDpCostEnumerator {
 	 */
 	private static void enumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-			Map<Long, List<Hop>> rewireTable, Map<Long, Privacy> privacyConstraintMap,
+			Map<Long, List<Hop>> rewireTable,
 			Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, int numOfWorkers, EnumerationCapture capture) {
 		long hopID = hop.getHopID();
@@ -1052,10 +1033,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// Boundary transfer accounting is based on selected execution/output combinations:
 		// FED parent + LOUT child always incurs LOUT->FED upload (shared by parent count/weight).
 		// CP parent + FOUT child always incurs FOUT->CP download.
-		List<Hop> inputHopsForPrivacy = new ArrayList<>(childHops);
-		inputHopsForPrivacy.addAll(lOUTOnlyinputHops);
-		inputHopsForPrivacy.addAll(fOUTOnlyinputHops);
-		final Privacy privacyConstraint = privacyConstraintMap.getOrDefault(hopID, Privacy.PUBLIC);
+		final Privacy privacyConstraint = capture.context.analysis().requirePrivacy(hopOccurrence.key());
 
 		double hopNetworkWeight = hopCommon.getNetworkWeight();
 		// Hop-local placement conversion (FED<->local result materialization) follows

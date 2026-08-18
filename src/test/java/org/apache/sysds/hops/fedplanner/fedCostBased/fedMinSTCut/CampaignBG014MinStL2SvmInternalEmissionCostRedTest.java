@@ -37,13 +37,23 @@ public class CampaignBG014MinStL2SvmInternalEmissionCostRedTest {
 		Map<String,String> oldCostProperties = installDockerLanCostProperties();
 		Path script = Path.of("target/g014-minst-l2svm-cli.dml");
 		Path config = Path.of("target/g014-minst-l2svm-cli.xml");
+		Path x1 = Path.of("target/g014-minst-l2svm-x-1.data");
+		Path x2 = Path.of("target/g014-minst-l2svm-x-2.data");
+		Path y1 = Path.of("target/g014-minst-l2svm-y-1.data");
+		Path y2 = Path.of("target/g014-minst-l2svm-y-2.data");
 		Files.createDirectories(script.getParent());
+		String x1Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker1", 8001, x1, 25000, 2100, 25000L * 2100);
+		String x2Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker2", 8002, x2, 25000, 2100, 25000L * 2100);
+		String y1Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker1", 8001, y1, 25000, 1, 25000);
+		String y2Address = MinStExactCliMetadataFixture.privateAggregateAddress(
+			"worker2", 8002, y2, 25000, 1, 25000);
 		Files.writeString(script, String.join("\n",
-			"X = federated(addresses=list(\"worker1:8001/data/P2P2D_features_2_1.data\", "
-				+ "\"worker2:8002/data/P2P2D_features_2_2.data\"), "
+			"X = federated(addresses=list(\"" + x1Address + "\", \"" + x2Address + "\"), "
 				+ "ranges=list(list(0, 0), list(25000, 2100), list(25000, 0), list(50000, 2100)))",
-			"Y = federated(addresses=list(\"worker1:8001/data/P2P2D_labels_2_1.data\", "
-				+ "\"worker2:8002/data/P2P2D_labels_2_2.data\"), "
+			"Y = federated(addresses=list(\"" + y1Address + "\", \"" + y2Address + "\"), "
 				+ "ranges=list(list(0, 0), list(25000, 1), list(25000, 0), list(50000, 1)))",
 			"",
 			"m = l2svm(X=X, Y=Y, verbose=FALSE, epsilon=1e-22, maxIterations=30)",
@@ -107,6 +117,7 @@ public class CampaignBG014MinStL2SvmInternalEmissionCostRedTest {
 		finally {
 			Files.deleteIfExists(script);
 			Files.deleteIfExists(config);
+			MinStExactCliMetadataFixture.delete(x1, x2, y1, y2);
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);
 			ConfigurationManager.setGlobalConfig(oldCompiler);

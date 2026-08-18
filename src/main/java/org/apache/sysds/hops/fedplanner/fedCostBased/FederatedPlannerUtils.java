@@ -21,9 +21,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.util.Iterator;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
@@ -69,7 +67,9 @@ import java.util.Set;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -86,6 +86,8 @@ public class FederatedPlannerUtils {
 	private static final Map<String, PlannerRecompileState> PLANNER_RECOMPILE_STATES = new ConcurrentHashMap<>();
 	private static final java.util.Set<String> AMBIGUOUS_PLANNER_RECOMPILE_STATES = ConcurrentHashMap.newKeySet();
 	private static final Map<Long, String> PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID = new ConcurrentHashMap<>();
+	private static final Map<DataOp, Privacy> FEDERATED_SOURCE_PRIVACY_TEST_OVERRIDES =
+		Collections.synchronizedMap(new WeakHashMap<>());
 
 
 	/** Immutable copy of one variable's federated planner metadata. */
@@ -310,9 +312,35 @@ public class FederatedPlannerUtils {
 		}
 	}
 
-	// NOTE: keep privacy semantics in sync with DP planner.
-	public static Privacy getFedWorkerMetaData(
-			List<Pair<FederatedRange, FederatedData>> fedMap, DataOp initFedOp) {
+	/**
+	 * Immutable, planner-neutral metadata acquired for one literal federated source.
+	 * Construction of this value performs no planner-registry mutation.
+	 */
+	public record FederatedSourceMetadata(Privacy privacy,
+		List<Pair<FederatedRange, FederatedData>> partitions) {
+		public FederatedSourceMetadata {
+			if(privacy == null)
+				throw new IllegalArgumentException("Federated source privacy must be resolved");
+			partitions = List.copyOf(partitions);
+		}
+	}
+
+	/**
+	 * Hermetic fixture hook. Production compilation never installs an override;
+	 * unresolved worker metadata therefore still fails closed.
+	 */
+	public static void setFederatedSourcePrivacyForTesting(DataOp source, Privacy privacy) {
+		FEDERATED_SOURCE_PRIVACY_TEST_OVERRIDES.put(Objects.requireNonNull(source, "source"),
+			Objects.requireNonNull(privacy, "privacy"));
+	}
+
+	/**
+	 * Acquire the privacy and physical worker metadata of one literal federated source.
+	 * This method is the common pre-selector acquisition boundary used by placement
+	 * analysis.  In particular, it deliberately does not register fed-init variables;
+	 * registry publication remains a post-selection compiler action.
+	 */
+	public static FederatedSourceMetadata resolveFederatedSourceMetadata(DataOp initFedOp) {
 		final boolean hasLocalObject = initFedOp.hasParameter(DataExpression.FED_LOCAL_OBJECT);
 		final Hop localObjectHop = hasLocalObject
 				? initFedOp.getInput(initFedOp.getParameterIndex(DataExpression.FED_LOCAL_OBJECT))
@@ -351,6 +379,7 @@ public class FederatedPlannerUtils {
 				? Types.DataType.MATRIX
 				: Types.DataType.FRAME;
 
+		List<Pair<FederatedRange, FederatedData>> partitions = new ArrayList<>();
 		// Local list for privacy calculation of this DataOp only
 		List<FedWorkerContext> localWorkers = new ArrayList<>();
 
@@ -376,20 +405,21 @@ public class FederatedPlannerUtils {
 			long[] beginRange = rangeList.get(2 * i);
 			long[] endRange = rangeList.get(2 * i + 1);
 
-			try {
-				FederatedData federatedData = new FederatedData(fedDataType,
-						new InetSocketAddress(InetAddress.getByName(host), port), filePath);
-				FederatedRange range = new FederatedRange(beginRange, endRange);
-				Pair<FederatedRange, FederatedData> pair = new ImmutablePair<>(range, federatedData);
+			// Keep worker identity symbolic while constructing placement authority. DNS is
+			// a transport concern and must not precede a successful local-metadata lookup;
+			// an actual privacy RPC still resolves (or fails) at the network boundary.
+			FederatedData federatedData = new FederatedData(fedDataType,
+				InetSocketAddress.createUnresolved(host, port), filePath);
+			FederatedRange range = new FederatedRange(beginRange, endRange);
+			Pair<FederatedRange, FederatedData> pair = new ImmutablePair<>(range, federatedData);
 
-				fedMap.add(pair); // Global worker count approximation
-				localWorkers.add(new FedWorkerContext(host, port, filePath, federatedData));
-			} catch (UnknownHostException e) {
-				throw new DMLRuntimeException("federated host was unknown: " + host, e);
-			}
+			partitions.add(pair);
+			localWorkers.add(new FedWorkerContext(host, port, filePath, federatedData));
 		}
-		Privacy privacyConstraint = null;
+		Privacy privacyConstraint = FEDERATED_SOURCE_PRIVACY_TEST_OVERRIDES.get(initFedOp);
 		boolean hadPrivacyFailure = false;
+		if(privacyConstraint != null)
+			return new FederatedSourceMetadata(privacyConstraint, partitions);
 
 		if (hasLocalObject) {
 			// Best-effort: derive privacy from local metadata (if available); otherwise default to PUBLIC.
@@ -438,10 +468,7 @@ public class FederatedPlannerUtils {
 			FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + errorMsg + " Aborting planning.");
 			throw new DMLRuntimeException(errorMsg);
 		}
-		FType fedInitFType = deriveFedInitFType(initFedOp);
-		String fedInitSignature = deriveFedInitSignature(initFedOp);
-		registerFedInitVar(initFedOp.getName(), fedInitFType, fedInitSignature);
-		return privacyConstraint;
+		return new FederatedSourceMetadata(privacyConstraint, partitions);
 	}
 
 	public static void registerFedInitVar(String varName) {
@@ -1289,30 +1316,18 @@ public class FederatedPlannerUtils {
 		return (v == Long.MAX_VALUE) ? null : v;
 	}
 
-	public static Privacy getPrivacyConstraint(Hop hop, List<Hop> inputHops, Map<Long, Privacy> privacyMap) {
-		Privacy[] pc = new Privacy[inputHops.size()];
-		StringBuilder missingPrivacy = new StringBuilder();
-		for (int i = 0; i < inputHops.size(); i++) {
-			Hop inputHop = inputHops.get(i);
-			Privacy p = privacyMap.get(inputHop.getHopID());
-			if (p == null) {
-				if (missingPrivacy.length() > 0)
-					missingPrivacy.append(", ");
-				missingPrivacy.append(inputHop.getHopID()).append(" (").append(inputHop.getOpString()).append(")");
-			}
-			pc[i] = p;
-		}
-
-		if (missingPrivacy.length() > 0) {
-			FederatedPlannerLogger.logWarnMessage(
-					"Missing privacy entry for input hop(s): " + missingPrivacy +
-							" while evaluating hop " + hop.getHopID() + " (" + hop.getOpString()
-							+ "); treating as PUBLIC.");
-		}
+	/**
+	 * Pure privacy transfer function. All inputs must already have an exact privacy
+	 * fact; unlike the legacy Hop-ID adapter this method never invents PUBLIC for a
+	 * missing predecessor.
+	 */
+	public static Privacy derivePrivacyConstraint(Hop hop, List<Privacy> inputPrivacy) {
+		if(hop == null || inputPrivacy == null || inputPrivacy.stream().anyMatch(Objects::isNull))
+			throw new IllegalArgumentException("Privacy transfer requires a Hop and complete input facts");
 
 		boolean hasPrivateAggreate = false;
 
-		for (Privacy p : pc) {
+		for (Privacy p : inputPrivacy) {
 			if (p == Privacy.PRIVATE) {
 				return Privacy.PRIVATE;
 			} else if (p == Privacy.PRIVATE_AGGREGATE) {
@@ -1357,7 +1372,7 @@ public class FederatedPlannerUtils {
 		return Privacy.PUBLIC;
 	}
 
-	private static Privacy joinPrivacy(Privacy a, Privacy b) {
+	public static Privacy joinPrivacy(Privacy a, Privacy b) {
 		if (a == null)
 			return b;
 		if (b == null)
