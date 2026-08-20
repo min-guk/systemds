@@ -465,13 +465,14 @@ public class FederatedPlannerDpCostEnumerator {
 			memoTable.assertNoExactFrontierSeeds();
 		EnumerationCapture capture = new EnumerationCapture(
 			enumerationContext, memoTable, observer, closeExactFrontier);
-		String stableFrontier = closeExactFrontier
-			? memoTable.exactSemanticFrontierFingerprint() : null;
+		FederatedPlannerDpMemoTable.ExactSemanticFrontierSnapshot stableFrontier = closeExactFrontier
+			? memoTable.exactSemanticFrontierSnapshot() : null;
 		enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
 			parentChildUploadHints, unRefTwriteSet, numOfWorkers,
 			unrollCtx, capture);
 		if(closeExactFrontier) {
-			String observedFrontier = memoTable.exactSemanticFrontierFingerprint();
+			FederatedPlannerDpMemoTable.ExactSemanticFrontierSnapshot observedFrontier =
+				memoTable.exactSemanticFrontierSnapshot();
 			if(!stableFrontier.equals(observedFrontier))
 				throw new IllegalStateException("Final observed DP enumeration changed the exact memo fixed point: "
 					+ "before=" + frontierDigest(stableFrontier)
@@ -542,14 +543,16 @@ public class FederatedPlannerDpCostEnumerator {
 		Map<Long,Set<Long>> parentChildUploadHints, Set<Long> unRefTwriteSet,
 		int numOfWorkers, FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx,
 		NeutralEnumerationContext enumerationContext) {
-		String previous = memoTable.exactSemanticFrontierFingerprint();
+		FederatedPlannerDpMemoTable.ExactSemanticFrontierSnapshot previous =
+			memoTable.exactSemanticFrontierSnapshot();
 		for(int pass = 1; pass <= MAX_EXACT_FRONTIER_CLOSURE_PASSES; pass++) {
 			EnumerationCapture closure = new EnumerationCapture(
 				enumerationContext, memoTable, NO_OP_OBSERVER, true);
 			enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
 				parentChildUploadHints, unRefTwriteSet, numOfWorkers,
 				unrollCtx, closure);
-			String current = memoTable.exactSemanticFrontierFingerprint();
+			FederatedPlannerDpMemoTable.ExactSemanticFrontierSnapshot current =
+				memoTable.exactSemanticFrontierSnapshot();
 			if(FederatedPlannerTrace.isEnabled())
 				FederatedPlannerTrace.logGlobal("DP-FrontierClosure", "pass=" + pass
 					+ " previous=" + frontierDigest(previous)
@@ -567,9 +570,11 @@ public class FederatedPlannerDpCostEnumerator {
 			+ frontierDigest(previous));
 	}
 
-	private static String frontierDigest(String fingerprint) {
-		return "chars=" + fingerprint.length() + ",hash="
-			+ Integer.toUnsignedString(fingerprint.hashCode(), 16);
+	private static String frontierDigest(
+		FederatedPlannerDpMemoTable.ExactSemanticFrontierSnapshot frontier) {
+		return "occurrences=" + frontier.occurrenceArms().size()
+			+ ",arms=" + frontier.armCount() + ",hash="
+			+ Integer.toUnsignedString(frontier.hashCode(), 16);
 	}
 
 	private static void enumerateProgramPass(DMLProgram prog, FederatedPlannerDpMemoTable memoTable,

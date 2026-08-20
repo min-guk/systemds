@@ -634,34 +634,34 @@ public class FederatedPlannerDpMemoTable {
 	}
 
 	/**
-	 * Canonical semantic snapshot of the complete exact DP frontier.
+	 * Exact structural snapshot of the complete DP frontier.
 	 *
 	 * <p>The production rewire graph can contain loop-carried TRead/TWrite cycles.
 	 * A single depth-first enumeration pass is then only a seed: an early TRead can
 	 * observe the previous pass' TWrite frontier while a later TWrite already observes
-	 * the new TRead frontier.  Comparing object identities cannot detect convergence
-	 * because every closure pass allocates fresh {@link FedPlan} objects.  This method
-	 * therefore records every execution-relevant field using exact occurrence authority,
-	 * placement/candidate/relocation receipts, ordered child boundaries, and exact cost
-	 * bits.  It deliberately excludes Java object identity while retaining carrier IDs,
-	 * so semantically identical recomputation is stable but a changed executable carrier
-	 * or cost is not.</p>
+	 * the new TRead frontier. Comparing object identities cannot detect convergence
+	 * because every closure pass allocates fresh {@link FedPlan} objects. The former
+	 * convergence check serialized every nested occurrence identity and plan field into
+	 * very large strings on every pass. This snapshot retains the same exact semantic
+	 * fields as immutable record values instead. Map/set equality makes occurrence and
+	 * arm order irrelevant just as the former canonical sorting did, without rebuilding
+	 * normalized identity strings.</p>
 	 */
-	String exactSemanticFrontierFingerprint() {
+	ExactSemanticFrontierSnapshot exactSemanticFrontierSnapshot() {
 		if(analysis == null)
 			throw new IllegalStateException("Memo is not bound to a placement analysis");
-		StringBuilder fingerprint = new StringBuilder();
-		for(HopOccurrenceProjection occurrence : analysis.occurrences().stream()
-			.sorted(Comparator.comparing(HopOccurrenceProjection::key)).toList()) {
-			fingerprint.append("occ=").append(occurrence.key().normalizedSignature()).append('{');
-			List<String> arms = getAllExactPlanVariantsForOccurrence(occurrence).stream()
-				.map(FederatedPlannerDpMemoTable::exactSemanticArmSignature)
-				.distinct().sorted().toList();
-			for(String arm : arms)
-				fingerprint.append(arm).append(';');
-			fingerprint.append('}');
+		Map<CompiledHopKey,Set<ExactSemanticArmSnapshot>> occurrenceArms = new LinkedHashMap<>();
+		int armCount = 0;
+		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
+			Set<ExactSemanticArmSnapshot> arms = new LinkedHashSet<>();
+			for(OccurrencePlanArm arm : getAllExactPlanVariantsForOccurrence(occurrence))
+				arms.add(exactSemanticArmSnapshot(arm));
+			if(occurrenceArms.put(occurrence.key(), Collections.unmodifiableSet(arms)) != null)
+				throw new IllegalStateException("Duplicate exact occurrence identity " + occurrence.key());
+			armCount += arms.size();
 		}
-		return fingerprint.toString();
+		return new ExactSemanticFrontierSnapshot(
+			Collections.unmodifiableMap(occurrenceArms), armCount);
 	}
 
 	void assertNoExactFrontierSeeds() {
@@ -680,50 +680,60 @@ public class FederatedPlannerDpMemoTable {
 		return variants.pruneFedPlans();
 	}
 
-	private static String exactSemanticArmSignature(OccurrencePlanArm arm) {
+	private static ExactSemanticArmSnapshot exactSemanticArmSnapshot(OccurrencePlanArm arm) {
 		FedPlan plan = arm.plan();
-		PlacementState state = plan.getSelectedPlacementState();
-		StringBuilder signature = new StringBuilder()
-			.append("carrier=").append(arm.carrier().getHopID())
-			.append("|output=").append(arm.output())
-			.append("|seed=").append(plan.isExactFrontierSeed())
-			.append("|exec=").append(plan.getExecType())
-			.append("|ftype=").append(plan.getFType())
-			.append("|cpFout=").append(plan.getCpFoutType())
-			.append("|state=").append(state == null ? "null" : state.normalizedSignature())
-			.append("|derived=").append(plan.isDerivedFedFout())
-			.append("|materialized=").append(plan.isFoutMaterializationAccounted())
-			.append("|cumulative=").append(Double.toHexString(plan.getCumulativeCost()))
-			.append("|self=").append(Double.toHexString(plan.getSelfCost()))
-			.append("|forwarding=").append(Double.toHexString(plan.getForwardingCost()));
-		if(plan.hasExactRecurrenceCosts())
-			signature.append("|recurrence=")
-				.append(Double.toHexString(plan.getEmbeddedChildRecurrenceCost())).append('/')
-				.append(Double.toHexString(plan.getPhysicalChildBoundaryCost()));
-		else
-			signature.append("|recurrence=absent");
-		CandidateSelectionReceipt candidate = plan.getDirectCandidateSelection();
-		signature.append("|candidate=")
-			.append(candidate == null ? "null" : candidate.normalizedSignature());
-		for(RelocationChoiceReceipt relocation : plan.getDirectRelocationChoices())
-			signature.append("|relocation=").append(relocation.normalizedSignature());
+		List<ExactSemanticRelocationCostSnapshot> relocationCosts = new ArrayList<>();
 		for(Map.Entry<RelocationActionKey,Double> cost : plan.getDirectRelocationActionCosts().entrySet())
-			signature.append("|relocationCost=").append(cost.getKey().normalizedSignature())
-				.append('@').append(Double.toHexString(cost.getValue()));
+			relocationCosts.add(new ExactSemanticRelocationCostSnapshot(
+				cost.getKey(), exactDoubleBits(cost.getValue())));
+		List<ExactSemanticChildSnapshot> children = new ArrayList<>();
 		for(FedPlan.ExactChildPlanEdge edge : plan.getExactChildPlanEdges()) {
 			FedPlan child = edge.selectedPlan();
-			PlacementState childState = child.getSelectedPlacementState();
-			CandidateSelectionReceipt childCandidate = child.getDirectCandidateSelection();
-			signature.append("|child=").append(edge.occurrence().normalizedSignature())
-				.append('@').append(edge.carrier().getHopID())
-				.append('/').append(edge.output())
-				.append('/').append(childState == null ? "null" : childState.normalizedSignature())
-				.append("/derived=").append(child.isDerivedFedFout())
-				.append("/cost=").append(Double.toHexString(child.getCumulativeCost()))
-				.append("/candidate=")
-				.append(childCandidate == null ? "null" : childCandidate.normalizedSignature());
+			children.add(new ExactSemanticChildSnapshot(
+				edge.occurrence(), edge.carrier().getHopID(), edge.output(),
+				child.getSelectedPlacementState(), child.isDerivedFedFout(),
+				exactDoubleBits(child.getCumulativeCost()), child.getDirectCandidateSelection()));
 		}
-		return signature.toString();
+		boolean hasRecurrence = plan.hasExactRecurrenceCosts();
+		return new ExactSemanticArmSnapshot(
+			arm.carrier().getHopID(), arm.output(), plan.isExactFrontierSeed(),
+			plan.getExecType(), plan.getFType(), plan.getCpFoutType(),
+			plan.getSelectedPlacementState(), plan.isDerivedFedFout(),
+			plan.isFoutMaterializationAccounted(), exactDoubleBits(plan.getCumulativeCost()),
+			exactDoubleBits(plan.getSelfCost()), exactDoubleBits(plan.getForwardingCost()),
+			hasRecurrence,
+			hasRecurrence ? exactDoubleBits(plan.getEmbeddedChildRecurrenceCost()) : 0L,
+			hasRecurrence ? exactDoubleBits(plan.getPhysicalChildBoundaryCost()) : 0L,
+			plan.getDirectCandidateSelection(), List.copyOf(plan.getDirectRelocationChoices()),
+			List.copyOf(relocationCosts), List.copyOf(children));
+	}
+
+	private static long exactDoubleBits(double value) {
+		return Double.doubleToLongBits(value);
+	}
+
+	static record ExactSemanticFrontierSnapshot(
+		Map<CompiledHopKey,Set<ExactSemanticArmSnapshot>> occurrenceArms, int armCount) {
+	}
+
+	private static record ExactSemanticArmSnapshot(long carrierHopId, FederatedOutput output,
+		boolean frontierSeed, ExecType execType, FType fType, FType cpFoutType,
+		PlacementState placementState, boolean derivedFout, boolean materializationAccounted,
+		long cumulativeCostBits, long selfCostBits, long forwardingCostBits,
+		boolean hasRecurrenceCosts, long embeddedChildRecurrenceCostBits,
+		long physicalChildBoundaryCostBits, CandidateSelectionReceipt candidate,
+		List<RelocationChoiceReceipt> relocations,
+		List<ExactSemanticRelocationCostSnapshot> relocationCosts,
+		List<ExactSemanticChildSnapshot> children) {
+	}
+
+	private static record ExactSemanticRelocationCostSnapshot(
+		RelocationActionKey action, long costBits) {
+	}
+
+	private static record ExactSemanticChildSnapshot(CompiledHopKey occurrence,
+		long carrierHopId, FederatedOutput output, PlacementState placementState,
+		boolean derivedFout, long cumulativeCostBits, CandidateSelectionReceipt candidate) {
 	}
 
 	/** Selects the minimum-cost memo arm for an exact neutral occurrence, including disconnected regions. */

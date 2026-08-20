@@ -593,24 +593,35 @@ public final class PlacementIdentity {
 	}
 
 	private static String fields(String... values) {
-		List<String> encoded = new ArrayList<>(values.length);
-		for(String value : values)
-			encoded.add(token(value));
-		return String.join("|", encoded);
+		StringBuilder encoded = new StringBuilder();
+		for(int i = 0; i < values.length; i++) {
+			if(i > 0)
+				encoded.append('|');
+			appendToken(encoded, values[i]);
+		}
+		return encoded.toString();
 	}
 
 	private static String list(Collection<String> values) {
-		List<String> encoded = new ArrayList<>(values.size());
-		for(String value : values)
-			encoded.add(token(value));
-		return String.join(",", encoded);
+		StringBuilder encoded = new StringBuilder();
+		int index = 0;
+		for(String value : values) {
+			if(index++ > 0)
+				encoded.append(',');
+			appendToken(encoded, value);
+		}
+		return encoded.toString();
 	}
 
 	private static String longs(Collection<Long> values) {
-		List<String> strings = new ArrayList<>(values.size());
-		for(Long value : values)
-			strings.add(Long.toString(value));
-		return list(strings);
+		StringBuilder encoded = new StringBuilder();
+		int index = 0;
+		for(Long value : values) {
+			if(index++ > 0)
+				encoded.append(',');
+			appendToken(encoded, Long.toString(Objects.requireNonNull(value, "signature value")));
+		}
+		return encoded.toString();
 	}
 
 	private static String signatures(Collection<? extends Comparable<?>> values) {
@@ -631,5 +642,10 @@ public final class PlacementIdentity {
 	private static String token(String value) {
 		Objects.requireNonNull(value, "signature value");
 		return value.length() + ":" + value;
+	}
+
+	private static void appendToken(StringBuilder target, String value) {
+		Objects.requireNonNull(value, "signature value");
+		target.append(value.length()).append(':').append(value);
 	}
 }

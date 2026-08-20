@@ -5340,8 +5340,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		Map<Long, ConflictEntry> conflictCheckMap = resolutionContext.conflictMapCache.getFeasible(decisions);
 		for (int iter = 0; iter < maxIters; iter++) {
-			refreshConflictChoiceFeasibility(conflictCheckMap, memoTable);
-
 			Map<Long, FederatedOutput> nextDecisions = new HashMap<>();
 			if (lockedDecisions != null && !lockedDecisions.isEmpty())
 				nextDecisions.putAll(lockedDecisions);
@@ -5517,7 +5515,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				// retain the output contract selected by the superseded family state.
 				Map<Long, ConflictEntry> finalConflictCheckMap =
 					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
-				refreshConflictChoiceFeasibility(finalConflictCheckMap, memoTable);
 				nextDecisions = refineTransientFamilyDecisions(
 					memoTable, rootPlan, finalConflictCheckMap, nextDecisions, lockedDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
@@ -5527,7 +5524,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					transientReadParentsCache, iter);
 				Map<Long, ConflictEntry> alignedConflictCheckMap =
 					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
-				refreshConflictChoiceFeasibility(alignedConflictCheckMap, memoTable);
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, alignedConflictCheckMap, nextDecisions, lockedDecisions,
 					iter, decisionMapScoreCache);
@@ -5544,7 +5540,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					transientReadParentsCache, iter);
 				Map<Long, ConflictEntry> finalAlignedConflictCheckMap =
 					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
-				refreshConflictChoiceFeasibility(finalAlignedConflictCheckMap, memoTable);
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, finalAlignedConflictCheckMap, nextDecisions, lockedDecisions,
 					iter, decisionMapScoreCache);
@@ -5768,8 +5763,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (memoTable == null || rootPlan == null)
 			return decisions;
 
-		Map<Long, FederatedOutput> refinedDecisions = applyLockedOutputDecisions(
-			decisions != null ? new HashMap<>(decisions) : new HashMap<>(), lockedDecisions);
+		Map<Long, FederatedOutput> refinedDecisions =
+			copyOutputDecisionsAndApplyLocks(decisions, lockedDecisions);
 		for (int refinement = 0; ; refinement++) {
 			DecisionMapScoreBreakdown currentScore =
 				computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
@@ -5822,7 +5817,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						continue;
 					Map<Long, FederatedOutput> candidate = new HashMap<>(refinedDecisions);
 					candidate.put(hopID, output);
-					candidate = applyLockedOutputDecisions(candidate, lockedDecisions);
+					applyLockedOutputDecisionsInPlace(candidate, lockedDecisions);
 					DecisionMapScoreBreakdown candidateScore =
 						computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidate, scoreCache);
 					Hop hopRef = memoTable.resolveOriginalHop(hopID);
@@ -5877,7 +5872,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			decisions != null ? new HashMap<>(decisions) : new HashMap<>();
 		for (long hopID : familyHopIDs)
 			candidate.put(hopID, output);
-		return applyLockedOutputDecisions(candidate, lockedDecisions);
+		applyLockedOutputDecisionsInPlace(candidate, lockedDecisions);
+		return candidate;
 	}
 
 	private static boolean hasBetterDecisionMapStructure(
@@ -5929,6 +5925,25 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			decisions != null ? new HashMap<>(decisions) : new HashMap<>();
 		mergedDecisions.putAll(lockedDecisions);
 		return mergedDecisions;
+	}
+
+	private static Map<Long, FederatedOutput> copyOutputDecisionsAndApplyLocks(
+		Map<Long, FederatedOutput> decisions,
+		Map<Long, FederatedOutput> lockedDecisions) {
+
+		Map<Long, FederatedOutput> copy =
+			decisions != null ? new HashMap<>(decisions) : new HashMap<>();
+		applyLockedOutputDecisionsInPlace(copy, lockedDecisions);
+		return copy;
+	}
+
+	private static void applyLockedOutputDecisionsInPlace(
+		Map<Long, FederatedOutput> ownedDecisions,
+		Map<Long, FederatedOutput> lockedDecisions) {
+
+		Objects.requireNonNull(ownedDecisions, "ownedDecisions");
+		if(lockedDecisions != null && !lockedDecisions.isEmpty())
+			ownedDecisions.putAll(lockedDecisions);
 	}
 
 	/**
@@ -6028,7 +6043,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return decisions;
 
 		Map<Long, FederatedOutput> normalizedDecisions =
-			applyLockedOutputDecisions(new HashMap<>(decisions), lockedDecisions);
+			copyOutputDecisionsAndApplyLocks(decisions, lockedDecisions);
 		// Earlier refinements in the same decision pass can switch a TRead output
 		// after conflictCheckMap was collected. Rebuild the selected traversal before
 		// discovering concrete producers; otherwise a stale LOUT traversal cannot
@@ -6036,7 +6051,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// multi-write family normalization.
 		Map<Long, ConflictEntry> normalizationConflictCheckMap =
 			scoreCache.conflicts(normalizedDecisions);
-		refreshConflictChoiceFeasibility(normalizationConflictCheckMap, memoTable);
 		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(normalizationConflictCheckMap)) {
 			long tReadHopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(tReadHopID);
@@ -6088,11 +6102,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					for (long familyHopID : candidateFamilyHopIDs)
 						selectionDecisions.put(familyHopID, targetOut);
 					candidateConflictCheckMap = scoreCache.conflicts(selectionDecisions);
-					// Logical CFG-only members are metadata-only until this candidate
-					// assigns a family output. Recompute feasibility on the rebuilt map;
-					// the default ConflictEntry flags are not evidence that an exact arm
-					// exists (ALS' initial U write has no FOUT arm).
-					refreshConflictChoiceFeasibility(candidateConflictCheckMap, memoTable);
+					// getFeasible has already rebuilt the selected forest and derived exact
+					// LOUT/FOUT availability for CFG-only members under this candidate.
 					ConflictEntry candidateTReadEntry = candidateConflictCheckMap.get(tReadHopID);
 					LinkedHashSet<Long> selectedTargetProducerHopIDs =
 						collectSelectedTransientReadProducerHopIDs(
@@ -6238,7 +6249,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return nextDecisions;
 
 		Map<Long, FederatedOutput> refinedDecisions =
-			applyLockedOutputDecisions(new HashMap<>(nextDecisions), lockedDecisions);
+			copyOutputDecisionsAndApplyLocks(nextDecisions, lockedDecisions);
 		DecisionMapScoreBreakdown currentScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
 		final int numWorkers = Math.max(1, memoTable.getNumWorkers());
@@ -6258,7 +6269,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			applyRequiredOutputDecisionClosure(
 				memoTable, hopID, chosen, conflictCheckMap,
 				candidateDecisions, closureHopIDs, new HashSet<>(), lockedDecisions);
-			candidateDecisions = applyLockedOutputDecisions(candidateDecisions, lockedDecisions);
+			applyLockedOutputDecisionsInPlace(candidateDecisions, lockedDecisions);
 
 			if (closureHopIDs.isEmpty() || candidateDecisions.equals(refinedDecisions))
 				continue;
@@ -6305,7 +6316,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				applyDirectChildOutputDecisionClosure(
 					memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
 					loutDecisions, loutClosureHopIDs, lockedDecisions);
-				loutDecisions = applyLockedOutputDecisions(loutDecisions, lockedDecisions);
+				applyLockedOutputDecisionsInPlace(loutDecisions, lockedDecisions);
 				DecisionMapScoreBreakdown loutScore =
 					computeDecisionMapScoreBreakdown(memoTable, rootPlan, loutDecisions, scoreCache);
 				boolean loutClosureResolved =
@@ -6364,7 +6375,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			applyDirectChildOutputDecisionClosure(
 				memoTable, hopID, alternative, conflictCheckMap,
 				candidateDecisions, closureHopIDs, lockedDecisions);
-			candidateDecisions = applyLockedOutputDecisions(candidateDecisions, lockedDecisions);
+			applyLockedOutputDecisionsInPlace(candidateDecisions, lockedDecisions);
 
 			if (closureHopIDs.isEmpty() || candidateDecisions.equals(refinedDecisions))
 				continue;
@@ -6929,7 +6940,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return nextDecisions;
 
 		Map<Long, FederatedOutput> refinedDecisions =
-			applyLockedOutputDecisions(new HashMap<>(nextDecisions), lockedDecisions);
+			copyOutputDecisionsAndApplyLocks(nextDecisions, lockedDecisions);
 		DecisionMapScoreBreakdown currentScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
 		Map<Long, LinkedHashSet<Long>> parentGraph = buildConflictParentGraph(memoTable, conflictCheckMap);
@@ -7033,7 +7044,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 							normalizedChanged++;
 					}
 				}
-				normalizedDecisions = applyLockedOutputDecisions(normalizedDecisions, lockedDecisions);
+				applyLockedOutputDecisionsInPlace(normalizedDecisions, lockedDecisions);
 				if (normalizedChanged > 0) {
 					DecisionMapScoreBreakdown normalizedScore =
 						computeDecisionMapScoreBreakdown(memoTable, rootPlan, normalizedDecisions, scoreCache);
@@ -7108,7 +7119,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				if (old != alternative)
 					changed++;
 			}
-			altDecisions = applyLockedOutputDecisions(altDecisions, lockedDecisions);
+			applyLockedOutputDecisionsInPlace(altDecisions, lockedDecisions);
 			if (changed == 0)
 				continue;
 
@@ -7134,7 +7145,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						lockedDecisions, feasibleBundleHopIDs, FederatedOutput.FOUT)) {
 						for (long bundleHopID : feasibleBundleHopIDs)
 							bundleAltDecisions.put(bundleHopID, FederatedOutput.FOUT);
-						bundleAltDecisions = applyLockedOutputDecisions(bundleAltDecisions, lockedDecisions);
+						applyLockedOutputDecisionsInPlace(bundleAltDecisions, lockedDecisions);
 						bundleAltScore = computeDecisionMapScoreBreakdown(
 							memoTable, rootPlan, bundleAltDecisions, scoreCache);
 					}
@@ -7297,7 +7308,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, FederatedOutput> outputDecisions,
-		ConflictMapCache conflictMapCache) {
+		Map<Long, ConflictEntry> precomputedConflictMap) {
 
 		DecisionMapScoreBreakdown breakdown = new DecisionMapScoreBreakdown();
 		if (memoTable == null || rootPlan == null)
@@ -7330,7 +7341,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 			Map<Long, ConflictEntry> conflictCheckMap = outputDecisions == null || outputDecisions.isEmpty()
 				? Collections.emptyMap()
-				: conflictMapCache != null ? conflictMapCache.getUnrefreshed(outputDecisions)
+				: precomputedConflictMap != null ? precomputedConflictMap
 					: collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
 			double transientLocalCost = computeDecisionMapTransientReadLoutMaterializationCost(
 				memoTable, outputDecisions, conflictCheckMap);
@@ -10675,10 +10686,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			this.rootPlan = rootPlan;
 		}
 
-		Map<Long,ConflictEntry> getUnrefreshed(Map<Long,FederatedOutput> decisions) {
-			return snapshot(decisions).unrefreshed;
-		}
-
 		Map<Long,ConflictEntry> getFeasible(Map<Long,FederatedOutput> decisions) {
 			ConflictForestSnapshot snapshot = snapshot(decisions);
 			if(snapshot.feasible == null) {
@@ -10689,7 +10696,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		private ConflictForestSnapshot snapshot(Map<Long,FederatedOutput> decisions) {
-			DecisionMapScoreKey key = new DecisionMapScoreKey(decisions);
+			return snapshot(new DecisionMapScoreKey(decisions));
+		}
+
+		private ConflictForestSnapshot snapshot(DecisionMapScoreKey key) {
 			ConflictForestSnapshot cached = values.get(key);
 			if(cached != null)
 				return cached;
@@ -10705,6 +10715,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final class ConflictForestSnapshot {
 		final Map<Long,ConflictEntry> unrefreshed;
 		Map<Long,ConflictEntry> feasible;
+		DecisionMapScoreBreakdown score;
 
 		ConflictForestSnapshot(Map<Long,ConflictEntry> unrefreshed) {
 			this.unrefreshed = Objects.requireNonNull(unrefreshed, "unrefreshed");
@@ -10856,7 +10867,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private final FederatedPlannerDpMemoTable memoTable;
 		private final FederatedPlannerDpMemoTable.FedPlan rootPlan;
 		private final ConflictMapCache conflictMapCache;
-		private final Map<DecisionMapScoreKey, DecisionMapScoreBreakdown> values = new HashMap<>();
 
 		DecisionMapScoreCache(
 			FederatedPlannerDpMemoTable memoTable,
@@ -10869,14 +10879,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		DecisionMapScoreBreakdown get(Map<Long, FederatedOutput> outputDecisions) {
 			DecisionMapScoreKey key = new DecisionMapScoreKey(outputDecisions);
-			DecisionMapScoreBreakdown cached = values.get(key);
-			if (cached != null)
-				return cached;
-			DecisionMapScoreBreakdown computed =
-				computeDecisionMapScoreBreakdownWithConflicts(
-					memoTable, rootPlan, key.outputDecisions, conflictMapCache);
-			values.put(key, computed);
-			return computed;
+			ConflictForestSnapshot snapshot = conflictMapCache.snapshot(key);
+			if(snapshot.score == null)
+				snapshot.score = computeDecisionMapScoreBreakdownWithConflicts(
+					memoTable, rootPlan, key.outputDecisions, snapshot.unrefreshed);
+			return snapshot.score;
 		}
 
 		Map<Long,ConflictEntry> conflicts(Map<Long,FederatedOutput> decisions) {

@@ -13,6 +13,7 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.BoundaryName;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.junit.Assert;
@@ -47,6 +48,16 @@ public class PlacementIdentityKnownEqualityContractTest {
 			input.valueVersion().lexicalVariable());
 		Assert.assertTrue("known metadata remains a legal emitted boundary", input.emittedWork());
 		Assert.assertFalse("known metadata keeps its legal alternatives", input.legalAlternatives().isEmpty());
+	}
+
+	@Test
+	public void structuralEncodingKeepsExactLengthDelimitedBytes() {
+		ControlRegionKey key = new ControlRegionKey(
+			"p|x", "n,\u03c3", List.of("a|b", "c,d"), "call:1", "r");
+
+		Assert.assertEquals(
+			"3:p|x|3:n,\u03c3|11:3:a|b,3:c,d|6:call:1|1:r",
+			key.normalizedSignature());
 	}
 
 	static FunctionOp functionCall(String[] inputNames, String[] outputNames) {
