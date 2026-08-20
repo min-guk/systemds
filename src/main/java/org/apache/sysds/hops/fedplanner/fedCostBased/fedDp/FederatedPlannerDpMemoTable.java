@@ -71,6 +71,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -1540,6 +1541,17 @@ public class FederatedPlannerDpMemoTable {
 				public void setDirectRelocationChoices(Collection<RelocationChoiceReceipt> choices) {
 					List<RelocationChoiceReceipt> ordered = Objects.requireNonNull(choices, "choices")
 						.stream().map(choice -> Objects.requireNonNull(choice, "choice")).sorted().toList();
+					setDirectRelocationChoicesCanonical(ordered);
+				}
+
+				public void setDirectRelocationChoices(Collection<RelocationChoiceReceipt> choices,
+					RelocationSelections.CanonicalOrderIndex order) {
+					Objects.requireNonNull(choices, "choices");
+					setDirectRelocationChoicesCanonical(
+						Objects.requireNonNull(order, "order").canonicalChoices(choices));
+				}
+
+				private void setDirectRelocationChoicesCanonical(List<RelocationChoiceReceipt> ordered) {
 					Set<RelocationDemandKey> demands = new HashSet<>();
 					for(RelocationChoiceReceipt choice : ordered)
 						if(!demands.add(choice.demand()))
@@ -1553,20 +1565,31 @@ public class FederatedPlannerDpMemoTable {
 				}
 
 				public void setDirectRelocationActionCosts(Map<RelocationActionKey,Double> costs) {
+					setDirectRelocationActionCostsCanonical(costs,
+						Objects.requireNonNull(costs, "costs").keySet().stream().sorted().toList());
+				}
+
+				public void setDirectRelocationActionCosts(Map<RelocationActionKey,Double> costs,
+					RelocationSelections.CanonicalOrderIndex order) {
+					Objects.requireNonNull(costs, "costs");
+					setDirectRelocationActionCostsCanonical(costs,
+						Objects.requireNonNull(order, "order").canonicalActions(costs.keySet()));
+				}
+
+				private void setDirectRelocationActionCostsCanonical(
+					Map<RelocationActionKey,Double> costs, List<RelocationActionKey> canonicalActions) {
 					Set<RelocationActionKey> selectedActions = directRelocationChoices.stream()
 						.map(RelocationChoiceReceipt::action).collect(java.util.stream.Collectors.toSet());
 					Map<RelocationActionKey,Double> ordered = new LinkedHashMap<>();
-					Objects.requireNonNull(costs, "costs").entrySet().stream()
-						.sorted(Map.Entry.comparingByKey()).forEach(entry -> {
-							RelocationActionKey action = Objects.requireNonNull(entry.getKey(), "action");
-							Double cost = Objects.requireNonNull(entry.getValue(), "cost");
+					for(RelocationActionKey action : canonicalActions) {
+							Double cost = Objects.requireNonNull(costs.get(action), "cost");
 							if(!selectedActions.contains(action))
 								throw new IllegalArgumentException("DP relocation action cost is not selected: "
 									+ action.normalizedSignature());
 							if(!Double.isFinite(cost) || cost < 0.0)
 								throw new IllegalArgumentException("DP relocation action cost must be finite and non-negative");
 							ordered.put(action, cost);
-						});
+					}
 					directRelocationActionCosts = Collections.unmodifiableMap(ordered);
 				}
 			}

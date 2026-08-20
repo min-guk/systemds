@@ -163,8 +163,8 @@ final class ExactPhysicalSelection {
 				throw new IllegalArgumentException(
 					"EXACT_PHYSICAL_CANDIDATE_EMISSION_PLACEMENT_MISMATCH|key="
 						+ candidate.decision().normalizedSignature());
-			CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
-				candidate.rule().key(), candidate.emission(), List.of());
+			CandidateSelectionReceipt receipt = analysis.canonicalCandidateReceipt(
+				candidate.rule().key(), candidate.emission());
 			if(exact.put(candidate.decision(), receipt) != null)
 				throw new IllegalArgumentException("EXACT_PHYSICAL_CANDIDATE_DUPLICATE|key="
 					+ candidate.decision().normalizedSignature());
@@ -183,7 +183,7 @@ final class ExactPhysicalSelection {
 		}
 		return CandidateSelections.resolveAndValidate(analysis,
 			analysis.graph().relocationActions(), selected,
-			exact.values().stream().sorted().toList());
+			analysis.canonicalCandidateReceipts(exact.values()));
 	}
 
 	private static List<RelocationChoiceReceipt> exactRelocationChoices(

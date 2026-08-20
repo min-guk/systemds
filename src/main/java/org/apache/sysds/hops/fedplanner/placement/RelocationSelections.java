@@ -54,6 +54,7 @@ public final class RelocationSelections {
 	public static final class CanonicalOrderIndex {
 		private final Map<RelocationDemandKey,Integer> demandRanks;
 		private final Map<RelocationActionKey,Integer> actionRanks;
+		private final Map<RelocationChoiceReceipt,Integer> structuralChoiceRanks;
 		private final Map<ObligationKey,Integer> choiceRanks;
 		private final Map<ObligationKey,RelocationDemandKey> demandsByObligation;
 		private final Map<ObligationKey,Integer> demandRanksByObligation;
@@ -65,6 +66,7 @@ public final class RelocationSelections {
 
 		private CanonicalOrderIndex(Map<RelocationDemandKey,Integer> demandRanks,
 			Map<RelocationActionKey,Integer> actionRanks,
+			Map<RelocationChoiceReceipt,Integer> structuralChoiceRanks,
 			Map<ObligationKey,Integer> choiceRanks,
 			Map<ObligationKey,RelocationDemandKey> demandsByObligation,
 			Map<ObligationKey,Integer> demandRanksByObligation,
@@ -74,6 +76,7 @@ public final class RelocationSelections {
 			Map<DurableAnchorKey,Integer> anchorIds) {
 			this.demandRanks = Map.copyOf(demandRanks);
 			this.actionRanks = Collections.unmodifiableMap(new IdentityHashMap<>(actionRanks));
+			this.structuralChoiceRanks = Map.copyOf(structuralChoiceRanks);
 			this.choiceRanks = Collections.unmodifiableMap(new IdentityHashMap<>(choiceRanks));
 			this.demandsByObligation = Collections.unmodifiableMap(
 				new IdentityHashMap<>(demandsByObligation));
@@ -135,7 +138,7 @@ public final class RelocationSelections {
 			return rank;
 		}
 
-		private int physicalEmissionId(RelocationActionKey action) {
+		public int physicalEmissionId(RelocationActionKey action) {
 			Integer id = physicalEmissionIds.get(action);
 			if(id == null)
 				throw new IllegalStateException(
@@ -144,8 +147,37 @@ public final class RelocationSelections {
 			return id;
 		}
 
-		private int physicalEmissionCount() {
+		public int physicalEmissionCount() {
 			return physicalEmissionCount;
+		}
+
+		/** Canonical action order without rebuilding nested normalized signatures. */
+		public List<RelocationActionKey> canonicalActions(
+			Collection<RelocationActionKey> actions) {
+			List<RelocationActionKey> ordered = new ArrayList<>(actions.size());
+			for(RelocationActionKey action : actions) {
+				Objects.requireNonNull(action, "relocation action");
+				actionRank(action);
+				ordered.add(action);
+			}
+			ordered.sort(java.util.Comparator.comparingInt(this::actionRank));
+			return List.copyOf(ordered);
+		}
+
+		/** Canonical receipt order without rebuilding nested normalized signatures. */
+		public List<RelocationChoiceReceipt> canonicalChoices(
+			Collection<RelocationChoiceReceipt> choices) {
+			List<RelocationChoiceReceipt> ordered = new ArrayList<>(choices.size());
+			for(RelocationChoiceReceipt choice : choices) {
+				Objects.requireNonNull(choice, "relocation choice");
+				if(!structuralChoiceRanks.containsKey(choice))
+					throw new IllegalStateException(
+						"Relocation choice is outside its canonical action universe: "
+							+ choice.normalizedSignature());
+				ordered.add(choice);
+			}
+			ordered.sort(java.util.Comparator.comparingInt(structuralChoiceRanks::get));
+			return List.copyOf(ordered);
 		}
 
 		private List<ActionObligation> actionObligations(CompiledHopKey consumer) {
@@ -818,7 +850,7 @@ public final class RelocationSelections {
 				consumerIds.computeIfAbsent(obligation.consumer(), ignored -> consumerIds.size());
 				anchorIds.computeIfAbsent(action.key().durableAnchor(), ignored -> anchorIds.size());
 			}
-		return new CanonicalOrderIndex(demandRanks, actionRanks, choiceRanks,
+		return new CanonicalOrderIndex(demandRanks, actionRanks, structuralChoiceRanks, choiceRanks,
 			demandsByObligation, demandRanksByObligation,
 			physicalEmissionIds, actionObligationsByConsumer, consumerIds, anchorIds);
 	}
@@ -884,7 +916,7 @@ public final class RelocationSelections {
 		Collection<CandidateSelectionReceipt> candidateSelections,
 		ToDoubleFunction<RelocationActionKey> emittedActionCost) {
 		return selectMinimumCost(analysis, actionUniverse, assignment, candidateSelections,
-			canonicalOrderIndex(actionUniverse), emittedActionCost);
+			analysis.relocationOrderFor(actionUniverse), emittedActionCost);
 	}
 
 	/**
@@ -921,7 +953,7 @@ public final class RelocationSelections {
 		Collection<CandidateSelectionReceipt> candidateSelections,
 		BiPredicate<RelocationDemandKey, RelocationActionKey> allowed) {
 		Objects.requireNonNull(allowed, "allowed");
-		CanonicalOrderIndex order = canonicalOrderIndex(actionUniverse);
+		CanonicalOrderIndex order = analysis.relocationOrderFor(actionUniverse);
 		Problem problem = problem(analysis, actionUniverse, assignment, candidateSelections, order);
 		List<DemandOptions> filtered = new ArrayList<>();
 		for(DemandOptions demand : problem.demands()) {
@@ -953,7 +985,7 @@ public final class RelocationSelections {
 		Collection<CandidateSelectionReceipt> candidateSelections,
 		BiPredicate<RelocationDemandKey, RelocationActionKey> allowed) {
 		return selectCanonicalPrevalidated(analysis, analysis.graph(), actionUniverse, assignment,
-			candidateSelections, canonicalOrderIndex(actionUniverse), allowed);
+			candidateSelections, analysis.relocationOrderFor(actionUniverse), allowed);
 	}
 
 	static Selection selectCanonicalPrevalidated(PlacementAnalysis analysis,
@@ -962,7 +994,7 @@ public final class RelocationSelections {
 		Collection<CandidateSelectionReceipt> candidateSelections,
 		BiPredicate<RelocationDemandKey, RelocationActionKey> allowed) {
 		return selectCanonicalPrevalidated(analysis, authorityGraph, actionUniverse, assignment,
-			candidateSelections, canonicalOrderIndex(actionUniverse), allowed);
+			candidateSelections, analysis.relocationOrderFor(actionUniverse), allowed);
 	}
 
 	static Selection selectCanonicalPrevalidated(PlacementAnalysis analysis,
@@ -1136,9 +1168,7 @@ public final class RelocationSelections {
 			candidateSelections, choices))
 			if(choice.requiresEmission())
 				emitted.add(choice.action().key());
-		List<RelocationActionKey> ordered = new ArrayList<>(emitted);
-		Collections.sort(ordered);
-		return List.copyOf(ordered);
+		return analysis.relocationOrderFor(actionUniverse).canonicalActions(emitted);
 	}
 
 	public static List<RelocationActionKey> emittedActions(PlacementAnalysis analysis,
@@ -1203,7 +1233,7 @@ public final class RelocationSelections {
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections) {
 		return problem(analysis, analysis.graph(), actionUniverse, assignment, candidateSelections,
-			canonicalOrderIndex(actionUniverse));
+			analysis.relocationOrderFor(actionUniverse));
 	}
 
 	private static Problem problem(PlacementAnalysis analysis,
@@ -1218,7 +1248,7 @@ public final class RelocationSelections {
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections) {
 		return problem(analysis, authorityGraph, actionUniverse, assignment, candidateSelections,
-			canonicalOrderIndex(actionUniverse));
+			analysis.relocationOrderFor(actionUniverse));
 	}
 
 	private static Problem problem(PlacementAnalysis analysis,
@@ -1239,7 +1269,7 @@ public final class RelocationSelections {
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections) {
 		return problemPrevalidated(analysis, analysis.graph(), actionUniverse, assignment,
-			candidateSelections, canonicalOrderIndex(actionUniverse));
+			candidateSelections, analysis.relocationOrderFor(actionUniverse));
 	}
 
 	private static Problem problemPrevalidated(PlacementAnalysis analysis,
@@ -1247,7 +1277,7 @@ public final class RelocationSelections {
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections) {
 		return problemPrevalidated(analysis, authorityGraph, actionUniverse, assignment,
-			candidateSelections, canonicalOrderIndex(actionUniverse));
+			candidateSelections, analysis.relocationOrderFor(actionUniverse));
 	}
 
 	private static Problem problemPrevalidated(PlacementAnalysis analysis,

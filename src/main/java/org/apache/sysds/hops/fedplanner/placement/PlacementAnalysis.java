@@ -37,6 +37,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
@@ -439,6 +440,74 @@ public final class PlacementAnalysis {
 		}
 	}
 
+	/**
+	 * Analysis-owned canonical candidate receipts and their exact structural order.
+	 * Candidate rule/emission identities are immutable, so selectors must reuse this
+	 * domain instead of rebuilding receipts and their nested textual signatures in
+	 * every assignment, closure pass, and validation call.
+	 */
+	private static final class CandidateReceiptDomain {
+		private record RankedReceipt(CandidateSelectionReceipt receipt, String signature) { }
+
+		private final Map<CandidateRuleKey,Map<CandidateEmissionFact,CandidateSelectionReceipt>>
+			receiptsByIdentity;
+		private final Map<CandidateSelectionReceipt,Integer> ranksByIdentity;
+
+		private CandidateReceiptDomain(CandidateRuleFacts facts) {
+			Map<CandidateRuleKey,Map<CandidateEmissionFact,CandidateSelectionReceipt>> indexed =
+				new IdentityHashMap<>();
+			List<RankedReceipt> ranked = new ArrayList<>();
+			for(CandidateRuleFact fact : facts.orderedFacts()) {
+				Map<CandidateEmissionFact,CandidateSelectionReceipt> byEmission = new IdentityHashMap<>();
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+					CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
+						fact.key(), emission, List.of());
+					byEmission.put(emission, receipt);
+					ranked.add(new RankedReceipt(receipt, receipt.normalizedSignature()));
+				}
+				indexed.put(fact.key(), Collections.unmodifiableMap(byEmission));
+			}
+			ranked.sort(java.util.Comparator.comparing(RankedReceipt::signature));
+			Map<CandidateSelectionReceipt,Integer> ranks = new IdentityHashMap<>();
+			for(int rank = 0; rank < ranked.size(); rank++)
+				ranks.put(ranked.get(rank).receipt(), rank);
+			receiptsByIdentity = Collections.unmodifiableMap(indexed);
+			ranksByIdentity = Collections.unmodifiableMap(ranks);
+		}
+
+		private CandidateSelectionReceipt require(CandidateRuleKey rule,
+			CandidateEmissionFact emission) {
+			Map<CandidateEmissionFact,CandidateSelectionReceipt> byEmission = receiptsByIdentity.get(rule);
+			CandidateSelectionReceipt receipt = byEmission == null ? null : byEmission.get(emission);
+			if(receipt == null)
+				throw new IllegalArgumentException(
+					"Candidate rule/emission is outside the analysis-owned receipt domain");
+			return receipt;
+		}
+
+		private int rank(CandidateSelectionReceipt receipt) {
+			CandidateSelectionReceipt canonical = require(receipt.rule(), receipt.emission());
+			Integer rank = ranksByIdentity.get(canonical);
+			if(rank == null)
+				throw new IllegalStateException("Canonical candidate receipt has no structural rank");
+			return rank;
+		}
+
+		private List<CandidateSelectionReceipt> canonicalize(
+			java.util.Collection<CandidateSelectionReceipt> receipts) {
+			List<CandidateSelectionReceipt> canonical = new ArrayList<>(receipts.size());
+			Map<CandidateSelectionReceipt,Boolean> seen = new IdentityHashMap<>();
+			for(CandidateSelectionReceipt receipt : receipts) {
+				Objects.requireNonNull(receipt, "candidate receipt");
+				CandidateSelectionReceipt exact = require(receipt.rule(), receipt.emission());
+				if(seen.put(exact, Boolean.TRUE) == null)
+					canonical.add(exact);
+			}
+			canonical.sort(java.util.Comparator.comparingInt(this::rank));
+			return List.copyOf(canonical);
+		}
+	}
+
 	public static final class CandidateConsumerProfileFacts {
 		private final CandidateRuleDomain domain;
 		private final List<CandidateConsumerProfileFact> orderedFacts;
@@ -760,6 +829,11 @@ public final class PlacementAnalysis {
 
 	private final NeutralPlacementGraph graph;
 	private final List<HopOccurrenceProjection> occurrences;
+	private final List<HopOccurrenceProjection> compiledHopOccurrences;
+	private final Map<HopOccurrenceProjection,Boolean> occurrenceOwnershipByIdentity;
+	private final Map<CompiledHopKey,Boolean> occurrenceKeysByIdentity;
+	private final Map<CompiledHopKey,Boolean> compiledOccurrenceKeysByIdentity;
+	private final Map<CompiledHopKey,String> occurrenceSignaturesByIdentity;
 	private final List<StatementBlock> topLevelStatementBlocks;
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
@@ -768,6 +842,9 @@ public final class PlacementAnalysis {
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
 	private final CandidateRuleDomain candidateRuleDomain;
 	private final CandidateRuleFacts candidateRuleFacts;
+	private final CandidateReceiptDomain candidateReceiptDomain;
+	private final RelocationSelections.CanonicalOrderIndex relocationOrder;
+	private final Map<NeutralPlacementGraph.RelocationAction,Boolean> relocationActionsByIdentity;
 	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
@@ -861,11 +938,31 @@ public final class PlacementAnalysis {
 		this.occurrences = List.copyOf(occurrences);
 		this.topLevelStatementBlocks = List.copyOf(topLevelStatementBlocks);
 		Map<CompiledHopKey, Hop> indexed = new LinkedHashMap<>();
-		for(HopOccurrenceProjection occurrence : this.occurrences)
+		Map<HopOccurrenceProjection,Boolean> ownedOccurrences = new IdentityHashMap<>();
+		Map<CompiledHopKey,Boolean> ownedKeys = new IdentityHashMap<>();
+		Map<CompiledHopKey,Boolean> compiledKeys = new IdentityHashMap<>();
+		Map<CompiledHopKey,String> occurrenceSignatures = new IdentityHashMap<>();
+		List<HopOccurrenceProjection> compiledOccurrences = new ArrayList<>();
+		for(HopOccurrenceProjection occurrence : this.occurrences) {
 			if(indexed.put(occurrence.key(), occurrence.hop()) != null)
 				throw new IllegalArgumentException("Duplicate compiled Hop projection key: " + occurrence.key());
+			ownedOccurrences.put(occurrence, Boolean.TRUE);
+			ownedKeys.put(occurrence.key(), Boolean.TRUE);
+			occurrenceSignatures.put(occurrence.key(), occurrence.normalizedSignature());
+			NodeKind kind = graph.node(occurrence.key()).orElseThrow(() ->
+				new IllegalArgumentException("Occurrence has a foreign graph key")).kind();
+			if(isCompiledHopOccurrenceKey(occurrence.key(), kind)) {
+				compiledKeys.put(occurrence.key(), Boolean.TRUE);
+				compiledOccurrences.add(occurrence);
+			}
+		}
 		if(indexed.size() != graph.nodes().size())
 			throw new IllegalArgumentException("Projection does not cover the neutral placement graph");
+		this.compiledHopOccurrences = List.copyOf(compiledOccurrences);
+		this.occurrenceOwnershipByIdentity = Collections.unmodifiableMap(ownedOccurrences);
+		this.occurrenceKeysByIdentity = Collections.unmodifiableMap(ownedKeys);
+		this.compiledOccurrenceKeysByIdentity = Collections.unmodifiableMap(compiledKeys);
+		this.occurrenceSignaturesByIdentity = Collections.unmodifiableMap(occurrenceSignatures);
 		this.shapeFacts = Objects.requireNonNull(shapeFacts, "shapeFacts");
 		if(!shapeFacts.keys().equals(indexed.keySet()))
 			throw new IllegalArgumentException("Shape facts do not exactly cover indexed placement projections");
@@ -876,13 +973,17 @@ public final class PlacementAnalysis {
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
 		this.candidateRuleDomain = new CandidateRuleDomain(this.analysisFingerprint, candidateRuleDomainKeys,
 			candidateConsumerDomainKeys);
-		Map<CompiledHopKey,Boolean> analysisKeysByIdentity = new IdentityHashMap<>();
-		for(HopOccurrenceProjection occurrence : this.occurrences)
-			analysisKeysByIdentity.put(occurrence.key(), Boolean.TRUE);
+		Map<CompiledHopKey,Boolean> analysisKeysByIdentity = this.occurrenceKeysByIdentity;
 		for(CandidateRuleKey key : this.candidateRuleDomain.orderedRuleKeys())
 			if(!analysisKeysByIdentity.containsKey(key.parentOccurrence()))
 				throw new IllegalArgumentException("Candidate domain parent is not analysis-owned");
 		this.candidateRuleFacts = new CandidateRuleFacts(this.candidateRuleDomain, candidateRuleFacts);
+		this.candidateReceiptDomain = new CandidateReceiptDomain(this.candidateRuleFacts);
+		Map<NeutralPlacementGraph.RelocationAction,Boolean> ownedRelocationActions = new IdentityHashMap<>();
+		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions())
+			ownedRelocationActions.put(action, Boolean.TRUE);
+		this.relocationActionsByIdentity = Collections.unmodifiableMap(ownedRelocationActions);
+		this.relocationOrder = RelocationSelections.canonicalOrderIndex(graph.relocationActions());
 		this.candidateConsumerProfileFacts = new CandidateConsumerProfileFacts(this.candidateRuleDomain,
 			candidateConsumerProfileFacts);
 		this.detachedConsumerProfileFacts = new DetachedConsumerProfileFacts(detachedConsumerProfileFacts,
@@ -1324,9 +1425,12 @@ public final class PlacementAnalysis {
 	static boolean isCompiledHopOccurrenceKey(CompiledHopKey key, NodeKind kind) {
 		Objects.requireNonNull(key, "key");
 		Objects.requireNonNull(kind, "kind");
-		return kind != NodeKind.FUNCTION_INPUT && kind != NodeKind.FUNCTION_OUTPUT
-			&& key.controlRegion().regionPath().stream()
-				.noneMatch(part -> part.startsWith("function-boundary:"));
+		if(kind == NodeKind.FUNCTION_INPUT || kind == NodeKind.FUNCTION_OUTPUT)
+			return false;
+		for(String part : key.controlRegion().regionPath())
+			if(part.startsWith("function-boundary:"))
+				return false;
+		return true;
 	}
 
 	public NeutralPlacementGraph graph() {
@@ -1345,21 +1449,29 @@ public final class PlacementAnalysis {
 	 * @return immutable compiled occurrence projections in analysis order
 	 */
 	public List<HopOccurrenceProjection> compiledHopOccurrences() {
-		return occurrences.stream().filter(occurrence -> isCompiledHopOccurrence(occurrence.key())).toList();
+		return compiledHopOccurrences;
 	}
 
 	public boolean isCompiledHopOccurrence(HopOccurrenceProjection occurrence) {
 		Objects.requireNonNull(occurrence, "occurrence");
-		if(occurrences.stream().noneMatch(candidate -> candidate == occurrence))
+		if(!occurrenceOwnershipByIdentity.containsKey(occurrence))
 			throw new IllegalArgumentException("Occurrence is not owned by this placement analysis");
-		return isCompiledHopOccurrence(occurrence.key());
+		return compiledOccurrenceKeysByIdentity.containsKey(occurrence.key());
 	}
 
 	public boolean isCompiledHopOccurrence(CompiledHopKey key) {
-		NodeKind kind = graph.node(Objects.requireNonNull(key, "key"))
-			.orElseThrow(() -> new IllegalArgumentException("Key is not owned by this placement analysis"))
-			.kind();
-		return isCompiledHopOccurrenceKey(key, kind);
+		Objects.requireNonNull(key, "key");
+		if(!occurrenceKeysByIdentity.containsKey(key))
+			throw new IllegalArgumentException("Key is not owned by this placement analysis");
+		return compiledOccurrenceKeysByIdentity.containsKey(key);
+	}
+
+	/** Stable constructor-captured signature of an exact analysis-owned occurrence. */
+	public String normalizedOccurrenceSignature(CompiledHopKey key) {
+		String signature = occurrenceSignaturesByIdentity.get(Objects.requireNonNull(key, "key"));
+		if(signature == null)
+			throw new IllegalArgumentException("Key is not owned by this placement analysis");
+		return signature;
 	}
 
 	public List<StatementBlock> topLevelStatementBlocks() {
@@ -1430,6 +1542,42 @@ public final class PlacementAnalysis {
 	public CandidateRuleFacts candidateRuleFacts() { return candidateRuleFacts; }
 	public CandidateConsumerProfileFacts candidateConsumerProfileFacts() { return candidateConsumerProfileFacts; }
 	public DetachedConsumerProfileFacts detachedConsumerProfileFacts() { return detachedConsumerProfileFacts; }
+
+	/** Exact immutable candidate receipt owned by this analysis. */
+	public CandidateSelectionReceipt canonicalCandidateReceipt(CandidateRuleKey rule,
+		CandidateEmissionFact emission) {
+		return candidateReceiptDomain.require(rule, emission);
+	}
+
+	/** Canonicalizes without reconstructing nested candidate identity strings. */
+	public List<CandidateSelectionReceipt> canonicalCandidateReceipts(
+		java.util.Collection<CandidateSelectionReceipt> receipts) {
+		return candidateReceiptDomain.canonicalize(Objects.requireNonNull(receipts, "receipts"));
+	}
+
+	/** Exact structural rank corresponding to CandidateSelectionReceipt.compareTo. */
+	public int candidateReceiptRank(CandidateSelectionReceipt receipt) {
+		return candidateReceiptDomain.rank(Objects.requireNonNull(receipt, "receipt"));
+	}
+
+	/** Shared canonical order for the immutable relocation-action universe. */
+	public RelocationSelections.CanonicalOrderIndex relocationOrder() {
+		return relocationOrder;
+	}
+
+	/**
+	 * Reuses the common index only for the exact analysis-owned action objects.
+	 * Policy projections may clone/filter actions and therefore need one selector-
+	 * local index whose embedded obligation objects belong to that projection.
+	 */
+	public RelocationSelections.CanonicalOrderIndex relocationOrderFor(
+		java.util.Collection<NeutralPlacementGraph.RelocationAction> actions) {
+		Objects.requireNonNull(actions, "actions");
+		if(actions.size() == relocationActionsByIdentity.size()
+			&& actions.stream().allMatch(relocationActionsByIdentity::containsKey))
+			return relocationOrder;
+		return RelocationSelections.canonicalOrderIndex(actions);
+	}
 
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {

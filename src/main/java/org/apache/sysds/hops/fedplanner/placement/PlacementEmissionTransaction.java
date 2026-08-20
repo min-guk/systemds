@@ -253,6 +253,7 @@ public final class PlacementEmissionTransaction {
 	 */
 	public static String canonicalPlanHash(NormalizedPlannerResult result) {
 		Objects.requireNonNull(result, "result");
+		PlacementAnalysis analysis = Objects.requireNonNull(result.analysis(), "result.analysis");
 		String plannerId = requireText(result.plannerId(), "plannerId");
 		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
 		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
@@ -265,31 +266,31 @@ public final class PlacementEmissionTransaction {
 		List<RelocationChoiceReceipt> choices = List.copyOf(Objects.requireNonNull(
 			result.selectedRelocationChoices(), "selectedRelocationChoices"));
 		List<LocalMaterializationActionKey> locals = typedLocalMaterializations(result);
-		return canonicalPlanHash(plannerId, analysisFingerprint, selected, candidates,
+		return canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected, candidates,
 			choices, relocations, locals, objective);
 	}
 
-	private static String canonicalPlanHash(String plannerId, String analysisFingerprint,
+	private static String canonicalPlanHash(PlacementAnalysis analysis,
+		String plannerId, String analysisFingerprint,
 		Map<CompiledHopKey, PlacementEmissionState> selected,
 		List<CandidateSelectionReceipt> candidates, List<RelocationChoiceReceipt> choices,
 		List<RelocationActionKey> relocations,
 		List<LocalMaterializationActionKey> locals, String objective) {
 		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
 			.append(analysisFingerprint).append('\n');
-		selected.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> canonical
-			.append(Objects.requireNonNull(entry.getKey(), "selected state key").normalizedSignature())
+		selected.entrySet().stream().sorted(Comparator.comparing(entry ->
+			analysis.normalizedOccurrenceSignature(
+				Objects.requireNonNull(entry.getKey(), "selected state key")))).forEach(entry -> canonical
+			.append(analysis.normalizedOccurrenceSignature(entry.getKey()))
 			.append('=').append(Objects.requireNonNull(entry.getValue(), "selected emission state")
 				.placementState().normalizedSignature())
 			.append(entry.getValue().derivedFedFout() ? "|derivedFedFout=true" : "")
 			.append('\n'));
-		candidates.stream().map(candidate -> Objects.requireNonNull(candidate, "selected candidate"))
-			.sorted().forEach(candidate -> canonical.append("CANDIDATE=")
+		analysis.canonicalCandidateReceipts(candidates).forEach(candidate -> canonical.append("CANDIDATE=")
 				.append(candidate.normalizedSignature()).append('\n'));
-		choices.stream().map(choice -> Objects.requireNonNull(choice, "selected relocation choice"))
-			.sorted().forEach(choice -> canonical.append("CHOICE=")
+		analysis.relocationOrder().canonicalChoices(choices).forEach(choice -> canonical.append("CHOICE=")
 				.append(choice.normalizedSignature()).append('\n'));
-		relocations.stream().map(key -> Objects.requireNonNull(key, "selected relocation"))
-			.sorted(Comparator.comparing(RelocationActionKey::normalizedSignature))
+		analysis.relocationOrder().canonicalActions(relocations).stream()
 			.forEach(relocation -> canonical.append(relocation.normalizedSignature()).append('\n'));
 		locals.stream().map(key -> Objects.requireNonNull(key, "selected local materialization"))
 			.sorted(Comparator.comparing(LocalMaterializationActionKey::normalizedSignature))
@@ -315,7 +316,7 @@ public final class PlacementEmissionTransaction {
 			result.selectedRelocationChoices());
 		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
 		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
-		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
+		if(!planHash.equals(canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected,
 			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals, objective)))
 			throw new PlacementEmissionException("Normalized plan changed during prevalidation");
 
@@ -545,7 +546,7 @@ public final class PlacementEmissionTransaction {
 		List<RelocationChoiceReceipt> selectedChoices = List.copyOf(Objects.requireNonNull(
 			result.selectedRelocationChoices(), "selectedRelocationChoices"));
 		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
-		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
+		if(!planHash.equals(canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected,
 			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals, objective)))
 			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
 		return planHash;

@@ -257,7 +257,9 @@ public final class ExactPlacementSelector implements PlacementSelector {
 			this.relocationOptionsByConsumer = indexRelocationOptions(this.relocationActions);
 			this.inputEdgesByProducer = indexInputEdgesByProducer(analysis);
 			this.functionInputsBySource = indexFunctionInputsBySource(analysis);
-			this.relocationOrder = RelocationSelections.canonicalOrderIndex(this.relocationActions);
+			this.relocationOrder = analysis == null
+				? RelocationSelections.canonicalOrderIndex(this.relocationActions)
+				: analysis.relocationOrderFor(this.relocationActions);
 			this.branchAndBound = branchAndBound;
 			List<DecisionGroup> equalityGroups = samePlacementGroups(decisions, constraints);
 			Map<DecisionGroup,Integer> canonicalRanks = new IdentityHashMap<>();
@@ -1555,7 +1557,8 @@ public final class ExactPlacementSelector implements PlacementSelector {
 	private static PlacementScore score(PlacementAnalysis analysis, NeutralPlacementGraph graph, List<Node> decisions,
 		List<RelocationAction> relocationActions, Map<CompiledHopKey, PlacementState> assignment) {
 		return score(analysis, graph, decisions, relocationActions, assignment,
-			RelocationSelections.canonicalOrderIndex(relocationActions),
+			analysis == null ? RelocationSelections.canonicalOrderIndex(relocationActions)
+				: analysis.relocationOrderFor(relocationActions),
 			analysis == null ? null
 				: CandidateSelections.partialReachabilityIndex(analysis, graph, relocationActions));
 	}

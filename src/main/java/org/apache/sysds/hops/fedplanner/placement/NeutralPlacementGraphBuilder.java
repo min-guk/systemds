@@ -4952,18 +4952,52 @@ public final class NeutralPlacementGraphBuilder {
 		}
 	}
 
-	private record RelocationGroup(ValueVersionKey source, PlacementState target,
-		FType materializationFType, DurableAnchorKey anchor, String scope)
-		implements Comparable<RelocationGroup> {
-		@Override
-		public int compareTo(RelocationGroup that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+	private static final class RelocationGroup implements Comparable<RelocationGroup> {
+		private final ValueVersionKey source;
+		private final PlacementState target;
+		private final FType materializationFType;
+		private final DurableAnchorKey anchor;
+		private final String scope;
+		private final String normalizedSignature;
+		private final int hashCode;
+
+		private RelocationGroup(ValueVersionKey source, PlacementState target,
+			FType materializationFType, DurableAnchorKey anchor, String scope) {
+			this.source = Objects.requireNonNull(source, "source");
+			this.target = Objects.requireNonNull(target, "target");
+			this.materializationFType = Objects.requireNonNull(materializationFType,
+				"materializationFType");
+			this.anchor = Objects.requireNonNull(anchor, "anchor");
+			this.scope = Objects.requireNonNull(scope, "scope");
+			this.normalizedSignature = source.normalizedSignature() + '|'
+				+ target.normalizedSignature() + '|' + materializationFType.name() + '|'
+				+ anchor.normalizedSignature() + '|' + scope;
+			this.hashCode = Objects.hash(source, target, materializationFType, anchor, scope);
 		}
 
-		private String normalizedSignature() {
-			return source.normalizedSignature() + '|' + target.normalizedSignature() + '|'
-				+ materializationFType.name() + '|' + anchor.normalizedSignature() + '|' + scope;
+		private ValueVersionKey source() { return source; }
+		private PlacementState target() { return target; }
+		private FType materializationFType() { return materializationFType; }
+		private DurableAnchorKey anchor() { return anchor; }
+		private String scope() { return scope; }
+
+		@Override
+		public int compareTo(RelocationGroup that) {
+			return normalizedSignature.compareTo(that.normalizedSignature);
 		}
+
+		@Override
+		public boolean equals(Object value) {
+			if(this == value)
+				return true;
+			if(!(value instanceof RelocationGroup that))
+				return false;
+			return source.equals(that.source) && target.equals(that.target)
+				&& materializationFType == that.materializationFType
+				&& anchor.equals(that.anchor) && scope.equals(that.scope);
+		}
+
+		@Override public int hashCode() { return hashCode; }
 	}
 
 	private record InputUseSeed(ValueVersionKey source, CompiledHopKey consumer, int position) { }

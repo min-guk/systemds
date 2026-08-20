@@ -190,8 +190,7 @@ public class FederatedPlannerDpCostEnumerator {
 			boolean seedExactTransientFrontier) {
 			this.context = context;
 			this.observer = observer == null ? NO_OP_OBSERVER : observer;
-			this.relocationOrder = RelocationSelections.canonicalOrderIndex(
-				context.analysis().graph().relocationActions());
+			this.relocationOrder = context.analysis().relocationOrder();
 			this.sharedFunctionInputClosure = sharedFunctionInputClosure;
 			this.seedExactTransientFrontier = seedExactTransientFrontier;
 			if(sharedFunctionInputClosure && seedExactTransientFrontier)
@@ -1384,8 +1383,9 @@ public class FederatedPlannerDpCostEnumerator {
 						PlacementState exactState = emissionState.placementState();
 						if(exactState.execType() == ExecType.FED && exactState.output() == FederatedOutput.FOUT
 							&& allowFedFoutCandidate) {
-							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
-								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
+							CandidateSelectionReceipt candidateSelection = capture.context.analysis()
+								.canonicalCandidateReceipt(
+									candidateDecisionReceipt.candidateRuleFact().key(), emissionFact);
 								ExactRelocationCost relocation;
 								try {
 									relocation = exactRelocationCost(capture,
@@ -1414,16 +1414,19 @@ public class FederatedPlannerDpCostEnumerator {
 							fedFOutPlan.setDerivedFedFout(emissionState.derivedFedFout());
 							fedFOutPlan.setSelectedPlacementState(exactState);
 							fedFOutPlan.setDirectCandidateSelection(candidateSelection);
-							fedFOutPlan.setDirectRelocationChoices(relocation.choices());
-							fedFOutPlan.setDirectRelocationActionCosts(relocation.actionCosts());
+							fedFOutPlan.setDirectRelocationChoices(
+								relocation.choices(), capture.relocationOrder);
+							fedFOutPlan.setDirectRelocationActionCosts(
+								relocation.actionCosts(), capture.relocationOrder);
 							fedFOutPlan.setExactRecurrenceCosts(
 								exactChildCostFEDExec, relocation.selectedBoundaryCost());
 							fOutFedPlanVariants.addFedPlan(fedFOutPlan);
 						}
 						else if(exactState.execType() == ExecType.FED && exactState.output() == FederatedOutput.LOUT
 							&& allowFedLoutCandidate) {
-							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
-								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
+							CandidateSelectionReceipt candidateSelection = capture.context.analysis()
+								.canonicalCandidateReceipt(
+									candidateDecisionReceipt.candidateRuleFact().key(), emissionFact);
 								ExactRelocationCost relocation;
 								try {
 									relocation = exactRelocationCost(capture,
@@ -1450,16 +1453,19 @@ public class FederatedPlannerDpCostEnumerator {
 								candidateDecisionReceipt.allowFEDFOUT() ? cpLogicalFType : null);
 							fedLOutPlan.setSelectedPlacementState(exactState);
 							fedLOutPlan.setDirectCandidateSelection(candidateSelection);
-							fedLOutPlan.setDirectRelocationChoices(relocation.choices());
-							fedLOutPlan.setDirectRelocationActionCosts(relocation.actionCosts());
+							fedLOutPlan.setDirectRelocationChoices(
+								relocation.choices(), capture.relocationOrder);
+							fedLOutPlan.setDirectRelocationActionCosts(
+								relocation.actionCosts(), capture.relocationOrder);
 							fedLOutPlan.setExactRecurrenceCosts(
 								exactChildCostFEDExec, relocation.selectedBoundaryCost());
 							lOutFedPlanVariants.addFedPlan(fedLOutPlan);
 						}
 						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.LOUT
 							&& allowCpLoutCandidate && literalCandidateInputs) {
-							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
-								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
+							CandidateSelectionReceipt candidateSelection = capture.context.analysis()
+								.canonicalCandidateReceipt(
+									candidateDecisionReceipt.candidateRuleFact().key(), emissionFact);
 							FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 								cpLoutCost, lOutFedPlanVariants, planChilds);
 							cpLOutPlan.bindExactChildPlanEdges(exactCollectedHops, memoTable);
@@ -1474,8 +1480,9 @@ public class FederatedPlannerDpCostEnumerator {
 						}
 						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.FOUT
 							&& allowCpFoutCandidate && literalCandidateInputs) {
-							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
-								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
+							CandidateSelectionReceipt candidateSelection = capture.context.analysis()
+								.canonicalCandidateReceipt(
+									candidateDecisionReceipt.candidateRuleFact().key(), emissionFact);
 							double entryCpUploadCost = hopPlacementWeight
 								* exactEstimator.upload(cpUploadMemEstimate, exactState.fType(), numOfWorkers);
 							double entryCpFoutCost = cpLoutCost
@@ -1691,13 +1698,15 @@ public class FederatedPlannerDpCostEnumerator {
 				+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature(), ex);
 		}
 		Map<RelocationActionKey,Double> actionCosts = new LinkedHashMap<>();
-		Set<String> costedPhysicalEmissions = new LinkedHashSet<>();
+		boolean[] costedPhysicalEmissions =
+			new boolean[capture.relocationOrder.physicalEmissionCount()];
 		double selectedCost = 0.0;
 		for(RelocationActionKey action : selection.emittedActions()) {
 			double cost = exactRelocationActionCost(action, selectedSources, exactEstimator,
 				parentHop, parentCommon, hopCommonTable, memoTable, numWorkers);
-			boolean firstPhysicalEmission = costedPhysicalEmissions.add(
-				RelocationSelections.physicalEmissionIdentity(action));
+			int physicalEmission = capture.relocationOrder.physicalEmissionId(action);
+			boolean firstPhysicalEmission = !costedPhysicalEmissions[physicalEmission];
+			costedPhysicalEmissions[physicalEmission] = true;
 			actionCosts.put(action, firstPhysicalEmission ? cost : 0.0);
 			if(firstPhysicalEmission)
 				selectedCost += cost;

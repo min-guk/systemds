@@ -633,13 +633,14 @@ final class ExactPhysicalModel {
 				List<DecisionDomain> scope = List.copyOf(scopeDomains);
 				factors.add(ExactCategoricalSolver.Factor.lazy(
 					scope.stream().map(DecisionDomain::variable).toList(), values ->
-						inputSatisfied(analysis.graph(), link, consumer, directSource, scope, values)));
+						inputSatisfied(analysis, link, consumer, directSource, scope, values)));
 			}
 		}
 	}
 
-	private static double inputSatisfied(NeutralPlacementGraph graph, Link link, DecisionDomain consumer,
+	private static double inputSatisfied(PlacementAnalysis analysis, Link link, DecisionDomain consumer,
 		DecisionDomain directSource, List<DecisionDomain> scope, int[] values) {
+		NeutralPlacementGraph graph = analysis.graph();
 		Alternative selectedConsumer = selected(consumer, scope, values);
 		if(selectedConsumer.orderedInputs().isEmpty()
 			|| link.position >= selectedConsumer.orderedInputs().size())
@@ -659,7 +660,8 @@ final class ExactPhysicalModel {
 			return inputAuthorityPlacementSatisfied(authority, source.state()) ? 0.0
 				: Double.POSITIVE_INFINITY;
 		Map<CompiledHopKey,PlacementState> assignment = selectedStates(scope, values);
-		List<CandidateSelectionReceipt> selectedCandidates = selectedCandidateReceipts(scope, values);
+		List<CandidateSelectionReceipt> selectedCandidates =
+			selectedCandidateReceipts(analysis, scope, values);
 		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
 			return directFoutSatisfied(graph, link.sourceNode, consumer.node().key(), link.position,
 				selectedConsumer.state(), authority.expectedFType(), authority.relocationAction(), assignment,
@@ -731,7 +733,7 @@ final class ExactPhysicalModel {
 	}
 
 	private static List<CandidateSelectionReceipt> selectedCandidateReceipts(
-		List<DecisionDomain> scope, int[] values) {
+		PlacementAnalysis analysis, List<DecisionDomain> scope, int[] values) {
 		List<CandidateSelectionReceipt> result = new ArrayList<>();
 		for(int index = 0; index < scope.size(); index++) {
 			Alternative alternative = scope.get(index).alternatives().get(values[index]);
@@ -740,7 +742,7 @@ final class ExactPhysicalModel {
 			CandidateEmissionFact emission = alternative.captured()
 				? alternative.candidateEmission() : alternative.executionEmission();
 			if(rule != null && emission != null)
-				result.add(new CandidateSelectionReceipt(rule.key(), emission, List.of()));
+				result.add(analysis.canonicalCandidateReceipt(rule.key(), emission));
 		}
 		return List.copyOf(result);
 	}
