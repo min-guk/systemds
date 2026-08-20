@@ -21,17 +21,20 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.ArrayDeque;
 import java.util.AbstractMap;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
@@ -1194,7 +1197,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerDpMemoTable.FedPlan best = null;
 			for(FederatedOutput output : List.of(lock.output(), FederatedOutput.LOUT, FederatedOutput.FOUT)) {
 				FederatedPlannerDpMemoTable.FedPlanVariants variants =
-					memoTable.getFedPlanVariants(Pair.of(hopId, output));
+					memoTable.getFedPlanVariants(hopId, output);
 				if(variants == null || variants.isEmpty())
 					continue;
 				for(FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
@@ -4693,7 +4696,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return selectedPlan;
 
 		FederatedPlannerDpMemoTable.FedPlanVariants variants =
-			memoTable.getFedPlanVariants(Pair.of(hopID, selectedPlan.getFedOutType()));
+			memoTable.getFedPlanVariants(hopID, selectedPlan.getFedOutType());
 		if (variants == null || variants.isEmpty())
 			return selectedPlan;
 
@@ -5172,7 +5175,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> outputDecisions) {
 
 		FederatedPlannerDpMemoTable.FedPlanVariants variants =
-			memoTable.getFedPlanVariants(Pair.of(memberHopID, referencePlan.getFedOutType()));
+			memoTable.getFedPlanVariants(memberHopID, referencePlan.getFedOutType());
 		if (variants == null || variants.isEmpty())
 			return null;
 
@@ -6812,7 +6815,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					return RequiredOutputSelection.CYCLE;
 
 				FederatedPlannerDpMemoTable.FedPlanVariants variants =
-					memoTable.getFedPlanVariants(Pair.of(hopID, desiredOut));
+					memoTable.getFedPlanVariants(hopID, desiredOut);
 				if (variants != null && !variants.isEmpty()) {
 					for (FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
 						RequiredOutputSelection candidateSelection = isCandidateFeasible(candidate, desiredOut);
@@ -9425,7 +9428,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// If no decisions exist, keep the cheapest variant (index 0 after pruning).
 		if (outputDecisions == null || outputDecisions.isEmpty()) {
 			FederatedPlannerDpMemoTable.FedPlanVariants variants =
-				memoTable.getFedPlanVariants(Pair.of(hopID, desiredOut));
+				memoTable.getFedPlanVariants(hopID, desiredOut);
 			if(variants == null || variants.isEmpty())
 				return null;
 			return variants.getFedPlanVariants().get(0);
@@ -9456,7 +9459,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (memoTable == null)
 			return null;
 
-		FederatedPlannerDpMemoTable.FedPlanVariants variants = memoTable.getFedPlanVariants(Pair.of(hopID, desiredOut));
+		FederatedPlannerDpMemoTable.FedPlanVariants variants = memoTable.getFedPlanVariants(hopID, desiredOut);
 		if (variants == null || variants.isEmpty())
 			return null;
 
@@ -10176,9 +10179,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// output type over-penalizes such switches and can lock DP into suboptimal FED
 		// chains (observed in kmeans WAN-mid around hop 358/359).
 		FederatedPlannerDpMemoTable.FedPlanVariants variantsLOUT =
-			memoTable.getFedPlanVariants(Pair.of(parentHopID, FederatedOutput.LOUT));
+			memoTable.getFedPlanVariants(parentHopID, FederatedOutput.LOUT);
 		FederatedPlannerDpMemoTable.FedPlanVariants variantsFOUT =
-			memoTable.getFedPlanVariants(Pair.of(parentHopID, FederatedOutput.FOUT));
+			memoTable.getFedPlanVariants(parentHopID, FederatedOutput.FOUT);
 		if ((variantsLOUT == null || variantsLOUT.isEmpty()) && (variantsFOUT == null || variantsFOUT.isEmpty())) {
 			if (cacheKey != null)
 				parentVariantDeltaCache.put(cacheKey, Double.NaN);
@@ -10855,6 +10858,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final class DecisionResolutionContext {
 		final FederatedPlannerDpMemoTable memoTable;
 		final FederatedPlannerDpMemoTable.FedPlan rootPlan;
+		final CompatiblePlanVariantCache compatiblePlanVariantCache;
 		final ConflictMapCache conflictMapCache;
 		final TransientReadParentsCache transientReadParentsCache;
 		final SimulationDecisionCache simulationDecisionCache;
@@ -10864,7 +10868,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
 			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
 			this.rootPlan = rootPlan;
-			this.conflictMapCache = new ConflictMapCache(memoTable, rootPlan);
+			this.compatiblePlanVariantCache = new CompatiblePlanVariantCache(memoTable);
+			this.conflictMapCache = new ConflictMapCache(
+				memoTable, rootPlan, compatiblePlanVariantCache);
 			this.transientReadParentsCache =
 				new TransientReadParentsCache(memoTable);
 			this.simulationDecisionCache = new SimulationDecisionCache(this);
@@ -10883,12 +10889,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final class ConflictMapCache {
 		private final FederatedPlannerDpMemoTable memoTable;
 		private final FederatedPlannerDpMemoTable.FedPlan rootPlan;
+		private final CompatiblePlanVariantCache compatiblePlanVariantCache;
 		private final Map<DecisionMapScoreKey, ConflictForestSnapshot> values = new HashMap<>();
 
 		ConflictMapCache(FederatedPlannerDpMemoTable memoTable,
-			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+			FederatedPlannerDpMemoTable.FedPlan rootPlan,
+			CompatiblePlanVariantCache compatiblePlanVariantCache) {
 			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
 			this.rootPlan = rootPlan;
+			this.compatiblePlanVariantCache = Objects.requireNonNull(
+				compatiblePlanVariantCache, "compatiblePlanVariantCache");
 		}
 
 		Map<Long,ConflictEntry> getFeasible(Map<Long,FederatedOutput> decisions) {
@@ -10901,7 +10911,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		private ConflictForestSnapshot snapshot(Map<Long,FederatedOutput> decisions) {
-			return snapshot(new DecisionMapScoreKey(decisions));
+			return snapshot(new DecisionMapScoreKey(decisions, compatiblePlanVariantCache));
 		}
 
 		private ConflictForestSnapshot snapshot(DecisionMapScoreKey key) {
@@ -11085,7 +11095,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		DecisionMapScoreBreakdown get(Map<Long, FederatedOutput> outputDecisions) {
-			DecisionMapScoreKey key = new DecisionMapScoreKey(outputDecisions);
+			DecisionMapScoreKey key = new DecisionMapScoreKey(
+				outputDecisions, conflictMapCache.compatiblePlanVariantCache);
 			ConflictForestSnapshot snapshot = conflictMapCache.snapshot(key);
 			if(snapshot.score == null)
 				snapshot.score = computeDecisionMapScoreBreakdownWithConflicts(
@@ -11099,12 +11110,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private static final class DecisionMapScoreKey {
-		final Map<Long, FederatedOutput> outputDecisions;
+		final DecisionMapView outputDecisions;
 		final int hash;
 
 		DecisionMapScoreKey(Map<Long, FederatedOutput> outputDecisions) {
-			this.outputDecisions = new DecisionMapView(outputDecisions);
-			this.hash = unorderedDecisionMapHash(this.outputDecisions);
+			this(outputDecisions, null);
+		}
+
+		DecisionMapScoreKey(Map<Long, FederatedOutput> outputDecisions,
+			CompatiblePlanVariantCache compatiblePlanVariantCache) {
+			this.outputDecisions = new DecisionMapView(
+				outputDecisions, compatiblePlanVariantCache);
+			this.hash = this.outputDecisions.decisionHash();
 		}
 
 		@Override
@@ -11114,7 +11131,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (!(obj instanceof DecisionMapScoreKey))
 				return false;
 			DecisionMapScoreKey that = (DecisionMapScoreKey) obj;
-			return Objects.equals(this.outputDecisions, that.outputDecisions);
+			return this.outputDecisions.sameDecisions(that.outputDecisions);
 		}
 
 		@Override
@@ -11124,18 +11141,81 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	/**
-	 * Immutable decision-map snapshot with a memo-local variant index. A score is
-	 * evaluated against one fixed map, so rescanning every retained arm for the same
-	 * (carrier, required output) state cannot change the answer.
+	 * Immutable primitive decision-map snapshot. HashMap nodes are unnecessary here:
+	 * score keys are immutable, queried by Hop id, and compared structurally.
 	 */
-	private static final class DecisionMapView extends java.util.AbstractMap<Long,FederatedOutput> {
-		private final Map<Long,FederatedOutput> values;
-		private CompatiblePlanSelectionCache compatiblePlans;
+	private static final class DecisionMapView extends AbstractMap<Long,FederatedOutput> {
+		private static final FederatedOutput[] OUTPUTS = FederatedOutput.values();
+		private static final byte NULL_OUTPUT = (byte) (OUTPUTS.length + 1);
+		private final Long[] hopIDs;
+		private final byte[] outputs;
+		private final boolean hasNullHopID;
+		private final byte nullHopOutput;
+		private final int size;
+		private final int decisionHash;
+		private final int mapHash;
+		private final CompatiblePlanVariantCache compatiblePlans;
+		private Set<Map.Entry<Long,FederatedOutput>> entries;
 
 		DecisionMapView(Map<Long,FederatedOutput> source) {
-			values = source == null || source.isEmpty()
-				? Collections.emptyMap()
-				: Collections.unmodifiableMap(new HashMap<>(source));
+			this(source, null);
+		}
+
+		DecisionMapView(Map<Long,FederatedOutput> source,
+			CompatiblePlanVariantCache compatiblePlans) {
+			this.compatiblePlans = compatiblePlans;
+			if(source == null || source.isEmpty()) {
+				hopIDs = new Long[0];
+				outputs = new byte[0];
+				hasNullHopID = false;
+				nullHopOutput = 0;
+				size = 0;
+				decisionHash = 0;
+				mapHash = 0;
+				return;
+			}
+
+			Long[] localHopIDs = new Long[decisionTableCapacity(source.size())];
+			byte[] localOutputs = new byte[localHopIDs.length];
+			boolean localHasNull = false;
+			byte localNullOutput = 0;
+			int localSize = 0;
+			int localMapHash = 0;
+			long hashSum = 0L;
+			long hashXor = 0L;
+			for(Map.Entry<Long,FederatedOutput> entry : source.entrySet()) {
+				Long boxedHopID = entry.getKey();
+				FederatedOutput output = entry.getValue();
+				byte encodedOutput = encodeOutput(output);
+				long hopID = boxedHopID != null ? boxedHopID.longValue() : 0L;
+				long mixed = mixDecisionMapHash(hopID
+					^ (output != null ? output.ordinal() + 1L : 0L) * 0x9E3779B97F4A7C15L);
+				hashSum += mixed;
+				hashXor ^= Long.rotateLeft(mixed, (int) (hopID & 63L));
+				localMapHash += (boxedHopID != null ? boxedHopID.hashCode() : 0)
+					^ (output != null ? output.hashCode() : 0);
+				if(boxedHopID == null) {
+					localHasNull = true;
+					localNullOutput = encodedOutput;
+				}
+				else {
+					int slot = findDecisionSlot(hopID, localHopIDs);
+					if(localHopIDs[slot] == null) {
+						localHopIDs[slot] = boxedHopID;
+						localSize++;
+					}
+					localOutputs[slot] = encodedOutput;
+				}
+			}
+			hopIDs = localHopIDs;
+			outputs = localOutputs;
+			hasNullHopID = localHasNull;
+			nullHopOutput = localNullOutput;
+			size = localSize + (localHasNull ? 1 : 0);
+			long mixedHash = mixDecisionMapHash(hashSum ^ Long.rotateLeft(hashXor, 23)
+				^ size * 0xD6E8FEB86659FD93L);
+			decisionHash = (int) (mixedHash ^ mixedHash >>> 32);
+			mapHash = localMapHash;
 		}
 
 		FederatedPlannerDpMemoTable.FedPlan findCompatiblePlan(
@@ -11143,45 +11223,173 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(memoTable == null)
 				return null;
 			if(compatiblePlans == null)
-				compatiblePlans = new CompatiblePlanSelectionCache(memoTable, this);
-			else
-				compatiblePlans.requireOwner(memoTable);
-			return compatiblePlans.get(hopID, desiredOut);
+				return findStrictCompatiblePlanVariantUncached(
+					memoTable, hopID, desiredOut, this);
+			compatiblePlans.requireOwner(memoTable);
+			return compatiblePlans.get(hopID, desiredOut, this);
 		}
 
 		@Override
 		public FederatedOutput get(Object key) {
-			return values.get(key);
+			if(key == null)
+				return hasNullHopID ? decodeOutput(nullHopOutput) : null;
+			if(!(key instanceof Long) || hopIDs.length == 0)
+				return null;
+			int slot = locateDecision(((Long) key).longValue());
+			return slot >= 0 ? decodeOutput(outputs[slot]) : null;
+		}
+
+		@Override
+		public boolean containsKey(Object key) {
+			if(key == null)
+				return hasNullHopID;
+			return key instanceof Long && hopIDs.length > 0
+				&& locateDecision(((Long) key).longValue()) >= 0;
 		}
 
 		@Override
 		public Set<Map.Entry<Long,FederatedOutput>> entrySet() {
-			return values.entrySet();
+			if(entries == null)
+				entries = new DecisionEntrySet();
+			return entries;
 		}
 
 		@Override
 		public int size() {
-			return values.size();
+			return size;
+		}
+
+		@Override
+		public int hashCode() {
+			return mapHash;
+		}
+
+		@Override
+		public boolean equals(Object value) {
+			if(this == value)
+				return true;
+			if(value instanceof DecisionMapView)
+				return sameDecisions((DecisionMapView) value);
+			return super.equals(value);
+		}
+
+		int decisionHash() {
+			return decisionHash;
+		}
+
+		boolean sameDecisions(DecisionMapView that) {
+			if(that == null || size != that.size || hasNullHopID != that.hasNullHopID
+				|| hasNullHopID && nullHopOutput != that.nullHopOutput)
+				return false;
+			for(int slot = 0; slot < hopIDs.length; slot++) {
+				Long hopID = hopIDs[slot];
+				if(hopID == null)
+					continue;
+				int thatSlot = that.locateDecision(hopID.longValue());
+				if(thatSlot < 0 || outputs[slot] != that.outputs[thatSlot])
+					return false;
+			}
+			return true;
+		}
+
+		private int locateDecision(long hopID) {
+			int slot = mixDecisionHopID(hopID) & (hopIDs.length - 1);
+			while(hopIDs[slot] != null) {
+				if(hopIDs[slot].longValue() == hopID)
+					return slot;
+				slot = (slot + 1) & (hopIDs.length - 1);
+			}
+			return -1;
+		}
+
+		private static int findDecisionSlot(long hopID, Long[] keys) {
+			int slot = mixDecisionHopID(hopID) & (keys.length - 1);
+			while(keys[slot] != null && keys[slot].longValue() != hopID)
+				slot = (slot + 1) & (keys.length - 1);
+			return slot;
+		}
+
+		private static int mixDecisionHopID(long value) {
+			value = (value ^ value >>> 33) * 0xff51afd7ed558ccdL;
+			value = (value ^ value >>> 33) * 0xc4ceb9fe1a85ec53L;
+			return (int) (value ^ value >>> 33);
+		}
+
+		private static int decisionTableCapacity(int expectedSize) {
+			int capacity = 2;
+			while((int) (capacity * 0.65) < expectedSize)
+				capacity <<= 1;
+			return capacity;
+		}
+
+		private static byte encodeOutput(FederatedOutput output) {
+			return output == null ? NULL_OUTPUT : (byte) (output.ordinal() + 1);
+		}
+
+		private static FederatedOutput decodeOutput(byte encoded) {
+			return encoded == NULL_OUTPUT ? null : OUTPUTS[encoded - 1];
+		}
+
+		private final class DecisionEntrySet extends AbstractSet<Map.Entry<Long,FederatedOutput>> {
+			@Override
+			public Iterator<Map.Entry<Long,FederatedOutput>> iterator() {
+				return new Iterator<>() {
+					private boolean nullPending = hasNullHopID;
+					private int scanSlot;
+					private int nextSlot = -1;
+
+					@Override
+					public boolean hasNext() {
+						if(nullPending || nextSlot >= 0)
+							return true;
+						while(scanSlot < hopIDs.length) {
+							if(hopIDs[scanSlot] != null) {
+								nextSlot = scanSlot++;
+								return true;
+							}
+							scanSlot++;
+						}
+						return false;
+					}
+
+					@Override
+					public Map.Entry<Long,FederatedOutput> next() {
+						if(nullPending) {
+							nullPending = false;
+							return new SimpleImmutableEntry<>(null, decodeOutput(nullHopOutput));
+						}
+						if(!hasNext())
+							throw new NoSuchElementException();
+						int slot = nextSlot;
+						nextSlot = -1;
+						return new SimpleImmutableEntry<>(hopIDs[slot], decodeOutput(outputs[slot]));
+					}
+				};
+			}
+
+			@Override
+			public int size() {
+				return DecisionMapView.this.size;
+			}
 		}
 	}
 
-	/** Primitive carrier/output cache retained only for one immutable decision map. */
-	private static final class CompatiblePlanSelectionCache {
+	/**
+	 * Reuses plan selection by the complete local child-decision boundary of one
+	 * (carrier, output) coordinate. Global decision maps that differ outside that
+	 * boundary necessarily select the same retained arm and share this result.
+	 */
+	private static final class CompatiblePlanVariantCache {
 		private static final int OUTPUT_COUNT = FederatedOutput.values().length;
 		private final FederatedPlannerDpMemoTable memoTable;
-		private final Map<Long,FederatedOutput> decisions;
-		private long[] hopIDs = new long[8];
-		private boolean[] occupied = new boolean[8];
-		private byte[] computedOutputs = new byte[8];
-		private FederatedPlannerDpMemoTable.FedPlan[] plans =
-			new FederatedPlannerDpMemoTable.FedPlan[8 * OUTPUT_COUNT];
+		private long[] hopIDs = new long[16];
+		private boolean[] occupied = new boolean[16];
+		private LocalCompatiblePlanCache[][] caches = new LocalCompatiblePlanCache[16][];
 		private int size;
-		private int resizeThreshold = 5;
+		private int resizeThreshold = 10;
 
-		CompatiblePlanSelectionCache(FederatedPlannerDpMemoTable memoTable,
-			Map<Long,FederatedOutput> decisions) {
+		CompatiblePlanVariantCache(FederatedPlannerDpMemoTable memoTable) {
 			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
-			this.decisions = Objects.requireNonNull(decisions, "decisions");
 		}
 
 		void requireOwner(FederatedPlannerDpMemoTable owner) {
@@ -11189,7 +11397,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalArgumentException("Compatible-plan cache has a different memo owner");
 		}
 
-		FederatedPlannerDpMemoTable.FedPlan get(long hopID, FederatedOutput desiredOut) {
+		FederatedPlannerDpMemoTable.FedPlan get(long hopID, FederatedOutput desiredOut,
+			Map<Long,FederatedOutput> decisions) {
 			if(desiredOut == null)
 				return null;
 			int slot = findSlot(hopID, hopIDs, occupied);
@@ -11200,37 +11409,32 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				}
 				occupied[slot] = true;
 				hopIDs[slot] = hopID;
+				caches[slot] = new LocalCompatiblePlanCache[OUTPUT_COUNT];
 				size++;
 			}
 			int outputIndex = desiredOut.ordinal();
-			int outputBit = 1 << outputIndex;
-			if((computedOutputs[slot] & outputBit) == 0) {
-				plans[slot * OUTPUT_COUNT + outputIndex] =
-					findStrictCompatiblePlanVariantUncached(
-						memoTable, hopID, desiredOut, decisions);
-				computedOutputs[slot] |= (byte) outputBit;
+			LocalCompatiblePlanCache cache = caches[slot][outputIndex];
+			if(cache == null) {
+				cache = new LocalCompatiblePlanCache(memoTable, hopID, desiredOut);
+				caches[slot][outputIndex] = cache;
 			}
-			return plans[slot * OUTPUT_COUNT + outputIndex];
+			return cache.get(decisions);
 		}
 
 		private void resize(int capacity) {
 			long[] previousHopIDs = hopIDs;
 			boolean[] previousOccupied = occupied;
-			byte[] previousComputed = computedOutputs;
-			FederatedPlannerDpMemoTable.FedPlan[] previousPlans = plans;
+			LocalCompatiblePlanCache[][] previousCaches = caches;
 			hopIDs = new long[capacity];
 			occupied = new boolean[capacity];
-			computedOutputs = new byte[capacity];
-			plans = new FederatedPlannerDpMemoTable.FedPlan[capacity * OUTPUT_COUNT];
+			caches = new LocalCompatiblePlanCache[capacity][];
 			for(int previousSlot = 0; previousSlot < previousHopIDs.length; previousSlot++) {
 				if(!previousOccupied[previousSlot])
 					continue;
 				int slot = findSlot(previousHopIDs[previousSlot], hopIDs, occupied);
 				occupied[slot] = true;
 				hopIDs[slot] = previousHopIDs[previousSlot];
-				computedOutputs[slot] = previousComputed[previousSlot];
-				System.arraycopy(previousPlans, previousSlot * OUTPUT_COUNT,
-					plans, slot * OUTPUT_COUNT, OUTPUT_COUNT);
+				caches[slot] = previousCaches[previousSlot];
 			}
 			resizeThreshold = (int) (capacity * 0.65);
 		}
@@ -11249,9 +11453,148 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 	}
 
+	/** One coordinate's non-dominated selection indexed by its exact boundary signature. */
+	private static final class LocalCompatiblePlanCache {
+		private static final int MAX_PACKED_BOUNDARY = Long.SIZE / 2;
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final List<FederatedPlannerDpMemoTable.FedPlan> candidates;
+		private final Long[] boundaryHopIDs;
+		private final boolean cacheable;
+		private boolean firstComputed;
+		private long firstSignature;
+		private FederatedPlannerDpMemoTable.FedPlan firstPlan;
+		private long[] signatures;
+		private byte[] states;
+		private FederatedPlannerDpMemoTable.FedPlan[] plans;
+		private int size;
+		private int resizeThreshold;
+
+		LocalCompatiblePlanCache(FederatedPlannerDpMemoTable memoTable,
+			long hopID, FederatedOutput desiredOut) {
+			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
+			FederatedPlannerDpMemoTable.FedPlanVariants variants =
+				memoTable.getFedPlanVariants(hopID, desiredOut);
+			candidates = variants == null || variants.isEmpty()
+				? List.of() : variants.getFedPlanVariants();
+			List<Long> relevantHopIDs = new ArrayList<>();
+			for(FederatedPlannerDpMemoTable.FedPlan candidate : candidates) {
+				if(candidate == null)
+					continue;
+				for(int childIndex = 0; childIndex < childPlanEdgeCount(candidate); childIndex++) {
+					Long childHopID = childPlanOriginalDecisionHopId(
+						memoTable, candidate, childIndex);
+					if(childHopID != null && !relevantHopIDs.contains(childHopID))
+						relevantHopIDs.add(childHopID);
+				}
+			}
+			relevantHopIDs.sort(Long::compareTo);
+			boundaryHopIDs = relevantHopIDs.toArray(Long[]::new);
+			cacheable = boundaryHopIDs.length <= MAX_PACKED_BOUNDARY;
+		}
+
+		FederatedPlannerDpMemoTable.FedPlan get(Map<Long,FederatedOutput> decisions) {
+			if(!cacheable)
+				return compute(decisions);
+			long signature = boundarySignature(decisions);
+			if(!firstComputed) {
+				firstComputed = true;
+				firstSignature = signature;
+				firstPlan = compute(decisions);
+				return firstPlan;
+			}
+			if(signature == firstSignature)
+				return firstPlan;
+			if(signatures == null)
+				initializeTable();
+			int slot = findSignatureSlot(signature, signatures, states);
+			if(states[slot] != 0)
+				return plans[slot];
+			if(size >= resizeThreshold) {
+				resize(signatures.length << 1);
+				slot = findSignatureSlot(signature, signatures, states);
+			}
+			FederatedPlannerDpMemoTable.FedPlan selected = compute(decisions);
+			put(slot, signature, selected);
+			return selected;
+		}
+
+		private FederatedPlannerDpMemoTable.FedPlan compute(
+			Map<Long,FederatedOutput> decisions) {
+			if(decisions == null || decisions.isEmpty())
+				return candidates.isEmpty() ? null : candidates.get(0);
+			for(int candidateIndex = 0; candidateIndex < candidates.size(); candidateIndex++) {
+				FederatedPlannerDpMemoTable.FedPlan candidate = candidates.get(candidateIndex);
+				if(candidate != null
+					&& isCompatibleWithChildDecisions(memoTable, candidate, decisions))
+					return candidate;
+			}
+			return null;
+		}
+
+		private long boundarySignature(Map<Long,FederatedOutput> decisions) {
+			long signature = 0L;
+			if(decisions == null || decisions.isEmpty())
+				return signature;
+			for(int index = 0; index < boundaryHopIDs.length; index++) {
+				FederatedOutput output = decisions.get(boundaryHopIDs[index]);
+				long code = output == null ? 0L : output.ordinal() + 1L;
+				signature |= code << (index << 1);
+			}
+			return signature;
+		}
+
+		private void initializeTable() {
+			signatures = new long[4];
+			states = new byte[4];
+			plans = new FederatedPlannerDpMemoTable.FedPlan[4];
+			resizeThreshold = 2;
+			put(findSignatureSlot(firstSignature, signatures, states), firstSignature, firstPlan);
+		}
+
+		private void put(int slot, long signature,
+			FederatedPlannerDpMemoTable.FedPlan selected) {
+			signatures[slot] = signature;
+			states[slot] = selected == null ? (byte) 2 : (byte) 1;
+			plans[slot] = selected;
+			size++;
+		}
+
+		private void resize(int capacity) {
+			long[] previousSignatures = signatures;
+			byte[] previousStates = states;
+			FederatedPlannerDpMemoTable.FedPlan[] previousPlans = plans;
+			signatures = new long[capacity];
+			states = new byte[capacity];
+			plans = new FederatedPlannerDpMemoTable.FedPlan[capacity];
+			size = 0;
+			for(int previousSlot = 0; previousSlot < previousSignatures.length; previousSlot++) {
+				if(previousStates[previousSlot] == 0)
+					continue;
+				int slot = findSignatureSlot(previousSignatures[previousSlot], signatures, states);
+				put(slot, previousSignatures[previousSlot], previousPlans[previousSlot]);
+			}
+			resizeThreshold = (int) (capacity * 0.65);
+		}
+
+		private static int findSignatureSlot(long signature, long[] keys, byte[] states) {
+			int slot = mixSignature(signature) & (keys.length - 1);
+			while(states[slot] != 0 && keys[slot] != signature)
+				slot = (slot + 1) & (keys.length - 1);
+			return slot;
+		}
+
+		private static int mixSignature(long value) {
+			value = (value ^ value >>> 33) * 0xff51afd7ed558ccdL;
+			value = (value ^ value >>> 33) * 0xc4ceb9fe1a85ec53L;
+			return (int) (value ^ value >>> 33);
+		}
+	}
+
 	private static int unorderedDecisionMapHash(Map<Long, FederatedOutput> decisions) {
 		if (decisions == null || decisions.isEmpty())
 			return 0;
+		if(decisions instanceof DecisionMapView)
+			return ((DecisionMapView) decisions).decisionHash();
 		long sum = 0L;
 		long xor = 0L;
 		for (Map.Entry<Long, FederatedOutput> entry : decisions.entrySet()) {

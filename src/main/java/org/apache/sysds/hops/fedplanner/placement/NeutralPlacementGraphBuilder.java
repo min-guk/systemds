@@ -290,7 +290,7 @@ public final class NeutralPlacementGraphBuilder {
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
 				Hop input = hop.getInput(inputPosition);
 				if(values.containsKey(input)) predecessorEdges.add("input-" + inputPosition + ':'
-					+ values.get(input).normalizedSignature());
+					+ values.get(input).cfgReferenceSignature());
 			}
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
 				predecessorEdges);

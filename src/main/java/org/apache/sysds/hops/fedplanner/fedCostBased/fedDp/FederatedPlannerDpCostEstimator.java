@@ -1094,7 +1094,7 @@ public class FederatedPlannerDpCostEstimator {
 			if (finalizedOut != null && out != finalizedOut)
 				continue;
 			FederatedPlannerDpMemoTable.FedPlanVariants variants =
-				memoTable.getFedPlanVariants(Pair.of(parentHop.getHopID(), out));
+				memoTable.getFedPlanVariants(parentHop.getHopID(), out);
 			FederatedPlannerDpMemoTable.FedPlan selected =
 				findFinalizedParentPlanVariant(memoTable, variants, finalizedExec, childHopId, true);
 			if (selected == null)

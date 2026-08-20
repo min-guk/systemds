@@ -3628,9 +3628,9 @@ public class FederatedPlannerDpCostEnumerator {
 
 		long parentHopID = parentPlan.getHopRef().getHopID();
 		FederatedPlannerDpMemoTable.FedPlanVariants variantsLOUT =
-				memoTable.getFedPlanVariants(Pair.of(parentHopID, FederatedOutput.LOUT));
+			memoTable.getFedPlanVariants(parentHopID, FederatedOutput.LOUT);
 		FederatedPlannerDpMemoTable.FedPlanVariants variantsFOUT =
-				memoTable.getFedPlanVariants(Pair.of(parentHopID, FederatedOutput.FOUT));
+			memoTable.getFedPlanVariants(parentHopID, FederatedOutput.FOUT);
 		if ((variantsLOUT == null || variantsLOUT.isEmpty()) && (variantsFOUT == null || variantsFOUT.isEmpty()))
 			return Double.NaN;
 

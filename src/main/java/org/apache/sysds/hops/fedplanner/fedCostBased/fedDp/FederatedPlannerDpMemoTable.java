@@ -122,6 +122,7 @@ public class FederatedPlannerDpMemoTable {
 	private final Map<HopOccurrenceProjection, List<Hop>> orderedPlanCarriersByOccurrence = new IdentityHashMap<>();
 	private final LongObjectLookup<Hop> hopRefById = new LongObjectLookup<>();
 	private final LongLongLookup originalHopIdByClone = new LongLongLookup();
+	private LongObjectLookup<SealedLegacyCoordinate> sealedLegacyCoordinates;
 	private final Map<HopOccurrenceProjection, List<OccurrencePlanArm>> selectedArmsByOccurrence =
 		new IdentityHashMap<>();
 	private final Map<HopOccurrenceProjection, List<OccurrencePlanArm>> allArmsByOccurrence =
@@ -311,6 +312,32 @@ public class FederatedPlannerDpMemoTable {
 	 * whole-memo reconstruction.
 	 */
 	void sealForSelection() {
+		LongObjectLookup<SealedLegacyCoordinate> coordinates = new LongObjectLookup<>();
+		for(Map.Entry<Pair<Long,FederatedOutput>,FedPlanVariants> entry : hopMemoTable.entrySet()) {
+			Pair<Long,FederatedOutput> key = entry.getKey();
+			if(key == null || key.getLeft() == null || key.getRight() == null)
+				continue;
+			long hopID = key.getLeft();
+			SealedLegacyCoordinate coordinate = coordinates.get(hopID);
+			if(coordinate == null) {
+				coordinate = new SealedLegacyCoordinate();
+				coordinates.put(hopID, coordinate);
+			}
+			coordinate.variants[key.getRight().ordinal()] = entry.getValue();
+		}
+		for(Map.Entry<Pair<Long,FederatedOutput>,Set<Hop>> entry : carriersByLegacyCoordinate.entrySet()) {
+			Pair<Long,FederatedOutput> key = entry.getKey();
+			if(key == null || key.getLeft() == null || key.getRight() == null
+				|| entry.getValue() == null || entry.getValue().size() <= 1)
+				continue;
+			SealedLegacyCoordinate coordinate = coordinates.get(key.getLeft());
+			if(coordinate == null) {
+				coordinate = new SealedLegacyCoordinate();
+				coordinates.put(key.getLeft(), coordinate);
+			}
+			coordinate.ambiguousOutputs |= 1 << key.getRight().ordinal();
+		}
+		sealedLegacyCoordinates = coordinates;
 		selectionSealed = true;
 	}
 
@@ -329,6 +356,13 @@ public class FederatedPlannerDpMemoTable {
 		decisionHopIdsByOccurrence.clear();
 		transientReadSiblingHopIds.clear();
 		mandatoryExactChildEdges = null;
+		sealedLegacyCoordinates = null;
+	}
+
+	private static final class SealedLegacyCoordinate {
+		private final FedPlanVariants[] variants =
+			new FedPlanVariants[FederatedOutput.values().length];
+		private int ambiguousOutputs;
 	}
 
 	private void registerPlanCarrier(Hop carrier, HopOccurrenceProjection occurrence) {
@@ -470,14 +504,28 @@ public class FederatedPlannerDpMemoTable {
 		return hopMemoTable.get(fedPlanPair);
 	}
 
+	/** Allocation-free legacy-coordinate lookup once enumeration has frozen the memo. */
+	public FedPlanVariants getFedPlanVariants(long hopID, FederatedOutput output) {
+		Objects.requireNonNull(output, "output");
+		if(selectionSealed && sealedLegacyCoordinates != null) {
+			SealedLegacyCoordinate coordinate = sealedLegacyCoordinates.get(hopID);
+			if(coordinate == null)
+				return null;
+			if((coordinate.ambiguousOutputs & 1 << output.ordinal()) != 0)
+				throw new IllegalStateException("Ambiguous legacy DP memo coordinate "
+					+ Pair.of(hopID, output));
+			return coordinate.variants[output.ordinal()];
+		}
+		return getFedPlanVariants(Pair.of(hopID, output));
+	}
+
 	public FedPlanVariants getFedPlanVariants(Hop carrier, FederatedOutput output) {
 		Map<FederatedOutput,FedPlanVariants> byOutput = exactMemoByCarrier.get(carrier);
 		return byOutput == null ? null : byOutput.get(output);
 	}
 
 	public FedPlan getFedPlanAfterPrune(long hopID, FederatedOutput federatedOutput) {
-		FedPlanVariants fedPlanVariantList = getFedPlanVariants(
-			new ImmutablePair<>(hopID, federatedOutput));
+		FedPlanVariants fedPlanVariantList = getFedPlanVariants(hopID, federatedOutput);
 		if (fedPlanVariantList == null || fedPlanVariantList.isEmpty()) {
 			return null;
 		}
@@ -931,7 +979,7 @@ public class FederatedPlannerDpMemoTable {
 	}
 
 	public boolean contains(long hopID, FederatedOutput fedOutType) {
-		return hopMemoTable.containsKey(new ImmutablePair<>(hopID, fedOutType));
+		return getFedPlanVariants(hopID, fedOutType) != null;
 	}
 
 	public boolean containsPlanForCarrier(Hop carrier, FederatedOutput fedOutType) {

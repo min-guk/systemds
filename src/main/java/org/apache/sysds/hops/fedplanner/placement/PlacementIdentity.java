@@ -24,8 +24,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -34,6 +36,16 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 
 /** Structural identities used by the immutable neutral placement graph. */
 public final class PlacementIdentity {
+	/**
+	 * Structural identities are immutable records, but canonical sorting and receipt
+	 * construction ask for the same normalized signature many times.  Keep one weak,
+	 * compiler-thread-local serialization per equal identity instead of rebuilding its
+	 * complete nested token stream on every comparison.  Weak keys prevent completed
+	 * compilations from being retained by a long-lived compiler thread.
+	 */
+	private static final ThreadLocal<Map<Object,String>> NORMALIZED_SIGNATURES =
+		ThreadLocal.withInitial(WeakHashMap::new);
+
 	public enum VersionKind {
 		ORDINARY,
 		BRANCH_JOIN_PHI,
@@ -106,8 +118,10 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(programFingerprint, functionNamespace, list(regionPath), callSitePath,
-				recompileContext);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(programFingerprint, functionNamespace, list(regionPath), callSitePath,
+					recompileContext));
 		}
 
 		@Override
@@ -136,8 +150,10 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(programFingerprint, functionNamespace, callSitePath, recompileContext,
-				controlRegion.normalizedSignature(), emittedHopInstance, canonicalSourceOrigin);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(programFingerprint, functionNamespace, callSitePath, recompileContext,
+					controlRegion.normalizedSignature(), emittedHopInstance, canonicalSourceOrigin));
 		}
 
 		@Override
@@ -163,9 +179,11 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(programFingerprint, lexicalVariable,
-				definingControlRegion.normalizedSignature(), Integer.toString(definitionOrdinal),
-				versionKind.name(), list(predecessorVersions));
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(programFingerprint, lexicalVariable,
+					definingControlRegion.normalizedSignature(), Integer.toString(definitionOrdinal),
+					versionKind.name(), list(predecessorVersions)));
 		}
 
 		/** Stable compact identity used by builder-owned CFG definition references. */
@@ -195,7 +213,9 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(workerId, longs(begin), longs(end));
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(workerId, longs(begin), longs(end)));
 		}
 
 		@Override
@@ -216,7 +236,9 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(placementId, fType.name(), signatures(partitions));
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(placementId, fType.name(), signatures(partitions)));
 		}
 
 		@Override
@@ -287,9 +309,11 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(sourceValueVersion.normalizedSignature(), targetPlacement.normalizedSignature(),
-				materializationFType.name(), durableAnchor.normalizedSignature(), statementBlockScope,
-				signatures(compatibleConsumers));
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(sourceValueVersion.normalizedSignature(), targetPlacement.normalizedSignature(),
+					materializationFType.name(), durableAnchor.normalizedSignature(), statementBlockScope,
+					signatures(compatibleConsumers)));
 		}
 
 		@Override
@@ -318,9 +342,11 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(consumer.normalizedSignature(), Integer.toString(inputPosition),
-				sourceValueVersion.normalizedSignature(), requiredPlacement.normalizedSignature(),
-				relocationAction.normalizedSignature(), callRecompileContext);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(consumer.normalizedSignature(), Integer.toString(inputPosition),
+					sourceValueVersion.normalizedSignature(), requiredPlacement.normalizedSignature(),
+					relocationAction.normalizedSignature(), callRecompileContext));
 		}
 
 		@Override
@@ -350,9 +376,11 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(sourceValueVersion.normalizedSignature(), consumer.normalizedSignature(),
-				Integer.toString(inputPosition), requiredPlacement.normalizedSignature(),
-				callRecompileContext);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(sourceValueVersion.normalizedSignature(), consumer.normalizedSignature(),
+					Integer.toString(inputPosition), requiredPlacement.normalizedSignature(),
+					callRecompileContext));
 		}
 
 		@Override
@@ -374,7 +402,9 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(demand.normalizedSignature(), action.normalizedSignature());
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(demand.normalizedSignature(), action.normalizedSignature()));
 		}
 
 		@Override
@@ -425,11 +455,13 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(producer.normalizedSignature(), producerValueVersion.normalizedSignature(),
-				candidateRule.normalizedSignature(),
-				sourcePlacement.normalizedSignature(), targetPlacement.normalizedSignature(),
-				durableAnchor.normalizedSignature(), durableAnchorOwner.normalizedSignature(),
-				durableAnchorOwnerFType.name(), materializationFType.name(), statementBlockScope);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(producer.normalizedSignature(), producerValueVersion.normalizedSignature(),
+					candidateRule.normalizedSignature(),
+					sourcePlacement.normalizedSignature(), targetPlacement.normalizedSignature(),
+					durableAnchor.normalizedSignature(), durableAnchorOwner.normalizedSignature(),
+					durableAnchorOwnerFType.name(), materializationFType.name(), statementBlockScope));
 		}
 
 		@Override
@@ -453,7 +485,9 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(Integer.toString(inputPosition), materializationFType.name());
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(Integer.toString(inputPosition), materializationFType.name()));
 		}
 
 		@Override
@@ -481,9 +515,11 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(rule.normalizedSignature(), emission.normalizedSignature(),
-				fallbackMaterializations.stream().map(CandidateFallbackMaterialization::normalizedSignature)
-					.reduce((left, right) -> left + ',' + right).orElse(""));
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(rule.normalizedSignature(), emission.normalizedSignature(),
+					fallbackMaterializations.stream().map(CandidateFallbackMaterialization::normalizedSignature)
+						.reduce((left, right) -> left + ',' + right).orElse("")));
 		}
 
 		@Override
@@ -502,8 +538,10 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(consumerOccurrence.normalizedSignature(), Integer.toString(inputPosition),
-				requiredPlacement.normalizedSignature());
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(consumerOccurrence.normalizedSignature(), Integer.toString(inputPosition),
+					requiredPlacement.normalizedSignature()));
 		}
 
 		@Override
@@ -525,9 +563,11 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(sourceOccurrence.normalizedSignature(), sourceValueVersion.normalizedSignature(),
-				producerPlacement.normalizedSignature(), signatures(obligations),
-				String.valueOf(statementBlockScope), String.valueOf(durableProvenance));
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(sourceOccurrence.normalizedSignature(), sourceValueVersion.normalizedSignature(),
+					producerPlacement.normalizedSignature(), signatures(obligations),
+					String.valueOf(statementBlockScope), String.valueOf(durableProvenance)));
 		}
 
 		@Override
@@ -538,6 +578,15 @@ public final class PlacementIdentity {
 
 	private PlacementIdentity() {
 		// utility class
+	}
+
+	private static String cachedSignature(Object identity) {
+		return NORMALIZED_SIGNATURES.get().get(identity);
+	}
+
+	private static String rememberSignature(Object identity, String signature) {
+		NORMALIZED_SIGNATURES.get().put(identity, signature);
+		return signature;
 	}
 
 	private static String requireText(String value, String name) {

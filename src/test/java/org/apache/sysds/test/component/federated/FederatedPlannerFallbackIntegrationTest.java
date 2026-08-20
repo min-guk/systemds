@@ -3772,6 +3772,28 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpDecisionMapScoreKeyIsAnOrderIndependentImmutableSnapshot() throws Exception {
+		Class<?> keyClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$DecisionMapScoreKey");
+		Constructor<?> constructor = keyClass.getDeclaredConstructor(Map.class);
+		constructor.setAccessible(true);
+		Map<Long,FederatedOutput> mutable = new LinkedHashMap<>();
+		mutable.put(7L, FederatedOutput.FOUT);
+		mutable.put(3L, FederatedOutput.LOUT);
+		Object snapshot = constructor.newInstance(mutable);
+
+		mutable.put(7L, FederatedOutput.LOUT);
+		Map<Long,FederatedOutput> sameOriginalDecisions = new LinkedHashMap<>();
+		sameOriginalDecisions.put(3L, FederatedOutput.LOUT);
+		sameOriginalDecisions.put(7L, FederatedOutput.FOUT);
+		Object reordered = constructor.newInstance(sameOriginalDecisions);
+
+		assertEquals("score keys must snapshot source mutations and ignore iteration order",
+			snapshot, reordered);
+		assertEquals(snapshot.hashCode(), reordered.hashCode());
+	}
+
+	@Test
 	public void testDpResolveOneHopConflictAccountsForSameOutputCompatibleVariantShift() throws Exception {
 		DataOp source = transientRead("XsourceCompat", ROWS, COLS);
 		UnaryOp target = new UnaryOp("targetCompat", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, source);
