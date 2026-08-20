@@ -67,23 +67,35 @@
 
 ## 3. Repeated transient/function conflict discovery inflated DP planning time
 
-- **상태**: 해결 (compile-only profile 기준)
-- **환경/조건**: trace/logging 비활성, StepLM compile-only DP, runtime instruction execution 없음.
-- **재현 절차**: 기존 profile artifact는 다음 경로에 보존했다.
-  - `/tmp/cofee-dp-steplm-profile-1787214646.jfr`
-  - `/tmp/cofee-dp-steplm-profile-1787214646.json`
-  - `/tmp/cofee-dp-steplm-profile-1787214646.log`
-- **관측 증상**: JFR 625 DP samples 중 output-decision 계열이 약 27%, conflict BFS가 약
-  14.2%였고, exact component join은 약 0.3%였다. `collectTransientReadParents`,
-  `collectConflicts`, `augmentLogicalTransientConflictUsages`,
-  `recordAnalysisTransientRelation`이 반복적으로 나타났다.
-- **원인 분석**: decision-dependent BFS마다 변하지 않는 logical transient,
-  function-input binding, function-formal group, CFG reaching-definition 관계를 재발견했고,
-  각 TWrite마다 conflict map 전체를 다시 역탐색했다.
-- **해결 요약**: `PlacementAnalysis`로부터 exact occurrence map과 immutable
-  `TransientConflictRelation` topology를 memo 생성 시 한 번 구축한다. conflict map도
-  identity별 TWrite-to-TRead inverse index를 한 번 생성해 BFS에서 재사용한다. 선택된 plan과
-  output decision에 의존하는 filtering/cost resolution은 기존 위치에 유지했다.
+- **상태**: 부분 해결. immutable topology 사전색인은 완료했지만 반복적인
+  decision-dependent reconciliation 비용은 남아 있다.
+- **환경/조건**: final authenticated compile-only campaign은 PlannerTrace/JFR/GC logging을
+  끄고 runtime instruction을 실행하지 않았다. JFR은 timing과 분리한 새 JVM diagnostic run에서만
+  활성화했다.
+- **재현 절차 및 산출물**:
+  - timing/validation:
+    `/home/mchoi/g014-planner-compile-benchmark-7589d9823b-20260820-v1/results/full-blocked-wan-light-r1`
+  - LOGREG-w1 four-planner JFR:
+    `.../results/profiling-logreg-w1-r2`
+  - KMEANS-w2 DP/Exact JFR:
+    `.../results/profiling-kmeans-w2-r1`
+  - `/tmp/cofee-dp-steplm-profile-1787214646.*`는 Maven/Surefire/JaCoCo가 개입한 초기 smoke
+    artifact이며 final 외부 fresh-JVM 성능 근거로 사용하지 않는다.
+- **관측 증상**: 7 workloads × 4 worker counts × 4 planners × 5 measured repetitions에서
+  DP의 FedAll-normalized cell geometric mean은 3.150배였다. LOGREG-w1 DP JFR 934 planner
+  samples 중 transient-read sibling 수집 131, output-closure refinement 127,
+  output-decision 계산 121, original-Hop identity resolution 111이 나타났고,
+  `collectConflictsSingleBFS`는 inclusive 44(4.7%), leaf 21(2.2%)였다. KMEANS-w2에서는
+  conflict BFS가 inclusive 80/603이지만 leaf는 23/603(3.8%)였으며 `ConflictEntry` 생성만
+  sampled allocation 2.28 GB를 차지했다.
+- **원인 분석**: static logical transient/function topology 자체는 memo 생성 때 한 번
+  index된다. 그러나 선택 output/plan/child boundary가 바뀔 때마다 active conflict가 달라지므로
+  여러 refinement 경로가 conflict map, queue, visited set, occurrence variant, identity/signature,
+  parent/child sharing cost를 다시 구성한다. 따라서 병목은 단일 BFS가 아니라 전체
+  decision/closure/conflict reconstruction 경로다.
+- **해결된 범위**: `PlacementAnalysis`로부터 exact occurrence map과 immutable
+  `TransientConflictRelation` topology를 memo 생성 시 한 번 구축한다. 선택된 plan과 output
+  decision에 의존하는 legality/filtering/cost resolution은 보존했다.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpMemoTable.java`
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
@@ -94,16 +106,19 @@
   mvn -q -Dspotless.check.skip=true -DskipTests compile
   git diff --check
   ```
-  모두 통과했다. 같은 StepLM compile-only 단일 관측에서 FedPlanner는 9.231489초였다.
-  이 단일 수치는 성능 결론이 아니라 회귀 smoke evidence로만 사용한다.
-- **잔여 이슈**: 반복·warm-up을 통제한 planner-only benchmark와 heap/GC 비교가 필요하다.
-  실행 중인 runtime campaign을 보호하기 위해 이번 세션에서는 추가 runtime workload를
-  실행하지 않았다.
+  모두 통과했다. final campaign은 28/28 blocks, 672/672 observations, 0 failures이고
+  672개 receipt/log hash가 모두 일치한다. runtime-nonzero observation, PlannerTrace,
+  runtime-explain marker는 모두 0이다.
+- **잔여 이슈**: immutable multi-parent/transient topology와 conflict-entry skeleton을 재사용하고,
+  decision 변경의 affected component만 bottom-up 증분 갱신해야 한다. `resolveOriginalHopId`,
+  occurrence variant lookup, normalized identity/signature도 cache 후보이다. 다만 active conflict는
+  selected state에 의존하므로 static conflict list로 단순 대체하면 합법 후보를 누락할 수 있다.
 - **잠재 회귀 위험**: function formal 하나가 여러 binding write를 갖는 합법 IR이 생기면
   현재 invariant check가 실패한다. 그런 fixture가 등장하면 topology를 multimap으로
   확장하되 constraint를 누락하지 않는 테스트로 감지한다.
 - **의사결정 근거**: candidate space나 legality를 축소하지 않고, 결정과 무관한 graph
-  topology만 사전색인하는 behavior-preserving 최적화다.
+  topology만 사전색인하는 behavior-preserving 최적화다. final profile은 이 최적화만으로
+  DP compile-time 문제가 해결되었다고 주장할 수 없음을 보여준다.
 
 ## 4. Live optimizer was named MinST although it no longer implemented min-s-t-cut
 
@@ -157,3 +172,40 @@
   limit tests로 최적성/tractability contract를 계속 검증한다.
 - **의사결정 근거**: 구현된 알고리즘을 Exact로 명명하고 사용되지 않는 min-cut residue만
   제거해 research abstraction과 executable code를 일치시킨다.
+
+## 5. Controlled compile-only planner benchmark
+
+- **상태**: 완료
+- **목적**: runtime 실행과 trace/logging overhead를 제거하고 각 planner의 실제
+  `Compile Phase FedPlanner`만 동일 조건에서 비교한다.
+- **설계**: 7 workloads × 4 worker counts × 4 planners, cell마다 fresh-JVM warm-up 1회와
+  measured 5회. workload/worker block 안에서 planner 순서를 회전했다. 정규화 baseline은
+  FedAll=1이다.
+- **결과**:
+  - FedAll-normalized cell geometric mean: FedAll 1.000, Heuristic 0.915,
+    DP 3.150, Exact 0.809.
+  - mean planner seconds: FedAll 2.403, Heuristic 1.845, DP 6.921, Exact 1.659.
+  - DP의 HOP-count-to-cell-mean 상관: Pearson 0.883, Spearman 0.939.
+  - planner timer 밖 `LopsBuild - FedPlanner` 평균: FedAll 1.367, Heuristic 1.362,
+    DP 1.326, Exact 1.356초.
+- **타이밍 경계**: `DMLTranslator`는 physical normalization과 canonical
+  `PlacementAnalysis` binding을 완료한 뒤 planner timer를 시작한다. 따라서 DP 격차는
+  공통 privacy/placement analysis 생성 비용이 아니라 planner-specific rewrite/reconciliation
+  경로에서 발생한다.
+- **Exact 해석**: 현재 workload의 factor graph에서는 Exact가 빠르지만, KMEANS-w2 diagnostic
+  profile의 sampled peak는 Exact 2.196 GiB, DP 1.651 GiB였다. Exact의 dense-factor variable
+  elimination은 induced width/domain cardinality/materialized cells에 민감하므로 이번 속도를
+  일반적 tractability 보장으로 해석하지 않는다.
+- **검증**: machine-readable `validation.json`의 모든 check가 true이며 28/28 blocks,
+  112/112 cells, 672/672 total observations, 560/560 measured observations, 0 failures이다.
+  672개 receipt/log의 실제 SHA-256이 ledger와 일치하며 runtime execution, PlannerTrace,
+  runtime explain은 모두 0이다.
+- **산출물**:
+  - `/home/mchoi/g014-planner-compile-benchmark-7589d9823b-20260820-v1/EXPERIMENT_REPORT.md`
+  - `.../results/full-blocked-wan-light-r1/validation.json`
+  - `.../results/full-blocked-wan-light-r1/summary/planner_compile_grid.{png,pdf}`
+  - `.../results/profiling-logreg-w1-r2/profile-comparison.{csv,json}`
+  - `.../results/profiling-kmeans-w2-r1/profile-comparison.{csv,json}`
+- **범위 제한**: 이 campaign은 planning overhead만 검증한다. trace를 의도적으로 껐으므로
+  DP/Exact의 selected physical plan quality 차이는 normalized plan/assignment/objective
+  certificate를 별도로 대조해야 한다.
