@@ -2400,7 +2400,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		sccs.add(scc);
 	}
 
-	private static ExactComponentJoin selectLocallyRankedCoherentComponent(PlacementAnalysis analysis,
+	private static ExactComponentJoin selectMinimumCostCoherentComponent(PlacementAnalysis analysis,
 		FederatedPlannerDpMemoTable memoTable, OrdinaryComponentId componentId,
 		List<CompiledHopKey> roots, OwnerComponentIndex ownerIndex,
 		TraversalDependencyLedger ledger, Map<Long,FederatedOutput> outputDecisions) {
@@ -2487,12 +2487,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				FederatedPlannerTrace.logGlobal(
 					"DP-ComponentPreferredForestInfeasible", preferredFailure);
 			}
-			// DP is intentionally local and its output conflict resolver normally owns
-			// LOUT/FOUT. A graph-declared global legality constraint (notably exact
-			// TWrite/TRead coherence) may nevertheless make every locally preferred arm
-			// infeasible. In that case reopen the already enumerated legal arms, preserve
-			// the local preference as the first sort key, and choose the first coherent
-			// forest. This is legality repair, not a second global cost optimizer.
+			// A graph-declared global legality constraint (notably exact TWrite/TRead
+			// coherence) may make every locally preferred arm infeasible. Reopen only the
+			// already-enumerated legal component domain and minimize the shared DP cost
+			// objective over that local separator; this does not expand DP into the Exact
+			// planner's whole-program search space.
 			domains = legalityDomains;
 			usedLegalityDomains = true;
 			legalityOverrideReason = "no-coherent-preferred-output-forest";
@@ -2743,27 +2742,30 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<CompiledHopKey,FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> requirements,
 		double cost, Map<ExactJoinMemoKey,Double> prefixMemo, ExactComponentJoin[] best,
 		ExactJoinSearchDiagnostics diagnostics) {
-		if(best[0] != null)
-			return;
 		if(index == order.size()) {
 			String signature = exactComponentJoinSignature(componentId, selections);
 			List<FederatedPlannerDpMemoTable.FedPlan> selectedRoots = roots.stream()
 				.map(key -> selections.get(key).retainedPlan()).toList();
-			best[0] = new ExactComponentJoin(selectedRoots, selections, cost, signature);
+			if(best[0] == null || cost < best[0].objective())
+				best[0] = new ExactComponentJoin(selectedRoots, selections, cost, signature);
+			return;
+		}
+		if(best[0] != null && cost >= best[0].objective()) {
+			diagnostics.reject(index, order.get(index), "objective-bound",
+				"prefix=" + cost + " incumbent=" + best[0].objective());
 			return;
 		}
 		ExactJoinMemoKey memoKey = exactJoinSearchState(analysis, order, domains,
 			selections, requirements, index);
-		// Domains are ordered by the original DP output proposal and each HOP's
-		// cumulative local recurrence cost. For an identical future feasibility state,
-		// the first prefix is therefore the DP-preferred one; later prefixes must not
-		// replace it with a globally cheaper whole-component assignment.
 		CompiledHopKey key = order.get(index);
 		diagnostics.visit(index, key);
-		if(prefixMemo.putIfAbsent(memoKey, cost) != null) {
-			diagnostics.reject(index, key, "memo", "equivalent-future-state");
+		Double previousCost = prefixMemo.get(memoKey);
+		if(previousCost != null && previousCost <= cost) {
+			diagnostics.reject(index, key, "memo", "equivalent-future-state previous="
+				+ previousCost + " current=" + cost);
 			return;
 		}
+		prefixMemo.put(memoKey, cost);
 
 		FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge required = requirements.get(key);
 		SelectedDpState fixedState = fixed.get(key);
@@ -2839,8 +2841,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			searchExactComponentAssignment(analysis, memo, componentId, roots, order, domains, fixed,
 				index + 1, nextSelections, nextRequirements, cost + exactPlanLocalCost(plan),
 				prefixMemo, best, diagnostics);
-			if(best[0] != null)
-				return;
 		}
 	}
 
@@ -3356,7 +3356,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalStateException("DP conflict resolution changed exact component lock: hop="
 					+ lock.getKey() + " required=" + lock.getValue()
 					+ " actual=" + localDecisions.get(lock.getKey()));
-		ExactComponentJoin join = selectLocallyRankedCoherentComponent(analysis, memoTable, componentId, roots,
+		ExactComponentJoin join = selectMinimumCostCoherentComponent(analysis, memoTable, componentId, roots,
 			ownerIndex, ledger, localDecisions);
 		reconcileExactJoinOutputDecisions(
 			memoTable, componentId, join, componentLocks, localDecisions);
@@ -5319,7 +5319,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// refresh. Keep non-refining callers single-pass.
 		final int maxIters = allowTransientFamilyRefine ? 2 : 1;
 		ParentVariantDeltaCache parentVariantDeltaCache = new ParentVariantDeltaCache();
-		TransientReadParentsCache transientReadParentsCache = new TransientReadParentsCache();
+		TransientReadParentsCache transientReadParentsCache = new TransientReadParentsCache(memoTable);
 		SimulationDecisionCache simulationDecisionCache = new SimulationDecisionCache();
 		DecisionMapScoreCache decisionMapScoreCache = new DecisionMapScoreCache(memoTable, rootPlan);
 		// Initial and locked maps may be partial. Keep an executable initial map only as
@@ -5602,7 +5602,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		for(PlacementAnalysis.LogicalFunctionInputFact fact :
 			analysis.logicalFunctionInputsInCanonicalOrder()) {
 			PlacementAnalysis.HopOccurrenceProjection formal =
-				requireAnalysisOccurrence(analysis, fact.targetRead());
+				memoTable.requireAnalysisOccurrence(fact.targetRead());
 			formalFamilies.computeIfAbsent(fact.boundary(), ignored -> new LinkedHashSet<>())
 				.add(memoTable.resolveOriginalHopId(formal.hop().getHopID()));
 		}
@@ -5717,7 +5717,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(fact.boundary() != boundary)
 				continue;
 			PlacementAnalysis.HopOccurrenceProjection occurrence =
-				requireAnalysisOccurrence(analysis, fact.targetRead());
+				memoTable.requireAnalysisOccurrence(fact.targetRead());
 			FederatedPlannerDpMemoTable.FedPlan plan =
 				selectLogicalTransientOccurrencePlan(memoTable, occurrence, decisions);
 			if(plan != null && plan.getSelectedPlacementState() != null)
@@ -8919,16 +8919,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		TransientReadParentsCache transientReadParentsCache) {
 
-		LinkedHashSet<Long> tReadHopIDs = new LinkedHashSet<>();
 		if (memoTable == null || conflictCheckMap == null || conflictCheckMap.isEmpty())
-			return tReadHopIDs;
-		TransientReadParentsKey cacheKey = null;
-		if (transientReadParentsCache != null) {
-			cacheKey = new TransientReadParentsKey(conflictCheckMap, tWriteOrigHopID);
-			LinkedHashSet<Long> cached = transientReadParentsCache.get(cacheKey);
-			if (cached != null)
-				return cached;
-		}
+			return new LinkedHashSet<>();
+		if (transientReadParentsCache != null)
+			return transientReadParentsCache.get(conflictCheckMap, tWriteOrigHopID);
+		return collectTransientReadParentsForWrite(memoTable, tWriteOrigHopID, conflictCheckMap);
+	}
+
+	private static LinkedHashSet<Long> collectTransientReadParentsForWrite(
+		FederatedPlannerDpMemoTable memoTable, long tWriteOrigHopID,
+		Map<Long, ConflictEntry> conflictCheckMap) {
+		LinkedHashSet<Long> tReadHopIDs = new LinkedHashSet<>();
 
 		ConflictEntry logicalSourceEntry = conflictCheckMap.get(tWriteOrigHopID);
 		if (logicalSourceEntry != null) {
@@ -8993,10 +8994,66 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				tReadHopIDs.add(hopID);
 		}
 
-			if (cacheKey != null)
-				transientReadParentsCache.put(cacheKey, tReadHopIDs);
-			return tReadHopIDs;
+		return tReadHopIDs;
+	}
+
+	/**
+	 * Builds the inverse TWrite-to-TRead relation once for one selected conflict
+	 * forest. The previous per-write scan repeated the same TRead/member/child walk
+	 * for every write in that forest.
+	 */
+	private static Map<Long,LinkedHashSet<Long>> indexTransientReadParents(
+		FederatedPlannerDpMemoTable memoTable, Map<Long,ConflictEntry> conflictCheckMap) {
+		Map<Long,LinkedHashSet<Long>> indexed = new LinkedHashMap<>();
+		for(Map.Entry<Long,ConflictEntry> source : sortedConflictEntries(conflictCheckMap)) {
+			ConflictEntry sourceEntry = source.getValue();
+			if(sourceEntry == null)
+				continue;
+			for(long readHopID : sourceEntry.logicalTransientReadHopIDs) {
+				ConflictEntry readEntry = conflictCheckMap.get(readHopID);
+				if(readEntry != null && readEntry.logicalTransientProducerHopIDs.size() == 1
+					&& readEntry.logicalTransientProducerHopIDs.contains(source.getKey()))
+					indexed.computeIfAbsent(source.getKey(), ignored -> new LinkedHashSet<>())
+						.add(readHopID);
+			}
 		}
+
+		for(Map.Entry<Long,ConflictEntry> read : sortedConflictEntries(conflictCheckMap)) {
+			long readHopID = read.getKey();
+			ConflictEntry entry = read.getValue();
+			if(entry == null || !entry.canChooseLOUT || entry.memberHopIDs == null
+				|| entry.memberHopIDs.isEmpty())
+				continue;
+			Hop hopRef = memoTable.resolveOriginalHop(readHopID);
+			if(!(hopRef instanceof DataOp)
+				|| ((DataOp) hopRef).getOp() != Types.OpOpData.TRANSIENTREAD)
+				continue;
+
+			LinkedHashSet<Long> referencedWrites = new LinkedHashSet<>();
+			for(long memberHopID : selectDecisionMembers(entry.memberHopIDs, memoTable)) {
+				FederatedPlannerDpMemoTable.FedPlan plan =
+					memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.LOUT);
+				if(plan == null)
+					continue;
+				for(Pair<Long,FederatedOutput> childEdge : plan.getChildFedPlans()) {
+					Hop childRef = memoTable.resolveOriginalHop(childEdge.getKey());
+					if(childRef instanceof DataOp
+						&& ((DataOp) childRef).getOp() == Types.OpOpData.TRANSIENTWRITE)
+						referencedWrites.add(memoTable.resolveOriginalHopId(childEdge.getKey()));
+				}
+			}
+			if(referencedWrites.size() != 1)
+				continue;
+			long writeHopID = referencedWrites.iterator().next();
+			boolean logicalRelationAllowsSingleWriterPropagation =
+				entry.logicalTransientProducerHopIDs.isEmpty()
+					|| entry.logicalTransientProducerHopIDs.size() == 1
+						&& entry.logicalTransientProducerHopIDs.contains(writeHopID);
+			if(logicalRelationAllowsSingleWriterPropagation)
+				indexed.computeIfAbsent(writeHopID, ignored -> new LinkedHashSet<>()).add(readHopID);
+		}
+		return indexed;
+	}
 
 	private static FederatedOutput resolveTransientWriteConflict(
 		FederatedPlannerDpMemoTable memoTable, long tWriteHopID, ConflictEntry tWriteEntry,
@@ -9499,89 +9556,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		if (memoTable == null || memoTable.analysis() == null || conflictCheckMap == null)
 			return;
-		PlacementAnalysis analysis = memoTable.analysis();
-		for (PlacementAnalysis.LogicalTransientInputFact fact :
-			analysis.logicalTransientInputsInCanonicalOrder())
-			recordAnalysisTransientRelation(memoTable, analysis, conflictCheckMap, outputDecisions,
-				fact.sourceWrite(), fact.targetRead());
-
-		// A compiler-generated formal input binding is a transparent TRead->TWrite
-		// alias. The neutral graph proves this with SAME_PLACEMENT, but it is not a
-		// logical reaching-definition fact and therefore was absent from DP's legacy
-		// conflict traversal. Feed the reverse TWrite->TRead family relation into the
-		// existing resolver so it chooses one of the two legal contracts
-		// (<CP,LOUT> or <FED,FOUT>) before exact-arm capture.
-		for (Constraint constraint : analysis.graph().constraints()) {
-			if (constraint.kind() != ConstraintKind.SAME_PLACEMENT
-				|| !"function-input-binding".equals(constraint.evidence()))
-				continue;
-			Hop inputHop = analysis.hop(constraint.left()).orElseThrow();
-			Hop bindingHop = analysis.hop(constraint.right()).orElseThrow();
-			if (!(inputHop instanceof DataOp) || !(bindingHop instanceof DataOp)
-				|| ((DataOp) inputHop).getOp() != Types.OpOpData.TRANSIENTREAD
-				|| ((DataOp) bindingHop).getOp() != Types.OpOpData.TRANSIENTWRITE)
-				throw new IllegalStateException(
-					"Transparent function-input binding is not TRead->TWrite: "
-						+ constraint.normalizedSignature());
-			recordAnalysisTransientRelation(memoTable, analysis, conflictCheckMap, outputDecisions,
-				constraint.right(), constraint.left());
-		}
-		// One synthetic call input can own several compiled formal TRead occurrences.
-		// All of them are SAME_PLACEMENT aliases of the same runtime value. If any
-		// formal has a transparent binding TWrite, use that write as the existing DP
-		// conflict-family authority for every formal in the boundary group.
-		Map<CompiledHopKey,List<CompiledHopKey>> formalsByBoundary = new IdentityHashMap<>();
-		for (Constraint constraint : analysis.graph().constraints())
-			if (constraint.kind() == ConstraintKind.SAME_PLACEMENT
-				&& "function-formal-input".equals(constraint.evidence()))
-				formalsByBoundary.computeIfAbsent(constraint.left(), ignored -> new ArrayList<>())
-					.add(constraint.right());
-		for (List<CompiledHopKey> formalReads : formalsByBoundary.values())
-			for (Constraint binding : analysis.graph().constraints()) {
-				if (binding.kind() != ConstraintKind.SAME_PLACEMENT
-					|| !"function-input-binding".equals(binding.evidence())
-					|| formalReads.stream().noneMatch(formal -> formal == binding.left()))
-					continue;
-				for (CompiledHopKey formalRead : formalReads)
-					recordAnalysisTransientRelation(memoTable, analysis, conflictCheckMap,
-						outputDecisions, binding.right(), formalRead);
-			}
-
-		// Some CFG reaching definitions intentionally have no replayable logical-input
-		// tuple (for example ALS loop-carried U/V definitions). They still constrain
-		// the one runtime representation shared by TWrite/TRead. Consume that broader
-		// immutable relation as family metadata only; exact memo arms remain the sole
-		// source of feasible output states.
-		for (PlacementAnalysis.HopOccurrenceProjection targetOccurrence :
-			analysis.compiledHopOccurrences()) {
-			Hop targetHop = targetOccurrence.hop();
-			if (!(targetHop instanceof DataOp)
-				|| ((DataOp) targetHop).getOp() != Types.OpOpData.TRANSIENTREAD)
-				continue;
-			for (CompiledHopKey sourceKey :
-				analysis.cfgDefinitionSourcesInCanonicalOrder(targetOccurrence.key())) {
-				Hop sourceHop = analysis.hop(sourceKey).orElseThrow();
-				if (!(sourceHop instanceof DataOp)
-					|| ((DataOp) sourceHop).getOp() != Types.OpOpData.TRANSIENTWRITE)
-					continue;
-				recordAnalysisTransientRelation(memoTable, analysis, conflictCheckMap, outputDecisions,
-					sourceKey, targetOccurrence.key());
-			}
-		}
+		for(FederatedPlannerDpMemoTable.TransientConflictRelation relation :
+			memoTable.transientConflictRelations())
+			recordAnalysisTransientRelation(memoTable, conflictCheckMap, outputDecisions,
+				relation.source(), relation.target());
 	}
 
 	private static void recordAnalysisTransientRelation(
 		FederatedPlannerDpMemoTable memoTable,
-		PlacementAnalysis analysis,
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> outputDecisions,
-		CompiledHopKey sourceKey,
-		CompiledHopKey targetKey) {
+		PlacementAnalysis.HopOccurrenceProjection sourceOccurrence,
+		PlacementAnalysis.HopOccurrenceProjection targetOccurrence) {
 
-		PlacementAnalysis.HopOccurrenceProjection sourceOccurrence =
-			requireAnalysisOccurrence(analysis, sourceKey);
-		PlacementAnalysis.HopOccurrenceProjection targetOccurrence =
-			requireAnalysisOccurrence(analysis, targetKey);
 		FederatedPlannerDpMemoTable.FedPlan sourcePlan =
 			selectLogicalTransientOccurrencePlan(memoTable, sourceOccurrence, outputDecisions);
 		FederatedPlannerDpMemoTable.FedPlan targetPlan =
@@ -9610,15 +9597,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			conflictCheckMap.put(originalHopID, new ConflictEntry(memberHopID, selectedMemberPlan));
 		else
 			entry.addMember(memberHopID, selectedMemberPlan);
-	}
-
-	private static PlacementAnalysis.HopOccurrenceProjection requireAnalysisOccurrence(
-		PlacementAnalysis analysis, CompiledHopKey key) {
-
-		for (PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.occurrences())
-			if (occurrence.key() == key)
-				return occurrence;
-		throw new IllegalStateException("Logical transient fact has no analysis-owned occurrence: " + key);
 	}
 
 	private static FederatedPlannerDpMemoTable.FedPlan selectLogicalTransientOccurrencePlan(
@@ -10728,42 +10706,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private static final class TransientReadParentsCache {
-		private final Map<TransientReadParentsKey, LinkedHashSet<Long>> values = new HashMap<>();
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final Map<Map<Long,ConflictEntry>,Map<Long,LinkedHashSet<Long>>> values =
+			new IdentityHashMap<>();
 
-		LinkedHashSet<Long> get(TransientReadParentsKey key) {
-			return values.get(key);
+		TransientReadParentsCache(FederatedPlannerDpMemoTable memoTable) {
+			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
 		}
 
-		void put(TransientReadParentsKey key, LinkedHashSet<Long> value) {
-			values.put(key, value);
-		}
-	}
-
-	private static final class TransientReadParentsKey {
-		final Map<Long, ConflictEntry> conflictCheckMap;
-		final long tWriteOrigHopID;
-		final int hash;
-
-		TransientReadParentsKey(Map<Long, ConflictEntry> conflictCheckMap, long tWriteOrigHopID) {
-			this.conflictCheckMap = conflictCheckMap;
-			this.tWriteOrigHopID = tWriteOrigHopID;
-			this.hash = 31 * System.identityHashCode(conflictCheckMap) + Long.hashCode(tWriteOrigHopID);
-		}
-
-		@Override
-		public boolean equals(Object obj) {
-			if (this == obj)
-				return true;
-			if (!(obj instanceof TransientReadParentsKey))
-				return false;
-			TransientReadParentsKey that = (TransientReadParentsKey) obj;
-			return this.conflictCheckMap == that.conflictCheckMap
-				&& this.tWriteOrigHopID == that.tWriteOrigHopID;
-		}
-
-		@Override
-		public int hashCode() {
-			return hash;
+		LinkedHashSet<Long> get(Map<Long,ConflictEntry> conflictCheckMap,
+			long tWriteOrigHopID) {
+			Map<Long,LinkedHashSet<Long>> byWrite = values.computeIfAbsent(conflictCheckMap,
+				map -> indexTransientReadParents(memoTable, map));
+			return new LinkedHashSet<>(byWrite.getOrDefault(tWriteOrigHopID,
+				new LinkedHashSet<>()));
 		}
 	}
 

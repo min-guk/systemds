@@ -110,7 +110,8 @@ public class FederatedPlannerDpMemoTable {
 	private final Map<Pair<Long, FederatedOutput>, Set<Hop>> carriersByLegacyCoordinate = new HashMap<>();
 	private final PlacementAnalysis analysis;
 	private final Set<HopOccurrenceProjection> ownedOccurrences;
-	private final Set<CompiledHopKey> exactConstraintSensitiveOccurrences;
+	private final Map<CompiledHopKey, HopOccurrenceProjection> occurrenceByKey;
+	private final List<TransientConflictRelation> transientConflictRelations;
 	private final Map<Hop, HopOccurrenceProjection> occurrenceByPlanCarrier = new IdentityHashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
 	private final Map<Long, Long> cloneToOrig = new HashMap<>();
@@ -129,7 +130,8 @@ public class FederatedPlannerDpMemoTable {
 	public FederatedPlannerDpMemoTable() {
 		analysis = null;
 		ownedOccurrences = Collections.emptySet();
-		exactConstraintSensitiveOccurrences = Collections.emptySet();
+		occurrenceByKey = Collections.emptyMap();
+		transientConflictRelations = List.of();
 	}
 
 	public FederatedPlannerDpMemoTable(PlacementAnalysis analysis) {
@@ -137,16 +139,107 @@ public class FederatedPlannerDpMemoTable {
 		Set<HopOccurrenceProjection> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
 		occurrences.addAll(analysis.occurrences());
 		ownedOccurrences = Collections.unmodifiableSet(occurrences);
-		Set<CompiledHopKey> sensitive = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(NeutralPlacementGraph.Constraint constraint : analysis.graph().constraints())
-			if(constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT
-				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
-				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_FTYPE
-				|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE) {
-				sensitive.add(constraint.left());
-				sensitive.add(constraint.right());
+		Map<CompiledHopKey,HopOccurrenceProjection> indexed = new IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : analysis.occurrences())
+			if(indexed.put(occurrence.key(), occurrence) != null)
+				throw new IllegalArgumentException("Duplicate exact DP occurrence key");
+		occurrenceByKey = Collections.unmodifiableMap(indexed);
+		transientConflictRelations = buildTransientConflictRelations(analysis, occurrenceByKey);
+	}
+
+	/** Immutable source/write to target/read topology reused by every decision-dependent BFS. */
+	static record TransientConflictRelation(HopOccurrenceProjection source,
+		HopOccurrenceProjection target) {
+		TransientConflictRelation {
+			Objects.requireNonNull(source, "source");
+			Objects.requireNonNull(target, "target");
+		}
+	}
+
+	List<TransientConflictRelation> transientConflictRelations() {
+		return transientConflictRelations;
+	}
+
+	HopOccurrenceProjection requireAnalysisOccurrence(CompiledHopKey key) {
+		HopOccurrenceProjection occurrence = occurrenceByKey.get(Objects.requireNonNull(key, "key"));
+		if(occurrence == null)
+			throw new IllegalStateException("Exact DP key has no analysis-owned occurrence: " + key);
+		return occurrence;
+	}
+
+	private static List<TransientConflictRelation> buildTransientConflictRelations(
+		PlacementAnalysis analysis, Map<CompiledHopKey,HopOccurrenceProjection> occurrences) {
+		List<TransientConflictRelation> relations = new ArrayList<>();
+		Map<CompiledHopKey,Set<CompiledHopKey>> targetsBySource = new IdentityHashMap<>();
+
+		for(PlacementAnalysis.LogicalTransientInputFact fact :
+			analysis.logicalTransientInputsInCanonicalOrder())
+			addTransientConflictRelation(relations, targetsBySource, occurrences,
+				fact.sourceWrite(), fact.targetRead());
+
+		Map<CompiledHopKey,List<CompiledHopKey>> formalsByBoundary = new IdentityHashMap<>();
+		Map<CompiledHopKey,CompiledHopKey> bindingWriteByFormal = new IdentityHashMap<>();
+		for(NeutralPlacementGraph.Constraint constraint : analysis.graph().constraints()) {
+			if(constraint.kind() != NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT)
+				continue;
+			if("function-formal-input".equals(constraint.evidence()))
+				formalsByBoundary.computeIfAbsent(constraint.left(), ignored -> new ArrayList<>())
+					.add(constraint.right());
+			else if("function-input-binding".equals(constraint.evidence())) {
+				Hop inputHop = analysis.hop(constraint.left()).orElseThrow();
+				Hop bindingHop = analysis.hop(constraint.right()).orElseThrow();
+				if(!(inputHop instanceof DataOp) || !(bindingHop instanceof DataOp)
+					|| ((DataOp) inputHop).getOp() != Types.OpOpData.TRANSIENTREAD
+					|| ((DataOp) bindingHop).getOp() != Types.OpOpData.TRANSIENTWRITE)
+					throw new IllegalStateException(
+						"Transparent function-input binding is not TRead->TWrite: "
+							+ constraint.normalizedSignature());
+				CompiledHopKey previous = bindingWriteByFormal.put(constraint.left(), constraint.right());
+				if(previous != null && previous != constraint.right())
+					throw new IllegalStateException("Function formal input has multiple binding writes");
+				addTransientConflictRelation(relations, targetsBySource, occurrences,
+					constraint.right(), constraint.left());
 			}
-		exactConstraintSensitiveOccurrences = Collections.unmodifiableSet(sensitive);
+		}
+		for(List<CompiledHopKey> formalReads : formalsByBoundary.values())
+			for(CompiledHopKey boundFormal : formalReads) {
+				CompiledHopKey bindingWrite = bindingWriteByFormal.get(boundFormal);
+				if(bindingWrite == null)
+					continue;
+				for(CompiledHopKey formalRead : formalReads)
+					addTransientConflictRelation(relations, targetsBySource, occurrences,
+						bindingWrite, formalRead);
+			}
+
+		for(HopOccurrenceProjection targetOccurrence : analysis.compiledHopOccurrences()) {
+			Hop targetHop = targetOccurrence.hop();
+			if(!(targetHop instanceof DataOp)
+				|| ((DataOp) targetHop).getOp() != Types.OpOpData.TRANSIENTREAD)
+				continue;
+			for(CompiledHopKey sourceKey :
+				analysis.cfgDefinitionSourcesInCanonicalOrder(targetOccurrence.key())) {
+				Hop sourceHop = analysis.hop(sourceKey).orElseThrow();
+				if(sourceHop instanceof DataOp
+					&& ((DataOp) sourceHop).getOp() == Types.OpOpData.TRANSIENTWRITE)
+					addTransientConflictRelation(relations, targetsBySource, occurrences,
+						sourceKey, targetOccurrence.key());
+			}
+		}
+		return List.copyOf(relations);
+	}
+
+	private static void addTransientConflictRelation(List<TransientConflictRelation> relations,
+		Map<CompiledHopKey,Set<CompiledHopKey>> targetsBySource,
+		Map<CompiledHopKey,HopOccurrenceProjection> occurrences,
+		CompiledHopKey sourceKey, CompiledHopKey targetKey) {
+		HopOccurrenceProjection source = occurrences.get(sourceKey);
+		HopOccurrenceProjection target = occurrences.get(targetKey);
+		if(source == null || target == null)
+			throw new IllegalStateException("Transient conflict relation has no analysis-owned occurrence");
+		Set<CompiledHopKey> targets = targetsBySource.computeIfAbsent(sourceKey,
+			ignored -> Collections.newSetFromMap(new IdentityHashMap<>()));
+		if(targets.add(targetKey))
+			relations.add(new TransientConflictRelation(source, target));
 	}
 
 	public PlacementAnalysis analysis() {
@@ -467,9 +560,7 @@ public class FederatedPlannerDpMemoTable {
 		FedPlanVariants variants) {
 		assertOwnedOccurrence(occurrence);
 		Objects.requireNonNull(variants, "variants");
-		return variants.pruneFedPlans(
-			exactConstraintSensitiveOccurrences.contains(occurrence.key()),
-			exactConstraintSensitiveOccurrences);
+		return variants.pruneFedPlans();
 	}
 
 	private static String exactSemanticArmSignature(OccurrencePlanArm arm) {
@@ -1200,8 +1291,45 @@ public class FederatedPlannerDpMemoTable {
 	 * It uses HopCommon to store common properties and costs related to the Hop.
 	 */
 		public static class FedPlanVariants {
-		private static final int MAX_PRUNED_VARIANTS_PER_OUTPUT = 8;
-		private static final int MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS = 4;
+		/**
+		 * Cost-independent authority exposed by one retained plan at a value boundary.
+		 * Relocation costs themselves are deliberately absent: selected action ownership
+		 * belongs to the signature, while cumulative cost chooses the representative.
+		 */
+		private record PlanBoundaryAuthority(PlacementState state, ExecType execType,
+			FederatedOutput output, FType fType, FType cpFoutType, boolean derivedFedFout,
+			boolean foutMaterializationAccounted, boolean exactFrontierSeed,
+			boolean exactRecurrenceCaptured, CandidateSelectionReceipt candidate,
+			List<RelocationChoiceReceipt> relocations,
+			List<RelocationActionKey> costedRelocationActions) {
+			private PlanBoundaryAuthority {
+				relocations = List.copyOf(relocations);
+				costedRelocationActions = List.copyOf(costedRelocationActions);
+			}
+		}
+
+		/** Ordered child occurrence/value boundary consumed by the current plan. */
+		private record ChildBoundaryAuthority(CompiledHopKey occurrence, Long legacyHopId,
+			FederatedOutput output, PlanBoundaryAuthority selectedAuthority) {
+			private ChildBoundaryAuthority {
+				Objects.requireNonNull(output, "output");
+				if((occurrence == null) == (legacyHopId == null))
+					throw new IllegalArgumentException(
+						"A DP child boundary requires exactly one exact or legacy occurrence identity");
+				if(occurrence != null)
+					Objects.requireNonNull(selectedAuthority, "selectedAuthority");
+				else if(selectedAuthority != null)
+					throw new IllegalArgumentException("A legacy DP child boundary has no exact authority");
+			}
+		}
+
+		private record CompleteBoundarySignature(PlanBoundaryAuthority result,
+			List<ChildBoundaryAuthority> orderedChildren) {
+			private CompleteBoundarySignature {
+				Objects.requireNonNull(result, "result");
+				orderedChildren = List.copyOf(orderedChildren);
+			}
+		}
 
 		protected HopCommon hopCommon; // Common properties and costs for the Hop
 		private final FederatedOutput fedOutType; // Output type (FOUT/LOUT)
@@ -1234,12 +1362,14 @@ public class FederatedPlannerDpMemoTable {
 			return fedOutType;
 		}
 
+		/**
+		 * Retains the minimum cumulative-cost representative for every complete
+		 * future-observable boundary signature. Plans with different signatures are
+		 * incomparable and are all retained; there is no cardinality cap. Within one
+		 * signature, later planning and lowering observe identical placement, child,
+		 * candidate, and movement authority, so the higher-cost plan is dominated.
+		 */
 		public boolean pruneFedPlans() {
-			return pruneFedPlans(false, Collections.emptySet());
-		}
-
-		private boolean pruneFedPlans(boolean exactParentSensitive,
-			Set<CompiledHopKey> exactSensitiveOccurrences) {
 			if (_fedPlanVariants.isEmpty())
 				return false;
 
@@ -1248,176 +1378,50 @@ public class FederatedPlannerDpMemoTable {
 				return false;
 
 			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
-
-			FedPlan bestCP = null;
-			FedPlan bestFED = null;
-			for(FedPlan plan : _fedPlanVariants) {
-				if(bestCP == null && plan.getExecType() == ExecType.CP)
-					bestCP = plan;
-				if(bestFED == null && plan.getExecType() == ExecType.FED)
-					bestFED = plan;
-				if(bestCP != null && bestFED != null)
-					break;
-			}
-
-			LinkedHashSet<FedPlan> kept = new LinkedHashSet<>();
-			for(FedPlan plan : _fedPlanVariants) {
-				if(kept.size() >= MAX_PRUNED_VARIANTS_PER_OUTPUT)
-					break;
-				kept.add(plan);
-			}
-			if(bestCP != null)
-				kept.add(bestCP);
-			if(bestFED != null)
-				kept.add(bestFED);
-			kept.addAll(selectMaterializationSensitiveCpVariants(_fedPlanVariants));
-			kept.addAll(selectExactConstraintBoundaryRepresentatives(_fedPlanVariants,
-				exactParentSensitive, exactSensitiveOccurrences));
+			Map<CompleteBoundarySignature,FedPlan> kept = new LinkedHashMap<>();
+			for(FedPlan plan : _fedPlanVariants)
+				kept.putIfAbsent(completeBoundarySignature(plan), plan);
 			_fedPlanVariants.clear();
-			_fedPlanVariants.addAll(kept);
-			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
+			_fedPlanVariants.addAll(kept.values());
 			return true;
-		}
-
-		private static List<FedPlan> selectExactConstraintBoundaryRepresentatives(
-			List<FedPlan> variants, boolean exactParentSensitive,
-			Set<CompiledHopKey> exactSensitiveOccurrences) {
-			if(!exactParentSensitive && exactSensitiveOccurrences.isEmpty())
-				return List.of();
-			Map<String,FedPlan> bestByBoundary = new LinkedHashMap<>();
-			for(FedPlan plan : variants) {
-				String signature = exactConstraintBoundarySignature(
-					plan, exactParentSensitive, exactSensitiveOccurrences);
-				if(signature != null)
-					bestByBoundary.putIfAbsent(signature, plan);
-			}
-			return List.copyOf(bestByBoundary.values());
-		}
-
-		private static String exactConstraintBoundarySignature(FedPlan plan,
-			boolean exactParentSensitive, Set<CompiledHopKey> exactSensitiveOccurrences) {
-			StringBuilder signature = new StringBuilder();
-			if(exactParentSensitive) {
-				PlacementState state = plan.getSelectedPlacementState();
-				if(state == null)
-					throw new IllegalStateException(
-						"Exact-constraint DP frontier plan lacks a placement state");
-				signature.append("parent=").append(state.normalizedSignature());
-			}
-			for(FedPlan.ExactChildPlanEdge edge : plan.getExactChildPlanEdges()) {
-				if(!exactSensitiveOccurrences.contains(edge.occurrence()))
-					continue;
-				PlacementState childState = edge.selectedPlan().getSelectedPlacementState();
-				if(childState == null)
-					throw new IllegalStateException(
-						"Exact-constraint DP child frontier lacks a placement state");
-				signature.append("|child=").append(edge.occurrence().normalizedSignature())
-					.append('=').append(childState.normalizedSignature())
-					.append("/derived=").append(edge.selectedPlan().isDerivedFedFout());
-			}
-			return signature.length() == 0 ? null : signature.toString();
 		}
 
 		/**
-		 * Deduplicates the already-factorized shared-function-input frontier without
-		 * applying the ordinary top-K cap.  Its producer emits only the cheapest
-		 * baseline, one representative per caller boundary alternative, and uniform
-		 * extremes, so retaining this set is linear rather than Cartesian.
+		 * Applies the same lossless dominance rule to an already-factorized transient
+		 * or shared-function frontier. There is intentionally no separate cap or
+		 * coarser signature for these program structures.
 		 */
 		public boolean pruneExactBoundaryRepresentatives() {
-			_fedPlanVariants.removeIf(plan -> plan == null || plan.getExecType() == null);
-			if(_fedPlanVariants.isEmpty())
-				return false;
-			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
-			Map<String,FedPlan> unique = new LinkedHashMap<>();
-			for(FedPlan plan : _fedPlanVariants)
-				unique.putIfAbsent(exactBoundarySignature(plan), plan);
-			_fedPlanVariants.clear();
-			_fedPlanVariants.addAll(unique.values());
-			return true;
+			return pruneFedPlans();
 		}
 
-		private static String exactBoundarySignature(FedPlan plan) {
-			PlacementState state = plan.getSelectedPlacementState();
-			StringBuilder signature = new StringBuilder(state == null
-				? plan.getExecType() + "/" + plan.getFedOutType() + "/" + plan.getFType()
-				: state.normalizedSignature());
-			if(plan.getExactChildPlanEdges().isEmpty())
-				return signature.append('|').append(plan.getChildFedPlans()).toString();
-			for(FedPlan.ExactChildPlanEdge edge : plan.getExactChildPlanEdges()) {
-				FedPlan child = edge.selectedPlan();
-				PlacementState childState = child.getSelectedPlacementState();
-				signature.append('|').append(edge.occurrence().normalizedSignature()).append('=')
-					.append(childState == null
-						? child.getExecType() + "/" + child.getFedOutType() + "/" + child.getFType()
-						: childState.normalizedSignature())
-					.append(":derived=").append(child.isDerivedFedFout());
+		private static CompleteBoundarySignature completeBoundarySignature(FedPlan plan) {
+			List<ChildBoundaryAuthority> children = new ArrayList<>(plan.childFedPlans.size());
+			if(!plan.exactChildPlanEdges.isEmpty()
+				&& plan.exactChildPlanEdges.size() != plan.childFedPlans.size())
+				throw new IllegalStateException("DP plan has a partial exact child boundary");
+			if(plan.exactChildPlanEdges.size() == plan.childFedPlans.size()) {
+				for(FedPlan.ExactChildPlanEdge edge : plan.exactChildPlanEdges)
+					children.add(new ChildBoundaryAuthority(edge.occurrence(), null, edge.output(),
+						planBoundaryAuthority(edge.selectedPlan())));
 			}
-			return signature.toString();
-		}
-
-		private static List<FedPlan> selectMaterializationSensitiveCpVariants(List<FedPlan> variants) {
-			List<FedPlan> candidates = new ArrayList<>();
-			Set<String> seenSignatures = new LinkedHashSet<>();
-			for(FedPlan plan : variants) {
-				if(plan == null || plan.getExecType() != ExecType.CP || countFoutChildren(plan) <= 0)
-					continue;
-				if(seenSignatures.add(buildFoutChildSignature(plan)))
-					candidates.add(plan);
-			}
-			candidates.sort((left, right) -> {
-				int order = Double.compare(estimateFoutChildMemEstimate(right),
-					estimateFoutChildMemEstimate(left));
-				if(order != 0)
-					return order;
-				order = Integer.compare(countFoutChildren(right), countFoutChildren(left));
-				return order != 0 ? order
-					: Double.compare(left.getCumulativeCost(), right.getCumulativeCost());
-			});
-			return candidates.size() <= MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS ? candidates
-				: new ArrayList<>(candidates.subList(0, MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS));
-		}
-
-		private static int countFoutChildren(FedPlan plan) {
-			int count = 0;
-			for(Pair<Long,FederatedOutput> child : plan.getChildFedPlans())
-				if(child != null && child.getValue() == FederatedOutput.FOUT)
-					count++;
-			return count;
-		}
-
-		private static double estimateFoutChildMemEstimate(FedPlan plan) {
-			double total = 0d;
-			for(Pair<Long,FederatedOutput> child : plan.getChildFedPlans()) {
-				if(child == null || child.getValue() != FederatedOutput.FOUT)
-					continue;
-				Hop input = findInputByHopID(plan.getHopRef(), child.getKey());
-				if(input != null) {
-					double memory = FederatedCostModel.getEffectiveOutputMemEstimate(input);
-					if(Double.isFinite(memory) && memory > 0d)
-						total += memory;
+			else {
+				for(Pair<Long,FederatedOutput> edge : plan.childFedPlans) {
+					Objects.requireNonNull(edge, "legacy child edge");
+					children.add(new ChildBoundaryAuthority(null, edge.getLeft(), edge.getRight(), null));
 				}
 			}
-			return total;
+			return new CompleteBoundarySignature(planBoundaryAuthority(plan), children);
 		}
 
-		private static Hop findInputByHopID(Hop parent, long childHopId) {
-			if(parent != null && parent.getInput() != null)
-				for(Hop input : parent.getInput())
-					if(input != null && input.getHopID() == childHopId)
-						return input;
-			return null;
-		}
-
-		private static String buildFoutChildSignature(FedPlan plan) {
-			StringBuilder signature = new StringBuilder();
-			for(Pair<Long,FederatedOutput> child : plan.getChildFedPlans())
-				if(child != null && child.getValue() == FederatedOutput.FOUT) {
-					if(signature.length() > 0)
-						signature.append(',');
-					signature.append(child.getKey());
-				}
-			return signature.toString();
+		private static PlanBoundaryAuthority planBoundaryAuthority(FedPlan plan) {
+			List<RelocationActionKey> costedActions = plan.getDirectRelocationActionCosts().keySet()
+				.stream().sorted().toList();
+			return new PlanBoundaryAuthority(plan.getSelectedPlacementState(), plan.getExecType(),
+				plan.getFedOutType(), plan.getFType(), plan.getCpFoutType(), plan.isDerivedFedFout(),
+				plan.isFoutMaterializationAccounted(), plan.isExactFrontierSeed(),
+				plan.hasExactRecurrenceCosts(), plan.getDirectCandidateSelection(),
+				plan.getDirectRelocationChoices(), costedActions);
 		}
 	}
 
