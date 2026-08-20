@@ -80,6 +80,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationCh
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -123,6 +124,7 @@ public class FederatedPlannerDpMemoTable {
 	private final LongObjectLookup<Hop> hopRefById = new LongObjectLookup<>();
 	private final LongLongLookup originalHopIdByClone = new LongLongLookup();
 	private LongObjectLookup<SealedLegacyCoordinate> sealedLegacyCoordinates;
+	private final Map<FedPlanVariants,FedPlan> sealedPrimaryPlans = new IdentityHashMap<>();
 	private final Map<HopOccurrenceProjection, List<OccurrencePlanArm>> selectedArmsByOccurrence =
 		new IdentityHashMap<>();
 	private final Map<HopOccurrenceProjection, List<OccurrencePlanArm>> allArmsByOccurrence =
@@ -357,6 +359,7 @@ public class FederatedPlannerDpMemoTable {
 		transientReadSiblingHopIds.clear();
 		mandatoryExactChildEdges = null;
 		sealedLegacyCoordinates = null;
+		sealedPrimaryPlans.clear();
 	}
 
 	private static final class SealedLegacyCoordinate {
@@ -904,12 +907,20 @@ public class FederatedPlannerDpMemoTable {
 				|| fedPlanVariantList._fedPlanVariants.isEmpty()) {
 			return null;
 		}
+		if(selectionSealed) {
+			FedPlan cached = sealedPrimaryPlans.get(fedPlanVariantList);
+			if(cached != null || sealedPrimaryPlans.containsKey(fedPlanVariantList))
+				return cached;
+		}
 
 		FedPlan preferredConcreteSourceTransientReadPlan =
 			selectConcreteSourceTransientReadFoutPrimary(fedPlanVariantList);
-		return preferredConcreteSourceTransientReadPlan != null
+		FedPlan selected = preferredConcreteSourceTransientReadPlan != null
 			? preferredConcreteSourceTransientReadPlan
 			: fedPlanVariantList._fedPlanVariants.get(0);
+		if(selectionSealed)
+			sealedPrimaryPlans.put(fedPlanVariantList, selected);
+		return selected;
 	}
 
 	private FedPlan selectConcreteSourceTransientReadFoutPrimary(FedPlanVariants fedPlanVariantList) {
@@ -1336,6 +1347,8 @@ public class FederatedPlannerDpMemoTable {
 				private CandidateSelectionReceipt directCandidateSelection;
 				private List<RelocationChoiceReceipt> directRelocationChoices = List.of();
 				private Map<RelocationActionKey,Double> directRelocationActionCosts = Map.of();
+				private Set<ValueVersionKey> directRelocationSourceValues = Set.of();
+				private Map<ValueVersionKey,Double> directRelocationCostBySourceValue = Map.of();
 				private double embeddedChildRecurrenceCost = Double.NaN;
 				private double physicalChildBoundaryCost = Double.NaN;
 				private boolean exactFrontierSeed;
@@ -1611,11 +1624,23 @@ public class FederatedPlannerDpMemoTable {
 
 				private void setDirectRelocationChoicesCanonical(List<RelocationChoiceReceipt> ordered) {
 					Set<RelocationDemandKey> demands = new HashSet<>();
+					Set<ValueVersionKey> sourceValues = new LinkedHashSet<>();
 					for(RelocationChoiceReceipt choice : ordered)
 						if(!demands.add(choice.demand()))
 							throw new IllegalArgumentException("DP FedPlan has duplicate exact relocation demand: "
 								+ choice.demand().normalizedSignature());
+						else
+							sourceValues.add(choice.demand().sourceValueVersion());
 					directRelocationChoices = List.copyOf(ordered);
+					directRelocationSourceValues = Collections.unmodifiableSet(sourceValues);
+				}
+
+				public boolean hasDirectRelocationForSourceValue(ValueVersionKey sourceValue) {
+					return directRelocationSourceValues.contains(sourceValue);
+				}
+
+				public double getDirectRelocationCostForSourceValue(ValueVersionKey sourceValue) {
+					return directRelocationCostBySourceValue.getOrDefault(sourceValue, 0.0);
 				}
 
 				public Map<RelocationActionKey,Double> getDirectRelocationActionCosts() {
@@ -1639,6 +1664,7 @@ public class FederatedPlannerDpMemoTable {
 					Set<RelocationActionKey> selectedActions = directRelocationChoices.stream()
 						.map(RelocationChoiceReceipt::action).collect(java.util.stream.Collectors.toSet());
 					Map<RelocationActionKey,Double> ordered = new LinkedHashMap<>();
+					Map<ValueVersionKey,Double> bySourceValue = new LinkedHashMap<>();
 					for(RelocationActionKey action : canonicalActions) {
 							Double cost = Objects.requireNonNull(costs.get(action), "cost");
 							if(!selectedActions.contains(action))
@@ -1647,8 +1673,10 @@ public class FederatedPlannerDpMemoTable {
 							if(!Double.isFinite(cost) || cost < 0.0)
 								throw new IllegalArgumentException("DP relocation action cost must be finite and non-negative");
 							ordered.put(action, cost);
+							bySourceValue.merge(action.sourceValueVersion(), cost, Double::sum);
 					}
 					directRelocationActionCosts = Collections.unmodifiableMap(ordered);
+					directRelocationCostBySourceValue = Collections.unmodifiableMap(bySourceValue);
 				}
 			}
 
