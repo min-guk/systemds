@@ -479,6 +479,7 @@ public class FederatedPlannerDpCostEnumerator {
 			memoTable.assertNoExactFrontierSeeds();
 		}
 		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, collectPredicateWriteRoots(hopCommonTable));
+		memoTable.sealForSelection();
 
 		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
@@ -643,6 +644,7 @@ public class FederatedPlannerDpCostEnumerator {
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, collectPredicateWriteRoots(hopCommonTable));
+		memoTable.sealForSelection();
 		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
 
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);

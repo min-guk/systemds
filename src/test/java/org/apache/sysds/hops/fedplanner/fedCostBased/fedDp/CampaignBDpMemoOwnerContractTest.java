@@ -92,6 +92,40 @@ public class CampaignBDpMemoOwnerContractTest {
 	}
 
 	@Test
+	public void sealedSelectionMemoReusesExactArmSnapshotAndRejectsMutation() {
+		Fixture owner = fixture(ExecType.CP, FederatedOutput.LOUT, false);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
+		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.LOUT);
+		FedPlan retained = plan(variants, owner.state(), 0x1.0p3);
+		variants.addFedPlan(retained);
+		Assert.assertTrue(variants.pruneFedPlans());
+		memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.LOUT, variants);
+
+		memo.sealForSelection();
+		List<FederatedPlannerDpMemoTable.OccurrencePlanArm> first =
+			memo.getAllExactPlanVariantsForOccurrence(owner.occurrence());
+		List<FederatedPlannerDpMemoTable.OccurrencePlanArm> second =
+			memo.getAllExactPlanVariantsForOccurrence(owner.occurrence());
+		Assert.assertSame("selection must reuse the immutable occurrence frontier", first, second);
+		Assert.assertSame(retained, first.get(0).plan());
+		Assert.assertThrows(IllegalStateException.class,
+			() -> memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.LOUT, variants));
+	}
+
+	@Test
+	public void primitiveCloneIdentityLookupPreservesLargeHopIds() {
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
+		long firstClone = Long.MAX_VALUE - 11;
+		long secondClone = Long.MAX_VALUE - 3;
+		memo.registerCloneMapping(Map.of(firstClone, 17L, secondClone, 23L));
+		Assert.assertEquals(17L, memo.resolveOriginalHopId(firstClone));
+		Assert.assertEquals(23L, memo.resolveOriginalHopId(secondClone));
+		Assert.assertEquals(29L, memo.resolveOriginalHopId(29L));
+		Assert.assertTrue(memo.isVirtualClone(firstClone));
+		Assert.assertFalse(memo.isVirtualClone(29L));
+	}
+
+	@Test
 	public void sameLegacyCoordinatePreservesBothExactCarriersAndRejectsAmbiguousRead() throws Exception {
 		Fixture owner = fixture(ExecType.CP, FederatedOutput.LOUT, false);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());

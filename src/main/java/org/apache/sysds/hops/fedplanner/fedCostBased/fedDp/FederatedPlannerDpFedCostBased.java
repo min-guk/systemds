@@ -5229,9 +5229,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static Map<Long, FederatedOutput> computeOutputDecisions(
 		FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.FedPlan rootPlan) {
 
+		DecisionResolutionContext context = new DecisionResolutionContext(memoTable, rootPlan);
 		Map<Long, FederatedOutput> decisions = computeOutputDecisionsInternal(
-			memoTable, rootPlan, new HashMap<>(), Collections.emptyMap(), true);
-		DecisionMapScoreBreakdown score = computeDecisionMapScoreBreakdown(memoTable, rootPlan, decisions);
+			memoTable, rootPlan, new HashMap<>(), Collections.emptyMap(), true, context);
+		DecisionMapScoreBreakdown score = context.scoreCache.get(decisions);
 		if (!isExecutableDecisionMapScore(score))
 			throw new IllegalStateException("DP output decisions do not form an executable plan forest: "
 				+ "missingRoots=" + score.missingRootCount
@@ -5248,8 +5249,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> baseDecisions,
 		Map<Long, FederatedOutput> lockedDecisions) {
 
-		return computeOutputDecisionsInternal(
-			memoTable, rootPlan, baseDecisions, lockedDecisions, false);
+		return computeOutputDecisionsInternal(memoTable, rootPlan, baseDecisions, lockedDecisions,
+			false, new DecisionResolutionContext(memoTable, rootPlan));
 	}
 
 	private static Map<Long, FederatedOutput> resolveOutputDecisionsWithLocks(
@@ -5258,8 +5259,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> baseDecisions,
 		Map<Long, FederatedOutput> lockedDecisions) {
 
-		return computeOutputDecisionsInternal(
-			memoTable, rootPlan, baseDecisions, lockedDecisions, true);
+		return computeOutputDecisionsInternal(memoTable, rootPlan, baseDecisions, lockedDecisions,
+			true, new DecisionResolutionContext(memoTable, rootPlan));
 	}
 
 	private static Map<Long, FederatedOutput> simulateOutputDecisionsWithLocksCached(
@@ -5280,10 +5281,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (cached != null)
 			return new HashMap<>(cached);
 
-		Map<Long, FederatedOutput> computed =
-			simulateOutputDecisionsWithLocks(memoTable, rootPlan, baseDecisions, lockedDecisions);
+		Map<Long, FederatedOutput> computed = computeOutputDecisionsInternal(
+			memoTable, rootPlan, baseDecisions, lockedDecisions, false, simulationDecisionCache.context);
 		simulationDecisionCache.put(key, computed);
-		return computed;
+		return new HashMap<>(computed);
 	}
 
 	private static Map<Long, FederatedOutput> buildTentativeDecisionSnapshot(
@@ -5302,7 +5303,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, FederatedOutput> initialDecisions,
 		Map<Long, FederatedOutput> lockedDecisions,
-		boolean allowTransientFamilyRefine) {
+		boolean allowTransientFamilyRefine,
+		DecisionResolutionContext context) {
 
 		Map<Long, FederatedOutput> decisions = new HashMap<>();
 		if (initialDecisions != null)
@@ -5318,10 +5320,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// output states that can expose new parent/child costs for the next decision
 		// refresh. Keep non-refining callers single-pass.
 		final int maxIters = allowTransientFamilyRefine ? 2 : 1;
+		DecisionResolutionContext resolutionContext = context != null
+			? context.requireOwner(memoTable, rootPlan)
+			: new DecisionResolutionContext(memoTable, rootPlan);
 		ParentVariantDeltaCache parentVariantDeltaCache = new ParentVariantDeltaCache();
-		TransientReadParentsCache transientReadParentsCache = new TransientReadParentsCache(memoTable);
-		SimulationDecisionCache simulationDecisionCache = new SimulationDecisionCache();
-		DecisionMapScoreCache decisionMapScoreCache = new DecisionMapScoreCache(memoTable, rootPlan);
+		TransientReadParentsCache transientReadParentsCache = resolutionContext.transientReadParentsCache;
+		SimulationDecisionCache simulationDecisionCache = resolutionContext.simulationDecisionCache;
+		DecisionMapScoreCache decisionMapScoreCache = resolutionContext.scoreCache;
 		// Initial and locked maps may be partial. Keep an executable initial map only as
 		// a fallback: an executable refinement still takes precedence because it may add
 		// required virtual-root/family closure decisions. ALS exposed the fallback need
@@ -5333,7 +5338,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				? new HashMap<>(decisions) : null;
 		Map<Long, FederatedOutput> bestDecisions = null;
 
-		Map<Long, ConflictEntry> conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan, decisions);
+		Map<Long, ConflictEntry> conflictCheckMap = resolutionContext.conflictMapCache.getFeasible(decisions);
 		for (int iter = 0; iter < maxIters; iter++) {
 			refreshConflictChoiceFeasibility(conflictCheckMap, memoTable);
 
@@ -5511,7 +5516,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				// realigning TReads is insufficient because dependent consumers can still
 				// retain the output contract selected by the superseded family state.
 				Map<Long, ConflictEntry> finalConflictCheckMap =
-					collectConflictsSingleBFS(memoTable, rootPlan, nextDecisions);
+					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
 				refreshConflictChoiceFeasibility(finalConflictCheckMap, memoTable);
 				nextDecisions = refineTransientFamilyDecisions(
 					memoTable, rootPlan, finalConflictCheckMap, nextDecisions, lockedDecisions, iter,
@@ -5521,7 +5526,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					memoTable, finalConflictCheckMap, nextDecisions, lockedDecisions,
 					transientReadParentsCache, iter);
 				Map<Long, ConflictEntry> alignedConflictCheckMap =
-					collectConflictsSingleBFS(memoTable, rootPlan, nextDecisions);
+					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
 				refreshConflictChoiceFeasibility(alignedConflictCheckMap, memoTable);
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, alignedConflictCheckMap, nextDecisions, lockedDecisions,
@@ -5538,7 +5543,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					memoTable, alignedConflictCheckMap, nextDecisions, lockedDecisions,
 					transientReadParentsCache, iter);
 				Map<Long, ConflictEntry> finalAlignedConflictCheckMap =
-					collectConflictsSingleBFS(memoTable, rootPlan, nextDecisions);
+					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
 				refreshConflictChoiceFeasibility(finalAlignedConflictCheckMap, memoTable);
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, finalAlignedConflictCheckMap, nextDecisions, lockedDecisions,
@@ -5571,7 +5576,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 
 			decisions = nextDecisions;
-			conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan, decisions);
+			conflictCheckMap = resolutionContext.conflictMapCache.getFeasible(decisions);
 			parentVariantDeltaCache.clear();
 		}
 
@@ -5597,26 +5602,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		if(memoTable == null || memoTable.analysis() == null || decisions == null)
 			return decisions;
-		PlacementAnalysis analysis = memoTable.analysis();
-		Map<CompiledHopKey,LinkedHashSet<Long>> formalFamilies = new IdentityHashMap<>();
-		for(PlacementAnalysis.LogicalFunctionInputFact fact :
-			analysis.logicalFunctionInputsInCanonicalOrder()) {
-			PlacementAnalysis.HopOccurrenceProjection formal =
-				memoTable.requireAnalysisOccurrence(fact.targetRead());
-			formalFamilies.computeIfAbsent(fact.boundary(), ignored -> new LinkedHashSet<>())
-				.add(memoTable.resolveOriginalHopId(formal.hop().getHopID()));
-		}
 
 		Map<Long, FederatedOutput> aligned = new HashMap<>(decisions);
-		List<Map.Entry<CompiledHopKey,LinkedHashSet<Long>>> orderedFamilies =
-			formalFamilies.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList();
-		for(Map.Entry<CompiledHopKey,LinkedHashSet<Long>> familyEntry : orderedFamilies) {
-			LinkedHashSet<Long> familyHopIDs = familyEntry.getValue().stream().sorted()
+		for(FederatedPlannerDpMemoTable.FunctionFormalDecisionFamily family :
+			memoTable.functionFormalDecisionFamilies()) {
+			LinkedHashSet<Long> familyHopIDs = family.formals().stream()
+				.map(formal -> memoTable.resolveOriginalHopId(formal.hop().getHopID())).sorted()
 				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 			if(familyHopIDs.size() <= 1)
 				continue;
 			List<PlacementState> selectedFormalStates = selectedFunctionFormalInputStates(
-				memoTable, analysis, familyEntry.getKey(), aligned);
+				memoTable, family, aligned);
 			// A missing output-map entry is not itself a conflict: the selected parent
 			// arm can already give every formal the same exact state. Only intervene
 			// when the currently selected exact occurrences actually disagree.
@@ -5678,7 +5674,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				DecisionMapScoreBreakdown candidateScore =
 					computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidate, scoreCache);
 				List<PlacementState> candidateFormalStates = selectedFunctionFormalInputStates(
-					memoTable, analysis, familyEntry.getKey(), candidate);
+					memoTable, family, candidate);
 				if(!isExecutableDecisionMapScore(candidateScore)
 					|| !isDecisionMapClosureResolved(candidateScore, familyHopIDs)
 					|| candidateFormalStates.size() != 1
@@ -5695,7 +5691,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 
 			FederatedPlannerTrace.logGlobal("DP-FunctionFormalInputAlign",
-				"iter=" + iter + " boundary=" + familyEntry.getKey().normalizedSignature()
+				"iter=" + iter + " boundary=" + family.boundary().normalizedSignature()
 					+ " family=" + familyHopIDs + " selected=" + bestOutput
 					+ " total=" + (bestScore != null ? bestScore.totalCost : Double.NaN)
 					+ " apply=" + (bestCandidate != null));
@@ -5707,17 +5703,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	private static List<PlacementState> selectedFunctionFormalInputStates(
 		FederatedPlannerDpMemoTable memoTable,
-		PlacementAnalysis analysis,
-		CompiledHopKey boundary,
+		FederatedPlannerDpMemoTable.FunctionFormalDecisionFamily family,
 		Map<Long, FederatedOutput> decisions) {
 
 		Set<PlacementState> selected = new LinkedHashSet<>();
-		for(PlacementAnalysis.LogicalFunctionInputFact fact :
-			analysis.logicalFunctionInputsInCanonicalOrder()) {
-			if(fact.boundary() != boundary)
-				continue;
-			PlacementAnalysis.HopOccurrenceProjection occurrence =
-				memoTable.requireAnalysisOccurrence(fact.targetRead());
+		for(PlacementAnalysis.HopOccurrenceProjection occurrence : family.formals()) {
 			FederatedPlannerDpMemoTable.FedPlan plan =
 				selectLogicalTransientOccurrencePlan(memoTable, occurrence, decisions);
 			if(plan != null && plan.getSelectedPlacementState() != null)
@@ -6045,7 +6035,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// expose the FOUT clone plan (or vice versa) and a later loop write escapes the
 		// multi-write family normalization.
 		Map<Long, ConflictEntry> normalizationConflictCheckMap =
-			collectConflictsSingleBFS(memoTable, rootPlan, normalizedDecisions);
+			scoreCache.conflicts(normalizedDecisions);
 		refreshConflictChoiceFeasibility(normalizationConflictCheckMap, memoTable);
 		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(normalizationConflictCheckMap)) {
 			long tReadHopID = e.getKey();
@@ -6097,8 +6087,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					Map<Long, FederatedOutput> selectionDecisions = new HashMap<>(normalizedDecisions);
 					for (long familyHopID : candidateFamilyHopIDs)
 						selectionDecisions.put(familyHopID, targetOut);
-					candidateConflictCheckMap = collectConflictsSingleBFS(
-						memoTable, rootPlan, selectionDecisions);
+					candidateConflictCheckMap = scoreCache.conflicts(selectionDecisions);
 					// Logical CFG-only members are metadata-only until this candidate
 					// assigns a family output. Recompute feasibility on the rebuilt map;
 					// the default ConflictEntry flags are not evidence that an exact arm
@@ -7300,6 +7289,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, FederatedOutput> outputDecisions) {
+		return computeDecisionMapScoreBreakdownWithConflicts(
+			memoTable, rootPlan, outputDecisions, null);
+	}
+
+	private static DecisionMapScoreBreakdown computeDecisionMapScoreBreakdownWithConflicts(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan rootPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		ConflictMapCache conflictMapCache) {
 
 		DecisionMapScoreBreakdown breakdown = new DecisionMapScoreBreakdown();
 		if (memoTable == null || rootPlan == null)
@@ -7332,7 +7330,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 			Map<Long, ConflictEntry> conflictCheckMap = outputDecisions == null || outputDecisions.isEmpty()
 				? Collections.emptyMap()
-				: collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
+				: conflictMapCache != null ? conflictMapCache.getUnrefreshed(outputDecisions)
+					: collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
 			double transientLocalCost = computeDecisionMapTransientReadLoutMaterializationCost(
 				memoTable, outputDecisions, conflictCheckMap);
 			double mixedFoutToCpLocalEdgeCost = computeDecisionMapMixedFoutToCpLocalEdgeCost(
@@ -10631,6 +10630,87 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return op == Types.OpOpData.TRANSIENTREAD || op == Types.OpOpData.TRANSIENTWRITE;
 	}
 
+	/**
+	 * One top-level output-reconciliation context. Recursive lock simulations explore
+	 * the same immutable memo frontier, so rebuilding occurrence closure, conflict
+	 * forests, transient-parent indexes, and sharing-aware score decompositions inside
+	 * every simulation is redundant. Per-invocation mutable delta state remains local.
+	 */
+	private static final class DecisionResolutionContext {
+		final FederatedPlannerDpMemoTable memoTable;
+		final FederatedPlannerDpMemoTable.FedPlan rootPlan;
+		final ConflictMapCache conflictMapCache;
+		final TransientReadParentsCache transientReadParentsCache;
+		final SimulationDecisionCache simulationDecisionCache;
+		final DecisionMapScoreCache scoreCache;
+
+		DecisionResolutionContext(FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
+			this.rootPlan = rootPlan;
+			this.conflictMapCache = new ConflictMapCache(memoTable, rootPlan);
+			this.transientReadParentsCache =
+				new TransientReadParentsCache(memoTable);
+			this.simulationDecisionCache = new SimulationDecisionCache(this);
+			this.scoreCache = new DecisionMapScoreCache(memoTable, rootPlan, conflictMapCache);
+		}
+
+		DecisionResolutionContext requireOwner(FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+			if(this.memoTable != memoTable || this.rootPlan != rootPlan)
+				throw new IllegalArgumentException("DP decision context has a different memo/root owner");
+			return this;
+		}
+	}
+
+	/** Cached selected conflict forests keyed by the complete output-decision map. */
+	private static final class ConflictMapCache {
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final FederatedPlannerDpMemoTable.FedPlan rootPlan;
+		private final Map<DecisionMapScoreKey, ConflictForestSnapshot> values = new HashMap<>();
+
+		ConflictMapCache(FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
+			this.rootPlan = rootPlan;
+		}
+
+		Map<Long,ConflictEntry> getUnrefreshed(Map<Long,FederatedOutput> decisions) {
+			return snapshot(decisions).unrefreshed;
+		}
+
+		Map<Long,ConflictEntry> getFeasible(Map<Long,FederatedOutput> decisions) {
+			ConflictForestSnapshot snapshot = snapshot(decisions);
+			if(snapshot.feasible == null) {
+				snapshot.feasible = copyConflictEntries(snapshot.unrefreshed);
+				refreshConflictChoiceFeasibility(snapshot.feasible, memoTable);
+			}
+			return snapshot.feasible;
+		}
+
+		private ConflictForestSnapshot snapshot(Map<Long,FederatedOutput> decisions) {
+			DecisionMapScoreKey key = new DecisionMapScoreKey(decisions);
+			ConflictForestSnapshot cached = values.get(key);
+			if(cached != null)
+				return cached;
+			Map<Long,ConflictEntry> selected = rootPlan == null
+				? Collections.emptyMap()
+				: collectConflictsSingleBFS(memoTable, rootPlan, key.outputDecisions);
+			ConflictForestSnapshot created = new ConflictForestSnapshot(selected);
+			values.put(key, created);
+			return created;
+		}
+	}
+
+	private static final class ConflictForestSnapshot {
+		final Map<Long,ConflictEntry> unrefreshed;
+		Map<Long,ConflictEntry> feasible;
+
+		ConflictForestSnapshot(Map<Long,ConflictEntry> unrefreshed) {
+			this.unrefreshed = Objects.requireNonNull(unrefreshed, "unrefreshed");
+		}
+	}
+
 	private static final class ParentVariantDeltaCache {
 		private final Map<ParentVariantDeltaKey, Double> values = new HashMap<>();
 		private final TransientReadPlanShareCache transientReadPlanShareCache =
@@ -10724,14 +10804,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private static final class SimulationDecisionCache {
+		private final DecisionResolutionContext context;
 		private final Map<SimulationDecisionKey, Map<Long, FederatedOutput>> values = new HashMap<>();
+
+		SimulationDecisionCache(DecisionResolutionContext context) {
+			this.context = Objects.requireNonNull(context, "context");
+		}
 
 		Map<Long, FederatedOutput> get(SimulationDecisionKey key) {
 			return values.get(key);
 		}
 
 		void put(SimulationDecisionKey key, Map<Long, FederatedOutput> value) {
-			values.put(key, value != null ? value : Collections.emptyMap());
+			values.put(key, value != null
+				? Collections.unmodifiableMap(new HashMap<>(value)) : Collections.emptyMap());
 		}
 	}
 
@@ -10769,13 +10855,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final class DecisionMapScoreCache {
 		private final FederatedPlannerDpMemoTable memoTable;
 		private final FederatedPlannerDpMemoTable.FedPlan rootPlan;
+		private final ConflictMapCache conflictMapCache;
 		private final Map<DecisionMapScoreKey, DecisionMapScoreBreakdown> values = new HashMap<>();
 
 		DecisionMapScoreCache(
 			FederatedPlannerDpMemoTable memoTable,
-			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+			FederatedPlannerDpMemoTable.FedPlan rootPlan,
+			ConflictMapCache conflictMapCache) {
 			this.memoTable = memoTable;
 			this.rootPlan = rootPlan;
+			this.conflictMapCache = Objects.requireNonNull(conflictMapCache, "conflictMapCache");
 		}
 
 		DecisionMapScoreBreakdown get(Map<Long, FederatedOutput> outputDecisions) {
@@ -10784,9 +10873,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (cached != null)
 				return cached;
 			DecisionMapScoreBreakdown computed =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, key.outputDecisions);
+				computeDecisionMapScoreBreakdownWithConflicts(
+					memoTable, rootPlan, key.outputDecisions, conflictMapCache);
 			values.put(key, computed);
 			return computed;
+		}
+
+		Map<Long,ConflictEntry> conflicts(Map<Long,FederatedOutput> decisions) {
+			return conflictMapCache.getFeasible(decisions);
 		}
 	}
 
