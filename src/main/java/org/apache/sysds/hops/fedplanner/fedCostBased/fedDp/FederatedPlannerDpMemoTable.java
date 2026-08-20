@@ -1265,10 +1265,11 @@ public class FederatedPlannerDpMemoTable {
 	 */
 		public static class FedPlan {
 			public record ExactChildPlanEdge(CompiledHopKey occurrence, Hop carrier,
-				FederatedOutput output, FedPlan selectedPlan) {
+				Long originalDecisionHopId, FederatedOutput output, FedPlan selectedPlan) {
 				public ExactChildPlanEdge {
 					Objects.requireNonNull(occurrence, "occurrence");
 					Objects.requireNonNull(carrier, "carrier");
+					Objects.requireNonNull(originalDecisionHopId, "originalDecisionHopId");
 					Objects.requireNonNull(output, "output");
 					Objects.requireNonNull(selectedPlan, "selectedPlan");
 				}
@@ -1447,13 +1448,22 @@ public class FederatedPlannerDpMemoTable {
 				if(selected.getHopRef() != carrier || selected.getFedOutType() != legacy.getRight()
 					|| retained == null || retained.getFedPlanVariants().stream().noneMatch(plan -> plan == selected))
 					throw new IllegalArgumentException("Exact DP child carrier has no memo arm " + legacy);
-				exact.add(new ExactChildPlanEdge(occurrence.key(), carrier, legacy.getRight(), selected));
+				exact.add(new ExactChildPlanEdge(occurrence.key(), carrier,
+					Long.valueOf(memo.resolveOriginalHopId(carrier.getHopID())), legacy.getRight(), selected));
 			}
 			exactChildPlanEdges = List.copyOf(exact);
 		}
 
+		/**
+		 * Whether this retained arm owns the occurrence-aware child coordinates built
+		 * during enumeration. Empty leaves are complete without an explicit edge list.
+		 */
+		public boolean hasExactChildPlanEdges() {
+			return childFedPlans.isEmpty() || exactChildPlanEdges.size() == childFedPlans.size();
+		}
+
 		public List<ExactChildPlanEdge> getExactChildPlanEdges() {
-			if(!childFedPlans.isEmpty() && exactChildPlanEdges.size() != childFedPlans.size())
+			if(!hasExactChildPlanEdges())
 				throw new IllegalStateException("DP plan lacks exact occurrence-aware child coordinates");
 			return exactChildPlanEdges;
 		}

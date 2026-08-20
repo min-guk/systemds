@@ -113,6 +113,32 @@ public final class NeutralPlacementGraphBuilder {
 	private final OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 
 	/**
+	 * Canonical constraint accumulator that materializes each structural identity once.
+	 * A TreeSet repeatedly rebuilt the nested occurrence/value signatures at every
+	 * comparison (O(log n) serializations per insertion), even though constraints are
+	 * immutable after construction.
+	 */
+	private static final class CanonicalConstraintSet extends java.util.AbstractSet<Constraint> {
+		private final java.util.NavigableMap<String,Constraint> constraints = new java.util.TreeMap<>();
+
+		@Override
+		public boolean add(Constraint constraint) {
+			Objects.requireNonNull(constraint, "constraint");
+			return constraints.putIfAbsent(constraint.normalizedSignature(), constraint) == null;
+		}
+
+		@Override
+		public java.util.Iterator<Constraint> iterator() {
+			return constraints.values().iterator();
+		}
+
+		@Override
+		public int size() {
+			return constraints.size();
+		}
+	}
+
+	/**
 	 * Builder-owned program-structure guard. It admits only the construction baseline and exact
 	 * placement structures committed by PlacementEmissionTransaction. The analysis receives this
 	 * as an opaque authority and therefore cannot traverse or reconstruct the program universe.
@@ -341,7 +367,7 @@ public final class NeutralPlacementGraphBuilder {
 		scopes = functionExpansion.scopes();
 		nodesByHop.clear();
 		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
-		Set<Constraint> constraints = new java.util.TreeSet<>();
+		Set<Constraint> constraints = new CanonicalConstraintSet();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			CompiledHopKey consumer = nodes.get(ordinal).key();

@@ -237,7 +237,7 @@ public final class NeutralPlacementGraph {
 		Collection<RelocationAction> relocationActions,
 		Collection<DerivedFoutMaterializationAction> derivedFoutMaterializationActions) {
 		this.nodes = sorted(nodes, "nodes");
-		this.constraints = sorted(constraints, "constraints");
+		this.constraints = sortedConstraints(constraints);
 		this.relocationActions = sorted(relocationActions, "relocationActions");
 		this.derivedFoutMaterializationActions = sorted(derivedFoutMaterializationActions,
 			"derivedFoutMaterializationActions");
@@ -608,6 +608,27 @@ public final class NeutralPlacementGraph {
 			if(copy.get(i - 1).equals(copy.get(i)))
 				throw new IllegalArgumentException(name + " contains duplicates");
 		return List.copyOf(copy);
+	}
+
+	private static List<Constraint> sortedConstraints(Collection<Constraint> values) {
+		Objects.requireNonNull(values, "constraints");
+		List<NormalizedConstraint> normalized = new ArrayList<>(values.size());
+		for(Constraint value : values) {
+			Constraint constraint = Objects.requireNonNull(value, "constraints entry");
+			normalized.add(new NormalizedConstraint(constraint.normalizedSignature(), constraint));
+		}
+		normalized.sort(Comparator.comparing(NormalizedConstraint::signature));
+		List<Constraint> result = new ArrayList<>(normalized.size());
+		for(NormalizedConstraint value : normalized) {
+			Constraint constraint = value.constraint();
+			if(!result.isEmpty() && result.get(result.size() - 1).equals(constraint))
+				throw new IllegalArgumentException("constraints contains duplicates");
+			result.add(constraint);
+		}
+		return List.copyOf(result);
+	}
+
+	private record NormalizedConstraint(String signature, Constraint constraint) {
 	}
 
 	private static List<String> immutableSortedStrings(Collection<String> values) {
