@@ -6266,8 +6266,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		DecisionMapScoreBreakdown currentScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
 		final int numWorkers = Math.max(1, memoTable.getNumWorkers());
+		List<Map.Entry<Long, ConflictEntry>> conflictEntries = sortedConflictEntries(conflictCheckMap);
+		RequiredOutputClosureSearch closureSearch =
+			new RequiredOutputClosureSearch(memoTable, conflictCheckMap, lockedDecisions);
+		LinkedHashSet<Long> closureHopIDs = new LinkedHashSet<>();
+		Set<RequiredOutputStateKey> visitedClosureStates = new HashSet<>();
+		LinkedHashSet<Long> loutClosureHopIDs = new LinkedHashSet<>();
+		Set<RequiredOutputStateKey> visitedLoutClosureStates = new HashSet<>();
 
-		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
+		for (Map.Entry<Long, ConflictEntry> e : conflictEntries) {
 			long hopID = e.getKey();
 			ConflictEntry entry = e.getValue();
 			if (entry == null || !entry.canChooseFOUT)
@@ -6277,96 +6284,100 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (chosen != FederatedOutput.FOUT)
 				continue;
 
-			Map<Long, FederatedOutput> candidateDecisions = new HashMap<>(refinedDecisions);
-			LinkedHashSet<Long> closureHopIDs = new LinkedHashSet<>();
-			applyRequiredOutputDecisionClosure(
-				memoTable, hopID, chosen, conflictCheckMap,
-				candidateDecisions, closureHopIDs, new HashSet<>(), lockedDecisions);
-			applyLockedOutputDecisionsInPlace(candidateDecisions, lockedDecisions);
-
-			if (closureHopIDs.isEmpty() || candidateDecisions.equals(refinedDecisions))
-				continue;
-
-			DecisionMapScoreBreakdown candidateScore =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidateDecisions, scoreCache);
-			// A closure refinement must resolve every exact HOP it rewrites. Equal
-			// aggregate conflict counts can otherwise hide that an impossible arm
-			// survived (or that the conflict merely moved) and let a cost tie-break undo
-			// the existing local conflict resolver's executable decision.
-			boolean closureResolved =
-				isDecisionMapClosureResolved(candidateScore, closureHopIDs);
-			boolean keepClosure =
-				isScorableDecisionMapScore(candidateScore)
-					&& closureResolved
-					&& isBetterDecisionMapScore(candidateScore, currentScore);
-
-			Hop hopRef = memoTable.resolveOriginalHop(hopID);
-			if (FederatedPlannerTrace.shouldTrace(hopRef)) {
-				FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure-Selected", String.format(Locale.ROOT,
-					"iter=%d chosen=%s closure=%s currentTotal=%.6f closureTotal=%.6f "
-						+ "currentMissing=%d closureMissing=%d currentIncompatible=%d closureIncompatible=%d "
-						+ "currentConflicts=%s closureConflicts=%s closureResolved=%s apply=%s",
-					iter, chosen, closureHopIDs,
-					currentScore.totalCost, candidateScore.totalCost,
-					currentScore.missingRootCount, candidateScore.missingRootCount,
-					currentScore.incompatiblePlanCount, candidateScore.incompatiblePlanCount,
-					currentScore.exactSelectionConflictHopIDs, candidateScore.exactSelectionConflictHopIDs,
-					closureResolved, keepClosure));
-			}
-
-			if (keepClosure) {
-				refinedDecisions = candidateDecisions;
-				currentScore = candidateScore;
-				continue;
-			}
-
-			if (entry.canChooseLOUT) {
-				Map<Long, FederatedOutput> loutDecisions = new HashMap<>(refinedDecisions);
-				LinkedHashSet<Long> loutClosureHopIDs = new LinkedHashSet<>();
+			closureHopIDs.clear();
+			visitedClosureStates.clear();
+			DecisionMapScoreBreakdown candidateScore;
+			try(DecisionMapTransaction candidateDecisions =
+				new DecisionMapTransaction(refinedDecisions)) {
 				applyRequiredOutputDecisionClosure(
-					memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
-					loutDecisions, loutClosureHopIDs, new HashSet<>(), lockedDecisions);
-				applyDirectChildOutputDecisionClosure(
-					memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
-					loutDecisions, loutClosureHopIDs, lockedDecisions);
-				applyLockedOutputDecisionsInPlace(loutDecisions, lockedDecisions);
-				DecisionMapScoreBreakdown loutScore =
-					computeDecisionMapScoreBreakdown(memoTable, rootPlan, loutDecisions, scoreCache);
-				boolean loutClosureResolved =
-					isDecisionMapClosureResolved(loutScore, loutClosureHopIDs);
-				boolean keepLout =
-					isScorableDecisionMapScore(loutScore)
-						&& loutClosureResolved
-						&& isBetterDecisionMapScore(loutScore, candidateScore);
+					memoTable, hopID, chosen, conflictCheckMap,
+					candidateDecisions, closureHopIDs, visitedClosureStates,
+					lockedDecisions, closureSearch);
+				applyLockedOutputDecisionsInPlace(candidateDecisions, lockedDecisions);
 
+				if (closureHopIDs.isEmpty() || !candidateDecisions.hasEffectiveChanges())
+					continue;
+
+				candidateScore =
+					computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidateDecisions, scoreCache);
+				// A closure refinement must resolve every exact HOP it rewrites. Equal
+				// aggregate conflict counts can otherwise hide that an impossible arm
+				// survived (or that the conflict merely moved) and let a cost tie-break undo
+				// the existing local conflict resolver's executable decision.
+				boolean closureResolved =
+					isDecisionMapClosureResolved(candidateScore, closureHopIDs);
+				boolean keepClosure =
+					isScorableDecisionMapScore(candidateScore)
+						&& closureResolved
+						&& isBetterDecisionMapScore(candidateScore, currentScore);
+
+				Hop hopRef = memoTable.resolveOriginalHop(hopID);
 				if (FederatedPlannerTrace.shouldTrace(hopRef)) {
-					FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure-Demote", String.format(Locale.ROOT,
-						"iter=%d chosen=%s closure=%s loutClosure=%s closureTotal=%.6f loutTotal=%.6f "
-							+ "closureMissing=%d loutMissing=%d closureIncompatible=%d loutIncompatible=%d "
-							+ "closureConflicts=%s loutConflicts=%s loutClosureResolved=%s apply=%s",
-						iter, chosen, closureHopIDs, loutClosureHopIDs,
-						candidateScore.totalCost, loutScore.totalCost,
-						candidateScore.missingRootCount, loutScore.missingRootCount,
-						candidateScore.incompatiblePlanCount, loutScore.incompatiblePlanCount,
-						candidateScore.exactSelectionConflictHopIDs, loutScore.exactSelectionConflictHopIDs,
-						loutClosureResolved, keepLout));
+					FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure-Selected", String.format(Locale.ROOT,
+						"iter=%d chosen=%s closure=%s currentTotal=%.6f closureTotal=%.6f "
+							+ "currentMissing=%d closureMissing=%d currentIncompatible=%d closureIncompatible=%d "
+							+ "currentConflicts=%s closureConflicts=%s closureResolved=%s apply=%s",
+						iter, chosen, closureHopIDs,
+						currentScore.totalCost, candidateScore.totalCost,
+						currentScore.missingRootCount, candidateScore.missingRootCount,
+						currentScore.incompatiblePlanCount, candidateScore.incompatiblePlanCount,
+						currentScore.exactSelectionConflictHopIDs, candidateScore.exactSelectionConflictHopIDs,
+						closureResolved, keepClosure));
 				}
 
-				if (keepLout) {
-					refinedDecisions = loutDecisions;
-					currentScore = loutScore;
+				if (keepClosure) {
+					candidateDecisions.commit();
+					currentScore = candidateScore;
 					continue;
 				}
 			}
 
-			if (isScorableDecisionMapScore(candidateScore) && closureResolved
-				&& isBetterDecisionMapScore(candidateScore, currentScore)) {
-				refinedDecisions = candidateDecisions;
-				currentScore = candidateScore;
+			if (entry.canChooseLOUT) {
+				loutClosureHopIDs.clear();
+				visitedLoutClosureStates.clear();
+				try(DecisionMapTransaction loutDecisions =
+					new DecisionMapTransaction(refinedDecisions)) {
+					applyRequiredOutputDecisionClosure(
+						memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
+						loutDecisions, loutClosureHopIDs, visitedLoutClosureStates,
+						lockedDecisions, closureSearch);
+					applyDirectChildOutputDecisionClosure(
+						memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
+						loutDecisions, loutClosureHopIDs, lockedDecisions, closureSearch);
+					applyLockedOutputDecisionsInPlace(loutDecisions, lockedDecisions);
+					DecisionMapScoreBreakdown loutScore =
+						computeDecisionMapScoreBreakdown(memoTable, rootPlan, loutDecisions, scoreCache);
+					boolean loutClosureResolved =
+						isDecisionMapClosureResolved(loutScore, loutClosureHopIDs);
+					boolean keepLout =
+						isScorableDecisionMapScore(loutScore)
+							&& loutClosureResolved
+							&& isBetterDecisionMapScore(loutScore, candidateScore);
+
+					Hop hopRef = memoTable.resolveOriginalHop(hopID);
+					if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+						FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure-Demote", String.format(Locale.ROOT,
+							"iter=%d chosen=%s closure=%s loutClosure=%s closureTotal=%.6f loutTotal=%.6f "
+								+ "closureMissing=%d loutMissing=%d closureIncompatible=%d loutIncompatible=%d "
+								+ "closureConflicts=%s loutConflicts=%s loutClosureResolved=%s apply=%s",
+							iter, chosen, closureHopIDs, loutClosureHopIDs,
+							candidateScore.totalCost, loutScore.totalCost,
+							candidateScore.missingRootCount, loutScore.missingRootCount,
+							candidateScore.incompatiblePlanCount, loutScore.incompatiblePlanCount,
+							candidateScore.exactSelectionConflictHopIDs, loutScore.exactSelectionConflictHopIDs,
+							loutClosureResolved, keepLout));
+					}
+
+					if (keepLout) {
+						loutDecisions.commit();
+						currentScore = loutScore;
+						continue;
+					}
+				}
 			}
 		}
 
-		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
+		for (Map.Entry<Long, ConflictEntry> e : conflictEntries) {
 			long hopID = e.getKey();
 			ConflictEntry entry = e.getValue();
 			if (entry == null || !entry.canChooseLOUT || !entry.canChooseFOUT)
@@ -6380,39 +6391,44 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (!canChooseOutput(entry, alternative))
 				continue;
 
-			Map<Long, FederatedOutput> candidateDecisions = new HashMap<>(refinedDecisions);
-			LinkedHashSet<Long> closureHopIDs = new LinkedHashSet<>();
-			applyRequiredOutputDecisionClosure(
-				memoTable, hopID, alternative, conflictCheckMap,
-				candidateDecisions, closureHopIDs, new HashSet<>(), lockedDecisions);
-			applyDirectChildOutputDecisionClosure(
-				memoTable, hopID, alternative, conflictCheckMap,
-				candidateDecisions, closureHopIDs, lockedDecisions);
-			applyLockedOutputDecisionsInPlace(candidateDecisions, lockedDecisions);
+			closureHopIDs.clear();
+			visitedClosureStates.clear();
+			try(DecisionMapTransaction candidateDecisions =
+				new DecisionMapTransaction(refinedDecisions)) {
+				applyRequiredOutputDecisionClosure(
+					memoTable, hopID, alternative, conflictCheckMap,
+					candidateDecisions, closureHopIDs, visitedClosureStates,
+					lockedDecisions, closureSearch);
+				applyDirectChildOutputDecisionClosure(
+					memoTable, hopID, alternative, conflictCheckMap,
+					candidateDecisions, closureHopIDs, lockedDecisions, closureSearch);
+				applyLockedOutputDecisionsInPlace(candidateDecisions, lockedDecisions);
 
-			if (closureHopIDs.isEmpty() || candidateDecisions.equals(refinedDecisions))
-				continue;
+				if (closureHopIDs.isEmpty() || !candidateDecisions.hasEffectiveChanges())
+					continue;
 
-			DecisionMapScoreBreakdown candidateScore =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidateDecisions, scoreCache);
+				DecisionMapScoreBreakdown candidateScore =
+					computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidateDecisions, scoreCache);
 				// Tie preferences only rank executable alternatives for the complete local
 				// closure; they do not authorize a child-incompatible exact arm.
 				boolean closureResolved =
 					isDecisionMapClosureResolved(candidateScore, closureHopIDs);
+				boolean costTie = Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9;
+				Map<Long, FederatedOutput> incumbentDecisions = candidateDecisions.beforeView();
 				boolean transientTiePrefersAlternative =
-					Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9
+					costTie
 						&& shouldPreferTransientWriteAlternativeOnClosureTie(
 							memoTable, hopID, entry, conflictCheckMap,
-							refinedDecisions, alternative, numWorkers);
-					boolean directChildTiePrefersAlternative =
-						Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9
-							&& shouldPreferDirectChildAlternativeOnClosureTie(
-								memoTable, hopID, conflictCheckMap,
-								refinedDecisions, candidateDecisions, alternative, numWorkers);
-					boolean cloneFamilyPrefersCurrent =
-						shouldKeepCloneFamilyPreferredOutput(
-							memoTable, hopID, entry, refinedDecisions, chosen, alternative, numWorkers,
-							conflictCheckMap);
+							incumbentDecisions, alternative, numWorkers);
+				boolean directChildTiePrefersAlternative =
+					costTie
+						&& shouldPreferDirectChildAlternativeOnClosureTie(
+							memoTable, hopID, conflictCheckMap,
+							incumbentDecisions, candidateDecisions, alternative, numWorkers);
+				boolean cloneFamilyPrefersCurrent =
+					shouldKeepCloneFamilyPreferredOutput(
+						memoTable, hopID, entry, incumbentDecisions, chosen, alternative, numWorkers,
+						conflictCheckMap);
 					boolean structureImproved =
 						hasBetterDecisionMapStructure(candidateScore, currentScore);
 					boolean currentClosureUnresolved =
@@ -6431,8 +6447,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 										|| transientTiePrefersAlternative
 										|| directChildTiePrefersAlternative)));
 
-			Hop hopRef = memoTable.resolveOriginalHop(hopID);
-			if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+				Hop hopRef = memoTable.resolveOriginalHop(hopID);
+				if (FederatedPlannerTrace.shouldTrace(hopRef)) {
 					FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure", String.format(Locale.ROOT,
 							"iter=%d chosen=%s alternative=%s closure=%s currentTotal=%.6f altTotal=%.6f "
 								+ "currentMissing=%d altMissing=%d currentIncompatible=%d altIncompatible=%d "
@@ -6446,16 +6462,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 							closureResolved,
 							transientTiePrefersAlternative, directChildTiePrefersAlternative,
 							cloneFamilyPrefersCurrent, keepAlternative));
-					}
+				}
 
-			if (keepAlternative) {
-				refinedDecisions = candidateDecisions;
-				currentScore = candidateScore;
+				if (keepAlternative) {
+					candidateDecisions.commit();
+					currentScore = candidateScore;
+				}
 			}
 		}
 
-			return refinedDecisions;
-		}
+		return refinedDecisions;
+	}
 
 		private static boolean shouldKeepCloneFamilyPreferredOutput(
 			FederatedPlannerDpMemoTable memoTable,
@@ -6489,7 +6506,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		applyDirectChildOutputDecisionClosure(
 			memoTable, concreteHopID, desiredOut, conflictCheckMap,
-			decisions, closureHopIDs, Collections.emptyMap());
+			decisions, closureHopIDs, Collections.emptyMap(), null);
 	}
 
 	private static void applyDirectChildOutputDecisionClosure(
@@ -6501,6 +6518,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		LinkedHashSet<Long> closureHopIDs,
 		Map<Long, FederatedOutput> lockedDecisions) {
 
+		applyDirectChildOutputDecisionClosure(
+			memoTable, concreteHopID, desiredOut, conflictCheckMap,
+			decisions, closureHopIDs, lockedDecisions, null);
+	}
+
+	private static void applyDirectChildOutputDecisionClosure(
+		FederatedPlannerDpMemoTable memoTable,
+		long concreteHopID,
+		FederatedOutput desiredOut,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> decisions,
+		LinkedHashSet<Long> closureHopIDs,
+		Map<Long, FederatedOutput> lockedDecisions,
+		RequiredOutputClosureSearch closureSearch) {
+
 		if (memoTable == null || desiredOut == null || conflictCheckMap == null
 			|| decisions == null || closureHopIDs == null)
 			return;
@@ -6508,8 +6540,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan selectedPlan =
 			findStrictCompatiblePlanVariant(memoTable, concreteHopID, desiredOut, decisions);
 		if (selectedPlan == null)
-			selectedPlan = selectRequiredOutputClosurePlanVariant(
-				memoTable, concreteHopID, desiredOut, conflictCheckMap, lockedDecisions);
+			selectedPlan = closureSearch != null
+				? closureSearch.select(concreteHopID, desiredOut).plan
+				: selectRequiredOutputClosurePlanVariant(
+					memoTable, concreteHopID, desiredOut, conflictCheckMap, lockedDecisions);
 		if (selectedPlan == null)
 			selectedPlan = selectCompatiblePlanVariant(memoTable, concreteHopID, desiredOut, decisions);
 		if (selectedPlan == null && (lockedDecisions == null || lockedDecisions.isEmpty()))
@@ -6631,7 +6665,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> decisions,
 		LinkedHashSet<Long> closureHopIDs,
-		Set<String> visitedStates) {
+		Set<RequiredOutputStateKey> visitedStates) {
 
 		applyRequiredOutputDecisionClosure(
 			memoTable, concreteHopID, desiredOut, conflictCheckMap,
@@ -6645,7 +6679,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> decisions,
 		LinkedHashSet<Long> closureHopIDs,
-		Set<String> visitedStates,
+		Set<RequiredOutputStateKey> visitedStates,
 		Map<Long, FederatedOutput> lockedDecisions) {
 
 		RequiredOutputClosureSearch search =
@@ -6662,7 +6696,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> decisions,
 		LinkedHashSet<Long> closureHopIDs,
-		Set<String> visitedStates,
+		Set<RequiredOutputStateKey> visitedStates,
 		Map<Long, FederatedOutput> lockedDecisions,
 		RequiredOutputClosureSearch search) {
 
@@ -6670,7 +6704,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			|| decisions == null || closureHopIDs == null || visitedStates == null)
 			return;
 
-		String stateKey = concreteHopID + "|" + desiredOut;
+		RequiredOutputStateKey stateKey =
+			new RequiredOutputStateKey(concreteHopID, desiredOut);
 		if (!visitedStates.add(stateKey))
 			return;
 
@@ -11047,6 +11082,181 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		value = (value ^ value >>> 30) * 0xBF58476D1CE4E5B9L;
 		value = (value ^ value >>> 27) * 0x94D049BB133111EBL;
 		return value ^ value >>> 31;
+	}
+
+	/**
+	 * Applies one closure candidate directly to its owned decision map while
+	 * retaining only the touched-key delta needed for rollback.  Score-cache keys
+	 * still snapshot the complete candidate, but rejected candidates no longer
+	 * allocate a second full decision map before scoring.
+	 */
+	private static final class DecisionMapTransaction
+		extends AbstractMap<Long, FederatedOutput> implements AutoCloseable {
+		private final Map<Long, FederatedOutput> decisions;
+		private final LinkedHashMap<Long, PreviousDecision> previous = new LinkedHashMap<>();
+		private boolean completed;
+
+		DecisionMapTransaction(Map<Long, FederatedOutput> decisions) {
+			this.decisions = Objects.requireNonNull(decisions, "decisions");
+		}
+
+		private void capture(Long key) {
+			if(!previous.containsKey(key))
+				previous.put(key, new PreviousDecision(
+					decisions.containsKey(key), decisions.get(key)));
+		}
+
+		@Override
+		public FederatedOutput put(Long key, FederatedOutput value) {
+			FederatedOutput current = decisions.get(key);
+			if(decisions.containsKey(key) && Objects.equals(current, value))
+				return current;
+			capture(key);
+			return decisions.put(key, value);
+		}
+
+		@Override
+		public void putAll(Map<? extends Long, ? extends FederatedOutput> values) {
+			for(Map.Entry<? extends Long, ? extends FederatedOutput> entry : values.entrySet())
+				put(entry.getKey(), entry.getValue());
+		}
+
+		@Override
+		public FederatedOutput remove(Object key) {
+			if(!(key instanceof Long) || !decisions.containsKey(key))
+				return null;
+			capture((Long) key);
+			return decisions.remove(key);
+		}
+
+		@Override
+		public void clear() {
+			for(Long key : new ArrayList<>(decisions.keySet()))
+				capture(key);
+			decisions.clear();
+		}
+
+		@Override
+		public FederatedOutput get(Object key) {
+			return decisions.get(key);
+		}
+
+		@Override
+		public boolean containsKey(Object key) {
+			return decisions.containsKey(key);
+		}
+
+		@Override
+		public int size() {
+			return decisions.size();
+		}
+
+		@Override
+		public boolean isEmpty() {
+			return decisions.isEmpty();
+		}
+
+		@Override
+		public Set<Map.Entry<Long, FederatedOutput>> entrySet() {
+			return decisions.entrySet();
+		}
+
+		boolean hasEffectiveChanges() {
+			for(Map.Entry<Long, PreviousDecision> entry : previous.entrySet()) {
+				PreviousDecision prior = entry.getValue();
+				boolean present = decisions.containsKey(entry.getKey());
+				if(present != prior.present
+					|| present && !Objects.equals(decisions.get(entry.getKey()), prior.output))
+					return true;
+			}
+			return false;
+		}
+
+		Map<Long, FederatedOutput> beforeView() {
+			return previous.isEmpty()
+				? decisions : new PreviousDecisionMap(decisions, previous);
+		}
+
+		void commit() {
+			completed = true;
+		}
+
+		private void rollback() {
+			for(Map.Entry<Long, PreviousDecision> entry : previous.entrySet()) {
+				PreviousDecision prior = entry.getValue();
+				if(prior.present)
+					decisions.put(entry.getKey(), prior.output);
+				else
+					decisions.remove(entry.getKey());
+			}
+			completed = true;
+		}
+
+		@Override
+		public void close() {
+			if(!completed)
+				rollback();
+		}
+	}
+
+	private static final class PreviousDecision {
+		final boolean present;
+		final FederatedOutput output;
+
+		PreviousDecision(boolean present, FederatedOutput output) {
+			this.present = present;
+			this.output = output;
+		}
+	}
+
+	/** Read-only view of the decision map immediately before a transaction. */
+	private static final class PreviousDecisionMap extends AbstractMap<Long, FederatedOutput> {
+		private final Map<Long, FederatedOutput> current;
+		private final Map<Long, PreviousDecision> previous;
+
+		PreviousDecisionMap(Map<Long, FederatedOutput> current,
+			Map<Long, PreviousDecision> previous) {
+			this.current = current;
+			this.previous = previous;
+		}
+
+		@Override
+		public FederatedOutput get(Object key) {
+			PreviousDecision prior = previous.get(key);
+			return prior != null ? prior.output : current.get(key);
+		}
+
+		@Override
+		public boolean containsKey(Object key) {
+			PreviousDecision prior = previous.get(key);
+			return prior != null ? prior.present : current.containsKey(key);
+		}
+
+		@Override
+		public int size() {
+			int size = current.size();
+			for(Map.Entry<Long, PreviousDecision> entry : previous.entrySet()) {
+				boolean currentPresent = current.containsKey(entry.getKey());
+				if(entry.getValue().present && !currentPresent)
+					size++;
+				else if(!entry.getValue().present && currentPresent)
+					size--;
+			}
+			return size;
+		}
+
+		@Override
+		public Set<Map.Entry<Long, FederatedOutput>> entrySet() {
+			LinkedHashMap<Long, FederatedOutput> restored = new LinkedHashMap<>(current);
+			for(Map.Entry<Long, PreviousDecision> entry : previous.entrySet()) {
+				PreviousDecision prior = entry.getValue();
+				if(prior.present)
+					restored.put(entry.getKey(), prior.output);
+				else
+					restored.remove(entry.getKey());
+			}
+			return Collections.unmodifiableMap(restored).entrySet();
+		}
 	}
 
 	private static final class OverlayDecisionMap extends AbstractMap<Long, FederatedOutput> {
