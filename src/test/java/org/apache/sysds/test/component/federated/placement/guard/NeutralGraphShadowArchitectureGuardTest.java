@@ -106,7 +106,7 @@ public class NeutralGraphShadowArchitectureGuardTest {
 			collectMatches(source, executable, REGISTRY_WRITE, "registry write", violations);
 			collectMatches(source, executable, PLANNER_OR_RUNTIME_ACTION, "planner/runtime action", violations);
 			if(executable.matches("(?s).*\\b(?:FederatedPlannerFedAll|FederatedPlannerHeuristic|"
-				+ "FederatedPlannerCostbased|FederatedPlannerDp|FederatedPlannerMinST)\\b.*"))
+				+ "FederatedPlannerCostbased|FederatedPlannerDp|FederatedPlannerExact)\\b.*"))
 				violations.add(relative(source) + " imports or invokes a concrete planner");
 		}
 		assertTrue("P2 analysis must remain read-only and planner-neutral: " + violations, violations.isEmpty());

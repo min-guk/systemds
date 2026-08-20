@@ -12,7 +12,7 @@
 - TR/TW 연결(분기/루프 포함)을 rewireTable로 반영하고 **TR/TW 일관성 기반**으로 배치 결정.
 
 ### 비범위
-- DP cost enumeration/MinST 등 **비용 기반 플래너는 사용하지 않음**.
+- DP cost enumeration/Exact 등 **비용 기반 플래너는 사용하지 않음**.
 - runtime fallback/implicit 보정 로직 추가 금지.
 
 ## 3) 핵심 제약 (반드시 준수)
@@ -121,7 +121,7 @@
 - 목적: 신규 단일‑패스 Max‑FED/FOUT 플래너의 **로컬 재현/회귀 체크**를 기존 테스트 스위트에 편입
 - 전제:
   - **public privacy** 케이스는 기존 정책대로 `@Ignore` 유지
-  - 우선순위는 **DP → FedAll → Heuristic → MinST**
+  - 우선순위는 **DP → FedAll → Heuristic → Exact**
 - 대상 테스트(각 클래스에 1개 이상 추가):
   - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedPCAPlanningTest.java`
   - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedP2LMPlanningTest.java`

@@ -28,7 +28,7 @@ public class FTypes
 		COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS,
 		COMPILE_FED_HEURISTIC,
 		COMPILE_COST_BASED,
-		COMPILE_MIN_ST_CUT;
+		COMPILE_EXACT;
 		public boolean isCompiled() {
 			return this != NONE && this != RUNTIME;
 		}

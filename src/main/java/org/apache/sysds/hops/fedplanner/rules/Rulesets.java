@@ -2820,11 +2820,11 @@ public final class Rulesets {
       // FULL represents a single-worker federated mapping. Runtime AggregateBinaryFEDInstruction can execute
       // FULL x local and local x FULL by broadcasting the local side to the single federated worker.
       //
-      // Some planners (notably MinST) may conservatively model local/vector operands as BROADCAST
+      // Some planners (notably Exact) may conservatively model local/vector operands as BROADCAST
       // (rather than null) even when the operand can be provided locally. Treat BROADCAST like a
       // local operand for this special worker=1 FULL case to avoid planner/oracle divergence that
       // forces expensive CP fallbacks (e.g., l2svm/pca worker=1).
-      // This change is shared (Oracle) and therefore applies fairly to both DP and MinST.
+      // This change is shared (Oracle) and therefore applies fairly to both DP and Exact.
       boolean rightLocalLike = (right == null) || (right == FType.BROADCAST);
       boolean leftLocalLike = (left == null) || (left == FType.BROADCAST);
       // The single-partition proof is required only when it can enable a direct FULL FOUT path.
@@ -2975,7 +2975,7 @@ public final class Rulesets {
       // runtime can execute matrix multiplication federated by broadcasting the other operand to
       // that single worker. Without treating FULL as eligible here, the oracle can return
       // NOT_FEDERATED_INPUTS for FULL×(ROW/COL/...) combinations, causing planner/oracle divergence
-      // and expensive CP fallbacks (notably MinST worker=1 in kmeans/l2svm/pca).
+      // and expensive CP fallbacks (notably Exact worker=1 in kmeans/l2svm/pca).
       if (left == FType.FULL || right == FType.FULL)
         return true;
       if (isRowPartition(left) && isTrueFederated(left))

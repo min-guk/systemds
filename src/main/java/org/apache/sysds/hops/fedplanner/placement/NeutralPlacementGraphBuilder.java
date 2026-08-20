@@ -443,7 +443,7 @@ public final class NeutralPlacementGraphBuilder {
 		candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
 		candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes, origins);
 		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, nodes);
-		// TRead/TWrite is a planner-wide legality boundary, not a MinST-only factor:
+		// TRead/TWrite is a planner-wide legality boundary, not an Exact-only factor:
 		// the runtime accepts only the exact CP/LOUT or FED/FOUT tuple carried by
 		// the unique logical source. Publishing it in the neutral graph prevents
 		// FedAll/Heuristic from selecting a mismatched read/write pair.
@@ -942,7 +942,7 @@ public final class NeutralPlacementGraphBuilder {
 		// avoids replicated payload/range reshaping while reaching the identical
 		// consumer placement, so it is the Heuristic policy's unique dominant choice.
 		// This is a policy projection over already legal actions, not a candidate-space
-		// guard: DP and MinST retain and cost every exact alternative.
+		// guard: DP and Exact retain and cost every exact alternative.
 		List<HeuristicPathwiseReentryFact> anchorAligned = exactMatches.stream()
 			.filter(match -> match.relocationAction().materializationFType()
 				== match.durableAnchor().fType())
@@ -2654,7 +2654,7 @@ public final class NeutralPlacementGraphBuilder {
 				// with the call node's runtime transient domain, then attach the exact CFG
 				// value-authority equations. The ordinary fixed-point refresh below only
 				// intersects these finite domains, so this neither truncates call depth nor
-				// invents a placement absent from the runtime call carrier. MinST still
+				// invents a placement absent from the runtime call carrier. Exact still
 				// rejects recursive occurrence weighting with its typed applicability reason.
 				Map<FunctionOutputBoundaryKey,Integer> provisionalOrdinals = new java.util.TreeMap<>();
 				for(int callIndex : new ArrayList<>(unresolvedCalls)) {
@@ -3203,7 +3203,7 @@ public final class NeutralPlacementGraphBuilder {
 	 * A compiler-generated formal {@code TRead X -> TWrite X} pair binds the caller value into
 	 * the function CFG. It is an identity edge, not an executable download/upload boundary.
 	 * Treating it as an ordinary data dependency lets a planner invent a one-time local
-	 * materialization that the pre-unification DP/MinST graphs never exposed and then incorrectly
+	 * materialization that the pre-unification DP/Exact graphs never exposed and then incorrectly
 	 * amortize all loop work over that synthetic transfer.
 	 */
 	private static boolean isTransparentFunctionInputBinding(Hop input, Hop consumer,
@@ -3379,7 +3379,7 @@ public final class NeutralPlacementGraphBuilder {
 	/**
 	 * Literal federated sources are fixed runtime values, not executable CP candidates. Keep their
 	 * enumeration receipts, but bind every captured input variant to the one graph-owned source
-	 * state so DP/MinST cannot observe an Oracle placeholder tuple that the node itself forbids.
+	 * state so DP/Exact cannot observe an Oracle placeholder tuple that the node itself forbids.
 	 */
 	private static void replaceFederatedSourceCandidateFacts(List<CandidateRuleFact> candidateRuleFacts,
 		int candidateFactStart, PlacementState exactSource, Hop hop) {
@@ -4151,10 +4151,11 @@ public final class NeutralPlacementGraphBuilder {
 	 * <p>The first candidate pass can only see direct {@code Hop -> anchor} provenance. A legal
 	 * federated chain may instead carry the same durable worker pool through one or more exact
 	 * FED/FOUT candidates without making every intermediate value own the input's FederationMap.
-	 * Legacy DP/MinST could still compare local computation followed by an upload to that proven
-	 * worker pool. Preserve that candidate here, without inventing an anchor or mutating the Hop.
+	 * Earlier cost-based planner graphs could still compare local computation followed by an upload
+	 * to that proven worker pool. Preserve that candidate here, without inventing an anchor or
+	 * mutating the Hop.
 	 * A native FED/LOUT candidate using that same pool must also retain the explicit
-	 * FED-&gt;LOUT-&gt;FOUT alternative; otherwise the two-bit MinST graph would expose CP/FOUT
+	 * FED-&gt;LOUT-&gt;FOUT alternative; otherwise a two-bit execution/output graph would expose CP/FOUT
 	 * and FED/LOUT independently while omitting their legal composed state. Every contributing
 	 * exact candidate must recursively resolve to one existing durable anchor.
 	 * Recompile and transient-access nodes remain closed by their global legality rules.</p>
@@ -4485,7 +4486,7 @@ public final class NeutralPlacementGraphBuilder {
 		// A PRESENT input still needs an exact relocation alternative when its producer is
 		// selected LOUT.  Requiring an unrelated ABSENT_LOCAL sibling here dropped that
 		// legal FED->LOUT->FOUT path for single-input forwarding nodes such as TWrite and
-		// made the physical MinST domain strictly smaller than the runtime-supported space.
+		// made the Exact physical domain strictly smaller than the runtime-supported space.
 		if(anchors.isEmpty() || absentMatrixInputs.isEmpty() && presentMatrixInputs.isEmpty())
 			return;
 		List<DurableAnchorKey> targetAnchors = new ArrayList<>();
@@ -4557,7 +4558,7 @@ public final class NeutralPlacementGraphBuilder {
 	 * emitted by the otherwise-identical candidate whose uploaded input is {@code PRESENT}. Keeping
 	 * these identities separate is essential for mixed-layout operations such as {@code t(P) %*% X}:
 	 * the durable worker pool is ROW, the uploaded left input is COL, and the legal FED/LOUT consumer
-	 * state is COL. Conflating any two of those facts changes MinST/DP feasibility and cost semantics.
+	 * state is COL. Conflating any two of those facts changes Exact/DP feasibility and cost semantics.
 	 */
 	private static List<PostMaterializationCandidate> exactPostMaterializationCandidates(
 		CandidateRuleFact seed, int inputPosition, List<CandidateRuleFact> candidates,

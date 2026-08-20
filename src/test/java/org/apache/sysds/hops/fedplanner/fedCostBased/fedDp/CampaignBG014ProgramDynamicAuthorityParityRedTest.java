@@ -65,7 +65,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		RuntimeException firstFailure = null;
 		try {
 			for(String planner : List.of("compile_fed_all", "compile_fed_heuristic",
-				"compile_cost_based", "compile_min_st_cut")) {
+				"compile_cost_based", "compile_exact")) {
 				FederatedPlannerUtils.resetFederatedPlannerRunState();
 				DMLProgram contaminatingProgram = compile("B-21");
 				PlacementAnalysis contaminatingAnalysis =
@@ -80,7 +80,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				FederatedPlannerUtils.registerFedAnchorKey("X", "g014-stale-x-anchor|ROW");
 				Hop recompileSentinel = compile("B-01").getStatementBlocks().get(0).getHops().get(0);
 				// Keep the stale-state probe source-distinct from every clean control. In particular,
-				// MinST uses B-01 as its clean fallback control below and legitimately republishes
+				// Exact uses B-01 as its clean fallback control below and legitimately republishes
 				// emitted states by stable source signature; sharing that signature would confuse a
 				// fresh publication with restoration of the stale registry entry.
 				recompileSentinel.setBeginLine(900001);
@@ -105,10 +105,10 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				}
 				catch(RuntimeException failure) {
 					Throwable owner = deepestCause(failure);
-					boolean cleanMinSTDownstream = "compile_min_st_cut".equals(planner)
+					boolean cleanExactDownstream = "compile_exact".equals(planner)
 						&& owner instanceof IllegalArgumentException
-						&& "MINST_CONSUMER_LAYOUT_UNPROVEN|unconstrained-profile".equals(owner.getMessage());
-					if(!cleanMinSTDownstream) {
+						&& "EXACT_CONSUMER_LAYOUT_UNPROVEN|unconstrained-profile".equals(owner.getMessage());
+					if(!cleanExactDownstream) {
 						Assert.assertTrue("wrong shared lifecycle owner for " + planner + ": " + owner,
 							owner instanceof IllegalArgumentException);
 						Assert.assertEquals("Logical transient candidate capability differs", owner.getMessage());
@@ -119,7 +119,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				}
 
 				FederatedPlannerUtils.resetFederatedPlannerRunState();
-				// Exact MinST now proves the inlined function result's output shape and
+				// Exact Exact now proves the inlined function result's output shape and
 				// synthetic boundary authority, so B-21 is a supported clean control rather
 				// than an expected downstream profile failure.
 				PlannerInvocationReceipt control = invokeStaticProgramPlanning(planner, compile("B-21"));
@@ -131,7 +131,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 					FederatedPlannerUtils.snapshotPlannerRecompileStates().containsKey(recompileSignature));
 				Assert.assertFalse(planner + " restored stale X capability",
 					FederatedPlannerUtils.isFedInitVar("X"));
-				if(!"compile_min_st_cut".equals(planner)) {
+				if(!"compile_exact".equals(planner)) {
 					FederatedPlannerUtils.FedVarSnapshot current =
 						FederatedPlannerUtils.snapshotFedState().get("A");
 					Assert.assertNotNull(planner + " lost current-run fed-init authority", current);

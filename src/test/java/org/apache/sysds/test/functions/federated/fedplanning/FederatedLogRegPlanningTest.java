@@ -81,8 +81,8 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runLogRegPlannerMinSTPrivacyPrivateAggregate() {
-		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	public void runLogRegPlannerExactPrivacyPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-exact.xml", "private-aggregate");
 	}
 
 	@Ignore("public privacy constraints ignored in this run")
@@ -93,8 +93,8 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 
 	@Ignore("public privacy constraints ignored in this run")
 	@Test
-	public void runLogRegPlannerMinSTPrivacyPublic() {
-		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
+	public void runLogRegPlannerExactPrivacyPublic() {
+		runTestWithConfig("SystemDS-config-exact.xml", "public");
 	}
 
 	@Test

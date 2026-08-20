@@ -73,8 +73,8 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runKMeansPlannerMinSTPrivacyPrivateAggregate() {
-		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	public void runKMeansPlannerExactPrivacyPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-exact.xml", "private-aggregate");
 	}
 
 	@Ignore("public privacy constraints ignored in this run")
@@ -85,8 +85,8 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 
 	@Ignore("public privacy constraints ignored in this run")
 	@Test
-	public void runKMeansPlannerMinSTPrivacyPublic() {
-		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
+	public void runKMeansPlannerExactPrivacyPublic() {
+		runTestWithConfig("SystemDS-config-exact.xml", "public");
 	}
 
 	@Test

@@ -20,7 +20,7 @@ from typing import Any
 
 PROFILES = ("lan", "wan_light", "wan_mid")
 WORKLOADS = ("pca", "lm", "kmeans", "l2svm", "logreg", "als", "steplm")
-PLANNERS = ("FedAll", "Heuristic", "DP", "MinST")
+PLANNERS = ("FedAll", "Heuristic", "DP", "Exact")
 WORKERS = (1, 2, 3, 4)
 COMPILATION_PATTERN = re.compile(
     r"^Total compilation time:\s*([0-9]+(?:\.[0-9]+)?) sec\.$", re.MULTILINE

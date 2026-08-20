@@ -13,7 +13,7 @@ import org.junit.Test;
  * Source-level guard for the planning-only audit contract.
  *
  * <p>The Docker planning receipt is meaningful only when it can prove which planner
- * implementation ran, and the production MinST path exposes its physical objective
+ * implementation ran, and the production Exact path exposes its physical objective
  * and selected categorical alternatives. DP detail logging must also remain bounded
  * when no explicit hop filter is supplied; otherwise an audit itself can exhaust the
  * experiment host before a runtime plan is emitted.</p>
@@ -29,8 +29,8 @@ public class CampaignBG014PlanningTraceContractTest {
 		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
 	private static final Path DP_COST = MAIN.resolve(
 		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java");
-	private static final Path MINST = MAIN.resolve(
-		"fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java");
+	private static final Path EXACT = MAIN.resolve(
+		"fedplanner/fedCostBased/fedExact/FederatedPlanExact.java");
 	private static final Path FEDALL = MAIN.resolve(
 		"fedplanner/fedAll/FederatedPlannerFedAll.java");
 	private static final Path HEURISTIC = MAIN.resolve(
@@ -52,17 +52,17 @@ public class CampaignBG014PlanningTraceContractTest {
 	}
 
 	@Test
-	public void productionMinStPhysicalPathIsAuditable() throws Exception {
-		String source = Files.readString(MINST);
-		int selection = source.indexOf("MinStExactPhysicalSelection.create");
+	public void productionExactPhysicalPathIsAuditable() throws Exception {
+		String source = Files.readString(EXACT);
+		int selection = source.indexOf("ExactPhysicalSelection.create");
 		int trace = source.indexOf("tracePhysicalSelection");
-		int projection = source.indexOf("MinStExactPhysicalPlacementProjector.project");
-		assertTrue("MinST trace must observe the production physical selection before projection",
+		int projection = source.indexOf("ExactPhysicalPlacementProjector.project");
+		assertTrue("Exact trace must observe the production physical selection before projection",
 			selection >= 0 && trace > selection && projection > trace);
-		for(String stage : new String[] {"MinST-PhysicalOptimize", "MinST-PhysicalSelect",
-			"MinST-PhysicalAlternative", "MinST-PhysicalComplete"})
-			assertTrue("missing production MinST stage " + stage, source.contains("\"" + stage + "\""));
-		assertTrue("MinST trace must expose fixed-others alternative deltas",
+		for(String stage : new String[] {"Exact-PhysicalOptimize", "Exact-PhysicalSelect",
+			"Exact-PhysicalAlternative", "Exact-PhysicalComplete"})
+			assertTrue("missing production Exact stage " + stage, source.contains("\"" + stage + "\""));
+		assertTrue("Exact trace must expose fixed-others alternative deltas",
 			source.contains("fixedOthersDelta"));
 	}
 

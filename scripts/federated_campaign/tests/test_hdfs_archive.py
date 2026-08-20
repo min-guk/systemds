@@ -160,7 +160,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			path.parent.mkdir(parents=True, exist_ok=True)
 			path.write_bytes(contents)
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		return {
 			"jar": self.root / "systemds.jar",
@@ -170,7 +170,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"dml": self.root / "workload.dml",
 			"dataset_root": self.root / "data",
 			"worker_mapping": ("worker-1:8001",),
-			"planner_order": ("DP", "FedAll", "Heuristic", "MinST"),
+			"planner_order": ("DP", "FedAll", "Heuristic", "Exact"),
 			"seed": 19,
 			"warmup_runs": 1,
 			"measured_warm_runs": 5,
@@ -489,7 +489,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		lease = self._begin_raw(facade,
 			kind="performance", cell="resource-cell", manifest_hash="manifest-a",
 			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1, period=1,
-			order="DP>FedAll>Heuristic>MinST",
+			order="DP>FedAll>Heuristic>Exact",
 		)
 		cold = self._phase("resource-cold", "docker_e2e", 2.5)
 		warm = self._phase("resource-warm", "systemds_total_execution_time", 1.25)
@@ -662,7 +662,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		manifest = self.ledger.validate_committed(committed)
 		row = {
 			"pilot_class": "cheap", "workload": "kmeans", "planner": "DP", "workers": 1, "profile": "lan",
-			"cell": lease.key.cell, "pilot_repeat": 1, "period": 1, "order": "DP>FedAll>Heuristic>MinST",
+			"cell": lease.key.cell, "pilot_repeat": 1, "period": 1, "order": "DP>FedAll>Heuristic>Exact",
 			"lifecycle": {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0},
 			"identity": lease.key.as_dict(), "evidence_status": "committed",
 			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
@@ -807,7 +807,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				facade.begin(
 					kind=kind, cell=candidate, manifest_hash="a" * 64,
 					invocation_manifest=invocation, lifecycle_replicate=1,
-					period=1, order="DP>FedAll>Heuristic>MinST",
+					period=1, order="DP>FedAll>Heuristic>Exact",
 				)
 		with self.assertRaisesRegex(ArchiveContractError, "completion schema"):
 			facade.begin_pilot(
@@ -841,7 +841,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				pilot_selection_receipt={}, pilot_resource_reservation={},
 				final_campaign_manifest=forged_final,
 				cell="workers=1|planner=DP|workload=kmeans|profile=lan",
-				lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+				lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 			)
 		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
 		self.assertFalse(hasattr(facade, "_allocate_attempt"))
@@ -987,7 +987,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		facade = CampaignHarnessAdapter(self.ledger, adapter)
 		lease = self._begin_raw(facade,
 			kind="performance", cell="cell-p", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
-			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 		)
 		failed = facade.publish_failure(lease, self._failure("performance-failure"))
 		facade.archive(failed)

@@ -119,7 +119,7 @@ public final class PlacementCostSemantics {
 	}
 
 	/**
-	 * Occurrence-exact local operation cost shared by DP and MinST.
+	 * Occurrence-exact local operation cost shared by DP and Exact.
 	 *
 	 * <p>The ordinary HOP cost remains authoritative.  The only supplemental term
 	 * modeled here is a runtime WDivMM kernel that the dynamic algebraic rewrite can

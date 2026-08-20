@@ -6,7 +6,7 @@
 - TRead/TWrite는 **`<CP,LOUT>` 또는 `<FED,FOUT>`만 허용**하며, 이를 위반해야 한다면 **오라클 규칙 또는 런타임 지원**을 수정한다.
 - 런타임 제약은 “입력 federated 여부” 뿐 아니라 “연산/입력 형태별 출력 제약(항상 local로만 떨어지는 FED 연산 등)”까지 포함해 플래너가 모델링한다. (예: vector×federated-MM은 FED로 계산해도 출력은 LOUT만 가능)
 - 런타임은 플래너가 만든 계획을 그대로 실행하며, fallback이나 암묵적 보정은 허용하지 않는다.
-- CP→FOUT/FED→LOUT→FOUT 등 업로드/재배치는 플래너가 가능성을 검증한 경우에만 삽입하고, DP/MinST 등 비용 기반 플래너는 비용을 최적화 전에 반영한다.
+- CP→FOUT/FED→LOUT→FOUT 등 업로드/재배치는 플래너가 가능성을 검증한 경우에만 삽입하고, DP/Exact 등 비용 기반 플래너는 비용을 최적화 전에 반영한다.
 - 플래너는 런타임 제약을 반영하되, 필요 이상으로 보수적으로 축소하지 않는다.
 - FED→LOUT만 지원되는 연산이 상위에서 FOUT을 요구하는 경우에도, 플래너가 사전에 LOUT→FOUT 재배치 가능성과 비용을 평가해 계획에 반영한다.
 - (개선 방향) 앵커는 “살아있는 변수”가 아니라 “placement 메타데이터(FederationMap의 worker/range/FType)”로 취급해, `rmvar`로 앵커 변수가 제거돼도 계획 실행에 필요한 placement를 잃지 않도록 한다(예: anchorKey 기반 registry/명시적 인코딩).
@@ -45,7 +45,7 @@
 - 테스트 통과 후 실험/검증은 **run_LAN_docker.sh만** 사용해 성공할 때까지 반복한다.
 - 물리 호스트 실행 스크립트 **run_LAN.sh 사용 및 결과의 실험 근거 채택을 금지**한다. 모든 성능 비교는 동일 Docker 조건에서 수행한다.
 - 모든 workload에서 **모든 플래너**를 한 번에 맞추지 않는다.
-  - 순서: **DP → FedAll → Heuristic → MinST**
+  - 순서: **DP → FedAll → Heuristic → Exact**
 - FedAll/Heuristic에서 rewire 문제가 반복되면 **DP의 rewire 구조를 참고**해 수정한다.
 - 가장 중요한 원칙: **runtime fallback 금지**.  
   - planner가 정확히 계획하고, runtime은 그 계획을 그대로 실행한다.  

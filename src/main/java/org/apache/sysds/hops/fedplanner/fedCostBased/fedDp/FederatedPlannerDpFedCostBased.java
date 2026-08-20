@@ -616,7 +616,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	 * Complete DP selection authority captured before the single transactional emission.
 	 *
 	 * <p>The separation is intentional: cross-planner certificates must compare DP and
-	 * MinST on the same immutable {@link PlacementAnalysis}.  Reconstructing a MinST
+	 * Exact on the same immutable {@link PlacementAnalysis}.  Reconstructing an Exact
 	 * cost surface after DP has rewired the HOP DAG is not a valid comparison basis.</p>
 	 */
 	public record DpPreEmissionSelection(PlacementAnalysis analysis,

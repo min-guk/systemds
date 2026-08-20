@@ -1316,7 +1316,7 @@ public final class FederatedRefedPolicy {
 		ExecType oldExec = hop.getForcedExecType();
 		FederatedOutput oldOut = hop.getFederatedOutput();
 		try {
-			// Selected MinST U obligations are defined over a CP/LOUT child that
+			// Selected upload obligations are defined over a CP/LOUT child that
 			// needs one additional federated representation for grouped FED
 			// consumers.  Register the runtime rewrite from that selected state,
 			// even if earlier policy phases temporarily marked the same hop as FED
@@ -2649,7 +2649,7 @@ public final class FederatedRefedPolicy {
 	 * Planner-side federated input feasibility check based purely on inferred/planned FTypes.
 	 *
 	 * <p>This variant is intended for planners that do not set {@code ExecType} / {@code FederatedOutput}
-	 * markers on hops during candidate enumeration (e.g., DP/MinST). In such cases, the {@code fTypeMap}
+	 * markers on hops during candidate enumeration (e.g., DP/Exact). In such cases, the {@code fTypeMap}
 	 * is treated as the source of truth for whether an input is planned to be federated.</p>
 	 */
 	public static boolean canSatisfyFederatedInputsFromFTypes(Hop parent, java.util.Map<Long, FType> fTypeMap) {
@@ -5516,7 +5516,7 @@ public final class FederatedRefedPolicy {
 		if (isFederatedInitDataOp(hop))
 			return true;
 		if (fTypeMap != null && fTypeMap.get(hop.getHopID()) != null) {
-			// Planned FOUT outputs (from DP/MinST enumeration) should be treated as federated
+			// Planned FOUT outputs (from DP/Exact enumeration) should be treated as federated
 			// inputs for downstream feasibility checks. Do NOT do this for transient reads,
 			// because TR locals may carry FType hints without a runtime FederationMap.
 			// Also require that the hop is planned to produce a federated output; local outputs

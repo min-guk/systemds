@@ -88,7 +88,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
-import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
 import org.apache.sysds.hops.ipa.InterProceduralAnalysis;
@@ -416,7 +416,7 @@ public class DMLTranslator
 			result = receipt.normalizedResult();
 			emissionReceipt = receipt.emissionReceipt();
 		}
-		else if(plannerReceipt instanceof MinStPlacementInput receipt) {
+		else if(plannerReceipt instanceof ExactPlacementInput receipt) {
 			result = receipt.normalizedResult();
 			emissionReceipt = receipt.emissionReceipt();
 		}

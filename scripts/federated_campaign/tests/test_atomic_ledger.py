@@ -52,7 +52,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			ledger.begin_attempt(
 				kind="performance", cell="forged-pilot", manifest_hash="a" * 64,
 				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
-				period=1, order="DP>FedAll>Heuristic>MinST",
+				period=1, order="DP>FedAll>Heuristic>Exact",
 			)
 		self.assertFalse(any((self.root / "bypass-ledger" / "intents").rglob("*.json")))
 		with self.assertRaisesRegex(LedgerContractError, "authority"):
@@ -178,7 +178,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		lease = ledger._begin_attempt_from_adapter(
 			_allocation_authority=_TEST_ALLOCATION_AUTHORITY,
 			kind="performance", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
-			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 		)
 		cold = self._phase("diagnostic-cold", "docker_e2e", 2.5)
 		warm = self._phase("diagnostic-warm", "systemds_total_execution_time", 1.25)
@@ -205,7 +205,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		bad_lease = bad_ledger._begin_attempt_from_adapter(
 			_allocation_authority=_TEST_ALLOCATION_AUTHORITY,
 			kind="performance", cell="cell-b", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
-			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 		)
 		bad_shared = self._shared_manifest(bad_lease.key, cold, warm, "bad-diagnostic-shared.json", 4.5)
 		bad_value = json.loads(bad_shared.read_text(encoding="utf-8"))
@@ -217,7 +217,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		wall_lease = wall_ledger._begin_attempt_from_adapter(
 			_allocation_authority=_TEST_ALLOCATION_AUTHORITY,
 			kind="performance", cell="cell-wall", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
-			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 		)
 		wall_shared = self._shared_manifest(wall_lease.key, cold, warm, "bad-wall-shared.json", 3.0)
 		with self.assertRaisesRegex(LedgerContractError, "lifecycle_wall_seconds"):
@@ -226,7 +226,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		restart_lease = restart_ledger._begin_attempt_from_adapter(
 			_allocation_authority=_TEST_ALLOCATION_AUTHORITY,
 			kind="performance", cell="cell-c", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
-			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 		)
 		restart_shared = self._shared_manifest(restart_lease.key, cold, warm, "restart-diagnostic-shared.json", 4.5)
 		restart_value = json.loads(restart_shared.read_text(encoding="utf-8"))
@@ -445,7 +445,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		performance_lease = performance_ledger._begin_attempt_from_adapter(
 			_allocation_authority=_TEST_ALLOCATION_AUTHORITY,
 			kind="performance", cell="cell-p", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
-			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>Exact",
 		)
 		cold = self._phase("resource-performance-cold", "docker_e2e", 2.0)
 		warm = self._phase("resource-performance-warm", "systemds_total_execution_time", 1.0)

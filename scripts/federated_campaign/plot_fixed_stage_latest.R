@@ -22,11 +22,11 @@ svg_path <- args[[10]]
 data <- read.csv(csv_path, stringsAsFactors = FALSE)
 profiles <- c("lan", "wan_light", "wan_mid")
 profile_labels <- c(lan = "LAN", wan_light = "WAN-Light", wan_mid = "WAN-Mid")
-planners <- c("FedAll", "Heuristic", "DP", "MinST")
-legend_labels <- c(FedAll = "ALL", Heuristic = "Heuristic", DP = "DP", MinST = "MinST")
-colors <- c(FedAll = "#c44e52", Heuristic = "#55a868", DP = "#e17c05", MinST = "#4c72b0")
-symbols <- c(FedAll = 0, Heuristic = 1, DP = 5, MinST = 2)
-label_positions <- c(FedAll = 3, Heuristic = 1, DP = 3, MinST = 1)
+planners <- c("FedAll", "Heuristic", "DP", "Exact")
+legend_labels <- c(FedAll = "ALL", Heuristic = "Heuristic", DP = "DP", Exact = "Exact")
+colors <- c(FedAll = "#c44e52", Heuristic = "#55a868", DP = "#e17c05", Exact = "#4c72b0")
+symbols <- c(FedAll = 0, Heuristic = 1, DP = 5, Exact = 2)
+label_positions <- c(FedAll = 3, Heuristic = 1, DP = 3, Exact = 1)
 
 if (!(metric %in% names(data))) {
   stop(paste("missing metric column:", metric))

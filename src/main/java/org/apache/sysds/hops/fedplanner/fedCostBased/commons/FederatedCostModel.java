@@ -157,7 +157,7 @@ public final class FederatedCostModel {
 	private static final int UNKNOWN_DIM_DESCENT_MAX_DEPTH = 6;
 	// Fallback transfer payload used when output dimensions remain unknown and no
 	// reliable descendant size estimate is available. This value directly impacts
-	// DP/MinST decisions that trade off local materialization vs. federated plans
+	// DP/Exact decisions that trade off local materialization vs. federated plans
 	// in early planning phases (before recompile resolves dimensions).
 	//
 	// In practice (notably in sliceline), under-estimation here can cause DP to
@@ -169,13 +169,13 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_FLOPS_PER_SEC = 2d * 1024 * 1024 * 1024;
 	// AggBinaryOp (notably ba+* / matrix multiplication) executes on optimized BLAS kernels.
 	// The generic 2 GiFLOPs/s fallback dramatically over-prices CP execution for these ops in
-	// multi-worker planning and can bias MinST/DP toward pathological FED/FOUT chains.
+	// multi-worker planning and can bias Exact/DP toward pathological FED/FOUT chains.
 	// Keep the calibration shared so both planners see the same correction.
 	private static final double DEFAULT_AGGBINARY_FLOPS_PER_SEC = 32d * 1000 * 1000 * 1000;
 	// DML FunctionOp placeholders summarize whole callees. A pure output-size shell cost
 	// under-estimates the work because the placeholder at least has to account for one
 	// logical pass over distinct inputs plus result production. Keep this floor small and
-	// shared so both DP and MinST see the same correction without planner-specific hacks.
+	// shared so both DP and Exact see the same correction without planner-specific hacks.
 	private static final double MIN_DML_FUNCTION_OP_COMPUTE_FLOPS_PER_CELL = 1.0;
 	// In the single-worker case, a federated function placeholder can still pay
 	// additional call-boundary control cost when we keep the callee federated.
@@ -293,7 +293,7 @@ public final class FederatedCostModel {
 	}
 
 	/**
-	 * FED self-cost scaling predicate shared by DP and MinST.
+	 * FED self-cost scaling predicate shared by DP and Exact.
 	 *
 	 * <p>The generic static model divides a hop's self compute cost by worker count
 	 * for FED execution.  That is reasonable for arithmetic-heavy, partition-preserving
@@ -367,7 +367,7 @@ public final class FederatedCostModel {
 	 * not price these native FED/FOUT candidates as identical to a CP aggregate
 	 * over a local full-input materialization.</p>
 	 *
-	 * <p>This helper does not close any candidate; it only gives DP and MinST a
+	 * <p>This helper does not close any candidate; it only gives DP and Exact a
 	 * shared reduced-output cost for the runtime-supported native FED output path.
 	 * Scalar aggregates are excluded because runtime cannot represent scalar
 	 * outputs as federated variables.</p>
@@ -487,7 +487,7 @@ public final class FederatedCostModel {
 	 * can keep cheap native {@code fed_rightIndex} while WAN/high-control cases can
 	 * still choose CP/LOUT by cost.</p>
 	 *
-	 * <p>This helper keeps all candidates open and is shared by DP and MinST. It is
+	 * <p>This helper keeps all candidates open and is shared by DP and Exact. It is
 	 * based only on operation semantics and static size estimates, not workload,
 	 * worker-count, row-id, or hop-id rules.</p>
 	 */
@@ -514,7 +514,7 @@ public final class FederatedCostModel {
 	 * arithmetic/memory term is bounded by the selected slice/output payload; the
 	 * one-time FOUT-to-local materialization remains modeled by the planner's
 	 * boundary/result edges.  This mirrors the native FED indexing helper without
-	 * closing any FED candidate, so DP and MinST compare the same staged operation
+	 * closing any FED candidate, so DP and Exact compare the same staged operation
 	 * semantics on both sides.</p>
 	 */
 	public static double computeLocalIndexingCostWithFallback(Hop hop, double defaultLocalCost) {
@@ -1982,7 +1982,7 @@ public final class FederatedCostModel {
 	 * <p>The runtime contract is FED/FOUT -&gt; LOUT -&gt; FED/FOUT: collect the
 	 * source placement at the coordinator and then upload the materialized value
 	 * using the planner-selected target layout. Treating this as upload-only makes
-	 * cross-anchor relocation artificially cheap and can invert DP/MinST choices.</p>
+	 * cross-anchor relocation artificially cheap and can invert DP/Exact choices.</p>
 	 */
 	public static double computeRefedNetworkCost(double memSize, FType sourceFType,
 		FType targetFType, int numWorkers) {

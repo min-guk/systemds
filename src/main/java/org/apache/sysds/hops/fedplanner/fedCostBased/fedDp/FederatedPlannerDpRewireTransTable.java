@@ -1200,7 +1200,7 @@ public class FederatedPlannerDpRewireTransTable {
 				// If/else bodies are mutually exclusive. Keeping networkWeight unscaled here causes
 				// transient-write/read forwarding costs for branch-local variables (e.g., steplm's X_global)
 				// to accumulate as if both branches executed together, which over-penalizes FED/FOUT
-				// alternatives and diverges from MinST parity.
+				// alternatives and diverges from Exact parity.
 
 				for (StatementBlock innerIsb : istmt.getIfBody())
 					newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
@@ -1257,7 +1257,7 @@ public class FederatedPlannerDpRewireTransTable {
 				// fall back to DEFAULT_LOOP_WEIGHT and under-estimate repeated forwarding costs.
 				//
 				// Best-effort: resolve scalar loop bounds through trans tables and simple scalar
-				// expressions. This is common to DP/MinST and improves planning accuracy without
+				// expressions. This is common to DP/Exact and improves planning accuracy without
 				// closing candidates ad-hoc.
 				Double dfromConst = RewireConstants.tryEvaluateScalarConstant(from, newOuterTransTableList);
 				Double dtoConst = RewireConstants.tryEvaluateScalarConstant(to, newOuterTransTableList);

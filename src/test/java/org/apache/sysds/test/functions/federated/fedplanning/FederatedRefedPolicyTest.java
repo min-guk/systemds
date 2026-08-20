@@ -560,7 +560,7 @@ public class FederatedRefedPolicyTest {
 
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		fTypeMap.put(anchor.getHopID(), FType.ROW);
-		// Mimic MinST/DP planned CP->FOUT choice where the upload shape is BROADCAST.
+		// Mimic Exact/DP planned CP->FOUT choice where the upload shape is BROADCAST.
 		fTypeMap.put(target.getHopID(), FType.BROADCAST);
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);

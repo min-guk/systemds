@@ -93,7 +93,7 @@ class DeterminismContractTest(unittest.TestCase):
 			dml=self.root / "workload.dml",
 			dataset_root=self.root / "data",
 			worker_mapping=("worker-0:8001", "worker-1:8002"),
-			planner_order=("DP", "FedAll", "Heuristic", "MinST"),
+			planner_order=("DP", "FedAll", "Heuristic", "Exact"),
 			seed=seed,
 			warmup_runs=1,
 			measured_warm_runs=5,
@@ -136,18 +136,18 @@ class DeterminismContractTest(unittest.TestCase):
 		self.assertEqual("reused_from_cold", lifecycle["warm_worker_containers"])
 
 	def test_schedule_is_reproducible_for_same_seed(self):
-		first = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "MinST"), 8, 19)
-		second = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "MinST"), 8, 19)
+		first = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "Exact"), 8, 19)
+		second = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "Exact"), 8, 19)
 		self.assertEqual(first, second)
 
 	def test_schedule_places_each_planner_in_each_period_equally(self):
-		schedule = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "MinST"), 8, 19)
+		schedule = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "Exact"), 8, 19)
 		for period in range(4):
 			counts = {planner: sum(row[period] == planner for row in schedule) for planner in schedule[0]}
-			self.assertEqual({"DP": 2, "FedAll": 2, "Heuristic": 2, "MinST": 2}, counts)
+			self.assertEqual({"DP": 2, "FedAll": 2, "Heuristic": 2, "Exact": 2}, counts)
 
 	def test_schedule_balances_each_directed_carryover_pair(self):
-		schedule = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "MinST"), 8, 19)
+		schedule = build_counterbalanced_schedule(("DP", "FedAll", "Heuristic", "Exact"), 8, 19)
 		pairs = {(left, right): 0 for left in schedule[0] for right in schedule[0] if left != right}
 		for row in schedule:
 			for left, right in zip(row, row[1:]):
@@ -158,7 +158,7 @@ class DeterminismContractTest(unittest.TestCase):
 		for repeats in (3, 5, 7):
 			with self.subTest(repeats=repeats):
 				schedule = build_block_counterbalanced_schedule(
-					("DP", "FedAll", "Heuristic", "MinST"), repeats, ("b0", "b1", "b2", "b3"), 19
+					("DP", "FedAll", "Heuristic", "Exact"), repeats, ("b0", "b1", "b2", "b3"), 19
 				)
 				for period_counts in _dict(schedule["aggregate_period_counts"]).values():
 					self.assertEqual({repeats}, set(_dict(period_counts).values()))
@@ -167,19 +167,19 @@ class DeterminismContractTest(unittest.TestCase):
 		for repeats in (3, 5, 7):
 			with self.subTest(repeats=repeats):
 				schedule = build_block_counterbalanced_schedule(
-					("DP", "FedAll", "Heuristic", "MinST"), repeats, ("b0", "b1", "b2", "b3"), 19
+					("DP", "FedAll", "Heuristic", "Exact"), repeats, ("b0", "b1", "b2", "b3"), 19
 				)
 				self.assertEqual({repeats}, set(_dict(schedule["aggregate_directed_carryover_counts"]).values()))
 
 	def test_block_rotation_records_unbalanced_within_cell_remainder_honestly(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		self.assertTrue(all(_dict(block)["within_cell_fully_balanced"] is False for block in _list(schedule["blocks"])))
 
 	def test_frozen_manifest_persists_aggregate_balanced_block_schedule(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		manifest = self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 		self.assertEqual(schedule, manifest["block_schedule"])
@@ -187,19 +187,19 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_frozen_manifest_rejects_forged_aggregate_balance_claim(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		block = _dict(_list(schedule["blocks"])[0])
 		run = _dict(_list(block["runs"])[0])
 		period = _dict(_list(run["periods"])[0])
-		period["planner"] = "MinST"
+		period["planner"] = "Exact"
 		schedule["aggregate_fully_balanced"] = True
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
 			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
 	def test_frozen_manifest_rejects_schedule_for_different_planner_order(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
 			build_frozen_manifest(
@@ -210,7 +210,7 @@ class DeterminismContractTest(unittest.TestCase):
 				dml=self.root / "workload.dml",
 				dataset_root=self.root / "data",
 				worker_mapping=("worker-1:8001", "worker-2:8002"),
-				planner_order=("FedAll", "DP", "Heuristic", "MinST"),
+				planner_order=("FedAll", "DP", "Heuristic", "Exact"),
 				seed=19,
 				warmup_runs=1,
 				measured_warm_runs=5,
@@ -220,7 +220,7 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_frozen_manifest_rejects_forged_aggregate_period_counts(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		period_one = _dict(_dict(schedule["aggregate_period_counts"])["1"])
 		planner = next(iter(period_one))
@@ -230,7 +230,7 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_frozen_manifest_rejects_forged_directed_carryover_counts(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		carryover = _dict(schedule["aggregate_directed_carryover_counts"])
 		pair = next(iter(carryover))
@@ -240,7 +240,7 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_frozen_manifest_rejects_forged_block_rotation(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		_dict(_list(schedule["blocks"])[0])["rotation_start_row"] = 3
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
@@ -248,7 +248,7 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_frozen_manifest_rejects_nontext_block_identity(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
 		_dict(_list(schedule["blocks"])[0])["block"] = 7
 		with self.assertRaisesRegex(CampaignContractError, "block"):
@@ -257,7 +257,7 @@ class DeterminismContractTest(unittest.TestCase):
 	def test_frozen_manifest_rejects_schedule_missing_a_complete_williams_cycle(self):
 		expected_blocks = tuple(f"b{index}" for index in range(8))
 		truncated_balanced_schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 5, expected_blocks[:4], 19
+			("DP", "FedAll", "Heuristic", "Exact"), 5, expected_blocks[:4], 19
 		)
 		self.assertTrue(truncated_balanced_schedule["aggregate_fully_balanced"])
 		with self.assertRaisesRegex(CampaignContractError, "block order"):
@@ -269,7 +269,7 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_block_rotation_persists_block_period_and_order(self):
 		schedule = build_block_counterbalanced_schedule(
-			("DP", "FedAll", "Heuristic", "MinST"), 3, tuple(f"workload=w{i}|workers=1|network=lan" for i in range(4)), 19
+			("DP", "FedAll", "Heuristic", "Exact"), 3, tuple(f"workload=w{i}|workers=1|network=lan" for i in range(4)), 19
 		)
 		first_block = _dict(_list(schedule["blocks"])[0])
 		first = _dict(_list(first_block["runs"])[0])
@@ -309,7 +309,7 @@ class DeterminismContractTest(unittest.TestCase):
 		self.assertEqual(84, len(blocks))
 		self.assertEqual(336, len(cells))
 		self.assertEqual("workers=1|workload=kmeans|profile=lan", blocks[0])
-		self.assertEqual("workers=4|planner=MinST|workload=steplm|profile=wan_mid", cells[-1])
+		self.assertEqual("workers=4|planner=Exact|workload=steplm|profile=wan_mid", cells[-1])
 		for planner_index, planner in enumerate(CAMPAIGN_PLANNERS):
 			planner_slice = cells[planner_index * 84:(planner_index + 1) * 84]
 			self.assertEqual(84, len(planner_slice))
@@ -474,7 +474,7 @@ class DeterminismContractTest(unittest.TestCase):
 			{"planner": "DP", "start": 0, "stop": 84},
 			{"planner": "FedAll", "start": 84, "stop": 168},
 			{"planner": "Heuristic", "start": 168, "stop": 252},
-			{"planner": "MinST", "start": 252, "stop": 336},
+			{"planner": "Exact", "start": 252, "stop": 336},
 		], dimensions["planner_major_barriers"])
 		pilot = _dict(prereg["pilot_preregistration"])
 		self.assertEqual((120, 5, 19), (pilot["row_count"], pilot["repeats"], pilot["schedule_seed"]))

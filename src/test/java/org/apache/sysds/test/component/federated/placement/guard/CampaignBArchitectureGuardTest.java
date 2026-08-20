@@ -17,9 +17,9 @@ public class CampaignBArchitectureGuardTest {
 		"FED_ALL", "org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll",
 		"HEURISTIC", "org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic",
 		"DP", "org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased",
-		"MIN_ST", "org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut");
+		"EXACT", "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact");
 	private static final Map<String,String> ADAPTERS = Map.of("FED_ALL", "FedAllPlacementAdapter",
-		"HEURISTIC", "HeuristicPlacementAdapter", "DP", "DpPlacementAdapter", "MIN_ST", "MinStPlacementAdapter");
+		"HEURISTIC", "HeuristicPlacementAdapter", "DP", "DpPlacementAdapter", "EXACT", "ExactPlacementAdapter");
 
 	@Test public void allFourOwnershipClosuresHaveOneSharedAnalysisBoundaryAndNoHiddenUniverse() throws Exception {
 		Map<String,CampaignBPlannerOwnershipClosure.Unit> index = CampaignBPlannerOwnershipClosure.index(
@@ -62,10 +62,10 @@ public class CampaignBArchitectureGuardTest {
 
 	@Test public void scannerIgnoresLiteralsButFindsExecutableMultilineAndNestedTokens() {
 		String source = "// OracleFacade\nString x=\"RulesCore\"; String t=\"\"\"fallback\"\"\";"
-			+ " class Outer { class Inner { void x(){ new\\n FederatedPlanMinSTGraph(); } } }";
+			+ " class Outer { class Inner { void x(){ new\\n FederatedPlanExactGraph(); } } }";
 		List<String> ids = JavaSourceTokenScanner.identifiers(source);
 		Assert.assertFalse(ids.contains("OracleFacade")); Assert.assertFalse(ids.contains("RulesCore"));
-		Assert.assertFalse(ids.contains("fallback")); Assert.assertTrue(ids.contains("FederatedPlanMinSTGraph"));
+		Assert.assertFalse(ids.contains("fallback")); Assert.assertTrue(ids.contains("FederatedPlanExactGraph"));
 	}
 
 	@Test public void runtimeAuditObservationBoundaryExceptionIsExactAndCannotHidePlannerEscapeHatches() {

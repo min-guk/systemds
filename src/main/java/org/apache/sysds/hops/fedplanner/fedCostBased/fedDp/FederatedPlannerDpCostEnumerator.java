@@ -1047,14 +1047,14 @@ public class FederatedPlannerDpCostEnumerator {
 						FederatedCostModel.getEffectiveOutputMemEstimate(explicitFunctionOutputSourceHop))
 				: FederatedCostModel.getEffectiveUploadMemEstimate(hop);
 		double cpSelfCost = baseSelfCost;
-		// Align with MinST: FED execution has a per-op coordination overhead that should
+		// Align with Exact: FED execution has a per-op coordination overhead that should
 		// be modeled even when compute cost scales down with workers.
 		//
 		// IMPORTANT: In DP we represent unrolled-loop iteration counts via
 		// HopCommon.multiplicity (see FederatedPlannerDpRewireTransTable). This overhead
 		// must therefore scale with multiplicity as well.
 		//
-		// DP/MinST parity: use the shared control-only helper. The helper already applies
+		// DP/Exact parity: use the shared control-only helper. The helper already applies
 		// worker fanout semantics, so do not multiply by numWorkers again here.
 		double fedExecWeight = hopNetworkWeight * hopCommon.getMultiplicity();
 		double fedOverhead = (hop instanceof DataOp)
@@ -1322,10 +1322,10 @@ public class FederatedPlannerDpCostEnumerator {
 					if (isTransientReadHop && !hasConcreteTransientReadSource) {
 						canSatisfyFedInputs = false;
 					}
-				// DP must not constrain its candidate space to match MinST's min-cut state encoding.
-				// If MinST cannot encode a combination (e.g., due to non-submodular costs), it should
-				// mark itself unsafe and fall back to DP. DP should remain cost-based over all
-				// runtime-supported combinations.
+				// DP must enumerate every runtime-supported alternative admitted by the shared
+				// placement analysis. Exact consumes the same feasible domain but may reject an
+				// instance when categorical factor limits are exceeded; that tractability policy
+				// must never shrink DP's candidate space.
 					if (candidateDecisionReceipt.capabilityFact().nativeExec() == ExecType.FED
 						&& candidateDecisionReceipt.capabilityFact().nativeOutput() == FederatedOutput.FOUT) {
 						sawOracleFedFout = true;

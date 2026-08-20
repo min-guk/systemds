@@ -528,7 +528,7 @@ public class DataOp extends Hop {
 			// Best-effort: infer federated NNZ from local metadata files when address literals
 			// include file paths accessible from the coordinator.
 			//
-			// Motivation: DP/MinST cost-based federated planners rely on Hop memory estimates.
+			// Motivation: DP/Exact cost-based federated planners rely on Hop memory estimates.
 			// If federated inputs have unknown nnz, the compiler falls back to default sparsity
 			// assumptions, which can drastically under-estimate network/compute costs and lead
 			// to plans that are slower than heuristic/fedall (notably in kmeans/lm).

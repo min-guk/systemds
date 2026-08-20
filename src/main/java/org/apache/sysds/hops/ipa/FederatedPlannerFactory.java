@@ -24,7 +24,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
 
 public final class FederatedPlannerFactory {
@@ -46,8 +46,8 @@ public final class FederatedPlannerFactory {
 				return new FederatedPlannerFedHeuristic();
 			case COMPILE_COST_BASED:
 				return new FederatedPlannerDpFedCostBased();
-			case COMPILE_MIN_ST_CUT:
-				return new FederatedPlanMinSTCut();
+			case COMPILE_EXACT:
+				return new FederatedPlanExact();
 		}
 		throw new IllegalStateException("Unreachable planner value");
 	}

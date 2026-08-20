@@ -45,7 +45,7 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java"),
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpRewireTransTable.java"),
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java"),
-		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java"));
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/FederatedPlanExact.java"));
 
 	@Rule
 	public final TemporaryFolder temporaryFolder = new TemporaryFolder();

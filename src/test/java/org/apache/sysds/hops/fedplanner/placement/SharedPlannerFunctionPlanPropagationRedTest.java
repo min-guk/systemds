@@ -196,7 +196,7 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
 			.findFirst().orElseThrow();
 
-		NormalizedPlannerResult normalized = NormalizedPlannerResults.create(analysis, "MinST-boundary-regression",
+		NormalizedPlannerResult normalized = NormalizedPlannerResults.create(analysis, "Exact-boundary-regression",
 			Map.of(argument.key(), federatedArgument, call.key(), localCallPlaceholder), "fixture");
 		Assert.assertTrue("A DML FunctionOp is a logical forwarding boundary, not a local matrix consumer",
 			normalized.selectedLocalMaterializations().isEmpty());

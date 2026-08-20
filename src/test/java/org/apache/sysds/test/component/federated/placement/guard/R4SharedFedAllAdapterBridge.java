@@ -18,7 +18,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 
 /** Lane-local reflection bridge. It validates raw mutability before copying any result surface. */
 final class R4SharedFedAllAdapterBridge {
-	enum Planner { FED_ALL, HEURISTIC, DP, MIN_ST }
+	enum Planner { FED_ALL, HEURISTIC, DP, EXACT }
 	record Handle(Planner planner, Object adapter, Method select) { }
 	static List<Planner> analysisOnlyPlanners() {
 		return List.of(Planner.FED_ALL, Planner.HEURISTIC);
@@ -36,7 +36,7 @@ final class R4SharedFedAllAdapterBridge {
 	static Handle open(Planner planner) {
 		String simple = switch(planner) {
 			case FED_ALL -> "FedAllPlacementAdapter"; case HEURISTIC -> "HeuristicPlacementAdapter";
-			case DP -> "DpPlacementAdapter"; case MIN_ST -> "MinStPlacementAdapter";
+			case DP -> "DpPlacementAdapter"; case EXACT -> "ExactPlacementAdapter";
 		};
 		String name = "org.apache.sysds.hops.fedplanner.placement.adapter." + simple;
 		try {

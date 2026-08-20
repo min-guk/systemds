@@ -35,7 +35,7 @@ class ResourceSnapshot:
 
 
 CAMPAIGN_WORKERS = (1, 2, 3, 4)
-CAMPAIGN_PLANNERS = ("DP", "FedAll", "Heuristic", "MinST")
+CAMPAIGN_PLANNERS = ("DP", "FedAll", "Heuristic", "Exact")
 CAMPAIGN_WORKLOADS = ("kmeans", "pca", "lm", "l2svm", "logreg", "als", "steplm")
 CAMPAIGN_PROFILES = ("lan", "wan_light", "wan_mid")
 COMPOSE_SURFACES = ("base", "campaign")

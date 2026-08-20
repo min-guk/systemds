@@ -280,13 +280,13 @@ public final class ExecPlacementPolicy {
 				// coordinator; only public release is disallowed. Keeping the CP/LOUT competitor
 				// open is important for cost-based planners because some private-aggregate hops
 				// (e.g., ALS masks, steplm rightIndex chains) can otherwise be forced into FED-only
-				// regimes even though a legal local/private plan exists. This mirrors MinST's
+				// regimes even though a legal local/private plan exists. This mirrors Exact's
 				// alternative-cap merge, which already compares the local/private competitor on
 				// the same workloads.
 				//
 				// Likewise, if a concrete FType is known and the hop can be materialized safely
 				// onto an existing federated anchor, keep CP->FOUT open as a common competitor
-				// for both DP and MinST. The planners' downstream safety checks still close the
+				// for both DP and Exact. The planners' downstream safety checks still close the
 				// candidate when no realizable anchor/materialization path exists, so this gate
 				// should model "materializable" rather than a narrow subset of oracle reasons.
 				decision.allowCP_LOUT = true;

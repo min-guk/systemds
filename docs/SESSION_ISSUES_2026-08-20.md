@@ -105,25 +105,55 @@
 - **의사결정 근거**: candidate space나 legality를 축소하지 않고, 결정과 무관한 graph
   topology만 사전색인하는 behavior-preserving 최적화다.
 
-## 4. Live optimizer is named MinST although it no longer implements min-s-t-cut
+## 4. Live optimizer was named MinST although it no longer implemented min-s-t-cut
 
-- **상태**: 진행중
-- **환경/조건**: `fedMinSTCut` production package, planner enum/factory/configuration,
+- **상태**: 해결
+- **환경/조건**: formerly `fedMinSTCut` production package, planner enum/factory/configuration,
   current categorical exact physical optimizer and obsolete legacy cut stack.
-- **관측 증상**: current factory entry `COMPILE_MIN_ST_CUT`가 실제로는
-  `MinStExactPhysicalOptimizer`/categorical solver를 실행한다. 동시에 old cut solver,
-  selector, variant-search classes가 남아 있어 논문·실험·코드에서 알고리즘 정체성이
-  혼동된다.
-- **원인 분석**: 초기 min-cut 구현 이후 exact optimizer를 같은 package와 public selector
-  이름 아래 교체했지만 live identifiers와 더 이상 호출되지 않는 cut implementation을
-  정리하지 않았다.
-- **해결 계획**: current physical exact optimizer와 공유 cost surface는 `Exact`로 rename해
-  보존하고, dependency graph상 live exact path에 포함되지 않는 old min-cut solver/selector/
-  projector/variant-search stack 및 전용 tests를 삭제한다. immutable runtime campaign stage는
-  수정하지 않는다.
-- **잔여 이슈**: live dependency closure를 확인한 뒤 별도 커밋으로 수행한다.
-- **잠재 회귀 위험**: mixed producer가 current physical cost surface와 legacy cut facts를 한
-  class에 포함한다. 단순 파일 삭제 대신 exact path를 먼저 분리하고 factory/config/tests로
-  검증해야 한다.
+- **관측 증상**: former factory entry `COMPILE_MIN_ST_CUT`가 실제로는 categorical variable
+  elimination 기반 physical optimizer를 실행했다. 동시에 호출되지 않는 cut solver,
+  selector, variant-search classes와 min-cut 전용 fixture가 남아 논문·실험·코드에서
+  알고리즘 정체성이 혼동됐다.
+- **원인 분석**: 초기 min-cut 구현 이후 exact physical optimizer를 같은 package와 public
+  selector 이름 아래 교체했지만, live identifiers와 더 이상 호출되지 않는 cut
+  implementation을 정리하지 않았다. 또한 현재 exact cost closure와 과거 cut facts가
+  하나의 대형 producer에 섞여 있었다.
+- **해결 요약**:
+  - 실행되는 categorical optimizer를 `fedExact` package의 `FederatedPlanExact`,
+    `ExactPhysicalModel`, `ExactPhysicalCostModel`, `ExactCategoricalSolver`로 분리·명명했다.
+  - planner enum/configuration을 `COMPILE_EXACT`/`compile_exact`로 바꾸고 factory,
+    translator, placement receipt/adapter, trace stage, campaign plot/ledger 명칭을 함께 갱신했다.
+  - old min-cut solver, selector, variant search, cut-fact/diagnostics/projector stack과 그 경로만
+    검증하던 tests 및 offline cut fixtures를 삭제했다.
+  - categorical selection과 무관한 two-node cut oracle, source/sink partition projection,
+    cut-named receipt fields, 항상 비어 있던 legacy obligation carrier도 제거했다.
+  - 현재 exact physical model의 categorical alternatives, hard factors, shared cost factors,
+    reusable transfer identities, occurrence/frequency model은 `ExactPhysicalCostModel`에
+    보존했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/*`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FTypes.java`
+  - `src/main/java/org/apache/sysds/hops/ipa/FederatedPlannerFactory.java`
+  - `src/main/java/org/apache/sysds/parser/DMLTranslator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/ExactPlacement{Adapter,Input}.java`
+  - `scripts/federated_campaign/*`
+  - `src/test/scripts/functions/privacy/fedplanning/SystemDS-config-exact.xml`
+- **검증**:
+  ```bash
+  mvn -q -Dspotless.check.skip=true -DskipTests test-compile
+  mvn -q -Dspotless.check.skip=true \
+    -Dtest='<fedExact package tests plus DP boundary, factory, ownership, trace, and placement guards>' test
+  python3 -m unittest discover -s scripts/federated_campaign/tests -p 'test_*.py'
+  ```
+  Java target suite는 29 classes/94 tests 모두 failure/error 없이 통과했고, campaign Python suite는
+  107 tests가 통과했다. live `src/main`, `src/test`, `scripts`에는 old planner token이나
+  old package/file path가 남지 않았다.
+- **잔여 이슈**: `compile_min_st_cut`를 직접 지정하던 외부 configuration은
+  `compile_exact`로 migration해야 한다. 의도적으로 compatibility alias를 두지 않아
+  obsolete algorithm name이 다시 실행 surface에 남지 않게 했다. 과거 실험 산출물과
+  historical documentation의 MinST label은 당시 provenance이므로 live code와 분리해 보존한다.
+- **잠재 회귀 위험**: categorical variable elimination은 induced width와 materialized factor
+  cell limit에 민감하다. `ExactPhysicalModelCertificateTest`의 brute-force oracle 및 production
+  limit tests로 최적성/tractability contract를 계속 검증한다.
 - **의사결정 근거**: 구현된 알고리즘을 Exact로 명명하고 사용되지 않는 min-cut residue만
   제거해 research abstraction과 executable code를 일치시킨다.

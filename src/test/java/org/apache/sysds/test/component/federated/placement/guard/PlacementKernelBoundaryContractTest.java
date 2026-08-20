@@ -55,14 +55,14 @@ public class PlacementKernelBoundaryContractTest {
 	public void scannerIgnoresCommentsStringsCharsAndRetainsRealLocations() {
 		String source = "// FederatedPlannerUtils\n"
 			+ "String text = \"FederatedCostModel NeutralPlacementGraphBuilder\";\n"
-			+ "char quote = '\\''; /* FederatedPlanMinSTGraph */\n"
+			+ "char quote = '\\''; /* FederatedPlanExactGraph */\n"
 			+ "FederatedPlannerTrace real;\n";
 		List<JavaSourceTokenScanner.Token> tokens = JavaSourceTokenScanner.tokens(source);
 		List<String> identifiers = tokens.stream().map(JavaSourceTokenScanner.Token::text).toList();
 		Assert.assertFalse(identifiers.contains("FederatedPlannerUtils"));
 		Assert.assertFalse(identifiers.contains("FederatedCostModel"));
 		Assert.assertFalse(identifiers.contains("NeutralPlacementGraphBuilder"));
-		Assert.assertFalse(identifiers.contains("FederatedPlanMinSTGraph"));
+		Assert.assertFalse(identifiers.contains("FederatedPlanExactGraph"));
 		JavaSourceTokenScanner.Token real = tokens.stream()
 			.filter(token -> token.text().equals("FederatedPlannerTrace")).findFirst().orElseThrow();
 		Assert.assertEquals(4, real.line());
@@ -222,7 +222,7 @@ public class PlacementKernelBoundaryContractTest {
 			return "G011";
 		if(fqcn.contains(".placement.adapter.") || fqcn.contains(".placement.selector.")
 			|| fqcn.endsWith(".PlacementShadowCoordinator") || fqcn.endsWith(".AFederatedPlanner")
-			|| fqcn.endsWith(".FederatedPlanMinSTGraph") || fqcn.endsWith(".FederatedPlanMinSTCut")
+			|| fqcn.endsWith(".FederatedPlanExactGraph") || fqcn.endsWith(".FederatedPlanExact")
 			|| fqcn.endsWith(".FederatedPlannerFedAll")
 			|| fqcn.endsWith(".FederatedPlannerFedAllMaxFedFoutSinglePass")
 			|| fqcn.endsWith(".FederatedPlannerFedHeuristic")

@@ -18,6 +18,6 @@
 -->
 
 <root>
-   <!-- set the federated plan generator (none, [runtime], compile_fed_all, compile_fed_heuristic, compile_cost_based, compile_min_st_cut, compile_fed_all_max_fed_fout_single_pass) -->
+   <!-- set the federated plan generator (none, [runtime], compile_fed_all, compile_fed_heuristic, compile_cost_based, compile_exact, compile_fed_all_max_fed_fout_single_pass) -->
    <sysds.federated.planner>compile_fed_all_max_fed_fout_single_pass</sysds.federated.planner>
 </root>

@@ -24,7 +24,7 @@ final class CampaignBPlannerOwnershipClosure {
 	private static final Pattern IMP = Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?([\\w.]+)(?:\\.\\*)?\\s*;");
 	private static final Pattern TYPE = Pattern.compile("\\b(?:class|interface|enum|record)\\s+([A-Za-z_$][\\w$]*)");
 	private static final Set<String> FORBIDDEN = Set.of("oraclefacade", "rulescore",
-		"federatedplanminstgraph", "enumerateprogram", "enumeratefunctiondynamic", "exactselectororacle",
+		"enumerateprogram", "enumeratefunctiondynamic", "exactselectororacle",
 		"neutralplacementgraphbuilder", "buildanalysis", "orderedoccurrences", "placementgraphfingerprint",
 		"getprogramblocks", "getstatementblocks", "executioncontext", "federatedworker", "fallback", "greedy",
 		"approximate", "truncate", "timeout", "partialsuccess", "systemgetenv", "getproperty",

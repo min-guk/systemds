@@ -29,7 +29,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Registry for MinST-selected D obligations.
+ * Registry for planner-selected local-materialization obligations.
  *
  * A D obligation materializes one local representation of a selected FED/FOUT
  * producer for a compatible domain of local consumers.  The planner registers

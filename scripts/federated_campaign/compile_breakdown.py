@@ -27,8 +27,8 @@ SECONDS = {
 HOPS = re.compile(r"^Compile Observed HOPs:\s+([0-9]+)\.$", re.MULTILINE)
 AUDIT_MISMATCHES = re.compile(r"\bmismatches=([0-9]+)\b")
 PLANNING_RECEIPT = re.compile(r"^PLANNING_RECEIPT=(.+\.json)$", re.MULTILINE)
-MINST_OPTIMIZE = re.compile(
-	r"\[PlannerTrace\]\[MinST-PhysicalOptimize\].*?variables=([0-9]+)"
+EXACT_OPTIMIZE = re.compile(
+	r"\[PlannerTrace\]\[Exact-PhysicalOptimize\].*?variables=([0-9]+)"
 	r"\s+hardFactors=([0-9]+)\s+costFactors=([0-9]+)\s+transfers=([0-9]+)"
 	r"\s+inducedWidth=([0-9]+)\s+maximumFactorCells=([0-9]+)"
 	r"\s+materializedFactorCells=([0-9]+)\s+maximumEliminationAssignments=([0-9]+)"
@@ -117,15 +117,15 @@ def planner_trace_metrics(log_path: Path | None) -> dict[str, int | str]:
 		"candidate_search_sum_leaves": 0,
 		"candidate_search_sum_physical": 0,
 		"candidate_search_sum_incumbents": 0,
-		"minst_variables": "",
-		"minst_hard_factors": "",
-		"minst_cost_factors": "",
-		"minst_transfers": "",
-		"minst_induced_width": "",
-		"minst_maximum_factor_cells": "",
-		"minst_materialized_factor_cells": "",
-		"minst_maximum_elimination_assignments": "",
-		"minst_elimination_assignments": "",
+		"exact_variables": "",
+		"exact_hard_factors": "",
+		"exact_cost_factors": "",
+		"exact_transfers": "",
+		"exact_induced_width": "",
+		"exact_maximum_factor_cells": "",
+		"exact_materialized_factor_cells": "",
+		"exact_maximum_elimination_assignments": "",
+		"exact_elimination_assignments": "",
 	}
 	if log_path is None or not log_path.is_file():
 		return metrics
@@ -150,15 +150,15 @@ def planner_trace_metrics(log_path: Path | None) -> dict[str, int | str]:
 				metrics["candidate_search_sum_physical"] = int(metrics["candidate_search_sum_physical"]) + physical
 				metrics["candidate_search_sum_incumbents"] = (
 					int(metrics["candidate_search_sum_incumbents"]) + incumbents)
-			minst = MINST_OPTIMIZE.search(line)
-			if minst:
+			exact = EXACT_OPTIMIZE.search(line)
+			if exact:
 				keys = (
-					"minst_variables", "minst_hard_factors", "minst_cost_factors", "minst_transfers",
-					"minst_induced_width", "minst_maximum_factor_cells",
-					"minst_materialized_factor_cells", "minst_maximum_elimination_assignments",
-					"minst_elimination_assignments",
+					"exact_variables", "exact_hard_factors", "exact_cost_factors", "exact_transfers",
+					"exact_induced_width", "exact_maximum_factor_cells",
+					"exact_materialized_factor_cells", "exact_maximum_elimination_assignments",
+					"exact_elimination_assignments",
 				)
-				metrics.update(dict(zip(keys, map(int, minst.groups()))))
+				metrics.update(dict(zip(keys, map(int, exact.groups()))))
 			if "[PlannerTrace][Planner-Complete]" in line:
 				break
 	return metrics
@@ -318,10 +318,10 @@ def summarize_complexity(rows: list[dict[str, object]]) -> list[dict[str, object
 		"dp_required_output_closures", "exact_search_calls", "exact_search_sum_prefixes",
 		"exact_search_sum_explored", "exact_search_sum_pruned", "exact_search_max_decisions",
 		"exact_search_max_groups", "exact_search_max_prefixes", "candidate_search_calls",
-		"candidate_search_sum_leaves", "candidate_search_sum_physical", "minst_variables",
-		"minst_hard_factors", "minst_cost_factors", "minst_transfers", "minst_induced_width",
-		"minst_maximum_factor_cells", "minst_materialized_factor_cells",
-		"minst_maximum_elimination_assignments", "minst_elimination_assignments",
+		"candidate_search_sum_leaves", "candidate_search_sum_physical", "exact_variables",
+		"exact_hard_factors", "exact_cost_factors", "exact_transfers", "exact_induced_width",
+		"exact_maximum_factor_cells", "exact_materialized_factor_cells",
+		"exact_maximum_elimination_assignments", "exact_elimination_assignments",
 		"emission_selected_fed", "emission_selected_fout", "emission_selected_derived_fout",
 		"emission_relocations", "emission_local_materializations", "runtime_federated_instruction_count",
 	)
