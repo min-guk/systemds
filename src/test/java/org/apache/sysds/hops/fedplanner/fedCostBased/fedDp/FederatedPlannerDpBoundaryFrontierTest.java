@@ -21,6 +21,8 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.List;
 
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -90,6 +92,25 @@ public class FederatedPlannerDpBoundaryFrontierTest {
 			3, variants.getFedPlanVariants().size());
 	}
 
+	@Test
+	public void orderedChildValueBoundariesRemainPartOfTheSignature() {
+		FedPlanVariants variants = variants(FederatedOutput.FOUT);
+		PlacementState state = new PlacementState(
+			ExecType.CP, FederatedOutput.FOUT, FType.ROW, false);
+		List<Pair<Long,FederatedOutput>> firstOrder = List.of(
+			new ImmutablePair<>(11L, FederatedOutput.FOUT),
+			new ImmutablePair<>(12L, FederatedOutput.LOUT));
+		List<Pair<Long,FederatedOutput>> secondOrder = List.of(
+			new ImmutablePair<>(12L, FederatedOutput.LOUT),
+			new ImmutablePair<>(11L, FederatedOutput.FOUT));
+		variants.addFedPlan(plan(variants, state, 1d, firstOrder));
+		variants.addFedPlan(plan(variants, state, 2d, secondOrder));
+
+		Assert.assertTrue(variants.pruneFedPlans());
+		Assert.assertEquals("ordered child occurrence/value boundaries are not interchangeable",
+			2, variants.getFedPlanVariants().size());
+	}
+
 	private static FedPlanVariants variants(FederatedOutput output) {
 		Hop hop = Mockito.mock(Hop.class);
 		Mockito.when(hop.getHopID()).thenReturn(7L);
@@ -101,7 +122,12 @@ public class FederatedPlannerDpBoundaryFrontierTest {
 	}
 
 	private static FedPlan plan(FedPlanVariants variants, PlacementState state, double cost) {
-		FedPlan plan = new FedPlan(cost, variants, List.of());
+		return plan(variants, state, cost, List.of());
+	}
+
+	private static FedPlan plan(FedPlanVariants variants, PlacementState state, double cost,
+		List<Pair<Long,FederatedOutput>> children) {
+		FedPlan plan = new FedPlan(cost, variants, children);
 		plan.setExecType(state.execType());
 		plan.setFType(state.fType());
 		plan.setCpFoutType(state.fType());
