@@ -28,7 +28,10 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
  * <p>Exact and this planner share domains, feasibility, and cost factors. They differ
  * only in search: Exact performs global variable elimination, while this planner uses
  * one producer-before-consumer pass followed by exact, cost-decreasing optimization
- * of factor-local interaction blocks.</p>
+ * of factor/shared-producer blocks. If the resulting plan materializes a selected
+ * FOUT for a local input, it derives only that FOUT component and its direct boundary
+ * fringe as a deferred conflict block. This bounded local refinement can escape a
+ * materialization cost barrier without turning the search into global enumeration.</p>
  */
 public final class FederatedPlanLocalCost extends AFederatedPlanner {
 	private final ExactPlacementAdapter adapter = new ExactPlacementAdapter();

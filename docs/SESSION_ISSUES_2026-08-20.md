@@ -209,3 +209,58 @@
 - **범위 제한**: 이 campaign은 planning overhead만 검증한다. trace를 의도적으로 껐으므로
   DP/Exact의 selected physical plan quality 차이는 normalized plan/assignment/objective
   certificate를 별도로 대조해야 한다.
+
+## 6. Local DP selected loop-amplified FOUT materialization basins
+
+- **상태**: 코드·회귀 검증 완료, fresh artifact runtime 검증 진행 중.
+- **환경/조건**: WAN-light L2SVM의 30회 outer loop와 20회 inner loop 안에서 생성되는
+  `1-Y*Xw` 계열 중간값, local-cost planner(`COMPILE_FEDERATED_COST`)의 selected
+  FED/FOUT state와 coordinator-local consumer.
+- **관측 증상**: 첫 factor-neighborhood 수정 후에도 L2SVM-w2는 73.211초였고,
+  Heuristic 22.228초, 이전 DP 6.122초, Exact 4.863초보다 느렸다. runtime explain에는
+  30x20과 30의 frequency가 적용된 두 loop-local `b(1-*)` 결과가 FED/FOUT으로 남아
+  coordinator에서 각각 반복 materialize되면서 `fed_1-*`와 `prefetch`가 총 630회
+  발생했다.
+- **버그와 구조적 한계의 구분**:
+  - 첫 구현은 factor/shared-producer 관계 일부를 local interaction scope에 포함하지 않아
+    합동 변경을 시도하지 못한 구현 결함이 있었고, 이는 이전 커밋에서 수정했다.
+  - 그 뒤 남은 현상은 개별 producer 또는 작은 star만 바꾸면 당장 비용이 증가하지만,
+    선택된 downstream FOUT chain과 local boundary를 함께 바꾸면 총비용이 감소하는
+    local cost barrier였다. 이는 privacy/physical feasibility 위반이 아니라 제한된
+    neighborhood descent의 구조적 local-minimum 가능성이다.
+- **해결 요약**:
+  - 현재 fixed point에서 실제로 FED/FOUT 결과를 local input으로 materialize하는 source만
+    찾는다.
+  - 해당 source에서 선택된 physical FOUT edge만 따라 downstream component를 구성하고,
+    각 component node의 direct input/consumer fringe를 하나의 conflict block으로 푼다.
+    non-FOUT decision에서 traversal을 중단하므로 whole-program/global enumeration으로
+    확장하지 않는다.
+  - 공통 value-boundary hard closure를 같은 block에 적용해 occurrence/value/FType 관련
+    합법성 제약을 보존한다. 모든 후보는 이미 공통 privacy-filtered domain에서 나오며,
+    block update는 incident shared-cost가 엄격히 감소할 때만 수용하고 마지막에 모든
+    hard factor를 다시 인증한다.
+  - block preparation, incident hard/cost factors, variable-to-dependent-block index와
+    producer/consumer/function-input adjacency를 한 번만 만든다. deferred block이 상태를
+    바꾸면 영향받은 기존 block만 재방문한다.
+- **탐색 범위 근거**: 고정 2-hop 확장은 L2SVM에서는 문제를 해결했지만 6,742,309개 block
+  assignment를 평가했다. 최종 selected-FOUT-component-plus-fringe 범위는 같은 회귀를
+  해결하면서 2,035,001개를 평가했고, largest block은 기존 base block의 42 variables,
+  deferred 최대 탐색은 424,124 assignments였다. 임의 top-K나 planner fallback은 없다.
+- **검증**:
+  ```bash
+  mvn -q -DskipITs -DskipTests=false \
+    -Dtest=LocalCategoricalOptimizerTest,CampaignBG014LocalL2SvmLoopRelocationRedTest test
+  mvn -q -DskipITs -DskipTests=false \
+    -Dtest=FederatedPlannerFactoryContractTest,FederatedPlannerFactorySourceGuardTest,CampaignBArchitectureGuardTest,SharedPrivacyPlacementAnalysisContractTest,LocalCategoricalOptimizerTest,FederatedPlanLocalCostIntegrationTest,CampaignBG014LocalL2SvmLoopRelocationRedTest,CampaignBG014ExactKMeansWanRepeatedUploadRedTest,ExactPhysicalModelCertificateTest test
+  git diff --check
+  ```
+  모두 통과했다. L2SVM 회귀는 line 106/120의 두 반복 `b(1-*)`가 CP로 선택되고 selected
+  local-materialization source가 아님을 검증한다.
+- **보장 범위**: 이 local optimizer는 shared feasible domain/cost model 안에서 monotone
+  cost descent와 legality를 보장하지만 전역 최적성이나 임의의 모든 DAG에서
+  FedAll/Heuristic보다 항상 낮은 runtime을 수학적으로 보장하지는 않는다. 그런 보장은
+  두 baseline plan을 함께 평가하는 fallback 또는 global search가 필요하며 현재 planner의
+  독립적 local-cost 철학과 compile-time 목표에 어긋난다. 본 수정의 주장은 관측된
+  loop-amplified materialization basin을 conflict-local refinement로 제거한다는 것이다.
+- **잔여 검증**: 새 commit/JAR/stage에서 logging 없는 compile-only benchmark와 L2SVM/PCA
+  runtime canary를 실행해 compile overhead와 실제 RPC/materialization 감소를 확인한다.

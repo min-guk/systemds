@@ -5,6 +5,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
@@ -93,6 +94,34 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
+	public void deferredBlockIsDerivedFromTheCurrentFixedPoint() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 4d),
+			Factor.dense(List.of(x, a), 5d, 7d, 8d, 0d),
+			Factor.dense(List.of(x, b), 5d, 7d, 8d, 0d));
+		AtomicInteger providerCalls = new AtomicInteger();
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables, List.of(), assignment -> {
+				providerCalls.incrementAndGet();
+				return assignment.equals(List.of(0, 0, 0))
+					? List.of(List.of(x, a, b)) : List.of();
+			}, (v, value) -> value);
+
+		Assert.assertEquals("the deferred neighborhood must cross the local cost barrier",
+			List.of(1, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(4d, result.objective(), 0d);
+		Assert.assertEquals(1, result.statistics().localBlocks());
+		Assert.assertEquals(1, result.statistics().localBlockImprovements());
+		Assert.assertEquals("the provider must be reevaluated after its block changes the plan",
+			2, providerCalls.get());
+	}
+
+	@Test
 	public void callerOwnedProducerChainBlocksAreNotTransitivelyMerged() {
 		Variable x = new Variable("x", 2);
 		Variable a = new Variable("a", 2);
@@ -133,7 +162,7 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
-	public void blockIsRevisitedWhenAnExternalIncidentFactorVariableChanges() {
+	public void existingBlockIsRevisitedAfterADeferredBlockChangesItsDependency() {
 		Variable x = new Variable("x", 2);
 		Variable w = new Variable("w", 2);
 		Variable y = new Variable("y", 2);
@@ -146,10 +175,12 @@ public class LocalCategoricalOptimizerTest {
 
 		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
 			variables, List.of(), costs, variables,
-			List.of(List.of(y, z), List.of(x, w)), (v, value) -> value);
+			List.of(List.of(y, z)), ignored -> List.of(List.of(x, w)),
+			(v, value) -> value);
 
 		Assert.assertEquals(List.of(1, 1, 1, 1), result.assignmentInVariableOrder());
 		Assert.assertEquals(0d, result.objective(), 0d);
+		Assert.assertEquals(2, result.statistics().localBlocks());
 		Assert.assertEquals(2, result.statistics().localBlockImprovements());
 		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
 	}

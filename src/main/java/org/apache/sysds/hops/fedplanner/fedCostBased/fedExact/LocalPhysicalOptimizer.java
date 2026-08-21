@@ -19,12 +19,16 @@ import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.DecisionDomain;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Connects the shared physical factor model to the local-conflict optimizer. */
 final class LocalPhysicalOptimizer {
@@ -95,13 +99,19 @@ final class LocalPhysicalOptimizer {
 		validateSharedSurface(model, surface);
 		List<Variable> variables = model.variables();
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
-		List<List<Variable>> localBlocks = localInteractionBlocks(model, surface, localOrder);
+		ValueBoundaryHardClosure hardClosure =
+			new ValueBoundaryHardClosure(model.domains(), model.hardFactors());
+		List<List<Variable>> localBlocks =
+			localInteractionBlocks(model, surface, localOrder, hardClosure);
+		MaterializationConflictBlockProvider materializationBlocks =
+			new MaterializationConflictBlockProvider(model, hardClosure);
 		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
 		for(DecisionDomain domain : model.domains())
 			domains.put(domain.variable(), domain);
 
 		LocalCategoricalOptimizer.Result local = LocalCategoricalOptimizer.optimize(
 			variables, model.hardFactors(), surface.factors(), localOrder, localBlocks,
+			materializationBlocks,
 			(variable, value) -> {
 				DecisionDomain domain = domains.get(variable);
 				if(domain == null)
@@ -130,10 +140,9 @@ final class LocalPhysicalOptimizer {
 	}
 
 	private static List<List<Variable>> localInteractionBlocks(ExactPhysicalModel model,
-		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Variable> localOrder) {
+		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Variable> localOrder,
+		ValueBoundaryHardClosure hardClosure) {
 		List<DecisionDomain> domains = model.domains();
-		ValueBoundaryHardClosure hardClosure =
-			new ValueBoundaryHardClosure(domains, model.hardFactors());
 		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
 		for(int index = 0; index < domains.size(); index++)
 			positions.put(domains.get(index).variable(), index);
@@ -165,6 +174,152 @@ final class LocalPhysicalOptimizer {
 				LocalPhysicalOptimizer::compareIntegerLists));
 		return blocks.stream().map(block -> block.stream().sorted()
 			.map(index -> domains.get(index).variable()).toList()).toList();
+	}
+
+	/**
+	 * Builds a bounded neighborhood only for a physical FED/FOUT source that the
+	 * selected assignment would actually materialize for a coordinator-local input.
+	 * A producer-consumer pair can be trapped behind an intermediate cost barrier when
+	 * a selected FOUT chain must change with it. The block therefore contains the
+	 * selected downstream FOUT component plus the direct input/consumer fringe of that
+	 * component. Traversal stops at non-FOUT decisions, so this remains a physical
+	 * conflict region rather than a transitive whole-program component.
+	 */
+	private static final class MaterializationConflictBlockProvider
+		implements LocalCategoricalOptimizer.DeferredBlockProvider {
+		private final List<DecisionDomain> domains;
+		private final ValueBoundaryHardClosure hardClosure;
+		private final Map<Integer,Set<Integer>> inputsByConsumer = new LinkedHashMap<>();
+		private final Map<Integer,Set<Integer>> consumersByProducer = new LinkedHashMap<>();
+		private final List<IndexedCompiledInput> compiledInputs;
+		private final List<IndexedFunctionInput> functionInputs;
+
+		MaterializationConflictBlockProvider(ExactPhysicalModel model,
+			ValueBoundaryHardClosure hardClosure) {
+			this.domains = model.domains();
+			this.hardClosure = hardClosure;
+			IdentityHashMap<CompiledHopKey,Integer> positions = decisionPositions(domains);
+			for(DecisionEdge edge : decisionEdges(model.analysis())) {
+				Integer producer = positions.get(edge.producer());
+				Integer consumer = positions.get(edge.consumer());
+				if(producer == null || consumer == null || producer.equals(consumer))
+					continue;
+				inputsByConsumer.computeIfAbsent(consumer, ignored -> new LinkedHashSet<>())
+					.add(producer);
+				consumersByProducer.computeIfAbsent(producer, ignored -> new LinkedHashSet<>())
+					.add(consumer);
+			}
+			List<IndexedCompiledInput> indexedCompiled = new ArrayList<>();
+			for(CompiledInputEdgeFact edge :
+				model.analysis().compiledInputEdgesInCanonicalOrder()) {
+				Integer producer = positions.get(edge.producer());
+				Integer consumer = positions.get(edge.consumer());
+				if(producer != null && consumer != null && !producer.equals(consumer)
+					&& !model.analysis().isDmlFunctionCallBoundary(edge.consumer()))
+					indexedCompiled.add(new IndexedCompiledInput(
+						producer, consumer, edge.inputPosition()));
+			}
+			compiledInputs = List.copyOf(indexedCompiled);
+			List<IndexedFunctionInput> indexedFunctions = new ArrayList<>();
+			model.analysis().logicalFunctionInputsInCanonicalOrder().forEach(edge -> {
+				Integer producer = positions.get(edge.sourceArgument());
+				Integer formal = positions.get(edge.targetRead());
+				if(producer != null && formal != null && !producer.equals(formal))
+					indexedFunctions.add(new IndexedFunctionInput(producer, formal));
+			});
+			functionInputs = List.copyOf(indexedFunctions);
+		}
+
+		@Override
+		public List<List<Variable>> localBlocks(List<Integer> assignment) {
+			if(assignment.size() != domains.size())
+				throw new IllegalArgumentException(
+					"LOCAL_MATERIALIZATION_ASSIGNMENT_SIZE_MISMATCH");
+			Set<Integer> selectedSources = new LinkedHashSet<>();
+			for(IndexedCompiledInput edge : compiledInputs) {
+				Alternative selectedProducer = selected(
+					domains.get(edge.producer()), assignment.get(edge.producer()));
+				Alternative selectedConsumer = selected(
+					domains.get(edge.consumer()), assignment.get(edge.consumer()));
+				if(isPhysicalFout(selectedProducer)
+					&& requiresLocalInput(selectedConsumer, edge.inputPosition()))
+					selectedSources.add(edge.producer());
+			}
+			for(IndexedFunctionInput edge : functionInputs) {
+				Alternative selectedProducer = selected(
+					domains.get(edge.producer()), assignment.get(edge.producer()));
+				Alternative selectedFormal = selected(
+					domains.get(edge.formal()), assignment.get(edge.formal()));
+				if(isPhysicalFout(selectedProducer)
+					&& selectedFormal.state().execType() == ExecType.CP
+					&& selectedFormal.state().output() == FederatedOutput.LOUT)
+					selectedSources.add(edge.producer());
+			}
+
+			List<List<Variable>> blocks = new ArrayList<>(selectedSources.size());
+			for(int source : selectedSources) {
+				Set<Integer> block = materializationConflictNeighborhood(source,
+					domains, assignment, inputsByConsumer, consumersByProducer);
+				hardClosure.expand(block);
+				blocks.add(block.stream().sorted()
+					.map(index -> domains.get(index).variable()).toList());
+			}
+			return blocks;
+		}
+	}
+
+	private record IndexedCompiledInput(int producer, int consumer, int inputPosition) { }
+	private record IndexedFunctionInput(int producer, int formal) { }
+
+	private static Set<Integer> materializationConflictNeighborhood(int source,
+		List<DecisionDomain> domains, List<Integer> assignment,
+		Map<Integer,Set<Integer>> inputsByConsumer,
+		Map<Integer,Set<Integer>> consumersByProducer) {
+		Set<Integer> foutComponent = new LinkedHashSet<>();
+		ArrayDeque<Integer> pending = new ArrayDeque<>();
+		foutComponent.add(source);
+		pending.addLast(source);
+		while(!pending.isEmpty()) {
+			int current = pending.removeFirst();
+			for(int consumer : consumersByProducer.getOrDefault(current, Set.of()))
+				if(isPhysicalFout(selected(domains.get(consumer), assignment.get(consumer)))
+					&& foutComponent.add(consumer))
+					pending.addLast(consumer);
+		}
+		Set<Integer> block = new LinkedHashSet<>();
+		for(int member : foutComponent)
+			block.addAll(operatorNeighborhood(member, inputsByConsumer, consumersByProducer));
+		return block;
+	}
+
+	private static Set<Integer> operatorNeighborhood(int source,
+		Map<Integer,Set<Integer>> inputsByConsumer,
+		Map<Integer,Set<Integer>> consumersByProducer) {
+		Set<Integer> block = new LinkedHashSet<>();
+		block.addAll(inputsByConsumer.getOrDefault(source, Set.of()));
+		block.add(source);
+		block.addAll(consumersByProducer.getOrDefault(source, Set.of()));
+		return block;
+	}
+
+	private static Alternative selected(DecisionDomain domain, int value) {
+		if(value < 0 || value >= domain.alternatives().size())
+			throw new IllegalArgumentException("LOCAL_MATERIALIZATION_ASSIGNMENT_VALUE_INVALID");
+		return domain.alternatives().get(value);
+	}
+
+	private static boolean isPhysicalFout(Alternative alternative) {
+		return alternative.state().execType() == ExecType.FED
+			&& alternative.state().output() == FederatedOutput.FOUT
+			&& alternative.derivedFoutAction() == null;
+	}
+
+	private static boolean requiresLocalInput(Alternative alternative, int inputPosition) {
+		if(alternative.state().execType() == ExecType.CP)
+			return alternative.state().output() == FederatedOutput.LOUT;
+		return alternative.state().execType() == ExecType.FED && inputPosition >= 0
+			&& inputPosition < alternative.orderedInputs().size()
+			&& !alternative.orderedInputs().get(inputPosition).present();
 	}
 
 	private static void validateSharedSurface(ExactPhysicalModel model,

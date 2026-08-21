@@ -38,6 +38,11 @@ final class LocalCategoricalOptimizer {
 		Object stateKey(Variable variable, int value);
 	}
 
+	@FunctionalInterface
+	interface DeferredBlockProvider {
+		List<List<Variable>> localBlocks(List<Integer> assignmentInVariableOrder);
+	}
+
 	record Statistics(long rawLocalAlternatives, long retainedLocalStates,
 		long prunedLocalRepresentatives, int initialHardViolations,
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
@@ -143,6 +148,98 @@ final class LocalCategoricalOptimizer {
 		}
 	}
 
+	private static final class LocalBlockOptimizer {
+		final Context context;
+		final int[] assignment;
+		final MutableStatistics statistics;
+		final List<int[]> blocks = new ArrayList<>();
+		final List<PreparedBlock> prepared = new ArrayList<>();
+		final List<List<Integer>> dependentBlocks;
+
+		LocalBlockOptimizer(Context context, int[] assignment,
+			MutableStatistics statistics) {
+			this.context = context;
+			this.assignment = assignment;
+			this.statistics = statistics;
+			dependentBlocks = new ArrayList<>(context.variables.size());
+			for(int variable = 0; variable < context.variables.size(); variable++)
+				dependentBlocks.add(new ArrayList<>());
+		}
+
+		List<Integer> addBlocks(List<int[]> candidates) {
+			List<Integer> added = new ArrayList<>();
+			for(int[] candidate : candidates) {
+				if(blocks.stream().anyMatch(prior -> Arrays.equals(prior, candidate)))
+					continue;
+				int index = blocks.size();
+				int[] stored = candidate.clone();
+				PreparedBlock block = prepareBlock(context, stored);
+				blocks.add(stored);
+				prepared.add(block);
+				for(int variable : block.dependencies())
+					dependentBlocks.get(variable).add(index);
+				added.add(index);
+			}
+			statistics.localBlocks = blocks.size();
+			return List.copyOf(added);
+		}
+
+		void optimize(List<Integer> initialBlocks) {
+			if(initialBlocks.isEmpty())
+				return;
+			ArrayDeque<Integer> pending = new ArrayDeque<>();
+			boolean[] queued = new boolean[prepared.size()];
+			for(int blockIndex : initialBlocks) {
+				if(blockIndex < 0 || blockIndex >= prepared.size() || queued[blockIndex])
+					throw new IllegalArgumentException("LOCAL_INITIAL_BLOCK_INDEX_INVALID|index="
+						+ blockIndex);
+				pending.addLast(blockIndex);
+				queued[blockIndex] = true;
+			}
+
+			long attempts = 0;
+			while(!pending.isEmpty()) {
+				int blockIndex = pending.removeFirst();
+				queued[blockIndex] = false;
+				attempts++;
+				PreparedBlock block = prepared.get(blockIndex);
+				double before = evaluateCost(block.incidentCost(), assignment);
+				BlockSolution solution = solveBlock(context, assignment, block);
+				if(solution == null)
+					throw new IllegalArgumentException(
+						"LOCAL_INTERACTION_BLOCK_HAS_NO_LEGAL_ASSIGNMENT|variables="
+							+ variableKeys(context, block.variables()));
+				recordBlockStatistics(statistics, block.variables().length, solution);
+				int comparison = Double.compare(solution.incidentCost(), before);
+				if(comparison > 0)
+					throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_COST_INCREASE|before="
+						+ before + "|after=" + solution.incidentCost() + "|variables="
+						+ variableKeys(context, block.variables()));
+				if(comparison == 0)
+					continue;
+				List<Integer> changed = new ArrayList<>(block.variables().length);
+				for(int index = 0; index < block.variables().length; index++)
+					if(assignment[block.variables()[index]]
+						!= solution.valuesInCanonicalBlockOrder()[index])
+						changed.add(block.variables()[index]);
+				if(changed.isEmpty())
+					throw new IllegalArgumentException(
+						"LOCAL_INTERACTION_BLOCK_COST_CHANGED_WITHOUT_ASSIGNMENT");
+				apply(assignment, block.variables(), solution.valuesInCanonicalBlockOrder());
+				statistics.localBlockImprovements++;
+				for(int variable : changed)
+					for(int neighbor : dependentBlocks.get(variable))
+						if(neighbor != blockIndex && !queued[neighbor]) {
+							pending.addLast(neighbor);
+							queued[neighbor] = true;
+						}
+			}
+			long revisits = Math.max(0L, attempts - initialBlocks.size());
+			statistics.localBlockRevisits = Math.toIntExact(Math.min(Integer.MAX_VALUE,
+				(long) statistics.localBlockRevisits + revisits));
+		}
+	}
+
 	private static final class BlockSearch {
 		final Context context;
 		final int[] assignment;
@@ -235,11 +332,18 @@ final class LocalCategoricalOptimizer {
 	static Result optimize(List<Variable> variables, List<Factor> hardFactors,
 		List<Factor> costFactors, List<Variable> localOrder,
 		List<List<Variable>> localBlocks, StateKeyProvider stateKeys) {
+		return optimize(variables, hardFactors, costFactors, localOrder, localBlocks,
+			ignored -> List.of(), stateKeys);
+	}
+
+	static Result optimize(List<Variable> variables, List<Factor> hardFactors,
+		List<Factor> costFactors, List<Variable> localOrder,
+		List<List<Variable>> localBlocks, DeferredBlockProvider deferredBlocks,
+		StateKeyProvider stateKeys) {
 		Context context = new Context(variables, hardFactors, costFactors, stateKeys);
 		List<Integer> order = validateOrder(context, localOrder);
-		List<int[]> blocks = normalizeBlocks(context, localBlocks);
+		Objects.requireNonNull(deferredBlocks, "deferredBlocks");
 		MutableStatistics statistics = new MutableStatistics();
-		statistics.localBlocks = blocks.size();
 		int[] assignment = new int[context.variables.size()];
 		Arrays.fill(assignment, -1);
 
@@ -250,7 +354,17 @@ final class LocalCategoricalOptimizer {
 		statistics.initialHardViolations = violations.size();
 		repairHardConflicts(context, assignment, statistics);
 
-		optimizeLocalBlocks(context, assignment, blocks, statistics);
+		LocalBlockOptimizer blockOptimizer =
+			new LocalBlockOptimizer(context, assignment, statistics);
+		blockOptimizer.optimize(blockOptimizer.addBlocks(normalizeBlocks(context, localBlocks)));
+
+		while(true) {
+			List<Integer> added = blockOptimizer.addBlocks(normalizeBlocks(context,
+				deferredBlocks.localBlocks(Arrays.stream(assignment).boxed().toList())));
+			if(added.isEmpty())
+				break;
+			blockOptimizer.optimize(added);
+		}
 
 		violations = violatedHardFactors(context, assignment);
 		if(!violations.isEmpty())
@@ -260,64 +374,6 @@ final class LocalCategoricalOptimizer {
 			throw new IllegalArgumentException("LOCAL_FINAL_OBJECTIVE_INVALID|value=" + objective);
 		return new Result(objective, Arrays.stream(assignment).boxed().toList(),
 			statistics.freeze(violations.size()));
-	}
-
-	private static void optimizeLocalBlocks(Context context, int[] assignment,
-		List<int[]> blocks, MutableStatistics statistics) {
-		if(blocks.isEmpty())
-			return;
-		List<PreparedBlock> prepared = blocks.stream()
-			.map(block -> prepareBlock(context, block)).toList();
-		List<List<Integer>> dependentBlocks = new ArrayList<>(context.variables.size());
-		for(int variable = 0; variable < context.variables.size(); variable++)
-			dependentBlocks.add(new ArrayList<>());
-		for(int blockIndex = 0; blockIndex < prepared.size(); blockIndex++)
-			for(int variable : prepared.get(blockIndex).dependencies())
-				dependentBlocks.get(variable).add(blockIndex);
-
-		ArrayDeque<Integer> pending = new ArrayDeque<>();
-		boolean[] queued = new boolean[prepared.size()];
-		for(int blockIndex = 0; blockIndex < prepared.size(); blockIndex++) {
-			pending.addLast(blockIndex);
-			queued[blockIndex] = true;
-		}
-		long attempts = 0;
-		while(!pending.isEmpty()) {
-			int blockIndex = pending.removeFirst();
-			queued[blockIndex] = false;
-			attempts++;
-			PreparedBlock block = prepared.get(blockIndex);
-			double before = evaluateCost(block.incidentCost(), assignment);
-			BlockSolution solution = solveBlock(context, assignment, block);
-			if(solution == null)
-				throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_HAS_NO_LEGAL_ASSIGNMENT|variables="
-					+ variableKeys(context, block.variables()));
-			recordBlockStatistics(statistics, block.variables().length, solution);
-			int comparison = Double.compare(solution.incidentCost(), before);
-			if(comparison > 0)
-				throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_COST_INCREASE|before="
-					+ before + "|after=" + solution.incidentCost() + "|variables="
-					+ variableKeys(context, block.variables()));
-			if(comparison == 0)
-				continue;
-			List<Integer> changed = new ArrayList<>(block.variables().length);
-			for(int index = 0; index < block.variables().length; index++)
-				if(assignment[block.variables()[index]]
-					!= solution.valuesInCanonicalBlockOrder()[index])
-					changed.add(block.variables()[index]);
-			if(changed.isEmpty())
-				throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_COST_CHANGED_WITHOUT_ASSIGNMENT");
-			apply(assignment, block.variables(), solution.valuesInCanonicalBlockOrder());
-			statistics.localBlockImprovements++;
-			for(int variable : changed)
-				for(int neighbor : dependentBlocks.get(variable))
-					if(neighbor != blockIndex && !queued[neighbor]) {
-						pending.addLast(neighbor);
-						queued[neighbor] = true;
-					}
-		}
-		statistics.localBlockRevisits = Math.toIntExact(Math.min(Integer.MAX_VALUE,
-			Math.max(0L, attempts - prepared.size())));
 	}
 
 	private static PreparedBlock prepareBlock(Context context, int[] block) {

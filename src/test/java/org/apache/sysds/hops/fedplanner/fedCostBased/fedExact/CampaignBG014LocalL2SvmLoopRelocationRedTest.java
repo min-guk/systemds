@@ -6,12 +6,14 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -19,7 +21,7 @@ import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Regression for a legal but loop-amplified Xd upload selected by the local planner. */
+/** Regression for legal but loop-amplified transfers selected by the local planner. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014LocalL2SvmLoopRelocationRedTest {
 	@Test
@@ -78,6 +80,22 @@ public class CampaignBG014LocalL2SvmLoopRelocationRedTest {
 						node.valueVersion().equals(action.sourceValueVersion())
 							&& result.analysis().hop(node.key()).map(hop -> "Xd".equals(hop.getName())
 								&& hop.getBeginLine() == 110).orElse(false))));
+			Assert.assertTrue("the local planner must not turn either loop-local 1-Y*Xw expression "
+				+ "into a repeated FED/FOUT-to-local materialization; locals="
+				+ localMaterializationSummary(result),
+				result.selectedLocalMaterializations().stream().noneMatch(raw -> {
+					LocalMaterializationActionKey action = (LocalMaterializationActionKey) raw;
+					return result.analysis().hop(action.sourceOccurrence()).map(hop ->
+						"b(1-*)".equals(hop.getOpString())
+							&& (hop.getBeginLine() == 106 || hop.getBeginLine() == 120)).orElse(false);
+				}));
+			Assert.assertTrue("the repeated 1-Y*Xw expressions must remain coordinator-local; states="
+				+ loopExpressionStateSummary(result),
+				result.selectedStates().entrySet().stream().filter(entry ->
+					result.analysis().hop(entry.getKey()).map(hop ->
+						"b(1-*)".equals(hop.getOpString())
+							&& (hop.getBeginLine() == 106 || hop.getBeginLine() == 120))
+						.orElse(false)).allMatch(entry -> entry.getValue().execType() == ExecType.CP));
 		}
 		finally {
 			ConfigurationManager.setGlobalConfig(oldGlobal);
@@ -104,6 +122,23 @@ public class CampaignBG014LocalL2SvmLoopRelocationRedTest {
 		Assert.assertEquals("Expected one committed program", 1, committed.size());
 		return PlacementEmissionTransaction.currentNormalizedResult(
 			committed.keySet().iterator().next());
+	}
+
+	private static String localMaterializationSummary(NormalizedPlannerResult result) {
+		return result.selectedLocalMaterializations().stream().map(raw -> {
+			LocalMaterializationActionKey action = (LocalMaterializationActionKey) raw;
+			return result.analysis().hop(action.sourceOccurrence()).map(hop ->
+				hop.getHopID() + ":" + hop.getOpString() + "@" + hop.getBeginLine())
+				.orElse(action.sourceOccurrence().normalizedSignature());
+		}).toList().toString();
+	}
+
+	private static String loopExpressionStateSummary(NormalizedPlannerResult result) {
+		return result.selectedStates().entrySet().stream().filter(entry ->
+			result.analysis().hop(entry.getKey()).map(hop -> "b(1-*)".equals(hop.getOpString())
+				&& (hop.getBeginLine() == 106 || hop.getBeginLine() == 120)).orElse(false))
+			.map(entry -> result.analysis().hop(entry.getKey()).orElseThrow().getHopID()
+				+ "=" + entry.getValue()).toList().toString();
 	}
 
 	private static Map<String,String> installWanLightCostProperties() {
