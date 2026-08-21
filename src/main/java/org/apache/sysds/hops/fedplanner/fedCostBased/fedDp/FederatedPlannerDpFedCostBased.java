@@ -7574,7 +7574,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, FederatedOutput> outputDecisions,
-		Map<Long, ConflictEntry> precomputedConflictMap,
+		ConflictForestSnapshot precomputedConflictForest,
 		ParentVariantDeltaCache parentVariantDeltaCache) {
 
 		DecisionMapScoreBreakdown breakdown = new DecisionMapScoreBreakdown();
@@ -7597,9 +7597,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			additionalRootHopIDs.add(rootHopID);
 		}
 
-		breakdown.incompatiblePlanCount = countIncompatibleDecisionMapPlans(
-			memoTable, rootPlan, outputDecisions, breakdown.exactSelectionConflictHopIDs,
-			breakdown.exactOccurrenceConflicts);
+		ConflictForestSnapshot conflictForest = precomputedConflictForest != null
+			? precomputedConflictForest
+			: collectConflictForestSnapshot(memoTable, rootPlan, outputDecisions, true);
+		breakdown.incompatiblePlanCount = conflictForest.incompatiblePlanCount;
+		breakdown.exactSelectionConflictHopIDs.addAll(
+			conflictForest.exactSelectionConflictHopIDs);
+		breakdown.exactOccurrenceConflicts.addAll(
+			conflictForest.exactOccurrenceConflicts);
 
 			for (Map.Entry<Long, FederatedPlannerDpMemoTable.FedPlan> entry : selectedRootPlans.entrySet()) {
 				long rootHopID = entry.getKey();
@@ -7608,8 +7613,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 			Map<Long, ConflictEntry> conflictCheckMap = outputDecisions == null || outputDecisions.isEmpty()
 				? Collections.emptyMap()
-				: precomputedConflictMap != null ? precomputedConflictMap
-					: collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
+				: conflictForest.unrefreshed;
 			double transientLocalCost = computeDecisionMapTransientReadLoutMaterializationCost(
 				memoTable, outputDecisions, conflictCheckMap);
 			double mixedFoutToCpLocalEdgeCost = computeDecisionMapMixedFoutToCpLocalEdgeCost(
@@ -7623,135 +7627,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 			return breakdown;
 		}
-
-	private static int countIncompatibleDecisionMapPlans(
-		FederatedPlannerDpMemoTable memoTable,
-		FederatedPlannerDpMemoTable.FedPlan rootPlan,
-		Map<Long, FederatedOutput> outputDecisions,
-		Set<Long> exactSelectionConflictHopIDs,
-		List<ExactOccurrenceConflict> exactOccurrenceConflicts) {
-
-		if (memoTable == null || rootPlan == null)
-			return 0;
-
-		Queue<RequiredOutputStateKey> queue = new ArrayDeque<>();
-		for(int childIndex = 0; childIndex < childPlanEdgeCount(rootPlan); childIndex++) {
-			FederatedOutput rootChildOut = childPlanOutput(rootPlan, childIndex);
-			if(rootChildOut == null)
-				continue;
-			long rootChildHopID = childPlanCarrierHopId(rootPlan, childIndex);
-			Long rootOrigHopID = childPlanOriginalDecisionHopId(memoTable, rootPlan, childIndex);
-			FederatedOutput desiredOut = outputDecisions != null
-				? getOutputDecision(outputDecisions, rootOrigHopID) : null;
-			queue.add(new RequiredOutputStateKey(
-				rootChildHopID, desiredOut != null ? desiredOut : rootChildOut));
-		}
-		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
-			long rootOrigHopID = memoTable.resolveOriginalHopId(rootHopID);
-			FederatedOutput desiredOut = outputDecisions != null
-				? getOutputDecision(outputDecisions, rootOrigHopID) : null;
-			if (desiredOut == null) {
-				FederatedPlannerDpMemoTable.FedPlan lPlan =
-					memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.LOUT);
-				FederatedPlannerDpMemoTable.FedPlan fPlan =
-					memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.FOUT);
-				FederatedPlannerDpMemoTable.FedPlan seed = lPlan == null ? fPlan : fPlan == null ? lPlan
-					: lPlan.getCumulativeCost() <= fPlan.getCumulativeCost() ? lPlan : fPlan;
-				if (seed == null)
-					continue;
-				desiredOut = seed.getFedOutType();
-			}
-			queue.add(new RequiredOutputStateKey(rootHopID, desiredOut));
-		}
-
-		Set<RequiredOutputStateKey> visited = new HashSet<>();
-		Map<CompiledHopKey, SelectedDpState> requiredSelections = new IdentityHashMap<>();
-		Set<CompiledHopKey> disagreeingSelections =
-			Collections.newSetFromMap(new IdentityHashMap<>());
-		int incompatiblePlans = 0;
-		while (!queue.isEmpty()) {
-			RequiredOutputStateKey state = queue.poll();
-			if(state == null || state.desiredOut == null || !visited.add(state))
-				continue;
-
-			FederatedPlannerDpMemoTable.FedPlan selectedPlan = findStrictCompatiblePlanVariant(
-				memoTable, state.hopID, state.desiredOut, outputDecisions);
-			if (selectedPlan == null) {
-				incompatiblePlans++;
-				// A requested output with no child-compatible exact arm is itself a
-				// refinement conflict. Previously only two-parent exact-state disagreements
-				// populated this set, so the existing resolver could detect the impossible
-				// plan but had no HOP to revisit (for example an FOUT predicate whose formal
-				// input had already been fixed to LOUT).
-				if (exactSelectionConflictHopIDs != null)
-					exactSelectionConflictHopIDs.add(
-						memoTable.resolveOriginalHopId(state.hopID));
-				selectedPlan = memoTable.getFedPlanAfterPrune(state.hopID, state.desiredOut);
-			}
-			if (selectedPlan == null)
-				continue;
-
-			// A compiled occurrence is one emitted runtime value and therefore cannot
-			// inherit different exact placements from separate roots/parents.  An absent
-			// output-map entry used to leave each incoming edge independently valid here,
-			// even though rewrite correctly rejected the resulting CP/LOUT vs FED/FOUT
-			// double selection.  Score that forest as structurally incompatible so the
-			// cost-based refinement must choose one explicit, executable occurrence state.
-			if (memoTable.analysis() != null) {
-				PlacementAnalysis.HopOccurrenceProjection occurrence =
-					memoTable.requirePlanCarrierOccurrence(selectedPlan.getHopRef());
-				CompiledHopKey occurrenceKey = occurrence.key();
-				SelectedDpState proposed = selectedState(selectedPlan);
-				SelectedDpState previous = requiredSelections.putIfAbsent(occurrenceKey, proposed);
-				if (previous != null && (previous.exactState() != proposed.exactState()
-					|| previous.derivedFedFout() != proposed.derivedFedFout())
-					&& disagreeingSelections.add(occurrenceKey)) {
-					incompatiblePlans++;
-					LinkedHashSet<Long> familyHopIDs = new LinkedHashSet<>(
-						memoTable.getOriginalDecisionHopIdsForOccurrence(occurrence));
-					familyHopIDs.add(memoTable.resolveOriginalHopId(previous.retainedPlan().getHopID()));
-					familyHopIDs.add(memoTable.resolveOriginalHopId(proposed.retainedPlan().getHopID()));
-					familyHopIDs.add(memoTable.resolveOriginalHopId(selectedPlan.getHopID()));
-					familyHopIDs.add(memoTable.resolveOriginalHopId(state.hopID));
-					List<Long> exactFamily = familyHopIDs.stream().sorted().toList();
-					if (exactSelectionConflictHopIDs != null)
-						exactSelectionConflictHopIDs.addAll(exactFamily);
-					if (exactOccurrenceConflicts != null)
-						exactOccurrenceConflicts.add(new ExactOccurrenceConflict(occurrenceKey, exactFamily));
-					FederatedPlannerTrace.logGlobal("DP-DecisionMap-ExactSelectionConflict",
-						"occurrence=" + occurrenceKey + " previous=" + previous + " proposed=" + proposed
-							+ " family=" + exactFamily
-							+ " stateHop=" + state.hopID + " stateOut=" + state.desiredOut
-							+ " explicitDecision=" + (outputDecisions != null ? getOutputDecision(
-								outputDecisions, memoTable.resolveOriginalHopId(state.hopID)) : null));
-				}
-			}
-
-			for(int childIndex = 0; childIndex < childPlanEdgeCount(selectedPlan); childIndex++) {
-				FederatedOutput childOut = childPlanOutput(selectedPlan, childIndex);
-				if(childOut == null)
-					continue;
-				long childHopID = childPlanCarrierHopId(selectedPlan, childIndex);
-				Long childOrigHopID = childPlanOriginalDecisionHopId(memoTable, selectedPlan, childIndex);
-				FederatedOutput desiredChildOut = outputDecisions != null
-					? getOutputDecision(outputDecisions, childOrigHopID) : null;
-				queue.add(new RequiredOutputStateKey(childHopID,
-					desiredChildOut != null ? desiredChildOut : childOut));
-			}
-		}
-
-		// The exact join still owns full (exec, output, FType) legality. One strictly
-		// earlier fact is already decidable here, however: a runtime transient value
-		// cannot be written as FOUT and read as LOUT (or vice versa). No later choice of
-		// exec type or FType can repair that output mismatch. Score these analysis-owned
-		// reaching-definition conflicts structurally so a final local refinement cannot
-		// undo multi-write normalization and force the whole component into the generic
-		// legality fallback. This does not close either output candidate; it makes the
-		// existing DP conflict resolver compare the two complete legal families.
-		incompatiblePlans += countSelectedTransientOutputConflicts(
-			memoTable, requiredSelections, exactSelectionConflictHopIDs);
-		return incompatiblePlans;
-	}
 
 	private static int countSelectedTransientOutputConflicts(
 		FederatedPlannerDpMemoTable memoTable,
@@ -9791,10 +9666,24 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static Map<Long, ConflictEntry> collectConflictsSingleBFS(
 		FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, FederatedOutput> outputDecisions) {
+		return collectConflictForestSnapshot(
+			memoTable, rootPlan, outputDecisions, false).unrefreshed;
+	}
+
+	private static ConflictForestSnapshot collectConflictForestSnapshot(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan rootPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		boolean collectCompatibilityFacts) {
+
+		if(memoTable == null || rootPlan == null)
+			return ConflictForestSnapshot.empty();
 
 		Map<Long, ConflictEntry> conflictCheckMap = new HashMap<>();
 		Queue<FederatedPlannerDpMemoTable.FedPlan> queue = new ArrayDeque<>();
 		Set<FederatedPlannerDpMemoTable.FedPlan> visited = new HashSet<>();
+		ConflictForestAnalyzer analyzer = new ConflictForestAnalyzer(
+			memoTable, outputDecisions, collectCompatibilityFacts);
 
 		for(int childIndex = 0; childIndex < childPlanEdgeCount(rootPlan); childIndex++) {
 			long childHopID = childPlanCarrierHopId(rootPlan, childIndex);
@@ -9803,10 +9692,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedOutput desiredOut = outputDecisions != null ? getOutputDecision(outputDecisions, childOrigID) : null;
 			if (desiredOut == null)
 				desiredOut = rootChildOut;
-			FederatedPlannerDpMemoTable.FedPlan childPlan = selectCompatiblePlanVariant(
-				memoTable, childHopID, desiredOut, outputDecisions);
-			if (childPlan == null)
-				childPlan = memoTable.getFedPlanAfterPrune(childHopID, desiredOut);
+			ConflictForestSelection selection = analyzer.select(childHopID, desiredOut);
+			FederatedPlannerDpMemoTable.FedPlan childPlan = selection.plan;
 			if (childPlan == null) {
 				String msg = "NULL FedPlan for root child hop " + childHopID;
 				if (OptimizerUtils.isStrictFederatedConflictCheck())
@@ -9830,32 +9717,32 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerDpMemoTable.FedPlan fPlan =
 				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.FOUT);
 			FederatedPlannerDpMemoTable.FedPlan seed;
+			ConflictForestSelection selection = null;
 			if (desiredOut != null) {
-				seed = selectCompatiblePlanVariant(memoTable, rootHopID, desiredOut, outputDecisions);
-				if (seed == null)
-					seed = memoTable.getFedPlanAfterPrune(rootHopID, desiredOut);
+				selection = analyzer.select(rootHopID, desiredOut);
+				seed = selection.plan;
 			}
 			else {
 				FederatedPlannerDpMemoTable.FedPlan cheapestSeed =
 					(lPlan == null) ? fPlan :
 					(fPlan == null) ? lPlan :
 					(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
-				seed = cheapestSeed;
 				if (cheapestSeed != null) {
-					FederatedPlannerDpMemoTable.FedPlan compatibleSeed = selectCompatiblePlanVariant(
-						memoTable, rootHopID, cheapestSeed.getFedOutType(), outputDecisions);
+					selection = analyzer.select(
+						rootHopID, cheapestSeed.getFedOutType());
+					FederatedPlannerDpMemoTable.FedPlan compatibleSeed = selection.strictPlan;
 					// Keep the concrete cheapest root when its child contract is incompatible.
 					// The conflict entry below must see that exact failed demand in order to
 					// select a compatible alternative output for a parentless additional root.
 					// Replacing it with null silently removed the root from the decision map.
-					if(compatibleSeed != null)
-						seed = compatibleSeed;
+					seed = compatibleSeed != null ? compatibleSeed : cheapestSeed;
 				}
+				else
+					seed = null;
 			}
 			boolean requiresRootClosureDecision = seed != null
 				&& outputDecisions != null && !outputDecisions.isEmpty()
-				&& findStrictCompatiblePlanVariant(
-					memoTable, rootHopID, seed.getFedOutType(), outputDecisions) == null;
+				&& selection != null && selection.strictPlan == null;
 			if (seed != null && (desiredOut != null || requiresRootClosureDecision)) {
 				// Additional roots have no parent edge through which conflict discovery
 				// can register them. Promote only roots already governed by a decision,
@@ -9882,10 +9769,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				if (desiredChildOut == null)
 					desiredChildOut = childOut;
 
-				FederatedPlannerDpMemoTable.FedPlan childPlan = selectCompatiblePlanVariant(
-					memoTable, childHopID, desiredChildOut, outputDecisions);
-				if (childPlan == null)
-					childPlan = memoTable.getFedPlanAfterPrune(childHopID, desiredChildOut);
+				ConflictForestSelection selection = analyzer.select(
+					childHopID, desiredChildOut);
+				FederatedPlannerDpMemoTable.FedPlan childPlan = selection.plan;
 
 				// The selected parent edge proves that this concrete occurrence is part
 				// of the plan forest even when the current family-wide decision has no
@@ -9912,7 +9798,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		augmentLogicalTransientConflictUsages(memoTable, conflictCheckMap, outputDecisions);
 
-		return conflictCheckMap;
+		return analyzer.finish(conflictCheckMap);
 	}
 
 	/**
@@ -11354,10 +11240,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			ConflictForestSnapshot cached = values.get(key);
 			if(cached != null)
 				return cached;
-			Map<Long,ConflictEntry> selected = rootPlan == null
-				? Collections.emptyMap()
-				: collectConflictsSingleBFS(memoTable, rootPlan, key.outputDecisions);
-			ConflictForestSnapshot created = new ConflictForestSnapshot(selected);
+			ConflictForestSnapshot created = rootPlan == null
+				? ConflictForestSnapshot.empty()
+				: collectConflictForestSnapshot(
+					memoTable, rootPlan, key.outputDecisions, true);
 			values.put(key, created);
 			return created;
 		}
@@ -11365,11 +11251,184 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	private static final class ConflictForestSnapshot {
 		final Map<Long,ConflictEntry> unrefreshed;
+		final int incompatiblePlanCount;
+		final Set<Long> exactSelectionConflictHopIDs;
+		final List<ExactOccurrenceConflict> exactOccurrenceConflicts;
 		Map<Long,ConflictEntry> feasible;
 		DecisionMapScoreBreakdown score;
 
-		ConflictForestSnapshot(Map<Long,ConflictEntry> unrefreshed) {
+		ConflictForestSnapshot(
+			Map<Long,ConflictEntry> unrefreshed,
+			int incompatiblePlanCount,
+			Set<Long> exactSelectionConflictHopIDs,
+			List<ExactOccurrenceConflict> exactOccurrenceConflicts) {
 			this.unrefreshed = Objects.requireNonNull(unrefreshed, "unrefreshed");
+			this.incompatiblePlanCount = incompatiblePlanCount;
+			this.exactSelectionConflictHopIDs = Collections.unmodifiableSet(
+				new LinkedHashSet<>(Objects.requireNonNull(
+					exactSelectionConflictHopIDs, "exactSelectionConflictHopIDs")));
+			this.exactOccurrenceConflicts = List.copyOf(
+				Objects.requireNonNull(exactOccurrenceConflicts, "exactOccurrenceConflicts"));
+		}
+
+		static ConflictForestSnapshot empty() {
+			return new ConflictForestSnapshot(
+				Collections.emptyMap(), 0, Collections.emptySet(), Collections.emptyList());
+		}
+	}
+
+	/**
+	 * Selects each required (carrier, output) state once while the conflict forest is
+	 * traversed.  The same selection is sufficient for conflict evidence, structural
+	 * feasibility, exact-occurrence agreement, and transient-output agreement; keeping
+	 * these facts together avoids a second whole-forest compatibility BFS per decision
+	 * map without changing the memo frontier or its candidate ordering.
+	 */
+	private static final class ConflictForestAnalyzer {
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final Map<Long,FederatedOutput> outputDecisions;
+		private final boolean collectCompatibilityFacts;
+		private final Map<ConflictForestStateKey,ConflictForestSelection> selectedStates =
+			new HashMap<>();
+		private final Map<CompiledHopKey,SelectedDpState> requiredSelections =
+			new IdentityHashMap<>();
+		private final Set<CompiledHopKey> disagreeingSelections =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		private final LinkedHashSet<Long> exactSelectionConflictHopIDs =
+			new LinkedHashSet<>();
+		private final List<ExactOccurrenceConflict> exactOccurrenceConflicts =
+			new ArrayList<>();
+		private int incompatiblePlanCount;
+
+		ConflictForestAnalyzer(
+			FederatedPlannerDpMemoTable memoTable,
+			Map<Long,FederatedOutput> outputDecisions,
+			boolean collectCompatibilityFacts) {
+			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
+			this.outputDecisions = outputDecisions;
+			this.collectCompatibilityFacts = collectCompatibilityFacts;
+		}
+
+		ConflictForestSelection select(long hopID, FederatedOutput desiredOut) {
+			if(desiredOut == null)
+				return ConflictForestSelection.EMPTY;
+			ConflictForestStateKey state = new ConflictForestStateKey(hopID, desiredOut);
+			if(collectCompatibilityFacts) {
+				ConflictForestSelection cached = selectedStates.get(state);
+				if(cached != null)
+					return cached;
+			}
+
+			FederatedPlannerDpMemoTable.FedPlan strictPlan =
+				findStrictCompatiblePlanVariant(
+					memoTable, hopID, desiredOut, outputDecisions);
+			FederatedPlannerDpMemoTable.FedPlan selectedPlan = strictPlan != null
+				? strictPlan : memoTable.getFedPlanAfterPrune(hopID, desiredOut);
+			ConflictForestSelection selection =
+				new ConflictForestSelection(strictPlan, selectedPlan);
+			if(!collectCompatibilityFacts)
+				return selection;
+
+			selectedStates.put(state, selection);
+			if(strictPlan == null) {
+				incompatiblePlanCount++;
+				exactSelectionConflictHopIDs.add(
+					memoTable.resolveOriginalHopId(hopID));
+			}
+			if(selectedPlan != null)
+				recordExactOccurrenceSelection(state, selectedPlan);
+			return selection;
+		}
+
+		private void recordExactOccurrenceSelection(
+			ConflictForestStateKey state,
+			FederatedPlannerDpMemoTable.FedPlan selectedPlan) {
+			if(memoTable.analysis() == null)
+				return;
+			PlacementAnalysis.HopOccurrenceProjection occurrence =
+				memoTable.requirePlanCarrierOccurrence(selectedPlan.getHopRef());
+			CompiledHopKey occurrenceKey = occurrence.key();
+			SelectedDpState proposed = selectedState(selectedPlan);
+			SelectedDpState previous = requiredSelections.putIfAbsent(
+				occurrenceKey, proposed);
+			if(previous == null || (previous.exactState() == proposed.exactState()
+				&& previous.derivedFedFout() == proposed.derivedFedFout())
+				|| !disagreeingSelections.add(occurrenceKey))
+				return;
+
+			incompatiblePlanCount++;
+			LinkedHashSet<Long> familyHopIDs = new LinkedHashSet<>(
+				memoTable.getOriginalDecisionHopIdsForOccurrence(occurrence));
+			familyHopIDs.add(memoTable.resolveOriginalHopId(
+				previous.retainedPlan().getHopID()));
+			familyHopIDs.add(memoTable.resolveOriginalHopId(
+				proposed.retainedPlan().getHopID()));
+			familyHopIDs.add(memoTable.resolveOriginalHopId(selectedPlan.getHopID()));
+			familyHopIDs.add(memoTable.resolveOriginalHopId(state.hopID));
+			List<Long> exactFamily = familyHopIDs.stream().sorted().toList();
+			exactSelectionConflictHopIDs.addAll(exactFamily);
+			exactOccurrenceConflicts.add(
+				new ExactOccurrenceConflict(occurrenceKey, exactFamily));
+			FederatedPlannerTrace.logGlobal("DP-DecisionMap-ExactSelectionConflict",
+				"occurrence=" + occurrenceKey + " previous=" + previous + " proposed=" + proposed
+					+ " family=" + exactFamily
+					+ " stateHop=" + state.hopID + " stateOut=" + state.desiredOut
+					+ " explicitDecision=" + (outputDecisions != null ? getOutputDecision(
+						outputDecisions, memoTable.resolveOriginalHopId(state.hopID)) : null));
+		}
+
+		ConflictForestSnapshot finish(Map<Long,ConflictEntry> conflictMap) {
+			if(collectCompatibilityFacts) {
+				// PlacementAnalysis has already frozen exact reaching-definition and
+				// function-binding relations.  Check them against the states selected by
+				// this traversal instead of rebuilding and traversing another forest.
+				incompatiblePlanCount += countSelectedTransientOutputConflicts(
+					memoTable, requiredSelections, exactSelectionConflictHopIDs);
+			}
+			return new ConflictForestSnapshot(
+				conflictMap, incompatiblePlanCount, exactSelectionConflictHopIDs,
+				exactOccurrenceConflicts);
+		}
+	}
+
+	private static final class ConflictForestSelection {
+		static final ConflictForestSelection EMPTY =
+			new ConflictForestSelection(null, null);
+		final FederatedPlannerDpMemoTable.FedPlan strictPlan;
+		final FederatedPlannerDpMemoTable.FedPlan plan;
+
+		ConflictForestSelection(
+			FederatedPlannerDpMemoTable.FedPlan strictPlan,
+			FederatedPlannerDpMemoTable.FedPlan plan) {
+			this.strictPlan = strictPlan;
+			this.plan = plan;
+		}
+	}
+
+	private static final class ConflictForestStateKey {
+		final long hopID;
+		final FederatedOutput desiredOut;
+		final int hash;
+
+		ConflictForestStateKey(long hopID, FederatedOutput desiredOut) {
+			this.hopID = hopID;
+			this.desiredOut = Objects.requireNonNull(desiredOut, "desiredOut");
+			this.hash = 31 * Long.hashCode(hopID) + desiredOut.hashCode();
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if(this == obj)
+				return true;
+			if(!(obj instanceof ConflictForestStateKey))
+				return false;
+			ConflictForestStateKey that = (ConflictForestStateKey) obj;
+			return hopID == that.hopID && desiredOut == that.desiredOut;
+		}
+
+		@Override
+		public int hashCode() {
+			return hash;
 		}
 	}
 
@@ -11732,7 +11791,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			ConflictForestSnapshot snapshot = conflictMapCache.snapshot(key);
 			if(snapshot.score == null)
 				snapshot.score = computeDecisionMapScoreBreakdownWithConflicts(
-					memoTable, rootPlan, key.outputDecisions, snapshot.unrefreshed,
+					memoTable, rootPlan, key.outputDecisions, snapshot,
 					parentVariantDeltaCache);
 			return snapshot.score;
 		}
