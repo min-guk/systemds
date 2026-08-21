@@ -5952,6 +5952,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		if (lockedDecisions == null || lockedDecisions.isEmpty())
 			return decisions;
+		if(decisions != null && containsAllLockedOutputDecisions(decisions, lockedDecisions))
+			return decisions;
 		Map<Long, FederatedOutput> mergedDecisions =
 			decisions != null ? new HashMap<>(decisions) : new HashMap<>();
 		mergedDecisions.putAll(lockedDecisions);
@@ -5973,8 +5975,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> lockedDecisions) {
 
 		Objects.requireNonNull(ownedDecisions, "ownedDecisions");
-		if(lockedDecisions != null && !lockedDecisions.isEmpty())
+		if(lockedDecisions != null && !lockedDecisions.isEmpty()
+			&& !containsAllLockedOutputDecisions(ownedDecisions, lockedDecisions))
 			ownedDecisions.putAll(lockedDecisions);
+	}
+
+	private static boolean containsAllLockedOutputDecisions(
+		Map<Long,FederatedOutput> decisions,
+		Map<Long,FederatedOutput> lockedDecisions) {
+		if(decisions == null || decisions.size() < lockedDecisions.size())
+			return false;
+		for(Map.Entry<Long,FederatedOutput> lock : lockedDecisions.entrySet())
+			if(decisions.get(lock.getKey()) != lock.getValue()
+				|| lock.getValue() == null && !decisions.containsKey(lock.getKey()))
+				return false;
+		return true;
 	}
 
 	/**
@@ -7716,42 +7731,45 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if(memoTable == null || memoTable.analysis() == null || selected == null
 			|| selected.isEmpty())
 			return 0;
-		PlacementAnalysis analysis = memoTable.analysis();
 		Set<String> observed = new LinkedHashSet<>();
 		int conflicts = 0;
 		String firstConflict = null;
-		for(PlacementAnalysis.HopOccurrenceProjection target : analysis.compiledHopOccurrences()) {
+		// PlacementAnalysis has already resolved CFG reaching definitions, logical
+		// transient edges, and function-binding aliases.  The memo freezes their exact
+		// occurrence pairs once at construction time; rescanning every compiled TRead and
+		// rebuilding its CFG-source list for every candidate score is redundant.
+		for(FederatedPlannerDpMemoTable.TransientConflictRelation relation :
+			memoTable.strictTransientOutputRelations()) {
+			PlacementAnalysis.HopOccurrenceProjection source = relation.source();
+			PlacementAnalysis.HopOccurrenceProjection target = relation.target();
+			Hop sourceHop = source.hop();
 			Hop targetHop = target.hop();
-			if(!(targetHop instanceof DataOp)
+			if(!(sourceHop instanceof DataOp)
+				|| ((DataOp)sourceHop).getOp() != Types.OpOpData.TRANSIENTWRITE
+				|| !(targetHop instanceof DataOp)
 				|| ((DataOp)targetHop).getOp() != Types.OpOpData.TRANSIENTREAD)
 				continue;
 			SelectedDpState targetState = selected.get(target.key());
 			if(targetState == null)
 				continue;
-			for(CompiledHopKey sourceKey :
-				analysis.cfgDefinitionSourcesInCanonicalOrder(target.key())) {
-				Hop sourceHop = analysis.hop(sourceKey).orElse(null);
-				SelectedDpState sourceState = selected.get(sourceKey);
-				if(!(sourceHop instanceof DataOp)
-					|| ((DataOp)sourceHop).getOp() != Types.OpOpData.TRANSIENTWRITE
-					|| sourceState == null || sourceState.output() == targetState.output())
-					continue;
-				String relation = sourceKey.normalizedSignature() + "->"
-					+ target.key().normalizedSignature();
-				if(!observed.add(relation))
-					continue;
-				conflicts++;
-				long sourceHopID = memoTable.resolveOriginalHopId(sourceHop.getHopID());
-				long targetHopID = memoTable.resolveOriginalHopId(targetHop.getHopID());
-				if(exactSelectionConflictHopIDs != null) {
-					exactSelectionConflictHopIDs.add(sourceHopID);
-					exactSelectionConflictHopIDs.add(targetHopID);
-				}
-				if(firstConflict == null)
-					firstConflict = "source=" + compactOccurrence(sourceKey) + ':' + sourceState.output()
-						+ " target=" + compactOccurrence(target.key()) + ':' + targetState.output()
-						+ " sourceHop=" + sourceHopID + " targetHop=" + targetHopID;
+			SelectedDpState sourceState = selected.get(source.key());
+			if(sourceState == null || sourceState.output() == targetState.output())
+				continue;
+			String relationSignature = source.key().normalizedSignature() + "->"
+				+ target.key().normalizedSignature();
+			if(!observed.add(relationSignature))
+				continue;
+			conflicts++;
+			long sourceHopID = memoTable.resolveOriginalHopId(sourceHop.getHopID());
+			long targetHopID = memoTable.resolveOriginalHopId(targetHop.getHopID());
+			if(exactSelectionConflictHopIDs != null) {
+				exactSelectionConflictHopIDs.add(sourceHopID);
+				exactSelectionConflictHopIDs.add(targetHopID);
 			}
+			if(firstConflict == null)
+				firstConflict = "source=" + compactOccurrence(source.key()) + ':' + sourceState.output()
+					+ " target=" + compactOccurrence(target.key()) + ':' + targetState.output()
+					+ " sourceHop=" + sourceHopID + " targetHop=" + targetHopID;
 		}
 		if(conflicts > 0)
 			FederatedPlannerTrace.logGlobal("DP-DecisionMap-TransientOutputConflict",
@@ -10567,54 +10585,65 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return 0.0;
 		}
 
-		// Prefer the concrete member's selected downstream edge when it exists. A
-		// candidate parent variant can, however, belong to a virtual clone whose
-		// selected traversal is represented only by another member of the logical
-		// family. In that case the family edge is the only proof of downstream
-		// forwarding demand and must not be discarded.
-		boolean hasCompatibleConcreteEdge = false;
-		for (FederatedPlannerDpMemoTable.FedPlan downstreamPlan : parentEntry.parents) {
-			if (downstreamPlan == null || downstreamPlan.getChildFedPlans() == null)
-				continue;
-			for (Pair<Long, FederatedOutput> edge : downstreamPlan.getChildFedPlans()) {
-				if (edge != null && edge.getKey() == parentConcreteHopID
-					&& edge.getValue() == candidateParentPlan.getFedOutType()) {
-					hasCompatibleConcreteEdge = true;
-					break;
-				}
-			}
-			if (hasCompatibleConcreteEdge)
-				break;
-		}
-
 		double delta = 0.0;
-		Set<ConflictCostEdgeKey> seenCostEdges = new LinkedHashSet<>();
-		for (FederatedPlannerDpMemoTable.FedPlan downstreamPlan : parentEntry.parents) {
-			if (downstreamPlan == null || downstreamPlan.getChildFedPlans() == null)
-				continue;
+		List<DownstreamForwardingUse> downstreamUses = parentVariantDeltaCache != null
+			? parentVariantDeltaCache.downstreamUses(memoTable, conflictCheckMap,
+				parentOrigHopID, parentConcreteHopID, candidateParentPlan.getFedOutType())
+			: indexDownstreamForwardingUses(memoTable, parentEntry, parentOrigHopID,
+				parentConcreteHopID, candidateParentPlan.getFedOutType());
+		for(DownstreamForwardingUse use : downstreamUses) {
+			FederatedPlannerDpMemoTable.FedPlan downstreamPlan = use.downstreamPlan();
 			boolean downstreamIsFed = downstreamPlan.getExecType() == ExecType.FED;
-			for (Pair<Long, FederatedOutput> edge : downstreamPlan.getChildFedPlans()) {
-				if (edge == null || memoTable.resolveOriginalHopId(edge.getKey()) != parentOrigHopID)
-					continue;
-				if (hasCompatibleConcreteEdge && edge.getKey() != parentConcreteHopID)
-					continue;
-				if (candidateParentPlan.getFedOutType() != edge.getValue())
-					continue;
-				ConflictCostEdgeKey edgeKey = buildConflictCostEdgeKey(
-					memoTable, downstreamPlan, edge.getKey(), edge.getValue());
-				if (!seenCostEdges.add(edgeKey))
-					continue;
-				double fromForwardingShare = computeParentChildForwardingCostShare(
-					memoTable, downstreamIsFed, edge.getValue(), fromParentPlan, downstreamPlan, numWorkers);
-				double candidateForwardingShare = computeParentChildForwardingCostShare(
-					memoTable, downstreamIsFed, edge.getValue(), candidateParentPlan, downstreamPlan, numWorkers);
-				delta += candidateForwardingShare - fromForwardingShare;
-			}
+			double fromForwardingShare = computeParentChildForwardingCostShare(
+				memoTable, downstreamIsFed, use.output(), fromParentPlan, downstreamPlan, numWorkers);
+			double candidateForwardingShare = computeParentChildForwardingCostShare(
+				memoTable, downstreamIsFed, use.output(), candidateParentPlan, downstreamPlan, numWorkers);
+			delta += candidateForwardingShare - fromForwardingShare;
 		}
 		if(parentVariantDeltaCache != null)
 			parentVariantDeltaCache.putDownstreamForwardingDelta(
 				conflictCheckMap, fromParentPlan, candidateParentPlan, numWorkers, delta);
 		return delta;
+	}
+
+	/** One canonical selected downstream use of a logical producer boundary. */
+	private record DownstreamForwardingUse(
+		FederatedPlannerDpMemoTable.FedPlan downstreamPlan, FederatedOutput output) { }
+
+	private static List<DownstreamForwardingUse> indexDownstreamForwardingUses(
+		FederatedPlannerDpMemoTable memoTable, ConflictEntry parentEntry,
+		long parentOrigHopID, long parentConcreteHopID, FederatedOutput output) {
+		if(parentEntry == null || parentEntry.parents == null || parentEntry.parents.isEmpty()
+			|| output == null)
+			return List.of();
+		boolean hasCompatibleConcreteEdge = false;
+		for(FederatedPlannerDpMemoTable.FedPlan downstreamPlan : parentEntry.parents) {
+			if(downstreamPlan == null || downstreamPlan.getChildFedPlans() == null)
+				continue;
+			for(Pair<Long,FederatedOutput> edge : downstreamPlan.getChildFedPlans())
+				if(edge != null && edge.getKey() == parentConcreteHopID && edge.getValue() == output) {
+					hasCompatibleConcreteEdge = true;
+					break;
+				}
+			if(hasCompatibleConcreteEdge)
+				break;
+		}
+		Set<ConflictCostEdgeKey> seen = new LinkedHashSet<>();
+		List<DownstreamForwardingUse> uses = new ArrayList<>();
+		for(FederatedPlannerDpMemoTable.FedPlan downstreamPlan : parentEntry.parents) {
+			if(downstreamPlan == null || downstreamPlan.getChildFedPlans() == null)
+				continue;
+			for(Pair<Long,FederatedOutput> edge : downstreamPlan.getChildFedPlans()) {
+				if(edge == null || edge.getValue() != output
+					|| memoTable.resolveOriginalHopId(edge.getKey()) != parentOrigHopID
+					|| hasCompatibleConcreteEdge && edge.getKey() != parentConcreteHopID)
+					continue;
+				if(seen.add(buildConflictCostEdgeKey(
+					memoTable, downstreamPlan, edge.getKey(), edge.getValue())))
+					uses.add(new DownstreamForwardingUse(downstreamPlan, edge.getValue()));
+			}
+		}
+		return List.copyOf(uses);
 	}
 
 	private static double computeParentVariantChildShareAdjustment(
@@ -11164,6 +11193,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private final Map<Map<Long,ConflictEntry>,IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan,
 			IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan,DownstreamForwardingDelta>>> downstreamValues =
 			new IdentityHashMap<>();
+		private final Map<Map<Long,ConflictEntry>,DownstreamForwardingIndex> downstreamIndexes =
+			new IdentityHashMap<>();
 		private final Map<ConflictEntry,Map<Long,FederatedOutput>> observedMemberOutputs =
 			new IdentityHashMap<>();
 		private final TransientReadPlanShareCache transientReadPlanShareCache =
@@ -11211,6 +11242,76 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			downstreamValues.computeIfAbsent(conflictMap, ignored -> new IdentityHashMap<>())
 				.computeIfAbsent(fromPlan, ignored -> new IdentityHashMap<>())
 				.put(candidatePlan, new DownstreamForwardingDelta(numWorkers, delta));
+		}
+
+		List<DownstreamForwardingUse> downstreamUses(
+			FederatedPlannerDpMemoTable memoTable,
+			Map<Long,ConflictEntry> conflictMap,
+			long parentOrigHopID,
+			long parentConcreteHopID,
+			FederatedOutput output) {
+			return downstreamIndexes.computeIfAbsent(conflictMap,
+				map -> new DownstreamForwardingIndex(memoTable, map))
+				.get(parentOrigHopID, parentConcreteHopID, output);
+		}
+	}
+
+	/**
+	 * Immutable selected-parent edge skeleton for one conflict forest.  Candidate
+	 * parent variants repeatedly ask for the same downstream uses; materialize and
+	 * de-duplicate those uses once instead of rebuilding a LinkedHashSet per query.
+	 */
+	private static final class DownstreamForwardingIndex {
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final Map<Long,ConflictEntry> conflictMap;
+		private final Map<Long,ParentDownstreamForwardingIndex> parents = new HashMap<>();
+
+		DownstreamForwardingIndex(FederatedPlannerDpMemoTable memoTable,
+			Map<Long,ConflictEntry> conflictMap) {
+			this.memoTable = Objects.requireNonNull(memoTable, "memoTable");
+			this.conflictMap = Objects.requireNonNull(conflictMap, "conflictMap");
+		}
+
+		List<DownstreamForwardingUse> get(long parentOrigHopID,
+			long parentConcreteHopID, FederatedOutput output) {
+			if(output == null)
+				return List.of();
+			ParentDownstreamForwardingIndex index = parents.computeIfAbsent(parentOrigHopID,
+				ignored -> new ParentDownstreamForwardingIndex(
+					memoTable, conflictMap.get(parentOrigHopID), parentOrigHopID));
+			return index.get(parentConcreteHopID, output);
+		}
+	}
+
+	private static final class ParentDownstreamForwardingIndex {
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final ConflictEntry entry;
+		private final long parentOrigHopID;
+		private final Map<Long,List<DownstreamForwardingUse>[]> byConcrete = new HashMap<>();
+
+		ParentDownstreamForwardingIndex(FederatedPlannerDpMemoTable memoTable,
+			ConflictEntry entry, long parentOrigHopID) {
+			this.memoTable = memoTable;
+			this.entry = entry;
+			this.parentOrigHopID = parentOrigHopID;
+		}
+
+		List<DownstreamForwardingUse> get(long parentConcreteHopID, FederatedOutput output) {
+			List<DownstreamForwardingUse>[] byOutput = byConcrete.computeIfAbsent(
+				parentConcreteHopID, ignored -> newForwardingUseArray());
+			int outputIndex = output.ordinal();
+			List<DownstreamForwardingUse> uses = byOutput[outputIndex];
+			if(uses == null) {
+				uses = indexDownstreamForwardingUses(
+					memoTable, entry, parentOrigHopID, parentConcreteHopID, output);
+				byOutput[outputIndex] = uses;
+			}
+			return uses;
+		}
+
+		@SuppressWarnings("unchecked")
+		private static List<DownstreamForwardingUse>[] newForwardingUseArray() {
+			return (List<DownstreamForwardingUse>[]) new List<?>[FederatedOutput.values().length];
 		}
 	}
 

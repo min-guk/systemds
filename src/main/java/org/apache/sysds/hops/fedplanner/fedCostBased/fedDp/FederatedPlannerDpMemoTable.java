@@ -114,6 +114,7 @@ public class FederatedPlannerDpMemoTable {
 	private final Set<HopOccurrenceProjection> ownedOccurrences;
 	private final Map<CompiledHopKey, HopOccurrenceProjection> occurrenceByKey;
 	private final List<TransientConflictRelation> transientConflictRelations;
+	private final List<TransientConflictRelation> strictTransientOutputRelations;
 	private final List<FunctionFormalDecisionFamily> functionFormalDecisionFamilies;
 	private final Map<Hop, HopOccurrenceProjection> occurrenceByAnalysisHop = new IdentityHashMap<>();
 	private final Set<Hop> ambiguousAnalysisOccurrenceHops =
@@ -151,6 +152,7 @@ public class FederatedPlannerDpMemoTable {
 		ownedOccurrences = Collections.emptySet();
 		occurrenceByKey = Collections.emptyMap();
 		transientConflictRelations = List.of();
+		strictTransientOutputRelations = List.of();
 		functionFormalDecisionFamilies = List.of();
 	}
 
@@ -174,6 +176,7 @@ public class FederatedPlannerDpMemoTable {
 		}
 		occurrenceByKey = Collections.unmodifiableMap(indexed);
 		transientConflictRelations = buildTransientConflictRelations(analysis, occurrenceByKey);
+		strictTransientOutputRelations = buildStrictTransientOutputRelations(analysis, occurrenceByKey);
 		functionFormalDecisionFamilies = buildFunctionFormalDecisionFamilies(analysis, occurrenceByKey);
 	}
 
@@ -188,6 +191,11 @@ public class FederatedPlannerDpMemoTable {
 
 	List<TransientConflictRelation> transientConflictRelations() {
 		return transientConflictRelations;
+	}
+
+	/** Exact CFG TWrite-to-TRead pairs used by strict runtime-value output checks. */
+	List<TransientConflictRelation> strictTransientOutputRelations() {
+		return strictTransientOutputRelations;
 	}
 
 	/** Immutable function-boundary to exact-formal topology shared by every refinement. */
@@ -287,6 +295,27 @@ public class FederatedPlannerDpMemoTable {
 			.sorted(Map.Entry.comparingByKey())
 			.map(entry -> new FunctionFormalDecisionFamily(entry.getKey(), List.copyOf(entry.getValue())))
 			.toList();
+	}
+
+	private static List<TransientConflictRelation> buildStrictTransientOutputRelations(
+		PlacementAnalysis analysis, Map<CompiledHopKey,HopOccurrenceProjection> occurrences) {
+		List<TransientConflictRelation> relations = new ArrayList<>();
+		Map<CompiledHopKey,Set<CompiledHopKey>> targetsBySource = new IdentityHashMap<>();
+		for(HopOccurrenceProjection targetOccurrence : analysis.compiledHopOccurrences()) {
+			Hop targetHop = targetOccurrence.hop();
+			if(!(targetHop instanceof DataOp)
+				|| ((DataOp) targetHop).getOp() != Types.OpOpData.TRANSIENTREAD)
+				continue;
+			for(CompiledHopKey sourceKey :
+				analysis.cfgDefinitionSourcesInCanonicalOrder(targetOccurrence.key())) {
+				Hop sourceHop = analysis.hop(sourceKey).orElseThrow();
+				if(sourceHop instanceof DataOp
+					&& ((DataOp) sourceHop).getOp() == Types.OpOpData.TRANSIENTWRITE)
+					addTransientConflictRelation(relations, targetsBySource, occurrences,
+						sourceKey, targetOccurrence.key());
+			}
+		}
+		return List.copyOf(relations);
 	}
 
 	private static void addTransientConflictRelation(List<TransientConflictRelation> relations,
