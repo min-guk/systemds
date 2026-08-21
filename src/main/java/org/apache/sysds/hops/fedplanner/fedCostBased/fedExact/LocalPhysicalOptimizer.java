@@ -6,6 +6,7 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -21,6 +22,7 @@ import java.util.Set;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.DecisionDomain;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
@@ -142,9 +144,6 @@ final class LocalPhysicalOptimizer {
 				consumersByProducer.computeIfAbsent(producer, ignored -> new LinkedHashSet<>())
 					.add(consumer);
 		}
-		IdentityHashMap<Variable,Integer> variablePositions = new IdentityHashMap<>();
-		for(int index = 0; index < domains.size(); index++)
-			variablePositions.put(domains.get(index).variable(), index);
 		List<SharedRegion> regions = new ArrayList<>();
 		for(Map.Entry<Integer,Set<Integer>> entry : consumersByProducer.entrySet()) {
 			if(entry.getValue().size() < 2)
@@ -156,16 +155,13 @@ final class LocalPhysicalOptimizer {
 				new LinkedHashSet<>(entry.getValue()), block));
 		}
 		mergeCommonConsumerRegions(regions);
-		// A direct hard-factor response is part of the same local decision, but response
-		// overlap alone must not transitively collapse a producer chain into a global
-		// block. Only a parent that consumes multiple shared producers causes a merge.
-		for(SharedRegion region : regions)
-			for(Factor factor : model.hardFactors()) {
-				List<Integer> scope = factor.scope().stream().map(variablePositions::get)
-					.filter(Objects::nonNull).toList();
-				if(scope.stream().anyMatch(region.producers()::contains))
-					region.variables().addAll(scope);
-			}
+		mergeValueBoundaryRegions(regions, domains);
+		expandValueBoundaryHardClosure(regions, domains, model.hardFactors());
+		// Ordinary regions remain one shared producer plus its direct consumers. A
+		// transient/function boundary region additionally closes only through boundary
+		// hard factors, so one logical value and its consumer stars can move together.
+		// Non-boundary operations are terminal: the closure cannot absorb the rest of the
+		// program DAG. Actual infeasibility remains the responsibility of conflict repair.
 		IdentityHashMap<Variable,Integer> localRanks = new IdentityHashMap<>();
 		for(int index = 0; index < localOrder.size(); index++)
 			localRanks.put(localOrder.get(index), index);
@@ -180,6 +176,83 @@ final class LocalPhysicalOptimizer {
 			result.add(region.variables().stream().sorted()
 				.map(index -> domains.get(index).variable()).toList());
 		return List.copyOf(result);
+	}
+
+	private static void expandValueBoundaryHardClosure(List<SharedRegion> regions,
+		List<DecisionDomain> domains, List<Factor> hardFactors) {
+		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
+		for(int index = 0; index < domains.size(); index++)
+			positions.put(domains.get(index).variable(), index);
+		List<int[]> scopes = hardFactors.stream().map(factor -> factor.scope().stream()
+			.mapToInt(variable -> Objects.requireNonNull(positions.get(variable),
+				"LOCAL_VALUE_BOUNDARY_HARD_FACTOR_FOREIGN_VARIABLE")).toArray()).toList();
+		for(SharedRegion region : regions) {
+			ArrayDeque<Integer> frontier = new ArrayDeque<>();
+			Set<Integer> expandedBoundaries = new LinkedHashSet<>();
+			for(int variable : region.variables())
+				if(isValueBoundary(domains.get(variable).node().kind()))
+					frontier.addLast(variable);
+			boolean[] includedFactors = new boolean[scopes.size()];
+			while(!frontier.isEmpty()) {
+				int boundary = frontier.removeFirst();
+				if(!expandedBoundaries.add(boundary))
+					continue;
+				for(int factor = 0; factor < scopes.size(); factor++) {
+					if(includedFactors[factor] || !contains(scopes.get(factor), boundary))
+						continue;
+					includedFactors[factor] = true;
+					for(int variable : scopes.get(factor)) {
+						region.variables().add(variable);
+						if(isValueBoundary(domains.get(variable).node().kind())
+							&& !expandedBoundaries.contains(variable))
+							frontier.addLast(variable);
+					}
+				}
+			}
+		}
+	}
+
+	private static boolean contains(int[] values, int expected) {
+		for(int value : values)
+			if(value == expected)
+				return true;
+		return false;
+	}
+
+	private static void mergeValueBoundaryRegions(List<SharedRegion> regions,
+		List<DecisionDomain> domains) {
+		boolean changed;
+		do {
+			changed = false;
+			outer:
+			for(int left = 0; left < regions.size(); left++)
+				for(int right = left + 1; right < regions.size(); right++) {
+					SharedRegion first = regions.get(left);
+					SharedRegion second = regions.get(right);
+					Set<Integer> forward = new LinkedHashSet<>(first.consumers());
+					forward.retainAll(second.producers());
+					Set<Integer> reverse = new LinkedHashSet<>(second.consumers());
+					reverse.retainAll(first.producers());
+					boolean valueBoundary = java.util.stream.Stream.concat(
+						forward.stream(), reverse.stream()).anyMatch(index ->
+							isValueBoundary(domains.get(index).node().kind()));
+					if(!valueBoundary)
+						continue;
+					first.producers().addAll(second.producers());
+					first.consumers().addAll(second.consumers());
+					first.variables().addAll(second.variables());
+					regions.remove(right);
+					changed = true;
+					break outer;
+				}
+		}
+		while(changed);
+	}
+
+	private static boolean isValueBoundary(NodeKind kind) {
+		return kind == NodeKind.TRANSIENT_READ || kind == NodeKind.TRANSIENT_WRITE
+			|| kind == NodeKind.BRANCH_JOIN || kind == NodeKind.LOOP_PHI
+			|| kind == NodeKind.FUNCTION_INPUT || kind == NodeKind.FUNCTION_OUTPUT;
 	}
 
 	private static void mergeCommonConsumerRegions(List<SharedRegion> regions) {

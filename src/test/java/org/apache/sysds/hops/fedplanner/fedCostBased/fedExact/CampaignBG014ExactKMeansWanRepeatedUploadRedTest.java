@@ -153,6 +153,100 @@ public class CampaignBG014ExactKMeansWanRepeatedUploadRedTest {
 		}
 	}
 
+	@Test
+	public void wanLightKMeansLocalPlannerAvoidsTheRepeatedRefedPlan() throws Exception {
+		Map<String,String> old = installWanLightCostProperties();
+		try {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			DMLProgram program = kmeansSingleWorker();
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+				.bindAtFinalHopBoundary(program);
+			ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+			ExactPhysicalCostModel.PhysicalCostSurface surface =
+				ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+			LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface);
+			ExactPhysicalSelection selection = ExactPhysicalSelection.create(
+				model, optimized.physicalResult());
+			ExactPhysicalOptimizer.Result exactOptimized = ExactPhysicalOptimizer.optimize(
+				model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			ExactPhysicalSelection exactSelection = ExactPhysicalSelection.create(model, exactOptimized);
+
+			List<CompiledInputEdgeFact> candidates = repeatedSampleUploadEdges(analysis);
+			Assert.assertEquals("G014_LOCAL_KMEANS_REPEATED_UPLOAD_EDGE_UNPROVEN|candidates="
+				+ describeEdges(analysis, candidates), 1, candidates.size());
+			CompiledInputEdgeFact edge = candidates.get(0);
+			Assert.assertEquals("G014_LOCAL_KMEANS_K50_UPLOAD_WEIGHT_DRIFT|edge="
+				+ describeEdge(analysis, edge), 50.0, forwardingWeight(analysis, edge), 0.0);
+
+			var producerState = selection.selectedStates().get(edge.producer());
+			var consumerState = selection.selectedStates().get(edge.consumer());
+			boolean selectedAbsentLocal = selection.candidateReceipts().stream().anyMatch(receipt ->
+				receipt.rule().parentOccurrence() == edge.consumer()
+					&& edge.inputPosition() < receipt.rule().orderedInputs().size()
+					&& !receipt.rule().orderedInputs().get(edge.inputPosition()).present());
+			boolean selectedRepeatedUpload = consumerState.execType() == ExecType.FED
+				&& (selectedAbsentLocal || producerState.execType() != ExecType.FED
+					|| producerState.output() != FederatedOutput.FOUT);
+			Assert.assertFalse("G014_LOCAL_KMEANS_SELECTED_50X_50MB_RUNTIME_UPLOAD|edge="
+				+ describeEdge(analysis, edge) + "|producer=" + producerState
+				+ "|consumer=" + consumerState + "|absentLocal=" + selectedAbsentLocal
+				+ "|objective=" + optimized.physicalResult().solverResult().objective(),
+				selectedRepeatedUpload);
+
+			List<CompiledInputEdgeFact> fullInputEdges = repeatedFullInputUploadEdges(analysis);
+			Assert.assertFalse("G014_LOCAL_KMEANS_FULL_INPUT_EDGE_UNPROVEN", fullInputEdges.isEmpty());
+			for(CompiledInputEdgeFact fullInputEdge : fullInputEdges) {
+				var fullProducerState = selection.selectedStates().get(fullInputEdge.producer());
+				var fullConsumerState = selection.selectedStates().get(fullInputEdge.consumer());
+				var exactProducerState = exactSelection.selectedStates().get(fullInputEdge.producer());
+				var exactConsumerState = exactSelection.selectedStates().get(fullInputEdge.consumer());
+				boolean fullAbsentLocal = selection.candidateReceipts().stream().anyMatch(receipt ->
+					receipt.rule().parentOccurrence() == fullInputEdge.consumer()
+						&& fullInputEdge.inputPosition() < receipt.rule().orderedInputs().size()
+						&& !receipt.rule().orderedInputs().get(fullInputEdge.inputPosition()).present());
+				boolean repeatedFullUpload = fullConsumerState.execType() == ExecType.FED
+					&& (fullAbsentLocal || fullProducerState.execType() != ExecType.FED
+						|| fullProducerState.output() != FederatedOutput.FOUT);
+				boolean exactRepeatedFullUpload = exactConsumerState.execType() == ExecType.FED
+					&& (exactProducerState.execType() != ExecType.FED
+						|| exactProducerState.output() != FederatedOutput.FOUT);
+				Assert.assertFalse("G014_EXACT_KMEANS_SELECTED_50X_FULL_INPUT_UPLOAD|edge="
+					+ describeEdge(analysis, fullInputEdge) + "|producer=" + exactProducerState
+					+ "|consumer=" + exactConsumerState + "|objective="
+					+ exactOptimized.solverResult().objective(), exactRepeatedFullUpload);
+				Assert.assertFalse("G014_LOCAL_KMEANS_SELECTED_50X_FULL_INPUT_UPLOAD|edge="
+					+ describeEdge(analysis, fullInputEdge) + "|producer=" + fullProducerState
+					+ "|consumer=" + fullConsumerState + "|absentLocal=" + fullAbsentLocal
+					+ "|producerKind=" + analysis.graph().node(fullInputEdge.producer()).orElseThrow().kind()
+					+ "|exactProducer=" + exactProducerState + "|exactConsumer=" + exactConsumerState
+					+ "|weight=" + forwardingWeight(analysis, fullInputEdge)
+					+ "|objective=" + optimized.physicalResult().solverResult().objective(),
+					repeatedFullUpload);
+			}
+		}
+		finally {
+			restoreProperties(old);
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
+	private static List<CompiledInputEdgeFact> repeatedFullInputUploadEdges(
+		PlacementAnalysis analysis) {
+		List<CompiledInputEdgeFact> result = new ArrayList<>();
+		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			var producer = analysis.hop(edge.producer()).orElseThrow();
+			var consumer = analysis.hop(edge.consumer()).orElseThrow();
+			var shape = analysis.shapeFact(edge.producer()).orElse(null);
+			if(shape != null && shape.rows() == 50000 && shape.cols() == 2100
+				&& "TRead X".equals(producer.getOpString())
+				&& "ba(+*)".equals(consumer.getOpString())
+				&& edge.consumer().controlRegion().regionPath().stream()
+					.anyMatch(path -> path.contains("loop-body")))
+				result.add(edge);
+		}
+		return result;
+	}
+
 	private static List<CompiledInputEdgeFact> repeatedSampleUploadEdges(PlacementAnalysis analysis) {
 		List<CompiledInputEdgeFact> result = new ArrayList<>();
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
