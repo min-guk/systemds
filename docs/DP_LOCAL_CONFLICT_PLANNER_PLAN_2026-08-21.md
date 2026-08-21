@@ -194,3 +194,64 @@ Run, in order:
   construction versus local search before further changes.
 - Runtime quality requires separate execution experiments; this task's requested
   experiment is compile-only.
+
+## 8. Completion and Verification Record
+
+### 8.1 Implemented design
+
+The production `COMPILE_COST_BASED` path now uses `FederatedPlanLocalCost` rather
+than the legacy reconciliation-heavy DP. The implementation:
+
+1. consumes the same `PlacementAnalysis`-owned, privacy-filtered physical domains,
+   hard constraints, and canonical cost surface as Exact;
+2. visits decisions in producer-before-consumer order and retains exactly one
+   minimum-cost representative for each complete `Alternative.signature()` state,
+   without an arbitrary top-K limit;
+3. repairs violated hard constraints by solving only the incident conflict block;
+4. optimizes a shared producer and its direct consumers as a local producer-star,
+   merging stars only when the same parent consumes multiple shared producers;
+5. solves multi-variable local blocks exactly by local variable elimination while
+   fixing the outside boundary; and
+6. validates the final hard factors and canonical objective before transactional
+   projection/emission under the `DP-LocalConflict` identity.
+
+The measured implementation is commit
+`81556286e2d63426cf73d6d6f976718854b2f6f0` (tree
+`d13bcf07879d03b4ab3c8a73131a5d805472565b`).
+
+### 8.2 Regression and build evidence
+
+The focused local-optimizer, integration, factory, architecture, Exact physical
+model, and projection-authority set passed 25 tests. This includes explicit tests
+for minimum-per-state pruning, more than eight distinct states, minimum legal
+conflict resolution rather than first-coherent selection, a shared producer with
+two consumers, and non-transitive producer-chain grouping. A fresh Maven package
+build also passed with the repository's unrelated global checkstyle baseline
+disabled. The resulting JAR SHA-256 is
+`0b624873771c885c738c2aaec89c78ef0082b6fa17e5e183a05d02c289b44979`.
+
+### 8.3 Compile-only experiment evidence
+
+The immutable Docker stage is
+`9264df22e8a3f2bc238843384462e4aea68298b5beaa5f63a41f19e0ee334d90`.
+Planner trace, JFR, GC logging, runtime explain, and runtime execution were disabled.
+Each planner received one warm-up and ten measured fresh-JVM repetitions inside the
+same blocked workload/worker cell. Both cells completed with zero failures and all
+88 raw observations report `execution_seconds = 0.0`.
+
+| Workload | FedAll | Heuristic | DP-LocalConflict | Exact |
+|---|---:|---:|---:|---:|
+| KMEANS, WAN-Light, 2 workers | 0.891608 s | 0.879071 s | 1.088524 s | 1.185302 s |
+| LOGREG, WAN-Light, 1 worker | 17.973684 s | 1.596453 s | 1.346531 s | 2.713388 s |
+
+Relative to the previous production DP, the new planner is 68.76% faster on
+KMEANS (3.20x) and 79.15% faster on LOGREG (4.80x). It is faster than Exact by
+8.16% and 50.37%, respectively. On LOGREG it is also faster than Heuristic by
+15.65% and FedAll by 92.51%. On KMEANS it remains 22.09% slower than FedAll and
+23.83% slower than Heuristic, so these measurements do not justify a universal
+"fastest planner" claim. The compile campaign does not measure runtime plan quality.
+
+Primary machine-readable results and their human-readable report are at:
+
+- `/home/mchoi/g014-local-conflict-compile-81556286e2-20260821-v3/control/compile-summary.json`
+- `/home/mchoi/g014-local-conflict-compile-81556286e2-20260821-v3/control/compile-report.md`
