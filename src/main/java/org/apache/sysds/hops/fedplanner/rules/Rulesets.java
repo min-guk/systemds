@@ -3364,6 +3364,17 @@ public final class Rulesets {
       if (inFTypes == null || inFTypes.isEmpty())
         return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
+      int localMatrixInputs = 0;
+      for (int inputPosition = 0; inputPosition < inFTypes.size(); inputPosition++) {
+        if (inFTypes.get(inputPosition) == null && sig.inputIsMatrix(inputPosition))
+          localMatrixInputs++;
+      }
+      // BuiltinNaryFEDInstruction creates one broadcast-sliced request array and
+      // therefore accepts at most one coordinator-resident matrix. Local scalars
+      // are embedded as literals and do not consume this single broadcast slot.
+      if (localMatrixInputs > 1)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+
       FType axis = null;
       boolean hasFedInput = false;
       for (FType t : inFTypes) {

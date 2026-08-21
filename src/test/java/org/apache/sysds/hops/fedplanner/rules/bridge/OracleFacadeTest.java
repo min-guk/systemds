@@ -33,6 +33,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
@@ -43,6 +44,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
@@ -191,6 +193,39 @@ public class OracleFacadeTest {
             && evidence.caps().foutFType().equals(Optional.of(FType.OTHER)));
     assertEquals(ExecType.CP, evidence.caps().exec());
     assertEquals(ReasonCode.NO_FED_INPUT, evidence.caps().reason());
+  }
+
+  @Test
+  public void naryFederatedExecutionRejectsMultipleLocalMatrixInputs() {
+    Hop federated = matrix("federated", 4, 4);
+    Hop localLeft = matrix("localLeft", 4, 4);
+    Hop localRight = matrix("localRight", 4, 4);
+    NaryOp product = new NaryOp("product", DataType.MATRIX, ValueType.FP64,
+        OpOpN.MULT, federated, localLeft, localRight);
+
+    OracleFacade.DecisionEvidence evidence = facade.decideWithEvidence(product,
+        Arrays.asList(FType.ROW, null, null), null);
+
+    assertEquals("BuiltinNaryFEDInstruction can broadcast at most one local matrix",
+        ExecType.CP, evidence.caps().exec());
+    assertEquals(FederatedOutput.LOUT, evidence.caps().placement());
+    assertEquals(ReasonCode.BROADCAST_CONSTRAINT, evidence.caps().reason());
+  }
+
+  @Test
+  public void naryFederatedExecutionAllowsOneLocalMatrixAndLocalScalars() {
+    Hop federated = matrix("federated", 4, 4);
+    Hop local = matrix("local", 4, 4);
+    NaryOp product = new NaryOp("product", DataType.MATRIX, ValueType.FP64,
+        OpOpN.MULT, federated, local, new LiteralOp(2.0), new LiteralOp(3.0));
+
+    OracleFacade.DecisionEvidence evidence = facade.decideWithEvidence(product,
+        Arrays.asList(FType.ROW, null, null, null), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
+    assertEquals(ReasonCode.OK, evidence.caps().reason());
   }
 
   @Test

@@ -5541,6 +5541,37 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDagRegistryRefedAcceptsEquivalentPermutedAnchorPartitions() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedConsumer = functionCallConsumerLop(localInput, 962);
+			Data liveAnchor = federatedMatrixAnchorLop("LiveAnchor", 916);
+			String liveKey = "localhost:10001;localhost:10002;|0,10;10,20;|ROW";
+			String durableKey = "localhost:10002;localhost:10001;|10,20;0,10;|ROW";
+			FederatedPlannerUtils.registerFedAnchorKey(
+				liveAnchor.getOutputParameters().getLabel(), liveKey);
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), liveAnchor.getHopID(),
+				durableKey, List.of(selectedConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedConsumer, liveAnchor));
+			boolean changed = invokeInsertRefedLops(lops);
+
+			assertTrue("Partition order must not create a false live/durable authority conflict", changed);
+			FederatedRefed refed = lops.stream().filter(lop -> lop instanceof FederatedRefed)
+				.map(lop -> (FederatedRefed) lop).findFirst().orElseThrow();
+			assertEquals("Equivalent live authority must preserve key-backed deterministic lowering",
+				1, refed.getInputs().size());
+			assertTrue(refed.getInstructions("LocalLabels", "RefedOut").contains(durableKey));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
 	public void testDagRegistryRefedFailsClosedForUnresolvedSelectedConsumerId() throws Exception {
 		FederatedRefedRegistry.clear();
 		FederatedPlannerUtils.clearFedInitVars();

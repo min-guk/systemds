@@ -1007,9 +1007,11 @@ public class Dag<N extends Lop>
 		if (durableKey != null) {
 			for (Lop liveAnchor : liveAnchors) {
 				String liveKey = knownDurableRefedAnchorKey(liveAnchor);
-				if (liveKey != null && !durableKey.equals(liveKey))
+				if (liveKey != null && !sameConcreteAnchorKey(durableKey, liveKey))
 					throw new LopsException("fed_refed lowering found conflicting live/durable anchor authority"
-						+ " for hop=" + hopId + " anchorHop=" + anchorHopId);
+						+ " for hop=" + hopId + " anchorHop=" + anchorHopId
+						+ " durableKey=" + durableKey + " liveKey=" + liveKey
+						+ " liveAnchor=" + lopIdentity(liveAnchor));
 			}
 			// A durable placement signature is independent of transient Lop lifetime and therefore
 			// takes precedence over the Hop-id hint once any known live authority agrees.
@@ -1625,6 +1627,58 @@ public class Dag<N extends Lop>
 
 	private static boolean isConcreteAnchorKey(String anchorKey) {
 		return anchorKey != null && !anchorKey.isEmpty() && !anchorKey.startsWith("VAR:");
+	}
+
+	private static boolean sameConcreteAnchorKey(String left, String right) {
+		if (left.equals(right))
+			return true;
+		String canonicalLeft = canonicalConcreteAnchorKey(left);
+		return canonicalLeft != null && canonicalLeft.equals(canonicalConcreteAnchorKey(right));
+	}
+
+	/**
+	 * Canonicalizes the literal worker/range/FType format used by fed-init and exact
+	 * placement anchors. Worker/range entries are paired before sorting because the
+	 * runtime mapping is insensitive to partition-list order but not to which range
+	 * belongs to which worker. Unknown concrete-key formats deliberately return null
+	 * and therefore retain strict string equality.
+	 */
+	private static String canonicalConcreteAnchorKey(String anchorKey) {
+		if (!isConcreteAnchorKey(anchorKey))
+			return null;
+		String[] sections = anchorKey.split("\\|", -1);
+		if (sections.length != 3 || sections[2].isEmpty())
+			return null;
+		List<String> workers = semicolonEntries(sections[0]);
+		List<String> ranges = semicolonEntries(sections[1]);
+		if (workers == null || ranges == null || workers.size() != ranges.size())
+			return null;
+		List<String> partitions = new ArrayList<>(workers.size());
+		for (int index = 0; index < workers.size(); index++) {
+			String worker = org.apache.sysds.runtime.controlprogram.federated.FederationUtils
+				.canonicalFederatedWorkerAddress(workers.get(index));
+			if (worker == null || worker.isEmpty())
+				return null;
+			partitions.add(worker + '|' + ranges.get(index));
+		}
+		Collections.sort(partitions);
+		return sections[2] + '|' + String.join(";", partitions);
+	}
+
+	private static List<String> semicolonEntries(String section) {
+		String[] raw = section.split(";", -1);
+		int size = raw.length;
+		if (size > 0 && raw[size - 1].isEmpty())
+			size--;
+		if (size == 0)
+			return null;
+		List<String> entries = new ArrayList<>(size);
+		for (int index = 0; index < size; index++) {
+			if (raw[index].isEmpty())
+				return null;
+			entries.add(raw[index]);
+		}
+		return entries;
 	}
 
 	private static boolean isReachable(Lop from, Lop target) {
