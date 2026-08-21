@@ -212,7 +212,8 @@
 
 ## 6. Local DP selected loop-amplified FOUT materialization basins
 
-- **상태**: 코드·회귀 검증 완료, fresh artifact runtime 검증 진행 중.
+- **상태**: 코드·회귀·compile-only·fresh runtime canary 검증 완료
+  (`b91411e5fef44638d0fa12e75e8a198667c62e3c`).
 - **환경/조건**: WAN-light L2SVM의 30회 outer loop와 20회 inner loop 안에서 생성되는
   `1-Y*Xw` 계열 중간값, local-cost planner(`COMPILE_FEDERATED_COST`)의 selected
   FED/FOUT state와 coordinator-local consumer.
@@ -262,5 +263,29 @@
   두 baseline plan을 함께 평가하는 fallback 또는 global search가 필요하며 현재 planner의
   독립적 local-cost 철학과 compile-time 목표에 어긋난다. 본 수정의 주장은 관측된
   loop-amplified materialization basin을 conflict-local refinement로 제거한다는 것이다.
-- **잔여 검증**: 새 commit/JAR/stage에서 logging 없는 compile-only benchmark와 L2SVM/PCA
-  runtime canary를 실행해 compile overhead와 실제 RPC/materialization 감소를 확인한다.
+- **fresh artifact compile 검증**: immutable stage
+  `783a0711e2d14ca25bca28b5b2116dd5103a0740a6f6389c7b2b9e795475bc5c`의 JAR
+  SHA-256은 `2a311c95372da3afb16c2d80c5e4c942b9c36bdc189041392a1eb4f233fb533a`이다.
+  logging 없는 L2SVM-w2 compile-only canary의 DP planning time은 1.311688, 1.356589,
+  1.382887초(중앙값 1.356589초)였다. 첫 factor-neighborhood 버전의 1.160464초보다 약
+  0.20초 증가하지만 동일 campaign의 Exact 기준 1.401615초보다는 작다.
+- **fresh runtime 검증**: WAN-light에서 새 coordinator JVM의 warm execution을 cell당 한 번
+  측정했다. L2SVM DP-new는 workers 1--4에서 각각 7.210, 7.120, 6.852, 6.665초였다.
+  특히 w2는 첫 수정의 73.211초에서 7.120초로 90.3% 감소했고, 네 cell 모두 historical
+  FedAll/Heuristic run보다 빨랐다. 모든 worker 수에서 warm instruction fingerprint가
+  동일하고 `fed_1-*`는 0회, `fed_fed_refed`는 33회이며 synthetic CP `prefetch`는 630회가
+  아니라 한 번만 실행된다. runtime physical audit mismatch는 0이다.
+- **비회귀 canary**: PCA DP-new는 workers 1--4에서 56.907, 55.073, 50.805, 49.921초였다.
+  w2 한 cell은 historical Heuristic보다 0.9%, FedAll보다 1.5% 느리지만 runtime-plan
+  SHA-256은 이전 DP와 Exact가 선택한 것과 정확히 동일하다. 반복 없는 단일 warm run의
+  차이이므로 physical-plan 회귀의 증거로 해석하지 않는다. 네 PCA cell의 FedAll-normalized
+  geometric mean은 0.966으로 FedAll과 Heuristic보다 작다.
+- **runtime 인증**: 요청한 8/8 cell이 모두 완료되었고 semantic oracle, runtime scan,
+  planner fallback, physical audit, teardown 검사가 모두 통과했다. 활성 Docker resource는
+  남지 않았다. 이 canary는 회귀를 인과적으로 확인하기 위한 단일 warm-run 실험이며 전체
+  통계 campaign이나 confidence interval은 아니다.
+- **산출물**:
+  - `/home/mchoi/g014-dp-local-runtime-b91411e5fe-20260821-v1/plots/CANARY_REPORT.md`
+  - `.../plots/validation.json`
+  - `.../plots/runtime_canary_comparison.csv`
+  - `.../plots/runtime_l2svm_pca_local_conflict_fix.{png,pdf}`
