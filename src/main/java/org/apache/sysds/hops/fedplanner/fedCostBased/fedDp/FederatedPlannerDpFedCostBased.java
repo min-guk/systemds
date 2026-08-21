@@ -6866,7 +6866,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			private final FederatedPlannerDpMemoTable memoTable;
 			private final Map<Long, ConflictEntry> conflictCheckMap;
 			private final Map<Long, FederatedOutput> lockedDecisions;
-			private final RequiredOutputStateTable states = new RequiredOutputStateTable();
+			private final RequiredOutputStateTable<RequiredOutputSelection> states =
+				new RequiredOutputStateTable<>();
 
 			RequiredOutputClosureSearch(
 				FederatedPlannerDpMemoTable memoTable,
@@ -6956,20 +6957,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		/** Primitive closure-state memo keyed by the exact concrete Hop and output. */
-		private static final class RequiredOutputStateTable {
+		/** Primitive state memo keyed by the exact concrete Hop and output. */
+		private static final class RequiredOutputStateTable<T> {
 			private static final FederatedOutput[] OUTPUTS = FederatedOutput.values();
 			private long[] hopIDs = new long[32];
 			private byte[] outputs = new byte[32];
 			private boolean[] occupied = new boolean[32];
 			private boolean[] active = new boolean[32];
-			private RequiredOutputSelection[] resolved = new RequiredOutputSelection[32];
+			private Object[] resolved = new Object[32];
 			private int size;
 			private int resizeThreshold = 20;
 
-			RequiredOutputSelection resolved(long hopID, FederatedOutput output) {
+			@SuppressWarnings("unchecked")
+			T resolved(long hopID, FederatedOutput output) {
 				int slot = locate(hopID, output);
-				return slot >= 0 ? resolved[slot] : null;
+				return slot >= 0 ? (T) resolved[slot] : null;
 			}
 
 			boolean activate(long hopID, FederatedOutput output) {
@@ -6986,7 +6988,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					active[slot] = false;
 			}
 
-			void resolve(long hopID, FederatedOutput output, RequiredOutputSelection selection) {
+			void resolve(long hopID, FederatedOutput output, T selection) {
 				int slot = ensure(hopID, output);
 				resolved[slot] = selection;
 			}
@@ -7020,12 +7022,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				byte[] previousOutputs = outputs;
 				boolean[] previousOccupied = occupied;
 				boolean[] previousActive = active;
-				RequiredOutputSelection[] previousResolved = resolved;
+				Object[] previousResolved = resolved;
 				hopIDs = new long[capacity];
 				outputs = new byte[capacity];
 				occupied = new boolean[capacity];
 				active = new boolean[capacity];
-				resolved = new RequiredOutputSelection[capacity];
+				resolved = new Object[capacity];
 				for(int index = 0; index < previousHopIDs.length; index++)
 					if(previousOccupied[index]) {
 						FederatedOutput output = OUTPUTS[previousOutputs[index] - 1];
@@ -11288,8 +11290,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private final FederatedPlannerDpMemoTable memoTable;
 		private final Map<Long,FederatedOutput> outputDecisions;
 		private final boolean collectCompatibilityFacts;
-		private final Map<ConflictForestStateKey,ConflictForestSelection> selectedStates =
-			new HashMap<>();
+		private final RequiredOutputStateTable<ConflictForestSelection> selectedStates =
+			new RequiredOutputStateTable<>();
 		private final Map<CompiledHopKey,SelectedDpState> requiredSelections =
 			new IdentityHashMap<>();
 		private final Set<CompiledHopKey> disagreeingSelections =
@@ -11312,9 +11314,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		ConflictForestSelection select(long hopID, FederatedOutput desiredOut) {
 			if(desiredOut == null)
 				return ConflictForestSelection.EMPTY;
-			ConflictForestStateKey state = new ConflictForestStateKey(hopID, desiredOut);
 			if(collectCompatibilityFacts) {
-				ConflictForestSelection cached = selectedStates.get(state);
+				ConflictForestSelection cached = selectedStates.resolved(hopID, desiredOut);
 				if(cached != null)
 					return cached;
 			}
@@ -11329,19 +11330,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(!collectCompatibilityFacts)
 				return selection;
 
-			selectedStates.put(state, selection);
+			selectedStates.resolve(hopID, desiredOut, selection);
 			if(strictPlan == null) {
 				incompatiblePlanCount++;
 				exactSelectionConflictHopIDs.add(
 					memoTable.resolveOriginalHopId(hopID));
 			}
 			if(selectedPlan != null)
-				recordExactOccurrenceSelection(state, selectedPlan);
+				recordExactOccurrenceSelection(hopID, desiredOut, selectedPlan);
 			return selection;
 		}
 
 		private void recordExactOccurrenceSelection(
-			ConflictForestStateKey state,
+			long hopID,
+			FederatedOutput desiredOut,
 			FederatedPlannerDpMemoTable.FedPlan selectedPlan) {
 			if(memoTable.analysis() == null)
 				return;
@@ -11364,7 +11366,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			familyHopIDs.add(memoTable.resolveOriginalHopId(
 				proposed.retainedPlan().getHopID()));
 			familyHopIDs.add(memoTable.resolveOriginalHopId(selectedPlan.getHopID()));
-			familyHopIDs.add(memoTable.resolveOriginalHopId(state.hopID));
+			familyHopIDs.add(memoTable.resolveOriginalHopId(hopID));
 			List<Long> exactFamily = familyHopIDs.stream().sorted().toList();
 			exactSelectionConflictHopIDs.addAll(exactFamily);
 			exactOccurrenceConflicts.add(
@@ -11372,9 +11374,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerTrace.logGlobal("DP-DecisionMap-ExactSelectionConflict",
 				"occurrence=" + occurrenceKey + " previous=" + previous + " proposed=" + proposed
 					+ " family=" + exactFamily
-					+ " stateHop=" + state.hopID + " stateOut=" + state.desiredOut
+					+ " stateHop=" + hopID + " stateOut=" + desiredOut
 					+ " explicitDecision=" + (outputDecisions != null ? getOutputDecision(
-						outputDecisions, memoTable.resolveOriginalHopId(state.hopID)) : null));
+						outputDecisions, memoTable.resolveOriginalHopId(hopID)) : null));
 		}
 
 		ConflictForestSnapshot finish(Map<Long,ConflictEntry> conflictMap) {
@@ -11402,33 +11404,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerDpMemoTable.FedPlan plan) {
 			this.strictPlan = strictPlan;
 			this.plan = plan;
-		}
-	}
-
-	private static final class ConflictForestStateKey {
-		final long hopID;
-		final FederatedOutput desiredOut;
-		final int hash;
-
-		ConflictForestStateKey(long hopID, FederatedOutput desiredOut) {
-			this.hopID = hopID;
-			this.desiredOut = Objects.requireNonNull(desiredOut, "desiredOut");
-			this.hash = 31 * Long.hashCode(hopID) + desiredOut.hashCode();
-		}
-
-		@Override
-		public boolean equals(Object obj) {
-			if(this == obj)
-				return true;
-			if(!(obj instanceof ConflictForestStateKey))
-				return false;
-			ConflictForestStateKey that = (ConflictForestStateKey) obj;
-			return hopID == that.hopID && desiredOut == that.desiredOut;
-		}
-
-		@Override
-		public int hashCode() {
-			return hash;
 		}
 	}
 
