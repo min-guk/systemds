@@ -1,0 +1,93 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements.
+ */
+package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class LocalCategoricalOptimizerTest {
+	@Test
+	public void localPruningRetainsOnlyTheMinimumRepresentativePerState() {
+		Variable variable = new Variable("x", 3);
+		Factor cost = Factor.dense(List.of(variable), 8d, 2d, 3d);
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			List.of(variable), List.of(), List.of(cost), List.of(variable), List.of(),
+			(v, value) -> value < 2 ? "CP/LOUT" : "FED/FOUT");
+
+		Assert.assertEquals(List.of(1), result.assignmentInVariableOrder());
+		Assert.assertEquals(3L, result.statistics().rawLocalAlternatives());
+		Assert.assertEquals(2L, result.statistics().retainedLocalStates());
+		Assert.assertEquals(1L, result.statistics().prunedLocalRepresentatives());
+	}
+
+	@Test
+	public void localPruningHasNoTopKCap() {
+		Variable variable = new Variable("x", 12);
+		double[] costs = new double[12];
+		for(int value = 0; value < costs.length; value++)
+			costs[value] = costs.length - value;
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			List.of(variable), List.of(), List.of(Factor.dense(List.of(variable), costs)),
+			List.of(variable), List.of(), (v, value) -> "state-" + value);
+
+		Assert.assertEquals(List.of(11), result.assignmentInVariableOrder());
+		Assert.assertEquals(12L, result.statistics().retainedLocalStates());
+		Assert.assertEquals(0L, result.statistics().prunedLocalRepresentatives());
+	}
+
+	@Test
+	public void conflictBlockChoosesTheCheapestLegalAssignmentNotTheFirstCoherentOne() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> hard = List.of(
+			Factor.lazy(List.of(x, b), values -> values[0] == values[1]
+				? 0d : Double.POSITIVE_INFINITY),
+			Factor.lazy(List.of(a, b), values -> values[0] != values[1]
+				? 0d : Double.POSITIVE_INFINITY));
+		List<Factor> cost = List.of(
+			Factor.dense(List.of(x), 0d, 2d),
+			Factor.dense(List.of(a), 0d, 0d),
+			// With x fixed to zero, the local pass chooses a=0 and creates a
+			// simultaneous conflict at b.  The first coherent block assignment
+			// (x=0,a=1,b=0) costs 10, while (x=1,a=0,b=1) costs 2.
+			Factor.dense(List.of(x, a), 0d, 10d, 0d, 0d));
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, hard, cost, variables, List.of(), (v, value) -> value);
+
+		Assert.assertEquals(List.of(1, 0, 1), result.assignmentInVariableOrder());
+		Assert.assertTrue(result.statistics().initialHardViolations() > 0);
+		Assert.assertEquals(0, result.statistics().finalHardViolations());
+		Assert.assertTrue(result.statistics().conflictBlocksSolved() > 0);
+		Assert.assertEquals(2d, result.objective(), 0d);
+	}
+
+	@Test
+	public void sharedProducerBlockOptimizesProducerAndBothParentsTogether() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = new ArrayList<>();
+		costs.add(Factor.dense(List.of(x), 0d, 4d));
+		costs.add(Factor.dense(List.of(x, a), 5d, 7d, 8d, 0d));
+		costs.add(Factor.dense(List.of(x, b), 5d, 7d, 8d, 0d));
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables, List.of(List.of(x, a, b)),
+			(v, value) -> value);
+
+		Assert.assertEquals("the joint x+a+b block must overturn the greedy x=0 choice",
+			List.of(1, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(4d, result.objective(), 0d);
+		Assert.assertEquals(1, result.statistics().sharedBlocksSolved());
+	}
+}

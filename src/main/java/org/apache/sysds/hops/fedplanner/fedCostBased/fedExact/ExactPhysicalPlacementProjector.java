@@ -30,7 +30,15 @@ final class ExactPhysicalPlacementProjector {
 	private ExactPhysicalPlacementProjector() { }
 
 	static ExactPlacementInput project(ExactPhysicalSelection selection) {
+		return project(selection, "Exact", "physical-ve");
+	}
+
+	static ExactPlacementInput project(ExactPhysicalSelection selection,
+		String plannerId, String algorithmCertificate) {
 		Objects.requireNonNull(selection, "selection");
+		if(plannerId == null || plannerId.isBlank()
+			|| algorithmCertificate == null || algorithmCertificate.isBlank())
+			throw new IllegalArgumentException("PHYSICAL_PROJECTOR_IDENTITY_INVALID");
 		PlacementAnalysis analysis = selection.analysis();
 		analysis.assertProgramStructureUnchanged();
 		if(!analysis.analysisFingerprint().equals(selection.analysisFingerprint()))
@@ -48,12 +56,12 @@ final class ExactPhysicalPlacementProjector {
 			throw new IllegalArgumentException("EXACT_PHYSICAL_PROJECTOR_RELOCATION_SET_CHANGED");
 
 		Map<CompiledHopKey,PlacementEmissionState> emissions = emissionStates(selection);
-		String certificate = "physical-ve-objective=" + selection.objectiveBits()
+		String certificate = algorithmCertificate + "-objective=" + selection.objectiveBits()
 			+ ";costSurface=" + selection.costSurfaceFingerprint()
 			+ ";assignment=" + selection.assignmentInDecisionOrder()
 			+ ";maxFactorCells=" + selection.statistics().maximumFactorCells();
 		NormalizedPlannerResult normalized = NormalizedPlannerResults
-			.createWithEmissionStatesAndCandidateSelections(analysis, "Exact", emissions,
+			.createWithEmissionStatesAndCandidateSelections(analysis, plannerId, emissions,
 				selection.candidateReceipts(), selection.relocationChoices(), certificate);
 		List<ExactPlacementInput.OccurrenceReceipt> occurrences = occurrenceReceipts(analysis, states);
 		ExactPlacementInput.ProducerReceipt producer = new ExactPlacementInput.ProducerReceipt(

@@ -16,10 +16,10 @@ public class CampaignBArchitectureGuardTest {
 	private static final Map<String,String> ROOTS = Map.of(
 		"FED_ALL", "org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll",
 		"HEURISTIC", "org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic",
-		"DP", "org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased",
+		"DP", "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost",
 		"EXACT", "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact");
 	private static final Map<String,String> ADAPTERS = Map.of("FED_ALL", "FedAllPlacementAdapter",
-		"HEURISTIC", "HeuristicPlacementAdapter", "DP", "DpPlacementAdapter", "EXACT", "ExactPlacementAdapter");
+		"HEURISTIC", "HeuristicPlacementAdapter", "DP", "ExactPlacementAdapter", "EXACT", "ExactPlacementAdapter");
 
 	@Test public void allFourOwnershipClosuresHaveOneSharedAnalysisBoundaryAndNoHiddenUniverse() throws Exception {
 		Map<String,CampaignBPlannerOwnershipClosure.Unit> index = CampaignBPlannerOwnershipClosure.index(
