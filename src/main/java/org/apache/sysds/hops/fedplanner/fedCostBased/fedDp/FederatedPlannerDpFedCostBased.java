@@ -23,6 +23,7 @@ import java.util.ArrayDeque;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -5314,6 +5315,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return new OverlayDecisionMap(currentDecisions, nextDecisions);
 	}
 
+	/**
+	 * Preserve reference identity for a refinement that did not change any output
+	 * decision. Reconciliation uses this identity as its dirty bit, which avoids
+	 * rerunning downstream whole-forest closure passes on an unchanged state.
+	 */
+	private static Map<Long, FederatedOutput> preserveDecisionMapIdentity(
+		Map<Long, FederatedOutput> input,
+		Map<Long, FederatedOutput> refined) {
+
+		return input == refined || Objects.equals(input, refined) ? input : refined;
+	}
+
 	private static Map<Long, FederatedOutput> computeOutputDecisionsInternal(
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
@@ -5512,34 +5525,36 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				nextDecisions = alignTransientReadsWithProducerDecisions(
 					memoTable, conflictCheckMap, nextDecisions, lockedDecisions,
 					transientReadParentsCache, iter);
+				Map<Long, FederatedOutput> beforeRefinement = nextDecisions;
 				nextDecisions = refineTransientFamilyDecisions(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, lockedDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
-				nextDecisions = alignTransientReadsWithProducerDecisions(
-					memoTable, conflictCheckMap, nextDecisions, lockedDecisions,
-					transientReadParentsCache, iter);
+				if (nextDecisions != beforeRefinement)
+					nextDecisions = alignTransientReadsWithProducerDecisions(
+						memoTable, conflictCheckMap, nextDecisions, lockedDecisions,
+						transientReadParentsCache, iter);
+				beforeRefinement = nextDecisions;
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, lockedDecisions,
 					iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
-				nextDecisions = alignTransientReadsWithProducerDecisions(
-					memoTable, conflictCheckMap, nextDecisions, lockedDecisions,
-					transientReadParentsCache, iter);
+				if (nextDecisions != beforeRefinement)
+					nextDecisions = alignTransientReadsWithProducerDecisions(
+						memoTable, conflictCheckMap, nextDecisions, lockedDecisions,
+						transientReadParentsCache, iter);
+				beforeRefinement = nextDecisions;
 				nextDecisions = normalizeMultiWriteTransientVariableFamilies(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, lockedDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				// Multi-write normalization may change a producer after the first closure pass.
 				// Re-close the resulting map before scoring it: rewrite cannot assign one exact
 				// compiled occurrence both the inherited edge state and a deferred global state.
-				nextDecisions = refineRequiredOutputClosureDecisions(
-					memoTable, rootPlan, conflictCheckMap, nextDecisions, lockedDecisions,
-					iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
+				if (nextDecisions != beforeRefinement) {
+					nextDecisions = refineRequiredOutputClosureDecisions(
+						memoTable, rootPlan, conflictCheckMap, nextDecisions, lockedDecisions,
+						iter, decisionMapScoreCache);
+				}
 				nextDecisions = refineExactOccurrenceSelectionDecisions(
 					memoTable, rootPlan, nextDecisions, lockedDecisions, iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				// Required-output and exact-occurrence closure can revisit a member after the
 				// transient-family pass. Rebuild the actually selected forest and let DP's
 				// existing conflict resolver make the final local family decision. Merely
@@ -5550,35 +5565,33 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				nextDecisions = refineTransientFamilyDecisions(
 					memoTable, rootPlan, finalConflictCheckMap, nextDecisions, lockedDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				nextDecisions = alignTransientReadsWithProducerDecisions(
 					memoTable, finalConflictCheckMap, nextDecisions, lockedDecisions,
 					transientReadParentsCache, iter);
 				Map<Long, ConflictEntry> alignedConflictCheckMap =
 					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
+				Map<Long, FederatedOutput> beforeFinalClosure = nextDecisions;
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, alignedConflictCheckMap, nextDecisions, lockedDecisions,
 					iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				// The family alignment above can expose a parent whose previously selected
 				// exact arm requires the superseded TRead output. Feed that newly visible
 				// incompatibility back through DP's existing exact-conflict detector/resolver
 				// instead of overriding the transient-family decision or pruning the arm.
 				nextDecisions = refineExactOccurrenceSelectionDecisions(
 					memoTable, rootPlan, nextDecisions, lockedDecisions, iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
-				nextDecisions = alignTransientReadsWithProducerDecisions(
-					memoTable, alignedConflictCheckMap, nextDecisions, lockedDecisions,
-					transientReadParentsCache, iter);
-				Map<Long, ConflictEntry> finalAlignedConflictCheckMap =
-					resolutionContext.conflictMapCache.getFeasible(nextDecisions);
-				nextDecisions = refineRequiredOutputClosureDecisions(
-					memoTable, rootPlan, finalAlignedConflictCheckMap, nextDecisions, lockedDecisions,
-					iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
-				nextDecisions = refineExactOccurrenceSelectionDecisions(
-					memoTable, rootPlan, nextDecisions, lockedDecisions, iter, decisionMapScoreCache);
-				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
+				if (nextDecisions != beforeFinalClosure) {
+					nextDecisions = alignTransientReadsWithProducerDecisions(
+						memoTable, alignedConflictCheckMap, nextDecisions, lockedDecisions,
+						transientReadParentsCache, iter);
+					Map<Long, ConflictEntry> finalAlignedConflictCheckMap =
+						resolutionContext.conflictMapCache.getFeasible(nextDecisions);
+					nextDecisions = refineRequiredOutputClosureDecisions(
+						memoTable, rootPlan, finalAlignedConflictCheckMap, nextDecisions, lockedDecisions,
+						iter, decisionMapScoreCache);
+					nextDecisions = refineExactOccurrenceSelectionDecisions(
+						memoTable, rootPlan, nextDecisions, lockedDecisions, iter, decisionMapScoreCache);
+				}
 				// A synthetic function-input boundary may feed multiple exact formal
 				// TRead occurrences that are not one transient TWrite/TRead family. The
 				// neutral graph nevertheless proves that those formals are aliases of one
@@ -5589,6 +5602,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				nextDecisions = alignFunctionFormalInputDecisions(
 					memoTable, rootPlan, nextDecisions, lockedDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
+				// Every refinement consumes the same lock set and must preserve it. One
+				// final repair/check replaces the former full lock scan after every stage.
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				logDecisionMapScoreBreakdown(
 					memoTable, rootPlan, conflictCheckMap, decisions, nextDecisions, iter, decisionMapScoreCache);
@@ -5724,7 +5739,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(bestCandidate != null)
 				aligned = bestCandidate;
 		}
-		return aligned;
+		return preserveDecisionMapIdentity(decisions, aligned);
 	}
 
 	private static List<PlacementState> selectedFunctionFormalInputStates(
@@ -5883,7 +5898,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					+ " totalAfter=" + bestScore.totalCost);
 			refinedDecisions = bestCandidate;
 		}
-		return refinedDecisions;
+		return preserveDecisionMapIdentity(decisions, refinedDecisions);
 	}
 
 	private static Map<Long, FederatedOutput> applyExactOccurrenceFamilyOutput(
@@ -6019,7 +6034,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			|| decisions == null || decisions.isEmpty())
 			return decisions;
 
-		Map<Long, FederatedOutput> alignedDecisions = new HashMap<>(decisions);
+		Map<Long, FederatedOutput> alignedDecisions = decisions;
 		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long tWriteHopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(tWriteHopID);
@@ -6047,7 +6062,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					}
 					continue;
 				}
-				FederatedOutput oldDecision = alignedDecisions.put(tReadHopID, producerDecision);
+				FederatedOutput oldDecision = alignedDecisions.get(tReadHopID);
+				if (oldDecision == producerDecision)
+					continue;
+				if (alignedDecisions == decisions)
+					alignedDecisions = new HashMap<>(decisions);
+				alignedDecisions.put(tReadHopID, producerDecision);
 				if (oldDecision != producerDecision && FederatedPlannerTrace.shouldTrace(hopRef)) {
 					FederatedPlannerTrace.log(hopRef, "DP-TransientReadProducerAlign",
 						String.format(Locale.ROOT,
@@ -6228,7 +6248,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (bestCandidate != null)
 				normalizedDecisions = bestCandidate;
 		}
-		return normalizedDecisions;
+		return preserveDecisionMapIdentity(decisions, normalizedDecisions);
 	}
 
 	private static FederatedOutput preferredUnobservedConflictOutput(ConflictEntry entry) {
@@ -6517,7 +6537,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		return refinedDecisions;
+		return preserveDecisionMapIdentity(nextDecisions, refinedDecisions);
 	}
 
 		private static boolean shouldKeepCloneFamilyPreferredOutput(
@@ -7175,7 +7195,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			copyOutputDecisionsAndApplyLocks(nextDecisions, lockedDecisions);
 		DecisionMapScoreBreakdown currentScore =
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
-		Map<Long, LinkedHashSet<Long>> parentGraph = buildConflictParentGraph(memoTable, conflictCheckMap);
+		Map<Long, LinkedHashSet<Long>> parentGraph = scoreCache.conflictParentGraph(conflictCheckMap);
 		TransientReadParentsCache transientReadParentsCache = scoreCache != null
 			? scoreCache.transientReadParentsCache : null;
 
@@ -7435,7 +7455,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		return refinedDecisions;
+		return preserveDecisionMapIdentity(nextDecisions, refinedDecisions);
 	}
 
 	private static void logDecisionMapScoreBreakdown(
@@ -11250,9 +11270,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			long parentOrigHopID,
 			long parentConcreteHopID,
 			FederatedOutput output) {
-			return downstreamIndexes.computeIfAbsent(conflictMap,
-				map -> new DownstreamForwardingIndex(memoTable, map))
-				.get(parentOrigHopID, parentConcreteHopID, output);
+			DownstreamForwardingIndex index = downstreamIndexes.get(conflictMap);
+			if(index == null) {
+				index = new DownstreamForwardingIndex(memoTable, conflictMap);
+				downstreamIndexes.put(conflictMap, index);
+			}
+			return index.get(parentOrigHopID, parentConcreteHopID, output);
 		}
 	}
 
@@ -11276,42 +11299,99 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			long parentConcreteHopID, FederatedOutput output) {
 			if(output == null)
 				return List.of();
-			ParentDownstreamForwardingIndex index = parents.computeIfAbsent(parentOrigHopID,
-				ignored -> new ParentDownstreamForwardingIndex(
-					memoTable, conflictMap.get(parentOrigHopID), parentOrigHopID));
+			ParentDownstreamForwardingIndex index = parents.get(parentOrigHopID);
+			if(index == null) {
+				index = new ParentDownstreamForwardingIndex(
+					memoTable, conflictMap.get(parentOrigHopID), parentOrigHopID);
+				parents.put(parentOrigHopID, index);
+			}
 			return index.get(parentConcreteHopID, output);
 		}
 	}
 
 	private static final class ParentDownstreamForwardingIndex {
-		private final FederatedPlannerDpMemoTable memoTable;
-		private final ConflictEntry entry;
-		private final long parentOrigHopID;
-		private final Map<Long,List<DownstreamForwardingUse>[]> byConcrete = new HashMap<>();
+		private final List<DownstreamForwardingUse>[] fallbackByOutput;
+		private final Map<Long,List<DownstreamForwardingUse>[]> exactByConcrete;
 
 		ParentDownstreamForwardingIndex(FederatedPlannerDpMemoTable memoTable,
 			ConflictEntry entry, long parentOrigHopID) {
-			this.memoTable = memoTable;
-			this.entry = entry;
-			this.parentOrigHopID = parentOrigHopID;
+			fallbackByOutput = newForwardingUseArray();
+			exactByConcrete = new HashMap<>();
+			build(memoTable, entry, parentOrigHopID);
 		}
 
 		List<DownstreamForwardingUse> get(long parentConcreteHopID, FederatedOutput output) {
-			List<DownstreamForwardingUse>[] byOutput = byConcrete.computeIfAbsent(
-				parentConcreteHopID, ignored -> newForwardingUseArray());
-			int outputIndex = output.ordinal();
-			List<DownstreamForwardingUse> uses = byOutput[outputIndex];
-			if(uses == null) {
-				uses = indexDownstreamForwardingUses(
-					memoTable, entry, parentOrigHopID, parentConcreteHopID, output);
-				byOutput[outputIndex] = uses;
+			List<DownstreamForwardingUse>[] exactByOutput = exactByConcrete.get(parentConcreteHopID);
+			List<DownstreamForwardingUse> exact = exactByOutput != null
+				? exactByOutput[output.ordinal()] : null;
+			return exact != null && !exact.isEmpty()
+				? exact : fallbackByOutput[output.ordinal()];
+		}
+
+		private void build(FederatedPlannerDpMemoTable memoTable,
+			ConflictEntry entry, long parentOrigHopID) {
+			if(entry == null || entry.parents == null || entry.parents.isEmpty()) {
+				Arrays.fill(fallbackByOutput, List.of());
+				return;
 			}
-			return uses;
+
+			LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse>[] fallback =
+				newForwardingUseMaps();
+			Map<Long,LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse>[]> exact =
+				new HashMap<>();
+			for(FederatedPlannerDpMemoTable.FedPlan downstreamPlan : entry.parents) {
+				if(downstreamPlan == null || downstreamPlan.getChildFedPlans() == null)
+					continue;
+				for(Pair<Long,FederatedOutput> edge : downstreamPlan.getChildFedPlans()) {
+					if(edge == null || edge.getValue() == null
+						|| memoTable.resolveOriginalHopId(edge.getKey()) != parentOrigHopID)
+						continue;
+					int outputIndex = edge.getValue().ordinal();
+					ConflictCostEdgeKey edgeKey = buildConflictCostEdgeKey(
+						memoTable, downstreamPlan, edge.getKey(), edge.getValue());
+					DownstreamForwardingUse use =
+						new DownstreamForwardingUse(downstreamPlan, edge.getValue());
+					if(fallback[outputIndex] == null)
+						fallback[outputIndex] = new LinkedHashMap<>();
+					fallback[outputIndex].putIfAbsent(edgeKey, use);
+
+					LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse>[] exactByOutput =
+						exact.get(edge.getKey());
+					if(exactByOutput == null) {
+						exactByOutput = newForwardingUseMaps();
+						exact.put(edge.getKey(), exactByOutput);
+					}
+					if(exactByOutput[outputIndex] == null)
+						exactByOutput[outputIndex] = new LinkedHashMap<>();
+					exactByOutput[outputIndex].putIfAbsent(edgeKey, use);
+				}
+			}
+
+			for(int outputIndex = 0; outputIndex < fallbackByOutput.length; outputIndex++)
+				fallbackByOutput[outputIndex] = immutableForwardingUses(fallback[outputIndex]);
+			for(Map.Entry<Long,LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse>[]> entrySet :
+				exact.entrySet()) {
+				List<DownstreamForwardingUse>[] exactLists = newForwardingUseArray();
+				for(int outputIndex = 0; outputIndex < exactLists.length; outputIndex++)
+					exactLists[outputIndex] = immutableForwardingUses(entrySet.getValue()[outputIndex]);
+				exactByConcrete.put(entrySet.getKey(), exactLists);
+			}
+		}
+
+		private static List<DownstreamForwardingUse> immutableForwardingUses(
+			LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse> uses) {
+			return uses == null || uses.isEmpty() ? List.of() : List.copyOf(uses.values());
 		}
 
 		@SuppressWarnings("unchecked")
 		private static List<DownstreamForwardingUse>[] newForwardingUseArray() {
 			return (List<DownstreamForwardingUse>[]) new List<?>[FederatedOutput.values().length];
+		}
+
+		@SuppressWarnings("unchecked")
+		private static LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse>[] newForwardingUseMaps() {
+			return (LinkedHashMap<ConflictCostEdgeKey,DownstreamForwardingUse>[])
+				new LinkedHashMap<?,?>[FederatedOutput.values().length];
 		}
 	}
 
@@ -11461,6 +11541,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private final ConflictMapCache conflictMapCache;
 		private final ParentVariantDeltaCache parentVariantDeltaCache;
 		private final TransientReadParentsCache transientReadParentsCache;
+		private final Map<Map<Long,ConflictEntry>,Map<Long,LinkedHashSet<Long>>> conflictParentGraphs =
+			new IdentityHashMap<>();
 
 		DecisionMapScoreCache(
 			FederatedPlannerDpMemoTable memoTable,
@@ -11490,6 +11572,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		Map<Long,ConflictEntry> conflicts(Map<Long,FederatedOutput> decisions) {
 			return conflictMapCache.getFeasible(decisions);
+		}
+
+		Map<Long,LinkedHashSet<Long>> conflictParentGraph(
+			Map<Long,ConflictEntry> conflicts) {
+			Map<Long,LinkedHashSet<Long>> graph = conflictParentGraphs.get(conflicts);
+			if(graph == null) {
+				graph = buildConflictParentGraph(memoTable, conflicts);
+				conflictParentGraphs.put(conflicts, graph);
+			}
+			return graph;
 		}
 	}
 
