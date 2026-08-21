@@ -10280,11 +10280,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	 * allocating boxed Hop IDs, map nodes, or entry iterators in the scoring loop.
 	 */
 	private static final class ObservedMemberOutputs {
-		private long[] hopIDs = new long[4];
-		private FederatedOutput[] outputs = new FederatedOutput[4];
-		private long[] indexHopIDs = new long[8];
-		private int[] indexOrdinals = new int[8];
-		private int resizeThreshold = 5;
+		private static final int INLINE_CAPACITY = 2;
+		private static final int INDEX_THRESHOLD = 12;
+		private static final FederatedOutput[] OUTPUTS = FederatedOutput.values();
+		private static final byte NULL_OUTPUT = (byte) (OUTPUTS.length + 1);
+		private long hopID0;
+		private long hopID1;
+		private byte output0;
+		private byte output1;
+		private long[] hopIDs;
+		private byte[] outputs;
+		private long[] indexHopIDs;
+		private int[] indexOrdinals;
+		private int resizeThreshold;
 		private int size;
 
 		void observe(long hopID, FederatedOutput output) {
@@ -10293,8 +10301,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				append(hopID, output);
 				return;
 			}
-			if(outputs[index] != output)
-				outputs[index] = null;
+			byte encoded = encodeOutput(output);
+			if(encodedOutputAt(index) != encoded)
+				setEncodedOutput(index, NULL_OUTPUT);
 		}
 
 		void observeIfAbsent(long hopID, FederatedOutput output) {
@@ -10311,44 +10320,99 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		long hopIDAt(int index) {
-			return hopIDs[index];
+			if(hopIDs != null)
+				return hopIDs[index];
+			return index == 0 ? hopID0 : hopID1;
 		}
 
 		FederatedOutput outputAt(int index) {
-			return outputs[index];
+			return decodeOutput(encodedOutputAt(index));
 		}
 
 		private int indexOf(long hopID) {
-			int slot = findIndexSlot(hopID, indexHopIDs, indexOrdinals);
-			return indexOrdinals[slot] - 1;
+			if(indexOrdinals != null) {
+				int slot = findIndexSlot(hopID, indexHopIDs, indexOrdinals);
+				return indexOrdinals[slot] - 1;
+			}
+			for(int index = 0; index < size; index++)
+				if(hopIDAt(index) == hopID)
+					return index;
+			return -1;
 		}
 
 		private void append(long hopID, FederatedOutput output) {
-			if(size >= resizeThreshold)
-				resizeIndex(indexHopIDs.length << 1);
-			if(size == hopIDs.length) {
+			if(hopIDs == null && size == INLINE_CAPACITY)
+				promoteInlineStorage();
+			else if(hopIDs != null && size == hopIDs.length) {
 				hopIDs = Arrays.copyOf(hopIDs, size << 1);
 				outputs = Arrays.copyOf(outputs, size << 1);
 			}
-			hopIDs[size] = hopID;
-			outputs[size] = output;
+			if(indexOrdinals != null && size >= resizeThreshold)
+				resizeIndex(indexHopIDs.length << 1);
+			setHopID(size, hopID);
+			setEncodedOutput(size, encodeOutput(output));
+			if(indexOrdinals != null)
+				putIndex(hopID, size);
+			size++;
+			if(indexOrdinals == null && size >= INDEX_THRESHOLD)
+				buildIndex(32);
+		}
+
+		private void promoteInlineStorage() {
+			hopIDs = new long[4];
+			outputs = new byte[4];
+			hopIDs[0] = hopID0;
+			hopIDs[1] = hopID1;
+			outputs[0] = output0;
+			outputs[1] = output1;
+		}
+
+		private void setHopID(int index, long hopID) {
+			if(hopIDs != null) {
+				hopIDs[index] = hopID;
+				return;
+			}
+			if(index == 0)
+				hopID0 = hopID;
+			else
+				hopID1 = hopID;
+		}
+
+		private byte encodedOutputAt(int index) {
+			if(outputs != null)
+				return outputs[index];
+			return index == 0 ? output0 : output1;
+		}
+
+		private void setEncodedOutput(int index, byte output) {
+			if(outputs != null) {
+				outputs[index] = output;
+				return;
+			}
+			if(index == 0)
+				output0 = output;
+			else
+				output1 = output;
+		}
+
+		private void buildIndex(int capacity) {
+			indexHopIDs = new long[capacity];
+			indexOrdinals = new int[capacity];
+			for(int index = 0; index < size; index++)
+				putIndex(hopIDAt(index), index);
+			resizeThreshold = (int) (capacity * 0.65);
+		}
+
+		private void putIndex(long hopID, int index) {
 			int slot = findIndexSlot(hopID, indexHopIDs, indexOrdinals);
 			indexHopIDs[slot] = hopID;
-			indexOrdinals[slot] = size + 1;
-			size++;
+			indexOrdinals[slot] = index + 1;
 		}
 
 		private void resizeIndex(int capacity) {
-			long[] resizedHopIDs = new long[capacity];
-			int[] resizedOrdinals = new int[capacity];
-			for(int index = 0; index < size; index++) {
-				int slot = findIndexSlot(hopIDs[index], resizedHopIDs, resizedOrdinals);
-				resizedHopIDs[slot] = hopIDs[index];
-				resizedOrdinals[slot] = index + 1;
-			}
-			indexHopIDs = resizedHopIDs;
-			indexOrdinals = resizedOrdinals;
-			resizeThreshold = (int) (capacity * 0.65);
+			indexHopIDs = null;
+			indexOrdinals = null;
+			buildIndex(capacity);
 		}
 
 		private static int findIndexSlot(long hopID, long[] keys, int[] ordinals) {
@@ -10362,6 +10426,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			value = (value ^ value >>> 33) * 0xff51afd7ed558ccdL;
 			value = (value ^ value >>> 33) * 0xc4ceb9fe1a85ec53L;
 			return (int) (value ^ value >>> 33);
+		}
+
+		private static byte encodeOutput(FederatedOutput output) {
+			return output == null ? NULL_OUTPUT : (byte) (output.ordinal() + 1);
+		}
+
+		private static FederatedOutput decodeOutput(byte encoded) {
+			return encoded == NULL_OUTPUT ? null : OUTPUTS[encoded - 1];
 		}
 	}
 
