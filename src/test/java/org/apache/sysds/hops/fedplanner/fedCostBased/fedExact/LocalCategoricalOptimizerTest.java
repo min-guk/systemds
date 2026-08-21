@@ -90,4 +90,23 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals(4d, result.objective(), 0d);
 		Assert.assertEquals(1, result.statistics().sharedBlocksSolved());
 	}
+
+	@Test
+	public void callerOwnedProducerChainBlocksAreNotTransitivelyMerged() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		Variable c = new Variable("c", 2);
+		Variable d = new Variable("d", 2);
+		List<Variable> variables = List.of(x, a, b, c, d);
+		List<Factor> costs = variables.stream()
+			.map(variable -> Factor.dense(List.of(variable), 0d, 1d)).toList();
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a, b), List.of(a, c, d)), (v, value) -> value);
+
+		Assert.assertEquals(List.of(0, 0, 0, 0, 0), result.assignmentInVariableOrder());
+		Assert.assertEquals(2, result.statistics().sharedBlocksSolved());
+	}
 }

@@ -43,7 +43,7 @@ final class LocalPhysicalOptimizer {
 		validateSharedSurface(model, surface);
 		List<Variable> variables = model.variables();
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
-		List<List<Variable>> sharedBlocks = sharedProducerBlocks(model);
+		List<List<Variable>> sharedBlocks = sharedProducerBlocks(model, localOrder);
 		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
 		for(DecisionDomain domain : model.domains())
 			domains.put(domain.variable(), domain);
@@ -130,7 +130,8 @@ final class LocalPhysicalOptimizer {
 		return order.stream().map(index -> domains.get(index).variable()).toList();
 	}
 
-	private static List<List<Variable>> sharedProducerBlocks(ExactPhysicalModel model) {
+	private static List<List<Variable>> sharedProducerBlocks(ExactPhysicalModel model,
+		List<Variable> localOrder) {
 		List<DecisionDomain> domains = model.domains();
 		IdentityHashMap<CompiledHopKey,Integer> positions = decisionPositions(domains);
 		Map<Integer,Set<Integer>> consumersByProducer = new LinkedHashMap<>();
@@ -144,41 +145,57 @@ final class LocalPhysicalOptimizer {
 		IdentityHashMap<Variable,Integer> variablePositions = new IdentityHashMap<>();
 		for(int index = 0; index < domains.size(); index++)
 			variablePositions.put(domains.get(index).variable(), index);
-		List<Set<Integer>> blocks = new ArrayList<>();
+		List<SharedRegion> regions = new ArrayList<>();
 		for(Map.Entry<Integer,Set<Integer>> entry : consumersByProducer.entrySet()) {
 			if(entry.getValue().size() < 2)
 				continue;
 			Set<Integer> block = new LinkedHashSet<>();
 			block.add(entry.getKey());
 			block.addAll(entry.getValue());
-			// Include the producer's immediate feasibility response region. This covers
-			// value-version siblings and transient/function equality without reconstructing
-			// a second whole-program representation.
+			regions.add(new SharedRegion(new LinkedHashSet<>(Set.of(entry.getKey())),
+				new LinkedHashSet<>(entry.getValue()), block));
+		}
+		mergeCommonConsumerRegions(regions);
+		// A direct hard-factor response is part of the same local decision, but response
+		// overlap alone must not transitively collapse a producer chain into a global
+		// block. Only a parent that consumes multiple shared producers causes a merge.
+		for(SharedRegion region : regions)
 			for(Factor factor : model.hardFactors()) {
 				List<Integer> scope = factor.scope().stream().map(variablePositions::get)
 					.filter(Objects::nonNull).toList();
-				if(scope.contains(entry.getKey()))
-					block.addAll(scope);
+				if(scope.stream().anyMatch(region.producers()::contains))
+					region.variables().addAll(scope);
 			}
-			blocks.add(block);
-		}
-		mergeOverlapping(blocks);
-		blocks.sort(LocalPhysicalOptimizer::compareBlocks);
-		List<List<Variable>> result = new ArrayList<>(blocks.size());
-		for(Set<Integer> block : blocks)
-			result.add(block.stream().sorted().map(index -> domains.get(index).variable()).toList());
+		IdentityHashMap<Variable,Integer> localRanks = new IdentityHashMap<>();
+		for(int index = 0; index < localOrder.size(); index++)
+			localRanks.put(localOrder.get(index), index);
+		regions.sort(Comparator
+			.comparingInt((SharedRegion region) -> region.producers().stream()
+				.map(index -> localRanks.get(domains.get(index).variable()))
+				.min(Integer::compareTo).orElse(Integer.MAX_VALUE))
+			.thenComparing(region -> region.variables().stream().sorted().toList(),
+				LocalPhysicalOptimizer::compareIntegerLists));
+		List<List<Variable>> result = new ArrayList<>(regions.size());
+		for(SharedRegion region : regions)
+			result.add(region.variables().stream().sorted()
+				.map(index -> domains.get(index).variable()).toList());
 		return List.copyOf(result);
 	}
 
-	private static void mergeOverlapping(List<Set<Integer>> blocks) {
+	private static void mergeCommonConsumerRegions(List<SharedRegion> regions) {
 		boolean changed;
 		do {
 			changed = false;
 			outer:
-			for(int left = 0; left < blocks.size(); left++)
-				for(int right = left + 1; right < blocks.size(); right++)
-					if(!Collections.disjoint(blocks.get(left), blocks.get(right))) {
-						blocks.get(left).addAll(blocks.remove(right));
+			for(int left = 0; left < regions.size(); left++)
+				for(int right = left + 1; right < regions.size(); right++)
+					if(!Collections.disjoint(regions.get(left).consumers(),
+						regions.get(right).consumers())) {
+						SharedRegion target = regions.get(left);
+						SharedRegion source = regions.remove(right);
+						target.producers().addAll(source.producers());
+						target.consumers().addAll(source.consumers());
+						target.variables().addAll(source.variables());
 						changed = true;
 						break outer;
 					}
@@ -186,9 +203,7 @@ final class LocalPhysicalOptimizer {
 		while(changed);
 	}
 
-	private static int compareBlocks(Set<Integer> left, Set<Integer> right) {
-		var leftValues = left.stream().sorted().toList();
-		var rightValues = right.stream().sorted().toList();
+	private static int compareIntegerLists(List<Integer> leftValues, List<Integer> rightValues) {
 		for(int index = 0; index < Math.min(leftValues.size(), rightValues.size()); index++) {
 			int comparison = Integer.compare(leftValues.get(index), rightValues.get(index));
 			if(comparison != 0)
@@ -196,6 +211,9 @@ final class LocalPhysicalOptimizer {
 		}
 		return Integer.compare(leftValues.size(), rightValues.size());
 	}
+
+	private record SharedRegion(Set<Integer> producers, Set<Integer> consumers,
+		Set<Integer> variables) { }
 
 	private static IdentityHashMap<CompiledHopKey,Integer> decisionPositions(
 		List<DecisionDomain> domains) {

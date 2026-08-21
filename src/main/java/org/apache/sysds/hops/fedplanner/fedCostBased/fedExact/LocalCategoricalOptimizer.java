@@ -9,7 +9,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -26,8 +25,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
  * Deterministic local min-sum optimization over the shared categorical factor model.
  *
  * <p>The solver performs one ordered local pass, repairs connected hard-factor
- * conflicts by optimizing only their incident variable blocks, performs one legal
- * coordinate pass, and finally optimizes caller-supplied shared-producer blocks.
+ * conflicts by optimizing only their incident variable blocks, and finally
+ * optimizes caller-supplied shared-producer blocks.
  * It never truncates a frontier by cardinality: within a complete state key it
  * retains the minimum-cost representative, while distinct state keys remain
  * incomparable.</p>
@@ -41,7 +40,7 @@ final class LocalCategoricalOptimizer {
 	record Statistics(long rawLocalAlternatives, long retainedLocalStates,
 		long prunedLocalRepresentatives, int initialHardViolations,
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
-		int coordinateBlocksSolved, int sharedBlocksSolved, int maximumBlockVariables,
+		int sharedBlocksSolved, int maximumBlockVariables,
 		long maximumBlockAssignments, long blockAssignments) { }
 
 	record Result(double objective, List<Integer> assignmentInVariableOrder,
@@ -68,7 +67,6 @@ final class LocalCategoricalOptimizer {
 		int initialHardViolations;
 		int conflictBlocksSolved;
 		int conflictBlockExpansions;
-		int coordinateBlocksSolved;
 		int sharedBlocksSolved;
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
@@ -77,8 +75,8 @@ final class LocalCategoricalOptimizer {
 		Statistics freeze(int finalHardViolations) {
 			return new Statistics(rawLocalAlternatives, retainedLocalStates,
 				prunedLocalRepresentatives, initialHardViolations, finalHardViolations,
-				conflictBlocksSolved, conflictBlockExpansions, coordinateBlocksSolved,
-				sharedBlocksSolved, maximumBlockVariables, maximumBlockAssignments,
+				conflictBlocksSolved, conflictBlockExpansions, sharedBlocksSolved,
+				maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments);
 		}
 	}
@@ -244,17 +242,6 @@ final class LocalCategoricalOptimizer {
 		statistics.initialHardViolations = violations.size();
 		repairHardConflicts(context, assignment, statistics);
 
-		for(int index = order.size() - 1; index >= 0; index--) {
-			int variable = order.get(index);
-			BlockSolution solution = solveBlock(context, assignment, new int[] {variable});
-			if(solution == null)
-				throw new IllegalArgumentException("LOCAL_COORDINATE_HAS_NO_LEGAL_STATE|variable="
-					+ context.variables.get(variable).key());
-			apply(assignment, new int[] {variable}, solution.valuesInCanonicalBlockOrder());
-			statistics.coordinateBlocksSolved++;
-			recordBlockStatistics(statistics, 1, solution);
-		}
-
 		for(int[] block : blocks) {
 			BlockSolution solution = solveBlock(context, assignment, block);
 			if(solution == null)
@@ -390,7 +377,7 @@ final class LocalCategoricalOptimizer {
 			throw new IllegalArgumentException("LOCAL_BLOCK_EMPTY");
 		List<IndexedFactor> hard = incidentFactors(context.hardFactors, block);
 		List<IndexedFactor> cost = incidentFactors(context.costFactors, block);
-		// A singleton coordinate has no internal coupling, so direct state-minimum
+		// A singleton block has no internal coupling, so direct state-minimum
 		// enumeration is cheaper than constructing a factorized solver.  Multi-variable
 		// blocks are solved exactly by local variable elimination; this compares every
 		// legal local assignment logically without materializing the Cartesian product.
@@ -625,31 +612,13 @@ final class LocalCategoricalOptimizer {
 			if(block.size() > 1)
 				blocks.add(block);
 		}
-		boolean merged;
-		do {
-			merged = false;
-			outer:
-			for(int left = 0; left < blocks.size(); left++)
-				for(int right = left + 1; right < blocks.size(); right++)
-					if(!Collections.disjoint(blocks.get(left), blocks.get(right))) {
-						blocks.get(left).addAll(blocks.remove(right));
-						merged = true;
-						break outer;
-					}
+		List<int[]> normalized = new ArrayList<>(blocks.size());
+		for(Set<Integer> block : blocks) {
+			int[] values = block.stream().sorted().mapToInt(Integer::intValue).toArray();
+			if(normalized.stream().noneMatch(prior -> Arrays.equals(prior, values)))
+				normalized.add(values);
 		}
-		while(merged);
-		return blocks.stream().map(block -> block.stream().sorted()
-			.mapToInt(Integer::intValue).toArray()).sorted(LocalCategoricalOptimizer::compareBlocks)
-			.toList();
-	}
-
-	private static int compareBlocks(int[] left, int[] right) {
-		for(int index = 0; index < Math.min(left.length, right.length); index++) {
-			int comparison = Integer.compare(left[index], right[index]);
-			if(comparison != 0)
-				return comparison;
-		}
-		return Integer.compare(left.length, right.length);
+		return List.copyOf(normalized);
 	}
 
 	private static void recordBlockStatistics(MutableStatistics statistics, int variables,

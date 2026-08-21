@@ -114,12 +114,13 @@ together.
 
 ### 3.4 Shared-producer improvement
 
-Pre-index producers with multiple compiled/logical consumers. Merge overlapping
-producer-parent regions. Once legality is established, optimize each such block
-once with its boundary fixed and accept a replacement only when all hard factors
-remain satisfied and incident cost decreases. Because canonical factors are
-evaluated once per factor, reusable materialization and transfer are not
-double-counted per parent.
+Pre-index producers with multiple compiled/logical consumers. Optimize each
+producer plus its direct consumers as one local block. Merge two blocks only when
+the same parent consumes both shared producers; a producer--consumer chain is
+kept as ordered local blocks instead of being transitively collapsed into a
+near-global solve. Once legality is established, optimize each block once with
+its boundary fixed. Because canonical factors are evaluated once per factor,
+reusable materialization and transfer are not double-counted per parent.
 
 ### 3.5 Final certificate
 
