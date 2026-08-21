@@ -38,6 +38,56 @@ final class LocalPhysicalOptimizer {
 
 	private LocalPhysicalOptimizer() { }
 
+	private static final class ValueBoundaryHardClosure {
+		private final List<DecisionDomain> domains;
+		private final List<int[]> scopes;
+		private final List<List<Integer>> incidentFactors;
+
+		ValueBoundaryHardClosure(List<DecisionDomain> domains, List<Factor> hardFactors) {
+			this.domains = domains;
+			IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
+			for(int index = 0; index < domains.size(); index++)
+				positions.put(domains.get(index).variable(), index);
+			incidentFactors = new ArrayList<>(domains.size());
+			for(int index = 0; index < domains.size(); index++)
+				incidentFactors.add(new ArrayList<>());
+			scopes = new ArrayList<>(hardFactors.size());
+			for(int factorIndex = 0; factorIndex < hardFactors.size(); factorIndex++) {
+				int[] scope = hardFactors.get(factorIndex).scope().stream()
+					.mapToInt(variable -> Objects.requireNonNull(positions.get(variable),
+						"LOCAL_VALUE_BOUNDARY_HARD_FACTOR_FOREIGN_VARIABLE")).toArray();
+				scopes.add(scope);
+				for(int variable : scope)
+					incidentFactors.get(variable).add(factorIndex);
+			}
+		}
+
+		void expand(Set<Integer> variables) {
+			ArrayDeque<Integer> frontier = new ArrayDeque<>();
+			Set<Integer> expandedBoundaries = new LinkedHashSet<>();
+			for(int variable : variables)
+				if(isValueBoundary(domains.get(variable).node().kind()))
+					frontier.addLast(variable);
+			boolean[] includedFactors = new boolean[scopes.size()];
+			while(!frontier.isEmpty()) {
+				int boundary = frontier.removeFirst();
+				if(!expandedBoundaries.add(boundary))
+					continue;
+				for(int factor : incidentFactors.get(boundary)) {
+					if(includedFactors[factor])
+						continue;
+					includedFactors[factor] = true;
+					for(int variable : scopes.get(factor)) {
+						variables.add(variable);
+						if(isValueBoundary(domains.get(variable).node().kind())
+							&& !expandedBoundaries.contains(variable))
+							frontier.addLast(variable);
+					}
+				}
+			}
+		}
+	}
+
 	static Result optimize(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface) {
 		Objects.requireNonNull(model, "model");
@@ -45,13 +95,13 @@ final class LocalPhysicalOptimizer {
 		validateSharedSurface(model, surface);
 		List<Variable> variables = model.variables();
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
-		List<List<Variable>> sharedBlocks = sharedProducerBlocks(model, localOrder);
+		List<List<Variable>> localBlocks = localInteractionBlocks(model, surface, localOrder);
 		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
 		for(DecisionDomain domain : model.domains())
 			domains.put(domain.variable(), domain);
 
 		LocalCategoricalOptimizer.Result local = LocalCategoricalOptimizer.optimize(
-			variables, model.hardFactors(), surface.factors(), localOrder, sharedBlocks,
+			variables, model.hardFactors(), surface.factors(), localOrder, localBlocks,
 			(variable, value) -> {
 				DecisionDomain domain = domains.get(variable);
 				if(domain == null)
@@ -77,6 +127,44 @@ final class LocalPhysicalOptimizer {
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
 			solverResult, canonicalBits, surface.contributionFingerprint());
 		return new Result(physical, statistics);
+	}
+
+	private static List<List<Variable>> localInteractionBlocks(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Variable> localOrder) {
+		List<DecisionDomain> domains = model.domains();
+		ValueBoundaryHardClosure hardClosure =
+			new ValueBoundaryHardClosure(domains, model.hardFactors());
+		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
+		for(int index = 0; index < domains.size(); index++)
+			positions.put(domains.get(index).variable(), index);
+		List<Set<Integer>> blocks = new ArrayList<>();
+		for(List<Variable> shared : sharedProducerBlocks(model, localOrder, hardClosure))
+			blocks.add(shared.stream().map(variable -> Objects.requireNonNull(positions.get(variable),
+				"LOCAL_SHARED_BLOCK_FOREIGN_VARIABLE")).collect(
+					java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
+		for(Factor factor : surface.factors()) {
+			if(factor.scope().size() < 2)
+				continue;
+			Set<Integer> block = factor.scope().stream().map(variable ->
+				Objects.requireNonNull(positions.get(variable),
+					"LOCAL_COST_BLOCK_FOREIGN_VARIABLE")).collect(
+						java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+			hardClosure.expand(block);
+			blocks.add(block);
+		}
+
+		IdentityHashMap<Variable,Integer> localRanks = new IdentityHashMap<>();
+		for(int index = 0; index < localOrder.size(); index++)
+			localRanks.put(localOrder.get(index), index);
+		blocks.sort(Comparator
+			.comparingInt((Set<Integer> block) -> block.stream()
+				.map(index -> localRanks.get(domains.get(index).variable()))
+				.min(Integer::compareTo).orElse(Integer.MAX_VALUE))
+			.thenComparingInt(Set::size)
+			.thenComparing(block -> block.stream().sorted().toList(),
+				LocalPhysicalOptimizer::compareIntegerLists));
+		return blocks.stream().map(block -> block.stream().sorted()
+			.map(index -> domains.get(index).variable()).toList()).toList();
 	}
 
 	private static void validateSharedSurface(ExactPhysicalModel model,
@@ -133,7 +221,7 @@ final class LocalPhysicalOptimizer {
 	}
 
 	private static List<List<Variable>> sharedProducerBlocks(ExactPhysicalModel model,
-		List<Variable> localOrder) {
+		List<Variable> localOrder, ValueBoundaryHardClosure hardClosure) {
 		List<DecisionDomain> domains = model.domains();
 		IdentityHashMap<CompiledHopKey,Integer> positions = decisionPositions(domains);
 		Map<Integer,Set<Integer>> consumersByProducer = new LinkedHashMap<>();
@@ -156,7 +244,8 @@ final class LocalPhysicalOptimizer {
 		}
 		mergeCommonConsumerRegions(regions);
 		mergeValueBoundaryRegions(regions, domains);
-		expandValueBoundaryHardClosure(regions, domains, model.hardFactors());
+		for(SharedRegion region : regions)
+			hardClosure.expand(region.variables());
 		// Ordinary regions remain one shared producer plus its direct consumers. A
 		// transient/function boundary region additionally closes only through boundary
 		// hard factors, so one logical value and its consumer stars can move together.
@@ -176,47 +265,6 @@ final class LocalPhysicalOptimizer {
 			result.add(region.variables().stream().sorted()
 				.map(index -> domains.get(index).variable()).toList());
 		return List.copyOf(result);
-	}
-
-	private static void expandValueBoundaryHardClosure(List<SharedRegion> regions,
-		List<DecisionDomain> domains, List<Factor> hardFactors) {
-		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
-		for(int index = 0; index < domains.size(); index++)
-			positions.put(domains.get(index).variable(), index);
-		List<int[]> scopes = hardFactors.stream().map(factor -> factor.scope().stream()
-			.mapToInt(variable -> Objects.requireNonNull(positions.get(variable),
-				"LOCAL_VALUE_BOUNDARY_HARD_FACTOR_FOREIGN_VARIABLE")).toArray()).toList();
-		for(SharedRegion region : regions) {
-			ArrayDeque<Integer> frontier = new ArrayDeque<>();
-			Set<Integer> expandedBoundaries = new LinkedHashSet<>();
-			for(int variable : region.variables())
-				if(isValueBoundary(domains.get(variable).node().kind()))
-					frontier.addLast(variable);
-			boolean[] includedFactors = new boolean[scopes.size()];
-			while(!frontier.isEmpty()) {
-				int boundary = frontier.removeFirst();
-				if(!expandedBoundaries.add(boundary))
-					continue;
-				for(int factor = 0; factor < scopes.size(); factor++) {
-					if(includedFactors[factor] || !contains(scopes.get(factor), boundary))
-						continue;
-					includedFactors[factor] = true;
-					for(int variable : scopes.get(factor)) {
-						region.variables().add(variable);
-						if(isValueBoundary(domains.get(variable).node().kind())
-							&& !expandedBoundaries.contains(variable))
-							frontier.addLast(variable);
-					}
-				}
-			}
-		}
-	}
-
-	private static boolean contains(int[] values, int expected) {
-		for(int value : values)
-			if(value == expected)
-				return true;
-		return false;
 	}
 
 	private static void mergeValueBoundaryRegions(List<SharedRegion> regions,

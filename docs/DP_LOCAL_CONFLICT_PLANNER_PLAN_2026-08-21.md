@@ -15,9 +15,10 @@ planner that:
    never applies an arbitrary top-K cap;
 5. detects only real hard-factor conflicts after the local pass and repairs each
    connected conflict block by comparing all legal local assignments;
-6. re-optimizes shared-producer blocks locally, so a producer consumed by parents
+6. re-optimizes factor-local interaction blocks, including shared-producer blocks, so a producer consumed by parents
    `a` and `b` is chosen by the cost of `producer + a + b + incident movement`,
-   while shared computation and reusable movement factors are charged once;
+   while a single-consumer transfer is also reconsidered with its producer and
+   consumer, and shared computation and reusable movement factors are charged once;
 7. emits only a fully legal, authority-complete placement certificate; and
 8. compiles faster than the legacy DP and, on the measured workloads, targets a
    lower planning time than Exact without claiming global optimality.
@@ -112,15 +113,22 @@ not discard assignments or states; it only changes evaluation order. If a parent
 couples multiple shared inputs, their overlapping blocks are merged and optimized
 together.
 
-### 3.4 Shared-producer improvement
+### 3.4 Factor-local improvement
 
-Pre-index producers with multiple compiled/logical consumers. Optimize each
-producer plus its direct consumers as one local block. Merge two blocks only when
-the same parent consumes both shared producers; a producer--consumer chain is
-kept as ordered local blocks instead of being transitively collapsed into a
-near-global solve. Once legality is established, optimize each block once with
-its boundary fixed. Because canonical factors are evaluated once per factor,
-reusable materialization and transfer are not double-counted per parent.
+Pre-index producers with multiple compiled/logical consumers and retain their
+producer-star blocks. In addition, create one local block for every canonical
+cost factor that couples two or more decisions. Close a block through hard
+factors only at transient, function, branch, and loop value boundaries; ordinary
+operator chains are not transitively collapsed into a near-global solve.
+
+Optimize each block exactly with its outside boundary fixed. If a block changes
+an assignment, re-enqueue precisely the blocks whose incident hard or cost
+factors depend on a changed variable. Continue only while the canonical incident
+cost strictly decreases. This yields a finite coordinate-wise local fixed point,
+not a global optimum. Factor incidences and value-boundary hard closure are built
+once and reused; they are not reconstructed on each revisit. Because canonical
+factors are evaluated once per factor, reusable materialization and transfer are
+not double-counted per parent.
 
 ### 3.5 Final certificate
 
@@ -148,6 +156,9 @@ emit transactionally.
   all distinct states beyond eight.
 - A shared producer with two parents selects the minimum joint local assignment,
   not the first coherent assignment and not either parent's isolated preference.
+- A single-consumer transfer factor can overturn an earlier producer choice.
+- Overlapping and factor-dependent blocks are revisited until neither can
+  strictly reduce its incident canonical cost.
 - A parent coupling two shared producers is solved as one overlapping block.
 - A locally chosen hard-factor conflict is repaired before projection.
 - Candidate/FType/privacy-filtered domain membership cannot be bypassed.
@@ -208,10 +219,12 @@ than the legacy reconciliation-heavy DP. The implementation:
    minimum-cost representative for each complete `Alternative.signature()` state,
    without an arbitrary top-K limit;
 3. repairs violated hard constraints by solving only the incident conflict block;
-4. optimizes a shared producer and its direct consumers as a local producer-star,
-   merging stars only when the same parent consumes multiple shared producers;
+4. optimizes shared-producer stars and every multi-decision canonical cost factor
+   as bounded local interaction blocks, closing only through value-boundary hard
+   factors;
 5. solves multi-variable local blocks exactly by local variable elimination while
-   fixing the outside boundary; and
+   fixing the outside boundary, and revisits factor-dependent blocks until a
+   strict cost-decreasing local fixed point; and
 6. validates the final hard factors and canonical objective before transactional
    projection/emission under the `DP-LocalConflict` identity.
 

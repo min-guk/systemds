@@ -26,7 +26,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
  *
  * <p>The solver performs one ordered local pass, repairs connected hard-factor
  * conflicts by optimizing only their incident variable blocks, and finally
- * optimizes caller-supplied shared-producer blocks.
+ * reaches a strict cost-decreasing fixed point over caller-supplied local
+ * interaction blocks.
  * It never truncates a frontier by cardinality: within a complete state key it
  * retains the minimum-cost representative, while distinct state keys remain
  * incomparable.</p>
@@ -40,7 +41,8 @@ final class LocalCategoricalOptimizer {
 	record Statistics(long rawLocalAlternatives, long retainedLocalStates,
 		long prunedLocalRepresentatives, int initialHardViolations,
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
-		int sharedBlocksSolved, int maximumBlockVariables,
+		int localBlocks, int localBlockImprovements, int localBlockRevisits,
+		int maximumBlockVariables,
 		long maximumBlockAssignments, long blockAssignments) { }
 
 	record Result(double objective, List<Integer> assignmentInVariableOrder,
@@ -55,6 +57,8 @@ final class LocalCategoricalOptimizer {
 	private record LocalChoice(int value, int hardViolations, double cost) { }
 	private record BlockSolution(int[] valuesInCanonicalBlockOrder, double incidentCost,
 		long searchAssignments) { }
+	private record PreparedBlock(int[] variables, List<IndexedFactor> incidentHard,
+		List<IndexedFactor> incidentCost, int[] dependencies) { }
 	private record BlockStateKey(List<Object> stateKeys) {
 		BlockStateKey { stateKeys = List.copyOf(stateKeys); }
 	}
@@ -67,7 +71,9 @@ final class LocalCategoricalOptimizer {
 		int initialHardViolations;
 		int conflictBlocksSolved;
 		int conflictBlockExpansions;
-		int sharedBlocksSolved;
+		int localBlocks;
+		int localBlockImprovements;
+		int localBlockRevisits;
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
 		long blockAssignments;
@@ -75,7 +81,8 @@ final class LocalCategoricalOptimizer {
 		Statistics freeze(int finalHardViolations) {
 			return new Statistics(rawLocalAlternatives, retainedLocalStates,
 				prunedLocalRepresentatives, initialHardViolations, finalHardViolations,
-				conflictBlocksSolved, conflictBlockExpansions, sharedBlocksSolved,
+				conflictBlocksSolved, conflictBlockExpansions, localBlocks,
+				localBlockImprovements, localBlockRevisits,
 				maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments);
 		}
@@ -227,11 +234,12 @@ final class LocalCategoricalOptimizer {
 
 	static Result optimize(List<Variable> variables, List<Factor> hardFactors,
 		List<Factor> costFactors, List<Variable> localOrder,
-		List<List<Variable>> sharedBlocks, StateKeyProvider stateKeys) {
+		List<List<Variable>> localBlocks, StateKeyProvider stateKeys) {
 		Context context = new Context(variables, hardFactors, costFactors, stateKeys);
 		List<Integer> order = validateOrder(context, localOrder);
-		List<int[]> blocks = normalizeBlocks(context, sharedBlocks);
+		List<int[]> blocks = normalizeBlocks(context, localBlocks);
 		MutableStatistics statistics = new MutableStatistics();
+		statistics.localBlocks = blocks.size();
 		int[] assignment = new int[context.variables.size()];
 		Arrays.fill(assignment, -1);
 
@@ -242,15 +250,7 @@ final class LocalCategoricalOptimizer {
 		statistics.initialHardViolations = violations.size();
 		repairHardConflicts(context, assignment, statistics);
 
-		for(int[] block : blocks) {
-			BlockSolution solution = solveBlock(context, assignment, block);
-			if(solution == null)
-				throw new IllegalArgumentException("LOCAL_SHARED_BLOCK_HAS_NO_LEGAL_ASSIGNMENT|variables="
-					+ variableKeys(context, block));
-			apply(assignment, block, solution.valuesInCanonicalBlockOrder());
-			statistics.sharedBlocksSolved++;
-			recordBlockStatistics(statistics, block.length, solution);
-		}
+		optimizeLocalBlocks(context, assignment, blocks, statistics);
 
 		violations = violatedHardFactors(context, assignment);
 		if(!violations.isEmpty())
@@ -260,6 +260,78 @@ final class LocalCategoricalOptimizer {
 			throw new IllegalArgumentException("LOCAL_FINAL_OBJECTIVE_INVALID|value=" + objective);
 		return new Result(objective, Arrays.stream(assignment).boxed().toList(),
 			statistics.freeze(violations.size()));
+	}
+
+	private static void optimizeLocalBlocks(Context context, int[] assignment,
+		List<int[]> blocks, MutableStatistics statistics) {
+		if(blocks.isEmpty())
+			return;
+		List<PreparedBlock> prepared = blocks.stream()
+			.map(block -> prepareBlock(context, block)).toList();
+		List<List<Integer>> dependentBlocks = new ArrayList<>(context.variables.size());
+		for(int variable = 0; variable < context.variables.size(); variable++)
+			dependentBlocks.add(new ArrayList<>());
+		for(int blockIndex = 0; blockIndex < prepared.size(); blockIndex++)
+			for(int variable : prepared.get(blockIndex).dependencies())
+				dependentBlocks.get(variable).add(blockIndex);
+
+		ArrayDeque<Integer> pending = new ArrayDeque<>();
+		boolean[] queued = new boolean[prepared.size()];
+		for(int blockIndex = 0; blockIndex < prepared.size(); blockIndex++) {
+			pending.addLast(blockIndex);
+			queued[blockIndex] = true;
+		}
+		long attempts = 0;
+		while(!pending.isEmpty()) {
+			int blockIndex = pending.removeFirst();
+			queued[blockIndex] = false;
+			attempts++;
+			PreparedBlock block = prepared.get(blockIndex);
+			double before = evaluateCost(block.incidentCost(), assignment);
+			BlockSolution solution = solveBlock(context, assignment, block);
+			if(solution == null)
+				throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_HAS_NO_LEGAL_ASSIGNMENT|variables="
+					+ variableKeys(context, block.variables()));
+			recordBlockStatistics(statistics, block.variables().length, solution);
+			int comparison = Double.compare(solution.incidentCost(), before);
+			if(comparison > 0)
+				throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_COST_INCREASE|before="
+					+ before + "|after=" + solution.incidentCost() + "|variables="
+					+ variableKeys(context, block.variables()));
+			if(comparison == 0)
+				continue;
+			List<Integer> changed = new ArrayList<>(block.variables().length);
+			for(int index = 0; index < block.variables().length; index++)
+				if(assignment[block.variables()[index]]
+					!= solution.valuesInCanonicalBlockOrder()[index])
+					changed.add(block.variables()[index]);
+			if(changed.isEmpty())
+				throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_COST_CHANGED_WITHOUT_ASSIGNMENT");
+			apply(assignment, block.variables(), solution.valuesInCanonicalBlockOrder());
+			statistics.localBlockImprovements++;
+			for(int variable : changed)
+				for(int neighbor : dependentBlocks.get(variable))
+					if(neighbor != blockIndex && !queued[neighbor]) {
+						pending.addLast(neighbor);
+						queued[neighbor] = true;
+					}
+		}
+		statistics.localBlockRevisits = Math.toIntExact(Math.min(Integer.MAX_VALUE,
+			Math.max(0L, attempts - prepared.size())));
+	}
+
+	private static PreparedBlock prepareBlock(Context context, int[] block) {
+		List<IndexedFactor> hard = incidentFactors(context.hardFactors, block);
+		List<IndexedFactor> cost = incidentFactors(context.costFactors, block);
+		Set<Integer> dependencies = new LinkedHashSet<>();
+		for(IndexedFactor factor : hard)
+			for(int variable : factor.scope())
+				dependencies.add(variable);
+		for(IndexedFactor factor : cost)
+			for(int variable : factor.scope())
+				dependencies.add(variable);
+		return new PreparedBlock(block, hard, cost,
+			dependencies.stream().mapToInt(Integer::intValue).toArray());
 	}
 
 	private static void selectLocalState(Context context, int[] assignment, int variable,
@@ -375,15 +447,20 @@ final class LocalCategoricalOptimizer {
 		int[] block = Arrays.stream(rawBlock).distinct().sorted().toArray();
 		if(block.length == 0)
 			throw new IllegalArgumentException("LOCAL_BLOCK_EMPTY");
-		List<IndexedFactor> hard = incidentFactors(context.hardFactors, block);
-		List<IndexedFactor> cost = incidentFactors(context.costFactors, block);
+		return solveBlock(context, assignment, prepareBlock(context, block));
+	}
+
+	private static BlockSolution solveBlock(Context context, int[] assignment,
+		PreparedBlock block) {
 		// A singleton block has no internal coupling, so direct state-minimum
 		// enumeration is cheaper than constructing a factorized solver.  Multi-variable
 		// blocks are solved exactly by local variable elimination; this compares every
 		// legal local assignment logically without materializing the Cartesian product.
-		return block.length == 1
-			? new BlockSearch(context, assignment, block, hard, cost).solve()
-			: solveFactorizedBlock(context, assignment, block, hard, cost);
+		return block.variables().length == 1
+			? new BlockSearch(context, assignment, block.variables(), block.incidentHard(),
+				block.incidentCost()).solve()
+			: solveFactorizedBlock(context, assignment, block.variables(),
+				block.incidentHard(), block.incidentCost());
 	}
 
 	private static BlockSolution solveFactorizedBlock(Context context, int[] assignment,
@@ -598,15 +675,15 @@ final class LocalCategoricalOptimizer {
 	}
 
 	private static List<int[]> normalizeBlocks(Context context,
-		List<List<Variable>> sharedBlocks) {
-		Objects.requireNonNull(sharedBlocks, "sharedBlocks");
+		List<List<Variable>> localBlocks) {
+		Objects.requireNonNull(localBlocks, "localBlocks");
 		List<Set<Integer>> blocks = new ArrayList<>();
-		for(List<Variable> raw : sharedBlocks) {
+		for(List<Variable> raw : localBlocks) {
 			Set<Integer> block = new LinkedHashSet<>();
 			for(Variable variable : raw) {
 				Integer position = context.positions.get(variable);
 				if(position == null)
-					throw new IllegalArgumentException("LOCAL_SHARED_BLOCK_FOREIGN_VARIABLE");
+					throw new IllegalArgumentException("LOCAL_INTERACTION_BLOCK_FOREIGN_VARIABLE");
 				block.add(position);
 			}
 			if(block.size() > 1)

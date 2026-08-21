@@ -88,7 +88,8 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals("the joint x+a+b block must overturn the greedy x=0 choice",
 			List.of(1, 1, 1), result.assignmentInVariableOrder());
 		Assert.assertEquals(4d, result.objective(), 0d);
-		Assert.assertEquals(1, result.statistics().sharedBlocksSolved());
+		Assert.assertEquals(1, result.statistics().localBlocks());
+		Assert.assertEquals(1, result.statistics().localBlockImprovements());
 	}
 
 	@Test
@@ -107,6 +108,49 @@ public class LocalCategoricalOptimizerTest {
 			List.of(List.of(x, a, b), List.of(a, c, d)), (v, value) -> value);
 
 		Assert.assertEquals(List.of(0, 0, 0, 0, 0), result.assignmentInVariableOrder());
-		Assert.assertEquals(2, result.statistics().sharedBlocksSolved());
+		Assert.assertEquals(2, result.statistics().localBlocks());
+	}
+
+	@Test
+	public void overlappingLocalBlocksAreRevisitedUntilNoBlockCanImprove() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 1d),
+			Factor.dense(List.of(x, a), 0d, 4d, 4d, 0d),
+			Factor.dense(List.of(a, b), 10d, 10d, 10d, 0d));
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a), List.of(a, b)), (v, value) -> value);
+
+		Assert.assertEquals(List.of(1, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(1d, result.objective(), 0d);
+		Assert.assertEquals(2, result.statistics().localBlockImprovements());
+		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
+	}
+
+	@Test
+	public void blockIsRevisitedWhenAnExternalIncidentFactorVariableChanges() {
+		Variable x = new Variable("x", 2);
+		Variable w = new Variable("w", 2);
+		Variable y = new Variable("y", 2);
+		Variable z = new Variable("z", 2);
+		List<Variable> variables = List.of(x, w, y, z);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x, y), 0d, 4d, 4d, 0d),
+			Factor.dense(List.of(x, w), 10d, 10d, 10d, 0d),
+			Factor.dense(List.of(y, z), 0d, 10d, 10d, 0d));
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(y, z), List.of(x, w)), (v, value) -> value);
+
+		Assert.assertEquals(List.of(1, 1, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(0d, result.objective(), 0d);
+		Assert.assertEquals(2, result.statistics().localBlockImprovements());
+		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
 	}
 }
