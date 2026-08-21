@@ -16,7 +16,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 
-/** Immutable exact assignment and its proof. */
+/** Immutable placement assignment and its selector certificate. */
 public record PlacementSelection(Map<CompiledHopKey, PlacementState> assignment,
 	List<CandidateSelectionReceipt> selectedCandidateSelections,
 	List<RelocationChoiceReceipt> selectedRelocationChoices,

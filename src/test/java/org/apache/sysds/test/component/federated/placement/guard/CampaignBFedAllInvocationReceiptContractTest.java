@@ -63,19 +63,19 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 	}
 
 	@Test
-	public void realAndCompatibilityFactoryRoutesReturnEquivalentTypedReceipts() throws Exception {
+	public void exactAndFirstFeasibleFactoryRoutesShareAnalysisAndEmissionContracts() throws Exception {
 		Invocation fedAll = invokeFactory(FederatedPlanner.COMPILE_FED_ALL, "B-15");
-		Invocation compatibility = invokeFactory(
+		Invocation firstFeasible = invokeFactory(
 			FederatedPlanner.COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS, "B-15");
 
-		Assert.assertEquals("FEDALL_COMPAT_ASSIGNMENT", fedAll.result.assignment(),
-			compatibility.result.assignment());
-		Assert.assertEquals("FEDALL_COMPAT_CERTIFICATE", fedAll.result.certificate(),
-			compatibility.result.certificate());
-		Assert.assertEquals("FEDALL_COMPAT_ANALYSIS_FINGERPRINT", fedAll.result.analysisFingerprint(),
-			compatibility.result.analysisFingerprint());
-		Assert.assertEquals("FEDALL_COMPAT_PLAN_FINGERPRINT", fedAll.result.normalizedPlanFingerprint(),
-			compatibility.result.normalizedPlanFingerprint());
+		Assert.assertEquals("FEDALL_POLICY_SHARED_ANALYSIS_FINGERPRINT",
+			fedAll.result.analysisFingerprint(), firstFeasible.result.analysisFingerprint());
+		Assert.assertNotEquals("FEDALL_EXACT_MUST_RETAIN_PROOF_COMPLETE_TERMINATION",
+			"POLICY_FEASIBLE", fedAll.result.certificate().terminationReason());
+		Assert.assertEquals("FEDALL_FIRST_FEASIBLE_TERMINATION", "POLICY_FEASIBLE",
+			firstFeasible.result.certificate().terminationReason());
+		Assert.assertEquals("FEDALL_FIRST_FEASIBLE_DECISION_COVERAGE",
+			fedAll.result.assignment().keySet(), firstFeasible.result.assignment().keySet());
 	}
 
 	@Test

@@ -45,7 +45,7 @@ import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Exhaustive exact selector for the planner-neutral FedAll objective. */
-public final class ExactPlacementSelector implements PlacementSelector {
+public final class ExactPlacementSelector implements PlacementSelector, PlacementAnalysisSelector {
 	private static final int BRANCH_AND_BOUND_THRESHOLD = 16;
 	private static final long CARTESIAN_BRANCH_AND_BOUND_THRESHOLD = 1L << BRANCH_AND_BOUND_THRESHOLD;
 	private static final long CANDIDATE_BOUND_COMPLETION_PRODUCT = 1L;

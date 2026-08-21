@@ -118,6 +118,21 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 	}
 
 	@Test
+	public void factoryFirstFeasibleRouteUsesSharedAnalysisAndEmitsCompleteLegalPlan() throws Exception {
+		Fixture fixture = vectorFixture();
+		Invocation invocation = invokeFactory(fixture,
+			FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS);
+
+		Assert.assertEquals("HEURISTIC_FIRST_FEASIBLE_TERMINATION", "POLICY_FEASIBLE",
+			invocation.result().certificate().terminationReason());
+		Assert.assertEquals("HEURISTIC_FIRST_FEASIBLE_SEARCH", "FIRST_FEASIBLE",
+			invocation.result().plannerFacts().get("search"));
+		Assert.assertEquals("HEURISTIC_FIRST_FEASIBLE_DECISION_COVERAGE",
+			invocation.result().selectorGraph().decisionNodes().size(),
+			invocation.result().assignment().size());
+	}
+
+	@Test
 	public void emptyFactsRemainValidWhileForeignAnalysisAndLegacyRoutesFailClosed() throws Exception {
 		Fixture fixture = vectorFixture();
 		TrackingHeuristic planner = new TrackingHeuristic(fixture.program());
@@ -158,7 +173,11 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 	}
 
 	private static Invocation invokeFactory(Fixture fixture) throws Exception {
-		AFederatedPlanner planner = FederatedPlannerFactory.create(FederatedPlanner.COMPILE_FED_HEURISTIC);
+		return invokeFactory(fixture, FederatedPlanner.COMPILE_FED_HEURISTIC);
+	}
+
+	private static Invocation invokeFactory(Fixture fixture, FederatedPlanner kind) throws Exception {
+		AFederatedPlanner planner = FederatedPlannerFactory.create(kind);
 		AFederatedPlanner.PlannerInvocationReceipt receipt = isolatedEmission(List.of(fixture.program()),
 			() -> planner.rewriteProgram(fixture.program(), null, null, fixture.analysis()));
 		HeuristicPlacementAdapter.Result result = result(receipt);

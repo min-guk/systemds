@@ -68,6 +68,11 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	public void runKMeansPlannerHeuristicSinglePassPrivacyPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-heuristic-single-pass.xml", "private-aggregate");
+	}
+
+	@Test
 	public void runKMeansPlannerDPPrivacyPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}

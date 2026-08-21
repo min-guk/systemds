@@ -35,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutS
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.junit.Test;
 
 public class FederatedPlannerFactoryContractTest {
@@ -68,6 +69,8 @@ public class FederatedPlannerFactoryContractTest {
 		expected.put(FederatedPlanner.COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS,
 			FederatedPlannerFedAllMaxFedFoutSinglePass.class);
 		expected.put(FederatedPlanner.COMPILE_FED_HEURISTIC, FederatedPlannerFedHeuristic.class);
+		expected.put(FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS,
+			FederatedPlannerFedHeuristicSinglePass.class);
 		expected.put(FederatedPlanner.COMPILE_COST_BASED, FederatedPlanLocalCost.class);
 		expected.put(FederatedPlanner.COMPILE_EXACT, FederatedPlanExact.class);
 		for(Map.Entry<FederatedPlanner, Class<? extends AFederatedPlanner>> entry : expected.entrySet())

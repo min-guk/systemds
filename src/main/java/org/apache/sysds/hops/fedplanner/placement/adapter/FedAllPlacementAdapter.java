@@ -47,14 +47,23 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMateria
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementScore;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
-/** Exact, mutation-free FedAll policy boundary over one supplied placement analysis. */
+/** Mutation-free FedAll policy boundary over one supplied placement analysis. */
 public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<FedAllPlacementAdapter.Result> {
 	private static final String COMPONENT_DERIVATION = "independent-component-envelope";
-	private final ExactPlacementSelector selector = new ExactPlacementSelector();
+	private final PlacementAnalysisSelector selector;
+
+	public FedAllPlacementAdapter() {
+		this(new ExactPlacementSelector());
+	}
+
+	public FedAllPlacementAdapter(PlacementAnalysisSelector selector) {
+		this.selector = Objects.requireNonNull(selector, "selector");
+	}
 
 	@Override
 	public Result select(PlannerPlacementContext context) {
@@ -265,7 +274,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		}
 	}
 
-	/** Adapter-facing exact objective view. */
+	/** Adapter-facing policy objective view. */
 	public record Score(int fedCount, int foutCount, int relocationCount, String normalizedSignature) {
 		public Score { Objects.requireNonNull(normalizedSignature, "normalizedSignature"); }
 	}
@@ -280,7 +289,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		}
 	}
 
-	/** Adapter-facing complete exact-search certificate. */
+	/** Adapter-facing selector certificate. */
 	public record Certificate(String graphFingerprint, String assignmentHash, long exploredCount,
 		long prunedCount, long legalUniverseSize, Score incumbentScore, Score finalUpperBound,
 		List<Bound> boundComponents, int graphNodeCount, int graphConstraintCount,
@@ -298,7 +307,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		}
 	}
 
-	/** Immutable exact FedAll selection bound to the supplied analysis instance. */
+	/** Immutable FedAll selection bound to the supplied analysis instance. */
 	public record Result(PlacementAnalysis analysis, Map<CompiledHopKey, PlacementState> assignment,
 		List<CandidateSelectionReceipt> selectedCandidateSelections,
 		List<RelocationChoiceReceipt> selectedRelocationChoices,

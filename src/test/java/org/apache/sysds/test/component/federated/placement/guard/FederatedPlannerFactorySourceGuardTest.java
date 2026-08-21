@@ -47,10 +47,11 @@ public class FederatedPlannerFactorySourceGuardTest {
 	private static final Path IPA_PASS = MAIN.resolve("org/apache/sysds/hops/ipa/IPAPassRewriteFederatedPlan.java");
 	private static final List<String> PLANNERS = Arrays.asList("FederatedPlannerFedAll",
 		"FederatedPlannerFedAllMaxFedFoutSinglePass", "FederatedPlannerFedHeuristic",
+		"FederatedPlannerFedHeuristicSinglePass",
 		"FederatedPlanLocalCost", "FederatedPlanExact");
 	private static final List<String> ENUMS = Arrays.asList("NONE", "RUNTIME", "COMPILE_FED_ALL",
-		"COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS", "COMPILE_FED_HEURISTIC", "COMPILE_COST_BASED",
-		"COMPILE_EXACT");
+		"COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS", "COMPILE_FED_HEURISTIC",
+		"COMPILE_FED_HEURISTIC_SINGLE_PASS", "COMPILE_COST_BASED", "COMPILE_EXACT");
 	private static final Pattern FACTORY_CALL = token("FederatedPlannerFactory\\s*\\.\\s*create\\s*\\(");
 	private static final Pattern GET_PLANNER = token("\\.\\s*getPlanner\\s*\\(");
 	private static final Pattern FACTORY_SIGNATURE = token(

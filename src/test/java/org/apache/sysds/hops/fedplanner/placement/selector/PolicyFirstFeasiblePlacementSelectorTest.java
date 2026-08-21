@@ -1,0 +1,120 @@
+/* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
+package org.apache.sysds.hops.fedplanner.placement.selector;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.junit.Assert;
+import org.junit.Test;
+
+/** Contract coverage for deterministic first-feasible policy selection. */
+public class PolicyFirstFeasiblePlacementSelectorTest {
+	private static final PlacementState LOCAL =
+		new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+	private static final PlacementState FED =
+		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+
+	@Test
+	public void independentPolicyChoicesStopAfterTheFirstCompleteAssignment() {
+		List<Node> nodes = new ArrayList<>();
+		for(int index = 0; index < 24; index++)
+			nodes.add(node("first-feasible-wide", "hop-" + index, index, List.of(LOCAL, FED)));
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(nodes, List.of(), List.of()));
+
+		Assert.assertEquals(24, selected.score().emittedFedCount());
+		Assert.assertEquals(24, selected.score().foutCount());
+		Assert.assertTrue(selected.assignment().values().stream().allMatch(FED::equals));
+		Assert.assertEquals("the selector must not prove the remaining 2^24 policy space",
+			1, selected.certificate().exploredCount());
+		Assert.assertEquals(TerminationReason.POLICY_FEASIBLE,
+			selected.certificate().terminationReason());
+	}
+
+	@Test
+	public void localizedPropagationResolvesOnlyTheConflictingNeighbor() {
+		Node left = node("first-feasible-conflict", "left", 0, List.of(LOCAL, FED));
+		Node right = node("first-feasible-conflict", "right", 1, List.of(LOCAL, FED));
+		Constraint conflict = new Constraint(ConstraintKind.CONJUNCTIVE,
+			left.key(), right.key(), 0,
+			"forbid-pair:" + FED.normalizedSignature() + "=>" + FED.normalizedSignature());
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(left, right), List.of(conflict), List.of()));
+
+		Assert.assertEquals("the first local policy choice remains FED", FED,
+			selected.assignment().get(left.key()));
+		Assert.assertEquals("arc propagation must demote only the conflicting neighbor", LOCAL,
+			selected.assignment().get(right.key()));
+		Assert.assertTrue(NeutralPlacementGraph.constraintSatisfied(conflict,
+			selected.assignment().get(left.key()), selected.assignment().get(right.key())));
+		Assert.assertEquals(1, selected.certificate().exploredCount());
+	}
+
+	@Test
+	public void samePlacementComponentsRetainEachNodesOwnedStateIdentity() {
+		PlacementState leftLocal = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState leftFed = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		PlacementState rightLocal = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState rightFed = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		Node left = node("first-feasible-identity", "left", 0, List.of(leftLocal, leftFed));
+		Node right = node("first-feasible-identity", "right", 1, List.of(rightLocal, rightFed));
+		Constraint same = new Constraint(ConstraintKind.SAME_PLACEMENT,
+			left.key(), right.key(), 0, "logical-value-identity");
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(left, right), List.of(same), List.of()));
+
+		Assert.assertSame(leftFed, selected.assignment().get(left.key()));
+		Assert.assertSame(rightFed, selected.assignment().get(right.key()));
+		Assert.assertNotSame(selected.assignment().get(left.key()), selected.assignment().get(right.key()));
+	}
+
+	@Test
+	public void canonicalSelectionDoesNotDependOnGraphInsertionOrder() {
+		Node left = node("first-feasible-order", "left", 0, List.of(LOCAL, FED));
+		Node right = node("first-feasible-order", "right", 1, List.of(LOCAL, FED));
+		Constraint conflict = new Constraint(ConstraintKind.CONJUNCTIVE,
+			left.key(), right.key(), 0,
+			"forbid-pair:" + FED.normalizedSignature() + "=>" + FED.normalizedSignature());
+		NeutralPlacementGraph canonical = new NeutralPlacementGraph(
+			List.of(left, right), List.of(conflict), List.of());
+		List<Node> reversedNodes = new ArrayList<>(canonical.nodes());
+		Collections.reverse(reversedNodes);
+
+		PlacementSelection first = new PolicyFirstFeasiblePlacementSelector().select(canonical);
+		PlacementSelection second = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(reversedNodes, List.of(conflict), List.of()));
+
+		Assert.assertEquals(first.assignment(), second.assignment());
+		Assert.assertEquals(first.score(), second.score());
+		Assert.assertEquals(first.selectedRelocations(), second.selectedRelocations());
+	}
+
+	private static Node node(String fingerprint, String topology, int version,
+		List<PlacementState> alternatives) {
+		ControlRegionKey region = new ControlRegionKey(fingerprint, "main", List.of("sb"),
+			"main", "compiled");
+		CompiledHopKey key = new CompiledHopKey(fingerprint, "main", "main", "compiled",
+			region, topology, topology);
+		ValueVersionKey value = new ValueVersionKey(fingerprint, "v" + version, region,
+			version, VersionKind.ORDINARY, List.of());
+		return new Node(key, NodeKind.OPERATION, value, true, alternatives, List.of(), List.of());
+	}
+}

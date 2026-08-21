@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/** Recomputable proof metadata for an exact selector result. */
+	/** Recomputable proof metadata for a placement selector result. */
 public record PlacementCertificate(PlacementScore incumbentScore, PlacementScore finalUpperBound,
 	long exploredCount, long prunedCount, String assignmentHash, String graphFingerprint,
 	int graphNodeCount, int graphEdgeCount, int componentCount, int closureDepth,
@@ -16,7 +16,8 @@ public record PlacementCertificate(PlacementScore incumbentScore, PlacementScore
 	long generatorSeed, TerminationReason terminationReason) {
 	public enum TerminationReason {
 		EXHAUSTED,
-		TIGHT_BOUND_EQUALITY
+		TIGHT_BOUND_EQUALITY,
+		POLICY_FEASIBLE
 	}
 
 	public PlacementCertificate {

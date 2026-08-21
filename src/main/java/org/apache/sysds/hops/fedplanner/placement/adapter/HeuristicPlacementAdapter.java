@@ -44,11 +44,23 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationCh
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
+import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
-/** Provenance-scoped, exact Heuristic policy over one immutable placement analysis. */
+/** Provenance-scoped Heuristic policy over one immutable placement analysis. */
 public final class HeuristicPlacementAdapter {
+	private final PlacementAnalysisSelector selector;
+
+	public HeuristicPlacementAdapter() {
+		this(new ExactPlacementSelector());
+	}
+
+	public HeuristicPlacementAdapter(PlacementAnalysisSelector selector) {
+		this.selector = Objects.requireNonNull(selector, "selector");
+	}
+
 	public Result select(PlacementAnalysis analysis, Set<ValueVersionKey> demotionMarkers) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(demotionMarkers, "demotionMarkers");
@@ -64,7 +76,7 @@ public final class HeuristicPlacementAdapter {
 		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
 		PlacementSelection selection;
 		try {
-			selection = new ExactPlacementSelector().select(analysis, filtered);
+			selection = selector.select(analysis, filtered);
 		}
 		catch(IllegalStateException failure) {
 			List<String> impossiblePairs = filtered.constraints().stream().filter(constraint -> {
@@ -117,11 +129,14 @@ public final class HeuristicPlacementAdapter {
 		List<String> clones = base.nodes().stream().filter(n -> n.kind() == NodeKind.CLONE
 			|| "recompile".equals(n.key().recompileContext())).map(Node::normalizedIdentity).sorted().toList();
 		List<String> structural = base.normalizedExclusions();
+		boolean firstFeasible = selection.certificate().terminationReason()
+			== TerminationReason.POLICY_FEASIBLE;
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
 			"policy", "PATHWISE_REENTRY_POLICY_V2", "markerCount", Integer.toString(policy.markers().size()),
 			"localPrefixCount", Integer.toString(policy.localPrefix().size()),
 			"downstreamMarkerCount", Integer.toString(policy.downstreamMarkers().size()),
-			"frontierEdgeCount", Integer.toString(policy.frontiers().size()), "search", "EXHAUSTIVE",
+			"frontierEdgeCount", Integer.toString(policy.frontiers().size()), "search",
+				firstFeasible ? "FIRST_FEASIBLE" : "EXHAUSTIVE",
 			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
 			: assignmentHash(assignment);
@@ -131,11 +146,16 @@ public final class HeuristicPlacementAdapter {
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
 			selection.score().distinctRelocationCount(), incumbent);
 		List<Bound> boundComponents = componentBounds(filtered);
+		long explored = firstFeasible ? selection.certificate().exploredCount() : candidateUniverse.size();
+		long pruned = firstFeasible ? selection.certificate().prunedCount() : 0;
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
-			assignmentHash, candidateUniverse.size(), candidateUniverse.size(), 0, List.of("complete"), incumbent,
-			incumbent, "EXHAUSTED", false, sha256(filtered.normalizedSignature()), score, score,
+			assignmentHash, explored + pruned, explored, pruned,
+			firstFeasible ? List.of("first-feasible") : List.of("complete"), incumbent,
+			incumbent, selection.certificate().terminationReason().name(), false,
+			sha256(filtered.normalizedSignature()), score, score,
 			boundComponents, filtered.nodes().size(), filtered.constraints().size(), boundComponents.size(),
-			"complete-cartesian-enumeration-with-partial-legality-pruning");
+			firstFeasible ? selection.certificate().boundDerivation()
+				: "complete-cartesian-enumeration-with-partial-legality-pruning");
 		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment,
 			candidateReceipts, choices, candidateUniverse, exclusions, relocations, obligations, anchors,
 			List.of(), List.of(), List.of(), objective, ties, relationships,

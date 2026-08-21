@@ -16,6 +16,17 @@
  */
 package org.apache.sysds.hops.fedplanner.fedAll;
 
-/** Compatibility alias for the single exact FedAll policy owner. */
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+
+/** FedAll policy variant that stops after the first constraint-coherent placement. */
 public final class FederatedPlannerFedAllMaxFedFoutSinglePass extends FederatedPlannerFedAll {
+	private final FedAllPlacementAdapter adapter = new FedAllPlacementAdapter(
+		new PolicyFirstFeasiblePlacementSelector());
+
+	@Override
+	public FedAllPlacementAdapter.Result select(PlacementAnalysis analysis) {
+		return adapter.select(analysis);
+	}
 }

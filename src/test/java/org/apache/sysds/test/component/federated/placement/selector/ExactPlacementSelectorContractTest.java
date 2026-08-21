@@ -139,10 +139,15 @@ public class ExactPlacementSelectorContractTest {
 	}
 
 	@Test
-	public void onlyProofCompleteTerminationCanRepresentSuccess() {
-		Assert.assertEquals(List.of("EXHAUSTED", "TIGHT_BOUND_EQUALITY"),
-			java.util.Arrays.stream(PlacementCertificate.TerminationReason.values())
-				.map(Enum::name).sorted().toList());
+	public void exactSelectorUsesOnlyProofCompleteTermination() {
+		for(Case fixture : IsomorphicSelectorContractFixtures.all()) {
+			PlacementCertificate.TerminationReason reason =
+				new ExactPlacementSelector().select(fixture.production()).certificate().terminationReason();
+			Assert.assertTrue(fixture.id(), reason == PlacementCertificate.TerminationReason.EXHAUSTED
+				|| reason == PlacementCertificate.TerminationReason.TIGHT_BOUND_EQUALITY);
+		}
+		Assert.assertTrue(java.util.Arrays.asList(PlacementCertificate.TerminationReason.values())
+			.contains(PlacementCertificate.TerminationReason.POLICY_FEASIBLE));
 	}
 
 	private static void assertExactCertificate(Case fixture, ExactSelectorOracle.Result oracle,
