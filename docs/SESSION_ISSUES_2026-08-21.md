@@ -112,6 +112,21 @@
     `0f7f942dd7` 대비 DP 평균 1.68%, 중앙값 1.75% 감소.
   - KMEANS, worker 2: DP 3.501초 평균/3.480초 중앙값, Exact 1.169초/1.145초.
     `0f7f942dd7` 대비 DP 평균 1.95%, 중앙값 2.99% 감소.
+- **4-planner compile-time 재실험**: 같은 최종 stage에서 FedAll, Heuristic, Exact, DP를
+  각각 1회 warm-up + 10회 측정했다. `DMLTranslator.runFederatedPlannerAtFinalHopBoundary`
+  기준으로 이 통계는 `rewriteProgram` 호출부터 final-boundary emission 검증까지를 포함한다.
+  공통 physical normalization, memory-estimate refresh, `PlacementAnalysis` binding은 타이머
+  전에 수행되며, parsing/HOP construction, LOP/runtime instruction execution은 포함되지 않는다.
+  따라서 아래 값은 공통 전처리나 전체 compile time이 아니라 **planner rewrite + 최종 emission
+  검증 시간**이다. timing JVM에서는 PlannerTrace, JFR, GC logging, runtime explain 및 runtime
+  execution을 모두 비활성화했다.
+  - LOGREG, worker 1: FedAll 17.939초 평균/17.877초 중앙값, Heuristic
+    1.554초/1.513초, Exact 2.886초/2.854초, DP 6.459초/6.380초.
+  - KMEANS, worker 2: FedAll 0.834초 평균/0.807초 중앙값, Heuristic
+    0.909초/0.896초, Exact 1.180초/1.170초, DP 3.484초/3.488초.
+  - LOGREG에서 FedAll이 가장 느리다는 사실은 재현됐지만, 이번 profiling 대상은 DP였다.
+    그러므로 FedAll의 LOGREG 비용 원인은 이 결과만으로 단정하지 않으며, 원인 귀속에는
+    FedAll 전용 allocation/CPU profiling이 별도로 필요하다.
 - **잔여 이슈**: 불필요한 두 번째 forest traversal은 제거됐지만, low-width LOGREG/KMEANS에서
   Exact는 여전히 DP보다 각각 약 2.31배, 3.00배 빠르다. 최신 JFR에서 남은 비용은 필요한
   conflict usage 구성, logical transient relation augmentation, root contribution, parent-variant
