@@ -55,7 +55,7 @@ final class LocalCategoricalOptimizer {
 	private record IndexedFactor(Factor factor, int[] scope, int ordinal) { }
 	private record LocalChoice(int value, int hardViolations, double cost) { }
 	private record BlockSolution(int[] valuesInCanonicalBlockOrder, double incidentCost,
-		long completeAssignments, long distinctStates, long prunedRepresentatives) { }
+		long searchAssignments) { }
 	private record BlockStateKey(List<Object> stateKeys) {
 		BlockStateKey { stateKeys = List.copyOf(stateKeys); }
 	}
@@ -149,7 +149,6 @@ final class LocalCategoricalOptimizer {
 		final Map<BlockStateKey,BlockCandidate> representatives;
 		BlockCandidate best;
 		long completeAssignments;
-		long prunedRepresentatives;
 
 		BlockSearch(Context context, int[] assignment, int[] canonicalBlock,
 			List<IndexedFactor> incidentHard, List<IndexedFactor> incidentCost) {
@@ -176,9 +175,7 @@ final class LocalCategoricalOptimizer {
 						retainBest(candidate);
 				if(best == null)
 					return null;
-				return new BlockSolution(best.values().clone(), best.cost(), completeAssignments,
-					duplicateStateKeys ? representatives.size() : completeAssignments,
-					prunedRepresentatives);
+				return new BlockSolution(best.values().clone(), best.cost(), completeAssignments);
 			}
 			finally {
 				for(int index = 0; index < canonicalBlock.length; index++)
@@ -207,8 +204,6 @@ final class LocalCategoricalOptimizer {
 				}
 				BlockStateKey state = new BlockStateKey(keys);
 				BlockCandidate prior = representatives.get(state);
-				if(prior != null)
-					prunedRepresentatives++;
 				if(prior == null || compare(candidate, prior) < 0)
 					representatives.put(state, candidate);
 			}
@@ -395,7 +390,81 @@ final class LocalCategoricalOptimizer {
 			throw new IllegalArgumentException("LOCAL_BLOCK_EMPTY");
 		List<IndexedFactor> hard = incidentFactors(context.hardFactors, block);
 		List<IndexedFactor> cost = incidentFactors(context.costFactors, block);
-		return new BlockSearch(context, assignment, block, hard, cost).solve();
+		// A singleton coordinate has no internal coupling, so direct state-minimum
+		// enumeration is cheaper than constructing a factorized solver.  Multi-variable
+		// blocks are solved exactly by local variable elimination; this compares every
+		// legal local assignment logically without materializing the Cartesian product.
+		return block.length == 1
+			? new BlockSearch(context, assignment, block, hard, cost).solve()
+			: solveFactorizedBlock(context, assignment, block, hard, cost);
+	}
+
+	private static BlockSolution solveFactorizedBlock(Context context, int[] assignment,
+		int[] block, List<IndexedFactor> hard, List<IndexedFactor> cost) {
+		Set<Integer> blockVariables = new LinkedHashSet<>();
+		for(int variable : block)
+			blockVariables.add(variable);
+		List<Variable> variables = Arrays.stream(block)
+			.mapToObj(context.variables::get).toList();
+		List<Factor> reducedFactors = new ArrayList<>(hard.size() + cost.size());
+		for(IndexedFactor factor : hard)
+			reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
+		for(IndexedFactor factor : cost)
+			reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
+
+		ExactCategoricalSolver.Result solved;
+		try {
+			solved = ExactCategoricalSolver.solve(variables, reducedFactors,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		}
+		catch(IllegalArgumentException ex) {
+			if("EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(ex.getMessage()))
+				return null;
+			throw ex;
+		}
+		int[] values = solved.assignmentInVariableOrder().stream()
+			.mapToInt(Integer::intValue).toArray();
+		int[] completed = assignment.clone();
+		apply(completed, block, values);
+		if(hard.stream().anyMatch(factor -> evaluate(factor, completed)
+			== Double.POSITIVE_INFINITY))
+			throw new IllegalArgumentException("LOCAL_FACTORIZED_BLOCK_HARD_CONFLICT");
+		double incidentCost = evaluateCost(cost, completed);
+		long assignments = solved.statistics().eliminationAssignments();
+		return new BlockSolution(values, incidentCost, assignments);
+	}
+
+	private static Factor reduceFactor(Context context, int[] assignment,
+		Set<Integer> blockVariables, IndexedFactor indexed) {
+		int[] globalScope = indexed.scope();
+		int[] localPositionByScope = new int[globalScope.length];
+		Arrays.fill(localPositionByScope, -1);
+		int[] fixedValues = new int[globalScope.length];
+		List<Variable> localScope = new ArrayList<>();
+		for(int scopePosition = 0; scopePosition < globalScope.length; scopePosition++) {
+			int global = globalScope[scopePosition];
+			if(blockVariables.contains(global)) {
+				localPositionByScope[scopePosition] = localScope.size();
+				localScope.add(context.variables.get(global));
+			}
+			else {
+				int fixed = assignment[global];
+				if(fixed < 0)
+					throw new IllegalArgumentException("LOCAL_BLOCK_BOUNDARY_INCOMPLETE");
+				fixedValues[scopePosition] = fixed;
+			}
+		}
+		if(localScope.isEmpty())
+			throw new IllegalArgumentException("LOCAL_BLOCK_FACTOR_NOT_INCIDENT");
+		return Factor.lazy(localScope, localValues -> {
+			int[] originalValues = fixedValues.clone();
+			for(int scopePosition = 0; scopePosition < originalValues.length; scopePosition++) {
+				int local = localPositionByScope[scopePosition];
+				if(local >= 0)
+					originalValues[scopePosition] = localValues[local];
+			}
+			return indexed.factor().cost(originalValues);
+		});
 	}
 
 	private static List<IndexedFactor> incidentFactors(List<IndexedFactor> factors, int[] block) {
@@ -587,11 +656,9 @@ final class LocalCategoricalOptimizer {
 		BlockSolution solution) {
 		statistics.maximumBlockVariables = Math.max(statistics.maximumBlockVariables, variables);
 		statistics.maximumBlockAssignments = Math.max(statistics.maximumBlockAssignments,
-			solution.completeAssignments());
+			solution.searchAssignments());
 		statistics.blockAssignments = saturatedAdd(statistics.blockAssignments,
-			solution.completeAssignments());
-		statistics.prunedLocalRepresentatives = saturatedAdd(
-			statistics.prunedLocalRepresentatives, solution.prunedRepresentatives());
+			solution.searchAssignments());
 	}
 
 	private static long saturatedAdd(long left, long right) {

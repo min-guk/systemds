@@ -101,13 +101,16 @@ For each connected violated component:
 2. include directly coupled hard-factor variables needed to make the block
    satisfiable;
 3. hold the remaining assignment fixed;
-4. enumerate/solve all local block assignments and minimize incident hard + cost
-   factors; and
+4. solve all local block assignments exactly under incident hard + cost factors,
+   using local variable elimination instead of materializing their Cartesian
+   product; and
 5. accept only an assignment that reduces the number of violations, breaking ties
    by incident canonical cost.
 
-Expansion is structural, not cardinality-capped. If a parent couples multiple
-shared inputs, their overlapping blocks are merged and optimized together.
+Expansion is structural, not cardinality-capped. The factorized local solve does
+not discard assignments or states; it only changes evaluation order. If a parent
+couples multiple shared inputs, their overlapping blocks are merged and optimized
+together.
 
 ### 3.4 Shared-producer improvement
 
