@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.ToDoubleFunction;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
@@ -25,6 +26,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.DerivedFoutMaterializationAction;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
+import org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -50,6 +52,16 @@ public final class PolicyFirstFeasiblePlacementSelector
 	private static final Comparator<PlacementState> POLICY_ORDER = Comparator
 		.comparingInt(PolicyFirstFeasiblePlacementSelector::policyRank)
 		.thenComparing(PlacementState::normalizedSignature);
+	private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
+
+	public PolicyFirstFeasiblePlacementSelector() {
+		this(null);
+	}
+
+	/** Package-private deterministic frequency seam for selector contract tests. */
+	PolicyFirstFeasiblePlacementSelector(ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
+		this.executionWeightOverride = executionWeightOverride;
+	}
 
 	@Override
 	public PlacementSelection select(NeutralPlacementGraph graph) {
@@ -59,7 +71,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 	@Override
 	public PlacementSelection select(PlacementAnalysis analysis, NeutralPlacementGraph graph) {
 		Objects.requireNonNull(graph, "graph");
-		Solver solver = new Solver(analysis, graph);
+		Solver solver = new Solver(analysis, graph, executionWeightOverride);
 		ScoredPlan plan = solver.solve();
 		PlacementScore score = new PlacementScore(plan.fedCount(), plan.foutCount(),
 			plan.physicalMovementCount(), normalizedSignature(plan));
@@ -93,22 +105,32 @@ public final class PolicyFirstFeasiblePlacementSelector
 		private final Map<ValueVersionKey,List<Integer>> sourceGroupsByValue;
 		private final List<Relation> relations;
 		private final List<List<Relation>> relationsByGroup;
+		private final List<List<RelocationAction>> relocationsByGroup;
+		private final List<List<DerivedFoutMaterializationAction>> derivedActionsByGroup;
 		private final CandidateSelections.PartialReachabilityIndex reachability;
 		private final RelocationSelections.CanonicalOrderIndex relocationOrder;
+		private final OccurrenceExecutionFrequencyFacts frequencyFacts;
+		private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
 		private long explored;
 		private long pruned;
 		private int maxDepth;
 
-		private Solver(PlacementAnalysis analysis, NeutralPlacementGraph graph) {
+		private Solver(PlacementAnalysis analysis, NeutralPlacementGraph graph,
+			ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
 			this.analysis = analysis != null && !analysis.candidateRuleFacts().orderedFacts().isEmpty()
 				? analysis : null;
 			this.graph = graph;
+			this.frequencyFacts = analysis == null ? null : analysis.executionFrequencyFacts();
+			this.executionWeightOverride = executionWeightOverride;
 			this.decisions = graph.decisionNodes().stream().sorted().toList();
 			this.groups = samePlacementGroups(decisions, graph.constraints());
 			this.groupsByKey = groupsByKey(groups);
 			this.sourceGroupsByValue = sourceGroupsByValue(groups);
 			this.relations = relations(groups, graph.constraints());
 			this.relationsByGroup = relationsByGroup(groups.size(), relations);
+			this.relocationsByGroup = relocationsByGroup(groups.size(), graph.relocationActions());
+			this.derivedActionsByGroup = derivedActionsByGroup(groups.size(),
+				graph.derivedFoutMaterializationActions());
 			this.reachability = this.analysis == null ? null
 				: CandidateSelections.partialReachabilityIndex(this.analysis, graph,
 					graph.relocationActions());
@@ -178,44 +200,175 @@ public final class PolicyFirstFeasiblePlacementSelector
 
 		private MovementHint movementHint(DecisionGroup selected, PlacementState state,
 			List<List<PlacementState>> domains) {
-			Set<String> unavoidable = new LinkedHashSet<>();
-			Set<String> exposed = new LinkedHashSet<>();
-			for(RelocationAction action : graph.relocationActions()) {
-				if(!incident(selected, action))
-					continue;
+			Map<String,Double> unavoidable = new LinkedHashMap<>();
+			Map<String,Double> exposed = new LinkedHashMap<>();
+			Map<String,Double> sourcePreparation = new LinkedHashMap<>();
+			for(RelocationAction action : relocationsByGroup.get(selected.index())) {
 				Requirement requirement = requirement(action, selected, state, domains);
 				if(!requirement.possible())
 					continue;
 				DirectSource direct = directSource(action, selected, state, domains);
 				String physical = RelocationSelections.physicalEmissionIdentity(action.key());
+				double actionWeight = relocationWeight(action);
 				if(requirement.definite() && !direct.possible())
-					unavoidable.add(physical);
+					unavoidable.merge(physical, actionWeight, Math::max);
 				else if(!direct.definite())
-					exposed.add(physical);
+					exposed.merge(physical, actionWeight, Math::max);
+				double preparation = minimumDirectSourcePreparation(
+					action, selected, state, domains);
+				if(Double.isFinite(preparation) && preparation > 0.0)
+					sourcePreparation.merge(physical,
+						Math.min(actionWeight, preparation), Math::max);
 			}
-			Set<String> derived = new LinkedHashSet<>();
-			for(DerivedFoutMaterializationAction action : graph.derivedFoutMaterializationActions()) {
-				Integer producerGroup = groupsByKey.get(action.key().producer());
-				if(producerGroup != null && producerGroup == selected.index()
-					&& action.key().targetPlacement().equals(state))
-					derived.add(action.key().producer().normalizedSignature() + '|'
+			Map<String,Double> derived = new LinkedHashMap<>();
+			for(DerivedFoutMaterializationAction action : derivedActionsByGroup.get(selected.index())) {
+				if(action.key().targetPlacement().equals(state)) {
+					String identity = action.key().producer().normalizedSignature() + '|'
 						+ action.key().targetPlacement().normalizedSignature() + '|'
-						+ action.key().durableAnchor().normalizedSignature());
+						+ action.key().durableAnchor().normalizedSignature();
+					derived.merge(identity, executionWeight(action.key().producer()), Math::max);
+				}
 			}
-			return new MovementHint(unavoidable.size(), exposed.size(), derived.size());
+			return new MovementHint(sum(unavoidable), sum(exposed), sum(derived),
+				sum(sourcePreparation), anchorAffinityPenalty(selected, state));
 		}
 
-		private boolean incident(DecisionGroup selected, RelocationAction action) {
-			for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
-				action.key().sourceValueVersion(), List.of()))
-				if(sourceGroup == selected.index())
-					return true;
-			for(var obligation : action.obligations()) {
-				Integer consumerGroup = groupsByKey.get(obligation.consumer());
-				if(consumerGroup != null && consumerGroup == selected.index())
-					return true;
+		private List<List<RelocationAction>> relocationsByGroup(int groupCount,
+			List<RelocationAction> actions) {
+			List<LinkedHashSet<RelocationAction>> indexed = new ArrayList<>();
+			for(int group = 0; group < groupCount; group++)
+				indexed.add(new LinkedHashSet<>());
+			for(RelocationAction action : actions) {
+				for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
+					action.key().sourceValueVersion(), List.of()))
+					indexed.get(sourceGroup).add(action);
+				for(var obligation : action.obligations()) {
+					Integer consumerGroup = groupsByKey.get(obligation.consumer());
+					if(consumerGroup != null)
+						indexed.get(consumerGroup).add(action);
+				}
 			}
+			return indexed.stream().map(actionsForGroup -> actionsForGroup.stream()
+				.sorted().toList()).toList();
+		}
+
+		private List<List<DerivedFoutMaterializationAction>> derivedActionsByGroup(
+			int groupCount, List<DerivedFoutMaterializationAction> actions) {
+			List<List<DerivedFoutMaterializationAction>> indexed = new ArrayList<>();
+			for(int group = 0; group < groupCount; group++)
+				indexed.add(new ArrayList<>());
+			for(DerivedFoutMaterializationAction action : actions) {
+				Integer producerGroup = groupsByKey.get(action.key().producer());
+				if(producerGroup != null)
+					indexed.get(producerGroup).add(action);
+			}
+			return indexed.stream().map(actionsForGroup -> actionsForGroup.stream()
+				.sorted().toList()).toList();
+		}
+
+		/**
+		 * Lower bound for realizing a direct source state one edge away.  A direct BROADCAST
+		 * alternative is not free when it can only be obtained through a derived FOUT
+		 * materialization; the selector compares that cost with emitting the relocation itself.
+		 */
+		private double minimumDirectSourcePreparation(RelocationAction action,
+			DecisionGroup selected, PlacementState selectedState,
+			List<List<PlacementState>> domains) {
+			double minimum = Double.POSITIVE_INFINITY;
+			for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
+				action.key().sourceValueVersion(), List.of())) {
+				for(PlacementState sourceState : domain(sourceGroup, selected, selectedState, domains)) {
+					if(!action.directSourcePlacements().contains(sourceState))
+						continue;
+					if(hasNativeDirectSourceEmission(sourceGroup, sourceState)) {
+						minimum = 0.0;
+						continue;
+					}
+					double preparation = Double.POSITIVE_INFINITY;
+					for(DerivedFoutMaterializationAction derived :
+						derivedActionsByGroup.get(sourceGroup))
+						if(derived.key().targetPlacement().equals(sourceState))
+							preparation = Math.min(preparation,
+								executionWeight(derived.key().producer()));
+					if(!Double.isFinite(preparation))
+						preparation = 0.0;
+					minimum = Math.min(minimum, preparation);
+				}
+			}
+			return minimum;
+		}
+
+		private boolean hasNativeDirectSourceEmission(int sourceGroup, PlacementState sourceState) {
+			if(analysis == null)
+				return false;
+			for(Node source : groups.get(sourceGroup).members())
+				for(var fact : analysis.candidateRuleFacts().orderedFactsForParent(source.key()))
+					for(var emission : fact.allowedEmissionFacts())
+						if(emission.emissionState().placementState().equals(sourceState)
+							&& emission.derivedFoutAction() == null)
+							return true;
 			return false;
+		}
+
+		private double relocationWeight(RelocationAction action) {
+			double weight = 0.0;
+			for(var obligation : action.obligations()) {
+				double obligationWeight = executionWeight(obligation.consumer());
+				if(frequencyFacts != null && executionWeightOverride == null) {
+					for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
+						action.key().sourceValueVersion(), List.of()))
+						for(Node source : groups.get(sourceGroup).members())
+							try {
+								obligationWeight = Math.min(obligationWeight,
+									frequencyFacts.forwardingWeight(
+										obligation.consumer(), source.key()));
+							}
+							catch(IllegalArgumentException incompleteContext) {
+								// Retain the conservative consumer execution weight.
+							}
+				}
+				// One physical action can serve compatible consumers, so reuse is modeled by
+				// the maximum dynamic demand rather than summing duplicate obligations.
+				weight = Math.max(weight, obligationWeight);
+			}
+			return weight > 0.0 ? weight : 1.0;
+		}
+
+		private double executionWeight(CompiledHopKey key) {
+			if(executionWeightOverride != null) {
+				double weight = executionWeightOverride.applyAsDouble(key);
+				if(!Double.isFinite(weight) || weight <= 0.0)
+					throw new IllegalArgumentException("selector execution weight must be positive");
+				return weight;
+			}
+			if(frequencyFacts == null)
+				return 1.0;
+			try {
+				return frequencyFacts.executionWeight(key);
+			}
+			catch(IllegalArgumentException incompleteContext) {
+				return 1.0;
+			}
+		}
+
+		private int anchorAffinityPenalty(DecisionGroup group, PlacementState state) {
+			if(state.fType() == null)
+				return 0;
+			boolean hasLayoutAnchor = false;
+			for(Node member : group.members())
+				for(var anchor : member.anchors()) {
+					hasLayoutAnchor = true;
+					if(anchor.fType() == state.fType())
+						return 0;
+				}
+			return hasLayoutAnchor ? 1 : 0;
+		}
+
+		private static double sum(Map<String,Double> weights) {
+			double total = 0.0;
+			for(double weight : weights.values())
+				total += weight;
+			return total;
 		}
 
 		private Requirement requirement(RelocationAction action, DecisionGroup selected,
@@ -391,16 +544,23 @@ public final class PolicyFirstFeasiblePlacementSelector
 
 	private record Requirement(boolean possible, boolean definite) { }
 	private record DirectSource(boolean possible, boolean definite) { }
-	private record MovementHint(int unavoidable, int exposed, int derived)
+	private record MovementHint(double unavoidable, double exposed, double derived,
+		double sourcePreparation, int anchorPenalty)
 		implements Comparable<MovementHint> {
 		@Override
 		public int compareTo(MovementHint that) {
-			int comparison = Long.compare(
-				(long) unavoidable + derived, (long) that.unavoidable + that.derived);
+			int comparison = Double.compare(
+				unavoidable + derived, that.unavoidable + that.derived);
 			if(comparison != 0)
 				return comparison;
-			comparison = Integer.compare(exposed, that.exposed);
-			return comparison != 0 ? comparison : Integer.compare(derived, that.derived);
+			comparison = Double.compare(sourcePreparation, that.sourcePreparation);
+			if(comparison != 0)
+				return comparison;
+			comparison = Double.compare(exposed, that.exposed);
+			if(comparison != 0)
+				return comparison;
+			comparison = Double.compare(derived, that.derived);
+			return comparison != 0 ? comparison : Integer.compare(anchorPenalty, that.anchorPenalty);
 		}
 	}
 

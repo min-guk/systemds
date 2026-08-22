@@ -838,6 +838,7 @@ public final class PlacementAnalysis {
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
 	private final PlacementPrivacyFacts privacyFacts;
+	private final OccurrenceExecutionFrequencyFacts executionFrequencyFacts;
 	private final String analysisFingerprint;
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
 	private final CandidateRuleDomain candidateRuleDomain;
@@ -1005,6 +1006,7 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Heuristic policy producer/value pair does not match the analysis graph");
 		}
 		validateHeuristicPaths(analysisKeysByIdentity);
+		this.executionFrequencyFacts = OccurrenceExecutionFrequencyFacts.from(this);
 	}
 
 	private void validateHeuristicPaths(Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
@@ -1476,6 +1478,11 @@ public final class PlacementAnalysis {
 
 	public List<StatementBlock> topLevelStatementBlocks() {
 		return topLevelStatementBlocks;
+	}
+
+	/** Shared immutable control-flow frequency authority captured before selector execution. */
+	public OccurrenceExecutionFrequencyFacts executionFrequencyFacts() {
+		return executionFrequencyFacts;
 	}
 
 	/**

@@ -39,6 +39,10 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
 	private static final PlacementState FED_BROADCAST =
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.BROADCAST, false);
+	private static final PlacementState FED_ROW_LOUT =
+		new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, false);
+	private static final PlacementState FED_BROADCAST_LOUT =
+		new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.BROADCAST, false);
 
 	@Test
 	public void independentPolicyChoicesStopAfterTheFirstCompleteAssignment() {
@@ -182,6 +186,74 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 		Assert.assertEquals("a certain output materialization must lose to an equally ranked native FOUT",
 			FED, selected.assignment().get(producer.key()));
 		Assert.assertEquals(1, selected.certificate().exploredCount());
+	}
+
+	@Test
+	public void repeatedIncidentMovementDominatesCanonicalLayoutOrder() {
+		String fingerprint = "first-feasible-frequency-weight";
+		Node source = node(fingerprint, "a-source", 0, List.of(FED_BROADCAST, FED));
+		Node hotRowConsumer = node(fingerprint, "b-hot-row", 1, List.of(FED));
+		Node coldBroadcastConsumer = node(fingerprint, "c-cold-broadcast", 2,
+			List.of(FED_BROADCAST));
+		DurableAnchorKey rowAnchor = new DurableAnchorKey("row-workers", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		DurableAnchorKey broadcastAnchor = new DurableAnchorKey("broadcast-workers", FType.BROADCAST,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		RelocationActionKey rowKey = new RelocationActionKey(source.valueVersion(), FED,
+			FType.ROW, rowAnchor, "main", List.of(hotRowConsumer.key()));
+		RelocationActionKey broadcastKey = new RelocationActionKey(source.valueVersion(), FED_BROADCAST,
+			FType.BROADCAST, broadcastAnchor, "main", List.of(coldBroadcastConsumer.key()));
+		RelocationAction row = new RelocationAction(rowKey, List.of(new ObligationKey(
+			hotRowConsumer.key(), 0, source.valueVersion(), FED, rowKey, "compiled")), List.of(FED));
+		RelocationAction broadcast = new RelocationAction(broadcastKey, List.of(new ObligationKey(
+			coldBroadcastConsumer.key(), 0, source.valueVersion(), FED_BROADCAST,
+			broadcastKey, "compiled")), List.of(FED_BROADCAST));
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector(key ->
+			key == hotRowConsumer.key() ? 30.0 : 1.0).select(new NeutralPlacementGraph(
+				List.of(source, hotRowConsumer, coldBroadcastConsumer), List.of(),
+				List.of(row, broadcast)));
+
+		Assert.assertEquals("one cold relocation must beat one loop-amplified relocation",
+			FED, selected.assignment().get(source.key()));
+		Assert.assertEquals(1, selected.score().distinctRelocationCount());
+		Assert.assertEquals(1, selected.certificate().exploredCount());
+	}
+
+	@Test
+	public void directSourceThatRequiresDerivedBroadcastLosesToNativeRow() {
+		String fingerprint = "first-feasible-one-hop-source-preparation";
+		Node consumer = node(fingerprint, "a-consumer", 0,
+			List.of(FED_BROADCAST_LOUT, FED_ROW_LOUT));
+		Node source = node(fingerprint, "z-source", 1,
+			List.of(FED_BROADCAST, FED, FED_BROADCAST_LOUT));
+		DurableAnchorKey rowAnchor = new DurableAnchorKey("row-workers", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		DurableAnchorKey broadcastAnchor = new DurableAnchorKey("broadcast-workers", FType.BROADCAST,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		RelocationActionKey rowKey = new RelocationActionKey(source.valueVersion(), FED_ROW_LOUT,
+			FType.ROW, rowAnchor, "main", List.of(consumer.key()));
+		RelocationActionKey broadcastKey = new RelocationActionKey(source.valueVersion(),
+			FED_BROADCAST_LOUT, FType.BROADCAST, broadcastAnchor, "main", List.of(consumer.key()));
+		RelocationAction row = new RelocationAction(rowKey, List.of(new ObligationKey(
+			consumer.key(), 0, source.valueVersion(), FED_ROW_LOUT, rowKey, "compiled")), List.of(FED));
+		RelocationAction broadcast = new RelocationAction(broadcastKey, List.of(new ObligationKey(
+			consumer.key(), 0, source.valueVersion(), FED_BROADCAST_LOUT,
+			broadcastKey, "compiled")), List.of(FED_BROADCAST));
+		CandidateRuleKey rule = new CandidateRuleKey(source.key(),
+			List.of(CandidateInputState.present(FType.BROADCAST)));
+		DerivedFoutMaterializationActionKey derivedKey = new DerivedFoutMaterializationActionKey(
+			source.key(), source.valueVersion(), rule, FED_BROADCAST_LOUT, FED_BROADCAST, rowAnchor,
+			source.key(), FType.ROW, FType.BROADCAST, "main");
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(consumer, source), List.of(), List.of(row, broadcast),
+				List.of(new DerivedFoutMaterializationAction(derivedKey))));
+
+		Assert.assertEquals("a nominally direct BROADCAST source is not free when it must be derived",
+			FED_ROW_LOUT, selected.assignment().get(consumer.key()));
+		Assert.assertEquals(FED, selected.assignment().get(source.key()));
+		Assert.assertTrue(selected.selectedRelocations().isEmpty());
 	}
 
 	private static Node node(String fingerprint, String topology, int version,
