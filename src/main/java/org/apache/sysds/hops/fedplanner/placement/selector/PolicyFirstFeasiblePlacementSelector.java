@@ -22,6 +22,7 @@ import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.DerivedFoutMaterializationAction;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -29,6 +30,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSel
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.ComponentBound;
@@ -87,6 +89,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 		private final NeutralPlacementGraph graph;
 		private final List<Node> decisions;
 		private final List<DecisionGroup> groups;
+		private final Map<CompiledHopKey,Integer> groupsByKey;
+		private final Map<ValueVersionKey,List<Integer>> sourceGroupsByValue;
 		private final List<Relation> relations;
 		private final List<List<Relation>> relationsByGroup;
 		private final CandidateSelections.PartialReachabilityIndex reachability;
@@ -101,6 +105,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			this.graph = graph;
 			this.decisions = graph.decisionNodes().stream().sorted().toList();
 			this.groups = samePlacementGroups(decisions, graph.constraints());
+			this.groupsByKey = groupsByKey(groups);
+			this.sourceGroupsByValue = sourceGroupsByValue(groups);
 			this.relations = relations(groups, graph.constraints());
 			this.relationsByGroup = relationsByGroup(groups.size(), relations);
 			this.reachability = this.analysis == null ? null
@@ -133,7 +139,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 				explored++;
 				return scoreComplete(partial);
 			}
-			for(PlacementState state : domains.get(unresolved.index())) {
+			for(PlacementState state : orderedAlternatives(unresolved, domains)) {
 				List<List<PlacementState>> branch = copyDomains(domains);
 				branch.set(unresolved.index(), List.of(state));
 				if(!propagate(branch, arcsFor(unresolved.index()))) {
@@ -145,6 +151,108 @@ public final class PolicyFirstFeasiblePlacementSelector
 					return result;
 			}
 			return null;
+		}
+
+		/**
+		 * Preserve the FedAll FED/FOUT policy order, but break equal-policy layout ties
+		 * with only the movement actions incident to this equality group.  This is a
+		 * greedy ordering hint, not a global objective proof: the selector still accepts
+		 * the first candidate-reachable complete assignment.
+		 */
+		private List<PlacementState> orderedAlternatives(DecisionGroup group,
+			List<List<PlacementState>> domains) {
+			List<PlacementState> ordered = new ArrayList<>(domains.get(group.index()));
+			Map<PlacementState,MovementHint> hints = new IdentityHashMap<>();
+			for(PlacementState state : ordered)
+				hints.put(state, movementHint(group, state, domains));
+			ordered.sort((left, right) -> {
+				int policy = Integer.compare(policyRank(left), policyRank(right));
+				if(policy != 0)
+					return policy;
+				int movement = hints.get(left).compareTo(hints.get(right));
+				return movement != 0 ? movement
+					: left.normalizedSignature().compareTo(right.normalizedSignature());
+			});
+			return List.copyOf(ordered);
+		}
+
+		private MovementHint movementHint(DecisionGroup selected, PlacementState state,
+			List<List<PlacementState>> domains) {
+			Set<String> unavoidable = new LinkedHashSet<>();
+			Set<String> exposed = new LinkedHashSet<>();
+			for(RelocationAction action : graph.relocationActions()) {
+				if(!incident(selected, action))
+					continue;
+				Requirement requirement = requirement(action, selected, state, domains);
+				if(!requirement.possible())
+					continue;
+				DirectSource direct = directSource(action, selected, state, domains);
+				String physical = RelocationSelections.physicalEmissionIdentity(action.key());
+				if(requirement.definite() && !direct.possible())
+					unavoidable.add(physical);
+				else if(!direct.definite())
+					exposed.add(physical);
+			}
+			Set<String> derived = new LinkedHashSet<>();
+			for(DerivedFoutMaterializationAction action : graph.derivedFoutMaterializationActions()) {
+				Integer producerGroup = groupsByKey.get(action.key().producer());
+				if(producerGroup != null && producerGroup == selected.index()
+					&& action.key().targetPlacement().equals(state))
+					derived.add(action.key().producer().normalizedSignature() + '|'
+						+ action.key().targetPlacement().normalizedSignature() + '|'
+						+ action.key().durableAnchor().normalizedSignature());
+			}
+			return new MovementHint(unavoidable.size(), exposed.size(), derived.size());
+		}
+
+		private boolean incident(DecisionGroup selected, RelocationAction action) {
+			for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
+				action.key().sourceValueVersion(), List.of()))
+				if(sourceGroup == selected.index())
+					return true;
+			for(var obligation : action.obligations()) {
+				Integer consumerGroup = groupsByKey.get(obligation.consumer());
+				if(consumerGroup != null && consumerGroup == selected.index())
+					return true;
+			}
+			return false;
+		}
+
+		private Requirement requirement(RelocationAction action, DecisionGroup selected,
+			PlacementState state, List<List<PlacementState>> domains) {
+			boolean possible = false;
+			boolean definite = false;
+			for(var obligation : action.obligations()) {
+				Integer group = groupsByKey.get(obligation.consumer());
+				if(group == null)
+					continue;
+				List<PlacementState> domain = domain(group, selected, state, domains);
+				if(domain.contains(obligation.requiredPlacement()))
+					possible = true;
+				if(domain.size() == 1 && domain.get(0).equals(obligation.requiredPlacement()))
+					definite = true;
+			}
+			return new Requirement(possible, definite);
+		}
+
+		private DirectSource directSource(RelocationAction action, DecisionGroup selected,
+			PlacementState state, List<List<PlacementState>> domains) {
+			boolean possible = false;
+			boolean definite = false;
+			for(Integer group : sourceGroupsByValue.getOrDefault(
+				action.key().sourceValueVersion(), List.of())) {
+				List<PlacementState> domain = domain(group, selected, state, domains);
+				if(domain.stream().anyMatch(action.directSourcePlacements()::contains))
+					possible = true;
+				if(domain.size() == 1 && action.directSourcePlacements().contains(domain.get(0)))
+					definite = true;
+			}
+			return new DirectSource(possible, definite);
+		}
+
+		private static List<PlacementState> domain(int group, DecisionGroup selected,
+			PlacementState state, List<List<PlacementState>> domains) {
+			return group == selected.index() ? List.of(state) : domains.get(group);
 		}
 
 		private ScoredPlan scoreComplete(Map<CompiledHopKey,PlacementState> assignment) {
@@ -278,6 +386,20 @@ public final class PolicyFirstFeasiblePlacementSelector
 					result.add(new Arc(relation, group, group));
 			}
 			return result;
+		}
+	}
+
+	private record Requirement(boolean possible, boolean definite) { }
+	private record DirectSource(boolean possible, boolean definite) { }
+	private record MovementHint(int unavoidable, int exposed, int derived)
+		implements Comparable<MovementHint> {
+		@Override
+		public int compareTo(MovementHint that) {
+			int comparison = Integer.compare(unavoidable, that.unavoidable);
+			if(comparison != 0)
+				return comparison;
+			comparison = Integer.compare(exposed, that.exposed);
+			return comparison != 0 ? comparison : Integer.compare(derived, that.derived);
 		}
 	}
 
@@ -424,6 +546,27 @@ public final class PolicyFirstFeasiblePlacementSelector
 		}
 		result.sort(Comparator.comparingInt(Relation::first).thenComparingInt(Relation::second));
 		return List.copyOf(result);
+	}
+
+	private static Map<CompiledHopKey,Integer> groupsByKey(List<DecisionGroup> groups) {
+		Map<CompiledHopKey,Integer> result = new IdentityHashMap<>();
+		for(DecisionGroup group : groups)
+			for(Node member : group.members())
+				result.put(member.key(), group.index());
+		return Collections.unmodifiableMap(result);
+	}
+
+	private static Map<ValueVersionKey,List<Integer>> sourceGroupsByValue(
+		List<DecisionGroup> groups) {
+		Map<ValueVersionKey,LinkedHashSet<Integer>> mutable = new LinkedHashMap<>();
+		for(DecisionGroup group : groups)
+			for(Node member : group.members())
+				mutable.computeIfAbsent(member.valueVersion(), ignored -> new LinkedHashSet<>())
+					.add(group.index());
+		Map<ValueVersionKey,List<Integer>> result = new LinkedHashMap<>();
+		for(Map.Entry<ValueVersionKey,LinkedHashSet<Integer>> entry : mutable.entrySet())
+			result.put(entry.getKey(), List.copyOf(entry.getValue()));
+		return Collections.unmodifiableMap(result);
 	}
 
 	private static List<List<Relation>> relationsByGroup(int size, List<Relation> relations) {

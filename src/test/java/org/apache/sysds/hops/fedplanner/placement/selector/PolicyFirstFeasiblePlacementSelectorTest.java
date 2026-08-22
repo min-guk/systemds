@@ -12,8 +12,13 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -28,6 +33,8 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 		new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 	private static final PlacementState FED =
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+	private static final PlacementState FED_BROADCAST =
+		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.BROADCAST, false);
 
 	@Test
 	public void independentPolicyChoicesStopAfterTheFirstCompleteAssignment() {
@@ -105,6 +112,29 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 		Assert.assertEquals(first.assignment(), second.assignment());
 		Assert.assertEquals(first.score(), second.score());
 		Assert.assertEquals(first.selectedRelocations(), second.selectedRelocations());
+	}
+
+	@Test
+	public void equalPolicyStatesPreferTheLocallyDirectLayout() {
+		String fingerprint = "first-feasible-local-movement";
+		Node source = node(fingerprint, "source", 0, List.of(FED_BROADCAST, FED));
+		Node consumer = node(fingerprint, "consumer", 1, List.of(FED));
+		DurableAnchorKey anchor = new DurableAnchorKey("row-workers", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		RelocationActionKey key = new RelocationActionKey(source.valueVersion(), FED,
+			FType.ROW, anchor, "main", List.of(consumer.key()));
+		RelocationAction relocation = new RelocationAction(key, List.of(new ObligationKey(
+			consumer.key(), 0, source.valueVersion(), FED, key, "compiled")), List.of(FED));
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(source, consumer), List.of(), List.of(relocation)));
+
+		Assert.assertEquals("FED/FOUT ties must choose the direct source layout instead of refederating",
+			FED, selected.assignment().get(source.key()));
+		Assert.assertTrue(selected.selectedRelocations().isEmpty());
+		Assert.assertEquals(0, selected.score().distinctRelocationCount());
+		Assert.assertEquals("local ordering must still stop at the first reachable leaf",
+			1, selected.certificate().exploredCount());
 	}
 
 	private static Node node(String fingerprint, String topology, int version,
