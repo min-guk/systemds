@@ -171,19 +171,52 @@ public final class Rulesets {
     return axisKnown(axis, hint) && matchesAxis(left, axis) && matchesAxis(right, axis);
   }
 
-  private static boolean matrixScalarPair(List<FType> left, List<FType> right, FType axis) {
-    return (hasAxis(left, axis) && hasBroadcastOrScalarFromList(right))
-        || (hasAxis(right, axis) && hasBroadcastOrScalarFromList(left));
+  private static boolean matrixScalarPair(List<FType> left, List<FType> right, FType axis,
+      ShapeHint hint) {
+    return (hasAxis(left, axis) && hasCompatibleBroadcastOrScalar(right, 1, axis, hint))
+        || (hasAxis(right, axis) && hasCompatibleBroadcastOrScalar(left, 0, axis, hint));
+  }
+
+  private static boolean hasCompatibleBroadcastOrScalar(Collection<FType> types, int inputPosition,
+      FType axis, ShapeHint hint) {
+    if (types == null)
+      return false;
+    for (FType t : types) {
+      if (t == null || t == FType.BROADCAST
+          && broadcastMatrixCompatibleWithPartition(t, inputPosition, axis, hint))
+        return true;
+    }
+    return false;
   }
 
   private static boolean hasBroadcastOrScalarFromList(Collection<FType> types) {
     if (types == null)
       return false;
-    for (FType t : types) {
-      if (isBroadcastOrScalar(t))
+    for (FType type : types) {
+      if (isBroadcastOrScalar(type))
         return true;
     }
     return false;
+  }
+
+  private static boolean broadcastMatrixCompatibleWithPartition(FType type, int inputPosition,
+      FType axis, ShapeHint hint) {
+    if (type != FType.BROADCAST || hint == null)
+      return true;
+    long rows = inputPosition == 0 ? hint.rowsA() : hint.rowsB();
+    long cols = inputPosition == 0 ? hint.colsA() : hint.colsB();
+    // A federated BROADCAST value is already replicated in full. Unlike a coordinator-local
+    // matrix, BinaryMatrixMatrixFEDInstruction does not slice it to the target FederationMap.
+    // It can therefore accompany ROW execution only as a row vector (and COL execution only
+    // as a column vector); otherwise workers observe full-vs-partition dimension mismatches.
+    if (rows > 0 && cols > 0
+        && (axis == FType.ROW && rows == 1 || axis == FType.COL && cols == 1))
+      return true;
+    if (hint.fullSinglePartition().orElse(false))
+      return true;
+    // Unknown dimensions remain shape-dependent: the recorded missing facts make the shared
+    // candidate builder exclude this row until recompilation supplies exact metadata.
+    return rows <= 0 || cols <= 0;
   }
 
   private static boolean hasScalarFromList(Collection<FType> types) {
@@ -210,9 +243,13 @@ public final class Rulesets {
             && sig.inputKind(0) == OpSig.InputKind.SCALAR && isScalarLike(left));
   }
 
-  private static boolean matrixScalarPair(FType left, FType right, FType axis) {
-    return (matchesAxis(left, axis) && isBroadcastOrScalar(right))
-        || (matchesAxis(right, axis) && isBroadcastOrScalar(left));
+  private static boolean matrixScalarPair(FType left, FType right, FType axis, ShapeHint hint) {
+    return (matchesAxis(left, axis)
+        && (right == null || right == FType.BROADCAST
+            && broadcastMatrixCompatibleWithPartition(right, 1, axis, hint)))
+        || (matchesAxis(right, axis)
+            && (left == null || left == FType.BROADCAST
+                && broadcastMatrixCompatibleWithPartition(left, 0, axis, hint)));
   }
 
   private static boolean isOuterLike(FType left, FType right, ShapeHint hint) {
@@ -3148,9 +3185,9 @@ public final class Rulesets {
         outs.add(FType.ROW);
       if (aligned(left, right, FType.COL, hint))
         outs.add(FType.COL);
-      if (matrixScalarPair(left, right, FType.ROW))
+      if (matrixScalarPair(left, right, FType.ROW, hint))
         outs.add(FType.ROW);
-      if (matrixScalarPair(left, right, FType.COL))
+      if (matrixScalarPair(left, right, FType.COL, hint))
         outs.add(FType.COL);
       // BinaryMatrixScalarFEDInstruction routes an exact scalar paired with any non-broadcast
       // federated matrix mapping, including OTHER, and preserves that mapping on the output.
@@ -3183,9 +3220,9 @@ public final class Rulesets {
           axis = FType.ROW;
         else if (aligned(left, right, FType.COL, hint))
           axis = FType.COL;
-        else if (matrixScalarPair(left, right, FType.ROW))
+        else if (matrixScalarPair(left, right, FType.ROW, hint))
           axis = FType.ROW;
-        else if (matrixScalarPair(left, right, FType.COL))
+        else if (matrixScalarPair(left, right, FType.COL, hint))
           axis = FType.COL;
       }
 

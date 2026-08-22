@@ -18,6 +18,7 @@
 package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -168,4 +169,37 @@ public class RuleBasicsTest {
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, caps.reason());
   }
+
+	@Test
+	public void fullBroadcastMatrixCannotMasqueradeAsRowLocalOperand() {
+		Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+		OpSig sig = OpSig.of(OpOp2.LESSEQUAL.toString(), OpCategory.BINARY_EWISE, Map.of(),
+			InputKind.MATRIX, InputKind.MATRIX);
+		ShapeHint fullMatrixAndColumnVector = new ShapeHint(50_000, 50, 1000,
+			java.util.Optional.empty(), 50_000, 50, 50_000, 1);
+
+		OpCaps caps = rule.caps(sig, List.of(FType.BROADCAST, FType.ROW),
+			fullMatrixAndColumnVector);
+		FTypeProfile profile = rule.profile(sig,
+			List.of(List.of(FType.BROADCAST), List.of(FType.ROW)), fullMatrixAndColumnVector);
+
+		assertEquals("workers cannot compare a full replicated matrix with row partitions",
+			ExecType.CP, caps.exec());
+		assertFalse(profile.outputs().contains(FType.ROW));
+	}
+
+	@Test
+	public void rowVectorBroadcastRemainsValidForRowPartitionedElementwiseExecution() {
+		Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+		OpSig sig = OpSig.of(OpOp2.DIV.toString(), OpCategory.BINARY_EWISE, Map.of(),
+			InputKind.MATRIX, InputKind.MATRIX);
+		ShapeHint rowMatrixAndBroadcastVector = new ShapeHint(50_000, 50, 1000,
+			java.util.Optional.empty(), 50_000, 50, 1, 50);
+
+		OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.BROADCAST),
+			rowMatrixAndBroadcastVector);
+
+		assertEquals(ExecType.FED, caps.exec());
+		assertEquals(FType.ROW, caps.foutFType().orElse(null));
+	}
 }

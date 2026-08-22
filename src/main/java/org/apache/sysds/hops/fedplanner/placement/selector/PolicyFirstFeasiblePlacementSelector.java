@@ -395,7 +395,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 		implements Comparable<MovementHint> {
 		@Override
 		public int compareTo(MovementHint that) {
-			int comparison = Integer.compare(unavoidable, that.unavoidable);
+			int comparison = Long.compare(
+				(long) unavoidable + derived, (long) that.unavoidable + that.derived);
 			if(comparison != 0)
 				return comparison;
 			comparison = Integer.compare(exposed, that.exposed);

@@ -10,10 +10,12 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.DerivedFoutMaterializationAction;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -21,6 +23,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKe
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -135,6 +139,49 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 		Assert.assertEquals(0, selected.score().distinctRelocationCount());
 		Assert.assertEquals("local ordering must still stop at the first reachable leaf",
 			1, selected.certificate().exploredCount());
+	}
+
+	@Test
+	public void certainDerivedMaterializationPrecedesSpeculativeRelocationRisk() {
+		String fingerprint = "first-feasible-derived-before-risk";
+		PlacementState fedLout = new PlacementState(
+			ExecType.FED, FederatedOutput.LOUT, FType.ROW, false);
+		Node producer = node(fingerprint, "a-producer", 0,
+			List.of(fedLout, FED_BROADCAST, FED));
+		Node ownerBase = node(fingerprint, "owner", 1, List.of(FED));
+		DurableAnchorKey rowAnchor = new DurableAnchorKey("row-workers", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		Node owner = new Node(ownerBase.key(), NodeKind.OPERATION, ownerBase.valueVersion(),
+			true, List.of(FED), List.of(), List.of(rowAnchor));
+		PlacementState fedBroadcastLout = new PlacementState(
+			ExecType.FED, FederatedOutput.LOUT, FType.BROADCAST, false);
+		Node consumer = node(fingerprint, "z-consumer", 2,
+			List.of(LOCAL, fedBroadcastLout, FED_BROADCAST));
+		CandidateRuleKey rule = new CandidateRuleKey(producer.key(),
+			List.of(CandidateInputState.present(FType.ROW)));
+		DerivedFoutMaterializationActionKey actionKey =
+			new DerivedFoutMaterializationActionKey(producer.key(), producer.valueVersion(),
+				rule, fedLout, FED_BROADCAST, rowAnchor, owner.key(), FType.ROW,
+				FType.BROADCAST, "main");
+		DurableAnchorKey broadcastAnchor = new DurableAnchorKey("broadcast-workers", FType.BROADCAST,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		RelocationActionKey relocationKey = new RelocationActionKey(producer.valueVersion(),
+			FED_BROADCAST, FType.BROADCAST, broadcastAnchor, "main", List.of(consumer.key()));
+		RelocationAction relocation = new RelocationAction(relocationKey,
+			List.of(new ObligationKey(consumer.key(), 0, producer.valueVersion(),
+				FED_BROADCAST, relocationKey, "compiled")), List.of(FED_BROADCAST));
+		Constraint noBroadcastConsumerForNativeRow = new Constraint(ConstraintKind.CONJUNCTIVE,
+			producer.key(), consumer.key(), 0,
+			"forbid-pair:" + FED.normalizedSignature() + "=>" + FED_BROADCAST.normalizedSignature());
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(producer, owner, consumer),
+				List.of(noBroadcastConsumerForNativeRow), List.of(relocation),
+				List.of(new DerivedFoutMaterializationAction(actionKey))));
+
+		Assert.assertEquals("a certain output materialization must lose to an equally ranked native FOUT",
+			FED, selected.assignment().get(producer.key()));
+		Assert.assertEquals(1, selected.certificate().exploredCount());
 	}
 
 	private static Node node(String fingerprint, String topology, int version,
