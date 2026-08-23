@@ -48,6 +48,7 @@ final class LocalCategoricalOptimizer {
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
 		int localBlocks, int localBlockImprovements, int localBlockRevisits,
 		int factorizedBlockCompilations, int factorizedBlockSolves,
+		int factorwiseMinimumSkips,
 		int maximumBlockVariables,
 		long maximumBlockAssignments, long blockAssignments) { }
 
@@ -82,6 +83,7 @@ final class LocalCategoricalOptimizer {
 		int localBlockRevisits;
 		int factorizedBlockCompilations;
 		int factorizedBlockSolves;
+		int factorwiseMinimumSkips;
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
 		long blockAssignments;
@@ -92,6 +94,7 @@ final class LocalCategoricalOptimizer {
 				conflictBlocksSolved, conflictBlockExpansions, localBlocks,
 				localBlockImprovements, localBlockRevisits,
 				factorizedBlockCompilations, factorizedBlockSolves,
+				factorwiseMinimumSkips,
 				maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments);
 		}
@@ -249,6 +252,10 @@ final class LocalCategoricalOptimizer {
 					continue;
 				attempts++;
 				PreparedBlock block = prepared.get(blockIndex);
+				if(isFactorwiseMinimum(context, assignment, block)) {
+					statistics.factorwiseMinimumSkips++;
+					continue;
+				}
 				double before = evaluateCost(block.incidentCost(), assignment);
 				BlockSolution solution = solveBlock(blockIndex, block);
 				if(solution == null)
@@ -508,6 +515,64 @@ final class LocalCategoricalOptimizer {
 				dependencies.add(variable);
 		return new PreparedBlock(block, hard, cost,
 			dependencies.stream().mapToInt(Integer::intValue).toArray());
+	}
+
+	/**
+	 * Proves that the current block assignment cannot improve without solving the
+	 * coupled subproblem. If the current value independently minimizes every incident
+	 * additive cost factor, it also minimizes their sum over every legal joint
+	 * assignment. This is a lower-bound proof, not a cardinality cutoff.
+	 */
+	private static boolean isFactorwiseMinimum(Context context, int[] assignment,
+		PreparedBlock block) {
+		boolean[] inBlock = new boolean[context.variables.size()];
+		for(int variable : block.variables())
+			inBlock[variable] = true;
+		for(IndexedFactor factor : block.incidentCost()) {
+			double current = evaluate(factor, assignment);
+			if(!Double.isFinite(current))
+				return false;
+			requireNonNegativeCost(current, "LOCAL_COST_FACTOR_INVALID");
+			int count = 0;
+			for(int variable : factor.scope())
+				if(inBlock[variable])
+					count++;
+			int[] variables = new int[count];
+			for(int index = 0, selected = 0; index < factor.scope().length; index++) {
+				int variable = factor.scope()[index];
+				if(inBlock[variable])
+					variables[selected++] = variable;
+			}
+			int[] saved = new int[variables.length];
+			for(int index = 0; index < variables.length; index++)
+				saved[index] = assignment[variables[index]];
+			try {
+				if(hasLowerFactorValue(context, factor, assignment, variables, 0, current))
+					return false;
+			}
+			finally {
+				apply(assignment, variables, saved);
+			}
+		}
+		return true;
+	}
+
+	private static boolean hasLowerFactorValue(Context context, IndexedFactor factor,
+		int[] assignment, int[] variables, int depth, double current) {
+		if(depth == variables.length) {
+			double candidate = evaluate(factor, assignment);
+			if(candidate == Double.POSITIVE_INFINITY)
+				return false;
+			requireNonNegativeCost(candidate, "LOCAL_COST_FACTOR_INVALID");
+			return Double.compare(candidate, current) < 0;
+		}
+		int variable = variables[depth];
+		for(int value = 0; value < context.variables.get(variable).domainSize(); value++) {
+			assignment[variable] = value;
+			if(hasLowerFactorValue(context, factor, assignment, variables, depth + 1, current))
+				return true;
+		}
+		return false;
 	}
 
 	private static void selectLocalState(Context context, int[] assignment, int variable,

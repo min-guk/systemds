@@ -94,6 +94,23 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
+	public void factorwiseMinimumSkipsAProvablyNonImprovingExactBlock() {
+		Variable x = new Variable("x", 2);
+		Variable y = new Variable("y", 2);
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			List.of(x, y), List.of(), List.of(
+				Factor.dense(List.of(x), 0d, 2d),
+				Factor.dense(List.of(y), 0d, 3d),
+				Factor.dense(List.of(x, y), 0d, 4d, 5d, 6d)),
+			List.of(x, y), List.of(List.of(x, y)), (v, value) -> value);
+
+		Assert.assertEquals(List.of(0, 0), result.assignmentInVariableOrder());
+		Assert.assertEquals(1, result.statistics().factorwiseMinimumSkips());
+		Assert.assertEquals(0, result.statistics().factorizedBlockCompilations());
+		Assert.assertEquals(0L, result.statistics().blockAssignments());
+	}
+
+	@Test
 	public void deferredBlockIsDerivedFromTheCurrentFixedPoint() {
 		Variable x = new Variable("x", 2);
 		Variable a = new Variable("a", 2);
@@ -193,12 +210,10 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals(1d, result.objective(), 0d);
 		Assert.assertEquals(2, result.statistics().localBlockImprovements());
 		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
-		Assert.assertEquals("each structural block must be compiled once",
-			result.statistics().localBlocks(),
-			result.statistics().factorizedBlockCompilations());
-		Assert.assertTrue("a revisit must reuse the compiled local factor topology",
-			result.statistics().factorizedBlockSolves()
-				> result.statistics().factorizedBlockCompilations());
+		Assert.assertTrue("factorwise proof should avoid the initial non-improving solve",
+			result.statistics().factorwiseMinimumSkips() > 0);
+		Assert.assertTrue(result.statistics().factorizedBlockCompilations()
+			<= result.statistics().localBlocks());
 	}
 
 	@Test
