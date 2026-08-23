@@ -192,7 +192,7 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
-	public void overlappingLocalBlocksAreRevisitedUntilNoBlockCanImprove() {
+	public void overlappingLocalBlocksAreSolvedOnceInCallerOrder() {
 		Variable x = new Variable("x", 2);
 		Variable a = new Variable("a", 2);
 		Variable b = new Variable("b", 2);
@@ -206,10 +206,10 @@ public class LocalCategoricalOptimizerTest {
 			variables, List.of(), costs, variables,
 			List.of(List.of(x, a), List.of(a, b)), (v, value) -> value);
 
-		Assert.assertEquals(List.of(1, 1, 1), result.assignmentInVariableOrder());
-		Assert.assertEquals(1d, result.objective(), 0d);
-		Assert.assertEquals(2, result.statistics().localBlockImprovements());
-		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
+		Assert.assertEquals(List.of(0, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(4d, result.objective(), 0d);
+		Assert.assertEquals(1, result.statistics().localBlockImprovements());
+		Assert.assertEquals(0, result.statistics().localBlockRevisits());
 		Assert.assertTrue("factorwise proof should avoid the initial non-improving solve",
 			result.statistics().factorwiseMinimumSkips() > 0);
 		Assert.assertTrue(result.statistics().factorizedBlockCompilations()
@@ -217,7 +217,7 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
-	public void existingBlockIsRevisitedAfterADeferredBlockChangesItsDependency() {
+	public void deferredBlockDoesNotRestartCompletedLocalPass() {
 		Variable x = new Variable("x", 2);
 		Variable w = new Variable("w", 2);
 		Variable y = new Variable("y", 2);
@@ -225,7 +225,7 @@ public class LocalCategoricalOptimizerTest {
 		List<Variable> variables = List.of(x, w, y, z);
 		List<Factor> costs = List.of(
 			Factor.dense(List.of(x, y), 0d, 4d, 4d, 0d),
-			Factor.dense(List.of(x, w), 10d, 10d, 10d, 0d),
+			Factor.dense(List.of(x, w), 10d, 10d, 0d, 0d),
 			Factor.dense(List.of(y, z), 0d, 10d, 10d, 0d));
 
 		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
@@ -233,10 +233,10 @@ public class LocalCategoricalOptimizerTest {
 			List.of(List.of(y, z)), ignored -> List.of(List.of(x, w)),
 			(v, value) -> value);
 
-		Assert.assertEquals(List.of(1, 1, 1, 1), result.assignmentInVariableOrder());
-		Assert.assertEquals(0d, result.objective(), 0d);
+		Assert.assertEquals(List.of(1, 0, 0, 0), result.assignmentInVariableOrder());
+		Assert.assertEquals(4d, result.objective(), 0d);
 		Assert.assertEquals(2, result.statistics().localBlocks());
-		Assert.assertEquals(2, result.statistics().localBlockImprovements());
-		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
+		Assert.assertEquals(1, result.statistics().localBlockImprovements());
+		Assert.assertEquals(0, result.statistics().localBlockRevisits());
 	}
 }
