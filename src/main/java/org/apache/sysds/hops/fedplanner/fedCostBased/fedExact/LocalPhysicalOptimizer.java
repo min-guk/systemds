@@ -182,7 +182,13 @@ final class LocalPhysicalOptimizer {
 			.comparingInt((Set<Integer> block) -> block.stream()
 				.map(index -> localRanks.get(domains.get(index).variable()))
 				.min(Integer::compareTo).orElse(Integer.MAX_VALUE))
-			.thenComparingInt(Set::size)
+			// At the same producer rank, solve the broader shared/value-boundary
+			// interaction first.  A later broad move can invalidate every smaller
+			// overlapping operator neighborhood and force a second exact solve of each
+			// one; the reverse order exposes the broad decision to those neighborhoods
+			// on their first pass.  Fixed-point semantics and each block's complete
+			// feasible domain remain unchanged.
+			.thenComparing(Comparator.comparingInt(Set<Integer>::size).reversed())
 			.thenComparing(block -> block.stream().sorted().toList(),
 				LocalPhysicalOptimizer::compareIntegerLists));
 		return blocks.stream().map(block -> block.stream().sorted()
