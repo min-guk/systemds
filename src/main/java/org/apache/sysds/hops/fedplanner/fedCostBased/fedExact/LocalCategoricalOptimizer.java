@@ -417,8 +417,14 @@ final class LocalCategoricalOptimizer {
 	}
 
 	private static PreparedBlock prepareBlock(Context context, int[] block) {
-		List<IndexedFactor> hard = incidentFactors(context.hardFactors, block);
-		List<IndexedFactor> cost = incidentFactors(context.costFactors, block);
+		// Context already owns the variable-to-factor incidence maps.  Reusing them
+		// avoids rescanning the complete whole-program factor surface for every local
+		// block and revisit.  Preserve canonical factor order by sorting on the stable
+		// construction ordinal after the incidence union.
+		List<IndexedFactor> hard = incidentFactors(
+			context.incidentHard, context.hardFactors.size(), block);
+		List<IndexedFactor> cost = incidentFactors(
+			context.incidentCost, context.costFactors.size(), block);
 		Set<Integer> dependencies = new LinkedHashSet<>();
 		for(IndexedFactor factor : hard)
 			for(int variable : factor.scope())
@@ -627,11 +633,18 @@ final class LocalCategoricalOptimizer {
 		});
 	}
 
-	private static List<IndexedFactor> incidentFactors(List<IndexedFactor> factors, int[] block) {
-		Set<Integer> variables = new LinkedHashSet<>();
+	private static List<IndexedFactor> incidentFactors(
+		List<List<IndexedFactor>> incidence, int factorCount, int[] block) {
+		boolean[] retained = new boolean[factorCount];
+		List<IndexedFactor> factors = new ArrayList<>();
 		for(int variable : block)
-			variables.add(variable);
-		return factors.stream().filter(factor -> intersects(factor.scope(), variables)).toList();
+			for(IndexedFactor factor : incidence.get(variable))
+				if(!retained[factor.ordinal()]) {
+					retained[factor.ordinal()] = true;
+					factors.add(factor);
+				}
+		factors.sort(Comparator.comparingInt(IndexedFactor::ordinal));
+		return List.copyOf(factors);
 	}
 
 	private static boolean hardFactorsSatisfiedWhenClosed(List<IndexedFactor> factors,

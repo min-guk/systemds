@@ -102,7 +102,7 @@ final class LocalPhysicalOptimizer {
 		ValueBoundaryHardClosure hardClosure =
 			new ValueBoundaryHardClosure(model.domains(), model.hardFactors());
 		List<List<Variable>> localBlocks =
-			localInteractionBlocks(model, surface, localOrder, hardClosure);
+			localInteractionBlocks(model, localOrder, hardClosure);
 		MaterializationConflictBlockProvider materializationBlocks =
 			new MaterializationConflictBlockProvider(model, hardClosure);
 		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
@@ -140,27 +140,40 @@ final class LocalPhysicalOptimizer {
 	}
 
 	private static List<List<Variable>> localInteractionBlocks(ExactPhysicalModel model,
-		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Variable> localOrder,
+		List<Variable> localOrder,
 		ValueBoundaryHardClosure hardClosure) {
 		List<DecisionDomain> domains = model.domains();
 		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
 		for(int index = 0; index < domains.size(); index++)
 			positions.put(domains.get(index).variable(), index);
 		List<Set<Integer>> blocks = new ArrayList<>();
+		// Optimize the physical choices visible at one program operator together:
+		// the consumer and all of its direct inputs. This is the bounded HOP-and-
+		// children neighborhood promised by the local planner. Do not turn every
+		// cost-factor scope into a separate exact subproblem: reusable-transfer
+		// factors overlap heavily, and doing so recreates most of global variable
+		// elimination through repeated local solves.
+		Map<Integer,Set<Integer>> inputsByConsumer = new LinkedHashMap<>();
+		for(DecisionEdge edge : decisionEdges(model.analysis())) {
+			Integer producer = positions.get(edge.producer());
+			Integer consumer = positions.get(edge.consumer());
+			if(producer != null && consumer != null && !producer.equals(consumer))
+				inputsByConsumer.computeIfAbsent(consumer, ignored -> new LinkedHashSet<>())
+					.add(producer);
+		}
+		for(Map.Entry<Integer,Set<Integer>> entry : inputsByConsumer.entrySet()) {
+			Set<Integer> block = new LinkedHashSet<>(entry.getValue());
+			block.add(entry.getKey());
+			hardClosure.expand(block);
+			blocks.add(block);
+		}
+		// A producer used by multiple consumers is a second bounded interaction
+		// pattern. Solving its direct star jointly preserves the reusable-movement
+		// decision that independent operator neighborhoods cannot see.
 		for(List<Variable> shared : sharedProducerBlocks(model, localOrder, hardClosure))
 			blocks.add(shared.stream().map(variable -> Objects.requireNonNull(positions.get(variable),
 				"LOCAL_SHARED_BLOCK_FOREIGN_VARIABLE")).collect(
 					java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
-		for(Factor factor : surface.factors()) {
-			if(factor.scope().size() < 2)
-				continue;
-			Set<Integer> block = factor.scope().stream().map(variable ->
-				Objects.requireNonNull(positions.get(variable),
-					"LOCAL_COST_BLOCK_FOREIGN_VARIABLE")).collect(
-						java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-			hardClosure.expand(block);
-			blocks.add(block);
-		}
 
 		IdentityHashMap<Variable,Integer> localRanks = new IdentityHashMap<>();
 		for(int index = 0; index < localOrder.size(); index++)
