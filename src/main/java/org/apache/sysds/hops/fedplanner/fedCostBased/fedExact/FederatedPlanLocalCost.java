@@ -76,8 +76,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			"objective=%.12f variables=%d hardFactors=%d costFactors=%d transfers=%d "
 				+ "rawStates=%d retainedStates=%d prunedRepresentatives=%d "
 				+ "initialConflicts=%d conflictBlocks=%d blockExpansions=%d "
-				+ "localBlocks=%d localImprovements=%d localRevisits=%d localCacheHits=%d "
-				+ "maxBlockVariables=%d "
+				+ "localBlocks=%d localImprovements=%d localRevisits=%d maxBlockVariables=%d "
 				+ "maxBlockAssignments=%d blockAssignments=%d costFingerprint=%s analysis=%s",
 			selection.solverObjective(), model.variables().size(), model.hardFactors().size(),
 			surface.factors().size(), surface.transferKeys().size(),
@@ -85,8 +84,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			statistics.prunedLocalRepresentatives(), statistics.initialHardViolations(),
 			statistics.conflictBlocksSolved(), statistics.conflictBlockExpansions(),
 			statistics.localBlocks(), statistics.localBlockImprovements(),
-			statistics.localBlockRevisits(), statistics.localBlockCacheHits(),
-			statistics.maximumBlockVariables(),
+			statistics.localBlockRevisits(), statistics.maximumBlockVariables(),
 			statistics.maximumBlockAssignments(),
 			statistics.blockAssignments(), selection.costSurfaceFingerprint(),
 			selection.analysisFingerprint()));
