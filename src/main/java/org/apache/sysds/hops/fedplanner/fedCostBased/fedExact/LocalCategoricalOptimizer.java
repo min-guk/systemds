@@ -169,14 +169,19 @@ final class LocalCategoricalOptimizer {
 
 		List<Integer> addBlocks(List<int[]> candidates) {
 			List<Integer> added = new ArrayList<>();
-			for(int[] candidate : candidates) {
+			for(int candidateIndex = 0; candidateIndex < candidates.size(); candidateIndex++) {
+				int[] candidate = candidates.get(candidateIndex);
 				// Exact optimization of a superset dominates every contained block: any
 				// contained move is also a legal superset move with the remaining values
 				// fixed. Dependencies of the superset include every factor boundary that
 				// could make the contained move useful later, so the superset is revisited
 				// on the same relevant changes. Keep only maximal neighborhoods instead of
 				// repeatedly solving identical exact subproblems at multiple granularities.
-				if(hasActiveSuperset(candidate))
+				// Look through the complete incoming batch before preparing factor incidence.
+				// Otherwise an ascending subset followed by its superset is retired before
+				// optimization but still pays the full preparation cost.
+				if(hasActiveSuperset(candidate)
+					|| hasStrictSuperset(candidates, candidateIndex, candidate))
 					continue;
 				for(int prior = 0; prior < blocks.size(); prior++)
 					if(active.get(prior) && containsAll(candidate, blocks.get(prior)))
@@ -199,6 +204,17 @@ final class LocalCategoricalOptimizer {
 			for(int index = 0; index < blocks.size(); index++)
 				if(active.get(index) && containsAll(blocks.get(index), candidate))
 					return true;
+			return false;
+		}
+
+		private static boolean hasStrictSuperset(List<int[]> candidates,
+				int candidateIndex, int[] candidate) {
+			for(int index = 0; index < candidates.size(); index++) {
+				int[] other = candidates.get(index);
+				if(index != candidateIndex && other.length > candidate.length
+					&& containsAll(other, candidate))
+					return true;
+			}
 			return false;
 		}
 
