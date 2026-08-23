@@ -47,6 +47,7 @@ final class LocalCategoricalOptimizer {
 		long prunedLocalRepresentatives, int initialHardViolations,
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
 		int localBlocks, int localBlockImprovements, int localBlockRevisits,
+		int localBlockCacheHits,
 		int maximumBlockVariables,
 		long maximumBlockAssignments, long blockAssignments) { }
 
@@ -63,7 +64,10 @@ final class LocalCategoricalOptimizer {
 	private record BlockSolution(int[] valuesInCanonicalBlockOrder, double incidentCost,
 		long searchAssignments) { }
 	private record PreparedBlock(int[] variables, List<IndexedFactor> incidentHard,
-		List<IndexedFactor> incidentCost, int[] dependencies) { }
+		List<IndexedFactor> incidentCost, int[] dependencies, int[] boundary) { }
+	private record BoundaryAssignment(List<Integer> values) {
+		BoundaryAssignment { values = List.copyOf(values); }
+	}
 	private record BlockStateKey(List<Object> stateKeys) {
 		BlockStateKey { stateKeys = List.copyOf(stateKeys); }
 	}
@@ -79,6 +83,7 @@ final class LocalCategoricalOptimizer {
 		int localBlocks;
 		int localBlockImprovements;
 		int localBlockRevisits;
+		int localBlockCacheHits;
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
 		long blockAssignments;
@@ -87,7 +92,7 @@ final class LocalCategoricalOptimizer {
 			return new Statistics(rawLocalAlternatives, retainedLocalStates,
 				prunedLocalRepresentatives, initialHardViolations, finalHardViolations,
 				conflictBlocksSolved, conflictBlockExpansions, localBlocks,
-				localBlockImprovements, localBlockRevisits,
+				localBlockImprovements, localBlockRevisits, localBlockCacheHits,
 				maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments);
 		}
@@ -154,6 +159,8 @@ final class LocalCategoricalOptimizer {
 		final MutableStatistics statistics;
 		final List<int[]> blocks = new ArrayList<>();
 		final List<PreparedBlock> prepared = new ArrayList<>();
+		final List<Map<BoundaryAssignment,BlockSolution>> solutionsByBoundary =
+			new ArrayList<>();
 		final List<Boolean> active = new ArrayList<>();
 		final List<List<Integer>> dependentBlocks;
 
@@ -191,6 +198,7 @@ final class LocalCategoricalOptimizer {
 				PreparedBlock block = prepareBlock(context, stored);
 				blocks.add(stored);
 				prepared.add(block);
+				solutionsByBoundary.add(new LinkedHashMap<>());
 				active.add(true);
 				for(int variable : block.dependencies())
 					dependentBlocks.get(variable).add(index);
@@ -244,7 +252,7 @@ final class LocalCategoricalOptimizer {
 				attempts++;
 				PreparedBlock block = prepared.get(blockIndex);
 				double before = evaluateCost(block.incidentCost(), assignment);
-				BlockSolution solution = solveBlock(context, assignment, block);
+				BlockSolution solution = solveBlock(blockIndex, block);
 				if(solution == null)
 					throw new IllegalArgumentException(
 						"LOCAL_INTERACTION_BLOCK_HAS_NO_LEGAL_ASSIGNMENT|variables="
@@ -277,6 +285,23 @@ final class LocalCategoricalOptimizer {
 			long revisits = Math.max(0L, attempts - initialActiveBlocks);
 			statistics.localBlockRevisits = Math.toIntExact(Math.min(Integer.MAX_VALUE,
 				(long) statistics.localBlockRevisits + revisits));
+		}
+
+		private BlockSolution solveBlock(int blockIndex, PreparedBlock block) {
+			BoundaryAssignment boundary = boundaryAssignment(block, assignment);
+			Map<BoundaryAssignment,BlockSolution> cached = solutionsByBoundary.get(blockIndex);
+			BlockSolution prior = cached.get(boundary);
+			if(prior != null) {
+				statistics.localBlockCacheHits++;
+				return new BlockSolution(prior.valuesInCanonicalBlockOrder().clone(),
+					prior.incidentCost(), 0L);
+			}
+			BlockSolution solved = LocalCategoricalOptimizer.solveBlock(context, assignment, block);
+			if(solved != null)
+				cached.put(boundary, new BlockSolution(
+					solved.valuesInCanonicalBlockOrder().clone(), solved.incidentCost(),
+					solved.searchAssignments()));
+			return solved;
 		}
 	}
 
@@ -432,8 +457,25 @@ final class LocalCategoricalOptimizer {
 		for(IndexedFactor factor : cost)
 			for(int variable : factor.scope())
 				dependencies.add(variable);
-		return new PreparedBlock(block, hard, cost,
-			dependencies.stream().mapToInt(Integer::intValue).toArray());
+		Set<Integer> internal = new LinkedHashSet<>();
+		for(int variable : block)
+			internal.add(variable);
+		int[] dependencyArray = dependencies.stream().mapToInt(Integer::intValue).toArray();
+		int[] boundary = dependencies.stream().filter(variable -> !internal.contains(variable))
+			.mapToInt(Integer::intValue).toArray();
+		return new PreparedBlock(block, hard, cost, dependencyArray, boundary);
+	}
+
+	private static BoundaryAssignment boundaryAssignment(PreparedBlock block, int[] assignment) {
+		List<Integer> values = new ArrayList<>(block.boundary().length);
+		for(int variable : block.boundary()) {
+			int value = assignment[variable];
+			if(value < 0)
+				throw new IllegalArgumentException(
+					"LOCAL_INTERACTION_BLOCK_BOUNDARY_UNASSIGNED|variable=" + variable);
+			values.add(value);
+		}
+		return new BoundaryAssignment(values);
 	}
 
 	private static void selectLocalState(Context context, int[] assignment, int variable,
