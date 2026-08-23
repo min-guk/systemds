@@ -127,6 +127,8 @@ public final class FederatedCostModel {
 	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH = "SYSDS_FED_COST_NET_SERDES_BW";
 	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_SERDES_BW_C2W";
 	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_SERDES_BW_W2C";
+	private static final String ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
+		"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
 	private static final String ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS = "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS";
 	private static final String ENV_UPLOAD_ESTIMATE_CLAMP_RATIO = "SYSDS_FED_COST_UPLOAD_MEM_CLAMP_RATIO";
@@ -201,6 +203,15 @@ public final class FederatedCostModel {
 			MBS_NETWORK_SERDES_BANDWIDTH);
 	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
 			MBS_NETWORK_SERDES_BANDWIDTH);
+	// Native FED/LOUT results are returned by the already-open worker channels in
+	// one FederationMap batch.  Keep their MatrixBlock codec throughput distinct
+	// from the standalone W2C collection calibration: the latter includes
+	// whole-result coordinator materialization and must remain conservative.
+	private static final double MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
+			ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
+			MBS_NETWORK_SERDES_BANDWIDTH > 0.0
+				? MBS_NETWORK_SERDES_BANDWIDTH : MBS_NETWORK_SERDES_BANDWIDTH_W2C);
 	private static final double MBS_NETWORK_LATENCY = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_LATENCY,
 			DEFAULT_MBS_NETWORK_LATENCY);
 	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
@@ -716,7 +727,10 @@ public final class FederatedCostModel {
 			return 0.0;
 		double payloadFanIn = estimateNativeAggregateUnaryPayloadFanIn(
 			aggregateUnary, logicalFType, Math.max(1, numWorkers));
-		return computeDownloadPayloadCost(partialResultMem * Math.max(1.0, payloadFanIn));
+		double totalPayloadMem = partialResultMem * Math.max(1.0, payloadFanIn);
+		return computeParallelInBandResultPayloadCost(totalPayloadMem,
+			Math.max(1, numWorkers), MBS_NETWORK_BANDWIDTH_W2C,
+			MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C);
 	}
 
 	private static double computeAggregateUnaryCoordinatorAggregationCost(AggUnaryOp aggregateUnary,
@@ -936,7 +950,8 @@ public final class FederatedCostModel {
 
 	private static double computeReplicatedWorkerResultDownloadCost(double memSizePerWorker, int fanIn) {
 		int workers = Math.max(1, fanIn);
-		return computeDownloadPayloadCost(memSizePerWorker * workers);
+		return computeParallelInBandResultPayloadCost(memSizePerWorker * workers, workers,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C);
 	}
 
 	private static double computeInBandWorkerResultDownloadCost(double resultMem, int fanIn,
@@ -945,7 +960,34 @@ public final class FederatedCostModel {
 			return 0.0;
 		int workers = Math.max(1, fanIn);
 		double payloadMem = replicatedResultPerWorker ? resultMem * workers : resultMem;
-		return computeDownloadPayloadCost(payloadMem);
+		return computeParallelInBandResultPayloadCost(payloadMem, workers,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C);
+	}
+
+	/**
+	 * Payload-only critical path for results returned inside one FED request batch.
+	 *
+	 * <p>{@code FederationMap.execute} submits all worker requests before any result
+	 * is consumed, and the coordinator owns multiple Netty event-loop threads.  Each
+	 * worker therefore serializes and transfers its response independently.  For a
+	 * balanced response set, both wire bytes and response ser/deser are on the largest
+	 * per-worker path, not on one serial path containing the complete logical result.
+	 * Coordinator binding/aggregation is modeled separately by the caller.  This is
+	 * deliberately different from explicit FED-to-CP collection, whose conservative
+	 * contract remains parallel wire plus full logical coordinator ser/deser.</p>
+	 */
+	private static double computeParallelInBandResultPayloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double serdesBwMBps) {
+		if (totalMemSize <= 0.0)
+			return 0.0;
+		int workers = Math.max(1, fanIn);
+		double effectiveBw = bandwidthMBps > 0.0 ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
+		double criticalPayloadMb = estimateParallelDownloadPayload(totalMemSize, workers)
+			/ (1024 * 1024);
+		double payloadSec = criticalPayloadMb / effectiveBw;
+		if (serdesBwMBps > 0.0)
+			payloadSec += criticalPayloadMb / serdesBwMBps;
+		return payloadSec * TO_MS;
 	}
 
 	private static double computeLocalAggregationCleanupControlCost(int fanIn) {
@@ -1875,20 +1917,6 @@ public final class FederatedCostModel {
 		if (memSize <= 0)
 			return 0.0;
 		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
-	}
-
-	private static double computeDownloadPayloadCost(double memSize) {
-		if (memSize <= 0)
-			return 0.0;
-		double effectiveBw = (MBS_NETWORK_BANDWIDTH_W2C > 0.0) ? MBS_NETWORK_BANDWIDTH_W2C : MBS_NETWORK_BANDWIDTH;
-		double payloadMb = memSize / (1024 * 1024);
-		double payloadSec = payloadMb / effectiveBw;
-		double effectiveSerdesBw = (MBS_NETWORK_SERDES_BANDWIDTH_W2C > 0.0)
-			? MBS_NETWORK_SERDES_BANDWIDTH_W2C
-			: 0.0;
-		if (effectiveSerdesBw > 0.0)
-			payloadSec += payloadMb / effectiveSerdesBw;
-		return payloadSec * TO_MS;
 	}
 
 	public static double computeDownloadNetworkCost(double memSize, FType fType, int numWorkers) {

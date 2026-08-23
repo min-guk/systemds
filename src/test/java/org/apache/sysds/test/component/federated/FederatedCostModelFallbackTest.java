@@ -987,6 +987,43 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
+	public void testInBandResultUsesPerWorkerResponseCriticalPath() throws Exception {
+		double totalBytes = 256d * 1024 * 1024;
+		double networkBwMBps = 125.0;
+		double responseSerdesBwMBps = 210.0;
+		for (int workers = 1; workers <= 4; workers++) {
+			double criticalPayloadMb = 256.0 / workers;
+			double expected = (criticalPayloadMb / networkBwMBps
+				+ criticalPayloadMb / responseSerdesBwMBps) * 1000.0;
+			double actual = invokeParallelInBandResultPayloadCost(totalBytes, workers,
+				networkBwMBps, responseSerdesBwMBps);
+			Assert.assertEquals("One FED request batch returns independently encoded worker responses;"
+				+ " both wire and response serdes belong to the largest per-worker path for workers="
+				+ workers, expected, actual, 1e-9);
+		}
+	}
+
+	@Test
+	public void testInBandResultDoesNotWeakenExplicitCollectionCost() throws Exception {
+		double totalBytes = 256d * 1024 * 1024;
+		int workers = 4;
+		double networkBwMBps = 125.0;
+		double responseSerdesBwMBps = 210.0;
+		double explicitCollectionSerdesBwMBps = 14.7;
+		double explicit = invokeParallelDownloadCost(totalBytes, workers,
+			networkBwMBps, explicitCollectionSerdesBwMBps, 0.020, 0.0);
+		double inBand = invokeParallelInBandResultPayloadCost(totalBytes, workers,
+			networkBwMBps, responseSerdesBwMBps);
+
+		Assert.assertTrue("Native in-band result response and explicit FED-to-CP collection are"
+			+ " distinct runtime paths; the response calibration must not replace full-result"
+			+ " coordinator serdes in the explicit collection contract", inBand < explicit);
+		Assert.assertEquals("Explicit collection must retain full logical W2C serdes",
+			((256.0 / workers) / networkBwMBps + 256.0 / explicitCollectionSerdesBwMBps)
+				* 1000.0 + 20.0, explicit, 1e-9);
+	}
+
+	@Test
 	public void testRefedNetworkCostModelsDownloadThenTargetUpload() {
 		double memSize = 32 * 1024 * 1024;
 		int workers = 4;
@@ -1081,6 +1118,15 @@ public class FederatedCostModelFallbackTest {
 		method.setAccessible(true);
 		return (double) method.invoke(null, totalMemSize, fanIn,
 			bandwidthMBps, serdesBwMBps, latencySec, controlMs);
+	}
+
+	private static double invokeParallelInBandResultPayloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double serdesBwMBps) throws Exception {
+		Method method = FederatedCostModel.class.getDeclaredMethod(
+			"computeParallelInBandResultPayloadCost", double.class, int.class,
+			double.class, double.class);
+		method.setAccessible(true);
+		return (double) method.invoke(null, totalMemSize, fanIn, bandwidthMBps, serdesBwMBps);
 	}
 
 	private static final class TestMatrixHop extends DataOp {
