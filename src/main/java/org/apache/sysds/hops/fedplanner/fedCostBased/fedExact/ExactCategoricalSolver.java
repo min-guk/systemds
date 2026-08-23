@@ -114,6 +114,22 @@ public final class ExactCategoricalSolver {
 		}
 	}
 
+	/**
+	 * Immutable structural preparation for repeated solves over the same variables and
+	 * factor objects. Lazy factors are materialized again on every solve, so callers may
+	 * safely expose changing boundary values through their evaluators while reusing the
+	 * validated scopes and deterministic elimination plan.
+	 */
+	static final class CompiledProblem {
+		private final Prepared prepared;
+		private final List<Factor> factors;
+
+		private CompiledProblem(Prepared prepared, List<Factor> factors) {
+			this.prepared = Objects.requireNonNull(prepared, "prepared");
+			this.factors = List.copyOf(Objects.requireNonNull(factors, "factors"));
+		}
+	}
+
 	public static Statistics analyze(List<Variable> variables, List<Factor> factors, Limits limits) {
 		return prepare(variables, factors, limits).statistics;
 	}
@@ -130,9 +146,24 @@ public final class ExactCategoricalSolver {
 		TieCostFunction tieCostFunction) {
 		Objects.requireNonNull(tieCostFunction, "tieCostFunction");
 		Prepared prepared = prepare(variables, factors, limits);
+		return solve(prepared, factors, tieCostFunction);
+	}
+
+	static CompiledProblem compile(List<Variable> variables, List<Factor> factors,
+		Limits limits) {
+		return new CompiledProblem(prepare(variables, factors, limits), factors);
+	}
+
+	static Result solve(CompiledProblem compiled) {
+		Objects.requireNonNull(compiled, "compiled");
+		return solve(compiled.prepared, compiled.factors, (variable, value) -> 0L);
+	}
+
+	private static Result solve(Prepared prepared, List<Factor> factors,
+		TieCostFunction tieCostFunction) {
 		List<DenseFactor> active = materializeInputs(prepared, factors);
-		List<Backpointer> backpointers = new ArrayList<>(variables.size());
-		int[] global = new int[variables.size()];
+		List<Backpointer> backpointers = new ArrayList<>(prepared.variables.size());
+		int[] global = new int[prepared.variables.size()];
 
 		for(Step step : prepared.steps) {
 			List<DenseFactor> bucket = new ArrayList<>();

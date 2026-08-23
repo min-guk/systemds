@@ -4,6 +4,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -11,6 +12,22 @@ import org.junit.Test;
 public class ExactCategoricalSolverTest {
 	private static final ExactCategoricalSolver.Limits GENEROUS =
 		new ExactCategoricalSolver.Limits(10_000_000, 50_000_000);
+
+	@Test
+	public void compiledProblemReusesTopologyButReevaluatesDynamicFactors() {
+		var value = variable("value", 2);
+		AtomicInteger boundary = new AtomicInteger(0);
+		var dynamic = ExactCategoricalSolver.Factor.lazy(List.of(value), assignment ->
+			assignment[0] == boundary.get() ? 0d : 10d);
+		ExactCategoricalSolver.CompiledProblem compiled =
+			ExactCategoricalSolver.compile(List.of(value), List.of(dynamic), GENEROUS);
+
+		Assert.assertEquals(List.of(0),
+			ExactCategoricalSolver.solve(compiled).assignmentInVariableOrder());
+		boundary.set(1);
+		Assert.assertEquals(List.of(1),
+			ExactCategoricalSolver.solve(compiled).assignmentInVariableOrder());
+	}
 
 	@Test
 	public void randomModelsMatchBruteForce() {

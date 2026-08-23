@@ -47,6 +47,7 @@ final class LocalCategoricalOptimizer {
 		long prunedLocalRepresentatives, int initialHardViolations,
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
 		int localBlocks, int localBlockImprovements, int localBlockRevisits,
+		int factorizedBlockCompilations, int factorizedBlockSolves,
 		int maximumBlockVariables,
 		long maximumBlockAssignments, long blockAssignments) { }
 
@@ -79,6 +80,8 @@ final class LocalCategoricalOptimizer {
 		int localBlocks;
 		int localBlockImprovements;
 		int localBlockRevisits;
+		int factorizedBlockCompilations;
+		int factorizedBlockSolves;
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
 		long blockAssignments;
@@ -88,6 +91,7 @@ final class LocalCategoricalOptimizer {
 				prunedLocalRepresentatives, initialHardViolations, finalHardViolations,
 				conflictBlocksSolved, conflictBlockExpansions, localBlocks,
 				localBlockImprovements, localBlockRevisits,
+				factorizedBlockCompilations, factorizedBlockSolves,
 				maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments);
 		}
@@ -154,6 +158,7 @@ final class LocalCategoricalOptimizer {
 		final MutableStatistics statistics;
 		final List<int[]> blocks = new ArrayList<>();
 		final List<PreparedBlock> prepared = new ArrayList<>();
+		final List<FactorizedBlockSolver> factorized = new ArrayList<>();
 		final List<Boolean> active = new ArrayList<>();
 		final List<List<Integer>> dependentBlocks;
 
@@ -191,6 +196,7 @@ final class LocalCategoricalOptimizer {
 				PreparedBlock block = prepareBlock(context, stored);
 				blocks.add(stored);
 				prepared.add(block);
+				factorized.add(null);
 				active.add(true);
 				for(int variable : block.dependencies())
 					dependentBlocks.get(variable).add(index);
@@ -244,7 +250,7 @@ final class LocalCategoricalOptimizer {
 				attempts++;
 				PreparedBlock block = prepared.get(blockIndex);
 				double before = evaluateCost(block.incidentCost(), assignment);
-				BlockSolution solution = solveBlock(context, assignment, block);
+				BlockSolution solution = solveBlock(blockIndex, block);
 				if(solution == null)
 					throw new IllegalArgumentException(
 						"LOCAL_INTERACTION_BLOCK_HAS_NO_LEGAL_ASSIGNMENT|variables="
@@ -277,6 +283,21 @@ final class LocalCategoricalOptimizer {
 			long revisits = Math.max(0L, attempts - initialActiveBlocks);
 			statistics.localBlockRevisits = Math.toIntExact(Math.min(Integer.MAX_VALUE,
 				(long) statistics.localBlockRevisits + revisits));
+		}
+
+		private BlockSolution solveBlock(int blockIndex, PreparedBlock block) {
+			if(block.variables().length == 1)
+				return new BlockSearch(context, assignment, block.variables(),
+					block.incidentHard(), block.incidentCost()).solve();
+			FactorizedBlockSolver solver = factorized.get(blockIndex);
+			if(solver == null) {
+				solver = new FactorizedBlockSolver(context, assignment, block.variables(),
+					block.incidentHard(), block.incidentCost());
+				factorized.set(blockIndex, solver);
+				statistics.factorizedBlockCompilations++;
+			}
+			statistics.factorizedBlockSolves++;
+			return solver.solve();
 		}
 	}
 
@@ -364,6 +385,59 @@ final class LocalCategoricalOptimizer {
 		private void retainBest(BlockCandidate candidate) {
 			if(best == null || compare(candidate, best) < 0)
 				best = candidate;
+		}
+	}
+
+	/** Reuses one local block's validated factor scopes and elimination topology. */
+	private static final class FactorizedBlockSolver {
+		final Context context;
+		final int[] assignment;
+		final int[] block;
+		final List<IndexedFactor> hard;
+		final List<IndexedFactor> cost;
+		final ExactCategoricalSolver.CompiledProblem compiled;
+
+		FactorizedBlockSolver(Context context, int[] assignment, int[] block,
+			List<IndexedFactor> hard, List<IndexedFactor> cost) {
+			this.context = context;
+			this.assignment = assignment;
+			this.block = block.clone();
+			this.hard = hard;
+			this.cost = cost;
+			Set<Integer> blockVariables = new LinkedHashSet<>();
+			for(int variable : block)
+				blockVariables.add(variable);
+			List<Variable> variables = Arrays.stream(block)
+				.mapToObj(context.variables::get).toList();
+			List<Factor> reducedFactors = new ArrayList<>(hard.size() + cost.size());
+			for(IndexedFactor factor : hard)
+				reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
+			for(IndexedFactor factor : cost)
+				reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
+			compiled = ExactCategoricalSolver.compile(variables, reducedFactors,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		}
+
+		BlockSolution solve() {
+			ExactCategoricalSolver.Result solved;
+			try {
+				solved = ExactCategoricalSolver.solve(compiled);
+			}
+			catch(IllegalArgumentException ex) {
+				if("EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(ex.getMessage()))
+					return null;
+				throw ex;
+			}
+			int[] values = solved.assignmentInVariableOrder().stream()
+				.mapToInt(Integer::intValue).toArray();
+			int[] completed = assignment.clone();
+			apply(completed, block, values);
+			if(hard.stream().anyMatch(factor -> evaluate(factor, completed)
+				== Double.POSITIVE_INFINITY))
+				throw new IllegalArgumentException("LOCAL_FACTORIZED_BLOCK_HARD_CONFLICT");
+			double incidentCost = evaluateCost(cost, completed);
+			long assignments = solved.statistics().eliminationAssignments();
+			return new BlockSolution(values, incidentCost, assignments);
 		}
 	}
 
@@ -567,37 +641,7 @@ final class LocalCategoricalOptimizer {
 
 	private static BlockSolution solveFactorizedBlock(Context context, int[] assignment,
 		int[] block, List<IndexedFactor> hard, List<IndexedFactor> cost) {
-		Set<Integer> blockVariables = new LinkedHashSet<>();
-		for(int variable : block)
-			blockVariables.add(variable);
-		List<Variable> variables = Arrays.stream(block)
-			.mapToObj(context.variables::get).toList();
-		List<Factor> reducedFactors = new ArrayList<>(hard.size() + cost.size());
-		for(IndexedFactor factor : hard)
-			reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
-		for(IndexedFactor factor : cost)
-			reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
-
-		ExactCategoricalSolver.Result solved;
-		try {
-			solved = ExactCategoricalSolver.solve(variables, reducedFactors,
-				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
-		}
-		catch(IllegalArgumentException ex) {
-			if("EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(ex.getMessage()))
-				return null;
-			throw ex;
-		}
-		int[] values = solved.assignmentInVariableOrder().stream()
-			.mapToInt(Integer::intValue).toArray();
-		int[] completed = assignment.clone();
-		apply(completed, block, values);
-		if(hard.stream().anyMatch(factor -> evaluate(factor, completed)
-			== Double.POSITIVE_INFINITY))
-			throw new IllegalArgumentException("LOCAL_FACTORIZED_BLOCK_HARD_CONFLICT");
-		double incidentCost = evaluateCost(cost, completed);
-		long assignments = solved.statistics().eliminationAssignments();
-		return new BlockSolution(values, incidentCost, assignments);
+		return new FactorizedBlockSolver(context, assignment, block, hard, cost).solve();
 	}
 
 	private static Factor reduceFactor(Context context, int[] assignment,
@@ -605,7 +649,6 @@ final class LocalCategoricalOptimizer {
 		int[] globalScope = indexed.scope();
 		int[] localPositionByScope = new int[globalScope.length];
 		Arrays.fill(localPositionByScope, -1);
-		int[] fixedValues = new int[globalScope.length];
 		List<Variable> localScope = new ArrayList<>();
 		for(int scopePosition = 0; scopePosition < globalScope.length; scopePosition++) {
 			int global = globalScope[scopePosition];
@@ -613,21 +656,21 @@ final class LocalCategoricalOptimizer {
 				localPositionByScope[scopePosition] = localScope.size();
 				localScope.add(context.variables.get(global));
 			}
-			else {
-				int fixed = assignment[global];
-				if(fixed < 0)
-					throw new IllegalArgumentException("LOCAL_BLOCK_BOUNDARY_INCOMPLETE");
-				fixedValues[scopePosition] = fixed;
-			}
 		}
 		if(localScope.isEmpty())
 			throw new IllegalArgumentException("LOCAL_BLOCK_FACTOR_NOT_INCIDENT");
 		return Factor.lazy(localScope, localValues -> {
-			int[] originalValues = fixedValues.clone();
+			int[] originalValues = new int[globalScope.length];
 			for(int scopePosition = 0; scopePosition < originalValues.length; scopePosition++) {
 				int local = localPositionByScope[scopePosition];
 				if(local >= 0)
 					originalValues[scopePosition] = localValues[local];
+				else {
+					int fixed = assignment[globalScope[scopePosition]];
+					if(fixed < 0)
+						throw new IllegalArgumentException("LOCAL_BLOCK_BOUNDARY_INCOMPLETE");
+					originalValues[scopePosition] = fixed;
+				}
 			}
 			return indexed.factor().cost(originalValues);
 		});

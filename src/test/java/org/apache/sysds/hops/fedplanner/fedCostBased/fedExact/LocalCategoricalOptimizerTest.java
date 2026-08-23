@@ -193,6 +193,12 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals(1d, result.objective(), 0d);
 		Assert.assertEquals(2, result.statistics().localBlockImprovements());
 		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
+		Assert.assertEquals("each structural block must be compiled once",
+			result.statistics().localBlocks(),
+			result.statistics().factorizedBlockCompilations());
+		Assert.assertTrue("a revisit must reuse the compiled local factor topology",
+			result.statistics().factorizedBlockSolves()
+				> result.statistics().factorizedBlockCompilations());
 	}
 
 	@Test
