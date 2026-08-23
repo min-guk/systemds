@@ -141,6 +141,40 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
+	public void exactSupersetBlockRetiresContainedExactSubproblem() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 4d),
+			Factor.dense(List.of(x, a), 5d, 7d, 8d, 0d),
+			Factor.dense(List.of(x, b), 5d, 7d, 8d, 0d));
+
+		LocalCategoricalOptimizer.Result maximalOnly = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables, List.of(List.of(x, a, b)),
+			(v, value) -> value);
+		LocalCategoricalOptimizer.Result withContained = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a), List.of(x, a, b)), (v, value) -> value);
+		LocalCategoricalOptimizer.Result withContainedAfter = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a, b), List.of(x, a)), (v, value) -> value);
+
+		Assert.assertEquals(maximalOnly.assignmentInVariableOrder(),
+			withContained.assignmentInVariableOrder());
+		Assert.assertEquals(maximalOnly.objective(), withContained.objective(), 0d);
+		Assert.assertEquals("only the exact maximal neighborhood remains active",
+			1, withContained.statistics().localBlocks());
+		Assert.assertEquals("the contained exact subproblem must not be solved",
+			maximalOnly.statistics().blockAssignments(),
+			withContained.statistics().blockAssignments());
+		Assert.assertEquals(maximalOnly.assignmentInVariableOrder(),
+			withContainedAfter.assignmentInVariableOrder());
+		Assert.assertEquals(maximalOnly.statistics(), withContainedAfter.statistics());
+	}
+
+	@Test
 	public void overlappingLocalBlocksAreRevisitedUntilNoBlockCanImprove() {
 		Variable x = new Variable("x", 2);
 		Variable a = new Variable("a", 2);

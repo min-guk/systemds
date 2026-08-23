@@ -154,6 +154,7 @@ final class LocalCategoricalOptimizer {
 		final MutableStatistics statistics;
 		final List<int[]> blocks = new ArrayList<>();
 		final List<PreparedBlock> prepared = new ArrayList<>();
+		final List<Boolean> active = new ArrayList<>();
 		final List<List<Integer>> dependentBlocks;
 
 		LocalBlockOptimizer(Context context, int[] assignment,
@@ -169,19 +170,36 @@ final class LocalCategoricalOptimizer {
 		List<Integer> addBlocks(List<int[]> candidates) {
 			List<Integer> added = new ArrayList<>();
 			for(int[] candidate : candidates) {
-				if(blocks.stream().anyMatch(prior -> Arrays.equals(prior, candidate)))
+				// Exact optimization of a superset dominates every contained block: any
+				// contained move is also a legal superset move with the remaining values
+				// fixed. Dependencies of the superset include every factor boundary that
+				// could make the contained move useful later, so the superset is revisited
+				// on the same relevant changes. Keep only maximal neighborhoods instead of
+				// repeatedly solving identical exact subproblems at multiple granularities.
+				if(hasActiveSuperset(candidate))
 					continue;
+				for(int prior = 0; prior < blocks.size(); prior++)
+					if(active.get(prior) && containsAll(candidate, blocks.get(prior)))
+						active.set(prior, false);
 				int index = blocks.size();
 				int[] stored = candidate.clone();
 				PreparedBlock block = prepareBlock(context, stored);
 				blocks.add(stored);
 				prepared.add(block);
+				active.add(true);
 				for(int variable : block.dependencies())
 					dependentBlocks.get(variable).add(index);
 				added.add(index);
 			}
-			statistics.localBlocks = blocks.size();
+			statistics.localBlocks = (int) active.stream().filter(Boolean::booleanValue).count();
 			return List.copyOf(added);
+		}
+
+		private boolean hasActiveSuperset(int[] candidate) {
+			for(int index = 0; index < blocks.size(); index++)
+				if(active.get(index) && containsAll(blocks.get(index), candidate))
+					return true;
+			return false;
 		}
 
 		void optimize(List<Integer> initialBlocks) {
@@ -189,18 +207,24 @@ final class LocalCategoricalOptimizer {
 				return;
 			ArrayDeque<Integer> pending = new ArrayDeque<>();
 			boolean[] queued = new boolean[prepared.size()];
+			int initialActiveBlocks = 0;
 			for(int blockIndex : initialBlocks) {
 				if(blockIndex < 0 || blockIndex >= prepared.size() || queued[blockIndex])
 					throw new IllegalArgumentException("LOCAL_INITIAL_BLOCK_INDEX_INVALID|index="
 						+ blockIndex);
+				if(!active.get(blockIndex))
+					continue;
 				pending.addLast(blockIndex);
 				queued[blockIndex] = true;
+				initialActiveBlocks++;
 			}
 
 			long attempts = 0;
 			while(!pending.isEmpty()) {
 				int blockIndex = pending.removeFirst();
 				queued[blockIndex] = false;
+				if(!active.get(blockIndex))
+					continue;
 				attempts++;
 				PreparedBlock block = prepared.get(blockIndex);
 				double before = evaluateCost(block.incidentCost(), assignment);
@@ -229,12 +253,12 @@ final class LocalCategoricalOptimizer {
 				statistics.localBlockImprovements++;
 				for(int variable : changed)
 					for(int neighbor : dependentBlocks.get(variable))
-						if(neighbor != blockIndex && !queued[neighbor]) {
+						if(neighbor != blockIndex && active.get(neighbor) && !queued[neighbor]) {
 							pending.addLast(neighbor);
 							queued[neighbor] = true;
 						}
 			}
-			long revisits = Math.max(0L, attempts - initialBlocks.size());
+			long revisits = Math.max(0L, attempts - initialActiveBlocks);
 			statistics.localBlockRevisits = Math.toIntExact(Math.min(Integer.MAX_VALUE,
 				(long) statistics.localBlockRevisits + revisits));
 		}
@@ -752,6 +776,19 @@ final class LocalCategoricalOptimizer {
 				normalized.add(values);
 		}
 		return List.copyOf(normalized);
+	}
+
+	private static boolean containsAll(int[] superset, int[] subset) {
+		if(superset.length < subset.length)
+			return false;
+		int outer = 0;
+		for(int value : subset) {
+			while(outer < superset.length && superset[outer] < value)
+				outer++;
+			if(outer == superset.length || superset[outer] != value)
+				return false;
+		}
+		return true;
 	}
 
 	private static void recordBlockStatistics(MutableStatistics statistics, int variables,
