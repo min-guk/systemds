@@ -6,20 +6,27 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
@@ -34,12 +41,263 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
 /** Runtime-independent cost semantics shared by planner-specific models. */
 public final class PlacementCostSemantics {
 	private PlacementCostSemantics() {
 		// utility class
 	}
+
+	/**
+	 * Precomputed, occurrence-exact expected cardinalities for row-arg-min assignment values.
+	 *
+	 * <p>The estimate recognizes the common {@code D <= rowMins(D)} idiom through
+	 * compiled input edges, transient values, and CFG reaching definitions in the shared
+	 * {@link PlacementAnalysis}. It assumes one selected minimum per row for planning;
+	 * tied minima can produce more nonzeros at runtime. Consequently, a concrete HOP NNZ
+	 * always takes precedence and ambiguous value flow fails closed. The constructor indexes
+	 * whole-program relations once and every occurrence result is memoized, so a cost-surface
+	 * build does not repeatedly scan the program graph.</p>
+	 */
+	public static final class ExpectedSparseAssignmentEstimates {
+		private final PlacementAnalysis analysis;
+		private final IdentityHashMap<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs =
+			new IdentityHashMap<>();
+		private final IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> logicalWrites =
+			new IdentityHashMap<>();
+		private final IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> cfgDefinitions =
+			new IdentityHashMap<>();
+		private final IdentityHashMap<CompiledHopKey,Set<String>> logicalVersions =
+			new IdentityHashMap<>();
+		private final IdentityHashMap<CompiledHopKey,Optional<ExpectedSparseAssignmentShape>> memo =
+			new IdentityHashMap<>();
+
+		private ExpectedSparseAssignmentEstimates(PlacementAnalysis analysis) {
+			this.analysis = Objects.requireNonNull(analysis, "analysis");
+			for(PlacementAnalysis.CompiledInputEdgeFact edge :
+				analysis.compiledInputEdgesInCanonicalOrder())
+				inputs.computeIfAbsent(edge.consumer(), ignored -> new HashMap<>())
+					.put(edge.inputPosition(), edge.producer());
+			for(PlacementAnalysis.LogicalTransientInputFact fact :
+				analysis.logicalTransientInputsInCanonicalOrder()) {
+				addIdentityUnique(logicalWrites.computeIfAbsent(fact.targetRead(),
+					ignored -> new ArrayList<>()), fact.sourceWrite());
+				logicalVersions.computeIfAbsent(fact.targetRead(),
+					ignored -> new java.util.TreeSet<>())
+					.add(fact.sourceValueVersion().normalizedSignature());
+			}
+			for(NeutralPlacementGraph.Node node : analysis.graph().nodes())
+				cfgDefinitions.put(node.key(),
+					analysis.cfgDefinitionSourcesInCanonicalOrder(node.key()));
+		}
+
+		/** Expected in-memory bytes, or zero when no safe estimate is available. */
+		public double memEstimate(CompiledHopKey key) {
+			ExpectedSparseAssignmentShape shape = shape(Objects.requireNonNull(key, "key"),
+				Collections.newSetFromMap(new IdentityHashMap<>()));
+			if(shape == null)
+				return 0.0;
+			double sparsity = Math.min(1.0,
+				shape.nnz() / (double)shape.rows() / (double)shape.cols());
+			return OptimizerUtils.estimateSizeExactSparsity(
+				shape.rows(), shape.cols(), sparsity, DataType.MATRIX);
+		}
+
+		/** Expected serialized bytes, or zero when no safe estimate is available. */
+		public double serializedEstimate(CompiledHopKey key) {
+			ExpectedSparseAssignmentShape shape = shape(Objects.requireNonNull(key, "key"),
+				Collections.newSetFromMap(new IdentityHashMap<>()));
+			return shape == null ? 0.0
+				: MatrixBlock.estimateSizeOnDisk(shape.rows(), shape.cols(), shape.nnz());
+		}
+
+		private ExpectedSparseAssignmentShape shape(CompiledHopKey key,
+				Set<CompiledHopKey> visiting) {
+			Optional<ExpectedSparseAssignmentShape> cached = memo.get(key);
+			if(cached != null)
+				return cached.orElse(null);
+			if(!visiting.add(key))
+				return null;
+			ExpectedSparseAssignmentShape result;
+			try {
+				result = derive(key, visiting);
+			}
+			finally {
+				visiting.remove(key);
+			}
+			memo.put(key, Optional.ofNullable(result));
+			return result;
+		}
+
+		private ExpectedSparseAssignmentShape derive(CompiledHopKey key,
+				Set<CompiledHopKey> visiting) {
+			Hop hop = analysis.hop(key).orElse(null);
+			if(hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix()
+				|| hop.getNnz() >= 0)
+				return null;
+
+			if(hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD) {
+				ExactInput definition = exactTransientDefinitionInput(key);
+				return definition == null ? null : shape(definition.key(), visiting);
+			}
+			if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS) {
+				ExactInput input = input(key, 0);
+				ExpectedSparseAssignmentShape inputShape = input == null ? null
+					: shape(input.key(), visiting);
+				return reshapeLike(key, inputShape);
+			}
+			if(hop instanceof BinaryOp binary && binary.getOp() == OpOp2.DIV) {
+				ExactInput numerator = input(key, 0);
+				ExactInput denominator = input(key, 1);
+				if(numerator == null || denominator == null
+					|| !isExactRowAggregateOf(denominator.key(), numerator.key(), AggOp.SUM))
+					return null;
+				return reshapeLike(key, shape(numerator.key(), visiting));
+			}
+
+			if(!(hop instanceof BinaryOp binary))
+				return null;
+			ExactInput left = input(key, 0);
+			ExactInput right = input(key, 1);
+			if(left == null || right == null)
+				return null;
+			ExactInput source;
+			ExactInput minimum;
+			switch(binary.getOp()) {
+				case LESSEQUAL -> { source = left; minimum = right; }
+				case GREATEREQUAL -> { source = right; minimum = left; }
+				case EQUAL -> {
+					if(isExactRowAggregateOf(right.key(), left.key(), AggOp.MIN)) {
+						source = left;
+						minimum = right;
+					}
+					else {
+						source = right;
+						minimum = left;
+					}
+				}
+				default -> { return null; }
+			}
+			if(!isExactRowAggregateOf(minimum.key(), source.key(), AggOp.MIN))
+				return null;
+			NodeShapeFact sourceShape = source.shape();
+			NodeShapeFact outputShape = analysis.shapeFact(key).orElse(null);
+			long rows = outputShape != null && outputShape.rows() > 0 ? outputShape.rows()
+				: sourceShape == null ? -1 : sourceShape.rows();
+			long cols = outputShape != null && outputShape.cols() > 0 ? outputShape.cols()
+				: sourceShape == null ? -1 : sourceShape.cols();
+			if(rows <= 0 || cols <= 0)
+				return null;
+			long cells = matrixCells(rows, cols);
+			return new ExpectedSparseAssignmentShape(rows, cols,
+				Math.min(cells, Math.max(1L, rows)));
+		}
+
+		private ExpectedSparseAssignmentShape reshapeLike(CompiledHopKey owner,
+				ExpectedSparseAssignmentShape inputShape) {
+			if(inputShape == null)
+				return null;
+			NodeShapeFact output = analysis.shapeFact(owner).orElse(null);
+			long rows = output != null && output.rows() > 0 ? output.rows() : inputShape.rows();
+			long cols = output != null && output.cols() > 0 ? output.cols() : inputShape.cols();
+			if(rows <= 0 || cols <= 0)
+				return null;
+			return new ExpectedSparseAssignmentShape(rows, cols,
+				Math.min(matrixCells(rows, cols), inputShape.nnz()));
+		}
+
+		private boolean isExactRowAggregateOf(CompiledHopKey aggregateOwner,
+				CompiledHopKey expectedInput, AggOp operation) {
+			ExactInput aggregate = resolveTransientValue(aggregateOwner);
+			if(aggregate == null || !(aggregate.hop() instanceof AggUnaryOp unary)
+				|| unary.getOp() != operation || unary.getDirection() != Direction.Row)
+				return false;
+			ExactInput aggregateInput = input(aggregate.key(), 0);
+			return aggregateInput != null
+				&& sameExactLogicalValue(aggregateInput.key(), expectedInput);
+		}
+
+		private ExactInput resolveTransientValue(CompiledHopKey key) {
+			Hop hop = analysis.hop(key).orElse(null);
+			if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.TRANSIENTREAD)
+				return hop == null ? null : new ExactInput(key, hop,
+					analysis.shapeFact(key).orElse(null));
+			return exactTransientDefinitionInput(key);
+		}
+
+		private ExactInput exactTransientDefinitionInput(CompiledHopKey read) {
+			List<CompiledHopKey> writes = logicalWrites.getOrDefault(read, List.of());
+			if(writes.isEmpty()) {
+				List<CompiledHopKey> cfgWrites = new ArrayList<>();
+				for(CompiledHopKey source : cfgDefinitions.getOrDefault(read, List.of()))
+					if(analysis.hop(source).map(candidate -> candidate instanceof DataOp data
+						&& data.getOp() == OpOpData.TRANSIENTWRITE).orElse(false))
+						addIdentityUnique(cfgWrites, source);
+				writes = cfgWrites;
+			}
+			return writes.size() == 1 ? input(writes.get(0), 0) : null;
+		}
+
+		private boolean sameExactLogicalValue(CompiledHopKey left, CompiledHopKey right) {
+			if(left == right || left.equals(right))
+				return true;
+			Set<String> leftDefinitions = exactLogicalDefinitionSignatures(left);
+			Set<String> rightDefinitions = exactLogicalDefinitionSignatures(right);
+			return !leftDefinitions.isEmpty() && leftDefinitions.equals(rightDefinitions);
+		}
+
+		private Set<String> exactLogicalDefinitionSignatures(CompiledHopKey key) {
+			Set<String> logical = logicalVersions.get(key);
+			if(logical != null && !logical.isEmpty())
+				return logical;
+			Set<String> result = new java.util.TreeSet<>();
+			for(CompiledHopKey source : cfgDefinitions.getOrDefault(key, List.of()))
+				analysis.graph().node(source).map(node -> node.valueVersion().normalizedSignature())
+					.ifPresent(result::add);
+			if(result.isEmpty())
+				analysis.graph().node(key).map(node -> node.valueVersion().normalizedSignature())
+					.ifPresent(result::add);
+			return result;
+		}
+
+		private ExactInput input(CompiledHopKey consumer, int position) {
+			CompiledHopKey producer = inputs.getOrDefault(consumer, Map.of()).get(position);
+			if(producer == null)
+				return null;
+			Hop hop = analysis.hop(producer).orElse(null);
+			return hop == null ? null : new ExactInput(producer, hop,
+				analysis.shapeFact(producer).orElse(null));
+		}
+	}
+
+	public static ExpectedSparseAssignmentEstimates expectedSparseAssignmentEstimates(
+			PlacementAnalysis analysis) {
+		return new ExpectedSparseAssignmentEstimates(analysis);
+	}
+
+	/** Convenience wrapper for one expected in-memory estimate. */
+	public static double semanticSparseAssignmentMemEstimate(PlacementAnalysis analysis,
+			CompiledHopKey key) {
+		return expectedSparseAssignmentEstimates(analysis).memEstimate(key);
+	}
+
+	/** Convenience wrapper for one expected serialized estimate. */
+	public static double semanticSparseAssignmentSerializedMemEstimate(
+			PlacementAnalysis analysis, CompiledHopKey key) {
+		return expectedSparseAssignmentEstimates(analysis).serializedEstimate(key);
+	}
+
+	private static void addIdentityUnique(List<CompiledHopKey> keys, CompiledHopKey candidate) {
+		if(keys.stream().noneMatch(existing -> existing == candidate))
+			keys.add(candidate);
+	}
+
+	private static long matrixCells(long rows, long cols) {
+		return rows > Long.MAX_VALUE / cols ? Long.MAX_VALUE : rows * cols;
+	}
+
+	private record ExpectedSparseAssignmentShape(long rows, long cols, long nnz) { }
 
 	/**
 	 * Whether one selected REFED action starts from a value that is still physically federated.

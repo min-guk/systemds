@@ -48,6 +48,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.ExpectedSparseAssignmentEstimates;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -160,20 +161,24 @@ public final class ExactPhysicalCostModel {
 		if(!frequencies.exactFunctionContextsProven())
 			throw new IllegalArgumentException("EXACT_GUARDED_FUNCTION_ROOTS_REQUIRED");
 		int workers = workerCount(analysis.graph());
+		ExpectedSparseAssignmentEstimates sparseAssignments =
+			PlacementCostSemantics.expectedSparseAssignmentEstimates(analysis);
 		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
 		List<PhysicalTransferKey> transferKeys = new ArrayList<>();
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains =
 			new IdentityHashMap<>();
 		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
 			domains.put(domain.node().key(), domain);
-			addPhysicalUnaryFactor(analysis, domain, workers, frequencies, factors);
+			addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers,
+				frequencies, factors);
 		}
 		List<EffectiveLogicalFunctionInput> logicalInputs = effectiveLogicalFunctionInputs(analysis);
-		addPhysicalCompiledTransferFactors(analysis, model.domains(), domains, workers, frequencies,
-			logicalInputs, factors, transferKeys);
-		addPhysicalNativeLocalInputTransferFactors(analysis, domains, workers,
-			frequencies, factors);
-		addPhysicalLogicalFunctionFactors(analysis, domains, workers, frequencies, factors, transferKeys);
+		addPhysicalCompiledTransferFactors(analysis, sparseAssignments, model.domains(),
+			domains, workers, frequencies, logicalInputs, factors, transferKeys);
+		addPhysicalNativeLocalInputTransferFactors(analysis, sparseAssignments, domains,
+			workers, frequencies, factors);
+		addPhysicalLogicalFunctionFactors(analysis, sparseAssignments, domains, workers,
+			frequencies, factors, transferKeys);
 		List<PhysicalContribution> contributions = new ArrayList<>(factors.size());
 		StringBuilder normalized = new StringBuilder(analysis.analysisFingerprint());
 		// The optimization receipt must bind the complete authority-bearing physical
@@ -243,6 +248,7 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private static void addPhysicalUnaryFactor(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments,
 		ExactPhysicalModel.DecisionDomain domain, int workers,
 		OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors) {
@@ -264,8 +270,8 @@ public final class ExactPhysicalCostModel {
 			if(state.execType() == ExecType.CP) {
 				execution[value] = cpUnaryCost(analysis, domain.node().key(), hop, weight);
 				if(state.output() == FederatedOutput.FOUT)
-					nativeCpUpload[value] = physicalResultUploadCost(analysis, domain.node().key(),
-						hop, state.fType(), workers, weight);
+					nativeCpUpload[value] = physicalResultUploadCost(analysis, sparseAssignments,
+						domain.node().key(), hop, state.fType(), workers, weight);
 				continue;
 			}
 			CandidateEmissionFact emission = alternative.captured()
@@ -274,8 +280,8 @@ public final class ExactPhysicalCostModel {
 			boolean federatedSource = hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED;
 			List<FType> inputFTypes = federatedSource ? List.of() : alternative.orderedInputs().stream()
 				.map(input -> input.present() ? input.fType() : null).toList();
-			FedCostProjection projection = fedCostProjection(analysis, domain.node().key(), hop,
-				inputFTypes, executionFType, workers, weight);
+			FedCostProjection projection = fedCostProjection(analysis, sparseAssignments,
+				domain.node().key(), hop, inputFTypes, executionFType, workers, weight);
 			boolean derivedFout = state.output() == FederatedOutput.FOUT && emission != null
 				&& emission.emissionState().derivedFedFout();
 			execution[value] = derivedFout
@@ -283,8 +289,8 @@ public final class ExactPhysicalCostModel {
 					"EXACT_PHYSICAL_FED_DOWNLOAD_COST_UNPROVEN")
 				: projection.fedUnaryCost();
 			if(derivedFout)
-				outputMaterialization[value] = physicalResultUploadCost(analysis, domain.node().key(),
-					hop, state.fType(), workers, weight);
+				outputMaterialization[value] = physicalResultUploadCost(analysis, sparseAssignments,
+					domain.node().key(), hop, state.fType(), workers, weight);
 			else if(state.output() == FederatedOutput.LOUT)
 				nativeFedDownload[value] = projection.resultDownloadCost();
 		}
@@ -296,15 +302,17 @@ public final class ExactPhysicalCostModel {
 		factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), nativeCpUpload));
 	}
 
-	private static double physicalResultUploadCost(PlacementAnalysis analysis, CompiledHopKey key,
-		Hop hop, FType fType, int workers, double weight) {
+	private static double physicalResultUploadCost(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop,
+		FType fType, int workers, double weight) {
 		return requireCost(weight * (FederatedCostModel.computeUploadNetworkCost(
-			effectiveUploadBytes(analysis, key, hop), fType, workers)
+			effectiveUploadBytes(analysis, sparseAssignments, key, hop), fType, workers)
 			+ FederatedCostModel.computeLocalToFedForwardingPenalty(fType, workers)),
 			"EXACT_RESULT_UPLOAD_COST_UNPROVEN");
 	}
 
 	private static void addPhysicalCompiledTransferFactors(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments,
 		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
 		int workers, OccurrenceExecutionFrequencyFacts frequencies,
@@ -325,7 +333,8 @@ public final class ExactPhysicalCostModel {
 			Hop producerHop = analysis.hop(producer.node().key()).orElseThrow();
 			if(producerHop.getDataType() == null || !producerHop.getDataType().isMatrix())
 				continue;
-			double bytes = estimatedBytes(analysis, producer.node().key(), producerHop);
+			double bytes = estimatedBytes(analysis, sparseAssignments,
+				producer.node().key(), producerHop);
 			Map<Key,List<Demand>> grouped = new LinkedHashMap<>();
 			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.producer() != producer.node().key()
@@ -453,6 +462,7 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private static void addPhysicalNativeLocalInputTransferFactors(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
 		int workers, OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors) {
@@ -474,7 +484,8 @@ public final class ExactPhysicalCostModel {
 								== ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL));
 			if(!hasNativeLocalFedAlternative)
 				continue;
-			double bytes = estimatedBytes(analysis, edge.producer(), producerHop);
+			double bytes = estimatedBytes(analysis, sparseAssignments,
+				edge.producer(), producerHop);
 			double fusedInputPreparationBytes =
 				PlacementCostSemantics.latentWdivmmFusedInputPreparationBytes(
 					analysis, edge.producer(), edge.consumer(), edge.inputPosition());
@@ -506,7 +517,8 @@ public final class ExactPhysicalCostModel {
 						FederatedCostModel.computeMixedFedLocalCost(consumerHop,
 							new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
 							unitLocalCost(analysis, edge.consumer(), consumerHop),
-							effectiveOutputBytes(analysis, edge.consumer(), consumerHop), workers);
+							effectiveOutputBytes(analysis, sparseAssignments,
+								edge.consumer(), consumerHop), workers);
 					double cost;
 					if(mixed.hasInputPreparation())
 						cost = 0.0;
@@ -552,6 +564,7 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private static void addPhysicalLogicalFunctionFactors(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
 		int workers, OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors,
@@ -561,9 +574,11 @@ public final class ExactPhysicalCostModel {
 			ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
 			if(source == null || formal == null)
 				continue;
-			double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
-				analysis.hop(formal.node().key()).orElseThrow(),
-				analysis.hop(source.node().key()).orElseThrow());
+			double bytes = sparseAssignments.serializedEstimate(source.node().key());
+			if(!Double.isFinite(bytes) || bytes <= 0.0)
+				bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+					analysis.hop(formal.node().key()).orElseThrow(),
+					analysis.hop(source.node().key()).orElseThrow());
 			double callWeight = frequencies.logicalFunctionCallWeight(input.authority());
 			List<FType> sourceTypes = source.alternatives().stream().map(a -> a.state().fType())
 				.filter(Objects::nonNull).distinct().toList();
@@ -654,12 +669,12 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
-		CompiledHopKey key, Hop hop, List<FType> inputFTypes, FType executionFType,
-		int workers, double executionWeight) {
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop,
+		List<FType> inputFTypes, FType executionFType, int workers, double executionWeight) {
 		double base = cpUnaryCost(analysis, key, hop, executionWeight);
 		return fedCostProjection(analysis, key, hop, inputFTypes, executionFType, workers,
-			executionWeight, base, effectiveOutputBytes(analysis, key, hop),
-			effectiveUploadBytes(analysis, key, hop));
+			executionWeight, base, effectiveOutputBytes(analysis, sparseAssignments, key, hop),
+			effectiveUploadBytes(analysis, sparseAssignments, key, hop));
 	}
 
 	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
@@ -748,15 +763,23 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private static double effectiveOutputBytes(PlacementAnalysis analysis,
-		CompiledHopKey key, Hop hop) {
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
+		double semantic = sparseAssignments.memEstimate(key);
+		if(Double.isFinite(semantic) && semantic > 0.0)
+			return semantic;
 		double bytes = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-		return Double.isFinite(bytes) && bytes > 0.0 ? bytes : estimatedBytes(analysis, key, hop);
+		return Double.isFinite(bytes) && bytes > 0.0 ? bytes
+			: estimatedBytes(analysis, sparseAssignments, key, hop);
 	}
 
 	private static double effectiveUploadBytes(PlacementAnalysis analysis,
-		CompiledHopKey key, Hop hop) {
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
+		double semantic = sparseAssignments.serializedEstimate(key);
+		if(Double.isFinite(semantic) && semantic > 0.0)
+			return semantic;
 		double bytes = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
-		return Double.isFinite(bytes) && bytes > 0.0 ? bytes : estimatedBytes(analysis, key, hop);
+		return Double.isFinite(bytes) && bytes > 0.0 ? bytes
+			: estimatedBytes(analysis, sparseAssignments, key, hop);
 	}
 
 	private static List<EffectiveLogicalFunctionInput> effectiveLogicalFunctionInputs(
@@ -930,9 +953,13 @@ public final class ExactPhysicalCostModel {
 		return workers.size();
 	}
 
-	private static double estimatedBytes(PlacementAnalysis analysis, CompiledHopKey key, Hop hop) {
+	private static double estimatedBytes(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
 		if(hop.getDataType() != null && hop.getDataType().isScalar())
 			return 8.0;
+		double semantic = sparseAssignments.serializedEstimate(key);
+		if(Double.isFinite(semantic) && semantic > 0.0)
+			return semantic;
 		FunctionOp multiReturnParent = exactMultiReturnBuiltinParent(hop);
 		if(multiReturnParent != null) {
 			double multiReturnEstimate = multiReturnParent.getMultiReturnBuiltinOutputMemEstimate(hop);

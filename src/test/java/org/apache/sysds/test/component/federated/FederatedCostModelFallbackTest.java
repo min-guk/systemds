@@ -739,7 +739,7 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testFedCoordinationCostDoesNotDoubleCountCalibratedControlPath() throws Exception {
+	public void testFedInstructionOwnsNetworkLatencyAndCalibratedControlCost() throws Exception {
 		TestMatrixHop left = new TestMatrixHop("ctrlLeft", 1000, 10, 1024 * 1024, 1024 * 1024);
 		TestMatrixHop right = new TestMatrixHop("ctrlRight", 1000, 10, 1024 * 1024, 1024 * 1024);
 		BinaryOp binary = new BinaryOp("ctrlPlus", DataType.MATRIX, ValueType.FP64,
@@ -756,13 +756,31 @@ public class FederatedCostModelFallbackTest {
 			binary, FType.ROW, execWeight, workers, false);
 		double totalControlCost = execWeight * perInstructionCoordination + controlDominatedTopup;
 
-		double expected = ctrlMs > 0.0
-			? execWeight * ctrlMs
-			: execWeight * latencySec * toMs;
-		Assert.assertEquals("A calibrated local-to-FED control value is already per logical dispatch;"
-			+ " the network-latency fallback represents the same parallel logical dispatch and"
-			+ " must not be multiplied by worker fanout either",
+		double expected = execWeight * (ctrlMs + latencySec * toMs);
+		Assert.assertEquals("Every logical FED instruction owns one parallel network round trip plus"
+			+ " the separately configured coordinator/runtime control path; neither term is"
+			+ " multiplied by worker fanout",
 			expected, totalControlCost, 1e-9);
+	}
+
+	@Test
+	public void testFedInstructionFixedStagePreservesFractionalBranchWeight() throws Exception {
+		TestMatrixHop left = new TestMatrixHop("branchLeft", 1000, 10,
+			1024 * 1024, 1024 * 1024);
+		TestMatrixHop right = new TestMatrixHop("branchRight", 1000, 10,
+			1024 * 1024, 1024 * 1024);
+		BinaryOp binary = new BinaryOp("branchPlus", DataType.MATRIX, ValueType.FP64,
+			OpOp2.PLUS, left, right);
+		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
+		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
+			* getFederatedCostModelConstant("TO_MS");
+		double branchWeight = 0.5;
+		int workers = 4;
+		double actual = branchWeight * FederatedCostModel.computeFedCoordinationCost(workers)
+			+ FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+				binary, FType.ROW, branchWeight, workers, false);
+		Assert.assertEquals("Expected branch frequency must scale both fixed-stage terms",
+			branchWeight * (ctrlMs + latencyMs), actual, 1e-9);
 	}
 
 	@Test
@@ -804,7 +822,7 @@ public class FederatedCostModelFallbackTest {
 		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
 			* getFederatedCostModelConstant("TO_MS");
 		double execWeight = 7.0;
-		double expected = execWeight * (ctrlMs > 0.0 ? ctrlMs : latencyMs);
+		double expected = execWeight * (ctrlMs + latencyMs);
 
 		for(int workers = 1; workers <= 4; workers++) {
 			double actual = execWeight * FederatedCostModel.computeFedCoordinationCost(workers)
@@ -830,13 +848,10 @@ public class FederatedCostModelFallbackTest {
 
 		double controlDominatedTopup = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
 			slice, FType.ROW, execWeight, workers, false);
-		double expected = ctrlMs > 0.0
-			? 0.0
-			: execWeight * latencySec * toMs;
+		double expected = execWeight * latencySec * toMs;
 
-		Assert.assertEquals("Native FED indexing submits all worker requests before waiting; calibrated"
-			+ " coordination already owns the logical dispatch, while the uncalibrated fallback is one"
-			+ " parallel critical-path round trip",
+		Assert.assertEquals("Native FED indexing submits all worker requests before waiting; it owns one"
+			+ " parallel critical-path network round trip in addition to calibrated coordinator control",
 			expected, controlDominatedTopup, 1e-9);
 	}
 

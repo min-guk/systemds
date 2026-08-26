@@ -10,15 +10,18 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -113,6 +116,29 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 					return normalized.analysis().hop(source.key()).orElseThrow().getBeginLine() == 124
 						&& "r(r')".equals(normalized.analysis().hop(source.key()).orElseThrow().getOpString());
 				}));
+			Assert.assertTrue("Exact must not relocate Xd inside the 30x20 nested loop; relocations="
+				+ normalized.selectedRelocations(), normalized.selectedRelocations().stream().noneMatch(action ->
+					normalized.analysis().graph().nodes().stream().anyMatch(node ->
+						node.valueVersion().equals(action.sourceValueVersion())
+							&& normalized.analysis().hop(node.key()).map(hop -> "Xd".equals(hop.getName())
+								&& hop.getBeginLine() == 110).orElse(false))));
+			var xdNodes = normalized.analysis().graph().nodes().stream()
+				.filter(node -> normalized.analysis().hop(node.key()).map(hop ->
+					"Xd".equals(hop.getName()) && hop.getBeginLine() == 110
+						&& "b(*)".equals(hop.getOpString())).orElse(false))
+				.toList();
+			Assert.assertEquals("Expected one exact Xd loop occurrence", 1, xdNodes.size());
+			var xd = xdNodes.get(0);
+			var xdState = normalized.selectedStates().get(xd.key());
+			Assert.assertNotNull("Exact selection must contain the exact Xd occurrence", xdState);
+			Assert.assertEquals("Xd must execute at the workers", ExecType.FED, xdState.execType());
+			Assert.assertEquals("Xd must remain resident at the workers", FederatedOutput.FOUT,
+				xdState.output());
+			Assert.assertEquals("Xd must preserve X's row partitioning", FType.ROW,
+				xdState.fType());
+			Assert.assertTrue("The model must retain an Xd relocation choice while emission keeps"
+				+ " the cheaper resident alternative", normalized.selectedRelocationChoices().stream()
+					.anyMatch(choice -> choice.action().sourceValueVersion().equals(xd.valueVersion())));
 		}
 		finally {
 			Files.deleteIfExists(script);
@@ -206,7 +232,7 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 			"SYSDS_FED_COST_NET_SERDES_BW_C2W", "210",
 			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7",
 			"SYSDS_FED_COST_NET_LATENCY", "0.001",
-			"SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0",
+			"SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "1",
 			"SYSDS_FED_COST_FLOPS", "2147483648");
 		Map<String,String> previous = new HashMap<>();
 		values.forEach((key, value) -> {

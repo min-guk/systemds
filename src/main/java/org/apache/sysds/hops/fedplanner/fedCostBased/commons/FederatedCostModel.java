@@ -130,6 +130,8 @@ public final class FederatedCostModel {
 	private static final String ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
 		"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
+	// Coordinator/runtime processing time only. This calibration must exclude network latency,
+	// which is configured independently by ENV_MBS_NETWORK_LATENCY.
 	private static final String ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS = "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS";
 	private static final String ENV_UPLOAD_ESTIMATE_CLAMP_RATIO = "SYSDS_FED_COST_UPLOAD_MEM_CLAMP_RATIO";
 	private static final String ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = "SYSDS_FED_COST_UNKNOWN_DIM_TRANSFER_MB";
@@ -239,10 +241,12 @@ public final class FederatedCostModel {
 	 * across multiple workers.
 	 *
 	 * <p>This helper is intentionally <b>control-plane only</b> (RPC framing / Netty bookkeeping).
-	 * The configured value comes from the measured local-to-federated dispatch/control path for
-	 * one logical federated instruction, so ordinary per-op coordination must not multiply it by
-	 * worker fanout again. Boundary upload/download helpers separately model payload fan-in/fan-out
-	 * and any extra worker-side transfer latency.</p>
+	 * The configured value measures coordinator/runtime processing for one logical federated
+	 * instruction after excluding network latency. Network latency is configured independently and
+	 * combined by {@link #computeFixedFederatedInstructionStageCost(double, double, double)}.
+	 * Ordinary per-op coordination must not multiply either fixed term by worker fanout. Boundary
+	 * upload/download helpers separately model payload fan-in/fan-out and any additional transfer
+	 * stages.</p>
 	 *
 	 * @param numWorkers number of federated workers participating in the operation
 	 * @return estimated control-only coordination overhead in milliseconds
@@ -250,6 +254,19 @@ public final class FederatedCostModel {
 	public static double computeFedCoordinationCost(int numWorkers) {
 		final double ctrl = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 		return ctrl;
+	}
+
+	/**
+	 * Pure fixed-stage cost for one logical FED instruction batch.
+	 *
+	 * <p>Network latency and coordinator/runtime control are independent calibrations in
+	 * milliseconds. The requests to participating workers are submitted as one parallel batch, so
+	 * the sum is weighted by logical execution frequency but never by worker fanout.</p>
+	 */
+	static double computeFixedFederatedInstructionStageCost(double executionWeight,
+			double networkLatencyMs, double coordinatorControlMs) {
+		return Math.max(0.0, executionWeight) * (Math.max(0.0, networkLatencyMs)
+			+ Math.max(0.0, coordinatorControlMs));
 	}
 
 	/**
@@ -560,13 +577,13 @@ public final class FederatedCostModel {
 	}
 
 	/**
-	 * Network-latency fallback for one logical FED instruction batch.
+	 * Network-latency contribution for one logical FED instruction batch.
 	 *
 	 * <p>Arithmetic-heavy and control-dominated instructions both cross the same remote
 	 * request boundary. Compute may scale by worker count, but the request batch still
-	 * owns one fixed dispatch stage. When an explicitly calibrated local-to-FED control
-	 * cost is configured, {@link #computeFedCoordinationCost(int)} already owns that
-	 * stage. Otherwise this method supplies one network-latency fallback. It never
+	 * owns one fixed network round trip. An explicitly calibrated local-to-FED control
+	 * cost represents coordinator/runtime work in addition to that network latency.
+	 * This method therefore always supplies the one network-latency stage. It never
 	 * multiplies the fixed stage by worker count because {@code FederationMap} submits
 	 * all worker requests as futures before waiting. Mapping-preserving transpose is
 	 * metadata-only and remains exempt.</p>
@@ -577,10 +594,13 @@ public final class FederatedCostModel {
 			return 0.0;
 		if (isMappingPreservingFederatedTranspose(hop, logicalFType))
 			return 0.0;
-		double boundedWeight = Math.max(1.0, execWeight);
-		if (LOCAL_TO_FED_CTRL_OVERHEAD_MS > 0.0)
-			return 0.0;
-		return boundedWeight * MBS_NETWORK_LATENCY * TO_MS;
+		double executionWeight = Math.max(0.0, execWeight);
+		double fixedStage = computeFixedFederatedInstructionStageCost(executionWeight,
+			MBS_NETWORK_LATENCY * TO_MS, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		// Existing planner call sites add the coordinator term through
+		// computeFedCoordinationCost. Return the separately configured latency remainder
+		// here so their combined fixed stage is exactly the pure additive formula above.
+		return fixedStage - executionWeight * computeFedCoordinationCost(numWorkers);
 	}
 
 	/**
@@ -1424,7 +1444,10 @@ public final class FederatedCostModel {
 	}
 
 	private static SparseAssignmentShape getSemanticSparseAssignmentShape(Hop hop) {
-		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+		// Concrete statistics are authoritative. The semantic rule below is only an
+		// expected-cardinality fallback for the common unknown-NNZ planning case.
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix()
+				|| hop.getNnz() >= 0)
 			return null;
 		if (isTranspose(hop)) {
 			SparseAssignmentShape inputShape = getSemanticSparseAssignmentShape(hop.getInput(0));
@@ -1440,7 +1463,8 @@ public final class FederatedCostModel {
 		long cols = hop.getDim2() > 0 ? hop.getDim2() : source.getDim2();
 		if (rows <= 0 || cols <= 0)
 			return null;
-		long nnz = Math.min(rows * cols, Math.max(1, source.getDim1()));
+		long cells = rows > Long.MAX_VALUE / cols ? Long.MAX_VALUE : rows * cols;
+		long nnz = Math.min(cells, Math.max(1, source.getDim1()));
 		return new SparseAssignmentShape(rows, cols, nnz);
 	}
 
@@ -1458,7 +1482,10 @@ public final class FederatedCostModel {
 		private SparseAssignmentShape transposeLike(Hop hop) {
 			long transposedRows = hop.getDim1() > 0 ? hop.getDim1() : cols;
 			long transposedCols = hop.getDim2() > 0 ? hop.getDim2() : rows;
-			return new SparseAssignmentShape(transposedRows, transposedCols, nnz);
+			long cells = transposedRows > Long.MAX_VALUE / transposedCols
+				? Long.MAX_VALUE : transposedRows * transposedCols;
+			return new SparseAssignmentShape(transposedRows, transposedCols,
+				Math.min(cells, nnz));
 		}
 	}
 

@@ -16,6 +16,7 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -28,12 +29,51 @@ import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.junit.Assert;
 import org.junit.Test;
 
 /** Regression for the repeated 50.4 MB CP-to-FOUT upload selected by WAN-light KMeans. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014ExactKMeansWanRepeatedUploadRedTest {
+	@Test
+	public void loopAssignmentPayloadUsesExpectedCardinalityAcrossTransientDefinitions() throws Exception {
+		DMLProgram program = kmeansSingleWorker();
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		List<CompiledHopKey> loopAssignments = analysis.graph().nodes().stream()
+			.map(node -> node.key())
+			.filter(key -> analysis.hop(key).map(hop -> hop.getBeginLine() == 148
+				&& "b(<=)".equals(hop.getOpString())).orElse(false))
+			.toList();
+		Assert.assertEquals("Expected one exact loop-body assignment occurrence", 1,
+			loopAssignments.size());
+
+		CompiledHopKey assignment = loopAssignments.get(0);
+		double serialized = PlacementCostSemantics
+			.semanticSparseAssignmentSerializedMemEstimate(analysis, assignment);
+		double expected = MatrixBlock.estimateSizeOnDisk(50000, 50, 50000);
+		Assert.assertEquals("The exact value-flow estimate must see through minD's transient"
+			+ " write/read boundary and use one expected assignment per input row",
+			expected, serialized, 0.0);
+
+		List<CompiledHopKey> transposedAssignments = analysis.graph().nodes().stream()
+			.map(node -> node.key())
+			.filter(key -> analysis.hop(key).map(hop -> hop.getBeginLine() == 155
+				&& "r(r')".equals(hop.getOpString())).orElse(false))
+			.filter(key -> analysis.shapeFact(key).map(shape -> shape.rows() == 50
+				&& shape.cols() == 50000).orElse(false))
+			.toList();
+		Assert.assertEquals("Expected one exact t(P) loop-body occurrence", 1,
+			transposedAssignments.size());
+		double transposedSerialized = PlacementCostSemantics
+			.semanticSparseAssignmentSerializedMemEstimate(
+				analysis, transposedAssignments.get(0));
+		double expectedTransposed = MatrixBlock.estimateSizeOnDisk(50, 50000, 50000);
+		Assert.assertEquals("t(P) must preserve the expected 50,000-nnz payload across"
+			+ " P's transient definition", expectedTransposed, transposedSerialized, 0.0);
+	}
+
 	@Test
 	public void cliWanLightKMeansDoesNotEmitTheRepeatedRefedPlan() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
@@ -146,6 +186,7 @@ public class CampaignBG014ExactKMeansWanRepeatedUploadRedTest {
 				+ "|consumer=" + consumerState + "|absentLocal=" + selectedAbsentLocal
 				+ "|objective=" + Double.longBitsToDouble(optimized.canonicalObjectiveBits()),
 				selectedRepeatedUpload);
+
 		}
 		finally {
 			restoreProperties(old);
@@ -170,6 +211,12 @@ public class CampaignBG014ExactKMeansWanRepeatedUploadRedTest {
 			ExactPhysicalOptimizer.Result exactOptimized = ExactPhysicalOptimizer.optimize(
 				model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 			ExactPhysicalSelection exactSelection = ExactPhysicalSelection.create(model, exactOptimized);
+			double localObjective = optimized.physicalResult().solverResult().objective();
+			double exactObjective = exactOptimized.solverResult().objective();
+			double objectiveTolerance = 1e-9 * Math.max(1.0, Math.abs(localObjective));
+			Assert.assertTrue("Exact and LocalConflict must optimize the same cost surface; exact="
+				+ exactObjective + ", local=" + localObjective,
+				exactObjective <= localObjective + objectiveTolerance);
 
 			List<CompiledInputEdgeFact> candidates = repeatedSampleUploadEdges(analysis);
 			Assert.assertEquals("G014_LOCAL_KMEANS_REPEATED_UPLOAD_EDGE_UNPROVEN|candidates="
@@ -190,8 +237,8 @@ public class CampaignBG014ExactKMeansWanRepeatedUploadRedTest {
 			Assert.assertFalse("G014_LOCAL_KMEANS_SELECTED_50X_50MB_RUNTIME_UPLOAD|edge="
 				+ describeEdge(analysis, edge) + "|producer=" + producerState
 				+ "|consumer=" + consumerState + "|absentLocal=" + selectedAbsentLocal
-				+ "|objective=" + optimized.physicalResult().solverResult().objective(),
-				selectedRepeatedUpload);
+					+ "|objective=" + localObjective,
+					selectedRepeatedUpload);
 
 			List<CompiledInputEdgeFact> fullInputEdges = repeatedFullInputUploadEdges(analysis);
 			Assert.assertFalse("G014_LOCAL_KMEANS_FULL_INPUT_EDGE_UNPROVEN", fullInputEdges.isEmpty());
@@ -353,7 +400,7 @@ public class CampaignBG014ExactKMeansWanRepeatedUploadRedTest {
 			Map.entry("SYSDS_FED_COST_NET_SERDES_BW_C2W", "210"),
 			Map.entry("SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7"),
 			Map.entry("SYSDS_FED_COST_NET_LATENCY", "0.020"),
-			Map.entry("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0"),
+			Map.entry("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "1"),
 			Map.entry("SYSDS_FED_COST_FLOPS", "2147483648"));
 		Map<String,String> previous = new HashMap<>();
 		values.forEach((key, value) -> {
