@@ -1043,18 +1043,45 @@ public class FederatedCostModelFallbackTest {
 		double totalBytes = 400304.0;
 		int workers = 2;
 		double networkBwMBps = 1250.0;
-		double responseSerdesBwMBps = 210.0;
+		double fastResponseSerdesBwMBps = 210.0;
+		double largeResponseSerdesBwMBps = 14.7;
+		double fastResponseMaxBytes = 4.0 * 1024 * 1024;
 		double latencySec = 0.001;
 		double controlMs = 1.0;
 		double criticalPayloadMb = totalBytes / workers / (1024.0 * 1024.0);
 		double expected = (criticalPayloadMb / networkBwMBps
-			+ criticalPayloadMb / responseSerdesBwMBps) * 1000.0
+			+ criticalPayloadMb / fastResponseSerdesBwMBps) * 1000.0
 			+ latencySec * 1000.0 + controlMs;
 		double actual = invokeReusableMaterializationDownloadCost(totalBytes, workers,
-			networkBwMBps, responseSerdesBwMBps, latencySec, controlMs);
+			networkBwMBps, fastResponseSerdesBwMBps, largeResponseSerdesBwMBps,
+			fastResponseMaxBytes, latencySec, controlMs);
 
 		Assert.assertEquals("One planner-selected FOUT-to-local boundary emits one parallel GET_VAR"
-			+ " materialization that is reused by all compatible CP consumers", expected, actual, 1e-9);
+			+ " materialization that is reused by all compatible CP consumers; a small response must"
+			+ " retain the measured small-message path", expected, actual, 1e-9);
+	}
+
+	@Test
+	public void testReusableLargeMaterializationUsesParallelDirectionalCodecPath() throws Exception {
+		double totalBytes = 840_000_000.0;
+		double networkBwMBps = 1250.0;
+		double fastResponseSerdesBwMBps = 210.0;
+		double largeResponseSerdesBwMBps = 14.7;
+		double fastResponseMaxBytes = 4.0 * 1024 * 1024;
+		double latencySec = 0.001;
+		double controlMs = 1.0;
+		for(int workers : new int[] {1, 2, 4}) {
+			double criticalPayloadMb = totalBytes / workers / (1024.0 * 1024.0);
+			double expected = (criticalPayloadMb / networkBwMBps
+				+ criticalPayloadMb / largeResponseSerdesBwMBps) * 1000.0
+				+ latencySec * 1000.0 + controlMs;
+			double actual = invokeReusableMaterializationDownloadCost(totalBytes, workers,
+				networkBwMBps, fastResponseSerdesBwMBps, largeResponseSerdesBwMBps,
+				fastResponseMaxBytes, latencySec, controlMs);
+			Assert.assertEquals("A large reusable GET_VAR remains parallel across workers but must not"
+				+ " inherit the small-response codec rate for workers=" + workers,
+				expected, actual, 1e-9);
+		}
 	}
 
 	@Test
@@ -1164,13 +1191,15 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	private static double invokeReusableMaterializationDownloadCost(double totalMemSize, int fanIn,
-			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) throws Exception {
+			double bandwidthMBps, double fastSerdesBwMBps, double largeSerdesBwMBps,
+			double fastResponseMaxBytes, double latencySec, double controlMs) throws Exception {
 		Method method = FederatedCostModel.class.getDeclaredMethod(
 			"computeReusableMaterializationDownloadCost", double.class, int.class,
-			double.class, double.class, double.class, double.class);
+			double.class, double.class, double.class, double.class, double.class, double.class);
 		method.setAccessible(true);
 		return (double) method.invoke(null, totalMemSize, fanIn,
-			bandwidthMBps, serdesBwMBps, latencySec, controlMs);
+			bandwidthMBps, fastSerdesBwMBps, largeSerdesBwMBps,
+			fastResponseMaxBytes, latencySec, controlMs);
 	}
 
 	private static final class TestMatrixHop extends DataOp {

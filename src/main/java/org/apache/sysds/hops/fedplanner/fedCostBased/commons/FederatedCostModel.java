@@ -129,6 +129,8 @@ public final class FederatedCostModel {
 	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_SERDES_BW_W2C";
 	private static final String ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
 		"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C";
+	private static final String ENV_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB =
+		"SYSDS_FED_COST_REUSABLE_GET_VAR_FAST_MAX_MB";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
 	// Coordinator/runtime processing time only. This calibration must exclude network latency,
 	// which is configured independently by ENV_MBS_NETWORK_LATENCY.
@@ -149,6 +151,10 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
 	// Additional per-byte overhead term for federated transfers (disabled by default).
 	private static final double DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH = 0.0;
+	// FederatedResponseEncoder preallocates one Netty response buffer. Netty 4.1.96's
+	// default pooled allocator chunk is 4 MiB; responses above this boundary use the
+	// separately calibrated large W2C path instead of the small-response critical path.
+	private static final double DEFAULT_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB = 4.0;
 	// Network latency between federated sites (1 ms).
 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
 	private static final double DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS = 0.0;
@@ -214,6 +220,10 @@ public final class FederatedCostModel {
 			ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
 			MBS_NETWORK_SERDES_BANDWIDTH > 0.0
 				? MBS_NETWORK_SERDES_BANDWIDTH : MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+	private static final double REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_BYTES =
+		Math.max(0.0, FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
+			ENV_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB,
+			DEFAULT_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB)) * 1024 * 1024;
 	private static final double MBS_NETWORK_LATENCY = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_LATENCY,
 			DEFAULT_MBS_NETWORK_LATENCY);
 	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
@@ -1960,11 +1970,14 @@ public final class FederatedCostModel {
 	 *
 	 * <p>The emitted {@code prefetch} calls {@code acquireReadAndRelease} once for the
 	 * selected producer and rewires all compatible local consumers to that materialized
-	 * value.  Its runtime path is therefore one parallel {@code GET_VAR} batch, not a
-	 * standalone serial collection per consumer.  Worker response transfer and codec
+	 * value. Its runtime path is therefore one parallel {@code GET_VAR} batch, not a
+	 * standalone serial collection per consumer. Worker response transfer and codec
 	 * work lie on the largest per-worker path; the batch itself owns one latency/control
-	 * stage.  This is the explicit-boundary counterpart of the in-band result path used
-	 * by native FED/LOUT instructions.</p>
+	 * stage. Small responses use the in-band response calibration. Once a worker response
+	 * exceeds the pooled response-buffer boundary, the large directional W2C codec
+	 * calibration applies to that worker's critical path. This preserves cheap repeated
+	 * materialization of small intermediates without pricing a single very large response
+	 * as if it followed the small-message path.</p>
 	 */
 	public static double computeReusableMaterializationDownloadCost(double memSize,
 			FType fType, int numWorkers) {
@@ -1973,15 +1986,22 @@ public final class FederatedCostModel {
 		int fanIn = estimateDownloadFanIn(fType, numWorkers);
 		return computeReusableMaterializationDownloadCost(memSize, fanIn,
 			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
+			MBS_NETWORK_SERDES_BANDWIDTH_W2C,
+			REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_BYTES,
 			MBS_NETWORK_LATENCY, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 	}
 
 	static double computeReusableMaterializationDownloadCost(double totalMemSize, int fanIn,
-			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) {
+			double bandwidthMBps, double fastSerdesBwMBps, double largeSerdesBwMBps,
+			double fastResponseMaxBytes, double latencySec, double controlMs) {
 		if (totalMemSize <= 0.0)
 			return 0.0;
+		int workers = Math.max(1, fanIn);
+		double criticalResponseBytes = estimateParallelDownloadPayload(totalMemSize, workers);
+		double responseSerdesBwMBps = criticalResponseBytes > Math.max(0.0, fastResponseMaxBytes)
+			&& largeSerdesBwMBps > 0.0 ? largeSerdesBwMBps : fastSerdesBwMBps;
 		double payload = computeParallelInBandResultPayloadCost(totalMemSize,
-			Math.max(1, fanIn), bandwidthMBps, serdesBwMBps);
+			workers, bandwidthMBps, responseSerdesBwMBps);
 		double fixedStage = computeFixedFederatedInstructionStageCost(1.0,
 			latencySec * TO_MS, controlMs);
 		return payload + fixedStage;
