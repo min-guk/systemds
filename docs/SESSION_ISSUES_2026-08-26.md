@@ -2,7 +2,7 @@
 
 ## 1. KMeans transient assignment payload was priced as a dense matrix
 
-- **상태**: 공통 비용모델 및 회귀 테스트 수정 완료; targeted Docker runtime 검증 진행중
+- **상태**: 해결; 공통 비용모델, 회귀 테스트, targeted Docker runtime 검증 완료
 - **적용 원칙**: runtime-supported placement를 닫지 않고 DP/Exact가 공유하는 occurrence-exact 비용 fact를 수정한다.
 - **환경/조건**: P2P2D KMeans, workers=1, WAN-light/WAN-mid, `COMPILE_COST_BASED`와 `COMPILE_EXACT`.
 - **재현 절차**:
@@ -30,13 +30,15 @@
   - line 155 `t(P)` serialized estimate: 600,213 bytes (50x50,000, nnz=50,000).
   - current-worktree cost probe: WAN-light w1 Exact 31,958.179ms <= DP 32,074.126ms; WAN-mid w1 Exact 39,825.218ms <= DP 39,835.510ms.
   - workload/line/Hop-ID/worker-count 기반 특수 처리는 없다.
+  - 새 immutable stage에서 KMeans WAN-light/w1과 WAN-mid/w1의 DP/Exact runtime-plan SHA-256가 각각 완전히 일치했고 `fed_refed=0`이었다.
+  - WAN-mid runtime은 DP 66.650초, Exact 66.772초로 정렬됐다. FedAll 234.002초와 Heuristic 291.417초는 각각 91개의 반복 REFED를 유지했다.
 - **잔여 이슈**: static estimate는 tie가 없는 보통 경우처럼 row당 한 assignment를 사용한다. 실제 데이터에 동일 minimum tie가 많으면 nnz를 과소평가할 수 있다.
 - **잠재 회귀 위험**: ambiguous transient reaching definitions를 잘못 합치면 unrelated comparison을 sparse로 오인할 수 있다. exact occurrence/value-version relation과 ambiguous-definition negative regression으로 감지한다.
 - **의사결정 근거**: candidate exclusion이나 Exact 전용 보정이 아니라 shared physical payload estimate를 수정했다.
 
 ## 2. Repeated FED instruction latency and coordinator control were modeled as substitutes
 
-- **상태**: 공통 비용모델 및 회귀 테스트 수정 완료; L2SVM targeted Docker runtime 검증 진행중
+- **상태**: 해결; 공통 비용모델, 회귀 테스트, L2SVM targeted Docker runtime 검증 완료
 - **적용 원칙**: runtime request path를 비용 surface에 반영하고 legal candidate는 유지한다.
 - **환경/조건**: P2P2D L2SVM, LAN, workers=2--4, 30x20 nested-loop path.
 - **재현 절차**:
@@ -59,7 +61,9 @@
   - Exact는 line-110 `Xd`를 `FED/FOUT/ROW`로 유지해 relocation choice가 non-emitted이고, DP는 `CP/LOUT`를 선택한다.
   - explicit-value unit test가 static environment 초기화와 무관하게 `7 x (1ms latency + 1ms control) = 14ms`를 검증한다.
   - `FederatedCostModelFallbackTest`가 arithmetic/indexing/control-dominated FED instruction의 call-site 조합을 검증한다.
-- **잔여 이슈**: 1ms coordinator control은 별도 microbenchmark가 아니라 기존 campaign의 conservative fixed calibration이다. targeted runtime에서 repeated `fed_refed` 제거와 wall-clock 개선을 함께 확인해야 한다.
+  - 새 immutable stage의 L2SVM LAN w2/w3/w4에서 DP와 Exact는 worker 수별로 동일한 runtime-plan SHA-256와 instruction fingerprint를 가졌고 모두 `fed_refed=0`이었다.
+  - runtime은 w2 DP/Exact 10.024/9.766초, w3 9.462/9.622초, w4 9.246/9.284초였다. 동일 physical plan에서 남는 작은 단일표본 차이는 selector 차이로 해석하지 않는다.
+- **잔여 이슈**: 1ms coordinator control은 별도 microbenchmark가 아니라 기존 campaign의 conservative fixed calibration이다. 이번 targeted runtime은 repeated `fed_refed` 제거와 wall-clock 정렬을 확인했지만, 절대비용 예측 오차를 주장하려면 coordinator-only microbenchmark가 별도로 필요하다.
 - **잠재 회귀 위험**: latency가 다른 helper에서 이미 중복 부과되면 remote-heavy plan을 과도하게 억제할 수 있다. instruction-level unit arithmetic, objective breakdown, emitted instruction fingerprint로 감지한다.
 - **의사결정 근거**: L2SVM opcode/state를 닫지 않고 공통 frequency-weighted runtime cost를 수정했다.
 
@@ -81,7 +85,7 @@
 
 ## 4. LAN planner alignment and shared privacy legality audit
 
-- **상태**: source/plan audit 및 privacy regression 완료; targeted runtime control cells 진행중
+- **상태**: 해결; source/plan/privacy audit와 targeted runtime control cells 완료
 - **적용 원칙**: 같은 runtime 숫자만으로 같은 fedplan이라고 판단하지 않고 emitted-plan identity와 privacy-filtered domain을 함께 검증한다.
 - **환경/조건**: LAN ALS, LM, KMeans 및 production `COMPILE_COST_BASED` privacy paths.
 - **관측 증상**: LAN에서 여러 planner의 runtime이 가까워 하나의 잘못된 fedplan을 공유한다는 의심이 있었다. ALS/LM도 KMeans와 같은 cost bug 가능성이 제기됐다.
@@ -99,6 +103,8 @@
   - `FederatedPlannerFactoryContractTest`, `SharedPrivacyPlacementAnalysisContractTest`, `FederatedPlanLocalCostPrivacyConstraintTest` 포함 combined suite 통과.
   - post-change combined suite: 66 tests, 0 failures/errors.
   - production route `COMPILE_COST_BASED -> FederatedPlanLocalCost -> ExactPhysicalModel.build(canonical PlacementAnalysis)`를 확인했다.
+  - LM LAN w2의 runtime은 FedAll 2.643초, Heuristic 19.705초, DP 2.416초, Exact 2.399초였다. DP/Exact는 같은 plan이지만 Heuristic의 plan SHA/fingerprint는 다르므로 “LAN에서 네 planner가 같은 잘못된 plan을 실행한다”는 가설은 기각된다.
+  - ALS LAN w3에서 FedAll/Heuristic은 같은 plan, DP/Exact는 서로 같은 별도 plan을 선택했다. DP/Exact plan은 둘 다 `fed_wdivmm=172`, `fed_fout=0`이며 single-warm runtime 41.943/45.083초였다. 같은 instruction plan의 이 차이는 selector 선택 차이로 귀속할 수 없다.
 - **잔여 이슈**: targeted runtime의 host noise는 같은 plan의 1회 wall-clock inversion을 만들 수 있다. plan/objective/fingerprint가 동일한 경우 이를 algorithmic inversion으로 주장하지 않는다.
 - **잠재 회귀 위험**: selector가 shared privacy domain 밖의 equal-but-new candidate를 합성할 수 있다. legal-alternative identity membership assertion과 `ReasonCode.PRIVACY` exclusion assertion으로 감지한다.
 - **의사결정 근거**: privacy는 selector 내부의 late filter가 아니라 shared pre-selector feasible-domain contract다.
@@ -113,9 +119,47 @@
 - canary는 KMeans WAN-mid w1 Exact/DP와 L2SVM LAN w2 Exact/DP이며, cost/plan receipt와 `fed_refed` fingerprint를 확인한 후 나머지 targeted schedule로 확장한다.
 - compile time은 이미 더 강한 19-measured LM-w2 receipt가 있으므로 full rerun하지 않는다. 새 source artifact의 planner-only smoke만 별도 기록한다.
 
+## Targeted experiment results
+
+- **Source commit**: `39473c7bcf2d6195a030699e2d044d7a6779841f`
+- **Immutable stage**: `188ab65286ca7795910daad107a5533108f4d0be9881580d06b95cfd7034051b`
+- **Campaign**: `/home/mchoi/g014-targeted-cost-fix-39473c7bcf-20260826-v2`
+- **완료 상태**: 영향/control 셀 28/28 성공, 셀당 1 attempt, failure 0, fallback 0, oracle/scan failure 0, coordinator/worker restart 0, teardown 뒤 잔존 resource 0.
+- **정규화 기준**: runtime 비교의 baseline은 **FedAll = 1**이다.
+
+| Cell | FedAll | Heuristic | DP | Exact | DP/Exact runtime plan |
+|---|---:|---:|---:|---:|---|
+| KMeans WAN-light w1 | 82.490s | 117.660s | 38.133s | 41.877s | same |
+| KMeans WAN-mid w1 | 234.002s | 291.417s | 66.650s | 66.772s | same |
+| LM LAN w2 | 2.643s | 19.705s | 2.416s | 2.399s | same |
+| L2SVM LAN w2 | 13.764s | 21.708s | 10.024s | 9.766s | same |
+| L2SVM LAN w3 | 12.714s | 14.863s | 9.462s | 9.622s | same |
+| L2SVM LAN w4 | 12.594s | 11.655s | 9.246s | 9.284s | same |
+| ALS LAN w3 | 45.613s | 42.252s | 41.943s | 45.083s | same |
+
+| Cell | DP planner | Exact planner | DP reduction vs Exact |
+|---|---:|---:|---:|
+| KMeans WAN-light w1 | 1.039457s | 1.507255s | 31.04% |
+| KMeans WAN-mid w1 | 0.986010s | 1.312553s | 24.88% |
+| LM LAN w2 | 0.399775s | 0.494860s | 19.21% |
+| L2SVM LAN w2 | 1.093100s | 1.442515s | 24.22% |
+| L2SVM LAN w3 | 1.152746s | 1.337022s | 13.78% |
+| L2SVM LAN w4 | 1.107824s | 1.368057s | 19.02% |
+| ALS LAN w3 | 0.383609s | 0.473292s | 18.95% |
+
+DP federated-planner phase는 이 targeted schedule의 7/7 group에서 Exact보다 짧았다. DP와 Exact는 7/7 group에서 동일 runtime-plan SHA-256를 생성했다. 따라서 같은 plan의 single-warm wall-clock에서 DP가 근소하게 짧게 나온 KMeans WAN-light/ALS 표본은 global-objective 역전의 증거가 아니며, 선택된 physical plan 차이로 설명해서는 안 된다.
+
+생성 artifact:
+
+- 결과/plan/cost CSV: `/home/mchoi/g014-targeted-cost-fix-39473c7bcf-20260826-v2/plots/targeted_affected_cells_metrics.csv`
+- raw runtime: `.../plots/targeted_affected_cells_runtime_raw.{png,svg}`
+- FedAll-normalized runtime: `.../plots/targeted_affected_cells_runtime_fedall_normalized.{png,svg}`
+- planner phase: `.../plots/targeted_affected_cells_planner_time.{png,svg}`
+- authenticated summary receipt: `.../plots/targeted_affected_cells_summary_receipt.json`
+
 ## 5. Reusable FOUT-to-local materialization was priced as a conservative explicit collection
 
-- **상태**: 공통 비용모델 및 plan-emission 회귀 수정 완료; 새 immutable stage의 targeted Docker runtime 검증 대기
+- **상태**: 해결; 공통 비용모델, plan-emission 회귀, 새 immutable stage의 targeted Docker runtime 검증 완료
 - **적용 원칙**: legal CP/FED alternatives를 닫지 않고, planner가 실제로 emit하는 reusable materialization runtime path를 shared physical cost surface에 반영한다.
 - **환경/조건**: P2P2D L2SVM, LAN, workers=2 canary, 30x20 nested loop, `COMPILE_COST_BASED`와 `COMPILE_EXACT`.
 - **재현 절차**:
@@ -145,6 +189,8 @@
   - L2SVM emission regression은 inner loop의 `CP prefetch`, `CP >`, `CP tak+*`, absence of `FED >`, source-line-106 materialization action 하나를 검증한다.
   - cost/privacy/plan combined suite: 66 tests, 0 failures/errors/skips.
   - `mvn -q -DskipTests package` 통과.
-- **잔여 이슈**: 새 commit/JAR/immutable stage에서 L2SVM LAN w2--w4와 KMeans WAN canary를 다시 실행해 wall-clock, instruction fingerprint, movement counts의 정렬을 확인해야 한다.
+  - 새 stage에서 L2SVM LAN w2--w4의 DP/Exact plan hash와 instruction fingerprint가 worker 수별로 일치했고, repeated `fed_refed`가 0으로 제거됐다.
+  - 기존 w2 inversion(Exact 12.173초 대 DP 9.984초)은 새 stage에서 9.766초 대 10.024초로 제거됐다.
+- **잔여 이슈**: cell당 warm 표본이 하나이므로 동일 runtime plan 사이의 수 퍼센트 wall-clock 차이를 optimizer 품질 차이로 해석하지 않는다. 분산 자체를 주장하려면 별도 반복실험이 필요하다.
 - **잠재 회귀 위험**: generic explicit collection까지 reusable GET_VAR cost로 낮추면 final output collection을 과소평가할 수 있다. helper의 제한된 call sites와 explicit-collection unit tests로 감지한다.
 - **의사결정 근거**: workload/opcode guard나 candidate exclusion 없이 실제 emitted boundary primitive와 cost primitive를 일치시켰다.
