@@ -354,7 +354,8 @@ public final class ExactPhysicalCostModel {
 				for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
 					.filter(Objects::nonNull).distinct().toList()) {
 					double download = requireCost(weight * (forwarded == null
-						? FederatedCostModel.computeDownloadNetworkCost(bytes, type, workers)
+						? FederatedCostModel.computeReusableMaterializationDownloadCost(
+							bytes, type, workers)
 						: FederatedCostModel.computeDownloadNetworkCost(bytes)),
 						"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
 					grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
@@ -431,7 +432,7 @@ public final class ExactPhysicalCostModel {
 							price = requireCost(price + demand.weight()
 								* (demand.forwarded()
 									? FederatedCostModel.computeDownloadNetworkCost(bytes)
-									: FederatedCostModel.computeDownloadNetworkCost(
+									: FederatedCostModel.computeReusableMaterializationDownloadCost(
 										bytes, sourceType, workers)),
 								"EXACT_PHYSICAL_REFED_DOWNLOAD_COST_UNPROVEN");
 						}
@@ -535,7 +536,7 @@ public final class ExactPhysicalCostModel {
 							"FOUT native-local source has no exact FType");
 						double sourceBytes = boundedElementwise == null ? bytes
 							: boundedElementwise.logicalBytesUpperBound();
-						cost += FederatedCostModel.computeDownloadNetworkCost(
+						cost += FederatedCostModel.computeReusableMaterializationDownloadCost(
 							sourceBytes, sourceType, workers);
 					}
 					return requireCost(weight * cost,

@@ -1955,6 +1955,38 @@ public final class FederatedCostModel {
 			MBS_NETWORK_LATENCY, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 	}
 
+	/**
+	 * Cost of one planner-selected, reusable FOUT-to-local materialization.
+	 *
+	 * <p>The emitted {@code prefetch} calls {@code acquireReadAndRelease} once for the
+	 * selected producer and rewires all compatible local consumers to that materialized
+	 * value.  Its runtime path is therefore one parallel {@code GET_VAR} batch, not a
+	 * standalone serial collection per consumer.  Worker response transfer and codec
+	 * work lie on the largest per-worker path; the batch itself owns one latency/control
+	 * stage.  This is the explicit-boundary counterpart of the in-band result path used
+	 * by native FED/LOUT instructions.</p>
+	 */
+	public static double computeReusableMaterializationDownloadCost(double memSize,
+			FType fType, int numWorkers) {
+		if (memSize <= 0.0)
+			return 0.0;
+		int fanIn = estimateDownloadFanIn(fType, numWorkers);
+		return computeReusableMaterializationDownloadCost(memSize, fanIn,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
+			MBS_NETWORK_LATENCY, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+	}
+
+	static double computeReusableMaterializationDownloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) {
+		if (totalMemSize <= 0.0)
+			return 0.0;
+		double payload = computeParallelInBandResultPayloadCost(totalMemSize,
+			Math.max(1, fanIn), bandwidthMBps, serdesBwMBps);
+		double fixedStage = computeFixedFederatedInstructionStageCost(1.0,
+			latencySec * TO_MS, controlMs);
+		return payload + fixedStage;
+	}
+
 	private static double computeParallelDownloadCost(double totalMemSize, int fanIn,
 			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) {
 		if (totalMemSize <= 0.0)

@@ -14,7 +14,6 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
@@ -122,6 +121,16 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 						node.valueVersion().equals(action.sourceValueVersion())
 							&& normalized.analysis().hop(node.key()).map(hop -> "Xd".equals(hop.getName())
 								&& hop.getBeginLine() == 110).orElse(false))));
+			String innerLoop = between(runtimeProgram, "GENERIC (lines 105-113)",
+				"CP rmvar h tmp_Xw sv g out");
+			Assert.assertTrue("The selected local boundary must be emitted once before the inner-loop"
+				+ " CP consumers", innerLoop.contains("CP prefetch"));
+			Assert.assertTrue("The locally materialized support-vector predicate must execute in CP",
+				innerLoop.lines().anyMatch(line -> line.contains("CP >")));
+			Assert.assertTrue("The local Hessian chain must lower to one fused ternary aggregate",
+				innerLoop.contains("CP tak+*"));
+			Assert.assertFalse("Exact must not retain the repeated FED comparison after reusable"
+				+ " materialization is priced on its actual GET_VAR path", innerLoop.contains("FED >"));
 			var xdNodes = normalized.analysis().graph().nodes().stream()
 				.filter(node -> normalized.analysis().hop(node.key()).map(hop ->
 					"Xd".equals(hop.getName()) && hop.getBeginLine() == 110
@@ -131,14 +140,20 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 			var xd = xdNodes.get(0);
 			var xdState = normalized.selectedStates().get(xd.key());
 			Assert.assertNotNull("Exact selection must contain the exact Xd occurrence", xdState);
-			Assert.assertEquals("Xd must execute at the workers", ExecType.FED, xdState.execType());
-			Assert.assertEquals("Xd must remain resident at the workers", FederatedOutput.FOUT,
+			Assert.assertEquals("The inner-loop Hessian product must execute locally after one reusable"
+				+ " producer materialization", ExecType.CP, xdState.execType());
+			Assert.assertEquals("The local Hessian product must remain coordinator-resident",
+				FederatedOutput.LOUT,
 				xdState.output());
-			Assert.assertEquals("Xd must preserve X's row partitioning", FType.ROW,
+			Assert.assertNull("A coordinator-resident Hessian product has no federated layout",
 				xdState.fType());
-			Assert.assertTrue("The model must retain an Xd relocation choice while emission keeps"
-				+ " the cheaper resident alternative", normalized.selectedRelocationChoices().stream()
-					.anyMatch(choice -> choice.action().sourceValueVersion().equals(xd.valueVersion())));
+			long innerMaterializations = ((java.util.List<?>) normalized.selectedLocalMaterializations()).stream()
+				.map(action -> (LocalMaterializationActionKey) action)
+				.filter(action -> normalized.analysis().hop(action.sourceOccurrence()).map(hop ->
+					hop.getBeginLine() == 106 && "b(1-*)".equals(hop.getOpString())).orElse(false))
+				.count();
+			Assert.assertEquals("The loop-local out value must use one reusable materialization action: "
+				+ normalizedLocalSummary(), 1L, innerMaterializations);
 		}
 		finally {
 			Files.deleteIfExists(script);

@@ -97,7 +97,7 @@
 - **수정 파일**: privacy source 변경 없음; 기존 contract tests로 재인증.
 - **검증**:
   - `FederatedPlannerFactoryContractTest`, `SharedPrivacyPlacementAnalysisContractTest`, `FederatedPlanLocalCostPrivacyConstraintTest` 포함 combined suite 통과.
-  - post-change combined suite: 65 tests, 0 failures/errors.
+  - post-change combined suite: 66 tests, 0 failures/errors.
   - production route `COMPILE_COST_BASED -> FederatedPlanLocalCost -> ExactPhysicalModel.build(canonical PlacementAnalysis)`를 확인했다.
 - **잔여 이슈**: targeted runtime의 host noise는 같은 plan의 1회 wall-clock inversion을 만들 수 있다. plan/objective/fingerprint가 동일한 경우 이를 algorithmic inversion으로 주장하지 않는다.
 - **잠재 회귀 위험**: selector가 shared privacy domain 밖의 equal-but-new candidate를 합성할 수 있다. legal-alternative identity membership assertion과 `ReasonCode.PRIVACY` exclusion assertion으로 감지한다.
@@ -112,3 +112,39 @@
 - **control 셀**: ALS LAN w3, LM LAN w2; 각 셀에서 네 planner를 비교해 기존 plan-alignment 판정을 재확인한다.
 - canary는 KMeans WAN-mid w1 Exact/DP와 L2SVM LAN w2 Exact/DP이며, cost/plan receipt와 `fed_refed` fingerprint를 확인한 후 나머지 targeted schedule로 확장한다.
 - compile time은 이미 더 강한 19-measured LM-w2 receipt가 있으므로 full rerun하지 않는다. 새 source artifact의 planner-only smoke만 별도 기록한다.
+
+## 5. Reusable FOUT-to-local materialization was priced as a conservative explicit collection
+
+- **상태**: 공통 비용모델 및 plan-emission 회귀 수정 완료; 새 immutable stage의 targeted Docker runtime 검증 대기
+- **적용 원칙**: legal CP/FED alternatives를 닫지 않고, planner가 실제로 emit하는 reusable materialization runtime path를 shared physical cost surface에 반영한다.
+- **환경/조건**: P2P2D L2SVM, LAN, workers=2 canary, 30x20 nested loop, `COMPILE_COST_BASED`와 `COMPILE_EXACT`.
+- **재현 절차**:
+  - 이전 immutable stage의 `L2SVM/LAN/w2` Exact/DP warm Docker logs 및 statistics 비교.
+  - `CampaignBG014ExactL2SvmInternalEmissionCostRedTest`에서 source line 106/110의 selected state, local materialization, emitted runtime program을 함께 검사한다.
+- **관측 증상**:
+  - 첫 번째 fixed-stage 수정 후 Exact 12.173초, DP 9.984초로 21.9% 차이가 남았다.
+  - Exact는 nested-loop마다 `fed_>` 600회, `fed_*` 추가 600회, `fed_uak+` 추가 600회를 실행했다. DP는 한 번 선택된 local boundary를 iteration별 `prefetch` 600회로 materialize한 뒤 CP `>`와 fused CP `tak+*`를 사용했다.
+  - Exact의 worker PUT은 732,664,688 bytes, DP는 492,482,288 bytes였고, DP의 600회 GET materialization 누적 acquire time은 1.402초였다.
+  - 수정 전 shared objective는 Exact 2,476.380ms, DP 4,481.087ms로 실제 순서를 반대로 예측했다.
+- **원인 분석**:
+  - compiled FOUT-to-CP boundary는 planner가 한 producer materialization action을 선택하고 compatible local consumers가 그 값을 재사용하도록 emit된다.
+  - 그러나 cost surface는 이를 generic `computeDownloadNetworkCost(bytes, type, workers)`로 계산했다. 이 helper는 독립적인 explicit whole collection을 위한 conservative W2C serialization path를 사용한다.
+  - 400,304-byte vector와 workers=2에서 모델은 약 28ms/occurrence를 부과했지만, 실제 reusable GET_VAR batch는 약 2.34ms/occurrence였다. 그 결과 DP와 Exact가 공유하는 objective가 local materialization을 과도하게 억제했다.
+- **해결 요약**:
+  - `computeReusableMaterializationDownloadCost`를 추가해 one parallel GET_VAR response의 per-worker critical payload와 one latency/control stage만 가격화한다.
+  - grouped compiled DOWNLOAD, FOUT source leg of REFED, native-local FOUT input 준비 중 실제 reusable materialization을 emit하는 세 경로에만 적용한다.
+  - forwarded function boundary와 generic final collection은 기존 conservative download model을 유지한다.
+  - plan regression은 Exact가 nested-loop 내부에서 CP prefetch, CP comparison, fused CP ternary aggregate를 선택하고 repeated FED comparison을 제거하는지 검증한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedCostModelFallbackTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014ExactL2SvmInternalEmissionCostRedTest.java`
+- **검증**:
+  - reusable materialization arithmetic regression은 400,304 bytes, workers=2에서 per-worker critical payload와 fixed batch stage의 합을 exact하게 검증한다.
+  - L2SVM emission regression은 inner loop의 `CP prefetch`, `CP >`, `CP tak+*`, absence of `FED >`, source-line-106 materialization action 하나를 검증한다.
+  - cost/privacy/plan combined suite: 66 tests, 0 failures/errors/skips.
+  - `mvn -q -DskipTests package` 통과.
+- **잔여 이슈**: 새 commit/JAR/immutable stage에서 L2SVM LAN w2--w4와 KMeans WAN canary를 다시 실행해 wall-clock, instruction fingerprint, movement counts의 정렬을 확인해야 한다.
+- **잠재 회귀 위험**: generic explicit collection까지 reusable GET_VAR cost로 낮추면 final output collection을 과소평가할 수 있다. helper의 제한된 call sites와 explicit-collection unit tests로 감지한다.
+- **의사결정 근거**: workload/opcode guard나 candidate exclusion 없이 실제 emitted boundary primitive와 cost primitive를 일치시켰다.

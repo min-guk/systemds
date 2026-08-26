@@ -1039,6 +1039,25 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
+	public void testReusableMaterializationUsesOneParallelGetVarBatch() throws Exception {
+		double totalBytes = 400304.0;
+		int workers = 2;
+		double networkBwMBps = 1250.0;
+		double responseSerdesBwMBps = 210.0;
+		double latencySec = 0.001;
+		double controlMs = 1.0;
+		double criticalPayloadMb = totalBytes / workers / (1024.0 * 1024.0);
+		double expected = (criticalPayloadMb / networkBwMBps
+			+ criticalPayloadMb / responseSerdesBwMBps) * 1000.0
+			+ latencySec * 1000.0 + controlMs;
+		double actual = invokeReusableMaterializationDownloadCost(totalBytes, workers,
+			networkBwMBps, responseSerdesBwMBps, latencySec, controlMs);
+
+		Assert.assertEquals("One planner-selected FOUT-to-local boundary emits one parallel GET_VAR"
+			+ " materialization that is reused by all compatible CP consumers", expected, actual, 1e-9);
+	}
+
+	@Test
 	public void testRefedNetworkCostModelsDownloadThenTargetUpload() {
 		double memSize = 32 * 1024 * 1024;
 		int workers = 4;
@@ -1142,6 +1161,16 @@ public class FederatedCostModelFallbackTest {
 			double.class, double.class);
 		method.setAccessible(true);
 		return (double) method.invoke(null, totalMemSize, fanIn, bandwidthMBps, serdesBwMBps);
+	}
+
+	private static double invokeReusableMaterializationDownloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) throws Exception {
+		Method method = FederatedCostModel.class.getDeclaredMethod(
+			"computeReusableMaterializationDownloadCost", double.class, int.class,
+			double.class, double.class, double.class, double.class);
+		method.setAccessible(true);
+		return (double) method.invoke(null, totalMemSize, fanIn,
+			bandwidthMBps, serdesBwMBps, latencySec, controlMs);
 	}
 
 	private static final class TestMatrixHop extends DataOp {
