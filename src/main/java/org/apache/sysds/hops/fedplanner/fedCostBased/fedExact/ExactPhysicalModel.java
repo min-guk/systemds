@@ -398,11 +398,13 @@ final class ExactPhysicalModel {
 					authorities.add(new InputAuthority(position, InputAuthorityKind.DIRECT_FOUT,
 						input.fType(), link.sourceNode.key(), null));
 				if(authorities.isEmpty() && presentPhysicalInputs == 1
-					&& isParametricFunctionFormal(analysis, link.sourceNode.key()))
-					// A single function-formal FederationMap is a runtime parameter.  Its
-					// exact pool is supplied by the selected actual argument for each call;
-					// no static DurableAnchorKey is required because there is no second
-					// PRESENT matrix receipt with which it could conflict.
+					&& hasCompatibleFoutState(link.sourceNode, input.fType()))
+					// A unary FED instruction executes on its sole matrix input's selected
+					// FederationMap. This applies to function formals and to transient reads
+					// returned by a function. No separate relocation anchor is required: the
+					// exact input factor below still requires this source occurrence to select
+					// the compatible FOUT state. Requiring a precomputed relocation action here
+					// silently removed legal FED/LOUT aggregates from dynamic pipelines.
 					authorities.add(new InputAuthority(position, InputAuthorityKind.DIRECT_FOUT,
 						input.fType(), link.sourceNode.key(), null));
 				if(authorities.isEmpty()) {
@@ -425,9 +427,9 @@ final class ExactPhysicalModel {
 		return products;
 	}
 
-	private static boolean isParametricFunctionFormal(PlacementAnalysis analysis, CompiledHopKey key) {
-		return analysis.logicalFunctionInputsInCanonicalOrder().stream()
-			.anyMatch(input -> input.targetRead() == key);
+	private static boolean hasCompatibleFoutState(Node source, FType expectedFType) {
+		return source.legalAlternatives().stream().anyMatch(state ->
+			state.output() == FederatedOutput.FOUT && state.fType() == expectedFType);
 	}
 
 	private static void expandAuthorityGroups(List<List<List<InputAuthority>>> choices, int index,
