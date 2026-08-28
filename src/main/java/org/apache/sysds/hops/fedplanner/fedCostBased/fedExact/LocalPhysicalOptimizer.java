@@ -233,10 +233,11 @@ final class LocalPhysicalOptimizer {
 				model.analysis().compiledInputEdgesInCanonicalOrder()) {
 				Integer producer = positions.get(edge.producer());
 				Integer consumer = positions.get(edge.consumer());
-				if(producer != null && consumer != null && !producer.equals(consumer)
-					&& !model.analysis().isDmlFunctionCallBoundary(edge.consumer()))
-					indexedCompiled.add(new IndexedCompiledInput(
-						producer, consumer, edge.inputPosition()));
+					if(producer != null && consumer != null && !producer.equals(consumer)
+						&& !model.analysis().isDmlFunctionCallBoundary(edge.consumer()))
+						indexedCompiled.add(new IndexedCompiledInput(
+							producer, consumer, edge.inputPosition(),
+							model.analysis().isCoordinatorMetadataOnlyInput(edge)));
 			}
 			compiledInputs = List.copyOf(indexedCompiled);
 			List<IndexedFunctionInput> indexedFunctions = new ArrayList<>();
@@ -258,10 +259,11 @@ final class LocalPhysicalOptimizer {
 			for(IndexedCompiledInput edge : compiledInputs) {
 				Alternative selectedProducer = selected(
 					domains.get(edge.producer()), assignment.get(edge.producer()));
-				Alternative selectedConsumer = selected(
-					domains.get(edge.consumer()), assignment.get(edge.consumer()));
-				if(isPhysicalFout(selectedProducer)
-					&& requiresLocalInput(selectedConsumer, edge.inputPosition()))
+					Alternative selectedConsumer = selected(
+						domains.get(edge.consumer()), assignment.get(edge.consumer()));
+					if(isPhysicalFout(selectedProducer)
+						&& requiresLocalInput(selectedConsumer, edge.inputPosition(),
+							edge.coordinatorMetadataOnly()))
 					selectedSources.add(edge.producer());
 			}
 			for(IndexedFunctionInput edge : functionInputs) {
@@ -287,7 +289,8 @@ final class LocalPhysicalOptimizer {
 		}
 	}
 
-	private record IndexedCompiledInput(int producer, int consumer, int inputPosition) { }
+	private record IndexedCompiledInput(int producer, int consumer, int inputPosition,
+		boolean coordinatorMetadataOnly) { }
 	private record IndexedFunctionInput(int producer, int formal) { }
 
 	private static Set<Integer> materializationConflictNeighborhood(int source,
@@ -333,9 +336,11 @@ final class LocalPhysicalOptimizer {
 			&& alternative.derivedFoutAction() == null;
 	}
 
-	private static boolean requiresLocalInput(Alternative alternative, int inputPosition) {
+	private static boolean requiresLocalInput(Alternative alternative, int inputPosition,
+		boolean coordinatorMetadataOnly) {
 		if(alternative.state().execType() == ExecType.CP)
-			return alternative.state().output() == FederatedOutput.LOUT;
+			return alternative.state().output() == FederatedOutput.LOUT
+				&& !coordinatorMetadataOnly;
 		return alternative.state().execType() == ExecType.FED && inputPosition >= 0
 			&& inputPosition < alternative.orderedInputs().size()
 			&& !alternative.orderedInputs().get(inputPosition).present();

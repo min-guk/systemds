@@ -331,7 +331,8 @@ public final class ExactPhysicalCostModel {
 				|| producer.node().kind() == NodeKind.FUNCTION_OUTPUT)
 				continue;
 			Hop producerHop = analysis.hop(producer.node().key()).orElseThrow();
-			if(producerHop.getDataType() == null || !producerHop.getDataType().isMatrix())
+			if(producerHop.getDataType() == null
+				|| (!producerHop.getDataType().isMatrix() && !producerHop.getDataType().isFrame()))
 				continue;
 			double bytes = estimatedBytes(analysis, sparseAssignments,
 				producer.node().key(), producerHop);
@@ -351,17 +352,18 @@ public final class ExactPhysicalCostModel {
 				double weight = forwarded == null
 					? frequencies.exactForwardingWeight(edge.consumer(), edge.producer())
 					: frequencies.logicalFunctionCallWeight(forwarded.authority());
-				for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
-					.filter(Objects::nonNull).distinct().toList()) {
-					double download = requireCost(weight * (forwarded == null
-						? FederatedCostModel.computeReusableMaterializationDownloadCost(
-							bytes, type, workers)
-						: FederatedCostModel.computeDownloadNetworkCost(bytes)),
-						"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
-					grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
-						BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-						.add(new Demand(edge, consumer, download, weight, forwarded != null));
-				}
+					if(!analysis.isCoordinatorMetadataOnlyInput(edge))
+						for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
+							.filter(Objects::nonNull).distinct().toList()) {
+							double download = requireCost(weight * (forwarded == null
+								? FederatedCostModel.computeReusableMaterializationDownloadCost(
+									bytes, type, workers)
+								: FederatedCostModel.computeDownloadNetworkCost(bytes)),
+								"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
+							grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
+								BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
+								.add(new Demand(edge, consumer, download, weight, forwarded != null));
+						}
 				for(RelocationAction action : consumer.alternatives().stream()
 					.flatMap(a -> a.inputAuthorities().stream())
 					.filter(a -> a.inputPosition() == edge.inputPosition()
@@ -634,6 +636,8 @@ public final class ExactPhysicalCostModel {
 				}
 			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.producer() != formal.node().key())
+					continue;
+				if(analysis.isCoordinatorMetadataOnlyInput(edge))
 					continue;
 				ExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
 				if(consumer == null)

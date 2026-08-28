@@ -41,6 +41,7 @@ import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
@@ -1008,6 +1009,14 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 	 */
 	private static Hop simplifyDistributiveBinaryOperation( Hop parent, Hop hi, int pos )
 	{
+		// This rule is also invoked after dynamic size propagation during recompilation.
+		// Once a planner has selected the physical operations, rewriting X-Y*X into
+		// (1-Y)*X replaces two independently authorised operations with two fresh HOPs.
+		// Their legality, residency, and movement were never searched, so inheriting one
+		// owner's placement would be unsound.  Keep the selected DAG intact; the same rule
+		// remains available during the pre-planner static-rewrite phase.
+		if(hi.isPlannerPlacementSelected())
+			return hi;
 		if( hi instanceof BinaryOp )
 		{
 			BinaryOp bop = (BinaryOp)hi;
@@ -1233,6 +1242,15 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 		// Note: This rewrite is not applicable for all binary operations because some of them 
 		// are undefined over scalars. We explicitly exclude potential conflicting matrix-scalar binary
 		// operations; other operations like cbind/rbind will never occur as matrix-scalar operations.
+		//
+		// Runtime recompilation invokes this nominally static rule after whole-program placement.
+		// Decomposing a planner-owned scalar adapter at that point creates a new scalar binary and
+		// new casts that have no independent occurrence in the selected plan.  Retain the exact
+		// selected boundary; the pre-planner invocation (where no authority exists) remains unchanged.
+		if(FederatedPlannerUtils.hasPlannerRecompileStateAuthority()
+			|| hi.isPlannerPlacementSelected()
+			|| !hi.getInput().isEmpty() && hi.getInput(0).isPlannerPlacementSelected())
+			return hi;
 
 		if( HopRewriteUtils.isUnary(hi, OpOp1.CAST_AS_SCALAR)
 				&& hi.getInput(0) instanceof BinaryOp
@@ -2342,6 +2360,14 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 		{
 			BinaryOp bop = (BinaryOp) hi;
 			BinaryOp bop2 = (BinaryOp) hi.getInput(0);
+			// Dynamic recompilation can expose this pattern only after dimensions become
+			// known.  At that point both comparisons are already distinct whole-program
+			// occurrences with committed placements.  Collapsing them would create one
+			// unplanned runtime operation and silently discard the inner occurrence.  Keep
+			// the selected boundary intact; the rewrite remains enabled before planning.
+			if(FederatedPlannerUtils.hasPlannerPlacement(bop)
+				|| FederatedPlannerUtils.hasPlannerPlacement(bop2))
+				return hi;
 			boolean one = HopRewriteUtils.isLiteralOfValue(hi.getInput(1), 1);
 
 			//pattern: outer(v1,v2,"!=") == 1 -> outer(v1,v2,"!=")

@@ -64,8 +64,8 @@ public final class LocalMaterializationSelections {
 			analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(!eligible.contains(edge.producer()) || analysis.isDmlFunctionCallBoundary(edge.consumer()))
 				continue;
-			if(requiresLocalInput(selected.get(edge.consumer()),
-				candidatesByConsumer.get(edge.consumer()), edge.inputPosition()))
+			if(requiresLocalInput(analysis, edge, selected.get(edge.consumer()),
+				candidatesByConsumer.get(edge.consumer())))
 				materialized.add(edge.producer());
 		}
 		for(PlacementAnalysis.LogicalFunctionInputFact fact :
@@ -193,7 +193,8 @@ public final class LocalMaterializationSelections {
 					if(consumer == null)
 						continue;
 					if(consumer.execType() == ExecType.CP
-						&& consumer.output() == FederatedOutput.LOUT) {
+						&& consumer.output() == FederatedOutput.LOUT
+						&& !index.analysis.isCoordinatorMetadataOnlyInput(edge)) {
 						baseRequired = true;
 						continue;
 					}
@@ -328,8 +329,8 @@ public final class LocalMaterializationSelections {
 				// FunctionOp placement is a call placeholder. Its local-input demand is
 				// determined by the selected formal below, not by the call's own state.
 				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
-				.filter(edge -> requiresLocalInput(selected.get(edge.consumer()),
-					candidatesByConsumer.get(edge.consumer()), edge.inputPosition()))
+				.filter(edge -> requiresLocalInput(analysis, edge,
+					selected.get(edge.consumer()), candidatesByConsumer.get(edge.consumer())))
 				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
 					selected.get(edge.consumer()))).toList());
 			for(PlacementAnalysis.LogicalFunctionInputFact fact :
@@ -378,17 +379,19 @@ public final class LocalMaterializationSelections {
 		return Map.copyOf(result);
 	}
 
-	private static boolean requiresLocalInput(PlacementState consumer,
-		CandidateSelectionReceipt candidate, int inputPosition) {
+	private static boolean requiresLocalInput(PlacementAnalysis analysis,
+		PlacementAnalysis.CompiledInputEdgeFact edge, PlacementState consumer,
+		CandidateSelectionReceipt candidate) {
 		if(consumer == null)
 			return false;
 		if(consumer.execType() == ExecType.CP && consumer.output() == FederatedOutput.LOUT)
-			return true;
+			return !analysis.isCoordinatorMetadataOnlyInput(edge);
 		if(consumer.execType() != ExecType.FED)
 			return false;
 		if(candidate == null || !candidate.emission().emissionState().placementState().equals(consumer))
 			throw new IllegalArgumentException(
 				"Federated consumer is missing its exact selected candidate authority");
+		int inputPosition = edge.inputPosition();
 		if(inputPosition < 0 || inputPosition >= candidate.rule().orderedInputs().size())
 			throw new IllegalArgumentException(
 				"Selected candidate does not cover an exact compiled input edge");

@@ -985,10 +985,17 @@ public class FrameBlock implements CacheBlock<FrameBlock>, Externalizable {
 	public boolean isShallowSerialize(boolean inclConvert) {
 		// shallow serialize if non-string schema because a frame block
 		// is always dense but strings have large array overhead per cell
-		if( _schema != null )
+		if(_schema != null) {
+			// Empty transform metadata and other schema-only frames legitimately
+			// have no allocated column arrays.  Their exact serialization format
+			// records negative type tags and is safe; the shallow-size path would
+			// otherwise dereference null columns during cache eviction.
+			if(_coldata == null)
+				return false;
 			for(int j = 0; j < _schema.length; j++)
-				if(!_coldata[j].isShallowSerialize())
+				if(_coldata[j] == null || !_coldata[j].isShallowSerialize())
 					return false;
+		}
 		return true;
 	}
 

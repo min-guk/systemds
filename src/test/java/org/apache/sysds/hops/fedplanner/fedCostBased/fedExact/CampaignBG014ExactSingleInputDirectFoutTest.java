@@ -7,8 +7,11 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.InputAuthorityKind;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -29,12 +32,33 @@ public class CampaignBG014ExactSingleInputDirectFoutTest {
 			return producer instanceof DataOp && consumer instanceof AggUnaryOp;
 		}).toList();
 		var federatedAggregateEdges = aggregateEdges.stream().filter(candidate ->
-			analysis.graph().node(candidate.producer()).orElseThrow().legalAlternatives().stream()
+			analysis.hop(candidate.producer()).orElseThrow().getName().toLowerCase().startsWith("y")
+				&& analysis.graph().node(candidate.producer()).orElseThrow().legalAlternatives().stream()
 				.anyMatch(state -> state.output() == FederatedOutput.FOUT)).toList();
 		Assert.assertEquals("split must expose both federated label outputs", 2,
 			federatedAggregateEdges.size());
 
 		var model = ExactPhysicalModel.build(analysis);
+		var transform = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof FunctionOp function
+				&& function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+				&& "transformencode".equalsIgnoreCase(function.getFunctionName()))
+			.findFirst().orElseThrow();
+		Assert.assertEquals(NodeKind.OPERATION,
+			analysis.graph().node(transform.key()).orElseThrow().kind());
+		var transformDomain = model.domains().stream()
+			.filter(domain -> domain.node().key() == transform.key()).findFirst().orElseThrow();
+		Assert.assertTrue("Exact must expose runtime-native transformencode on its direct frame FederationMap",
+			transformDomain.alternatives().stream().anyMatch(alternative ->
+				alternative.state().execType() == ExecType.FED
+					&& alternative.state().output() == FederatedOutput.FOUT
+					&& alternative.state().fType() == FType.ROW
+					&& alternative.inputAuthorities().stream().anyMatch(authority ->
+						authority.inputPosition() == 0
+							&& authority.kind() == InputAuthorityKind.DIRECT_FOUT
+							&& authority.sourceDecision() != null
+							&& analysis.hop(authority.sourceDecision()).orElseThrow()
+								.getDataType().isFrame())));
 		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		var selected = ExactPhysicalSelection.create(model, ExactPhysicalOptimizer.optimize(
 			model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS));

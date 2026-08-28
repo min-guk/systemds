@@ -16,6 +16,7 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
@@ -81,6 +82,91 @@ public class CampaignBG014DerivedFoutRecompileStateRedTest {
 		Assert.assertEquals(FederatedOutput.FOUT, weightedDivMm.getFederatedOutput());
 		Assert.assertTrue(weightedDivMm.isFederatedOutputDerived());
 		Assert.assertTrue(weightedDivMm.isPlannerPlacementSelected());
+	}
+
+	@Test
+	public void dynamicSumSquaredDoesNotEraseASelectedFoutToLoutBoundary() throws Exception {
+		DataOp x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		BinaryOp power = new BinaryOp("power", DataType.MATRIX, ValueType.FP64,
+			OpOp2.POW, x, new LiteralOp(2L));
+		power.setExecType(ExecType.FED);
+		power.setForcedExecType(ExecType.FED);
+		power.setFederatedOutput(FederatedOutput.FOUT);
+		power.setPlannerPlacementSelected(true);
+		AggUnaryOp sum = new AggUnaryOp("sum", DataType.MATRIX, ValueType.FP64,
+			AggOp.SUM, Direction.Col, power);
+		sum.setExecType(ExecType.FED);
+		sum.setForcedExecType(ExecType.FED);
+		sum.setFederatedOutput(FederatedOutput.LOUT);
+		sum.setPlannerPlacementSelected(true);
+		UnaryOp parent = new UnaryOp("sqrt", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, sum);
+
+		Method fuse = RewriteAlgebraicSimplificationDynamic.class.getDeclaredMethod(
+			"fuseSumSquared", Hop.class, Hop.class, int.class);
+		fuse.setAccessible(true);
+		Hop result = (Hop) fuse.invoke(null, parent, sum, 0);
+
+		Assert.assertSame("The selected FED/FOUT-to-FED/LOUT boundary is physical", sum, result);
+		Assert.assertSame(sum, parent.getInput(0));
+	}
+
+	@Test
+	public void dynamicSumSquaredCarriesAuthorityOnlyAcrossAnIdenticalSelectedPlacement() throws Exception {
+		DataOp x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		BinaryOp power = new BinaryOp("power", DataType.MATRIX, ValueType.FP64,
+			OpOp2.POW, x, new LiteralOp(2L));
+		power.setExecType(ExecType.CP);
+		power.setForcedExecType(ExecType.CP);
+		power.setFederatedOutput(FederatedOutput.LOUT);
+		power.setPlannerPlacementSelected(true);
+		AggUnaryOp sum = new AggUnaryOp("sum", DataType.MATRIX, ValueType.FP64,
+			AggOp.SUM, Direction.Col, power);
+		sum.setExecType(ExecType.CP);
+		sum.setForcedExecType(ExecType.CP);
+		sum.setFederatedOutput(FederatedOutput.LOUT);
+		sum.setPlannerPlacementSelected(true);
+		UnaryOp parent = new UnaryOp("sqrt", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, sum);
+
+		Method fuse = RewriteAlgebraicSimplificationDynamic.class.getDeclaredMethod(
+			"fuseSumSquared", Hop.class, Hop.class, int.class);
+		fuse.setAccessible(true);
+		Hop result = (Hop) fuse.invoke(null, parent, sum, 0);
+
+		Assert.assertTrue(result instanceof AggUnaryOp);
+		Assert.assertEquals(AggOp.SUM_SQ, ((AggUnaryOp) result).getOp());
+		Assert.assertEquals(sum.getPlannerOriginHopID(), result.getPlannerOriginHopID());
+		Assert.assertEquals("DYNAMIC_SUM_SQUARED", result.getPlannerRewriteReplacementKind());
+		Assert.assertEquals(ExecType.CP, result.getForcedExecType());
+		Assert.assertEquals(FederatedOutput.LOUT, result.getFederatedOutput());
+		Assert.assertTrue(result.isPlannerPlacementSelected());
+	}
+
+	@Test
+	public void runtimeStaticDistributiveRewriteDoesNotReplaceSelectedOperations() throws Exception {
+		DataOp x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 100, 20, 2000, 1000);
+		DataOp mask = new DataOp("mask", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "mask", 100, 20, 2000, 1000);
+		BinaryOp maskedX = new BinaryOp("masked-X", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, mask, x);
+		markSelectedFedFout(maskedX);
+		BinaryOp clippedX = new BinaryOp("clipped-X", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MINUS, x, maskedX);
+		markSelectedFedFout(clippedX);
+		DataOp parent = new DataOp("result", DataType.MATRIX, ValueType.FP64,
+			clippedX, OpOpData.TRANSIENTWRITE, null);
+
+		Method rewrite = RewriteAlgebraicSimplificationStatic.class.getDeclaredMethod(
+			"simplifyDistributiveBinaryOperation", Hop.class, Hop.class, int.class);
+		rewrite.setAccessible(true);
+		Hop result = (Hop) rewrite.invoke(null, parent, clippedX, 0);
+
+		Assert.assertSame("Runtime recompilation must retain the two selected physical operations",
+			clippedX, result);
+		Assert.assertSame(clippedX, parent.getInput(0));
+		Assert.assertSame(maskedX, clippedX.getInput(1));
 	}
 
 	@Test
@@ -272,5 +358,12 @@ public class CampaignBG014DerivedFoutRecompileStateRedTest {
 		hop.setBeginColumn(beginColumn);
 		hop.setEndLine(endLine);
 		hop.setEndColumn(endColumn);
+	}
+
+	private static void markSelectedFedFout(Hop hop) {
+		hop.setExecType(ExecType.FED);
+		hop.setForcedExecType(ExecType.FED);
+		hop.setFederatedOutput(FederatedOutput.FOUT);
+		hop.setPlannerPlacementSelected(true);
 	}
 }

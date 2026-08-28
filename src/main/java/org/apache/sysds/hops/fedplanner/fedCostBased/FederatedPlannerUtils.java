@@ -624,6 +624,68 @@ public class FederatedPlannerUtils {
 		return PLANNER_RECOMPILE_STATES.get(signature);
 	}
 
+	/** True while one emitted whole-program plan owns dynamic-recompile placement state. */
+	public static boolean hasPlannerRecompileStateAuthority() {
+		return !PLANNER_RECOMPILE_STATES.isEmpty()
+			|| !AMBIGUOUS_PLANNER_RECOMPILE_STATES.isEmpty();
+	}
+
+	/** Whether this exact occurrence has a selected placement, directly or by recompile signature. */
+	public static boolean hasPlannerPlacement(Hop hop) {
+		return hop != null && (hop.isPlannerPlacementSelected()
+			|| getPlannerRecompileState(hop) != null);
+	}
+
+	/** Whether one exact occurrence is selected at the layout-free coordinator boundary. */
+	public static boolean hasPlannerLocalPlacement(Hop hop) {
+		if(hop == null)
+			return false;
+		PlannerRecompileState state = hop.isPlannerPlacementSelected() ? null
+			: getPlannerRecompileState(hop);
+		Types.ExecType exec = hop.isPlannerPlacementSelected()
+			? hop.getExecType() : state == null ? null : state.getExecType();
+		FederatedOutput output = hop.isPlannerPlacementSelected()
+			? hop.getFederatedOutput() : state == null ? null : state.getFederatedOutput();
+		return exec == Types.ExecType.CP && output == FederatedOutput.LOUT;
+	}
+
+	/**
+	 * Whether two planner occurrences are both selected at the layout-free coordinator boundary.
+	 * This helper also consults registered function-body recompile states because algebraic
+	 * rewrites run before {@code Recompiler.restoreHopStates}.
+	 */
+	public static boolean haveSamePlannerLocalPlacement(Hop first, Hop second) {
+		if(first == null || second == null)
+			return false;
+		return hasPlannerLocalPlacement(first) && hasPlannerLocalPlacement(second);
+	}
+
+	/** Whether two exact occurrences have the same selected physical placement. */
+	public static boolean haveSamePlannerPlacement(Hop first, Hop second) {
+		if(!hasPlannerPlacement(first) || !hasPlannerPlacement(second))
+			return false;
+		PlannerRecompileState firstState = first.isPlannerPlacementSelected() ? null
+			: getPlannerRecompileState(first);
+		PlannerRecompileState secondState = second.isPlannerPlacementSelected() ? null
+			: getPlannerRecompileState(second);
+		Types.ExecType firstExec = first.isPlannerPlacementSelected()
+			? (first.getForcedExecType() != null ? first.getForcedExecType() : first.getExecType())
+			: firstState.getExecType();
+		Types.ExecType secondExec = second.isPlannerPlacementSelected()
+			? (second.getForcedExecType() != null ? second.getForcedExecType() : second.getExecType())
+			: secondState.getExecType();
+		FederatedOutput firstOutput = first.isPlannerPlacementSelected()
+			? first.getFederatedOutput() : firstState.getFederatedOutput();
+		FederatedOutput secondOutput = second.isPlannerPlacementSelected()
+			? second.getFederatedOutput() : secondState.getFederatedOutput();
+		boolean firstDerived = first.isPlannerPlacementSelected()
+			? first.isFederatedOutputDerived() : firstState.isFederatedOutputDerived();
+		boolean secondDerived = second.isPlannerPlacementSelected()
+			? second.isFederatedOutputDerived() : secondState.isFederatedOutputDerived();
+		return firstExec == secondExec && firstOutput == secondOutput
+			&& firstDerived == secondDerived;
+	}
+
 	/** Stable signature of the original planner-owned Hop, used to re-project exact edge actions. */
 	public static String getPlannerRecompileSignatureForHopId(long hopId) {
 		return PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.get(hopId);

@@ -365,6 +365,36 @@ public final class CandidateSelections {
 			return true;
 		}
 
+		/**
+		 * Domain-aware generalized reachability gate for policy propagation. Unlike
+		 * the admissible exact-search gate, an unassigned dependency is considered
+		 * reachable only through a state that remains in its current domain.
+		 */
+		public boolean canStillBeReachable(
+			Map<CompiledHopKey,PlacementState> partialAssignment,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains,
+			ChangedNodesReachabilityProbe probe) {
+			Objects.requireNonNull(partialAssignment, "partialAssignment");
+			Objects.requireNonNull(remainingStateDomains, "remainingStateDomains");
+			Objects.requireNonNull(probe, "probe");
+			for(IndexedConsumer consumer : probe.affectedConsumers)
+				if(!consumerReachable(consumer, partialAssignment, remainingStateDomains))
+					return false;
+			return true;
+		}
+
+		/** Full domain-aware check used after a generalized propagation fixed point. */
+		public boolean canStillBeReachable(
+			Map<CompiledHopKey,PlacementState> partialAssignment,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
+			Objects.requireNonNull(partialAssignment, "partialAssignment");
+			Objects.requireNonNull(remainingStateDomains, "remainingStateDomains");
+			for(IndexedConsumer consumer : consumers)
+				if(!consumerReachable(consumer, partialAssignment, remainingStateDomains))
+					return false;
+			return true;
+		}
+
 		private boolean consumerReachable(IndexedConsumer consumer,
 			Map<CompiledHopKey,PlacementState> partialAssignment) {
 			PlacementState selected = partialAssignment.get(consumer.key());
@@ -375,6 +405,25 @@ public final class CandidateSelections {
 				if(rowReachable(row, partialAssignment, true))
 					return true;
 			return activeRows.isEmpty();
+		}
+
+		private boolean consumerReachable(IndexedConsumer consumer,
+			Map<CompiledHopKey,PlacementState> partialAssignment,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
+			PlacementState selected = partialAssignment.get(consumer.key());
+			List<PlacementState> possible = selected == null
+				? remainingStateDomains.get(consumer.key()) : List.of(selected);
+			if(possible == null)
+				return true;
+			for(PlacementState state : possible) {
+				List<IndexedRow> activeRows = consumer.rowsFor(state);
+				if(activeRows.isEmpty())
+					return true;
+				for(IndexedRow row : activeRows)
+					if(rowReachable(row, partialAssignment, true, remainingStateDomains))
+						return true;
+			}
+			return false;
 		}
 
 		/**
@@ -442,8 +491,8 @@ public final class CandidateSelections {
 					List<IndexedRow> stateRows = consumer.rowsFor(state);
 					active |= !stateRows.isEmpty();
 					for(IndexedRow row : stateRows)
-						if(rowReachable(row, partialAssignment, true))
-							reachable.add(row.receipt());
+					if(rowReachable(row, partialAssignment, true, remainingStateDomains))
+						reachable.add(row.receipt());
 				}
 				if(active && reachable.isEmpty())
 					throw new IllegalStateException(
@@ -456,11 +505,22 @@ public final class CandidateSelections {
 
 		private boolean rowReachable(IndexedRow row,
 			Map<CompiledHopKey,PlacementState> partialAssignment, boolean allowUnassigned) {
+			return rowReachable(row, partialAssignment, allowUnassigned, Map.of());
+		}
+
+		private boolean rowReachable(IndexedRow row,
+			Map<CompiledHopKey,PlacementState> partialAssignment, boolean allowUnassigned,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
 			if(!row.emissionStructurallyReachable())
 				return false;
 			if(row.anchorOwner() != null) {
 				PlacementState owner = partialAssignment.get(row.anchorOwner());
-				if(owner == null && !allowUnassigned
+				List<PlacementState> ownerDomain = remainingStateDomains.get(row.anchorOwner());
+				if(owner == null && ownerDomain != null && ownerDomain.stream().noneMatch(state ->
+					state.output()
+						== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& state.fType() == row.anchorOwnerType())
+					|| owner == null && ownerDomain == null && !allowUnassigned
 					|| owner != null && (owner.output()
 					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 						|| owner.fType() != row.anchorOwnerType()))
@@ -479,14 +539,20 @@ public final class CandidateSelections {
 				boolean direct = false;
 				if(input.singlePresentInput()) {
 					PlacementState producerState = partialAssignment.get(producer);
-					direct = producerState == null ? allowUnassigned && input.directWhenUnassigned()
+					List<PlacementState> producerDomain = remainingStateDomains.get(producer);
+					direct = producerState == null && producerDomain != null
+						? producerDomain.stream().anyMatch(state -> state.output()
+							== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+								&& state.fType() == input.required())
+						: producerState == null ? allowUnassigned && input.directWhenUnassigned()
 						: producerState.output()
 							== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 								&& producerState.fType() == input.required();
 				}
 				boolean formal = input.singlePresentPhysicalInput()
 					&& parametricFormalChainFoutCompatible(producer, input.required(),
-						partialAssignment, allowUnassigned, Collections.newSetFromMap(
+						partialAssignment, allowUnassigned, remainingStateDomains,
+						Collections.newSetFromMap(
 							new IdentityHashMap<CompiledHopKey,Boolean>()));
 				if(!direct && !formal)
 					return false;
@@ -496,22 +562,24 @@ public final class CandidateSelections {
 
 		private boolean parametricFormalChainFoutCompatible(CompiledHopKey formal, FType required,
 			Map<CompiledHopKey,PlacementState> partialAssignment, boolean allowUnassigned,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains,
 			Set<CompiledHopKey> visiting) {
 			List<PlacementAnalysis.LogicalFunctionInputFact> incoming = incomingFunctionInputs.get(formal);
 			if(incoming == null || incoming.isEmpty())
 				return false;
-			if(!foutCompatible(partialAssignment.get(formal), required, allowUnassigned))
+			if(!foutCompatible(formal, required, partialAssignment, allowUnassigned,
+				remainingStateDomains))
 				return false;
 			if(!visiting.add(formal))
 				return true;
 			try {
 				for(PlacementAnalysis.LogicalFunctionInputFact input : incoming) {
-					if(!foutCompatible(partialAssignment.get(input.sourceArgument()), required,
-						allowUnassigned))
+					if(!foutCompatible(input.sourceArgument(), required, partialAssignment,
+						allowUnassigned, remainingStateDomains))
 						return false;
 					if(incomingFunctionInputs.containsKey(input.sourceArgument())
 						&& !parametricFormalChainFoutCompatible(input.sourceArgument(), required,
-							partialAssignment, allowUnassigned, visiting))
+							partialAssignment, allowUnassigned, remainingStateDomains, visiting))
 						return false;
 				}
 				return true;
@@ -519,6 +587,21 @@ public final class CandidateSelections {
 			finally {
 				visiting.remove(formal);
 			}
+		}
+
+		private static boolean foutCompatible(CompiledHopKey key, FType required,
+			Map<CompiledHopKey,PlacementState> partialAssignment, boolean allowUnassigned,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
+			PlacementState selected = partialAssignment.get(key);
+			if(selected != null)
+				return selected.output()
+					== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& selected.fType() == required;
+			List<PlacementState> domain = remainingStateDomains.get(key);
+			return domain == null ? allowUnassigned : domain.stream().anyMatch(state ->
+				state.output()
+					== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					&& state.fType() == required);
 		}
 	}
 

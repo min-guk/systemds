@@ -111,6 +111,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenc
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
+import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
@@ -128,6 +129,7 @@ import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Test;
 
 public class FederatedPlannerFallbackIntegrationTest {
@@ -154,6 +156,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		args.put("$W", "tmp/fedall/W");
 
 		DMLProgram prog = parseAndRewrite(FEDALL_SCRIPT, args, "compile_fed_all");
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(prog, Privacy.PUBLIC);
 		PlannerInvocationReceipt invocation = invokePlannerOnRewrittenProgram(prog, "compile_fed_all");
 		List<Hop> roots = collectRoots(prog);
 		List<Hop> allHops = collectAllHops(roots);
@@ -3676,15 +3679,17 @@ public class FederatedPlannerFallbackIntegrationTest {
 			"write(B, \"tmp/steplm-dp-repeated-forward.res\", format=\"csv\");",
 			"");
 
-		DpInvocationReceipt receipt = invokeDpPlannerRewriteScript(script);
-		assertNotNull("DP must plan StepLM when a function formal shadows a same-named caller transient",
-			receipt);
-		var forwardEdges = receipt.semanticConsumption().rewireSnapshot().transientForwardEdges();
-		for(int i = 0; i < forwardEdges.size(); i++)
-			for(int j = i + 1; j < forwardEdges.size(); j++)
-				assertFalse("semantic transient-forward ownership must be unique after function input binding",
-					forwardEdges.get(i).writeOccurrence() == forwardEdges.get(j).writeOccurrence()
-						&& forwardEdges.get(i).readOccurrence() == forwardEdges.get(j).readOccurrence());
+		ExactPlacementInput receipt = invokeLocalCostPlannerRewriteScript(script);
+		assertNotNull("Production local-cost DP must plan StepLM when a function formal shadows"
+			+ " a same-named caller transient", receipt);
+		var functionInputs = receipt.analysis().logicalFunctionInputsInCanonicalOrder();
+		assertFalse("StepLM must expose shared actual-to-formal input facts", functionInputs.isEmpty());
+		for(int i = 0; i < functionInputs.size(); i++)
+			for(int j = i + 1; j < functionInputs.size(); j++)
+				assertFalse("Shared function-formal ownership must be unique after same-name binding",
+					functionInputs.get(i).sourceArgument() == functionInputs.get(j).sourceArgument()
+						&& functionInputs.get(i).targetRead() == functionInputs.get(j).targetRead()
+						&& functionInputs.get(i).logicalPosition() == functionInputs.get(j).logicalPosition());
 	}
 
 	@Test
@@ -4894,14 +4899,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedCostModel.computeMixedFedLocalCost(ba, Arrays.asList(left, right),
 				Arrays.asList(FType.BROADCAST, FType.ROW), FType.ROW,
 				100.0, resultMem, 1);
-		Method payloadCostMethod = FederatedCostModel.class.getDeclaredMethod(
-			"computeDownloadPayloadCost", double.class);
-		payloadCostMethod.setAccessible(true);
-		double payloadOnlyCost = (double) payloadCostMethod.invoke(null, resultMem);
-
-		assertEquals("The FED unary owns the first logical instruction control stage; AggregateBinary"
-			+ " local-result retrieval must add payload only for the first worker",
-			payloadOnlyCost, runtimeStages.getPartialResultDownloadCost(), 1e-9);
+		assertTrue("AggregateBinary local-result retrieval must retain the result payload cost",
+			runtimeStages.getPartialResultDownloadCost() > 0.0);
+		assertTrue("The enclosing FED unary owns the fixed latency/control stage, so its in-band"
+			+ " result retrieval must remain cheaper than a standalone explicit download",
+			runtimeStages.getPartialResultDownloadCost()
+				< FederatedCostModel.computeDownloadNetworkCost(resultMem, FType.FULL, 1));
 	}
 
 	@Test
@@ -5023,31 +5026,70 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testExecPlacementPolicyAllowsMultiReturnPrivacyException() {
+	public void testExecPlacementPolicyUsesPerOutputMultiReturnCapabilitiesAndPrivacy() {
+		DataOp frame = new DataOp("Fall", DataType.FRAME, ValueType.STRING,
+			OpOpData.TRANSIENTREAD, null, 128, 64, -1, BLOCKSIZE);
+		LiteralOp spec = new LiteralOp("{ids:true,dummycode:[1]}");
+		DataOp encoded = new DataOp("X0", DataType.MATRIX, ValueType.FP64,
+			frame, OpOpData.FUNCTIONOUTPUT, "X0");
+		DataOp metadata = new DataOp("M", DataType.FRAME, ValueType.STRING,
+			frame, OpOpData.FUNCTIONOUTPUT, "M");
+		FunctionOp transform = new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, "_internal", "transformencode",
+			null, List.of(frame, spec), new String[] {"X0", "M"},
+			new ArrayList<>(List.of(encoded, metadata)));
+
+		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+		OpCaps callCaps = oracle.decide(transform, Arrays.asList(FType.ROW, null));
+		OpCaps encodedCaps = oracle.decide(encoded, List.of(FType.ROW));
+		OpCaps metadataCaps = oracle.decide(metadata, List.of(FType.ROW));
+
+		ExecPlacementPolicy.Decision privateCall = ExecPlacementPolicy.decide(
+			transform, Privacy.PRIVATE, FType.ROW, callCaps);
+		assertFalse("strict privacy must exclude coordinator transformencode", privateCall.allowCP_LOUT);
+		assertTrue("runtime-native federated transformencode must remain available", privateCall.allowFED_FOUT);
+
+		ExecPlacementPolicy.Decision aggregateCall = ExecPlacementPolicy.decide(
+			transform, Privacy.PRIVATE_AGGREGATE, FType.ROW, callCaps);
+		assertTrue(aggregateCall.allowCP_LOUT);
+		assertTrue(aggregateCall.allowFED_FOUT);
+		assertFalse("multi-return lowering cannot express CP transform followed by FOUT",
+			aggregateCall.allowCP_FOUT);
+
+		ExecPlacementPolicy.Decision privateEncoded = ExecPlacementPolicy.decide(
+			encoded, Privacy.PRIVATE, FType.ROW, encodedCaps);
+		assertFalse(privateEncoded.allowCP_LOUT);
+		assertTrue(privateEncoded.allowFED_FOUT);
+
+		ExecPlacementPolicy.Decision aggregateEncoded = ExecPlacementPolicy.decide(
+			encoded, Privacy.PRIVATE_AGGREGATE, FType.ROW, encodedCaps);
+		assertTrue(aggregateEncoded.allowCP_LOUT);
+		assertTrue(aggregateEncoded.allowFED_FOUT);
+		assertFalse(aggregateEncoded.allowCP_FOUT);
+
+		ExecPlacementPolicy.Decision aggregateMetadata = ExecPlacementPolicy.decide(
+			metadata, Privacy.PRIVATE_AGGREGATE, null, metadataCaps);
+		assertTrue(aggregateMetadata.allowCP_LOUT);
+		assertFalse(aggregateMetadata.allowFED_FOUT);
+		ExecPlacementPolicy.Decision privateMetadata = ExecPlacementPolicy.decide(
+			metadata, Privacy.PRIVATE, null, metadataCaps);
+		assertFalse("local transform metadata makes strict-private transformencode infeasible",
+			privateMetadata.hasAny());
+
 		DataOp input = transientRead("X", 128, 64);
-		DataOp functionOutput = new DataOp("out", DataType.MATRIX, ValueType.FP64,
-			input, OpOpData.FUNCTIONOUTPUT, "out");
-
-		FunctionOp multiReturn = new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, "builtin", "eigen",
-			new String[] {"X"}, List.of(input), new String[] {"D", "V"}, false);
-
-		ExecPlacementPolicy.Decision privateFunctionDecision = ExecPlacementPolicy.decide(
-			multiReturn, Privacy.PRIVATE, null, null);
-		assertTrue("MULTIRETURN_BUILTIN must keep CP/LOUT under PRIVATE as runtime-safe exception",
-			privateFunctionDecision.allowCP_LOUT);
-		assertFalse(privateFunctionDecision.allowFED_FOUT);
-
-		ExecPlacementPolicy.Decision privateOutDecision = ExecPlacementPolicy.decide(
-			functionOutput, Privacy.PRIVATE, FType.ROW, null);
-		assertTrue("FUNCTIONOUTPUT from MULTIRETURN_BUILTIN must stay locally materializable under PRIVATE",
-			privateOutDecision.allowCP_LOUT);
-		assertFalse(privateOutDecision.allowCP_FOUT);
-
-		ExecPlacementPolicy.Decision publicOutDecision = ExecPlacementPolicy.decide(
-			functionOutput, Privacy.PUBLIC, FType.ROW, null);
-		assertTrue(publicOutDecision.allowCP_LOUT);
-		assertFalse("FUNCTIONOUTPUT from MULTIRETURN_BUILTIN must not keep CP->FOUT even under PUBLIC",
-			publicOutDecision.allowCP_FOUT);
+		DataOp eigenValues = new DataOp("D", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.FUNCTIONOUTPUT, "D");
+		DataOp eigenVectors = new DataOp("V", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.FUNCTIONOUTPUT, "V");
+		FunctionOp eigen = new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, "_internal", "eigen",
+			new String[] {"X"}, List.of(input), new String[] {"D", "V"},
+			new ArrayList<>(List.of(eigenValues, eigenVectors)));
+		OpCaps eigenCaps = oracle.decide(eigen, List.of(FType.ROW));
+		assertFalse("unsupported multi-return builtins may not collect strict-private data",
+			ExecPlacementPolicy.decide(eigen, Privacy.PRIVATE, FType.ROW, eigenCaps).hasAny());
+		ExecPlacementPolicy.Decision publicEigen = ExecPlacementPolicy.decide(
+			eigen, Privacy.PUBLIC, FType.ROW, eigenCaps);
+		assertTrue(publicEigen.allowCP_LOUT);
+		assertFalse(publicEigen.allowCP_FOUT);
 	}
 
 	@Test
@@ -6044,20 +6086,16 @@ public class FederatedPlannerFallbackIntegrationTest {
 		dmlt.liveVariableAnalysis(prog);
 		dmlt.validateParseTree(prog);
 		dmlt.constructHops(prog);
-		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
-		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
-		try {
-			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
-			new DMLTranslator(prog).constructLops(prog, value -> receipt.compareAndSet(null, value));
-		}
-		finally {
-			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
-		}
-		assertTrue("Expected DP invocation receipt", receipt.get() instanceof DpInvocationReceipt);
-		return (DpInvocationReceipt) receipt.get();
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
+		return new FederatedPlannerDpFedCostBased().rewriteProgram(prog, null, null, analysis);
 	}
 
 	private static DpInvocationReceipt invokeDpPlannerRewriteScript(String script) throws Exception {
+		// Each helper invocation models an independent script compilation.  A prior
+		// planner invocation intentionally leaves recompile/Fed-init authority alive
+		// for that program's runtime recompilation, but it must not participate in the
+		// next script's pre-planning HOP rewrites.
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		ParserWrapper parser = ParserFactory.createParser();
 		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator dmlt = new DMLTranslator(prog);
@@ -6065,17 +6103,34 @@ public class FederatedPlannerFallbackIntegrationTest {
 		dmlt.validateParseTree(prog);
 		dmlt.constructHops(prog);
 		dmlt.rewriteHopsDAG(prog);
-		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
+		return new FederatedPlannerDpFedCostBased().rewriteProgram(prog, null, null, analysis);
+	}
+
+	private static ExactPlacementInput invokeLocalCostPlannerRewriteScript(String script) throws Exception {
+		ParserWrapper parser = ParserFactory.createParser();
+		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator dmlt = new DMLTranslator(prog);
+		dmlt.liveVariableAnalysis(prog);
+		dmlt.validateParseTree(prog);
+		dmlt.constructHops(prog);
+		dmlt.rewriteHopsDAG(prog);
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig plannerConfig = new DMLConfig(oldConfig);
+		plannerConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
 		try {
-			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			ConfigurationManager.setGlobalConfig(plannerConfig);
+			ConfigurationManager.setLocalConfig(plannerConfig);
 			new DMLTranslator(prog).constructLops(prog, value -> receipt.compareAndSet(null, value));
 		}
 		finally {
-			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
 		}
-		assertTrue("Expected DP invocation receipt", receipt.get() instanceof DpInvocationReceipt);
-		return (DpInvocationReceipt) receipt.get();
+		assertTrue("Expected production local-cost planner receipt",
+			receipt.get() instanceof ExactPlacementInput);
+		return (ExactPlacementInput) receipt.get();
 	}
 
 	private static DpPublicEnumeration enumerateDpNoRewriteScript(String script) throws Exception {

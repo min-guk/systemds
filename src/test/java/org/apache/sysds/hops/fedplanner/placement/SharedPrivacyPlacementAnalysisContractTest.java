@@ -29,12 +29,16 @@ import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -149,6 +153,96 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 	}
 
 	@Test
+	public void transformEncodePublishesOneRuntimeNativePrimaryAndOneLocalMetadataOutput() throws Exception {
+		DMLProgram program = compile(FEDERATED_SOURCE
+			+ "Fall=as.frame(A);jspec=\"{ids:true,dummycode:[1]}\";"
+			+ "[X0,M]=transformencode(target=Fall,spec=jspec);print(sum(X0));\n", false);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis.HopOccurrenceProjection callOccurrence = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof FunctionOp function
+				&& function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+				&& "transformencode".equalsIgnoreCase(function.getFunctionName()))
+			.findFirst().orElseThrow();
+		FunctionOp call = (FunctionOp) callOccurrence.hop();
+		Assert.assertEquals(2, call.getOutputs().size());
+		Hop encoded = call.getOutputs().get(0);
+		Hop metadata = call.getOutputs().get(1);
+		PlacementAnalysis.HopOccurrenceProjection encodedOccurrence = occurrenceFor(analysis, encoded);
+		PlacementAnalysis.HopOccurrenceProjection metadataOccurrence = occurrenceFor(analysis, metadata);
+
+		Assert.assertEquals("multi-return builtin is a physical instruction, not a DML call placeholder",
+			NodeKind.OPERATION, analysis.graph().node(callOccurrence.key()).orElseThrow().kind());
+		Assert.assertTrue("federated frame input must be an exact compiled data edge",
+			analysis.compiledInputEdgesInCanonicalOrder().stream().anyMatch(edge ->
+				edge.consumer() == callOccurrence.key() && edge.inputPosition() == 0
+					&& analysis.hop(edge.producer()).orElseThrow().getDataType().isFrame()));
+		Assert.assertTrue("multi-return output carriers must not consume the placeholder frame input",
+			analysis.compiledInputEdgesInCanonicalOrder().stream().noneMatch(edge ->
+				edge.consumer() == encodedOccurrence.key() || edge.consumer() == metadataOccurrence.key()));
+		Assert.assertFalse("MatrixObject-only fed_refed must never be published for a frame input",
+			analysis.graph().relocationActions().stream().anyMatch(action -> action.obligations().stream()
+				.anyMatch(obligation -> obligation.consumer() == callOccurrence.key()
+					&& obligation.inputPosition() == 0)));
+		assertHasState(analysis, callOccurrence, ExecType.CP, FederatedOutput.LOUT, null);
+		assertHasState(analysis, callOccurrence, ExecType.FED, FederatedOutput.FOUT, FType.ROW);
+		assertHasState(analysis, encodedOccurrence, ExecType.CP, FederatedOutput.LOUT, null);
+		assertHasState(analysis, encodedOccurrence, ExecType.FED, FederatedOutput.FOUT, FType.ROW);
+		Assert.assertEquals("transform metadata has no runtime-federated representation",
+			List.of(new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false)),
+			analysis.graph().node(metadataOccurrence.key()).orElseThrow().legalAlternatives());
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE, analysis.requirePrivacy(callOccurrence.key()));
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE, analysis.requirePrivacy(encodedOccurrence.key()));
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE, analysis.requirePrivacy(metadataOccurrence.key()));
+
+		Assert.assertTrue("primary transform result must be placement-coupled to physical execution",
+			analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.left() == callOccurrence.key()
+					&& constraint.inputPosition() == 0
+					&& constraint.evidence().startsWith("multi-return-primary-result:")));
+	}
+
+	@Test
+	public void transformEncodeUnknownWidthRetainsRuntimeNativePreprocessingDomain() throws Exception {
+		DMLProgram program = compile(FEDERATED_SOURCE
+			+ "Fall=as.frame(A);jspec=\"{ids:true,dummycode:[1]}\";"
+			+ "[X0,M]=transformencode(target=Fall,spec=jspec);"
+			+ "colMean=colMeans(X0);X=X0-colMean;print(sum(X));\n", false);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis.HopOccurrenceProjection mean = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof AggUnaryOp aggregate
+				&& aggregate.getOp() == AggOp.MEAN && aggregate.getDirection() == org.apache.sysds.common.Types.Direction.Col
+				&& "colMean".equals(aggregate.getName()))
+			.findFirst().orElseThrow();
+		PlacementAnalysis.HopOccurrenceProjection centered = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof BinaryOp binary
+				&& binary.getOp() == OpOp2.MINUS && "X".equals(binary.getName()))
+			.findFirst().orElseThrow();
+
+		Assert.assertTrue("transformencode fixture must preserve its metadata-dependent width",
+			mean.hop().getInput(0).getDim2() < 0);
+		assertHasState(analysis, mean, ExecType.FED, FederatedOutput.LOUT, FType.ROW);
+		assertHasState(analysis, centered, ExecType.FED, FederatedOutput.FOUT, FType.ROW);
+	}
+
+	@Test
+	public void transformEncodeWithLocalMetadataFailsClosedUnderStrictPrivacy() throws Exception {
+		DMLProgram program = compile(FEDERATED_SOURCE
+			+ "Fall=as.frame(A);jspec=\"{ids:true,dummycode:[1]}\";"
+			+ "[X0,M]=transformencode(target=Fall,spec=jspec);print(sum(X0));\n", false);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE);
+
+		DMLRuntimeException failure = Assert.assertThrows(DMLRuntimeException.class,
+			() -> new NeutralPlacementGraphBuilder().buildAnalysis(program));
+		Assert.assertTrue(failure.getMessage(),
+			failure.getMessage().contains("No privacy-safe physical placement"));
+	}
+
+	@Test
 	public void privateCollectionFailsBeforeAnyPlannerSelectorCanRun() throws Exception {
 		DMLProgram program = compile(FEDERATED_SOURCE + "B=A+1;print(sum(B));\n", true);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE);
@@ -185,6 +279,28 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 		program.getStatementBlocks().clear();
 		program.getStatementBlocks().add(block);
 		return program;
+	}
+
+	private static PlacementAnalysis.HopOccurrenceProjection occurrenceFor(PlacementAnalysis analysis, Hop hop) {
+		return analysis.compiledHopOccurrences().stream().filter(occurrence -> occurrence.hop() == hop)
+			.findFirst().orElseThrow();
+	}
+
+	private static void assertHasState(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence, ExecType exec,
+		FederatedOutput output, FType fType) {
+		List<PlacementState> alternatives = analysis.graph().node(occurrence.key()).orElseThrow().legalAlternatives();
+		List<String> candidateFacts = analysis.candidateRuleFacts().orderedFactsForParent(occurrence.key()).stream()
+			.map(fact -> fact.key().orderedInputs() + "=>" + fact.capability() + "/" + fact.status()
+				+ "/shapeProof=" + fact.shapeProof()
+				+ "/emissions=" + fact.allowedEmissionFacts()).toList();
+		List<String> graphDump = analysis.compiledHopOccurrences().stream().map(candidate -> candidate.hop().getHopID()
+			+ ":" + candidate.hop().getOpString() + ":" + candidate.hop().getName() + "="
+			+ analysis.graph().node(candidate.key()).orElseThrow().legalAlternatives()).toList();
+		Assert.assertTrue("missing state " + exec + '/' + output + '/' + fType + " for " + occurrence.hop()
+			+ "; alternatives=" + alternatives + "; candidates=" + candidateFacts + "; graph=" + graphDump,
+			alternatives.stream()
+				.anyMatch(state -> state.execType() == exec && state.output() == output && state.fType() == fType));
 	}
 
 	private static DataOp federatedSource(DMLProgram program) {

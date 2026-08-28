@@ -71,16 +71,39 @@ public final class PolicyFirstFeasiblePlacementSelector
 	@Override
 	public PlacementSelection select(PlacementAnalysis analysis, NeutralPlacementGraph graph) {
 		Objects.requireNonNull(graph, "graph");
-		Solver solver = new Solver(analysis, graph, executionWeightOverride);
-		ScoredPlan plan = solver.solve();
+		PlacementAnalysis candidateAnalysis = analysis != null
+			&& !analysis.candidateRuleFacts().orderedFacts().isEmpty() ? analysis : null;
+		CandidateSelections.PartialReachabilityIndex reachability = candidateAnalysis == null
+			? null : CandidateSelections.partialReachabilityIndex(candidateAnalysis, graph,
+				graph.relocationActions());
+		RelocationSelections.CanonicalOrderIndex relocationOrder = candidateAnalysis == null
+			? RelocationSelections.canonicalOrderIndex(graph.relocationActions())
+			: candidateAnalysis.relocationOrderFor(graph.relocationActions());
+		Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
+		long pruned = 0;
+		int maxDepth = 0;
+		for(PolicyComponent component : policyComponents(candidateAnalysis, graph)) {
+			Solver solver = new Solver(candidateAnalysis, graph, component.nodes(),
+				component.constraints(), component.relocationActions(), reachability,
+				executionWeightOverride);
+			Map<CompiledHopKey,PlacementState> selected = solver.solve();
+			for(Map.Entry<CompiledHopKey,PlacementState> entry : selected.entrySet())
+				if(assignment.put(entry.getKey(), entry.getValue()) != null)
+					throw new IllegalStateException(
+						"placement decision belongs to multiple policy components");
+			pruned = Math.addExact(pruned, solver.pruned);
+			maxDepth = Math.max(maxDepth, solver.maxDepth);
+		}
+		ScoredPlan plan = scoreComplete(candidateAnalysis, graph, assignment,
+			relocationOrder, reachability);
 		PlacementScore score = new PlacementScore(plan.fedCount(), plan.foutCount(),
 			plan.physicalMovementCount(), normalizedSignature(plan));
 		List<ComponentBound> bounds = policyBounds(graph, score);
 		PlacementCertificate certificate = new PlacementCertificate(score, score,
-			solver.explored, solver.pruned, sha256(score.normalizedSignature()),
+			1, pruned, sha256(score.normalizedSignature()),
 			sha256(graph.normalizedSignature()), graph.nodes().size(), graph.constraints().size(),
-			bounds.size(), solver.maxDepth, bounds,
-			"deterministic-first-feasible-with-localized-arc-consistency",
+			bounds.size(), maxDepth, bounds,
+			"deterministic-component-first-feasible-with-localized-arc-consistency",
 			"policy", -1L, TerminationReason.POLICY_FEASIBLE);
 		return new PlacementSelection(plan.assignment(), plan.candidates(), plan.choices(),
 			new LinkedHashSet<>(plan.relocations()), score, certificate);
@@ -96,9 +119,230 @@ public final class PolicyFirstFeasiblePlacementSelector
 		return 3;
 	}
 
+	private static ScoredPlan scoreComplete(PlacementAnalysis analysis,
+		NeutralPlacementGraph graph, Map<CompiledHopKey,PlacementState> assignment,
+		RelocationSelections.CanonicalOrderIndex relocationOrder,
+		CandidateSelections.PartialReachabilityIndex reachability) {
+		if(assignment.size() != graph.decisionNodes().size())
+			throw new IllegalStateException("policy component merge produced an incomplete assignment");
+		for(Constraint constraint : graph.constraints()) {
+			PlacementState left = assignment.get(constraint.left());
+			PlacementState right = assignment.get(constraint.right());
+			if(left != null && right != null
+				&& !NeutralPlacementGraph.constraintSatisfied(constraint, left, right))
+				throw new IllegalStateException("policy component merge violated a graph constraint");
+		}
+		List<CandidateSelectionReceipt> candidates;
+		List<RelocationChoiceReceipt> choices;
+		List<RelocationActionKey> relocations;
+		int movement;
+		if(analysis == null) {
+			candidates = List.of();
+			choices = RelocationSelections.selectCanonical(graph, graph.relocationActions(),
+				assignment, (demand, action) -> true);
+			relocations = RelocationSelections.emittedActions(graph, graph.relocationActions(),
+				assignment, choices);
+			movement = RelocationSelections.physicalEmissionCount(relocations);
+		}
+		else {
+			CandidateSelections.Selection selected = CandidateSelections.selectMaterializationMaximal(
+				analysis, graph, graph.relocationActions(), assignment, relocationOrder, reachability);
+			candidates = selected.candidates();
+			choices = selected.relocationChoices();
+			relocations = selected.emittedActions();
+			movement = Math.addExact(Math.addExact(selected.relocationPhysicalEmissionCount(),
+				selected.localMaterializationActionCount()),
+				selected.foutMaterializationActionCount());
+		}
+		int fed = 0;
+		int fout = 0;
+		for(Node node : graph.decisionNodes()) {
+			PlacementState state = assignment.get(node.key());
+			if(state.execType() == ExecType.FED)
+				fed++;
+			if(state.output() == FederatedOutput.FOUT)
+				fout++;
+		}
+		return new ScoredPlan(Map.copyOf(assignment), List.copyOf(candidates),
+			List.copyOf(choices), List.copyOf(relocations), fed, fout, movement);
+	}
+
+	/**
+	 * Splits the policy CSP at every exact physical-independence boundary before
+	 * committing policy states. Legality edges, candidate input dependencies,
+	 * relocation sharing, and derived-FOUT anchor ownership all keep their
+	 * participants in one component. Consequently, accepting the first feasible
+	 * assignment of one component cannot invalidate another component and avoids
+	 * constructing their Cartesian product.
+	 */
+	private static List<PolicyComponent> policyComponents(PlacementAnalysis analysis,
+		NeutralPlacementGraph graph) {
+		List<Node> decisions = graph.decisionNodes().stream().sorted().toList();
+		Map<CompiledHopKey,Node> decisionByKey = new LinkedHashMap<>();
+		Map<CompiledHopKey,Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
+		for(Node decision : decisions) {
+			decisionByKey.put(decision.key(), decision);
+			adjacency.put(decision.key(), new LinkedHashSet<>());
+		}
+		for(Constraint constraint : graph.constraints())
+			if(isLegalityConstraint(constraint)
+				&& decisionByKey.containsKey(constraint.left())
+				&& decisionByKey.containsKey(constraint.right()))
+				connect(adjacency, constraint.left(), constraint.right());
+		for(RelocationAction action : graph.relocationActions())
+			connectAll(adjacency, relocationParticipants(decisions, decisionByKey, action));
+		for(DerivedFoutMaterializationAction action : graph.derivedFoutMaterializationActions())
+			if(decisionByKey.containsKey(action.key().producer())
+				&& decisionByKey.containsKey(action.key().durableAnchorOwner()))
+				connect(adjacency, action.key().producer(), action.key().durableAnchorOwner());
+		for(CandidateDependency dependency : candidateDependencies(analysis, decisionByKey))
+			connect(adjacency, dependency.producer(), dependency.consumer());
+
+		List<Set<CompiledHopKey>> members = connectedDecisionSets(adjacency);
+		Map<CompiledHopKey,Integer> componentByNode = new LinkedHashMap<>();
+		for(int index = 0; index < members.size(); index++)
+			for(CompiledHopKey key : members.get(index))
+				componentByNode.put(key, index);
+		List<List<Constraint>> constraints = new ArrayList<>();
+		List<List<RelocationAction>> actions = new ArrayList<>();
+		for(int index = 0; index < members.size(); index++) {
+			constraints.add(new ArrayList<>());
+			actions.add(new ArrayList<>());
+		}
+		for(Constraint constraint : graph.constraints()) {
+			Integer left = componentByNode.get(constraint.left());
+			Integer right = componentByNode.get(constraint.right());
+			if(isLegalityConstraint(constraint) && left != null && right != null) {
+				if(!left.equals(right))
+					throw new IllegalStateException(
+						"legality constraint crosses policy components");
+				constraints.get(left).add(constraint);
+			}
+		}
+		for(RelocationAction action : graph.relocationActions()) {
+			Set<CompiledHopKey> participants = relocationParticipants(
+				decisions, decisionByKey, action);
+			if(participants.isEmpty())
+				continue;
+			Set<Integer> owners = new LinkedHashSet<>();
+			for(CompiledHopKey participant : participants)
+				owners.add(componentByNode.get(participant));
+			if(owners.size() != 1)
+				throw new IllegalStateException("relocation action crosses policy components");
+			actions.get(owners.iterator().next()).add(action);
+		}
+
+		List<PolicyComponent> result = new ArrayList<>();
+		for(int index = 0; index < members.size(); index++) {
+			List<Node> nodes = members.get(index).stream().map(decisionByKey::get).sorted().toList();
+			List<Constraint> componentConstraints = constraints.get(index).stream().sorted().toList();
+			List<RelocationAction> componentActions = actions.get(index).stream().sorted().toList();
+			result.add(new PolicyComponent(nodes, componentConstraints, componentActions));
+		}
+		result.sort(Comparator.naturalOrder());
+		return List.copyOf(result);
+	}
+
+	private static boolean isLegalityConstraint(Constraint constraint) {
+		return constraint.kind() == ConstraintKind.SAME_PLACEMENT
+			|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+			|| constraint.kind() == ConstraintKind.SAME_FTYPE
+			|| constraint.kind() == ConstraintKind.CONJUNCTIVE;
+	}
+
+	private static Set<CompiledHopKey> relocationParticipants(List<Node> decisions,
+		Map<CompiledHopKey,Node> decisionByKey, RelocationAction action) {
+		Set<CompiledHopKey> participants = new LinkedHashSet<>();
+		for(Node decision : decisions)
+			if(decision.valueVersion().equals(action.key().sourceValueVersion()))
+				participants.add(decision.key());
+		for(var obligation : action.obligations())
+			if(decisionByKey.containsKey(obligation.consumer()))
+				participants.add(obligation.consumer());
+		return participants;
+	}
+
+	private static void connectAll(Map<CompiledHopKey,Set<CompiledHopKey>> adjacency,
+		Set<CompiledHopKey> participants) {
+		if(participants.size() < 2)
+			return;
+		CompiledHopKey first = participants.iterator().next();
+		for(CompiledHopKey participant : participants)
+			connect(adjacency, first, participant);
+	}
+
+	private static void connect(Map<CompiledHopKey,Set<CompiledHopKey>> adjacency,
+		CompiledHopKey left, CompiledHopKey right) {
+		if(left == right)
+			return;
+		Set<CompiledHopKey> leftEdges = adjacency.get(left);
+		Set<CompiledHopKey> rightEdges = adjacency.get(right);
+		if(leftEdges == null || rightEdges == null)
+			return;
+		leftEdges.add(right);
+		rightEdges.add(left);
+	}
+
+	private static List<Set<CompiledHopKey>> connectedDecisionSets(
+		Map<CompiledHopKey,Set<CompiledHopKey>> adjacency) {
+		Set<CompiledHopKey> visited = new LinkedHashSet<>();
+		List<Set<CompiledHopKey>> result = new ArrayList<>();
+		for(CompiledHopKey start : adjacency.keySet()) {
+			if(!visited.add(start))
+				continue;
+			Set<CompiledHopKey> members = new LinkedHashSet<>();
+			ArrayDeque<CompiledHopKey> pending = new ArrayDeque<>();
+			pending.add(start);
+			while(!pending.isEmpty()) {
+				CompiledHopKey current = pending.removeFirst();
+				members.add(current);
+				for(CompiledHopKey adjacent : adjacency.get(current))
+					if(visited.add(adjacent))
+						pending.addLast(adjacent);
+			}
+			result.add(Set.copyOf(members));
+		}
+		return List.copyOf(result);
+	}
+
+	private static List<CandidateDependency> candidateDependencies(PlacementAnalysis analysis,
+		Map<CompiledHopKey,Node> nodes) {
+		if(analysis == null)
+			return List.of();
+		Map<CompiledHopKey,Map<Integer,List<CompiledHopKey>>> producers = new IdentityHashMap<>();
+		for(PlacementAnalysis.CompiledInputEdgeFact edge :
+			analysis.compiledInputEdgesInCanonicalOrder())
+			producers.computeIfAbsent(edge.consumer(), ignored -> new LinkedHashMap<>())
+				.computeIfAbsent(edge.inputPosition(), ignored -> new ArrayList<>())
+				.add(edge.producer());
+		Set<CandidateDependency> dependencies = new java.util.TreeSet<>();
+		for(PlacementAnalysis.CandidateRuleFact fact :
+			analysis.candidateRuleFacts().orderedFacts()) {
+			Node consumer = nodes.get(fact.key().parentOccurrence());
+			if(consumer == null
+				|| fact.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE
+				|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
+					consumer.legalAlternatives().stream().anyMatch(state ->
+						state == emission.emissionState().placementState())))
+				continue;
+			for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+				List<CompiledHopKey> edges = producers.getOrDefault(consumer.key(), Map.of())
+					.getOrDefault(position, List.of());
+				if(edges.size() > 1)
+					throw new IllegalStateException(
+						"candidate input edge is ambiguous while constructing policy components");
+				if(edges.size() == 1 && nodes.containsKey(edges.get(0)))
+					dependencies.add(new CandidateDependency(edges.get(0), consumer.key(), position));
+			}
+		}
+		return List.copyOf(dependencies);
+	}
+
 	private static final class Solver {
 		private final PlacementAnalysis analysis;
 		private final NeutralPlacementGraph graph;
+		private final List<Constraint> constraints;
+		private final List<RelocationAction> relocationActions;
 		private final List<Node> decisions;
 		private final List<DecisionGroup> groups;
 		private final Map<CompiledHopKey,Integer> groupsByKey;
@@ -108,71 +352,108 @@ public final class PolicyFirstFeasiblePlacementSelector
 		private final List<List<RelocationAction>> relocationsByGroup;
 		private final List<List<DerivedFoutMaterializationAction>> derivedActionsByGroup;
 		private final CandidateSelections.PartialReachabilityIndex reachability;
-		private final RelocationSelections.CanonicalOrderIndex relocationOrder;
+		private final Map<DecisionGroup,
+			CandidateSelections.PartialReachabilityIndex.ChangedNodesReachabilityProbe>
+			reachabilityProbes;
 		private final OccurrenceExecutionFrequencyFacts frequencyFacts;
 		private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
+		private final Map<CompiledHopKey,Double> executionWeights = new IdentityHashMap<>();
+		private final Map<RelocationAction,Double> relocationWeights = new IdentityHashMap<>();
+		private final Map<CompiledHopKey,PlacementState> current = new IdentityHashMap<>();
 		private long explored;
 		private long pruned;
 		private int maxDepth;
 
+		private Map<CompiledHopKey,PlacementState> solution;
+
 		private Solver(PlacementAnalysis analysis, NeutralPlacementGraph graph,
+			List<Node> decisions, List<Constraint> constraints,
+			List<RelocationAction> relocationActions,
+			CandidateSelections.PartialReachabilityIndex reachability,
 			ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
 			this.analysis = analysis != null && !analysis.candidateRuleFacts().orderedFacts().isEmpty()
 				? analysis : null;
 			this.graph = graph;
+			this.constraints = List.copyOf(constraints);
+			this.relocationActions = List.copyOf(relocationActions);
 			this.frequencyFacts = analysis == null ? null : analysis.executionFrequencyFacts();
 			this.executionWeightOverride = executionWeightOverride;
-			this.decisions = graph.decisionNodes().stream().sorted().toList();
-			this.groups = samePlacementGroups(decisions, graph.constraints());
+			this.decisions = decisions.stream().sorted().toList();
+			this.groups = samePlacementGroups(this.decisions, this.constraints);
 			this.groupsByKey = groupsByKey(groups);
 			this.sourceGroupsByValue = sourceGroupsByValue(groups);
-			this.relations = relations(groups, graph.constraints());
+			this.relations = relations(groups, this.constraints);
 			this.relationsByGroup = relationsByGroup(groups.size(), relations);
-			this.relocationsByGroup = relocationsByGroup(groups.size(), graph.relocationActions());
+			this.relocationsByGroup = relocationsByGroup(groups.size(), this.relocationActions);
 			this.derivedActionsByGroup = derivedActionsByGroup(groups.size(),
 				graph.derivedFoutMaterializationActions());
-			this.reachability = this.analysis == null ? null
-				: CandidateSelections.partialReachabilityIndex(this.analysis, graph,
-					graph.relocationActions());
-			this.relocationOrder = this.analysis == null
-				? RelocationSelections.canonicalOrderIndex(graph.relocationActions())
-				: this.analysis.relocationOrderFor(graph.relocationActions());
+			this.reachability = reachability;
+			this.reachabilityProbes = new IdentityHashMap<>();
+			if(this.reachability != null)
+				for(DecisionGroup group : groups)
+					reachabilityProbes.put(group,
+						this.reachability.changedNodesProbe(group.members()));
+			for(RelocationAction action : this.relocationActions)
+				relocationWeights.put(action, computeRelocationWeight(action));
 		}
 
-		private ScoredPlan solve() {
+		private Map<CompiledHopKey,PlacementState> solve() {
 			List<List<PlacementState>> domains = initialDomains(groups);
 			if(!propagate(domains, allArcs()))
 				throw new IllegalStateException("placement policy graph has no arc-consistent legal assignment");
-			ScoredPlan result = choose(domains, 0);
-			if(result == null)
+			if(!propagateCandidateDomains(domains, null, null))
+				throw new IllegalStateException(
+					"placement policy graph has no candidate-consistent legal assignment");
+			List<DecisionGroup> fixed = assignInitialSingletons(domains);
+			if(reachability != null
+				&& !reachability.canStillBeReachable(current, domainsByNode(domains))) {
+				unassign(fixed);
+				throw new IllegalStateException(
+					"placement policy graph has no candidate-reachable fixed assignment");
+			}
+			boolean found = choose(domains, 0);
+			unassign(fixed);
+			if(!found || solution == null)
 				throw new IllegalStateException("placement policy graph has no candidate-reachable legal assignment");
-			return result;
+			return solution;
 		}
 
-		private ScoredPlan choose(List<List<PlacementState>> domains, int depth) {
+		private boolean choose(List<List<PlacementState>> domains, int depth) {
 			maxDepth = Math.max(maxDepth, depth);
-			Map<CompiledHopKey,PlacementState> partial = singletonAssignment(domains);
-			if(reachability != null && !reachability.canStillBeReachable(partial)) {
-				pruned++;
-				return null;
-			}
 			DecisionGroup unresolved = nextGroup(domains);
 			if(unresolved == null) {
 				explored++;
-				return scoreComplete(partial);
+				if(!constraintsSatisfied(current))
+					return false;
+				solution = Map.copyOf(current);
+				return true;
 			}
 			for(PlacementState state : orderedAlternatives(unresolved, domains)) {
-				List<List<PlacementState>> branch = copyDomains(domains);
-				branch.set(unresolved.index(), List.of(state));
-				if(!propagate(branch, arcsFor(unresolved.index()))) {
+				List<DomainChange> trail = new ArrayList<>();
+				setDomain(domains, unresolved.index(), List.of(state), trail);
+				Set<Integer> singletonGroups = new LinkedHashSet<>();
+				singletonGroups.add(unresolved.index());
+				if(!propagate(domains, arcsFor(unresolved.index()), singletonGroups, trail)) {
 					pruned++;
+					restoreDomains(domains, trail);
 					continue;
 				}
-				ScoredPlan result = choose(branch, depth + 1);
-				if(result != null)
-					return result;
+				if(!propagateCandidateDomains(domains, singletonGroups, trail)) {
+					pruned++;
+					restoreDomains(domains, trail);
+					continue;
+				}
+				List<DecisionGroup> assigned = assignNewSingletons(domains, singletonGroups);
+				boolean reachable = candidatesReachable(assigned, domains);
+				boolean result = reachable && choose(domains, depth + 1);
+				if(!reachable)
+					pruned++;
+				unassign(assigned);
+				restoreDomains(domains, trail);
+				if(result)
+					return true;
 			}
-			return null;
+			return false;
 		}
 
 		/**
@@ -311,6 +592,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 		}
 
 		private double relocationWeight(RelocationAction action) {
+			return relocationWeights.getOrDefault(action, 1.0);
+		}
+
+		private double computeRelocationWeight(RelocationAction action) {
 			double weight = 0.0;
 			for(var obligation : action.obligations()) {
 				double obligationWeight = executionWeight(obligation.consumer());
@@ -318,14 +603,9 @@ public final class PolicyFirstFeasiblePlacementSelector
 					for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
 						action.key().sourceValueVersion(), List.of()))
 						for(Node source : groups.get(sourceGroup).members())
-							try {
-								obligationWeight = Math.min(obligationWeight,
-									frequencyFacts.forwardingWeight(
-										obligation.consumer(), source.key()));
-							}
-							catch(IllegalArgumentException incompleteContext) {
-								// Retain the conservative consumer execution weight.
-							}
+							obligationWeight = Math.min(obligationWeight,
+								frequencyFacts.forwardingWeightOrDefault(
+									obligation.consumer(), source.key(), obligationWeight));
 				}
 				// One physical action can serve compatible consumers, so reuse is modeled by
 				// the maximum dynamic demand rather than summing duplicate obligations.
@@ -335,20 +615,20 @@ public final class PolicyFirstFeasiblePlacementSelector
 		}
 
 		private double executionWeight(CompiledHopKey key) {
+			Double cached = executionWeights.get(key);
+			if(cached != null)
+				return cached;
+			double weight;
 			if(executionWeightOverride != null) {
-				double weight = executionWeightOverride.applyAsDouble(key);
+				weight = executionWeightOverride.applyAsDouble(key);
 				if(!Double.isFinite(weight) || weight <= 0.0)
 					throw new IllegalArgumentException("selector execution weight must be positive");
-				return weight;
 			}
-			if(frequencyFacts == null)
-				return 1.0;
-			try {
-				return frequencyFacts.executionWeight(key);
-			}
-			catch(IllegalArgumentException incompleteContext) {
-				return 1.0;
-			}
+			else
+				weight = frequencyFacts == null ? 1.0
+					: frequencyFacts.executionWeightOrDefault(key, 1.0);
+			executionWeights.put(key, weight);
+			return weight;
 		}
 
 		private int anchorAffinityPenalty(DecisionGroup group, PlacementState state) {
@@ -408,51 +688,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 			return group == selected.index() ? List.of(state) : domains.get(group);
 		}
 
-		private ScoredPlan scoreComplete(Map<CompiledHopKey,PlacementState> assignment) {
-			if(assignment.size() != decisions.size() || !constraintsSatisfied(assignment)) {
-				pruned++;
-				return null;
-			}
-			try {
-				if(analysis == null) {
-					List<RelocationChoiceReceipt> choices = RelocationSelections.selectCanonical(
-						graph, graph.relocationActions(), assignment, (demand, action) -> true);
-					List<RelocationActionKey> relocations = RelocationSelections.emittedActions(
-						graph, graph.relocationActions(), assignment, choices);
-					return scored(assignment, List.of(), choices, relocations,
-						RelocationSelections.physicalEmissionCount(relocations));
-				}
-				CandidateSelections.Selection selected = CandidateSelections.selectMaterializationMaximal(
-					analysis, graph, graph.relocationActions(), assignment, relocationOrder, reachability);
-				int movement = Math.addExact(Math.addExact(selected.relocationPhysicalEmissionCount(),
-					selected.localMaterializationActionCount()), selected.foutMaterializationActionCount());
-				return scored(assignment, selected.candidates(), selected.relocationChoices(),
-					selected.emittedActions(), movement);
-			}
-			catch(IllegalArgumentException | IllegalStateException unavailable) {
-				pruned++;
-				return null;
-			}
-		}
-
-		private ScoredPlan scored(Map<CompiledHopKey,PlacementState> assignment,
-			List<CandidateSelectionReceipt> candidates, List<RelocationChoiceReceipt> choices,
-			List<RelocationActionKey> relocations, int movement) {
-			int fed = 0;
-			int fout = 0;
-			for(Node node : decisions) {
-				PlacementState state = assignment.get(node.key());
-				if(state.execType() == ExecType.FED)
-					fed++;
-				if(state.output() == FederatedOutput.FOUT)
-					fout++;
-			}
-			return new ScoredPlan(Map.copyOf(assignment), List.copyOf(candidates), List.copyOf(choices),
-				List.copyOf(relocations), fed, fout, movement);
-		}
-
 		private boolean constraintsSatisfied(Map<CompiledHopKey,PlacementState> assignment) {
-			for(Constraint constraint : graph.constraints()) {
+			if(assignment.size() != decisions.size())
+				return false;
+			for(Constraint constraint : constraints) {
 				PlacementState left = assignment.get(constraint.left());
 				PlacementState right = assignment.get(constraint.right());
 				if(left != null && right != null
@@ -481,24 +720,132 @@ public final class PolicyFirstFeasiblePlacementSelector
 			return selected;
 		}
 
-		private Map<CompiledHopKey,PlacementState> singletonAssignment(
-			List<List<PlacementState>> domains) {
-			Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
+		private List<DecisionGroup> assignInitialSingletons(List<List<PlacementState>> domains) {
+			Set<Integer> singletonGroups = new LinkedHashSet<>();
 			for(DecisionGroup group : groups)
 				if(domains.get(group.index()).size() == 1)
-					group.assign(assignment, domains.get(group.index()).get(0));
-			return assignment;
+					singletonGroups.add(group.index());
+			return assignNewSingletons(domains, singletonGroups);
+		}
+
+		private List<DecisionGroup> assignNewSingletons(List<List<PlacementState>> domains,
+			Collection<Integer> singletonGroups) {
+			List<DecisionGroup> assigned = new ArrayList<>();
+			for(int index : singletonGroups.stream().sorted().toList()) {
+				DecisionGroup group = groups.get(index);
+				if(current.containsKey(group.members().get(0).key()))
+					continue;
+				List<PlacementState> domain = domains.get(index);
+				if(domain.size() != 1)
+					throw new IllegalStateException("propagated singleton group is not singleton");
+				group.assign(current, domain.get(0));
+				assigned.add(group);
+			}
+			return assigned;
+		}
+
+		private boolean candidatesReachable(List<DecisionGroup> changed,
+			List<List<PlacementState>> domains) {
+			if(reachability == null)
+				return true;
+			Map<CompiledHopKey,List<PlacementState>> byNode = domainsByNode(domains);
+			for(DecisionGroup group : changed)
+				if(!reachability.canStillBeReachable(
+					current, byNode, reachabilityProbes.get(group)))
+					return false;
+			return true;
+		}
+
+		/**
+		 * Generalized arc consistency for candidate rows. Each retained placement
+		 * state must leave at least one exact runtime candidate row reachable under
+		 * the current source/anchor domains. This turns late whole-assignment
+		 * candidate failures into local domain pruning before greedy commitment.
+		 */
+		private boolean propagateCandidateDomains(List<List<PlacementState>> domains,
+			Set<Integer> singletonGroups, List<DomainChange> trail) {
+			if(reachability == null)
+				return true;
+			boolean changed;
+			do {
+				changed = false;
+				for(DecisionGroup group : groups) {
+					List<PlacementState> domain = domains.get(group.index());
+					if(domain.isEmpty())
+						return false;
+					if(current.containsKey(group.members().get(0).key()))
+						continue;
+					Map<CompiledHopKey,List<PlacementState>> byNode = domainsByNode(domains);
+					List<PlacementState> retained = new ArrayList<>();
+					for(PlacementState state : domain) {
+						group.assign(current, state);
+						boolean reachable;
+						try {
+							reachable = reachability.canStillBeReachable(current, byNode,
+								reachabilityProbes.get(group));
+						}
+						finally {
+							group.remove(current);
+						}
+						if(reachable)
+							retained.add(state);
+					}
+					if(retained.size() == domain.size())
+						continue;
+					pruned += domain.size() - retained.size();
+					setDomain(domains, group.index(), List.copyOf(retained), trail);
+					if(retained.isEmpty())
+						return false;
+					if(singletonGroups != null && domain.size() > 1 && retained.size() == 1)
+						singletonGroups.add(group.index());
+					if(!propagate(domains, arcsFor(group.index()), singletonGroups, trail))
+						return false;
+					changed = true;
+				}
+			}
+			while(changed);
+			return reachability.canStillBeReachable(current, domainsByNode(domains));
+		}
+
+		private Map<CompiledHopKey,List<PlacementState>> domainsByNode(
+			List<List<PlacementState>> domains) {
+			Map<CompiledHopKey,List<PlacementState>> result = new IdentityHashMap<>();
+			for(DecisionGroup group : groups)
+				for(Node member : group.members()) {
+					List<PlacementState> owned = new ArrayList<>();
+					for(PlacementState state : domains.get(group.index()))
+						for(PlacementState candidate : member.legalAlternatives())
+							if(candidate.equals(state)) {
+								owned.add(candidate);
+								break;
+							}
+					result.put(member.key(), List.copyOf(owned));
+				}
+			return result;
+		}
+
+		private void unassign(List<DecisionGroup> assigned) {
+			for(int index = assigned.size() - 1; index >= 0; index--)
+				assigned.get(index).remove(current);
 		}
 
 		private boolean propagate(List<List<PlacementState>> domains, Collection<Arc> initial) {
+			return propagate(domains, initial, null, null);
+		}
+
+		private boolean propagate(List<List<PlacementState>> domains, Collection<Arc> initial,
+			Set<Integer> singletonGroups, List<DomainChange> trail) {
 			ArrayDeque<Arc> pending = new ArrayDeque<>(initial);
 			while(!pending.isEmpty()) {
 				Arc arc = pending.removeFirst();
-				if(!revise(domains, arc))
+				int priorSize = domains.get(arc.target()).size();
+				if(!revise(domains, arc, trail))
 					continue;
 				List<PlacementState> revised = domains.get(arc.target());
 				if(revised.isEmpty())
 					return false;
+				if(singletonGroups != null && priorSize > 1 && revised.size() == 1)
+					singletonGroups.add(arc.target());
 				for(Relation neighbor : relationsByGroup.get(arc.target())) {
 					int other = neighbor.other(arc.target());
 					if(other != arc.target())
@@ -508,7 +855,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			return true;
 		}
 
-		private boolean revise(List<List<PlacementState>> domains, Arc arc) {
+		private boolean revise(List<List<PlacementState>> domains, Arc arc,
+			List<DomainChange> trail) {
 			List<PlacementState> target = domains.get(arc.target());
 			List<PlacementState> support = domains.get(arc.support());
 			List<PlacementState> retained = target.stream().filter(candidate -> support.stream()
@@ -516,8 +864,24 @@ public final class PolicyFirstFeasiblePlacementSelector
 			if(retained.size() == target.size())
 				return false;
 			pruned += target.size() - retained.size();
-			domains.set(arc.target(), retained);
+			setDomain(domains, arc.target(), retained, trail);
 			return true;
+		}
+
+		private static void setDomain(List<List<PlacementState>> domains, int group,
+			List<PlacementState> replacement, List<DomainChange> trail) {
+			List<PlacementState> previous = domains.get(group);
+			if(trail != null)
+				trail.add(new DomainChange(group, previous));
+			domains.set(group, replacement);
+		}
+
+		private static void restoreDomains(List<List<PlacementState>> domains,
+			List<DomainChange> trail) {
+			for(int index = trail.size() - 1; index >= 0; index--) {
+				DomainChange change = trail.get(index);
+				domains.set(change.group(), change.previous());
+			}
 		}
 
 		private List<Arc> allArcs() {
@@ -544,6 +908,29 @@ public final class PolicyFirstFeasiblePlacementSelector
 
 	private record Requirement(boolean possible, boolean definite) { }
 	private record DirectSource(boolean possible, boolean definite) { }
+	private record PolicyComponent(List<Node> nodes, List<Constraint> constraints,
+		List<RelocationAction> relocationActions) implements Comparable<PolicyComponent> {
+		@Override
+		public int compareTo(PolicyComponent that) {
+			if(nodes.isEmpty())
+				return that.nodes.isEmpty() ? 0 : -1;
+			if(that.nodes.isEmpty())
+				return 1;
+			return nodes.get(0).compareTo(that.nodes.get(0));
+		}
+	}
+	private record CandidateDependency(CompiledHopKey producer, CompiledHopKey consumer,
+		int inputPosition) implements Comparable<CandidateDependency> {
+		@Override
+		public int compareTo(CandidateDependency that) {
+			int producerOrder = producer.compareTo(that.producer);
+			if(producerOrder != 0)
+				return producerOrder;
+			int consumerOrder = consumer.compareTo(that.consumer);
+			return consumerOrder != 0 ? consumerOrder
+				: Integer.compare(inputPosition, that.inputPosition);
+		}
+	}
 	private record MovementHint(double unavoidable, double exposed, double derived,
 		double sourcePreparation, int anchorPenalty)
 		implements Comparable<MovementHint> {
@@ -596,9 +983,14 @@ public final class PolicyFirstFeasiblePlacementSelector
 					}
 				if(owned == null)
 					throw new IllegalStateException("SAME_PLACEMENT member has no node-owned state");
-				assignment.put(member.key(), owned);
+					assignment.put(member.key(), owned);
+				}
 			}
-		}
+
+			private void remove(Map<CompiledHopKey,PlacementState> assignment) {
+				for(Node member : members)
+					assignment.remove(member.key());
+			}
 
 		@Override
 		public int compareTo(DecisionGroup that) {
@@ -637,6 +1029,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 	}
 
 	private record Arc(Relation relation, int target, int support) { }
+	private record DomainChange(int group, List<PlacementState> previous) { }
 
 	private static List<DecisionGroup> samePlacementGroups(List<Node> decisions,
 		List<Constraint> constraints) {
@@ -747,10 +1140,6 @@ public final class PolicyFirstFeasiblePlacementSelector
 		for(DecisionGroup group : groups)
 			result.add(group.alternatives());
 		return result;
-	}
-
-	private static List<List<PlacementState>> copyDomains(List<List<PlacementState>> domains) {
-		return new ArrayList<>(domains);
 	}
 
 	private static String normalizedSignature(ScoredPlan plan) {

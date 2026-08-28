@@ -106,6 +106,23 @@ public final class OccurrenceExecutionFrequencyFacts {
 	}
 
 	/**
+	 * Non-throwing policy-ordering estimate. Detached/synthetic occurrence paths may
+	 * intentionally have no exact compiler profile; callers that merely rank two
+	 * otherwise legal states must not allocate an exception on every comparison.
+	 * Exact cost models continue to use the strict methods below.
+	 */
+	public double executionWeightOrDefault(CompiledHopKey key, double defaultWeight) {
+		requirePositiveWeight(defaultWeight, "PLACEMENT_EXECUTION_DEFAULT_INVALID");
+		List<OccurrenceProfileFact> profiles = profilesOrNull(key);
+		if(profiles == null)
+			return defaultWeight;
+		double total = 0.0;
+		for(OccurrenceProfileFact profile : profiles)
+			total += profile.expectedExecutions();
+		return Double.isFinite(total) && total > 0.0 ? total : defaultWeight;
+	}
+
+	/**
 	 * Strict execution weight for exact physical costing.  Exact costing requires one compiler-owned
 	 * occurrence path rather than the conservative multi-path aggregation used by local ordering.
 	 */
@@ -140,6 +157,29 @@ public final class OccurrenceExecutionFrequencyFacts {
 				producerProfile.loopContext()), "PLACEMENT_FORWARDING_WEIGHT_UNPROVEN");
 		}
 		return requirePositiveWeight(total, "PLACEMENT_FORWARDING_WEIGHT_UNPROVEN");
+	}
+
+	/** Non-throwing counterpart used only for deterministic local policy ordering. */
+	public double forwardingWeightOrDefault(CompiledHopKey consumer, CompiledHopKey producer,
+		double defaultWeight) {
+		requirePositiveWeight(defaultWeight, "PLACEMENT_FORWARDING_DEFAULT_INVALID");
+		List<OccurrenceProfileFact> consumers = profilesOrNull(consumer);
+		List<OccurrenceProfileFact> producers = profilesOrNull(producer);
+		if(consumers == null || producers == null)
+			return defaultWeight;
+		double total = 0.0;
+		for(OccurrenceProfileFact consumerProfile : consumers) {
+			OccurrenceProfileFact producerProfile = producers.stream()
+				.filter(candidate -> candidate.contextOrdinal() == consumerProfile.contextOrdinal())
+				.findFirst().orElse(null);
+			double weight = producerProfile == null ? consumerProfile.expectedExecutions()
+				: PlacementCostSemantics.forwardingWeight(consumerProfile.expectedExecutions(),
+					consumerProfile.loopContext(), producerProfile.loopContext());
+			if(!Double.isFinite(weight) || weight <= 0.0)
+				return defaultWeight;
+			total += weight;
+		}
+		return Double.isFinite(total) && total > 0.0 ? total : defaultWeight;
 	}
 
 	/** Strict producer-to-consumer weight for exact physical costing. */
@@ -188,6 +228,21 @@ public final class OccurrenceExecutionFrequencyFacts {
 			List<OccurrenceProfileFact> profiles = profilesByPath.get(path);
 			if(profiles == null || profiles.isEmpty())
 				throw new IllegalArgumentException("PLACEMENT_OCCURRENCE_PATH_UNPROVEN|path=" + path);
+			result.addAll(profiles);
+		}
+		return List.copyOf(result);
+	}
+
+	private List<OccurrenceProfileFact> profilesOrNull(CompiledHopKey key) {
+		Objects.requireNonNull(key, "key");
+		List<String> paths = key.controlRegion().regionPath();
+		if(paths.isEmpty())
+			return null;
+		List<OccurrenceProfileFact> result = new ArrayList<>();
+		for(String path : paths) {
+			List<OccurrenceProfileFact> profiles = profilesByPath.get(path);
+			if(profiles == null || profiles.isEmpty())
+				return null;
 			result.addAll(profiles);
 		}
 		return List.copyOf(result);

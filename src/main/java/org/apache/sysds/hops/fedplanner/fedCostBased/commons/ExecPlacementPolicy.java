@@ -247,6 +247,7 @@ public final class ExecPlacementPolicy {
 	private static Decision decide(Hop hop, Privacy privacy, FType fType, ExecType oracleExec,
 		FederatedOutput placement) {
 		boolean dmlFunctionPlaceholder = isDmlFunctionPlaceholder(hop);
+		boolean multiReturnBoundary = isMultiReturnBuiltinHop(hop) || isFunctionOutputFromMultiReturn(hop);
 
 		Decision decision = new Decision();
 
@@ -256,14 +257,6 @@ public final class ExecPlacementPolicy {
 		}
 
 		if (HopUtils.isPrintOrPWrite(hop)) {
-			decision.allowCP_LOUT = true;
-			return decision;
-		}
-
-		if (isMultiReturnBuiltinHop(hop) || isFunctionOutputFromMultiReturn(hop)) {
-			// Multi-return builtins (e.g., eigen) have no runtime FED instruction, and their
-			// FunctionOutput hops must stay local as well. Allowing CP->FOUT on outputs can
-			// still push FED inputs into the builtin call and trigger invalid FED instructions.
 			decision.allowCP_LOUT = true;
 			return decision;
 		}
@@ -345,6 +338,15 @@ public final class ExecPlacementPolicy {
 				break;
 		}
 
+		if (multiReturnBoundary) {
+			// FunctionOp lowering chooses FED iff a concrete output is FOUT. There is no
+			// independent CP->FOUT or FED->LOUT lowering for multi-return builtins. The
+			// operation-specific oracle decides whether FED/FOUT exists (transformencode)
+			// or the builtin is CP/LOUT-only (e.g., eigen).
+			decision.allowCP_FOUT = false;
+			decision.allowFED_LOUT = false;
+		}
+
 		if (hop instanceof DataOp) {
 			Types.OpOpData op = ((DataOp) hop).getOp();
 			if (op == Types.OpOpData.TRANSIENTREAD) {
@@ -397,8 +399,11 @@ public final class ExecPlacementPolicy {
 		if (parents == null || parents.isEmpty())
 			return false;
 		for (Hop parent : parents) {
-			if (parent instanceof FunctionOp
-					&& ((FunctionOp) parent).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN)
+			if (!(parent instanceof FunctionOp function)
+					|| function.getFunctionType() != FunctionType.MULTIRETURN_BUILTIN)
+				continue;
+			List<Hop> outputs = function.getOutputs();
+			if (outputs != null && outputs.stream().anyMatch(output -> output == hop))
 				return true;
 		}
 		return false;

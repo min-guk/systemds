@@ -24,6 +24,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.lops.Transform;
@@ -138,12 +139,16 @@ public class ReorgOp extends MultiThreadedHop
 		{
 			case TRANS:
 			{
-				Lop lin = getInput().get(0).constructLops();
+				Hop input = getInput().get(0);
+				Lop lin = input.constructLops();
 				if( lin instanceof Transform && ((Transform)lin).getOp()==ReOrgOp.TRANS
-					&& !hasPlannerMaterializationBoundary(getInput().get(0), this) )
+					&& !hasPlannerPlacementAuthority(input)
+					&& !hasPlannerMaterializationBoundary(input, this) )
 					setLops(lin.getInputs().get(0)); //if input is already a transpose, avoid redundant transpose ops
-				else if( getDim1()==1 && getDim2()==1 )
+				else if( getDim1()==1 && getDim2()==1
+					&& canElideOneByOneTranspose(input) ) {
 					setLops(lin); //if input of size 1x1, avoid unnecessary transpose
+				}
 				else { //general case
 					int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
 					Transform transform1 = new Transform(lin, _op, getDataType(), getValueType(), et, k);
@@ -240,6 +245,17 @@ public class ReorgOp extends MultiThreadedHop
 			|| FederatedRefedRegistry.hasSelectedConsumerInput(consumerHopId)
 			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(consumerHopId)
 			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(consumerHopId);
+	}
+
+	private boolean canElideOneByOneTranspose(Hop input) {
+		// A selected occurrence must emit its own transpose instruction. Reusing the child
+		// Lop would erase the occurrence and overwrite its planner identity during setLops.
+		return !hasPlannerPlacementAuthority(input);
+	}
+
+	private boolean hasPlannerPlacementAuthority(Hop input) {
+		return isPlannerPlacementSelected() || input.isPlannerPlacementSelected()
+			|| FederatedPlannerUtils.hasPlannerRecompileStateAuthority();
 	}
 
 

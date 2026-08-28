@@ -1038,7 +1038,8 @@ public class FederatedPlannerDpCostEnumerator {
 		int numFoutOnlyInputs = fOUTOnlyinputHops.size();
 		// Boundary transfer accounting is based on selected execution/output combinations:
 		// FED parent + LOUT child always incurs LOUT->FED upload (shared by parent count/weight).
-		// CP parent + FOUT child always incurs FOUT->CP download.
+		// CP parent + FOUT child incurs FOUT->CP payload download except for exact
+		// FederationMap metadata reads captured by the shared PlacementAnalysis.
 		final Privacy privacyConstraint = capture.context.analysis().requirePrivacy(hopOccurrence.key());
 
 		double hopNetworkWeight = hopCommon.getNetworkWeight();
@@ -3234,8 +3235,8 @@ public class FederatedPlannerDpCostEnumerator {
 		if (inputHop == null || inputHop.getDataType() == null)
 			return false;
 		// Even OPTIONAL inputs need to be transferred to FED sites for FED execution (e.g., broadcast vectors).
-		// Non-matrix inputs are treated as embedded literals and do not incur separate forwarding costs.
-		return inputHop.getDataType().isMatrix();
+		// Matrix and frame values can carry FederationMaps; scalar/control operands remain embedded.
+		return inputHop.getDataType().isMatrix() || inputHop.getDataType().isFrame();
 	}
 
 	// Creates a dummy root node (fedplan) and selects the FedPlan with the minimum
@@ -3703,6 +3704,9 @@ public class FederatedPlannerDpCostEnumerator {
 						childPlan.getHopRef(), parentPlan.getHopRef(), uploadType, numOfWorkers);
 				return exactEstimator.forwardingShare(uploadCost, childPlan, parentPlan);
 		} else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
+			if(exactEstimator.isCoordinatorMetadataOnlyBoundary(
+				parentPlan.getHopRef(), childPlan.getHopRef()))
+				return 0.0;
 			double downloadCost;
 			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childPlan.getHopRef())) {
 				downloadCost = 0.0;

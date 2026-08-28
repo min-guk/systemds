@@ -23,13 +23,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
@@ -43,18 +42,20 @@ import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
-import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Test;
 
 public class OracleFallbackFTypeTest {
@@ -93,82 +94,67 @@ public class OracleFallbackFTypeTest {
 	}
 
 	@Test
-	public void testTransientRewireSkipsReadInWriteInputDag() throws Exception {
-		DataOp trInput = transientRead("X");
-		LiteralOp one = new LiteralOp(1.0);
-		BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, trInput, one);
-		DataOp tw = transientWrite("X", plus);
-
-		DataOp trConsumer = transientRead("X");
-		AggUnaryOp consumer = new AggUnaryOp("sum", DataType.MATRIX, ValueType.FP64,
-			AggOp.SUM, Direction.Row, trConsumer);
-
-		Map<Long, List<Hop>> rewire = buildTransientRewireTable(Arrays.asList(tw, consumer));
-		assertNotNull(rewire);
-		List<Hop> twLinks = rewire.get(tw.getHopID());
-		assertNotNull(twLinks);
-		assertEquals(1, twLinks.size());
-		assertEquals(trConsumer.getHopID(), twLinks.get(0).getHopID());
-
-		List<Hop> trLinks = rewire.get(trConsumer.getHopID());
-		assertNotNull(trLinks);
-		assertEquals(1, trLinks.size());
-		assertEquals(tw.getHopID(), trLinks.get(0).getHopID());
-
-		assertFalse("Input TREAD should not be rewired as a consumer",
-			rewire.containsKey(trInput.getHopID()));
+	public void testSharedAnalysisOwnsLogicalTransientForwardInsteadOfFedAllPrivateRewire() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(
+			ProductionShadowFixtureFactory.compile("B-21"));
+		var forwards = analysis.logicalTransientInputsInCanonicalOrder().stream()
+			.filter(fact -> analysis.hop(fact.sourceWrite()).orElseThrow().getDataType().isMatrix())
+			.toList();
+		assertFalse("Fixture must retain matrix transient forwarding", forwards.isEmpty());
+		for(var forward : forwards) {
+			assertEquals(OpOpData.TRANSIENTWRITE,
+				((DataOp) analysis.hop(forward.sourceWrite()).orElseThrow()).getOp());
+			assertEquals(OpOpData.TRANSIENTREAD,
+				((DataOp) analysis.hop(forward.targetRead()).orElseThrow()).getOp());
+			assertTrue("Logical CFG forwarding must not be fabricated as a compiled physical HOP edge",
+				analysis.compiledInputEdgesInCanonicalOrder().stream().noneMatch(edge ->
+					edge.producer() == forward.sourceWrite()
+						&& edge.consumer() == forward.targetRead()));
+		}
 	}
 
 	@Test
-	public void testTransientRewireSkipsMultipleWrites() throws Exception {
-		DataOp tr1 = transientRead("X");
-		DataOp tw1 = transientWrite("X", tr1);
-		DataOp tr2 = transientRead("X");
-		DataOp tw2 = transientWrite("X", tr2);
-
-		Map<Long, List<Hop>> rewire = buildTransientRewireTable(Arrays.asList(tw1, tw2));
-		assertTrue("Expected no rewire entries when multiple TWRITEs exist",
-			rewire == null || rewire.isEmpty());
+	public void testSharedAnalysisKeepsDistinctControlFlowValueVersions() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(
+			ProductionShadowFixtureFactory.compile("B-18"));
+		var xVersions = analysis.graph().nodes().stream()
+			.map(node -> node.valueVersion()).filter(version -> "X".equals(version.lexicalVariable()))
+			.distinct().toList();
+		assertTrue("Loop/branch definitions of X must not collapse into one memo-table identity",
+			xVersions.size() > 1);
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
-	public void testFedAllOracleInputUsesCpfoutHintWhenAvailable() throws Exception {
-		FederatedPlannerUtils.clearFedInitVars();
-		try {
-			DataOp fedX = transientRead("Xfed");
-			FederatedPlannerUtils.registerFedInitVar("Xfed");
-			fedX.setForcedExecType(ExecType.FED);
-			fedX.setFederatedOutput(FederatedOutput.FOUT);
-
-			DataOp localA = transientRead("A");
-			DataOp localB = transientRead("B");
-			BinaryOp localCandidate = new BinaryOp("localCandidate", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, localA, localB);
-			localCandidate.setDim1(ROWS);
-			localCandidate.setDim2(COLS);
-
-			BinaryOp parent = new BinaryOp("parent", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, fedX, localCandidate);
-			parent.setDim1(ROWS);
-			parent.setDim2(COLS);
-
-			Map<Long, FType> memo = new java.util.HashMap<>();
-			memo.put(fedX.getHopID(), FType.ROW);
-
-			FederatedPlannerFedAll planner = new FederatedPlannerFedAll();
-			Method method = FederatedPlannerFedAll.class.getDeclaredMethod(
-				"collectInputFTypes", Hop.class, Map.class, Map.class, boolean.class);
-			method.setAccessible(true);
-
-			List<FType> base = (List<FType>) method.invoke(planner, parent, memo, null, false);
-			List<FType> hinted = (List<FType>) method.invoke(planner, parent, memo, null, true);
-
-			assertEquals("Expected base input FType to preserve existing FED input", FType.ROW, base.get(0));
-			assertNull("Expected local input to be null without CP->FOUT hint injection", base.get(1));
-			assertNotNull("Expected CP->FOUT-capable local input to receive inferred FType hint", hinted.get(1));
+	public void testFedAllConsumesSharedCpfoutCandidateDomain() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-22");
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+		var facts = analysis.candidateRuleFacts().orderedFacts();
+		boolean hasSharedLocalAndCpfoutDomain = false;
+		for(var nativeFact : facts) {
+			for(int position = 0; position < nativeFact.key().orderedInputs().size(); position++) {
+				if(nativeFact.key().orderedInputs().get(position).present())
+					continue;
+				int inputPosition = position;
+				hasSharedLocalAndCpfoutDomain = facts.stream().anyMatch(materializedFact ->
+					materializedFact.key().parentOccurrence() == nativeFact.key().parentOccurrence()
+						&& materializedFact.key().orderedInputs().size()
+							== nativeFact.key().orderedInputs().size()
+						&& materializedFact.key().orderedInputs().get(inputPosition).present());
+				if(hasSharedLocalAndCpfoutDomain)
+					break;
+			}
+			if(hasSharedLocalAndCpfoutDomain)
+				break;
 		}
-		finally {
-			FederatedPlannerUtils.clearFedInitVars();
-		}
+		assertTrue("Shared candidate domain must retain native-local and legal CP-to-FOUT alternatives",
+			hasSharedLocalAndCpfoutDomain);
+
+		var result = new FederatedPlannerFedAll().select(analysis);
+		assertSame("FedAll must consume the prebuilt shared PlacementAnalysis", analysis, result.analysis());
+		assertFalse(result.selectedCandidateSelections().isEmpty());
+		result.selectedCandidateSelections().forEach(receipt -> assertSame(
+			"FedAll must select an exact analysis-owned candidate receipt", receipt,
+			analysis.canonicalCandidateReceipt(receipt.rule(), receipt.emission())));
 	}
 
 	@Test
@@ -195,11 +181,46 @@ public class OracleFallbackFTypeTest {
 			FType.ROW, decision.logicalFType());
 	}
 
-	@SuppressWarnings("unchecked")
-	private static Map<Long, List<Hop>> buildTransientRewireTable(List<Hop> roots) throws Exception {
-		Method method = FederatedPlannerFedAll.class.getDeclaredMethod("buildTransientRewireTable", List.class);
-		method.setAccessible(true);
-		return (Map<Long, List<Hop>>) method.invoke(null, roots);
+	@Test
+	public void testTransformEncodeUsesNativeFedCapabilityAndHeterogeneousOutputs() {
+		DataOp frame = new DataOp("Fall", DataType.FRAME, ValueType.STRING,
+			OpOpData.TRANSIENTREAD, null, ROWS, COLS, ROWS * COLS, BLOCKSIZE);
+		LiteralOp spec = new LiteralOp("{ids:true,dummycode:[1]}");
+		DataOp encoded = new DataOp("X0", DataType.MATRIX, ValueType.FP64,
+			frame, OpOpData.FUNCTIONOUTPUT, null);
+		DataOp metadata = new DataOp("M", DataType.FRAME, ValueType.STRING,
+			frame, OpOpData.FUNCTIONOUTPUT, null);
+		FunctionOp transform = new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, "_internal", "transformencode",
+			null, List.of(frame, spec), new String[] {"X0", "M"},
+			new java.util.ArrayList<>(List.of(encoded, metadata)));
+
+		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+		OpCaps callCaps = oracle.decide(transform, Arrays.asList(FType.ROW, null));
+		assertEquals(ExecType.FED, callCaps.exec());
+		assertEquals(FederatedOutput.FOUT, callCaps.placement());
+		assertEquals(FType.ROW, callCaps.foutFType().orElse(null));
+
+		OpCaps encodedCaps = oracle.decide(encoded, List.of(FType.ROW));
+		assertEquals(ExecType.FED, encodedCaps.exec());
+		assertEquals(FederatedOutput.FOUT, encodedCaps.placement());
+		assertEquals(FType.ROW, encodedCaps.foutFType().orElse(null));
+
+		OpCaps metadataCaps = oracle.decide(metadata, List.of(FType.ROW));
+		assertEquals(ExecType.CP, metadataCaps.exec());
+		assertEquals(FederatedOutput.LOUT, metadataCaps.placement());
+	}
+
+	@Test
+	public void testBuiltinMKMeansSpecializationPrecedesGenericFunctionRule() {
+		DataOp input = matrixRead("X", ROWS, COLS);
+		FunctionOp call = new FunctionOp(FunctionType.DML, ".builtinNS", "m_kmeans",
+			new String[] {"X"}, List.of(input), new String[] {"C"}, false);
+
+		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+		OpCaps caps = oracle.decide(call, List.of(FType.ROW));
+		assertEquals(ExecType.FED, caps.exec());
+		assertEquals(FederatedOutput.FOUT, caps.placement());
+		assertEquals("builtin m_kmeans placeholder", caps.detail().orElse(null));
 	}
 
 	private static DataOp matrixRead(String name, long rows, long cols) {
@@ -211,7 +232,4 @@ public class OracleFallbackFTypeTest {
 		return matrixRead(name, ROWS, COLS);
 	}
 
-	private static DataOp transientWrite(String name, Hop input) {
-		return new DataOp(name, DataType.MATRIX, ValueType.FP64, input, OpOpData.TRANSIENTWRITE, null);
-	}
 }

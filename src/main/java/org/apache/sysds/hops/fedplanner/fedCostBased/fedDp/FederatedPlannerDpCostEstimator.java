@@ -248,11 +248,14 @@ public class FederatedPlannerDpCostEstimator {
 				toFED, foutToFED, loutOnly, loutCumulative, loutToFED, foutOnly, foutCumulative,
 				foutToCP, foutOnlyToFED, workers);
 			for(int index = 0; index < inputs.size(); index++) {
-				if(!isLatentWdivmmRemovedBoundary(inputs.get(index)))
-					continue;
-				toCP[index] = 0.0;
-				toFED[index] = 0.0;
-				foutToFED[index] = 0.0;
+				Hop child = inputs.get(index);
+				if(isCoordinatorMetadataOnlyBoundary(common.getHopRef(), child))
+					toCP[index] = 0.0;
+				if(isLatentWdivmmRemovedBoundary(child)) {
+					toCP[index] = 0.0;
+					toFED[index] = 0.0;
+					foutToFED[index] = 0.0;
+				}
 			}
 			for(int index = 0; index < loutOnly.size(); index++) {
 				Hop child = loutOnly.get(index);
@@ -274,11 +277,22 @@ public class FederatedPlannerDpCostEstimator {
 					upload, childPlan, common, commonTable, memo));
 			}
 			for(int index = 0; index < foutOnly.size(); index++) {
-				if(!isLatentWdivmmRemovedBoundary(foutOnly.get(index)))
-					continue;
-				foutToCP.set(index, 0.0);
-				foutOnlyToFED.set(index, 0.0);
+				Hop child = foutOnly.get(index);
+				if(isCoordinatorMetadataOnlyBoundary(common.getHopRef(), child))
+					foutToCP.set(index, 0.0);
+				if(isLatentWdivmmRemovedBoundary(child)) {
+					foutToCP.set(index, 0.0);
+					foutOnlyToFED.set(index, 0.0);
+				}
 			}
+		}
+
+		/** True only when the exact parent-child edge is a runtime FederationMap metadata read. */
+		public boolean isCoordinatorMetadataOnlyBoundary(Hop parent, Hop child) {
+			HopOccurrenceProjection parentOccurrence = memo.requirePlanCarrierOccurrence(parent);
+			HopOccurrenceProjection childOccurrence = memo.requirePlanCarrierOccurrence(child);
+			return analysis.isCoordinatorMetadataOnlyInputBoundary(
+				childOccurrence.key(), parentOccurrence.key());
 		}
 
 		private boolean isLatentWdivmmRemovedBoundary(Hop child) {

@@ -257,7 +257,13 @@ public final class PlannerRuntimePlacementAudit {
 	private static final Set<String> LOWERED_PLAN_KEYS = ConcurrentHashMap.newKeySet();
 	private static final Set<String> LOWERED_SYNTHETIC_KEYS = ConcurrentHashMap.newKeySet();
 	private static final Set<String> AUTHORITY_PLAN_HASHES = ConcurrentHashMap.newKeySet();
-	private static final ThreadLocal<LoweredExpectation> ACTIVE_FEDERATED_PARENT = new ThreadLocal<>();
+	// Federated implementations such as transformencode deliberately create short-lived
+	// worker-dispatch pools inside one already-proved coordinator FED instruction.  The
+	// child callbacks must carry the same immutable parent proof; otherwise the audit either
+	// rejects a legal dispatch or, if callback failures are accidentally swallowed, publishes
+	// a federation map for worker values that were never created.
+	private static final ThreadLocal<LoweredExpectation> ACTIVE_FEDERATED_PARENT =
+		new InheritableThreadLocal<>();
 
 	private PlannerRuntimePlacementAudit() { }
 
@@ -867,6 +873,8 @@ public final class PlannerRuntimePlacementAudit {
 					+ " owner=" + entries.stream().map(PlanEntry::plan)
 						.map(PlannerRuntimePlacementAudit::describePlan).toList()
 					+ " requiredOpcode=" + requiredOpcode + " actualOpcode=" + opcode
+					+ " validOwner=" + validOwner
+					+ " ownerPlacementCompatible=" + ownerPlacementCompatible
 					+ " expected=" + placement(helperExec, helperOutput, helperFType)
 					+ " actual=" + placement(actualExec(instruction), actualOutput(instruction), null)
 					+ " instruction=" + quotedInstruction(instruction));
@@ -907,7 +915,7 @@ public final class PlannerRuntimePlacementAudit {
 			case "+*", "-*", "ifelse", "min", "max", "+",
 				"abs", "acos", "asin", "atan", "ceil", "cos", "exp", "floor",
 				"log", "round", "sign", "sin", "sqrt", "tan", "castdts",
-				"castdti", "castdtb", "not" -> true;
+				"castvtd", "castvti", "castvtb", "not" -> true;
 			default -> false;
 		};
 	}
@@ -1031,7 +1039,10 @@ public final class PlannerRuntimePlacementAudit {
 		assertOnePhysicalPlacement(entries, instruction);
 		String kind = instruction.getPlannerRewriteReplacementKind();
 		String actualOpcode = safeOpcode(instruction);
-		boolean validOpcode = entries.stream().allMatch(entry -> switch(kind) {
+		boolean validOpcode = entries.stream().allMatch(entry ->
+			isOneByOneTransposeReplacement(kind, entry, actualOpcode)
+			|| isOneByOneAggregateReplacement(kind, entry, actualOpcode)
+			|| switch(kind) {
 			case "PERSISTENT_READ_REBLOCK" -> "PRead".equals(entry.plan().opcode())
 				&& entry.plan().requiresReblock() && "rblk".equals(actualOpcode);
 			case "PERSISTENT_READ_CSV_REBLOCK" -> "PRead".equals(entry.plan().opcode())
@@ -1054,6 +1065,10 @@ public final class PlannerRuntimePlacementAudit {
 				isExactTernaryAggregateFusion(entry.plan().opcode(), actualOpcode);
 			case "DYNAMIC_TABLE_SEQ_REXPAND" ->
 				"ctable".equalsIgnoreCase(entry.plan().opcode()) && "rexpand".equals(actualOpcode);
+			case "DYNAMIC_SUM_SQUARED" ->
+				isDynamicSumSquaredReplacement(entry.plan().opcode(), actualOpcode);
+			case "DYNAMIC_SUM_DIVIDE_TO_MEAN" ->
+				isDynamicMeanReplacement(entry.plan().opcode(), actualOpcode);
 			default -> false;
 		});
 		if(!validOpcode)
@@ -1111,6 +1126,59 @@ public final class PlannerRuntimePlacementAudit {
 	private static boolean isFullSumAggregateOpcode(String opcode) {
 		return "ua(+rc)".equalsIgnoreCase(opcode) || "uak+rc".equalsIgnoreCase(opcode)
 			|| "sum".equalsIgnoreCase(opcode);
+	}
+
+	private static boolean isDynamicSumSquaredReplacement(String planned, String actual) {
+		if(planned == null || actual == null)
+			return false;
+		return switch(planned.toLowerCase(java.util.Locale.ROOT)) {
+			case "ua(+c)" -> "uacsqk+".equalsIgnoreCase(actual);
+			case "ua(+r)" -> "uarsqk+".equalsIgnoreCase(actual);
+			case "ua(+rc)" -> "uasqk+".equalsIgnoreCase(actual);
+			default -> false;
+		};
+	}
+
+	private static boolean isDynamicMeanReplacement(String planned, String actual) {
+		if(planned == null || actual == null)
+			return false;
+		return switch(planned.toLowerCase(java.util.Locale.ROOT)) {
+			case "ua(+c)" -> "uacmean".equalsIgnoreCase(actual);
+			case "ua(+r)" -> "uarmean".equalsIgnoreCase(actual);
+			case "ua(+rc)" -> "uamean".equalsIgnoreCase(actual);
+			default -> false;
+		};
+	}
+
+	private static boolean isOneByOneTransposeReplacement(String kind,
+		PlanEntry owner, String actual) {
+		String dynamicPrefix = "DYNAMIC_REMOVE_1X1_TRANSPOSE:";
+		String physicalPrefix = "PHYSICAL_REMOVE_1X1_TRANSPOSE:";
+		String prefix = kind != null && kind.startsWith(dynamicPrefix) ? dynamicPrefix
+			: kind != null && kind.startsWith(physicalPrefix) ? physicalPrefix : null;
+		if(prefix == null || !"r'".equals(owner.plan().opcode()))
+			return false;
+		String inputOpcode = kind.substring(prefix.length());
+		return isOrdinaryOpcodeCompatible(inputOpcode, actual);
+	}
+
+	private static boolean isOneByOneAggregateReplacement(String kind,
+		PlanEntry owner, String actual) {
+		String prefix = "DYNAMIC_REMOVE_1X1_AGGREGATE:";
+		if(kind == null || !kind.startsWith(prefix) || !"castdts".equals(actual))
+			return false;
+		String aggregateOpcode = kind.substring(prefix.length());
+		return aggregateOpcode.equalsIgnoreCase(owner.plan().opcode())
+			&& isRemovableFullAggregateOpcode(owner.plan().opcode());
+	}
+
+	private static boolean isRemovableFullAggregateOpcode(String opcode) {
+		if(opcode == null)
+			return false;
+		return switch(opcode.toLowerCase(java.util.Locale.ROOT)) {
+			case "ua(+rc)", "ua(minrc)", "ua(maxrc)", "ua(*rc)", "ua(tracerc)" -> true;
+			default -> false;
+		};
 	}
 
 	private static boolean isExactTernaryAggregateFusion(String planned, String actual) {
@@ -1355,7 +1423,7 @@ public final class PlannerRuntimePlacementAudit {
 				.append(" hop=").append(entry.plan().hopId()).append(" key=")
 				.append(entry.plan().keyHash()).append(" signature=")
 				.append(signatureToken(entry.plan().recompileSignature())).append(" opcode=")
-				.append(entry.plan().opcode()).append(" nodeKind=").append(entry.plan().nodeKind())
+				.append(structuredToken(entry.plan().opcode())).append(" nodeKind=").append(entry.plan().nodeKind())
 				.append(" plannedTarget=").append(entry.plan().targetSignature())
 				.append(" plannedPhysical=").append(entry.plan().physicalSignature())
 				.append(" actual=- auditKey=- actualIdentity=- instruction=-\n");
@@ -1363,7 +1431,7 @@ public final class PlannerRuntimePlacementAudit {
 			out.append("[PlannerRuntimeAudit][Lowering-Synthetic] status=MISSING plan=")
 				.append(authority.planHash).append(" action=").append(shortHash(action.baseActionKey()))
 				.append(" stage=").append(action.stage()).append(" token=").append(shortHash(action.token()))
-				.append(" opcode=").append(action.opcode()).append(" plannedPhysical=")
+				.append(" opcode=").append(structuredToken(action.opcode())).append(" plannedPhysical=")
 				.append(action.physicalSignature()).append(" actual=-\n");
 		LOWERING_OBSERVATIONS.entrySet().stream().sorted(Map.Entry.comparingByKey())
 			.forEach(entry -> out.append(entry.getValue()).append('\n'));
@@ -1376,7 +1444,7 @@ public final class PlannerRuntimePlacementAudit {
 					.append(" auditKey=").append(key.auditKey())
 					.append(" hop=").append(key.hopId()).append(" lop=").append(key.lopId())
 					.append(" signature=").append(signatureToken(key.recompileSignature()))
-					.append(" opcode=").append(key.opcode())
+					.append(" opcode=").append(structuredToken(key.opcode()))
 					.append(" plannedTarget=").append(expected == null ? "-" : expectedTarget(expected))
 					.append(" plannedPhysical=").append(expected == null ? "-"
 						: placement(expected.exec(), expected.output(), expected.fType()))
@@ -1528,7 +1596,7 @@ public final class PlannerRuntimePlacementAudit {
 		String line = "[PlannerRuntimeAudit][Lowering] status=" + status + " plan=" + planHash
 			+ " planner=" + plan.plannerId()
 			+ " hop=" + plan.hopId() + " key=" + plan.keyHash() + " signature="
-			+ signatureToken(plan.recompileSignature()) + " opcode=" + plan.opcode()
+			+ signatureToken(plan.recompileSignature()) + " opcode=" + structuredToken(plan.opcode())
 			+ " nodeKind=" + plan.nodeKind() + " plannedTarget=" + plan.targetSignature()
 			+ " plannedPhysical=" + plan.physicalSignature() + " actual=" + actual
 			+ " auditKey=" + (instruction == null ? "-" : Objects.toString(instruction.getPlannerAuditKey(), "-"))
@@ -1925,6 +1993,26 @@ public final class PlannerRuntimePlacementAudit {
 
 	private static String signatureToken(String signature) {
 		return signature == null || signature.isBlank() ? "-" : shortHash(signature);
+	}
+
+	/** Keep one-record-per-line audit output even when a DML string literal is an opcode label. */
+	private static String structuredToken(String value) {
+		if(value == null || value.isEmpty())
+			return "-";
+		StringBuilder encoded = new StringBuilder(value.length());
+		for(int i = 0; i < value.length(); i++) {
+			char current = value.charAt(i);
+			if(current == '%' || Character.isWhitespace(current)) {
+				encoded.append('%');
+				String hex = Integer.toHexString(current).toUpperCase(java.util.Locale.ROOT);
+				for(int padding = hex.length(); padding < 2; padding++)
+					encoded.append('0');
+				encoded.append(hex);
+			}
+			else
+				encoded.append(current);
+		}
+		return encoded.toString();
 	}
 
 	private static String safeOpcode(Instruction instruction) {

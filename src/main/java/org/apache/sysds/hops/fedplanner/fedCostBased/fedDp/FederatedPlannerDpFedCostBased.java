@@ -2061,6 +2061,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		Map<CompiledHopKey, SelectedDpState> selectedStates) {
 		Set<CompiledHopKey> repair = Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<CompiledHopKey,PlacementAnalysis.HopOccurrenceProjection> occurrences =
+			new IdentityHashMap<>();
+		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.occurrences())
+			occurrences.put(occurrence.key(), occurrence);
 		for(Constraint constraint : analysis.graph().constraints()) {
 			if(!isExactComponentLegalityConstraint(constraint))
 				continue;
@@ -2081,6 +2085,22 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					throw new IllegalStateException(
 						"DP exact legality violation has no ordinary function-boundary owner");
 			}
+			// A selected endpoint is not a safe completion boundary when the other
+			// endpoint has not been visited and none of its exact memo arms can satisfy
+			// the graph constraint.  This occurs for branch-join/transient families: a
+			// locally selected FED/FOUT TWrite can otherwise become a foreign hard lock
+			// for a later CP-only TRead component.  Reopen the selected owner before the
+			// component partition is frozen so both endpoints are solved together.
+			else if(left != null && right == null
+				&& !isSyntheticFunctionBoundary(analysis, constraint.right())
+				&& !hasExactConstraintSupport(memoTable, occurrences.get(constraint.right()),
+					constraint, left, true))
+				repair.add(constraint.left());
+			else if(right != null && left == null
+				&& !isSyntheticFunctionBoundary(analysis, constraint.left())
+				&& !hasExactConstraintSupport(memoTable, occurrences.get(constraint.left()),
+					constraint, right, false))
+				repair.add(constraint.right());
 		}
 		Map<CompiledHopKey,List<SyntheticBoundaryIncident>> selectedSyntheticIncidents =
 			new IdentityHashMap<>();
@@ -2166,6 +2186,22 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				expanded.addAll(collectWeakComponent(seed, undirected));
 		}
 		return expanded;
+	}
+
+	private static boolean hasExactConstraintSupport(FederatedPlannerDpMemoTable memoTable,
+		PlacementAnalysis.HopOccurrenceProjection occurrence, Constraint constraint,
+		SelectedDpState selected, boolean selectedIsLeft) {
+		if(occurrence == null)
+			return true;
+		List<FederatedPlannerDpMemoTable.FedPlan> domain = memoTable
+			.getAllExactPlanVariantsForOccurrence(occurrence).stream()
+			.map(FederatedPlannerDpMemoTable.OccurrencePlanArm::plan)
+			.filter(plan -> plan != null && plan.getSelectedPlacementState() != null)
+			.toList();
+		// An absent memo domain is diagnosed by disconnected completion itself; it
+		// must not make an unrelated already-selected component appear repairable.
+		return domain.isEmpty()
+			|| exactJoinConstraintHasSupport(constraint, selected, selectedIsLeft, domain);
 	}
 
 	/**
@@ -4901,6 +4937,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				if (childPlan == null)
 					childPlan = memoTable.getFedPlanAfterPrune(childEdge.getKey(), childEdge.getValue());
 				if (!isDecisionMapFedFoutMatrixProducer(childPlan))
+					continue;
+				if(isCoordinatorMetadataOnlyBoundary(memoTable, childPlan, parentPlan))
 					continue;
 				// Stable federated reads/transient families have their own selected-scope
 				// cache-credit model below. This correction is only for computed FOUT
@@ -10953,6 +10991,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					refedCost, childPlan, parentPlan, memoTable);
 		}
 		else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
+			if(isCoordinatorMetadataOnlyBoundary(memoTable, childPlan, parentPlan))
+				return 0.0;
 			double downloadCost;
 			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childPlan.getHopRef())) {
 				downloadCost = 0.0;
@@ -10975,6 +11015,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					parentPlan.getHopRef(), downloadCost, childPlan, parentPlan);
 		}
 		return 0.0;
+	}
+
+	private static boolean isCoordinatorMetadataOnlyBoundary(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan childPlan,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		if(memoTable == null || memoTable.analysis() == null || childPlan == null
+			|| parentPlan == null || childPlan.getHopRef() == null || parentPlan.getHopRef() == null)
+			return false;
+		PlacementAnalysis.HopOccurrenceProjection child =
+			memoTable.requirePlanCarrierOccurrence(childPlan.getHopRef());
+		PlacementAnalysis.HopOccurrenceProjection parent =
+			memoTable.requirePlanCarrierOccurrence(parentPlan.getHopRef());
+		return memoTable.analysis().isCoordinatorMetadataOnlyInputBoundary(
+			child.key(), parent.key());
 	}
 
 	/**

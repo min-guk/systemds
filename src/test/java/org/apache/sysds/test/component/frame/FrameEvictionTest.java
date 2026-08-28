@@ -19,6 +19,9 @@
 
 package org.apache.sysds.test.component.frame;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
 import java.lang.reflect.Method;
 
 import org.apache.sysds.hops.OptimizerUtils;
@@ -51,6 +54,14 @@ public class FrameEvictionTest extends AutomatedTestBase
 	@Override
 	public void setUp() {
 		TestUtils.clearAssertionInformation();
+	}
+
+	@Test
+	public void testSchemaOnlyFrameUsesSafeExactCacheSerialization() {
+		FrameBlock empty = new FrameBlock(schemaStrings);
+
+		assertFalse(empty.isShallowSerialize());
+		assertTrue(LazyWriteBuffer.getCacheBlockSize(empty) > 0);
 	}
 
 	@Test

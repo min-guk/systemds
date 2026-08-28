@@ -254,6 +254,22 @@ public abstract class Hop implements ParseInfo {
 	 * {@code PlannerRuntimePlacementAudit}.
 	 */
 	public void setPlannerRewriteReplacement(Hop owner, String kind) {
+		setPlannerRewriteReplacementIdentity(owner, kind);
+		_plannerPlacementSelected = true;
+		_etype = owner.getExecType();
+		_etypeForced = owner.getForcedExecType();
+		_federatedOutput = owner.getFederatedOutput();
+		_federatedOutputDerived = owner.isFederatedOutputDerived();
+	}
+
+	/**
+	 * Record the exact occurrence replaced by a dynamic rewrite without inventing a placement.
+	 * Recompilation performs algebraic rewrites before it restores the whole-program planner state,
+	 * so a replacement sometimes needs provenance while neither the function-body Hop nor its
+	 * surviving child has been marked selected yet.  The later restore step obtains the selected
+	 * state from this origin; ordinary compilation keeps its existing placement behavior.
+	 */
+	public void setPlannerRewriteReplacementIdentity(Hop owner, String kind) {
 		if(owner == null)
 			throw new IllegalArgumentException("Planner rewrite replacement owner must not be null");
 		if(kind == null || kind.isBlank())
@@ -262,11 +278,6 @@ public abstract class Hop implements ParseInfo {
 		_plannerLoweringOwnerRecompileSignature =
 			FederatedPlannerUtils.plannerRecompileSignature(owner);
 		_plannerRewriteReplacementKind = kind;
-		_plannerPlacementSelected = true;
-		_etype = owner.getExecType();
-		_etypeForced = owner.getForcedExecType();
-		_federatedOutput = owner.getFederatedOutput();
-		_federatedOutputDerived = owner.isFederatedOutputDerived();
 	}
 
 	public ExecType getExecType() {

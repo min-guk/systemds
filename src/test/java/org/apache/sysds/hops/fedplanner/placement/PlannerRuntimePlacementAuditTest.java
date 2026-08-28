@@ -19,25 +19,35 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.Instruction.IType;
+import org.apache.sysds.runtime.instructions.FEDInstructionParser;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.FunctionCallCPInstruction;
+import org.apache.sysds.runtime.instructions.fed.CastFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.MultiReturnParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -133,6 +143,39 @@ public class PlannerRuntimePlacementAuditTest {
 		IllegalStateException failure = assertThrows(IllegalStateException.class,
 			() -> PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(request));
 		assertTrue(failure.getMessage().contains("FEDERATED_REQUEST_UNPLANNED"));
+	}
+
+	@Test
+	public void parallelFederatedCallbacksInheritTheExactCoordinatorParent() throws Exception {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(plan(146, "sig-146", FED_FOUT, FED_FOUT, true)));
+		AuditFedInstruction coordinator = new AuditFedInstruction("ba+*",
+			FEDInstruction.FederatedOutput.FOUT);
+		coordinator.setAuditLocation(146, "sig-146");
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(coordinator)));
+
+		AtomicReference<FederatedRequest> dispatched = new AtomicReference<>();
+		AtomicReference<Throwable> childFailure = new AtomicReference<>();
+		try(PlannerRuntimePlacementAudit.RuntimeExecutionScope ignored =
+			PlannerRuntimePlacementAudit.beginRuntimeExecution(coordinator)) {
+			Thread callback = new Thread(() -> {
+				try {
+					FederatedRequest request = new FederatedRequest(RequestType.EXEC_UDF, -1, "worker-udf");
+					PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(request);
+					dispatched.set(request);
+				}
+				catch(Throwable failure) {
+					childFailure.set(failure);
+				}
+			});
+			callback.start();
+			callback.join();
+		}
+
+		assertNull("parallel runtime callbacks must retain planner authority", childFailure.get());
+		assertTrue(dispatched.get() != null);
+		assertTrue(dispatched.get().getPlannerRuntimeAuthority() != null);
+		assertEquals("ba+*",
+			dispatched.get().getPlannerRuntimeAuthority().getParentOpcode());
 	}
 
 	@Test
@@ -445,6 +488,148 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void dynamicSumSquaredIsAnExactSamePlacementAggregateReplacement() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(73, "colsum-owner", "ua(+C)", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION)));
+		AuditCpInstruction sumSquared = new AuditCpInstruction("uacsqk+", IType.CONTROL_PROGRAM);
+		sumSquared.setAuditLocation(1073, "colsum-owner");
+		sumSquared.setPlannerOriginHopID(73);
+		sumSquared.setPlannerRewriteReplacementKind("DYNAMIC_SUM_SQUARED");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(sumSquared)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_SUM_SQUARED"));
+		assertTrue(report.contains("replacementOpcode=uacsqk+"));
+	}
+
+	@Test
+	public void dynamicSumDivideToMeanIsAnExactSamePlacementAggregateReplacement() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(74, "colsum-mean-owner", "ua(+C)", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction mean = new AuditCpInstruction("uacmean", IType.CONTROL_PROGRAM);
+		mean.setAuditLocation(1074, "colsum-mean-owner");
+		mean.setPlannerOriginHopID(74);
+		mean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(mean)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_SUM_DIVIDE_TO_MEAN"));
+		assertTrue(report.contains("replacementOpcode=uacmean"));
+	}
+
+	@Test
+	public void dynamicSumDivideToMeanCannotBorrowTheWrongAggregateDirection() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(75, "rowsum-mean-owner", "ua(+R)", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction forged = new AuditCpInstruction("uacmean", IType.CONTROL_PROGRAM);
+		forged.setAuditLocation(1075, "rowsum-mean-owner");
+		forged.setPlannerOriginHopID(75);
+		forged.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(), new ArrayList<>(List.of(forged))));
+		assertTrue(failure.getMessage().contains("LOWERING_REWRITE_OPCODE_MISMATCH"));
+	}
+
+	@Test
+	public void dynamicOneByOneAggregateTransposeRetainsTheOuterPlacement() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(76, "one-by-one-transpose", "r'", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction aggregate = new AuditCpInstruction("uack+", IType.CONTROL_PROGRAM);
+		aggregate.setAuditLocation(1076, "one-by-one-transpose");
+		aggregate.setPlannerOriginHopID(76);
+		aggregate.setPlannerRewriteReplacementKind(
+			"DYNAMIC_REMOVE_1X1_TRANSPOSE:ua(+C)");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(aggregate)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_REMOVE_1X1_TRANSPOSE:ua(+C)"));
+	}
+
+	@Test
+	public void dynamicOneByOneAggregateTransposeRejectsAnUnrelatedAggregate() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(77, "one-by-one-transpose-forged", "r'", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction forged = new AuditCpInstruction("uarmean", IType.CONTROL_PROGRAM);
+		forged.setAuditLocation(1077, "one-by-one-transpose-forged");
+		forged.setPlannerOriginHopID(77);
+		forged.setPlannerRewriteReplacementKind(
+			"DYNAMIC_REMOVE_1X1_TRANSPOSE:ua(+C)");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(), new ArrayList<>(List.of(forged))));
+		assertTrue(failure.getMessage().contains("LOWERING_REWRITE_OPCODE_MISMATCH"));
+	}
+
+	@Test
+	public void physicalOneByOneTransposeElisionUsesTheExactInputOpcode() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(78, "physical-one-by-one-transpose", "r'", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction aggregate = new AuditCpInstruction("uack+", IType.CONTROL_PROGRAM);
+		aggregate.setAuditLocation(1078, "physical-one-by-one-transpose");
+		aggregate.setPlannerOriginHopID(78);
+		aggregate.setPlannerRewriteReplacementKind(
+			"PHYSICAL_REMOVE_1X1_TRANSPOSE:ua(+C)");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(aggregate)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains(
+			"kind=PHYSICAL_REMOVE_1X1_TRANSPOSE:ua(+C)"));
+	}
+
+	@Test
+	public void dynamicOneByOneAggregateElisionUsesTheExactAggregateOwner() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(79, "one-by-one-aggregate", "ua(+rc)", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction cast = new AuditCpInstruction("castdts", IType.CONTROL_PROGRAM);
+		cast.setAuditLocation(1079, "one-by-one-aggregate");
+		cast.setPlannerOriginHopID(79);
+		cast.setPlannerRewriteReplacementKind(
+			"DYNAMIC_REMOVE_1X1_AGGREGATE:ua(+RC)");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(cast)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains(
+			"kind=DYNAMIC_REMOVE_1X1_AGGREGATE:ua(+RC)"));
+	}
+
+	@Test
+	public void dynamicOneByOneAggregateElisionRejectsTheWrongAggregate() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(80, "one-by-one-aggregate-forged", "ua(meanrc)", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction cast = new AuditCpInstruction("castdts", IType.CONTROL_PROGRAM);
+		cast.setAuditLocation(1080, "one-by-one-aggregate-forged");
+		cast.setPlannerOriginHopID(80);
+		cast.setPlannerRewriteReplacementKind(
+			"DYNAMIC_REMOVE_1X1_AGGREGATE:ua(meanRC)");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(), new ArrayList<>(List.of(cast))));
+		assertTrue(failure.getMessage().contains("LOWERING_REWRITE_OPCODE_MISMATCH"));
+	}
+
+	@Test
 	public void constantFoldResultBindingIsOnlyAnExactCpLocalHelper() {
 		PlannerRuntimePlacementAudit.installForTesting(List.of(
 			plan(55, "constant-owner", "*", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION)));
@@ -460,6 +645,24 @@ public class PlannerRuntimePlacementAuditTest {
 		String report = PlannerRuntimePlacementAudit.display();
 		assertTrue(report.contains("kind=CONSTANT_FOLD_RESULT_BIND"));
 		assertTrue(report.contains("helperOpcode=mvvar"));
+	}
+
+	@Test
+	public void constantFoldScalarValueCastUsesItsPlannerOpcode() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(551, "constant-cast-owner", "castvti", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction bind = new AuditCpInstruction("mvvar", IType.CONTROL_PROGRAM);
+		bind.setAuditLocation(1551, "constant-cast-owner");
+		bind.setPlannerOriginHopID(551);
+		bind.setPlannerLoweringAuxiliaryKind("CONSTANT_FOLD_RESULT_BIND");
+		AuditCpInstruction owner = new AuditCpInstruction("castvti", IType.CONTROL_PROGRAM);
+		owner.setAuditLocation(551, "constant-cast-owner");
+
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(owner, bind)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains(
+			"kind=CONSTANT_FOLD_RESULT_BIND"));
 	}
 
 	@Test
@@ -679,6 +882,49 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void federatedCastDeclaresItsInherentFoutPlacement() {
+		FEDInstruction instruction = FEDInstructionParser.parseSingleInstruction(
+			"FED" + Instruction.OPERAND_DELIM + "castdtf" + Instruction.OPERAND_DELIM
+				+ "in" + Instruction.VALUETYPE_PREFIX + "MATRIX"
+				+ Instruction.VALUETYPE_PREFIX + "FP64" + Instruction.OPERAND_DELIM
+				+ "out" + Instruction.VALUETYPE_PREFIX + "FRAME"
+				+ Instruction.VALUETYPE_PREFIX + "STRING" + Instruction.OPERAND_DELIM
+				+ "8" + Instruction.OPERAND_DELIM + "FOUT");
+
+		assertTrue(instruction instanceof CastFEDInstruction);
+		assertEquals(FEDInstruction.FederatedOutput.FOUT, instruction.getFederatedOutput());
+	}
+
+	@Test
+	public void federatedCastRejectsAnImpossibleForcedLocalOutput() {
+		String encoded = "FED" + Instruction.OPERAND_DELIM + "castdtf" + Instruction.OPERAND_DELIM
+			+ "in" + Instruction.VALUETYPE_PREFIX + "MATRIX"
+			+ Instruction.VALUETYPE_PREFIX + "FP64" + Instruction.OPERAND_DELIM
+			+ "out" + Instruction.VALUETYPE_PREFIX + "FRAME"
+			+ Instruction.VALUETYPE_PREFIX + "STRING" + Instruction.OPERAND_DELIM + "LOUT";
+
+		DMLRuntimeException failure = assertThrows(DMLRuntimeException.class,
+			() -> FEDInstructionParser.parseSingleInstruction(encoded));
+		assertTrue(failure.getMessage().contains("cannot produce LOUT"));
+	}
+
+	@Test
+	public void transformEncodeDeclaresItsHeterogeneousPrimaryFoutPlacement() {
+		FEDInstruction instruction = FEDInstructionParser.parseSingleInstruction(
+			"FED" + Instruction.OPERAND_DELIM + "transformencode" + Instruction.OPERAND_DELIM
+				+ "in" + Instruction.VALUETYPE_PREFIX + "FRAME"
+				+ Instruction.VALUETYPE_PREFIX + "STRING" + Instruction.OPERAND_DELIM
+				+ "spec" + Instruction.VALUETYPE_PREFIX + "SCALAR"
+				+ Instruction.VALUETYPE_PREFIX + "STRING"
+				+ Instruction.VALUETYPE_PREFIX + "false" + Instruction.OPERAND_DELIM
+				+ "encoded" + Instruction.OPERAND_DELIM + "metadata");
+
+		assertTrue(instruction instanceof MultiReturnParameterizedBuiltinFEDInstruction);
+		assertEquals(FEDInstruction.FederatedOutput.FOUT, instruction.getFederatedOutput());
+		assertEquals("encoded", instruction.getOutputVariableName());
+	}
+
+	@Test
 	public void variableBindingsExposeTheirActualPublishedDestinationForPlacementAudit() {
 		Instruction copy = org.apache.sysds.runtime.instructions.cp.VariableCPInstruction
 			.prepareCopyInstruction("source", "copyTarget");
@@ -709,6 +955,31 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void inlinedFunctionKeepsItsPhysicalResultInTheRuntimeAuditDomain() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-21");
+
+		assertTrue("fixture must exercise compiler-owned inlined-call metadata",
+			program.getStatementBlocks().stream()
+				.anyMatch(block -> !block.getInlinedFunctionCallBoundaries().isEmpty()));
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		assertTrue("the exact inlined result authority must remain a compiled physical operation",
+			analysis.occurrences().stream()
+				.filter(boundary -> boundary.key().canonicalSourceOrigin().startsWith("function-boundary:"))
+				.filter(boundary -> !(boundary.hop() instanceof FunctionOp))
+				.anyMatch(boundary -> analysis.compiledHopOccurrences().stream()
+					.anyMatch(physical -> physical.hop() == boundary.hop()
+						&& analysis.graph().node(physical.key()).orElseThrow().kind() == NodeKind.OPERATION)));
+		assertTrue("FUNCTION_CALL is reserved for an actual DML FunctionOp",
+			analysis.compiledHopOccurrences().stream()
+				.filter(occurrence -> analysis.graph().node(occurrence.key()).orElseThrow().kind()
+					== NodeKind.FUNCTION_CALL)
+				.allMatch(occurrence -> occurrence.hop() instanceof FunctionOp));
+
+		PlannerRuntimePlacementAudit.prepareRegistration(
+			new FedAllPlacementAdapter().select(analysis));
+	}
+
+	@Test
 	public void dmlFunctionControlCannotCallADifferentFunction() {
 		PlannerRuntimePlacementAudit.installForTesting(List.of(planWithNameAndControlTarget(59, "sig-59",
 			"fcall", "ns::publicWrapper", "ns::other", FED_FOUT, FED_FOUT, true,
@@ -729,6 +1000,19 @@ public class PlannerRuntimePlacementAuditTest {
 			() -> PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>()));
 		assertTrue(failure.getMessage().contains("LOWERING_MISSING"));
 		assertTrue(failure.getMessage().contains("hop=44"));
+	}
+
+	@Test
+	public void structuralAuditRecordEscapesWhitespaceInLiteralOpcode() {
+		String literal = "literalop fitting failed because covariance\nwas invalid";
+		PlannerRuntimePlacementAudit.installForTesting(List.of(plan(
+			45, "sig-45", literal, CP_LOUT, CP_LOUT, false, NodeKind.OPERATION)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		String record = report.lines().filter(line -> line.contains(" hop=45 ")).findFirst().orElseThrow();
+
+		assertTrue(record.contains("opcode=literalop%20fitting%20failed%20because%20covariance%0Awas%20invalid"));
+		assertTrue(record.contains("nodeKind=OPERATION"));
 	}
 
 	private static PlannerRuntimePlacementAudit.PlannedHop plan(long hopId, String signature,

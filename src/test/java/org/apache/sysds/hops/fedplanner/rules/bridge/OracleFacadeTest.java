@@ -266,6 +266,26 @@ public class OracleFacadeTest {
     assertEquals(Set.of("rows"), evidence.shapeProof().missingRequiredFacts());
   }
 
+  @Test
+  public void binaryFederatedMatrixWithLocalMatrixDoesNotRequireStaticOutputShape() {
+    Hop left = matrix("left", -1, -1);
+    Hop right = matrix("right", -1, -1);
+    BinaryOp minus = new BinaryOp(
+        "minus", DataType.MATRIX, ValueType.FP64, OpOp2.MINUS, left, right);
+    minus.setDim1(-1);
+    minus.setDim2(-1);
+    minus.setBlocksize(-1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(minus, Arrays.asList(FType.ROW, null), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
+    assertEquals("runtime broadcast/broadcastSliced does not require compile-time dimensions",
+        Set.of(), evidence.shapeProof().missingRequiredFacts());
+  }
+
   private static void assertCapsEquivalent(OpCaps actual, OpCaps expected) {
     assertEquals(expected.exec(), actual.exec());
     assertEquals(expected.placement(), actual.placement());

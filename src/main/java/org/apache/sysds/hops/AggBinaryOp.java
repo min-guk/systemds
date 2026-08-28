@@ -653,6 +653,10 @@ public class AggBinaryOp extends MultiThreadedHop {
 	public boolean usesLeftTransposeRewrite(ExecType et) {
 		String cla = ConfigurationManager.getDMLConfig().getTextValue("sysds.compressed.linalg");
 		return (et == ExecType.CP || et == ExecType.FED)
+			// The planner normalization pass exposes this lowering choice as explicit HOPs.
+			// Never introduce the hidden Lop-only form after placement: runtime dimensions
+			// may make it newly applicable and would otherwise create unplanned transposes.
+			&& !isPlannerPlacementSelected()
 			&& !cla.equals("true") && !cla.equals("cost")
 			&& !hasPlannerMaterializationBoundary(getInput().get(0))
 			&& !hasPlannerMaterializationBoundary(getInput().get(1))

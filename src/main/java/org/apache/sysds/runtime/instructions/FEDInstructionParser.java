@@ -28,6 +28,7 @@ import org.apache.sysds.runtime.instructions.fed.AppendFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.BinaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.BuiltinNaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CentralMomentFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.CastFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CtableFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CovarianceFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
@@ -66,6 +67,11 @@ public class FEDInstructionParser extends InstructionParser
 	public static FEDInstruction parseSingleInstruction ( InstructionType fedtype, String str ) {
 		if ( str == null || str.isEmpty() )
 			return null;
+		// castdtf/castdtm are classified as variable opcodes by the shared opcode
+		// table, but their federated physical implementation is the map-preserving
+		// CastFEDInstruction rather than VariableFEDInstruction.
+		if(CastFEDInstruction.isValidOpcode(InstructionUtils.getOpCode(str)))
+			return CastFEDInstruction.parseInstruction(str);
 		switch(fedtype) {
 			case Init:
 				return InitFEDInstruction.parseInstruction(str);

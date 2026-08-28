@@ -380,9 +380,11 @@ public final class NeutralPlacementGraphBuilder {
 					Node consumerNode = nodes.get(ordinal);
 					boolean formalBinding = isTransparentFunctionInputBinding(input, occurrence.hop(),
 						inputPosition, inputNode, consumerNode);
+					boolean multiReturnOutputValue = isMultiReturnBuiltinOutputCarrier(occurrence.hop());
 					constraints.add(new Constraint(formalBinding ? ConstraintKind.SAME_PLACEMENT
 						: ConstraintKind.DOMINATES, inputKey, consumer, inputPosition,
-						formalBinding ? "function-input-binding" : "data-input"));
+						formalBinding ? "function-input-binding"
+							: multiReturnOutputValue ? "multi-return-output-value" : "data-input"));
 				}
 			}
 		}
@@ -706,6 +708,7 @@ public final class NeutralPlacementGraphBuilder {
 	private static boolean carriesPrivacyValue(Constraint constraint) {
 		String evidence = constraint.evidence();
 		return "data-input".equals(evidence) || "function-input-binding".equals(evidence)
+			|| "multi-return-output-value".equals(evidence)
 			|| evidence.startsWith("cfg-transient-value:")
 			|| evidence.startsWith("cfg-function-output-value:")
 			|| evidence.startsWith("function-argument:")
@@ -750,13 +753,18 @@ public final class NeutralPlacementGraphBuilder {
 			Node consumerNode = nodes.get(consumerOrdinal);
 			if(!PlacementAnalysis.isCompiledHopOccurrenceKey(consumerNode.key(), consumerNode.kind()))
 				continue;
+			// A MULTIRETURN_BUILTIN output carrier is not a runtime consumer of the
+			// placeholder Hop input stored on the DataOp. The owning FunctionOp emits the
+			// value; synthetic result constraints carry identity and privacy instead.
+			if(isMultiReturnBuiltinOutputCarrier(consumer))
+				continue;
 			for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
 				Hop producer = consumer.getInput(inputPosition);
-				if(!isMatrixShape(factsByHop, producer))
+				if(!isPlacementDataShape(factsByHop, producer))
 					continue;
 				Integer producerOrdinal = blockOrdinals == null ? null : blockOrdinals.get(producer);
 				if(producerOrdinal == null)
-					throw new IllegalStateException("Matrix producer input lacks exact compiled owner key");
+					throw new IllegalStateException("Placement-data producer input lacks exact compiled owner key");
 				Node producerNode = nodes.get(producerOrdinal);
 				CompiledHopKey producerKey = producerNode.key();
 				if(PlacementAnalysis.isCompiledHopOccurrenceKey(producerKey, producerNode.kind()))
@@ -1896,11 +1904,11 @@ public final class NeutralPlacementGraphBuilder {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
 			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
 			for(Hop input : occurrence.hop().getInput()) {
-				if(!isMatrixShape(factsByHop, input))
+				if(!isPlacementDataShape(factsByHop, input))
 					continue;
 				Integer producerOrdinal = blockOrdinals == null ? null : blockOrdinals.get(input);
 				if(producerOrdinal == null)
-					throw new IllegalStateException("Matrix producer lacks exact post-CFG closure owner");
+					throw new IllegalStateException("Placement-data producer lacks exact post-CFG closure owner");
 				consumersByProducer.get(producerOrdinal).add(consumerOrdinal);
 			}
 		}
@@ -2024,7 +2032,7 @@ public final class NeutralPlacementGraphBuilder {
 		if(blockOrdinals == null)
 			return false;
 		boolean refinedPhysicalInput = occurrence.hop().getInput().stream()
-			.filter(input -> isMatrixShape(factsByHop, input))
+			.filter(input -> isPlacementDataShape(factsByHop, input))
 			.map(blockOrdinals::get).filter(Objects::nonNull).anyMatch(refinedOrdinals::contains);
 		List<CandidateEmissionFact> removedMaterializations = new ArrayList<>();
 		for(CandidateRuleKey key : priorKeys) {
@@ -2100,7 +2108,7 @@ public final class NeutralPlacementGraphBuilder {
 		for(int inputPosition = 0; inputPosition < inputs.size() && inputPosition < occurrence.hop().getInput().size();
 			inputPosition++) {
 			Hop input = occurrence.hop().getInput(inputPosition);
-			if(!isMatrixShape(factsByHop, input))
+			if(!isPlacementDataShape(factsByHop, input))
 				continue;
 			Integer predecessorOrdinal = blockOrdinals.get(input);
 			if(predecessorOrdinal == null || !refinedOrdinals.contains(predecessorOrdinal))
@@ -2566,13 +2574,11 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Hop> expandedOrigins = new java.util.LinkedHashMap<>(origins);
 		Map<CompiledHopKey,Long> expandedScopes = new java.util.LinkedHashMap<>(scopes);
 		Map<StatementBlock,Map<Hop,Node>> nodesByBlock = new IdentityHashMap<>();
-		Map<Node,Integer> ordinalsByNode = new IdentityHashMap<>();
-		Map<String,List<Node>> inlinedAuthoritiesByFunction = new LinkedHashMap<>();
-		Set<Node> claimedInlinedAuthorities = Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<String,List<Node>> inlinedContextBoundariesByFunction = new LinkedHashMap<>();
+		Set<Node> claimedInlinedPhysicalAuthorities = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int i = 0; i < occurrences.size(); i++) {
 			nodesByBlock.computeIfAbsent(occurrences.get(i).block(), ignored -> new IdentityHashMap<>())
 				.put(occurrences.get(i).hop(), nodes.get(i));
-			ordinalsByNode.put(nodes.get(i), i);
 		}
 		Map<Integer,CallBoundaryContext> callContexts = new java.util.TreeMap<>();
 		for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
@@ -2664,6 +2670,10 @@ public final class NeutralPlacementGraphBuilder {
 					expandedScopes.put(output.key(), context.callScope());
 					constraints.add(new Constraint(ConstraintKind.DOMINATES, context.callNode().key(),
 						output.key(), outputPosition, "function-callsite-output-control"));
+					if(isRuntimeCoupledMultiReturnPrimary(callOp, outputPosition))
+						constraints.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT,
+							context.callNode().key(), output.key(), outputPosition,
+							"multi-return-primary-result:" + outputName.canonicalSourceOriginToken()));
 					for(Node authority : authorities)
 						constraints.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT,
 							authority.key(), output.key(), outputPosition,
@@ -2786,29 +2796,18 @@ public final class NeutralPlacementGraphBuilder {
 				if(callAuthority == null)
 					continue;
 				Long callScope = scopes.get(callAuthority.key());
-				Integer authorityOrdinal = ordinalsByNode.get(callAuthority);
 				int callIndex = inlinedCall.callStatementPosition();
-				if(callScope == null || authorityOrdinal == null)
+				if(callScope == null)
 					throw new IllegalStateException("Inlined function call has no exact occurrence authority");
-				Node originalCallAuthority = callAuthority;
-				if(!claimedInlinedAuthorities.add(originalCallAuthority))
+				if(!claimedInlinedPhysicalAuthorities.add(callAuthority))
 					throw new IllegalStateException("Inlined function calls share one emitted authority: "
 						+ inlinedCall.functionKey() + " callStatement=" + callIndex);
-				Node exactCallAuthority = withNodeKind(originalCallAuthority, NodeKind.FUNCTION_CALL);
-				expanded.set(authorityOrdinal, exactCallAuthority);
-				ordinalsByNode.remove(originalCallAuthority);
-				ordinalsByNode.put(exactCallAuthority, authorityOrdinal);
-				nodesByBlock.get(block).replaceAll((hop, node) -> node == originalCallAuthority
-					? exactCallAuthority : node);
-				for(int i = 0; i < arguments.size(); i++)
-					if(arguments.get(i) == originalCallAuthority)
-						arguments.set(i, exactCallAuthority);
-				for(int i = 0; i < results.size(); i++)
-					if(results.get(i) == originalCallAuthority)
-						results.set(i, exactCallAuthority);
-				callAuthority = exactCallAuthority;
-				inlinedAuthoritiesByFunction.computeIfAbsent(inlinedCall.functionKey(), ignored -> new ArrayList<>())
-					.add(callAuthority);
+				// An inlined DML call has no FunctionCallCPInstruction.  Its result/argument Hop is
+				// still a real physical operation and must retain its original node kind so every
+				// planner costs, selects, lowers, and audits that operation.  Call-site identity is
+				// carried by the synthetic function boundary below, never by reclassifying the
+				// physical Hop as a FUNCTION_CALL placeholder.
+				Node contextBoundary = null;
 				for(int inputOrdinal = 0; inputOrdinal < inlinedCall.inputs().size(); inputOrdinal++) {
 					InlinedFunctionInputBoundary inlinedInput = inlinedCall.inputs().get(inputOrdinal);
 					int inputPosition = inlinedInput.position();
@@ -2822,6 +2821,8 @@ public final class NeutralPlacementGraphBuilder {
 						VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives,
 						argument == null ? List.of() : argument.anchors());
 					expanded.add(input);
+					if(contextBoundary == null)
+						contextBoundary = input;
 					expandedOrigins.put(input.key(), origins.get(callAuthority.key()));
 					expandedScopes.put(input.key(), callScope);
 					if(argument != null)
@@ -2839,6 +2840,8 @@ public final class NeutralPlacementGraphBuilder {
 						VersionKind.FUNCTION_OUTPUT, NodeKind.FUNCTION_OUTPUT,
 						transientAlternatives(result.legalAlternatives()), result.anchors());
 					expanded.add(output);
+					if(contextBoundary == null)
+						contextBoundary = output;
 					expandedOrigins.put(output.key(), origins.get(callAuthority.key()));
 					expandedScopes.put(output.key(), callScope);
 					constraints.add(new Constraint(ConstraintKind.DOMINATES, callAuthority.key(), output.key(),
@@ -2847,9 +2850,13 @@ public final class NeutralPlacementGraphBuilder {
 						outputPosition, "inlined-function-result:"
 							+ outputName.canonicalSourceOriginToken()));
 				}
+				if(contextBoundary != null)
+					inlinedContextBoundariesByFunction
+						.computeIfAbsent(inlinedCall.functionKey(), ignored -> new ArrayList<>())
+						.add(contextBoundary);
 			}
 		}
-		for(Map.Entry<String,List<Node>> entry : inlinedAuthoritiesByFunction.entrySet()) {
+		for(Map.Entry<String,List<Node>> entry : inlinedContextBoundariesByFunction.entrySet()) {
 			List<Node> authorities = entry.getValue();
 			for(int left = 0; left < authorities.size(); left++)
 				for(int right = left + 1; right < authorities.size(); right++)
@@ -2861,6 +2868,12 @@ public final class NeutralPlacementGraphBuilder {
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins),
 			Collections.unmodifiableMap(expandedScopes), Collections.unmodifiableMap(outputBoundaryKeys));
+	}
+
+	private static boolean isRuntimeCoupledMultiReturnPrimary(FunctionOp call, int outputPosition) {
+		return call != null && outputPosition == 0
+			&& call.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			&& "transformencode".equalsIgnoreCase(call.getFunctionName());
 	}
 
 	private static List<Node> exactFunctionOutputAuthorities(DMLProgram program, CfgAnalysis cfg,
@@ -2977,11 +2990,6 @@ public final class NeutralPlacementGraphBuilder {
 		for(int index = 1; index < authorities.size(); index++)
 			common.retainAll(authorities.get(index).anchors());
 		return List.copyOf(common);
-	}
-
-	private static Node withNodeKind(Node node, NodeKind kind) {
-		return node.kind() == kind ? node : new Node(node.key(), kind, node.valueVersion(), node.emittedWork(),
-			node.legalAlternatives(), node.exclusions(), node.anchors());
 	}
 
 	private static Node requireExactDataNode(Map<Hop,Node> blockNodes, OpOpData operation, String name,
@@ -3726,6 +3734,14 @@ public final class NeutralPlacementGraphBuilder {
 		return shape.dataType().isMatrix();
 	}
 
+	/** Matrix and frame values can carry a runtime FederationMap and therefore own a physical data edge. */
+	private static boolean isPlacementDataShape(Map<Hop,NodeShapeFact> factsByHop, Hop hop) {
+		NodeShapeFact shape = factsByHop.get(Objects.requireNonNull(hop, "hop"));
+		if(shape == null)
+			throw new IllegalStateException("Hop has no builder-owned shape fact: " + hop.getHopID());
+		return shape.dataType().isMatrix() || shape.dataType().isFrame();
+	}
+
 	private ConsumerProfileEvaluation evaluateConsumerProfile(Hop consumer, List<NodeShapeFact> inputShapeFacts,
 		List<Integer> targetPositions) {
 		List<FType> allowed = new ArrayList<>();
@@ -4094,11 +4110,11 @@ public final class NeutralPlacementGraphBuilder {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
 			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
 			for(Hop input : occurrence.hop().getInput()) {
-				if(!isMatrixShape(factsByHop, input))
+				if(!isPlacementDataShape(factsByHop, input))
 					continue;
 				Integer producerOrdinal = blockOrdinals == null ? null : blockOrdinals.get(input);
 				if(producerOrdinal == null)
-					throw new IllegalStateException("Matrix producer lacks exact affected-descendant owner");
+					throw new IllegalStateException("Placement-data producer lacks exact affected-descendant owner");
 				consumersByProducer.get(producerOrdinal).add(consumerOrdinal);
 			}
 		}
@@ -4475,6 +4491,18 @@ public final class NeutralPlacementGraphBuilder {
 			if(edge != null && inputPosition == 0 && latentPair != null
 				&& latentPair.inner() == edge.producer())
 				continue;
+			// A frame FederationMap can be consumed directly by runtime-native FED
+			// instructions (currently transformencode), but FEDRefedInstruction and the
+			// CP->FOUT materialization registry are MatrixObject-only. Keep the compiled
+			// frame edge for direct feasibility/cost and never manufacture a relocation.
+			if(edge != null) {
+				Hop sourceHop = origins.get(edge.producer());
+				if(sourceHop == null)
+					throw new IllegalStateException("Relocation input has no compiled Hop origin: "
+						+ edge.producer());
+				if(!isMatrixShape(factsByHop, sourceHop))
+					continue;
+			}
 			if(input.present()) {
 				// Candidate rules include scalar/broadcast inputs as PRESENT, but scalar
 				// values are shipped as instruction operands and do not own a matrix
@@ -4780,8 +4808,16 @@ public final class NeutralPlacementGraphBuilder {
 						&& !isMatrixShape(factsByHop, owner.getInput(inputPosition)))
 						continue;
 				}
-				else
+				else {
+					Hop sourceHop = origins.get(edge.producer());
+					if(sourceHop == null)
+						return Set.of();
+					// This resolver proves MatrixObject relocation/materialization anchors.
+					// Frame FederationMaps are direct-only because fed_refed cannot carry them.
+					if(!isMatrixShape(factsByHop, sourceHop))
+						continue;
 					inputAnchors = resolve(edge.producer(), input.fType());
+				}
 				if(inputAnchors.isEmpty())
 					return Set.of();
 				hasPresentMatrixInput = true;
@@ -5204,6 +5240,19 @@ public final class NeutralPlacementGraphBuilder {
 	private static boolean isTransientRead(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.TRANSIENTREAD; }
 	private static boolean isTransientWrite(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.TRANSIENTWRITE; }
 	private static boolean isFunctionOutput(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.FUNCTIONOUTPUT; }
+	private static boolean isMultiReturnBuiltinOutputCarrier(Hop hop) {
+		if(!isFunctionOutput(hop) || hop.getInput() == null || hop.getInput().isEmpty())
+			return false;
+		for(Hop parent : hop.getInput(0).getParent()) {
+			if(!(parent instanceof FunctionOp function)
+				|| function.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+				|| function.getOutputs() == null)
+				continue;
+			if(function.getOutputs().stream().anyMatch(output -> output == hop))
+				return true;
+		}
+		return false;
+	}
 	private static String lexicalVariable(Hop h, int ordinal) {
 		return h instanceof DataOp && h.getName() != null && !h.getName().isBlank() ? h.getName() : "value-" + ordinal;
 	}
@@ -5227,7 +5276,12 @@ public final class NeutralPlacementGraphBuilder {
 		if(isTransientRead(h)) return NodeKind.TRANSIENT_READ;
 		if(isTransientWrite(h)) return NodeKind.TRANSIENT_WRITE;
 		if(isFunctionOutput(h)) return NodeKind.TRANSIENT_WRITE;
-		if(h instanceof FunctionOp) return NodeKind.FUNCTION_CALL;
+		// Only a DML FunctionOp is a non-executing call-site placeholder. Multi-return
+		// builtins such as transformencode lower to a concrete CP/FED instruction at this
+		// occurrence and must participate in ordinary physical input feasibility and cost.
+		if(h instanceof FunctionOp function
+			&& function.getFunctionType() == FunctionOp.FunctionType.DML)
+			return NodeKind.FUNCTION_CALL;
 		return NodeKind.OPERATION;
 	}
 	private static String structuralFingerprint(List<PlacementGraphFingerprint.HopOccurrence> hops) {

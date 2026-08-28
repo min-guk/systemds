@@ -505,6 +505,10 @@ public class ProgramConverter
 		
 		//save replacement of thread id references in instructions
 		inst = saveReplaceThreadID( inst, Lop.CP_ROOT_THREAD_ID, Lop.CP_CHILD_THREAD+pid);
+		// Parsing the instruction string reconstructs only executable operands and silently
+		// drops source, Hop/Lop, and planner-proof identity.  ParFor clones execute the same
+		// selected physical instruction, so carry this immutable provenance onto the clone.
+		inst.setLocation(oInst);
 		
 		return inst;
 	}

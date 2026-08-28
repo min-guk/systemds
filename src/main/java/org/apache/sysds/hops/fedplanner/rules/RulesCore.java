@@ -385,8 +385,8 @@ public final class RulesCore {
       rr.register(new Rulesets.TransientWriteRule());
       rr.register(new Rulesets.FunctionOutputRule());
       rr.register(new Rulesets.TransientReadRule());
-      rr.register(new Rulesets.FunctionCallRule());
       rr.register(new Rulesets.BuiltinMKMeansRule());
+      rr.register(new Rulesets.FunctionCallRule());
 
       return rr;
     }

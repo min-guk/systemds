@@ -57,6 +57,7 @@ import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.lops.MapMultChain.ChainType;
 import org.apache.sysds.parser.DataExpression;
 
@@ -148,6 +149,19 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			//process childs recursively first (to allow roll-up)
 			if( descendFirst )
 				rule_AlgebraicSimplification(hi, descendFirst); //see below
+
+			// A committed whole-program placement owns the operation boundary as well as
+			// its CP/FED and output-residency decision. Runtime-value-dependent rewrites
+			// (for example, replacing an empty slice with a source-less rand/datagen Hop)
+			// otherwise manufacture an operation that was absent from the feasible plan
+			// space and discard the selected occurrence. Keep all algebraic rewrites active
+			// before planning, but freeze the selected HOP DAG during recompilation. Shape
+			// propagation and Lop construction still run normally.
+			if(FederatedPlannerUtils.hasPlannerRecompileStateAuthority()) {
+				if(!descendFirst)
+					rule_AlgebraicSimplification(hi, descendFirst);
+				continue;
+			}
 			
 			//apply actual simplification rewrites (of childs incl checks)
 			hi = removeEmptyRightIndexing(hop, hi, i);        //e.g., X[,1] -> matrix(0,ru-rl+1,cu-cl+1), if nnz(X)==0 and known indices
@@ -399,6 +413,16 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			apply |= ((rop.getOp()==ReOrgOp.TRANS || rop.getOp()==ReOrgOp.RESHAPE
 					|| rop.getOp()==ReOrgOp.ROLL) && rop.getDim1()==1 && rop.getDim2()==1);
 
+			boolean plannerAware = rop.isPlannerPlacementSelected()
+				|| input.isPlannerPlacementSelected()
+				|| FederatedPlannerUtils.hasPlannerRecompileStateAuthority();
+
+			if( apply && plannerAware )
+				// A runtime-known semantic identity is still a selected physical occurrence.
+				// Retain the boundary because subsequent aggregate-direction rewrites may compose
+				// with this rewrite and change the selected opcode, result type, and residency.
+				return hi;
+
 			if( apply ) {
 				HopRewriteUtils.replaceChildReference(parent, hi, input, pos);
 				hi = input;
@@ -408,7 +432,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 
 		return hi;
 	}
-	
+
 	private static Hop removeUnnecessaryOuterProduct(Hop parent, Hop hi, int pos)
 	{
 		if( hi instanceof BinaryOp  ) //binary cell operation 
@@ -571,6 +595,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	
 	private static Hop fuseDatagenAndReorgOperation(Hop parent, Hop hi, int pos)
 	{
+		if(FederatedPlannerUtils.hasPlannerRecompileStateAuthority()
+			|| hi.isPlannerPlacementSelected())
+			return hi;
+
 		if( HopRewriteUtils.isTransposeOperation(hi)
 			&& hi.getInput(0) instanceof DataGenOp     //datagen
 			&& hi.getInput(0).getParent().size()==1 )  //transpose only consumer
@@ -607,6 +635,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	}
 
 	private static Hop simplifyColwiseAggregate( Hop parent, Hop hi, int pos ) {
+		if(FederatedPlannerUtils.hasPlannerRecompileStateAuthority()
+			|| hi.isPlannerPlacementSelected())
+			return hi;
+
 		if( hi instanceof AggUnaryOp  ) 
 		{
 			AggUnaryOp uhi = (AggUnaryOp)hi;
@@ -668,6 +700,10 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	}
 
 	private static Hop simplifyRowwiseAggregate( Hop parent, Hop hi, int pos ) {
+		if(FederatedPlannerUtils.hasPlannerRecompileStateAuthority()
+			|| hi.isPlannerPlacementSelected())
+			return hi;
+
 		if( hi instanceof AggUnaryOp  ) 
 		{
 			AggUnaryOp uhi = (AggUnaryOp)hi;
@@ -744,6 +780,11 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			if( (agg.getDirection().isRow() && HopRewriteUtils.isSizeExpressionOf(N, in, false))
 				|| (agg.getDirection().isCol() && HopRewriteUtils.isSizeExpressionOf(N, in, true)) )
 			{
+				// The dynamic rewrite removes the division and changes the aggregate's physical
+				// opcode.  Preserve the exact selected aggregate occurrence and placement so
+				// runtime lowering can prove this closed semantic substitution instead of
+				// treating colMeans/rowMeans as an unrelated runtime operation.
+				agg.setPlannerRewriteReplacement(agg, "DYNAMIC_SUM_DIVIDE_TO_MEAN");
 				HopRewriteUtils.replaceChildReference(parent, hi, agg, pos);
 				HopRewriteUtils.cleanupUnreferenced(hi, N);
 				agg.setOp(AggOp.MEAN);
@@ -838,7 +879,21 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				
 				if( input.getDim1()==1 && input.getDim2()==1 && input.getDataType()==DataType.MATRIX)
 				{
+					boolean plannerAware = hi.isPlannerPlacementSelected()
+						|| FederatedPlannerUtils.hasPlannerRecompileStateAuthority();
+					// A scalar cast is a coordinator instruction.  Once whole-program planning owns
+					// placement, this algebraic identity may replace only an exact CP/LOUT aggregate;
+					// otherwise retain the selected physical boundary.
+					if(plannerAware && !FederatedPlannerUtils.hasPlannerLocalPlacement(hi))
+						return hi;
 					UnaryOp cast = HopRewriteUtils.createUnary(input, OpOp1.CAST_AS_SCALAR);
+					if(plannerAware) {
+						String kind = "DYNAMIC_REMOVE_1X1_AGGREGATE:" + hi.getOpString();
+						if(hi.isPlannerPlacementSelected())
+							cast.setPlannerRewriteReplacement(hi, kind);
+						else
+							cast.setPlannerRewriteReplacementIdentity(hi, kind);
+					}
 					
 					//remove unnecessary aggregation 
 					HopRewriteUtils.replaceChildReference(parent, hi, cast, pos);
@@ -1066,9 +1121,12 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				UnaryOp cast = HopRewriteUtils.createUnary(left, OpOp1.CAST_AS_SCALAR);
 				BinaryOp mult = HopRewriteUtils.createBinary(cast, right, OpOp2.MULT);
-				if(hi.isPlannerPlacementSelected()) {
+				if(FederatedPlannerUtils.hasPlannerPlacement(hi)) {
 					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_SCALAR_MM_CAST");
-					mult.setPlannerRewriteReplacement(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
+					if(hi.isPlannerPlacementSelected())
+						mult.setPlannerRewriteReplacement(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
+					else
+						mult.setPlannerRewriteReplacementIdentity(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
 				}
 				
 				//add mult to parent
@@ -1083,9 +1141,12 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			{
 				UnaryOp cast = HopRewriteUtils.createUnary(right, OpOp1.CAST_AS_SCALAR);
 				BinaryOp mult = HopRewriteUtils.createBinary(cast, left, OpOp2.MULT);
-				if(hi.isPlannerPlacementSelected()) {
+				if(FederatedPlannerUtils.hasPlannerPlacement(hi)) {
 					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_SCALAR_MM_CAST");
-					mult.setPlannerRewriteReplacement(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
+					if(hi.isPlannerPlacementSelected())
+						mult.setPlannerRewriteReplacement(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
+					else
+						mult.setPlannerRewriteReplacementIdentity(hi, "DYNAMIC_SCALAR_MATRIX_MULT");
 				}
 				
 				//add mult to parent
@@ -2419,9 +2480,12 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				ReorgOp trans = HopRewriteUtils.createTranspose(baLeft);
 				AggBinaryOp mmult = HopRewriteUtils.createMatrixMultiply(trans, baRight);
 				UnaryOp cast = HopRewriteUtils.createUnary(mmult, OpOp1.CAST_AS_SCALAR);
-				if(hi.isPlannerPlacementSelected()) {
+				if(FederatedPlannerUtils.hasPlannerPlacement(hi)) {
 					trans.setPlannerLoweringAuxiliary(hi, "DYNAMIC_DOT_PRODUCT_TRANSPOSE");
-					mmult.setPlannerRewriteReplacement(hi, "DYNAMIC_DOT_PRODUCT");
+					if(hi.isPlannerPlacementSelected())
+						mmult.setPlannerRewriteReplacement(hi, "DYNAMIC_DOT_PRODUCT");
+					else
+						mmult.setPlannerRewriteReplacementIdentity(hi, "DYNAMIC_DOT_PRODUCT");
 					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_DOT_PRODUCT_SCALAR_CAST");
 				}
 				
@@ -2461,9 +2525,20 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 
 				// if X is NOT a column vector
 				if (x.getDim2() > 1) {
+					// Dynamic recompilation runs after the federated planner.  The power
+					// result can intentionally be a durable FED/FOUT value consumed by a
+					// FED/LOUT aggregate.  Fusing across that selected boundary would erase
+					// a planner decision and create a new, unauthorised physical operation.
+					// Pre-planner rewrites remain unrestricted; post-planner fusion is safe
+					// only when both selected operations have the identical placement.
+					if(hi.isPlannerPlacementSelected()
+						&& !sameSelectedPlacement(hi, sumInput))
+						return hi;
 					// perform rewrite from SUM(POW(X,2)) to SUM_SQ(X)
 					Direction dir = ((AggUnaryOp) hi).getDirection();
 					AggUnaryOp sumSq = HopRewriteUtils.createAggUnaryOp(x, AggOp.SUM_SQ, dir);
+					if(hi.isPlannerPlacementSelected())
+						sumSq.setPlannerRewriteReplacement(hi, "DYNAMIC_SUM_SQUARED");
 					HopRewriteUtils.replaceChildReference(parent, hi, sumSq, pos);
 					HopRewriteUtils.cleanupUnreferenced(hi, sumInput);
 					hi = sumSq;
@@ -2473,6 +2548,19 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			}
 		}
 		return hi;
+	}
+
+	private static boolean sameSelectedPlacement(Hop left, Hop right) {
+		if(left == null || right == null || !left.isPlannerPlacementSelected()
+			|| !right.isPlannerPlacementSelected())
+			return false;
+		ExecType leftExec = left.getForcedExecType() != null
+			? left.getForcedExecType() : left.getExecType();
+		ExecType rightExec = right.getForcedExecType() != null
+			? right.getForcedExecType() : right.getExecType();
+		return leftExec == rightExec
+			&& left.getFederatedOutput() == right.getFederatedOutput()
+			&& left.isFederatedOutputDerived() == right.isFederatedOutputDerived();
 	}
 	
 	private static Hop fuseAxpyBinaryOperationChain(Hop parent, Hop hi, int pos) 
@@ -2555,24 +2643,18 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	 * historical rewrite behavior.
 	 */
 	private static boolean plannerRewriteCanRemainCpLocal(Hop hop) {
-		if(!hop.isPlannerPlacementSelected())
+		if(!hop.isPlannerPlacementSelected()
+			&& !FederatedPlannerUtils.hasPlannerRecompileStateAuthority())
 			return true;
-		ExecType exec = hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
-		return exec == ExecType.CP && hop.getFederatedOutput().isForcedLocal();
+		return FederatedPlannerUtils.hasPlannerLocalPlacement(hop);
 	}
 
 	/** A fusion is legal only when it does not erase a selected physical placement boundary. */
 	private static boolean plannerFusionPreservesPlacement(Hop owner, Hop folded) {
-		if(!owner.isPlannerPlacementSelected() && !folded.isPlannerPlacementSelected())
+		if(!owner.isPlannerPlacementSelected() && !folded.isPlannerPlacementSelected()
+			&& !FederatedPlannerUtils.hasPlannerRecompileStateAuthority())
 			return true;
-		if(owner.isPlannerPlacementSelected() != folded.isPlannerPlacementSelected())
-			return false;
-		ExecType ownerExec = owner.getForcedExecType() != null
-			? owner.getForcedExecType() : owner.getExecType();
-		ExecType foldedExec = folded.getForcedExecType() != null
-			? folded.getForcedExecType() : folded.getExecType();
-		return ownerExec == foldedExec
-			&& owner.getFederatedOutput() == folded.getFederatedOutput();
+		return FederatedPlannerUtils.haveSamePlannerPlacement(owner, folded);
 	}
 
 	private static Hop simplifyEmptyBinaryOperation(Hop parent, Hop hi, int pos) 
@@ -2794,7 +2876,8 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	{
 		if( hi instanceof BinaryOp && ((BinaryOp)hi).supportsMatrixScalarOperations() //e.g., X * s
 			&& hi.getInput(0).getDataType()==DataType.MATRIX 
-			&& hi.getInput(1).getDataType()==DataType.MATRIX )	
+			&& hi.getInput(1).getDataType()==DataType.MATRIX
+			&& plannerRewriteCanRemainCpLocal(hi) )
 		{
 			Hop right = hi.getInput(1);
 			
@@ -2806,7 +2889,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				// This cast is a physical type adapter introduced after planner selection, not an
 				// independent placement decision.  It is legal only as a CP/LOUT helper of this
 				// exact binary owner; the runtime audit enforces that closed contract.
-				if(hi.isPlannerPlacementSelected())
+				if(FederatedPlannerUtils.hasPlannerPlacement(hi))
 					cast.setPlannerLoweringAuxiliary(hi, "DYNAMIC_BINARY_SCALAR_CAST");
 				HopRewriteUtils.replaceChildReference(hi, right, cast, 1);			
 				

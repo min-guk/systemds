@@ -76,13 +76,21 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 	
 	private MultiReturnParameterizedBuiltinFEDInstruction(Operator op, CPOperand input1, CPOperand input2,
 		List<CPOperand> outputs, boolean metaReturn, String opcode, String istr) {
-		super(FEDType.MultiReturnParameterizedBuiltin, op, input1, input2, null, opcode, istr);
+		// transformencode always installs a federation map on its primary matrix
+		// output; its metadata frame is the heterogeneous coordinator-local output.
+		super(FEDType.MultiReturnParameterizedBuiltin, op, input1, input2, null, opcode, istr,
+			FederatedOutput.FOUT);
 		_metaReturn = metaReturn;
 		_outputs = outputs;
 	}
 
 	public CPOperand getOutput(int i) {
 		return _outputs.get(i);
+	}
+
+	@Override
+	public String getOutputVariableName() {
+		return _outputs.isEmpty() ? null : _outputs.get(0).getName();
 	}
 
 	public static MultiReturnParameterizedBuiltinFEDInstruction parseInstruction(

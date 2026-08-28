@@ -28,9 +28,11 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
@@ -53,6 +55,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
 	public enum InputPresence { ABSENT_LOCAL, PRESENT }
+	public enum CoordinatorInputAccess { PAYLOAD, FEDERATION_MAP_METADATA }
 
 	/** Neutral explicit absence/value state; present-null cannot be represented. */
 	public record CandidateInputState(InputPresence presence, FType fType) {
@@ -722,7 +725,7 @@ public final class PlacementAnalysis {
 		public NodeShapeFact { Objects.requireNonNull(dataType, "dataType"); }
 		public boolean knownPositiveMatrix() { return dataType == DataType.MATRIX && rows > 0 && cols > 0; }
 	}
-	/** Exact structural matrix input edge between two compiled Hop owners. */
+	/** Exact structural matrix/frame input edge between two compiled Hop owners. */
 	public static final class CompiledInputEdgeFact {
 		private final CompiledHopKey producer;
 		private final CompiledHopKey consumer;
@@ -850,6 +853,7 @@ public final class PlacementAnalysis {
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
+	private final Map<CompiledInputEdgeFact,CoordinatorInputAccess> coordinatorInputAccessByIdentity;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> cfgDefinitionSourcesByIdentity;
 	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>> logicalInputsByIdentity;
@@ -991,6 +995,8 @@ public final class PlacementAnalysis {
 			analysisKeysByIdentity);
 		this.compiledInputEdgesInCanonicalOrder = validateCompiledInputEdges(compiledInputEdges);
 		this.inputEdgesByIdentity = indexCompiledInputEdges(this.compiledInputEdgesInCanonicalOrder);
+		this.coordinatorInputAccessByIdentity = deriveCoordinatorInputAccess(
+			this.compiledInputEdgesInCanonicalOrder);
 		this.cfgDefinitionSourcesByIdentity = indexCfgDefinitionSources(graph);
 		this.logicalTransientInputsInCanonicalOrder = validateLogicalTransientInputs(logicalTransientInputs,
 			analysisKeysByIdentity);
@@ -1396,7 +1402,7 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Compiled-input constraint has no exact input position");
 			NodeShapeFact producerShape = shapeFacts.shapeFact(producer.key()).orElseThrow(() ->
 				new IllegalArgumentException("Compiled-input producer has no builder-owned shape fact"));
-			if(producerShape.dataType() != DataType.MATRIX)
+			if(!isPlacementDataType(producerShape.dataType()))
 				continue;
 			Map<Integer,Constraint> byPosition = inputsByConsumer.computeIfAbsent(consumer.key(),
 				ignored -> new LinkedHashMap<>());
@@ -1420,6 +1426,10 @@ public final class PlacementAnalysis {
 		return constraint.kind() == ConstraintKind.DOMINATES && "data-input".equals(constraint.evidence())
 			|| constraint.kind() == ConstraintKind.SAME_PLACEMENT
 				&& "function-input-binding".equals(constraint.evidence());
+	}
+
+	private static boolean isPlacementDataType(DataType dataType) {
+		return dataType == DataType.MATRIX || dataType == DataType.FRAME;
 	}
 
 	private record EdgeIdentity(CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) { }
@@ -1592,6 +1602,58 @@ public final class PlacementAnalysis {
 	}
 
 	/**
+	 * Runtime-native coordinator access required by one exact compiled data edge.
+	 * Matrix/frame {@code nrow}, {@code ncol}, and {@code length} read dimensions
+	 * directly from {@code FederationMap} ranges in
+	 * {@code AggregateUnaryCPInstruction}; they do not acquire or download the
+	 * partition payload. The fact is captured once by the shared analysis so every
+	 * selector, cost model, and lowering projection consumes the same boundary
+	 * semantics.
+	 */
+	public CoordinatorInputAccess coordinatorInputAccess(CompiledInputEdgeFact edge) {
+		CoordinatorInputAccess access = coordinatorInputAccessByIdentity.get(
+			Objects.requireNonNull(edge, "compiled input edge"));
+		if(access == null)
+			throw new IllegalArgumentException(
+				"Coordinator input access requires an exact analysis-owned compiled edge");
+		return access;
+	}
+
+	public boolean isCoordinatorMetadataOnlyInput(CompiledInputEdgeFact edge) {
+		return coordinatorInputAccess(edge) == CoordinatorInputAccess.FEDERATION_MAP_METADATA;
+	}
+
+	/** O(1) exact producer/consumer boundary query used by DP reconciliation. */
+	public boolean isCoordinatorMetadataOnlyInputBoundary(CompiledHopKey producer,
+		CompiledHopKey consumer) {
+		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> byConsumer =
+			inputEdgesByIdentity.get(Objects.requireNonNull(producer, "producer"));
+		Map<Integer,CompiledInputEdgeFact> byPosition = byConsumer == null ? null
+			: byConsumer.get(Objects.requireNonNull(consumer, "consumer"));
+		return byPosition != null && byPosition.size() == 1
+			&& isCoordinatorMetadataOnlyInput(byPosition.values().iterator().next());
+	}
+
+	private Map<CompiledInputEdgeFact,CoordinatorInputAccess> deriveCoordinatorInputAccess(
+		List<CompiledInputEdgeFact> edges) {
+		Map<CompiledInputEdgeFact,CoordinatorInputAccess> result = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : edges) {
+			Hop producer = hopsByKey.get(edge.producer());
+			Hop consumer = hopsByKey.get(edge.consumer());
+			boolean federationMapMetadata = edge.inputPosition() == 0
+				&& producer != null && producer.getDataType() != null
+				&& (producer.getDataType().isMatrix() || producer.getDataType().isFrame())
+				&& consumer instanceof UnaryOp unary
+				&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL
+					|| unary.getOp() == OpOp1.LENGTH);
+			result.put(edge, federationMapMetadata
+				? CoordinatorInputAccess.FEDERATION_MAP_METADATA
+				: CoordinatorInputAccess.PAYLOAD);
+		}
+		return Collections.unmodifiableMap(result);
+	}
+
+	/**
 	 * Exact raw CFG reaching definitions for one occurrence.  This relation is
 	 * intentionally broader than {@link #logicalTransientInputsInCanonicalOrder()}:
 	 * the latter exists only when the writer/read candidate tuples can be replayed
@@ -1680,10 +1742,10 @@ public final class PlacementAnalysis {
 
 	/**
 	 * Resolves the physical DML {@link FunctionOp} input that carries one exact logical
-	 * caller-argument/formal binding. Matrix arguments additionally require the frozen
+	 * caller-argument/formal binding. Matrix and frame arguments additionally require the frozen
 	 * compiled-input fact used by placement transfers. Scalar/control arguments are
 	 * validated against the concrete FunctionOp input itself because the compiled-input
-	 * index is intentionally matrix-only and no placement transfer exists for them.
+	 * index intentionally excludes non-data operands and no placement transfer exists for them.
 	 */
 	public CompiledHopKey requireExactPhysicalFunctionInputConsumer(LogicalFunctionInputFact supplied) {
 		Objects.requireNonNull(supplied, "logical function input fact");
@@ -1712,7 +1774,7 @@ public final class PlacementAnalysis {
 				"Logical function input does not match the exact physical FunctionOp operand");
 		NodeShapeFact sourceShape = shapeFacts.shapeFact(fact.sourceArgument()).orElseThrow(() ->
 			new IllegalArgumentException("Logical function input has no builder-owned shape fact"));
-		if(sourceShape.dataType() == DataType.MATRIX)
+		if(isPlacementDataType(sourceShape.dataType()))
 			requireExactCompiledInputEdge(fact.sourceArgument(), consumer, fact.callInputPosition());
 		return consumer;
 	}

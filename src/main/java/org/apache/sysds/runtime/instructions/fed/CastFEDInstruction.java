@@ -47,7 +47,12 @@ import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 public class CastFEDInstruction extends UnaryFEDInstruction {
 
 	private CastFEDInstruction(Operator op, CPOperand in, CPOperand out, String opcode, String istr) {
-		super(FEDInstruction.FEDType.Cast, op, in, out, opcode, istr);
+		// Both federated cast variants preserve the input federation map and publish
+		// a federated MatrixObject/FrameObject.  This is an inherent FOUT operation,
+		// not a runtime output heuristic.  Declaring the physical result explicitly
+		// keeps planner lowering, runtime auditing, and the value actually installed
+		// in the ExecutionContext on the same contract.
+		super(FEDInstruction.FEDType.Cast, op, in, out, opcode, istr, FederatedOutput.FOUT);
 	}
 
 	public static CastFEDInstruction parseInstruction(CastSPInstruction inst, ExecutionContext ec) {
@@ -66,11 +71,32 @@ public class CastFEDInstruction extends UnaryFEDInstruction {
 
 	public static CastFEDInstruction parseInstruction(String str) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		InstructionUtils.checkNumFields(parts, 2);
+		InstructionUtils.checkNumFields(parts, 2, 3, 4);
+		FederatedOutput requested = null;
+		try {
+			requested = FederatedOutput.valueOf(parts[parts.length - 1]);
+		}
+		catch(IllegalArgumentException ignored) {
+			// The optional trailing unary field is the thread count, not a
+			// federated-output flag.
+		}
+		if(requested != null) {
+			if(requested == FederatedOutput.LOUT)
+				throw new DMLRuntimeException(
+					"Federated cast preserves the federation map and cannot produce LOUT");
+			str = InstructionUtils.removeFEDOutputFlag(str);
+			parts = InstructionUtils.getInstructionPartsWithValueType(str);
+		}
+		InstructionUtils.checkNumFields(parts, 2, 3);
 		String opcode = parts[0];
 		CPOperand in = new CPOperand(parts[1]);
 		CPOperand out = new CPOperand(parts[2]);
 		return new CastFEDInstruction(null, in, out, opcode, str);
+	}
+
+	public static boolean isValidOpcode(String opcode) {
+		return OpOp1.CAST_AS_FRAME.toString().equalsIgnoreCase(opcode)
+			|| OpOp1.CAST_AS_MATRIX.toString().equalsIgnoreCase(opcode);
 	}
 
 	@Override

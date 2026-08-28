@@ -103,6 +103,9 @@ public final class OracleFacade {
   private static final String ATTR_FCALL_NAME = "fcall.name";
   private static final String ATTR_FCALL_TYPE = "fcall.type";
   private static final String ATTR_FUNOUT_FCALL_TYPE = "funout.fcall.type";
+  private static final String ATTR_FUNOUT_FCALL_NAMESPACE = "funout.fcall.namespace";
+  private static final String ATTR_FUNOUT_FCALL_NAME = "funout.fcall.name";
+  private static final String ATTR_FUNOUT_POSITION = "funout.position";
   private static final String ALIGN_COL_T = "COL_T";
 
   private final RuleRegistry registry;
@@ -387,9 +390,18 @@ public final class OracleFacade {
 
   private void addDataOpAttrs(DataOp hop, Map<String,String> attrs) {
     if (hop.getOp() == OpOpData.FUNCTIONOUTPUT) {
-      FunctionOp.FunctionType sourceType = resolveFunctionOutputSourceType(hop);
-      if (sourceType != null)
-        attrs.put(ATTR_FUNOUT_FCALL_TYPE, sourceType.name());
+      FunctionOutputOwner owner = resolveFunctionOutputOwner(hop);
+      if (owner != null) {
+        FunctionOp source = owner.call();
+        if (source.getFunctionType() != null)
+          attrs.put(ATTR_FUNOUT_FCALL_TYPE, source.getFunctionType().name());
+        if (source.getFunctionNamespace() != null)
+          attrs.put(ATTR_FUNOUT_FCALL_NAMESPACE, source.getFunctionNamespace());
+        if (source.getFunctionName() != null)
+          attrs.put(ATTR_FUNOUT_FCALL_NAME, source.getFunctionName());
+        if (owner.outputPosition() >= 0)
+          attrs.put(ATTR_FUNOUT_POSITION, Integer.toString(owner.outputPosition()));
+      }
     }
 
     if (hop.isWrite()) {
@@ -409,24 +421,47 @@ public final class OracleFacade {
     }
   }
 
-  private static FunctionOp.FunctionType resolveFunctionOutputSourceType(DataOp hop) {
+  private record FunctionOutputOwner(FunctionOp call, int outputPosition) {}
+
+  private static FunctionOutputOwner resolveFunctionOutputOwner(DataOp hop) {
     if (hop == null || hop.getOp() != OpOpData.FUNCTIONOUTPUT)
       return null;
     List<Hop> inputs = hop.getInput();
     if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
       return null;
 
-    FunctionOp.FunctionType fallback = null;
+    List<FunctionOutputOwner> exact = new ArrayList<>();
+    List<FunctionOutputOwner> fallback = new ArrayList<>();
     for (Hop parent : inputs.get(0).getParent()) {
       if (!(parent instanceof FunctionOp))
         continue;
-      FunctionOp.FunctionType type = ((FunctionOp) parent).getFunctionType();
-      if (type == FunctionOp.FunctionType.MULTIRETURN_BUILTIN)
-        return type;
-      if (fallback == null)
-        fallback = type;
+      FunctionOp call = (FunctionOp) parent;
+      int position = functionOutputPosition(call, hop);
+      FunctionOutputOwner owner = new FunctionOutputOwner(call, position);
+      if (position >= 0)
+        exact.add(owner);
+      else
+        fallback.add(owner);
     }
-    return fallback;
+    if (exact.size() == 1)
+      return exact.get(0);
+    if (exact.size() > 1)
+      throw new IllegalStateException("Function output has multiple exact call owners: " + hop.getName());
+    return fallback.size() == 1 ? fallback.get(0) : null;
+  }
+
+  private static int functionOutputPosition(FunctionOp call, Hop output) {
+    List<Hop> outputs = call.getOutputs();
+    if (outputs != null)
+      for (int i = 0; i < outputs.size(); i++)
+        if (outputs.get(i) == output)
+          return i;
+    String[] names = call.getOutputVariableNames();
+    if (output.getName() != null && names != null)
+      for (int i = 0; i < names.length; i++)
+        if (output.getName().equals(names[i]))
+          return i;
+    return -1;
   }
 
   private void addSpoofAttrs(SpoofFusedOp hop, Map<String,String> attrs) {
@@ -908,8 +943,13 @@ public final class OracleFacade {
         return ((TernaryOp) hop).getOp().toString();
       if (hop instanceof QuaternaryOp)
         return ((QuaternaryOp) hop).getOp().toString();
-      if (hop instanceof FunctionOp)
+      if (hop instanceof FunctionOp) {
+        FunctionOp function = (FunctionOp) hop;
+        if (function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+            && function.getFunctionName() != null && !function.getFunctionName().isBlank())
+          return function.getFunctionName().trim().toLowerCase(Locale.ROOT);
         return FunctionOp.OPCODE;
+      }
       if (hop instanceof ParameterizedBuiltinOp) {
         ParamBuiltinOp op = ((ParameterizedBuiltinOp) hop).getOp();
         return (op != null) ? op.toString() : fallback(hop);

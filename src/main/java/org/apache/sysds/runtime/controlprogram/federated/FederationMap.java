@@ -25,6 +25,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -697,21 +698,7 @@ public class FederationMap {
 		ArrayList<MappingTask> mappingTasks = new ArrayList<>();
 		for(Pair<FederatedRange, FederatedData> fedMap : _fedMap)
 			mappingTasks.add(new MappingTask(fedMap.getKey(), fedMap.getValue(), forEachFunction, _ID));
-
-		try {
-			for(Future<?> t:pool.invokeAll(mappingTasks, ConfigurationManager.getFederatedTimeout(), TimeUnit.SECONDS)){
-				if(!t.isDone())
-					throw new RuntimeException("Timeout");
-				else if(t.isCancelled())
-					throw new RuntimeException("Failed");
-			}
-		}
-		catch(InterruptedException e) {
-			throw new RuntimeException(e);
-		}
-		finally{
-			pool.shutdown();
-		}
+		executeMappingTasks(pool, mappingTasks);
 	}
 
 	/**
@@ -730,19 +717,37 @@ public class FederationMap {
 		ArrayList<MappingTask> mappingTasks = new ArrayList<>();
 		for(Pair<FederatedRange, FederatedData> fedMap : fedMapCopy._fedMap)
 			mappingTasks.add(new MappingTask(fedMap.getKey(), fedMap.getValue(), mappingFunction, newVarID));
-		try{
-			for(Future<?> t : pool.invokeAll(mappingTasks, ConfigurationManager.getFederatedTimeout(), TimeUnit.SECONDS)){
-				if(!t.isDone())
-					throw new RuntimeException("Timeout");
-				else if(t.isCancelled()){
-					throw new RuntimeException("Failed");
-				}
+		executeMappingTasks(pool, mappingTasks);
+		fedMapCopy._ID = newVarID;
+		return fedMapCopy;
+	}
+
+	private static void executeMappingTasks(ExecutorService pool, List<MappingTask> mappingTasks) {
+		try {
+			List<Future<Void>> futures = pool.invokeAll(mappingTasks,
+				ConfigurationManager.getFederatedTimeout(), TimeUnit.SECONDS);
+			for(Future<Void> future : futures) {
+				if(future.isCancelled())
+					throw new DMLRuntimeException("Federated parallel mapping timed out");
+				future.get();
 			}
-			fedMapCopy._ID = newVarID;
-			return fedMapCopy;
 		}
-		catch(Exception e){
-			throw new RuntimeException(e);
+		catch(InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new DMLRuntimeException("Federated parallel mapping was interrupted", e);
+		}
+		catch(ExecutionException e) {
+			Throwable cause = e.getCause();
+			if(cause instanceof RuntimeException)
+				throw (RuntimeException) cause;
+			if(cause instanceof Error)
+				throw (Error) cause;
+			if(cause instanceof Exception)
+				throw new DMLRuntimeException("Federated parallel mapping failed", (Exception) cause);
+			throw new DMLRuntimeException("Federated parallel mapping failed", new Exception(cause));
+		}
+		finally {
+			pool.shutdownNow();
 		}
 	}
 

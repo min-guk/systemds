@@ -76,6 +76,8 @@ public final class Rulesets {
   private static final String ATTR_FCALL_NAME = "fcall.name";
   private static final String ATTR_FCALL_TYPE = "fcall.type";
   private static final String ATTR_FUNOUT_FCALL_TYPE = "funout.fcall.type";
+  private static final String ATTR_FUNOUT_FCALL_NAME = "funout.fcall.name";
+  private static final String ATTR_FUNOUT_POSITION = "funout.position";
   private static final String MULTIRETURN_BUILTIN_TYPE = "MULTIRETURN_BUILTIN";
   private static final String WUMM_X_AXIS_ONLY_DETAIL =
       "WUMM supports only ROW or COL partitioned X (per QuaternaryWUMMFEDInstruction)";
@@ -2046,7 +2048,9 @@ public final class Rulesets {
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       Objects.requireNonNull(sig, "sig");
       try {
-        if (inFTypes == null || inFTypes.size() != 1)
+        // The HOP carries the frame plus local scalar parameters such as the JSON spec.
+        // Only the primary frame input determines the federated layout.
+        if (inFTypes == null || inFTypes.isEmpty())
           return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
         FType in = typeAt(inFTypes, 0);
@@ -2406,7 +2410,10 @@ public final class Rulesets {
 
       Dir dir = dirOf(sig);
       String agg = aggOf(sig);
-      if ("VAR".equals(agg) || dir == Dir.ROWCOL || isScalarOutput(dir, hint))
+      // Axis aggregates remain matrix-valued even when an extent is unknown or happens
+      // to be one. Only ROWCOL is scalar. Requiring a known encoded width here hid the
+      // runtime-native FED/LOUT path for colMeans(transformencode(...)).
+      if ("VAR".equals(agg) || dir == Dir.ROWCOL)
         return FTypeProfile.empty();
 
       for (FType cand : inputs) {
@@ -2435,9 +2442,6 @@ public final class Rulesets {
 
       if (dir == Dir.ROWCOL)
         return fedLocalCaps(sig, ReasonCode.FULL_AGG_REQUIRES_CONSOLIDATION);
-
-      if (isScalarOutput(dir, hint))
-        return fedLocalCaps(sig, ReasonCode.SCALAR_CANNOT_BE_FEDERATED);
 
       // Runtime supports BROADCAST/FULL and preserves mapping semantics on output.
       if (in == FType.BROADCAST || in == FType.FULL)
@@ -2471,18 +2475,6 @@ public final class Rulesets {
 
     private static boolean axisMatch(FType in, Dir dir) {
       return (in == FType.ROW && dir == Dir.ROW) || (in == FType.COL && dir == Dir.COL);
-    }
-
-    private static boolean isScalarOutput(Dir dir, ShapeHint hint) {
-      if (dir == Dir.ROWCOL)
-        return true;
-      if (hint == null)
-        return false;
-      if (dir == Dir.ROW)
-        return hint.rows() == 1;
-      if (dir == Dir.COL)
-        return hint.cols() == 1;
-      return false;
     }
 
   }
@@ -3216,13 +3208,20 @@ public final class Rulesets {
 
       FType axis = null;
       if (!outerLike) {
-        if (aligned(left, right, FType.ROW, hint))
-          axis = FType.ROW;
-        else if (aligned(left, right, FType.COL, hint))
-          axis = FType.COL;
-        else if (matrixScalarPair(left, right, FType.ROW, hint))
+        // A coordinator-local matrix/scalar paired with a ROW/COL federated matrix is a
+        // native runtime path. BinaryMatrixMatrixFEDInstruction decides at execution time
+        // between broadcast and broadcastSliced from the actual operand dimensions, while
+        // BinaryMatrixScalarFEDInstruction broadcasts a scalar. Do not first consult static
+        // output dimensions through aligned(...): transformencode deliberately leaves its
+        // encoded width unknown, and that speculative lookup used to turn this legal path
+        // into an UNKNOWN_METADATA exclusion before any selector could see it.
+        if (matrixScalarPair(left, right, FType.ROW, hint))
           axis = FType.ROW;
         else if (matrixScalarPair(left, right, FType.COL, hint))
+          axis = FType.COL;
+        else if (aligned(left, right, FType.ROW, hint))
+          axis = FType.ROW;
+        else if (aligned(left, right, FType.COL, hint))
           axis = FType.COL;
       }
 
@@ -4524,14 +4523,26 @@ public final class Rulesets {
 
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (isMultiReturnBuiltinOutput(sig)) {
+        if (!isTransformEncodeOutput(sig) || functionOutputPosition(sig) != 0)
+          return FTypeProfile.empty();
+      }
       return primaryLikeProfile(inFTypeCandidates);
     }
 
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       String sourceType = attrValue(sig, ATTR_FUNOUT_FCALL_TYPE);
-      if (sourceType != null && sourceType.equalsIgnoreCase(MULTIRETURN_BUILTIN_TYPE))
+      if (sourceType != null && sourceType.equalsIgnoreCase(MULTIRETURN_BUILTIN_TYPE)) {
+        if (!isTransformEncodeOutput(sig))
+          return cpCaps(sig, ReasonCode.MISSING_FED_INSTRUCTION);
+        int position = functionOutputPosition(sig);
+        if (position == 0)
+          return new TransformEncodeRule().caps(sig, inFTypes, hint);
+        if (position == 1)
+          return cpCaps(sig, ReasonCode.OK);
         return cpCaps(sig, ReasonCode.MISSING_FED_INSTRUCTION);
+      }
 
       FType in = typeAt(inFTypes, 0);
       if (isFederatedLike(in))
@@ -4543,6 +4554,28 @@ public final class Rulesets {
         return fedLocalWithDetail(sig, ReasonCode.OK, FED_WRITE_DETAIL);
 
       return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+
+    private boolean isMultiReturnBuiltinOutput(OpSig sig) {
+      String sourceType = attrValue(sig, ATTR_FUNOUT_FCALL_TYPE);
+      return sourceType != null && sourceType.equalsIgnoreCase(MULTIRETURN_BUILTIN_TYPE);
+    }
+
+    private boolean isTransformEncodeOutput(OpSig sig) {
+      String sourceName = attrValue(sig, ATTR_FUNOUT_FCALL_NAME);
+      return sourceName != null && sourceName.equalsIgnoreCase(Opcodes.TRANSFORMENCODE.toString());
+    }
+
+    private int functionOutputPosition(OpSig sig) {
+      String raw = attrValue(sig, ATTR_FUNOUT_POSITION);
+      if (raw == null)
+        return -1;
+      try {
+        return Integer.parseInt(raw);
+      }
+      catch (NumberFormatException ignored) {
+        return -1;
+      }
     }
   }
 
@@ -4595,7 +4628,7 @@ public final class Rulesets {
       if (sig == null)
         return false;
       String opcode = normalizedOpcode(sig);
-      return opcode.startsWith(OPCODE_PREFIX);
+      return opcode.startsWith(OPCODE_PREFIX) || isMultiReturnBuiltin(sig);
     }
 
     @Override
