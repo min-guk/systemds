@@ -2,7 +2,7 @@
 
 ## P2 `nrow` was modeled as a full FOUT-to-local payload materialization
 
-- **Status**: implementation fixed; Docker runtime-plan audit pending on the rebuilt stage
+- **Status**: resolved and verified on final immutable stage `g014-stage-audit-token-dd533dac-v27`
 - **Applied principle**: planner/runtime alignment and shared pre-selector authority. This is not a candidate-space restriction: the runtime-supported metadata access remains legal, while a nonexistent payload transfer is removed from the shared cost/lowering model.
 - **Environment/condition**: P2 preprocessing, `PRIVATE_AGGREGATE`, FedAll, LAN, 4 workers, runtime-plan audit, jar SHA prefix `f9ce3d40`.
 - **Reproduction**:
@@ -42,7 +42,7 @@
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/placement/CoordinatorMetadataInputAccessTest.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CoordinatorMetadataExactCostTest.java`
-- **Verification so far**:
+- **Targeted verification**:
   ```bash
   mvn -q -Dskip.antlr=false \
     -Dtest=CoordinatorMetadataInputAccessTest,CoordinatorMetadataExactCostTest,\
@@ -50,10 +50,13 @@ CampaignBG014AbsentLocalMaterializationLoweringRedTest,\
 CampaignBG014ExactSingleInputDirectFoutTest test
   ```
   Result: 6 tests passed. The tests prove the exact shared edge classification, preserve ordinary payload unary behavior, remove FedAll lowering action, and remove Exact's download factor/lowering action.
-- **Remaining work**:
-  - Build a fresh immutable stage.
-  - Re-run P2 audit in required order: DP, FedAll, Heuristic, Exact; also audit P1_FULL.
-  - Confirm the old missing synthetic action disappears without introducing physical HOP mismatches.
-  - Run the full 96-cell matrix and regenerate runtime/compile plots only from complete receipts.
-- **Potential regression risk**:
+- **Final verification**:
+  - Executable source commit: `33f3d27f42401c16b864c1d38ee68b7566562fb0`.
+  - Final JAR SHA-256: `dd533dac75d50fe0392bb65c97a04c7e88b9612f89fb97ec9f071ea97044739d`.
+  - The 19-class/290-test planner suite, the complete 130-test `FederatedPlannerFallbackIntegrationTest`, package build, and `git diff --check` passed.
+  - P1_FULL/P2_PREP by FedAll/Heuristic/Exact/DP produced eight runtime-plan audits with zero physical or synthetic mismatches. Audit summary: `/home/mchoi/g014-p2-pipeline-privateagg-27201f202a-20260827-v1/validation-p1full-p2prep-audits-v27-dd533dac/audit-summary.json` (SHA-256 `cc7a2cda5f4904409674d1dedf232a40e3fe6eeb14e1fa0dbbdae7d09ba2806f`).
+  - The old P2 missing `prefetch` action is absent. Exact and DP select `castdtf:1;fedinit:2;rmempty:2;transformencode:1;uak+:2`; FedAll and Heuristic select the separately audited policy plan, and all lower exactly.
+  - The final campaign contains 96/96 authenticated cells and matching workload outputs. Validation: `/home/mchoi/g014-p2-pipeline-privateagg-27201f202a-20260827-v1/runtime-p1full-p2prep-final-v27-dd533dac/validation.json` (SHA-256 `6e49c1353d88c52029350b49a4bda7c678b0ead7c7ae181d86b270e9d6cbe5c0`).
+  - Final runtime, normalized-runtime, planner-time, and total-compilation plots were generated from the authenticated campaign. Plot receipt: `/home/mchoi/g014-p2-pipeline-privateagg-27201f202a-20260827-v1/plots/p1full_p2prep_final_v27_plot_receipt.json`.
+- **Residual regression risk and guard**:
   - Over-broad metadata classification could incorrectly suppress a real payload transfer. Detection: the classifier is a closed whitelist (`NROW`, `NCOL`, `LENGTH`), requires matrix/frame input position 0, and the negative `abs` regression plus runtime-plan audit must stay green.
