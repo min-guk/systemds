@@ -11,14 +11,17 @@ import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -55,6 +58,33 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
 				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 		var selected = new HeuristicPlacementAdapter().select(analysis, markers);
+		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop",
+			selected.selectedRelocations().stream().noneMatch(action ->
+				"Xd".equals(action.sourceValueVersion().lexicalVariable())));
+	}
+
+	@Test
+	public void singlePassComponentsRetainFunctionFormalCandidateDependencies() throws Exception {
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(l2svmScript(2)));
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
+			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
+				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+
+		var selected = new HeuristicPlacementAdapter(new PolicyFirstFeasiblePlacementSelector())
+			.select(analysis, markers);
+
+		Assert.assertEquals("single-pass L2SVM must return a complete policy assignment",
+			selected.selectorGraph().decisionNodes().size(), selected.assignment().size());
+		Assert.assertTrue("merged single-pass components must remain exact-candidate reachable",
+			CandidateSelections.canStillBeReachable(analysis, selected.selectorGraph(),
+				selected.selectorGraph().relocationActions(), selected.assignment()));
+		var canonical = CandidateSelections.selectMaterializationMaximal(analysis,
+			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment());
+		Assert.assertEquals("adapter receipts must equal the exact candidate-row projection",
+			canonical.candidates().stream().map(candidate -> candidate.normalizedSignature())
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)),
+			selected.selectedCandidateSelections().stream().map(candidate -> candidate.normalizedSignature())
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)));
 		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop",
 			selected.selectedRelocations().stream().noneMatch(action ->
 				"Xd".equals(action.sourceValueVersion().lexicalVariable())));
@@ -99,6 +129,7 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return program;
 	}
 }
