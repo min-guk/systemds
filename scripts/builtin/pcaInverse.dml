@@ -1,0 +1,54 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Principal Component Analysis (PCA) for reconstruction of approximation of the original data.
+# This methods allows to reconstruct an approximation of the original matrix, and is useful for
+# calculating how much information is lost in the PCA.
+#
+# INPUT:
+# --------------------------------------------------------------------------------------
+# Y            Input features that have PCA applied to them
+# Clusters     The previous PCA components computed
+# Centering    The column means of the PCA model, subtracted to construct the PCA
+# ScaleFactor  The scaling of each dimension in the PCA model
+# --------------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ------------------------------------------------------------------------------------
+# X     Output feature matrix reconstructing and approximation of the original matrix
+# ------------------------------------------------------------------------------------
+
+m_pcaInverse = function(Matrix[Double] Y, Matrix[Double] Clusters, 
+  Matrix[Double] Centering = matrix(0, rows= 0, cols=0), 
+  Matrix[Double] ScaleFactor = matrix(0, rows= 0, cols=0))
+  return (Matrix[Double] X) 
+{
+  X = Y %*% t(Clusters)
+
+  if(nrow(ScaleFactor) > 0 & ncol(ScaleFactor) > 0){
+    X = X * ScaleFactor
+  }
+
+  if(nrow(Centering) > 0 & ncol(Centering) > 0){
+    X = X + Centering
+  }
+
+}

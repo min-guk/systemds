@@ -1,0 +1,17 @@
+{
+    "__comment__": "insert type_mapping from dml to python here",
+    "type": {
+            "matrix": "Matrix",
+            "frame": "Frame",
+            "boolean": "bool",
+            "integer": "int",
+            "int": "int",
+            "scalar":"float",
+            "double": "float",
+            "string": "str",
+            "list": "List"
+    },
+    "default": {
+        "---": "None"
+    }
+}

@@ -1,0 +1,11 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+XR = federated(addresses=list($XR1, $XR2),
+               ranges=list(list(0, 0), list($r / 2, $c),
+                           list($r / 2, 0), list($r, $c)))
+B = read($B)
+RowMM = XR %*% B
+write(RowMM, $RowMM)

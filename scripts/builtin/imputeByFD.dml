@@ -1,0 +1,83 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Implements builtin for imputing missing values from observed values (if exist) using robust functional dependencies
+#
+# INPUT:
+# --------------------------------------------------------------------------------------
+# X          Vector X, source attribute of functional dependency
+# Y          Vector Y, target attribute of functional dependency and imputation
+# threshold  threshold value in interval [0, 1] for robust FDs
+# verbose    flag for printing verbose debug output
+# --------------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ----------------------------------------------------------------------------------
+# Y      Vector Y, with missing values mapped to a new max value
+# Y_imp  Vector Y, with imputed missing values
+# ----------------------------------------------------------------------------------
+
+m_imputeByFD = function(Matrix[Double] X, Matrix[Double] Y, Double threshold, Boolean verbose = FALSE)
+  return(Matrix[Double] Y, Matrix[Double] Y_imp)
+{
+  # validation checks
+  if( threshold < 0 | threshold > 1 )
+    stop("Stopping due to invalid input, threshold required in interval [0, 1] found "+threshold)
+
+  if(min(X) < 1 | min(Y) < 1) {
+    print("imputeByFD: source or target contain values less than 1")
+    Y = matrix(0, 1, 1);
+    Y_imp = matrix(0, 1, 1);
+  }
+  else {
+    # impute missing values and fix errors
+    [Y, Y_imp] = imputeAndCorrect(X, Y, threshold) 
+  }
+
+  if(verbose)
+    print("output \n"+toString(X))
+}
+
+imputeAndCorrect = function(Matrix[Double] X, Matrix[Double] Y, Double threshold)
+  return(Matrix[Double] imputed_Y, Matrix[Double] filled) {
+
+  missing_mask_Y = is.na(Y)
+  # replace the NaN values with zero
+  X = replace(target = X, pattern=NaN, replacement=1)
+  Y = replace(target = Y, pattern=NaN, replacement=0)
+  maxVal = max(Y)+1
+  # map the missing values to an arbitrary number (i.e., Max values + 1)
+  Y = (missing_mask_Y * maxVal) + (Y * (missing_mask_Y == 0))
+  
+  # create mapping between source and target
+  ctab = table(X, Y)
+
+  # remove the table column representing missing values
+  if(sum(missing_mask_Y) > 0 & ncol(ctab) > 1)
+    ctab = ctab[,1:ncol(ctab)-1]
+
+  # copmute vector of qualifying max count per row (source value)
+  I = (rowMaxs(ctab)/rowSums(ctab)) > threshold 
+  
+  # Get the most frequent mapped value of Y 
+  filled = rowIndexMax(ctab) * I
+  imputed_Y = imputeByFDApply(X, filled)
+}

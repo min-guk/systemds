@@ -1,0 +1,95 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Reference K-Means clustering test (non-federated version)
+# This test uses regular matrices for comparison with federated version
+
+# X : regular matrix of data points as rows (concatenated X1 and X2)
+X1 = read($X1);
+X2 = read($X2);
+X = rbind(X1, X2);
+
+num_records = nrow(X);
+num_features = ncol(X);
+num_centroids = $k;
+max_iterations = $max_iter;
+
+one_per_record = matrix(1.0, rows = num_records, cols = 1);
+one_per_feature = matrix(1.0, rows = num_features, cols = 1);
+one_per_centroid = matrix(1.0, rows = num_centroids, cols = 1);
+
+# Y : matrix of centroids as rows
+Y = matrix(0.0, rows = num_centroids, cols = num_features);
+# D : matrix of squared distances from X rows to Y rows, up to a Y-independent term
+D = matrix(0.0, rows = num_records, cols = num_centroids);
+
+# Sample for convergence criterion
+X_sample = X;
+sample_size = 100;  # Reduced for testing
+if (num_records > sample_size) {
+   P = Rand(rows = num_records, cols = 1, min = 0.0, max = 1.0);
+   P = ((P * num_records) <= sample_size);
+   X_sample = X * (P %*% t(one_per_feature));
+   X_sample = removeEmpty(target = X_sample, margin = "rows");
+}
+
+sample_size = nrow(X_sample);
+one_per_sample = matrix(1.0, rows = sample_size, cols = 1);
+
+# Compute eps for convergence criterion
+eps = 0.0001 * 
+    sum(one_per_sample %*% t(rowSums(X_sample * X_sample)) 
+    + rowSums(X_sample * X_sample) %*% t(one_per_sample) 
+    - 2.0 * X_sample %*% t(X_sample)) / (sample_size * sample_size);
+
+# Iterations
+centroid_change = 10.0 + eps;
+iter_count = 0;
+
+while (centroid_change > eps & iter_count < max_iterations) {
+    iter_count = iter_count + 1;
+    old_Y = matrix(0.0, rows = num_centroids, cols = num_features);
+    
+    if (iter_count == 1 
+        | (centroid_change != centroid_change)
+        | ((centroid_change == centroid_change + 1) 
+            & (centroid_change == 2 * centroid_change))) {
+        # Start with random matrix
+        D = Rand(rows = num_records, cols = num_centroids, min = 0.0, max = 1.0);
+    } else {
+        old_Y = Y;
+        # Euclidean squared distances
+        D = one_per_record %*% t(rowSums(Y * Y)) - 2.0 * X %*% t(Y);
+    }
+    
+    # Find closest centroid for each record
+    P = (D <= (rowMins(D) %*% t(one_per_centroid)));
+    # Share records equally if they belong to multiple centroids
+    P = P / (rowSums(P) %*% t(one_per_centroid));
+    # Normalize columns to compute record weights
+    P = P / (one_per_record %*% colSums(P));
+    # Compute new centroids
+    Y = t(P) %*% X;
+    # Measure change
+    centroid_change = sum((Y - old_Y) * (Y - old_Y)) / num_centroids;
+}
+
+write(Y, $Y);

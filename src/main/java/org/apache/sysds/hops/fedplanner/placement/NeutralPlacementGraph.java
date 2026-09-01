@@ -1,0 +1,668 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.sysds.hops.fedplanner.placement;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+
+/** Immutable planner-neutral placement graph used by shadow comparison. */
+public final class NeutralPlacementGraph {
+	public enum NodeKind {
+		OPERATION,
+		TRANSIENT_READ,
+		TRANSIENT_WRITE,
+		BRANCH_JOIN,
+		LOOP_PHI,
+		FUNCTION_CALL,
+		FUNCTION_INPUT,
+		FUNCTION_OUTPUT,
+		CLONE,
+		FUNCTION_BODY_NON_EMITTED,
+		ROOT
+	}
+
+	public enum ConstraintKind {
+		SAME_PLACEMENT,
+		/**
+		 * Exact runtime value alias. The producer may execute in CP or FED, but the
+		 * bound value must retain the same output placement; federated values must
+		 * additionally retain their exact FederationMap layout.
+		 */
+		SAME_VALUE_PLACEMENT,
+		SAME_FTYPE,
+		DOMINATES,
+		CONJUNCTIVE,
+		DISTINCT_CONTEXT,
+		SAME_ORIGIN
+	}
+
+	public enum ReasonCode {
+		UNREACHABLE_BRANCH,
+		MISSING_ANCHOR,
+		UNSUPPORTED_ANCHOR,
+		PRIVACY,
+		UNSUPPORTED_OPERATION_SHAPE,
+		ILLEGAL_TRANSIENT_PLACEMENT,
+		RECOMPILE_CP_FOUT,
+		UNKNOWN_METADATA,
+		CONSTRAINT_CONFLICT,
+		NO_FEDERATED_INPUT,
+		RUNTIME_UNSUPPORTED,
+		RULE_ERROR,
+		NON_EMITTED_FUNCTION_BODY_CONTEXT
+	}
+
+	public record Exclusion(PlacementState state, ReasonCode reasonCode, String detail)
+		implements Comparable<Exclusion> {
+
+		public Exclusion {
+			Objects.requireNonNull(state, "state");
+			Objects.requireNonNull(reasonCode, "reasonCode");
+			detail = detail == null ? "" : detail;
+		}
+
+		public String normalizedSignature() {
+			return fields(state.normalizedSignature(), reasonCode.name(), detail);
+		}
+
+		@Override
+		public int compareTo(Exclusion that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record Node(CompiledHopKey key, NodeKind kind, ValueVersionKey valueVersion,
+		boolean emittedWork, List<PlacementState> legalAlternatives, List<Exclusion> exclusions,
+		List<DurableAnchorKey> anchors) implements Comparable<Node> {
+
+		public Node {
+			Objects.requireNonNull(key, "key");
+			Objects.requireNonNull(kind, "kind");
+			Objects.requireNonNull(valueVersion, "valueVersion");
+			legalAlternatives = sorted(legalAlternatives, "legalAlternatives");
+			exclusions = sorted(exclusions, "exclusions");
+			anchors = sorted(anchors, "anchors");
+			if(emittedWork != !legalAlternatives.isEmpty())
+				throw new IllegalArgumentException("Node emitted-work polarity must match legal alternatives: " + key);
+			Set<PlacementState> excludedStates = new LinkedHashSet<>();
+			for(Exclusion exclusion : exclusions)
+				if(!excludedStates.add(exclusion.state()))
+					throw new IllegalArgumentException("Node has multiple exclusions for one state: " + key);
+			for(PlacementState state : legalAlternatives)
+				if(excludedStates.contains(state))
+					throw new IllegalArgumentException("Node state is both legal and excluded: " + key);
+			if(!key.programFingerprint().equals(valueVersion.programFingerprint()))
+				throw new IllegalArgumentException("Node key and value version fingerprints differ");
+		}
+
+		public String normalizedIdentity() {
+			return fields(key.normalizedSignature(), kind.name(), valueVersion.normalizedSignature(),
+				Boolean.toString(emittedWork), anchorSignatures(anchors));
+		}
+
+		@Override
+		public int compareTo(Node that) {
+			return key.compareTo(that.key);
+		}
+	}
+	public List<Node> decisionNodes() {
+		return nodes().stream().filter(Node::emittedWork).filter(n -> !n.legalAlternatives().isEmpty()).toList();
+	}
+
+	public record Constraint(ConstraintKind kind, CompiledHopKey left, CompiledHopKey right,
+		int inputPosition, String evidence)
+		implements Comparable<Constraint> {
+		public Constraint(ConstraintKind kind, CompiledHopKey left, CompiledHopKey right) {
+			this(kind, left, right, -1, "structural");
+		}
+
+		public Constraint {
+			Objects.requireNonNull(kind, "kind");
+			Objects.requireNonNull(left, "left");
+			Objects.requireNonNull(right, "right");
+			if(inputPosition < -1)
+				throw new IllegalArgumentException("inputPosition must be -1 or non-negative");
+			evidence = evidence == null ? "" : evidence;
+		}
+
+		public String normalizedSignature() {
+			return fields(kind.name(), left.normalizedSignature(), right.normalizedSignature(),
+				Integer.toString(inputPosition), evidence);
+		}
+
+		@Override
+		public int compareTo(Constraint that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record RelocationAction(RelocationActionKey key, List<ObligationKey> obligations,
+		List<PlacementState> directSourcePlacements)
+		implements Comparable<RelocationAction> {
+		public RelocationAction(RelocationActionKey key, List<ObligationKey> obligations) {
+			this(key, obligations, List.of());
+		}
+
+		public RelocationAction {
+			Objects.requireNonNull(key, "key");
+			obligations = sorted(obligations, "obligations");
+			directSourcePlacements = sorted(directSourcePlacements, "directSourcePlacements");
+			if(obligations.isEmpty())
+				throw new IllegalArgumentException("A relocation action requires obligations");
+			for(ObligationKey obligation : obligations)
+				if(!key.equals(obligation.relocationAction()))
+					throw new IllegalArgumentException("Obligation refers to a different relocation action");
+			for(PlacementState state : directSourcePlacements)
+				if(state.output() != FederatedOutput.FOUT || state.fType() != key.materializationFType())
+					throw new IllegalArgumentException(
+						"A direct relocation source must be FOUT with the materialization FType");
+		}
+
+		public String normalizedSignature() {
+			if(directSourcePlacements.isEmpty())
+				return key.normalizedSignature();
+			return fields(key.normalizedSignature(), "DIRECT_SOURCE_PLACEMENTS",
+				signatures(directSourcePlacements.stream()
+					.map(PlacementState::normalizedSignature).toList()));
+		}
+
+		@Override
+		public int compareTo(RelocationAction that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Physical output materialization authority; deliberately separate from consumer-input relocation. */
+	public record DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key)
+		implements Comparable<DerivedFoutMaterializationAction> {
+		public DerivedFoutMaterializationAction {
+			Objects.requireNonNull(key, "key");
+		}
+		public String normalizedSignature() { return key.normalizedSignature(); }
+		@Override public int compareTo(DerivedFoutMaterializationAction that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	private final List<Node> nodes;
+	private final List<Constraint> constraints;
+	private final List<RelocationAction> relocationActions;
+	private final List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions;
+	private final Map<CompiledHopKey, Node> nodesByKey;
+	private final Map<ValueVersionKey,List<Node>> nodesByValueVersion;
+	private final Map<DerivedFoutMaterializationActionKey,Integer> derivedFoutActionCounts;
+
+	public NeutralPlacementGraph(Collection<Node> nodes, Collection<Constraint> constraints,
+		Collection<RelocationAction> relocationActions) {
+		this(nodes, constraints, relocationActions, List.of());
+	}
+
+	public NeutralPlacementGraph(Collection<Node> nodes, Collection<Constraint> constraints,
+		Collection<RelocationAction> relocationActions,
+		Collection<DerivedFoutMaterializationAction> derivedFoutMaterializationActions) {
+		this.nodes = sorted(nodes, "nodes");
+		this.constraints = sortedConstraints(constraints);
+		this.relocationActions = sorted(relocationActions, "relocationActions");
+		this.derivedFoutMaterializationActions = sorted(derivedFoutMaterializationActions,
+			"derivedFoutMaterializationActions");
+		nodesByKey = indexNodes(this.nodes);
+		nodesByValueVersion = indexNodesByValueVersion(this.nodes);
+		Map<DerivedFoutMaterializationActionKey,Integer> actionCounts = new IdentityHashMap<>();
+		for(DerivedFoutMaterializationAction action : this.derivedFoutMaterializationActions)
+			actionCounts.merge(action.key(), 1, Integer::sum);
+		derivedFoutActionCounts = Collections.unmodifiableMap(actionCounts);
+		validateReferences();
+	}
+
+	public List<Node> nodes() {
+		return nodes;
+	}
+
+	public List<Constraint> constraints() {
+		return constraints;
+	}
+
+	public List<RelocationAction> relocationActions() {
+		return relocationActions;
+	}
+
+	public List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions() {
+		return derivedFoutMaterializationActions;
+	}
+
+	public Optional<Node> node(CompiledHopKey key) {
+		return Optional.ofNullable(nodesByKey.get(Objects.requireNonNull(key, "key")));
+	}
+
+	/** Returns whether an exact assignment requires this relocation action. */
+	public boolean isRelocationActive(RelocationAction action,
+		Map<CompiledHopKey, PlacementState> assignment) {
+		return isRelocationActive(action, assignment, List.of());
+	}
+
+	/**
+	 * Returns whether an exact assignment requires this relocation action. A selected
+	 * FED/FOUT tuple suppresses relocation only when it is a graph-declared direct
+	 * source or when an exact selected derived-output receipt owns the materialization.
+	 * Placement/FType equality by itself is not physical residency authority.
+	 */
+	public boolean isRelocationActive(RelocationAction action,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> selectedCandidates) {
+		Objects.requireNonNull(action, "action");
+		Objects.requireNonNull(assignment, "assignment");
+		Objects.requireNonNull(selectedCandidates, "selectedCandidates");
+		boolean requiredByConsumer = false;
+		for(ObligationKey obligation : action.obligations())
+			if(obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))) {
+				requiredByConsumer = true;
+				break;
+			}
+		if(!requiredByConsumer)
+			return false;
+		for(Node source : nodesByValueVersion.getOrDefault(
+			action.key().sourceValueVersion(), List.of())) {
+			PlacementState sourceState = assignment.get(source.key());
+			if(sourceState != null && action.directSourcePlacements().contains(sourceState))
+				return false;
+			if(sourceState == null)
+				continue;
+			for(CandidateSelectionReceipt selected : selectedCandidates) {
+				DerivedFoutMaterializationActionKey derived = selected.emission().derivedFoutAction();
+				if(derived == null || derived.producerValueVersion() != source.valueVersion()
+					|| derived.producer() != source.key() || assignment.get(source.key()) != derived.targetPlacement()
+					|| derived.materializationFType() != action.key().materializationFType()
+					|| !PlacementIdentity.samePhysicalWorkerPool(
+						derived.durableAnchor(), action.key().durableAnchor()))
+					continue;
+				int owned = derivedFoutActionCounts.getOrDefault(derived, 0);
+				if(owned == 1)
+					return false;
+			}
+		}
+		return true;
+	}
+
+	private static Map<ValueVersionKey,List<Node>> indexNodesByValueVersion(List<Node> nodes) {
+		Map<ValueVersionKey,List<Node>> grouped = new LinkedHashMap<>();
+		for(Node node : nodes)
+			grouped.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>()).add(node);
+		Map<ValueVersionKey,List<Node>> result = new LinkedHashMap<>();
+		grouped.forEach((version, owners) -> result.put(version, List.copyOf(owners)));
+		return Collections.unmodifiableMap(result);
+	}
+
+	public List<String> normalizedCandidateUniverse() {
+		List<String> normalized = new ArrayList<>();
+		for(Node node : nodes)
+			for(PlacementState state : node.legalAlternatives())
+				normalized.add(fields(node.key().normalizedSignature(), state.normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedIdentities() {
+		List<String> normalized = new ArrayList<>(nodes.size());
+		for(Node node : nodes)
+			normalized.add(node.normalizedIdentity());
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedValueVersions() {
+		List<String> normalized = new ArrayList<>(nodes.size());
+		for(Node node : nodes)
+			normalized.add(fields(node.key().normalizedSignature(),
+				node.valueVersion().normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedProvenance() {
+		List<String> normalized = new ArrayList<>(nodes.size());
+		for(Node node : nodes)
+			normalized.add(fields(node.key().normalizedSignature(),
+				node.key().canonicalSourceOrigin(), node.key().controlRegion().normalizedSignature(),
+				node.valueVersion().normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedAnchors() {
+		List<String> normalized = new ArrayList<>();
+		for(Node node : nodes)
+			for(DurableAnchorKey anchor : node.anchors())
+				normalized.add(fields("NODE", node.key().normalizedSignature(),
+					anchor.normalizedSignature()));
+		for(RelocationAction action : relocationActions)
+			normalized.add(fields("RELOCATION", action.key().normalizedSignature(),
+				action.key().durableAnchor().normalizedSignature()));
+		for(DerivedFoutMaterializationAction action : derivedFoutMaterializationActions)
+			normalized.add(fields("DERIVED_FOUT", action.key().normalizedSignature(),
+				action.key().durableAnchor().normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedConstraints() {
+		List<String> normalized = new ArrayList<>(constraints.size());
+		for(Constraint constraint : constraints)
+			normalized.add(constraint.normalizedSignature());
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedExclusions() {
+		List<String> normalized = new ArrayList<>();
+		for(Node node : nodes)
+			for(Exclusion exclusion : node.exclusions())
+				normalized.add(fields(node.key().normalizedSignature(), exclusion.normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedRelocationActions() {
+		List<String> normalized = new ArrayList<>(relocationActions.size());
+		for(RelocationAction action : relocationActions)
+			normalized.add(action.normalizedSignature());
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedDerivedFoutMaterializationActions() {
+		return immutableSortedStrings(derivedFoutMaterializationActions.stream()
+			.map(DerivedFoutMaterializationAction::normalizedSignature).toList());
+	}
+
+	public List<String> normalizedObligations() {
+		List<String> normalized = new ArrayList<>();
+		for(RelocationAction action : relocationActions)
+			for(ObligationKey obligation : action.obligations())
+				normalized.add(obligation.normalizedSignature());
+		return immutableSortedStrings(normalized);
+	}
+
+	/**
+	 * Exhaustively enumerates legal assignments for bounded shadow fixtures.
+	 * Production callers should compare the normalized graph surfaces instead.
+	 */
+	public List<String> normalizedLegalAssignments() {
+		List<Node> active = new ArrayList<>(decisionNodes());
+		List<String> assignments = new ArrayList<>();
+		enumerateAssignments(active, 0, new LinkedHashMap<>(), assignments);
+		return immutableSortedStrings(assignments);
+	}
+
+	public String normalizedSignature() {
+		return section("CANDIDATES", normalizedCandidateUniverse())
+			+ section("IDENTITIES", normalizedIdentities())
+			+ section("VALUE_VERSIONS", normalizedValueVersions())
+			+ section("PROVENANCE", normalizedProvenance())
+			+ section("ANCHORS", normalizedAnchors())
+			+ section("CONSTRAINTS", normalizedConstraints())
+			+ section("EXCLUSIONS", normalizedExclusions())
+			+ section("RELOCATIONS", normalizedRelocationActions())
+			+ section("DERIVED_FOUT_MATERIALIZATIONS", normalizedDerivedFoutMaterializationActions())
+			+ section("OBLIGATIONS", normalizedObligations());
+	}
+
+	public String normalizedSignatureWithLegalAssignments() {
+		return normalizedSignature() + section("LEGAL_ASSIGNMENTS", normalizedLegalAssignments());
+	}
+
+	private void enumerateAssignments(List<Node> active, int index,
+		Map<CompiledHopKey, PlacementState> assignment, List<String> assignments) {
+		if(index == active.size()) {
+			if(satisfiesAssignmentConstraints(assignment))
+				assignments.add(normalizeAssignment(assignment));
+			return;
+		}
+		Node node = active.get(index);
+		for(PlacementState state : node.legalAlternatives()) {
+			assignment.put(node.key(), state);
+			enumerateAssignments(active, index + 1, assignment, assignments);
+		}
+		assignment.remove(node.key());
+	}
+
+	private boolean satisfiesAssignmentConstraints(Map<CompiledHopKey, PlacementState> assignment) {
+		for(Constraint constraint : constraints) {
+			PlacementState left = assignment.get(constraint.left());
+			PlacementState right = assignment.get(constraint.right());
+			if(left == null || right == null)
+				continue;
+			if(!constraintSatisfied(constraint, left, right))
+				return false;
+		}
+		return true;
+	}
+
+	/** Shared exact legality semantics used by every neutral-graph planner. */
+	public static boolean constraintSatisfied(Constraint constraint,
+		PlacementState left, PlacementState right) {
+		Objects.requireNonNull(constraint, "constraint");
+		Objects.requireNonNull(left, "left");
+		Objects.requireNonNull(right, "right");
+		if(constraint.kind() == ConstraintKind.SAME_PLACEMENT)
+			return left.equals(right);
+		if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
+			return left.output() == right.output()
+				&& (left.output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					|| Objects.equals(left.fType(), right.fType()));
+		if(constraint.kind() == ConstraintKind.SAME_FTYPE)
+			return Objects.equals(left.fType(), right.fType());
+		if(constraint.kind() != ConstraintKind.CONJUNCTIVE)
+			return true;
+		String forbiddenPrefix = "forbid-pair:";
+		if(constraint.evidence().startsWith(forbiddenPrefix)) {
+			String[] pair = constraint.evidence().substring(forbiddenPrefix.length()).split("=>", -1);
+			if(pair.length != 2)
+				throw new IllegalArgumentException(
+					"invalid conjunctive forbid-pair evidence: " + constraint.evidence());
+			return !left.normalizedSignature().equals(pair[0])
+				|| !right.normalizedSignature().equals(pair[1]);
+		}
+		// A conjunctive value edge is directional. A local target can consume either a
+		// local source or an explicitly materialized federated source; a federated target
+		// requires an exact same-layout federated source. Function actual/formal edges use
+		// the same contract because FunctionCallCP owns a physical input Lop that lowering
+		// can rewire to the selected FOUT->LOUT materialization.
+		return right.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+			|| left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& Objects.equals(left.fType(), right.fType());
+	}
+
+	private static String normalizeAssignment(Map<CompiledHopKey, PlacementState> assignment) {
+		List<String> entries = new ArrayList<>(assignment.size());
+		for(Map.Entry<CompiledHopKey, PlacementState> entry : assignment.entrySet())
+			entries.add(fields(entry.getKey().normalizedSignature(),
+				entry.getValue().normalizedSignature()));
+		return signatures(entries);
+	}
+
+	private static Map<CompiledHopKey, Node> indexNodes(List<Node> nodes) {
+		Map<CompiledHopKey, Node> indexed = new LinkedHashMap<>();
+		for(Node node : nodes)
+			if(indexed.put(node.key(), node) != null)
+				throw new IllegalArgumentException("Duplicate compiled Hop key: " + node.key());
+		return Collections.unmodifiableMap(indexed);
+	}
+
+	private void validateReferences() {
+		Set<ValueVersionKey> valueVersions = new LinkedHashSet<>();
+		Set<RelocationActionKey> relocationKeys = new LinkedHashSet<>();
+		for(Node node : nodes)
+			valueVersions.add(node.valueVersion());
+		for(Constraint constraint : constraints) {
+			requireNode(constraint.left(), "constraint left");
+			requireNode(constraint.right(), "constraint right");
+		}
+		for(RelocationAction action : relocationActions) {
+			RelocationActionKey key = action.key();
+			if(!relocationKeys.add(key))
+				throw new IllegalArgumentException("Duplicate relocation action key: " + key);
+			if(!valueVersions.contains(key.sourceValueVersion()))
+				throw new IllegalArgumentException("Relocation source value is absent from graph");
+			for(PlacementState direct : action.directSourcePlacements())
+				if(nodes.stream().filter(node -> node.valueVersion().equals(key.sourceValueVersion()))
+					.noneMatch(node -> node.legalAlternatives().contains(direct)))
+					throw new IllegalArgumentException(
+						"Relocation direct-source placement is absent from its source node");
+			for(CompiledHopKey consumer : key.compatibleConsumers())
+				requireNode(consumer, "relocation consumer");
+			for(ObligationKey obligation : action.obligations()) {
+				requireNode(obligation.consumer(), "obligation consumer");
+				if(!valueVersions.contains(obligation.sourceValueVersion()))
+					throw new IllegalArgumentException("Obligation source value is absent from graph");
+				if(!key.targetPlacement().equals(obligation.requiredPlacement()))
+					throw new IllegalArgumentException("Obligation target differs from relocation target");
+			}
+		}
+		Set<DerivedFoutMaterializationActionKey> derivedKeys = new LinkedHashSet<>();
+		for(DerivedFoutMaterializationAction action : derivedFoutMaterializationActions) {
+			DerivedFoutMaterializationActionKey key = action.key();
+			if(!derivedKeys.add(key))
+				throw new IllegalArgumentException("Duplicate derived FOUT materialization action key: " + key);
+			Node producer = nodesByKey.get(key.producer());
+			if(producer == null)
+				throw new IllegalArgumentException("Derived FOUT producer is absent from graph: " + key.producer());
+			if(!producer.valueVersion().equals(key.producerValueVersion()))
+				throw new IllegalArgumentException("Derived FOUT producer value version is foreign to graph");
+			if(!producer.legalAlternatives().contains(key.sourcePlacement())
+				|| !producer.legalAlternatives().contains(key.targetPlacement()))
+				throw new IllegalArgumentException("Derived FOUT action placement is absent from producer node");
+			Node anchorOwner = nodesByKey.get(key.durableAnchorOwner());
+			if(anchorOwner == null)
+				throw new IllegalArgumentException("Derived FOUT anchor owner is absent from graph");
+			boolean exactFoutOwner = anchorOwner.legalAlternatives().stream().anyMatch(state ->
+				state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					&& state.fType() == key.durableAnchorOwnerFType());
+			if(!exactFoutOwner)
+				throw new IllegalArgumentException(
+					"Derived FOUT anchor owner cannot expose the required exact FOUT layout: owner="
+						+ anchorOwner.key().normalizedSignature() + " legal="
+						+ anchorOwner.legalAlternatives().stream()
+							.map(PlacementState::normalizedSignature).toList()
+						+ " anchor=" + key.durableAnchor().normalizedSignature()
+						+ " action=" + key.normalizedSignature());
+			boolean exactAnchorAuthority = anchorOwner.anchors().stream()
+				.anyMatch(anchor -> PlacementIdentity.samePhysicalWorkerPool(anchor, key.durableAnchor()))
+				|| derivedFoutMaterializationActions.stream().anyMatch(ownerAction ->
+					ownerAction.key().producer() == anchorOwner.key()
+						&& PlacementIdentity.samePhysicalWorkerPool(
+							ownerAction.key().durableAnchor(), key.durableAnchor()))
+				|| relocationActions.stream().anyMatch(relocation ->
+					relocation.key().sourceValueVersion().equals(anchorOwner.valueVersion())
+						&& relocation.key().targetPlacement().output()
+							== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& PlacementIdentity.samePhysicalWorkerPool(
+							relocation.key().durableAnchor(), key.durableAnchor()));
+			if(!exactAnchorAuthority)
+				throw new IllegalArgumentException(
+					"Derived FOUT anchor owner has no exact graph-owned worker-pool authority");
+		}
+	}
+
+	private void requireNode(CompiledHopKey key, String role) {
+		if(!nodesByKey.containsKey(key))
+			throw new IllegalArgumentException(role + " is absent from graph: " + key);
+	}
+
+	private static <T extends Comparable<? super T>> List<T> sorted(Collection<T> values,
+		String name) {
+		Objects.requireNonNull(values, name);
+		List<T> copy = new ArrayList<>(values.size());
+		for(T value : values)
+			copy.add(Objects.requireNonNull(value, name + " entry"));
+		copy.sort(Comparator.naturalOrder());
+		for(int i = 1; i < copy.size(); i++)
+			if(copy.get(i - 1).equals(copy.get(i)))
+				throw new IllegalArgumentException(name + " contains duplicates");
+		return List.copyOf(copy);
+	}
+
+	private static List<Constraint> sortedConstraints(Collection<Constraint> values) {
+		Objects.requireNonNull(values, "constraints");
+		List<NormalizedConstraint> normalized = new ArrayList<>(values.size());
+		for(Constraint value : values) {
+			Constraint constraint = Objects.requireNonNull(value, "constraints entry");
+			normalized.add(new NormalizedConstraint(constraint.normalizedSignature(), constraint));
+		}
+		normalized.sort(Comparator.comparing(NormalizedConstraint::signature));
+		List<Constraint> result = new ArrayList<>(normalized.size());
+		for(NormalizedConstraint value : normalized) {
+			Constraint constraint = value.constraint();
+			if(!result.isEmpty() && result.get(result.size() - 1).equals(constraint))
+				throw new IllegalArgumentException("constraints contains duplicates");
+			result.add(constraint);
+		}
+		return List.copyOf(result);
+	}
+
+	private record NormalizedConstraint(String signature, Constraint constraint) {
+	}
+
+	private static List<String> immutableSortedStrings(Collection<String> values) {
+		List<String> copy = new ArrayList<>(values);
+		Collections.sort(copy);
+		return List.copyOf(copy);
+	}
+
+	private static String anchorSignatures(Collection<DurableAnchorKey> anchors) {
+		List<String> normalized = new ArrayList<>(anchors.size());
+		for(DurableAnchorKey anchor : anchors)
+			normalized.add(anchor.normalizedSignature());
+		return signatures(normalized);
+	}
+
+	private static String section(String name, List<String> values) {
+		return name + "[" + signatures(values) + "]\n";
+	}
+
+	private static String fields(String... values) {
+		List<String> encoded = new ArrayList<>(values.length);
+		for(String value : values)
+			encoded.add(token(value));
+		return String.join("|", encoded);
+	}
+
+	private static String signatures(Collection<String> values) {
+		List<String> encoded = new ArrayList<>(values.size());
+		for(String value : values)
+			encoded.add(token(value));
+		return String.join(",", encoded);
+	}
+
+	private static String token(String value) {
+		return value.length() + ":" + value;
+	}
+}

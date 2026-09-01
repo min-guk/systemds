@@ -1,0 +1,12 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+X = read($X)
+Q = as.matrix(quantile(X, 0.5))
+C = cumsum(X)
+
+write(Q, $Q)
+write(C, $C)

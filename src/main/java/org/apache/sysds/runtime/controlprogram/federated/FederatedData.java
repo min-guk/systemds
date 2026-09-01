@@ -1,0 +1,651 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.sysds.runtime.controlprogram.federated;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Serializable;
+import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Future;
+
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.EventLoopGroup;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
+import org.apache.sysds.parser.DataExpression;
+import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.instructions.cp.Data;
+import org.apache.sysds.runtime.io.IOUtilFunctions;
+import org.apache.sysds.runtime.lineage.LineageItem;
+import org.apache.sysds.runtime.meta.MetaData;
+import org.apache.sysds.runtime.meta.MetaDataAll;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
+import org.apache.sysds.runtime.controlprogram.paramserv.NetworkTrafficCounter;
+import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
+import org.apache.sysds.conf.DMLConfig;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.serialization.ObjectEncoder;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.util.concurrent.Promise;
+
+@SuppressWarnings("deprecation")
+public class FederatedData {
+	private static final Log LOG = LogFactory.getLog(FederatedData.class.getName());
+	private static final boolean DEBUG_FEDREQ = Boolean.getBoolean("sysds.debug.fedreq");
+	private static final Set<InetSocketAddress> _allFedSites = new HashSet<>();
+
+	/** Thread pool specific for the federated requests */
+	private static EventLoopGroup workerGroup = null;
+
+	/**
+	 * Client-side connection pool to federated workers.
+	 * <p>
+	 * Historically, we opened a fresh Netty connection for every federated request batch.
+	 * However, the federated runtime is stateful (per worker PID/TID) and relies on strict
+	 * request ordering (e.g., PUT_VAR -> EXEC -> GET -> rmvar). Using separate TCP connections
+	 * makes <i>arrival order</i> non-deterministic even if the coordinator issues requests in
+	 * program order, which can lead to missing variables and redundant releases on workers.
+	 * <p>
+	 * We therefore keep a persistent channel per (address, tid-key) and multiplex requests
+	 * over it, matching responses to requests by FIFO order. This preserves request ordering
+	 * without requiring planner-specific workarounds.
+	 */
+	private static final Map<ImmutablePair<InetSocketAddress, Long>, PooledConnection> pooledConnections = new ConcurrentHashMap<>();
+
+
+
+	private final Types.DataType _dataType;
+	private final InetSocketAddress _address;
+	private final String _filepath;
+
+	/**
+	 * The ID of default matrix/tensor on which operations get executed if no other ID is given.
+	 */
+	private long _varID = -1; // -1 is never valid since varIDs start at 0
+
+	public FederatedData(Types.DataType dataType, InetSocketAddress address, String filepath) {
+		_dataType = dataType;
+		_address = address;
+		_filepath = filepath;
+		if(_address != null)
+			_allFedSites.add(_address);
+	}
+
+	public FederatedData(Types.DataType dataType, InetSocketAddress address, String filepath, long varID) {
+		_dataType = dataType;
+		_address = address;
+		_filepath = filepath;
+		_varID = varID;
+	}
+
+	/**
+	 * Create transport metadata for a planner-time lookup without publishing the
+	 * endpoint as a runtime cleanup target. Runtime federated data must continue to
+	 * use the registering constructor so that {@link #clearFederatedWorkers()} can
+	 * release worker execution contexts exactly once.
+	 *
+	 * @param dataType federated data type
+	 * @param address worker endpoint
+	 * @param filepath worker-local data path
+	 * @return uninitialized metadata that is not registered in {@code _allFedSites}
+	 */
+	public static FederatedData forPlannerMetadata(Types.DataType dataType,
+		InetSocketAddress address, String filepath) {
+		return new FederatedData(dataType, address, filepath, -1);
+	}
+
+	public InetSocketAddress getAddress() {
+		return _address;
+	}
+
+	public void setVarID(long varID) {
+		_varID = varID;
+	}
+
+	public long getVarID() {
+		return _varID;
+	}
+
+	public String getFilepath() {
+		return _filepath;
+	}
+
+	public Types.DataType getDataType() {
+		return _dataType;
+	}
+
+	public boolean isInitialized() {
+		return _varID != -1;
+	}
+
+	boolean equalAddress(FederatedData that) {
+		return _address != null && that != null && that._address != null && _address.equals(that._address);
+	}
+
+	/**
+	 * Make a copy of the <code>FederatedData</code> metadata, but use another varID (refer to another object on worker)
+	 * 
+	 * @param varID the varID of the variable we refer to
+	 * @return new <code>FederatedData</code> with different varID set
+	 */
+	public FederatedData copyWithNewID(long varID) {
+		FederatedData copy = new FederatedData(_dataType, _address, _filepath);
+		copy.setVarID(varID);
+		return copy;
+	}
+
+	public synchronized Future<FederatedResponse> initFederatedData(long id) {
+		return initFederatedData(id, null);
+	}
+
+	public synchronized Future<FederatedResponse> initFederatedData(long id, MetaData mtd) {
+		if(isInitialized())
+			throw new DMLRuntimeException("Tried to init already initialized data");
+		if(!_dataType.isMatrix() && !_dataType.isFrame())
+			throw new DMLRuntimeException("Federated datatype \"" + _dataType.toString() + "\" is not supported.");
+		_varID = id;
+		FederatedRequest request = (mtd != null) ? new FederatedRequest(RequestType.READ_VAR, id,
+			mtd) : new FederatedRequest(RequestType.READ_VAR, id);
+		request.appendParam(_filepath);
+		request.appendParam(_dataType.name());
+		return executeFederatedOperation(request);
+	}
+
+	public synchronized Future<FederatedResponse> initFederatedDataFromLocal(long id, CacheBlock<?> block) {
+		if(isInitialized())
+			throw new DMLRuntimeException("Tried to init already initialized data");
+		if(!_dataType.isMatrix() && !_dataType.isFrame())
+			throw new DMLRuntimeException("Federated datatype \"" + _dataType.toString() + "\" is not supported.");
+		_varID = id;
+		FederatedRequest request = new FederatedRequest(RequestType.READ_VAR, id);
+		request.appendParam(_filepath);
+		request.appendParam(_dataType.name());
+		request.appendParam(block);
+		return executeFederatedOperation(request);
+	}
+
+	public Future<FederatedResponse> executeFederatedOperation(FederatedRequest... request) {
+		return executeFederatedOperation(_address, request);
+	}
+
+	/**
+	 * Executes an federated operation on a federated worker.
+	 *
+	 * @param address socket address (incl host and port)
+	 * @param request the requested operation
+	 * @return the response
+	 */
+	public static Future<FederatedResponse> executeFederatedOperation(InetSocketAddress address,
+		FederatedRequest... request) {
+		PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(request);
+		return executeFederatedOperation(address, 1, request);
+	}
+
+	/**
+	 * Executes an federated operation on a federated worker.
+	 *
+	 * @param address socket address (incl host and port)
+	 * @param retry   the retry count
+	 * @param request the requested operation
+	 * @return the response
+	 */
+	public synchronized static Future<FederatedResponse> executeFederatedOperation(InetSocketAddress address, int retry,
+		FederatedRequest... request) {
+		try {
+			if(workerGroup == null)
+				createWorkGroup();
+
+			// All tid<=0 share the main execution context on federated workers and must therefore
+			// preserve strict request order. Use a stable tid-key for pooling connections.
+			final long tid = (request != null && request.length > 0) ? request[0].getTID() : 0;
+			final long tidKey = (tid <= 0) ? 0 : tid;
+			final ImmutablePair<InetSocketAddress, Long> key = ImmutablePair.of(address, tidKey);
+			final PooledConnection conn = pooledConnections.computeIfAbsent(key, k -> new PooledConnection(k, address));
+			return conn.send(request);
+		}
+		catch(Exception e) {
+			if(isConnectException(e)) {
+				if(retry < 5) {
+					try {
+						// Increasing retry timeout
+						Thread.sleep(200L * retry);
+					}
+					catch(Exception e2) {
+						throw new DMLRuntimeException(e);
+					}
+					return executeFederatedOperation(address, retry + 1, request);
+				}
+				throw new DMLRuntimeException(e);
+			}
+			throw new DMLRuntimeException("Failed sending federated operation", e);
+		}
+	}
+
+	private static boolean isConnectException(Throwable t) {
+		while(t != null) {
+			if(t instanceof ConnectException)
+				return true;
+			t = t.getCause();
+		}
+		return false;
+	}
+
+	private static ChannelInitializer<SocketChannel> createChannel(InetSocketAddress address,
+		ChannelInboundHandlerAdapter handler) {
+		final int timeout = ConfigurationManager.getFederatedTimeout();
+		final boolean ssl = ConfigurationManager.isFederatedSSL();
+
+		return new ChannelInitializer<>() {
+			@Override
+			protected void initChannel(SocketChannel ch) throws Exception {
+				final ChannelPipeline cp = ch.pipeline();
+				final Optional<ImmutablePair<ChannelInboundHandlerAdapter, ChannelOutboundHandlerAdapter>> compressionStrategy = FederationUtils.compressionStrategy();
+				cp.addLast("NetworkTrafficCounter", new NetworkTrafficCounter(FederatedStatistics::logServerTraffic));
+
+				if(ssl)
+					cp.addLast(FederatedSSLUtil.createSSLHandler(ch, address));
+				if(timeout > -1)
+					cp.addLast(new ReadTimeoutHandler(timeout));
+
+				compressionStrategy.ifPresent(strategy -> cp.addLast(strategy.left));
+				cp.addLast(FederationUtils.decoder());
+				compressionStrategy.ifPresent(strategy -> cp.addLast(strategy.right));
+				cp.addLast(new FederatedRequestEncoder());
+				cp.addLast(handler);
+			}
+		};
+	}
+
+	private static class PooledConnection {
+		private final ImmutablePair<InetSocketAddress, Long> _key;
+		private final InetSocketAddress _address;
+		private final Object _connectLock = new Object();
+		private volatile Channel _channel;
+		private final Queue<Promise<FederatedResponse>> _pending = new ConcurrentLinkedQueue<>();
+
+		public PooledConnection(ImmutablePair<InetSocketAddress, Long> key, InetSocketAddress address) {
+			_key = key;
+			_address = address;
+		}
+
+		public Future<FederatedResponse> send(FederatedRequest... request) throws Exception {
+			if (DEBUG_FEDREQ)
+				System.out.println("[DBG-FEDREQ][coordinator][send] addr=" + _address
+					+ " keyTid=" + _key.right + " batch=" + summarizeRequestBatch(request));
+			final Channel ch = getOrCreateChannel();
+			final Promise<FederatedResponse> prom = ch.eventLoop().newPromise();
+			_pending.add(prom);
+
+			final ChannelFuture writeFuture = ch.writeAndFlush(request);
+			writeFuture.addListener(f -> {
+				if(!f.isSuccess()) {
+					_pending.remove(prom);
+					if(!prom.isDone())
+						prom.setFailure(f.cause());
+					invalidateChannel(ch);
+				}
+			});
+			return prom;
+		}
+
+		private Channel getOrCreateChannel() throws Exception {
+			Channel ch = _channel;
+			if(ch != null && ch.isActive())
+				return ch;
+			synchronized(_connectLock) {
+				ch = _channel;
+				if(ch != null && ch.isActive())
+					return ch;
+
+				final Bootstrap b = new Bootstrap();
+				b.group(workerGroup);
+				b.channel(NioSocketChannel.class);
+				b.handler(createChannel(_address, new PooledDataRequestHandler(this)));
+				final ChannelFuture f = b.connect(_address).sync();
+				_channel = f.channel();
+				return _channel;
+			}
+		}
+
+		private void invalidateChannel(Channel ch) {
+			// fail all pending promises (if any)
+			Promise<FederatedResponse> prom;
+			final DMLRuntimeException ex = new DMLRuntimeException("Federated response channel closed without a reply");
+			while((prom = _pending.poll()) != null) {
+				if(!prom.isDone())
+					prom.setFailure(ex);
+			}
+
+			// remove from pool so future requests reconnect
+			_channel = null;
+			pooledConnections.remove(_key, this);
+
+			if(ch != null)
+				ch.close();
+		}
+
+		private void completeNext(FederatedResponse res) {
+			final Promise<FederatedResponse> prom = _pending.poll();
+			if(prom == null) {
+				LOG.error("Received federated response without a pending request: " + res);
+				return;
+			}
+			prom.setSuccess(res);
+		}
+	}
+
+	private static String summarizeRequestBatch(FederatedRequest[] requests) {
+		if (requests == null)
+			return "null";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < requests.length; i++) {
+			if (i > 0)
+				sb.append(" | ");
+			sb.append(summarizeRequest(requests[i]));
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private static String summarizeRequest(FederatedRequest req) {
+		if (req == null)
+			return "null";
+		StringBuilder sb = new StringBuilder();
+		sb.append(req.getType()).append("#id=").append(req.getID()).append("@t").append(req.getTID());
+		if (req.getType() == RequestType.EXEC_INST && req.getNumParams() > 0 && req.getParam(0) instanceof String) {
+			String inst = (String) req.getParam(0);
+			sb.append(" inst=").append(truncate(inst, 220));
+		}
+		else if (req.getType() == RequestType.PUT_VAR) {
+			sb.append(" params=").append(req.getNumParams());
+			if (req.getNumParams() > 0 && req.getParam(0) != null)
+				sb.append(" p0=").append(req.getParam(0).getClass().getSimpleName());
+			if (req.getNumParams() > 1 && req.getParam(1) != null)
+				sb.append(" p1=").append(req.getParam(1));
+		}
+		return sb.toString();
+	}
+
+	private static String truncate(String s, int maxLen) {
+		if (s == null || s.length() <= maxLen)
+			return s;
+		return s.substring(0, maxLen) + "...";
+	}
+
+	private static class PooledDataRequestHandler extends ChannelInboundHandlerAdapter {
+		private final PooledConnection _conn;
+
+		public PooledDataRequestHandler(PooledConnection conn) {
+			_conn = conn;
+		}
+
+		@Override
+		public void channelRead(ChannelHandlerContext ctx, Object msg) {
+			_conn.completeNext((FederatedResponse) msg);
+		}
+
+		@Override
+		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+			LOG.error("Federated pooled request channel error", cause);
+			_conn.invalidateChannel(ctx.channel());
+		}
+
+		@Override
+		public void channelInactive(ChannelHandlerContext ctx) {
+			_conn.invalidateChannel(ctx.channel());
+		}
+	}
+
+	public static void clearFederatedWorkers() {
+		if(_allFedSites.isEmpty())
+			return;
+
+		try {
+			// create and execute clear request on all workers
+			FederatedRequest fr = new FederatedRequest(RequestType.CLEAR);
+			List<Future<FederatedResponse>> ret = new ArrayList<>();
+			for(InetSocketAddress address : _allFedSites)
+				ret.add(executeFederatedOperation(address, fr));
+
+			// wait for successful completion
+			FederationUtils.waitFor(ret);
+		}
+		catch(Exception ex) {
+			LOG.warn("Failed to execute CLEAR request on existing federated sites.", ex);
+		}
+		finally {
+			closePooledConnections();
+			resetFederatedSites();
+		}
+	}
+
+	private static void closePooledConnections() {
+		for(PooledConnection conn : pooledConnections.values()) {
+			try {
+				conn.invalidateChannel(null);
+			}
+			catch(Exception ignore) {
+				// ignore
+			}
+		}
+		pooledConnections.clear();
+	}
+
+
+
+	public static void resetFederatedSites() {
+		_allFedSites.clear();
+	}
+
+	public static void clearWorkGroup() {
+		closePooledConnections();
+		if(workerGroup != null)
+			workerGroup.shutdownGracefully();
+		workerGroup = null;
+	}
+
+	public synchronized static void createWorkGroup() {
+		if(workerGroup == null)
+			workerGroup = new NioEventLoopGroup(DMLConfig.DEFAULT_NUMBER_OF_FEDERATED_WORKER_THREADS);
+	}
+
+	private static class DataRequestHandler extends ChannelInboundHandlerAdapter {
+		private Promise<FederatedResponse> _prom;
+
+		public DataRequestHandler() {
+		}
+
+		public void setPromise(Promise<FederatedResponse> prom) {
+			_prom = prom;
+		}
+
+		@Override
+		public void channelRead(ChannelHandlerContext ctx, Object msg) {
+			_prom.setSuccess((FederatedResponse) msg);
+			ctx.close();
+		}
+
+		@Override
+		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+			if (_prom != null && !_prom.isDone())
+				_prom.setFailure(cause);
+			LOG.error("Federated request channel error", cause);
+			ctx.close();
+		}
+
+		@Override
+		public void channelInactive(ChannelHandlerContext ctx) {
+			if (_prom != null && !_prom.isDone()) {
+				_prom.setFailure(new DMLRuntimeException("Federated response channel closed without a reply"));
+				LOG.error("Federated request channel closed before response");
+			}
+		}
+
+		public Promise<FederatedResponse> getProm() {
+			return _prom;
+		}
+	}
+
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append(this.getClass().getSimpleName().toString());
+		sb.append(" " + _dataType);
+		sb.append(" " + (_address != null ? _address.toString() : "null"));
+		sb.append(":" + _filepath);
+		return sb.toString();
+	}
+
+	public static class FederatedRequestEncoder extends ObjectEncoder {
+		@Override
+		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg, boolean preferDirect)
+			throws Exception {
+			int initCapacity = 256; // default initial capacity
+			if(msg instanceof FederatedRequest[]) {
+				initCapacity = 0;
+				try {
+					for(FederatedRequest fr : (FederatedRequest[]) msg) {
+						int frSize = Math.toIntExact(fr.estimateSerializationBufferSize());
+						if(Integer.MAX_VALUE - initCapacity < frSize) // summed sizes exceed integer limits
+							throw new ArithmeticException("Overflow.");
+						initCapacity += frSize;
+					}
+				}
+				catch(ArithmeticException ae) { // size of federated request exceeds integer limits
+					initCapacity = Integer.MAX_VALUE;
+				}
+			}
+			if(preferDirect)
+				return ctx.alloc().ioBuffer(initCapacity);
+			else
+				return ctx.alloc().heapBuffer(initCapacity);
+		}
+	}
+
+	/**
+	 * Requests privacy constraints from the federated worker
+	 * 
+	 * @return Future containing the federated response with privacy constraints
+	 */
+	public Future<FederatedResponse> requestPrivacyConstraints() {
+		// NOTE: Requesting privacy constraints does not require an initialized federated variable:
+		// the GetPrivacyConstraints UDF has no input IDs and only reads the local metadata file.
+		//
+		// Avoid forcing READ_VAR initialization here, as doing so during planning would duplicate
+		// federated reads at runtime (planner-time init + runtime fedinit).
+		final long id = isInitialized() ? _varID : -1;
+		FederatedRequest request = new FederatedRequest(RequestType.EXEC_UDF, id,
+			new GetPrivacyConstraints(_filepath));
+		return executeFederatedOperation(request);
+	}
+
+	public static class GetPrivacyConstraints extends FederatedUDF {
+		private final String filename;
+
+        public GetPrivacyConstraints(String filename) {
+            super(new long[] { });  // Pass empty ID array to parent constructor as this is a static class
+			this.filename = filename;
+        }
+    
+        @Override
+        public FederatedResponse execute(ExecutionContext ec, Data... data) {
+			String privacyConstraints = null;
+			FileSystem fs = null;
+			MetaDataAll mtd = null;
+		
+			try {
+				final String mtdName = DataExpression.getMTDFileName(filename);
+				Path path = new Path(mtdName);
+				fs = IOUtilFunctions.getFileSystem(mtdName);
+				try(BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(path)))) {
+					mtd = new MetaDataAll(br);
+					if(!mtd.mtdExists())
+						throw new FederatedWorkerHandlerException("Could not parse metadata file for " + filename);
+					privacyConstraints = mtd.getPrivacyConstraints();
+
+					// An existing, valid metadata file without a privacy field denotes
+					// unrestricted data. Return that fact explicitly: a successful response
+					// with a null payload is otherwise indistinguishable from a malformed
+					// privacy response at the coordinator.
+					if(privacyConstraints == null)
+						privacyConstraints = "public";
+				}
+				
+				return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, privacyConstraints);
+			}
+			catch(IOException ex) {
+				String msg = "IO Exception when reading metadata file for " + filename;
+				LOG.error(msg, ex);
+				throw new FederatedWorkerHandlerException(msg, ex);
+			}
+			catch(Exception ex) {
+				String msg = "Exception of type " + ex.getClass() + " thrown when processing privacy constraints request for " + filename;
+				LOG.error(msg, ex);
+				throw new FederatedWorkerHandlerException(msg, ex);
+			}
+			finally {
+				IOUtilFunctions.closeSilently(fs);
+			}
+        }
+
+        @Override
+        public Pair<String, LineageItem> getLineageItem(ExecutionContext ec) {
+            String opcode = "fedprivconst"; // Appropriate operation code
+            
+            // Create input LineageItem for the operation
+            LineageItem[] inputs = new LineageItem[] { 
+                new LineageItem(filename) // Create literal LineageItem by passing only the string
+            };
+            
+            // Create appropriate LineageItem (for read operation)
+            return Pair.of(opcode, new LineageItem(opcode, inputs));
+        }
+    }
+}

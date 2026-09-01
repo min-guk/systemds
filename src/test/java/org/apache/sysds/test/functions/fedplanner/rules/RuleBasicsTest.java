@@ -1,0 +1,217 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.sysds.test.functions.fedplanner.rules;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.Rulesets;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.junit.Test;
+
+public class RuleBasicsTest {
+
+  private static final ShapeHint UNKNOWN_SHAPE = new ShapeHint(-1, -1, 0);
+
+  @Test
+  public void registryLookupIgnoresOpcodeCase() {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    Rulesets.AppendRule appendRule = new Rulesets.AppendRule();
+    registry.register(appendRule);
+
+    Optional<Rule> located = registry.byOpcode("APPEND");
+    assertTrue("Registry must find opcode irrespective of case", located.isPresent());
+    assertSame(appendRule, located.get());
+  }
+
+  @Test
+  public void defaultModuleContainsAggUnaryAndBinaryMM() {
+    RulesCore.RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
+    boolean hasAggUnary = false;
+    boolean hasBinaryMM = false;
+    for (Rule rule : registry.allRules()) {
+      hasAggUnary |= rule instanceof Rulesets.AggUnaryRule;
+      hasBinaryMM |= rule instanceof Rulesets.BinaryMMRule;
+    }
+    assertTrue("AggUnaryRule should be registered", hasAggUnary);
+    assertTrue("BinaryMMRule should be registered", hasBinaryMM);
+  }
+
+  @Test
+  public void appendRuleSupportsUppercaseOpcode() {
+    Rulesets.AppendRule rule = new Rulesets.AppendRule();
+    OpSig sig = OpSig.of(Opcodes.APPEND.toString(), OpCategory.APPEND, Map.of("cbind", "true"));
+
+    assertTrue(rule.supports(sig));
+    OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW), UNKNOWN_SHAPE);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(ReasonCode.BROADCAST_OR_ALIGNED_ROW, caps.reason());
+  }
+
+  @Test
+  public void naryCbindIsExcludedWithoutAFederatedRuntimeKernel() {
+    Rulesets.AppendRule rule = new Rulesets.AppendRule();
+    OpSig sig = OpSig.of(Opcodes.CBIND.toString(), OpCategory.APPEND, Map.of("cbind", "true"),
+        InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX);
+
+    OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW, FType.ROW), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
+    assertEquals(ReasonCode.NOT_IMPLEMENTED, caps.reason());
+  }
+
+  @Test
+  public void quantilePickIncludesQpick() {
+    Rulesets.QuantilePickRule rule = new Rulesets.QuantilePickRule();
+    OpSig sig = OpSig.of(Opcodes.QPICK.toString(), OpCategory.QUANTILE_PICK, Map.of());
+    assertTrue(rule.opcodes().contains(Opcodes.QPICK.toString()));
+
+    OpCaps caps = rule.caps(sig, Arrays.asList((FType) null), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(ReasonCode.NOT_FEDERATED_INPUTS, caps.reason());
+  }
+
+  @Test
+  public void binaryElemwiseOtherMatrixScalarProfilesOtherOutput() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig leftScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.SCALAR);
+    OpSig rightScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.SCALAR, InputKind.MATRIX);
+
+    FTypeProfile leftOther = rule.profile(leftScalar,
+        List.of(List.of(FType.OTHER), Collections.singletonList(null)), UNKNOWN_SHAPE);
+    FTypeProfile rightOther = rule.profile(rightScalar,
+        List.of(Collections.singletonList(null), List.of(FType.OTHER)), UNKNOWN_SHAPE);
+
+    assertEquals(List.of(FType.OTHER), leftOther.outputs());
+    assertEquals(List.of(FType.OTHER), rightOther.outputs());
+  }
+
+  @Test
+  public void binaryElemwiseOtherMatrixScalarCapsFedFoutOtherOnlyForExactScalarPair() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig leftScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.SCALAR);
+    OpSig rightScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.SCALAR, InputKind.MATRIX);
+
+    OpCaps leftOther = rule.caps(leftScalar, Arrays.asList(FType.OTHER, null), UNKNOWN_SHAPE);
+    assertEquals(ExecType.FED, leftOther.exec());
+    assertEquals(FederatedOutput.FOUT, leftOther.placement());
+    assertTrue(leftOther.foutEnabled());
+    assertEquals(FType.OTHER, leftOther.foutFType().orElse(null));
+    assertEquals(ReasonCode.OK, leftOther.reason());
+
+    OpCaps rightOther = rule.caps(rightScalar, Arrays.asList(null, FType.OTHER), UNKNOWN_SHAPE);
+    assertEquals(ExecType.FED, rightOther.exec());
+    assertEquals(FederatedOutput.FOUT, rightOther.placement());
+    assertTrue(rightOther.foutEnabled());
+    assertEquals(FType.OTHER, rightOther.foutFType().orElse(null));
+    assertEquals(ReasonCode.OK, rightOther.reason());
+
+    OpCaps otherBroadcast = rule.caps(leftScalar, List.of(FType.OTHER, FType.BROADCAST), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, otherBroadcast.exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, otherBroadcast.reason());
+  }
+
+  @Test
+  public void binaryElemwiseOtherNullRequiresExactScalarInputKind() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig frameOther = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.FRAME);
+    OpSig unknownOther = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.UNKNOWN);
+
+    FTypeProfile frameProfile = rule.profile(frameOther,
+        List.of(List.of(FType.OTHER), Collections.singletonList(null)), UNKNOWN_SHAPE);
+    FTypeProfile unknownProfile = rule.profile(unknownOther,
+        List.of(List.of(FType.OTHER), Collections.singletonList(null)), UNKNOWN_SHAPE);
+    assertEquals(List.of(), frameProfile.outputs());
+    assertEquals(List.of(), unknownProfile.outputs());
+
+    OpCaps frameCaps = rule.caps(frameOther, Arrays.asList(FType.OTHER, null), UNKNOWN_SHAPE);
+    OpCaps unknownCaps = rule.caps(unknownOther, Arrays.asList(FType.OTHER, null), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, frameCaps.exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, frameCaps.reason());
+    assertEquals(ExecType.CP, unknownCaps.exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, unknownCaps.reason());
+  }
+
+  @Test
+  public void fullInputNotTreatedAsScalarLike() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig sig = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of());
+    OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.FULL), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, caps.reason());
+  }
+
+	@Test
+	public void fullBroadcastMatrixCannotMasqueradeAsRowLocalOperand() {
+		Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+		OpSig sig = OpSig.of(OpOp2.LESSEQUAL.toString(), OpCategory.BINARY_EWISE, Map.of(),
+			InputKind.MATRIX, InputKind.MATRIX);
+		ShapeHint fullMatrixAndColumnVector = new ShapeHint(50_000, 50, 1000,
+			java.util.Optional.empty(), 50_000, 50, 50_000, 1);
+
+		OpCaps caps = rule.caps(sig, List.of(FType.BROADCAST, FType.ROW),
+			fullMatrixAndColumnVector);
+		FTypeProfile profile = rule.profile(sig,
+			List.of(List.of(FType.BROADCAST), List.of(FType.ROW)), fullMatrixAndColumnVector);
+
+		assertEquals("workers cannot compare a full replicated matrix with row partitions",
+			ExecType.CP, caps.exec());
+		assertFalse(profile.outputs().contains(FType.ROW));
+	}
+
+	@Test
+	public void rowVectorBroadcastRemainsValidForRowPartitionedElementwiseExecution() {
+		Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+		OpSig sig = OpSig.of(OpOp2.DIV.toString(), OpCategory.BINARY_EWISE, Map.of(),
+			InputKind.MATRIX, InputKind.MATRIX);
+		ShapeHint rowMatrixAndBroadcastVector = new ShapeHint(50_000, 50, 1000,
+			java.util.Optional.empty(), 50_000, 50, 1, 50);
+
+		OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.BROADCAST),
+			rowMatrixAndBroadcastVector);
+
+		assertEquals(ExecType.FED, caps.exec());
+		assertEquals(FType.ROW, caps.foutFType().orElse(null));
+	}
+}

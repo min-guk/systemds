@@ -1,0 +1,62 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+# 
+#   http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+a = rand();
+b= rand();
+c= rand();
+d= rand();
+e= rand();
+f= rand();
+g= rand();
+h= rand();
+i= rand();
+j= rand();
+k= rand();
+l= rand();
+
+if (a < 10){
+	a = a + b;
+
+	if (a < 20) {
+		a = a * c;
+	} else {
+		a = a + d;
+
+		if (a < 30) {
+			a = a + e;
+			
+			if (a < 40){
+				a = a + f;
+			} else {
+				a = a + g;
+			}
+
+			a = a + h;
+		} else {
+			a = a + i;
+		}
+		a = a + j;
+	}
+} else {
+	a = a + k;
+}
+c = a + l;
+print(mean(c))

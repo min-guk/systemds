@@ -1,0 +1,516 @@
+# Session Issues — 2026-07-30
+
+## 공통 placement emission의 live/durable/runtime anchor identity가 서로 달랐음
+
+- **상태**: 해결 — canonical anchor stage의 Docker 재검증에서 기존 authority 충돌이 사라졌고, 다음 독립 오류를 노출함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 최초 기준 commit: `a6d66b0f294c059804a67b49d94d53207515bf2e`
+  - 1차 serializer 수정 commit: `01a60ec84d94d56710e40e254428cd8242dd4ceb`
+  - 플래너/워크로드: DP / PCA, privacy public 케이스 제외
+  - 기존 Docker 결과: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/05-dp-pca`
+  - 1차 수정 후 단일 Docker 재현: `/home/mchoi/g007-dp-pca-anchor-canary-20260730-v1`
+  - 1차 수정 stage: `/home/mchoi/g007-anchor-runtime-stage-20260730-v1/g007-stage-bef893ad494cfa6a196139629b5da816ae5343ac1463613a85eeca88136d7aa7`
+  - 2차 canonical stage: `/home/mchoi/g007-anchor-canonical-stage-20260730-v1/g007-stage-7ee60b523433f1fd66a6ab913257a481a6f763d9606fb87e457fb35a82d852e6`
+  - 2차 Docker 재검증: `/home/mchoi/g007-dp-pca-anchor-canonical-canary-20260730-v1`
+  - 실행 제약: 성능 및 런타임 검증은 `run_LAN_docker.sh`만 사용하며 물리 호스트 `run_LAN.sh` 결과는 채택하지 않음
+- **재현 절차**:
+  - 기존 Docker 로그: `05-dp-pca/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - 1차 단위 RED:
+    - `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest#durableAnchorRegistryKeyRoundTripsThroughRuntimeParser' test`
+    - 로그: `/tmp/g007-anchor-runtime-key-red-20260730.log`
+  - 1차 수정 후 Docker 1회:
+    - response: `/home/mchoi/g007-dp-pca-anchor-canary-20260730-v1/response.json`
+    - coordinator log: `/home/mchoi/g007-dp-pca-anchor-canary-20260730-v1/results/fed1/mkl-cost/pca_dataset-P2P2D_coordinator_mkl-cost_g007anchor_pca_dp_lan_coordinator1.log`
+  - 2차 단위 RED:
+    - `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest#fullFedInitDurableAnchorMatchesLiveRegisteredAuthority' test`
+    - FULL range 불일치 로그: `/tmp/g007-full-anchor-authority-red-20260730.log`
+    - compile/runtime worker identity 불일치 로그: `/tmp/g007-full-anchor-runtime-authority-red-20260730.log`
+- **관측 증상**:
+  - Docker lowering 실패: `fed_refed lowering found conflicting live/durable anchor authority for hop=209 anchorHop=18`
+  - 1차 추가 회귀 테스트는 수정 전 `G007_RUNTIME_ANCHOR_KEY_MUST_BE_PARSEABLE`로 실패함.
+  - 1차 serializer 수정 JAR로 DP/PCA를 Docker에서 정확히 한 번 재실행했으나 같은 lowering 충돌로 실패했다. `response.json`은 `success=false`, `failure_category=semantic_oracle`, `return_code=1`, teardown 성공을 기록한다.
+  - 실제 PCA 입력은 `worker1:8001/data/P2P2D_features.data`, range `[0,0]-[50000,2100]`인 단일-worker FULL 배치였다.
+  - 2차 RED가 정확히 드러낸 세 authority는 다음과 같았다.
+    - live fed-init key: `worker1:8001/data/P2P2D_features.data;||FULL`
+    - durable key: `worker1:8001/data/P2P2D_features.data;|0,0,50000,2100;|FULL`
+    - runtime map 재직렬화 key: `worker1/<unresolved>:8001;|0,0,50000,2100;|FULL`
+- **원인 분석**:
+  - `PlacementEmissionTransaction.prepareRegistryWrites(...)`가 runtime registry의 `anchorKey` 필드에 `DurableAnchorKey.normalizedSignature()`를 기록했다.
+  - 이 값은 planner 내부의 구조적 identity이며, runtime 계약인 `worker ids|ranges|FType` 직렬화가 아니다.
+  - 반면 `ExactPlacementRegistration`은 이미 `FederationUtils.buildAnchorMapFromKey(...)`가 해석할 수 있는 정확한 runtime key serializer를 갖고 있었다.
+  - 1차 수정으로 parse 불가능 문제는 제거됐지만, `deriveFedInitSignature(...)`가 `FType.FULL`일 때만 range를 생략해 live/durable key가 계속 달랐다.
+  - 또한 compile-time fed-init 주소는 데이터 경로까지 포함하지만 runtime `InetSocketAddress.toString()`은 DNS 상태를 포함하고 데이터 경로는 포함하지 않아, recompile/registry round-trip 후 동일 worker도 다른 문자열 identity가 됐다.
+  - 즉 문제는 후보 정책이나 runtime 지원 부족이 아니라, 공통 placement metadata의 세 생산자가 worker/range/FType를 서로 다르게 직렬화한 계약 위반이었다.
+- **해결 요약**:
+  - 중복 serializer를 새로 만들지 않고 `ExactPlacementRegistration.runtimeAnchorKey(...)`를 package-visible 공통 helper로 재사용했다.
+  - transaction emission도 해당 runtime serializer를 사용하도록 변경했다.
+  - fed-init 및 runtime mapping signature 모두 FULL을 포함한 모든 지원 FType에서 정확한 range를 기록하도록 통일했다.
+  - `FederationUtils.canonicalFederatedWorkerAddress(...)`를 추가해 fed-init의 `host:port/path`, resolved/unresolved `InetSocketAddress`를 모두 DNS 결과와 파일 경로에 독립적인 `host:port` worker identity로 만든다.
+  - `deriveFedInitSignature`, `deriveFedMappingSignature`, runtime layout/materialized-layout signature, exact durable registry serializer가 같은 canonical worker 표현을 사용하도록 연결했다.
+  - 테스트 fixture는 graph에 존재하는 두 개의 합법 후보 전체가 아니라 실제 선택된 relocation 하나를 검증하도록 갱신했다. 후보 공간은 축소하지 않았다.
+  - registry key를 실제 `FederationUtils.buildAnchorMapFromKey(...)`로 round-trip해 worker/range/FType을 검증하는 회귀 테스트를 추가했다.
+  - 단일-worker FULL PCA 형태에 대해 live 등록 key, durable registry key, runtime map 재직렬화 key가 완전히 동일한지 검증하는 회귀 테스트를 추가했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/ExactPlacementRegistration.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerUtils.java`
+  - `src/main/java/org/apache/sysds/runtime/controlprogram/federated/FederationUtils.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransactionRedTest.java`
+- **검증**:
+  - 수정 전 단일 회귀 테스트: 실패(의도한 RED), `/tmp/g007-anchor-runtime-key-red-20260730.log`
+  - 수정 후 단일 회귀 테스트: 성공, `/tmp/g007-anchor-runtime-key-green-20260730.log`
+  - 관련 suite 성공:
+    - `PlacementEmissionTransactionRedTest`
+    - `FederationUtilsRefedReuseLayoutTest`
+    - `CampaignBG014ImmutableAnchorRegistrationRedTest`
+    - `SharedPlannerFunctionPlanPropagationRedTest`
+    - 로그: `/tmp/g007-anchor-related-suite-20260730.log`, `MAVEN_RC=0`
+  - FULL range RED: 의도한 비교 실패, `/tmp/g007-full-anchor-authority-red-20260730.log`
+  - compile/runtime worker identity RED: 의도한 비교 실패, `/tmp/g007-full-anchor-runtime-authority-red-20260730.log`
+  - FULL live/durable/runtime identity GREEN: `/tmp/g007-full-anchor-runtime-authority-green-20260730.log`, `MAVEN_RC=0`
+  - canonical anchor 관련 suite 성공:
+    - `PlacementEmissionTransactionRedTest`
+    - `FederationUtilsRefedReuseLayoutTest`
+    - `FederatedRefedPolicyTest`
+    - `CampaignBG014ImmutableAnchorRegistrationRedTest`
+    - `SharedPlannerFunctionPlanPropagationRedTest`
+    - 로그: `/tmp/g007-anchor-canonical-suite-20260730.log`, `MAVEN_RC=0`
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-anchor-canonical-package-20260730.log`, `MAVEN_RC=0`
+  - canonical stage Docker DP/PCA 셀을 정확히 한 번 실행함:
+    - response: `/home/mchoi/g007-dp-pca-anchor-canonical-canary-20260730-v1/response.json`
+    - 결과: `success=false`, `failure_category=semantic_oracle`, `return_code=1`, teardown 후 container/network 0개
+    - coordinator log에는 기존 `conflicting live/durable anchor authority`가 없고, 후속 독립 오류인 `fed_refed lowering selected an already federated input for hop=209`가 나타남
+- **잔여 이슈**:
+  - anchor identity 자체의 잔여 이슈는 없음. 새 `already federated input` 오류는 아래 별도 이슈에서 추적한다.
+  - PCA 성공 후에도 DP/LM의 registry slot 충돌, DP/LogReg의 transient forwarding authority, DP/StepLM의 function-input fact 누락은 별도 원인일 수 있다.
+- **잠재 회귀 위험**:
+  - 기존에 파일 경로나 `InetSocketAddress.toString()`의 DNS 문자열을 identity 일부로 잘못 기대한 코드가 있다면 key가 달라진다. worker placement identity에는 파일 경로/DNS 해석 결과가 포함되면 안 되므로 의도한 계약 변경이며, 관련 registry/policy/recompile suite와 이후 Docker workload에서 회귀를 감지한다.
+  - FULL signature가 이제 정확한 4차원 range를 포함한다. legacy 빈-range FULL key가 외부에서 직접 주입되는 경로는 parser가 계속 읽을 수 있지만 새 planner/runtime 생산자는 정확한 range만 기록한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 exact placement metadata를 runtime 계약 형식으로 명시하며 runtime fallback이나 암묵적 보정은 추가하지 않았다.
+  - runtime이 지원하는 후보를 닫지 않았고 TRead/TWrite 및 recompile 제약도 변경하지 않았다.
+
+## DP/PCA가 이미 FOUT인 derived source에 불필요한 `fed_refed`를 선택함
+
+- **상태**: 해결 — 새 immutable stage의 DP/PCA Docker 1회 canary가 lowering·runtime·semantic oracle을 모두 통과함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 기준 commit: `3ca73b21d27e050040a83666699aceb79675091e`
+  - 플래너/워크로드: DP / PCA / `P2P2D`, private-aggregate 입력, 단일-worker FULL 배치
+  - Docker stage: `/home/mchoi/g007-anchor-canonical-stage-20260730-v1/g007-stage-7ee60b523433f1fd66a6ab913257a481a6f763d9606fb87e457fb35a82d852e6`
+  - 수정 후 stage: `/home/mchoi/g007-pca-direct-source-stage-20260730-v1/g007-stage-ae144dbccbae8948d16119e1ad1a8b7d3504865d8e7af73c0d3b5fda090bb770`
+  - 수정 후 Docker run: `/home/mchoi/g007-dp-pca-direct-source-canary-20260730-v1`
+  - 실행 제약: Docker 성능 실험은 `run_LAN_docker.sh`만 사용하고 각 targeted cell은 실제로 한 번만 실행함
+- **재현 절차**:
+  - Docker response: `/home/mchoi/g007-dp-pca-anchor-canonical-canary-20260730-v1/response.json`
+  - coordinator log: `/home/mchoi/g007-dp-pca-anchor-canonical-canary-20260730-v1/results/fed1/mkl-cost/pca_dataset-P2P2D_coordinator_mkl-cost_g007anchorcanon_pca_dp_lan_lan_coordinator1.log`
+  - 실행된 DML: `/home/mchoi/g007-dp-pca-anchor-canonical-canary-20260730-v1/tmp/cell-1/discovery-correctness/gen_pca_P2P2D_1.dml`
+  - hermetic RED: `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpPcaRefedLoweringRedTest test`
+  - RED 로그: `/tmp/g007-dp-pca-already-fed-refed-red-detail-20260730.log`
+- **관측 증상**:
+  - Docker lowering이 `org.apache.sysds.lops.LopsException: fed_refed lowering selected an already federated input for hop=209`로 종료됨.
+  - DP normalized result에는 이미 `FED/FOUT/FULL`인 세 derived value에 relocation이 선택되어 있었음.
+    - `REPLACE:Centering`
+    - `REPLACE:ScaleFactor`
+    - `b(-):X`
+  - 세 source 모두 exact input value의 range identity를 소유하지는 않지만, 같은 durable worker pool에서 생성되어 consumer가 그대로 사용할 수 있는 FOUT이었다.
+- **원인 분석**:
+  - `Node.anchors()`는 정확한 값/FederationMap identity를 뜻하므로 shape가 달라진 derived output에 원본 `X`의 exact range anchor를 복사하는 것은 잘못이다.
+  - `WorkerPoolAnchorResolver`는 derived output이 어느 durable worker pool에서 생성됐는지 이미 증명하지만, `NeutralPlacementGraph.isRelocationActive(...)`는 exact anchor ownership만 검사했다.
+  - 따라서 DP가 source를 FOUT으로 선택하고 exact PRESENT candidate가 그 입력을 직접 받을 수 있어도, normalized graph가 다시 `FED->LOUT->FOUT` relocation을 활성화했다.
+  - 이는 native DP가 non-transient FOUT→FED 경계를 zero-cost/direct-use로 취급하는 의미와 normalized emission의 의미가 불일치한 것이다.
+- **해결 요약**:
+  - `RelocationAction`에 action-level `directSourcePlacements` 증명을 추가했다. 기존 2-인자 생성자는 유지해 기존 호출 계약을 보존한다.
+  - builder는 모든 grouped input use가 exact PRESENT candidate로 직접 수용되고, source의 worker-pool provenance가 같은 단일 durable anchor로 정확히 증명될 때만 해당 FOUT state를 direct source로 게시한다.
+  - sparse pre-materialization fallback은 direct-use 증명으로 인정하지 않는다.
+  - assignment가 이 exact direct FOUT state를 선택하면 relocation만 비활성화한다. 합법 candidate를 닫거나 runtime fallback을 추가하지 않는다.
+  - 처음에는 이 증명을 `RelocationActionKey`에 넣었으나 selector/MinST identity 계약까지 바꾸는 잘못된 모델링임을 확인해 폐기했다. 최종 구현은 key identity를 변경하지 않는다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraph.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpPcaRefedLoweringRedTest.java`
+- **검증**:
+  - 새 회귀 테스트는 DP planner receipt를 확인하고, 이미 forced-FOUT인 Lop에 refed registry entry가 없는지 검증한 뒤 Docker에서 실패한 동일 `Dag.getJobs` 경계인 `getRuntimeProgram(...)`까지 수행한다.
+  - GREEN: `/tmp/g007-dp-pca-derived-pool-action-proof-green-20260730.log`, `MAVEN_RC=0`
+  - 관련 differential suite 현재 결과: 51 tests, 3 failures + 7 errors, 즉 41 pass.
+    - 로그: `/tmp/g007-action-proof-related-suite-current-20260730.log`
+  - 동일 suite를 수정 전 HEAD `3ca73b21d2`에서 실행한 결과: 50 tests, 동일한 3 failures + 7 errors, 즉 40 pass.
+    - 로그: `/tmp/g007-head-baseline-related-suite-20260730.log`
+    - 결론: 새 PCA 회귀 1건이 추가로 통과했고 이번 변경이 새 실패를 만들지 않았다.
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-pca-direct-source-package-20260730.log`, `MAVEN_RC=0`
+  - immutable stage identity:
+    - SystemDS commit: `8afdfc4692ce31af20d4827b87b7dff542d1b0f8`
+    - stage id: `ae144dbccbae8948d16119e1ad1a8b7d3504865d8e7af73c0d3b5fda090bb770`
+    - JAR sha256: `a57213bcaa730cc3327f2c016fc11fdefe3f2f4f82cc8d7bf30142c0d49151a1`
+    - data sha256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f`
+    - reference sha256: `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - Docker DP/PCA targeted cell을 정확히 한 번 실행함:
+    - response: `/home/mchoi/g007-dp-pca-direct-source-canary-20260730-v1/response.json`
+    - 결과: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart 0회
+    - semantic oracle: `passed=true`, projector relative error `0.0`, reconstruction loss relative error `0.0`
+    - phase metric: `124.933174647`초; SystemDS `Total execution time`: `56.043`초
+    - coordinator log: `/home/mchoi/g007-dp-pca-direct-source-canary-20260730-v1/results/fed1/mkl-cost/pca_dataset-P2P2D_coordinator_mkl-cost_g007pcadirect_pca_dp_lan_lan_coordinator1.log`
+    - 로그에 `fed_refed`, anchor conflict, exception/error가 없고 `FED/FOUT` PCA 경로가 실제로 완료됨
+- **잔여 이슈**:
+  - 이 PCA 오류 자체의 잔여 이슈는 없음. 다음 DP 실패 workload는 기존 로그를 먼저 사용해 별도로 분석한다.
+  - differential suite의 기존 10건은 기준 commit에서도 동일하게 실패한다. MinST 관련 fixture와 shared graph/selector fixture의 별도 baseline 부채이며 이번 DP/PCA 수정의 신규 회귀는 아니다.
+- **잠재 회귀 위험**:
+  - worker-pool provenance가 과도하게 넓게 추론되면 필요한 relocation을 생략할 수 있다. 이를 막기 위해 단일 exact durable pool, 같은 materialization FType, 모든 grouped use의 exact PRESENT proof를 동시에 요구한다.
+  - action-level direct proof가 graph fingerprint에 포함되므로 같은 key라도 실행 의미가 다른 graph는 같은 분석 identity로 취급되지 않는다.
+  - 감지 방법: PCA hermetic lowering 회귀, exact anchor/relocation suite의 HEAD differential 비교, 다음 Docker canary의 semantic oracle 및 runtime 결과를 함께 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - exact anchor identity를 derived value로 위조하지 않고 worker-pool placement metadata를 별도 증명으로 모델링했다.
+  - runtime fallback/암묵 보정 없이 planner가 불필요한 relocation을 만들지 않도록 수정했다.
+  - runtime이 지원하는 후보를 닫지 않았고 TRead/TWrite 및 recompile 제약도 변경하지 않았다.
+
+## DP/LM virtual child의 canonical owner를 output만으로 선택함
+
+- **상태**: 해결 — exact-state owner 수정 후 hermetic 회귀, package, canonical Docker DP/LM canary와 semantic oracle을 모두 통과함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 기준 commit: `61218a3d35`
+  - 플래너/워크로드: DP / LM / `P2P2D`, private-aggregate, 단일-worker FULL 배치
+  - 기존 Docker 실패: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm`
+  - 수정 commit: `255a5509a7afa300d8b75d3530b229e03b26232c`
+  - 수정 stage: `/home/mchoi/g007-dp-lm-exact-owner-stage-20260730-v1/g007-stage-4ea9d4930a23970cbfb029ac2b31e2eff3d51702717331ea66a4f24ee12dfdf2`
+  - canonical Docker run: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2`
+  - 실행 제약: Docker 성능 검증은 `run_LAN_docker.sh`만 사용하며 canonical DP/LM cell은 `--salg lm`으로 한 번 실행함
+- **재현 절차**:
+  - 기존 Docker DML: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm/tmp/cell-1/discovery-correctness/gen_lm_P2P2D_1.dml`
+  - 기존 Docker coordinator log: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm/results/fed1/mkl-cost/lm_dataset-P2P2D_coordinator_mkl-cost_p4v2c13_lan_coordinator1.log`
+  - hermetic 회귀: `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpLmRegistrySlotRedTest test`
+  - 상세 RED 로그: `/tmp/g007-dp-lm-canonical-owner-red-detail-20260730.log`
+- **관측 증상**:
+  - 기존 Docker stage에서는 emission 시 `PlacementEmissionException: Multiple relocations target one registry slot`이 발생했다.
+  - 현재 HEAD를 exact LM 형태의 local federated worker로 재현하자 emission보다 앞서 다음 fail-closed 오류가 발생했다.
+    - `DP selected child lacks an exact canonical owner plan`
+    - virtual selected carrier: hop `750`, `CP/LOUT`, `derived=false`
+    - physical occurrence owner로 잘못 조회된 primary arm: hop `246`, `FED/LOUT/FULL`, `derived=false`
+  - 즉 같은 LOUT bucket 안의 CP와 FED variant가 서로 다른 exact placement state인데도 output만으로 canonical owner를 조회했다.
+- **원인 분석**:
+  - DP memo는 하나의 `(hop, LOUT)` bucket에 `CP/LOUT`과 `FED/LOUT`을 모두 유지한다. 이는 exec type 및 child-output signature가 다른 합법 비용 후보를 보존하기 위한 기존 설계다.
+  - virtual/recompile child를 physical analysis occurrence에 연결하는 `resolveSelectedChild(...)`는 `getFedPlanAfterPrune(occurrence, state.output())`을 사용했다.
+  - 이 API는 해당 output bucket의 primary/최저비용 variant를 반환하므로 virtual child의 exact `PlacementState`와 다른 exec/FType arm을 반환할 수 있다.
+  - 문제는 runtime 지원이나 후보 합법성/비용이 아니라, disconnected-component ownership receipt가 exact state identity 대신 output identity만 사용한 것이다.
+- **해결 요약**:
+  - physical carrier인 경우 기존처럼 selected plan 자체를 owner로 유지한다.
+  - virtual/recompile carrier인 경우 physical occurrence의 동일 output bucket 전체에서 다음 조건을 모두 만족하는 arm만 canonical owner로 선택한다.
+    - exact physical Hop/occurrence identity
+    - 동일한 analysis-owned `PlacementState` 객체
+    - 동일한 `derivedFedFout`
+    - 현재 global child-output decisions와 호환
+  - 복수 exact arm이 남으면 기존 비용 철학대로 cumulative cost가 가장 작은 arm을 선택한다.
+  - exact arm이 없으면 계속 fail-closed하며 runtime fallback, 암묵 보정, candidate guard는 추가하지 않는다.
+  - 기존 예외 메시지에 selected/owner hop, state, derived 비교를 추가해 다음 identity 불일치를 즉시 진단할 수 있게 했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpLmRegistrySlotRedTest.java`
+- **검증**:
+  - 수정 전 hermetic RED: `/tmp/g007-dp-lm-canonical-owner-red-detail-20260730.log`, 의도한 exact-state mismatch로 실패
+  - 수정 후 단일 GREEN: `/tmp/g007-dp-lm-exact-owner-prototype-20260730.log`, `MAVEN_RC=0`
+  - 관련 GREEN suite: LM 회귀, PCA lowering 회귀, DP KMeans private-aggregate, candidate occurrence, disconnected component, rewire occurrence
+    - 로그: `/tmp/g007-dp-lm-exact-owner-green-suite-20260730.log`, `MAVEN_RC=0`
+  - 더 넓은 관련 suite는 28 tests 중 기존 3 failures를 제외한 25 tests가 통과함.
+    - 현재 로그: `/tmp/g007-dp-lm-exact-owner-related-suite-20260730.log`
+    - 패치 역적용 기준선에서도 `CampaignBDpAggregateProducerContractTest` 2건과 `FederatedPCAPlanningTest` 1건이 동일 메시지로 실패함: `/tmp/g007-dp-lm-exact-owner-baseline-failures-20260730.log`
+    - 따라서 세 실패는 이번 변경의 신규 회귀가 아님.
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-lm-exact-owner-package-20260730.log`, `MAVEN_RC=0`
+  - immutable stage identity:
+    - SystemDS commit: `255a5509a7afa300d8b75d3530b229e03b26232c`
+    - stage id: `4ea9d4930a23970cbfb029ac2b31e2eff3d51702717331ea66a4f24ee12dfdf2`
+    - descriptor sha256: `3fcb1f37fb3f006ca9bfe99cebad63ffcb63dbfed78edd145459a468214cf99d`
+    - JAR sha256: `90adb17a51b8109318d332df4db70b437d66adc5172577908dcfe1d882f9bc44`
+    - data sha256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f`
+    - reference sha256: `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - canonical Docker DP/LM targeted cell 성공:
+    - response: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2/response.json`
+    - 결과: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart 0회
+    - phase scan: error/fallback/resource-invalid/timeout 모두 `false`
+    - semantic oracle: `passed=true`, prediction NRMSE `0.0`, objective relative error `0.0`; output/reference sha256 동일
+    - phase metric: `80.38918997`초; SystemDS total execution `60.038`초, compilation `1.531160`초, FedPlanner `0.365948`초
+    - federated 실행 증거: I/O `(Read, Put, Get)=2/1/2`, Execute `(Inst, UDF)=4/0`, heavy hitter에 `fed_ba+*`, `fed_fedinit`, `fed_r'` 존재
+    - coordinator log 및 전체 artifact에 기존 `Multiple relocations target one registry slot`과 exact-owner fail-closed 오류가 없음
+- **잔여 이슈**:
+  - 이 DP/LM registry-slot 및 exact-owner 오류 자체의 잔여 이슈는 없음. DP 우선순위의 다음 기존 실패 workload를 별도 hermetic 재현으로 진행한다.
+  - 기준선의 aggregate receipt count 2건 및 multi-worker PCA transient-forward authority 1건은 별도 baseline 부채다. 단일-worker PCA Docker canary는 이미 성공했다.
+- **잠재 회귀 위험**:
+  - 같은 exact state이지만 child-output signature가 다른 physical arm 중 잘못된 arm을 owner로 고를 수 있다. 현재 global output decisions 호환성과 최소 cumulative cost를 함께 요구하며 LM/KMeans/disconnected 회귀로 감지한다.
+  - 필요한 physical exact state arm이 pruning에서 사라지면 fail-closed 오류가 다시 발생한다. DP pruning은 LOUT bucket에서 best CP와 best FED를 모두 보존하며 새 LM 회귀가 이를 감지한다.
+- **의사결정 근거/적용 원칙**:
+  - DP의 기존 비용 최적화와 CP/FED 후보 공간은 유지하고, ownership projection만 exact placement state 기준으로 수정했다.
+  - runtime fallback/repair, 후보 임의 폐쇄, TRead/TWrite 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.
+
+## DP/LM canary의 supervised workload를 수동으로 `--alg`에 전달함
+
+- **상태**: 해결 — canonical campaign 분류인 `--salg lm`으로 바로잡았고, 잘못된 실행은 별도 보존한 뒤 정식 canary를 한 번만 실행함
+- **환경/조건**:
+  - 잘못된 수동 실행: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v1`
+  - 정식 실행: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2`
+  - 동일 immutable stage/JAR/data/reference/seed 사용; 두 번째 실행은 첫 실행에서 측정한 동일 LAN net-check cache를 재사용함
+  - 실행 스크립트: stage-local `run_LAN_docker.sh`만 사용함
+- **재현 절차**:
+  - 잘못된 호출은 `--alg lm`, 정식 호출은 `--salg lm`이다.
+  - canonical launcher의 분류 근거: `experiments/tools/campaign_lifecycle.py`가 `lm`, `l2svm`, `logreg`, `steplm`을 `--salg`로 전달한다.
+  - 잘못된 response: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v1/response.json`
+  - 정식 response: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2/response.json`
+- **관측 증상**:
+  - 첫 실행의 LM 본체는 return code 0으로 완료했고 실제 출력 `tmp/cell-1/discovery-correctness/lm-P2P2D.res`를 생성했다.
+  - 그러나 `run_coordinator_once`는 `only_alg` 경로에서 unsupervised 출력명 `fed_P2P2D_1.res`를 oracle에 넘겨 `Read input file does not exist`가 발생했다.
+  - 첫 실행에서도 SystemDS total execution은 `57.485`초였고 phase scan의 runtime error/fallback/timeout은 모두 `false`였다. 실패는 planner/runtime가 아니라 semantic-oracle 입력 경로 분류였다.
+- **원인 분석**:
+  - LM은 `parameters.sh`의 `SAlgs` 항목이며 실제 runner도 supervised 출력명 `${workload}-${dataset}.res`를 생성한다.
+  - 수동 canary 명령을 작성할 때 canonical `campaign_lifecycle.py`의 `--salg` 분기를 확인하지 않고 `--alg lm`을 사용했다.
+  - harness 자체의 canonical campaign 경로는 이미 올바르므로 소스 수정 대상이 아니다.
+- **해결 요약**:
+  - 잘못된 response와 artifact를 삭제하거나 성공으로 변조하지 않고 그대로 보존했다.
+  - 동일 코드를 재빌드하거나 planner를 수정하지 않고, canonical 분류만 `--salg lm`으로 바로잡아 새 run root에서 정식 canary를 수행했다.
+  - 불필요한 네트워크 재측정을 피하기 위해 직전 동일 LAN/worker/profile의 cache를 복사해 사용했으며 planner cost 입력은 측정값이 아니라 기존 frozen LAN 상수 그대로다.
+- **수정 파일**:
+  - 없음. 실행 인자 분류 오류였고 canonical harness 코드는 이미 정확했다.
+- **검증**:
+  - 정식 response `success=true`, semantic oracle `passed=true`, prediction/objective 오차 `0.0`, teardown resource 0개.
+  - 정식 response argv에 `--salg`, `lm`이 기록되어 canonical launcher 계약과 일치한다.
+- **잔여 이슈**:
+  - 수동 one-cell 실행 시 workload가 `Algs`/`SAlgs` 중 어디에 속하는지 반드시 `campaign_lifecycle.py` 또는 `parameters.sh`에서 확인한다.
+- **잠재 회귀 위험**:
+  - 향후 workload 분류가 바뀌고 canonical launcher와 수동 명령이 다시 어긋날 수 있다. 수동 명령 대신 canonical lifecycle command builder를 우선 사용하고 response argv와 실제 output basename을 함께 검증한다.
+- **의사결정 근거/적용 원칙**:
+  - 실패한 evidence를 가짜 성공으로 바꾸거나 runtime fallback을 추가하지 않았고, 오직 canonical experiment contract에 맞는 호출을 사용했다.
+
+## DP/LogReg branch-join TRead가 scheduling-only forward에서 FED/FOUT을 열거함
+
+- **상태**: 해결 — hermetic 회귀, 관련 suite/package, immutable stage 검증, canonical Docker 단일 셀과 semantic oracle을 모두 통과함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 전 기준 commit: `9647a6215ce66d9599f4c2aba1566d76d0c0c909`
+  - 플래너/워크로드: DP / LogReg / `P2P2D`, private-aggregate, 단일-worker FULL 배치
+  - 기존 Docker 실패: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/21-dp-logreg`
+  - 실행 제약: 성능 검증은 새 immutable stage의 `run_LAN_docker.sh` 단일 셀만 사용하며 `run_LAN.sh`는 사용하지 않음
+- **재현 절차**:
+  - 기존 Docker DML: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/21-dp-logreg/tmp/cell-1/discovery-correctness/gen_logreg_P2P2D_1.dml`
+  - 기존 coordinator log: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/21-dp-logreg/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - hermetic RED: `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpLogRegTransientForwardRedTest test`
+  - RED 로그: `/tmp/g007-dp-logreg-transient-forward-red-20260730.log`
+  - 상세 진단 RED: `/tmp/g007-dp-logreg-transient-forward-red-detail2-20260730.log`
+- **관측 증상**:
+  - 기존 Docker와 hermetic 회귀 모두 `DpSemanticConstructionException: TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS`로 DP 열거 단계에서 종료됐다.
+  - 실패 source는 builtin `multiLogReg.dml`의 `rowSums_X_sq` TWrite였다.
+  - source에는 `<CP,LOUT>`과 `<FED,FOUT,FULL>`이 모두 합법이었지만, if/else 이후 branch-join의 `rowSums_X_sq` TRead에는 `<CP,LOUT>`만 합법이었다.
+  - 해당 TWrite→TRead 연결은 compiled physical input도 `LogicalTransientInputFact`도 아닌 `RewireTransientForwardEdge` 하나뿐이었다. 즉 실행 순서용 scheduling dependency였지만 DP가 FOUT child arm까지 candidate input처럼 열거했다.
+- **원인 분석**:
+  - `enumerateTransientReadDataOp(...)`는 `allowLOUT/allowFOUT`을 무조건 `true`로 시작했다.
+  - FOUT source plan과 legacy reuse 조건만 만족하면 parent TRead의 neutral legal alternatives 및 exact input authority를 확인하지 않고 FOUT candidate receipt를 구성했다.
+  - `DpPlacementAdapter`는 scheduling-only rewire edge가 candidate oracle input을 제조하지 못하도록 의도적으로 CP/LOUT dependency만 허용하므로, 잘못 만들어진 FOUT receipt를 fail-closed했다.
+  - 비용/메모리 과소평가나 runtime 지원 부족이 아니라, neutral graph가 확정한 branch-join/TRead 전역 합법성과 DP candidate enumeration의 불일치였다.
+- **해결 요약**:
+  - TRead의 `allowLOUT/allowFOUT` 초기값을 exact neutral node가 실제 게시한 `<CP,LOUT>` / `<FED,FOUT>` 상태에서만 가져오도록 변경했다.
+  - FED/FOUT source는 exact compiled physical edge, `LogicalTransientInputFact`, 또는 `LogicalFunctionInputFact` 중 하나가 source→read 관계를 소유할 때만 열거한다.
+  - scheduling-only `RewireTransientForwardEdge`는 기존처럼 의존성과 source cumulative cost를 유지하지만 federated candidate input 권한을 새로 만들지 않는다.
+  - 합법적인 logical/physical FED/FOUT TRead 경로는 그대로 보존하며 비용 모델, 후보 비용 비교, runtime, TRead/TWrite 최상위 제약은 변경하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpLogRegTransientForwardRedTest.java`
+- **검증**:
+  - 새 회귀는 Docker와 동일한 50,000×2,100 LogReg 스크립트/메타데이터를 컴파일하고 DP receipt 및 runtime-program lowering까지 확인한다.
+  - 추가로 `rowSums_X_sq` branch-join scheduling edge가 physical/logical input authority가 아니며, read의 legal state와 DP decision이 CP/LOUT-only임을 receipt로 검증한다.
+  - 단일 GREEN: `/tmp/g007-dp-logreg-transient-authority-asserted-green-20260730.log`, `MAVEN_RC=0`
+  - 관련 GREEN suite: LogReg 회귀, program dynamic/transient authority, candidate occurrence snapshot, DP/LM, DP/PCA
+    - 로그: `/tmp/g007-dp-logreg-targeted-regression-suite-20260730.log`, `MAVEN_RC=0`
+  - 기존 소형 DP LogReg integration 실행 성공:
+    - 로그: `/tmp/g007-dp-logreg-existing-integration-green-20260730.log`, `MAVEN_RC=0`
+    - total execution `1.221`초, federated I/O `(Read, Put, Get)=4/0/5`, federated Execute `(Inst, UDF)=1/0`
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-logreg-transient-authority-package-final-20260730.log`, `MAVEN_RC=0`
+  - 구현 commit: `e90ec266018e650e2c07565029d856449ceda8b1` (`Align DP transient reads with exact input authority`)
+  - immutable stage 검증 성공:
+    - stage: `/home/mchoi/g007-dp-logreg-transient-authority-stage-20260730-v1/g007-stage-2c915c723e1146cb55c32f7990bb31f8a4d1bf6224c1cf2b3a6fd4de4a5155f3`
+    - descriptor SHA-256: `85ce4a1f2021d212b602405a8074c786c93549ec52b4a1bdeed78e62ef7072f7`
+    - JAR SHA-256: `8b54837a04c6ce23df31ea6fa73794d7d17a5e71fa6278625cd748620dfcdc76`
+    - data/reference tree SHA-256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f` / `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - canonical Docker 단일 셀 성공:
+    - cell: `workers=1|planner=DP|workload=logreg|profile=lan`, `--salg logreg`, seed `2026072701`, retry 각 1, continue-on-failure 0
+    - run root: `/home/mchoi/g007-dp-logreg-transient-authority-canary-20260730-v1`
+    - response: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart `0/0`, full lifecycle `52.854915699`초
+    - discovery metric `32.277092964`초; SystemDS compilation `3.828234`초, FedPlanner `1.860848`초, execution `9.705`초
+    - semantic oracle `passed=true`; objective relative error `0.0`, probability NRMSE `0.0`, masked classes identical, output/reference SHA-256 `4be690996469f4c23c1da027804e0e6abd0fe033cd45e4a46eb0ef5989b988c5`
+    - runtime scan: error/fallback/resource-invalid/timeout 모두 `false`; `TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS` 없음
+    - federated I/O `(Read, Put, Get)=2/335/339`, federated Execute `(Inst, UDF)=1013/0`, `fed_fed_refed=335`
+    - 동일 LAN/1-worker의 기존 검증된 net-check cache를 재사용했고 planner cost input은 frozen LAN 상수(`1250 MB/s`, latency `0.001 s`)를 유지함
+    - 종료 후 compose project `g007dplogregauth01`의 container/network/volume 개수는 모두 0
+- **잔여 이슈**:
+  - 이 LogReg 결함에 대한 필수 작업은 남지 않았다. 다음 DP 우선순위 workload인 StepLM의 별도 exact-candidate-rule 실패를 독립적으로 분석한다.
+- **잠재 회귀 위험**:
+  - exact logical/physical authority 탐지가 누락되면 합법적인 FED/FOUT TRead 후보를 과도하게 닫을 수 있다.
+  - 감지 방법: logical transient local+FED parity와 function-input 회귀, 기존 DP LogReg integration, 새 Docker semantic oracle을 함께 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime-supported opcode 조합을 편의상 닫은 것이 아니라, scheduling-only edge가 candidate input을 제조할 수 없다는 문서화된 TRead/TWrite·CFG 전역 합법성을 DP 열거에 반영했다.
+  - runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용, 비용 기반 후보의 임의 제거는 하지 않았다.
+
+## DP/StepLM 함수 formal TRead 후보와 전역 output decision forest가 서로 닫히지 않음
+
+- **상태**: 해결 — 공유 formal, 전역 output-map/plan-edge, 함수 경계 상태 투영을 구조적으로 닫았고, 후속 runtime recompile의 cost-ignorant placement 변경까지 별도 수정했다. 최종 immutable Docker DP/StepLM 단일 셀은 semantic oracle과 planner-placement 불변식을 모두 통과함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 전 기준 commit: `356c3b8b07`
+  - function-input candidate closure commit: `b78ccf6e132e6f50c60025c492bc21e6cc293261`
+  - shared-formal all-caller closure commit: `b2b7a5a3c3c9e20e9176b0d90c57de12db07ce6e`
+  - 플래너/워크로드: DP / StepLM / 50,000×2,100 features + 50,000×1 labels, private-aggregate, 단일 federated worker
+  - 첫 shared-formal immutable stage: `/home/mchoi/g007-dp-steplm-shared-formal-stage-20260730-v1/g007-stage-393f172a5d48a1520c83b941b78efdf455a16f09efc61bccc32778ad18df13d4`
+  - 첫 shared-formal Docker canary: `/home/mchoi/g007-dp-steplm-shared-formal-canary-20260730-v1`
+  - 테스트는 public privacy case를 사용하지 않으며, 성능 검증은 이후 새 immutable stage의 `run_LAN_docker.sh` 단일 셀만 사용함
+- **재현 절차**:
+  - hermetic 회귀: `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpStepLmFunctionInputCandidateRedTest test`
+  - 최초 RED 로그: `/tmp/g007-dp-steplm-function-input-red-20260730.log`
+  - 첫 클로저 후 nested-function RED: `/tmp/g007-dp-steplm-function-input-green-attempt1-20260730.log`
+  - synthetic output identity 진단: `/tmp/g007-dp-steplm-function-input-green-attempt5-20260730.log`
+  - 첫 immutable Docker canary: `/home/mchoi/g007-dp-steplm-function-closure-canary-20260730-v1/results/fed1/mkl-cost/steplm_dataset-P2P2D_coordinator_mkl-cost_g007dpsteplmclosure1_lan_coordinator1.log`
+  - 공유 formal 전체-caller 고정 RED: `/tmp/g007-dp-steplm-shared-formal-all-callers-red-20260730.log`
+  - Docker-equivalent full lifecycle RED: `/tmp/g007-dp-steplm-decision-map-full-lifecycle-red-20260730.log`
+  - strict child-edge 진단 trace: `/tmp/g007-dp-steplm-strict-mismatch-trace-red-20260730.log`
+  - decision-map closure 후 경계 투영 RED: `/tmp/g007-dp-steplm-decision-map-closure-green-attempt1-20260730.log`
+- **관측 증상**:
+  - 최초에는 `.builtinNS::linear_regression` formal TRead `y`가 `PRESENT/FULL` exact candidate fact를 요청했지만 빌더에는 `ABSENT_LOCAL` fact만 있어 `CandidateRuleLookupException`으로 종료됐다.
+  - 한 번만 formal domain을 재생성하면 실패 위치가 nested `.builtinNS::m_lm`으로 이동했다. 이는 caller→formal 후보 전파가 transitive fixed point를 필요로 함을 보여준다.
+  - 최종 caller 후보를 모두 반영한 뒤에는 같은 compiled `linear_regression` body에 StepLM 내부의 세 call-site가 연결되어 기존 DP의 “source authority 하나” 가정이 모호해졌다.
+  - 함수 입력/물리 후보 replay가 FunctionOp 노드를 교체한 뒤 synthetic FUNCTION_OUTPUT boundary는 이전 `PlacementState` 객체를 계속 보유해 `DP synthetic boundary did not retain its exact source state identity`로 fail-closed했다.
+  - 첫 Docker canary에서는 공유 `.builtinNS::linear_regression` formal `X`를 세 call-site에서 다시 방문하면서 첫 방문은 `<CP,LOUT>`, 다른 방문은 `<FED,FOUT>`을 선택했다. rewrite의 `coalesceSelectedState`가 이를 `DP occurrence has disagreeing exact selections`로 올바르게 fail-closed했다.
+  - 강화된 고정 RED는 공유 formal의 retained plan이 세 exact caller source를 모두 child edge로 보유해야 한다고 검증했으며, 기존 구현은 첫 active source 하나(`[133]`)만 보유해 기대값(`[133, 422, 298]`)과 달랐다.
+  - all-caller closure 이후 Docker-equivalent full lifecycle은 exact `rix(X_orig)` occurrence에 먼저 `FED/LOUT/FULL`, 나중에 `FED/FOUT/FULL`을 적용하려 해 같은 `DP occurrence has disagreeing exact selections`로 실패했다.
+  - trace에서 전역 decision map은 hop 133을 `FOUT`으로 정했지만 선택된 function-call/TRead plan의 child edge는 같은 hop 133을 `LOUT`으로 요구했다. 기존 score는 missing root와 비용만 비교해, 약 1.284M의 불일치 forest를 약 1.331M의 실행 가능한 LOUT closure보다 선호했다.
+  - forest closure를 적용한 다음에는 source `rix`가 합법적인 `FED/LOUT/FULL`로 확정됐지만 synthetic FUNCTION_INPUT boundary가 producer의 전체 exec tuple을 그대로 요구해 실패했다. boundary의 합법 상태는 최상위 transient 규칙대로 `[CP/LOUT, FED/FOUT]`뿐이었다.
+- **원인 분석**:
+  - neutral builder는 compiled function body occurrence를 일부 caller보다 먼저 fingerprint/build한다. 초기 formal TRead 후보는 아직 CFG/worker-pool/materialization closure로 확정되지 않은 caller source domain만 보고 만들어졌다.
+  - 이후 function boundary constraint는 모든 exact caller를 알고 있었지만 formal TRead의 candidate domain/fact를 다시 계산하지 않았다.
+  - DP는 동일 compiled function body를 active invocation 문맥으로 계획하지만, 공유 분석에는 동일 formal에 대한 여러 exact `LogicalFunctionInputFact`가 존재한다. 기존 코드는 fact 수가 1이 아니면 실패했고 active rewire call-site를 사용하지 않았다.
+  - synthetic output boundary의 alternatives는 확장 시점 source state 객체에 묶여 있었고 후속 replay 후 refresh되지 않았다.
+  - active call-site 방식만으로는 컴파일된 formal TRead 하나에 여러 placement를 저장할 수 없다. runtime에도 formal별 단일 placement만 존재하므로, rewrite에서 first-wins로 덮는 대신 planner가 모든 caller가 만족할 수 있는 공통 formal state를 선택해야 한다.
+  - 초기 DFS에서 첫 formal을 만날 때 뒤 call-site의 source plan은 아직 memo에 없었다. 따라서 한 번의 active-call traversal만으로는 전체 caller 비용/합법성을 계산할 수 없고, source memo를 준비하는 seed pass와 공유 formal을 재계산하는 closure pass가 필요했다.
+  - 전역 output decision refinement는 후보 map의 누적 비용과 missing root만 점수화했다. 따라서 각 hop의 output choice와 실제 parent plan variant의 child-output edge가 동시에 만족되는지는 최종 rewrite 전까지 검증하지 않았다.
+  - synthetic function boundary는 값의 placement authority인데도 producer의 실행 위치까지 동일해야 한다고 가정했다. `FED/LOUT`은 “FED에서 계산해 local 값을 생성”한 합법 연산 상태지만, transient boundary에서는 같은 local 값을 `CP/LOUT`으로 표현해야 한다.
+- **해결 요약**:
+  - final exact caller source placement의 합집합으로 formal TRead input domain을 재구성하고, 기존 `buildNode`/oracle 경로로 candidate keys/facts와 합법 상태를 다시 생성한다.
+  - formal 후보 변경 시 post-CFG physical dependency와 worker-pool materialization closure를 재실행하며 변화가 없어질 때까지 bounded fixed point로 반복한다.
+  - 각 function-input boundary는 source와 formal에 공통인 합법 transient 상태의 exact graph object를 보존한다. 모든 replay가 끝난 뒤 function-output boundary도 최종 source domain으로 refresh한다.
+  - seed pass는 기존 exact active call-site authority로 전체 source memo를 먼저 구성한다. 그 다음 closure pass는 공유 formal마다 canonical `LogicalFunctionInputFact` 전체를 읽고 각 caller의 LOUT/FOUT source arm을 exact candidate adapter로 개별 검증한다.
+  - closure pass는 `<CP,LOUT>` 또는 `<FED,FOUT>` formal state만 열거한다. `<CP,LOUT>`은 caller별 LOUT 또는 비용이 포함된 FOUT→LOUT를 선택하고, `<FED,FOUT>`은 모든 caller가 같은 FType의 FOUT을 제공할 때만 생성한다. 모든 caller에 공통으로 가능한 state가 없으면 fail-closed한다.
+  - 각 retained shared-formal plan은 canonical caller 순서대로 모든 source edge를 보유하며, source cumulative share와 호출 경계 download share를 모두 누적한다. runtime fallback이나 rewrite first-wins는 추가하지 않았다.
+  - closure pass는 seed variant를 carrier별로 정확히 교체하되, 같은 Hop ID를 다른 carrier가 소유한 경우에는 덮어쓰지 않고 fail-closed한다.
+  - synthetic boundary identity 오류에는 kind/boundary/source/selected/alternatives를 포함해 후속 진단 가능성을 높였다.
+  - output decision score에 `incompatiblePlanCount`를 추가했다. root/additional-root forest를 순회하며 각 `(exact hop occurrence, desired output)`에 대해 전역 child-output map과 strict-compatible한 plan variant가 있는지 계산한다.
+  - map 선택은 `missing roots → incompatible plans → cumulative cost` 순서로 비교한다. 실행 가능한 forest가 비용 비교보다 우선하며, 동일 구조 안에서는 기존 DP 최소비용 철학을 그대로 유지한다.
+  - multi-write transient normalization 뒤 required-output closure를 다시 실행하고, 최종 decision map에 incompatible plan이 남으면 rewrite에 넘기지 않고 planner에서 fail-closed한다.
+  - synthetic function boundary는 source output이 LOUT이면 boundary-owned `CP/LOUT`, FOUT이면 동일 FType/shape의 boundary-owned `FED/FOUT` exact state로 투영한다. 이는 `<FED,LOUT>`/`<CP,FOUT>` transient 상태를 새로 허용하지 않고 producer 실행 위치와 전달 값 placement를 분리한 것이다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpMemoTable.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmFunctionInputCandidateRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmDecisionMapClosureRedTest.java`
+- **검증**:
+  - 강화된 StepLM 단일 GREEN: `/tmp/g007-dp-steplm-function-input-green-final-20260730.log`, Maven return code 0.
+  - 회귀는 `linear_regression`의 `X`/`y` 각각에 대해 모든 exact caller state의 합집합과 formal candidate domain이 동일하고, 각 exact fact가 AVAILABLE이며, formal TRead emission이 `<CP,LOUT>` 또는 `<FED,FOUT>`만 게시하고, boundary가 graph-owned legal transient state identity를 보존함을 검증한다.
+  - 함수 전파/후보 팩트/기존 StepLM 동일명 formal suite 성공: `/tmp/g007-dp-function-closure-targeted-regressions-20260730.log`, Maven return code 0.
+  - DP PCA·LM·LogReg 및 function-output dependency suite 성공: `/tmp/g007-dp-pca-lm-logreg-regressions-20260730.log`, Maven return code 0.
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-steplm-function-closure-package-20260730.log`, Maven return code 0.
+  - 공유 formal 전체-caller GREEN: `CampaignBG014DpStepLmFunctionInputCandidateRedTest`, tests=1/errors=0/failures=0. 이 테스트는 세 caller edge 보존과 runtime-program lowering까지 검증한다.
+  - 함수 후보/전파/occurrence/dynamic targeted 21건 GREEN: `/tmp/g007-dp-shared-formal-closure-targeted-green-20260730.log`, Maven return code 0(20 success, 기존 조건부 1 skip). 별도 진단 실행에서 legacy `FederatedPlannerFallbackIntegrationTest`의 기존 기준선 실패 13건도 재확인했으며 이번 targeted 결과와 분리했다.
+  - DP PCA·LM·LogReg targeted 회귀 GREEN: `/tmp/g007-dp-shared-formal-pca-lm-logreg-20260730.log`, Maven return code 0.
+  - 새 package 성공: `/tmp/g007-dp-shared-formal-closure-package-20260730.log`, Maven return code 0.
+  - 첫 shared-formal Docker canary는 `success=false`였고 teardown은 성공했다. 이후 decision-forest 수정 stage는 semantic/runtime 성공까지 갔지만 runtime recompile이 선택된 placement를 변경하는 별도 결함을 노출했으며, 바로 다음 이슈에서 구조적으로 해결했다.
+  - Docker-equivalent full lifecycle RED는 exact `rix`의 `FED/LOUT` 대 `FED/FOUT` 충돌을 재현했다: `/tmp/g007-dp-steplm-decision-map-full-lifecycle-red-20260730.log`.
+  - decision-map structural closure만 적용한 중간 실행은 원래 충돌을 제거하고 다음 정확한 경계 오류(`FED/LOUT` source 대 `[CP/LOUT,FED/FOUT]` boundary)를 노출했다: `/tmp/g007-dp-steplm-decision-map-closure-green-attempt1-20260730.log`.
+  - 경계 placement 정규화 후 동일 full lifecycle GREEN: `/tmp/g007-dp-steplm-boundary-normalization-attempt1-20260730.log`, Maven return code 0, compile-only runtime program 생성 완료.
+  - StepLM 2개 회귀 및 PCA·LM·LogReg, shared function propagation, DP oracle/semantic closure, projected upload, rewire owner 묶음 성공: `/tmp/g007-dp-steplm-decision-closure-regression-suite-20260730.log`, 총 22 tests / 0 failures / 0 errors / 1 조건부 skip.
+  - checkstyle/RAT를 포함한 package 성공: `/tmp/g007-dp-steplm-decision-closure-package-20260730.log`, Maven return code 0.
+  - 최종 runtime-placement lock commit `f3bdd2ea18148312b28ec4a25a7d825a00df43db`의 Docker DP/StepLM canary가 `success=true`, semantic oracle `passed=true`, fallback/demotion 0건, teardown resource 0개로 종료했다. 상세 경로와 hash는 다음 이슈에 기록했다.
+- **잔여 이슈**:
+  - 이 StepLM 결함에 대한 필수 작업은 남지 않았다. 다음 단계는 기존 검증 artifact를 재사용해 DP 전체 workload 상태를 정리하고, 미검증 DP 셀만 새 immutable Docker discovery로 보충한 뒤 FedAll로 넘어가는 것이다.
+  - seed pass에서 active call-site를 확정할 direct rewire argument가 어떤 formal에도 없다면 DP는 의도적으로 fail-closed한다. 실제 workload에서 나타나면 seed dependency 모델을 확장해야 하며 임의 선택으로 우회하면 안 된다.
+  - closure pass는 cyclic function-call dependency를 끊기 위해 seed source plan을 사용한다. 새 workload에서 후속 source 재열거로 필요한 output arm이 사라지는 증거가 나오면 bounded convergence를 추가해야 하며, 현재 StepLM lowering에서는 dangling edge가 없음을 검증했다.
+- **잠재 회귀 위험**:
+  - 다단 nested function에서 후보 domain이 계속 변하면 fixed-point 상한에서 fail-closed한다. 새 StepLM nested 경로와 기존 function propagation 회귀로 감지한다.
+  - 여러 call-site의 합집합 때문에 formal 후보 수가 늘 수 있으나 이는 비용 후보를 닫지 않고 실제 caller 가능성을 보존하는 동작이다. 최종 shared-formal 선택은 모든 exact caller의 교집합 합법성과 총 경계 비용으로 제한한다.
+  - post-CFG source node가 교체되었는데 boundary refresh가 누락되면 identity 오류가 재발한다. 입력 boundary identity assertion과 PCA multi-return function-output regression으로 감지한다.
+  - 구조 일관성을 비용보다 우선하므로, 기존에 더 싸지만 실행 불가능했던 map 대신 더 비싼 실행 가능한 map이 선택될 수 있다. 이는 의도한 DP 계약이며 Docker 실행시간/plan trace에서 비용 추정 오차를 별도로 검증한다.
+  - `incompatiblePlanCount` 순회가 새로운 additional-root/clone 형태를 빠뜨리면 rewrite 충돌이 재발할 수 있다. full lifecycle StepLM 회귀와 최종 fail-closed 검사로 감지한다.
+  - boundary 정규화가 source FType/shape를 잘못 투영하면 FOUT 호출 경계가 깨질 수 있다. exact boundary-owned identity 검사와 함수/PCA 회귀 및 Docker semantic oracle로 감지한다.
+- **의사결정 근거/적용 원칙**:
+  - 수정 대상은 builder의 후보 폐쇄 순서, DP의 seed/공유-formal closure, output-decision forest의 구조적 실행 가능성 점수, 그리고 synthetic boundary의 값-placement 투영이다. oracle/runtime 지원과 TRead/TWrite 제약은 완화하지 않았다.
+  - runtime fallback/암묵 보정, `<CP,FOUT>` 허용, legal candidate 임의 skip/continue는 추가하지 않았다.
+
+## Runtime recompile 관측값이 DP가 선택한 TRead placement를 비용 없이 덮어씀
+
+- **상태**: 해결 — runtime placement map을 검증용 관측값으로 제한하고 planner 선택을 불변식으로 잠근 뒤, 새 immutable Docker DP/StepLM 단일 셀에서 demotion/fallback 0건과 semantic oracle 통과를 확인함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 결함 재현 commit/stage: `8e1e17363be856a1aa4f47fdd2d88d217f5e4b31` / `/home/mchoi/g007-dp-steplm-decision-closure-stage-20260730-v1/g007-stage-9b4fc78bbf7dbb78e09217c79a317121485a809b7abd614b873c565b0818a156`
+  - 결함 재현 Docker run: `/home/mchoi/g007-dp-steplm-decision-closure-canary-20260730-v1`
+  - 수정 commit: `f3bdd2ea18148312b28ec4a25a7d825a00df43db` (`Preserve planner placement during runtime recompile`)
+  - 플래너/워크로드: DP / StepLM / `P2P2D`, private-aggregate, worker 1, LAN, seed `2026072701`
+  - 실행은 stage-local `run_LAN_docker.sh`만 사용했고 retry 각 1, `continue-on-failure=0`으로 정확히 한 번 수행함
+- **재현 절차**:
+  - 기존 coordinator log: `/home/mchoi/g007-dp-steplm-decision-closure-canary-20260730-v1/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - RED 계약: `/tmp/g007-runtime-placement-contract-red-20260730.log`
+  - 재현 핵심은 runtime map에 federated symbol, 명시적 local symbol, 아예 없는 symbol을 각각 넣고 planner가 선택한 `<CP,LOUT>` 또는 `<FED,FOUT>` TRead가 runtime 등록 과정에서 바뀌는지 검사하는 것이다.
+- **관측 증상**:
+  - 기존 Docker run은 semantic oracle까지 통과했지만 coordinator log에 `RefedRuntimeLocalTReadDemote` 9건과 `RefedUnsatisfiedFedInputDemote` 2건이 있었다.
+  - `X`와 `y`의 planner-selected `<FED,FOUT>` TRead가 phase-2 recompile의 비어 있거나 불완전한 `LocalVariableMap` 때문에 `<CP,LOUT>`으로 바뀌었고, 그 결과 상위 aggregate/reorg도 연쇄 demotion됐다.
+  - 반대 방향으로 runtime에서 federated라고 관측된 symbol은 planner-selected local TRead를 FED/FOUT으로 승격할 수 있었다. 두 방향 모두 비용 최적화가 끝난 뒤 runtime context가 계획을 다시 쓰는 동작이었다.
+  - 이전 run의 SystemDS execution은 `17.178`초였지만 plan mutation이 존재했으므로 성능 근거로 채택할 수 없다.
+- **원인 분석**:
+  - recompiler의 계층적 2단계 재컴파일은 일부 구간에 빈 runtime variable map을 전달한다. 기존 policy는 map 부재/미포함을 “명시적 local”과 구분하지 않았다.
+  - `extractDAGOutputStatistics(...)`가 통계 전달을 위해 만든 `MatrixObject`도 실제 runtime-local 값처럼 보였으며, 이 provenance가 `RecompileStatus`에 남지 않았다.
+  - `FederatedRefedPolicy.registerFromHopsInternal(...)`는 runtime map을 검증 관측값이 아니라 replacement plan처럼 사용해 TRead/TWrite와 downstream FED plan을 승격·강등했다.
+  - 따라서 문제는 DP 비용 모델이나 runtime opcode 미지원이 아니라, planner와 runtime-lowering 사이 authority 경계가 뒤집힌 것이었다.
+- **해결 요약**:
+  - runtime map 의미를 세 상태로 분리했다: key 부재는 unknown, `containsKey(name)`이면서 값 `null`은 명시적 local 관측, non-null FType/signature는 federated 관측이다.
+  - `RecompileStatus`에 placement-unknown 변수 provenance를 추가하고 clone/branch merge에서 보존한다. stats-only output 변수는 runtime placement/signature map에서 제거한다.
+  - runtime context는 선택된 TRead placement를 승격·강등하지 않고 lowering registry만 재구성한다.
+  - runtime 등록 전 planner placement snapshot을 만들고 등록 후 ExecType/FedOut/derived flag가 바뀌지 않았는지 fail-closed 검사한다.
+  - 명시적 runtime-local 관측과 planner-selected FED/FOUT이 실제로 모순이면 CP로 demote하지 않고 `DMLRuntimeException`을 발생시킨다. federated input을 만족하지 못하는 downstream plan도 runtime에서 보정하지 않고 실패시킨다.
+  - 후보군, oracle 합법 상태, 비용 모델, TRead/TWrite 규칙 및 recompile `<CP,FOUT>` 금지는 변경하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/recompile/RecompileStatus.java`
+  - `src/main/java/org/apache/sysds/hops/recompile/Recompiler.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `src/test/java/org/apache/sysds/hops/recompile/RecompileStatusFederatedPlacementTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmFunctionInputCandidateRedTest.java`
+- **검증**:
+  - 4개 신규 runtime placement 계약 GREEN: `/tmp/g007-runtime-placement-contract-green-attempt1-20260730.log`.
+  - `FederatedRefedPolicyTest` 46/46 GREEN: `/tmp/g007-runtime-placement-policy-suite-attempt3-20260730.log`.
+  - policy + `RecompileStatusFederatedPlacementTest` 48/48 GREEN: `/tmp/g007-runtime-placement-unit-suite-attempt1-20260730.log`.
+  - StepLM static lifecycle GREEN: `/tmp/g007-runtime-placement-steplm-static-attempt1-20260730.log`.
+  - 일반 function/loop/predicate recompile suite GREEN: `/tmp/g007-runtime-placement-general-recompile-suite-20260730.log`.
+  - DP 관련 22 tests는 0 failures / 0 errors / 1 조건부 skip: `/tmp/g007-runtime-placement-dp-22-suite-20260730.log`.
+  - checkstyle/RAT 포함 package 성공: `/tmp/g007-runtime-placement-package-attempt1-20260730.log`.
+  - 새 immutable runtime/JAR:
+    - runtime: `/home/mchoi/g007-dp-runtime-placement-lock-runtime-20260730-v1`
+    - JAR SHA-256: `b6574df6b3054b65a37fc6d410d7472a72e3abc8a22bd435c252b199bfc22d47`
+  - 새 immutable stage:
+    - root: `/home/mchoi/g007-dp-runtime-placement-lock-stage-20260730-v1/g007-stage-4c838968a51801a734bf3ca923a524ad3cf38de09e6b30ca358a5ee9a858ffc4`
+    - descriptor SHA-256: `cf9c58b58f53bc32b2ed5c26986f813ea25d7872c7cb87994eda0f1591e4771f`
+    - data/reference tree SHA-256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f` / `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - 최종 Docker canary:
+    - run root: `/home/mchoi/g007-dp-runtime-placement-lock-canary-20260730-v1`
+    - response: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart `0/0`, full lifecycle `106.262822513`초
+    - phase return code `0`; scan의 error/fallback/resource-invalid/timeout 모두 `false`
+    - semantic oracle `passed=true`; AIC와 reference가 `380202.8708510169`로 동일, prediction NRMSE와 objective relative error 모두 `0.0`, support identical
+    - SystemDS total execution `17.278`초, compilation `4.136616`초, FedPlanner `2.104782`초; federated I/O `(Read, Put, Get)=2/0/2102`, Execute `(Inst, UDF)=4202/0`
+    - coordinator log에서 `RefedRuntimeLocalTReadDemote`, `RefedUnsatisfiedFedInputDemote`, fallback/repair marker가 모두 0건
+    - raw coordinator SHA-256 `f6383a2abe3025b2813d7ef4ec6cdc62254640a81e750b8a1554bed0cb576705`; semantic oracle SHA-256 `ccd9aa945df07fe6944268ab423b2a357f9469800142692a291bcc4f7e3b20c8`
+    - 종료 후 compose project `g007dprtplock01`의 container/network/volume은 모두 0개
+  - 기존 mutation run `17.178`초 대비 최종 run은 `17.278`초로 `0.100`초(약 `0.58%`) 높다. 단일 discovery 1회 차이는 noise 범위일 수 있어 정책 성능 우열 근거로 사용하지 않으며, 이번 canary의 판정 대상은 semantic/runtime/placement 계약이다.
+- **잔여 이슈**:
+  - 이 runtime placement mutation 결함에 대한 필수 작업은 남지 않았다.
+  - 네 정책 execution-time 정렬은 동일 immutable stage·고정 seed/data·warm 측정·사전 등록된 순서로 별도 performance pass를 수행해야 판단할 수 있다. discovery 단일 run과 서로 다른 JAR의 시간 비교로 정렬을 주장하지 않는다.
+- **잠재 회귀 위험**:
+  - 실제 runtime-local 값이 unknown으로 잘못 표기되면 잘못된 FED plan을 늦게까지 보존할 수 있다. 명시적 local 관측은 계속 fail-closed하며 신규 policy 계약으로 감지한다.
+  - 새로운 stats-only `MatrixObject` 생성 경로가 unknown provenance 등록을 누락할 수 있다. recompile status 단위 테스트와 function/loop/predicate suite로 감지한다.
+  - lowering registry 재구성이 planner placement를 다시 변경하면 snapshot invariant가 즉시 예외를 발생시키며 Docker scan이 이를 검출한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 비용과 합법성을 판단하고 runtime은 그 계획을 그대로 실행한다는 최상위 원칙을 복원했다.
+  - runtime fallback/암묵 demotion, 후보 임의 폐쇄, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.

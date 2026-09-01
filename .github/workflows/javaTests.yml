@@ -1,0 +1,182 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+name: Java Test
+
+on:
+  push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '*.html'
+      - 'src/main/python/**'
+      - 'dev/**'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '*.html'
+      - 'src/main/python/**'
+      - 'dev/**'
+    branches:
+      - main
+
+jobs:
+  java_tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tests: [
+          "org.apache.sysds.test.applications.**",
+          "**.test.usertest.**",
+          "**.component.c**.** -Dtest-threadCount=1 -Dtest-forkCount=1",
+          "**.component.e**.**,**.component.f**.**,**.component.m**.**",
+          "**.component.p**.**,**.component.r**.**,**.component.s**.**,**.component.t**.**,**.component.u**.**",
+          "**.functions.a**.**,**.functions.binary.matrix.**,**.functions.binary.scalar.**,**.functions.binary.tensor.**",
+          "**.functions.blocks.**,**.functions.data.rand.**,",
+          "**.functions.countDistinct.**,**.functions.countDistinctApprox.**",
+          "**.functions.data.misc.**,**.functions.lineage.**",
+          "**.functions.compress.**,**.functions.data.tensor.**,**.functions.codegenalg.parttwo.**,**.functions.codegen.**,**.functions.caching.**",
+          "**.functions.binary.matrix_full_cellwise.**,**.functions.binary.matrix_full_other.**",
+          "**.functions.federated.algorithms.**,**.functions.federated.io.**,**.functions.federated.paramserv.**",
+          "**.functions.federated.transform.**,**.functions.federated.fedplanner.**",
+          "**.functions.federated.primitives.part1.** -Dtest-threadCount=1 -Dtest-forkCount=1",
+          "**.functions.federated.primitives.part2.** -Dtest-threadCount=1 -Dtest-forkCount=1",
+          "**.functions.federated.primitives.part3.** -Dtest-threadCount=1 -Dtest-forkCount=1",
+          "**.functions.federated.primitives.part4.** -Dtest-threadCount=1 -Dtest-forkCount=1",
+          "**.functions.federated.primitives.part5.** -Dtest-threadCount=1 -Dtest-forkCount=1",
+          "**.functions.federated.monitoring.**,**.functions.federated.multitenant.**",
+          "**.functions.federated.codegen.**,**.functions.federated.FederatedTestObjectConstructor",
+          "**.functions.codegenalg.partone.**",
+          "**.functions.builtin.part1.**",
+          "**.functions.builtin.part2.**",
+          "**.functions.frame.**,**.functions.indexing.**,**.functions.io.**,**.functions.iogen.**",
+          "**.functions.dnn.**,**.functions.ooc.**",
+          "**.functions.paramserv.**",
+          "**.functions.recompile.**,**.functions.misc.**",
+          "**.functions.mlcontext.**",
+          "**.functions.nary.**,**.functions.quaternary.**",
+          "**.functions.parfor.**,**.functions.pipelines.**",
+          "**.functions.homomorphicEncryption.**",
+          "**.functions.unary.scalar.**,**.functions.updateinplace.**,**.functions.vect.**",
+          "**.functions.reorg.**,**.functions.rewrite.**,**.functions.ternary.**",
+          "**.functions.transform.**","**.functions.unique.**",
+          "**.functions.unary.matrix.**,**.functions.linearization.**,**.functions.jmlc.**"
+        ]
+    name: ${{ matrix.tests }}
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: ${{ matrix.tests }}
+      uses: ./.github/action/
+      id: test
+      with:
+        test-to-run: ${{ matrix.tests }}
+
+    - name: Clean Github Artifact Name of Asterisks
+      run: |
+        ARTIFACT_NAME="transient_jacoco"
+        ARTIFACT_NAME+="-${{ matrix.tests }}"
+        ARTIFACT_NAME=${ARTIFACT_NAME//\*/x} # replace * with x
+        echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
+
+    - name: Save Java Test Coverage as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}
+        path: target/jacoco.exec
+        retention-days: 1
+
+  determine_test_coverage:
+    name: Determine Test Coverage
+    runs-on: ${{ matrix.os }}
+    needs: [
+      java_tests
+      ]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        java: ['17']
+        javadist: ['adopt']
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Cache Maven Dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-test-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-test-
+
+    - name: Download all Jacoco Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: target
+
+    - name: Merge Jacoco Artifacts
+      run: mvn jacoco:merge
+
+    - name: Process Classes
+      run: mvn process-classes
+
+    - name: Generate Code Coverage Report
+      run: mvn jacoco:report
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5.4.3
+      if: github.repository_owner == 'apache'
+      with:
+        fail_ci_if_error: false
+        files: target/site/jacoco/jacoco.xml
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Upload Jacoco Report Artifact PR
+      if: (github.repository_owner == 'apache') && (github.ref_name != 'main')
+      uses: actions/upload-artifact@v4
+      with:
+        name: Java Code Coverage (Jacoco)
+        path: target/site/jacoco
+        retention-days: 7
+
+    - name: Upload Jacoco Report Artifact Main
+      if: (github.repository_owner == 'apache') && (github.ref_name == 'main')
+      uses: actions/upload-artifact@v4
+      with:
+        name: Java Code Coverage (Jacoco)
+        path: target/site/jacoco
+        retention-days: 30
+
+    - name: Upload Jacoco Report Artifact Fork
+      if: (github.repository_owner != 'apache')
+      uses: actions/upload-artifact@v4
+      with:
+        name: Java Code Coverage (Jacoco)
+        path: target/site/jacoco
+        retention-days: 3
+

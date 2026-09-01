@@ -1,0 +1,14 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+X = read($X)
+TsmmLeft = t(X) %*% X
+TsmmRight = X %*% t(X)
+TsmmWrongCol = t(X) %*% X
+TsmmWrongRow = X %*% t(X)
+write(TsmmLeft, $TsmmLeft)
+write(TsmmRight, $TsmmRight)
+write(TsmmWrongCol, $TsmmWrongCol)
+write(TsmmWrongRow, $TsmmWrongRow)

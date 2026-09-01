@@ -1,0 +1,61 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Read federated inputs
+X1 = read($X1);
+X2 = read($X2);
+Y = read($Y);
+
+# Combine federated matrices
+X = rbind(X1, X2);
+
+# Parameters from test
+epochs = $epochs;
+batch_size = $batch_size;
+eta = $eta;
+workers = $workers;
+utype = $utype;
+freq = $freq;
+mode = $mode;
+C = $C;
+Hin = $Hin;
+Win = $Win;
+
+# Simple CNN simulation (without actual paramserv for planning test)
+# This is a simplified version for planning test purposes
+N = nrow(X);
+K = ncol(Y);
+
+# Create dummy weights for planning
+W1 = matrix(0.01, 32*C*5*5, 1);
+W2 = matrix(0.01, 64*32*5*5, 1);
+W3 = matrix(0.01, 64*7*7, 512);
+W4 = matrix(0.01, 512, K);
+
+# Dummy forward pass for planning purposes
+conv_out = X %*% W1[1:ncol(X), ];
+hidden = conv_out %*% W2[1:ncol(conv_out), ];
+output = hidden %*% W3[1:ncol(hidden), ];
+result = output %*% W4[1:ncol(output), ];
+
+# Write result for test completion
+write(result, $Z);
+print("CNN planning test completed");

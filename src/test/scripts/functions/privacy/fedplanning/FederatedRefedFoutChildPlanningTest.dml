@@ -1,0 +1,20 @@
+# Federated refed integration test: FOUT child -> CP -> FOUT -> FED
+r = 10
+c = 10
+
+X = federated(addresses=list($X1, $X2),
+  ranges=list(list(0, 0), list(r / 2, c),
+              list(r / 2, 0), list(r, c)))
+
+# PRIVATE_AGGREGATE -> PUBLIC via safe full/axis aggregate
+A = rowMeans(X)
+
+# CP op consuming federated input (A is FOUT) and producing matrix output
+B = A %*% t(A)
+
+# FED parents sharing the same anchor (X)
+W1 = X + B
+W2 = X - B
+
+write(W1, $W1)
+write(W2, $W2)

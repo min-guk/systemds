@@ -1,0 +1,107 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+addedX = read($1);
+oldX = read($2);
+totalX = rbind(oldX, addedX);
+oldE = read($3);
+addedE = read($4);
+totalE = rbind(oldE, addedE);
+indicesRemoved = read($9);
+disableIncScorePruning = $13;
+disableIncSizePruning = $14;
+
+if(disableIncScorePruning & disableIncSizePruning){
+  pruningStrat = 5;
+} else if (disableIncSizePruning){
+  pruningStrat = 2;
+} else if (disableIncScorePruning){
+  pruningStrat = 4;
+} else {
+  pruningStrat = 1;
+}
+
+
+if(nrow(indicesRemoved) > 0){
+  if(as.scalar(indicesRemoved[1]) == 0){
+    indicesRemoved = matrix(0, 0, 0);
+  }
+}
+
+# first compute the top k slices in two increments
+  # first increment
+[TK, TKC, D, L, meta, Stats, Xout, eOut, foffb, foffe, params] = incSliceLine(addedX=oldX[1:nrow(oldX) -10], addedE=oldE[1:nrow(oldE) -10], k=$5,
+  alpha=0.95, minSup=4, tpEval=$6, selFeat=$7, encodeLat=$8, verbose=$10);
+/*
+for(i in 1:nrow(Stats)){
+  print("nrow(L[" + i + "]): " + nrow(as.matrix(L[i])));
+  print("Stats[" + i + "]: " + nrow(as.matrix(Stats[i])));
+}*/
+
+[TK, TKC, D, L, meta, Stats, Xout, eOut, foffb, foffe, params] = incSliceLine(addedX=oldX[nrow(oldX) -9: nrow(oldX)], oldX = oldX[1:nrow(oldX) -10], oldE = oldE[1:nrow(oldE) -10], addedE=oldE[nrow(oldE) -9: nrow(oldE)], prevLattice = L, metaPrevLattice=meta, prevStats = Stats, prevTK = TK, prevTKC = TKC, k=$5,
+  alpha=0.95, minSup=4, tpEval=$6, selFeat=$7, encodeLat=$8, indicesRemoved=indicesRemoved, verbose=$10, params=params, prevFoffb = foffb, prevFoffe = foffe, pruningStrat = pruningStrat);
+
+/*
+for(i in 1:nrow(Stats)){
+  print("nrow(L[" + i + "]): " + nrow(as.matrix(L[i])));
+  print("Stats[" + i + "]: " + nrow(as.matrix(Stats[i])));
+}*/
+
+  # second increment
+
+  # third increment
+[TK1, TKC1, D1, L1, meta1, Stats1, Xout1, eOut1, foffb2, foffe2, params] = incSliceLine(addedX=addedX, oldX = oldX, oldE = oldE, addedE=addedE, prevLattice = L, metaPrevLattice=meta, prevStats = Stats, prevTK = TK, prevTKC = TKC, k=$5,
+  alpha=0.95, minSup=4, tpEval=$6, selFeat=$7, encodeLat=$8, indicesRemoved=indicesRemoved, verbose=$10, params=params, prevFoffb = foffb, prevFoffe = foffe, pruningStrat = pruningStrat);
+
+# prepare totalX and totalE for running sliceline on total data
+if(nrow(indicesRemoved) > 0){
+  oldX = removeRowsByIndices(oldX, indicesRemoved);
+  oldE = removeRowsByIndices(oldE, indicesRemoved);
+  totalX = rbind(oldX, addedX);
+  totalE = rbind(oldE, addedE);
+}
+
+# call sliceline on total data
+[TK2, TKC2, D2, L2, meta2, Stats2, Xout2, eOut2, foffb3, foffe3, params] = incSliceLine(addedX=totalX, addedE=totalE, k=$5,
+  alpha=0.95, minSup=4, tpEval=$6, selFeat=$7, encodeLat=$8, verbose=$10);
+
+write(TKC1, $11)
+write(TKC2, $12)
+
+# Function to remove rows from matrix M based on a list of indices
+removeRowsByIndices = function(Matrix[Double] M, Matrix[Double] indices)
+  return (Matrix[Double] result)
+{
+  result = matrix(0, 0, ncol(M));
+  index = 1;
+  for(i in 1:nrow(indices)){
+    index2 = as.scalar(indices[i]);
+    if(index == index2){
+      index = index + 1;
+      i = i + 1;
+    } else {
+      result = rbind(result, M[index:(index2-1),]);
+      index = index2+1;
+    }
+  }
+  result = rbind(result, M[index:nrow(M),]);
+}
+

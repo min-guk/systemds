@@ -1,0 +1,92 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# The tomekLink-function performs under sampling by removing Tomek's links for imbalanced multi-class problems
+# Computes TOMEK links and drops them from data matrix and label vector.
+# Drops only the majority label and corresponding point of TOMEK links.
+#
+# INPUT:
+# -------------------------------------------------------------------------------------------
+# X     Data Matrix (nxm)
+# y     Label Matrix (nx1), greater than zero
+# -------------------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ------------------------------------------------------------------------------------------------
+# X_under   Data Matrix without Tomek links
+# y_under   Labels corresponding to under sampled data
+# drop_idx  Indices of dropped rows/labels wrt input
+# ------------------------------------------------------------------------------------------------
+
+m_tomeklink = function(Matrix[Double] X, Matrix[Double] y)
+return (Matrix[Double] X_under, Matrix[Double] y_under, Matrix[Double] drop_idx)
+{
+  ymin = min(y)
+  if(ymin == 0)
+    y = y + 1
+
+  # # find the majority labels
+  label = table(y, 1)
+  majority_label = as.scalar(rowIndexMax(t(label)))
+
+  tomek_links = get_links(X, y, majority_label)
+
+  if(sum(tomek_links == 0) > 0)
+  {
+    drop_idx = tomek_links * seq(1, nrow(X)) 
+    X_under = removeEmpty(target=X, margin="rows", select = (tomek_links == 0))
+    y_under = removeEmpty(target=y, margin="rows", select = (tomek_links == 0))
+    drop_idx = removeEmpty(target=drop_idx, margin="rows", select = tomek_links)
+  }
+  else
+  {
+    X_under = X
+    y_under = y
+    drop_idx = as.matrix(NaN)
+  }
+  if(ymin == 0)
+    y_under = y_under - 1
+}
+
+# get the nearest neighbour index
+get_nn = function(Matrix[Double] X)
+return (Matrix[Double] nn) {
+  # TODO exchange manhatten by euclidean dist()?
+  nn = matrix(0, rows = nrow(X), cols = 1)
+  parfor (i in 1:nrow(X)) {
+    dists = rowSums((X - X[i,])^2) 
+    dists[i,] = NaN; # mask out self-ref
+    nn[i, 1] = rowIndexMin(t(dists))
+  }
+}
+
+# find the tomek links
+get_links = function(Matrix[Double] X, Matrix[Double] y, double majority_label)
+return (Matrix[Double] tomek_links) {
+  tomek_links = matrix(-1, 1, 1)
+  if(max(y) <= 2 ) {
+    nn = get_nn(X)
+    perm = table(seq(1, nrow(y)), nn, nrow(y), nrow(y))
+    nn_labels = perm %*% y
+    links = (y != majority_label) & (nn_labels == majority_label)
+    tomek_links = (table(nn, 1, links, nrow(y), 1) > 0)
+  }
+}

@@ -1,0 +1,292 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.sysds.runtime.instructions.fed;
+
+import java.util.concurrent.Future;
+
+import org.apache.sysds.hops.fedplanner.FTypes.AlignType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
+import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.controlprogram.federated.MatrixLineagePair;
+import org.apache.sysds.runtime.functionobjects.OffsetColumnIndex;
+import org.apache.sysds.runtime.instructions.InstructionUtils;
+import org.apache.sysds.runtime.instructions.cp.AppendCPInstruction;
+import org.apache.sysds.runtime.instructions.cp.CPOperand;
+import org.apache.sysds.runtime.instructions.spark.AppendSPInstruction;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
+import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.matrix.operators.ReorgOperator;
+import org.apache.sysds.runtime.meta.DataCharacteristics;
+import org.apache.sysds.runtime.meta.MatrixCharacteristics;
+import org.apache.sysds.runtime.meta.MetaDataUtils;
+
+public class AppendFEDInstruction extends BinaryFEDInstruction {
+	protected boolean _cbind; // otherwise rbind
+
+	protected AppendFEDInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean cbind,
+		String opcode, String istr) {
+		super(FEDType.Append, op, in1, in2, out, opcode, istr);
+		_cbind = cbind;
+	}
+
+	protected AppendFEDInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand out, boolean cbind,
+		String opcode, String istr, FederatedOutput fedOut) {
+		super(FEDType.Append, op, in1, in2, out, opcode, istr, fedOut);
+		_cbind = cbind;
+	}
+
+	public static AppendFEDInstruction parseInstruction(AppendCPInstruction instr) {
+		return new AppendFEDInstruction(instr.getOperator(), instr.input1, instr.input2, instr.output,
+			instr.getAppendType().equals(AppendCPInstruction.AppendType.CBIND), instr.getOpcode(),
+			instr.getInstructionString(), FederatedOutput.NONE);
+	}
+
+	public static AppendFEDInstruction parseInstruction(AppendSPInstruction instr) {
+		return new AppendFEDInstruction(instr.getOperator(), instr.input1, instr.input2, instr.output, instr.getCBind(),
+			instr.getOpcode(), instr.getInstructionString(), FederatedOutput.NONE);
+	}
+
+	public static AppendFEDInstruction parseInstruction(String str) {
+		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
+		InstructionUtils.checkNumFields(parts, 7, 6, 5);
+
+		String opcode = parts[0];
+		CPOperand in1 = new CPOperand(parts[1]);
+		CPOperand in2 = new CPOperand(parts[2]);
+		CPOperand out = new CPOperand(parts[parts.length - 3]);
+		boolean cbind = Boolean.parseBoolean(parts[parts.length - 2]);
+		FederatedOutput fedOut = FederatedOutput.valueOf(parts[parts.length-1]);
+
+		Operator op = new ReorgOperator(OffsetColumnIndex.getOffsetColumnIndexFnObject(-1));
+		return new AppendFEDInstruction(op, in1, in2, out, cbind, opcode, str, fedOut);
+	}
+
+	@Override
+	public void processInstruction(ExecutionContext ec) {
+		// get inputs
+		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
+		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
+		DataCharacteristics dc1 = mo1.getDataCharacteristics();
+		DataCharacteristics dc2 = mo2.getDataCharacteristics();
+
+		// check input dimensions
+		if(_cbind && mo1.getNumRows() != mo2.getNumRows()) {
+			StringBuilder sb = new StringBuilder();
+			sb.append("Append-cbind is not possible for federated input matrices ");
+			sb.append(input1.getName()).append(" and ").append(input2.getName());
+			sb.append(" with different number of rows: ");
+			sb.append(mo1.getNumRows()).append(" vs ").append(mo2.getNumRows());
+			throw new DMLRuntimeException(sb.toString());
+		}
+		else if(!_cbind && mo1.getNumColumns() != mo2.getNumColumns()) {
+			StringBuilder sb = new StringBuilder();
+			sb.append("Append-rbind is not possible for federated input matrices ");
+			sb.append(input1.getName()).append(" and ").append(input2.getName());
+			sb.append(" with different number of columns: ");
+			sb.append(mo1.getNumColumns()).append(" vs ").append(mo2.getNumColumns());
+			throw new DMLRuntimeException(sb.toString());
+		}
+
+		//prepare output
+		MatrixObject out = ec.getMatrixObject(output);
+		MetaDataUtils.updateAppendDataCharacteristics(dc1, dc2, out.getDataCharacteristics(), _cbind);
+
+		// FULL is both row-like and column-like in FType.isType(), so the generic axis
+		// branches below cannot distinguish a complete single-worker object from a
+		// partitioned object.  For a forced FOUT, execute FULL+local append on that
+		// exact worker instead of building a mixed remote/FederatedLocalData map.
+		if(_fedOut.isForcedFederated()
+			&& ((isRemoteSingleWorkerFull(mo1) && !mo2.isFederated())
+				|| (!mo1.isFederated() && isRemoteSingleWorkerFull(mo2)))) {
+			boolean isFed1 = mo1.isFederated();
+			MatrixLineagePair moFed = isFed1 ? mo1 : mo2;
+			MatrixLineagePair moLoc = isFed1 ? mo2 : mo1;
+			FederationMap fedMap = moFed.getFedMapping();
+			FederatedRequest fr1 = fedMap.broadcast(moLoc);
+			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1, input2}, isFed1
+					? new long[]{fedMap.getID(), fr1.getID()}
+					: new long[]{fr1.getID(), fedMap.getID()});
+			FederatedRequest frC = fedMap.cleanup(getTID(), fr1.getID());
+			Future<FederatedResponse>[] ret = fedMap.execute(getTID(), true, fr1, fr2, frC);
+			out.setFedMapping(fedMap.copyWithNewIDAndRange(
+				out.getNumRows(), out.getNumColumns(), fr2.getID(), FType.FULL));
+			out.getDataCharacteristics().setNonZeros(FederationUtils.sumNonZeros(ret));
+		}
+		// federated/federated aligned
+		else if( ((mo1.isFederated(FType.ROW) && mo2.isFederated(FType.ROW) && _cbind)
+				|| (mo1.isFederated(FType.COL) && mo2.isFederated(FType.COL) && !_cbind))
+			&& mo1.getFedMapping().isAligned(mo2.getFedMapping(), mo1.isFederated(FType.ROW) ? AlignType.ROW : AlignType.COL)) {
+			boolean isSpark = instString.contains("SPARK");
+
+			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1, input2},
+				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()});
+
+			Future<FederatedResponse>[] ffr = null;
+			if(isSpark) {
+				FederatedRequest frTmp = new FederatedRequest(RequestType.PUT_VAR,
+					fr2.getID(), new MatrixCharacteristics(-1, -1), mo1.getDataType());
+				ffr = mo1.getFedMapping().execute(getTID(), true, frTmp, fr2);
+			}
+			else {
+				ffr = mo1.getFedMapping().execute(getTID(), true, fr2);
+			}
+
+			int dim = (_cbind ? 1 : 0);
+			FederationMap newFedMap = mo1.getFedMapping().copyWithNewID(fr2.getID())
+				.modifyFedRanges(mo1.getDim(dim) + mo2.getDim(dim), dim);
+			out.setFedMapping(newFedMap);
+			out.getDataCharacteristics().setNonZeros(FederationUtils.sumNonZeros(ffr));
+		}
+		// federated/federated misaligned, federated/local, local/federated bind
+		else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)) && !_cbind)
+			|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL)) && _cbind) ) {
+			// This branch normally implements append as a federation-map bind.  A
+			// bound map can contain the same worker and variable more than once (for
+			// example rbind(X, X)); issuing GET+cleanup through that aliased map would
+			// delete the variable after the first range.  For LOUT, collect each input
+			// map without deleting it and perform the final append locally instead.
+			if(_fedOut != null && _fedOut.isForcedLocal()) {
+				MatrixBlock left = collectInput(mo1);
+				MatrixBlock right = mo1.getMO() == mo2.getMO() ? left : collectInput(mo2);
+				ec.setMatrixOutput(output.getName(),
+					left.append(right, new MatrixBlock(), _cbind));
+				return;
+			}
+
+			long id = FederationUtils.getNextFedDataID();
+			long roff = _cbind ? 0 : dc1.getRows();
+			long coff = _cbind ? dc1.getCols() : 0;
+
+			boolean isFed1 = mo1.isFederated(_cbind ? FType.COL : FType.ROW);
+			boolean isFed2 = mo2.isFederated(_cbind ? FType.COL : FType.ROW);
+			FederationMap fed1 = isFed1 ? mo1.getFedMapping() : FederationUtils.federateLocalData(mo1.getMO());
+			FederationMap fed2 = isFed2 ? mo2.getFedMapping() : FederationUtils.federateLocalData(mo2.getMO());
+
+			out.setFedMapping(fed1.identCopy(getTID(), id)
+				.bind(roff, coff, fed2.identCopy(getTID(), id)));
+			if(mo1.getNnz() != -1 && mo2.getNnz() != -1)
+				out.getDataCharacteristics().setNonZeros(mo1.getNnz() + mo2.getNnz());
+		}
+		// federated/local, local/federated bind
+		else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)) && _cbind)
+			|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL)) && !_cbind) ) {
+			boolean isFed1 = mo1.isFederated(_cbind ? FType.ROW : FType.COL);
+			boolean isSpark = instString.contains("SPARK");
+			MatrixLineagePair moFed = isFed1 ? mo1 : mo2;
+			MatrixLineagePair moLoc = isFed1 ? mo2 : mo1;
+			
+			//construct commands: broadcast lhs, fed append, clean broadcast
+			FederatedRequest[] fr1 = moFed.getFedMapping().broadcastSliced(moLoc, false);
+			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1, input2}, isFed1 ?
+				new long[]{ moFed.getFedMapping().getID(), fr1[0].getID()} :
+				new long[]{ fr1[0].getID(), moFed.getFedMapping().getID()});
+			
+			//execute federated operations and set output
+			Future<FederatedResponse>[] ret = null;
+			if(isSpark) {
+				FederatedRequest tmp = new FederatedRequest(RequestType.PUT_VAR,
+					fr2.getID(), new MatrixCharacteristics(-1, -1), mo1.getDataType());
+				ret = moFed.getFedMapping().execute(getTID(), true, fr1, tmp, fr2);
+			} else {
+				ret = moFed.getFedMapping().execute(getTID(), true, fr1, fr2);
+			}
+			int dim = (_cbind ? 1 : 0);
+			FederationMap newFedMap = moFed.getFedMapping().copyWithNewID(fr2.getID())
+				.modifyFedRanges(moFed.getDim(dim) + moLoc.getDim(dim), dim);
+			out.setFedMapping(newFedMap);
+			out.getDataCharacteristics().setNonZeros(FederationUtils.sumNonZeros(ret));
+		}
+		else {
+			throw new DMLRuntimeException("Unsupported federated append: "
+				+ " input 1 FType is " + (mo1.isFederated() ? mo1.getFedMapping().getType().name():"LOCAL")
+				+ ", input 2 FType is " + (mo2.isFederated() ? mo2.getFedMapping().getType().name():"LOCAL")
+				+ ", and column bind is " + _cbind);
+		}
+
+		materializeForcedLocalOutput(ec, out);
+	}
+
+	/**
+	 * LOUT is a physical residency contract: the instruction may execute on the
+	 * federated workers, but the value visible after the instruction must be local.
+	 * Each worker-executed append branch above first constructs the exact output
+	 * map. Retrieving through that map keeps the branch-specific ranges
+	 * authoritative and avoids reimplementing append assembly at the coordinator.
+	 * The alias-prone map-only branch is handled separately before reaching here.
+	 */
+	private void materializeForcedLocalOutput(ExecutionContext ec, MatrixObject out) {
+		if(_fedOut == null || !_fedOut.isForcedLocal())
+			return;
+
+		FederationMap outMap = out.getFedMapping();
+		if(outMap == null || outMap.getSize() == 0)
+			throw new DMLRuntimeException(
+				"FED append cannot produce local output without a federated output map");
+
+		long outId = outMap.getID();
+		FederatedRequest get = new FederatedRequest(RequestType.GET_VAR, outId);
+		FederatedRequest cleanup = outMap.cleanup(getTID(), outId);
+		Future<FederatedResponse>[] responses = outMap.execute(getTID(), true, get, cleanup);
+		FType outputType = outMap.getType();
+		final MatrixBlock local;
+		if(outputType == FType.BROADCAST || outputType == FType.FULL)
+			local = FederationUtils.getResults(responses)[0];
+		else if(outputType == FType.ROW || outputType == FType.COL)
+			local = FederationUtils.bind(responses, outputType == FType.COL);
+		else
+			throw new DMLRuntimeException(
+				"FED append LOUT does not support output FType " + outputType);
+		ec.setMatrixOutput(output.getName(), local);
+	}
+
+	private MatrixBlock collectInput(MatrixLineagePair input) {
+		if(!input.isFederated())
+			return input.getMO().acquireReadAndRelease();
+
+		FederationMap map = input.getFedMapping();
+		if(map == null || map.getSize() == 0)
+			throw new DMLRuntimeException("FED append cannot collect an empty input map");
+		FederatedRequest get = new FederatedRequest(RequestType.GET_VAR, map.getID());
+		Future<FederatedResponse>[] responses = map.execute(getTID(), true, get);
+		FType type = map.getType();
+		if(type == FType.BROADCAST || type == FType.FULL)
+			return FederationUtils.getResults(responses)[0];
+		if(type == FType.ROW || type == FType.COL)
+			return FederationUtils.bind(responses, type == FType.COL);
+		throw new DMLRuntimeException("FED append LOUT cannot collect input FType " + type);
+	}
+
+	private static boolean isRemoteSingleWorkerFull(MatrixLineagePair input) {
+		return input != null && input.isFederated() && input.getFedMapping() != null
+			&& input.getFedMapping().getType() == FType.FULL
+			&& input.getFedMapping().getSize() == 1
+			&& !FEDLocalMaterializeUtil.hasLocalFederatedData(input.getFedMapping());
+	}
+}

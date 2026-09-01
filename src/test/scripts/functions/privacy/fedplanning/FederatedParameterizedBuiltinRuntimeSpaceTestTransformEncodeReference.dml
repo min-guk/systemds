@@ -1,0 +1,5 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements.
+X = read($X)
+F = as.frame(X)
+[T,M] = transformencode(target=F, spec=$spec)
+write(T, $T)

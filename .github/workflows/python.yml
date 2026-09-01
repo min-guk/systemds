@@ -1,0 +1,161 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+name: Python Test
+
+on:
+  push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '*.html'
+      - 'src/test/**'
+      - 'src/assembly/**'
+      - 'dev/**'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '*.html'
+      - 'src/test/**'
+      - 'dev/**'
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.8]
+        os: [ubuntu-24.04]
+        java: ['17']
+        javadist: ['adopt']
+
+    name: ${{ matrix.os }} Java ${{ matrix.java }} ${{ matrix.javadist }} Python ${{ matrix.python-version }}
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Java ${{ matrix.java }} ${{ matrix.javadist }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ matrix.javadist }}
+        java-version: ${{ matrix.java }}
+        cache: 'maven'
+
+    - name: Cache Pip Dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('src/main/python/setup.py') }}
+
+    - name: Cache Datasets
+      uses: actions/cache@v4
+      with:
+        path: |
+          src/main/python/systemds/examples/tutorials/mnist
+          src/main/python/systemds/examples/tutorials/adult/data.zip
+        key: ${{ runner.os }}-mnist-${{ hashFiles('src/main/python/systemds/examples/tutorials/mnist.py') }}-${{ hashFiles('src/main/python/systemds/examples/tutorials/adult.py') }}
+
+    - name: Cache Deb Dependencies
+      uses: actions/cache@v4
+      with:
+        path: /var/cache/apt/archives
+        key: ${{ runner.os }}-${{ hashFiles('.github/workflows/python.yml') }}
+
+    - name: Maven clean & package
+      run: mvn -ntp clean package -P distribution -B
+
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: 'x64'
+
+    - name: Install pip Dependencies
+      run: |
+        # Install pip twice to update past the versions.
+        pip install --upgrade pip
+        pip install --upgrade pip
+        pip install wheel
+        pip install \
+          numpy \
+          py4j \
+          scipy \
+          scikit-learn \
+          requests \
+          pandas \
+          unittest-parallel \
+          torchvision \
+          transformers \
+          opencv-python \
+          torch \
+          librosa \
+          h5py \
+          gensim \
+          black \
+          opt-einsum \
+          nltk
+
+    - name: Build Python Package
+      run: |
+        cd src/main/python
+        python create_python_dist.py
+
+    - name: Run all python tests
+      run: |
+        export SYSTEMDS_ROOT=$(pwd)
+        export PATH=$SYSTEMDS_ROOT/bin:$PATH
+        export SYSDS_QUIET=1
+        export LOG4JPROP=$SYSTEMDS_ROOT/src/test/resources/log4j.properties
+        cd src/main/python
+        unittest-parallel -t . -s tests -v
+        # python -m unittest discover -s tests -p 'test_*.py'
+        echo "Exit Status: " $?
+
+    - name: Run all python tests no environment
+      run: |
+        export LOG4JPROP=$(pwd)/src/test/resources/log4j.properties
+        cd src/main/python
+        unittest-parallel -t . -s tests -v
+        # python -m unittest discover -s tests -p 'test_*.py'
+        echo "Exit Status: " $?
+
+    - name: Run Federated Python Tests
+      run: |
+        export SYSTEMDS_ROOT=$(pwd)
+        export PATH=$SYSTEMDS_ROOT/bin:$PATH
+        cd src/main/python
+        ./tests/federated/runFedTest.sh
+
+    - name: Check formatting according to Black (src/main/python/systemds)
+      run: |
+        black --check --exclude operator/algorithm src/main/python/systemds
+
+    - name: Check formatting according to Black (src/main/python/tests)
+      run: |
+        black --check src/main/python/tests
+
+

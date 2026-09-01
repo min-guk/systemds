@@ -1,0 +1,33 @@
+{
+  "base_registry_descriptor_sha256": "accdb05cc5f815f6933fd82c8a3e1d370000769849ac1586e58c00ec2cdce4ae",
+  "base_registry_sha256": "8bace10365578c0aeaa77b0b551cd015f0ec1467d3b594c2613772149fb8fb48",
+  "canonical_total_cells": 336,
+  "completed_unique_cells": 282,
+  "counts_by_planner": {
+    "DP": 84,
+    "FedAll": 84,
+    "Heuristic": 84,
+    "MinST": 30
+  },
+  "csv_sha256": "cbf25f8161ea1a0a028fb5b7cf80456bac4cd779f32abdccbda8194b2a57d3bb",
+  "frozen_campaign_failure_marker_sha256": "277ff96c06139b932de2916bf54e5757739fc4fe522919200d6400c7a61d3a1b",
+  "frozen_campaign_rows_sha256": "3cf89293e5d3e104801f80f69379c0cb9ad6bfe0d50087f7524d9fbf50c2d9bc",
+  "matched_four_planner_cells": 30,
+  "maximum_execution_seconds": 1431.188723143,
+  "median_runtime_ratio_to_dp": {
+    "DP": 1.0,
+    "FedAll": 1.4174559399420077,
+    "Heuristic": 1.395321619428885,
+    "MinST": 1.5087683920782693
+  },
+  "minimum_execution_seconds": 26.442171905,
+  "ordering_5pct_failures": 26,
+  "ordering_5pct_passes": 4,
+  "ordering_contract": "MinST <= DP and DP <= Heuristic and DP <= FedAll",
+  "ordering_exact_failures": 30,
+  "ordering_exact_passes": 0,
+  "provenance_warning": "Stitched no-duplicate Docker successes span multiple committed binaries; this interim view is diagnostic and is not a homogeneous final performance run.",
+  "remaining_cells": 54,
+  "schema": "g007-interim-authenticated-performance/v1",
+  "status": "interim-incomplete-not-final"
+}

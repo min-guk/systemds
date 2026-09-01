@@ -1,0 +1,85 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# THIS SCRIPT APPLIES THE ESTIMATED PARAMETERS OF MULTINOMIAL LOGISTIC REGRESSION TO A NEW (TEST) DATASET
+# Matrix M of predicted means/probabilities, some statistics in CSV format (see below)
+#
+# INPUT:
+# -----------------------------------------------------------------------------------
+# X        Data Matrix X
+# B        Regression parameters betas
+# Y        Response vector Y
+# verbose  flag specifying if logging information should be printed
+# -----------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ----------------------------------------------------------------------------------------
+# M            Matrix M of predicted means/probabilities
+# predicted_Y  Predicted response vector
+# accuracy     scalar value of accuracy
+# ----------------------------------------------------------------------------------------
+
+m_multiLogRegPredict = function(Matrix[Double] X, Matrix[Double] B, 
+    Matrix[Double] Y = matrix(0,1,1), Boolean verbose = FALSE)
+  return(Matrix[Double] M, Matrix[Double] predicted_Y, Double accuracy)
+{
+  if(ncol(X) < nrow(B)-1)
+    stop("multiLogRegPredict: mismatching ncol(X) and nrow(B): "+ncol(X)+" "+nrow(B));
+  
+  # Robustness for datasets with missing values (causing NaN probabilities)
+  hasNaNs = contains(target=X, pattern=NaN);
+  if( hasNaNs > 0 ) {
+    print("multiLogRegPredict: matrix X contains "+sum(isNaN(X))+" missing values, replacing with 0.")
+    X = replace(target=X, pattern=NaN, replacement=0);
+  }
+  accuracy = 0.0 # initialize variable 
+  beta = B[1:ncol(X), ];
+  intercept = ifelse(ncol(X)==nrow(B), matrix(0,1,ncol(B)), B[nrow(B),]);
+  linear_terms = X %*% beta + matrix(1,nrow(X),1) %*% intercept;
+
+  M = probabilities(linear_terms); # compute the probabilities on unknown data
+  predicted_Y = rowIndexMax(M); # extract the class labels
+
+  if(nrow(Y) != 0){
+    if(min(Y) <= 0) {
+      print("multiLogRegPredict: class labels should be greater than "
+        + "zero - converting all labels <= 0 to max(Y)+1");
+      Y = ifelse(Y <= 0, max(Y) + 1, Y);
+    }
+
+    accuracy = sum((predicted_Y - Y) == 0) / nrow(Y) * 100;
+  }
+  
+  if(verbose)
+    print("Accuracy (%): " + accuracy);
+}
+
+probabilities = function (Matrix[double] linear_terms)
+  return (Matrix[double] means)
+{
+  # PROBABLITIES FOR MULTINOMIAL LOGIT DISTRIBUTION
+  num_points = nrow (linear_terms);
+  elt = exp (linear_terms);
+  ones_pts = matrix (1, rows = num_points, cols = 1);
+  elt = cbind (elt, ones_pts);
+  ones_ctg = matrix (1, rows = ncol (elt), cols = 1);
+  means = elt / (rowSums (elt) %*% t(ones_ctg));
+}

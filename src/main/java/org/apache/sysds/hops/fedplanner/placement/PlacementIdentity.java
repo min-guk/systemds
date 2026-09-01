@@ -1,0 +1,700 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.sysds.hops.fedplanner.placement;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.WeakHashMap;
+
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+
+/** Structural identities used by the immutable neutral placement graph. */
+public final class PlacementIdentity {
+	/**
+	 * Structural identities are immutable records, but canonical sorting and receipt
+	 * construction ask for the same normalized signature many times.  Keep one weak,
+	 * compiler-thread-local serialization per equal identity instead of rebuilding its
+	 * complete nested token stream on every comparison.  Weak keys prevent completed
+	 * compilations from being retained by a long-lived compiler thread.
+	 */
+	private static final ThreadLocal<Map<Object,String>> NORMALIZED_SIGNATURES =
+		ThreadLocal.withInitial(WeakHashMap::new);
+
+	public enum VersionKind {
+		ORDINARY,
+		BRANCH_JOIN_PHI,
+		LOOP_HEAD_PHI,
+		LOOP_BACKEDGE,
+		FUNCTION_INPUT,
+		FUNCTION_OUTPUT,
+		CLONE_RECOMPILE
+	}
+
+	public enum BoundaryNameKind {
+		KNOWN,
+		UNNAMED,
+		ABSENT
+	}
+
+	public record BoundaryName(BoundaryNameKind kind, String name) implements Comparable<BoundaryName> {
+		public BoundaryName {
+			Objects.requireNonNull(kind, "kind");
+			if(kind == BoundaryNameKind.KNOWN)
+				name = requireText(name, "boundary name");
+			else if(name != null)
+				throw new IllegalArgumentException("Only known boundary metadata may carry a name");
+		}
+
+		public static BoundaryName known(String name) {
+			return new BoundaryName(BoundaryNameKind.KNOWN, name);
+		}
+
+		public static BoundaryName unnamed() {
+			return new BoundaryName(BoundaryNameKind.UNNAMED, null);
+		}
+
+		public static BoundaryName absent() {
+			return new BoundaryName(BoundaryNameKind.ABSENT, null);
+		}
+
+		public boolean isKnown() {
+			return kind == BoundaryNameKind.KNOWN;
+		}
+
+		public String identityToken() {
+			return isKnown() ? name : kind.name();
+		}
+
+		public String canonicalSourceOriginToken() {
+			return isKnown() ? name : '<' + kind.name() + '>';
+		}
+
+		public String normalizedSignature() {
+			return isKnown() ? name : fields(kind.name());
+		}
+
+		@Override
+		public int compareTo(BoundaryName that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record ControlRegionKey(String programFingerprint, String functionNamespace,
+		List<String> regionPath, String callSitePath, String recompileContext)
+		implements Comparable<ControlRegionKey> {
+
+		public ControlRegionKey {
+			programFingerprint = requireText(programFingerprint, "programFingerprint");
+			functionNamespace = requireText(functionNamespace, "functionNamespace");
+			regionPath = immutableStrings(regionPath, "regionPath");
+			callSitePath = requireText(callSitePath, "callSitePath");
+			recompileContext = requireText(recompileContext, "recompileContext");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(programFingerprint, functionNamespace, list(regionPath), callSitePath,
+					recompileContext));
+		}
+
+		@Override
+		public int compareTo(ControlRegionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record CompiledHopKey(String programFingerprint, String functionNamespace,
+		String callSitePath, String recompileContext, ControlRegionKey controlRegion,
+		String emittedHopInstance, String canonicalSourceOrigin)
+		implements Comparable<CompiledHopKey> {
+
+		public CompiledHopKey {
+			programFingerprint = requireText(programFingerprint, "programFingerprint");
+			functionNamespace = requireText(functionNamespace, "functionNamespace");
+			callSitePath = requireText(callSitePath, "callSitePath");
+			recompileContext = requireText(recompileContext, "recompileContext");
+			Objects.requireNonNull(controlRegion, "controlRegion");
+			emittedHopInstance = requireText(emittedHopInstance, "emittedHopInstance");
+			canonicalSourceOrigin = requireText(canonicalSourceOrigin, "canonicalSourceOrigin");
+			if(!programFingerprint.equals(controlRegion.programFingerprint()))
+				throw new IllegalArgumentException("Compiled Hop and control region fingerprints differ");
+			if(!functionNamespace.equals(controlRegion.functionNamespace()))
+				throw new IllegalArgumentException("Compiled Hop and control region namespaces differ");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(programFingerprint, functionNamespace, callSitePath, recompileContext,
+					controlRegion.normalizedSignature(), emittedHopInstance, canonicalSourceOrigin));
+		}
+
+		@Override
+		public int compareTo(CompiledHopKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record ValueVersionKey(String programFingerprint, String lexicalVariable,
+		ControlRegionKey definingControlRegion, int definitionOrdinal, VersionKind versionKind,
+		List<String> predecessorVersions) implements Comparable<ValueVersionKey> {
+
+		public ValueVersionKey {
+			programFingerprint = requireText(programFingerprint, "programFingerprint");
+			lexicalVariable = requireText(lexicalVariable, "lexicalVariable");
+			Objects.requireNonNull(definingControlRegion, "definingControlRegion");
+			if(definitionOrdinal < 0)
+				throw new IllegalArgumentException("definitionOrdinal must be non-negative");
+			Objects.requireNonNull(versionKind, "versionKind");
+			predecessorVersions = sortedStrings(predecessorVersions, "predecessorVersions");
+			if(!programFingerprint.equals(definingControlRegion.programFingerprint()))
+				throw new IllegalArgumentException("Value version and control region fingerprints differ");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(programFingerprint, lexicalVariable,
+					definingControlRegion.normalizedSignature(), Integer.toString(definitionOrdinal),
+					versionKind.name(), list(predecessorVersions)));
+		}
+
+		/** Stable compact identity used by builder-owned CFG definition references. */
+		public String cfgReferenceSignature() {
+			return lexicalVariable + '#' + definitionOrdinal + '@'
+				+ definingControlRegion.callSitePath() + ':' + versionKind;
+		}
+
+		@Override
+		public int compareTo(ValueVersionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record AnchorPartition(String workerId, List<Long> begin, List<Long> end)
+		implements Comparable<AnchorPartition> {
+
+		public AnchorPartition {
+			workerId = requireText(workerId, "workerId");
+			begin = immutableLongs(begin, "begin");
+			end = immutableLongs(end, "end");
+			if(begin.isEmpty() || begin.size() != end.size())
+				throw new IllegalArgumentException("Anchor range bounds must have equal non-zero dimensions");
+			for(int i = 0; i < begin.size(); i++)
+				if(begin.get(i) > end.get(i))
+					throw new IllegalArgumentException("Anchor range begin exceeds end at dimension " + i);
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(workerId, longs(begin), longs(end)));
+		}
+
+		@Override
+		public int compareTo(AnchorPartition that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record DurableAnchorKey(String placementId, FType fType,
+		List<AnchorPartition> partitions) implements Comparable<DurableAnchorKey> {
+
+		public DurableAnchorKey {
+			placementId = requireText(placementId, "placementId");
+			Objects.requireNonNull(fType, "fType");
+			partitions = sorted(partitions, "partitions");
+			if(partitions.isEmpty())
+				throw new IllegalArgumentException("A durable anchor requires placement partitions");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(placementId, fType.name(), signatures(partitions)));
+		}
+
+		@Override
+		public int compareTo(DurableAnchorKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Returns whether two durable anchors describe the same runtime worker-pool layout.
+	 * The placement id names the value that supplied the metadata, not a different physical
+	 * pool. ROW/COL compare the partitioned axis, while FULL/BROADCAST compare the worker
+	 * endpoints because every listed worker owns a complete local operand in those layouts.
+	 */
+	public static boolean samePhysicalWorkerPool(DurableAnchorKey left, DurableAnchorKey right) {
+		Objects.requireNonNull(left, "left anchor");
+		Objects.requireNonNull(right, "right anchor");
+		if(left.equals(right))
+			return true;
+		if(left.fType() != right.fType() || left.fType() == FType.PART || left.fType() == FType.OTHER)
+			return false;
+		List<String> leftLayout = physicalWorkerPoolLayout(left);
+		return !leftLayout.isEmpty() && leftLayout.equals(physicalWorkerPoolLayout(right));
+	}
+
+	private static List<String> physicalWorkerPoolLayout(DurableAnchorKey anchor) {
+		List<String> layout = new ArrayList<>(anchor.partitions().size());
+		for(AnchorPartition partition : anchor.partitions()) {
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			if(worker == null || worker.isBlank())
+				return List.of();
+			if(anchor.fType() == FType.ROW || anchor.fType() == FType.COL) {
+				int axis = anchor.fType() == FType.ROW ? 0 : 1;
+				if(partition.begin().size() <= axis || partition.end().size() <= axis)
+					return List.of();
+				layout.add(worker + '|' + partition.begin().get(axis) + ':' + partition.end().get(axis));
+			}
+			else
+				layout.add(worker);
+		}
+		Collections.sort(layout);
+		return List.copyOf(layout);
+	}
+
+	public record RelocationActionKey(ValueVersionKey sourceValueVersion,
+		PlacementState targetPlacement, FType materializationFType, DurableAnchorKey durableAnchor,
+		String statementBlockScope, List<CompiledHopKey> compatibleConsumers)
+		implements Comparable<RelocationActionKey> {
+		public RelocationActionKey(ValueVersionKey sourceValueVersion,
+			PlacementState targetPlacement, DurableAnchorKey durableAnchor,
+			String statementBlockScope, List<CompiledHopKey> compatibleConsumers) {
+			this(sourceValueVersion, targetPlacement,
+				Objects.requireNonNull(targetPlacement, "targetPlacement").fType(), durableAnchor,
+				statementBlockScope, compatibleConsumers);
+		}
+
+		public RelocationActionKey {
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(targetPlacement, "targetPlacement");
+			Objects.requireNonNull(materializationFType, "materializationFType");
+			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
+				throw new IllegalArgumentException("Relocation materialization FType is unsupported");
+			Objects.requireNonNull(durableAnchor, "durableAnchor");
+			statementBlockScope = requireText(statementBlockScope, "statementBlockScope");
+			compatibleConsumers = sorted(compatibleConsumers, "compatibleConsumers");
+			if(compatibleConsumers.isEmpty())
+				throw new IllegalArgumentException("A relocation action requires compatible consumers");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(sourceValueVersion.normalizedSignature(), targetPlacement.normalizedSignature(),
+					materializationFType.name(), durableAnchor.normalizedSignature(), statementBlockScope,
+					signatures(compatibleConsumers)));
+		}
+
+		@Override
+		public int compareTo(RelocationActionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record ObligationKey(CompiledHopKey consumer, int inputPosition,
+		ValueVersionKey sourceValueVersion, PlacementState requiredPlacement,
+		RelocationActionKey relocationAction, String callRecompileContext)
+		implements Comparable<ObligationKey> {
+
+		public ObligationKey {
+			Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("inputPosition must be non-negative");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+			Objects.requireNonNull(relocationAction, "relocationAction");
+			callRecompileContext = requireText(callRecompileContext, "callRecompileContext");
+			if(!sourceValueVersion.equals(relocationAction.sourceValueVersion()))
+				throw new IllegalArgumentException("Obligation and relocation source versions differ");
+			if(!relocationAction.compatibleConsumers().contains(consumer))
+				throw new IllegalArgumentException("Obligation consumer is not compatible with relocation");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(consumer.normalizedSignature(), Integer.toString(inputPosition),
+					sourceValueVersion.normalizedSignature(), requiredPlacement.normalizedSignature(),
+					relocationAction.normalizedSignature(), callRecompileContext));
+		}
+
+		@Override
+		public int compareTo(ObligationKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Action-independent identity of one exact input materialization demand. */
+	public record RelocationDemandKey(ValueVersionKey sourceValueVersion,
+		CompiledHopKey consumer, int inputPosition, PlacementState requiredPlacement,
+		String callRecompileContext) implements Comparable<RelocationDemandKey> {
+		public RelocationDemandKey {
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("inputPosition must be non-negative");
+			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+			callRecompileContext = requireText(callRecompileContext, "callRecompileContext");
+		}
+
+		public static RelocationDemandKey from(ObligationKey obligation) {
+			Objects.requireNonNull(obligation, "obligation");
+			return new RelocationDemandKey(obligation.sourceValueVersion(), obligation.consumer(),
+				obligation.inputPosition(), obligation.requiredPlacement(),
+				obligation.callRecompileContext());
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(sourceValueVersion.normalizedSignature(), consumer.normalizedSignature(),
+					Integer.toString(inputPosition), requiredPlacement.normalizedSignature(),
+					callRecompileContext));
+		}
+
+		@Override
+		public int compareTo(RelocationDemandKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Exact planner choice of one legal materialization alternative for one input demand. */
+	public record RelocationChoiceReceipt(RelocationDemandKey demand,
+		RelocationActionKey action) implements Comparable<RelocationChoiceReceipt> {
+		public RelocationChoiceReceipt {
+			Objects.requireNonNull(demand, "demand");
+			Objects.requireNonNull(action, "action");
+			if(!demand.sourceValueVersion().equals(action.sourceValueVersion())
+				|| !demand.requiredPlacement().equals(action.targetPlacement())
+				|| !action.compatibleConsumers().contains(demand.consumer()))
+				throw new IllegalArgumentException("Relocation choice and demand identities differ");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(demand.normalizedSignature(), action.normalizedSignature()));
+		}
+
+		@Override
+		public int compareTo(RelocationChoiceReceipt that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Exact graph-owned authority for materializing one planner-created FOUT producer result.
+	 *
+	 * <p>The historical type name is retained for serialized/test compatibility. It covers both
+	 * CP/LOUT -&gt; CP/FOUT uploads and FED/LOUT -&gt; FED/FOUT uploads. A native FED/FOUT result
+	 * does not carry this action because it already owns a runtime FederationMap.</p>
+	 */
+	public record DerivedFoutMaterializationActionKey(CompiledHopKey producer, ValueVersionKey producerValueVersion,
+		CandidateRuleKey candidateRule, PlacementState sourcePlacement, PlacementState targetPlacement,
+		DurableAnchorKey durableAnchor, CompiledHopKey durableAnchorOwner,
+		FType durableAnchorOwnerFType, FType materializationFType, String statementBlockScope)
+		implements Comparable<DerivedFoutMaterializationActionKey> {
+		public DerivedFoutMaterializationActionKey {
+			Objects.requireNonNull(producer, "producer");
+			Objects.requireNonNull(producerValueVersion, "producerValueVersion");
+			Objects.requireNonNull(candidateRule, "candidateRule");
+			Objects.requireNonNull(sourcePlacement, "sourcePlacement");
+			Objects.requireNonNull(targetPlacement, "targetPlacement");
+			Objects.requireNonNull(durableAnchor, "durableAnchor");
+			Objects.requireNonNull(durableAnchorOwner, "durableAnchorOwner");
+			Objects.requireNonNull(durableAnchorOwnerFType, "durableAnchorOwnerFType");
+			Objects.requireNonNull(materializationFType, "materializationFType");
+			statementBlockScope = requireText(statementBlockScope, "statementBlockScope");
+			if(candidateRule.parentOccurrence() != producer)
+				throw new IllegalArgumentException("Derived FOUT action candidate and producer identities differ");
+			if(!producer.programFingerprint().equals(producerValueVersion.programFingerprint()))
+				throw new IllegalArgumentException("Derived FOUT producer and value-version fingerprints differ");
+			if(!producer.programFingerprint().equals(durableAnchorOwner.programFingerprint()))
+				throw new IllegalArgumentException("Derived FOUT producer and anchor-owner fingerprints differ");
+			if(sourcePlacement.output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
+				|| targetPlacement.output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				|| sourcePlacement.execType() != targetPlacement.execType()
+				|| sourcePlacement.execType() != org.apache.sysds.common.Types.ExecType.CP
+					&& sourcePlacement.execType() != org.apache.sysds.common.Types.ExecType.FED
+				|| targetPlacement.fType() != materializationFType)
+				throw new IllegalArgumentException(
+					"FOUT action must materialize an exact CP/LOUT or FED/LOUT result on the same execution side");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(producer.normalizedSignature(), producerValueVersion.normalizedSignature(),
+					candidateRule.normalizedSignature(),
+					sourcePlacement.normalizedSignature(), targetPlacement.normalizedSignature(),
+					durableAnchor.normalizedSignature(), durableAnchorOwner.normalizedSignature(),
+					durableAnchorOwnerFType.name(), materializationFType.name(), statementBlockScope));
+		}
+
+		@Override
+		public int compareTo(DerivedFoutMaterializationActionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Legacy serialized shape for the removed sparse-domain fallback authority. New candidate
+	 * receipts reject these entries; an upload must be represented by an exact PRESENT oracle row.
+	 */
+	public record CandidateFallbackMaterialization(int inputPosition, FType materializationFType)
+		implements Comparable<CandidateFallbackMaterialization> {
+		public CandidateFallbackMaterialization {
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Fallback input position must be non-negative");
+			Objects.requireNonNull(materializationFType, "materializationFType");
+			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
+				throw new IllegalArgumentException("Fallback materialization FType is unsupported");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(Integer.toString(inputPosition), materializationFType.name()));
+		}
+
+		@Override
+		public int compareTo(CandidateFallbackMaterialization that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Exact candidate row selected for one consumer occurrence. Final placement alone cannot
+	 * distinguish a native ABSENT_LOCAL operand from an explicitly materialized PRESENT operand,
+	 * so every production plan retains the exact oracle row through lowering. The legacy fallback
+	 * list is retained in the record shape for compatibility but must always be empty.
+	 */
+	public record CandidateSelectionReceipt(CandidateRuleKey rule,
+		CandidateEmissionFact emission, List<CandidateFallbackMaterialization> fallbackMaterializations)
+		implements Comparable<CandidateSelectionReceipt> {
+		public CandidateSelectionReceipt {
+			Objects.requireNonNull(rule, "rule");
+			Objects.requireNonNull(emission, "emission");
+			fallbackMaterializations = sorted(fallbackMaterializations, "fallbackMaterializations");
+			if(!fallbackMaterializations.isEmpty())
+				throw new IllegalArgumentException(
+					"ABSENT_LOCAL candidates cannot own post-materialization authority; select an exact PRESENT row");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(rule.normalizedSignature(), emission.normalizedSignature(),
+					fallbackMaterializations.stream().map(CandidateFallbackMaterialization::normalizedSignature)
+						.reduce((left, right) -> left + ',' + right).orElse("")));
+		}
+
+		@Override
+		public int compareTo(CandidateSelectionReceipt that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Exact consumer edge that requires a local view of one federated producer. */
+	public record LocalMaterializationObligation(CompiledHopKey consumerOccurrence,
+		int inputPosition, PlacementState requiredPlacement)
+		implements Comparable<LocalMaterializationObligation> {
+		public LocalMaterializationObligation {
+			Objects.requireNonNull(consumerOccurrence, "consumerOccurrence");
+			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(consumerOccurrence.normalizedSignature(), Integer.toString(inputPosition),
+					requiredPlacement.normalizedSignature()));
+		}
+
+		@Override
+		public int compareTo(LocalMaterializationObligation that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Complete immutable authority for one LOCAL materialization registry write. */
+	public record LocalMaterializationActionKey(CompiledHopKey sourceOccurrence,
+		ValueVersionKey sourceValueVersion, PlacementState producerPlacement,
+		List<LocalMaterializationObligation> obligations, String statementBlockScope,
+		String durableProvenance) implements Comparable<LocalMaterializationActionKey> {
+		public LocalMaterializationActionKey {
+			Objects.requireNonNull(sourceOccurrence, "sourceOccurrence");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(producerPlacement, "producerPlacement");
+			obligations = List.copyOf(Objects.requireNonNull(obligations, "obligations"));
+		}
+
+		public String normalizedSignature() {
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(sourceOccurrence.normalizedSignature(), sourceValueVersion.normalizedSignature(),
+					producerPlacement.normalizedSignature(), signatures(obligations),
+					String.valueOf(statementBlockScope), String.valueOf(durableProvenance)));
+		}
+
+		@Override
+		public int compareTo(LocalMaterializationActionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	private PlacementIdentity() {
+		// utility class
+	}
+
+	private static String cachedSignature(Object identity) {
+		return NORMALIZED_SIGNATURES.get().get(identity);
+	}
+
+	private static String rememberSignature(Object identity, String signature) {
+		NORMALIZED_SIGNATURES.get().put(identity, signature);
+		return signature;
+	}
+
+	private static String requireText(String value, String name) {
+		if(value == null || value.isBlank())
+			throw new IllegalArgumentException(name + " must not be blank");
+		return value;
+	}
+
+	private static List<String> sortedStrings(Collection<String> values, String name) {
+		Objects.requireNonNull(values, name);
+		List<String> copy = new ArrayList<>(values.size());
+		for(String value : values)
+			copy.add(requireText(value, name + " entry"));
+		Collections.sort(copy);
+		if(hasDuplicates(copy))
+			throw new IllegalArgumentException(name + " contains duplicates");
+		return List.copyOf(copy);
+	}
+
+	private static List<String> immutableStrings(Collection<String> values, String name) {
+		Objects.requireNonNull(values, name);
+		List<String> copy = new ArrayList<>(values.size());
+		for(String value : values)
+			copy.add(requireText(value, name + " entry"));
+		return List.copyOf(copy);
+	}
+
+	private static List<Long> immutableLongs(Collection<Long> values, String name) {
+		Objects.requireNonNull(values, name);
+		List<Long> copy = new ArrayList<>(values.size());
+		for(Long value : values)
+			copy.add(Objects.requireNonNull(value, name + " entry"));
+		return List.copyOf(copy);
+	}
+
+	private static <T extends Comparable<? super T>> List<T> sorted(Collection<T> values,
+		String name) {
+		Objects.requireNonNull(values, name);
+		List<T> copy = new ArrayList<>(values.size());
+		for(T value : values)
+			copy.add(Objects.requireNonNull(value, name + " entry"));
+		copy.sort(Comparator.naturalOrder());
+		if(hasDuplicates(copy))
+			throw new IllegalArgumentException(name + " contains duplicates");
+		return List.copyOf(copy);
+	}
+
+	private static boolean hasDuplicates(List<?> values) {
+		for(int i = 1; i < values.size(); i++)
+			if(values.get(i - 1).equals(values.get(i)))
+				return true;
+		return false;
+	}
+
+	private static String fields(String... values) {
+		StringBuilder encoded = new StringBuilder();
+		for(int i = 0; i < values.length; i++) {
+			if(i > 0)
+				encoded.append('|');
+			appendToken(encoded, values[i]);
+		}
+		return encoded.toString();
+	}
+
+	private static String list(Collection<String> values) {
+		StringBuilder encoded = new StringBuilder();
+		int index = 0;
+		for(String value : values) {
+			if(index++ > 0)
+				encoded.append(',');
+			appendToken(encoded, value);
+		}
+		return encoded.toString();
+	}
+
+	private static String longs(Collection<Long> values) {
+		StringBuilder encoded = new StringBuilder();
+		int index = 0;
+		for(Long value : values) {
+			if(index++ > 0)
+				encoded.append(',');
+			appendToken(encoded, Long.toString(Objects.requireNonNull(value, "signature value")));
+		}
+		return encoded.toString();
+	}
+
+	private static String signatures(Collection<? extends Comparable<?>> values) {
+		List<String> strings = new ArrayList<>(values.size());
+		for(Object value : values) {
+			if(value instanceof AnchorPartition partition)
+				strings.add(partition.normalizedSignature());
+			else if(value instanceof CompiledHopKey key)
+				strings.add(key.normalizedSignature());
+			else if(value instanceof LocalMaterializationObligation obligation)
+				strings.add(obligation.normalizedSignature());
+			else
+				throw new IllegalArgumentException("Unsupported identity signature type " + value.getClass());
+		}
+		return list(strings);
+	}
+
+	private static String token(String value) {
+		Objects.requireNonNull(value, "signature value");
+		return value.length() + ":" + value;
+	}
+
+	private static void appendToken(StringBuilder target, String value) {
+		Objects.requireNonNull(value, "signature value");
+		target.append(value.length()).append(':').append(value);
+	}
+}

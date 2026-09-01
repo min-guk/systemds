@@ -1,0 +1,29 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+XR = federated(addresses=list($XR1,$XR2),
+  ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+YR = federated(addresses=list($YR1,$YR2),
+  ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+XC = federated(addresses=list($XC1,$XC2),
+  ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+YC = federated(addresses=list($YC1,$YC2),
+  ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+XF = federated(addresses=list($XF), ranges=list(list(0,0),list($r,$c)))
+L = read($L)
+
+RBindRow = rbind(XR, XR)
+CBindRow = cbind(XR, YR)
+RBindCol = rbind(XC, YC)
+CBindCol = cbind(XC, XC)
+CBindFull = cbind(XF, L)
+ReshapeRow = matrix(XR, rows=6, cols=16, byrow=TRUE)
+ReshapeCol = matrix(XC, rows=24, cols=4, byrow=FALSE)
+ReshapeFull = matrix(XF, rows=6, cols=16, byrow=TRUE)
+
+write(RBindRow,$RBindRow); write(CBindRow,$CBindRow)
+write(RBindCol,$RBindCol); write(CBindCol,$CBindCol); write(CBindFull,$CBindFull)
+write(ReshapeRow,$ReshapeRow); write(ReshapeCol,$ReshapeCol); write(ReshapeFull,$ReshapeFull)

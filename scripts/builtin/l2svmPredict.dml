@@ -1,0 +1,61 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Builtin function Implements binary-class SVM with squared slack variables.
+#
+# INPUT:
+# -----------------------------------------------------------------------------------
+# X        matrix X of feature vectors to classify
+# W        matrix of the trained variables
+# verbose  Set to true if one wants print statements.
+# -----------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ----------------------------------------------------------------------------------------
+# YRaw  Classification Labels Raw, meaning not modified to clean
+#       labels of 1's and -1's
+# Y     Classification Labels Maxed to ones and zeros.
+# ----------------------------------------------------------------------------------------
+
+m_l2svmPredict = function(Matrix[Double] X, Matrix[Double] W, Boolean verbose = FALSE)
+  return(Matrix[Double] YRaw, Matrix[Double] Y)
+{
+  n = nrow(X)
+  m = ncol(X)
+  wn = nrow(W)
+  wm = ncol(W)
+  if(m != wn){
+    # If intercept was enabled
+    if(m + 1 != wn){
+      stop("l2svm Predict: Invalid shape of W [" +
+        wm + "," + wn + "] or X [" + m + "," + n + "]")
+    }
+    # We could append a 1 column to X and multiply
+    # But slicing W seems faster.
+    YRaw = X %*% W[1:m,] + W[m+1,]
+  }
+  else{
+    # If intercept was disabled
+    YRaw = X %*% W
+  }
+  # Predict Y.
+  Y = rowIndexMax(YRaw)
+}

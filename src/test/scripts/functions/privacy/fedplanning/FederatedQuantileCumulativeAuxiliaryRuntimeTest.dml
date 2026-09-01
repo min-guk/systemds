@@ -1,0 +1,15 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+XFull = federated(addresses=list($XFull), ranges=list(list(0, 0), list($r, 1)))
+XRow = federated(addresses=list($X1, $X2),
+  ranges=list(list(0, 0), list($r / 2, 1), list($r / 2, 0), list($r, 1)))
+
+Q = as.matrix(quantile(XFull, 0.5))
+C = cumsum(XRow)
+
+write(Q, $Q)
+write(C, $C)

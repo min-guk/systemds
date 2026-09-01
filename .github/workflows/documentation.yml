@@ -1,0 +1,91 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+name: Documentation
+
+on:
+  push:
+    paths-ignore:
+      - '*.html'
+      - 'dev/**'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - '*.html'
+      - 'dev/**'
+    branches:
+      - main
+
+jobs:
+  doc1:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        java: ['17']
+        javadist: ['adopt']
+    name: Java
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Java ${{ matrix.java }} ${{ matrix.javadist }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ matrix.javadist }}
+        java-version: ${{ matrix.java }}
+        cache: 'maven'
+
+    - name: Make Documentation SystemDS Java
+      run: mvn -ntp -P distribution package
+
+  doc2:
+    runs-on: ubuntu-22.04
+    name: Python
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.7
+        architecture: 'x64'
+
+    - name: Cache Pip Dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-docs-${{ hashFiles('src/main/python/docs/requires-docs.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-docs-
+
+    - name: Install Dependencies
+      run: |
+        cd src/main/python/docs
+        python3 -m pip install -r requires-docs.txt
+
+    - name: Make Documentation SystemDS-Python
+      run: |
+        cd src/main/python/docs
+        make html

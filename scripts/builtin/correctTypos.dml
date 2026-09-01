@@ -1,0 +1,185 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Corrects corrupted frames of strings
+# This algorithm operates on the assumption that most strings are correct
+# and simply swaps strings that do not occur often with similar strings that 
+# occur more often
+#
+# .. code-block::
+#
+#   References:
+#   Fred J. Damerau. 1964. 
+#     A technique for computer detection and correction of spelling errors. 
+#     Commun. ACM 7, 3 (March 1964), 171–176. 
+#     DOI:https://doi.org/10.1145/363958.363994
+#
+# INPUT:
+# ----------------------------------------------------------------------------------------
+# strings              The nx1 input frame of corrupted strings
+# frequency_threshold  Strings that occur above this frequency level will not be corrected
+# distance_threshold   Max distance at which strings are considered similar
+# is_verbose           Print debug information
+# ----------------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ---------------------------------------------------------------------------------------------
+# Y     Corrected nx1 output frame
+# ---------------------------------------------------------------------------------------------
+
+# TODO: future: add parameter for list of words that are sure to be correct
+
+f_correctTypos = function(Frame[String] strings, Double frequency_threshold=0.05, Integer distance_threshold=2,  Boolean is_verbose=FALSE)
+  return (Frame[String] Y, Double frequency_threshold, Integer distance_threshold, Matrix[Double] distance_matrix, Frame[Unknown] dict)
+{
+  if(is_verbose)
+    print ("BEGIN CORRECT-TYPOS SCRIPT");
+  num_strings = length(strings);
+
+  if(is_verbose)
+    print("num strings: " + num_strings + "\n")
+
+  strings = map(strings, "s -> s.toLowerCase()");
+
+  Y = strings
+
+  # build dictionary
+  dict = buildDictionary(strings);
+  strings = dict[,1];
+  lengths = as.matrix(map(strings, "s -> s.length()"));
+  
+  num_different_strings = nrow(strings);
+  if (is_verbose) {
+    print("dict:" )
+    print(toString(dict));
+    print("lengths:")
+    print(toString(lengths))
+  }
+
+  # generate ascii matrix
+  max_len = max(lengths);
+  if (is_verbose) {
+    print("max_len: " + max_len + "\n");
+  }
+  # TODO: when proper lambda expressions are supported: rewrite in not so hacky
+  ascii_matrix = matrix(0, rows = max_len, cols = num_different_strings)
+  parfor (i in 1:num_different_strings) {
+    parfor (j in 1:as.scalar(lengths[i, 1])) {
+      tmp = as.matrix(map(strings[i,], "s -> UtilFunctions.getAsciiAtIdx(s, " + j + ")"));
+      ascii_matrix[j, i] = tmp[1, 1];
+    }
+  }
+  if (is_verbose) {
+    print("ascii_matrix: ")
+    print(toString(ascii_matrix));
+  }
+
+  # create upper triangular matrix with distances
+  distance_matrix = matrix(0, rows=num_different_strings, cols=num_different_strings);
+  parfor (i in 1:num_different_strings) {
+    parfor (j in i:num_different_strings) {
+      if (i != j) {
+        if(abs(as.scalar(lengths[i, 1]) - as.scalar(lengths[j , 1])) >= distance_threshold) {
+          distance_matrix[i, j] = 42000;
+        } else {
+          A = ascii_matrix[1:as.scalar(lengths[i,1]), i];
+          B = ascii_matrix[1:as.scalar(lengths[j,1]), j];
+          d = damerauLevenshteinDistanceBound(A, B, distance_threshold, FALSE);
+          distance_matrix[i, j] = ifelse(d == -1, 42000, d);
+        }
+      }
+    }
+  }
+  upper_triangle = upper.tri(target=distance_matrix, values=TRUE);
+  distance_matrix = distance_matrix + t(upper_triangle) + diag(matrix(42000, num_different_strings, 1));
+  Y = correctTyposApply(Y, frequency_threshold, distance_threshold, distance_matrix, dict)
+}
+
+replaceStrings = function(String replacement, String to_replace, Frame[String] strings)
+  return(Frame[String] strings) 
+{
+  strings = map(strings, "s -> s.equals(\""+to_replace+"\") ? \""+replacement+"\" : s");
+}
+
+buildDictionary = function(Frame[String] S)
+  return(Frame[Unknown] dict)
+{
+  [ID,M] = transformencode(target=S, spec="{ids:true,recode:[1]}");
+  dstr = map(M[,1], "s -> UtilFunctions.splitRecodeEntry(s)[0]");
+  dcodes = map(M[,1], "s -> UtilFunctions.splitRecodeEntry(s)[1]");
+  frequencies = table(seq(1,nrow(dstr)),as.matrix(dcodes)) %*% table(ID, 1);
+  dict = cbind(dstr, as.frame(frequencies));
+}
+
+damerauLevenshteinDistanceBound = function(matrix[double] A, matrix[double] B, double bound, Boolean is_verbose) 
+  return(double dl_distance) {
+
+  dl_matrix = matrix(0, rows = length(A) + 1, cols = length(B) + 1);
+  dl_matrix[length(A) + 1, length(B) + 1] = -1;
+  dl_matrix[1, 2:(length(B)+1)] = t(seq(2,length(B)+1) - 1);
+  dl_matrix[2, 1] = 1;
+
+  for (j in 2:length(B) + 1) {
+    cost = as.integer(as.scalar(A[1]) != as.scalar(B[j - 1]))
+    dl_matrix[2, j] = min(min(
+      dl_matrix[2, j - 1] + 1, 
+      dl_matrix[1, j] + 1),
+      dl_matrix[1, j - 1] + cost);
+  }
+
+  i = 2;
+  break_condition = FALSE;
+  while (i < length(A) + 1 & !break_condition) {
+    i += 1;
+
+    dl_matrix[i, 1] = i - 1;
+    cost = as.integer(as.scalar(A[i - 1]) != as.scalar(B[1]))
+    dl_matrix[i, 2] = min(min(
+      dl_matrix[i - 1, 2] + 1, 
+      dl_matrix[i, 1] + 1),
+      dl_matrix[i - 1, 1] + cost);
+
+    for (j in 3:length(B) + 1) {
+      cost = as.integer(as.scalar(A[i - 1]) != as.scalar(B[j - 1]))
+      if (as.scalar(A[i - 1]) == as.scalar(B[j - 2]) & as.scalar(A[i - 2]) == as.scalar(B[j - 1])) {
+        dl_matrix[i, j] = min(min(
+          dl_matrix[i, j - 1] + 1, 
+          dl_matrix[i - 1, j] + 1), min(
+          dl_matrix[i - 1, j - 1] + cost,
+          dl_matrix[i - 2, j - 2] +  1));
+      } else {
+        dl_matrix[i, j] = min(min(
+          dl_matrix[i, j - 1] + 1, 
+          dl_matrix[i - 1, j] + 1),
+          dl_matrix[i - 1, j - 1] + cost);   
+      }
+    }
+
+    break_condition = min(dl_matrix[i - 1, ]) > bound & min(dl_matrix[i, ]) > bound;
+  }
+
+  if (is_verbose){
+    print("dl distance matrix:")
+    print(toString(dl_matrix));
+  }
+
+  dl_distance = as.scalar(dl_matrix[length(A) + 1, length(B) + 1]);
+}

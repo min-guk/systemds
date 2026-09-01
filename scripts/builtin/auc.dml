@@ -1,0 +1,104 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# This builtin function computes the area under the ROC curve (AUC)
+# for binary classifiers.
+#
+# INPUT:
+# ------------------------------------------------------------------------------
+# Y            Binary response vector (shape: n x 1), in -1/+1 or 0/1 encoding
+# P            Prediction scores (predictor such as estimated probabilities)
+#              for true class (shape: n x 1), assumed in [0,1]
+# ------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ------------------------------------------------------------------------------
+# auc          Area under the ROC curve (AUC)
+# ------------------------------------------------------------------------------
+
+m_auc = function(Matrix[Double] Y, Matrix[Double] P)
+  return(Double auc)
+{
+  minv = min(Y)
+  maxv = max(Y)
+
+  # check input parameter assertions
+  if(minv == maxv)
+    stop("AUC: stopping because only one class label existing in Y")
+  if(sum(Y==minv) + sum(Y==maxv) < nrow(Y))
+    stop("AUC: stopping because more than two class labels existing in Y")
+
+  # convert -1/1 to 0/1 if necessary
+  if( minv < 0 )
+    Y = (Y+1) != 0;
+
+  # compute true and false positive rates per unique threshold
+  [tpr, fpr] = cumsumROC(Y, P);
+
+  # compute AUC via Trapezoidal rule
+  nd = nrow(tpr);
+  auc = as.scalar(tpr[1] * fpr[1])
+      + sum((fpr[2:nd]-fpr[1:(nd-1)]) * (tpr[2:nd]+tpr[1:(nd-1)])/2);
+}
+
+cumsumROC = function(Matrix[Double] Y, Matrix[Double] P)
+  return(Matrix[Double] tpr, Matrix[Double] fpr)
+{
+  pos = sum(Y);
+  neg = nrow(Y) - pos;
+
+  # compute ROC curve for distinct threshold scores
+  # (cut-offs > and <= choosen to match R-pROC-package behavior)
+  # vectorized implementation via cumsum of ordered scores P
+  YP = order(target=cbind(Y, P), by=2);
+  oY = YP[,1]; oP = YP[,2];
+  tp = pos - cumsum(oY); # true positives until certain threshold (row)
+  fp = cumsum(!oY);      # false positives until certain threshold
+
+  # indicator of unique thresholds for at end of range
+  uI = (oP != rbind(oP[2:nrow(oP)],as.matrix(0)));
+
+  # extract true/false positves for unique thresholds
+  tp = removeEmpty(target=tp, margin="rows", select=uI);
+  fp = removeEmpty(target=fp, margin="rows", select=uI);
+  tpr = tp / pos; # true positive rate, increasing
+  fpr = fp / neg; # false postive rate, increasing
+}
+
+naiveROC = function(Matrix[Double] Y, Matrix[Double] P)
+  return(Matrix[Double] tpr, Matrix[Double] fpr)
+{
+  pos = sum(Y);
+  neg = nrow(Y) - pos;
+
+  # compute ROC curve for distinct threshold scores
+  # (cut-offs > and <= choosen to match R-pROC-package behavior)
+  dP = order(target=unique(P)); # distinct P thresholds, increasing
+  nd = nrow(dP)
+  tp = matrix(0, nd, 1);
+  fp = matrix(0, nd, 1);
+  parfor(i in 1:nd) {
+    tp[i] = sum(P>dP[i] & Y)
+    fp[i] = sum(P<=dP[i] & !Y)
+  }
+  tpr = tp / pos; # true positive rate, decreasing
+  fpr = fp / neg; # false postive rate, decreasing
+}

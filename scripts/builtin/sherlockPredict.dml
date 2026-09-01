@@ -1,0 +1,99 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# This function implements prediction and evaluation phase of Sherlock:
+# Split feature matrix into four different feature categories and predicting the class probability
+# on the respective features. Then combine all predictions for final predicted probabilities.
+# A Deep Learning Approach to Semantic Data Type Detection.
+# [Hulsebos, Madelon, et al. "Sherlock: A deep learning approach to semantic data type detection."
+# Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining.
+# 2019.]
+#
+# INPUT:
+# -------------------------------------------------------------------------------------------
+# X     matrix of values which are to be classified
+# cW    weights (parameters) matrices for character distribtions
+# cb    biases vectors for character distribtions
+# wW    weights (parameters) matrices for word embeddings
+# wb    biases vectors for word embeddings
+# pW    weights (parameters) matrices for paragraph vectors
+# pb    biases vectors for paragraph vectors
+# sW    weights (parameters) matrices for global statistics
+# sb    biases vectors for global statistics
+# fW    weights (parameters) matrices for  combining all trained features (final)
+# fb    biases vectors for combining all trained features (final)
+# -------------------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ------------------------------------------------------------------------------------------
+# probs  class probabilities of shape (N, K)
+# ------------------------------------------------------------------------------------------
+
+source("scripts/nn/examples/sherlockNet.dml") as sherlockNet
+
+m_sherlockPredict = function(Matrix[Double] X,
+            Matrix[Double] cW1, Matrix[Double] cb1,
+            Matrix[Double] cW2, Matrix[Double] cb2,
+            Matrix[Double] cW3, Matrix[Double] cb3,
+            Matrix[Double] wW1, Matrix[Double] wb1,
+            Matrix[Double] wW2, Matrix[Double] wb2,
+            Matrix[Double] wW3, Matrix[Double] wb3,
+            Matrix[Double] pW1, Matrix[Double] pb1,
+            Matrix[Double] pW2, Matrix[Double] pb2,
+            Matrix[Double] pW3, Matrix[Double] pb3,
+            Matrix[Double] sW1, Matrix[Double] sb1,
+            Matrix[Double] sW2, Matrix[Double] sb2,
+            Matrix[Double] sW3, Matrix[Double] sb3,
+            Matrix[Double] fW1, Matrix[Double] fb1,
+            Matrix[Double] fW2, Matrix[Double] fb2,
+            Matrix[Double] fW3, Matrix[Double] fb3)
+      return (Matrix[Double] probs) {
+
+  rows = nrow(X)
+
+  cprobs = sherlockNet::predict(X[1:rows, 224:1183], cW1, cb1, cW2, cb2, cW3, cb3)
+  wprobs = sherlockNet::predict(cbind(X[1:rows, 13:212], X[1:rows, 1188]), wW1,wb1, wW2, wb2, wW3, wb3)
+  pprobs = sherlockNet::predict(X[1:rows, 1189:1588], pW1, pb1, pW2, pb2, pW3, pb3)
+  sprobs = sherlockNet::predict(cbind(X[1:rows, 1:12], X[1:rows, 213:223], X[1:rows, 1184:1187]), sW1, sb1, sW2, sb2, sW3, sb3)
+
+  first_predictions = cbind(cprobs, wprobs, pprobs, sprobs)
+  #final training
+  probs = sherlockNet::predict(first_predictions, fW1, fb1, fW2, fb2, fW3, fb3)
+}
+
+# Evaluates the performance of the network.
+# ---------------------------------------------------------------------------------------------
+# NAME         TYPE      DEFAULT  MEANING
+# ---------------------------------------------------------------------------------------------
+# probs        Matrix             class probabilities of shape (N, K) (one-hot encoded)
+# Y            Matrix             target matrix of shape (N, K)
+# ---------------------------------------------------------------------------------------------
+# loss         double             scalar loss, of shape (1)
+# accuracy     double             scalar accuracy, of shape (1)
+# f1 score     double             scalar f1 score, of shape (1)
+# precision    double             scalar precission, of shape (1)
+# recall       double             scalar recall, of shape (1)
+
+eval = function(Matrix[Double] probs, Matrix[Double] Y)
+  return (double loss, double accuracy, double f1, double precision, double recall) {
+
+  [loss, accuracy, f1, precision, recall] = sherlockNet::eval(probs, Y)
+}

@@ -1,0 +1,16 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+#-------------------------------------------------------------
+
+X = read($X)
+ExpRow = exp(X)
+SqrtCol = sqrt(X)
+ShapeRow = matrix(ExpRow, rows=6, cols=24, byrow=TRUE)
+ShapeCol = matrix(SqrtCol, rows=6, cols=24, byrow=FALSE)
+
+write(ExpRow, $ExpRow)
+write(SqrtCol, $SqrtCol)
+write(ShapeRow, $ShapeRow)
+write(ShapeCol, $ShapeCol)

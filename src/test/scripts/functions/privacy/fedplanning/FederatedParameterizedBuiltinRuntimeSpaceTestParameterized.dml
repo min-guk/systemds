@@ -1,0 +1,18 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements.
+if($layout == "row") {
+	X = federated(addresses=list($X1, $X2), ranges=list(list(0,0), list($r/2,$c), list($r/2,0), list($r,$c)))
+}
+else if($layout == "col") {
+	X = federated(addresses=list($X1, $X2), ranges=list(list(0,0), list($r,$c/2), list(0,$c/2), list($r,$c)))
+}
+else {
+	X = federated(addresses=list($X1), ranges=list(list(0,0), list($r,$c)))
+}
+C = contains(target=X, pattern=3)
+P = replace(target=X, pattern=3, replacement=7)
+E = removeEmpty(target=P, margin=$margin)
+V = X[,1]
+R = 1.0 * outer(V, t(seq(1,5)), "==")
+S = sum(P) + sum(E) + sum(R)
+write(S, $S)
+write(C, $C)

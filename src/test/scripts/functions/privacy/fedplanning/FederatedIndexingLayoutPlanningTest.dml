@@ -1,0 +1,57 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+XR = federated(addresses=list($XR1, $XR2),
+               ranges=list(list(0, 0), list($r / 2, $c),
+                           list($r / 2, 0), list($r, $c)))
+XC = federated(addresses=list($XC1, $XC2),
+               ranges=list(list(0, 0), list($r, $c / 2),
+                           list(0, $c / 2), list($r, $c)))
+
+UR = read($UR)
+UC = read($UC)
+
+# Multi-partition slices retain their input partitioning axis.
+RRow = XR[, 3:10]
+RCol = XC[3:10, ]
+
+# Each of these slices is contained in exactly one worker partition.
+RRowOne = XR[2:5, ]
+RColOne = XC[, 2:5]
+
+LRowMatrix = XR
+LRowMatrix[4:5, 3:5] = UR
+LColMatrix = XC
+LColMatrix[3:5, 4:5] = UC
+
+LRowScalar = XR
+LRowScalar[2, 2] = 91
+LColScalar = XC
+LColScalar[11, 8] = 92
+
+write(RRow, $RRow)
+write(RRowOne, $RRowOne)
+write(RCol, $RCol)
+write(RColOne, $RColOne)
+write(LRowMatrix, $LRowMatrix)
+write(LColMatrix, $LColMatrix)
+write(LRowScalar, $LRowScalar)
+write(LColScalar, $LColScalar)

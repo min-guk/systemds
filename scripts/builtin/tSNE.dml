@@ -1,0 +1,188 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# This function performs dimensionality reduction using tSNE algorithm based on
+# the paper: Visualizing Data using t-SNE, Maaten et. al.
+#
+# There exists a variant of t-SNE, implemented in sklearn, that first reduces the
+# dimenisonality of the data using PCA to reduce noise and then applies t-SNE for
+# further dimensionality reduction. A script of this can be found in the tutorials
+# folder: scripts/tutorials/tsne/pca-tsne.dml
+#
+# For direct reference and tips on choosing the dimension for the PCA pre-processing,
+# you can visit:
+# https://github.com/scikit-learn/scikit-learn/blob/main/sklearn/manifold/_t_sne.py
+# https://lvdmaaten.github.io/tsne/
+#
+# INPUT:
+# -------------------------------------------------------------------------------------------
+# X              Data Matrix of shape
+#                (number of data points, input dimensionality)
+# reduced_dims   Output dimensionality
+# perplexity     Perplexity Parameter
+# lr             Learning rate
+# momentum       Momentum Parameter
+# max_iter       Number of iterations
+# tol            Tolerance for early stopping in gradient descent
+# seed           The seed used for initial values.
+#                If set to -1 random seeds are selected.
+# is_verbose     Print debug information
+# print_iter     Intervals of printing out the L1 norm values. Parameter not relevant if
+#                is_verbose = FALSE.
+# -------------------------------------------------------------------------------------------
+#
+# OUTPUT:
+# -------------------------------------------------------------------------------------------
+# Y      Data Matrix of shape (number of data points, reduced_dims)
+# -------------------------------------------------------------------------------------------
+
+m_tSNE = function(Matrix[Double] X, Integer reduced_dims = 2, Integer perplexity = 30,
+  Double lr = 300., Double momentum = 0.9, Integer max_iter = 1000, Double tol = 1e-5, 
+  Integer seed = -1, Boolean is_verbose = FALSE, Integer print_iter = 10)
+  return(Matrix[Double] Y)
+{
+  d = reduced_dims
+  n = nrow(X)
+
+  P = x2p(X, perplexity, is_verbose)
+  P = P*4
+  Y = rand(rows=n, cols=d, pdf="normal", seed=seed)
+  dY = matrix(0, rows=n, cols=d)
+  C = matrix(0, rows=max_iter/100, cols=1)
+  ZERODIAG = (diag(matrix(-1, rows=n, cols=1)) + 1)
+
+  D = matrix(0, rows=n, cols=n)
+  Z = matrix(0, rows=n, cols=n)
+  Q = matrix(0, rows=n, cols=n)
+  W = matrix(0, rows=n, cols=n)
+
+  if(is_verbose)
+    print("starting loop....")
+
+  itr = 1
+
+  # Start first iteration out of loop as benchmark for early stopping
+  D = dist(Y)
+  Z = 1/(D + 1)
+  Z = Z * ZERODIAG
+  Q = Z/sum(Z)
+  W = (P - Q)*Z
+  sumW = rowSums(W)
+  g = Y * sumW - W %*% Y
+  dY = momentum*dY - lr*g
+  	
+  norm = sum(dY^2)
+  norm_initial = norm
+  norm_target = norm_initial * tol
+
+  if(is_verbose){
+    print("L1 Norm initial : " + norm_initial)
+    print("L1 Norm target  : " + norm_target)
+  }
+
+  Y = Y + dY
+  Y = Y - colMeans(Y)
+
+  if (itr%%100 == 0) {
+    C[itr/100,] = sum(P * log(pmax(P, 1e-12) / pmax(Q, 1e-12)))
+  }
+  if (itr == 100) {
+    P = P/4
+  }
+  itr = itr + 1
+  # End of first iteration
+
+  while (itr <= max_iter & norm > norm_target) {
+    D = dist(Y)
+    Z = 1/(D + 1)
+    Z = Z * ZERODIAG
+    Q = Z/sum(Z)
+    W = (P - Q)*Z
+    sumW = rowSums(W)
+    g = Y * sumW - W %*% Y
+    dY = momentum*dY - lr*g
+
+    norm = sum(dY^2)
+    if(is_verbose & itr %% print_iter == 0){
+      print("Iteration: " + itr)
+      print("L1 Norm: " + norm)
+    }
+
+    Y = Y + dY
+    Y = Y - colMeans(Y)
+
+    if (itr%%100 == 0) {
+      C[itr/100,] = sum(P * log(pmax(P, 1e-12) / pmax(Q, 1e-12)))
+    }
+    if (itr == 100) {
+      P = P/4
+    }
+    itr = itr + 1
+  }
+}
+
+x2p = function(matrix[double] X, double perplexity, Boolean is_verbose = FALSE)
+return(matrix[double] P)
+{
+  if(is_verbose)
+    print("x2p....")
+  tol = 1.0e-5
+  INF = 1.0e20
+  n = nrow(X)
+  if(is_verbose)
+    print(n)
+  D = dist(X)
+
+  P = matrix(0, rows=n, cols=n)
+  beta = matrix(1, rows=n, cols=1)
+  betamax = matrix(INF, rows=n, cols=1)
+  betamin = matrix(0, rows=n, cols=1)
+  Hdiff = matrix(INF, rows=n, cols=1)
+  logU = log(perplexity)
+
+  ZERODIAG = (diag(matrix(-1, rows=n, cols=1)) + 1)
+  itr = 1
+  while (mean(abs(Hdiff)) > tol & itr < 50) {
+    P = exp(-D * beta)
+    P = P * ZERODIAG
+    sum_Pi = rowSums(P) + 1e-12
+    W = rowSums(P * D)
+    Ws = W/sum_Pi
+    H = log(sum_Pi) + beta * Ws
+    P = P/sum_Pi
+    Hdiff = H - logU
+
+    Hpos = (Hdiff >= 0)
+    Hneg = (Hdiff <  0)
+    betamin = Hneg*betamin + Hpos*beta
+    betamax = Hpos*betamax + Hneg*beta
+    beta = 2*Hpos*(betamax == INF)*beta +
+             Hpos*(betamax != INF)*(beta + betamax)/2 +
+             Hneg*(beta + betamin)/2
+
+    itr = itr + 1
+  }
+
+  P = P + t(P)
+  P = P / sum(P)
+  if(is_verbose)
+    print("x2p finishing....")
+}

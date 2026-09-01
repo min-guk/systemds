@@ -1,0 +1,67 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.sysds.hops.fedplanner.placement.adapter;
+
+import java.util.Map;
+import java.util.List;
+
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+
+/** Read-only common projection of a planner-specific selection result. */
+public interface NormalizedPlannerResult {
+	PlacementAnalysis analysis();
+	String plannerId();
+
+	String analysisFingerprint();
+
+	Map<CompiledHopKey, PlacementState> selectedStates();
+
+	default Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates() {
+		return NormalizedPlannerResults.exactEmissionStates(
+			analysis(), selectedStates(), selectedCandidateSelections());
+	}
+
+	List<RelocationActionKey> selectedRelocations();
+
+	default List<CandidateSelectionReceipt> selectedCandidateSelections() {
+		return CandidateSelections.selectNativeCanonical(analysis(), analysis().graph().relocationActions(),
+			selectedStates()).candidates();
+	}
+
+	default List<RelocationChoiceReceipt> selectedRelocationChoices() {
+		return CandidateSelections.selectNativeCanonical(analysis(), analysis().graph().relocationActions(),
+			selectedStates()).relocationChoices();
+	}
+
+	@SuppressWarnings("rawtypes")
+	default List selectedLocalMaterializations() {
+		return List.of();
+	}
+
+	String objectiveCertificate();
+
+	String normalizedPlanFingerprint();
+}

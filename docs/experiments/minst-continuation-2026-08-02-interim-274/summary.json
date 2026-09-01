@@ -1,0 +1,31 @@
+{
+  "base_registry_descriptor_sha256": "accdb05cc5f815f6933fd82c8a3e1d370000769849ac1586e58c00ec2cdce4ae",
+  "base_registry_sha256": "8bace10365578c0aeaa77b0b551cd015f0ec1467d3b594c2613772149fb8fb48",
+  "canonical_total_cells": 336,
+  "completed_unique_cells": 274,
+  "counts_by_planner": {
+    "DP": 84,
+    "FedAll": 84,
+    "Heuristic": 84,
+    "MinST": 22
+  },
+  "csv_sha256": "224babc3fe144a4bd3fe887a4af1e145b089dfcb48a57921875e313e6345e381",
+  "matched_four_planner_cells": 22,
+  "maximum_execution_seconds": 1431.188723143,
+  "median_runtime_ratio_to_dp": {
+    "DP": 1.0,
+    "FedAll": 1.1841768167603104,
+    "Heuristic": 1.1824638589117253,
+    "MinST": 1.6585440645509402
+  },
+  "minimum_execution_seconds": 26.442171905,
+  "ordering_5pct_failures": 21,
+  "ordering_5pct_passes": 1,
+  "ordering_contract": "MinST <= DP and DP <= Heuristic and DP <= FedAll",
+  "ordering_exact_failures": 22,
+  "ordering_exact_passes": 0,
+  "provenance_warning": "Stitched no-duplicate Docker successes span multiple committed binaries; this interim view is diagnostic and is not a homogeneous final performance run.",
+  "remaining_cells": 62,
+  "schema": "g007-interim-authenticated-performance/v1",
+  "status": "interim-incomplete-not-final"
+}

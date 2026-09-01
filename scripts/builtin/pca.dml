@@ -1,0 +1,120 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# This builtin defines PCA that is a technique typically used to
+# reduce the number of dimensions of a matrix.
+# This implementation is based on calculating eigenvectors on
+# the covariance matrix of the input.
+#
+# An example of calling in DML:
+#
+# .. code-block::
+#
+#   data = read($1)
+#   [data_reduced, Components] = pca(data=data, K=4, onlyComponents=TRUE)
+#   print(Components)
+#
+#
+# An example in a ML pipeline containing PCA:
+#
+# .. code-block::
+#
+#   X = read($1)
+#   [X_reduced, Components] = pca(data=X, K=4)
+#   Y = read($2)
+#   bias = l2svm(X=X, Y=Y)
+#   X_test = read($3)
+#   [y_predict_normal, Y_predict_rounded] = l2svmPredict(X=X_test, W=bias)
+#   write($5, Y_predict_rounded)
+#
+#
+# INPUT:
+# ------------------------------------------------------------------------------
+# X               Input feature matrix
+# K               Number of components returned
+# center          Indicates whether or not to center the feature matrix
+# scale           Indicates whether or not to scale the feature matrix
+# onlyComponents  Indicate if only the components should be calculated and returned
+#                 not the application of the components on X
+# ------------------------------------------------------------------------------
+#
+# OUTPUT:
+# ---------------------------------------------------------------------------
+# XReduced     Output feature matrix with K columns
+# Components   Output dominant eigen vectors sorted by influence
+# Centering    The column means of the input, subtracted to construct the PCA
+# ScaleFactor  The scaling of the values, to make each dimension same size.
+# ---------------------------------------------------------------------------
+
+m_pca = function(Matrix[Double] X, Integer K=2,
+  Boolean center=TRUE, Boolean scale=TRUE,
+  Boolean onlyComponents=FALSE)
+  return (Matrix[Double] XReduced, Matrix[Double] Components,
+  Matrix[Double] Centering, Matrix[Double] ScaleFactor) 
+{
+  N = nrow(X);
+  D = ncol(X);
+
+  if(K > D) {
+    print("PCA: invalid parameter value")
+    print("K should not be greater than the number of columns in X")
+    print("setting K = ncol(X)")
+    K = D
+  }
+
+  # perform z-scoring (centering and scaling)
+  [X, Centering, ScaleFactor] = scale(X, center, scale);
+
+  mu = colSums(X)/N;
+
+  # co-variance matrix minus correction
+  C = (t(X) %*% X)/(N-1) - (N/(N-1))*t(mu) %*% mu;
+  
+  # compute eigen vectors and values
+  [eigen_values, eigen_vectors] = eigen(C);
+
+  # Sort eigenvalues by decreasing order
+  decreasing_Idx = order(target=eigen_values, by=1, decreasing=TRUE, index.return=TRUE);
+  diagonal_matrix = table(seq(1,D), decreasing_Idx);
+
+  # sorts eigenvectors column-wise in the order of decreasing eigen values
+  sorted_eigenvectors = eigen_vectors %*% diagonal_matrix;
+
+  # Slice out the number of requested K eigenvectors
+  Components = sorted_eigenvectors[,1:K];
+
+  if(onlyComponents){
+    # If only the components are wanted, we return XReduced as empty.
+    XReduced = matrix(0, rows=0, cols=0)
+  }
+  else{
+    # Construct new data set by treating the computed eigenvectors as the basis vectors
+    XReduced = X %*% Components;
+    # Check if the output contains infinity
+    # This is to avoid spark pulling back the dataset for replace.
+    containsInf = contains(target=XReduced, pattern=1/0);
+
+    if(containsInf){
+      # replace infinity with zero
+      XReduced = replace(target=XReduced, pattern=1/0, replacement=0);
+    }
+  }
+}

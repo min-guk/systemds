@@ -1,0 +1,47 @@
+
+features = read($features)
+labels = read($labels) 
+X_test = read($X_test)
+y_test = read($y_test)
+
+# Normalize
+features = (features - min(features)) / (max(features) - min(features));
+X_test = (X_test - min(features)) / (max(features) - min(features));
+
+source("src/test/scripts/functions/federated/fedplanning/FNN_network.dml") as FNNN
+
+workers = $numWorkers
+paramserv_mode = "LOCAL"
+
+# train model
+model = FNNN::train_paramserv(features, labels,
+  matrix(0, rows=0, cols=0), matrix(0, rows=0, cols=0),
+  $epochs, workers, $utype, $freq, $batch_size, 
+  paramserv_mode, $eta, 13)
+
+print(sum(as.matrix(model[1])))
+
+# Compute test loss & accuracy
+probs_test = predict(X_test, model)
+[loss_test, accuracy_test] = eval(probs_test, y_test)
+print("[+] test loss: " + loss_test + ", test accuracy: " + accuracy_test + "\n")
+
+
+# Export functions from FNNN namespace
+train_paramserv = function(matrix[double] X, matrix[double] y,
+  matrix[double] X_val, matrix[double] y_val,
+  int epochs, int workers, string utype, string freq, int batch_size,
+  string paramserv_mode, double eta, int seed)
+    return (list[unknown] model) {
+  model = FNNN::train_paramserv(X, y, epochs, workers, utype, freq, batch_size, paramserv_mode, eta, seed)
+}
+
+predict = function(matrix[double] X, list[unknown] model)
+    return (matrix[double] probs) {
+  probs = FNNN::predict(X, model)
+}
+
+eval = function(matrix[double] probs, matrix[double] y)
+    return (double loss, double accuracy) {
+  [loss, accuracy] = FNNN::eval(probs, y)
+}

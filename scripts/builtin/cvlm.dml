@@ -1,0 +1,75 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# The cvlm-function is used for cross-validation of the provided data model. This function follows a non-exhaustive cross
+# validation method. It uses lm and lmPredict functions to solve the linear regression and to predict the class of a
+# feature vector with no intercept, shifting, and rescaling.
+#
+# INPUT:
+# ----------------------------------------------------------------------------------
+# X      Recorded Data set into matrix
+# y      1-column matrix of response values.
+# k      Number of subsets needed, It should always be more than 1 and less than nrow(X)
+# icpt   Intercept presence, shifting and rescaling the columns of X
+# reg    Regularization constant (lambda) for L2-regularization. set to nonzero for
+#        highly dependant/sparse/numerous features
+# ----------------------------------------------------------------------------------
+#
+# OUTPUT:
+# --------------------------------------------------------------------------------------------
+# y_predict   Response values
+# allbeta     Validated data set
+# --------------------------------------------------------------------------------------------
+
+m_cvlm = function(Matrix[Double] X, Matrix[Double] y, Integer k, Integer icpt = 0, Double reg = 1e-7)
+    return (Matrix[Double] y_predict, Matrix[Double] allbeta)
+{
+  M = nrow(X);
+  lim = floor(as.integer(M/k));
+  y_predict = y;
+  allbeta = matrix(0, rows=k, cols=ncol(X));
+
+	for (i in 1:k)
+  {
+    testS = ifelse(i==1, 1, ((i-1) * lim)+1)
+    testE = i * lim;
+    testSet = X[testS:testE,];
+
+    if (i == 1) {
+      trainSet = X[testE+1:M,];
+      trainRes = y[testE+1:M,];
+    }
+    else if(i == k)
+    {
+      trainSet = X[1:testS-1,];
+      trainRes = y[1:testS-1,];
+    }
+    else {
+      trainSet = rbind(X[1:testS-1,], X[testE+1:M,]);
+      trainRes = rbind(y[1:testS-1,], y[testE+1:M,]);
+    }
+
+    beta = lm(X=trainSet, y=trainRes, icpt=icpt, reg=reg);
+    pred = lmPredict(X=testSet, B=beta, ytest=matrix(0,1,1), icpt=icpt);
+    y_predict[testS:testE,] = pred;
+    allbeta[i,] = t(beta);
+  }
+}

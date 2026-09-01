@@ -1,0 +1,14 @@
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+-->
+<root>
+   <sysds.optlevel>7</sysds.optlevel>
+   <sysds.codegen.enabled>true</sysds.codegen.enabled>
+   <sysds.codegen.plancache>true</sysds.codegen.plancache>
+   <sysds.codegen.literals>1</sysds.codegen.literals>
+   <sysds.codegen.api>auto</sysds.codegen.api>
+   <sysds.federated.planner>compile_fed_all</sysds.federated.planner>
+   <sysds.federated.timeout>128</sysds.federated.timeout>
+</root>

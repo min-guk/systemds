@@ -1,0 +1,78 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# This builtin function computes and prints a summary of accuracy
+# measures for regression problems.
+#
+# INPUT:
+# ------------------------------------------------------------
+# yhat     A column vector of predicted response values y
+# ytest    A column vector of actual response values y
+# lm       An indicator if used for linear regression model
+# ------------------------------------------------------------
+#
+# OUTPUT:
+# ------------------------------------------------------------
+# R        A column vector holding avg_res, ss_avg_res, and R2
+# ------------------------------------------------------------
+
+m_lmPredictStats = function(Matrix[Double] yhat, Matrix[Double] ytest, Boolean lm)
+  return (Matrix[Double] R)
+{
+  print ("\n\nComputing the statistics...");
+  n = nrow(ytest)
+
+  sum_y_test = sum(ytest)
+  mean_y_test = sum_y_test / n
+  sum_sq_y_test = sum(ytest^2)
+
+  y_residual = ytest - yhat;
+  avg_res = sum(y_residual) / n;
+  ss_res = sum(y_residual^2);
+  ss_avg_res = ss_res - n * avg_res^2;
+  if( lm )
+    R2 = 1 - ss_res / (sum_sq_y_test - n * (sum_y_test/n)^2);
+  else
+    R2 = sum((yhat - mean_y_test)^2) / sum((ytest - mean_y_test)^2)
+
+  avg_tot = sum_y_test / n;
+  ss_tot = sum_sq_y_test;
+  ss_avg_tot = ss_tot - n * avg_tot ^ 2;
+  var_tot = ss_avg_tot / (n - 1);
+  R2_nobias = 1 - ss_avg_res / ss_avg_tot;
+
+  print("sum(ytest) = " + sum_y_test)
+  print("sum(yhat) = " + sum(yhat))
+  print("SS_AVG_RES_Y: " + ss_avg_res)
+  # Average of the response value Y
+  print("AVG_TOT_Y, " + avg_tot)
+  # Standard Deviation of the response value Y
+  print("STDEV_TOT_Y, " + sqrt(var_tot))
+  # Average of the residual Y - pred(Y|X), i.e. residual bias
+  print("AVG_RES_Y, " + avg_res)
+  # R^2 of residual with bias included vs. total average
+  print("R2, " + R2)
+  # R^2 of residual with bias subtracted vs. total average<Paste>
+  print("R2_NOBIAS, " + R2_nobias)
+  # Adjusted R^2 of residual with bias subtracted vs. total average
+
+  R = as.matrix(list(avg_res, ss_avg_res, R2));
+}

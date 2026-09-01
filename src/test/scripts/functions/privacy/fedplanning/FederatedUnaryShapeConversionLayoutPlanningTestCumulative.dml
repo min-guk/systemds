@@ -1,0 +1,15 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+#-------------------------------------------------------------
+
+XR = federated(addresses=list($XR1, $XR2),
+  ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)))
+XC = federated(addresses=list($XC1, $XC2),
+  ranges=list(list(0, 0), list($r, $c / 2), list(0, $c / 2), list($r, $c)))
+
+CumSumRow = cumsum(XR)
+CumMaxCol = cummax(XC)
+write(CumSumRow, $CumSumRow)
+write(CumMaxCol, $CumMaxCol)

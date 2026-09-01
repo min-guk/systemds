@@ -1,0 +1,66 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Related to [SYSTEMDS-2662] dependency function for cleaning pipelines
+#
+# impute the data by median value and if the feature is categorical then by mode value
+#
+# INPUT:
+# ---------------------------------------------------------------
+# X     Data Matrix (Recoded Matrix for categorical features)
+# mask  A 0/1 row vector for identifying numeric (0) and categorical features (1)
+# ---------------------------------------------------------------
+#
+# OUTPUT:
+# ---------------------------------------------------------------
+# X     imputed dataset
+# ---------------------------------------------------------------------------------------------
+
+
+
+m_imputeByMedian = function(Matrix[Double] X, Matrix[Double] mask)
+return(Matrix[Double] X,  Matrix[Double] imputedVec)
+# return(List[Unknown] out)
+{
+
+  cols = ncol(X)
+  #  median imputation
+  colMedian = matrix(0, 1, cols)
+  parfor(i in 1:ncol(X))
+  {
+    if(as.scalar(mask[1, i]) == 0)
+    {
+      nX = removeEmpty(target=X[, i], margin="rows", select = (is.na(X[, i]) == 0))
+      colMedian[1, i] = median(nX)
+    }
+  }
+  if(sum(mask) > 0)
+  {
+    # mode imputation
+    cX = X * mask
+    [X_c, colMode] = imputeByMode(cX)
+    imputedVec = colMedian + colMode
+  }  
+  else {
+    imputedVec = colMedian 
+  }
+  X = imputeByMedianApply(X, imputedVec)
+}
