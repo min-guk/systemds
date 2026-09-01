@@ -2089,12 +2089,17 @@ public class RewriteAlgebraicSimplificationStatic extends HopRewriteRule
 	 * arbitrary source-less WDIVMM hops.
 	 */
 	private static void inheritCollapsedWeightedDivMmPlacement(Hop outer, Hop inner, Hop replacement) {
-		if( outer.isPlannerPlacementSelected()
+		if( FederatedPlannerUtils.hasPlannerPlacement(outer)
 			&& "DYNAMIC_WEIGHTED_DIV_MM".equals(inner.getPlannerRewriteReplacementKind())
 			&& replacement instanceof QuaternaryOp
-			&& ((QuaternaryOp) replacement).getOp() == OpOp4.WDIVMM )
-			replacement.setPlannerRewriteReplacement(outer,
-				"DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR");
+			&& ((QuaternaryOp) replacement).getOp() == OpOp4.WDIVMM ) {
+			if(outer.isPlannerPlacementSelected())
+				replacement.setPlannerRewriteReplacement(outer,
+					"DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR");
+			else
+				replacement.setPlannerRewriteReplacementIdentity(outer,
+					"DYNAMIC_WEIGHTED_DIV_MM_TRANSPOSE_PAIR");
+		}
 	}
 
 	/*

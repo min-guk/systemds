@@ -717,7 +717,8 @@ public final class PlacementCostSemantics {
 
 	private static LatentWdivmmTransposePairFact latentWdivmmTransposePair(
 			ExactPlacementFacts facts, CompiledHopKey ownerKey, Hop owner) {
-		if(!(owner instanceof ReorgOp reorg) || reorg.getOp() != ReOrgOp.TRANS
+		if(!OptimizerUtils.ALLOW_OPERATOR_FUSION
+			|| !(owner instanceof ReorgOp reorg) || reorg.getOp() != ReOrgOp.TRANS
 			|| owner.getInput() == null || owner.getInput().size() != 1)
 			return null;
 		ExactInput inner = findExactInput(facts, ownerKey, 0);

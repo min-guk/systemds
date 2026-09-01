@@ -24,6 +24,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.ExpectedSparseAssignmentEstimates;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
@@ -278,11 +279,14 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			Assert.assertFalse("ALS regression fixture did not expose S*HS at line 126", targets.isEmpty());
 
 			Method estimatedBytes = ExactPhysicalCostModel.class.getDeclaredMethod(
-				"estimatedBytes", PlacementAnalysis.class, CompiledHopKey.class,
+				"estimatedBytes", PlacementAnalysis.class, ExpectedSparseAssignmentEstimates.class,
+				CompiledHopKey.class,
 				org.apache.sysds.hops.Hop.class);
 			estimatedBytes.setAccessible(true);
+			ExpectedSparseAssignmentEstimates sparseAssignments =
+				PlacementCostSemantics.expectedSparseAssignmentEstimates(analysis);
 			for(CompiledHopKey key : targets) {
-				double actual = (double)estimatedBytes.invoke(null, analysis, key,
+				double actual = (double)estimatedBytes.invoke(null, analysis, sparseAssignments, key,
 					analysis.hop(key).orElseThrow());
 				Assert.assertEquals("Exact must price the immutable 50000x10 occurrence shape (allowing"
 					+ " only MatrixBlock metadata) rather than"

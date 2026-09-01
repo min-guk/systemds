@@ -155,9 +155,13 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			// (for example, replacing an empty slice with a source-less rand/datagen Hop)
 			// otherwise manufacture an operation that was absent from the feasible plan
 			// space and discard the selected occurrence. Keep all algebraic rewrites active
-			// before planning, but freeze the selected HOP DAG during recompilation. Shape
-			// propagation and Lop construction still run normally.
+			// before planning, but freeze the selected HOP DAG during recompilation except
+			// for the exact WDivMM transpose-pair replacement that the shared placement
+			// model already treats as the runtime operation. Shape propagation and Lop
+			// construction still run normally.
 			if(FederatedPlannerUtils.hasPlannerRecompileStateAuthority()) {
+				if(OptimizerUtils.ALLOW_OPERATOR_FUSION)
+					hi = simplifyPlannerModeledWeightedDivMMTransposePair(hop, hi, i);
 				if(!descendFirst)
 					rule_AlgebraicSimplification(hi, descendFirst);
 				continue;
@@ -1854,6 +1858,27 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 	}
 
 	private static Hop simplifyWeightedDivMM(Hop parent, Hop hi, int pos) {
+		return simplifyWeightedDivMM(parent, hi, pos, false);
+	}
+
+	/**
+	 * Apply only the source-level transpose pair whose replacement is explicitly
+	 * represented by PlacementCostSemantics. All other dynamic rewrites remain
+	 * frozen while a whole-program placement owns the HOP DAG.
+	 */
+	private static Hop simplifyPlannerModeledWeightedDivMMTransposePair(
+		Hop parent, Hop hi, int pos) {
+		if(!(parent instanceof ReorgOp) || ((ReorgOp)parent).getOp() != ReOrgOp.TRANS
+			|| parent.getInput().size() != 1 || parent.getInput(0) != hi
+			|| hi.getParent().size() != 1 || hi.getParent().get(0) != parent
+			|| !FederatedPlannerUtils.hasPlannerPlacement(parent)
+			|| !FederatedPlannerUtils.hasPlannerPlacement(hi))
+			return hi;
+		return simplifyWeightedDivMM(parent, hi, pos, true);
+	}
+
+	private static Hop simplifyWeightedDivMM(Hop parent, Hop hi, int pos,
+		boolean plannerModeledTransposePairOnly) {
 		Hop hnew = null;
 		boolean appliedPattern = false;
 		
@@ -1900,6 +1925,11 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 					LOG.debug("Applied simplifyWeightedDivMM1 (line "+hi.getBeginLine()+")");
 				}
 			}	
+
+			// The planner's latent transpose-pair fact models only pattern 1. Do not
+			// admit another WDivMM pattern merely because some planner authority is active.
+			if(plannerModeledTransposePairOnly && !appliedPattern)
+				return hi;
 			
 			//Pattern 1e) t(U) %*% (W/(U%*%t(V) + x))
 			if( !appliedPattern
@@ -2126,7 +2156,9 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				}
 			}
 		}
-		
+		if(plannerModeledTransposePairOnly && !appliedPattern)
+			return hi;
+
 		//Pattern 7) (W*(U%*%t(V)))
 		if( !appliedPattern
 			&& HopRewriteUtils.isBinary(hi, LOOKUP_VALID_WDIVMM_BINARY[0]) //MULT	
@@ -2191,6 +2223,13 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			// origin and selected placement so a source-less WDIVMM cannot borrow authority
 			// from another syntactically similar weighted-quaternary occurrence.
 			replacement.setPlannerRewriteReplacement(replaced, "DYNAMIC_WEIGHTED_DIV_MM");
+		}
+		else if(FederatedPlannerUtils.hasPlannerPlacement(replaced)) {
+			// Recompiler runs algebraic rewrites before restoring selected Hop fields.
+			// Preserve the exact source identity now; restoreHopStates applies the
+			// registered placement to this replacement after rewriting.
+			replacement.setPlannerRewriteReplacementIdentity(
+				replaced, "DYNAMIC_WEIGHTED_DIV_MM");
 		}
 		else {
 			// The same rewrite also runs before planning. Preserve the historical physical
