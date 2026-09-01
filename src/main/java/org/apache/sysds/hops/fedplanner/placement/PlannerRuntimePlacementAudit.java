@@ -1373,9 +1373,9 @@ public final class PlannerRuntimePlacementAudit {
 		if(planned == null || actual == null)
 			return false;
 		return switch(planned.toLowerCase(java.util.Locale.ROOT)) {
-			case "ua(+c)" -> "uacmean".equalsIgnoreCase(actual);
-			case "ua(+r)" -> "uarmean".equalsIgnoreCase(actual);
-			case "ua(+rc)" -> "uamean".equalsIgnoreCase(actual);
+			case "ua(+c)", "ua(meanc)" -> "uacmean".equalsIgnoreCase(actual);
+			case "ua(+r)", "ua(meanr)" -> "uarmean".equalsIgnoreCase(actual);
+			case "ua(+rc)", "ua(meanrc)" -> "uamean".equalsIgnoreCase(actual);
 			default -> false;
 		};
 	}

@@ -728,6 +728,42 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void dynamicSumDivideToMeanAcceptsAlreadyRewrittenOwnersByDirection() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			derivedFoutPlan(740, "rewritten-colmean-owner", "ua(meanC)", FED_FOUT,
+				FED_LOUT),
+			plan(741, "rewritten-rowmean-owner", "ua(meanR)", CP_LOUT, CP_LOUT,
+				true, NodeKind.OPERATION),
+			plan(742, "rewritten-fullmean-owner", "ua(meanRC)", CP_LOUT, CP_LOUT,
+				true, NodeKind.OPERATION)));
+		AuditFedInstruction colMean = new AuditFedInstruction(
+			"uacmean", FEDInstruction.FederatedOutput.LOUT);
+		colMean.setAuditLocation(10740, "rewritten-colmean-owner");
+		colMean.setPlannerOriginHopID(740);
+		colMean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+		AuditCpInstruction rowMean = new AuditCpInstruction("uarmean", IType.CONTROL_PROGRAM);
+		rowMean.setAuditLocation(10741, "rewritten-rowmean-owner");
+		rowMean.setPlannerOriginHopID(741);
+		rowMean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+		AuditCpInstruction fullMean = new AuditCpInstruction("uamean", IType.CONTROL_PROGRAM);
+		fullMean.setAuditLocation(10742, "rewritten-fullmean-owner");
+		fullMean.setPlannerOriginHopID(742);
+		fullMean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(colMean, rowMean, fullMean)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_SUM_DIVIDE_TO_MEAN"));
+		assertTrue(report.contains("plannedTarget=FED/FOUT"));
+		assertTrue(report.contains("plannedPhysical=FED/LOUT"));
+		assertTrue(report.contains("replacementOpcode=uacmean"));
+		assertTrue(report.contains("replacementOpcode=uarmean"));
+		assertTrue(report.contains("replacementOpcode=uamean"));
+	}
+
+	@Test
 	public void dynamicSumDivideToMeanCannotBorrowTheWrongAggregateDirection() {
 		PlannerRuntimePlacementAudit.installForTesting(List.of(
 			plan(75, "rowsum-mean-owner", "ua(+R)", CP_LOUT, CP_LOUT, true,
@@ -1343,6 +1379,15 @@ public class PlannerRuntimePlacementAuditTest {
 		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, originHopId, signature, "DP", "key-" + hopId,
 			"ba+*", NodeKind.OPERATION, "test.dml:1:1-1:1", "value-" + hopId, "-", List.of(), true,
 			new PlacementEmissionState(physical, false), physical.execType(), physical.output(),
+			physical.fType(), true, false);
+	}
+
+	private static PlannerRuntimePlacementAudit.PlannedHop derivedFoutPlan(long hopId,
+		String signature, String opcode, PlacementState target, PlacementState physical) {
+		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, hopId, signature, "DP",
+			"key-" + hopId, opcode, NodeKind.OPERATION, "test.dml:1:1-1:1",
+			"value-" + hopId, "-", List.of(), true,
+			new PlacementEmissionState(target, true), physical.execType(), physical.output(),
 			physical.fType(), true, false);
 	}
 
