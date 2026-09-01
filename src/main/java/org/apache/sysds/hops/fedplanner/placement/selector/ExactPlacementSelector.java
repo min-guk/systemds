@@ -751,6 +751,16 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 		 */
 		private int candidateAwarePhysicalEmissionLowerBound(
 			Map<CompiledHopKey,List<PlacementState>> competitiveDomains) {
+			// orderedAlternatives evaluates one tentative state against the tail domains
+			// computed before that state was assigned.  The tentative assignment can make
+			// an otherwise feasible tail candidate-incoherent (for example, a CP/LOUT
+			// producer followed only by FED/FOUT rows without a relocation action). Such a
+			// tail cannot seed or improve an incumbent and therefore has an infinite lower
+			// bound; asking the strict row projector to score it would incorrectly turn a
+			// prunable branch into a planner failure.
+			if(current.size() != decisions.size()
+				&& !candidateReachability.canStillBeReachable(current, competitiveDomains))
+				return Integer.MAX_VALUE;
 			Map<CompiledHopKey,List<CandidateSelectionReceipt>> reachable =
 				current.size() == decisions.size()
 					? candidateReachability

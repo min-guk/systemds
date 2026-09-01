@@ -19,6 +19,7 @@ import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
@@ -37,6 +38,23 @@ import org.junit.Test;
 /** Regression for WAN-light ALS inner-CG partitioned compute being priced as serial work. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014AlsPartitionedComputeCostRedTest {
+	@Test
+	public void singleWorkerFullAlsHasCandidateReachableFedAllPlan() throws Exception {
+		try {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+				.bindAtFinalHopBoundary(als(1));
+			var selected = new FederatedPlannerFedAll().select(analysis);
+			Assert.assertEquals("FedAll must assign every ALS occurrence from the shared legal domain",
+				analysis.graph().decisionNodes().size(), selected.selectedStates().size());
+			Assert.assertTrue("FedAll must retain at least one selected candidate for worker=1 FULL ALS",
+				!selected.selectedCandidateSelections().isEmpty());
+		}
+		finally {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
 	@Test
 	public void wanLightAlsDpRetainsDerivedFoutAlternativeWithoutPretendingToBeGlobal() throws Exception {
 		Map<String,String> oldProperties = installWanLightCostProperties();

@@ -489,7 +489,11 @@ public final class CandidateSelections {
 						reachable.add(row.receipt());
 				if(!activeRows.isEmpty() && reachable.isEmpty())
 					throw new IllegalStateException(
-						"Active exact candidate has no source-reachable row");
+						"Active exact candidate has no source-reachable row: "
+							+ consumer.key().normalizedSignature() + " selected=" + selected
+							+ " rows=" + activeRows.stream()
+								.map(row -> rowReachabilityDetails(row, assignment))
+								.toList());
 				if(reachable.isEmpty())
 					continue;
 				boolean maximize = selected.execType() == ExecType.FED;
@@ -536,7 +540,12 @@ public final class CandidateSelections {
 				}
 				if(active && reachable.isEmpty())
 					throw new IllegalStateException(
-						"Active exact candidate has no source-reachable row");
+						"Active exact candidate has no source-reachable row: "
+							+ consumer.key().normalizedSignature() + " selected=" + selected
+							+ " possible=" + possible + " rows="
+							+ possible.stream().flatMap(state -> consumer.rowsFor(state).stream())
+								.map(row -> rowReachabilityDetails(row, partialAssignment))
+								.toList());
 				if(!reachable.isEmpty())
 					result.put(consumer.key(), List.copyOf(reachable));
 			}
@@ -598,6 +607,22 @@ public final class CandidateSelections {
 					return false;
 			}
 			return true;
+		}
+
+		private String rowReachabilityDetails(IndexedRow row,
+			Map<CompiledHopKey,PlacementState> assignment) {
+			List<String> inputs = new ArrayList<>();
+			for(IndexedInput input : row.inputs())
+				inputs.add("required=" + input.required() + ",receipted=" + input.receipted()
+					+ ",edges=" + input.edges().stream().map(edge -> edge.producer().normalizedSignature()
+						+ "=>" + assignment.get(edge.producer())).toList());
+			return row.receipt().normalizedSignature()
+				+ "{structural=" + row.emissionStructurallyReachable()
+				+ ",anchorCompatible=" + row.relocationAnchorCompatible()
+				+ ",anchorOwner=" + (row.anchorOwner() == null ? "none"
+					: row.anchorOwner().normalizedSignature() + "=>" + assignment.get(row.anchorOwner()))
+				+ ",anchorOwnerType=" + row.anchorOwnerType()
+				+ ",inputs=" + inputs + '}';
 		}
 
 		private boolean parametricFormalChainFoutCompatible(CompiledHopKey formal, FType required,
