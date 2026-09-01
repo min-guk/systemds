@@ -3,10 +3,12 @@ package org.apache.sysds.hops.fedplanner.fedHeuristic;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
@@ -14,6 +16,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
@@ -88,6 +91,61 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop",
 			selected.selectedRelocations().stream().noneMatch(action ->
 				"Xd".equals(action.sourceValueVersion().lexicalVariable())));
+	}
+
+	@Test
+	public void candidateComponentDependenciesExposeRecursiveFunctionSourceClosure() throws Exception {
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(l2svmScript(2)));
+		var reachability = CandidateSelections.partialReachabilityIndex(analysis,
+			analysis.graph(), analysis.graph().relocationActions());
+		Set<CandidateSelections.ComponentDependency> dependencies =
+			new LinkedHashSet<>(reachability.componentDependencies());
+		Map<CompiledHopKey,List<CompiledHopKey>> sourcesByFormal = new HashMap<>();
+		for(var fact : analysis.logicalFunctionInputsInCanonicalOrder())
+			sourcesByFormal.computeIfAbsent(fact.targetRead(), ignored -> new ArrayList<>())
+				.add(fact.sourceArgument());
+		Map<CompiledHopKey,Set<Integer>> candidateInputs = new HashMap<>();
+		for(var fact : analysis.candidateRuleFacts().orderedFacts()) {
+			if(fact.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(int position = 0; position < fact.key().orderedInputs().size(); position++)
+				if(fact.key().orderedInputs().get(position).present())
+					candidateInputs.computeIfAbsent(fact.key().parentOccurrence(),
+						ignored -> new LinkedHashSet<>()).add(position);
+		}
+		Set<CompiledHopKey> decisions = analysis.graph().decisionNodes().stream()
+			.map(node -> node.key()).collect(java.util.stream.Collectors.toSet());
+		boolean witnessedFunctionClosure = false;
+		boolean witnessedDecisionCoupling = false;
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(!candidateInputs.getOrDefault(edge.consumer(), Set.of()).contains(edge.inputPosition())
+				|| !sourcesByFormal.containsKey(edge.producer()))
+				continue;
+			Assert.assertTrue("candidate dependency closure must retain the direct formal producer",
+				dependencies.contains(new CandidateSelections.ComponentDependency(
+					edge.producer(), edge.consumer())));
+			Set<CompiledHopKey> visited = new LinkedHashSet<>();
+			ArrayDeque<CompiledHopKey> pending = new ArrayDeque<>();
+			pending.add(edge.producer());
+			while(!pending.isEmpty()) {
+				CompiledHopKey formal = pending.removeFirst();
+				if(!visited.add(formal))
+					continue;
+				for(CompiledHopKey source : sourcesByFormal.getOrDefault(formal, List.of())) {
+					witnessedFunctionClosure = true;
+					Assert.assertTrue("recursive function/transient source must couple to its candidate consumer",
+						dependencies.contains(new CandidateSelections.ComponentDependency(
+							source, edge.consumer())));
+					witnessedDecisionCoupling |= decisions.contains(source)
+						&& decisions.contains(edge.consumer());
+					pending.addLast(source);
+				}
+			}
+		}
+		Assert.assertTrue("L2SVM w2 must expose a function/transient candidate dependency",
+			witnessedFunctionClosure);
+		Assert.assertTrue("the closure must connect independently selectable L2SVM occurrences",
+			witnessedDecisionCoupling);
 	}
 
 	private static String l2svmScript(int workers) throws Exception {

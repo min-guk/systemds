@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -75,6 +76,26 @@ public final class CandidateSelections {
 		return new PartialReachabilityIndex(analysis, authorityGraph, actionUniverse);
 	}
 
+	/**
+	 * Canonical coupling required when candidate-reachability decisions are split
+	 * into independent selector components. A participant may be the candidate
+	 * consumer itself, a physical input producer, a derived-FOUT anchor owner, or
+	 * a recursively forwarded function/transient source. Self edges are omitted.
+	 */
+	public record ComponentDependency(CompiledHopKey participant, CompiledHopKey consumer)
+		implements Comparable<ComponentDependency> {
+		public ComponentDependency {
+			Objects.requireNonNull(participant, "participant");
+			Objects.requireNonNull(consumer, "consumer");
+		}
+
+		@Override
+		public int compareTo(ComponentDependency that) {
+			int participantOrder = participant.compareTo(that.participant);
+			return participantOrder != 0 ? participantOrder : consumer.compareTo(that.consumer);
+		}
+	}
+
 	/** Immutable, allocation-free-on-success partial candidate reachability check. */
 	public static final class PartialReachabilityIndex {
 		private final PlacementAnalysis analysis;
@@ -82,6 +103,7 @@ public final class CandidateSelections {
 		private final Map<CompiledHopKey,List<PlacementAnalysis.LogicalFunctionInputFact>>
 			incomingFunctionInputs;
 		private final Map<CompiledHopKey,List<IndexedConsumer>> consumersByDependency;
+		private final List<ComponentDependency> componentDependencies;
 		private final Map<CompiledHopKey,List<RelocationAction>> actionsByConsumer;
 		private final Map<CandidateSelectionReceipt,List<IndexedCandidateAction>>
 			physicalEffectsByReceipt;
@@ -221,6 +243,7 @@ public final class CandidateSelections {
 						actionsByConsumer.getOrDefault(consumer.key(), List.of())));
 			this.physicalEffectsByReceipt = Collections.unmodifiableMap(physicalEffects);
 			Map<CompiledHopKey,List<IndexedConsumer>> dependencies = new IdentityHashMap<>();
+			Set<ComponentDependency> componentDependencies = new TreeSet<>();
 			for(IndexedConsumer consumer : this.consumers) {
 				Set<CompiledHopKey> keys = Collections.newSetFromMap(new IdentityHashMap<>());
 				keys.add(consumer.key());
@@ -234,10 +257,23 @@ public final class CandidateSelections {
 								Collections.newSetFromMap(new IdentityHashMap<>()));
 						}
 				}
-				for(CompiledHopKey key : keys)
+				for(CompiledHopKey key : keys) {
 					dependencies.computeIfAbsent(key, ignored -> new ArrayList<>()).add(consumer);
+					if(!key.equals(consumer.key()))
+						componentDependencies.add(new ComponentDependency(key, consumer.key()));
+				}
 			}
 			this.consumersByDependency = immutableIdentityLists(dependencies);
+			this.componentDependencies = List.copyOf(componentDependencies);
+		}
+
+		/**
+		 * Returns the exact immutable dependency closure used by partial candidate
+		 * reachability. Selectors must use these facts when partitioning independent
+		 * components instead of reconstructing a weaker direct-input approximation.
+		 */
+		public List<ComponentDependency> componentDependencies() {
+			return componentDependencies;
 		}
 
 		/**

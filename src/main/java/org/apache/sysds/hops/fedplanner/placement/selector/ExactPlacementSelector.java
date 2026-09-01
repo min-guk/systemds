@@ -72,16 +72,19 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 		validateRelocationSources(graph);
 		List<Node> decisions = new ArrayList<>(graph.decisionNodes());
 		validateDecisionAlternatives(decisions);
+		CandidateSelections.PartialReachabilityIndex componentReachability =
+			candidateAnalysis == null ? null : CandidateSelections.partialReachabilityIndex(
+				candidateAnalysis, graph, graph.relocationActions());
 		boolean branchAndBound = requiresBranchAndBound(decisions);
 		SearchResult result = branchAndBound
-			? solveIndependentComponents(candidateAnalysis, graph, decisions)
+			? solveIndependentComponents(candidateAnalysis, graph, decisions, componentReachability)
 			: solve(candidateAnalysis, graph, decisions, graph.constraints(), graph.relocationActions(), false);
 		if(result.assignment() == null)
 			throw new IllegalStateException("neutral placement graph has no legal total assignment");
 		if(result.assignment().size() != decisions.size() || !canStillBeLegal(graph.constraints(), result.assignment()))
 			throw new IllegalStateException("exact component solver produced an incomplete or illegal assignment");
 		validateAssignmentStateIdentity(decisions, result.assignment());
-		List<ComponentBound> componentBounds = componentBounds(candidateAnalysis, graph);
+		List<ComponentBound> componentBounds = componentBounds(graph, componentReachability);
 		String derivation = branchAndBound
 			? "exact-independent-component-branch-and-bound-with-partial-legality-pruning"
 			: "complete-cartesian-enumeration-with-partial-legality-pruning";
@@ -105,8 +108,9 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 	}
 
 	private static SearchResult solveIndependentComponents(PlacementAnalysis analysis,
-		NeutralPlacementGraph graph, List<Node> decisions) {
-		List<SearchComponent> components = searchComponents(analysis, graph, decisions);
+		NeutralPlacementGraph graph, List<Node> decisions,
+		CandidateSelections.PartialReachabilityIndex componentReachability) {
+		List<SearchComponent> components = searchComponents(graph, decisions, componentReachability);
 		Map<CompiledHopKey, PlacementState> assignment = new LinkedHashMap<>();
 		long explored = 0;
 		long pruned = 0;
@@ -1645,8 +1649,9 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 	 * globally sorted assignment entries are a deterministic merge of the locally
 	 * minimal entries; relocation signatures are compared only after assignments.
 	 */
-	private static List<SearchComponent> searchComponents(PlacementAnalysis analysis,
-		NeutralPlacementGraph graph, List<Node> decisions) {
+	private static List<SearchComponent> searchComponents(NeutralPlacementGraph graph,
+		List<Node> decisions,
+		CandidateSelections.PartialReachabilityIndex componentReachability) {
 		Map<CompiledHopKey, Node> decisionByKey = new LinkedHashMap<>();
 		Map<CompiledHopKey, Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
 		for(Node decision : decisions) {
@@ -1663,8 +1668,12 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 			if(decisionByKey.containsKey(action.key().producer())
 				&& decisionByKey.containsKey(action.key().durableAnchorOwner()))
 				connect(adjacency, action.key().producer(), action.key().durableAnchorOwner());
-		for(CandidateDependencyEdge dependency : candidateDependencyEdges(analysis, decisionByKey))
-			connect(adjacency, dependency.producer(), dependency.consumer());
+		if(componentReachability != null)
+			for(CandidateSelections.ComponentDependency dependency :
+				componentReachability.componentDependencies())
+				if(decisionByKey.containsKey(dependency.participant())
+					&& decisionByKey.containsKey(dependency.consumer()))
+					connect(adjacency, dependency.participant(), dependency.consumer());
 
 		List<Set<CompiledHopKey>> memberSets = connectedDecisionSets(adjacency);
 		Map<CompiledHopKey, Integer> componentByNode = new HashMap<>();
@@ -1774,47 +1783,6 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 		}
 	}
 
-	private record CandidateDependencyEdge(CompiledHopKey producer, CompiledHopKey consumer,
-		int inputPosition) implements Comparable<CandidateDependencyEdge> {
-		@Override public int compareTo(CandidateDependencyEdge that) {
-			int producerOrder = producer.compareTo(that.producer);
-			if(producerOrder != 0)
-				return producerOrder;
-			int consumerOrder = consumer.compareTo(that.consumer);
-			return consumerOrder != 0 ? consumerOrder : Integer.compare(inputPosition, that.inputPosition);
-		}
-	}
-
-	private static List<CandidateDependencyEdge> candidateDependencyEdges(PlacementAnalysis analysis,
-		Map<CompiledHopKey,Node> nodes) {
-		if(analysis == null)
-			return List.of();
-		Set<CandidateDependencyEdge> dependencies = new TreeSet<>();
-		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts()) {
-			Node consumer = nodes.get(fact.key().parentOccurrence());
-			if(consumer == null || fact.status() != CandidateEvaluationStatus.AVAILABLE
-				|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
-					consumer.legalAlternatives().stream()
-						.anyMatch(state -> state == emission.emissionState().placementState())))
-				continue;
-			for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
-				final int inputPosition = position;
-				List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
-					.compiledInputEdgesInCanonicalOrder().stream()
-					.filter(edge -> edge.consumer() == fact.key().parentOccurrence()
-						&& edge.inputPosition() == inputPosition).toList();
-				if(edges.size() > 1)
-					throw new IllegalStateException("Candidate exact input edge is ambiguous while "
-						+ "constructing exact-search components: consumer="
-						+ fact.key().parentOccurrence().normalizedSignature() + " input=" + inputPosition);
-				if(edges.size() == 1 && nodes.containsKey(edges.get(0).producer()))
-					dependencies.add(new CandidateDependencyEdge(edges.get(0).producer(),
-						fact.key().parentOccurrence(), inputPosition));
-			}
-		}
-		return List.copyOf(dependencies);
-	}
-
 	private static String normalizedSignature(Map<CompiledHopKey, PlacementState> assignment,
 		Set<RelocationActionKey> relocations, List<CandidateSelectionReceipt> candidates,
 		List<RelocationChoiceReceipt> choices) {
@@ -1830,8 +1798,8 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 				+ "#" + String.join("|", decisions);
 	}
 
-	private static List<ComponentBound> componentBounds(PlacementAnalysis analysis,
-		NeutralPlacementGraph graph) {
+	private static List<ComponentBound> componentBounds(NeutralPlacementGraph graph,
+		CandidateSelections.PartialReachabilityIndex componentReachability) {
 		Map<CompiledHopKey, Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
 		Map<CompiledHopKey,Node> nodes = new LinkedHashMap<>();
 		for(Node node : graph.nodes())
@@ -1849,8 +1817,12 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 			for(CompiledHopKey consumer : action.key().compatibleConsumers())
 				connect(adjacency, source, consumer);
 		}
-		for(CandidateDependencyEdge dependency : candidateDependencyEdges(analysis, nodes))
-			connect(adjacency, dependency.producer(), dependency.consumer());
+		if(componentReachability != null)
+			for(CandidateSelections.ComponentDependency dependency :
+				componentReachability.componentDependencies())
+				if(nodes.containsKey(dependency.participant())
+					&& nodes.containsKey(dependency.consumer()))
+					connect(adjacency, dependency.participant(), dependency.consumer());
 		Set<CompiledHopKey> visited = new HashSet<>();
 		List<ComponentBound> result = new ArrayList<>();
 		for(CompiledHopKey start : adjacency.keySet()) {
@@ -1866,13 +1838,14 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 					if(visited.add(adjacent))
 						pending.addLast(adjacent);
 			}
-			result.add(componentBound(analysis, graph, members, owners));
+			result.add(componentBound(graph, componentReachability, members, owners));
 		}
 		Collections.sort(result);
 		return List.copyOf(result);
 	}
 
-	private static ComponentBound componentBound(PlacementAnalysis analysis, NeutralPlacementGraph graph,
+	private static ComponentBound componentBound(NeutralPlacementGraph graph,
+		CandidateSelections.PartialReachabilityIndex componentReachability,
 		Set<CompiledHopKey> members, Map<ValueVersionKey, CompiledHopKey> owners) {
 		Set<String> normalizedNodes = new TreeSet<>();
 		members.forEach(key -> normalizedNodes.add(key.normalizedSignature()));
@@ -1887,13 +1860,13 @@ public final class ExactPlacementSelector implements PlacementSelector, Placemen
 					edges.add("relocation:" + source.normalizedSignature() + "->" + consumer.normalizedSignature()
 						+ ':' + action.key().normalizedSignature());
 		}
-		Map<CompiledHopKey,Node> nodes = new LinkedHashMap<>();
-		for(Node node : graph.nodes())
-			nodes.put(node.key(), node);
-		for(CandidateDependencyEdge dependency : candidateDependencyEdges(analysis, nodes))
-			if(members.contains(dependency.producer()) && members.contains(dependency.consumer()))
-				edges.add("candidate:" + dependency.producer().normalizedSignature() + "->"
-					+ dependency.consumer().normalizedSignature() + '@' + dependency.inputPosition());
+		if(componentReachability != null)
+			for(CandidateSelections.ComponentDependency dependency :
+				componentReachability.componentDependencies())
+				if(members.contains(dependency.participant())
+					&& members.contains(dependency.consumer()))
+					edges.add("candidate:" + dependency.participant().normalizedSignature() + "->"
+						+ dependency.consumer().normalizedSignature());
 		int maxFed = 0;
 		int maxFout = 0;
 		for(Node node : graph.nodes())

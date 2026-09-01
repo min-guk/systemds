@@ -82,7 +82,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 		Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
 		long pruned = 0;
 		int maxDepth = 0;
-		for(PolicyComponent component : policyComponents(candidateAnalysis, graph)) {
+		for(PolicyComponent component : policyComponents(graph, reachability)) {
 			Solver solver = new Solver(candidateAnalysis, graph, component.nodes(),
 				component.constraints(), component.relocationActions(), reachability,
 				executionWeightOverride);
@@ -175,8 +175,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 	 * assignment of one component cannot invalidate another component and avoids
 	 * constructing their Cartesian product.
 	 */
-	private static List<PolicyComponent> policyComponents(PlacementAnalysis analysis,
-		NeutralPlacementGraph graph) {
+	private static List<PolicyComponent> policyComponents(NeutralPlacementGraph graph,
+		CandidateSelections.PartialReachabilityIndex reachability) {
 		List<Node> decisions = graph.decisionNodes().stream().sorted().toList();
 		Map<CompiledHopKey,Node> decisionByKey = new LinkedHashMap<>();
 		Map<CompiledHopKey,Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
@@ -195,8 +195,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 			if(decisionByKey.containsKey(action.key().producer())
 				&& decisionByKey.containsKey(action.key().durableAnchorOwner()))
 				connect(adjacency, action.key().producer(), action.key().durableAnchorOwner());
-		for(CandidateDependency dependency : candidateDependencies(analysis, decisionByKey))
-			connect(adjacency, dependency.producer(), dependency.consumer());
+		if(reachability != null)
+			for(CandidateSelections.ComponentDependency dependency :
+				reachability.componentDependencies())
+				connect(adjacency, dependency.participant(), dependency.consumer());
 
 		List<Set<CompiledHopKey>> members = connectedDecisionSets(adjacency);
 		Map<CompiledHopKey,Integer> componentByNode = new LinkedHashMap<>();
@@ -303,39 +305,6 @@ public final class PolicyFirstFeasiblePlacementSelector
 			result.add(Set.copyOf(members));
 		}
 		return List.copyOf(result);
-	}
-
-	private static List<CandidateDependency> candidateDependencies(PlacementAnalysis analysis,
-		Map<CompiledHopKey,Node> nodes) {
-		if(analysis == null)
-			return List.of();
-		Map<CompiledHopKey,Map<Integer,List<CompiledHopKey>>> producers = new IdentityHashMap<>();
-		for(PlacementAnalysis.CompiledInputEdgeFact edge :
-			analysis.compiledInputEdgesInCanonicalOrder())
-			producers.computeIfAbsent(edge.consumer(), ignored -> new LinkedHashMap<>())
-				.computeIfAbsent(edge.inputPosition(), ignored -> new ArrayList<>())
-				.add(edge.producer());
-		Set<CandidateDependency> dependencies = new java.util.TreeSet<>();
-		for(PlacementAnalysis.CandidateRuleFact fact :
-			analysis.candidateRuleFacts().orderedFacts()) {
-			Node consumer = nodes.get(fact.key().parentOccurrence());
-			if(consumer == null
-				|| fact.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE
-				|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
-					consumer.legalAlternatives().stream().anyMatch(state ->
-						state == emission.emissionState().placementState())))
-				continue;
-			for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
-				List<CompiledHopKey> edges = producers.getOrDefault(consumer.key(), Map.of())
-					.getOrDefault(position, List.of());
-				if(edges.size() > 1)
-					throw new IllegalStateException(
-						"candidate input edge is ambiguous while constructing policy components");
-				if(edges.size() == 1 && nodes.containsKey(edges.get(0)))
-					dependencies.add(new CandidateDependency(edges.get(0), consumer.key(), position));
-			}
-		}
-		return List.copyOf(dependencies);
 	}
 
 	private static final class Solver {
@@ -917,18 +886,6 @@ public final class PolicyFirstFeasiblePlacementSelector
 			if(that.nodes.isEmpty())
 				return 1;
 			return nodes.get(0).compareTo(that.nodes.get(0));
-		}
-	}
-	private record CandidateDependency(CompiledHopKey producer, CompiledHopKey consumer,
-		int inputPosition) implements Comparable<CandidateDependency> {
-		@Override
-		public int compareTo(CandidateDependency that) {
-			int producerOrder = producer.compareTo(that.producer);
-			if(producerOrder != 0)
-				return producerOrder;
-			int consumerOrder = consumer.compareTo(that.consumer);
-			return consumerOrder != 0 ? consumerOrder
-				: Integer.compare(inputPosition, that.inputPosition);
 		}
 	}
 	private record MovementHint(double unavoidable, double exposed, double derived,
