@@ -63,6 +63,7 @@ public final class RelocationSelections {
 		private final Map<CompiledHopKey,Integer> consumerIds;
 		private final Map<DurableAnchorKey,Integer> anchorIds;
 		private final int physicalEmissionCount;
+		private final int anchorCount;
 
 		private CanonicalOrderIndex(Map<RelocationDemandKey,Integer> demandRanks,
 			Map<RelocationActionKey,Integer> actionRanks,
@@ -92,6 +93,8 @@ public final class RelocationSelections {
 			this.consumerIds = Collections.unmodifiableMap(new IdentityHashMap<>(consumerIds));
 			this.anchorIds = Map.copyOf(anchorIds);
 			this.physicalEmissionCount = physicalEmissionIds.values().stream()
+				.mapToInt(Integer::intValue).max().orElse(-1) + 1;
+			this.anchorCount = anchorIds.values().stream()
 				.mapToInt(Integer::intValue).max().orElse(-1) + 1;
 		}
 
@@ -205,8 +208,57 @@ public final class RelocationSelections {
 		}
 
 		private int anchorCount() {
-			return anchorIds.size();
+			return anchorCount;
 		}
+	}
+
+	/**
+	 * Returns whether all relocation demands activated by one exact candidate row
+	 * can bind to one runtime worker-pool layout. A durable anchor's placement id
+	 * names the value that supplied its metadata; physical compatibility is defined
+	 * by endpoints, ranges, and FType through
+	 * {@link PlacementIdentity#samePhysicalWorkerPool(DurableAnchorKey, DurableAnchorKey)}.
+	 *
+	 * <p>This is the row-local form of the exact emission scorer's higher-arity
+	 * anchor constraint. Candidate reachability uses it before a placement selector
+	 * commits a row, while exact relocation selection retains the same fail-closed
+	 * constraint for complete plans.</p>
+	 */
+	static boolean candidateReceiptHasCommonPhysicalAnchor(
+		Collection<RelocationAction> actionUniverse, CandidateSelectionReceipt receipt) {
+		Objects.requireNonNull(actionUniverse, "actionUniverse");
+		Objects.requireNonNull(receipt, "receipt");
+		Map<RelocationDemandKey,List<DurableAnchorKey>> anchorsByDemand =
+			new LinkedHashMap<>();
+		for(RelocationAction action : actionUniverse)
+			for(ObligationKey obligation : action.obligations()) {
+				if(obligation.consumer() != receipt.rule().parentOccurrence()
+					|| !CandidateSelections.actionMatchesSelectedCandidate(
+						action, obligation, receipt))
+					continue;
+				anchorsByDemand.computeIfAbsent(RelocationDemandKey.from(obligation),
+					ignored -> new ArrayList<>()).add(action.key().durableAnchor());
+			}
+		if(anchorsByDemand.isEmpty())
+			return true;
+
+		List<DurableAnchorKey> common = new ArrayList<>();
+		boolean first = true;
+		for(List<DurableAnchorKey> anchors : anchorsByDemand.values()) {
+			if(first) {
+				for(DurableAnchorKey anchor : anchors)
+					if(common.stream().noneMatch(existing ->
+						PlacementIdentity.samePhysicalWorkerPool(existing, anchor)))
+						common.add(anchor);
+				first = false;
+			}
+			else
+				common.removeIf(candidate -> anchors.stream().noneMatch(anchor ->
+					PlacementIdentity.samePhysicalWorkerPool(candidate, anchor)));
+			if(common.isEmpty())
+				return false;
+		}
+		return true;
 	}
 
 	/**
@@ -839,6 +891,7 @@ public final class RelocationSelections {
 			new IdentityHashMap<>();
 		Map<CompiledHopKey,Integer> consumerIds = new IdentityHashMap<>();
 		Map<DurableAnchorKey,Integer> anchorIds = new HashMap<>();
+		List<DurableAnchorKey> physicalAnchorRepresentatives = new ArrayList<>();
 		for(RelocationAction action : actions)
 			for(ObligationKey obligation : action.obligations()) {
 				RelocationDemandKey demand = demandsByObligation.get(obligation);
@@ -848,7 +901,21 @@ public final class RelocationSelections {
 				actionObligationsByConsumer.computeIfAbsent(obligation.consumer(),
 					ignored -> new ArrayList<>()).add(new ActionObligation(action, obligation));
 				consumerIds.computeIfAbsent(obligation.consumer(), ignored -> consumerIds.size());
-				anchorIds.computeIfAbsent(action.key().durableAnchor(), ignored -> anchorIds.size());
+				DurableAnchorKey anchor = action.key().durableAnchor();
+				if(!anchorIds.containsKey(anchor)) {
+					int physicalId = -1;
+					for(int candidate = 0; candidate < physicalAnchorRepresentatives.size(); candidate++)
+						if(PlacementIdentity.samePhysicalWorkerPool(
+							physicalAnchorRepresentatives.get(candidate), anchor)) {
+							physicalId = candidate;
+							break;
+						}
+					if(physicalId < 0) {
+						physicalId = physicalAnchorRepresentatives.size();
+						physicalAnchorRepresentatives.add(anchor);
+					}
+					anchorIds.put(anchor, physicalId);
+				}
 			}
 		return new CanonicalOrderIndex(demandRanks, actionRanks, structuralChoiceRanks, choiceRanks,
 			demandsByObligation, demandRanksByObligation,
@@ -1140,9 +1207,10 @@ public final class RelocationSelections {
 				.findFirst().orElseThrow();
 			DurableAnchorKey prior = anchorsByConsumer.putIfAbsent(
 				option.obligation().consumer(), option.action().key().durableAnchor());
-			if(prior != null && !prior.equals(option.action().key().durableAnchor()))
+			if(prior != null && !PlacementIdentity.samePhysicalWorkerPool(
+				prior, option.action().key().durableAnchor()))
 				throw new IllegalArgumentException(
-					"One exact consumer cannot mix input receipts from different durable anchors: consumer="
+					"One exact consumer cannot mix input receipts from incompatible physical worker pools: consumer="
 						+ option.obligation().consumer().normalizedSignature() + " first="
 						+ prior.normalizedSignature() + " current="
 						+ option.action().key().durableAnchor().normalizedSignature());
@@ -1665,9 +1733,9 @@ public final class RelocationSelections {
 
 	/**
 	 * A FED instruction executes against one worker/range placement.  Candidate
-	 * rows may offer several exact anchors (for example, retain the left input's
+	 * rows may offer several physical-pool anchors (for example, retain the left input's
 	 * pool and REFED the right input, or vice versa), but receipts selected for
-	 * one consumer must all choose the same durable anchor.  Tracking reference
+	 * one consumer must all choose one compatible physical worker-pool layout. Tracking reference
 	 * counts keeps this constraint exact even though MRV ordering can interleave
 	 * demands from different consumers.
 	 */
@@ -1677,14 +1745,15 @@ public final class RelocationSelections {
 
 		private boolean compatible(Option option) {
 			DurableAnchorKey selected = anchors.get(option.obligation().consumer());
-			return selected == null || selected.equals(option.action().key().durableAnchor());
+			return selected == null || PlacementIdentity.samePhysicalWorkerPool(
+				selected, option.action().key().durableAnchor());
 		}
 
 		private boolean acquire(Option option) {
 			CompiledHopKey consumer = option.obligation().consumer();
 			DurableAnchorKey anchor = option.action().key().durableAnchor();
 			DurableAnchorKey selected = anchors.get(consumer);
-			if(selected != null && !selected.equals(anchor))
+			if(selected != null && !PlacementIdentity.samePhysicalWorkerPool(selected, anchor))
 				return false;
 			anchors.putIfAbsent(consumer, anchor);
 			refs.merge(consumer, 1, Integer::sum);

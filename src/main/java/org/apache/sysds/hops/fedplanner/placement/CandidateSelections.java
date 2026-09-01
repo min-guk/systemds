@@ -176,6 +176,9 @@ public final class CandidateSelections {
 							fact.key(), emission);
 						boolean emissionStructurallyReachable = foutMaterializationActionReachable(
 							authorityGraph, fact, receipt, null, true);
+						boolean relocationAnchorCompatible =
+							RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(
+								actionsByConsumer.getOrDefault(consumer.key(), List.of()), receipt);
 						CompiledHopKey anchorOwner = emission.derivedFoutAction() == null ? null
 							: emission.derivedFoutAction().durableAnchorOwner();
 						FType anchorOwnerType = emission.derivedFoutAction() == null ? null
@@ -205,6 +208,7 @@ public final class CandidateSelections {
 								directWhenUnassigned));
 						}
 						rows.add(new IndexedRow(receipt, selected, emissionStructurallyReachable,
+							relocationAnchorCompatible,
 							anchorOwner, anchorOwnerType,
 							analysis.isDmlFunctionCallBoundary(consumer.key()), List.copyOf(inputs)));
 					}
@@ -547,7 +551,7 @@ public final class CandidateSelections {
 		private boolean rowReachable(IndexedRow row,
 			Map<CompiledHopKey,PlacementState> partialAssignment, boolean allowUnassigned,
 			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
-			if(!row.emissionStructurallyReachable())
+			if(!row.emissionStructurallyReachable() || !row.relocationAnchorCompatible())
 				return false;
 			if(row.anchorOwner() != null) {
 				PlacementState owner = partialAssignment.get(row.anchorOwner());
@@ -652,7 +656,7 @@ public final class CandidateSelections {
 	}
 	private record IndexedStateRows(PlacementState state, List<IndexedRow> rows) { }
 	private record IndexedRow(CandidateSelectionReceipt receipt, PlacementState selectedConsumer,
-		boolean emissionStructurallyReachable,
+		boolean emissionStructurallyReachable, boolean relocationAnchorCompatible,
 		CompiledHopKey anchorOwner, FType anchorOwnerType, boolean functionBoundary,
 		List<IndexedInput> inputs) { }
 	private record IndexedInput(FType required,
@@ -1170,7 +1174,7 @@ public final class CandidateSelections {
 			List.copyOf(options));
 	}
 
-	private static boolean actionMatchesSelectedCandidate(RelocationAction action,
+	static boolean actionMatchesSelectedCandidate(RelocationAction action,
 		PlacementIdentity.ObligationKey obligation, CandidateSelectionReceipt selected) {
 		if(!selected.emission().emissionState().placementState()
 			.equals(obligation.requiredPlacement())
@@ -1313,6 +1317,11 @@ public final class CandidateSelections {
 	private static boolean receiptReachable(PlacementAnalysis analysis,
 		Collection<RelocationAction> actions, Map<CompiledHopKey,PlacementState> assignment,
 		CandidateSelectionReceipt receipt, boolean allowUnassigned) {
+		// Exact relocation selection binds every materialized input of one FED
+		// consumer to one physical worker-pool layout. Reject a row before any
+		// selector can commit it when its relocation demands have no common pool.
+		if(!RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(actions, receipt))
+			return false;
 		// See candidateRowCanStillBeReachable: function arguments are forwarded by
 		// the compiler-owned actual/formal boundary, not consumed by this Hop.
 		if(analysis.isDmlFunctionCallBoundary(receipt.rule().parentOccurrence()))
