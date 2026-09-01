@@ -888,6 +888,9 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementShapeFacts shapeFacts, List<HeuristicPolicyFact> demotions,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
 		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing) {
+		Set<CompiledHopKey> demotionProducers = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		for(HeuristicPolicyFact demotion : demotions)
+			demotionProducers.add(demotion.producer());
 		List<HeuristicPathFact> paths = new ArrayList<>();
 		for(HeuristicPolicyFact demotion : demotions) {
 			Set<CompiledHopKey> localPrefix = new java.util.TreeSet<>();
@@ -910,7 +913,12 @@ public final class NeutralPlacementGraphBuilder {
 						HeuristicNativeContinuationFact nativeContinuation =
 							exactHeuristicNativeContinuation(graph, compiledInputEdges,
 								candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition());
-						if(nativeContinuation != null) {
+						// A native-continuation proof fixes the consumer at FED/FOUT. It
+						// therefore cannot terminate at another aggregate-vector demotion,
+						// whose Heuristic policy is coordinator-local after the earlier
+						// demotion. Let the normal traversal classify that nested marker as
+						// part of the local prefix instead of publishing a contradictory fact.
+						if(nativeContinuation != null && !demotionProducers.contains(edge.consumer())) {
 							nativeContinuations.add(nativeContinuation);
 							continue;
 						}

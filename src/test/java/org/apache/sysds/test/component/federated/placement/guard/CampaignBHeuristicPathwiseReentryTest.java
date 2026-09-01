@@ -256,6 +256,45 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		}
 	}
 
+	@Test
+	public void lmSingleWorkerFullLayoutRetainsAReachableHeuristicPolicy() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(
+			compile(lmSingleWorkerScript()));
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
+			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
+				.collect(java.util.stream.Collectors.toSet());
+
+		Assert.assertFalse("single-worker LM must exercise FULL-layout demotions", markers.isEmpty());
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey> markerProducers =
+			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.producer())
+				.collect(java.util.stream.Collectors.toSet());
+		Assert.assertTrue("a native FED/FOUT continuation must not terminate at another demotion marker",
+			analysis.heuristicPolicyFacts().paths().stream()
+				.flatMap(path -> path.nativeContinuations().stream())
+				.noneMatch(fact -> markerProducers.contains(fact.consumer())));
+		Assert.assertTrue("the nested demotion must remain in the earlier coordinator-local prefix",
+			analysis.heuristicPolicyFacts().paths().stream().anyMatch(path -> path.localPrefix().stream()
+				.anyMatch(key -> key != path.demotion().producer() && markerProducers.contains(key))));
+		var result = new HeuristicPlacementAdapter().select(analysis, markers);
+
+		Assert.assertEquals("the projected policy must have a candidate-reachable total assignment",
+			result.selectorGraph().decisionNodes().size(), result.assignment().size());
+		Assert.assertTrue("the selected policy must remain exact-candidate reachable",
+			org.apache.sysds.hops.fedplanner.placement.CandidateSelections.canStillBeReachable(
+				analysis, result.selectorGraph(), result.selectorGraph().relocationActions(),
+				result.assignment()));
+
+		var firstFeasible = new HeuristicPlacementAdapter(
+			new org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector())
+			.select(analysis, markers);
+		Assert.assertEquals("single-pass Heuristic must retain the same complete legal domain",
+			firstFeasible.selectorGraph().decisionNodes().size(), firstFeasible.assignment().size());
+		Assert.assertTrue("single-pass Heuristic must not stop on a candidate-unreachable projection",
+			org.apache.sysds.hops.fedplanner.placement.CandidateSelections.canStillBeReachable(
+				analysis, firstFeasible.selectorGraph(), firstFeasible.selectorGraph().relocationActions(),
+				firstFeasible.assignment()));
+	}
+
 	private static boolean isFedLout(org.apache.sysds.hops.fedplanner.placement.PlacementState state) {
 		return state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT;
 	}
@@ -325,6 +364,15 @@ public class CampaignBHeuristicPathwiseReentryTest {
 				+ "ranges=list(list(0,0),list(500000,1050),list(500000,0),list(1000000,1050)));",
 			"Y=federated(addresses=list(\"localhost:1234/Y1\",\"localhost:1235/Y2\"),"
 				+ "ranges=list(list(0,0),list(500000,1),list(500000,0),list(1000000,1)));",
+			"m=lm(X=X,y=Y,verbose=FALSE,tol=1e-9);", "print(sum(m));") + "\n";
+	}
+
+	private static String lmSingleWorkerScript() {
+		return String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\"),"
+				+ "ranges=list(list(0,0),list(1000000,1050)));",
+			"Y=federated(addresses=list(\"localhost:1234/Y1\"),"
+				+ "ranges=list(list(0,0),list(1000000,1)));",
 			"m=lm(X=X,y=Y,verbose=FALSE,tol=1e-9);", "print(sum(m));") + "\n";
 	}
 
