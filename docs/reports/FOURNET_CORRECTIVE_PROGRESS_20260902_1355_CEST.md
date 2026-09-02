@@ -188,3 +188,20 @@ WAN-Heavy w7은 잘못된 이전 plan의 66.067 s, FED execution/UDF 0 상태에
 5. 완료 후 semantic parity, planner/runtime ordering, planning time, FED instruction statistics를 전수 집계하고 그래프를 갱신한다.
 
 현재는 두 번째 셀이 실행 중이며, 캠페인은 자동으로 다음 셀을 계속 수행한다.
+
+
+## 8. 2026-09-02 19:10 CEST new-cell-first 재배치
+
+사용자 지시에 따라 이미 이전 캠페인에서 측정한 PCA/LM을 연속으로 다시 실행하는 대신, 새로운 coverage를 우선하도록 실행 순서를 변경했다.
+
+- 최종-JAR PCA: **64/64 complete**, 16개 `(profile, workers)` block 모두 4-planner semantic parity 통과
+- 기존 full root는 PCA block boundary에서 의도적으로 중단
+- 중단 직후 시작된 `ml|lm|lan|w1|FedAll`은 result receipt가 없으므로 완료 셀로 계산하지 않음
+- 중단된 컨테이너는 `so002`와 `so007`에서 정리했으며 전 노드 idle을 확인한 뒤 새 캠페인을 시작
+- new-cell-first root: `/home/mchoi/g014-fournet-w1357-runtime-20260902-9aefc64-priority`
+- 실행 순서: ALS → KMeans → LOGREG → L2SVM → StepLM → P1 → P2 → SliceLine → LM
+- 우선 실행 셀: 768; 완료된 PCA 64와 합쳐 전체 832-cell coverage를 구성
+
+첫 new-cell segment인 ALS는 최종 JAR/stage manifest를 다시 인증했다. 첫 셀 `ml|als|lan|w1|FedAll`은 complete이며 SystemDS execution `104.949 s`, planning `0.778049 s`, semantic SHA `8cae6699...`를 기록했다. 다음 Heuristic 셀이 실행 중이다.
+
+과거 full root의 131개 결과는 JAR SHA가 `c667be00...`이므로 최종 `1b65364f...` 결과와 직접 병합하지 않는다. 다만 coverage 우선순위를 결정하는 데 사용하고, LM은 new-cell coverage를 먼저 채운 뒤 최종 JAR로 갱신한다.
