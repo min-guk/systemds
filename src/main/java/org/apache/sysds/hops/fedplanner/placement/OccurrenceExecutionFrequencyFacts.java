@@ -32,6 +32,7 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
@@ -364,8 +365,10 @@ public final class OccurrenceExecutionFrequencyFacts {
 				replaceMappings(headerWrites, bodyWrites);
 			}
 			else if(block instanceof WhileStatementBlock whileBlock) {
+				List<Map<String,List<Hop>>> boundedVisible = appendExactPredicateScalars(
+					visible, whileBlock.getPredicateHops());
 				double loopWeight = requirePositiveWeight(
-					RewireConstants.estimateWhileLoopWeight(whileBlock, visible),
+					RewireConstants.estimateWhileLoopWeight(whileBlock, boundedVisible),
 					"PLACEMENT_WHILE_OCCURRENCE_WEIGHT_UNPROVEN");
 				OccurrenceProfileFact nested = nestedLoopProfile(block, networkWeight, loopContext,
 					loopWeight, contextOrdinal);
@@ -435,6 +438,71 @@ public final class OccurrenceExecutionFrequencyFacts {
 			if(boundRoot == null || boundRoot.getInput() == null || boundRoot.getInput().isEmpty())
 				return null;
 			return RewireConstants.tryEvaluateScalarConstant(boundRoot.getInput().get(0), transTables);
+		}
+
+		/**
+		 * Adds occurrence-scoped scalar facts for predicate reads that the lexical
+		 * transient table cannot resolve after a branch/function join.  The overlay is
+		 * local to this frequency analysis and never mutates the compiler HOP DAG.
+		 */
+		private List<Map<String,List<Hop>>> appendExactPredicateScalars(
+			List<Map<String,List<Hop>>> visible, Hop predicate) {
+			if(predicate == null)
+				return visible;
+			Map<String,Double> resolved = new LinkedHashMap<>();
+			Set<String> ambiguous = new java.util.HashSet<>();
+			Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+			List<Hop> pending = new ArrayList<>();
+			pending.add(predicate);
+			while(!pending.isEmpty()) {
+				Hop hop = pending.remove(pending.size() - 1);
+				if(hop == null || !visited.add(hop))
+					continue;
+				if(hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD
+					&& data.getDataType() != null && data.getDataType().isScalar()) {
+					Double value = exactNumericScalar(hop);
+					if(value != null && !ambiguous.contains(data.getName())) {
+						Double prior = resolved.putIfAbsent(data.getName(), value);
+						if(prior != null && Double.doubleToRawLongBits(prior)
+							!= Double.doubleToRawLongBits(value)) {
+							resolved.remove(data.getName());
+							ambiguous.add(data.getName());
+						}
+					}
+				}
+				if(hop.getInput() != null)
+					pending.addAll(hop.getInput());
+			}
+			if(resolved.isEmpty())
+				return visible;
+			Map<String,List<Hop>> overlay = new LinkedHashMap<>();
+			resolved.forEach((name, value) -> overlay.put(name, List.of(new LiteralOp(value))));
+			return appendTransTable(visible, overlay);
+		}
+
+		private Double exactNumericScalar(Hop hop) {
+			Double value = null;
+			for(HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences()) {
+				if(occurrence.hop() != hop)
+					continue;
+				var fact = analysis.scalarLiteralFact(occurrence.key());
+				if(fact.isEmpty())
+					continue;
+				double candidate;
+				try {
+					candidate = Double.parseDouble(fact.get().canonicalValue());
+				}
+				catch(NumberFormatException ignored) {
+					return null;
+				}
+				if(!Double.isFinite(candidate))
+					return null;
+				if(value != null && Double.doubleToRawLongBits(value)
+					!= Double.doubleToRawLongBits(candidate))
+					return null;
+				value = candidate;
+			}
+			return value;
 		}
 
 		private void putProfile(String path, OccurrenceProfileFact profile) {

@@ -51,7 +51,7 @@ public final class RewireConstants {
 
 	public static double estimateWhileLoopWeight(WhileStatementBlock wsb,
 			List<Map<String, List<Hop>>> transTableStack) {
-		Hop predicate = wsb.getPredicateHops();
+		Hop predicate = unwrapPredicateRoot(wsb.getPredicateHops());
 		Double predicateBound = predicate instanceof BinaryOp
 			? estimateInductionPredicateLoopWeight(wsb, (BinaryOp) predicate, transTableStack)
 			: null;
@@ -124,11 +124,20 @@ public final class RewireConstants {
 		}
 
 		// A convergence/data-dependent predicate can exit before its induction/body cap.
-		// Price it with the generic expected count, bounded by any smaller proven cap,
-		// rather than treating the hard safety cap as the expected execution count.
+		// Treating the hard cap as the expected count grossly over-prices early convergence,
+		// while discarding a large proven cap and always using ten iterations systematically
+		// under-prices repeated RPC stages.  We use the geometric midpoint of the admissible
+		// interval [1, cap] as a sublinear, cap-aware estimate, with the established default
+		// as its floor.  This is deterministic, never exceeds the proven cap, and leaves an
+		// unbounded convergence loop at the established default.
 		return maxIterationCap > 0.0
-			? Math.min(maxIterationCap, DEFAULT_LOOP_WEIGHT)
+			? expectedConvergenceLoopWeight(maxIterationCap)
 			: DEFAULT_LOOP_WEIGHT;
+	}
+
+	private static double expectedConvergenceLoopWeight(double maxIterationCap) {
+		return Math.min(maxIterationCap,
+			Math.max(DEFAULT_LOOP_WEIGHT, Math.sqrt(maxIterationCap)));
 	}
 
 	private static boolean isPureInductionPredicate(WhileStatementBlock wsb, Hop predicate,
@@ -140,6 +149,14 @@ public final class RewireConstants {
 			return isPureInductionPredicate(wsb, binary.getInput().get(0), transTableStack)
 				&& isPureInductionPredicate(wsb, binary.getInput().get(1), transTableStack);
 		return estimateComparisonLoopWeight(wsb, binary, transTableStack) != null;
+	}
+
+	private static Hop unwrapPredicateRoot(Hop predicate) {
+		Hop current = predicate;
+		while(current instanceof DataOp data && data.getOp() == Types.OpOpData.TRANSIENTWRITE
+			&& current.getInput() != null && current.getInput().size() == 1)
+			current = current.getInput().get(0);
+		return stripScalarCasts(current);
 	}
 
 	private static double maxIterationCap(double current, double candidate) {

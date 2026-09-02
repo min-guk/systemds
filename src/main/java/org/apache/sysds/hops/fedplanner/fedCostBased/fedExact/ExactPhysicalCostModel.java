@@ -383,23 +383,27 @@ public final class ExactPhysicalCostModel {
 				ExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
 				if(consumer == null)
 					continue;
-				EffectiveLogicalFunctionInput forwarded = forwardedFunctionInputForTarget(
+				List<EffectiveLogicalFunctionInput> functionInputs = functionInputsForTarget(
 					effectiveFunctionInputs, producer.node().key());
-				double weight = forwarded == null
+				List<EffectiveLogicalFunctionInput> forwardedInputs = functionInputs.stream()
+					.filter(input -> input.forwardedAuthority() != null).toList();
+				double weight = forwardedInputs.isEmpty()
 					? frequencies.exactForwardingWeight(edge.consumer(), edge.producer())
-					: frequencies.logicalFunctionCallWeight(forwarded.authority());
-					if(!analysis.isCoordinatorMetadataOnlyInput(edge))
-						for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
-							.filter(Objects::nonNull).distinct().toList()) {
-							double download = requireCost(weight * (forwarded == null
-								? FederatedCostModel.computeReusableMaterializationDownloadCost(
-									bytes, type, workers)
-								: FederatedCostModel.computeDownloadNetworkCost(bytes)),
-								"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
-							grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
-								BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-								.add(new Demand(edge, consumer, download, weight, forwarded != null));
-						}
+					: logicalFunctionCallWeight(frequencies, forwardedInputs);
+				double downloadWeight = functionInputs.isEmpty() ? weight
+					: logicalFunctionCallWeight(frequencies, functionInputs);
+				if(!analysis.isCoordinatorMetadataOnlyInput(edge))
+					for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
+						.filter(Objects::nonNull).distinct().toList()) {
+						double download = requireCost(downloadWeight
+							* FederatedCostModel.computeReusableMaterializationDownloadCost(
+								bytes, type, workers),
+							"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
+						grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
+							BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
+							.add(new Demand(edge, consumer, download, weight,
+								!forwardedInputs.isEmpty()));
+					}
 				for(RelocationAction action : consumer.alternatives().stream()
 					.flatMap(a -> a.inputAuthorities().stream())
 					.filter(a -> a.inputPosition() == edge.inputPosition()
@@ -417,7 +421,8 @@ public final class ExactPhysicalCostModel {
 					if(demands.stream().noneMatch(demand -> demand.edge().producer() == edge.producer()
 						&& demand.edge().consumer() == edge.consumer()
 						&& demand.edge().inputPosition() == edge.inputPosition()))
-						demands.add(new Demand(edge, consumer, upload, weight, forwarded != null));
+						demands.add(new Demand(edge, consumer, upload, weight,
+							!forwardedInputs.isEmpty()));
 				}
 			}
 			for(Map.Entry<Key,List<Demand>> entry : grouped.entrySet()) {
@@ -1008,7 +1013,9 @@ public final class ExactPhysicalCostModel {
 			List<FType> sourceTypes = source.alternatives().stream().map(a -> a.state().fType())
 				.filter(Objects::nonNull).distinct().toList();
 			for(FType type : sourceTypes) {
-				double cost = requireCost(callWeight * FederatedCostModel.computeDownloadNetworkCost(bytes),
+				double cost = requireCost(callWeight
+					* FederatedCostModel.computeReusableMaterializationDownloadCost(
+						bytes, type, workers),
 					"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
 				factors.add(ExactCategoricalSolver.Factor.lazy(
 					List.of(source.variable(), formal.variable()), values -> {
@@ -1055,34 +1062,6 @@ public final class ExactPhysicalCostModel {
 						List.of(new PhysicalTransferEndpoint(source.node().key(), formal.node().key(),
 							input.logicalPosition())), Direction.UPLOAD, type, BoundaryMode.ANCHOR_TRANSFER,
 						emissionIdentity));
-			}
-			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
-				if(edge.producer() != formal.node().key())
-					continue;
-				if(latentRuntimeBoundaries.contains(new LatentWdivmmRuntimeTransferBoundary(
-					edge.producer(), edge.consumer(), edge.inputPosition())))
-					continue;
-				if(analysis.isCoordinatorMetadataOnlyInput(edge))
-					continue;
-				ExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
-				if(consumer == null)
-					continue;
-				double downstream = requireCost(frequencies.exactForwardingWeight(edge.consumer(), edge.producer())
-					* FederatedCostModel.computeDownloadNetworkCost(bytes),
-					"EXACT_PHYSICAL_LOGICAL_FUNCTION_CONSUMER_DOWNLOAD_COST_UNPROVEN");
-				for(FType type : sourceTypes) {
-					factors.add(ExactCategoricalSolver.Factor.lazy(
-						List.of(source.variable(), consumer.variable()), values -> {
-							PlacementState sourceState = source.alternatives().get(values[0]).state();
-							return sourceState.output() == FederatedOutput.FOUT && sourceState.fType() == type
-								&& consumer.alternatives().get(values[1]).state().execType() == ExecType.CP
-								? downstream : 0.0;
-						}));
-					transferKeys.add(new PhysicalTransferKey(source.node().valueVersion(),
-						List.of(new PhysicalTransferEndpoint(source.node().key(), consumer.node().key(),
-							edge.inputPosition())), Direction.DOWNLOAD, type,
-						BoundaryMode.ANCHOR_TRANSFER));
-				}
 			}
 		}
 	}
@@ -1316,15 +1295,18 @@ public final class ExactPhysicalCostModel {
 		return BoundaryMode.TWRITE_METADATA;
 	}
 
-	private static EffectiveLogicalFunctionInput forwardedFunctionInputForTarget(
+	private static List<EffectiveLogicalFunctionInput> functionInputsForTarget(
 		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, CompiledHopKey target) {
-		List<EffectiveLogicalFunctionInput> matches = effectiveFunctionInputs.stream()
-			.filter(input -> input.forwardedAuthority() != null && input.targetRead() == target)
+		return effectiveFunctionInputs.stream()
+			.filter(input -> input.targetRead() == target)
 			.toList();
-		if(matches.size() > 1)
-			throw new IllegalArgumentException("EXACT_FUNCTION_INPUT_FORWARD_TARGET_AMBIGUOUS|target="
-				+ target.normalizedSignature());
-		return matches.isEmpty() ? null : matches.get(0);
+	}
+
+	private static double logicalFunctionCallWeight(OccurrenceExecutionFrequencyFacts frequencies,
+		List<EffectiveLogicalFunctionInput> inputs) {
+		double total = inputs.stream().map(EffectiveLogicalFunctionInput::authority).distinct()
+			.mapToDouble(frequencies::logicalFunctionCallWeight).sum();
+		return requireCost(total, "EXACT_FUNCTION_INPUT_CALL_WEIGHT_UNPROVEN");
 	}
 
 	private static double cpUnaryCost(PlacementAnalysis analysis, CompiledHopKey key,

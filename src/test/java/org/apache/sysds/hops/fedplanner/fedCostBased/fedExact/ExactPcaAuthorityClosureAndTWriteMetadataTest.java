@@ -33,6 +33,43 @@ import org.junit.Test;
 /** Production-shape PCA guards for exact physical authority and TWrite transfer pricing. */
 public class ExactPcaAuthorityClosureAndTWriteMetadataTest {
 	@Test
+	public void localPlannerEscapesPcaFunctionInputMaterializationBasin() throws Exception {
+		Map<String,String> previous = installWanHeavyCostProperties(7);
+		try {
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+				.buildDetachedAnalysis(compileHarnessShapePca(7));
+			ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+			ExactPhysicalCostModel.PhysicalCostSurface surface =
+				ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+			ExactPhysicalOptimizer.Result exact = ExactPhysicalOptimizer.optimize(
+				model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			LocalPhysicalOptimizer.Result local = LocalPhysicalOptimizer.optimize(model, surface);
+			var projection = model.domains().stream().filter(domain ->
+				domain.node().key().normalizedSignature().contains(
+					"pca.dml:110:21:org.apache.sysds.hops.AggBinaryOp:ba(+*):XReduced"))
+				.findFirst().orElseThrow();
+			int projectionIndex = model.domains().indexOf(projection);
+			var exactState = projection.alternatives().get(
+				exact.solverResult().assignmentInVariableOrder().get(projectionIndex)).state();
+			var localState = projection.alternatives().get(local.physicalResult().solverResult()
+				.assignmentInVariableOrder().get(projectionIndex)).state();
+
+			Assert.assertEquals("PCA_EXACT_REFERENCE_MUST_KEEP_THE_LARGE_PROJECTION_FEDERATED",
+				ExecType.FED, exactState.execType());
+			Assert.assertEquals("PCA_LOCAL_CONFLICT_BLOCK_MUST_CROSS_THE_FUNCTION_INPUT_"
+				+ "MATERIALIZATION_BASIN", ExecType.FED, localState.execType());
+			Assert.assertTrue("PCA_LOCAL_SEARCH_MUST_REMAIN_NO_BETTER_THAN_THE_GLOBAL_EXACT_"
+				+ "REFERENCE", Double.longBitsToDouble(exact.canonicalObjectiveBits()) <=
+					Double.longBitsToDouble(local.physicalResult().canonicalObjectiveBits()));
+			Assert.assertTrue("PCA_MATERIALIZATION_REPAIR_MUST_REMAIN_A_PROPER_LOCAL_BLOCK",
+				local.localStatistics().maximumBlockVariables() < model.variables().size());
+		}
+		finally {
+			restoreProperties(previous);
+		}
+	}
+
+	@Test
 	public void wanHeavyPcaScoresCoherentFedAllAssignmentOnExactSurface() throws Exception {
 		Map<String,String> previous = installWanHeavyCostProperties();
 		try {
@@ -241,8 +278,12 @@ public class ExactPcaAuthorityClosureAndTWriteMetadataTest {
 	}
 
 	private static Map<String,String> installWanHeavyCostProperties() {
+		return installWanHeavyCostProperties(3);
+	}
+
+	private static Map<String,String> installWanHeavyCostProperties(int workers) {
 		Map<String,String> values = Map.ofEntries(
-			Map.entry("DOCKER_NUM_WORKERS", "3"),
+			Map.entry("DOCKER_NUM_WORKERS", Integer.toString(workers)),
 			Map.entry("SYSDS_FED_COST_MEM_BW", "25000"),
 			Map.entry("SYSDS_FED_COST_FLOPS", "2147483648"),
 			Map.entry("SYSDS_FED_COST_NET_BW", "12.5"),

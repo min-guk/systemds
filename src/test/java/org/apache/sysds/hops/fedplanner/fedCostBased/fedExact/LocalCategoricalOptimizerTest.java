@@ -139,6 +139,29 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
+	public void initialDeferredSupersetRetiresContainedBlockBeforeSolving() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 4d),
+			Factor.dense(List.of(x, a), 5d, 7d, 8d, 0d),
+			Factor.dense(List.of(x, b), 5d, 7d, 8d, 0d));
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables, List.of(List.of(x, a)),
+			ignored -> List.of(List.of(x, a, b)), (v, value) -> value);
+
+		Assert.assertEquals(List.of(1, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(4d, result.objective(), 0d);
+		Assert.assertEquals("the deferred superset must retire its contained ordinary block",
+			1, result.statistics().localBlocks());
+		Assert.assertEquals("only the maximal block should require an exact solve",
+			1, result.statistics().factorizedBlockCompilations());
+	}
+
+	@Test
 	public void callerOwnedProducerChainBlocksAreNotTransitivelyMerged() {
 		Variable x = new Variable("x", 2);
 		Variable a = new Variable("a", 2);
