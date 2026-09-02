@@ -40,6 +40,87 @@ import org.junit.Test;
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014AlsPartitionedComputeCostRedTest {
 	@Test
+	public void reusableRuntimeMaterializationUsesControlFlowEventUnion() {
+		var branchAIf = new ExactPhysicalCostModel.BranchLiteral("main/0", true);
+		var branchAElse = new ExactPhysicalCostModel.BranchLiteral("main/0", false);
+		var branchBIf = new ExactPhysicalCostModel.BranchLiteral("main/1", true);
+		Assert.assertEquals("Duplicate consumers in one branch event share one transfer",
+			0.5, ExactPhysicalCostModel.reusableActivationUnion(
+				List.of(List.of(branchAIf), List.of(branchAIf)),
+				List.of(0.5, 0.25), 1.0), 0.0);
+		Assert.assertEquals("Mutually exclusive if/else arms cover the whole production",
+			1.0, ExactPhysicalCostModel.reusableActivationUnion(
+				List.of(List.of(branchAIf), List.of(branchAElse)),
+				List.of(0.5, 0.5), 1.0), 0.0);
+		Assert.assertEquals("Distinct sequential branch paths do not prove independence and"
+			+ " therefore use the conservative union bound",
+			1.0, ExactPhysicalCostModel.reusableActivationUnion(
+				List.of(List.of(branchAIf), List.of(branchBIf)),
+				List.of(0.5, 0.5), 1.0), 0.0);
+	}
+
+	@Test
+	public void functionFormalLatentWdivmmKeepsOnlyTheRealRuntimeTransfer()
+		throws Exception {
+		Map<String,String> oldProperties = installWanLightCostProperties();
+		try {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			String script = String.join("\n",
+				"latent=function(matrix[double] W)"
+					+ " return(matrix[double] H){",
+				"U=rand(rows=nrow(W),cols=10,seed=7);",
+				"V=rand(rows=ncol(W),cols=10,seed=8);", "S=U;",
+				"is_U=TRUE;", "i=1;", "while(i<=2){", "if(is_U){",
+				"H=(W*(S%*%t(V)))%*%V;", "U=U+H;", "S=V;", "}", "else{",
+				"H=t(t(U)%*%(W*(U%*%t(S))));", "V=V+H;", "S=U;", "}",
+				"is_U=!is_U;", "i=i+1;", "}",
+				"}", federatedFeatures(1),
+				"H=latent(X);", "write(H,\"out\",format=\"csv\");") + "\n";
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+				.bindAtFinalHopBoundary(parseProgram(script));
+			List<CompiledHopKey> owners = analysis.compiledHopOccurrences().stream()
+				.map(PlacementAnalysis.HopOccurrenceProjection::key)
+				.filter(key -> PlacementCostSemantics
+					.latentWdivmmTransposePairFact(analysis, key) != null)
+				.toList();
+			Assert.assertFalse("Function fixture must expose the latent WDivMM owner",
+				owners.isEmpty());
+			ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+			ExactPhysicalCostModel.PhysicalCostSurface surface =
+				ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+			for(CompiledHopKey owner : owners) {
+				var runtime = PlacementCostSemantics.latentWdivmmTransposePairFact(analysis, owner);
+				var functionInput = analysis.logicalFunctionInputsInCanonicalOrder().stream()
+					.filter(fact -> analysis.hop(fact.sourceArgument()).orElse(null)
+						instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
+					.findFirst().orElseThrow();
+				Assert.assertTrue("The caller-to-formal boundary remains a real transfer",
+					surface.transferKeys().stream()
+						.filter(key -> key.boundaryMode()
+							== ExactPhysicalCostModel.BoundaryMode.ANCHOR_TRANSFER)
+						.flatMap(key -> key.endpoints().stream())
+						.anyMatch(endpoint -> endpoint.producer() == functionInput.sourceArgument()
+							&& endpoint.consumer() == functionInput.targetRead()));
+				Assert.assertTrue("The formal-to-lowered-subtree edge must not be charged again",
+					surface.transferKeys().stream()
+						.filter(key -> key.boundaryMode()
+							== ExactPhysicalCostModel.BoundaryMode.ANCHOR_TRANSFER)
+						.flatMap(key -> key.endpoints().stream())
+						.noneMatch(endpoint -> endpoint.producer() == runtime.weights()
+							&& endpoint.consumer() == runtime.weighted()
+							&& endpoint.inputPosition() == 0));
+			}
+			Assert.assertEquals("One function argument value owns one reusable fused transfer",
+				1L, surface.transferKeys().stream().filter(key -> key.boundaryMode()
+					== ExactPhysicalCostModel.BoundaryMode.RUNTIME_FUSED_INPUT).count());
+		}
+		finally {
+			restoreProperties(oldProperties);
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
+	@Test
 	public void singleWorkerFullAlsHasCandidateReachableFedAllPlan() throws Exception {
 		try {
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
@@ -306,6 +387,156 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 	}
 
 	@Test
+	public void singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization() throws Exception {
+		Map<String,String> oldProperties = installWanLightCostProperties();
+		try {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			DMLProgram program = als(1);
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+				.bindAtFinalHopBoundary(program);
+			List<CompiledHopKey> owners = analysis.compiledHopOccurrences().stream()
+				.map(PlacementAnalysis.HopOccurrenceProjection::key)
+				.filter(key -> analysis.hop(key).orElse(null) instanceof ReorgOp reorg
+					&& reorg.getOp() == ReOrgOp.TRANS && reorg.getBeginLine() == 130)
+				.filter(key -> PlacementCostSemantics
+					.latentWdivmmTransposePairFact(analysis, key) != null)
+				.toList();
+			Assert.assertFalse("ALS fixture did not expose the line-130 runtime owners", owners.isEmpty());
+			double campaignMaterialization = 0.0;
+			for(CompiledHopKey owner : owners) {
+				var runtime = PlacementCostSemantics.latentWdivmmTransposePairFact(analysis, owner);
+				var ownerStates = analysis.graph().node(owner).orElseThrow().legalAlternatives();
+				var weightStates = analysis.graph().node(runtime.weights()).orElseThrow()
+					.legalAlternatives();
+				var cp = ownerStates.stream().filter(state -> state.execType() == ExecType.CP)
+					.findFirst().orElseThrow();
+				var fed = ownerStates.stream().filter(state -> state.execType() == ExecType.FED)
+					.findFirst().orElseThrow();
+				var federatedWeights = weightStates.stream().filter(state ->
+					state.execType() == ExecType.FED
+						&& state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction
+							.FederatedOutput.FOUT)
+					.findFirst().orElseThrow();
+				double weightBytes = 50000D * 2100D * 8D;
+				double materialization = PlacementCostSemantics
+					.latentWdivmmCpRuntimeInputMaterializationCost(
+						weightBytes, cp, federatedWeights, 1);
+				double expected = FederatedCostModel.computeReusableMaterializationDownloadCost(
+					weightBytes, FType.FULL, 1);
+				Assert.assertEquals("The runtime factor must charge the exact dense W payload through"
+					+ " the shared reusable W2C materialization model",
+					expected, materialization, 2.0);
+				Assert.assertTrue("The fused CP runtime input must not remain a zero-cost boundary",
+					materialization > 0.0);
+				campaignMaterialization = Math.max(campaignMaterialization, materialization);
+				Assert.assertEquals("A FED runtime owner consumes the fused FederationMap directly",
+					0.0, PlacementCostSemantics.latentWdivmmCpRuntimeInputMaterializationCost(
+						weightBytes, fed, federatedWeights, 1), 0.0);
+				var boundaries = PlacementCostSemantics
+					.latentWdivmmRuntimeTransferBoundaries(analysis);
+				Assert.assertTrue("The removed inner-to-owner shell edge must not be generically costed",
+					boundaries.contains(new PlacementCostSemantics.LatentWdivmmRuntimeTransferBoundary(
+						runtime.inner(), owner, 0)));
+				Assert.assertTrue("The removed weighted-to-inner edge must not be generically costed",
+					boundaries.contains(new PlacementCostSemantics.LatentWdivmmRuntimeTransferBoundary(
+						runtime.weighted(), runtime.inner(), 1)));
+				Assert.assertTrue("The weights-to-weighted edge is replaced by the real runtime input",
+					boundaries.contains(new PlacementCostSemantics.LatentWdivmmRuntimeTransferBoundary(
+						runtime.weights(), runtime.weighted(), 0)));
+			}
+
+			ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+			ExactPhysicalCostModel.PhysicalCostSurface surface =
+				ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+			long fusedTransfers = surface.transferKeys().stream().filter(key ->
+				key.boundaryMode() == ExactPhysicalCostModel.BoundaryMode.RUNTIME_FUSED_INPUT)
+				.count();
+			Assert.assertEquals("All branch/loop owners of the same W value must share one"
+				+ " reusable FULL materialization", 1L, fusedTransfers);
+			List<ExactPhysicalCostModel.PhysicalContribution> fusedContributions =
+				surface.contributions().stream()
+					.filter(contribution -> contribution.id().contains("|RUNTIME_FUSED_INPUT|"))
+					.toList();
+			Assert.assertEquals("The reusable runtime transfer must be represented by exactly"
+				+ " one objective contribution", 1, fusedContributions.size());
+			List<Integer> forced = new ArrayList<>();
+			for(int index = 0; index < model.domains().size(); index++)
+				forced.add(0);
+			CompiledHopKey source = surface.transferKeys().stream()
+				.filter(key -> key.boundaryMode()
+					== ExactPhysicalCostModel.BoundaryMode.RUNTIME_FUSED_INPUT)
+				.findFirst().orElseThrow().endpoints().get(0).producer();
+			setAlternative(model, forced, source, state ->
+				state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction
+					.FederatedOutput.FOUT && state.fType() == FType.FULL);
+			for(CompiledHopKey owner : owners) {
+				var runtime = PlacementCostSemantics.latentWdivmmTransposePairFact(analysis, owner);
+				setAlternative(model, forced, runtime.weights(), state ->
+					state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction
+						.FederatedOutput.FOUT && state.fType() == FType.FULL);
+				setAlternative(model, forced, owner, state -> state.execType() == ExecType.CP);
+			}
+			double forcedContribution = surface.evaluateContributionCanonical(
+				fusedContributions.get(0), forced);
+			Assert.assertEquals("All runtime owners must reuse one W-to-coordinator"
+				+ " materialization rather than multiplying it by loop/branch occurrences",
+				campaignMaterialization, forcedContribution, 2.0);
+			for(var boundary : PlacementCostSemantics
+				.latentWdivmmRuntimeTransferBoundaries(analysis))
+				Assert.assertTrue("A lowered WDivMM source edge must not reappear as a generic"
+					+ " anchor transfer|boundary=" + boundary,
+					surface.transferKeys().stream()
+						.filter(key -> key.boundaryMode()
+							== ExactPhysicalCostModel.BoundaryMode.ANCHOR_TRANSFER)
+						.flatMap(key -> key.endpoints().stream())
+						.noneMatch(endpoint -> endpoint.producer() == boundary.producer()
+							&& endpoint.consumer() == boundary.consumer()
+							&& endpoint.inputPosition() == boundary.inputPosition()));
+
+			ExactPhysicalSelection exact = ExactPhysicalSelection.create(model,
+				ExactPhysicalOptimizer.optimize(model, surface,
+					ExactPhysicalOptimizer.PRODUCTION_LIMITS));
+			ExactPhysicalSelection local = ExactPhysicalSelection.create(model,
+				LocalPhysicalOptimizer.optimize(model, surface).physicalResult());
+			Assert.assertEquals("Exact and local-conflict DP must bind the identical physical"
+				+ " cost surface, including the runtime-input materialization factor",
+				exact.costSurfaceFingerprint(), local.costSurfaceFingerprint());
+			for(CompiledHopKey owner : owners) {
+				Assert.assertEquals("Exact must not select the CP owner after charging W2C",
+					ExecType.FED, exact.selectedStates().get(owner).execType());
+				Assert.assertNotNull("Local-conflict DP must retain an executable owner decision",
+					local.selectedStates().get(owner));
+				if(campaignMaterialization > 50_000.0)
+					Assert.assertEquals("With the campaign's measured W2C codec calibration, local-conflict"
+						+ " DP must reject the 54-second CP materialization",
+						ExecType.FED, local.selectedStates().get(owner).execType());
+			}
+		}
+		finally {
+			restoreProperties(oldProperties);
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
+	private static void setAlternative(ExactPhysicalModel model, List<Integer> assignment,
+		CompiledHopKey key, Predicate<org.apache.sysds.hops.fedplanner.placement.PlacementState>
+			predicate) {
+		for(int domainIndex = 0; domainIndex < model.domains().size(); domainIndex++) {
+			ExactPhysicalModel.DecisionDomain domain = model.domains().get(domainIndex);
+			if(domain.node().key() != key)
+				continue;
+			for(int value = 0; value < domain.alternatives().size(); value++)
+				if(predicate.test(domain.alternatives().get(value).state())) {
+					assignment.set(domainIndex, value);
+					return;
+				}
+			throw new AssertionError("No requested placement alternative for "
+				+ key.normalizedSignature());
+		}
+		throw new AssertionError("No decision domain for " + key.normalizedSignature());
+	}
+
+	@Test
 	public void wanLightAlsUsesCapturedSmallInnerShapeForNativeLocalInputCost() throws Exception {
 		Map<String,String> oldProperties = installWanLightCostProperties();
 		try {
@@ -538,6 +769,10 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			"[U,V]=als(X=X,rank=10,regType=\"L2\",reg=0.000001,maxi=" + maxi + ","
 				+ "check=FALSE,thr=0.0001,seed=1389632218,verbose=FALSE);",
 			"write(V,\"out\",format=\"csv\");") + "\n";
+		return parseProgram(script);
+	}
+
+	private static DMLProgram parseProgram(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

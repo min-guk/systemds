@@ -600,6 +600,53 @@ public final class PlacementCostSemantics {
 			genericResultDownloadCost);
 	}
 
+	/** One reusable worker-to-coordinator materialization of a latent WDivMM input. */
+	public static double latentWdivmmCpRuntimeInputMaterializationCost(double bytes,
+		PlacementState ownerState, PlacementState sourceState, int workers) {
+		Objects.requireNonNull(ownerState, "ownerState");
+		Objects.requireNonNull(sourceState, "sourceState");
+		if(ownerState.execType() != ExecType.CP
+			|| sourceState.output() != FederatedOutput.FOUT)
+			return 0.0;
+		FType fType = sourceState.fType();
+		if(fType == null)
+			throw new IllegalArgumentException(
+				"LATENT_WDIVMM_CP_RUNTIME_INPUT_LAYOUT_UNPROVEN");
+		if(!Double.isFinite(bytes) || bytes <= 0.0)
+			throw new IllegalArgumentException(
+				"LATENT_WDIVMM_CP_RUNTIME_INPUT_BYTES_UNPROVEN");
+		return FederatedCostModel.computeReusableMaterializationDownloadCost(
+			bytes, fType, workers);
+	}
+
+	/**
+	 * Whether a source-level transfer belongs to the subtree replaced by one latent
+	 * transpose-pair WDivMM runtime instruction.  The weights-to-weighted edge is
+	 * replaced by the real weights-to-owner runtime input; weighted-to-inner and
+	 * inner-to-owner are removed intermediates.  Physical costing must therefore let
+	 * one explicit runtime-input factor own these transfers.
+	 */
+	public static List<LatentWdivmmRuntimeTransferBoundary>
+			latentWdivmmRuntimeTransferBoundaries(PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
+		Set<LatentWdivmmRuntimeTransferBoundary> boundaries = new java.util.TreeSet<>();
+		for(PlacementAnalysis.HopOccurrenceProjection occurrence
+				: analysis.compiledHopOccurrences()) {
+			CompiledHopKey owner = occurrence.key();
+			LatentWdivmmTransposePairFact pair = latentWdivmmTransposePairFact(
+				analysis, owner);
+			if(pair == null)
+				continue;
+			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
+				pair.inner(), owner, 0));
+			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
+				pair.weighted(), pair.inner(), 1));
+			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
+				pair.weights(), pair.weighted(), 0));
+		}
+		return List.copyOf(boundaries);
+	}
+
 	/** Whether this source edge is removed when the transpose-pair WDivMM is formed. */
 	public static boolean isLatentWdivmmTransposePairBoundary(PlacementAnalysis analysis,
 			CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) {
@@ -893,7 +940,8 @@ public final class PlacementCostSemantics {
 		// locally even when an FOUT flag is serialized. Publishing native FOUT here
 		// would therefore be a planner/runtime contract violation.
 		boolean nativeOutputMustBeLocal = partitionedInputFType == FType.ROW;
-		return new LatentWdivmmTransposePairFact(inner.key(), weighted.weights().key(),
+		return new LatentWdivmmTransposePairFact(inner.key(), right.key(),
+			weighted.weights().key(),
 			floor, partitionedInputFType, nativeOutputMustBeLocal);
 	}
 
@@ -1102,8 +1150,29 @@ public final class PlacementCostSemantics {
 	private record WeightedOuter(ExactInput weights, ExactInput outer,
 		ExactInput outerLeft, ExactInput outerRight) { }
 	public record LatentWdivmmTransposePairFact(CompiledHopKey inner,
-		CompiledHopKey weights, double computeTimeFloor, FType partitionedInputFType,
-		boolean nativeOutputMustBeLocal) { }
+		CompiledHopKey weighted, CompiledHopKey weights, double computeTimeFloor,
+		FType partitionedInputFType, boolean nativeOutputMustBeLocal) { }
+	public record LatentWdivmmRuntimeTransferBoundary(CompiledHopKey producer,
+		CompiledHopKey consumer, int inputPosition)
+		implements Comparable<LatentWdivmmRuntimeTransferBoundary> {
+		public LatentWdivmmRuntimeTransferBoundary {
+			Objects.requireNonNull(producer, "producer");
+			Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException(
+					"LATENT_WDIVMM_RUNTIME_TRANSFER_POSITION_INVALID");
+		}
+
+		@Override
+		public int compareTo(LatentWdivmmRuntimeTransferBoundary that) {
+			int producerOrder = producer.compareTo(that.producer);
+			if(producerOrder != 0)
+				return producerOrder;
+			int consumerOrder = consumer.compareTo(that.consumer);
+			return consumerOrder != 0 ? consumerOrder
+				: Integer.compare(inputPosition, that.inputPosition);
+		}
+	}
 	public record DirectWdivmmRuntimeFact(CompiledHopKey root, CompiledHopKey weighted,
 		CompiledHopKey outer, CompiledHopKey weights, double computeTimeFloor,
 		FType runtimeInputFType, boolean nativeOutputMustBeLocal) { }
