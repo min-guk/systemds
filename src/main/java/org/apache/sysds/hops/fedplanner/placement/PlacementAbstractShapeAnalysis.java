@@ -13,6 +13,7 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -27,6 +28,7 @@ import java.util.Set;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
@@ -101,6 +103,7 @@ final class PlacementAbstractShapeAnalysis {
 		}
 		boolean isBottom() { return knowledge == ScalarKnowledge.BOTTOM; }
 		boolean isExact() { return knowledge == ScalarKnowledge.EXACT; }
+		boolean isUnknown() { return knowledge == ScalarKnowledge.UNKNOWN; }
 		ScalarLiteralFact literal() { return literal; }
 		ScalarState join(ScalarState that) {
 			if(isBottom()) return that;
@@ -385,18 +388,99 @@ final class PlacementAbstractShapeAnalysis {
 		List<ScalarState> scalars) {
 		if(hop instanceof LiteralOp literal)
 			return ScalarState.exact(literal);
+		if(hop instanceof BinaryOp binary && hop.getDataType() == DataType.SCALAR)
+			return inferScalarBinary(binary, inputScalar(scalars, 0), inputScalar(scalars, 1));
 		if(hop instanceof UnaryOp unary) {
 			if(unary.getOp() == OpOp1.NROW)
 				return exactDimension(inputShape(inputs, 0).rows());
 			if(unary.getOp() == OpOp1.NCOL)
 				return exactDimension(inputShape(inputs, 0).cols());
 			if(hop.getDataType() == DataType.SCALAR && !scalars.isEmpty())
-				return scalars.get(0);
+				return inferScalarUnary(unary, scalars.get(0));
 		}
 		if(hop instanceof DataOp data && hop.getDataType() == DataType.SCALAR
 			&& (data.getOp().isWrite() || data.getOp() == org.apache.sysds.common.Types.OpOpData.FUNCTIONOUTPUT))
 			return inputScalar(scalars, 0);
 		return ScalarState.bottom();
+	}
+
+	private static ScalarState inferScalarUnary(UnaryOp unary, ScalarState input) {
+		if(input.isBottom())
+			return ScalarState.bottom();
+		if(input.isUnknown())
+			return ScalarState.unknown();
+		if(unary.getOp() == OpOp1.NOT)
+			return exactBoolean(input).map(value -> exactBooleanLiteral(!value))
+				.orElseGet(ScalarState::unknown);
+		// A generic scalar unary operator does not preserve its operand's literal. Treat
+		// unsupported transfers conservatively instead of publishing the input value as
+		// the output value (which is unsound for !, arithmetic functions, and casts).
+		return ScalarState.unknown();
+	}
+
+	private static ScalarState inferScalarBinary(BinaryOp binary, ScalarState left,
+		ScalarState right) {
+		if(left.isUnknown() || right.isUnknown())
+			return ScalarState.unknown();
+		if(!left.isExact() || !right.isExact())
+			return ScalarState.bottom();
+
+		OpOp2 op = binary.getOp();
+		if(op == OpOp2.AND || op == OpOp2.OR) {
+			Optional<Boolean> lhs = exactBoolean(left);
+			Optional<Boolean> rhs = exactBoolean(right);
+			if(lhs.isEmpty() || rhs.isEmpty())
+				return ScalarState.unknown();
+			return exactBooleanLiteral(op == OpOp2.AND
+				? lhs.get() && rhs.get() : lhs.get() || rhs.get());
+		}
+
+		Optional<BigDecimal> lhs = exactNumber(left);
+		Optional<BigDecimal> rhs = exactNumber(right);
+		if(lhs.isPresent() && rhs.isPresent()) {
+			int comparison = lhs.get().compareTo(rhs.get());
+			return switch(op) {
+				case GREATER -> exactBooleanLiteral(comparison > 0);
+				case GREATEREQUAL -> exactBooleanLiteral(comparison >= 0);
+				case LESS -> exactBooleanLiteral(comparison < 0);
+				case LESSEQUAL -> exactBooleanLiteral(comparison <= 0);
+				case EQUAL -> exactBooleanLiteral(comparison == 0);
+				case NOTEQUAL -> exactBooleanLiteral(comparison != 0);
+				default -> ScalarState.bottom();
+			};
+		}
+		if(op == OpOp2.EQUAL || op == OpOp2.NOTEQUAL) {
+			boolean equal = left.literal().canonicalValue().equals(right.literal().canonicalValue());
+			return exactBooleanLiteral(op == OpOp2.EQUAL ? equal : !equal);
+		}
+		return ScalarState.unknown();
+	}
+
+	private static ScalarState exactBooleanLiteral(boolean value) {
+		return ScalarState.exact(new ScalarLiteralFact(
+			org.apache.sysds.common.Types.ValueType.BOOLEAN, Boolean.toString(value)));
+	}
+
+	private static Optional<BigDecimal> exactNumber(ScalarState scalar) {
+		if(!scalar.isExact())
+			return Optional.empty();
+		try {
+			return Optional.of(new BigDecimal(scalar.literal().canonicalValue()));
+		}
+		catch(NumberFormatException ignored) {
+			return Optional.empty();
+		}
+	}
+
+	private static Optional<Boolean> exactBoolean(ScalarState scalar) {
+		if(!scalar.isExact())
+			return Optional.empty();
+		String value = scalar.literal().canonicalValue();
+		if("true".equalsIgnoreCase(value) || "1".equals(value))
+			return Optional.of(true);
+		if("false".equalsIgnoreCase(value) || "0".equals(value))
+			return Optional.of(false);
+		return Optional.empty();
 	}
 
 	private static AbstractShapeFact dataGenShape(DataGenOp hop, List<ScalarState> scalars) {
@@ -425,6 +509,12 @@ final class PlacementAbstractShapeAnalysis {
 				&& !upperHop.getInput().isEmpty() && upperHop.getInput(0) == hopInputs.get(dataPosition))
 				return input;
 		}
+		// BOTTOM means a predecessor has not been visited yet. Publishing UNKNOWN here
+		// would irreversibly poison the finite join lattice before the exact scalar bound
+		// arrives later in the same closure (for example PCA's [,1:K] after a function-
+		// literal/CFG refinement). Defer the result until all required bounds are known.
+		if(lower.isBottom() || upper.isBottom())
+			return DimensionFact.bottom();
 		return DimensionFact.unknown();
 	}
 

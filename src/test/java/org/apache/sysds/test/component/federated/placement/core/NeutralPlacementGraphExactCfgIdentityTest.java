@@ -95,6 +95,34 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	}
 
 	@Test
+	public void exactScalarGuardPrunesDeadFunctionBranchBeforeShapeJoin() throws Exception {
+		PlacementAnalysis analysis = buildAnalysis("f=function(matrix[double] X,integer k)"
+			+ "return(matrix[double] Y){D=ncol(X);if(k>D){k=D;}"
+			+ "C=matrix(1,rows=D,cols=k);Y=X%*%C;}"
+			+ "A=matrix(1,rows=7,cols=5);Z=f(A,2);print(sum(Z));");
+		PlacementAnalysis.HopOccurrenceProjection aggregate = analysis.occurrences().stream()
+			.filter(projection -> projection.hop() instanceof AggBinaryOp)
+			.filter(projection -> projection.key().functionNamespace().endsWith("f"))
+			.findFirst().orElseThrow();
+		AbstractShapeFact shape = analysis.abstractShapeFact(aggregate.key()).orElseThrow();
+		Assert.assertTrue("false k>D branch must preserve seven result rows: " + shape,
+			shape.rows().isExact(7));
+		Assert.assertTrue("false k>D branch must preserve callsite k=2: " + shape,
+			shape.cols().isExact(2));
+	}
+
+	@Test
+	public void loopCarriedBooleanToggleKeepsBothDynamicBranchesReachable() throws Exception {
+		NeutralPlacementGraph graph = build("flag=TRUE;i=1;X=matrix(0,2,2);"
+			+ "while(i<3){if(flag){X=matrix(1,2,2);}else{X=matrix(2,2,2);}"
+			+ "flag=!flag;i=i+1;}Y=X+1;print(sum(Y));");
+		Assert.assertTrue("the loop-carried toggle executes both branch arms across iterations;"
+			+ " CFG refinement must retain the entry and both branch definitions|identities="
+			+ graph.normalizedIdentities(), reads(graph, "X").stream().anyMatch(read ->
+				Set.of("X#1", "X#2", "X#3").equals(distinctCfgDefinitions(read))));
+	}
+
+	@Test
 	public void splitStyleFunctionJoinsBranchesAndPreservesOrientationThroughTransfers() throws Exception {
 		PlacementAnalysis analysis = buildAnalysis("split=function(matrix[double] X,boolean sampled)"
 			+ "return(matrix[double] Y){T=X;i=1;while(i<2){T=T+0;i=i+1;}"
@@ -212,7 +240,7 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	public void optionalFormalOverwriteKeepsFunctionInputAsExactBranchPredecessor() throws Exception {
 		PlacementAnalysis analysis = buildAnalysis("f=function(matrix[double] X, boolean flag)"
 			+ "return(matrix[double] Y){if(flag){X=X+1;}Y=X+1;}"
-			+ "A=matrix(1,2,2);Y=f(A,FALSE);print(sum(Y));");
+			+ "A=matrix(1,2,2);Y=f(A,sum(A)>0);print(sum(Y));");
 		NeutralPlacementGraph graph = analysis.graph();
 		List<Node> feedingReads = readsFeeding(graph, "Y", "X");
 		Assert.assertEquals("expected one post-branch formal X read", 1, feedingReads.size());

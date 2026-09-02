@@ -517,8 +517,8 @@ public final class ExactPhysicalCostModel {
 					List<FType> inputFTypes = target.orderedInputs().stream()
 						.map(input -> input.present() ? input.fType() : null).toList();
 					FederatedCostModel.MixedFedLocalCost mixed =
-						FederatedCostModel.computeMixedFedLocalCost(consumerHop,
-							new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
+						PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
+							edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
 							unitLocalCost(analysis, edge.consumer(), consumerHop),
 							effectiveOutputBytes(analysis, sparseAssignments,
 								edge.consumer(), consumerHop), workers);
@@ -708,7 +708,7 @@ public final class ExactPhysicalCostModel {
 				executionWeight, workers, broadcastOnlyFedCompute);
 		FederatedCostModel.MixedFedLocalCost mixed = hop instanceof DataOp
 			? FederatedCostModel.MixedFedLocalCost.none()
-			: FederatedCostModel.computeMixedFedLocalCost(hop,
+			: PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis, key,
 				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
 				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers);
 		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
@@ -772,8 +772,10 @@ public final class ExactPhysicalCostModel {
 		double semantic = sparseAssignments.memEstimate(key);
 		if(Double.isFinite(semantic) && semantic > 0.0)
 			return semantic;
+		boolean unresolvedMatrixShape = hop.getDataType() != null && hop.getDataType().isMatrix()
+			&& (!hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0);
 		double bytes = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-		return Double.isFinite(bytes) && bytes > 0.0 ? bytes
+		return !unresolvedMatrixShape && Double.isFinite(bytes) && bytes > 0.0 ? bytes
 			: estimatedBytes(analysis, sparseAssignments, key, hop);
 	}
 
@@ -782,8 +784,10 @@ public final class ExactPhysicalCostModel {
 		double semantic = sparseAssignments.serializedEstimate(key);
 		if(Double.isFinite(semantic) && semantic > 0.0)
 			return semantic;
+		boolean unresolvedMatrixShape = hop.getDataType() != null && hop.getDataType().isMatrix()
+			&& (!hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0);
 		double bytes = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
-		return Double.isFinite(bytes) && bytes > 0.0 ? bytes
+		return !unresolvedMatrixShape && Double.isFinite(bytes) && bytes > 0.0 ? bytes
 			: estimatedBytes(analysis, sparseAssignments, key, hop);
 	}
 
@@ -1017,6 +1021,11 @@ public final class ExactPhysicalCostModel {
 		if(!visiting.add(key))
 			return null;
 		try {
+			double abstractBytes = PlacementCostSemantics.analysisAwareDenseOutputBytes(analysis, key);
+			if(Double.isFinite(abstractBytes) && abstractBytes > 0.0) {
+				var abstractShape = analysis.abstractShapeFact(key).orElseThrow();
+				return new ExactMatrixShape(abstractShape.rows().value(), abstractShape.cols().value());
+			}
 			ExactMatrixShape captured = analysis.shapeFact(key)
 				.filter(shape -> shape.rows() > 0 && shape.cols() > 0)
 				.map(shape -> new ExactMatrixShape(shape.rows(), shape.cols())).orElse(null);

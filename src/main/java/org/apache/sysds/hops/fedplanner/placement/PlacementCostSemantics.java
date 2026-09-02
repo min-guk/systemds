@@ -36,6 +36,8 @@ import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DimensionKnowledge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -391,7 +393,8 @@ public final class PlacementCostSemantics {
 		Objects.requireNonNull(key, "key");
 		Hop hop = analysis.hop(key).orElseThrow(() ->
 			new IllegalArgumentException("Placement cost key has no owned Hop"));
-		if(isLatentWdivmmTransposePairInner(analysis, key, hop))
+		if(isLatentWdivmmTransposePairInner(analysis, key, hop)
+			|| isDirectWdivmmRemovedIntermediate(analysis, key))
 			return 0.0;
 		double dynamicKernelFloor = latentWdivmmComputeTimeFloor(analysis, key, hop);
 		double operation = FederatedCostModel.computeOpCostWithFallback(hop, dynamicKernelFloor);
@@ -401,6 +404,54 @@ public final class PlacementCostSemantics {
 				? 0.0 : operation;
 		}
 		return FederatedCostModel.computeLocalIndexingCostWithFallback(hop, operation);
+	}
+
+	/**
+	 * Shared mixed FED/local runtime-stage cost using occurrence-exact input sizes.
+	 * Compiler HOPs with deferred dimensions retain a large sentinel memory estimate;
+	 * when whole-program shape closure proves the exact matrix geometry, that immutable
+	 * fact must price the actual broadcast/refederation payload instead.
+	 */
+	public static FederatedCostModel.MixedFedLocalCost analysisAwareMixedFedLocalCost(
+			PlacementAnalysis analysis, CompiledHopKey key, List<Hop> inputHops,
+			List<FType> inputFTypes, FType logicalFType, double baseSelfCost,
+			double outputMemEstimate, int workers) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(key, "key");
+		Hop hop = analysis.hop(key).orElseThrow(() ->
+			new IllegalArgumentException("Placement cost key has no owned Hop"));
+		List<Hop> exactInputs = inputHops == null ? new ArrayList<>(hop.getInput()) : inputHops;
+		List<Double> inputMemEstimates = new ArrayList<>(hop.getInput().size());
+		for(int position = 0; position < hop.getInput().size(); position++) {
+			Hop compiledInput = hop.getInput(position);
+			double estimate = Double.NaN;
+			if(compiledInput != null && compiledInput.getDataType() != null
+				&& compiledInput.getDataType().isMatrix()
+				&& (!compiledInput.dimsKnown() || compiledInput.getDim1() <= 0
+					|| compiledInput.getDim2() <= 0)) {
+				estimate = analysis.compiledInputEdge(key, position)
+					.map(edge -> analysisAwareDenseOutputBytes(analysis, edge.producer()))
+					.orElse(Double.NaN);
+			}
+			inputMemEstimates.add(estimate);
+		}
+		return FederatedCostModel.computeMixedFedLocalCost(hop, exactInputs,
+			inputMemEstimates, inputFTypes, logicalFType, baseSelfCost,
+			outputMemEstimate, workers);
+	}
+
+	/** Dense in-memory bytes from an exact occurrence-scoped abstract shape, or NaN. */
+	public static double analysisAwareDenseOutputBytes(PlacementAnalysis analysis,
+			CompiledHopKey key) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(key, "key");
+		AbstractShapeFact shape = analysis.abstractShapeFact(key).orElse(null);
+		if(shape == null || shape.dataType() == null || !shape.dataType().isMatrix()
+			|| shape.rows().knowledge() != DimensionKnowledge.EXACT
+			|| shape.cols().knowledge() != DimensionKnowledge.EXACT
+			|| shape.rows().value() <= 0 || shape.cols().value() <= 0)
+			return Double.NaN;
+		return denseMatrixBytes(shape.rows().value(), shape.cols().value());
 	}
 
 	/**
@@ -422,6 +473,53 @@ public final class PlacementCostSemantics {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(key, "key");
 		return latentWdivmmTransposePair(analysis, key, analysis.hop(key).orElse(null));
+	}
+
+	/**
+	 * Exact source-level Pattern-2 substitution owned by the surviving root matrix
+	 * multiply: {@code (W op (U %*% t(V))) %*% V}.  The fact is derived only from
+	 * occurrence-exact graph, shape, and privacy-filtered legal-state facts.
+	 */
+	public static DirectWdivmmRuntimeFact directWdivmmRuntimeFact(
+			PlacementAnalysis analysis, CompiledHopKey key) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(key, "key");
+		return directWdivmmRuntimeFact(exactPlacementFacts(analysis), key,
+			analysis.hop(key).orElse(null));
+	}
+
+	/** Whether a selected direct Pattern-2 owner and its exact W occurrence form an executable runtime state. */
+	public static boolean directWdivmmRuntimeAssignmentCompatible(
+		DirectWdivmmRuntimeFact runtime, PlacementState owner, PlacementState weights) {
+		return directWdivmmRuntimeAssignmentCompatible(runtime, owner,
+			owner.execType() == ExecType.FED ? owner.fType() : null, false, weights);
+	}
+
+	/**
+	 * Runtime compatibility for one exact candidate emission.  A derived FOUT
+	 * candidate has two layouts: the native FED/LOUT execution layout and the
+	 * final post-execution materialization layout.  WDivMM consumes the former;
+	 * comparing its input FederationMap with the latter incorrectly removes legal
+	 * ROW/COL execution followed by a BROADCAST/FULL materialization.
+	 */
+	public static boolean directWdivmmRuntimeAssignmentCompatible(
+		DirectWdivmmRuntimeFact runtime, PlacementState owner, FType executionFType,
+		boolean derivedFedFout, PlacementState weights) {
+		Objects.requireNonNull(runtime, "runtime");
+		Objects.requireNonNull(owner, "owner");
+		if(owner.execType() != ExecType.FED)
+			return owner.execType() == ExecType.CP;
+		FType nativeFType = executionFType == null ? owner.fType() : executionFType;
+		if(weights == null || runtime.runtimeInputFType() == null
+			|| nativeFType != runtime.runtimeInputFType()
+			|| weights.execType() != ExecType.FED
+			|| weights.output() != FederatedOutput.FOUT
+			|| weights.fType() != runtime.runtimeInputFType())
+			return false;
+		if(derivedFedFout && owner.output() != FederatedOutput.FOUT)
+			return false;
+		FederatedOutput nativeOutput = derivedFedFout ? FederatedOutput.LOUT : owner.output();
+		return !runtime.nativeOutputMustBeLocal() || nativeOutput == FederatedOutput.LOUT;
 	}
 
 	/**
@@ -685,6 +783,9 @@ public final class PlacementCostSemantics {
 
 	private static double directLatentWdivmmComputeTimeFloor(PlacementAnalysis analysis,
 			CompiledHopKey rootKey, Hop root) {
+		DirectWdivmmRuntimeFact direct = directWdivmmRuntimeFact(analysis, rootKey);
+		if(direct != null)
+			return direct.computeTimeFloor();
 		if(!(root instanceof AggBinaryOp) || !((AggBinaryOp)root).isMatrixMultiply()
 			|| root.getInput() == null || root.getInput().size() != 2)
 			return 0.0;
@@ -697,6 +798,56 @@ public final class PlacementCostSemantics {
 		if(rightWeighted > 0.0)
 			return rightWeighted;
 		return latentLeftWeightedWdivmmFloor(analysis, rootKey, left, right);
+	}
+
+	private static DirectWdivmmRuntimeFact directWdivmmRuntimeFact(
+			ExactPlacementFacts facts, CompiledHopKey rootKey, Hop root) {
+		if(!OptimizerUtils.ALLOW_OPERATOR_FUSION
+			|| !(root instanceof AggBinaryOp) || !((AggBinaryOp)root).isMatrixMultiply()
+			|| root.getInput() == null || root.getInput().size() != 2
+			|| root.getParent() == null || root.getParent().size() != 1)
+			return null;
+		ExactInput weighted = findExactInput(facts, rootKey, 0);
+		ExactInput right = findExactInput(facts, rootKey, 1);
+		if(weighted == null || right == null || weighted.hop().getParent() == null
+			|| weighted.hop().getParent().size() != 1
+			|| weighted.hop().getParent().get(0) != root)
+			return null;
+		double floor = latentLeftWeightedWdivmmFloor(facts, rootKey, weighted, right);
+		if(floor <= 0.0)
+			return null;
+		WeightedOuter structure = weightedOuter(facts, weighted);
+		if(structure == null || structure.outer().hop().getParent() == null
+			|| structure.outer().hop().getParent().size() != 1
+			|| structure.outer().hop().getParent().get(0) != weighted.hop())
+			return null;
+		FType runtimeInputFType = uniquePartitionedFoutType(facts, structure.weights().key());
+		return new DirectWdivmmRuntimeFact(rootKey, weighted.key(), structure.outer().key(),
+			structure.weights().key(), floor, runtimeInputFType,
+			runtimeInputFType == FType.COL);
+	}
+
+	private static boolean isDirectWdivmmRemovedIntermediate(PlacementAnalysis analysis,
+			CompiledHopKey key) {
+		for(PlacementAnalysis.CompiledInputEdgeFact edge
+				: analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(edge.producer() != key)
+				continue;
+			DirectWdivmmRuntimeFact direct = directWdivmmRuntimeFact(
+				analysis, edge.consumer());
+			if(direct != null && direct.weighted() == key)
+				return true;
+			for(PlacementAnalysis.CompiledInputEdgeFact parentEdge
+					: analysis.compiledInputEdgesInCanonicalOrder()) {
+				if(parentEdge.producer() != edge.consumer())
+					continue;
+				direct = directWdivmmRuntimeFact(analysis, parentEdge.consumer());
+				if(direct != null && direct.outer() == key
+					&& direct.weighted() == edge.consumer())
+					return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -756,7 +907,8 @@ public final class PlacementCostSemantics {
 		List<FType> types = facts.legalAlternatives(key).stream()
 			.filter(state -> state.execType() == ExecType.FED
 				&& state.output() == FederatedOutput.FOUT
-				&& (state.fType() == FType.ROW || state.fType() == FType.COL))
+				&& (state.fType() == FType.ROW || state.fType() == FType.COL
+					|| state.fType() == FType.FULL))
 			.map(PlacementState::fType).distinct().toList();
 		return types.size() == 1 ? types.get(0) : null;
 	}
@@ -952,6 +1104,9 @@ public final class PlacementCostSemantics {
 	public record LatentWdivmmTransposePairFact(CompiledHopKey inner,
 		CompiledHopKey weights, double computeTimeFloor, FType partitionedInputFType,
 		boolean nativeOutputMustBeLocal) { }
+	public record DirectWdivmmRuntimeFact(CompiledHopKey root, CompiledHopKey weighted,
+		CompiledHopKey outer, CompiledHopKey weights, double computeTimeFloor,
+		FType runtimeInputFType, boolean nativeOutputMustBeLocal) { }
 	private interface ExactPlacementFacts {
 		Hop hop(CompiledHopKey key);
 		NodeShapeFact shape(CompiledHopKey key);

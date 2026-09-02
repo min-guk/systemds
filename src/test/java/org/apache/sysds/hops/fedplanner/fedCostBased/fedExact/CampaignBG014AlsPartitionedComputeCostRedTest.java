@@ -25,6 +25,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.ExpectedSparseAssignmentEstimates;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
@@ -42,15 +43,39 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 	public void singleWorkerFullAlsHasCandidateReachableFedAllPlan() throws Exception {
 		try {
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			PlacementEmissionTransaction.resetForTesting();
+			DMLProgram program = als(1);
 			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
-				.bindAtFinalHopBoundary(als(1));
-			var selected = new FederatedPlannerFedAll().select(analysis);
+				.bindAtFinalHopBoundary(program);
+			var invocation = new FederatedPlannerFedAll().rewriteProgram(
+				program, null, null, analysis);
+			var selected = invocation.result();
 			Assert.assertEquals("FedAll must assign every ALS occurrence from the shared legal domain",
 				analysis.graph().decisionNodes().size(), selected.selectedStates().size());
 			Assert.assertTrue("FedAll must retain at least one selected candidate for worker=1 FULL ALS",
 				!selected.selectedCandidateSelections().isEmpty());
+			List<CompiledHopKey> directOwners = analysis.compiledHopOccurrences().stream()
+				.map(PlacementAnalysis.HopOccurrenceProjection::key)
+				.filter(key -> PlacementCostSemantics.directWdivmmRuntimeFact(analysis, key) != null)
+				.toList();
+			Assert.assertFalse("Worker=1 ALS must expose the direct line-125 WDivMM owner",
+				directOwners.isEmpty());
+			for(CompiledHopKey owner : directOwners) {
+				var runtime = PlacementCostSemantics.directWdivmmRuntimeFact(analysis, owner);
+				var ownerState = selected.selectedStates().get(owner);
+				var weightsState = selected.selectedStates().get(runtime.weights());
+				Assert.assertTrue("FedAll's selected FULL owner must satisfy the same runtime contract"
+					+ " used by every selector", PlacementCostSemantics
+						.directWdivmmRuntimeAssignmentCompatible(runtime, ownerState, weightsState));
+				Assert.assertTrue("Atomic emission must explicitly authorize only the modeled Pattern-2"
+					+ " substitution for runtime recompilation",
+					FederatedPlannerUtils.hasPlannerModeledRewrite(
+						analysis.hop(owner).orElseThrow(),
+						FederatedPlannerUtils.REWRITE_DIRECT_WDIVMM_PATTERN_2));
+			}
 		}
 		finally {
+			PlacementEmissionTransaction.resetForTesting();
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 		}
 	}
@@ -345,6 +370,18 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 	}
 
 	@Test
+	public void alsLine125DirectWdivmmUsesSharedFullAndRowRuntimeFacts() throws Exception {
+		try {
+			assertDirectWdivmmRuntimeFact(1, FType.FULL);
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			assertDirectWdivmmRuntimeFact(4, FType.ROW);
+		}
+		finally {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
+	@Test
 	public void wanLightAlsExactKeepsLargeInnerElementwiseWorkFederated() throws Exception {
 		Map<String,String> oldProperties = installWanLightCostProperties();
 		try {
@@ -395,6 +432,45 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			.distinct().toList();
 		Assert.assertEquals("ALS source must publish one exact durable layout", 1, sourceTypes.size());
 		return sourceTypes.get(0);
+	}
+
+	private static void assertDirectWdivmmRuntimeFact(int workers, FType expectedInput)
+		throws Exception {
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(als(workers));
+		List<CompiledHopKey> owners = analysis.compiledHopOccurrences().stream()
+			.map(PlacementAnalysis.HopOccurrenceProjection::key)
+			.filter(key -> analysis.hop(key).orElse(null) instanceof AggBinaryOp mm
+				&& mm.isMatrixMultiply() && mm.getBeginLine() == 125)
+			.filter(key -> PlacementCostSemantics.directWdivmmRuntimeFact(analysis, key) != null)
+			.toList();
+		Assert.assertFalse("ALS line 125 must expose direct Pattern-2 runtime facts", owners.isEmpty());
+		for(CompiledHopKey owner : owners) {
+			PlacementCostSemantics.DirectWdivmmRuntimeFact runtime =
+				PlacementCostSemantics.directWdivmmRuntimeFact(analysis, owner);
+			Assert.assertSame(owner, runtime.root());
+			Assert.assertEquals(expectedInput, runtime.runtimeInputFType());
+			Assert.assertFalse("RIGHT WDivMM over FULL/ROW has non-overlapping output",
+				runtime.nativeOutputMustBeLocal());
+			Assert.assertTrue("The common privacy-filtered owner domain must retain its executable FED state",
+				analysis.graph().node(owner).orElseThrow().legalAlternatives().stream()
+					.anyMatch(state -> state.execType() == ExecType.FED
+						&& state.fType() == expectedInput));
+			Assert.assertTrue("The exact W occurrence must own the runtime FederationMap",
+				analysis.graph().node(runtime.weights()).orElseThrow().legalAlternatives().stream()
+					.anyMatch(state -> state.execType() == ExecType.FED
+						&& state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction
+							.FederatedOutput.FOUT
+						&& state.fType() == expectedInput));
+			Assert.assertEquals("The fused weighted intermediate must not retain source-level compute",
+				0.0, PlacementCostSemantics.analysisAwareUnitLocalCost(
+					analysis, runtime.weighted()), 0.0);
+			Assert.assertEquals("The fused outer product must not retain source-level compute",
+				0.0, PlacementCostSemantics.analysisAwareUnitLocalCost(
+					analysis, runtime.outer()), 0.0);
+			Assert.assertTrue("The surviving root must own the rank-aware WDivMM compute",
+				PlacementCostSemantics.analysisAwareUnitLocalCost(analysis, owner) > 0.0);
+		}
 	}
 
 	private static List<CompiledHopKey> innerMaskReads(PlacementAnalysis analysis) {

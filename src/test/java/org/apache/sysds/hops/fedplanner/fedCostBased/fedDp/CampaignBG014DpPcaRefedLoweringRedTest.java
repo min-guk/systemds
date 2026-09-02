@@ -14,9 +14,9 @@ import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -61,9 +61,10 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 			AtomicReference<PlannerInvocationReceipt> captured = new AtomicReference<>();
 			DMLTranslator translator = new DMLTranslator(program);
 			translator.constructLops(program, captured::set);
-			Assert.assertTrue("PCA must use the DP planner", captured.get() instanceof DpInvocationReceipt);
-			DpInvocationReceipt receipt = (DpInvocationReceipt) captured.get();
-			Assert.assertEquals("fixture must retain four-worker cost geometry", 4, receipt.memo().getNumWorkers());
+			Assert.assertTrue("PCA must use the local-conflict DP planner",
+				captured.get() instanceof ExactPlacementInput);
+			ExactPlacementInput receipt = (ExactPlacementInput) captured.get();
+			Assert.assertEquals("fixture must retain four-worker cost geometry", 4, receipt.analysis().numWorkers());
 			long centeredXOccurrences = receipt.analysis().occurrences().stream()
 				.filter(occurrence -> occurrence.key().functionNamespace().endsWith("::m_pca"))
 				.filter(occurrence -> occurrence.hop().getOpString().equals("b(-)"))
@@ -158,8 +159,9 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 			AtomicReference<PlannerInvocationReceipt> captured = new AtomicReference<>();
 			DMLTranslator translator = new DMLTranslator(program);
 			translator.constructLops(program, captured::set);
-			Assert.assertTrue("PCA must use the DP planner", captured.get() instanceof DpInvocationReceipt);
-			DpInvocationReceipt receipt = (DpInvocationReceipt) captured.get();
+			Assert.assertTrue("PCA must use the local-conflict DP planner",
+				captured.get() instanceof ExactPlacementInput);
+			ExactPlacementInput receipt = (ExactPlacementInput) captured.get();
 
 			StringBuilder conflicts = new StringBuilder();
 			for(Map.Entry<Long, Map<Long, FederatedRefedRegistry.AnchorSpec>> scope :

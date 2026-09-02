@@ -236,6 +236,17 @@ public class FederatedPlannerDpCostEstimator {
 				genericResultDownloadCost);
 		}
 
+		public FederatedCostModel.MixedFedLocalCost mixedFedLocalCost(Hop hop,
+			List<Hop> inputs, List<FType> inputFTypes, FType logicalFType,
+			double baseSelfCost, double outputMemEstimate, int workers) {
+			if(hop == null || memo.requirePlanCarrierOccurrence(hop) != occurrence)
+				throw new IllegalArgumentException(
+					"Estimator mixed FED/local cost Hop is not owned by the exact occurrence");
+			return PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
+				occurrence.key(), inputs, inputFTypes, logicalFType, baseSelfCost,
+				outputMemEstimate, workers);
+		}
+
 		public void getChildCosts(FederatedPlannerDpMemoTable.HopCommon common,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> commonTable, List<Hop> inputs,
 			double[][] cumulative, double[] toCP, double[] toFED, double[] foutToFED,

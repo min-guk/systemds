@@ -1027,6 +1027,7 @@ public final class PlacementAnalysis {
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
+	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> inputEdgesByConsumerIdentity;
 	private final Map<CompiledInputEdgeFact,CoordinatorInputAccess> coordinatorInputAccessByIdentity;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> cfgDefinitionSourcesByIdentity;
 	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
@@ -1169,6 +1170,8 @@ public final class PlacementAnalysis {
 			analysisKeysByIdentity);
 		this.compiledInputEdgesInCanonicalOrder = validateCompiledInputEdges(compiledInputEdges);
 		this.inputEdgesByIdentity = indexCompiledInputEdges(this.compiledInputEdgesInCanonicalOrder);
+		this.inputEdgesByConsumerIdentity = indexCompiledInputEdgesByConsumer(
+			this.compiledInputEdgesInCanonicalOrder);
 		this.coordinatorInputAccessByIdentity = deriveCoordinatorInputAccess(
 			this.compiledInputEdgesInCanonicalOrder);
 		this.cfgDefinitionSourcesByIdentity = indexCfgDefinitionSources(graph);
@@ -1613,6 +1616,18 @@ public final class PlacementAnalysis {
 		return Collections.unmodifiableMap(indexed);
 	}
 
+	private static Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> indexCompiledInputEdgesByConsumer(
+		List<CompiledInputEdgeFact> facts) {
+		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> indexed = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact fact : facts) {
+			Map<Integer,CompiledInputEdgeFact> byPosition = indexed.computeIfAbsent(
+				fact.consumer(), ignored -> new LinkedHashMap<>());
+			if(byPosition.putIfAbsent(fact.inputPosition(), fact) != null)
+				throw new IllegalArgumentException("Duplicate compiled consumer input edge fact");
+		}
+		return Collections.unmodifiableMap(indexed);
+	}
+
 	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(NeutralPlacementGraph graph,
 		List<HopOccurrenceProjection> occurrences, PlacementShapeFacts shapeFacts) {
 		Objects.requireNonNull(graph, "graph");
@@ -1842,6 +1857,17 @@ public final class PlacementAnalysis {
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {
 		return compiledInputEdgesInCanonicalOrder;
+	}
+
+	/** O(1) exact compiled matrix/frame input lookup by consumer occurrence and position. */
+	public Optional<CompiledInputEdgeFact> compiledInputEdge(CompiledHopKey consumer,
+		int inputPosition) {
+		if(inputPosition < 0)
+			throw new IllegalArgumentException("inputPosition must be non-negative");
+		NeutralPlacementGraph.Node target = graph.node(Objects.requireNonNull(consumer, "consumer"))
+			.orElseThrow(() -> new IllegalArgumentException("Compiled input consumer is outside the analysis"));
+		Map<Integer,CompiledInputEdgeFact> byPosition = inputEdgesByConsumerIdentity.get(target.key());
+		return Optional.ofNullable(byPosition == null ? null : byPosition.get(inputPosition));
 	}
 
 	/**

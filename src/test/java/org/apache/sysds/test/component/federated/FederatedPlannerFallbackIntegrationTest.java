@@ -4648,7 +4648,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testPlannerDoesNotAdvertiseNativeFederatedWdivmmForFullX() {
+	public void testPlannerAdvertisesNativeFederatedWdivmmForSingleRangeFullX() {
 		DataOp x = federatedRead("XwdivmmFullPlan", ROWS, COLS);
 		DataOp u = transientRead("UwdivmmFullPlan", ROWS, 2);
 		DataOp v = transientRead("VwdivmmFullPlan", COLS, 2);
@@ -4663,13 +4663,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
 			wdivmm, Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, caps.foutFType().orElse(null), caps);
 
-		assertEquals("FULL-X WDIVMM should use coordinator execution because QuaternaryWDivMMFEDInstruction "
-			+ "supports native FED only for ROW/COL X", ExecType.CP, caps.exec());
-		assertEquals("FULL-X WDIVMM may still materialize the local result as FOUT", FederatedOutput.FOUT,
+		assertEquals("A single-range FULL FederationMap follows the runtime's explicit row branch",
+			ExecType.FED, caps.exec());
+		assertEquals("FULL-X WDIVMM retains its single-range remote result", FederatedOutput.FOUT,
 			caps.placement());
-		assertTrue("FULL-X WDIVMM should retain CP->FOUT as a cost competitor", decision.allowCP_FOUT);
-		assertFalse("FULL-X WDIVMM must not advertise native FED/FOUT", decision.allowFED_FOUT);
-		assertFalse("FULL-X WDIVMM must not advertise native FED/LOUT", decision.allowFED_LOUT);
+		assertTrue("FULL-X WDIVMM must retain CP->FOUT as a cost competitor", decision.allowCP_FOUT);
+		assertTrue("FULL-X WDIVMM must advertise the runtime-backed FED/FOUT candidate",
+			decision.allowFED_FOUT);
+		assertTrue("Forced-local FULL-X WDIVMM is also executable", decision.allowFED_LOUT);
 	}
 
 	@Test
@@ -4888,7 +4889,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testAggBinaryLocalResultDoesNotRepeatLogicalInstructionFixedOverhead() throws Exception {
+	public void testAggBinaryLocalResultChargesBlockingRetrievalStage() throws Exception {
 		DataOp left = federatedRead("XaggBinarySingleControlPlan", ROWS, COLS);
 		DataOp right = transientRead("YaggBinarySingleControlPlan", COLS, 2);
 		AggBinaryOp ba = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
@@ -4901,10 +4902,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 				100.0, resultMem, 1);
 		assertTrue("AggregateBinary local-result retrieval must retain the result payload cost",
 			runtimeStages.getPartialResultDownloadCost() > 0.0);
-		assertTrue("The enclosing FED unary owns the fixed latency/control stage, so its in-band"
-			+ " result retrieval must remain cheaper than a standalone explicit download",
-			runtimeStages.getPartialResultDownloadCost()
-				< FederatedCostModel.computeDownloadNetworkCost(resultMem, FType.FULL, 1));
+		double sharedBlockingResultCost =
+			FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+				ba, FType.ROW, resultMem, 1, Double.POSITIVE_INFINITY);
+		assertEquals("AggregateBinary local aggregation and ordinary FED/LOUT bind share the"
+			+ " same one-worker blocking result-stage contract", sharedBlockingResultCost,
+			runtimeStages.getPartialResultDownloadCost(), 0.0);
 	}
 
 	@Test

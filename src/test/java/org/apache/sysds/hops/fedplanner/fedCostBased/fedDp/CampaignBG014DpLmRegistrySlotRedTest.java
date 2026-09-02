@@ -12,8 +12,8 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -49,8 +49,8 @@ public class CampaignBG014DpLmRegistrySlotRedTest {
 			AtomicReference<PlannerInvocationReceipt> captured = new AtomicReference<>();
 			DMLTranslator translator = new DMLTranslator(program);
 			translator.constructLops(program, captured::set);
-			Assert.assertTrue("LM must use the DP planner, receipt=" + captured.get(),
-				captured.get() instanceof DpInvocationReceipt);
+			Assert.assertTrue("LM must use the local-conflict DP planner, receipt=" + captured.get(),
+				captured.get() instanceof ExactPlacementInput);
 			translator.getRuntimeProgram(program, config);
 		}
 		finally {
@@ -94,8 +94,8 @@ public class CampaignBG014DpLmRegistrySlotRedTest {
 			AtomicReference<PlannerInvocationReceipt> captured = new AtomicReference<>();
 			DMLTranslator translator = new DMLTranslator(program);
 			translator.constructLops(program, captured::set);
-			Assert.assertTrue("LM must use the DP planner, receipt=" + captured.get(),
-				captured.get() instanceof DpInvocationReceipt);
+			Assert.assertTrue("LM must use the local-conflict DP planner, receipt=" + captured.get(),
+				captured.get() instanceof ExactPlacementInput);
 			translator.getRuntimeProgram(program, config);
 		}
 		finally {

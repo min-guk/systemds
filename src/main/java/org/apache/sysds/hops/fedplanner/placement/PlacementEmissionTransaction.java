@@ -312,6 +312,8 @@ public final class PlacementEmissionTransaction {
 		selected.forEach((key, state) -> selectedStates.put(key, state.placementState()));
 		List<CandidateSelectionReceipt> selectedCandidates = List.copyOf(
 			result.selectedCandidateSelections());
+		Map<CompiledHopKey,CandidateSelectionReceipt> selectedCandidatesByConsumer =
+			CandidateSelections.indexByConsumer(selectedCandidates);
 		List<RelocationChoiceReceipt> selectedChoices = List.copyOf(
 			result.selectedRelocationChoices());
 		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
@@ -348,12 +350,21 @@ public final class PlacementEmissionTransaction {
 			// above and is projected structurally by the planner from its source.
 			if(!analysis.isCompiledHopOccurrence(node.key()))
 				continue;
+			Set<String> modeledRewriteKinds = modeledRewriteKinds(analysis, node.key(),
+				emissionState, selectedStates, selectedCandidatesByConsumer.get(node.key()));
 			HopWrite prior = writesByHop.get(occurrence.hop());
 			if(prior != null && (!prior.state().equals(state)
 				|| prior.derivedFedFout() != emissionState.derivedFedFout()))
 				throw new PlacementEmissionException("One concrete Hop has conflicting occurrence authority");
-			writesByHop.putIfAbsent(occurrence.hop(), new HopWrite(occurrence.hop(), state,
-				emissionState.derivedFedFout()));
+			if(prior == null)
+				writesByHop.put(occurrence.hop(), new HopWrite(occurrence.hop(), state,
+					emissionState.derivedFedFout(), modeledRewriteKinds));
+			else {
+				Set<String> commonRewriteKinds = new LinkedHashSet<>(prior.modeledRewriteKinds());
+				commonRewriteKinds.retainAll(modeledRewriteKinds);
+				writesByHop.put(occurrence.hop(), new HopWrite(occurrence.hop(), state,
+					emissionState.derivedFedFout(), Set.copyOf(commonRewriteKinds)));
+			}
 		}
 		for(CompiledHopKey key : selected.keySet())
 			if(!selectedIdentities.contains(key))
@@ -371,6 +382,29 @@ public final class PlacementEmissionTransaction {
 			foutMaterializations, locals);
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites),
 			runtimeActionSnapshot(registryWrites));
+	}
+
+	private static Set<String> modeledRewriteKinds(PlacementAnalysis analysis, CompiledHopKey key,
+		PlacementEmissionState ownerEmission, Map<CompiledHopKey,PlacementState> selectedStates,
+		CandidateSelectionReceipt selectedCandidate) {
+		PlacementCostSemantics.DirectWdivmmRuntimeFact runtime =
+			PlacementCostSemantics.directWdivmmRuntimeFact(analysis, key);
+		if(runtime == null)
+			return Set.of();
+		PlacementState owner = ownerEmission.placementState();
+		PlacementState weights = selectedStates.get(runtime.weights());
+		FType executionFType = selectedCandidate == null ? owner.fType()
+			: selectedCandidate.emission().executionFType();
+		if(!PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(runtime, owner,
+			executionFType, ownerEmission.derivedFedFout(), weights)) {
+			if(owner.execType() == ExecType.FED)
+				throw new PlacementEmissionException(
+					"Selected direct WDivMM placement violates its shared runtime-input contract");
+			return Set.of();
+		}
+		if(owner.execType() == ExecType.CP && owner.output() != FederatedOutput.LOUT)
+			return Set.of();
+		return Set.of(FederatedPlannerUtils.REWRITE_DIRECT_WDIVMM_PATTERN_2);
 	}
 
 	private static void validateExactGraphConstraints(PlacementAnalysis analysis,
@@ -1044,7 +1078,7 @@ public final class PlacementEmissionTransaction {
 			// Dynamic function/loop recompilation can rebuild Hops with new IDs. Publish the exact
 			// emitted state by stable source signature so recompilation preserves planner authority.
 			FederatedPlannerUtils.registerPlannerRecompileState(write.hop(),
-				write.state().execType(), write.state().output());
+				write.state().execType(), write.state().output(), write.modeledRewriteKinds());
 			if(i == 0)
 				injector.inject(FailurePoint.AFTER_FIRST_HOP_MUTATION);
 		}
@@ -1197,7 +1231,12 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
-	private record HopWrite(Hop hop, PlacementState state, boolean derivedFedFout) { }
+	private record HopWrite(Hop hop, PlacementState state, boolean derivedFedFout,
+		Set<String> modeledRewriteKinds) {
+		private HopWrite {
+			modeledRewriteKinds = Set.copyOf(Objects.requireNonNull(modeledRewriteKinds));
+		}
+	}
 
 	private record HopSnapshot(ExecType execType, ExecType forcedExecType, FederatedOutput output,
 		boolean outputDerived, boolean plannerPlacementSelected) {

@@ -1280,7 +1280,7 @@ public class FederatedPlannerDpCostEnumerator {
 					nativeResultDownloadCost = exactEstimator.nativeFederatedLoutResultCost(
 						hop, outputMemEstimate, numOfWorkers, nativeResultDownloadCost);
 						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
-								FederatedCostModel.computeMixedFedLocalCost(
+								exactEstimator.mixedFedLocalCost(
 										hop, exactCollectedHops, effectiveCollectedFTypes, oracleLogicalFType,
 										baseSelfCost, outputMemEstimate, numOfWorkers);
 						double nativeAggUnaryFedComputeCost =
@@ -3057,7 +3057,7 @@ public class FederatedPlannerDpCostEnumerator {
 			hop, executionFType, outputMemEstimate, numOfWorkers, nativeAggUnaryResultDownloadCost);
 		nativeResultDownloadCost = exactEstimator.nativeFederatedLoutResultCost(
 			hop, outputMemEstimate, numOfWorkers, nativeResultDownloadCost);
-		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost = FederatedCostModel.computeMixedFedLocalCost(
+		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost = exactEstimator.mixedFedLocalCost(
 			hop, exactCollectedHops, effectiveCollectedFTypes, executionFType, baseSelfCost, outputMemEstimate,
 			numOfWorkers);
 		double nativeAggUnaryFedComputeCost = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(

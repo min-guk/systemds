@@ -78,6 +78,7 @@ import java.util.function.Function;
  * Utility class for federated planners.
  */
 public class FederatedPlannerUtils {
+	public static final String REWRITE_DIRECT_WDIVMM_PATTERN_2 = "DIRECT_WDIVMM_PATTERN_2";
 	private static final String FED_MATRIX_IDENTIFIER = "matrix";
 	private static final java.util.Set<String> FED_INIT_VARS = ConcurrentHashMap.newKeySet();
 	private static final Map<String, FType> FED_INIT_FTYPES = new ConcurrentHashMap<>();
@@ -98,18 +99,24 @@ public class FederatedPlannerUtils {
 
 	/** Immutable copy of one planner recompile decision. */
 	public record PlannerRecompileStateSnapshot(Types.ExecType execType, FederatedOutput federatedOutput,
-		boolean federatedOutputDerived) { }
+		boolean federatedOutputDerived, Set<String> modeledRewriteKinds) {
+		public PlannerRecompileStateSnapshot {
+			modeledRewriteKinds = Set.copyOf(Objects.requireNonNull(modeledRewriteKinds));
+		}
+	}
 
 	public static final class PlannerRecompileState {
 		private final Types.ExecType _execType;
 		private final FederatedOutput _fedOut;
 		private final boolean _fedOutDerived;
+		private final Set<String> _modeledRewriteKinds;
 
 		private PlannerRecompileState(Types.ExecType execType, FederatedOutput fedOut,
-			boolean fedOutDerived) {
+			boolean fedOutDerived, Set<String> modeledRewriteKinds) {
 			_execType = execType;
 			_fedOut = fedOut;
 			_fedOutDerived = fedOutDerived;
+			_modeledRewriteKinds = Set.copyOf(Objects.requireNonNull(modeledRewriteKinds));
 		}
 
 		public Types.ExecType getExecType() {
@@ -124,11 +131,20 @@ public class FederatedPlannerUtils {
 			return _fedOutDerived;
 		}
 
+		public boolean permitsModeledRewrite(String kind) {
+			return kind != null && _modeledRewriteKinds.contains(kind);
+		}
+
+		public Set<String> getModeledRewriteKinds() {
+			return _modeledRewriteKinds;
+		}
+
 		private boolean sameAs(PlannerRecompileState that) {
 			if (that == null)
 				return false;
 			return _execType == that._execType && _fedOut == that._fedOut
-				&& _fedOutDerived == that._fedOutDerived;
+				&& _fedOutDerived == that._fedOutDerived
+				&& _modeledRewriteKinds.equals(that._modeledRewriteKinds);
 		}
 	}
 
@@ -646,14 +662,21 @@ public class FederatedPlannerUtils {
 
 	public static void registerPlannerRecompileState(
 		Hop hop, Types.ExecType execType, FederatedOutput fedOut) {
+		registerPlannerRecompileState(hop, execType, fedOut, Set.of());
+	}
+
+	public static void registerPlannerRecompileState(Hop hop, Types.ExecType execType,
+		FederatedOutput fedOut, Set<String> modeledRewriteKinds) {
 		PlannerRecompileAuthority authority = plannerRecompileAuthority();
 		String signature = plannerRecompileSignature(hop);
-		if (signature == null || signature.isEmpty() || execType == null || fedOut == null)
+		if (signature == null || signature.isEmpty() || execType == null || fedOut == null
+			|| modeledRewriteKinds == null)
 			return;
 		boolean fedOutDerived = hop.isFederatedOutputDerived();
 		if (fedOutDerived && (execType != Types.ExecType.FED || fedOut != FederatedOutput.FOUT))
 			throw new IllegalArgumentException("Derived federated output requires FED/FOUT planner state");
-		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut, fedOutDerived);
+		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut, fedOutDerived,
+			modeledRewriteKinds);
 		synchronized(authority) {
 			authority.requireMutable();
 			String priorHopSignature = authority._signaturesByHopId.putIfAbsent(
@@ -701,7 +724,8 @@ public class FederatedPlannerUtils {
 
 	private static String formatPlannerRecompileState(PlannerRecompileState state) {
 		return state == null ? "null" : state.getExecType() + "/" + state.getFederatedOutput()
-			+ "/derived=" + state.isFederatedOutputDerived();
+			+ "/derived=" + state.isFederatedOutputDerived()
+			+ "/rewrites=" + state.getModeledRewriteKinds();
 	}
 
 	public static PlannerRecompileState getPlannerRecompileState(Hop hop) {
@@ -726,6 +750,14 @@ public class FederatedPlannerUtils {
 	public static boolean hasPlannerPlacement(Hop hop) {
 		return hop != null && (hop.isPlannerPlacementSelected()
 			|| getPlannerRecompileState(hop) != null);
+	}
+
+	/** Whether the committed shared placement explicitly certified one runtime substitution. */
+	public static boolean hasPlannerModeledRewrite(Hop hop, String kind) {
+		if(hop == null || kind == null)
+			return false;
+		PlannerRecompileState state = getPlannerRecompileState(hop);
+		return state != null && state.permitsModeledRewrite(kind);
 	}
 
 	/** Whether one exact occurrence is selected at the layout-free coordinator boundary. */
@@ -823,7 +855,8 @@ public class FederatedPlannerUtils {
 		for(Entry<String, PlannerRecompileState> entry : authority._states.entrySet()) {
 			PlannerRecompileState state = entry.getValue();
 			snapshot.put(entry.getKey(), new PlannerRecompileStateSnapshot(
-				state.getExecType(), state.getFederatedOutput(), state.isFederatedOutputDerived()));
+				state.getExecType(), state.getFederatedOutput(), state.isFederatedOutputDerived(),
+				state.getModeledRewriteKinds()));
 		}
 		return Collections.unmodifiableMap(snapshot);
 	}
@@ -850,7 +883,8 @@ public class FederatedPlannerUtils {
 				String signature = entry.getKey();
 				PlannerRecompileStateSnapshot state = entry.getValue();
 				if (signature == null || signature.isEmpty() || state == null
-					|| state.execType() == null || state.federatedOutput() == null)
+					|| state.execType() == null || state.federatedOutput() == null
+					|| state.modeledRewriteKinds() == null)
 					throw new IllegalArgumentException("Planner recompile snapshot contains an invalid entry");
 				if (state.federatedOutputDerived()
 					&& (state.execType() != Types.ExecType.FED
@@ -859,7 +893,7 @@ public class FederatedPlannerUtils {
 						"Derived planner recompile snapshot must be FED/FOUT");
 				authority._states.put(signature,
 					new PlannerRecompileState(state.execType(), state.federatedOutput(),
-						state.federatedOutputDerived()));
+						state.federatedOutputDerived(), state.modeledRewriteKinds()));
 			}
 			for (String signature : ambiguousSignatures) {
 				if (signature == null || signature.isEmpty())

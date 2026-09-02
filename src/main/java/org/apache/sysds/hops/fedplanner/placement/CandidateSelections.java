@@ -1361,6 +1361,13 @@ public final class CandidateSelections {
 			&& !latentWdivmmRuntimeInputReachable(analysis, latentWdivmm,
 				assignment, allowUnassigned))
 			return false;
+		PlacementCostSemantics.DirectWdivmmRuntimeFact directWdivmm =
+			PlacementCostSemantics.directWdivmmRuntimeFact(
+				analysis, receipt.rule().parentOccurrence());
+		if(directWdivmm != null && !directWdivmmRuntimeInputReachable(analysis,
+			directWdivmm, receipt.emission(), assignment,
+			allowUnassigned))
+			return false;
 		for(int position = 0; position < receipt.rule().orderedInputs().size(); position++) {
 			final int inputPosition = position;
 			CandidateInputState input = receipt.rule().orderedInputs().get(position);
@@ -1412,6 +1419,26 @@ public final class CandidateSelections {
 			.anyMatch(state -> state.output()
 				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 				&& state.fType() == runtime.partitionedInputFType());
+	}
+
+	private static boolean directWdivmmRuntimeInputReachable(PlacementAnalysis analysis,
+		PlacementCostSemantics.DirectWdivmmRuntimeFact runtime,
+		PlacementAnalysis.CandidateEmissionFact ownerEmission,
+		Map<CompiledHopKey,PlacementState> assignment, boolean allowUnassigned) {
+		PlacementState owner = ownerEmission.emissionState().placementState();
+		PlacementState selected = assignment.get(runtime.weights());
+		if(selected != null)
+			return PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+				runtime, owner, ownerEmission.executionFType(),
+				ownerEmission.emissionState().derivedFedFout(), selected);
+		if(owner.execType() != ExecType.FED)
+			return owner.execType() == ExecType.CP;
+		if(!allowUnassigned)
+			return false;
+		return analysis.graph().node(runtime.weights()).orElseThrow().legalAlternatives().stream()
+			.anyMatch(state -> PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+				runtime, owner, ownerEmission.executionFType(),
+				ownerEmission.emissionState().derivedFedFout(), state));
 	}
 
 	static boolean derivedFoutActionReachable(NeutralPlacementGraph graph,

@@ -523,6 +523,35 @@ final class ExactPhysicalModel {
 					return selectedWeights.output() == FederatedOutput.FOUT
 						&& selectedWeights.fType() == runtime.partitionedInputFType()
 						? 0.0 : Double.POSITIVE_INFINITY;
+					}));
+		}
+		for(Node ownerNode : analysis.graph().decisionNodes()) {
+			DecisionDomain owner = domains.get(ownerNode.key());
+			if(owner == null)
+				continue;
+			org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+				.DirectWdivmmRuntimeFact runtime =
+				org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+					.directWdivmmRuntimeFact(analysis, owner.node().key());
+			if(runtime == null || runtime.runtimeInputFType() == null)
+				continue;
+			DecisionDomain weights = domains.get(runtime.weights());
+			if(weights == null)
+				throw new IllegalArgumentException(
+					"EXACT_DIRECT_WDIVMM_RUNTIME_INPUT_DOMAIN_MISSING|owner="
+						+ owner.node().key().normalizedSignature());
+			factors.add(ExactCategoricalSolver.Factor.lazy(
+				List.of(owner.variable(), weights.variable()), values -> {
+					Alternative selectedOwner = owner.alternatives().get(values[0]);
+					CandidateEmissionFact emission = selectedOwner.captured()
+						? selectedOwner.candidateEmission() : selectedOwner.executionEmission();
+					return org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+						.directWdivmmRuntimeAssignmentCompatible(runtime,
+							selectedOwner.state(), emission == null ? selectedOwner.state().fType()
+								: emission.executionFType(), emission != null
+									&& emission.emissionState().derivedFedFout(),
+							weights.alternatives().get(values[1]).state())
+							? 0.0 : Double.POSITIVE_INFINITY;
 				}));
 		}
 	}

@@ -247,6 +247,7 @@ public class PlacementEmissionTransactionRedTest {
 	@Test
 	public void fullFedInitDurableAnchorMatchesLiveRegisteredAuthority() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileFullRelocationProgram());
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NeutralPlacementGraph.Node anchor = uniqueNode(analysis, "XF");
 
@@ -271,6 +272,7 @@ public class PlacementEmissionTransactionRedTest {
 	@Test
 	public void singleWorkerFullAuthorityIsIdenticalForFedAllAndUnmarkedHeuristic() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileFullRelocationProgram());
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		var fedAll = new FedAllPlacementAdapter().select(analysis);
 		var heuristic = new HeuristicPlacementAdapter().select(analysis, Set.of());
@@ -298,6 +300,7 @@ public class PlacementEmissionTransactionRedTest {
 	@Test
 	public void multiReturnFunctionOutputMaterializationTargetsTheExactPhysicalCallInput() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileMultiReturnMaterializationProgram());
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NormalizedPlannerResult plan = new FedAllPlacementAdapter().select(analysis);
 		List<FunctionOp> calls = analysis.occurrences().stream().map(o -> o.hop())
@@ -314,9 +317,11 @@ public class PlacementEmissionTransactionRedTest {
 				sourceActions.add(action);
 		Assert.assertEquals("FedAll must explicitly materialize the selected FED/FOUT EIGEN input locally",
 			1, sourceActions.size());
-		Assert.assertTrue("fixture must include the logical multi-return output descriptors",
-			sourceActions.get(0).obligations().stream().anyMatch(obligation ->
-				call.getOutputs().contains(analysis.hop(obligation.consumerOccurrence()).orElseThrow())));
+		Assert.assertEquals("The common closure must project one exact physical FunctionCallCP input",
+			1, sourceActions.get(0).obligations().size());
+		var obligation = sourceActions.get(0).obligations().get(0);
+		Assert.assertSame(call, analysis.hop(obligation.consumerOccurrence()).orElseThrow());
+		Assert.assertEquals(0, obligation.inputPosition());
 
 		program.install(analysis);
 		PlacementEmissionTransaction.emit(program, plan, FailureInjector.none());
@@ -406,6 +411,7 @@ public class PlacementEmissionTransactionRedTest {
 
 	private static Fixture relocationFixture() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileRelocationProgram());
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis baseline = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NormalizedPlannerResult baselinePlan = new FedAllPlacementAdapter().select(baseline);
 		RelocationAction upload = baseline.graph().relocationActions().stream()
@@ -447,7 +453,8 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_EXACT_LOCAL_INPUT", !localEdges.isEmpty());
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_CP_LOUT_SOURCE",
 			selected(plan, local.key(), ExecType.CP, FederatedOutput.LOUT));
-		Assert.assertTrue("P4_FIXTURE_LOCAL_SOURCE_HAS_NO_DURABLE_ANCHOR", local.anchors().isEmpty());
+		Assert.assertTrue("P4 fixture's partition-preserving local source must retain the exact"
+			+ " durable target layout used by its selected upload", local.anchors().contains(upload.key().durableAnchor()));
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_EXACT_RELOCATION_OBLIGATION", 1,
 			upload.obligations().size());
 		Assert.assertEquals("P4_FIXTURE_RELOCATION_ENDPOINTS_ARE_EXACT",
@@ -496,6 +503,7 @@ public class PlacementEmissionTransactionRedTest {
 
 	private static Fixture localMaterializationFixture() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileFullRelocationProgram());
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NormalizedPlannerResult baseline = new FedAllPlacementAdapter().select(analysis);
 		NeutralPlacementGraph.Node source = uniqueNode(analysis, "XF");

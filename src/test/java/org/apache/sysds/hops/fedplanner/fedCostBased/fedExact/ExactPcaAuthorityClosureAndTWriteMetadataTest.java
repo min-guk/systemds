@@ -5,8 +5,11 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
@@ -18,6 +21,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -28,6 +32,59 @@ import org.junit.Test;
 
 /** Production-shape PCA guards for exact physical authority and TWrite transfer pricing. */
 public class ExactPcaAuthorityClosureAndTWriteMetadataTest {
+	@Test
+	public void wanHeavyPcaScoresCoherentFedAllAssignmentOnExactSurface() throws Exception {
+		Map<String,String> previous = installWanHeavyCostProperties();
+		try {
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+				.buildDetachedAnalysis(compileHarnessShapePca(3));
+			ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+			ExactPhysicalCostModel.PhysicalCostSurface surface =
+				ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+			ExactPhysicalOptimizer.Result exact = ExactPhysicalOptimizer.optimize(
+				model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			var fedAll = new FedAllPlacementAdapter().select(analysis);
+			var projection = model.domains().stream().filter(domain -> domain.node().key().normalizedSignature()
+				.contains("pca.dml:110:21:org.apache.sysds.hops.AggBinaryOp:ba(+*):XReduced"))
+				.findFirst().orElseThrow();
+			var projectionShape = analysis.abstractShapeFact(projection.node().key()).orElseThrow();
+			Assert.assertTrue("PCA_PROJECTION_ROWS_MUST_BE_EXACT", projectionShape.rows().isExact(50000));
+			Assert.assertTrue("PCA_PROJECTION_RANK_MUST_USE_EXACT_K", projectionShape.cols().isExact(10));
+			int projectionIndex = model.domains().indexOf(projection);
+			var projectionState = projection.alternatives().get(
+				exact.solverResult().assignmentInVariableOrder().get(projectionIndex)).state();
+			Assert.assertEquals("PCA_WAN_HEAVY_MUST_NOT_COLLECT_X_BEFORE_PROJECTION",
+				ExecType.FED, projectionState.execType());
+
+			List<ExactCategoricalSolver.Factor> factors = new ArrayList<>(model.hardFactors());
+			factors.addAll(surface.factors());
+			for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
+				var selectedState = fedAll.selectedStates().get(domain.node().key());
+				Assert.assertNotNull("PCA_FEDALL_ASSIGNMENT_MUST_BE_TOTAL", selectedState);
+				double[] force = new double[domain.alternatives().size()];
+				Arrays.fill(force, Double.POSITIVE_INFINITY);
+				for(int value = 0; value < domain.alternatives().size(); value++)
+					if(domain.alternatives().get(value).state() == selectedState)
+						force[value] = 0.0;
+				Assert.assertTrue("PCA_FEDALL_STATE_MUST_EXIST_IN_EXACT_DOMAIN|decision="
+					+ domain.node().key().normalizedSignature(),
+					Arrays.stream(force).anyMatch(cost -> cost == 0.0));
+				factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), force));
+			}
+			ExactCategoricalSolver.Result coherentFedAll = ExactCategoricalSolver.solve(
+				model.variables(), factors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			long coherentBits = surface.evaluateCanonical(coherentFedAll.assignmentInVariableOrder());
+			Assert.assertEquals("PCA_ZERO_COST_STATE_FORCING_MUST_PRESERVE_CANONICAL_OBJECTIVE",
+				coherentBits, Double.doubleToRawLongBits(coherentFedAll.objective()));
+
+			Assert.assertTrue("PCA_EXACT_OBJECTIVE_MUST_NOT_EXCEED_FEASIBLE_COHERENT_FEDALL_OBJECTIVE",
+				Double.longBitsToDouble(exact.canonicalObjectiveBits()) <= Double.longBitsToDouble(coherentBits));
+		}
+		finally {
+			restoreProperties(previous);
+		}
+	}
+
 	@Test
 	public void oneWorkerPcaUsesEffectiveUnknownDimTransferEstimate() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -162,12 +219,55 @@ public class ExactPcaAuthorityClosureAndTWriteMetadataTest {
 	}
 
 	private static DMLProgram compileHarnessShapePca() throws Exception {
+		return compileHarnessShapePca(1);
+	}
+
+	private static DMLProgram compileHarnessShapePca(int workers) throws Exception {
+		List<String> addresses = new ArrayList<>();
+		List<String> ranges = new ArrayList<>();
+		for(int worker = 0; worker < workers; worker++) {
+			long begin = 50000L * worker / workers;
+			long end = 50000L * (worker + 1) / workers;
+			addresses.add("\"localhost:" + (1234 + worker) + "/X\"");
+			ranges.add("list(" + begin + ",0)");
+			ranges.add("list(" + end + ",2100)");
+		}
 		String script = String.join("\n",
-			"X=federated(addresses=list(\"localhost:1234/X\"),"
-				+ "ranges=list(list(0,0),list(50000,2100)));",
+			"X=federated(addresses=list(" + String.join(",", addresses) + "),"
+				+ "ranges=list(" + String.join(",", ranges) + "));",
 			"[Xout,Mout]=pca(X=X,K=10);",
 			"write(Mout,\"out\",format=\"csv\");") + "\n";
 		return compile(script);
+	}
+
+	private static Map<String,String> installWanHeavyCostProperties() {
+		Map<String,String> values = Map.ofEntries(
+			Map.entry("DOCKER_NUM_WORKERS", "3"),
+			Map.entry("SYSDS_FED_COST_MEM_BW", "25000"),
+			Map.entry("SYSDS_FED_COST_FLOPS", "2147483648"),
+			Map.entry("SYSDS_FED_COST_NET_BW", "12.5"),
+			Map.entry("SYSDS_FED_COST_NET_BW_C2W", "12.5"),
+			Map.entry("SYSDS_FED_COST_NET_BW_W2C", "12.5"),
+			Map.entry("SYSDS_FED_COST_NET_SERDES_BW", "210"),
+			Map.entry("SYSDS_FED_COST_NET_SERDES_BW_C2W", "210"),
+			Map.entry("SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7"),
+			Map.entry("SYSDS_FED_COST_NET_LATENCY", "0.2"),
+			Map.entry("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0.35"));
+		Map<String,String> previous = new HashMap<>();
+		values.forEach((key, value) -> {
+			previous.put(key, System.getProperty(key));
+			System.setProperty(key, value);
+		});
+		return previous;
+	}
+
+	private static void restoreProperties(Map<String,String> previous) {
+		previous.forEach((key, value) -> {
+			if(value == null)
+				System.clearProperty(key);
+			else
+				System.setProperty(key, value);
+		});
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

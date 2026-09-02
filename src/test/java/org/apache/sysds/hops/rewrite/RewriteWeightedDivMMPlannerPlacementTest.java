@@ -55,6 +55,53 @@ public class RewriteWeightedDivMMPlannerPlacementTest {
 	}
 
 	@Test
+	public void genericPlannerPlacementDoesNotAuthorizeDirectWeightedDivMMPattern() {
+		DataOp w = matrixRead("W", 100, 20);
+		DataOp u = matrixRead("U", 100, 10);
+		DataOp v = matrixRead("V", 20, 10);
+		Hop uv = HopRewriteUtils.createMatrixMultiply(u, HopRewriteUtils.createTranspose(v));
+		Hop weighted = HopRewriteUtils.createBinary(w, uv, OpOp2.MULT);
+		Hop selected = HopRewriteUtils.createMatrixMultiply(weighted, v);
+		markSelected(selected, 125, 2);
+		DataOp root = HopRewriteUtils.createTransientWrite("HS", selected);
+
+		FederatedPlannerUtils.registerPlannerRecompileState(
+			selected, ExecType.FED, FederatedOutput.LOUT);
+		new RewriteAlgebraicSimplificationDynamic().rewriteHopDAG(
+			root, new ProgramRewriteStatus());
+
+		assertSame("A placement alone is not shared runtime-substitution authority",
+			selected, root.getInput(0));
+	}
+
+	@Test
+	public void sharedModeledAuthorityAppliesDirectWeightedDivMMPattern() {
+		DataOp w = matrixRead("W", 100, 20);
+		DataOp u = matrixRead("U", 100, 10);
+		DataOp v = matrixRead("V", 20, 10);
+		Hop uv = HopRewriteUtils.createMatrixMultiply(u, HopRewriteUtils.createTranspose(v));
+		Hop weighted = HopRewriteUtils.createBinary(w, uv, OpOp2.MULT);
+		Hop selected = HopRewriteUtils.createMatrixMultiply(weighted, v);
+		markSelected(selected, 125, 2);
+		DataOp root = HopRewriteUtils.createTransientWrite("HS", selected);
+
+		FederatedPlannerUtils.registerPlannerRecompileState(
+			selected, ExecType.FED, FederatedOutput.LOUT,
+			java.util.Set.of(FederatedPlannerUtils.REWRITE_DIRECT_WDIVMM_PATTERN_2));
+		new RewriteAlgebraicSimplificationDynamic().rewriteHopDAG(
+			root, new ProgramRewriteStatus());
+
+		Hop replacement = root.getInput(0);
+		assertTrue("The modeled direct pattern-2 chain must lower to WDIVMM under planner authority",
+			replacement instanceof QuaternaryOp
+				&& ((QuaternaryOp) replacement).getOp() == OpOp4.WDIVMM);
+		assertEquals(selected.getPlannerOriginHopID(), replacement.getPlannerOriginHopID());
+		assertEquals("DYNAMIC_WEIGHTED_DIV_MM", replacement.getPlannerRewriteReplacementKind());
+		assertEquals(ExecType.FED, replacement.getForcedExecType());
+		assertEquals(FederatedOutput.LOUT, replacement.getFederatedOutput());
+	}
+
+	@Test
 	public void plannerAuthorityStillAppliesModeledWeightedDivMMTransposePair() {
 		DataOp w = matrixRead("W", 100, 20);
 		DataOp u = matrixRead("U", 100, 10);

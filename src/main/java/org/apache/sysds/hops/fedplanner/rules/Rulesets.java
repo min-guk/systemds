@@ -1240,8 +1240,8 @@ public final class Rulesets {
       else if (isRightBaseType(baseType) && primary.contains(FType.ROW)) {
         outputs.add(FType.ROW);
       }
-      // FULL is not a native FED input, but the CP/FOUT alternative remains a
-      // legal materialized output over the existing worker pool.
+      // A single-range FULL FederationMap is an explicit native runtime input;
+      // it follows the row branch without duplicating data across workers.
       if (primary.contains(FType.FULL))
         outputs.add(FType.FULL);
       return profileOf(outputs);
@@ -1265,8 +1265,7 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
 
       if (x == FType.FULL)
-        return cpFoutCaps(sig, x, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
-            WDIVMM_NATIVE_X_AXIS_DETAIL);
+        return guardAwareFout(sig, x, ReasonCode.OK, Guard.eval(sig));
       if (x == FType.PART)
         return cpCaps(sig, ReasonCode.PARTITION_FORBIDDEN);
 

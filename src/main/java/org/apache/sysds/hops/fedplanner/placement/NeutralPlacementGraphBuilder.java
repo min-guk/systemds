@@ -270,12 +270,35 @@ public final class NeutralPlacementGraphBuilder {
 		List<StatementBlock> topLevelStatementBlocks = List.copyOf(program.getStatementBlocks());
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
-		CfgAnalysis cfg = analyzeCfg(program, topLevelStatementBlocks, occurrences);
-		PlacementAbstractShapeAnalysis.HopFacts preliminaryAbstractFacts =
-			PlacementAbstractShapeAnalysis.inferOriginalOccurrences(
+		CfgAnalysis conservativeCfg = analyzeCfg(program, topLevelStatementBlocks, occurrences, Map.of());
+		CfgAnalysis cfg = conservativeCfg;
+		PlacementAbstractShapeAnalysis.HopFacts preliminaryAbstractFacts = null;
+		int maxCfgRefinementPasses = Math.max(8, occurrences.size() + 1);
+		boolean cfgRefinementConverged = false;
+		for(int pass = 0; pass < maxCfgRefinementPasses; pass++) {
+			preliminaryAbstractFacts = PlacementAbstractShapeAnalysis.inferOriginalOccurrences(
 				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
 				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::namespace).toList(),
 				cfg.reachingDefinitions(), cfg.reachingFunctionInputs(), fgraph, fcallSizes);
+			CfgAnalysis refined = analyzeCfg(program, topLevelStatementBlocks, occurrences,
+				preliminaryAbstractFacts.scalars());
+			if(refined.equals(cfg)) {
+				cfgRefinementConverged = true;
+				break;
+			}
+			cfg = refined;
+		}
+		if(!cfgRefinementConverged) {
+			// Branch refinement is an optional precision improvement. Planning must remain
+			// fail-closed if a future transfer function breaks monotonicity: retain the
+			// conservative all-branches CFG instead of rejecting a legal program or pruning
+			// a reachable branch.
+			cfg = conservativeCfg;
+			preliminaryAbstractFacts = PlacementAbstractShapeAnalysis.inferOriginalOccurrences(
+				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
+				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::namespace).toList(),
+				cfg.reachingDefinitions(), cfg.reachingFunctionInputs(), fgraph, fcallSizes);
+		}
 		List<Node> nodes = new ArrayList<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock = new IdentityHashMap<>();
@@ -1282,7 +1305,8 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static CfgAnalysis analyzeCfg(DMLProgram program, List<StatementBlock> topLevelStatementBlocks,
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences) {
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		Map<Hop,PlacementAbstractShapeAnalysis.ScalarState> scalarFacts) {
 		Map<Integer,CfgFunctionOutputDefinition> functionOutputDefinitionsByToken = new java.util.TreeMap<>();
 		Map<Integer,List<CfgFunctionOutputDefinition>> functionOutputDefinitionsByCall = new java.util.TreeMap<>();
 		int nextFunctionOutputToken = CFG_FUNCTION_INPUT_DEFINITION - 1;
@@ -1306,14 +1330,15 @@ public final class NeutralPlacementGraphBuilder {
 		Map<StatementBlock,Set<StatementBlock>> predecessors = new IdentityHashMap<>();
 		Set<StatementBlock> loopHeaders = Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<StatementBlock> loopLatches = Collections.newSetFromMap(new IdentityHashMap<>());
-		connectSequence(topLevelStatementBlocks, Set.of(), predecessors, loopHeaders, loopLatches);
+		connectSequence(topLevelStatementBlocks, Set.of(), predecessors, loopHeaders, loopLatches,
+			scalarFacts);
 		Map<StatementBlock,Map<String,Set<Integer>>> functionInputSeeds = new IdentityHashMap<>();
 		Map<String,Set<StatementBlock>> functionExits = new java.util.TreeMap<>();
 		for(Map.Entry<String,FunctionStatementBlock> entry :
 			program.getNamedNSFunctionStatementBlocks().entrySet()) {
 			FunctionStatementBlock function = entry.getValue();
 			Set<StatementBlock> exits = connectSequence(List.of(function), Set.of(), predecessors,
-				loopHeaders, loopLatches);
+				loopHeaders, loopLatches, scalarFacts);
 			functionExits.put(entry.getKey(), Collections.unmodifiableSet(new LinkedHashSet<>(exits)));
 			FunctionStatement statement = (FunctionStatement) function.getStatement(0);
 			Map<String,Set<Integer>> seeds = new java.util.TreeMap<>();
@@ -1438,25 +1463,33 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static Set<StatementBlock> connectSequence(List<StatementBlock> blocks, Set<StatementBlock> incoming,
 		Map<StatementBlock,Set<StatementBlock>> predecessors, Set<StatementBlock> loopHeaders,
-		Set<StatementBlock> loopLatches) {
+		Set<StatementBlock> loopLatches,
+		Map<Hop,PlacementAbstractShapeAnalysis.ScalarState> scalarFacts) {
 		Set<StatementBlock> exits = new LinkedHashSet<>(incoming);
 		for(StatementBlock block : blocks == null ? List.<StatementBlock>of() : blocks) {
 			predecessors.computeIfAbsent(block, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(exits);
 			if(block instanceof IfStatementBlock) {
 				IfStatement statement = (IfStatement) block.getStatement(0);
-				Set<StatementBlock> thenExits = connectSequence(statement.getIfBody(), Set.of(block), predecessors,
-					loopHeaders, loopLatches);
-				Set<StatementBlock> elseExits = connectSequence(statement.getElseBody(), Set.of(block), predecessors,
-					loopHeaders, loopLatches);
-				exits = new LinkedHashSet<>();
-				exits.addAll(thenExits.isEmpty() ? Set.of(block) : thenExits);
-				exits.addAll(elseExits.isEmpty() ? Set.of(block) : elseExits);
+				Boolean predicate = exactPredicate(isbPredicate((IfStatementBlock)block), scalarFacts);
+				if(predicate == null || predicate) {
+					Set<StatementBlock> thenExits = connectSequence(statement.getIfBody(), Set.of(block), predecessors,
+						loopHeaders, loopLatches, scalarFacts);
+					exits = new LinkedHashSet<>(thenExits.isEmpty() ? Set.of(block) : thenExits);
+				}
+				if(predicate == null || !predicate) {
+					Set<StatementBlock> elseExits = connectSequence(statement.getElseBody(), Set.of(block), predecessors,
+						loopHeaders, loopLatches, scalarFacts);
+					if(predicate == null)
+						exits.addAll(elseExits.isEmpty() ? Set.of(block) : elseExits);
+					else
+						exits = new LinkedHashSet<>(elseExits.isEmpty() ? Set.of(block) : elseExits);
+				}
 			}
 			else if(block instanceof WhileStatementBlock) {
 				loopHeaders.add(block);
 				WhileStatement statement = (WhileStatement) block.getStatement(0);
 				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors,
-					loopHeaders, loopLatches);
+					loopHeaders, loopLatches, scalarFacts);
 				predecessors.get(block).addAll(bodyExits);
 				bodyExits.stream().filter(exit -> exit != block).forEach(loopLatches::add);
 				exits = new LinkedHashSet<>(Set.of(block));
@@ -1465,18 +1498,40 @@ public final class NeutralPlacementGraphBuilder {
 				loopHeaders.add(block);
 				ForStatement statement = (ForStatement) block.getStatement(0);
 				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors,
-					loopHeaders, loopLatches);
+					loopHeaders, loopLatches, scalarFacts);
 				predecessors.get(block).addAll(bodyExits);
 				bodyExits.stream().filter(exit -> exit != block).forEach(loopLatches::add);
 				exits = new LinkedHashSet<>(Set.of(block));
 			}
 			else if(block instanceof FunctionStatementBlock) {
 				FunctionStatement statement = (FunctionStatement) block.getStatement(0);
-				exits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders, loopLatches);
+				exits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders, loopLatches,
+					scalarFacts);
 			}
 			else exits = new LinkedHashSet<>(Set.of(block));
 		}
 		return exits;
+	}
+
+	private static Hop isbPredicate(IfStatementBlock block) {
+		Hop predicateRoot = block.getPredicateHops();
+		return predicateRoot != null && predicateRoot.getInput() != null
+			&& predicateRoot.getInput().size() == 1 ? predicateRoot.getInput(0) : predicateRoot;
+	}
+
+	private static Boolean exactPredicate(Hop predicate,
+		Map<Hop,PlacementAbstractShapeAnalysis.ScalarState> scalarFacts) {
+		if(predicate == null || scalarFacts == null)
+			return null;
+		PlacementAbstractShapeAnalysis.ScalarState state = scalarFacts.get(predicate);
+		if(state == null || !state.isExact())
+			return null;
+		String value = state.literal().canonicalValue();
+		if("true".equalsIgnoreCase(value) || "1".equals(value))
+			return true;
+		if("false".equalsIgnoreCase(value) || "0".equals(value))
+			return false;
+		return null;
 	}
 
 	private static void transfer(Map<String,Set<Integer>> state, List<Integer> indices,
@@ -3330,7 +3385,7 @@ public final class NeutralPlacementGraphBuilder {
 			int sourceCount = cfg.reachingDefinitions().get(i).size()
 				+ cfg.reachingFunctionOutputDefinitions().get(i).size()
 				+ (cfg.reachingFunctionInputs().get(i) ? 1 : 0);
-			if(isTransientRead(occurrences.get(i).hop()) && sourceCount > 1) {
+			if(isTransientRead(occurrences.get(i).hop()) && sourceCount > 0) {
 				for(int definition : cfg.reachingDefinitions().get(i))
 					// A CFG definition/read edge is one runtime variable binding, not a
 					// materializing function boundary.  In particular, cpvar preserves a
@@ -3339,8 +3394,11 @@ public final class NeutralPlacementGraphBuilder {
 					// Using CONJUNCTIVE here was unsound because its LOUT arm deliberately
 					// accepts a FOUT source for boundaries that can charge a download.  No such
 					// action exists on this CFG-only edge, so that combination reached runtime
-					// as a planner-local TRead backed by a federated symbol.
-					constraints.add(new Constraint(ConstraintKind.SAME_PLACEMENT,
+					// as a planner-local TRead backed by a federated symbol. A unique source uses
+					// SAME_VALUE_PLACEMENT because execution type is not part of the runtime value;
+					// a phi keeps the stricter tuple equality required by every reaching source.
+					constraints.add(new Constraint(sourceCount > 1
+						? ConstraintKind.SAME_PLACEMENT : ConstraintKind.SAME_VALUE_PLACEMENT,
 						nodes.get(definition).key(), target.key(), -1,
 						"cfg-transient-value:" + target.valueVersion().versionKind().name()));
 			}
