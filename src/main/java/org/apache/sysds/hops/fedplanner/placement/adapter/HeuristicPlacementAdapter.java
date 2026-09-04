@@ -262,9 +262,18 @@ public final class HeuristicPlacementAdapter {
 				legal = legal.stream().filter(state -> state.execType() == ExecType.CP
 					&& state.output() == FederatedOutput.LOUT).toList();
 			else if(policy.markers().contains(node.key()))
-				legal = legal.stream().filter(state -> state.execType() == ExecType.FED
-					&& state.output() == FederatedOutput.LOUT && state.fType() != null
-					&& state.shapeDependent()).toList();
+				// Prefer the native FED/LOUT aggregate-vector demotion, but retain its
+				// CP/LOUT realization as a candidate-consistent fallback. A legal FED
+				// marker state can still be globally unreachable when its apparent FULL
+				// input originates from a coordinator-local function/transient value.
+				// Candidate propagation then removes only that unreachable FED state and
+				// completes the same demotion on the coordinator instead of making the
+				// entire policy projection unsatisfiable.
+				legal = legal.stream().filter(state -> (state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT)
+					|| (state.execType() == ExecType.FED
+						&& state.output() == FederatedOutput.LOUT && state.fType() != null
+						&& state.shapeDependent())).toList();
 			else if(policy.localPrefix().contains(node.key()))
 				// Once the heuristic demotes a path after its FED/LOUT producer, the
 				// prefix is coordinator-local until an explicit pathwise frontier.

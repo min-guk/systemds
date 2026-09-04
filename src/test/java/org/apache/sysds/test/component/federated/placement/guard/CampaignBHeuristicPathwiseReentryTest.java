@@ -37,6 +37,10 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		Assert.assertEquals("PATHWISE_REENTRY_POLICY_V2", result.plannerFacts().get("policy"));
 		Assert.assertEquals("one pathwise-minimal eligible frontier", "1",
 			result.plannerFacts().get("frontierEdgeCount"));
+		Assert.assertTrue("a marker must retain CP/LOUT as a candidate-consistent demotion fallback",
+			result.selectorGraph().node(marker.producer()).orElseThrow().legalAlternatives().stream()
+				.anyMatch(state -> state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT));
 		Assert.assertTrue("producer is exact FED/LOUT", isFedLout(result.assignment().get(marker.producer())));
 
 		HeuristicPathwiseReentryFact frontier = analysis.heuristicPolicyFacts().paths().stream()
