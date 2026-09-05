@@ -1,5 +1,64 @@
 # Session Issues — 2026-09-05
 
+## Historical observer stage contains volatile Python bytecode
+
+- **Status**: resolved in new immutable observer v3 stages; v2 originals and failed
+  partials preserved.
+- **Symptom/cause**: full-manifest verification on so003--so005 rejected generated
+  `__pycache__/*.pyc` bytes after cloning a historical stage. These files were
+  already excluded from executable-input authority but were incorrectly included
+  in the observer's complete-file manifest. This was an artifact construction
+  defect, not a SystemDS planner/data difference.
+- **Resolution**: record and remove only the exact generated cache-path set from
+  the clone; never modify source-stage hard links in place. Rebuild as v3; verify
+  all 4,420 remaining files and the unchanged 3,960 executable inputs. Preserve
+  the authenticated failed v2 partials by atomic rename, then deploy to
+  so002--so009 (never proxy so001).
+- **Files/evidence**: control `build_trace_observers_20260905.py`,
+  `deploy_trace_observers_20260905.py`, their tests, and
+  `TRACE_OBSERVER_V3_POSTDEPLOY_VERIFICATION_20260905.json`.
+- **Verification**: 11/11 targeted tests; 7/7 remote hosts, 14/14 observer stages
+  passed complete-file/JAR verification. Original JARs stayed unchanged.
+  Original/observer Docker planning canaries for PCA/FedAll and LM/Heuristic
+  emitted exactly equal legacy emission records (188 and 220 respectively).
+  Both observer traces also passed the complete-authority comparator's self
+  check; all four canaries executed zero runtime work and produced no outputs.
+- **Residual risk**: generated caches can reappear during ordinary Python use;
+  they remain outside executable-input authority. No permission to ignore an
+  actual source, data, harness, JAR, or complete physical-authority mismatch.
+- **Decision basis**: repair reproducible artifacts without changing algorithms,
+  candidate space, privacy, DML, runtime configuration, or archived measurements.
+
+## Four wider Exact regressions also fail in the immutable baseline JAR
+
+- **Status**: baseline failures authenticated; not silently fixed or waived as
+  successful tests. No new-reduction regression is established by these failures.
+- **Conditions**: broader fedExact batch reported 96/100 passing. The failing
+  tests are sparse function-boundary cost, B09 compact clone predecessor identity,
+  L2SVM internal relocation-anchor multiplicity, and StepLM recompiled REFED count.
+- **Verification**: run the same compiled test fixtures with immutable `211e8f8`
+  JAR SHA `2b106c1fbadd767fccf5e0e2fb46e9c49e8fb5d9acee676ea2db038a2c0dd87c`
+  replacing `target/classes` in the JUnit classpath. Required JVM module/open flags
+  are taken from `pom.xml`. Sparse cost reproduces expected 1.0008316040039062
+  versus 1.0004158020019531; B09 reproduces compact `input-0:M1#0@main/4:ORDINARY`;
+  StepLM reproduces four REFED instructions. L2SVM in an isolated baseline JVM
+  reproduces the same independent-anchor assertion as the new implementation.
+- **Evidence**: control `GLM_BASELINE_FOUR_FAILURES_211_MODULES_20260905.json`,
+  `GLM_BASELINE_L2_ISOLATED_211_20260905.json`, their SHA-bound logs, and
+  `target/glm-exact-repair-evidence/{reduced,unreduced}`.
+- **Diagnostic pitfalls**: an initial manual command omitted the vector module
+  and produced six linkage errors; this is retained but is not regression
+  evidence. Running the L2SVM fixture after other classes in one manual JVM also
+  exposes unreset static receipt state; the isolated invocation eliminates that
+  confounder.
+- **Residual issues/risk**: the four historical assertions still require their
+  own contract review; baseline failure alone does not establish that their
+  expected behavior is wrong. Do not weaken assertions or change production
+  planning merely to make the broader suite green. Final reports must distinguish
+  targeted new-change successes from these known validation gaps.
+- **Decision basis**: prioritize evidence over attributing every pre-existing
+  test failure to the GLM repair; preserve privacy and physical feasibility gates.
+
 ## Candidate-row materialization search expands a whole-program Cartesian product
 
 - **Status**: resolved and verified in immutable stage `7ac6818`; the smoke exposed a
@@ -363,3 +422,35 @@
 - 576 original successful runtime cells, 128 pairwise reversals and 30 Exact upward worker
   transitions remain inventoried. Ordering is diagnostic, not a runtime invariant. No
   existing result is discarded/replaced solely because its numerical order is unexpected.
+
+## GLM Exact repair: final source verification and promotion boundary
+
+- **Status**: implementation and independent code review complete; immutable Docker
+  planning canary is the next gate, not yet a runtime-success claim.
+- **Resolution**: replace Cartesian fingerprint expansion with preflighted frozen
+  ordinary factors and exact structured max-demand descriptors. Exact uses deterministic
+  auxiliary chains, sound unary/binary arc consistency and complete factor-observation
+  equivalence classes. Neither privacy/physical domains nor production factor budgets
+  are relaxed. Original canonical cost is independently checked by raw binary64 bits.
+- **Files**: `fedExact/ExactPhysicalCostModel.java`, `ExactCategoricalSolver.java`,
+  `ExactMaxDemandFactorDecomposition.java`, `ExactPhysicalReducedSolver.java`,
+  `ExactPhysicalOptimizer.java`, `FederatedPlanExact.java`; regression tests and
+  `docs/GLM_EXACT_COST_FACTOR_REPAIR_20260905.md` describe the proof and scope.
+- **Fresh parent verification**: 64 tests, zero failures/errors/skips, including actual
+  built-in GLM optimize/canonical-certify/project (51.150 s), shared privacy, movement
+  legality, inlined boundaries, forced-state audit, certificate and trace formatting.
+  Evidence: `/home/mchoi/g014-runtime-4net-w1357-20260901-control/INTEGRATED_FINAL_REGRESSION_20260905.json`
+  and `integrated-regression-final-20260905.log`; `git diff --check` passes.
+- **Known validation gaps**: four wider tests fail both here and against the immutable
+  pre-change `211e8f8` JAR. The sparse-boundary expected price, normalized B-09 predecessor,
+  L2SVM multiple-emission-anchor assertion, and StepLM REFED-count assertion are retained,
+  not weakened. Baseline reproduction proves they are not newly introduced by this
+  repair; it does not establish that each old expectation or behavior is correct.
+- **Potential regression**: exact-equivalent classes may pick another equal-cost physical
+  representative. Full-authority old/new planning comparison, not objective equality alone,
+  controls selective runtime reruns. Nontrivial control-event unions still use the original
+  bounded exact evaluator and can fail explicitly on an intractable induced width.
+- **Experiment provenance**: old-observer and extra-ML stages are separate. Baseline
+  comparison preserves all original harness/data/config bytes; extra ML deliberately
+  retains its authenticated GLM/GNMF/GMM harness version. Historical FedAll exact-policy
+  is not relabeled as the explicitly selected new-ML single-pass variant.

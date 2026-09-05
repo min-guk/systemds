@@ -228,7 +228,7 @@ public class ExactPhysicalModelCertificateTest {
 	}
 
 	@Test
-	public void inlinedFunctionPhysicalSelectionCompletesSyntheticBoundaryAuthority() throws Exception {
+	public void inlinedFunctionPhysicalSelectionKeepsInputProvenanceAndOutputAuthority() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(
 			CampaignBG014HermeticPlannerFixtureFactory.compile("B-21"));
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
@@ -242,9 +242,16 @@ public class ExactPhysicalModelCertificateTest {
 			node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
 				|| node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
 			.toList();
-		Assert.assertTrue("B-21 must retain synthetic function-boundary decisions",
-			boundaries.stream().anyMatch(node -> node.kind()
-				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT));
+		var inputs = analysis.graph().nodes().stream().filter(node -> node.kind()
+			== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT)
+			.toList();
+		Assert.assertFalse("B-21 must retain inlined input provenance", inputs.isEmpty());
+		for(var input : inputs) {
+			Assert.assertFalse("AST-inlined input is not a runtime instruction", input.emittedWork());
+			Assert.assertTrue("trace input cannot publish physical alternatives", input.legalAlternatives().isEmpty());
+			Assert.assertTrue("trace input cannot publish executable anchors", input.anchors().isEmpty());
+			Assert.assertFalse("Exact must not select a trace-only input", selected.selectedStates().containsKey(input.key()));
+		}
 		Assert.assertTrue("B-21 must retain synthetic function-boundary decisions",
 			boundaries.stream().anyMatch(node -> node.kind()
 				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT));

@@ -1,0 +1,285 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to you under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+public class ExactPhysicalReducedSolverTest {
+	private static final ExactCategoricalSolver.Limits GENEROUS =
+		new ExactCategoricalSolver.Limits(1_000_000, 5_000_000);
+
+	@Test
+	public void randomUnaryBinaryTernaryModelsMatchUnreducedExactSolve() {
+		Random random = new Random(709_2026L);
+		for(int trial = 0; trial < 80; trial++) {
+			List<ExactCategoricalSolver.Variable> variables = List.of(
+				variable("a", 2 + random.nextInt(3)), variable("b", 2 + random.nextInt(3)),
+				variable("c", 2 + random.nextInt(3)));
+			List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+			factors.add(randomFactor(random, List.of(variables.get(0))));
+			factors.add(randomFactor(random, List.of(variables.get(0), variables.get(1))));
+			factors.add(randomFactor(random, List.of(variables.get(0), variables.get(1),
+				variables.get(2))));
+			// Preserve at least one feasible assignment independently of random infinities.
+			factors.add(ExactCategoricalSolver.Factor.dense(List.of(), 0d));
+			try {
+				ExactCategoricalSolver.Result expected = ExactCategoricalSolver.solve(
+					variables, factors, GENEROUS);
+				ExactCategoricalSolver.Result actual = ExactPhysicalReducedSolver.solve(
+					variables.size(), variables, factors, GENEROUS);
+				Assert.assertEquals(Double.doubleToRawLongBits(expected.objective()),
+					Double.doubleToRawLongBits(actual.objective()));
+				Assert.assertEquals(Double.doubleToRawLongBits(actual.objective()),
+					Double.doubleToRawLongBits(ExactCategoricalSolver.evaluate(
+						variables, factors, GENEROUS, actual.assignmentInVariableOrder())));
+			}
+			catch(IllegalArgumentException failure) {
+				Assert.assertTrue(failure.getMessage(),
+					failure.getMessage().startsWith("EXACT_VE_NO_FEASIBLE_ASSIGNMENT"));
+				try {
+					ExactPhysicalReducedSolver.solve(variables.size(), variables, factors, GENEROUS);
+					Assert.fail("reduced model accepted an infeasible original model");
+				}
+				catch(IllegalArgumentException reducedFailure) {
+					Assert.assertTrue(reducedFailure.getMessage(), reducedFailure.getMessage()
+						.startsWith("EXACT_VE_NO_FEASIBLE_ASSIGNMENT"));
+				}
+			}
+		}
+	}
+
+	@Test
+	public void completeObservationQuotientBreaksDenseCliqueWithoutChangingObjective() {
+		List<ExactCategoricalSolver.Variable> variables = variables(4, 8);
+		List<ExactCategoricalSolver.Factor> factors = completeBinaryClique(variables, false);
+		ExactCategoricalSolver.Limits small = new ExactCategoricalSolver.Limits(100, 2_000);
+		try {
+			ExactCategoricalSolver.solve(variables, factors, small);
+			Assert.fail("unreduced clique unexpectedly fit");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		}
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(
+			variables.size(), variables, factors, small);
+		Assert.assertEquals(Double.doubleToRawLongBits(0d),
+			Double.doubleToRawLongBits(result.objective()));
+		Assert.assertEquals(List.of(0, 0, 0, 0), result.assignmentInVariableOrder());
+	}
+
+	@Test
+	public void distinctRawObservationsAreNeverMerged() {
+		List<ExactCategoricalSolver.Variable> variables = variables(4, 8);
+		List<ExactCategoricalSolver.Factor> factors = completeBinaryClique(variables, true);
+		ExactCategoricalSolver.Limits small = new ExactCategoricalSolver.Limits(100, 2_000);
+		try {
+			ExactPhysicalReducedSolver.solveWithConstantObservationHashForTesting(
+				variables.size(), variables, factors, small);
+			Assert.fail("distinct observations were improperly merged");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		}
+	}
+
+	@Test
+	public void tieCostIsPartOfTheObservation() {
+		List<ExactCategoricalSolver.Variable> variables = variables(4, 8);
+		List<ExactCategoricalSolver.Factor> factors = completeBinaryClique(variables, false);
+		ExactCategoricalSolver.Limits small = new ExactCategoricalSolver.Limits(100, 2_000);
+		try {
+			ExactPhysicalReducedSolver.solve(variables.size(), variables, factors, small,
+				(variable, value) -> value);
+			Assert.fail("tie-distinct alternatives were improperly merged");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		}
+	}
+
+	@Test
+	public void reducedSolvePreservesSpecifiedSecondaryTieChoice() {
+		var a = variable("a", 3);
+		var constant = ExactCategoricalSolver.Factor.dense(List.of(a), 0d, 0d, 0d);
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(1,
+			List.of(a), List.of(constant), GENEROUS,
+			(variable, value) -> new long[] {5L, 0L, 3L}[value]);
+		Assert.assertEquals(List.of(1), result.assignmentInVariableOrder());
+		Assert.assertEquals(Double.doubleToRawLongBits(0d),
+			Double.doubleToRawLongBits(result.objective()));
+	}
+
+	@Test
+	public void unaryAndBinaryArcConsistencyCanProveEmptyDomain() {
+		var a = variable("a", 2);
+		var b = variable("b", 2);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(a), 0d, Double.POSITIVE_INFINITY),
+			ExactCategoricalSolver.Factor.dense(List.of(a, b),
+				Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, 0d, 0d));
+		try {
+			ExactPhysicalReducedSolver.solve(2, List.of(a, b), factors, GENEROUS);
+			Assert.fail("AC-3 failed to prove an empty domain");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertEquals("EXACT_VE_NO_FEASIBLE_ASSIGNMENT", expected.getMessage());
+		}
+	}
+
+	@Test
+	public void forcedUnaryValueIsPreservedInExpandedAssignment() {
+		var a = variable("a", 4);
+		var forced = ExactCategoricalSolver.Factor.dense(List.of(a),
+			Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, 7d,
+			Double.POSITIVE_INFINITY);
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(
+			1, List.of(a), List.of(forced), GENEROUS);
+		Assert.assertEquals(List.of(2), result.assignmentInVariableOrder());
+		Assert.assertEquals(Double.doubleToRawLongBits(7d),
+			Double.doubleToRawLongBits(result.objective()));
+	}
+
+	@Test
+	public void oversizedLazyInputFailsBeforeEvaluation() {
+		var a = variable("a", 3);
+		var b = variable("b", 3);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(a, b), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		try {
+			ExactPhysicalReducedSolver.solve(2, List.of(a, b), List.of(lazy),
+				new ExactCategoricalSolver.Limits(8, 100));
+			Assert.fail("oversized input factor accepted");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		}
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
+	public void totalInputBudgetFailsBeforeEvaluation() {
+		var a = variable("a", 3);
+		AtomicInteger evaluations = new AtomicInteger();
+		var first = ExactCategoricalSolver.Factor.lazy(List.of(a), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		var second = ExactCategoricalSolver.Factor.lazy(List.of(a), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		try {
+			ExactPhysicalReducedSolver.solve(1, List.of(a), List.of(first, second),
+				new ExactCategoricalSolver.Limits(10, 5));
+			Assert.fail("oversized total input accepted");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED"));
+		}
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
+	public void invalidDenseInputFailsBeforeAnyLazyEvaluation() {
+		var a = variable("a", 2);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(a), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		var invalid = ExactCategoricalSolver.Factor.dense(List.of(a), 0d, Double.NaN);
+		try {
+			ExactPhysicalReducedSolver.solve(1, List.of(a), List.of(lazy, invalid), GENEROUS);
+			Assert.fail("invalid dense factor accepted");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_COST_INVALID"));
+		}
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
+	public void lazyFactorsAreFrozenOncePerSolveAndRefreshedBetweenSolves() {
+		var a = variable("a", 2);
+		AtomicInteger generation = new AtomicInteger();
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(a), values -> {
+			evaluations.incrementAndGet();
+			return values[0] == generation.get() ? 0d : 1d;
+		});
+		Assert.assertEquals(List.of(0), ExactPhysicalReducedSolver.solve(1, List.of(a),
+			List.of(lazy), GENEROUS).assignmentInVariableOrder());
+		Assert.assertEquals(2, evaluations.get());
+		generation.set(1);
+		Assert.assertEquals(List.of(1), ExactPhysicalReducedSolver.solve(1, List.of(a),
+			List.of(lazy), GENEROUS).assignmentInVariableOrder());
+		Assert.assertEquals(4, evaluations.get());
+	}
+
+	private static ExactCategoricalSolver.Variable variable(String key, int domain) {
+		return new ExactCategoricalSolver.Variable(key, domain);
+	}
+
+	private static List<ExactCategoricalSolver.Variable> variables(int count, int domain) {
+		List<ExactCategoricalSolver.Variable> result = new ArrayList<>();
+		for(int index = 0; index < count; index++)
+			result.add(variable("v" + index, domain));
+		return result;
+	}
+
+	private static List<ExactCategoricalSolver.Factor> completeBinaryClique(
+		List<ExactCategoricalSolver.Variable> variables, boolean distinct) {
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+		for(int left = 0; left < variables.size(); left++)
+			for(int right = left + 1; right < variables.size(); right++) {
+				double[] values = new double[64];
+				if(distinct)
+					for(int row = 0; row < 8; row++)
+						for(int column = 0; column < 8; column++)
+							values[row * 8 + column] = row + column / 16d;
+				factors.add(ExactCategoricalSolver.Factor.dense(
+					List.of(variables.get(left), variables.get(right)), values));
+			}
+		return factors;
+	}
+
+	private static ExactCategoricalSolver.Factor randomFactor(Random random,
+		List<ExactCategoricalSolver.Variable> scope) {
+		int cells = scope.stream().mapToInt(ExactCategoricalSolver.Variable::domainSize)
+			.reduce(1, Math::multiplyExact);
+		double[] values = new double[cells];
+		for(int cell = 0; cell < cells; cell++)
+			values[cell] = random.nextInt(13) == 0 ? Double.POSITIVE_INFINITY
+				: random.nextInt(4) * 0.25d;
+		return ExactCategoricalSolver.Factor.dense(scope, values);
+	}
+}

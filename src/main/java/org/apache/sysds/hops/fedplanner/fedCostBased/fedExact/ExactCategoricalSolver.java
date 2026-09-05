@@ -130,6 +130,29 @@ public final class ExactCategoricalSolver {
 		}
 	}
 
+	/**
+	 * One solve-local, validated materialization of the caller's input factors.
+	 * This representation intentionally contains no elimination plan: exact
+	 * structure-preserving reducers may inspect the frozen raw tables before
+	 * asking the dense solver to construct an elimination order.
+	 */
+	static final class FrozenInputs {
+		private final int[] domains;
+		private final List<int[]> scopes;
+		private final List<double[]> values;
+
+		private FrozenInputs(InputDefinition definition, List<DenseFactor> factors) {
+			domains = definition.domains.clone();
+			scopes = definition.scopes.stream().map(int[]::clone).toList();
+			values = factors.stream().map(factor -> factor.values.clone()).toList();
+		}
+
+		int domainSize(int variable) { return domains[variable]; }
+		int[] scope(int factor) { return scopes.get(factor); }
+		double[] values(int factor) { return values.get(factor); }
+		int factorCount() { return scopes.size(); }
+	}
+
 	public static Statistics analyze(List<Variable> variables, List<Factor> factors, Limits limits) {
 		return prepare(variables, factors, limits).statistics;
 	}
@@ -157,6 +180,38 @@ public final class ExactCategoricalSolver {
 	static Result solve(CompiledProblem compiled) {
 		Objects.requireNonNull(compiled, "compiled");
 		return solve(compiled.prepared, compiled.factors, (variable, value) -> 0L);
+	}
+
+	static FrozenInputs freezeInputs(List<Variable> variables, List<Factor> factors,
+		Limits limits) {
+		InputDefinition definition = validateInputs(variables, factors, limits);
+		return new FrozenInputs(definition, materializeInputs(definition, factors));
+	}
+
+	static void validateInputStructure(List<Variable> variables, List<Factor> factors,
+		Limits limits) {
+		validateInputs(variables, factors, limits);
+	}
+
+	static Factor freezeValidatedFactor(Factor factor) {
+		Objects.requireNonNull(factor, "factor");
+		if(factor.denseValues != null)
+			return factor;
+		int cells = 1;
+		for(Variable variable : factor.scope)
+			cells = Math.multiplyExact(cells, variable.domainSize());
+		double[] values = new double[cells];
+		int[] local = new int[factor.scope.size()];
+		for(int cell = 0; cell < cells; cell++) {
+			int remainder = cell;
+			for(int position = local.length - 1; position >= 0; position--) {
+				local[position] = remainder % factor.scope.get(position).domainSize();
+				remainder /= factor.scope.get(position).domainSize();
+			}
+			values[cell] = factor.evaluator.cost(local);
+			validateCost(values[cell]);
+		}
+		return Factor.dense(factor.scope, values);
 	}
 
 	private static Result solve(Prepared prepared, List<Factor> factors,
@@ -242,55 +297,30 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static Prepared prepare(List<Variable> variables, List<Factor> factors, Limits limits) {
-		Objects.requireNonNull(variables, "variables");
-		Objects.requireNonNull(factors, "factors");
-		Objects.requireNonNull(limits, "limits");
-		List<Variable> canonical = List.copyOf(variables);
-		Map<Variable,Integer> index = new LinkedHashMap<>();
-		Map<String,Variable> keys = new HashMap<>();
-		int[] domains = new int[canonical.size()];
-		for(int i = 0; i < canonical.size(); i++) {
-			Variable variable = Objects.requireNonNull(canonical.get(i), "variable");
-			if(index.put(variable, i) != null || keys.put(variable.key(), variable) != null)
-				throw new IllegalArgumentException("EXACT_VE_VARIABLE_DUPLICATE|key=" + variable.key());
-			domains[i] = variable.domainSize();
-		}
-
-		List<int[]> scopes = new ArrayList<>(factors.size());
-		long inputCells = 0;
-		for(Factor factor : factors) {
-			Objects.requireNonNull(factor, "factor");
-			int[] scope = new int[factor.scope.size()];
-			Set<Integer> unique = new HashSet<>();
-			for(int i = 0; i < scope.length; i++) {
-				Integer variableIndex = index.get(factor.scope.get(i));
-				if(variableIndex == null)
-					throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_UNKNOWN");
-				if(!unique.add(variableIndex))
-					throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_DUPLICATE");
-				scope[i] = variableIndex;
-			}
-			int cells = checkedCells(scope, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
-			if(factor.denseValues != null && factor.denseValues.length != cells)
-				throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
-			inputCells = checkedAdd(inputCells, cells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
-			scopes.add(scope);
-		}
+		InputDefinition input = validateInputs(variables, factors, limits);
+		List<Variable> canonical = input.variables;
+		int[] domains = input.domains;
+		List<int[]> scopes = input.scopes;
+		long inputCells = input.inputCells;
 
 		Plan plan = minimumMaterializationPlan(canonical, domains, scopes);
 		long totalCells = inputCells;
-		long maximumCells = 0;
-		for(int[] scope : scopes)
-			maximumCells = Math.max(maximumCells, checkedCells(scope, domains,
-				"EXACT_VE_FACTOR_CELL_OVERFLOW"));
+		long maximumCells = input.maximumInputCells;
+		String maximumSource = "input";
 		for(Step step : plan.steps) {
 			long cells = checkedCells(step.separator, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
-			maximumCells = Math.max(maximumCells, cells);
+			if(cells > maximumCells) {
+				maximumCells = cells;
+				maximumSource = "eliminate=" + canonical.get(step.variable).key()
+					+ "|separator=" + Arrays.stream(step.separator)
+						.mapToObj(variable -> canonical.get(variable).key() + ':' + domains[variable])
+						.toList();
+			}
 			totalCells = checkedAdd(totalCells, cells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
 		}
 		if(maximumCells > limits.maximumFactorCells())
 			throw new IllegalArgumentException("EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells=" + maximumCells
-				+ "|limit=" + limits.maximumFactorCells());
+				+ "|limit=" + limits.maximumFactorCells() + '|' + maximumSource);
 		if(totalCells > limits.maximumMaterializedCells())
 			throw new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED|cells=" + totalCells
 				+ "|limit=" + limits.maximumMaterializedCells());
@@ -309,6 +339,61 @@ public final class ExactCategoricalSolver {
 			.map(step -> canonical.get(step.variable).key()).toList(), plan.inducedWidth,
 			maximumCells, totalCells, maximumAssignments, assignments);
 		return new Prepared(canonical, domains, scopes, plan.steps, statistics);
+	}
+
+	private static InputDefinition validateInputs(List<Variable> variables, List<Factor> factors,
+		Limits limits) {
+		Objects.requireNonNull(variables, "variables");
+		Objects.requireNonNull(factors, "factors");
+		Objects.requireNonNull(limits, "limits");
+		List<Variable> canonical = List.copyOf(variables);
+		Map<Variable,Integer> index = new LinkedHashMap<>();
+		Map<String,Variable> keys = new HashMap<>();
+		int[] domains = new int[canonical.size()];
+		for(int i = 0; i < canonical.size(); i++) {
+			Variable variable = Objects.requireNonNull(canonical.get(i), "variable");
+			if(index.put(variable, i) != null || keys.put(variable.key(), variable) != null)
+				throw new IllegalArgumentException("EXACT_VE_VARIABLE_DUPLICATE|key=" + variable.key());
+			domains[i] = variable.domainSize();
+		}
+
+		List<int[]> scopes = new ArrayList<>(factors.size());
+		long inputCells = 0;
+		long maximumInputCells = 0;
+		for(Factor factor : factors) {
+			Objects.requireNonNull(factor, "factor");
+			int[] scope = new int[factor.scope.size()];
+			Set<Integer> unique = new HashSet<>();
+			for(int i = 0; i < scope.length; i++) {
+				Integer variableIndex = index.get(factor.scope.get(i));
+				if(variableIndex == null)
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_UNKNOWN");
+				if(!unique.add(variableIndex))
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_DUPLICATE");
+				scope[i] = variableIndex;
+			}
+			int cells = checkedCells(scope, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
+			if(factor.denseValues != null && factor.denseValues.length != cells)
+				throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
+			inputCells = checkedAdd(inputCells, cells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
+			maximumInputCells = Math.max(maximumInputCells, cells);
+			scopes.add(scope);
+		}
+		if(maximumInputCells > limits.maximumFactorCells())
+			throw new IllegalArgumentException("EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells="
+				+ maximumInputCells + "|limit=" + limits.maximumFactorCells() + "|input");
+		if(inputCells > limits.maximumMaterializedCells())
+			throw new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED|cells="
+				+ inputCells + "|limit=" + limits.maximumMaterializedCells());
+		// Validate every already-materialized value before invoking any lazy
+		// evaluator. This keeps malformed dense input from causing observable
+		// partial lazy evaluation.
+		for(Factor factor : factors)
+			if(factor.denseValues != null)
+				for(double value : factor.denseValues)
+					validateCost(value);
+		return new InputDefinition(canonical, domains, List.copyOf(scopes), inputCells,
+			maximumInputCells);
 	}
 
 	/**
@@ -474,6 +559,12 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static List<DenseFactor> materializeInputs(Prepared prepared, List<Factor> factors) {
+		return materializeInputs(new InputDefinition(prepared.variables, prepared.domains,
+			prepared.scopes, 0L, 0L), factors);
+	}
+
+	private static List<DenseFactor> materializeInputs(InputDefinition prepared,
+		List<Factor> factors) {
 		List<DenseFactor> result = new ArrayList<>(factors.size());
 		int[] global = new int[prepared.variables.size()];
 		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
@@ -562,6 +653,8 @@ public final class ExactCategoricalSolver {
 	private record ScoredPlan(Plan plan, PlanMetrics metrics, int priority) { }
 	private record Prepared(List<Variable> variables, int[] domains, List<int[]> scopes,
 		List<Step> steps, Statistics statistics) { }
+	private record InputDefinition(List<Variable> variables, int[] domains, List<int[]> scopes,
+		long inputCells, long maximumInputCells) { }
 	private record Backpointer(int variable, int[] separator, int[] choices) { }
 
 	/**

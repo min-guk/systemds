@@ -84,11 +84,13 @@ public class FederatedPlanExact extends AFederatedPlanner {
 		List<Integer> assignment = selection.assignmentInDecisionOrder();
 		ExactCategoricalSolver.Statistics statistics = selection.statistics();
 		FederatedPlannerTrace.logGlobal("Exact-PhysicalOptimize", String.format(Locale.ROOT,
-			"objective=%.12f objectiveBits=%s variables=%d hardFactors=%d costFactors=%d transfers=%d "
+			"objective=%.12f objectiveBits=%s variables=%d auxiliaryVariables=%d "
+				+ "hardFactors=%d costFactors=%d transfers=%d "
 				+ "inducedWidth=%d maximumFactorCells=%d materializedFactorCells=%d "
 				+ "maximumEliminationAssignments=%d eliminationAssignments=%d costFingerprint=%s analysis=%s",
 			selection.solverObjective(), Long.toUnsignedString(selection.objectiveBits()),
-			model.variables().size(), model.hardFactors().size(), surface.factors().size(),
+			model.variables().size(), surface.exactSolverVariables().size() - model.variables().size(),
+			model.hardFactors().size(), surface.factors().size(),
 			surface.transferKeys().size(), statistics.inducedWidth(), statistics.maximumFactorCells(),
 			statistics.materializedFactorCells(), statistics.maximumEliminationAssignments(),
 			statistics.eliminationAssignments(), selection.costSurfaceFingerprint(),
