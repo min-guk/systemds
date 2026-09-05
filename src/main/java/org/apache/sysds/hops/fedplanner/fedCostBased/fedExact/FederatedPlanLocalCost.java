@@ -73,7 +73,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 		if(!FederatedPlannerTrace.isEnabled())
 			return;
 		FederatedPlannerTrace.logGlobal("DP-LocalConflict", String.format(Locale.ROOT,
-			"objective=%.12f variables=%d hardFactors=%d costFactors=%d transfers=%d "
+			"objective=%.12f unit=ms variables=%d hardFactors=%d costFactors=%d transfers=%d "
 				+ "rawStates=%d retainedStates=%d prunedRepresentatives=%d "
 				+ "initialConflicts=%d conflictBlocks=%d blockExpansions=%d "
 				+ "localBlocks=%d localImprovements=%d localRevisits=%d "
@@ -92,6 +92,9 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			statistics.maximumBlockAssignments(),
 			statistics.blockAssignments(), selection.costSurfaceFingerprint(),
 			selection.analysisFingerprint()));
+		ExactPhysicalCostModel.traceCanonicalContributions("DP", model.variables(),
+			surface.contributions(), selection.assignmentInDecisionOrder(), selection.objectiveBits(),
+			FederatedPlannerTrace::logGlobal);
 	}
 
 	@Override

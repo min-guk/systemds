@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import org.apache.commons.lang3.tuple.Pair;
@@ -196,6 +198,54 @@ public final class ExactPhysicalCostModel {
 			}
 			return total.totalBits("EXACT_PHYSICAL_OBJECTIVE_UNPROVEN");
 		}
+	}
+
+	/** Trace original physical contributions once; incident costs and solver auxiliaries are not additive. */
+	static void traceCanonicalContributions(String planner,
+		List<ExactCategoricalSolver.Variable> variables, List<PhysicalContribution> contributions,
+		List<Integer> assignment, long expectedObjectiveBits, BiConsumer<String,String> sink) {
+		if(assignment == null || assignment.size() != variables.size())
+			throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_ASSIGNMENT_SIZE_MISMATCH");
+		Objects.requireNonNull(sink, "sink");
+		IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions = new IdentityHashMap<>();
+		for(int index = 0; index < variables.size(); index++) {
+			if(assignment.get(index) == null || assignment.get(index) < 0
+				|| assignment.get(index) >= variables.get(index).domainSize())
+				throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_ASSIGNMENT_VALUE_INVALID");
+			positions.put(variables.get(index), index);
+		}
+		ExactCompensatedCostSum sum = new ExactCompensatedCostSum();
+		for(int ordinal = 0; ordinal < contributions.size(); ordinal++) {
+			PhysicalContribution contribution = contributions.get(ordinal);
+			int[] local = new int[contribution.factor().scope().size()];
+			StringBuilder scope = new StringBuilder();
+			for(int index = 0; index < local.length; index++) {
+				Integer global = positions.get(contribution.factor().scope().get(index));
+				if(global == null)
+					throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_FOREIGN_VARIABLE");
+				local[index] = assignment.get(global);
+				if(index > 0)
+					scope.append(',');
+				scope.append(global);
+			}
+			double value = contribution.factor().cost(local);
+			long valueBits = bits(value);
+			sum.addBits(valueBits, "EXACT_PHYSICAL_TRACE_COST_INVALID",
+				"EXACT_PHYSICAL_TRACE_SUM_INVALID");
+			String id = Base64.getUrlEncoder().withoutPadding()
+				.encodeToString(contribution.id().getBytes(StandardCharsets.UTF_8));
+			sink.accept("Physical-CostContribution", "planner=" + planner + " ordinal=" + ordinal
+				+ " unit=ms value=" + Double.toString(value)
+				+ " valueBits=" + Long.toUnsignedString(valueBits) + " idBase64=" + id
+				+ " scope=" + (scope.length() == 0 ? "-" : scope.toString()));
+		}
+		long sumBits = sum.totalBits("EXACT_PHYSICAL_TRACE_SUM_INVALID");
+		if(sumBits != expectedObjectiveBits)
+			throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_OBJECTIVE_MISMATCH");
+		sink.accept("Physical-CostContributionComplete", "planner=" + planner
+			+ " contributions=" + contributions.size() + " unit=ms objective="
+			+ Double.toString(Double.longBitsToDouble(sumBits))
+			+ " objectiveBits=" + Long.toUnsignedString(sumBits));
 	}
 
 	static PhysicalCostSurface physicalCostSurface(PlacementAnalysis analysis,
@@ -692,12 +742,15 @@ public final class ExactPhysicalCostModel {
 								+ sourceFact.occurrence().normalizedSignature()
 								+ "|owner=" + owner.node().key().normalizedSignature()
 								+ "|context=" + ownerProfile.contextOrdinal());
-					double forwardingWeight = PlacementCostSemantics.forwardingWeight(
+					// This strict profile distinguishes proven zero from the legacy helper's
+					// zero-as-missing sentinel. Never revive an unreachable runtime demand.
+					double forwardingWeight = ownerProfile.expectedExecutions() == 0.0 ? 0.0
+						: PlacementCostSemantics.forwardingWeight(
 						ownerProfile.expectedExecutions(), ownerProfile.loopContext(),
 						readProfile.loopContext());
 					double demandWeight = Math.min(sourceProfile.expectedExecutions(),
 						forwardingWeight);
-					if(!Double.isFinite(demandWeight) || demandWeight <= 0.0)
+					if(!Double.isFinite(demandWeight) || demandWeight < 0.0)
 						throw new IllegalArgumentException(
 							"EXACT_LATENT_WDIVMM_RUNTIME_ACTIVATION_UNPROVEN|owner="
 								+ owner.node().key().normalizedSignature()
@@ -1076,16 +1129,20 @@ public final class ExactPhysicalCostModel {
 		List<Double> activationWeights, double productionWeight) {
 		if(events == null || activationWeights == null
 			|| events.size() != activationWeights.size() || events.isEmpty()
-			|| !Double.isFinite(productionWeight) || productionWeight <= 0.0)
+			|| !Double.isFinite(productionWeight) || productionWeight < 0.0)
 			throw new IllegalArgumentException(
 				"EXACT_LATENT_WDIVMM_BRANCH_ACTIVATION_INPUT_INVALID");
 		Map<List<BranchLiteral>,Double> byEvent = new LinkedHashMap<>();
 		for(int index = 0; index < events.size(); index++) {
 			double weight = activationWeights.get(index);
-			if(!Double.isFinite(weight) || weight <= 0.0 || weight > productionWeight)
+			if(!Double.isFinite(weight) || weight < 0.0 || weight > productionWeight)
 				throw new IllegalArgumentException(
 					"EXACT_LATENT_WDIVMM_BRANCH_ACTIVATION_WEIGHT_INVALID");
-			byEvent.merge(List.copyOf(events.get(index)), weight, Math::max);
+			List<BranchLiteral> event = List.copyOf(events.get(index));
+			// Zero affects cost only, never candidate/hard-factor feasibility. A dead
+			// broad event must not subsume a narrower event that actually executes.
+			if(weight > 0.0)
+				byEvent.merge(event, weight, Math::max);
 		}
 		List<Map.Entry<List<BranchLiteral>,Double>> ordered = new ArrayList<>(byEvent.entrySet());
 		ordered.sort(Comparator.comparingInt(entry -> entry.getKey().size()));
@@ -1361,8 +1418,10 @@ public final class ExactPhysicalCostModel {
 				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
 				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers);
 		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
-		double singleWorkerPenalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(
-			hop, executionWeight, workers);
+		// The legacy control-plane heuristic floors a positive call count at one.
+		// A compiler-proven unreachable occurrence is not a one-shot invocation.
+		double singleWorkerPenalty = executionWeight == 0.0 ? 0.0
+			: FederatedCostModel.computeSingleWorkerFedExecPenalty(hop, executionWeight, workers);
 		double fedCost = requireCost(fedCompute + fedCoordination + fedInstructionLatency
 			+ fedInputPreparation + singleWorkerPenalty, "EXACT_FED_COST_UNPROVEN");
 
@@ -1580,11 +1639,12 @@ public final class ExactPhysicalCostModel {
 				.findFirst().orElseThrow(() -> new IllegalArgumentException(
 					"EXACT_OCCURRENCE_CONTEXT_UNMATCHED|consumer=" + consumer.normalizedSignature()
 						+ "|producer=" + producer.normalizedSignature()));
-			total += requirePositiveWeight(PlacementCostSemantics.forwardingWeight(
-				consumerProfile.networkWeight, consumerProfile.loopContext, producerProfile.loopContext),
+			total += requireCost(consumerProfile.networkWeight == 0.0 ? 0.0
+				: PlacementCostSemantics.forwardingWeight(consumerProfile.networkWeight,
+					consumerProfile.loopContext, producerProfile.loopContext),
 				"EXACT_FORWARDING_WEIGHT_UNPROVEN");
 		}
-		return requirePositiveWeight(total, "EXACT_FORWARDING_WEIGHT_UNPROVEN");
+		return requireCost(total, "EXACT_FORWARDING_WEIGHT_UNPROVEN");
 	}
 
 	private static List<OccurrenceProfile> requireOccurrenceProfiles(
@@ -1597,12 +1657,6 @@ public final class ExactPhysicalCostModel {
 		if(pathProfiles == null || pathProfiles.isEmpty())
 			throw new IllegalArgumentException("EXACT_OCCURRENCE_PATH_UNPROVEN|path=" + regionPath.get(0));
 		return pathProfiles;
-	}
-
-	private static double requirePositiveWeight(double value, String reason) {
-		if(!Double.isFinite(value) || value <= 0.0)
-			throw new IllegalArgumentException(reason + "|value=" + value);
-		return value;
 	}
 
 	private static int workerCount(NeutralPlacementGraph graph) {
@@ -1831,7 +1885,7 @@ public final class ExactPhysicalCostModel {
 		private final long contextOrdinal;
 		OccurrenceProfile(double networkWeight, List<Pair<Long,Double>> loopContext,
 			long contextOrdinal) {
-			this.networkWeight = requirePositiveWeight(networkWeight,
+			this.networkWeight = requireCost(networkWeight,
 				"EXACT_OCCURRENCE_WEIGHT_UNPROVEN");
 			this.loopContext = List.copyOf(loopContext);
 			this.contextOrdinal = contextOrdinal;

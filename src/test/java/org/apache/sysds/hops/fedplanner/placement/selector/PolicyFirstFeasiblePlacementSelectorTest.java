@@ -190,6 +190,15 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 
 	@Test
 	public void repeatedIncidentMovementDominatesCanonicalLayoutOrder() {
+		assertDynamicMovementPreference(30.0, 1.0);
+	}
+
+	@Test
+	public void provenZeroMovementMustNotRevertToOneExecution() {
+		assertDynamicMovementPreference(0.5, 0.0);
+	}
+
+	private void assertDynamicMovementPreference(double rowWeight, double broadcastWeight) {
 		String fingerprint = "first-feasible-frequency-weight";
 		Node source = node(fingerprint, "a-source", 0, List.of(FED_BROADCAST, FED));
 		Node hotRowConsumer = node(fingerprint, "b-hot-row", 1, List.of(FED));
@@ -210,7 +219,7 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 			broadcastKey, "compiled")), List.of(FED_BROADCAST));
 
 		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector(key ->
-			key == hotRowConsumer.key() ? 30.0 : 1.0).select(new NeutralPlacementGraph(
+			key == hotRowConsumer.key() ? rowWeight : broadcastWeight).select(new NeutralPlacementGraph(
 				List.of(source, hotRowConsumer, coldBroadcastConsumer), List.of(),
 				List.of(row, broadcast)));
 

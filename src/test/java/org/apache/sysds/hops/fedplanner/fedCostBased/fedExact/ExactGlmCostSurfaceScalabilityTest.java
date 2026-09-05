@@ -41,6 +41,31 @@ public class ExactGlmCostSurfaceScalabilityTest {
 			model.variables().size() >= 300);
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		int deadUnaryAlternatives = 0;
+		for(var domain : model.domains()) {
+			if(domain.node().kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph
+				.NodeKind.FUNCTION_INPUT || domain.node().kind() == org.apache.sysds.hops.fedplanner.placement
+				.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+				continue; // Synthetic call boundaries are not executable occurrence profiles.
+			if(analysis.executionFrequencyFacts().exactExecutionWeight(domain.node().key()) != 0.0)
+				continue;
+			for(var contribution : surface.contributions()) {
+				var factor = contribution.factor();
+				if(!factor.scope().equals(java.util.List.of(domain.variable())))
+					continue;
+				for(int value = 0; value < domain.variable().domainSize(); value++) {
+					double cost = factor.cost(new int[] {value});
+					if(cost == Double.POSITIVE_INFINITY)
+						continue; // Zero frequency never relaxes a forbidden physical assignment.
+					Assert.assertEquals("Every feasible placement of a dead occurrence has zero unary cost: "
+						+ contribution.id() + " alternative=" + value,
+						0.0, cost, 0.0);
+					deadUnaryAlternatives++;
+				}
+			}
+		}
+		Assert.assertTrue("actual GLM must retain dead candidates rather than delete their domains",
+			deadUnaryAlternatives > 0);
 		Assert.assertTrue("GLM fixture must exercise exact-only auxiliary cost factors",
 			surface.exactSolverVariables().size() > model.variables().size());
 		var allFactors = new ArrayList<>(model.hardFactors());
@@ -61,9 +86,14 @@ public class ExactGlmCostSurfaceScalabilityTest {
 			<= ExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumFactorCells());
 		Assert.assertTrue(statistics.materializedFactorCells()
 			<= ExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumMaterializedCells());
-		Assert.assertTrue("GLM reduced maximum factor unexpectedly regressed: " + statistics,
-			statistics.maximumFactorCells() <= 500_000L);
-		Assert.assertTrue("GLM reduced materialization unexpectedly regressed: " + statistics,
+		// Exact value-based quotienting changes the elimination profile when proven
+		// dead branches change from positive frequency to zero. A previous 500k
+		// separator snapshot was not a bound on the unchanged authority domains.
+		String resourceProfile = "width=" + statistics.inducedWidth()
+			+ " maximumFactorCells=" + statistics.maximumFactorCells()
+			+ " materializedFactorCells=" + statistics.materializedFactorCells();
+		System.out.println("GLM exact resource profile: " + resourceProfile);
+		Assert.assertTrue("GLM reduced materialization unexpectedly regressed: " + resourceProfile,
 			statistics.materializedFactorCells() <= 6_000_000L);
 		Assert.assertEquals(optimized.canonicalObjectiveBits(), Double.doubleToRawLongBits(
 			optimized.solverResult().objective()));

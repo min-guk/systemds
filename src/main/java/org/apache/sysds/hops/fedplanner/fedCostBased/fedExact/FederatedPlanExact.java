@@ -22,6 +22,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.DecisionDomain;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementAdapter;
@@ -84,7 +85,7 @@ public class FederatedPlanExact extends AFederatedPlanner {
 		List<Integer> assignment = selection.assignmentInDecisionOrder();
 		ExactCategoricalSolver.Statistics statistics = selection.statistics();
 		FederatedPlannerTrace.logGlobal("Exact-PhysicalOptimize", String.format(Locale.ROOT,
-			"objective=%.12f objectiveBits=%s variables=%d auxiliaryVariables=%d "
+			"objective=%.12f objectiveBits=%s unit=ms variables=%d auxiliaryVariables=%d "
 				+ "hardFactors=%d costFactors=%d transfers=%d "
 				+ "inducedWidth=%d maximumFactorCells=%d materializedFactorCells=%d "
 				+ "maximumEliminationAssignments=%d eliminationAssignments=%d costFingerprint=%s analysis=%s",
@@ -95,6 +96,9 @@ public class FederatedPlanExact extends AFederatedPlanner {
 			statistics.materializedFactorCells(), statistics.maximumEliminationAssignments(),
 			statistics.eliminationAssignments(), selection.costSurfaceFingerprint(),
 			selection.analysisFingerprint()));
+		ExactPhysicalCostModel.traceCanonicalContributions("Exact", model.variables(),
+			surface.contributions(), assignment, selection.objectiveBits(),
+			FederatedPlannerTrace::logGlobal);
 
 		List<Factor> factors = new ArrayList<>(model.hardFactors());
 		factors.addAll(surface.factors());
@@ -115,9 +119,13 @@ public class FederatedPlanExact extends AFederatedPlanner {
 				factors, domain.variable(), positions, assignment, selectedIndex);
 			FederatedPlannerTrace.log(hop, "Exact-PhysicalSelect", String.format(Locale.ROOT,
 				"variable=%d selectedIndex=%d domainSize=%d state=%s derivedFedFout=%s authority=%s "
-					+ "fixedOthersIncident=%.12f inputs=%s signature=%s",
+					+ "fixedOthersIncident=%.12f unit=ms expectedExecutions=%s inputs=%s signature=%s",
 				index, selectedIndex, domain.alternatives().size(), selected.state().normalizedSignature(),
 				emission != null && emission.derivedFedFout(), selected.authorityKind(), selectedIncident,
+				domain.node().kind() == NodeKind.FUNCTION_INPUT || domain.node().kind() == NodeKind.FUNCTION_OUTPUT
+					? "not_an_executable_occurrence"
+					: Double.toString(selection.analysis().executionFrequencyFacts()
+						.exactExecutionWeight(domain.node().key())),
 				selected.inputAuthorities().stream().map(authority -> authority.signature()).toList(),
 				selected.signature()));
 

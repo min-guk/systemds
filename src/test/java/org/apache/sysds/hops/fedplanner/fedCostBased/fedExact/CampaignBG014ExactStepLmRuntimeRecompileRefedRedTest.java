@@ -3,6 +3,10 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
@@ -13,6 +17,8 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -43,6 +49,7 @@ public class CampaignBG014ExactStepLmRuntimeRecompileRefedRedTest {
 		int oldSeed = DMLScript.SEED;
 		boolean oldLocalSpark = DMLScript.USE_LOCAL_SPARK_CONFIG;
 		String oldParserPath = DMLScript.DML_FILE_PATH_ANTLR_PARSER;
+		String oldRuntimeAudit = System.getProperty(PlannerRuntimePlacementAudit.PROPERTY);
 		int port = AutomatedTestBase.getRandomAvailablePort();
 		Thread worker = null;
 		Path root = Files.createTempDirectory(Path.of("target"), "g014-exact-steplm-refed-");
@@ -57,14 +64,14 @@ public class CampaignBG014ExactStepLmRuntimeRecompileRefedRedTest {
 			Files.writeString(config, config(root));
 			worker = AutomatedTestBase.startLocalFedWorkerThread(port, 1_000);
 			InfrastructureAnalyzer.setLocalMaxMemory(8L * 1024 * 1024 * 1024);
+			System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, Boolean.TRUE.toString());
 			Statistics.reset();
 			Assert.assertTrue(DMLScript.executeScript(new String[] {
 				"-exec", "singlenode", "-seed", "2026072701", "-f", script.toString(),
 				"-stats", "100", "-config", config.toString()
 			}));
 			long refed = Statistics.getCPHeavyHitterCount("fed_fed_refed");
-			Assert.assertTrue("Only a statically selected physical upload may remain; runtime-recompiled "
-				+ "CP blocks must not add REFED for coordinator-only work. actual=" + refed, refed <= 1);
+			assertExecutedRefedMatchesCommittedAuthority(refed, PlannerRuntimePlacementAudit.display());
 		}
 		finally {
 			TestUtils.shutdownThreads(worker);
@@ -78,6 +85,11 @@ public class CampaignBG014ExactStepLmRuntimeRecompileRefedRedTest {
 			DMLScript.SEED = oldSeed;
 			DMLScript.USE_LOCAL_SPARK_CONFIG = oldLocalSpark;
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER = oldParserPath;
+			PlannerRuntimePlacementAudit.resetForTesting();
+			if(oldRuntimeAudit == null)
+				System.clearProperty(PlannerRuntimePlacementAudit.PROPERTY);
+			else
+				System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, oldRuntimeAudit);
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			PlacementEmissionTransaction.resetForTesting();
 			FederatedRefedRegistry.clear();
@@ -93,6 +105,107 @@ public class CampaignBG014ExactStepLmRuntimeRecompileRefedRedTest {
 			Files.deleteIfExists(root.resolve("SystemDS-config.xml"));
 			Files.deleteIfExists(root);
 		}
+	}
+
+	private static void assertExecutedRefedMatchesCommittedAuthority(long heavyHitterCount, String audit) {
+		var committed = PlacementEmissionTransaction.receiptSnapshotForTesting();
+		Assert.assertEquals("Expected one committed StepLM program", 1, committed.size());
+		var normalized = PlacementEmissionTransaction.currentNormalizedResult(
+			committed.keySet().iterator().next());
+		var selectedActions = normalized.selectedRelocations().stream().collect(
+			java.util.stream.Collectors.toMap(action -> action.normalizedSignature(), action -> action));
+		var expectedInputs = new TreeMap<String,java.util.Set<
+			FederatedRefedRegistry.ConsumerInputSpec>>();
+		var resolvedChoices = RelocationSelections.resolveAndValidate(normalized.analysis(),
+			normalized.selectedStates(), normalized.selectedCandidateSelections(),
+			normalized.selectedRelocationChoices());
+		for(var choice : resolvedChoices) {
+			if(!choice.requiresEmission())
+				continue;
+			String actionKey = choice.action().key().normalizedSignature();
+			Assert.assertEquals("Emission-requiring relocation choice must reference a committed selected action",
+				choice.action().key(), selectedActions.get(actionKey));
+			long consumerHop = normalized.analysis().hop(
+				choice.receipt().demand().consumer()).orElseThrow().getHopID();
+			expectedInputs.computeIfAbsent(actionKey, ignored -> new TreeSet<>()).add(
+				new FederatedRefedRegistry.ConsumerInputSpec(consumerHop,
+					choice.receipt().demand().inputPosition()));
+		}
+		Assert.assertEquals("Committed physical relocations must equal emission-requiring exact choices",
+			selectedActions.keySet(), expectedInputs.keySet());
+
+		var emittedInputs = new TreeMap<String,java.util.Set<
+			FederatedRefedRegistry.ConsumerInputSpec>>();
+		var emittedPlacements = new TreeMap<String,String>();
+		for(var scope : FederatedRefedRegistry.snapshotAll().scopes().values())
+			for(var spec : scope.values())
+				for(var authority : spec.getAuthorities()) {
+					String actionKey = authority.getPlannerActionKey();
+					Assert.assertNotNull("Runtime REFED registry must retain selected action identity", actionKey);
+					var action = selectedActions.get(actionKey);
+					Assert.assertNotNull("Runtime REFED registry contains an uncommitted action", action);
+					Assert.assertEquals("Runtime REFED layout differs from selected placement",
+						action.materializationFType(), authority.getMaterializationFType());
+					Assert.assertTrue("Runtime REFED must retain exact consumer-input authority",
+						authority.getConsumerInputs().stream().noneMatch(
+							FederatedRefedRegistry.ConsumerInputSpec::allInputs));
+					emittedInputs.computeIfAbsent(actionKey, ignored -> new TreeSet<>())
+						.addAll(authority.getConsumerInputs());
+					emittedPlacements.put(actionKey, action.sourceValueVersion().cfgReferenceSignature()
+						+ "->" + action.targetPlacement().normalizedSignature() + "/"
+						+ action.materializationFType() + " consumers=" + authority.getConsumerInputs());
+				}
+		Assert.assertEquals("Committed REFED emissions must cover exactly the selected source/consumer inputs",
+			expectedInputs, emittedInputs);
+
+		List<RuntimeRefedExecution> executedRefed = runtimeRefedExecutions(audit);
+		long auditedCount = executedRefed.stream().mapToLong(RuntimeRefedExecution::count).sum();
+		Assert.assertEquals("Heavy-hitter and exact runtime-audit REFED counts must agree; emitted="
+			+ executedRefed + "; audit=" + audit, heavyHitterCount, auditedCount);
+		var authorizedSyntheticActions = new TreeMap<String,String>();
+		for(String actionKey : selectedActions.keySet())
+			authorizedSyntheticActions.put(PlannerRuntimePlacementAudit.shortHash(
+				PlannerRuntimePlacementAudit.syntheticActionKey(actionKey, "REFED")), actionKey);
+		for(RuntimeRefedExecution executed : executedRefed) {
+			Assert.assertTrue("Runtime-recompiled coordinator emitted REFED without a committed source/consumer/"
+				+ "placement receipt: emitted=" + executed + "; authorized="
+				+ authorizedSyntheticActions + "; placements=" + emittedPlacements + "; audit=" + audit,
+				authorizedSyntheticActions.containsKey(executed.syntheticAction()));
+			String actionKey = authorizedSyntheticActions.get(executed.syntheticAction());
+			String expectedPhysical = "FED/FOUT/" + selectedActions.get(actionKey).materializationFType();
+			Assert.assertEquals("Runtime REFED physical placement differs from its selected action: " + executed,
+				expectedPhysical, executed.plannedPhysical());
+			Assert.assertEquals("Executed REFED value placement differs from its lowering receipt: " + executed,
+				expectedPhysical, executed.actual());
+		}
+	}
+
+	private static List<RuntimeRefedExecution> runtimeRefedExecutions(String audit) {
+		java.util.ArrayList<RuntimeRefedExecution> result = new java.util.ArrayList<>();
+		for(String line : audit.lines().filter(value -> value.startsWith(
+				"[PlannerRuntimeAudit][Execution]") && value.contains(" opcode=fed_refed ")).toList()) {
+			Assert.assertTrue("Executed REFED must have MATCH audit status: " + line,
+				line.contains(" status=MATCH "));
+			String action = field(line, "syntheticAction");
+			Assert.assertNotEquals("Executed REFED must retain its synthetic action identity: " + line,
+				"-", action);
+			result.add(new RuntimeRefedExecution(action, Long.parseLong(field(line, "hop")),
+				Long.parseLong(field(line, "lop")), field(line, "plannedPhysical"),
+				field(line, "actual"), Long.parseLong(field(line, "count"))));
+		}
+		return List.copyOf(result);
+	}
+
+	private record RuntimeRefedExecution(String syntheticAction, long hopId, long lopId,
+		String plannedPhysical, String actual, long count) { }
+
+	private static String field(String line, String name) {
+		String prefix = name + '=';
+		int start = line.indexOf(prefix);
+		Assert.assertTrue("Missing " + name + " in runtime-audit line: " + line, start >= 0);
+		start += prefix.length();
+		int end = line.indexOf(' ', start);
+		return end < 0 ? line.substring(start) : line.substring(start, end);
 	}
 
 	private static String stepLmScript(int port, Path features, Path labels, Path output) {

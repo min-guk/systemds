@@ -568,7 +568,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			double weight = 0.0;
 			for(var obligation : action.obligations()) {
 				double obligationWeight = executionWeight(obligation.consumer());
-				if(frequencyFacts != null && executionWeightOverride == null) {
+				if(obligationWeight > 0.0 && frequencyFacts != null && executionWeightOverride == null) {
 					for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
 						action.key().sourceValueVersion(), List.of()))
 						for(Node source : groups.get(sourceGroup).members())
@@ -580,7 +580,9 @@ public final class PolicyFirstFeasiblePlacementSelector
 				// the maximum dynamic demand rather than summing duplicate obligations.
 				weight = Math.max(weight, obligationWeight);
 			}
-			return weight > 0.0 ? weight : 1.0;
+			// An absent demand has no frequency evidence; a present, proven-dead
+			// demand has weight zero and must not be revived by that default.
+			return action.obligations().isEmpty() ? 1.0 : weight;
 		}
 
 		private double executionWeight(CompiledHopKey key) {
@@ -590,8 +592,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			double weight;
 			if(executionWeightOverride != null) {
 				weight = executionWeightOverride.applyAsDouble(key);
-				if(!Double.isFinite(weight) || weight <= 0.0)
-					throw new IllegalArgumentException("selector execution weight must be positive");
+				if(!Double.isFinite(weight) || weight < 0.0)
+					throw new IllegalArgumentException("selector execution weight must be nonnegative");
 			}
 			else
 				weight = frequencyFacts == null ? 1.0

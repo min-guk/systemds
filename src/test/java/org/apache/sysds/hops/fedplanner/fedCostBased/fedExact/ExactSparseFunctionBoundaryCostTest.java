@@ -48,8 +48,14 @@ public class ExactSparseFunctionBoundaryCostTest {
 			.filter(factor -> factor.scope().equals(List.of(source.variable(), formal.variable())))
 			.mapToDouble(factor -> factor.cost(new int[] {sourceFout, formalCp})).sum();
 		double expectedBytes = MatrixBlock.estimateSizeOnDisk(6, 3, 6);
+		double denseBytes = MatrixBlock.estimateSizeOnDisk(6, 3, 18);
+		Assert.assertTrue("Fixture must distinguish sparse wire bytes from the dense formal shape",
+			expectedBytes < denseBytes);
+		var sourceState = source.alternatives().get(sourceFout).state();
+		Assert.assertNotNull("FED/FOUT source must retain its materialization layout", sourceState.fType());
 		double expected = analysis.executionFrequencyFacts().logicalFunctionCallWeight(input)
-			* FederatedCostModel.computeDownloadNetworkCost(expectedBytes);
+			* FederatedCostModel.computeReusableMaterializationDownloadCost(
+				expectedBytes, sourceState.fType(), 2);
 		Assert.assertTrue("Expected a nonzero FOUT-to-CP function-boundary transfer", actual > 0.0);
 		Assert.assertEquals("The function boundary must use the source occurrence's expected"
 			+ " assignment payload instead of the dense formal-read estimate",

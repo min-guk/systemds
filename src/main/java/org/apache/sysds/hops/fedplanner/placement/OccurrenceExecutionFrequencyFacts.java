@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -34,6 +35,7 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -47,23 +49,27 @@ import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
+import org.apache.sysds.runtime.functionobjects.IntegerDivide;
+import org.apache.sysds.runtime.functionobjects.Modulus;
 import org.apache.sysds.runtime.util.UtilFunctions;
 
 /**
  * Immutable occurrence-execution facts shared by all placement selectors and cost models.
  *
  * <p>The fact construction follows compiled statement-block identity rather than HOP identity:
- * loops scale their nested regions, branches use the configured expected branch weight, and each
- * DML function invocation receives a distinct context.  Consequently, two projections backed by
+ * loops scale their nested regions, compiler-proven predicates select their reachable arm while
+ * unknown branches use the configured expectation, and each DML function invocation receives a
+ * distinct context. Consequently, two projections backed by
  * the same HOP can still have different execution weights, while one function body called from
  * multiple sites retains all call-context profiles.</p>
  */
 public final class OccurrenceExecutionFrequencyFacts {
+	private static final long MAX_EXACT_DOUBLE_INTEGER = 1L << 53;
 	/** One exact call-context occurrence profile for one control-region path. */
 	public record OccurrenceProfileFact(double expectedExecutions,
 		List<Pair<Long,Double>> loopContext, long contextOrdinal) {
 		public OccurrenceProfileFact {
-			expectedExecutions = requirePositiveWeight(expectedExecutions,
+			expectedExecutions = requireNonnegativeWeight(expectedExecutions,
 				"PLACEMENT_OCCURRENCE_WEIGHT_UNPROVEN");
 			loopContext = List.copyOf(Objects.requireNonNull(loopContext, "loopContext"));
 			if(contextOrdinal < 0L)
@@ -103,7 +109,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 		double total = 0.0;
 		for(OccurrenceProfileFact profile : requireProfiles(key))
 			total += profile.expectedExecutions();
-		return requirePositiveWeight(total, "PLACEMENT_EXECUTION_WEIGHT_UNPROVEN");
+		return requireNonnegativeWeight(total, "PLACEMENT_EXECUTION_WEIGHT_UNPROVEN");
 	}
 
 	/**
@@ -120,7 +126,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 		double total = 0.0;
 		for(OccurrenceProfileFact profile : profiles)
 			total += profile.expectedExecutions();
-		return Double.isFinite(total) && total > 0.0 ? total : defaultWeight;
+		return Double.isFinite(total) && total >= 0.0 ? total : defaultWeight;
 	}
 
 	/**
@@ -131,7 +137,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 		double total = 0.0;
 		for(OccurrenceProfileFact profile : requireExactProfiles(key))
 			total += profile.expectedExecutions();
-		return requirePositiveWeight(total, "EXACT_EXECUTION_WEIGHT_UNPROVEN");
+		return requireNonnegativeWeight(total, "EXACT_EXECUTION_WEIGHT_UNPROVEN");
 	}
 
 	/**
@@ -143,6 +149,8 @@ public final class OccurrenceExecutionFrequencyFacts {
 		List<OccurrenceProfileFact> producers = requireProfiles(producer);
 		double total = 0.0;
 		for(OccurrenceProfileFact consumerProfile : consumers) {
+			if(consumerProfile.expectedExecutions() == 0.0)
+				continue;
 			OccurrenceProfileFact producerProfile = producers.stream()
 				.filter(candidate -> candidate.contextOrdinal() == consumerProfile.contextOrdinal())
 				.findFirst().orElse(null);
@@ -157,7 +165,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 				consumerProfile.expectedExecutions(), consumerProfile.loopContext(),
 				producerProfile.loopContext()), "PLACEMENT_FORWARDING_WEIGHT_UNPROVEN");
 		}
-		return requirePositiveWeight(total, "PLACEMENT_FORWARDING_WEIGHT_UNPROVEN");
+		return requireNonnegativeWeight(total, "PLACEMENT_FORWARDING_WEIGHT_UNPROVEN");
 	}
 
 	/** Non-throwing counterpart used only for deterministic local policy ordering. */
@@ -170,17 +178,19 @@ public final class OccurrenceExecutionFrequencyFacts {
 			return defaultWeight;
 		double total = 0.0;
 		for(OccurrenceProfileFact consumerProfile : consumers) {
+			if(consumerProfile.expectedExecutions() == 0.0)
+				continue;
 			OccurrenceProfileFact producerProfile = producers.stream()
 				.filter(candidate -> candidate.contextOrdinal() == consumerProfile.contextOrdinal())
 				.findFirst().orElse(null);
 			double weight = producerProfile == null ? consumerProfile.expectedExecutions()
 				: PlacementCostSemantics.forwardingWeight(consumerProfile.expectedExecutions(),
 					consumerProfile.loopContext(), producerProfile.loopContext());
-			if(!Double.isFinite(weight) || weight <= 0.0)
+			if(!Double.isFinite(weight) || weight < 0.0)
 				return defaultWeight;
 			total += weight;
 		}
-		return Double.isFinite(total) && total > 0.0 ? total : defaultWeight;
+		return Double.isFinite(total) && total >= 0.0 ? total : defaultWeight;
 	}
 
 	/** Strict producer-to-consumer weight for exact physical costing. */
@@ -189,6 +199,8 @@ public final class OccurrenceExecutionFrequencyFacts {
 		List<OccurrenceProfileFact> producers = requireExactProfiles(producer);
 		double total = 0.0;
 		for(OccurrenceProfileFact consumerProfile : consumers) {
+			if(consumerProfile.expectedExecutions() == 0.0)
+				continue;
 			OccurrenceProfileFact producerProfile = producers.stream()
 				.filter(candidate -> candidate.contextOrdinal() == consumerProfile.contextOrdinal())
 				.findFirst().orElseThrow(() -> new IllegalArgumentException(
@@ -198,7 +210,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 				consumerProfile.expectedExecutions(), consumerProfile.loopContext(),
 				producerProfile.loopContext()), "EXACT_FORWARDING_WEIGHT_UNPROVEN");
 		}
-		return requirePositiveWeight(total, "EXACT_FORWARDING_WEIGHT_UNPROVEN");
+		return requireNonnegativeWeight(total, "EXACT_FORWARDING_WEIGHT_UNPROVEN");
 	}
 
 	/** Expected executions of one logical DML function-call boundary. */
@@ -215,7 +227,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 		double total = 0.0;
 		for(OccurrenceProfileFact profile : calls)
 			total += profile.expectedExecutions();
-		return requirePositiveWeight(total, "PLACEMENT_LOGICAL_FUNCTION_CALL_WEIGHT_UNPROVEN");
+		return requireNonnegativeWeight(total, "PLACEMENT_LOGICAL_FUNCTION_CALL_WEIGHT_UNPROVEN");
 	}
 
 	private List<OccurrenceProfileFact> requireProfiles(CompiledHopKey key) {
@@ -359,10 +371,14 @@ public final class OccurrenceExecutionFrequencyFacts {
 					nested.loopContext(), visible, callStack, contextOrdinal);
 				putProfile(path, nested);
 				ForStatement statement = (ForStatement)block.getStatement(0);
+				Map<String,List<Hop>> loopUnknowns = loopWrittenUnknowns(statement.getBody());
+				loopUnknowns.put(statement.getIterablePredicate().getIterVar().getName(), List.of());
 				Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/loop-body",
 					nested.expectedExecutions(), nested.loopContext(),
-					appendTransTable(visible, headerWrites), callStack, contextOrdinal);
+					appendTransTable(appendTransTable(visible, headerWrites), loopUnknowns),
+					callStack, contextOrdinal);
 				replaceMappings(headerWrites, bodyWrites);
+				replaceMappings(headerWrites, loopUnknowns);
 			}
 			else if(block instanceof WhileStatementBlock whileBlock) {
 				List<Map<String,List<Hop>>> boundedVisible = appendExactPredicateScalars(
@@ -376,25 +392,34 @@ public final class OccurrenceExecutionFrequencyFacts {
 					nested.loopContext(), visible, callStack, contextOrdinal);
 				putProfile(path, nested);
 				WhileStatement statement = (WhileStatement)block.getStatement(0);
+				Map<String,List<Hop>> loopUnknowns = loopWrittenUnknowns(statement.getBody());
 				Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/loop-body",
 					nested.expectedExecutions(), nested.loopContext(),
-					appendTransTable(visible, headerWrites), callStack, contextOrdinal);
+					appendTransTable(appendTransTable(visible, headerWrites), loopUnknowns),
+					callStack, contextOrdinal);
 				replaceMappings(headerWrites, bodyWrites);
+				replaceMappings(headerWrites, loopUnknowns);
 			}
-			else if(block instanceof IfStatementBlock) {
+			else if(block instanceof IfStatementBlock ifBlock) {
+				Boolean predicate = exactPredicate(ifBlock.getPredicateHops(), visible);
 				headerWrites = scanBlockRoots(blockRoots(block), networkWeight, loopContext,
 					visible, callStack, contextOrdinal);
 				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal));
-				double branchWeight = requirePositiveWeight(networkWeight
-					* RewireConstants.DEFAULT_IF_ELSE_WEIGHT, "PLACEMENT_BRANCH_WEIGHT_UNPROVEN");
+				double ifWeight = predicate == null ? networkWeight == 0.0 ? 0.0
+					: requirePositiveWeight(networkWeight * RewireConstants.DEFAULT_IF_ELSE_WEIGHT,
+						"PLACEMENT_BRANCH_WEIGHT_UNPROVEN")
+					: predicate ? networkWeight : 0.0;
+				double elseWeight = predicate == null ? ifWeight : predicate ? 0.0 : networkWeight;
 				IfStatement statement = (IfStatement)block.getStatement(0);
 				List<Map<String,List<Hop>>> branchOuter = appendTransTable(visible, headerWrites);
 				Map<String,List<Hop>> ifWrites = indexBlocks(statement.getIfBody(), path + "/branch-if",
-					branchWeight, loopContext, branchOuter, callStack, contextOrdinal);
+					ifWeight, loopContext, branchOuter, callStack, contextOrdinal);
 				Map<String,List<Hop>> elseWrites = indexBlocks(statement.getElseBody(), path + "/branch-else",
-					branchWeight, loopContext, branchOuter, callStack, contextOrdinal);
-				mergeMappings(headerWrites, ifWrites);
-				mergeMappings(headerWrites, elseWrites);
+					elseWeight, loopContext, branchOuter, callStack, contextOrdinal);
+				if(predicate != null)
+					replaceMappings(headerWrites, predicate ? ifWrites : elseWrites);
+				else
+					replaceMappings(headerWrites, joinBranchMappings(branchOuter, ifWrites, elseWrites));
 			}
 			else if(block instanceof FunctionStatementBlock) {
 				headerWrites = scanBlockRoots(blockRoots(block), networkWeight, loopContext,
@@ -438,6 +463,206 @@ public final class OccurrenceExecutionFrequencyFacts {
 			if(boundRoot == null || boundRoot.getInput() == null || boundRoot.getInput().isEmpty())
 				return null;
 			return RewireConstants.tryEvaluateScalarConstant(boundRoot.getInput().get(0), transTables);
+		}
+
+		private Boolean exactPredicate(Hop predicateRoot,
+			List<Map<String,List<Hop>>> visibleTransTables) {
+			Double value = exactScalar(predicateRoot, visibleTransTables,
+				Collections.newSetFromMap(new IdentityHashMap<>()), 0);
+			return value == null ? null : value != 0.0;
+		}
+
+		/**
+		 * Exact, occurrence-scoped evaluator for branch predicates. Unlike the
+		 * best-effort loop estimator, a transient read is constant only when every
+		 * reaching definition in the nearest lexical table proves the same value.
+		 */
+		private Double exactScalar(Hop hop, List<Map<String,List<Hop>>> transTables,
+			Set<Hop> active, int depth) {
+			if(hop == null || depth > 32 || !active.add(hop))
+				return null;
+			try {
+				if(hop instanceof LiteralOp literal) {
+					if(!literal.getValueType().isNumeric()
+						&& literal.getValueType() != org.apache.sysds.common.Types.ValueType.BOOLEAN)
+						return null;
+					if(literal.getValueType() == org.apache.sysds.common.Types.ValueType.INT64
+						&& (literal.getLongValue() > MAX_EXACT_DOUBLE_INTEGER
+							|| literal.getLongValue() < -MAX_EXACT_DOUBLE_INTEGER))
+						return null;
+					return finiteOrNull(HopRewriteUtils.getDoubleValue(literal));
+				}
+				if(hop instanceof DataOp data) {
+					if(data.getOp() == OpOpData.TRANSIENTWRITE)
+						return hop.getInput() == null || hop.getInput().size() != 1 ? null
+							: exactScalar(hop.getInput().get(0), transTables, active, depth + 1);
+					if(data.getOp() == OpOpData.TRANSIENTREAD) {
+						List<Hop> candidates = nearestCandidates(data.getName(), transTables);
+						if(candidates == null || candidates.isEmpty())
+							return null;
+						Double result = null;
+						for(Hop candidate : candidates) {
+							Double value = exactScalar(candidate, transTables, active, depth + 1);
+							if(value == null)
+								return null;
+							if(result != null && Double.doubleToRawLongBits(result)
+								!= Double.doubleToRawLongBits(value))
+								return null;
+							result = value;
+						}
+						return result;
+					}
+				}
+				if(hop instanceof org.apache.sysds.hops.UnaryOp unary
+					&& hop.getDataType() != null && hop.getDataType().isScalar()
+					&& hop.getInput() != null && hop.getInput().size() == 1) {
+					Double input = exactScalar(hop.getInput().get(0), transTables, active, depth + 1);
+					if(input == null)
+						return null;
+					return switch(unary.getOp()) {
+						case CAST_AS_DOUBLE, CAST_AS_SCALAR -> input;
+						case CAST_AS_INT -> exactLongAsDouble(UtilFunctions.toLong(input));
+						case CAST_AS_BOOLEAN -> input == 0.0 ? 0.0 : 1.0;
+						case ABS -> Math.abs(input);
+						default -> null;
+					};
+				}
+				if(hop instanceof org.apache.sysds.hops.BinaryOp binary
+					&& hop.getDataType() != null && hop.getDataType().isScalar()
+					&& hop.getInput() != null && hop.getInput().size() == 2) {
+					// Runtime INT64 arithmetic dispatches through long operands. Retaining
+					// only a Double here could round above 2^53 and prove the wrong arm.
+					// Comparisons remain eligible because their operands are evaluated
+					// independently and any unrepresentable INT64 literal is rejected.
+					Double left = exactScalar(hop.getInput().get(0), transTables, active, depth + 1);
+					Double right = exactScalar(hop.getInput().get(1), transTables, active, depth + 1);
+					if(left == null || right == null)
+						return null;
+					if(binary.getValueType() == org.apache.sysds.common.Types.ValueType.INT64
+						&& (binary.getOp() == org.apache.sysds.common.Types.OpOp2.PLUS
+							|| binary.getOp() == org.apache.sysds.common.Types.OpOp2.MINUS
+							|| binary.getOp() == org.apache.sysds.common.Types.OpOp2.MULT))
+						return exactIntegerArithmetic(binary.getOp(), UtilFunctions.toLong(left),
+							UtilFunctions.toLong(right));
+					double value = switch(binary.getOp()) {
+						case PLUS -> left + right;
+						case MINUS -> left - right;
+						case MULT -> left * right;
+						case DIV -> right == 0.0 ? Double.NaN : left / right;
+						case MODULUS -> Modulus.getFnObject().execute(left, right);
+						case INTDIV -> IntegerDivide.getFnObject().execute(left, right);
+						case POW -> Math.pow(left, right);
+						case LESS -> left < right ? 1.0 : 0.0;
+						case LESSEQUAL -> left <= right ? 1.0 : 0.0;
+						case GREATER -> left > right ? 1.0 : 0.0;
+						case GREATEREQUAL -> left >= right ? 1.0 : 0.0;
+						case EQUAL -> left.doubleValue() == right.doubleValue() ? 1.0 : 0.0;
+						case NOTEQUAL -> left.doubleValue() != right.doubleValue() ? 1.0 : 0.0;
+						case AND -> left != 0.0 && right != 0.0 ? 1.0 : 0.0;
+						case OR -> left != 0.0 || right != 0.0 ? 1.0 : 0.0;
+						case XOR -> (left != 0.0) ^ (right != 0.0) ? 1.0 : 0.0;
+						default -> Double.NaN;
+					};
+					if(binary.getValueType() == org.apache.sysds.common.Types.ValueType.INT64
+						&& Math.abs(value) > MAX_EXACT_DOUBLE_INTEGER)
+						return null;
+					return finiteOrNull(value);
+				}
+				return null;
+			}
+			finally {
+				active.remove(hop);
+			}
+		}
+
+		private Double finiteOrNull(double value) {
+			return Double.isFinite(value) ? value : null;
+		}
+
+		private Double exactLongAsDouble(long value) {
+			return value >= -MAX_EXACT_DOUBLE_INTEGER && value <= MAX_EXACT_DOUBLE_INTEGER
+				? (double)value : null;
+		}
+
+		private Double exactIntegerArithmetic(org.apache.sysds.common.Types.OpOp2 operation,
+			long left, long right) {
+			try {
+				long value = switch(operation) {
+					case PLUS -> Math.addExact(left, right);
+					case MINUS -> Math.subtractExact(left, right);
+					case MULT -> Math.multiplyExact(left, right);
+					default -> throw new IllegalArgumentException("not integer arithmetic: " + operation);
+				};
+				return exactLongAsDouble(value);
+			}
+			catch(ArithmeticException overflow) {
+				return null;
+			}
+		}
+
+		private List<Hop> nearestCandidates(String name,
+			List<Map<String,List<Hop>>> transTables) {
+			if(name == null || transTables == null)
+				return null;
+			for(int index = transTables.size() - 1; index >= 0; index--) {
+				Map<String,List<Hop>> table = transTables.get(index);
+				if(table != null && table.containsKey(name))
+					return table.get(name);
+			}
+			return null;
+		}
+
+		private Map<String,List<Hop>> joinBranchMappings(
+			List<Map<String,List<Hop>>> before, Map<String,List<Hop>> ifWrites,
+			Map<String,List<Hop>> elseWrites) {
+			Set<String> names = new LinkedHashSet<>(ifWrites.keySet());
+			names.addAll(elseWrites.keySet());
+			Map<String,List<Hop>> joined = new LinkedHashMap<>();
+			for(String name : names) {
+				List<Hop> fromIf = ifWrites.containsKey(name) ? ifWrites.get(name)
+					: nearestCandidates(name, before);
+				List<Hop> fromElse = elseWrites.containsKey(name) ? elseWrites.get(name)
+					: nearestCandidates(name, before);
+				if(fromIf == null || fromElse == null || fromIf.isEmpty() || fromElse.isEmpty()) {
+					joined.put(name, List.of());
+					continue;
+				}
+				List<Hop> candidates = new ArrayList<>(fromIf);
+				candidates.addAll(fromElse);
+				joined.put(name, candidates);
+			}
+			return joined;
+		}
+
+		private Map<String,List<Hop>> loopWrittenUnknowns(List<StatementBlock> blocks) {
+			Set<String> names = new LinkedHashSet<>();
+			collectWrittenNames(blocks, names);
+			Map<String,List<Hop>> unknowns = new LinkedHashMap<>();
+			for(String name : names)
+				unknowns.put(name, List.of());
+			return unknowns;
+		}
+
+		private void collectWrittenNames(List<StatementBlock> blocks, Set<String> names) {
+			if(blocks == null)
+				return;
+			for(StatementBlock block : blocks) {
+				names.addAll(transientWrites(blockRoots(block)).keySet());
+				names.addAll(functionOutputUnknowns(blockRoots(block)).keySet());
+				if(block instanceof IfStatementBlock) {
+					IfStatement statement = (IfStatement)block.getStatement(0);
+					collectWrittenNames(statement.getIfBody(), names);
+					collectWrittenNames(statement.getElseBody(), names);
+				}
+				else if(block instanceof ForStatementBlock) {
+					ForStatement statement = (ForStatement)block.getStatement(0);
+					collectWrittenNames(statement.getBody(), names);
+				}
+				else if(block instanceof WhileStatementBlock) {
+					WhileStatement statement = (WhileStatement)block.getStatement(0);
+					collectWrittenNames(statement.getBody(), names);
+				}
+			}
 		}
 
 		/**
@@ -545,9 +770,45 @@ public final class OccurrenceExecutionFrequencyFacts {
 				List<Map<String,List<Hop>>> current = appendTransTable(visibleTransTables, writes);
 				collectFunctionCalls(List.of(root), networkWeight, loopContext, current,
 					callStack, contextOrdinal);
-				mergeMappings(writes, transientWrites(List.of(root)));
+				mergeMappings(writes, snapshotScalarWrites(transientWrites(List.of(root)), current));
+				replaceMappings(writes, functionOutputUnknowns(List.of(root)));
 			}
 			return writes;
+		}
+
+		/** Freeze scalar reaching definitions in their definition-time lexical context. */
+		private Map<String,List<Hop>> snapshotScalarWrites(Map<String,List<Hop>> raw,
+			List<Map<String,List<Hop>>> definitionContext) {
+			Map<String,List<Hop>> snapshots = new LinkedHashMap<>();
+			for(Map.Entry<String,List<Hop>> entry : raw.entrySet()) {
+				List<Hop> candidates = entry.getValue();
+				boolean scalar = !candidates.isEmpty() && candidates.stream().allMatch(candidate ->
+					candidate.getDataType() != null && candidate.getDataType().isScalar());
+				if(!scalar) {
+					snapshots.put(entry.getKey(), candidates);
+					continue;
+				}
+				if(candidates.size() != 1) {
+					snapshots.put(entry.getKey(), List.of());
+					continue;
+				}
+				Hop write = candidates.get(0);
+				Double value = exactScalar(write, definitionContext,
+					Collections.newSetFromMap(new IdentityHashMap<>()), 0);
+				Hop literal = value == null ? null : scalarLiteral(write, value);
+				snapshots.put(entry.getKey(), literal == null ? List.of() : List.of(literal));
+			}
+			return snapshots;
+		}
+
+		private Hop scalarLiteral(Hop source, double value) {
+			return switch(source.getValueType()) {
+				case BOOLEAN -> new LiteralOp(value != 0.0);
+				case INT32, INT64 -> Math.abs(value) <= MAX_EXACT_DOUBLE_INTEGER
+					? new LiteralOp(UtilFunctions.toLong(value)) : null;
+				case FP32, FP64 -> new LiteralOp(value);
+				default -> null;
+			};
 		}
 
 		private Map<String,List<Hop>> transientWrites(List<Hop> roots) {
@@ -556,6 +817,24 @@ public final class OccurrenceExecutionFrequencyFacts {
 			for(Hop root : roots)
 				collectTransientWrites(root, visited, writes);
 			return writes;
+		}
+
+		private Map<String,List<Hop>> functionOutputUnknowns(List<Hop> roots) {
+			Map<String,List<Hop>> outputs = new LinkedHashMap<>();
+			Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+			List<Hop> pending = new ArrayList<>(roots);
+			while(!pending.isEmpty()) {
+				Hop hop = pending.remove(pending.size() - 1);
+				if(hop == null || !visited.add(hop))
+					continue;
+				if(hop instanceof FunctionOp function && function.getOutputVariableNames() != null)
+					for(String output : function.getOutputVariableNames())
+						if(output != null && !output.isBlank())
+							outputs.put(output, List.of());
+				if(hop.getInput() != null)
+					pending.addAll(hop.getInput());
+			}
+			return outputs;
 		}
 
 		private void collectTransientWrites(Hop hop, Set<Hop> visited,
@@ -606,12 +885,12 @@ public final class OccurrenceExecutionFrequencyFacts {
 				String name = Objects.requireNonNull(names[index], "function input name");
 				if(name.isBlank())
 					throw new IllegalArgumentException("PLACEMENT_FUNCTION_INPUT_NAME_UNPROVEN");
-				Hop input = resolveTransientSource(function.getInput(index), visibleTransTables);
-				inputs.computeIfAbsent(name, ignored -> new ArrayList<>()).add(input);
+				inputs.put(name, new ArrayList<>(resolveTransientSources(
+					function.getInput(index), visibleTransTables)));
 			}
 			List<Map<String,List<Hop>>> functionTransTables = appendTransTable(visibleTransTables, inputs);
 			FunctionCallContext candidate = new FunctionCallContext(networkWeight, loopContext,
-				functionTransTables, appendCallStack(callStack, functionIdentity), -1L);
+				functionTransTables, appendCallStack(callStack, functionIdentity), contextOrdinal, -1L);
 			List<FunctionCallContext> indexed = indexedFunctionCalls.computeIfAbsent(hop,
 				ignored -> new ArrayList<>());
 			if(indexed.stream().anyMatch(existing -> existing.sameAs(candidate)))
@@ -627,20 +906,20 @@ public final class OccurrenceExecutionFrequencyFacts {
 			return List.copyOf(nested);
 		}
 
-		private Hop resolveTransientSource(Hop hop,
+		private List<Hop> resolveTransientSources(Hop hop,
 			List<Map<String,List<Hop>>> visibleTransTables) {
-			if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.TRANSIENTREAD)
-				return hop;
-			String name = hop.getName();
-			for(int index = visibleTransTables.size() - 1; index >= 0; index--) {
-				List<Hop> candidates = visibleTransTables.get(index).get(name);
-				if(candidates != null && !candidates.isEmpty()) {
-					Hop candidate = candidates.get(candidates.size() - 1);
-					if(candidate != hop)
-						return candidate;
-				}
+			if(hop != null && hop.getDataType() != null && hop.getDataType().isScalar()) {
+				Double value = exactScalar(hop, visibleTransTables,
+					Collections.newSetFromMap(new IdentityHashMap<>()), 0);
+				Hop literal = value == null ? null : scalarLiteral(hop, value);
+				return literal == null ? List.of() : List.of(literal);
 			}
-			return hop;
+			if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.TRANSIENTREAD)
+				return List.of(hop);
+			List<Hop> candidates = nearestCandidates(hop.getName(), visibleTransTables);
+			if(candidates == null)
+				return List.of(hop);
+			return candidates.stream().filter(candidate -> candidate != hop).toList();
 		}
 
 		private List<Map<String,List<Hop>>> appendTransTable(
@@ -672,11 +951,13 @@ public final class OccurrenceExecutionFrequencyFacts {
 		private final List<Pair<Long,Double>> loopContext;
 		private final List<Map<String,List<Hop>>> transTables;
 		private final List<String> callStack;
+		private final long callerContextOrdinal;
 		private final long contextOrdinal;
 
 		private FunctionCallContext(double networkWeight, List<Pair<Long,Double>> loopContext,
-			List<Map<String,List<Hop>>> transTables, List<String> callStack, long contextOrdinal) {
-			this.networkWeight = requirePositiveWeight(networkWeight,
+			List<Map<String,List<Hop>>> transTables, List<String> callStack,
+			long callerContextOrdinal, long contextOrdinal) {
+			this.networkWeight = requireNonnegativeWeight(networkWeight,
 				"PLACEMENT_FUNCTION_CALL_WEIGHT_UNPROVEN");
 			this.loopContext = List.copyOf(loopContext);
 			List<Map<String,List<Hop>>> copied = new ArrayList<>();
@@ -688,16 +969,19 @@ public final class OccurrenceExecutionFrequencyFacts {
 			}
 			this.transTables = List.copyOf(copied);
 			this.callStack = List.copyOf(callStack);
+			this.callerContextOrdinal = callerContextOrdinal;
 			this.contextOrdinal = contextOrdinal;
 		}
 
 		private FunctionCallContext withContextOrdinal(long ordinal) {
-			return new FunctionCallContext(networkWeight, loopContext, transTables, callStack, ordinal);
+			return new FunctionCallContext(networkWeight, loopContext, transTables, callStack,
+				callerContextOrdinal, ordinal);
 		}
 
 		private boolean sameAs(FunctionCallContext that) {
 			if(Double.doubleToRawLongBits(networkWeight)
 				!= Double.doubleToRawLongBits(that.networkWeight)
+				|| callerContextOrdinal != that.callerContextOrdinal
 				|| !loopContext.equals(that.loopContext) || !callStack.equals(that.callStack)
 				|| transTables.size() != that.transTables.size())
 				return false;
@@ -712,16 +996,29 @@ public final class OccurrenceExecutionFrequencyFacts {
 					if(rightHops == null || leftHops.size() != rightHops.size())
 						return false;
 					for(int hopIndex = 0; hopIndex < leftHops.size(); hopIndex++)
-						if(leftHops.get(hopIndex) != rightHops.get(hopIndex))
+						if(!sameSourceHop(leftHops.get(hopIndex), rightHops.get(hopIndex)))
 							return false;
 				}
 			}
 			return true;
 		}
+
+		private boolean sameSourceHop(Hop left, Hop right) {
+			return left == right || left instanceof LiteralOp leftLiteral
+				&& right instanceof LiteralOp rightLiteral
+				&& leftLiteral.getValueType() == rightLiteral.getValueType()
+				&& leftLiteral.getName().equals(rightLiteral.getName());
+		}
 	}
 
 	private static double requirePositiveWeight(double value, String reason) {
 		if(!Double.isFinite(value) || value <= 0.0)
+			throw new IllegalArgumentException(reason + "|value=" + value);
+		return value;
+	}
+
+	private static double requireNonnegativeWeight(double value, String reason) {
+		if(!Double.isFinite(value) || value < 0.0)
 			throw new IllegalArgumentException(reason + "|value=" + value);
 		return value;
 	}

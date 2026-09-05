@@ -1,5 +1,19 @@
 # Session Issues — 2026-09-05
 
+## Fixed-invocation dead branches were charged positive execution cost
+
+- **Status**: implemented; fresh integrated regression 104/104 PASS. Immutable Docker promotion and physical-plan comparisons remain pending; no repaired-frequency runtime result is approved yet.
+- **Conditions**: GLM PRIVATE_AGGREGATE 50,000 × 2,100, dfam=2/link=2, fixed campaign invocation. Commit 2d2f7f3 already repairs the independent Exact factor-array/search resource defect.
+- **Observed symptom**: the 2d2f7f3 Docker planning trace assigns positive frequency and cost to `straightenX` / glm.dml:1065 even though fixed invocation facts prove `desired_eta=0` and the `desired_eta != 0` branch does not execute. The old objective 111441.826853 is in milliseconds, not seconds. Incident factor sums overlap and cannot be added across decisions.
+- **Cause**: shared occurrence-frequency analysis assigns 0.5 to both IF arms without proving invocation-specific scalar predicates. Downstream strict cost consumers originally reject zero; legacy forwarding and local policy defaults can revive a known-zero demand as one execution.
+- **Repair**: prove only safe occurrence-/call-scoped scalar predicates; retain every occurrence, candidate, privacy constraint, and hard compatibility factor. Propagate zero for unreachable regions and the full parent weight for the proven reachable arm; unknown predicates retain existing expectations. Preserve definition-time and call-time scalar bindings, unknown branch joins, loop-carried unknowns, typed runtime arithmetic, and nested invocation identity. Accept proven zero in the shared DP/Exact physical objective, filter zero events only from cost unions, and distinguish absent policy evidence from present zero-demand evidence.
+- **Diagnostics**: trace-only DP/Exact records enumerate each original physical cost contribution once with its full encoded identity, scope positions, millisecond value, and binary64 bits; completion is emitted only if the independently accumulated objective matches the selected canonical objective bits. Solver auxiliary and incident costs are not additive attribution.
+- **Files**: `OccurrenceExecutionFrequencyFacts.java`, `ExactPhysicalCostModel.java`, `FederatedPlanExact.java`, `FederatedPlanLocalCost.java`, `PolicyFirstFeasiblePlacementSelector.java`; focused frequency/zero/trace/policy tests.
+- **RED evidence**: control `ZERO_FREQUENCY_COST_RED_20260905.log` (three failures of four tests) and `ZERO_POLICY_FREQUENCY_RED_20260905.log` (new zero-policy test fails, eight older tests pass). Focused frequency tests independently reproduce the previous 0.5 assignment.
+- **Residual risk**: a false constant proof could alter planner choices; unsupported values must remain unknown rather than be guessed. No candidate deletion or legality relaxation is authorized, even for a zero-cost occurrence. Diagnostic planning time includes logging and is not an overhead-free compile benchmark.
+- **Next validation**: integrated regression suite, actual builtin GLM private-aggregate fixture, immutable new-stage Docker planning, all 576 authenticated old/new physical comparisons, and only then changed-cell runtime replay.
+- **Decision basis**: repair shared invocation-frequency and cost evidence, not runtime capability, privacy policy, DML, or measurement ordering.
+
 ## Historical observer stage contains volatile Python bytecode
 
 - **Status**: resolved in new immutable observer v3 stages; v2 originals and failed
@@ -31,8 +45,9 @@
 
 ## Four wider Exact regressions also fail in the immutable baseline JAR
 
-- **Status**: baseline failures authenticated; not silently fixed or waived as
-  successful tests. No new-reduction regression is established by these failures.
+- **Status**: baseline failures authenticated, then all four historical test
+  contracts audited and repaired against current physical-emission semantics.
+  Focused tests 6/6 and final integrated suite 104/104 PASS; this is not a waiver.
 - **Conditions**: broader fedExact batch reported 96/100 passing. The failing
   tests are sparse function-boundary cost, B09 compact clone predecessor identity,
   L2SVM internal relocation-anchor multiplicity, and StepLM recompiled REFED count.
@@ -51,11 +66,12 @@
   evidence. Running the L2SVM fixture after other classes in one manual JVM also
   exposes unreset static receipt state; the isolated invocation eliminates that
   confounder.
-- **Residual issues/risk**: the four historical assertions still require their
-  own contract review; baseline failure alone does not establish that their
-  expected behavior is wrong. Do not weaken assertions or change production
-  planning merely to make the broader suite green. Final reports must distinguish
-  targeted new-change successes from these known validation gaps.
+- **Resolution/risk**: the follow-up audit is recorded in
+  `EXACT_HISTORICAL_REGRESSION_CONTRACT_AUDIT_20260905.md`. Tests now derive
+  worker-aware sparse costs, actual clone value-version identity, emitted versus
+  direct relocation obligations, and runtime REFED authorization from committed
+  physical actions. Production semantics were not changed to satisfy stale
+  expectations. New backend runtime evidence is still required.
 - **Decision basis**: prioritize evidence over attributing every pre-existing
   test failure to the GLM repair; preserve privacy and physical feasibility gates.
 
