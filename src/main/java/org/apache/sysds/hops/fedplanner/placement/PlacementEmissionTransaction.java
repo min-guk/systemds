@@ -512,7 +512,11 @@ public final class PlacementEmissionTransaction {
 						? "-" : candidate.emission().executionFType().name())
 					+ " derivedFedFout=" + candidate.emission().emissionState().derivedFedFout()
 					+ " foutMaterializationAction=" + (candidate.emission().derivedFoutAction() == null
-						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature())));
+						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature()))
+					+ " foutMaterializationAuthorityB64="
+					+ PhysicalEmissionTraceFormatter.derivedFoutAction(
+						candidate.emission().derivedFoutAction() == null ? null
+							: candidate.emission().derivedFoutAction().normalizedSignature()));
 		}
 		prepared.registryWrites().stream()
 			.sorted(Comparator.comparing(write -> write.slot().kind().name()
@@ -534,7 +538,8 @@ public final class PlacementEmissionTransaction {
 					+ " localInputs=" + (write.localConsumerInputs() == null ? List.of()
 						: write.localConsumerInputs())
 					+ " anchorKey=" + write.anchorKey()
-					+ " reason=" + write.reason()));
+					+ " reason=" + write.reason()
+					+ " runtimeAuthorityB64=" + traceRuntimeAuthority(write)));
 		String candidateAuthority = String.join("\n", candidates.stream()
 			.map(CandidateSelectionReceipt::normalizedSignature).toList());
 		FederatedPlannerTrace.logGlobal("Emission-Summary", "planner=" + result.plannerId()
@@ -558,6 +563,16 @@ public final class PlacementEmissionTransaction {
 			+ " selectedCandidates=" + candidates.size()
 			+ " hopMutations=" + prepared.hopWrites().size()
 			+ " registryWrites=" + prepared.registryWrites().size());
+	}
+
+	private static String traceRuntimeAuthority(RegistryWrite write) {
+		return switch(write.slot().kind()) {
+			case REFED -> PhysicalEmissionTraceFormatter.refed(write.refedAuthority());
+			case FOUT -> PhysicalEmissionTraceFormatter.fout(write.anchorHopId(), write.fType(), write.label(),
+				write.anchorKey(), write.foutConsumerInputs(), write.plannerActionKey());
+			case LOCAL -> PhysicalEmissionTraceFormatter.local(write.fType(), write.reason(),
+				write.localConsumerInputs(), write.plannerActionKey());
+		};
 	}
 
 	private static String validateAuthorityAndHash(DMLProgram program, NormalizedPlannerResult result) {

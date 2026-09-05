@@ -307,3 +307,59 @@
   the inlined-marker change neither expands nor closes that domain. This is not a claim that PA
   data never leaves workers. Strict PRIVATE remains FED/FOUT-only. Broader PA threat-model
   semantics are a separate audit, not a policy change hidden inside this representation repair.
+
+## GLM cost-based Exact: physical cost fingerprint exceeds JVM array limit
+
+- **Status**: reproduced in authenticated Docker planning-only; structural repair in progress.
+- **Environment**: stage `211e8f8`, private-aggregate GLM / LAN / one worker.
+  FedAll explicit single-pass and Heuristic both compiled successfully with zero runtime;
+  Exact token `8cb4c3dbea47b27caa29` failed before optimization.
+- **Symptom**: `OutOfMemoryError: Requested array size exceeds VM limit` in
+  `ExactPhysicalCostModel.appendPhysicalFactorValues` while constructing the cost certificate.
+- **Cause**: complete Cartesian cost tables were appended into one StringBuilder. Reusable
+  movement is a maximum/union over consumer demands, yet its scope was represented as a
+  dense clique both for hashing and for Exact variable elimination. A larger heap cannot
+  remove Java's maximum-array-length limit.
+- **Repair boundary**: retain the canonical objective and full original physical decision
+  domains; stream ordinary fingerprints, bind structured cost coefficients directly, and
+  use exact deterministic auxiliary representations for reusable max-demand factors.
+  Auxiliary variables must not leak into placement/selection authority. Dense solver
+  limits remain fail-closed, not approximation or candidate pruning.
+- **Evidence**: `/home/mchoi/g014-extra-ml-planning-20260905-211e8f8/` and its authenticated
+  diagnostic coordinator archive. No runtime measurement was produced by the failed cell.
+- **Residual risk**: eliminating one huge fingerprint does not prove the remaining Exact
+  induced width is affordable. An actual GLM compile and canonical-cost equality are required.
+
+## Physical comparison: incomplete runtime registry trace authority
+
+- **Status**: trace schema repaired; comparison/controller safety review remains in progress.
+- **Problem**: flattened REFED consumer lists lose grouping by AuthoritySpec and planner
+  action keys. Derived-FOUT actions were opaque hashes. Such traces cannot prove complete
+  physical equality across source revisions; unknown evidence must not authorize reuse.
+- **Resolution**: add trace-only Base64URL JSON carrying all applied per-authority fields
+  and full derived-action signatures, preserving existing fields for diagnostics. No
+  selection, lowering, registry application or runtime behavior changes.
+- **Files**: `PlacementEmissionTransaction.java`, `PhysicalEmissionTraceFormatter.java`,
+  `PhysicalEmissionTraceFormatterTest.java`, `docs/PHYSICAL_EMISSION_TRACE_SCHEMA_20260905.md`.
+- **Verification**: RED missing formatter symbols, then **3/3 formatter tests pass**; parent
+  source review and `git diff --check` pass. Formatting is inside the existing trace-enabled
+  guard, so logging-free runtime does not invoke the new serializer.
+- **Remaining work**: authenticated trace-only observer backports to old baseline binaries,
+  same-schema comparison, checkpoint/driver/input/remote-archive provenance regression.
+- **Risk**: process-local Hop IDs cannot be compared literally or dropped; comparisons must
+  preserve their canonical physical-sharing equivalence classes and registry consumer groups.
+
+## Retracted materialization-lifetime hypothesis: prefetch count is not download count
+
+- **Status**: disproven hypothesis; no runtime/cost/lowering repair warranted.
+- Initial aggregate instruction-count inspection suggested that LM/LogReg/L2SVM downloaded
+  immutable inputs once per loop iteration. Per-instruction timing and `CacheableData`
+  refute this: only the first acquire is seconds-scale; later acquires are microsecond cache
+  hits. Function argument aliasing and pinned MatrixObject lifetime preserve this reuse.
+- Do not hoist DML/LOPs or multiply the one-time materialization cost by prefetch execution
+  count. The first download can be slow, but attributing that to repeated network traffic
+  is incorrect. Detailed correction: `docs/MATERIALIZATION_LIFETIME_REPAIR_20260905.md` and
+  control `REMAINING_ML_ANOMALY_DIAGNOSIS_20260905.md`.
+- 576 original successful runtime cells, 128 pairwise reversals and 30 Exact upward worker
+  transitions remain inventoried. Ordering is diagnostic, not a runtime invariant. No
+  existing result is discarded/replaced solely because its numerical order is unexpected.
