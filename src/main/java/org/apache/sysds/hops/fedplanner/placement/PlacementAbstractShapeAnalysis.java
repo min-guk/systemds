@@ -56,6 +56,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFac
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.ScalarLiteralFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.parser.DataExpression;
+import org.apache.sysds.parser.DMLProgram;
 
 /**
  * Common, occurrence-aware abstract-value closure used before selector policy is
@@ -152,6 +153,8 @@ final class PlacementAbstractShapeAnalysis {
 
 		Map<Hop,List<Hop>> valueSources = new IdentityHashMap<>();
 		Set<Hop> unsafeScalarFunctionInputs = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<Hop> representedHops = Collections.newSetFromMap(new IdentityHashMap<>());
+		representedHops.addAll(hops);
 		for(int ordinal = 0; ordinal < hops.size(); ordinal++) {
 			Hop target = hops.get(ordinal);
 			for(int sourceOrdinal : reachingDefinitions.get(ordinal))
@@ -159,6 +162,15 @@ final class PlacementAbstractShapeAnalysis {
 					valueSources.computeIfAbsent(target, ignored -> new ArrayList<>()).add(hops.get(sourceOrdinal));
 			if(!reachingFunctionInputs.get(ordinal))
 				continue;
+			if(target.getDataType() == DataType.SCALAR) {
+				// Literal syntax is sufficient for IPA substitution, but not necessary
+				// for this abstract lattice: exact actuals may be forwarded through
+				// several functions. Certify the complete qualified call set instead.
+				if(!addScalarFunctionSources(target, namespaces.get(ordinal), fgraph,
+					representedHops, valueSources))
+					unsafeScalarFunctionInputs.add(target);
+				continue;
+			}
 			String formal = target.getName();
 			for(Hop candidate : hops) {
 				if(!(candidate instanceof FunctionOp call) || !functionMatches(call, namespaces.get(ordinal))
@@ -178,6 +190,46 @@ final class PlacementAbstractShapeAnalysis {
 
 		closeHopFacts(hops, shapes, scalars, valueSources, unsafeScalarFunctionInputs);
 		return new HopFacts(shapes, scalars, valueSources);
+	}
+
+	private static boolean addScalarFunctionSources(Hop formal, String namespace,
+		FunctionCallGraph fgraph, Set<Hop> representedHops, Map<Hop,List<Hop>> valueSources) {
+		if(namespace == null || namespace.isBlank())
+			return false;
+		String key = namespace.contains("::") ? namespace
+			: DMLProgram.constructFunctionKey(DMLProgram.DEFAULT_NAMESPACE, namespace);
+		if(!fgraph.getReachableFunctions().contains(key) || fgraph.isRecursiveFunction(key))
+			// A seed plus a recursive backedge is not an acyclic all-call proof.
+			return false;
+		List<FunctionOp> calls = fgraph.getFunctionCalls(key);
+		if(calls == null || calls.isEmpty())
+			return false;
+		List<Hop> actuals = new ArrayList<>(calls.size());
+		for(FunctionOp call : calls) {
+			if(call == null || !key.equals(call.getFunctionKey()) || !representedHops.contains(call))
+				return false;
+			String[] names = call.getInputVariableNames();
+			if(names == null || names.length != call.getInput().size())
+				return false;
+			int position = -1;
+			for(int index = 0; index < names.length; index++)
+				if(Objects.equals(formal.getName(), names[index])) {
+					if(position >= 0)
+						return false;
+					position = index;
+				}
+			if(position < 0)
+				return false;
+			Hop actual = call.getInput(position);
+			if(!representedHops.contains(actual) || actual.getDataType() != DataType.SCALAR)
+				return false;
+			actuals.add(actual);
+		}
+		// Do not publish a prefix if a later caller was missing. The existing
+		// lattice joins ALL these actuals, then promotes unresolved facts to
+		// UNKNOWN and closes again before CFG refinement can consume a literal.
+		valueSources.computeIfAbsent(formal, ignored -> new ArrayList<>()).addAll(actuals);
+		return true;
 	}
 
 	static KeyFacts closeCompiledOccurrences(NeutralPlacementGraph graph,

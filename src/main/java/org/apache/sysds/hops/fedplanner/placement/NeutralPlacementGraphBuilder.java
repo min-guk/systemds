@@ -955,19 +955,83 @@ public final class NeutralPlacementGraphBuilder {
 		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg) {
+		Map<CompiledHopKey,List<PlacementState>> supported = constraintSupportedPolicyStates(graph);
 		List<HeuristicPolicyFact> demotions = new ArrayList<>();
 		for(HopOccurrenceProjection projection : projections) {
 			Hop hop = projection.hop();
 			Node node = graph.node(projection.key()).orElseThrow();
 			AbstractShapeFact shape = shapeFacts.abstractShapeFact(projection.key()).orElseThrow();
-			boolean exactLocalAlternative = node.legalAlternatives().stream().anyMatch(state ->
+			boolean exactLocalAlternative = supported.getOrDefault(node.key(), List.of()).stream().anyMatch(state ->
 				state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT && state.shapeDependent()
 					&& isAggregateBinaryVectorInput(hop, shape, state.fType()));
 			if(exactLocalAlternative)
 				demotions.add(new HeuristicPolicyFact(projection.key(), node.valueVersion()));
 		}
-		return new HeuristicPolicyFacts(demotions, heuristicPaths(graph, projections, shapeFacts, demotions,
-			compiledInputEdges, candidateRuleFacts, occurrences, cfg));
+		while(true) {
+			List<HeuristicPathFact> paths = heuristicPaths(graph, projections, shapeFacts, demotions,
+				compiledInputEdges, candidateRuleFacts, occurrences, cfg);
+			Set<CompiledHopKey> incompatible = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(HeuristicPathFact path : paths)
+				if(path.localPrefix().stream().anyMatch(key -> key != path.demotion().producer()
+					&& supported.getOrDefault(key, List.of()).stream().noneMatch(state ->
+						state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)))
+					incompatible.add(path.demotion().producer());
+			if(incompatible.isEmpty())
+				return new HeuristicPolicyFacts(demotions, paths);
+			// A base-legal local result may require an upload at a shared formal/TWrite.
+			// The heuristic's no-upload local prefix cannot promise that demotion. Decline
+			// the preference, not the base candidate, and retrace after strict marker removal.
+			demotions.removeIf(demotion -> incompatible.contains(demotion.producer()));
+		}
+	}
+
+	/**
+	 * Necessary hard-constraint support, not a complete assignment or a new candidate domain.
+	 * A demotion cannot override a shared function/CFG value that must remain FOUT. Use only
+	 * the common legality semantics; selectors still certify runtime candidates and whole plans.
+	 */
+	static Map<CompiledHopKey,List<PlacementState>> constraintSupportedPolicyStates(NeutralPlacementGraph graph) {
+		Map<CompiledHopKey,List<PlacementState>> supported = new IdentityHashMap<>();
+		Map<CompiledHopKey,Map<CompiledHopKey,List<Constraint>>> incident = new IdentityHashMap<>();
+		java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>();
+		Set<CompiledHopKey> queued = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Node node : graph.decisionNodes()) {
+			supported.put(node.key(), node.legalAlternatives());
+			incident.put(node.key(), new LinkedHashMap<>());
+			pending.addLast(node.key());
+			queued.add(node.key());
+		}
+		for(Constraint constraint : graph.constraints())
+			if(supported.containsKey(constraint.left()) && supported.containsKey(constraint.right())
+				&& (constraint.kind() == ConstraintKind.SAME_PLACEMENT
+					|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+					|| constraint.kind() == ConstraintKind.SAME_FTYPE
+					|| constraint.kind() == ConstraintKind.CONJUNCTIVE)) {
+				incident.get(constraint.left()).computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+					.add(constraint);
+				if(constraint.right() != constraint.left())
+					incident.get(constraint.right()).computeIfAbsent(constraint.left(), ignored -> new ArrayList<>())
+						.add(constraint);
+			}
+		while(!pending.isEmpty()) {
+			CompiledHopKey key = pending.removeFirst();
+			queued.remove(key);
+			List<PlacementState> prior = supported.get(key);
+			List<PlacementState> retained = prior.stream().filter(state -> incident.get(key).entrySet().stream()
+				.allMatch(relation -> (relation.getKey() == key ? List.of(state) : supported.get(relation.getKey()))
+					.stream().anyMatch(otherState -> relation.getValue().stream().allMatch(constraint ->
+						constraint.left() == key
+							? NeutralPlacementGraph.constraintSatisfied(constraint, state, otherState)
+							: NeutralPlacementGraph.constraintSatisfied(constraint, otherState, state))))).toList();
+			if(retained.size() == prior.size())
+				continue;
+			supported.put(key, retained);
+			for(CompiledHopKey other : incident.get(key).keySet()) {
+				if(queued.add(other))
+					pending.addLast(other);
+			}
+		}
+		return Collections.unmodifiableMap(supported);
 	}
 
 	private static List<HeuristicPathFact> heuristicPaths(NeutralPlacementGraph graph,
@@ -1038,15 +1102,19 @@ public final class NeutralPlacementGraphBuilder {
 							reentries.add(reentry);
 							continue;
 						}
+						boolean nestedDemotion = demotionProducers.contains(edge.consumer());
+						boolean remoteDemotionRequired = nestedDemotion && graph.node(edge.consumer())
+							.orElseThrow().legalAlternatives().stream().noneMatch(state ->
+								state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT);
 						HeuristicNativeContinuationFact nativeContinuation =
 							exactHeuristicNativeContinuation(graph, compiledInputEdges,
-								candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition());
-						// A native-continuation proof fixes the consumer at FED/FOUT. It
-						// therefore cannot terminate at another aggregate-vector demotion,
-						// whose Heuristic policy is coordinator-local after the earlier
-						// demotion. Let the normal traversal classify that nested marker as
-						// part of the local prefix instead of publishing a contradictory fact.
-						if(nativeContinuation != null && !demotionProducers.contains(edge.consumer())) {
+								candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition(),
+								remoteDemotionRequired ? FederatedOutput.LOUT : FederatedOutput.FOUT);
+						// A nested demotion normally stays CP. If a protected sibling makes
+						// CP illegal, an exact native local-input FED/LOUT row can still
+						// return a safe local result. Its own marker starts the next prefix;
+						// do not force that remote computation into the preceding CP prefix.
+						if(nativeContinuation != null && (!nestedDemotion || remoteDemotionRequired)) {
 							nativeContinuations.add(nativeContinuation);
 							continue;
 						}
@@ -1240,6 +1308,14 @@ public final class NeutralPlacementGraphBuilder {
 		NeutralPlacementGraph graph, List<CompiledInputEdgeFact> compiledInputEdges,
 		List<CandidateRuleFact> candidateRuleFacts, CompiledHopKey localProducer,
 		CompiledHopKey consumer, int localInputPosition) {
+		return exactHeuristicNativeContinuation(graph, compiledInputEdges, candidateRuleFacts,
+			localProducer, consumer, localInputPosition, FederatedOutput.FOUT);
+	}
+
+	static HeuristicNativeContinuationFact exactHeuristicNativeContinuation(
+		NeutralPlacementGraph graph, List<CompiledInputEdgeFact> compiledInputEdges,
+		List<CandidateRuleFact> candidateRuleFacts, CompiledHopKey localProducer,
+		CompiledHopKey consumer, int localInputPosition, FederatedOutput output) {
 		if(!exactHeuristicReentryOccurrence(graph.node(localProducer).orElseThrow())
 			|| !exactHeuristicReentryOccurrence(graph.node(consumer).orElseThrow()))
 			return null;
@@ -1249,7 +1325,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<HeuristicNativeContinuationFact> matches = new ArrayList<>();
 		for(CandidateRuleFact candidate : candidateRuleFacts)
 			addExactHeuristicNativeContinuationMatch(graph, compiledInputEdges, localProducer,
-				consumer, localInputPosition, candidate, matches);
+				consumer, localInputPosition, candidate, output, matches);
 		List<HeuristicNativeContinuationFact> exactMatches = matches.stream()
 			.distinct().sorted().toList();
 		return exactMatches.size() == 1 ? exactMatches.get(0) : null;
@@ -1258,7 +1334,7 @@ public final class NeutralPlacementGraphBuilder {
 	private static void addExactHeuristicNativeContinuationMatch(NeutralPlacementGraph graph,
 		List<CompiledInputEdgeFact> compiledInputEdges, CompiledHopKey localProducer,
 		CompiledHopKey consumer, int localInputPosition, CandidateRuleFact candidate,
-		List<HeuristicNativeContinuationFact> matches) {
+		FederatedOutput output, List<HeuristicNativeContinuationFact> matches) {
 		if(candidate.key().parentOccurrence() != consumer
 			|| candidate.status() != CandidateEvaluationStatus.AVAILABLE
 			|| candidate.capability() == null
@@ -1287,9 +1363,10 @@ public final class NeutralPlacementGraphBuilder {
 		Node consumerNode = graph.node(consumer).orElseThrow();
 		List<PlacementState> consumerStates = consumerNode.legalAlternatives().stream()
 			.filter(state -> state.execType() == ExecType.FED
-				&& state.output() == FederatedOutput.FOUT && state.fType() == layout)
-			.filter(state -> candidate.allowedEmissionStates().stream()
-				.anyMatch(emission -> emission.placementState().equals(state)))
+				&& state.output() == output && state.fType() == layout)
+			.filter(state -> candidate.allowedEmissionFacts().stream()
+				.anyMatch(emission -> emission.emissionState().placementState().equals(state)
+					&& emission.executionFType() == layout))
 			.toList();
 		if(consumerStates.size() != 1)
 			return;
@@ -5393,6 +5470,8 @@ public final class NeutralPlacementGraphBuilder {
 		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead =
 			new IdentityHashMap<>();
 		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead = new IdentityHashMap<>();
+		private final Map<CompiledHopKey,List<CompiledHopKey>> functionOutputSourcesByAlias =
+			new IdentityHashMap<>();
 		private final Map<String,List<CompiledHopKey>> cfgDefinitionSourcesByReference = new LinkedHashMap<>();
 		private final Map<CompiledHopKey,Hop> origins;
 		private final Map<Hop,NodeShapeFact> factsByHop;
@@ -5429,6 +5508,15 @@ public final class NeutralPlacementGraphBuilder {
 						|| constraint.evidence().startsWith("inlined-function-argument:")))
 					argumentsByBoundary.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
 						.add(constraint.left());
+			for(Constraint constraint : constraints)
+				if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+						&& (constraint.evidence().startsWith("function-result:")
+							|| constraint.evidence().startsWith("inlined-function-result:"))
+					|| constraint.kind() == ConstraintKind.SAME_PLACEMENT
+						&& constraint.evidence().startsWith("cfg-function-output-value:"))
+					functionOutputSourcesByAlias
+						.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+						.add(constraint.left());
 			for(Constraint constraint : constraints) {
 				if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
 					|| !"function-formal-input".equals(constraint.evidence()))
@@ -5440,6 +5528,12 @@ public final class NeutralPlacementGraphBuilder {
 					.addAll(arguments);
 			}
 			functionInputsByRead.values().forEach(keys -> {
+				keys.sort(null);
+				for(int index = keys.size() - 1; index > 0; index--)
+					if(keys.get(index).equals(keys.get(index - 1)))
+						keys.remove(index);
+			});
+			functionOutputSourcesByAlias.values().forEach(keys -> {
 				keys.sort(null);
 				for(int index = keys.size() - 1; index > 0; index--)
 					if(keys.get(index).equals(keys.get(index - 1)))
@@ -5459,10 +5553,13 @@ public final class NeutralPlacementGraphBuilder {
 				return Set.of();
 			try {
 				Set<DurableAnchorKey> resolved = directAnchors(producer, fType);
+				boolean hasFunctionOutputAlias = functionOutputSourcesByAlias.containsKey(producer);
 				boolean mixedCfgFunctionSource = hasMixedCfgFunctionSources(producer);
-				if(resolved.isEmpty() && mixedCfgFunctionSource)
+				if(resolved.isEmpty() && hasFunctionOutputAlias)
+					resolved = resolveFunctionOutputInputs(producer, fType);
+				else if(resolved.isEmpty() && mixedCfgFunctionSource)
 					resolved = resolveMixedCfgFunctionInputs(producer, fType);
-				if(resolved.isEmpty() && !mixedCfgFunctionSource) {
+				if(resolved.isEmpty() && !hasFunctionOutputAlias && !mixedCfgFunctionSource) {
 					resolved = derivedAnchors(producer, fType);
 					if(resolved.isEmpty())
 						resolved = resolveLogicalTransientInput(producer, fType);
@@ -5641,6 +5738,64 @@ public final class NeutralPlacementGraphBuilder {
 			return common == null ? Set.of() : common;
 		}
 
+		/**
+		 * Follows only compiler-declared function-return value aliases. Every reaching
+		 * returned value must prove the same physical worker pool; an unknown or
+		 * different endpoint closes the proof instead of inventing an anchor.
+		 */
+		private Set<DurableAnchorKey> resolveFunctionOutputAlias(CompiledHopKey producer,
+			FType fType) {
+			List<CompiledHopKey> sources = functionOutputSourcesByAlias.getOrDefault(
+				producer, List.of());
+			if(sources.isEmpty())
+				return Set.of();
+			Set<DurableAnchorKey> common = null;
+			for(CompiledHopKey source : sources) {
+				Set<DurableAnchorKey> sourcePools = canonicalWorkerPools(resolve(source, fType));
+				if(sourcePools.isEmpty())
+					return Set.of();
+				if(common == null)
+					common = sourcePools;
+				else {
+					Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
+					for(DurableAnchorKey current : common)
+						if(sourcePools.stream().anyMatch(candidate -> sameWorkerPool(current, candidate)))
+							compatible.add(current);
+					common = compatible;
+				}
+				if(common.isEmpty())
+					return Set.of();
+			}
+			return common == null ? Set.of() : common;
+		}
+
+		/**
+		 * A function-output read can simultaneously carry ordinary CFG and formal-input
+		 * reaching definitions. Every present source category must prove the same worker
+		 * pool; resolving only the first non-empty category would mint relocation authority
+		 * from an incomplete branch/function join.
+		 */
+		private Set<DurableAnchorKey> resolveFunctionOutputInputs(CompiledHopKey producer,
+			FType fType) {
+			Set<DurableAnchorKey> common = canonicalWorkerPools(
+				resolveFunctionOutputAlias(producer, fType));
+			if(common.isEmpty())
+				return Set.of();
+			Node node = nodesByKey.get(producer);
+			boolean hasFunctionInput = functionInputsByRead.containsKey(producer)
+				|| node != null && hasCfgFunctionInputPredecessor(node);
+			if(hasFunctionInput) {
+				common = intersectWorkerPools(common, resolveFunctionInput(producer, fType));
+				if(common.isEmpty())
+					return Set.of();
+			}
+			boolean hasCfgDefinition = node != null && node.valueVersion().predecessorVersions().stream()
+				.anyMatch(value -> value.startsWith("cfg-definition:"));
+			if(hasCfgDefinition)
+				common = intersectWorkerPools(common, resolveCfgDefinitionInputs(producer, fType));
+			return common;
+		}
+
 		private boolean hasMixedCfgFunctionSources(CompiledHopKey producer) {
 			Node node = nodesByKey.get(producer);
 			return node != null && hasCfgFunctionInputPredecessor(node)
@@ -5650,17 +5805,8 @@ public final class NeutralPlacementGraphBuilder {
 
 		private Set<DurableAnchorKey> resolveMixedCfgFunctionInputs(CompiledHopKey producer,
 			FType fType) {
-			Set<DurableAnchorKey> functionPools = canonicalWorkerPools(
-				resolveFunctionInput(producer, fType));
-			Set<DurableAnchorKey> cfgPools = canonicalWorkerPools(
+			return intersectWorkerPools(resolveFunctionInput(producer, fType),
 				resolveCfgDefinitionInputs(producer, fType));
-			if(functionPools.isEmpty() || cfgPools.isEmpty())
-				return Set.of();
-			Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
-			for(DurableAnchorKey functionPool : functionPools)
-				if(cfgPools.stream().anyMatch(cfgPool -> sameWorkerPool(functionPool, cfgPool)))
-					compatible.add(functionPool);
-			return compatible;
 		}
 
 		/**
@@ -5712,6 +5858,20 @@ public final class NeutralPlacementGraphBuilder {
 				if(result.stream().noneMatch(existing -> sameWorkerPool(existing, anchor)))
 					result.add(anchor);
 			return result;
+		}
+
+		private static Set<DurableAnchorKey> intersectWorkerPools(
+			java.util.Collection<DurableAnchorKey> left,
+			java.util.Collection<DurableAnchorKey> right) {
+			Set<DurableAnchorKey> leftPools = canonicalWorkerPools(left);
+			Set<DurableAnchorKey> rightPools = canonicalWorkerPools(right);
+			if(leftPools.isEmpty() || rightPools.isEmpty())
+				return Set.of();
+			Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
+			for(DurableAnchorKey leftPool : leftPools)
+				if(rightPools.stream().anyMatch(rightPool -> sameWorkerPool(leftPool, rightPool)))
+					compatible.add(leftPool);
+			return compatible;
 		}
 
 		private static boolean sameWorkerPool(DurableAnchorKey left, DurableAnchorKey right) {

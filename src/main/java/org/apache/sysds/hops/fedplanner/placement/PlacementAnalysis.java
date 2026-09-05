@@ -670,12 +670,13 @@ public final class PlacementAnalysis {
 	 * pathwise re-entry, this fact owns no reusable relocation action: the exact runtime candidate
 	 * consumes the local input as {@link InputPresence#ABSENT_LOCAL}. The sibling may itself be a
 	 * derived FOUT, so this proof deliberately depends on its exact placement state rather than on
-	 * a source-data durable anchor.
+	 * a source-data durable anchor. The consumer may retain FOUT, or emit an exact legal LOUT
+	 * result when a protected sibling prevents a nested reduction from executing in CP.
 	 */
 	public record HeuristicNativeContinuationFact(CompiledHopKey localProducer,
 		ValueVersionKey localValueVersion, CompiledHopKey consumer, int localInputPosition,
 		CompiledHopKey siblingProducer, ValueVersionKey siblingValueVersion, int siblingInputPosition,
-		PlacementState siblingFoutState, PlacementState consumerFoutState,
+		PlacementState siblingFoutState, PlacementState consumerState,
 		CandidateRuleFact runtimeCandidate)
 		implements Comparable<HeuristicNativeContinuationFact> {
 		public HeuristicNativeContinuationFact {
@@ -689,7 +690,7 @@ public final class PlacementAnalysis {
 			Objects.requireNonNull(siblingProducer, "siblingProducer");
 			Objects.requireNonNull(siblingValueVersion, "siblingValueVersion");
 			Objects.requireNonNull(siblingFoutState, "siblingFoutState");
-			Objects.requireNonNull(consumerFoutState, "consumerFoutState");
+			Objects.requireNonNull(consumerState, "consumerState");
 			Objects.requireNonNull(runtimeCandidate, "runtimeCandidate");
 		}
 
@@ -1303,28 +1304,30 @@ public final class PlacementAnalysis {
 			|| fact.siblingFoutState().fType() == null)
 			throw new IllegalArgumentException(
 				"Heuristic native-continuation sibling FOUT authority differs");
-		if(!consumer.legalAlternatives().contains(fact.consumerFoutState())
-			|| fact.consumerFoutState().execType() != ExecType.FED
-			|| fact.consumerFoutState().output() != FederatedOutput.FOUT
-			|| fact.consumerFoutState().fType() != fact.siblingFoutState().fType())
-			throw new IllegalArgumentException("Heuristic native-continuation consumer FOUT state differs");
+		if(!consumer.legalAlternatives().contains(fact.consumerState())
+			|| fact.consumerState().execType() != ExecType.FED
+			|| (fact.consumerState().output() != FederatedOutput.FOUT
+				&& fact.consumerState().output() != FederatedOutput.LOUT)
+			|| fact.consumerState().fType() != fact.siblingFoutState().fType())
+			throw new IllegalArgumentException("Heuristic native-continuation consumer state differs");
 		CandidateRuleFact exactCandidate = candidateRuleFacts.requireExact(fact.consumer(),
 			fact.runtimeCandidate().key().orderedInputs());
 		List<CandidateInputState> inputs = exactCandidate.key().orderedInputs();
 		if(exactCandidate != fact.runtimeCandidate()
 			|| exactCandidate.status() != CandidateEvaluationStatus.AVAILABLE
 			|| exactCandidate.capability() == null
-			|| exactCandidate.capability().nativeExec() != fact.consumerFoutState().execType()
-			|| exactCandidate.capability().nativeOutput() != fact.consumerFoutState().output()
-			|| exactCandidate.capability().nativeFoutFType() != fact.consumerFoutState().fType()
+			|| exactCandidate.capability().nativeExec() != fact.consumerState().execType()
+			|| exactCandidate.capability().nativeOutput() != FederatedOutput.FOUT
+			|| exactCandidate.capability().nativeFoutFType() != fact.consumerState().fType()
 			|| fact.localInputPosition() >= inputs.size()
 			|| !inputs.get(fact.localInputPosition()).equals(CandidateInputState.absentLocal())
 			|| fact.siblingInputPosition() >= inputs.size()
 			|| !inputs.get(fact.siblingInputPosition()).equals(
 				CandidateInputState.present(fact.siblingFoutState().fType()))
 			|| inputs.stream().filter(CandidateInputState::present).count() != 1
-			|| exactCandidate.allowedEmissionStates().stream().noneMatch(emission ->
-				emission.placementState().equals(fact.consumerFoutState())))
+			|| exactCandidate.allowedEmissionFacts().stream().noneMatch(emission ->
+				emission.emissionState().placementState().equals(fact.consumerState())
+					&& emission.executionFType() == fact.siblingFoutState().fType()))
 			throw new IllegalArgumentException("Heuristic native-continuation runtime candidate differs");
 		if(List.of(local, sibling, consumer).stream().anyMatch(node -> !node.emittedWork()
 			|| node.valueVersion().versionKind() == PlacementIdentity.VersionKind.CLONE_RECOMPILE

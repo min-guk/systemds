@@ -1224,6 +1224,8 @@ public final class ExactPhysicalCostModel {
 				PlacementCostSemantics.latentWdivmmFusedInputPreparationBytes(
 					analysis, edge.producer(), edge.consumer(), edge.inputPosition());
 			double weight = frequencies.exactForwardingWeight(edge.consumer(), edge.producer());
+			int[] targetWorkerCounts = consumer.alternatives().stream()
+				.mapToInt(target -> nativeLocalInputWorkerCount(target.inputAuthorities(), workers)).toArray();
 			factors.add(ExactCategoricalSolver.Factor.lazy(
 				List.of(producer.variable(), consumer.variable()), values -> {
 					ExactPhysicalModel.Alternative source = producer.alternatives().get(values[0]);
@@ -1234,6 +1236,7 @@ public final class ExactPhysicalCostModel {
 								&& authority.kind()
 									== ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
 						return 0.0;
+					int targetWorkers = targetWorkerCounts[values[1]];
 					CandidateEmissionFact emission = target.captured()
 						? target.candidateEmission() : target.executionEmission();
 					FType executionFType = emission == null ? target.state().fType()
@@ -1241,7 +1244,7 @@ public final class ExactPhysicalCostModel {
 					PlacementCostSemantics.NativeLocalInputTransferEstimate boundedElementwise =
 						PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
 							analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
-							executionFType, workers);
+							executionFType, targetWorkers);
 					List<FType> inputFTypes = target.orderedInputs().stream()
 						.map(input -> input.present() ? input.fType() : null).toList();
 					FederatedCostModel.MixedFedLocalCost mixed =
@@ -1249,18 +1252,18 @@ public final class ExactPhysicalCostModel {
 							edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
 							unitLocalCost(analysis, edge.consumer(), consumerHop),
 							effectiveOutputBytes(analysis, sparseAssignments,
-								edge.consumer(), consumerHop), workers);
+								edge.consumer(), consumerHop), targetWorkers);
 					double cost;
 					if(mixed.hasInputPreparation())
 						cost = 0.0;
 					else if(fusedInputPreparationBytes >= 0.0)
 						cost = FederatedCostModel.computeInBandUploadPayloadCost(
-							fusedInputPreparationBytes, FType.BROADCAST, workers);
+							fusedInputPreparationBytes, FType.BROADCAST, targetWorkers);
 					else if(boundedElementwise != null)
 						cost = boundedElementwise.uploadPayloadCostUpperBound();
 					else
 						cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
-							executionFType, workers);
+							executionFType, targetWorkers);
 					if(source.state().output() == FederatedOutput.FOUT) {
 						FType sourceType = Objects.requireNonNull(source.state().fType(),
 							"FOUT native-local source has no exact FType");
@@ -1273,6 +1276,24 @@ public final class ExactPhysicalCostModel {
 						"EXACT_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
 				}));
 		}
+	}
+
+	static int nativeLocalInputWorkerCount(List<ExactPhysicalModel.InputAuthority> authorities,
+		int fallbackWorkers) {
+		DurableAnchorKey anchor = null;
+		for(var authority : authorities) {
+			if(authority.relocationAction() == null)
+				continue;
+			DurableAnchorKey current = authority.relocationAction().key().durableAnchor();
+			if(anchor != null && !anchor.equals(current))
+				throw new IllegalArgumentException("EXACT_NATIVE_LOCAL_CONSUMER_ANCHOR_CONFLICT");
+			anchor = current;
+		}
+		// The selected consumer's exact input authority determines its runtime map.
+		// A graph-wide worker union overcharges FULL uploads and smaller worker pools.
+		// Without such authority retain the prior conservative estimate; neither a
+		// worker count nor an output FType invents an input FederationMap.
+		return anchor == null ? Math.max(1, fallbackWorkers) : anchor.partitions().size();
 	}
 
 	private static double nativeLocalInputUploadCost(Hop consumer, Hop input, double bytes,

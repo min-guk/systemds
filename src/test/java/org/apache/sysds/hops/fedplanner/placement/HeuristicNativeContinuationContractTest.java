@@ -41,7 +41,7 @@ public class HeuristicNativeContinuationContractTest {
 		Assert.assertEquals(1, nativeContinuation.runtimeCandidate().key().orderedInputs().stream()
 			.filter(CandidateInputState::present).count());
 		Assert.assertEquals(FederatedOutput.FOUT, nativeContinuation.siblingFoutState().output());
-		Assert.assertEquals(FederatedOutput.FOUT, nativeContinuation.consumerFoutState().output());
+		Assert.assertEquals(FederatedOutput.FOUT, nativeContinuation.consumerState().output());
 		Assert.assertNotEquals("an ABSENT_LOCAL continuation is not the reusable upload row",
 			reusable.runtimeCandidate(), nativeContinuation.runtimeCandidate());
 		Assert.assertSame(analysis.requireExactCompiledInputEdge(nativeContinuation.localProducer(),
@@ -66,7 +66,7 @@ public class HeuristicNativeContinuationContractTest {
 			sibling.anchors().isEmpty());
 		Assert.assertEquals(FederatedOutput.FOUT, continuation.siblingFoutState().output());
 		Assert.assertEquals(continuation.siblingFoutState().fType(),
-			continuation.consumerFoutState().fType());
+			continuation.consumerState().fType());
 		Assert.assertEquals(CandidateInputState.absentLocal(),
 			continuation.runtimeCandidate().key().orderedInputs()
 				.get(continuation.localInputPosition()));

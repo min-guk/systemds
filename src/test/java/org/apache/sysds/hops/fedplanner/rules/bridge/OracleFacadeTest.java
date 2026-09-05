@@ -23,6 +23,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +60,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesCore.OracleEngine;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.FTypes;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
@@ -66,6 +68,44 @@ public class OracleFacadeTest {
 
   private final OracleFacade facade =
       new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+
+  @Test
+  public void fullSingleHintRequiresEverySelectedFullInputToBeKnownSingle() {
+    assertEquals("true", inferredFullSinglePartition(
+        binary(federated("left", 1), federated("right", 1)),
+        List.of(FType.FULL, FType.FULL)));
+    assertEquals("false", inferredFullSinglePartition(
+        binary(federated("left", 1), federated("right", 2)),
+        List.of(FType.FULL, FType.FULL)));
+  }
+
+  @Test
+  public void oneKnownFullDoesNotCertifyUnknownFullInEitherInputOrder() {
+    assertEquals("UNKNOWN", inferredFullSinglePartition(
+        binary(federated("left", 1), matrix("unknownRight", 4, 2)),
+        List.of(FType.FULL, FType.FULL)));
+    assertEquals("UNKNOWN", inferredFullSinglePartition(
+        binary(matrix("unknownLeft", 4, 2), federated("right", 1)),
+        List.of(FType.FULL, FType.FULL)));
+  }
+
+  @Test
+  public void unrelatedGlobalSingleWorkerDoesNotCertifyAnUnknownFullInput() {
+    org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    try {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.registerFedInitVar(
+          "unrelated", FType.FULL, "localhost:1234/unrelated|[0,0]-[4,2]|FULL");
+      assertEquals("UNKNOWN", inferredFullSinglePartition(
+          binary(matrix("localLeft", 4, 2), matrix("localRight", 4, 2)),
+          List.of(FType.FULL, FType.FULL)));
+      assertEquals("UNKNOWN", inferredFullSinglePartition(
+          binary(matrix("rowLeft", 4, 2), matrix("rowRight", 4, 2)),
+          List.of(FType.ROW, FType.ROW)));
+    }
+    finally {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    }
+  }
 
   @Test
   public void canonicalizesMatrixMultiply() {
@@ -430,6 +470,43 @@ public class OracleFacadeTest {
     for (int i = 0; i < actual.notes().size(); i++) {
       assertEquals(expected.notes().get(i).code(), actual.notes().get(i).code());
     }
+  }
+
+  private static String inferredFullSinglePartition(Hop hop, List<FType> inputTypes) {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public OpCaps caps(OpSig sig, List<FType> inputs, ShapeHint hint) {
+        hint.fullSinglePartition();
+        return super.caps(sig, inputs, hint);
+      }
+    });
+    OracleFacade.DecisionEvidence evidence =
+        new OracleFacade(registry).decideWithEvidence(hop, inputTypes, null);
+    return evidence.shapeProof().consultedFacts().get("fullSinglePartition");
+  }
+
+  private static BinaryOp binary(Hop left, Hop right) {
+    return new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+  }
+
+  private static DataOp federated(String name, int rangeCount) {
+    Hop[] addresses = new Hop[rangeCount];
+    Hop[] ranges = new Hop[rangeCount * 2];
+    for (int index = 0; index < rangeCount; index++) {
+      addresses[index] = new LiteralOp("localhost:" + (1234 + index) + '/' + name);
+      ranges[2 * index] = list(new LiteralOp(0L), new LiteralOp(0L));
+      ranges[2 * index + 1] = list(new LiteralOp(4L), new LiteralOp(2L));
+    }
+    HashMap<String,Hop> parameters = new HashMap<>();
+    parameters.put(DataExpression.FED_ADDRESSES, list(addresses));
+    parameters.put(DataExpression.FED_RANGES, list(ranges));
+    return new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.FEDERATED, parameters);
+  }
+
+  private static NaryOp list(Hop... inputs) {
+    return new NaryOp("list", DataType.LIST, ValueType.UNKNOWN, OpOpN.LIST, inputs);
   }
 
   private static DataOp matrix(String name, long rows, long cols) {

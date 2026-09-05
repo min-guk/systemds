@@ -18,21 +18,31 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOpN;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.NaryOp;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -60,6 +70,68 @@ import org.junit.Test;
 
 /** Typed, coinductive native worker-pool continuity proofs. */
 public class NativePlacementContinuityTest {
+	@Test
+	public void nativeFullLeftIndexChainKeepsOnlyItsGroundedRhsWorker() {
+		Fixture f = new Fixture(FType.FULL);
+		Ref local = f.read("localZeros");
+		Ref rhs = f.source("rhs", anchor(FType.FULL, "worker1:8001", 0, 4));
+		Ref first = f.leftIndex("first", local, rhs, false, true, false);
+		Ref write = f.write("probabilities", first, NodeKind.TRANSIENT_WRITE, false);
+		Ref alias = f.logicalRead("probabilities");
+		f.reaching.put(alias.key, List.of(write.key));
+		Ref second = f.leftIndex("second", alias, rhs, true, true, false);
+		Assert.assertTrue("Only PRESENT FULL operands ground a native LIX result",
+			f.resolver().proves(List.of(first.key, alias.key, second.key), rhs.anchor));
+		Assert.assertTrue("Continuity is not a fabricated output FederationMap", f.nodes.get(first.key).anchors().isEmpty());
+	}
+
+	@Test
+	public void leftIndexRequiresAnExactNativeRowAndEveryProtectedInput() {
+		Fixture f = new Fixture(FType.FULL);
+		Ref local = f.read("local");
+		Ref rhs = f.source("rhs", anchor(FType.FULL, "worker1:8001", 0, 4));
+		Ref other = f.source("other", anchor(FType.FULL, "worker2:8002", 0, 4));
+		Ref foreign = f.leftIndex("foreign", other, rhs, true, true, false);
+		Ref unknown = f.leftIndex("unknown", rhs, local, true, true, false);
+		Ref forged = f.leftIndex("forgedLocalRhs", rhs, local, true, false, false);
+		Ref derived = f.leftIndex("derived", local, rhs, false, true, true);
+		Ref missing = f.leftIndex("missing", local, rhs, false, true, false);
+		f.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == missing.key);
+		for(Ref invalid : List.of(foreign, unknown, forged, derived, missing))
+			Assert.assertFalse("Invalid native LIX proof: " + invalid.hop.getName(),
+				f.resolver().proves(List.of(invalid.key), rhs.anchor));
+	}
+
+	@Test
+	public void inheritedAnchorDoesNotCertifyDerivedOnlyLeftIndex() {
+		Fixture f = new Fixture(FType.FULL);
+		Ref local = f.read("local");
+		Ref rhs = f.source("rhs", anchor(FType.FULL, "worker1:8001", 0, 4));
+		Ref derived = f.leftIndex("derived", local, rhs, false, true, true);
+		Node node = f.nodes.get(derived.key);
+		f.nodes.put(derived.key, new Node(derived.key, NodeKind.OPERATION, node.valueVersion(),
+			true, List.of(state(FType.FULL)), List.of(), List.of(rhs.anchor)));
+		Assert.assertFalse("An inherited endpoint is not a native instruction row",
+			f.resolver().proves(List.of(derived.key), rhs.anchor));
+	}
+
+	@Test
+	public void scalarLeftIndexRetainsOnlyAProvenFullLhs() {
+		Fixture f = new Fixture(FType.FULL);
+		Ref lhs = f.source("lhs", anchor(FType.FULL, "worker1:8001", 0, 4));
+		Ref scalar = f.add("scalar", new LiteralOp(1L), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+		Ref remote = f.leftIndex("remote", lhs, scalar, true, false, false);
+		Assert.assertTrue(f.resolver().proves(List.of(remote.key), lhs.anchor));
+		Ref local = f.leftIndex("local", f.read("unknown"), scalar, false, false, false);
+		Assert.assertFalse(f.resolver().proves(List.of(local.key), lhs.anchor));
+		DurableAnchorKey ranges = new DurableAnchorKey("multi", FType.FULL, List.of(
+			partition("worker1:8001", 0, 2), partition("worker1:8001", 2, 4)));
+		Ref multi = f.source("multi", ranges);
+		Ref matrix = f.leftIndex("multiRhs", lhs, multi, true, true, false);
+		Assert.assertFalse("One endpoint with two ranges cannot run the single-FULL kernel",
+			f.resolver().proves(List.of(matrix.key), lhs.anchor));
+	}
+
 	@Test
 	public void provesGrowingFullRowAndColIncludingLoopCycle() {
 		Fixture typedRow = new Fixture(FType.ROW);
@@ -165,6 +237,157 @@ public class NativePlacementContinuityTest {
 			row.resolver().proves(List.of(rowSlice.key), rowInput.anchor));
 	}
 
+	@Test
+	public void provesNativeElementwiseChainThroughLogicalRead() {
+		for(OpOp3 ternaryOp : List.of(OpOp3.PLUS_MULT, OpOp3.MINUS_MULT, OpOp3.IFELSE)) {
+			Fixture full = new Fixture(FType.FULL);
+			Ref seed = full.source("X", anchor(FType.FULL, "worker1:8001", 0, 50));
+			Ref product = full.nary("weights", OpOpN.MULT, false, seed, seed);
+			Ref ternary = full.ternary("updated", ternaryOp, product, seed, seed);
+			Ref replaced = full.replace("finite", ternary);
+			Ref write = full.write("X_global", replaced, NodeKind.TRANSIENT_WRITE, false);
+			Ref read = full.logicalRead("X_global");
+			full.reaching.put(read.key, List.of(write.key));
+
+			Assert.assertTrue("Native nary/ternary/replace kernels copy the selected FULL input map: "
+				+ ternaryOp, full.resolver().proves(List.of(read.key), seed.anchor));
+		}
+	}
+
+	@Test
+	public void provesSelectiveUnaryAndSameEndpointFullBinaryContinuity() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey seedAnchor = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("seed", seedAnchor);
+		Ref sameWorker = full.source("sameWorker",
+			anchor(FType.FULL, "worker1:8001", 70, 90));
+		Ref logged = full.unary("logged", OpOp1.LOG, seed, false);
+		Ref sum = full.binary("sum", OpOp2.PLUS, logged, sameWorker, false);
+
+		Assert.assertTrue("UnaryElemwiseRule kernels copy the selected native map",
+			full.resolver().proves(List.of(logged.key), seedAnchor));
+		Assert.assertTrue("Two exact PRESENT FULL operands on one worker retain that worker",
+			full.resolver().proves(List.of(sum.key), seedAnchor));
+	}
+
+	@Test
+	public void selectiveUnaryAndFullBinaryContinuityFailClosed() {
+		Fixture missingUnaryRow = new Fixture(FType.FULL);
+		Ref missingUnarySeed = missingUnaryRow.source("missingUnarySeed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref missingLog = missingUnaryRow.unary("missingLog", OpOp1.LOG, missingUnarySeed, false);
+		missingUnaryRow.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == missingLog.key);
+		missingUnaryRow.inheritAnchor(missingLog, missingUnarySeed.anchor);
+		Assert.assertFalse("An inherited anchor cannot replace an AVAILABLE native unary row",
+			missingUnaryRow.resolver().proves(List.of(missingLog.key), missingUnarySeed.anchor));
+
+		Fixture missingBinaryRow = new Fixture(FType.FULL);
+		Ref missingBinarySeed = missingBinaryRow.source("missingBinarySeed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref missingPlus = missingBinaryRow.binary("missingPlus", OpOp2.PLUS,
+			missingBinarySeed, missingBinarySeed, false);
+		missingBinaryRow.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == missingPlus.key);
+		missingBinaryRow.inheritAnchor(missingPlus, missingBinarySeed.anchor);
+		Assert.assertFalse("An inherited anchor cannot replace an AVAILABLE native two-matrix row",
+			missingBinaryRow.resolver().proves(List.of(missingPlus.key), missingBinarySeed.anchor));
+
+		Fixture unsupportedUnary = new Fixture(FType.FULL);
+		Ref unarySeed = unsupportedUnary.source("unarySeed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref cumulative = unsupportedUnary.unary("cumulative", OpOp1.CUMSUM, unarySeed, false);
+		Assert.assertFalse("Cumulative unary kernels do not use the non-cumulative map-copy proof",
+			unsupportedUnary.resolver().proves(List.of(cumulative.key), unarySeed.anchor));
+
+		Fixture endpoint = new Fixture(FType.FULL);
+		Ref first = endpoint.source("first", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref other = endpoint.source("other", anchor(FType.FULL, "worker2:8002", 0, 50));
+		Ref different = endpoint.binary("different", OpOp2.PLUS, first, other, false);
+		Assert.assertFalse("FULL operands on different workers cannot share native continuity",
+			endpoint.resolver().proves(List.of(different.key), first.anchor));
+
+		Fixture unknown = new Fixture(FType.FULL);
+		Ref known = unknown.source("known", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref unknownRead = unknown.read("unknown");
+		Ref unknownBinary = unknown.binary("unknownBinary", OpOp2.PLUS, known, unknownRead, false);
+		Assert.assertFalse("Every PRESENT FULL operand requires exact endpoint authority",
+			unknown.resolver().proves(List.of(unknownBinary.key), known.anchor));
+
+		Fixture multi = new Fixture(FType.FULL);
+		Ref single = multi.source("single", anchor(FType.FULL, "worker1:8001", 0, 50));
+		DurableAnchorKey multiRange = new DurableAnchorKey("multi", FType.FULL, List.of(
+			partition("worker1:8001", 0, 25), partition("worker1:8001", 25, 50)));
+		Ref ranges = multi.source("ranges", multiRange);
+		Ref multiBinary = multi.binary("multiBinary", OpOp2.PLUS, single, ranges, false);
+		Assert.assertFalse("The direct FULL/FULL runtime requires one range per operand",
+			multi.resolver().proves(List.of(multiBinary.key), single.anchor));
+
+		Fixture unsupportedBinary = new Fixture(FType.FULL);
+		Ref binarySeed = unsupportedBinary.source("binarySeed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref solve = unsupportedBinary.binary("solve", OpOp2.SOLVE, binarySeed, binarySeed, false);
+		Assert.assertFalse("Only BinaryElemwiseRule kernels use the two-matrix map-copy proof",
+			unsupportedBinary.resolver().proves(List.of(solve.key), binarySeed.anchor));
+
+		Fixture cycle = new Fixture(FType.FULL);
+		Ref cycleSeed = cycle.source("cycleSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref cycleA = cycle.read("cycleA");
+		Ref cycleB = cycle.read("cycleB");
+		cycle.reaching.put(cycleA.key, List.of(cycleB.key));
+		cycle.reaching.put(cycleB.key, List.of(cycleA.key));
+		Ref cyclicBinary = cycle.binary("cyclicBinary", OpOp2.PLUS, cycleSeed, cycleA, false);
+		Assert.assertFalse("A matching branch cannot ground an independent binary-input cycle",
+			cycle.resolver().proves(List.of(cyclicBinary.key), cycleSeed.anchor));
+	}
+
+	@Test
+	public void rejectsElementwiseChainWithoutOneGroundedNativePool() {
+		Fixture unknown = new Fixture(FType.FULL);
+		Ref unknownSeed = unknown.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref unknownRead = unknown.read("unknown");
+		Ref unknownProduct = unknown.nary("unknownProduct", OpOpN.MULT, false, unknownSeed, unknownRead);
+		Assert.assertFalse("An unknown selected matrix input cannot borrow another input's native map",
+			unknown.resolver().proves(List.of(unknownProduct.key), unknownSeed.anchor));
+
+		Fixture endpoint = new Fixture(FType.FULL);
+		Ref first = endpoint.source("first", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref other = endpoint.source("other", anchor(FType.FULL, "worker2:8002", 0, 50));
+		Ref mixed = endpoint.nary("mixed", OpOpN.MULT, false, first, other);
+		Assert.assertFalse("Every selected matrix input must have the exact witnessed endpoint",
+			endpoint.resolver().proves(List.of(mixed.key), first.anchor));
+
+		Fixture cycle = new Fixture(FType.FULL);
+		Ref cycleSeed = cycle.source("cycleSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref cycleA = cycle.read("cycleA");
+		Ref cycleB = cycle.read("cycleB");
+		cycle.reaching.put(cycleA.key, List.of(cycleB.key));
+		cycle.reaching.put(cycleB.key, List.of(cycleA.key));
+		Ref cyclicProduct = cycle.nary("cyclicProduct", OpOpN.MULT, false, cycleSeed, cycleA);
+		Assert.assertFalse("A good branch must not ground an independent reaching-definition cycle",
+			cycle.resolver().proves(List.of(cyclicProduct.key), cycleSeed.anchor));
+
+		Fixture evidence = new Fixture(FType.FULL);
+		Ref evidenceSeed = evidence.source("evidenceSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref derivedOnly = evidence.nary("derivedOnly", OpOpN.MULT, true, evidenceSeed, evidenceSeed);
+		Assert.assertFalse("Derived FED/FOUT is not native map-copy evidence",
+			evidence.resolver().proves(List.of(derivedOnly.key), evidenceSeed.anchor));
+		Ref noNativeRow = evidence.naryWithoutCandidate("noNativeRow", OpOpN.MULT,
+			evidenceSeed, evidenceSeed);
+		Assert.assertFalse("A supported Hop opcode still requires an actual native FED/FOUT candidate row",
+			evidence.resolver().proves(List.of(noNativeRow.key), evidenceSeed.anchor));
+	}
+
+	@Test
+	public void rejectsUnsupportedMembersOfTernaryAndNaryClasses() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("X", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref ctable = full.ternary("ctable", OpOp3.CTABLE, seed, seed, seed);
+		Assert.assertFalse("CTABLE changes topology and must not inherit elementwise ternary authority",
+			full.resolver().proves(List.of(ctable.key), seed.anchor));
+		Ref append = full.nary("append", OpOpN.CBIND, false, seed, seed);
+		Assert.assertFalse("Nary append requires a topology proof and is not a BuiltinNary map copy",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
 	private static final class Fixture {
 		private final String fingerprint = "native-continuity-" + System.identityHashCode(this);
 		private final FType fType;
@@ -220,6 +443,13 @@ public class NativePlacementContinuityTest {
 			return result;
 		}
 
+		private Ref unary(String name, OpOp1 op, Ref input, boolean derivedEmission) {
+			Ref result = add(name, new UnaryOp(name, DataType.MATRIX, ValueType.FP64,
+				op, input.hop), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidate(result, List.of(input), derivedEmission);
+			return result;
+		}
+
 		private Ref matrixScalar(String name, OpOp2 op, Ref matrix) {
 			BinaryOp hop = new BinaryOp(name, DataType.MATRIX, ValueType.FP64,
 				op, matrix.hop, new LiteralOp(1L));
@@ -234,6 +464,54 @@ public class NativePlacementContinuityTest {
 				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
 				new CandidateProfileFact(List.of(fType), ""), List.of(emission), ""));
 			edges.add(new CompiledInputEdgeFact(matrix.key, result.key, 0));
+			return result;
+		}
+
+		private Ref leftIndex(String name, Ref lhs, Ref rhs, boolean remoteLhs,
+			boolean remoteRhs, boolean derived) {
+			Hop hop = new LeftIndexingOp(name, DataType.MATRIX, ValueType.FP64, lhs.hop, rhs.hop,
+				new LiteralOp(1L), new LiteralOp(4L), new LiteralOp(1L), new LiteralOp(1L), false, true);
+			Ref result = add(name, hop, NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			Map<Integer,Ref> remote = new LinkedHashMap<>();
+			if(remoteLhs) remote.put(0, lhs);
+			if(remoteRhs) remote.put(1, rhs);
+			candidateAtPositions(result, remote, derived);
+			return result;
+		}
+
+		private Ref nary(String name, OpOpN op, boolean derivedEmission, Ref... inputs) {
+			Hop[] inputHops = java.util.Arrays.stream(inputs).map(Ref::hop).toArray(Hop[]::new);
+			Ref result = add(name, new NaryOp(name, DataType.MATRIX, ValueType.FP64,
+				op, inputHops), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			Map<Integer,Ref> matrixInputs = new java.util.LinkedHashMap<>();
+			for(int position = 0; position < inputs.length; position++)
+				matrixInputs.put(position, inputs[position]);
+			candidateAtPositions(result, matrixInputs, derivedEmission);
+			return result;
+		}
+
+		private Ref naryWithoutCandidate(String name, OpOpN op, Ref... inputs) {
+			Hop[] inputHops = java.util.Arrays.stream(inputs).map(Ref::hop).toArray(Hop[]::new);
+			return add(name, new NaryOp(name, DataType.MATRIX, ValueType.FP64,
+				op, inputHops), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+		}
+
+		private Ref ternary(String name, OpOp3 op, Ref first, Ref second, Ref third) {
+			Ref result = add(name, new TernaryOp(name, DataType.MATRIX, ValueType.FP64,
+				op, first.hop, second.hop, third.hop), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, first, 1, second, 2, third), false);
+			return result;
+		}
+
+		private Ref replace(String name, Ref target) {
+			LinkedHashMap<String,Hop> params = new LinkedHashMap<>();
+			params.put("target", target.hop);
+			params.put("pattern", new LiteralOp(Double.POSITIVE_INFINITY));
+			params.put("replacement", new LiteralOp(0.0));
+			Ref result = add(name, new ParameterizedBuiltinOp(name, DataType.MATRIX,
+				ValueType.FP64, ParamBuiltinOp.REPLACE, params), NodeKind.OPERATION,
+				VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, target), false);
 			return result;
 		}
 
@@ -290,18 +568,35 @@ public class NativePlacementContinuityTest {
 			return new Ref(key, hop, anchor);
 		}
 
+		private void inheritAnchor(Ref target, DurableAnchorKey anchor) {
+			Node node = nodes.get(target.key);
+			nodes.put(target.key, new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
+				node.legalAlternatives(), node.exclusions(), List.of(anchor)));
+		}
+
 		private void candidate(Ref owner, List<Ref> inputs, boolean includeDerived) {
-			List<CandidateInputState> inputStates = inputs.stream()
-				.map(ignored -> CandidateInputState.present(fType)).toList();
+			Map<Integer,Ref> matrixInputs = new java.util.LinkedHashMap<>();
+			for(int position = 0; position < inputs.size(); position++)
+				matrixInputs.put(position, inputs.get(position));
+			candidateAtPositions(owner, matrixInputs, includeDerived);
+		}
+
+		private void candidateAtPositions(Ref owner, Map<Integer,Ref> matrixInputs,
+			boolean includeDerived) {
+			List<CandidateInputState> inputStates = new ArrayList<>();
+			for(int position = 0; position < owner.hop.getInput().size(); position++)
+				inputStates.add(matrixInputs.containsKey(position)
+					? CandidateInputState.present(fType) : CandidateInputState.absentLocal());
 			CandidateRuleKey rule = new CandidateRuleKey(owner.key, inputStates);
 			PlacementState target = state(fType);
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			if(includeDerived) {
-				DurableAnchorKey anchor = inputs.get(0).anchor;
+				Ref firstInput = matrixInputs.values().iterator().next();
+				DurableAnchorKey anchor = firstInput.anchor;
 				DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
 					owner.key, nodes.get(owner.key).valueVersion(), rule,
 					new PlacementState(ExecType.FED, FederatedOutput.LOUT, null, false), target,
-					anchor, inputs.get(0).key, fType, fType, owner.key.controlRegion().normalizedSignature());
+					anchor, firstInput.key, fType, fType, owner.key.controlRegion().normalizedSignature());
 				emissions.add(new CandidateEmissionFact(
 					new PlacementEmissionState(target, true), fType, action));
 			}
@@ -312,8 +607,8 @@ public class NativePlacementContinuityTest {
 					FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
 				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
 				new CandidateProfileFact(List.of(fType), ""), emissions, ""));
-			for(int position = 0; position < inputs.size(); position++)
-				edges.add(new CompiledInputEdgeFact(inputs.get(position).key, owner.key, position));
+			matrixInputs.forEach((position, input) ->
+				edges.add(new CompiledInputEdgeFact(input.key, owner.key, position)));
 		}
 
 		private void candidateLogicalRead(Ref owner) {

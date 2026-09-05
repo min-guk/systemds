@@ -742,8 +742,7 @@ public final class OracleFacade {
 
     List<Hop> inputs = hop.getInput();
     boolean sawFull = false;
-    boolean anyMulti = false;
-    boolean anyKnown = false;
+    boolean allKnownSingle = true;
 
     for (int i = 0; i < inFTypes.size(); i++) {
       if (inFTypes.get(i) != FTypes.FType.FULL)
@@ -751,24 +750,15 @@ public final class OracleFacade {
       sawFull = true;
       Hop inHop = (inputs != null && i < inputs.size()) ? inputs.get(i) : null;
       Optional<Integer> count = inferFederatedRangeCount(inHop);
-      if (!count.isPresent())
+      if (!count.isPresent()) {
+        allKnownSingle = false;
         continue;
-      anyKnown = true;
-      if (count.get() > 1) {
-        anyMulti = true;
-        break;
       }
+      if (count.get() != 1)
+        return Optional.of(false);
     }
 
-    if (!sawFull)
-      return Optional.empty();
-    if (anyKnown)
-      return Optional.of(!anyMulti);
-
-    // Fallback: if the program is effectively single-worker, treat FULL as single-range.
-    return (FederatedPlannerUtils.getMaxFedInitWorkers() == 1)
-        ? Optional.of(true)
-        : Optional.empty();
+    return sawFull && allKnownSingle ? Optional.of(true) : Optional.empty();
   }
 
   private static Optional<Integer> inferFederatedRangeCount(Hop inputHop) {

@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -13,8 +14,10 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpN;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
@@ -28,6 +31,162 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class SinglePartitionFactsTest {
+	@Test
+	public void nativeFullLeftIndexCarriesRhsEndpointIntoNextUpdate() {
+		DataOp local = read("localZeros");
+		DataOp rhs = source("probability", "localhost:1234/probability");
+		Hop first = leftIndex(local, rhs);
+		DataOp write = new DataOp("probabilities", DataType.MATRIX, ValueType.FP64,
+			first, OpOpData.TRANSIENTWRITE, "probabilities");
+		DataOp alias = read("probabilities");
+		Hop second = leftIndex(alias, rhs);
+		SinglePartitionFacts facts = new SinglePartitionFacts(List.of(local, rhs, first, write, alias, second),
+			Map.of(alias, List.of(write)), Set.of());
+		Assert.assertTrue("Native matrix update runs on its single FULL RHS endpoint",
+			facts.isSinglePartition(first));
+		Assert.assertEquals(Optional.of(true), facts.fullInputHint(second, List.of(FType.FULL, FType.FULL)));
+		Assert.assertFalse("Output cardinality must not federate the local LHS", facts.isSinglePartition(local));
+		Assert.assertEquals("No exact output geometry is synthesized", -1, alias.getDim1());
+	}
+
+	@Test
+	public void fullLeftIndexCannotBorrowLhsForUnknownRhsOrConflictingWorker() {
+		DataOp lhs = source("lhs", "localhost:1234/lhs");
+		DataOp other = source("other", "localhost:1235/other");
+		DataOp unknown = read("unknown");
+		for(Hop rhs : List.of(other, unknown)) {
+			Hop update = leftIndex(lhs, rhs);
+			SinglePartitionFacts facts = new SinglePartitionFacts(List.of(lhs, other, unknown, update),
+				Map.of(), Set.of());
+			Assert.assertFalse("Matrix-RHS FULL LIX requires its own single RHS provider",
+				facts.isSinglePartition(update));
+		}
+	}
+
+	@Test
+	public void scalarLeftIndexNeedsRemoteLhsAndMatrixRhsNeedsSingleRange() {
+		DataOp lhs = source("lhs", "localhost:1234/lhs");
+		DataOp local = read("local");
+		DataOp multi = source("multi", "localhost:1234/part1", "localhost:1234/part2");
+		Hop remoteUpdate = leftIndex(lhs, new LiteralOp(1L));
+		Hop localUpdate = leftIndex(local, new LiteralOp(1L));
+		Hop multiUpdate = leftIndex(lhs, multi);
+		SinglePartitionFacts facts = new SinglePartitionFacts(
+			List.of(lhs, local, multi, remoteUpdate, localUpdate, multiUpdate), Map.of(), Set.of());
+		Assert.assertTrue(facts.isSinglePartition(remoteUpdate));
+		Assert.assertFalse(facts.isSinglePartition(localUpdate));
+		Assert.assertFalse("Range count, not distinct hostname count, is the FULL contract",
+			facts.isSinglePartition(multiUpdate));
+	}
+
+	private static Hop leftIndex(Hop lhs, Hop rhs) {
+		return HopRewriteUtils.createLeftIndexingOp(lhs, rhs,
+			new LiteralOp(1L), new LiteralOp(4L), new LiteralOp(1L), new LiteralOp(1L));
+	}
+
+	@Test
+	public void fusedNaryAndReplaceChainKeepsFullCardinality() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp right = source("right", "localhost:1234/right");
+		for(OpOpN opcode : List.of(OpOpN.PLUS, OpOpN.MULT, OpOpN.MIN, OpOpN.MAX)) {
+			NaryOp nary = new NaryOp("fused", DataType.MATRIX, ValueType.FP64,
+				opcode, new Hop[] {left, right, left});
+			Hop ternary = HopRewriteUtils.createTernary(nary, new LiteralOp(0.5), left, OpOp3.PLUS_MULT);
+			LinkedHashMap<String,Hop> params = new LinkedHashMap<>();
+			params.put("target", ternary);
+			params.put("pattern", new LiteralOp(Double.POSITIVE_INFINITY));
+			params.put("replacement", new LiteralOp(0.0));
+			Hop replace = HopRewriteUtils.createParameterizedBuiltinOp(ternary, params, ParamBuiltinOp.REPLACE);
+			BinaryOp append = new BinaryOp("append", DataType.MATRIX, ValueType.FP64,
+				OpOp2.CBIND, replace, left);
+			SinglePartitionFacts facts = new SinglePartitionFacts(
+				List.of(left, right, nary, ternary, replace, append), Map.of(), Set.of());
+			Assert.assertTrue("Nary elementwise output copies its input map: " + opcode,
+				facts.isSinglePartition(nary));
+			Assert.assertTrue("Replacing values does not replace the input FederationMap",
+				facts.isSinglePartition(replace));
+			Assert.assertEquals(Optional.of(true),
+				facts.fullInputHint(append, List.of(FType.FULL, FType.FULL)));
+		}
+	}
+
+	@Test
+	public void naryAppendAndUnknownReplaceDoNotBorrowSingleEndpointEvidence() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp unknown = read("unknown");
+		NaryOp append = new NaryOp("append", DataType.MATRIX, ValueType.FP64,
+			OpOpN.CBIND, new Hop[] {left, left, left});
+		LinkedHashMap<String,Hop> params = new LinkedHashMap<>();
+		params.put("target", unknown);
+		params.put("pattern", new LiteralOp(1.0));
+		params.put("replacement", new LiteralOp(0.0));
+		Hop replace = HopRewriteUtils.createParameterizedBuiltinOp(unknown, params, ParamBuiltinOp.REPLACE);
+		SinglePartitionFacts facts = new SinglePartitionFacts(
+			List.of(left, unknown, append, replace), Map.of(), Set.of());
+		Assert.assertFalse("Nary concatenation requires its own topology proof", facts.isSinglePartition(append));
+		Assert.assertFalse("Replacing unknown input does not obtain a source", facts.isSinglePartition(replace));
+	}
+
+	@Test
+	public void rewrittenElementwiseTernaryKeepsSingleEndpointThroughAliases() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp right = source("right", "localhost:1234/right");
+		for(OpOp3 opcode : List.of(OpOp3.PLUS_MULT, OpOp3.MINUS_MULT, OpOp3.IFELSE)) {
+			Hop ternary = HopRewriteUtils.createTernary(left, new LiteralOp(0.5), right, opcode);
+			DataOp write = new DataOp("result", DataType.MATRIX, ValueType.FP64,
+				ternary, OpOpData.TRANSIENTWRITE, "result");
+			DataOp read = read("result");
+			BinaryOp append = new BinaryOp("append", DataType.MATRIX, ValueType.FP64,
+				OpOp2.CBIND, read, left);
+			SinglePartitionFacts facts = new SinglePartitionFacts(
+				List.of(left, right, ternary, write, read, append), Map.of(read, List.of(write)), Set.of());
+			Assert.assertTrue("Native elementwise ternary copies its grounded input map: " + opcode,
+				facts.isSinglePartition(ternary));
+			Assert.assertEquals("A HOP fusion must not erase a downstream FULL proof: " + opcode,
+				Optional.of(true), facts.fullInputHint(append, List.of(FType.FULL, FType.FULL)));
+			Assert.assertEquals("Cardinality does not invent the alias geometry", -1, read.getDim2());
+		}
+	}
+
+	@Test
+	public void ternaryProofRequiresEveryMatrixInputOnOneKnownEndpoint() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp other = source("other", "localhost:1235/other");
+		DataOp unknown = read("unknown");
+		for(Hop right : List.of(other, unknown)) {
+			Hop ternary = HopRewriteUtils.createTernary(left, new LiteralOp(0.5), right, OpOp3.PLUS_MULT);
+			SinglePartitionFacts facts = new SinglePartitionFacts(
+				List.of(left, other, unknown, ternary), Map.of(), Set.of());
+			Assert.assertFalse("One valid input does not authorize a conflicting/unknown ternary map",
+				facts.isSinglePartition(ternary));
+		}
+	}
+
+	@Test
+	public void naryCellProofRequiresEveryMatrixInputOnOneKnownEndpoint() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp other = source("other", "localhost:1235/other");
+		DataOp unknown = read("unknown");
+		for(Hop right : List.of(other, unknown)) {
+			NaryOp nary = new NaryOp("nary", DataType.MATRIX, ValueType.FP64,
+				OpOpN.MULT, new Hop[] {left, right, left});
+			SinglePartitionFacts facts = new SinglePartitionFacts(
+				List.of(left, other, unknown, nary), Map.of(), Set.of());
+			Assert.assertFalse("An nary provider cannot hide an unknown or conflicting matrix input",
+				facts.isSinglePartition(nary));
+		}
+	}
+
+	@Test
+	public void nonElementwiseTernaryDoesNotInheritInputCardinality() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp right = source("right", "localhost:1234/right");
+		Hop ctable = HopRewriteUtils.createTernary(left, right, new LiteralOp(1.0), OpOp3.CTABLE);
+		SinglePartitionFacts facts = new SinglePartitionFacts(List.of(left, right, ctable), Map.of(), Set.of());
+		Assert.assertFalse("CTABLE changes output topology; the ternary Java class is not map-copy authority",
+			facts.isSinglePartition(ctable));
+	}
+
 	@Test
 	public void lateConflictingDefinitionInvalidatesPreviouslyGroundedMatmul() {
 		DataOp first = source("first", "localhost:1234/first");

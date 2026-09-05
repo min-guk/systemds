@@ -1828,7 +1828,8 @@ public final class Rulesets {
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
       List<FType> lhs = candidates(inFTypeCandidates, 0);
-      if (lhs.isEmpty())
+      List<FType> rhs = candidates(inFTypeCandidates, 1);
+      if (lhs.isEmpty() && rhs.isEmpty())
         return FTypeProfile.empty();
 
       Set<FType> outs = new LinkedHashSet<>();
@@ -1839,6 +1840,9 @@ public final class Rulesets {
       if (lhs.contains(FType.PART))
         outs.add(FType.PART);
       if (lhs.contains(FType.FULL))
+        outs.add(FType.FULL);
+      if (sig != null && sig.inputKind(0) == OpSig.InputKind.MATRIX
+          && lhs.contains(null) && rhs.contains(FType.FULL))
         outs.add(FType.FULL);
       return profileOf(outs);
     }
@@ -1851,34 +1855,45 @@ public final class Rulesets {
 
       FType lhs = typeAt(inFTypes, 0);
       FType rhs = typeAt(inFTypes, 1);
+      boolean lhsIsMatrix = sig.inputKind(0) == OpSig.InputKind.MATRIX;
+      boolean rhsIsScalar = sig.inputKind(1) == OpSig.InputKind.SCALAR;
+      boolean rhsIsMatrix = sig.inputKind(1) == OpSig.InputKind.MATRIX;
 
-      if (lhs == null)
+      if (lhs == null) {
+        if (lhsIsMatrix && rhsIsMatrix && rhs == FType.FULL)
+          return singleFullLeftIndexCaps(sig, hint);
+        if (rhs == FType.FULL)
+          return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      }
       if (!isFederatedLike(lhs))
-        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
 
       if (lhs == FType.PART)
-        return fedFoutCaps(sig, FType.PART, ReasonCode.OK);
+        return rhsIsScalar && rhs == null
+            ? fedFoutCaps(sig, FType.PART, ReasonCode.OK)
+            : cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
 
-      if (lhs == FType.FULL)
-        return fedFoutCaps(sig, FType.FULL, ReasonCode.OK);
-
-      boolean rhsIsScalar = sig.inputKind(1) == OpSig.InputKind.SCALAR;
-      if (rhsIsScalar)
-        return fedFoutCaps(sig, lhs, ReasonCode.OK);
-
-      if (rhs == null || rhs == FType.BROADCAST)
-        return fedFoutCaps(sig, lhs, ReasonCode.OK);
-
-      if (isFederatedLike(rhs)) {
-        boolean rowAligned = matchesAxis(lhs, FType.ROW) && matchesAxis(rhs, FType.ROW);
-        boolean colAligned = matchesAxis(lhs, FType.COL) && matchesAxis(rhs, FType.COL);
-        if (rowAligned || colAligned)
-          return guardAwareFout(sig, lhs, ReasonCode.OK, Guard.eval(sig));
+      if (lhs == FType.FULL) {
+        if ((rhsIsScalar && rhs == null) || (lhsIsMatrix && rhsIsMatrix && rhs == FType.FULL))
+          return singleFullLeftIndexCaps(sig, hint);
         return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
       }
 
-      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (rhsIsScalar && rhs == null)
+        return fedFoutCaps(sig, lhs, ReasonCode.OK);
+
+      if (rhs == null)
+        return fedFoutCaps(sig, lhs, ReasonCode.OK);
+
+      return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+    }
+
+    private static OpCaps singleFullLeftIndexCaps(OpSig sig, ShapeHint hint) {
+      boolean single = hint != null && hint.fullSinglePartition().orElse(false);
+      return single
+          ? fedFoutCaps(sig, FType.FULL, ReasonCode.OK)
+          : cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
     }
   }
 
@@ -3466,23 +3481,33 @@ public final class Rulesets {
 
       FType axis = null;
       boolean hasFedInput = false;
+      boolean hasFullInput = false;
       for (FType t : inFTypes) {
         if (t == null || t == FType.BROADCAST)
           continue;
         if (!isFederatedLike(t))
-          continue;
+          return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
         hasFedInput = true;
         if (matchesAxis(t, FType.ROW)) {
+          if (hasFullInput)
+            return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
           if (axis == null)
             axis = FType.ROW;
           else if (!matchesAxis(axis, FType.ROW))
             return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
         }
         else if (matchesAxis(t, FType.COL)) {
+          if (hasFullInput)
+            return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
           if (axis == null)
             axis = FType.COL;
           else if (!matchesAxis(axis, FType.COL))
             return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
+        }
+        else if (t == FType.FULL) {
+          if (axis != null)
+            return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
+          hasFullInput = true;
         }
         else {
           return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
@@ -3491,6 +3516,17 @@ public final class Rulesets {
 
       if (!hasFedInput)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (hasFullInput) {
+        // BuiltinNaryFEDInstruction natively aligns and preserves all-federated FULL mappings,
+        // including multi-range mappings. A coordinator-local matrix takes a different path:
+        // FederationMap.broadcastSliced emits only one request for FULL, while execute consumes
+        // one request per range. Require the exact single-range proof only for that broadcast path.
+        boolean localBroadcastSafe = localMatrixInputs == 0
+            || (hint != null && hint.fullSinglePartition().orElse(false));
+        if (!localBroadcastSafe)
+          return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+        return guardAwareFout(sig, FType.FULL, ReasonCode.OK, Guard.eval(sig));
+      }
       if (axis != null)
         return guardAwareFout(sig, axis, ReasonCode.OK, Guard.eval(sig));
       return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);

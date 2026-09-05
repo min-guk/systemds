@@ -997,3 +997,124 @@ Latest required order is **Exact <= DP <= {FedAll, Heuristic}**, not a total ord
 - Missing operational piece found: local seeded-GNMF stage preparer exists, but
   there is no remote seeded-stage deployer. A bounded separate helper/test/contract
   is being implemented under the control directory; no servers/stages modified yet.
+
+## Authenticated GLM private-aggregate cbind planning failure (21:16 UTC)
+
+- **Status**: reproduced in the first new Docker planning cell; diagnosis in progress.
+  Both ordinary and seeded immutable stages are now authenticated on so002-so009.
+- **Symptom**: `ml|glm|lan|w1|FedAll`, token `5053cbb1863eccc05b1b`, fails before
+  selector execution at builtin `binomial_probability_two_column`, glm.dml:903,
+  `b(cbind):Y_prob`: no privacy-safe physical placement, PRIVATE_AGGREGATE.
+  The new 54-cell planning campaign stopped fail-closed after this first attempt;
+  zero accepted planning or runtime cells. Coordinator archive SHA-256:
+  `8d399e265475f353a54fd98394275a85f9e590c09507afb08fef19e83ef2436e`.
+- **Evidence**: control/glm-fedall-planning-failure-ac145cd-20260905 holds the
+  size/hash-authenticated coordinator log and generated DML. Inputs are 50000x2100
+  and 50000x1, PA, one worker; binomial link=2, moi=20, mii=5.
+- **Coverage gap**: the passing ExactGlmCostSurfaceScalabilityTest exercises the
+  actual builtin graph but with 8x4 PUBLIC hermetic inputs and moi/mii=2. Its exact
+  resource gate is not a PRIVATE_AGGREGATE campaign planning/correctness gate.
+- **Initial diagnosis**: runtime supports native FULL/ROW cbind; missing native
+  candidate/cardinality authority is under investigation. The failing branch may
+  have zero frequency for link=2, but deleting dead domains or relaxing privacy is
+  not a valid repair. Aggregate output release never licenses collecting raw input.
+- **Regression**: add GlmPrivateAggregatePlanningContractTest with actual campaign
+  shapes/options/PA metadata and production final-Hop-boundary analysis. No worker
+  or training is executed; RED verification precedes a source repair.
+- **Decision boundary**: repair proven candidate/continuity omissions, not privacy
+  filtering, benchmark DML, TR/TW state rules, or runtime fallback.
+- **Remaining issues/risks**: exact missing proof not yet isolated; after repairing
+  it, later GLM occurrences may expose additional gaps. Keep full-source/CFG joins,
+  endpoint identity and unknown cardinality negatives, then rerun authenticated
+  planning before accepting any replacement runtime result.
+
+### Causal isolation: rewritten elementwise ternaries erase the FULL proof
+
+- **RED evidence**: actual GLM production-boundary regression reproduces the exact
+  authenticated failure (1 error, 12.921s). Unit SinglePartitionFactsTest: 12 tests,
+  1 assertion failure on native `+*`, 0 errors. Receipts:
+  `GLM_PRIVATE_AGGREGATE_PRODUCTION_RED_20260905T2127Z` and
+  `GLM_TERNARY_CARDINALITY_UNIT_RED_20260905T2132Z` under control.
+- **Exact chain**: hop511 cbind <- hop510 minus <- hop507 exp <- hop506 formal
+  linear_terms <- hop3359 formal join. That join includes hop1385; its eight CFG
+  sources include writes derived from hop3674 `t(+*)` (glm:584) and hop3676 `t(-*)`
+  (glm:596). Both ternaries had no cardinality transfer despite already having
+  native FULL candidates. Other caller MM sources are already proven single.
+- **Diagnostic**: `GLM_SINGLE_FACTS_DEPENDENCY_SLICE_20260905.json`, 126-node closure.
+  Temporary audit-gated source instrumentation was removed after the run; neither
+  timing claims nor permanent hot-path logging are introduced.
+- **Minimum repair**: recognize only PLUS_MULT/MINUS_MULT/IFELSE map-copy kernels
+  in SinglePartitionFacts. Runtime TernaryFEDInstruction#setOutputFedMapping copies
+  the selected map; Rulesets.TernaryElemwiseRule supports these three opcodes.
+  Every matrix input still needs the same known endpoint. All-source joins,
+  unknown/foreign sources, incomplete function returns and selected FULL guards stay.
+- **Negative scope**: conflicting/unknown matrix input remains unproved; CTABLE is
+  not covered merely because it uses the same HOP class. No exact range, placement
+  availability, privacy release or relocation permission is created by this fact.
+- **Validation**: GREEN targeted unit/production-boundary checks pending; later GLM
+  failures must be recorded separately, not silently called fixed by the first repair.
+
+## Parallel native-map proof repairs and bulk GLM audit (22:04 UTC)
+
+- **Status**: three bounded shared-analysis/oracle repairs verified; actual PA GLM
+  still RED. Runtime has not restarted. Native subagents and root are working on
+  disjoint implementation and read-only review lanes rather than serial remote retries.
+- **Fixed cause**: native map-copy ternary, nary and REPLACE chains lost cardinality
+  or native continuity. Nary MULT also lacked supported FULL input signatures.
+- **Changes**: exact opcode allowlists in SinglePartitionFacts/NativePlacementContinuity;
+  Nary FULL oracle now mirrors runtime. FULL plus one local matrix requires a true
+  single-range proof; all-FED aligned FULL operands do not require this local-upload
+  guard. Unknown/conflicting sources, unavailable/derived-only native candidates,
+  unsupported topology, and multiple local matrices remain fail-closed.
+- **Verification**: current focused component set is 31/31 PASS (15 + 7 + 9), independent
+  architecture review CLEAR. Normal-source wider set GLM_PARALLEL_WIDE_20260905T215915Z:
+  211 tests across 38 requested classes, 210 PASS, no assertion failures/skips/missing
+  classes; only actual GLM planning errors at glm.dml:932 LIX. Explicit PUBLIC GLM
+  resource fixture and PUBLIC print control excluded, so denominator differs from
+  the earlier 194 gate. This is not the complete repository suite or runtime validation.
+- **Bulk diagnosis**: one local diagnostic captured all 25 privacy-empty occurrences,
+  still throwing before returning PlacementAnalysis; then the original builder bytes
+  were restored. Evidence GLM_ALL_PRIVACY_EMPTY_DOMAINS_20260905.json. The 25 nodes
+  reduce to two blocker groups, not 25 unrelated opcode bugs.
+- **Remaining group A (16 occurrences)**: glm:932 local LHS + protected FULL RHS,
+  then glm:933 FULL/FULL LIX. Runtime currently cannot consume FED RHS without
+  coordinator broadcast/collection. Also existing FULL-LHS/matrix-RHS candidates
+  are overadvertised by a copy-only legacy path. Debugger owns exact native runtime,
+  oracle and negative tests; architect reviews geometry/endpoint/movement cost.
+- **Remaining group B (9 occurrences)**: glm_dist g_Y function return stays CP-only.
+  Direct-Literal-only isSafeLiteral veto discards exact scalar values forwarded through
+  m_glm to glm_dist, retaining a CP initializer in conservative function-exit joins.
+  Root owns preliminary qualified all-call scalar binding; independent architect review.
+- **Regression risks**: no shortcut from worker pool to exact range, no raw protected
+  GET, no partial callset exact proof, no namespace-name conflation, no silent fallback.
+  LIX local-LHS native upload has a separate global-vs-anchor fanout cost review;
+  support must not be closed to hide a cost error. General append expansion is deferred
+  because it is not causal in the bulk failure inventory.
+- **Decision boundary**: repair runtime capability and shared facts, not privacy filtering,
+  TR/TW residency policy, benchmark options or forced planner rankings. New source is
+  uncommitted/unpackaged and no runtime performance case is declared resolved.
+
+## 22:37 UTC — Parallel scalar/LIX integration and native-local fanout repair
+
+- **Status**: component implementation verified; broader gate and actual selector canary in progress. No new authenticated runtime cell accepted.
+- **Symptom/cause**: nested GLM forwarded scalar selectors were not resolved from all exact qualified call sites. This retained infeasible mixed local/protected function-return joins. Native single-FULL left indexing also lacked runtime/oracle and endpoint-continuity support. An inherited output anchor could incorrectly waive a LIX native-row proof.
+- **Changes**: exact all-call scalar binding; native matrix local/FULL and same-endpoint FULL/FULL LIX execution with no protected GET; matrix-kind, range, ID, endpoint and scalar-bound validation; unconditional actual native row for LIX continuity; RHS-grounded endpoint transfer without fabricated geometry.
+- **Verification**: `GLM_LIX_SCALAR_VERIFIED_20260905T223127Z` ran 83 tests: 81 PASS, 2 graph test fixture arity errors (requested 2 rather than actual 6 HOP inputs). Core scalar12, cardinality18, continuity11, runtime15 including real worker-kernel numeric updates, LIX rules12, Nary9, oracle3 and actual PA GLM analysis1 all PASS. Fixed fixture signatures. Subsequent graph test write overlapped compilation and will be freshly compiled in the broad gate; do not rely on that intermediate graph receipt.
+- **New cost defect (confirmed)**: `ExactNativeLocalAnchorFanoutCostTest` on the real physical cost surface priced the same local-to-single-FULL upload at 0.00048828125 in isolation and 0.00146484375 with two unrelated ROW workers: exactly 3x. `GLM_NATIVE_FANOUT_RED_20260905.log` is the pre-fix evidence.
+- **Cost correction**: `ExactPhysicalCostModel` now uses the exact selected consumer input-authority anchor's partition count for native-local upload, including bounded/fused variants. Conflicting anchors fail closed consistently with existing physical-product legality. Without exact authority retain prior conservative fallback. Source FOUT download fan-in remains unchanged. Candidate space is not pruned; DP and Exact consume the same corrected physical surface.
+- **Regression protection**: FULL unrelated-worker invariance, BROADCAST N recipients, duplicate authority not double-counted, unknown authority fallback, conflicting-anchor rejection.
+- **Risks/remaining**: legacy null-hint oracle still has name-registry range inference; shared builder explicitly supplies occurrence hints and does not supplement unknown evidence. Kernel numeric fixture is not authenticated PA E2E. Actual selector compilation, worker-backed authenticated GLM numeric/runtime, wider workloads, P2/SliceLine PA release boundaries and the tracked performance cases remain open.
+
+## 23:13 UTC — Shared provenance and legality-aware heuristic policy
+
+- **Status**: actual PA GLM selectors now pass isolated local planning-only checks; final broad gate in progress. No new authenticated runtime has run.
+- **Observed blockers**: FedAll candidate consistency and Exact `glm:870` physical domain were empty despite AVAILABLE FULL/FULL rows. Function-return aliases and supported unary/two-matrix elementwise chains lost worker-pool provenance. Heuristic separately forced a protected nested reduction or an actual feeding a shared FOUT-only formal into its CP local prefix.
+- **Repair**: exact declared function-return/CFG output edges now participate in the all-source worker-pool intersection with ordinary CFG/formal inputs. Unknown/conflicting/cyclic evidence grants no authority. Native continuity uses the existing oracle opcode allowlists, exact native non-derived rows, and single-endpoint FULL/FULL input checks. A matching inherited anchor cannot waive a missing native row for LIX, unary or two-matrix binary operations.
+- **Heuristic correction**: an exact ABSENT_LOCAL/PRESENT FED/LOUT continuation can implement a protected nested aggregate without collecting its protected sibling. Independently, a copied-domain binary constraint support closure identifies impossible demotion preferences. It preserves direction, same-state self relations and conjunction of parallel constraints. A marker or its no-upload local prefix lacking necessary hard-constraint support is omitted and remaining paths are retraced. The graph/candidate/privacy/movement domain is not changed and no baseline/solver fallback is used. This necessary filter is not a complete CSP solver; batch removal is legality-safe but may conservatively decline interacting preferences.
+- **Validation**: wide scalar/LIX/fanout snapshot `GLM_PARALLEL_WIDE_VERIFIED_20260905T223726Z`: 264/264 PASS. Actual `GLM_PARALLEL_SELECTOR_CANARY_20260905T231032Z`: FED_ALL/HEURISTIC/EXACT each PASS, all 1971 decisions selected with owned legal states, protected append and all PA decisions remote, no protected relocation. Latest isolated integrated `GLM_FAST_COMPILE_20260905T231157Z`: 31/31 PASS in 6.08s including mixed protected function calls with branches, protected nested reductions, parallel/self/directional support, alias joins and native continuity. This is compile-only correctness, not performance or authenticated distributed execution.
+- **Invalid test assumption corrected**: campaign GLM uses link=2; LIX at glm:932/933 belongs to unreachable link=4 cloglog. They are PUBLIC before and after selection, same HOP identities. Requiring two PA LIX nodes in the link=2 canary was erroneous, not a privacy failure. Removed that assertion while retaining all-PA remote invariants; actual PA LIX graph and worker-kernel numeric tests remain separate. Canary stdout now emits certificate length/fingerprint instead of multi-megabyte full certificate strings.
+- **Changed files**: NeutralPlacementGraphBuilder, PlacementAnalysis, NativePlacementContinuity; HeuristicProtectedNestedDemotionTest, ConstraintSupportedPolicyStatesTest, WorkerPoolAnchorResolverFunctionReturnTest, NativePlacementContinuityTest, GlmPrivateAggregatePlanningContractTest.
+- **Remaining**: authenticated Docker planning/correctness, broader current plan comparison and runtime reruns. KMeans wan_mid/w5 top baseline reversals have real Heuristic-vs-cost-based plan differences (691 vs 94 FED rows); current lines134/155 selected states/costs must be captured before cost edits. No performance case is closed by these component tests.
+- **Risk detection**: retain unknown/conflict/cycle tests; unsupported/derived-only native row negatives; PA mixed-function and nested-reduction selectors; candidate reachability certification; authenticate source/JAR and compare physical plan hashes before runtime acceptance. No numeric timing statement derives from diagnostic or isolated test logs.
+
+- **Final source gate (23:17 UTC)**: `GLM_PARALLEL_WIDE_VERIFIED_20260905T231243Z` completed **284/284 PASS** across 46 suites, zero failures/errors/skips/missing suites, 200.10s, recorded source hashes unchanged. `GLM_ALL_SELECTOR_SHARED_ANALYSIS_20260905T231604Z` completed PASS on fresh Maven classes: FedAll/Heuristic/Exact using the same PA input paths and equal analysis fingerprints, all 1971 decisions legal and all protected data remote. Total local canary duration41.60s is not a benchmark. `git diff --check` PASS; full repository test suite and separate static analyzer were not run.

@@ -160,7 +160,7 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 	public void processInstruction(ExecutionContext ec) {
 		if(!input1.isList()) {
 			CacheableData<?> in = ec.getCacheableData(input1);
-			if(in.getFedMapping() == null)
+			if(in.getFedMapping() == null && !isLocalLhsSingleFullLeftIndex(ec))
 				throw new DMLRuntimeException("FED indexing requires federated input but found local at runtime. "
 					+ "op=" + instOpcode + " input=" + input1.getName() + " output=" + output.getName()
 					+ " inst=" + instString);
@@ -331,7 +331,17 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 			}
 		}
 
+		if(in2 != null && in2.isFederated()) {
+			leftIndexSingleFull(ec, in1, in2);
+			return;
+		}
+		if(scalar != null && in1.isFederated(FType.FULL))
+			requireSingleOriginFullMap(in1.getFedMapping(), in1, "LHS");
+
 		FederationMap fedMap = in1.getFedMapping();
+		if(in2 != null && fedMap.getType() != FType.ROW && fedMap.getType() != FType.COL)
+			throw new DMLRuntimeException(
+				"FED leftIndex with a coordinator-local matrix RHS requires a ROW or COL LHS mapping.");
 
 		String[] instStrings = new String[fedMap.getSize()];
 		int[][] sliceIxs = new int[fedMap.getSize()][];
@@ -439,6 +449,89 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 			out.getDataCharacteristics().set(in1.getDataCharacteristics());
 			out.setFedMapping(fedMap.copyWithNewID(id));
 		}
+	}
+
+	private boolean isLocalLhsSingleFullLeftIndex(ExecutionContext ec) {
+		if(!(getOpcode().equalsIgnoreCase(Opcodes.LEFT_INDEX.toString())
+			|| getOpcode().equalsIgnoreCase(Opcodes.MAPLEFTINDEX.toString()))
+			|| !input1.isMatrix() || !input2.isMatrix())
+			return false;
+		CacheableData<?> rhs = ec.getCacheableData(input2);
+		return rhs != null && rhs.isFederated(FType.FULL);
+	}
+
+	private void leftIndexSingleFull(ExecutionContext ec, CacheableData<?> in1, CacheableData<?> in2) {
+		if(!input1.isMatrix() || !input2.isMatrix())
+			throw new DMLRuntimeException("Single-range FULL leftIndex supports matrix inputs only.");
+
+		FederationMap rhsMap = in2.getFedMapping();
+		Pair<FederatedRange, FederatedData> rhsEntry = requireSingleOriginFullMap(rhsMap, in2, "RHS");
+		FederationMap executionMap;
+		long lhsID;
+		FederatedRequest lhsPut = null;
+
+		if(in1.isFederated()) {
+			FederationMap lhsMap = in1.getFedMapping();
+			Pair<FederatedRange, FederatedData> lhsEntry = requireSingleOriginFullMap(lhsMap, in1, "LHS");
+			String lhsAddress = FederationUtils.canonicalFederatedWorkerAddress(lhsEntry.getRight().getAddress());
+			String rhsAddress = FederationUtils.canonicalFederatedWorkerAddress(rhsEntry.getRight().getAddress());
+			if(lhsAddress == null || rhsAddress == null || !lhsAddress.equals(rhsAddress))
+				throw new DMLRuntimeException("Single-range FULL leftIndex inputs must reside on the same federated worker.");
+			executionMap = lhsMap;
+			lhsID = lhsEntry.getRight().getVarID();
+		}
+		else {
+			// Privacy is certified by placement before this instruction is emitted. Runtime has no
+			// trustworthy privacy label, so this branch uploads only the certified local LHS and
+			// never attempts to materialize or rebroadcast the protected federated RHS.
+			executionMap = rhsMap;
+			lhsPut = executionMap.broadcast(in1);
+			lhsID = lhsPut.getID();
+		}
+
+		long outputID = FederationUtils.getNextFedDataID();
+		String workerInstruction = instString;
+		if(getOpcode().equalsIgnoreCase(Opcodes.MAPLEFTINDEX.toString()))
+			workerInstruction = InstructionUtils.replaceOperand(workerInstruction, 1, Opcodes.LEFT_INDEX.toString());
+		FederatedRequest exec = FederationUtils.callInstruction(workerInstruction, output, outputID,
+			new CPOperand[] {input1, input2},
+			new long[] {lhsID, rhsEntry.getRight().getVarID()}, Types.ExecType.CP, false);
+
+		if(lhsPut != null) {
+			FederatedRequest cleanup = executionMap.cleanup(getTID(), lhsPut.getID());
+			executionMap.execute(getTID(), true, lhsPut, exec, cleanup);
+		}
+		else
+			executionMap.execute(getTID(), true, exec);
+
+		MatrixObject out = ec.getMatrixObject(output);
+		out.getDataCharacteristics().set(in1.getDataCharacteristics());
+		out.setFedMapping(executionMap.copyWithNewIDAndRange(
+			in1.getNumRows(), in1.getNumColumns(), outputID, FType.FULL));
+	}
+
+	private static Pair<FederatedRange, FederatedData> requireSingleOriginFullMap(
+		FederationMap map, CacheableData<?> data, String role) {
+		if(map == null || map.getType() != FType.FULL || !map.isInitialized()
+			|| map.getMap() == null || map.getMap().size() != 1)
+			throw new DMLRuntimeException(role + " must have one initialized FULL federated range.");
+		if(data.getNumRows() <= 0 || data.getNumColumns() <= 0)
+			throw new DMLRuntimeException(role + " must have known positive matrix dimensions.");
+
+		Pair<FederatedRange, FederatedData> entry = map.getMap().get(0);
+		FederatedRange range = entry != null ? entry.getLeft() : null;
+		FederatedData fedData = entry != null ? entry.getRight() : null;
+		if(range == null || fedData == null || !fedData.isInitialized() || fedData.getAddress() == null
+			|| map.getID() != fedData.getVarID())
+			throw new DMLRuntimeException(role + " has incomplete or inconsistent FULL federated metadata.");
+
+		long[] begin = range.getBeginDims();
+		long[] end = range.getEndDims();
+		if(begin == null || end == null || begin.length != 2 || end.length != 2
+			|| begin[0] != 0 || begin[1] != 0
+			|| end[0] != data.getNumRows() || end[1] != data.getNumColumns())
+			throw new DMLRuntimeException(role + " FULL federated range must exactly cover its matrix from the origin.");
+		return entry;
 	}
 
 	private String modifyIndices(long[] newIx, int from, int to) {

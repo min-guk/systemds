@@ -22,16 +22,25 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOpN;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LeftIndexingOp;
+import org.apache.sysds.hops.NaryOp;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
@@ -40,11 +49,16 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInpu
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 
 /** Conservative proof that native FED/FOUT execution preserves one physical worker pool. */
 final class NativePlacementContinuity {
+	private static final Set<String> NATIVE_UNARY_ELEMWISE_OPCODES =
+		Set.copyOf(new Rulesets.UnaryElemwiseRule().opcodes());
+	private static final Set<String> NATIVE_BINARY_ELEMWISE_OPCODES =
+		Set.copyOf(new Rulesets.BinaryElemwiseRule().opcodes());
 	private final Map<CompiledHopKey,Node> nodesByKey;
 	private final Map<CompiledHopKey,Hop> originsByKey;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
@@ -143,14 +157,20 @@ final class NativePlacementContinuity {
 			if(!matchingNativeRow)
 				continue;
 			matchedNativeRow = true;
-			if(!operationPreservesWitness(hop, witness))
+			if(!operationPreservesWitness(hop, witness, fact))
 				current.valid = false;
 			collectCandidateDependencies(fact, hop, witness, current);
 		}
 
 		boolean transientWrite = hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE;
-		boolean computedValue = hop instanceof BinaryOp || hop instanceof ReorgOp;
-		if(!matchedNativeRow && (transientWrite || computedValue && !current.directGround))
+		boolean computedValue = hop instanceof UnaryOp || hop instanceof BinaryOp || hop instanceof ReorgOp
+			|| hop instanceof TernaryOp || hop instanceof NaryOp || hop instanceof ParameterizedBuiltinOp
+			|| hop instanceof LeftIndexingOp;
+		// An inherited output anchor is not evidence that a newly admitted native
+		// runtime family can execute this exact input row; derived-only or absent
+		// rows must not certify it.
+		if(!matchedNativeRow && (transientWrite || requiresExactNativeRow(hop)
+			|| computedValue && !current.directGround))
 			current.valid = false;
 		for(CompiledHopKey dependency : current.dependencies)
 			buildProof(dependency, witness, proof);
@@ -200,10 +220,42 @@ final class NativePlacementContinuity {
 		return origin != null && origin.getDataType().isMatrix();
 	}
 
-	private static boolean operationPreservesWitness(Hop hop, NativePoolWitness witness) {
+	private static boolean requiresExactNativeRow(Hop hop) {
+		if(hop instanceof LeftIndexingOp || hop instanceof UnaryOp)
+			return true;
+		return hop instanceof BinaryOp binary && binary.getInput().size() == 2
+			&& binary.getInput(0).getDataType().isMatrix()
+			&& binary.getInput(1).getDataType().isMatrix();
+	}
+
+	private static boolean operationPreservesWitness(Hop hop, NativePoolWitness witness, CandidateRuleFact fact) {
+		if(hop instanceof LeftIndexingOp) {
+			var inputs = fact.key().orderedInputs();
+			if(witness.fType != FType.FULL || !witness.singleEndpoint() || inputs.size() != hop.getInput().size()
+				|| inputs.size() < 2 || inputs.subList(2, inputs.size()).stream().anyMatch(input -> input.present()))
+				return false;
+			var lhs = inputs.get(0);
+			var rhs = inputs.get(1);
+			// Matrix-RHS native FULL execution is grounded on the RHS, never on
+			// an uploaded/collected protected matrix. Scalar updates retain the
+			// proven FULL LHS. Generic dependency collection checks every PRESENT
+			// matrix edge and keeps this endpoint witness separate from geometry.
+			return hop.getInput(1).getDataType().isMatrix()
+				? rhs.present() && rhs.fType() == FType.FULL && (!lhs.present() || lhs.fType() == FType.FULL)
+				: hop.getInput(1).getDataType().isScalar() && !rhs.present()
+					&& lhs.present() && lhs.fType() == FType.FULL;
+		}
 		if(hop instanceof DataOp data)
 			return data.getOp() == OpOpData.FEDERATED || data.getOp() == OpOpData.TRANSIENTREAD
 				|| data.getOp() == OpOpData.TRANSIENTWRITE;
+		if(hop instanceof UnaryOp unary) {
+			var inputs = fact.key().orderedInputs();
+			return unary.getDataType().isMatrix() && unary.getInput().size() == 1
+				&& unary.getInput(0).getDataType().isMatrix()
+				&& NATIVE_UNARY_ELEMWISE_OPCODES.contains(unary.getOp().toString())
+				&& inputs.size() == 1 && inputs.get(0).present()
+				&& inputs.get(0).fType() == witness.fType;
+		}
 		if(hop instanceof BinaryOp binary && (binary.getOp() == OpOp2.CBIND || binary.getOp() == OpOp2.RBIND)) {
 			if(witness.fType == FType.ROW)
 				return binary.getOp() == OpOp2.CBIND;
@@ -218,7 +270,29 @@ final class NativePlacementContinuity {
 			// map with a new data id; the scalar operand never changes its worker pool.
 			if(leftMatrix != rightMatrix)
 				return true;
+			var inputs = fact.key().orderedInputs();
+			// BinaryMatrixMatrixFEDInstruction executes two single-range FULL values
+			// directly only on their common worker. Generic dependency collection
+			// separately proves both exact PRESENT inputs against this witness.
+			if(leftMatrix && rightMatrix)
+				return witness.fType == FType.FULL && witness.singleEndpoint()
+					&& NATIVE_BINARY_ELEMWISE_OPCODES.contains(binary.getOp().toString())
+					&& inputs.size() == 2 && inputs.stream()
+						.allMatch(input -> input.present() && input.fType() == FType.FULL);
 		}
+		// These BuiltinNaryFEDInstruction cell ops publish the selected native
+		// input's complete FederationMap with only a new data id.
+		if(hop instanceof NaryOp nary)
+			return nary.getOp() == OpOpN.PLUS || nary.getOp() == OpOpN.MULT
+				|| nary.getOp() == OpOpN.MIN || nary.getOp() == OpOpN.MAX;
+		// TernaryFEDInstruction performs these elementwise kernels on the selected
+		// worker pool and installs a copy of that native input map on the output.
+		if(hop instanceof TernaryOp ternary)
+			return ternary.getOp() == OpOp3.PLUS_MULT || ternary.getOp() == OpOp3.MINUS_MULT
+				|| ternary.getOp() == OpOp3.IFELSE;
+		// FED replace changes cell values only and copies the target's exact map.
+		if(hop instanceof ParameterizedBuiltinOp parameterized)
+			return parameterized.getOp() == ParamBuiltinOp.REPLACE;
 		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS)
 			return witness.fType == FType.FULL && witness.singleEndpoint();
 		// IndexingFEDInstruction filters the input FederationMap and rebases its

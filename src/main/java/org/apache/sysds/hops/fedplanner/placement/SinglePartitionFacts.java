@@ -24,6 +24,9 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOpN;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
@@ -31,7 +34,11 @@ import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LeftIndexingOp;
+import org.apache.sysds.hops.NaryOp;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.lops.MMTSJ.MMTSJType;
@@ -118,11 +125,26 @@ final class SinglePartitionFacts {
 	private static boolean preservesSingleEndpoint(Hop hop) {
 		if(hop instanceof DataOp data)
 			return data.getOp() == OpOpData.TRANSIENTWRITE;
+		if(hop instanceof TernaryOp ternary)
+			// TernaryFEDInstruction copies its input map for these elementwise
+			// kernels, including fused +*/-* produced by HOP rewrites. Other
+			// ternaries (e.g. CTABLE) may change topology and need separate proof.
+			return ternary.getOp() == OpOp3.PLUS_MULT || ternary.getOp() == OpOp3.MINUS_MULT
+				|| ternary.getOp() == OpOp3.IFELSE;
+		if(hop instanceof NaryOp nary)
+			// BuiltinNaryFEDInstruction copies its selected base map; nary append
+			// does not share this elementwise topology contract.
+			return nary.getOp() == OpOpN.PLUS || nary.getOp() == OpOpN.MULT
+				|| nary.getOp() == OpOpN.MIN || nary.getOp() == OpOpN.MAX;
+		if(hop instanceof ParameterizedBuiltinOp builtin)
+			// REPLACE changes entries, not the map. Other parameterized builtins
+			// (e.g. RMEMPTY/REXPAND) require operation-specific topology evidence.
+			return builtin.getOp() == ParamBuiltinOp.REPLACE;
 		// These native kernels copy/filter the input map; aligned append modifies
 		// its ranges in place. All matrix inputs must ultimately name the SAME
 		// endpoint, so map-binding across different workers is not certified here.
 		return hop instanceof BinaryOp || hop instanceof UnaryOp || hop instanceof AggUnaryOp || hop instanceof AggBinaryOp
-			|| hop instanceof IndexingOp
+			|| hop instanceof IndexingOp || hop instanceof LeftIndexingOp
 			|| hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS;
 	}
 
@@ -136,7 +158,9 @@ final class SinglePartitionFacts {
 			Map<Hop,String> previous = new IdentityHashMap<>(facts);
 			for(var entry : dependencies.entrySet()) {
 				String next = previous.get(entry.getKey());
-				if(fullResultMatmuls.contains(entry.getKey()))
+				if(entry.getKey() instanceof LeftIndexingOp update && update.getInput(1).getDataType().isMatrix())
+					next = join(next, fullLeftIndexTransfer(update, previous));
+				else if(fullResultMatmuls.contains(entry.getKey()))
 					next = join(next, fullResultTransfer(entry.getValue(), previous));
 				else
 					for(Hop source : entry.getValue())
@@ -147,6 +171,19 @@ final class SinglePartitionFacts {
 				}
 			}
 		} while(changed);
+	}
+
+	private static String fullLeftIndexTransfer(LeftIndexingOp update, Map<Hop,String> facts) {
+		// Native matrix-RHS FULL left indexing executes on its single RHS worker.
+		// Unlike MM, a known LHS alone cannot supply this conditional certificate.
+		// Local LHS contributes no endpoint; a known remote LHS must agree. This
+		// grants neither a candidate nor geometry, and fullInputHint still checks
+		// every operand actually selected as FULL (including the LHS).
+		String rhs = facts.get(update.getInput(1));
+		if(rhs == null || rhs.isEmpty())
+			return rhs;
+		String lhs = facts.get(update.getInput(0));
+		return lhs == null || lhs.isEmpty() ? rhs : join(lhs, rhs);
 	}
 
 	private static String fullResultTransfer(List<Hop> sources, Map<Hop,String> facts) {
