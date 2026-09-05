@@ -248,6 +248,16 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 				.noneMatch(action -> action.compatibleConsumers().contains(call.key())));
 	}
 
+	@Test
+	public void rewrittenInlinedOutputRetainsItsCompilerDeclaredTargetAuthority() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileBuiltinGlmFixture());
+
+		Assert.assertTrue("the boundary must bind to an emitted caller-side result",
+			analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.evidence().equals("inlined-function-result:new_z")));
+	}
+
 	private static boolean selected(NormalizedPlannerResult plan, Node node, ExecType exec,
 		FederatedOutput output) {
 		PlacementState selected = plan.selectedStates().get(node.key());
@@ -306,6 +316,26 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileBuiltinGlmFixture() throws Exception {
+		String script = "X=federated(addresses=list(\"localhost:1234/X1\"),"
+			+ "ranges=list(list(0,0),list(8,4)));\n"
+			+ "Y=federated(addresses=list(\"localhost:1234/Y1\"),"
+			+ "ranges=list(list(0,0),list(8,1)));\n"
+			+ "Y=(Y>mean(Y))*1;\n"
+			+ "beta=glm(X=X,Y=Y,dfam=2,vpow=0.0,link=2,lpow=1.0,yneg=0.0,"
+			+ "icpt=0,disp=0.0,reg=0.0,tol=1e-6,moi=2,mii=2,verbose=FALSE);\n"
+			+ "write(beta,\"/tmp/g014-inlined-output\",format=\"csv\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return program;
 	}
 

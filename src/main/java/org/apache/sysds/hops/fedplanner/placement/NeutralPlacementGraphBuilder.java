@@ -2353,11 +2353,10 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static boolean exactFactPublishesState(CandidateRuleFact fact, PlacementState state) {
-		if(fact == null || fact.status() != CandidateEvaluationStatus.AVAILABLE || fact.capability() == null)
+		if(fact == null || fact.status() != CandidateEvaluationStatus.AVAILABLE)
 			return false;
-		return fact.capability().nativeExec() == state.execType()
-			&& fact.capability().nativeOutput() == state.output()
-			&& fact.capability().nativeFoutFType() == state.fType();
+		return fact.allowedEmissionFacts().stream()
+			.anyMatch(emission -> emission.emissionState().placementState().equals(state));
 	}
 
 	private record CandidateReplay(List<Node> nodes, List<CandidateRuleKey> domainKeys,
@@ -3007,15 +3006,15 @@ public final class NeutralPlacementGraphBuilder {
 				for(InlinedFunctionInputBoundary inlinedInput : inlinedCall.inputs()) {
 					ResolvedInlinedInput exactInput = resolveInlinedInput(inlinedInput, inputBindings);
 					arguments.add(exactInput.transientRead()
-						? requireExactDataNode(blockNodes, OpOpData.TRANSIENTREAD,
+						? optionalExactDataNode(blockNodes, OpOpData.TRANSIENTREAD,
 							exactInput.variable(), inlinedCall, "input", inlinedInput.position())
-						: requireExactNamedNode(blockNodes, exactInput.variable(), inlinedCall,
+						: optionalExactNamedNode(blockNodes, exactInput.variable(), inlinedCall,
 							"input", inlinedInput.position()));
 				}
 				List<Node> results = new ArrayList<>(inlinedCall.outputs().size());
 				for(InlinedFunctionOutputBoundary inlinedOutput : inlinedCall.outputs())
-					results.add(requireExactNamedNode(blockNodes, resolveInlinedOutput(inlinedOutput, outputBindings), inlinedCall,
-						"output", inlinedOutput.position()));
+					results.add(requireExactInlinedOutputNode(blockNodes, inlinedOutput, outputBindings,
+						inlinedCall));
 				Node callAuthority = results.stream().findFirst()
 					.orElseGet(() -> arguments.stream().filter(Objects::nonNull).findFirst().orElse(null));
 				if(callAuthority == null)
@@ -3217,7 +3216,7 @@ public final class NeutralPlacementGraphBuilder {
 		return List.copyOf(common);
 	}
 
-	private static Node requireExactDataNode(Map<Hop,Node> blockNodes, OpOpData operation, String name,
+	private static Node optionalExactDataNode(Map<Hop,Node> blockNodes, OpOpData operation, String name,
 		InlinedFunctionCallBoundary call, String boundary, int position) {
 		if(name == null || name.isBlank())
 			throw new IllegalStateException("Inlined function " + boundary + " has no compiler-owned variable identity");
@@ -3226,25 +3225,93 @@ public final class NeutralPlacementGraphBuilder {
 			.filter(entry -> ((DataOp) entry.getKey()).getOp() == operation)
 			.filter(entry -> name.equals(entry.getKey().getName()))
 			.map(Map.Entry::getValue).toList();
-		if(matches.size() != 1)
+		if(matches.size() > 1)
 			throw new IllegalStateException("Inlined function boundary requires one exact compiler-owned occurrence: "
 				+ call.functionKey() + " callStatement=" + call.callStatementPosition() + ' ' + boundary + '='
-				+ position + " variable=" + name + " operation=" + operation + " matches=" + matches.size());
-		return matches.get(0);
+					+ position + " variable=" + name + " operation=" + operation + " matches=" + matches.size());
+		// HOP rewrites may substitute a transient read directly into an inlined body.  In
+		// that case the ordinary HOP input edge is the physical authority and there is no
+		// emitted call-boundary operation to attach here.
+		return matches.isEmpty() ? null : matches.get(0);
 	}
 
-	private static Node requireExactNamedNode(Map<Hop,Node> blockNodes, String name,
+	private static Node optionalExactNamedNode(Map<Hop,Node> blockNodes, String name,
 		InlinedFunctionCallBoundary call, String boundary, int position) {
 		if(name == null || name.isBlank())
 			throw new IllegalStateException("Inlined function " + boundary + " has no compiler-owned variable identity");
 		List<Node> matches = blockNodes.entrySet().stream()
 			.filter(entry -> name.equals(entry.getKey().getName()))
 			.map(Map.Entry::getValue).toList();
-		if(matches.size() != 1)
+		if(matches.size() > 1)
 			throw new IllegalStateException("Inlined function boundary requires one exact compiler-owned occurrence: "
 				+ call.functionKey() + " callStatement=" + call.callStatementPosition() + ' ' + boundary + '='
-				+ position + " variable=" + name + " matches=" + matches.size());
-		return matches.get(0);
+					+ position + " variable=" + name + " matches=" + matches.size());
+		return matches.isEmpty() ? null : matches.get(0);
+	}
+
+	private static Node requireExactInlinedOutputNode(Map<Hop,Node> blockNodes,
+		InlinedFunctionOutputBoundary output, Map<String,InlinedFunctionOutputBoundary> bindings,
+		InlinedFunctionCallBoundary call) {
+		String resolvedBound = resolveInlinedOutput(output, bindings);
+		List<Node> boundMatches = exactNamedNodes(blockNodes, resolvedBound);
+		if(boundMatches.size() == 1)
+			return boundMatches.get(0);
+		if(boundMatches.size() > 1)
+			throw inlinedOutputResolutionFailure(call, output, resolvedBound, boundMatches.size(), List.of());
+
+		List<String> targetAliases = compilerOwnedInlinedOutputTargets(output, bindings);
+		for(String target : targetAliases) {
+			List<Node> targetWrites = exactDataNodes(blockNodes, OpOpData.TRANSIENTWRITE, target);
+			if(targetWrites.size() == 1)
+				return targetWrites.get(0);
+			if(targetWrites.size() > 1)
+				throw inlinedOutputResolutionFailure(call, output, resolvedBound, 0, targetAliases);
+		}
+		throw inlinedOutputResolutionFailure(call, output, resolvedBound, 0, targetAliases);
+	}
+
+	private static List<Node> exactNamedNodes(Map<Hop,Node> blockNodes, String name) {
+		return blockNodes.entrySet().stream()
+			.filter(entry -> name.equals(entry.getKey().getName()))
+			.map(Map.Entry::getValue).toList();
+	}
+
+	private static List<Node> exactDataNodes(Map<Hop,Node> blockNodes, OpOpData operation, String name) {
+		return blockNodes.entrySet().stream()
+			.filter(entry -> entry.getKey() instanceof DataOp)
+			.filter(entry -> ((DataOp) entry.getKey()).getOp() == operation)
+			.filter(entry -> name.equals(entry.getKey().getName()))
+			.map(Map.Entry::getValue).toList();
+	}
+
+	private static List<String> compilerOwnedInlinedOutputTargets(InlinedFunctionOutputBoundary output,
+		Map<String,InlinedFunctionOutputBoundary> bindings) {
+		List<String> targets = new ArrayList<>();
+		String target = output.targetVariable();
+		Set<String> visited = new LinkedHashSet<>();
+		while(true) {
+			if(!visited.add(target))
+				throw new IllegalStateException("Cyclic compiler-owned inlined output target chain: " + visited);
+			targets.add(target);
+			String currentTarget = target;
+			List<InlinedFunctionOutputBoundary> enclosing = bindings.values().stream()
+				.filter(binding -> currentTarget.equals(binding.boundVariable())).toList();
+			if(enclosing.isEmpty())
+				break;
+			if(enclosing.size() != 1)
+				throw new IllegalStateException("Ambiguous compiler-owned inlined output target chain: "
+					+ target + " matches=" + enclosing.size());
+			target = enclosing.get(0).targetVariable();
+		}
+		return List.copyOf(targets);
+	}
+
+	private static IllegalStateException inlinedOutputResolutionFailure(InlinedFunctionCallBoundary call,
+		InlinedFunctionOutputBoundary output, String resolvedBound, int boundMatches, List<String> targets) {
+		return new IllegalStateException("Inlined function boundary requires one exact compiler-owned occurrence: "
+			+ call.functionKey() + " callStatement=" + call.callStatementPosition() + " output="
+			+ output.position() + " variable=" + resolvedBound + " matches=" + boundMatches
+			+ " compilerTargets=" + targets);
 	}
 
 	private record ResolvedInlinedInput(String variable, boolean transientRead) { }
