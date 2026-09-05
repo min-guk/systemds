@@ -1,0 +1,308 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.sysds.hops.fedplanner.placement;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
+import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+
+/** Conservative proof that native FED/FOUT execution preserves one physical worker pool. */
+final class NativePlacementContinuity {
+	private final Map<CompiledHopKey,Node> nodesByKey;
+	private final Map<CompiledHopKey,Hop> originsByKey;
+	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
+	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
+	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
+
+	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
+		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
+		List<CompiledInputEdgeFact> compiledEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions) {
+		this.nodesByKey = copyIdentityMap(nodesByKey, "nodesByKey");
+		this.originsByKey = copyIdentityMap(originsByKey, "originsByKey");
+		this.reachingDefinitions = copyIdentityLists(reachingDefinitions, "reachingDefinitions");
+		candidateFactsByKey = new IdentityHashMap<>();
+		for(CandidateRuleFact fact : List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts")))
+			candidateFactsByKey.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+		candidateFactsByKey.replaceAll((ignored, facts) -> List.copyOf(facts));
+		edgesByConsumer = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : List.copyOf(Objects.requireNonNull(compiledEdges, "compiledEdges"))) {
+			Map<Integer,CompiledInputEdgeFact> positions = edgesByConsumer.computeIfAbsent(
+				edge.consumer(), ignored -> new java.util.LinkedHashMap<>());
+			if(positions.put(edge.inputPosition(), edge) != null)
+				throw new IllegalArgumentException("Duplicate compiled input edge position");
+		}
+	}
+
+	boolean proves(List<CompiledHopKey> sources, DurableAnchorKey externalSeed) {
+		Objects.requireNonNull(sources, "sources");
+		NativePoolWitness witness = NativePoolWitness.from(
+			Objects.requireNonNull(externalSeed, "externalSeed"));
+		if(sources.isEmpty() || witness == null)
+			return false;
+		Map<CompiledHopKey,ProofNode> proof = new IdentityHashMap<>();
+		for(CompiledHopKey source : sources)
+			buildProof(Objects.requireNonNull(source, "source"), witness, proof);
+		if(proof.values().stream().anyMatch(node -> !node.valid))
+			return false;
+
+		// Coinductive cycles are safe only when every reachable node/SCC has a path
+		// to an actual matching source anchor. Requiring grounding for every reachable
+		// dependency prevents one unrelated good branch from certifying a bad cycle.
+		Map<CompiledHopKey,Boolean> grounded = new IdentityHashMap<>();
+		proof.forEach((key, node) -> grounded.put(key, node.directGround));
+		boolean changed;
+		do {
+			changed = false;
+			for(var entry : proof.entrySet()) {
+				if(grounded.get(entry.getKey()))
+					continue;
+				if(entry.getValue().dependencies.stream().anyMatch(key -> grounded.getOrDefault(key, false))) {
+					grounded.put(entry.getKey(), true);
+					changed = true;
+				}
+			}
+		}
+		while(changed);
+		return proof.keySet().stream().allMatch(key -> grounded.getOrDefault(key, false));
+	}
+
+	private void buildProof(CompiledHopKey key, NativePoolWitness witness,
+		Map<CompiledHopKey,ProofNode> proof) {
+		if(proof.containsKey(key))
+			return;
+		Node node = nodesByKey.get(key);
+		Hop hop = originsByKey.get(key);
+		ProofNode current = new ProofNode();
+		proof.put(key, current);
+		if(node == null || hop == null) {
+			current.valid = false;
+			return;
+		}
+		if(node.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
+			&& state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
+			current.valid = false;
+		current.directGround = node.anchors().stream()
+			.map(NativePoolWitness::from).filter(Objects::nonNull).anyMatch(witness::equals);
+
+		if(hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD)
+			for(CompiledHopKey definition : reachingDefinitions.getOrDefault(key, List.of()))
+				addDependency(current, definition);
+
+		boolean matchedNativeRow = false;
+		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			boolean matchingNativeRow = false;
+			for(var emission : fact.allowedEmissionFacts()) {
+				var state = emission.emissionState().placementState();
+				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
+					|| state.fType() != witness.fType)
+					continue;
+				if(emission.executionFType() == witness.fType && emission.derivedFoutAction() == null
+					&& !emission.emissionState().derivedFedFout())
+					matchingNativeRow = true;
+			}
+			if(!matchingNativeRow)
+				continue;
+			matchedNativeRow = true;
+			if(!operationPreservesWitness(hop, witness))
+				current.valid = false;
+			collectCandidateDependencies(fact, hop, witness, current);
+		}
+
+		boolean transientWrite = hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE;
+		boolean computedValue = hop instanceof BinaryOp || hop instanceof ReorgOp;
+		if(!matchedNativeRow && (transientWrite || computedValue && !current.directGround))
+			current.valid = false;
+		for(CompiledHopKey dependency : current.dependencies)
+			buildProof(dependency, witness, proof);
+	}
+
+	private void collectCandidateDependencies(CandidateRuleFact fact, Hop owner,
+		NativePoolWitness witness, ProofNode proof) {
+		if(owner instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+			if(!proof.directGround)
+				proof.valid = false;
+			return;
+		}
+		if(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD) {
+			if(fact.key().orderedInputs().stream().noneMatch(input -> input.present()))
+				proof.valid = false;
+			else if(fact.key().orderedInputs().stream()
+				.anyMatch(input -> input.present() && input.fType() != witness.fType))
+				proof.valid = false;
+			return;
+		}
+		Map<Integer,CompiledInputEdgeFact> edges = edgesByConsumer.getOrDefault(
+			fact.key().parentOccurrence(), Map.of());
+		boolean presentMatrix = false;
+		for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+			var input = fact.key().orderedInputs().get(position);
+			if(!input.present())
+				continue;
+			CompiledInputEdgeFact edge = edges.get(position);
+			boolean matrix = edge != null && isMatrixOrigin(edge.producer())
+				|| edge == null && position < owner.getInput().size()
+					&& owner.getInput(position).getDataType().isMatrix();
+			if(!matrix)
+				continue;
+			presentMatrix = true;
+			if(input.fType() != witness.fType || edge == null) {
+				proof.valid = false;
+				continue;
+			}
+			addDependency(proof, edge.producer());
+		}
+		if(!presentMatrix)
+			proof.valid = false;
+	}
+
+	private boolean isMatrixOrigin(CompiledHopKey key) {
+		Hop origin = originsByKey.get(key);
+		return origin != null && origin.getDataType().isMatrix();
+	}
+
+	private static boolean operationPreservesWitness(Hop hop, NativePoolWitness witness) {
+		if(hop instanceof DataOp data)
+			return data.getOp() == OpOpData.FEDERATED || data.getOp() == OpOpData.TRANSIENTREAD
+				|| data.getOp() == OpOpData.TRANSIENTWRITE;
+		if(hop instanceof BinaryOp binary && (binary.getOp() == OpOp2.CBIND || binary.getOp() == OpOp2.RBIND)) {
+			if(witness.fType == FType.ROW)
+				return binary.getOp() == OpOp2.CBIND;
+			if(witness.fType == FType.COL)
+				return binary.getOp() == OpOp2.RBIND;
+			return witness.fType == FType.FULL && witness.singleEndpoint();
+		}
+		if(hop instanceof BinaryOp binary && binary.getInput().size() == 2) {
+			boolean leftMatrix = binary.getInput(0).getDataType().isMatrix();
+			boolean rightMatrix = binary.getInput(1).getDataType().isMatrix();
+			// BinaryMatrixScalarFEDInstruction copies the federated matrix's complete
+			// map with a new data id; the scalar operand never changes its worker pool.
+			if(leftMatrix != rightMatrix)
+				return true;
+		}
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS)
+			return witness.fType == FType.FULL && witness.singleEndpoint();
+		// IndexingFEDInstruction filters the input FederationMap and rebases its
+		// ranges, but a nonempty slice of one FULL partition remains on that sole
+		// worker. ROW/COL indexing can filter or resize the witnessed partition axis.
+		if(hop instanceof IndexingOp && hop.getDataType().isMatrix()
+			&& !hop.getInput().isEmpty() && hop.getInput(0).getDataType().isMatrix())
+			return witness.fType == FType.FULL && witness.singleEndpoint();
+		return false;
+	}
+
+	private static void addDependency(ProofNode proof, CompiledHopKey dependency) {
+		if(dependency != null && proof.dependencies.stream().noneMatch(existing -> existing == dependency))
+			proof.dependencies.add(dependency);
+	}
+
+	private static final class ProofNode {
+		private final List<CompiledHopKey> dependencies = new ArrayList<>();
+		private boolean valid = true;
+		private boolean directGround;
+	}
+
+	private record AxisInterval(String endpoint, long begin, long end)
+		implements Comparable<AxisInterval> {
+		@Override public int compareTo(AxisInterval that) {
+			int endpointOrder = endpoint.compareTo(that.endpoint);
+			if(endpointOrder != 0)
+				return endpointOrder;
+			int beginOrder = Long.compare(begin, that.begin);
+			return beginOrder != 0 ? beginOrder : Long.compare(end, that.end);
+		}
+	}
+
+	/** Typed worker-pool evidence; value ids and full two-dimensional ranges never escape anchors. */
+	private record NativePoolWitness(FType fType, List<String> endpoints,
+		List<AxisInterval> partitionAxisIntervals) {
+		private NativePoolWitness {
+			endpoints = List.copyOf(endpoints);
+			partitionAxisIntervals = List.copyOf(partitionAxisIntervals);
+		}
+
+		private static NativePoolWitness from(DurableAnchorKey anchor) {
+			if(anchor == null || anchor.fType() == FType.PART || anchor.fType() == FType.OTHER
+				|| anchor.fType() == FType.BROADCAST || anchor.partitions().isEmpty())
+				return null;
+			if(anchor.fType() == FType.FULL && anchor.partitions().size() != 1)
+				return null;
+			List<String> endpoints = new ArrayList<>();
+			List<AxisInterval> intervals = new ArrayList<>();
+			int axis = anchor.fType() == FType.ROW ? 0 : anchor.fType() == FType.COL ? 1 : -1;
+			for(AnchorPartition partition : anchor.partitions()) {
+				String endpoint = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+				if(endpoint == null || endpoint.isBlank())
+					return null;
+				endpoints.add(endpoint);
+				if(axis >= 0) {
+					if(partition.begin().size() <= axis || partition.end().size() <= axis)
+						return null;
+					intervals.add(new AxisInterval(endpoint, partition.begin().get(axis), partition.end().get(axis)));
+				}
+			}
+			Collections.sort(endpoints);
+			Collections.sort(intervals);
+			return new NativePoolWitness(anchor.fType(), endpoints, intervals);
+		}
+
+		private boolean singleEndpoint() {
+			return endpoints.size() == 1;
+		}
+	}
+
+	private static <K,V> Map<K,V> copyIdentityMap(Map<K,V> source, String name) {
+		Objects.requireNonNull(source, name);
+		Map<K,V> copy = new IdentityHashMap<>();
+		source.forEach((key, value) -> copy.put(Objects.requireNonNull(key, name + " key"),
+			Objects.requireNonNull(value, name + " value")));
+		return copy;
+	}
+
+	private static <K,V> Map<K,List<V>> copyIdentityLists(Map<K,List<V>> source, String name) {
+		Objects.requireNonNull(source, name);
+		Map<K,List<V>> copy = new IdentityHashMap<>();
+		source.forEach((key, value) -> copy.put(Objects.requireNonNull(key, name + " key"),
+			List.copyOf(Objects.requireNonNull(value, name + " value"))));
+		return copy;
+	}
+}

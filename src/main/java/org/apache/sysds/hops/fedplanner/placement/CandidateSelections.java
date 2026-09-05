@@ -99,6 +99,7 @@ public final class CandidateSelections {
 	/** Immutable, allocation-free-on-success partial candidate reachability check. */
 	public static final class PartialReachabilityIndex {
 		private final PlacementAnalysis analysis;
+		private final RelocationSelections.RelocationPrivacyIndex relocationPrivacy;
 		private final List<IndexedConsumer> consumers;
 		private final Map<CompiledHopKey,List<PlacementAnalysis.LogicalFunctionInputFact>>
 			incomingFunctionInputs;
@@ -127,6 +128,8 @@ public final class CandidateSelections {
 			Objects.requireNonNull(authorityGraph, "authorityGraph");
 			List<RelocationAction> actions = List.copyOf(
 				Objects.requireNonNull(actionUniverse, "actionUniverse"));
+			this.relocationPrivacy = RelocationSelections.relocationPrivacyIndex(
+				analysis, authorityGraph, actions);
 			Map<CompiledHopKey,List<RelocationAction>> actionsByConsumerMutable =
 				new IdentityHashMap<>();
 			for(RelocationAction action : actions) {
@@ -157,6 +160,8 @@ public final class CandidateSelections {
 					factsByConsumer.computeIfAbsent(fact.key().parentOccurrence(),
 						ignored -> new ArrayList<>()).add(fact);
 			List<IndexedConsumer> indexedConsumers = new ArrayList<>();
+			Map<CandidateSelectionReceipt,List<IndexedCandidateAction>> physicalEffects =
+				new IdentityHashMap<>();
 			for(NeutralPlacementGraph.Node consumer : authorityGraph.decisionNodes()) {
 				List<CandidateRuleFact> facts = factsByConsumer.get(consumer.key());
 				if(facts == null || facts.isEmpty())
@@ -174,6 +179,9 @@ public final class CandidateSelections {
 						PlacementState selected = emission.emissionState().placementState();
 						CandidateSelectionReceipt receipt = analysis.canonicalCandidateReceipt(
 							fact.key(), emission);
+						List<IndexedCandidateAction> rowActions = indexCandidatePhysicalEffects(
+							authorityGraph, receipt, actionsByConsumer.getOrDefault(consumer.key(), List.of()));
+						physicalEffects.put(receipt, rowActions);
 						boolean emissionStructurallyReachable = foutMaterializationActionReachable(
 							authorityGraph, fact, receipt, null, true);
 						boolean relocationAnchorCompatible =
@@ -191,12 +199,9 @@ public final class CandidateSelections {
 							List<PlacementAnalysis.CompiledInputEdgeFact> inputEdges = edges
 								.getOrDefault(consumer.key(), Map.of()).getOrDefault(position, List.of());
 							final int inputPosition = position;
-							boolean receipted = actions.stream().anyMatch(action ->
-								action.key().materializationFType() == input.fType()
-									&& action.key().targetPlacement().equals(selected)
-									&& action.obligations().stream().anyMatch(obligation ->
-										obligation.consumer() == consumer.key()
-											&& obligation.inputPosition() == inputPosition));
+							List<IndexedCandidateAction> supports = rowActions.stream().filter(action ->
+								action.effects().stream().anyMatch(effect ->
+									effect.demand().inputPosition() == inputPosition)).toList();
 							boolean directWhenUnassigned = presentInputs == 1 && inputEdges.size() == 1
 								&& analysis.graph().node(inputEdges.get(0).producer()).orElseThrow()
 									.legalAlternatives().stream().anyMatch(state ->
@@ -204,13 +209,15 @@ public final class CandidateSelections {
 											== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 											&& state.fType() == input.fType());
 							inputs.add(new IndexedInput(input.fType(), List.copyOf(inputEdges),
-								receipted, presentInputs == 1, presentPhysicalInputs == 1,
+								supports, presentInputs == 1, presentPhysicalInputs == 1,
 								directWhenUnassigned));
 						}
 						rows.add(new IndexedRow(receipt, selected, emissionStructurallyReachable,
 							relocationAnchorCompatible,
 							anchorOwner, anchorOwnerType,
-							analysis.isDmlFunctionCallBoundary(consumer.key()), List.copyOf(inputs)));
+							analysis.isDmlFunctionCallBoundary(consumer.key()),
+							rowActions.stream().anyMatch(action ->
+								relocationPrivacy.requiresOriginResidency(action.action())), List.copyOf(inputs)));
 					}
 				}
 				// Canonicalize once while constructing the immutable index. Complete
@@ -238,13 +245,6 @@ public final class CandidateSelections {
 					List.copyOf(rowsBySelectedState)));
 			}
 			this.consumers = List.copyOf(indexedConsumers);
-			Map<CandidateSelectionReceipt,List<IndexedCandidateAction>> physicalEffects =
-				new IdentityHashMap<>();
-			for(IndexedConsumer consumer : this.consumers)
-				for(IndexedRow row : consumer.rows())
-					physicalEffects.put(row.receipt(), indexCandidatePhysicalEffects(
-						authorityGraph, row.receipt(),
-						actionsByConsumer.getOrDefault(consumer.key(), List.of())));
 			this.physicalEffectsByReceipt = Collections.unmodifiableMap(physicalEffects);
 			Map<CompiledHopKey,List<IndexedConsumer>> dependencies = new IdentityHashMap<>();
 			Set<ComponentDependency> componentDependencies = new TreeSet<>();
@@ -254,12 +254,15 @@ public final class CandidateSelections {
 				for(IndexedRow row : consumer.rows()) {
 					if(row.anchorOwner() != null)
 						keys.add(row.anchorOwner());
-					for(IndexedInput input : row.inputs())
+					for(IndexedInput input : row.inputs()) {
+						for(IndexedCandidateAction support : input.relocationSupports())
+							keys.addAll(support.sources());
 						for(PlacementAnalysis.CompiledInputEdgeFact edge : input.edges()) {
 							keys.add(edge.producer());
 							collectParametricDependencies(edge.producer(), keys,
 								Collections.newSetFromMap(new IdentityHashMap<>()));
 						}
+					}
 				}
 				for(CompiledHopKey key : keys) {
 					dependencies.computeIfAbsent(key, ignored -> new ArrayList<>()).add(consumer);
@@ -577,13 +580,27 @@ public final class CandidateSelections {
 			}
 			if(row.functionBoundary() || row.selectedConsumer().execType() != ExecType.FED)
 				return true;
+			List<RelocationAction> safeActions = row.hasProtectedRelocations() ? new ArrayList<>() : null;
 			for(IndexedInput input : row.inputs()) {
 				if(input.edges().isEmpty())
 					continue;
 				if(input.edges().size() != 1)
 					return false;
-				if(input.receipted())
+				if(!input.relocationSupports().isEmpty()) {
+					boolean supported = false;
+					for(IndexedCandidateAction support : input.relocationSupports())
+						if(relocationCanStillBeSafe(support, partialAssignment,
+							allowUnassigned, remainingStateDomains)) {
+							supported = true;
+							if(safeActions != null)
+								safeActions.add(support.action());
+						}
+					// A rejected anchored demand must not fall through to mere FType
+					// equality. That would hide a forbidden cross-pool materialization.
+					if(!supported)
+						return false;
 					continue;
+				}
 				CompiledHopKey producer = input.edges().get(0).producer();
 				boolean direct = false;
 				if(input.singlePresentInput()) {
@@ -606,14 +623,38 @@ public final class CandidateSelections {
 				if(!direct && !formal)
 					return false;
 			}
-			return true;
+			return safeActions == null || RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(
+				safeActions, row.receipt());
+		}
+
+		private boolean relocationCanStillBeSafe(IndexedCandidateAction support,
+			Map<CompiledHopKey,PlacementState> assignment, boolean allowUnassigned,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
+			// The indexed support already matches the proposed consumer row. Unlike
+			// graph.isRelocationActive, this does not interpret an unassigned consumer
+			// as absence of demand. Only an exact source/suppression can make it direct.
+			if(relocationPrivacy.isPrivacySafe(support.action(), support.requiresEmission(assignment)))
+				return true;
+			if(!allowUnassigned)
+				return false;
+			for(CompiledHopKey source : support.sources()) {
+				if(assignment.get(source) != null)
+					continue;
+				List<PlacementState> domain = remainingStateDomains.get(source);
+				if(domain == null)
+					domain = analysis.graph().node(source).orElseThrow().legalAlternatives();
+				for(PlacementState state : domain)
+					if(support.suppressesEmission(source, state))
+						return true;
+			}
+			return false;
 		}
 
 		private String rowReachabilityDetails(IndexedRow row,
 			Map<CompiledHopKey,PlacementState> assignment) {
 			List<String> inputs = new ArrayList<>();
 			for(IndexedInput input : row.inputs())
-				inputs.add("required=" + input.required() + ",receipted=" + input.receipted()
+				inputs.add("required=" + input.required() + ",receipted=" + !input.relocationSupports().isEmpty()
 					+ ",edges=" + input.edges().stream().map(edge -> edge.producer().normalizedSignature()
 						+ "=>" + assignment.get(edge.producer())).toList());
 			return row.receipt().normalizedSignature()
@@ -683,9 +724,10 @@ public final class CandidateSelections {
 	private record IndexedRow(CandidateSelectionReceipt receipt, PlacementState selectedConsumer,
 		boolean emissionStructurallyReachable, boolean relocationAnchorCompatible,
 		CompiledHopKey anchorOwner, FType anchorOwnerType, boolean functionBoundary,
+		boolean hasProtectedRelocations,
 		List<IndexedInput> inputs) { }
 	private record IndexedInput(FType required,
-		List<PlacementAnalysis.CompiledInputEdgeFact> edges, boolean receipted,
+		List<PlacementAnalysis.CompiledInputEdgeFact> edges, List<IndexedCandidateAction> relocationSupports,
 		boolean singlePresentInput, boolean singlePresentPhysicalInput,
 		boolean directWhenUnassigned) { }
 	private record CandidateRelocationEffectSeed(RelocationDemandKey demand,
@@ -697,15 +739,19 @@ public final class CandidateSelections {
 		private boolean requiresEmission(Map<CompiledHopKey,PlacementState> assignment) {
 			for(CompiledHopKey source : sources) {
 				PlacementState selected = assignment.get(source);
-				if(selected != null && action.directSourcePlacements().contains(selected))
+				if(selected != null && suppressesEmission(source, selected))
 					return false;
-				if(selected == null)
-					continue;
-				for(DerivedSuppression derived : derivedSuppressions)
-					if(derived.source() == source && selected == derived.target())
-						return false;
 			}
 			return true;
+		}
+
+		private boolean suppressesEmission(CompiledHopKey source, PlacementState selected) {
+			if(action.directSourcePlacements().contains(selected))
+				return true;
+			for(DerivedSuppression derived : derivedSuppressions)
+				if(derived.source() == source && selected == derived.target())
+					return true;
+			return false;
 		}
 	}
 

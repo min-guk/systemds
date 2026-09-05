@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.commons.lang3.tuple.Pair;
@@ -29,6 +30,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
@@ -86,6 +88,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFac
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.DecisionEvidence;
@@ -269,6 +272,9 @@ public final class NeutralPlacementGraphBuilder {
 		String registryBefore = registrySentinel(program);
 		List<StatementBlock> topLevelStatementBlocks = List.copyOf(program.getStatementBlocks());
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
+		Map<Hop,NodeShapeFact> concreteShapes = new IdentityHashMap<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences)
+			concreteShapes.put(occurrence.hop(), deriveNodeShapeFact(occurrence.hop()));
 		String programId = structuralFingerprint(occurrences);
 		CfgAnalysis conservativeCfg = analyzeCfg(program, topLevelStatementBlocks, occurrences, Map.of());
 		CfgAnalysis cfg = conservativeCfg;
@@ -279,7 +285,7 @@ public final class NeutralPlacementGraphBuilder {
 			preliminaryAbstractFacts = PlacementAbstractShapeAnalysis.inferOriginalOccurrences(
 				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
 				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::namespace).toList(),
-				cfg.reachingDefinitions(), cfg.reachingFunctionInputs(), fgraph, fcallSizes);
+				cfg.reachingDefinitions(), cfg.reachingFunctionInputs(), fgraph, fcallSizes, concreteShapes);
 			CfgAnalysis refined = analyzeCfg(program, topLevelStatementBlocks, occurrences,
 				preliminaryAbstractFacts.scalars());
 			if(refined.equals(cfg)) {
@@ -297,8 +303,18 @@ public final class NeutralPlacementGraphBuilder {
 			preliminaryAbstractFacts = PlacementAbstractShapeAnalysis.inferOriginalOccurrences(
 				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
 				occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::namespace).toList(),
-				cfg.reachingDefinitions(), cfg.reachingFunctionInputs(), fgraph, fcallSizes);
+				cfg.reachingDefinitions(), cfg.reachingFunctionInputs(), fgraph, fcallSizes, concreteShapes);
 		}
+		Set<Hop> unresolvedValueSources = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++)
+			if(!cfg.reachingFunctionOutputDefinitions().get(ordinal).isEmpty())
+				unresolvedValueSources.add(occurrences.get(ordinal).hop());
+		// The existing abstract source relation covers CFG writes and formal inputs,
+		// not synthetic function-return boundaries. A partial union is not a FULL
+		// cardinality certificate; those reads remain UNKNOWN until represented.
+		SinglePartitionFacts singlePartitions = new SinglePartitionFacts(
+			occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
+			preliminaryAbstractFacts.valueSources(), unresolvedValueSources);
 		List<Node> nodes = new ArrayList<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock = new IdentityHashMap<>();
@@ -326,10 +342,14 @@ public final class NeutralPlacementGraphBuilder {
 				occurrence.topology(), PlacementGraphFingerprint.semanticStructuralKey(hop));
 			origins.put(key, hop);
 			scopes.put(key, occurrence.block().getSBID());
-			NodeShapeFact shapeFact = deriveNodeShapeFact(hop);
 			AbstractShapeFact abstractShapeFact = preliminaryAbstractFacts.shapes().get(hop);
 			if(abstractShapeFact == null)
 				throw new IllegalStateException("Placement occurrence has no preliminary abstract shape: " + key);
+			// Publish only dimensions proven at the shared fixed point. A loop's initial
+			// concrete extent is not the extent of every later version of that value.
+			NodeShapeFact shapeFact = new NodeShapeFact(hop.getDataType(),
+				abstractShapeFact.rows().isExact() ? abstractShapeFact.rows().value() : -1,
+				abstractShapeFact.cols().isExact() ? abstractShapeFact.cols().value() : -1);
 			factsByHop.put(hop, shapeFact);
 			String variable = lexicalVariable(hop, ordinal);
 			int version = cfg.definitionOrdinals().get(ordinal);
@@ -386,7 +406,7 @@ public final class NeutralPlacementGraphBuilder {
 			List<DurableAnchorKey> exactAnchors = occurrenceAnchor == null ? List.of() : List.of(occurrenceAnchor);
 			Node node = buildNode(hop, key, value, exactAnchors,
 				Collections.unmodifiableList(new ArrayList<>(inputAnchors)),
-				Collections.unmodifiableList(new ArrayList<>(inputAnchorOwners)), shapeFact, abstractShapeFact,
+				Collections.unmodifiableList(new ArrayList<>(inputAnchorOwners)), shapeFact, abstractShapeFact, singlePartitions,
 				inputShapeFacts,
 				inputDomains(hop, nodesByHop, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(ordinal), cfg),
@@ -403,9 +423,11 @@ public final class NeutralPlacementGraphBuilder {
 		AnchorClosure anchorClosure = closeCfgDurableAnchors(occurrences, nodes, occurrenceAnchorProvenance, cfg, factsByHop);
 		nodes = anchorClosure.nodes();
 		occurrenceAnchorProvenance = anchorClosure.anchors();
-		CandidateReplay candidateReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
-			factsByHop, preliminaryAbstractFacts.shapes(), ordinalsByBlock,
+		CfgReplayBaseline cfgReplayBaseline = cfgReplayBaseline(nodes,
 			candidateRuleDomainKeys, candidateRuleFacts);
+		CandidateReplay candidateReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+			factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+			candidateRuleDomainKeys, candidateRuleFacts, List.of(), cfgReplayBaseline, origins);
 		nodes = candidateReplay.nodes();
 		candidateRuleDomainKeys = candidateReplay.domainKeys();
 		candidateRuleFacts = candidateReplay.facts();
@@ -451,7 +473,7 @@ public final class NeutralPlacementGraphBuilder {
 			ordinalsByBlock, factsByHop);
 		CandidateReplay materializationReplay = closeWorkerPoolMaterializationDependencies(
 			occurrences, nodes, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
-			compiledInputEdges, constraints, origins, factsByHop, preliminaryAbstractFacts.shapes(),
+			compiledInputEdges, constraints, origins, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
 			ordinalsByBlock, cfg);
 		nodes = materializationReplay.nodes();
 		candidateRuleDomainKeys = materializationReplay.domainKeys();
@@ -465,7 +487,7 @@ public final class NeutralPlacementGraphBuilder {
 			List<CandidateRuleFact> passFacts = candidateRuleFacts;
 			FunctionInputCandidateClosure functionInputClosure = closeLogicalFunctionInputCandidates(
 				nodes, candidateRuleDomainKeys, candidateRuleFacts, functionExpansion.constraints(), origins,
-				factsByHop, preliminaryAbstractFacts.shapes(), occurrences.size());
+				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, occurrences.size());
 			nodes = functionInputClosure.nodes();
 			candidateRuleDomainKeys = functionInputClosure.domainKeys();
 			candidateRuleFacts = functionInputClosure.facts();
@@ -473,11 +495,11 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateReplay functionReplay = closePostCfgPhysicalCandidateDependencies(occurrences,
 					new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts,
 						logicalTransientInputs, functionInputClosure.changedOrdinals()),
-					factsByHop, preliminaryAbstractFacts.shapes(), ordinalsByBlock, cfg);
+					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				materializationReplay = closeWorkerPoolMaterializationDependencies(
 					occurrences, functionReplay.nodes(), functionReplay.domainKeys(), functionReplay.facts(),
 					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, factsByHop,
-					preliminaryAbstractFacts.shapes(), ordinalsByBlock, cfg);
+					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				nodes = materializationReplay.nodes();
 				candidateRuleDomainKeys = materializationReplay.domainKeys();
 				candidateRuleFacts = materializationReplay.facts();
@@ -492,7 +514,7 @@ public final class NeutralPlacementGraphBuilder {
 			nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
 			FunctionOutputCandidateClosure functionOutputClosure = closeCfgFunctionOutputCandidates(
 				occurrences, nodes, candidateRuleDomainKeys, candidateRuleFacts, cfg, functionExpansion,
-				origins, factsByHop, preliminaryAbstractFacts.shapes());
+				origins, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions);
 			nodes = functionOutputClosure.nodes();
 			candidateRuleDomainKeys = functionOutputClosure.domainKeys();
 			candidateRuleFacts = functionOutputClosure.facts();
@@ -500,17 +522,40 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateReplay functionReplay = closePostCfgPhysicalCandidateDependencies(occurrences,
 					new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts,
 						logicalTransientInputs, functionOutputClosure.changedOrdinals()),
-					factsByHop, preliminaryAbstractFacts.shapes(), ordinalsByBlock, cfg);
+					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				materializationReplay = closeWorkerPoolMaterializationDependencies(
 					occurrences, functionReplay.nodes(), functionReplay.domainKeys(), functionReplay.facts(),
 					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, factsByHop,
-					preliminaryAbstractFacts.shapes(), ordinalsByBlock, cfg);
+					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				nodes = materializationReplay.nodes();
 				candidateRuleDomainKeys = materializationReplay.domainKeys();
 				candidateRuleFacts = materializationReplay.facts();
 				logicalTransientInputs = materializationReplay.logicalInputs();
 			}
 			nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
+			// Function-boundary closure can widen a TWrite only after the initial CFG
+			// replay has visited a downstream branch/loop TRead. Re-run the exact CFG
+			// transfer inside the same fixed point so newly common FED/FOUT tuples reach
+			// those reads before privacy filtering. Replay replaces each prior read fact
+			// and row, so later source-domain widening cannot leave stale authority.
+			CandidateReplay cfgReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
+				origins);
+			nodes = cfgReplay.nodes();
+			candidateRuleDomainKeys = cfgReplay.domainKeys();
+			candidateRuleFacts = cfgReplay.facts();
+			logicalTransientInputs = cfgReplay.logicalInputs();
+			if(!cfgReplay.changedOrdinals().isEmpty()) {
+				materializationReplay = closeWorkerPoolMaterializationDependencies(
+					occurrences, nodes, candidateRuleDomainKeys, candidateRuleFacts,
+					logicalTransientInputs, compiledInputEdges, constraints, origins, factsByHop,
+					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
+				nodes = materializationReplay.nodes();
+				candidateRuleDomainKeys = materializationReplay.domainKeys();
+				candidateRuleFacts = materializationReplay.facts();
+				logicalTransientInputs = materializationReplay.logicalInputs();
+			}
 			if(nodes.equals(passNodes) && candidateRuleDomainKeys.equals(passDomainKeys)
 				&& candidateRuleFacts.equals(passFacts)) {
 				functionClosureConverged = true;
@@ -524,7 +569,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleFact> prePrivacyCandidateRuleFacts = PlannerCandidateSpaceAudit.isEnabled()
 			? List.copyOf(candidateRuleFacts) : List.of();
 		PrivacyClosure privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
-			constraints, origins);
+			constraints, origins, compiledInputEdges);
 		nodes = privacyClosure.nodes();
 		candidateRuleFacts = privacyClosure.candidateRuleFacts();
 		PlacementPrivacyFacts privacyFacts = privacyClosure.privacyFacts();
@@ -567,7 +612,7 @@ public final class NeutralPlacementGraphBuilder {
 			factsByKey.put(projection.key(), shapeFact);
 		}
 		PlacementAbstractShapeAnalysis.KeyFacts abstractFacts =
-			PlacementAbstractShapeAnalysis.closeCompiledOccurrences(graph, projections, fcallSizes);
+			PlacementAbstractShapeAnalysis.closeCompiledOccurrences(graph, projections, fcallSizes, factsByKey);
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey,
 			abstractFacts.shapes(), abstractFacts.scalarLiterals(), expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections, shapeFacts);
@@ -598,7 +643,7 @@ public final class NeutralPlacementGraphBuilder {
 	 */
 	private static PrivacyClosure closePrivacyDomains(List<Node> nodes,
 		List<CandidateRuleFact> candidateRuleFacts, Set<Constraint> constraints,
-		Map<CompiledHopKey,Hop> origins) {
+		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges) {
 		Map<CompiledHopKey,List<CompiledHopKey>> predecessors = new IdentityHashMap<>();
 		for(Node node : nodes) {
 			predecessors.put(node.key(), new ArrayList<>());
@@ -677,6 +722,24 @@ public final class NeutralPlacementGraphBuilder {
 		if(changed)
 			throw new IllegalStateException("Whole-program privacy propagation did not converge");
 
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> protectedPayloadInputs = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledInputEdges) {
+			Privacy sourcePrivacy = effective.get(edge.producer());
+			Node consumer = nodesByKey.get(edge.consumer());
+			if(sourcePrivacy == null || consumer == null)
+				throw new IllegalStateException("Compiled input privacy authority is incomplete");
+			if(ExecPlacementPolicy.requiresOriginResidency(sourcePrivacy)
+				&& !PlacementAnalysis.isDmlFunctionCallBoundary(consumer, origins.get(edge.consumer()))
+				&& PlacementAnalysis.coordinatorInputAccess(origins.get(edge.producer()),
+					origins.get(edge.consumer()), edge.inputPosition())
+					== PlacementAnalysis.CoordinatorInputAccess.PAYLOAD)
+				protectedPayloadInputs.computeIfAbsent(edge.consumer(), ignored -> new LinkedHashMap<>())
+					.put(edge.inputPosition(), edge.producer());
+		}
+
 		Map<CompiledHopKey,Set<PlacementState>> candidateStates = new IdentityHashMap<>();
 		Map<CompiledHopKey,Set<PlacementState>> retainedStates = new IdentityHashMap<>();
 		List<CandidateRuleFact> filteredFacts = new ArrayList<>(candidateRuleFacts.size());
@@ -697,11 +760,14 @@ public final class NeutralPlacementGraphBuilder {
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				PlacementState state = emission.emissionState().placementState();
 				seen.add(state);
-				if(ExecPlacementPolicy.allowsCandidateEmission(hop, privacy, fact, emission)) {
+				if(ExecPlacementPolicy.allowsCandidateEmission(hop, privacy, fact, emission)
+					&& allowsProtectedCandidateInputs(fact, state, protectedPayloadInputs)) {
 					emissions.add(emission);
-					retained.add(state);
 				}
 			}
+			emissions = sourceClosedCandidateEmissions(emissions);
+			for(CandidateEmissionFact emission : emissions)
+				retained.add(emission.emissionState().placementState());
 			if(emissions.isEmpty()) {
 				String failure = "PRIVACY:" + privacy.name();
 				filteredFacts.add(new CandidateRuleFact(fact.key(),
@@ -723,8 +789,12 @@ public final class NeutralPlacementGraphBuilder {
 			for(Exclusion exclusion : node.exclusions())
 				exclusions.put(exclusion.state(), exclusion);
 			for(PlacementState state : node.legalAlternatives()) {
-				boolean denied = privacy == Privacy.PRIVATE
+				boolean denied = ExecPlacementPolicy.requiresOriginResidency(privacy)
+					&& !PlacementAnalysis.isDmlFunctionCallBoundary(node, origins.get(node.key()))
 					&& !(state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT);
+				// A public aggregate result does not authorize downloading its protected
+				// inputs first. CP/FOUT also computes from a coordinator payload.
+				denied |= state.execType() == ExecType.CP && protectedPayloadInputs.containsKey(node.key());
 				denied |= seen.contains(state) && !retained.contains(state);
 				if(denied)
 					exclusions.putIfAbsent(state, new Exclusion(state, ReasonCode.PRIVACY,
@@ -751,6 +821,41 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementPrivacyFacts authority = new PlacementPrivacyFacts(filteredNodes, privacyFacts,
 			FederatedWorkerUtils.countDistinctWorkers(allPartitions));
 		return new PrivacyClosure(List.copyOf(filteredNodes), List.copyOf(filteredFacts), authority);
+	}
+
+	static List<CandidateEmissionFact> sourceClosedCandidateEmissions(List<CandidateEmissionFact> emissions) {
+		Set<PlacementState> nativeSources = new HashSet<>();
+		for(CandidateEmissionFact emission : emissions)
+			if(emission.derivedFoutAction() == null)
+				nativeSources.add(emission.emissionState().placementState());
+		// A derived FED/LOUT -> FOUT action executes its native source first. If privacy
+		// excludes that source, retaining only the remote target would license an illegal
+		// collect-then-upload. The witness must survive in this exact candidate row, not
+		// merely in another input signature or in the union of the node's legal states.
+		return emissions.stream().filter(emission -> emission.derivedFoutAction() == null
+			|| nativeSources.contains(emission.derivedFoutAction().sourcePlacement())).toList();
+	}
+
+	private static boolean allowsProtectedCandidateInputs(CandidateRuleFact fact, PlacementState state,
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> protectedPayloadInputs) {
+		Map<Integer,CompiledHopKey> sources = protectedPayloadInputs.get(fact.key().parentOccurrence());
+		if(sources == null)
+			return true;
+		if(state.execType() != ExecType.FED)
+			return false;
+		for(Map.Entry<Integer,CompiledHopKey> sourceEntry : sources.entrySet()) {
+			int position = sourceEntry.getKey();
+			if(position >= fact.key().orderedInputs().size())
+				throw new IllegalStateException("Candidate input privacy authority is incomplete");
+			// ABSENT_LOCAL would upload an already collected protected input. PRESENT
+			// is necessary, not sufficient: the exact relocation model below must prove
+			// privacy-safe input availability at a common post-action worker/range pool.
+			if(!fact.key().orderedInputs().get(position).present())
+				return false;
+		}
+		// Exact relocation obligations/common-anchor reachability certify whether
+		// PRESENT inputs are direct or require an explicit (privacy-filtered) move.
+		return true;
 	}
 
 	private static boolean isFederatedSource(Hop hop) {
@@ -1684,7 +1789,7 @@ public final class NeutralPlacementGraphBuilder {
 				return null;
 			if(anchor == null)
 				anchor = definitionAnchor;
-			else if(!anchor.equals(definitionAnchor))
+			else if(!sameExactAnchorGeometry(anchor, definitionAnchor))
 				return null;
 		}
 		return anchor != null && outputShape != null && outputShape.dataType().isMatrix()
@@ -1696,27 +1801,37 @@ public final class NeutralPlacementGraphBuilder {
 		List<NodeShapeFact> inputShapeFacts, List<DurableAnchorKey> inputAnchors) {
 		if(outputShape == null || !outputShape.dataType().isMatrix())
 			return null;
-		Set<DurableAnchorKey> candidates = new java.util.TreeSet<>();
+		List<DurableAnchorKey> candidates = new ArrayList<>();
 		for(int i = 0; i < inputShapeFacts.size(); i++)
 			if(inputShapeFacts.get(i).dataType().isMatrix() && inputAnchors.get(i) != null)
 				candidates.add(inputAnchors.get(i));
-		if(candidates.size() != 1)
+		if(candidates.isEmpty())
 			return null;
-		DurableAnchorKey anchor = candidates.iterator().next();
+		DurableAnchorKey anchor = candidates.stream().sorted().findFirst().orElseThrow();
+		if(candidates.stream().anyMatch(candidate ->
+			!PlacementIdentity.samePhysicalWorkerPool(anchor, candidate)))
+			return null;
 		List<List<FType>> domains = new ArrayList<>(inputShapeFacts.size());
 		for(int i = 0; i < inputShapeFacts.size(); i++) {
 			NodeShapeFact inputShape = inputShapeFacts.get(i);
 			DurableAnchorKey inputAnchor = inputAnchors.get(i);
 			if(!inputShape.dataType().isMatrix())
 				domains.add(Collections.singletonList(null));
-			else if(anchor.equals(inputAnchor))
+			else if(inputAnchor != null
+				&& PlacementIdentity.samePhysicalWorkerPool(anchor, inputAnchor))
 				domains.add(Collections.singletonList(anchor.fType()));
 			else if(inputAnchor != null || !knownBroadcastableLocalMatrix(inputShape))
 				return null;
 			else
 				domains.add(Collections.singletonList(null));
 		}
-		return outputGeometryCompatible(outputShape, anchor) && oracleConfirmsAnchorDomain(hop, domains, anchor)
+		// An actual TWrite aliases the complete input value and may keep its exact
+		// map even when the compiler has no concrete dimensions. Computations must
+		// instead prove their current output extent; a stable pool alone is weaker.
+		boolean exactAlias = hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE
+			&& hop.getInput().size() == 1 && inputAnchors.get(0) != null;
+		return (exactAlias || outputGeometryCompatible(outputShape, anchor))
+			&& oracleConfirmsAnchorDomain(hop, domains, anchor)
 			? anchor : null;
 	}
 
@@ -1731,7 +1846,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static boolean outputGeometryCompatible(NodeShapeFact outputShape, DurableAnchorKey anchor) {
 		if(!outputShape.knownPositiveMatrix())
-			return true;
+			return false;
 		if(anchor.partitions().isEmpty() || deriveAnchorFType(anchor.partitions()) != anchor.fType())
 			return false;
 		long maxRow = -1, maxCol = -1;
@@ -1751,21 +1866,43 @@ public final class NeutralPlacementGraphBuilder {
 		return outputShape.rows() == maxRow && outputShape.cols() == maxCol;
 	}
 
+	private static boolean sameExactAnchorGeometry(DurableAnchorKey left, DurableAnchorKey right) {
+		// Unlike samePhysicalWorkerPool, compare both axes, including FULL extents.
+		// Placement ids identify metadata provenance, not different physical ranges.
+		return left.fType() == right.fType() && left.partitions().equals(right.partitions());
+	}
+
 	private CandidateReplay closeCfgTransientCandidateDependencies(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
-		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop,
+		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
 		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
-		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts) {
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
+		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
+		Map<CompiledHopKey,Hop> origins) {
 		CandidateReplay current = new CandidateReplay(List.copyOf(nodes), List.copyOf(domainKeys),
-			List.copyOf(facts), List.of(), List.of());
+			List.copyOf(facts), List.copyOf(logicalInputs), List.of());
+		Set<CompiledHopKey> installedLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
 		int maxPasses = Math.max(1, occurrences.size());
 		for(int pass = 0; pass < maxPasses; pass++) {
+			List<Node> passNodes = current.nodes();
+			Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+			for(Node node : passNodes)
+				nodesByKey.put(node.key(), node);
+			Map<CompiledHopKey,List<CompiledHopKey>> reachingSources = new IdentityHashMap<>();
+			for(int ordinal = 0; ordinal < occurrences.size(); ordinal++)
+				if(!cfg.reachingFunctionInputs().get(ordinal) && isTransientRead(occurrences.get(ordinal).hop()))
+					reachingSources.put(passNodes.get(ordinal).key(), cfg.reachingDefinitions().get(ordinal)
+						.stream().sorted().map(source -> passNodes.get(source).key()).toList());
+			NativePlacementContinuity nativePools = new NativePlacementContinuity(nodesByKey, origins,
+				current.facts(), deriveCompiledInputEdges(occurrences, current.nodes(), ordinalsByBlock, factsByHop),
+				reachingSources);
 			CandidateReplay replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
-				factsByHop, current.domainKeys(), current.facts(), current.logicalInputs());
+				factsByHop, current.domainKeys(), current.facts(), current.logicalInputs(), baseline, nativePools,
+				installedLoopSeeds);
 			if(replayed.changedOrdinals().isEmpty())
 				return replayed;
 			current = closePostCfgPhysicalCandidateDependencies(occurrences, replayed,
-				factsByHop, abstractFactsByHop, ordinalsByBlock, cfg);
+				factsByHop, abstractFactsByHop, singlePartitions, ordinalsByBlock, cfg);
 		}
 		throw new IllegalStateException("CFG transient candidate closure did not converge");
 	}
@@ -1773,7 +1910,9 @@ public final class NeutralPlacementGraphBuilder {
 	private CandidateReplay replayUniqueCfgTransientForwards(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
 		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> domainKeys,
-		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs) {
+		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
+		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
+		Set<CompiledHopKey> installedLoopSeeds) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before CFG replay");
 		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
@@ -1789,23 +1928,69 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleKey> replayedKeys = new ArrayList<>();
 		List<CandidateRuleFact> replayedFacts = new ArrayList<>();
 		List<LogicalTransientInputFact> logicalInputs = new ArrayList<>(existingLogicalInputs);
-		Set<CompiledHopKey> replayedReads = Collections.newSetFromMap(new IdentityHashMap<>());
-		existingLogicalInputs.forEach(input -> replayedReads.add(input.targetRead()));
 		Set<Integer> copiedSlots = new HashSet<>();
 		Set<CompiledHopKey> replacedParents = Collections.newSetFromMap(new IdentityHashMap<>());
 		List<Integer> changedOrdinals = new ArrayList<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			Node node = nodes.get(ordinal);
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
-			Node replayed = replayedReads.contains(node.key()) ? node
-				: replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
-					factsByHop, replayedKeys, replayedFacts, logicalInputs);
-			replayedNodes.add(replayed);
-			if(replayed != node) {
+			boolean cfgRead = PlacementAnalysis.isCompiledTransientAccess(
+				occurrence.hop(), node, OpOpData.TRANSIENTREAD)
+				&& !cfg.reachingFunctionInputs().get(ordinal)
+				&& !cfg.reachingDefinitions().get(ordinal).isEmpty();
+			boolean hadPriorReplay = cfgRead && logicalInputs.stream()
+				.anyMatch(input -> input.targetRead() == node.key());
+			List<LogicalTransientInputFact> priorInputs = logicalInputs.stream()
+				.filter(input -> input.targetRead() == node.key()).sorted().toList();
+			List<LogicalTransientInputFact> replacementInputs = new ArrayList<>();
+			int replacementStart = replayedKeys.size();
+			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
+				factsByHop, replayedKeys, replayedFacts, replacementInputs,
+				!hadPriorReplay && !installedLoopSeeds.contains(node.key()), nativePools, installedLoopSeeds);
+			boolean replayedParent = replayed != node;
+			if(hadPriorReplay && !replayedParent) {
+				Node original = baseline.nodes().get(node.key());
+				List<CandidateRuleKey> originalKeys = baseline.domainKeys().get(node.key());
+				List<CandidateRuleFact> originalFacts = baseline.facts().get(node.key());
+				if(original == null || originalKeys == null || originalFacts == null)
+					throw new IllegalStateException("CFG replay baseline is incomplete");
+				replayed = original;
+				replayedKeys.addAll(originalKeys);
+				replayedFacts.addAll(originalFacts);
+				replayedParent = true;
+			}
+			if(replayedParent) {
+				logicalInputs.removeIf(input -> input.targetRead() == node.key());
+				logicalInputs.addAll(replacementInputs);
+			}
+			List<Integer> priorSlots = candidateSlots.getOrDefault(node.key(), List.of());
+			List<CandidateRuleKey> priorKeys = priorSlots.stream().map(domainKeys::get).toList();
+			List<CandidateRuleFact> priorFacts = priorSlots.stream().map(facts::get).toList();
+			List<CandidateRuleKey> replacementKeys = replayedParent
+				? List.copyOf(replayedKeys.subList(replacementStart, replayedKeys.size())) : List.of();
+			List<CandidateRuleFact> replacementFacts = replayedParent
+				? List.copyOf(replayedFacts.subList(replacementStart, replayedFacts.size())) : List.of();
+			replayedNodes.add(replayedParent && replayed.equals(node) ? node : replayed);
+			if(replayedParent) {
 				replacedParents.add(node.key());
-				changedOrdinals.add(ordinal);
+				if(!replayed.equals(node) || !replacementKeys.equals(priorKeys)
+					|| !replacementFacts.equals(priorFacts)
+					|| !replacementInputs.stream().sorted().toList().equals(priorInputs))
+					changedOrdinals.add(ordinal);
 				continue;
 			}
+			for(int slot : candidateSlots.getOrDefault(node.key(), List.of())) {
+				replayedKeys.add(domainKeys.get(slot));
+				replayedFacts.add(facts.get(slot));
+				copiedSlots.add(slot);
+			}
+		}
+		// This replay also runs after function-boundary expansion. Preserve every
+		// synthetic boundary and its candidate slots; only compiled CFG occurrences
+		// participate in transient reaching-definition transfer.
+		for(int ordinal = occurrences.size(); ordinal < nodes.size(); ordinal++) {
+			Node node = nodes.get(ordinal);
+			replayedNodes.add(node);
 			for(int slot : candidateSlots.getOrDefault(node.key(), List.of())) {
 				replayedKeys.add(domainKeys.get(slot));
 				replayedFacts.add(facts.get(slot));
@@ -1825,8 +2010,10 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
 		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> replayedKeys,
-		List<CandidateRuleFact> replayedFacts, List<LogicalTransientInputFact> logicalInputs) {
-		if(read.kind() != NodeKind.TRANSIENT_READ || !isTransientRead(readOccurrence.hop()))
+		List<CandidateRuleFact> replayedFacts, List<LogicalTransientInputFact> logicalInputs,
+		boolean allowLoopPlacementSeed, NativePlacementContinuity nativePools,
+		Set<CompiledHopKey> installedLoopSeeds) {
+		if(!PlacementAnalysis.isCompiledTransientAccess(readOccurrence.hop(), read, OpOpData.TRANSIENTREAD))
 			return read;
 		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
 		if(cfg.reachingFunctionInputs().get(ordinal)) {
@@ -1843,10 +2030,16 @@ public final class NeutralPlacementGraphBuilder {
 				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
 			return read;
 		}
-		List<Integer> exactDefinitions = loopPassThroughSource == null
-			? definitions.stream().sorted().toList() : List.of(loopPassThroughSource);
+		Integer loopPlacementSeed = allowLoopPlacementSeed
+			&& loopPassThroughSource == null && definitions.size() > 1
+			? exactLoopPlacementSeed(readOccurrence, read, definitions, occurrences, nodes, factsByHop)
+			: null;
+		List<Integer> exactDefinitions = loopPassThroughSource != null
+			? List.of(loopPassThroughSource) : loopPlacementSeed != null
+				? List.of(loopPlacementSeed) : definitions.stream().sorted().toList();
+
 		ExactTransientReplay exact = exactTransientReplay(readOccurrence, read, exactDefinitions,
-			occurrences, nodes, factsByHop);
+			occurrences, nodes, factsByHop, nativePools, loopPlacementSeed == null);
 		if(exact == null) {
 			traceTransientReplay(readOccurrence, "non-replayable-common-source-domain=" + exactDefinitions
 				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
@@ -1855,8 +2048,13 @@ public final class NeutralPlacementGraphBuilder {
 		Node replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, exact.sources().get(0),
 			exact.anchor(), exact.federatedState().fType(), exact.localState(), exact.federatedState(),
 			replayedKeys, replayedFacts);
+		// Once physical closure has disproved an installed provisional seed, the
+		// identical seed is not new evidence. Ordinary all-source replay remains
+		// enabled; a later function-expanded closure gets its own fresh seed set.
+		if(loopPlacementSeed != null)
+			installedLoopSeeds.add(read.key());
 		for(Node source : exact.sources()) {
-			DurableAnchorKey sourceAnchor = source.anchors().isEmpty() ? null : source.anchors().get(0);
+			DurableAnchorKey sourceAnchor = exact.anchor() == null ? null : source.anchors().get(0);
 			logicalInputs.add(new LogicalTransientInputFact(source.key(), read.key(), 0,
 				source.valueVersion(), read.valueVersion(), sourceAnchor, exact.federatedState().fType(),
 				exact.localState(), exact.federatedState(), CandidateInputState.absentLocal(),
@@ -1877,14 +2075,13 @@ public final class NeutralPlacementGraphBuilder {
 	private static ExactTransientReplay exactTransientReplay(
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, List<Integer> definitions,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
-		Map<Hop,NodeShapeFact> factsByHop) {
+		Map<Hop,NodeShapeFact> factsByHop, NativePlacementContinuity nativePools,
+		boolean mayRetainExactGeometry) {
 		if(definitions.isEmpty())
 			return null;
 		List<Node> sources = new ArrayList<>(definitions.size());
 		Set<PlacementState> commonLocal = null;
 		Set<PlacementState> commonFederated = null;
-		DurableAnchorKey commonAnchor = null;
-		boolean sawAnchor = false;
 		NodeShapeFact readShape = factsByHop.get(readOccurrence.hop());
 		if(readShape == null)
 			return null;
@@ -1893,21 +2090,13 @@ public final class NeutralPlacementGraphBuilder {
 				return null;
 			PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
 			Node source = nodes.get(definition);
-			if(source.kind() != NodeKind.TRANSIENT_WRITE || !isTransientWrite(sourceOccurrence.hop())
+			if(!isCompiledTransientWrite(sourceOccurrence.hop(), source)
 				|| !sameTransientForwardContext(source, read)
 				|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state))
-				|| !sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()), readShape))
+				|| !sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()), readShape)) {
 				return null;
-			if(source.anchors().size() > 1)
-				return null;
-			if(source.anchors().size() == 1) {
-				DurableAnchorKey anchor = source.anchors().get(0);
-				if(sawAnchor && !commonAnchor.equals(anchor))
-					return null;
-				commonAnchor = anchor;
-				sawAnchor = true;
 			}
-			else if(sawAnchor)
+			if(source.anchors().size() > 1)
 				return null;
 			Set<PlacementState> local = source.legalAlternatives().stream().filter(state ->
 				state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
@@ -1927,18 +2116,25 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			sources.add(source);
 		}
-		if(sawAnchor && sources.stream().anyMatch(source -> source.anchors().isEmpty()))
+		List<DurableAnchorKey> exactAnchors = commonBoundaryAnchors(sources);
+		DurableAnchorKey commonAnchor = exactAnchors.isEmpty() ? null : exactAnchors.get(0);
+		DurableAnchorKey seed = sources.stream().flatMap(source -> source.anchors().stream())
+			.sorted().findFirst().orElse(null);
+		// A shared worker pool can justify native continuity, but must never become
+		// the evolving value's exact FederationMap. The separate proof checks every
+		// reaching definition and runtime-native map transfer; movement-target union
+		// resolution is deliberately not an authority for this join.
+		if(commonAnchor == null && seed != null
+			&& !nativePools.proves(sources.stream().map(Node::key).toList(), seed)) {
 			return null;
-		if(!read.anchors().isEmpty()
-			&& (read.anchors().size() != 1 || !read.anchors().get(0).equals(commonAnchor)))
-			return null;
+		}
 		if(commonAnchor != null) {
 			FType anchoredFType = commonAnchor.fType();
 			commonFederated.removeIf(state -> state.fType() != anchoredFType);
 		}
 		if(commonLocal.size() != 1 || commonFederated.size() != 1)
 			return null;
-		return new ExactTransientReplay(List.copyOf(sources), commonAnchor,
+		return new ExactTransientReplay(List.copyOf(sources), mayRetainExactGeometry ? commonAnchor : null,
 			commonLocal.iterator().next(), commonFederated.iterator().next());
 	}
 
@@ -1961,7 +2157,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(exactIdentityLoopBackedge(readOrdinal, readOccurrence, sourceOccurrence, source,
 				factsByHop))
 				continue;
-			if(source.kind() != NodeKind.TRANSIENT_WRITE || !isTransientWrite(sourceOccurrence.hop())
+			if(!isCompiledTransientWrite(sourceOccurrence.hop(), source)
 				|| !sameTransientForwardContext(source, read)
 				|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state)))
 				return null;
@@ -1981,6 +2177,58 @@ public final class NeutralPlacementGraphBuilder {
 		return seeds.size() == 1 ? seeds.get(0) : null;
 	}
 
+	/**
+	 * Seeds the greatest placement fixed point of a real loop update. Every backedge
+	 * must derive the same transient variable from some loop read of that variable;
+	 * the sole non-recursive reaching definition supplies the provisional exact
+	 * CP/LOUT + FED/FOUT tuple. Physical closure then proves each update supports the
+	 * tuple, after which ordinary all-definition replay replaces this seed authority.
+	 */
+	private static Integer exactLoopPlacementSeed(
+		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, Set<Integer> definitions,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+		Map<Hop,NodeShapeFact> factsByHop) {
+		List<Integer> seeds = new ArrayList<>();
+		for(int definition : definitions) {
+			if(definition < 0 || definition >= occurrences.size())
+				return null;
+			PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
+			Node source = nodes.get(definition);
+			if(!isCompiledTransientWrite(sourceOccurrence.hop(), source)
+				|| !sameTransientForwardContext(source, read)
+				|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state))
+				|| !sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()),
+					factsByHop.get(readOccurrence.hop())))
+				return null;
+			if(dependsOnTransientVariable(sourceOccurrence.hop(), readOccurrence.hop().getName(),
+				Collections.newSetFromMap(new IdentityHashMap<>())))
+				continue;
+			List<PlacementState> local = source.legalAlternatives().stream()
+				.filter(state -> state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT && state.fType() == null
+					&& !state.shapeDependent()).toList();
+			List<PlacementState> federated = source.legalAlternatives().stream()
+				.filter(state -> state.execType() == ExecType.FED
+					&& state.output() == FederatedOutput.FOUT && state.fType() != null
+					&& state.fType() != FType.PART && state.fType() != FType.OTHER).toList();
+			if(local.size() != 1 || federated.size() != 1)
+				return null;
+			seeds.add(definition);
+		}
+		return seeds.size() == 1 ? seeds.get(0) : null;
+	}
+
+	private static boolean dependsOnTransientVariable(Hop current, String variable, Set<Hop> visited) {
+		if(current == null || !visited.add(current))
+			return false;
+		if(isTransientRead(current) && Objects.equals(variable, current.getName()))
+			return true;
+		for(Hop input : current.getInput())
+			if(dependsOnTransientVariable(input, variable, visited))
+				return true;
+		return false;
+	}
+
 	private static boolean exactIdentityLoopBackedge(int readOrdinal,
 		PlacementGraphFingerprint.HopOccurrence readOccurrence,
 		PlacementGraphFingerprint.HopOccurrence sourceOccurrence, Node source,
@@ -1988,10 +2236,9 @@ public final class NeutralPlacementGraphBuilder {
 		Hop sourceHop = sourceOccurrence.hop();
 		return sourceOccurrence.block() == readOccurrence.block()
 			&& sourceOccurrence.path().equals(readOccurrence.path())
-			&& isTransientWrite(sourceHop) && sourceHop.getInput().size() == 1
+			&& isCompiledTransientWrite(sourceHop, source) && sourceHop.getInput().size() == 1
 			&& sourceHop.getInput(0) == readOccurrence.hop()
 			&& Objects.equals(sourceHop.getName(), readOccurrence.hop().getName())
-			&& source.kind() == NodeKind.TRANSIENT_WRITE
 			&& sourceOccurrence.hop() != readOccurrence.hop()
 			&& sameLogicalValueShape(factsByHop.get(sourceHop), factsByHop.get(readOccurrence.hop()));
 	}
@@ -2049,7 +2296,7 @@ public final class NeutralPlacementGraphBuilder {
 			anchor, federatedFType));
 		return new Node(read.key(), read.kind(), read.valueVersion(), read.emittedWork(),
 			List.of(localState, federatedState), read.exclusions(),
-			anchor == null ? read.anchors() : List.of(anchor));
+			anchor == null ? List.of() : List.of(anchor));
 	}
 
 	private CandidateRuleFact logicalTransientReplayFact(Hop readHop, CandidateRuleKey key, PlacementState state,
@@ -2076,6 +2323,10 @@ public final class NeutralPlacementGraphBuilder {
 				state.execType() == ExecType.FED ? state.fType() : null)), "");
 	}
 
+	private static boolean isCompiledTransientWrite(Hop hop, Node node) {
+		return PlacementAnalysis.isCompiledTransientAccess(hop, node, OpOpData.TRANSIENTWRITE);
+	}
+
 	private static boolean sameLogicalValueShape(NodeShapeFact source, NodeShapeFact read) {
 		if(source.dataType() != read.dataType())
 			return false;
@@ -2093,7 +2344,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	private CandidateReplay closePostCfgPhysicalCandidateDependencies(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CandidateReplay replay,
-		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop,
+		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
 		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
 		CfgAnalysis cfg) {
 		if(replay.changedOrdinals().isEmpty())
@@ -2170,9 +2421,18 @@ public final class NeutralPlacementGraphBuilder {
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
-				Node replacement = buildNode(hop, current.key(), current.valueVersion(), current.anchors(),
+				NodeShapeFact outputShape = factsByHop.get(hop);
+				// A derived anchor is certified by the current exact inputs, not by a
+				// prior replay. Recompute it so provisional loop anchors cannot survive
+				// a later input-domain or anchor change. Inputless sources retain their
+				// independently established intrinsic/function-boundary authority.
+				DurableAnchorKey outputAnchor = hop.getInput().isEmpty() && current.anchors().size() == 1
+					? current.anchors().get(0)
+					: inheritableDurableAnchor(hop, outputShape, inputShapes, inputAnchors);
+				List<DurableAnchorKey> outputAnchors = outputAnchor == null ? List.of() : List.of(outputAnchor);
+				Node replacement = buildNode(hop, current.key(), current.valueVersion(), outputAnchors,
 					inputAnchors, Collections.unmodifiableList(inputAnchorOwners),
-					factsByHop.get(hop), abstractFactsByHop.get(hop), List.copyOf(inputShapes),
+					outputShape, abstractFactsByHop.get(hop), singlePartitions, List.copyOf(inputShapes),
 					exactInputDomains, replacementKeys, replacementFacts);
 				if(FederatedPlannerTrace.shouldTrace(hop))
 					FederatedPlannerTrace.log(hop, "Neutral-PhysicalClosure",
@@ -2363,6 +2623,28 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> logicalInputs,
 		List<Integer> changedOrdinals) { }
 
+	private record CfgReplayBaseline(Map<CompiledHopKey,Node> nodes,
+		Map<CompiledHopKey,List<CandidateRuleKey>> domainKeys,
+		Map<CompiledHopKey,List<CandidateRuleFact>> facts) { }
+
+	private static CfgReplayBaseline cfgReplayBaseline(List<Node> nodes,
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		Map<CompiledHopKey,List<CandidateRuleKey>> keysByParent = new IdentityHashMap<>();
+		Map<CompiledHopKey,List<CandidateRuleFact>> factsByParent = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		for(int slot = 0; slot < domainKeys.size(); slot++) {
+			CandidateRuleKey key = domainKeys.get(slot);
+			keysByParent.computeIfAbsent(key.parentOccurrence(), ignored -> new ArrayList<>()).add(key);
+			factsByParent.computeIfAbsent(key.parentOccurrence(), ignored -> new ArrayList<>()).add(facts.get(slot));
+		}
+		keysByParent.replaceAll((ignored, values) -> List.copyOf(values));
+		factsByParent.replaceAll((ignored, values) -> List.copyOf(values));
+		return new CfgReplayBaseline(Collections.unmodifiableMap(nodesByKey),
+			Collections.unmodifiableMap(keysByParent), Collections.unmodifiableMap(factsByParent));
+	}
+
 	private record FunctionInputBinding(CompiledHopKey source, CompiledHopKey boundary,
 		CompiledHopKey target) implements Comparable<FunctionInputBinding> {
 		@Override public int compareTo(FunctionInputBinding that) {
@@ -2389,7 +2671,7 @@ public final class NeutralPlacementGraphBuilder {
 	private FunctionInputCandidateClosure closeLogicalFunctionInputCandidates(List<Node> nodes,
 		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
 		List<Constraint> functionConstraints, Map<CompiledHopKey,Hop> origins,
-		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop,
+		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
 		int originalOccurrenceCount) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before function replay");
@@ -2458,7 +2740,7 @@ public final class NeutralPlacementGraphBuilder {
 			List<CandidateRuleKey> exactKeys = new ArrayList<>();
 			List<CandidateRuleFact> exactFacts = new ArrayList<>();
 			Node replacement = buildNode(readHop, current.key(), current.valueVersion(), current.anchors(),
-				List.of(), List.of(), readShape, abstractFactsByHop.get(readHop), List.of(),
+				List.of(), List.of(), readShape, abstractFactsByHop.get(readHop), singlePartitions, List.of(),
 				List.of(exactDomain), exactKeys, exactFacts);
 			List<Integer> priorSlots = candidateSlots.getOrDefault(current.key(), List.of());
 			if(priorSlots.isEmpty())
@@ -2542,7 +2824,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
 		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts, CfgAnalysis cfg,
 		FunctionExpansion expansion, Map<CompiledHopKey,Hop> origins,
-		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop) {
+		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before function-output replay");
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
@@ -2617,7 +2899,7 @@ public final class NeutralPlacementGraphBuilder {
 			List<CandidateRuleKey> oracleKeys = new ArrayList<>();
 			List<CandidateRuleFact> oracleFacts = new ArrayList<>();
 			Node oraclePrototype = buildNode(readHop, current.key(), current.valueVersion(), exactAnchors,
-				List.of(), List.of(), readShape, abstractFactsByHop.get(readHop), List.of(),
+				List.of(), List.of(), readShape, abstractFactsByHop.get(readHop), singlePartitions, List.of(),
 				List.of(exactDomain), oracleKeys, oracleFacts);
 			if(!oraclePrototype.legalAlternatives().containsAll(exactValues))
 				throw new IllegalStateException("Function-output TRead oracle does not support the exact alias domain"
@@ -3210,10 +3492,12 @@ public final class NeutralPlacementGraphBuilder {
 	private static List<DurableAnchorKey> commonBoundaryAnchors(List<Node> authorities) {
 		if(authorities.isEmpty())
 			return List.of();
-		Set<DurableAnchorKey> common = new java.util.TreeSet<>(authorities.get(0).anchors());
-		for(int index = 1; index < authorities.size(); index++)
-			common.retainAll(authorities.get(index).anchors());
-		return List.copyOf(common);
+		if(authorities.stream().anyMatch(authority -> authority.anchors().size() != 1))
+			return List.of();
+		DurableAnchorKey representative = authorities.stream().map(authority -> authority.anchors().get(0))
+			.sorted().findFirst().orElseThrow();
+		return authorities.stream().allMatch(authority -> sameExactAnchorGeometry(
+			representative, authority.anchors().get(0))) ? List.of(representative) : List.of();
 	}
 
 	private static Node optionalExactDataNode(Map<Hop,Node> blockNodes, OpOpData operation, String name,
@@ -3594,7 +3878,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
 		List<DurableAnchorKey> inputAnchors, List<CompiledHopKey> inputAnchorOwners,
-		NodeShapeFact shape, AbstractShapeFact abstractShape, List<NodeShapeFact> inputShapeFacts,
+		NodeShapeFact shape, AbstractShapeFact abstractShape, SinglePartitionFacts singlePartitions, List<NodeShapeFact> inputShapeFacts,
 		List<List<FType>> inputDomains,
 		List<CandidateRuleKey> candidateRuleDomainKeys, List<CandidateRuleFact> candidateRuleFacts) {
 		int candidateFactStart = candidateRuleFacts.size();
@@ -3617,7 +3901,8 @@ public final class NeutralPlacementGraphBuilder {
 			DecisionEvidence evidence;
 			boolean shapeDependent;
 			try {
-				evidence = oracle.decideWithEvidence(hop, inputs, null);
+				evidence = oracle.decideWithEvidence(hop, inputs,
+					exactShapeHint(hop, shape, inputShapeFacts, singlePartitions.fullInputHint(hop, inputs)));
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
 			}
@@ -3729,6 +4014,25 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
+	}
+
+	private static ShapeHint exactShapeHint(Hop hop, NodeShapeFact output,
+		List<NodeShapeFact> inputs, Optional<Boolean> fullSinglePartition) {
+		NodeShapeFact left = inputs.isEmpty() ? null : inputs.get(0);
+		NodeShapeFact right = inputs.size() < 2 ? null : inputs.get(1);
+		// An inherited anchor describes a placement pool, not this value's shape.
+		// Only exact value-shape facts may be supplied as oracle decision evidence.
+		long rowsA = left == null ? -1 : left.rows();
+		long colsA = left == null ? -1 : left.cols();
+		long rowsB = right == null ? -1 : right.rows();
+		long colsB = right == null ? -1 : right.cols();
+		long rows = output.rows(), cols = output.cols();
+		if(hop instanceof BinaryOp && rows < 0 && rowsA > 0 && rowsA == rowsB)
+			rows = rowsA;
+		if(hop instanceof BinaryOp && cols < 0 && colsA > 0 && colsA == colsB)
+			cols = colsA;
+		return new ShapeHint(rows, cols, hop.getBlocksize(), fullSinglePartition,
+			rowsA, colsA, rowsB, colsB);
 	}
 
 	/**
@@ -4045,6 +4349,24 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static NodeShapeFact deriveNodeShapeFact(Hop hop) {
 		var shape = OracleFacade.nodeShape(Objects.requireNonNull(hop, "hop"));
+		// InitFEDInstruction establishes this literal source's dimensions from its own
+		// range endpoints. Do not transfer these dimensions through inherited anchors:
+		// transpose, indexing and other derived values can have different geometry.
+		if(hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED
+			&& (shape.rows() < 0 || shape.cols() < 0)) {
+			List<AnchorPartition> partitions = fedInitLiteralPartitions(data);
+			long rows = -1, cols = -1;
+			for(AnchorPartition partition : partitions) {
+				if(partition.begin().get(0) < 0 || partition.begin().get(1) < 0
+					|| partition.end().get(0) <= partition.begin().get(0)
+					|| partition.end().get(1) <= partition.begin().get(1))
+					return new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols());
+				rows = Math.max(rows, partition.end().get(0));
+				cols = Math.max(cols, partition.end().get(1));
+			}
+			return new NodeShapeFact(shape.dataType(), shape.rows() < 0 ? rows : shape.rows(),
+				shape.cols() < 0 ? cols : shape.cols());
+		}
 		return new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols());
 	}
 
@@ -4282,7 +4604,7 @@ public final class NeutralPlacementGraphBuilder {
 		return type == null || type == FType.PART || type == FType.OTHER ? deriveAnchorFType(partitions) : type;
 	}
 
-	private static List<AnchorPartition> fedInitLiteralPartitions(DataOp data) {
+	static List<AnchorPartition> fedInitLiteralPartitions(DataOp data) {
 		int addressIndex = data.getParameterIndex(DataExpression.FED_ADDRESSES);
 		int rangeIndex = data.getParameterIndex(DataExpression.FED_RANGES);
 		if(addressIndex < 0 || rangeIndex < 0) return List.of();
@@ -4335,7 +4657,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<LogicalTransientInputFact> logicalTransientInputs,
 		List<CompiledInputEdgeFact> compiledInputEdges, java.util.Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop,
-		Map<Hop,AbstractShapeFact> abstractFactsByHop,
+		Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
 		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock, CfgAnalysis cfg) {
 		CandidateReplay current = closeLatentWdivmmRuntimeOutputContracts(
 			new CandidateReplay(List.copyOf(nodes), List.copyOf(domainKeys),
@@ -4356,7 +4678,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay replayed = closePostCfgPhysicalCandidateDependencies(occurrences,
 				new CandidateReplay(materialization.nodes(), current.domainKeys(),
 					materialization.candidateRuleFacts(), current.logicalInputs(),
-					materialization.changedOrdinals()), factsByHop, abstractFactsByHop, ordinalsByBlock, cfg);
+					materialization.changedOrdinals()), factsByHop, abstractFactsByHop, singlePartitions, ordinalsByBlock, cfg);
 			Set<Integer> recompileDescendants = exactAffectedDescendants(occurrences,
 				materialization.changedOrdinals(), ordinalsByBlock, factsByHop).stream()
 				.filter(ordinal -> replayed.nodes().get(ordinal).key().recompileContext().equals("recompile"))

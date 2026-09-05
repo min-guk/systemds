@@ -470,3 +470,530 @@
   comparison preserves all original harness/data/config bytes; extra ML deliberately
   retains its authenticated GLM/GNMF/GMM harness version. Historical FedAll exact-policy
   is not relabeled as the explicitly selected new-ML single-pass variant.
+
+
+## PRIVATE_AGGREGATE raw release and GNMF parity failure — newly confirmed
+
+- **Status**: diagnosis confirmed; repair design and regressions in progress. All experiment queues stopped diagnostically.
+- **Symptom/evidence**: authenticated source5215f1a GNMF LAN/w1 FedAll runtime168.639s contains full original 50000x2100 X prefetch, REFED, and second shifted-X prefetch; only6 FED instructions, whole GNMF loop CP. Source/control report `GNMF_FIRST_CELL_DIAGNOSIS_20260905.md` binds all4 planning/runtime archives by SHA/size.
+- **Cause**: `ExecPlacementPolicy` explicitly permits CP/LOUT for effective PRIVATE_AGGREGATE; shared node closure categorically denies local only for PRIVATE. This preserves propagation identity but violates aggregate-only origin-bound release. Existing permissive tests are not proof of correct privacy semantics.
+- **Decision boundary**: fix common candidate/value/input-movement authority, not GNMF-specific forced placement, data/public relabeling, runtime fallback, or opaque cost penalties. CP call placeholders must be distinguished from real local data release. Public aggregate output must not authorize collecting protected inputs first. All selectors must consume the same corrected domain.
+- **Separate defect under diagnosis**: GNMF FedAll/Heuristic/Exact numeric models differ even at7 significant digits; builtin initialization has unseeded rand. Do not attribute differences to random seeds until verified, and do not relax numeric gate. Runtime driver stopped after Exact cell at11:21:51UTC.
+- **Verification plan**: RED raw-release tests (source/elementwise/transient/function/branch, public aggregate raw-input CP, relocation) then common gate repair; retain safe FED aggregate release and runtime-supported federated states, reject impossible plans before execution. Independently diagnose initialization and regression-lock reproducibility.
+- **Residual risk**: closing invalid raw release may reveal missing legitimate FED control-flow/function candidates. Repair candidate/representation gaps, do not reopen unsafe materialization. Existing576 and new measured cells remain preserved but require re-certification under new authority before privacy-safe final claims.
+
+## Performance repair acceptance categories — latest user clarification
+
+- **Status**: 128 planner-pair reversals are open defects to resolve, not closed as normal variation; 30 Exact upward worker transitions require separate evidence-based bug/non-bug classification. These are comparison cases, not 158 independently proved implementation faults.
+- **Closure**: identify the causal model/space/selector/lowering/runtime/measurement defect, apply a general correction, then authenticate planning and rerun physically changed cells. Do not fabricate costs, force rankings, or discard successful raw measurements merely for their order.
+- **Scaling**: a legitimate increase in synchronization, fan-in, computation or materialization with more workers may explain a scaling increase; close as non-bug only with code/plan/runtime evidence, not an unsupported worker-times-RTT assumption.
+- **Tracker**: `/home/mchoi/g014-runtime-4net-w1357-20260901-control/PERFORMANCE_REPAIR_TRACKER_20260905.json` retains all 128+30 input rows and explicit distinct statuses without changing source CSVs.
+
+## Protected CFG closure and DP loop-join dispatch
+
+- **Status**: shared CFG repair and DP dispatch implemented; the new branch/loop/function
+  regression passes all four production selectors. Broader regression and Docker
+  recertification are not complete; no runtime reversal is closed by this unit result.
+- **Symptom**: after enforcing origin-bound PRIVATE_AGGREGATE, a function-return loop
+  failed because previously replayed transient reads retained stale candidate domains.
+  After that repair, DP alone still rejected the post-loop read even though all three
+  reaching B writes had native FED/FOUT ROW states.
+- **Cause**: shared function closure could change candidate facts/anchors without a new
+  Node identity, while CFG replay did not revisit prior reads. In DP,
+  `canTransientReadReuseMatchedFoutWrite` rejected arithmetic updates depending on B
+  before dispatch to the existing cycle-aware multi-definition join path.
+- **Resolution**: replay CFG candidates when function/physical closure changes exact
+  inputs, replace stale rows rather than append them, and restore pre-replay authority
+  if a prior exact proof is lost. Loop seeds are provisional and every backedge must
+  subsequently certify the same physical tuple. Recompute inherited anchors from
+  current inputs. DP now collects every exact source domain and invokes its joined
+  transient routine before applying single-source self-dependency checks; exact input
+  authority, common placement equality and candidate receipts remain mandatory.
+- **Files**: `NeutralPlacementGraphBuilder.java`,
+  `fedDp/FederatedPlannerDpCostEnumerator.java`,
+  `PrivateAggregateFourPlannerContractTest.java`, `PrivacyMovementCertificationTest.java`.
+- **Fresh evidence**: control `DP_JOIN_ALL4_LOOP_PASS_SAMEPOOL_RED_20260905.xml`
+  records the full loop/branch/function method PASS for FedAll, Heuristic, DP and Exact;
+  raw protected print rejection also PASS. The independent same-pool positive still
+  fails before selection and is the next separate bug, not a reason to weaken privacy.
+- **Residual risk**: provisional anchors must not survive incompatible loop updates.
+  The square-transpose negative preserves matrix shape while changing ROW/COL, and
+  the unrelated-local-backedge negative checks that external seed authority alone is
+  insufficient. The strengthened fixtures require fresh combined validation.
+- **Decision basis**: restore graph-proven legal FED candidates and route DP to its
+  existing CFG recurrence; no CP/FOUT transient states, fallback, or privacy relaxation.
+
+## Independent aligned federated sources lose a legal native binary candidate
+
+- **Status**: reproduced; correction under implementation in shared graph construction.
+- **Reproducer**: two independent PRIVATE_AGGREGATE federated matrices A/B with identical
+  worker endpoints and ROW ranges but different file paths, then `C=A+B; print(sum(C));`.
+  `PrivateAggregateFourPlannerContractTest.fourPlannersPreserveNativeSamePoolPrivateAggregateInputs`
+  fails during PlacementAnalysis creation, before any selector is invoked.
+- **Cause**: inherited-anchor logic requires a single durable identity instead of
+  accepting distinct identities with the same physical worker/range layout. Runtime
+  `BinaryMatrixMatrixFEDInstruction` uses `FederationMap.isAligned`, which permits this
+  native case without collecting/redistributing raw values.
+- **Repair boundary**: prove physical equivalence with
+  `PlacementIdentity.samePhysicalWorkerPool`, retain oracle validation, and choose a
+  deterministic representative. Merely equal FType is insufficient; mismatched
+  workers or partition-axis ranges must not gain direct native authority.
+- **Evidence**: the same XML above preserves this distinct RED. Test names and log
+  filenames are not success evidence; read the individual testcase result.
+- **Residual risk**: choosing a representative must not invent alignment or erase
+  distinct value identities. Positive aligned and negative misaligned fixtures are
+  required before promotion.
+
+
+## Shape-proof observation pollution and literal FED source dimensions
+
+- **Status**: focused Oracle 19/19 and actual four-planner same-pool/CFG methods PASS;
+  full integrated regression running. No performance case closed or runtime restarted.
+- **Symptom**: ROW+ROW native FED candidates were rejected for a missing
+  `fullSinglePartition` fact that the rule did not require. Literal FED HOP dimensions
+  could also remain unknown despite exact source ranges.
+- **Cause**: `OracleFacade.mergeFullSinglePartitionHint` used proof-recording accessors
+  merely to test optional metadata presence and copy fields. This made observation
+  become an artificial rule precondition. An intermediate repair inferred dimensions
+  from inherited anchors, but placement metadata does not prove derived value shape.
+- **Resolution**: extend the existing non-recording immutable diagnostic snapshot for
+  structural copying; keep all rule-facing accessors recording actual dependencies.
+  Fill unknown literal FED source dimensions from its own ranges, matching
+  `InitFEDInstruction.processFedInit`; never derive value dimensions from an arbitrary
+  inherited anchor. Pass the exact input shape facts to the oracle. Temporary debug
+  traces removed. Physical source identity is retained separately from pool alignment.
+- **Files**: `rules/RulesApi.java`, `rules/bridge/OracleFacade.java`,
+  `placement/NeutralPlacementGraphBuilder.java`, `OracleFacadeTest.java`,
+  `PrivateAggregateFourPlannerContractTest.java`.
+- **Verification**: initial three new Oracle methods produced two expected RED failures;
+  after the change all Oracle 19 methods PASS and rule-required UNKNOWN still records
+  as missing. `SHAPE_HINT_PROOF_RED_20260905.*`,
+  `SHARED_SHAPE_PRIVACY_REGRESSION_20260905.*` preserve evidence. Same-pool private
+  A+B and function/branch/loop tests invoke all four production selectors successfully.
+- **Residual risk**: occurrence shapes must come from exact value facts, not stale
+  input/placement dimensions. The new transpose fixture asserts the source's 4x2
+  ranges do not become t(A)'s 4x2 output shape. Wider integration is pending.
+- **Decision basis**: preserve runtime-supported legal candidates and exact shape
+  preconditions; do not fabricate capabilities or weaken privacy to regain states.
+
+## Non-vacuous FULL cross-pool privacy regression
+
+- **Status**: fixture corrected, fresh PrivacyMovement 7/7 + MixedPrivacy 2/2 PASS.
+- **Symptom**: the old `sum(A+B)` FULL negative unexpectedly admitted a plan.
+- **Cause**: `rewriteHopsDAG` transformed it into independent federated partial sums
+  plus a local scalar addition. The raw matrix binary no longer existed, and this
+  aggregate-release plan was legal; assuming a raw movement bug was incorrect.
+- **Resolution**: use `sum(exp(C))` and assert protected `C=A+B` remains in the actual
+  graph. Existing common post-action pool constraints reject the true cross-pool raw
+  binary. No production guards were added and no legal plan was excluded.
+- **New mixed fixture**: all four planners keep protected A direct at pool P and move
+  only public B from Q to P; all four reject two protected ROW sources from incompatible
+  pools after analysis. These are privacy-sensitive mixed-input correctness fixtures,
+  not relabeled public benchmarks. The specialized FULL negative invokes FedAll.
+- **Evidence**: control `P3_MIXED_FULL_PRIVACY_RELOCATION_20260905.log`,
+  `P3_PRIVACY_MOVEMENT_FULL_ALIGNMENT_20260905.xml`,
+  `P3_MIXED_PRIVACY_RELOCATION_20260905.xml`; independent read-only review found
+  no HIGH issue in the bridge/common post-action alignment changes.
+- **Residual risk**: negative tests must assert the intended operation survives rewrites
+  and that failure is relevant. This fixture correction closes no 128/30 runtime case.
+
+
+## Superseding runtime-order contract — user clarification
+
+Latest required order is **Exact <= DP <= {FedAll, Heuristic}**, not a total order between baselines. The original 128-row audit included 54 FedAll-vs-Heuristic rows; these are now explicitly out of scope, not "fixed". Remaining comparisons: 23 cost-based-vs-baseline +51 Exact-vs-DP =74 open cases. Exact upward-worker transitions remain30 separate causal classifications. No Heuristic policy change will be made merely to order the baselines. PAIR017 remains explanatory evidence only. Original audit and pre-correction tracker are preserved; see control PERFORMANCE_REPAIR_SCOPE_CORRECTION_20260905.md. This supersedes the earlier "128 open defects" paragraph without altering raw measurements.
+
+## Runtime-order audit scope corrected and regression-locked
+
+- **Status**: control tests43/43 focused,164/164 full PASS; runtime still held.
+- **Problem**: the historical inventory used a total order that wrongly classified
+  FedAll-vs-Heuristic differences. Latest user contract is only Exact<=DP<=each baseline.
+- **Resolution**: authenticate the entire original128-row frozen CSV, then return74
+  required-order comparisons with original ordinals. Both directions of baseline
+  ordering are non-defects. Physical comparison1728 remains complete and independent.
+  The instruction audit reuses the same authority; queue gate requires74, rejects128.
+- **Files**: control compare_cross_planner_authority_20260905.py,
+  analyze_all_instruction_deltas_20260905.py, run_final_integrated_queue_20260905.py
+  and three corresponding test modules. No selector policy changed for baseline ranking.
+- **Verification**: control RUNTIME_ORDER_SCOPE_VERIFICATION_20260905.json; all74 IDs
+  exactly match original authenticated ordinals and tracker, no evidence altered.
+- **Residual**: old immutable queue definition intentionally no longer matches code SHA.
+  Reissue a new final-stage-bound definition before launch, never edit old authority in place.
+- **Regression risk**: filtering before authentication or renumbering would hide corrupt
+  excluded evidence or break PAIR identity; explicit negative tests guard both.
+- **Decision basis**: user-defined partial-order audit scope, not numerical manipulation.
+
+## GLM Exact identically-zero maximum-demand auxiliary encoding
+
+- **Status**: focused24/24 PASS, actual GLM resource gate restored, not packaged/deployed.
+- **Problem**: expanded lawful shared graph created zero-cost max-demand auxiliaries
+  that inflated GLM materialization to18,270,552 cells (gate6M), maxfactor3,276,800.
+- **Resolution**: after validating all demands, elide only private solver auxiliaries
+  when the canonical nonnegative finite maximum is exactly +0 across its full scope.
+  Keep canonical contribution/descriptor authority and hard/privacy feasibility factors.
+  Reachable nonzero costs retain encoding; NaN/Infinity/-0 remain invalid.
+- **Files**: ExactMaxDemandFactorDecomposition.java and its test.
+- **Verification**: decomposition9,reduced11,fingerprint3,actualGLM1 allPASS.
+  GLM maxfactor7424, materialized446476; optimizer/projection receipts consistent.
+  Control EXACT_ZERO_MAX_DEMAND_REGRESSION_20260905.json preserves XMLs; independent
+  review approved bounded change. This is not old/new campaign-plan equality proof.
+- **Residual**: StepLM growing-loop and L2SVM final-materialization contracts remainRED;
+  entire backend has not passed integration. No runtime-ranking case closed.
+- **Regression risk**: zero costs must not remove legality; tests cover dormant and
+  zero-frequency costs separately from reachable-positive and malformed price domains.
+- **Decision basis**: exact algebraic simplification of internal cost encoding only.
+
+## StepLM growing-column loop loses exact transient replay
+
+- **Status**: ROW and single-worker FULL minimal reproductions bothRED; repair underway.
+- **Environment/reproducer**: PRIVATE_AGGREGATE A; B=A; loop B=cbind(B,A); print(sum(B)).
+  See PrivateAggregateFourPlannerContractTest growing-loop methods and control
+  GROWING_LOOP_PRIVATE_PLACEMENT_RED_20260905.log / GROWING_LOOP_PRIVATE_TRACE_20260905.log.
+- **Cause status corrected**: the trace proves that the backedge gains FED/FOUT but
+  final replay leaves the read CP-only; origin-bound privacy then correctly rejects it.
+  It does NOT prove `sameLogicalValueShape` as the rejecting predicate. The fresh
+  compiled-HOP diagnostic shows all relevant dimensions unknown (-1,-1); literal Fed
+  sources are separately seeded by the builder. A bounded builder-fact/anchor/context
+  diagnostic is locating the exact rejection branch before changing any predicate.
+- **Repair constraints**: runtime AppendFEDInstruction is authority for pool preservation
+  and exact result range updates; do not drop arbitrary shape/anchor guards or reuse stale
+  FULL ranges. Provisionally seeded cycles must still prove every backedge at final closure.
+- **Required negatives**: unrelated local backedge, different protected pools, transpose,
+  partition-axis-changing append, and unknown FULL output extents. Positive tests must
+  assert retained append node, expected FType, no raw active movement and correct geometry.
+- **Residual**: no production fix for this issue yet; existing 150-test run remains147PASS.
+- **Regression risk**: confusing stable pool identity with evolving value shape could
+  fabricate index bounds or alignment. Validate these as independent facts.
+- **Decision basis**: restore proven runtime-supported private placement, not relax privacy.
+
+## Derived-FOUT action must retain its privacy-safe native source (L2SVM)
+
+- **Status**: exact-row dependency repair implemented; new 4/4 tests PASS after
+  3/4 RED failures. Wider privacy regression 24/24 PASS. Actual L2SVM now compiles;
+  its legacy test fails a forbidden CP/raw-label materialization expectation, currently
+  being audited against the unchanged PRIVATE_AGGREGATE fixture.
+- **Problem/cause**: privacy filtering independently retained a FOUT target while removing
+  its actual FED/LOUT source. Exact identity binding then correctly rejected the dangling
+  materialization. Candidate feasibility is a two-step action, not target residency alone.
+- **Repair plan**: after individual privacy/input checks, close each candidate row over its
+  non-action native source emissions; retain a derived target only if its exact source
+  placement remains in the same row. Compute retained node-state union only afterwards.
+- **Constraint**: native FOUT with equal final tuple stays available independently; do not
+  borrow a native source from another input signature, reopen private LOUT, or erase an
+  action while retaining its target. This is a privacy/physical dependency, not search pruning.
+- **Tests**: PrivacyDerivedMaterializationClosureTest, then actual L2SVM compile-only fixture.
+  Historic CP label/Hessian assertions in that fixture require privacy-aware reassessment.
+- **Evidence**: control L2SVM_DERIVED_FOUT_PRIVACY_CLOSURE_DIAGNOSIS_20260905.md.
+- **Regression risk**: mistakenly deleting legal native FOUT or safe released-aggregate
+  rematerialization; exact-row positive and same-final-tuple tests cover these distinctions.
+
+## Worker-pool continuity must not masquerade as exact value geometry
+
+- **Status**: independent review found a HIGH correctness risk; repair design underway.
+- **Problem**: samePhysicalWorkerPool intentionally ignores the FULL matrix extent
+  (and the ROW/COL non-partitioned extent), but some joins retain an old
+  DurableAnchorKey as an exact representative. Growing append values can therefore
+  inherit stale range/byte/index authority even if their endpoint pool stays stable.
+- **Decision**: do not remove shape guards blindly or publish a seed key as an exact
+  current map. Separate native runtime pool continuity from exact value-range facts.
+  The live AppendFEDInstruction map updates are the runtime authority.
+- **Affected paths**: cfgTransientReadAnchor, exactTransientReplay, inherited output
+  anchors, commonBoundaryAnchors, and worker-pool materialization resolution.
+- **Validation required**: growing FULL/ROW direct FOUT retains privacy with no raw
+  movement; no stale anchor reaches right-index, cost geometry or emitted actions;
+  exact known current dimensions may create fresh ranges; cross-pool cases remain
+  infeasible. Existing public/aggregate materialization space must not be arbitrarily
+  closed as a shortcut.
+- **Risk**: changing exact-anchor propagation can expose consumers that previously
+  conflated placement with shape. Regression and final immutable plan audit required.
+
+## Loop-backedge physical TWrite rejected by semantic LOOP_PHI classification
+
+- **Status**: precise cause reproduced; bounded operation-aware repair implemented,
+  focused tests next. This does not close the separate stale-geometry review issue.
+- **Evidence**: control GROWING_LOOP_NODE_KIND_DIAGNOSIS_20260905.log/.xml shows
+  initial source TRANSIENT_WRITE/ORDINARY and backedge LOOP_PHI/LOOP_BACKEDGE;
+  both have matching contexts and unknown compatible shapes, but seed=null.
+- **Cause**: four exact replay/seed/identity gates require TRANSIENT_WRITE kind,
+  whereas physicalNodeKind classifies actual loop-latch TWrite as LOOP_PHI first.
+- **Repair**: shared isCompiledTransientWrite requires the actual TRANSIENTWRITE HOP
+  and kind TRANSIENT_WRITE or LOOP_PHI. Keep all reaching definitions, final
+  consistency proof, state constraints, namespace/context, and clone exclusions.
+- **Files**: NeutralPlacementGraphBuilder.java; existing growing ROW/FULL regressions
+  reproduce the defect before repair. No privacy weakening or global reclassification.
+- **Residual/risk**: opening valid replay can expose stale geometry previously hidden
+  by the rejection. Native continuity and exact range authority must be verified
+  separately before any new backend is packaged or deployed.
+
+## Resume: exact transient operation and finite append shape regressions
+
+- **Status**: focused operation/L2/FULL legality 10/10 PASS; finite append + ROW loop
+  4/4 PASS. The stale geometry repair is still in progress, not deployed.
+- **Cause correction**: the earlier report's claim that equal iteration dimensions
+  were the first rejecting predicate is superseded. The actual first rejection was
+  semantic LOOP_PHI versus physical TRANSIENTWRITE. After fixing this, ROW append
+  still lacked a proven invariant row count in oracle facts.
+- **Repair**: require actual compiled DataOp direction without discarding semantic
+  loop/branch kinds. Seed shared abstract shape with the source's own authoritative
+  shape; implement CBIND/RBIND invariant-axis equality and growing-axis exact sum,
+  widening changing/unknown/overflow dimensions. Publish only final exact dimensions
+  into builder-owned oracle facts; do not mutate HOPs or infer value shape from a pool.
+- **Files**: PlacementAnalysis.java, NeutralPlacementGraphBuilder.java,
+  PlacementAbstractShapeAnalysis.java, CompiledTransientOperationKindTest.java,
+  PlacementAppendAbstractShapeTest.java, PrivateAggregateFourPlannerContractTest.java.
+- **Evidence**: control L2_PRIVACY_AND_FULL_LOOP_REGRESSION_20260905.* (10 PASS),
+  APPEND_SHAPE_AND_GEOMETRY_RED_20260905.* (4 assertion failures),
+  APPEND_SHAPE_ROW_LOOP_REGRESSION_20260905.* (4 PASS).
+- **L2 test contract**: actual compile-only L2SVM now passes the strict protected
+  origin/native FOUT requirements. Obsolete CP raw-label/Hessian prefetch assertions
+  were removed, not privacy-relaxed. Derived-FOUT candidates must retain their exact
+  row's safe native source; source-closure 4/4 remains part of the 10-test receipt.
+- **Remaining bug**: growing FULL values still inherited the initial 4x2 exact anchor.
+  A new non-vacuous assertion reproduces this independently of legal FED/FOUT selection.
+- **Risk/control**: operation-kind repair must reject clones and wrong-direction DataOps;
+  lattice repair must not freeze changing dimensions. New tests cover these boundaries.
+
+## Native loop continuity versus movement-target templates: repair in progress
+
+- **Problem**: generic WorkerPoolAnchorResolver answers which original anchor is a
+  usable movement TARGET. It does not certify the native output map of a partition-axis
+  append/transpose, and its logical-source union cannot prove all loop backedges.
+- **Decision**: preserve that target space unchanged. Use a separate typed native
+  continuity proof for the mixed exact/no-exact-map replay case. Require every
+  reaching definition and native candidate transfer; all dependency cycles must be
+  grounded in an original source witness. Never attach this witness to Node.anchors.
+- **Changes under verification**: unknown compute extents cannot inherit exact ranges;
+  actual TWrite aliases may retain their input's exact map. CFG/function exact-map
+  joins compare both axes, not only endpoints. A provisional real loop seed gives
+  residency, not old value geometry; null logical/read anchor remains null.
+- **Tests**: the new NativePlacementContinuityTest staged baseline produced 2 assertion
+  failures / 3 tests / 0 errors; native implementation is next. The initial derived
+  test setup violated identity ownership; fixture corrected before recording this
+  assertion-level RED. Both logs/XMLs are preserved separately.
+- **Evidence**: control NATIVE_PLACEMENT_CONTINUITY_ASSERTION_RED_20260905.*;
+  LOOP_NATIVE_CONTINUITY_REPAIR_PLAN_20260905.md.
+- **Remaining/risk**: native proof must not silently certify a derived/movement-only
+  state, an ungrounded cycle, a different pool, or ROW/COL partition-axis changes.
+  FULL/ROW/COL growing positives must retain all reaching sources and no stale ranges.
+- **Runtime**: campaigns remain held; 74 active runtime-order comparisons are still
+  open and the 30 worker-scaling transitions remain separately unclassified.
+
+
+## Invocation-local FULL metadata and native/CFG bridge integration
+
+- **Status**: implemented, focused integrated regression running; not deployed.
+- **Problem**: explicit UNKNOWN FULL cardinality was overwritten from a previous
+  program's global lexical-name signature. Standalone FULL loop passed while a
+  prior multi-worker same-name program made the same fixture fail.
+- **Evidence**: FOCUSED_DP_ORACLE_STEPLM_20260905T192402Z has actual Oracle isolation
+  assertion FAIL. An earlier 1938-named attempt failed compilation; its stale copied
+  XML is explicitly marked NOT test evidence. Do not count it as RED/PASS.
+- **Repair**: reuse the shared CFG/formal-input value relation in invocation-local
+  SinglePartitionFacts. Require literal one-range grounding, complete same-endpoint
+  dependencies, and supported native map-preserving transfers. Unknown function
+  returns/foreign sources/multi-range endpoints/ungrounded cycles stay UNKNOWN.
+  Supplied Oracle ShapeHint is authoritative, including UNKNOWN; legacy null-hint
+  callers remain a separate audit surface. Never publish cardinality as exact ranges.
+- **Native proof correction**: native plus derived fallback in one row is not a
+  derived-only row. A real native emission may certify native continuity while
+  ignoring fallback alternatives; no derived action itself proves native continuity.
+  Binary matrix-scalar kernel copies its input map, now represented precisely.
+- **DP correction**: raw CFG definition dependencies and actual SAME_PLACEMENT
+  constraints have typed all-source receipts separate from zero physical TRead arity.
+  Partial-source/foreign-constraint receipts remain invalid, and every published
+  arm must be compatible with the actual constraints. No CP/FOUT transient exception.
+- **Files**: NeutralPlacementGraphBuilder, PlacementAbstractShapeAnalysis,
+  SinglePartitionFacts, OracleFacade, NativePlacementContinuity,
+  FederatedPlannerDpCostEnumerator, adapter/DpPlacementAdapter; corresponding tests.
+- **Remaining**: integrated test gate, shared function-return cardinality precision,
+  P1/P2/SliceLine metadata release authorization, immutable stage and Docker reruns.
+- **Risks**: class-based native transfer must not accidentally admit a future
+  repartitioning opcode; inspect live runtime behavior and add negative tests.
+  Cardinality does not certify chosen placement, alignment, privacy, or movement.
+- **Decision basis**: source/runtime evidence repair in the common pre-selector
+  model and exact typed DP consumption, not ranking-driven state-space pruning.
+
+## KMeans derived FULL chain: precise occurrence and assertion RED
+
+- **Status**: diagnosed; repair in progress, runtime held.
+- **Symptom**: KMeans shared domain lacks FED/FOUT/FULL at hop286 `ba(+*)`,
+  directly consumed by hop287 `b(*)` in the 50-iteration centroid-selection loop.
+- **Cause**: the new endpoint lattice joins the local selection matrix's UNKNOWN
+  with the literal one-range FULL input. It consequently loses the cardinality of
+  hop185's legitimate FULL result, its TWrite/read223 aliases, and downstream MM.
+  Candidate audit proves hop185 FULL survives privacy; hop263 `[local,FULL]` has
+  missing `fullSinglePartition` BEFORE privacy and hop286 sees only local inputs.
+- **Corrected hypotheses**: actual/formal X binding is present (165 -> source736).
+  Neither missing function input binding nor privacy removal of hop185 is the cause.
+- **Evidence**: control `KMEANS_FULL_CHAIN_CAUSAL_EVIDENCE_20260905.json` and immutable
+  KMEANS_FULL_CANDIDATE_DIAG_20260905T195312Z audit/log/XML; minimal
+  `FULL_MM_CHAIN_CARDINALITY_RED_20260905T200131Z` has 5 tests, 1 assertion failure.
+  The preceding 200045Z constructor-compilation attempt has stale XML marked invalid.
+- **Repair contract**: distinguish the conditional range count of a legal FULL
+  result from actual availability, endpoint alignment, and exact output geometry.
+  Ordinary MM's native FULL paths require single-FULL providers and preserve their
+  count; local matrix operands do not determine that count. Retain literal grounding,
+  all-source CFG joins, and per-input FULL guards. Do not create a FULL state from
+  a cardinality fact, use global worker/varname fallback, or weaken privacy.
+- **Risk/negative coverage**: ungrounded MM cycles, unknown/multi-range FULL operands,
+  TSMM/LOUT-only outputs, different pools, and unsupported materialization must not
+  gain authority. These checks remain independent of the intended output implication.
+
+## Production DP dispatch versus legacy CFG compatibility (correction)
+
+- **Status**: production DP privacy regression passes; one legacy PCA gap remains.
+- Factory COMPILE_COST_BASED invokes FederatedPlanLocalCost/LocalPhysicalOptimizer,
+  not the fedDp enumerator. Four-planner tests now use that actual factory path;
+  the explicitly named legacy CFG method remains a separate compatibility test.
+- Source/test fixes to the legacy typed CFG bridge cover only matrix TReads with
+  real compiled TWrite sources and exact SAME_VALUE_PLACEMENT/SAME_PLACEMENT receipts.
+  Scalar TReads retain their legacy exact rewire-forward receipt contract.
+- Fresh legacy receipt run: 5 tests, 4 PASS, 1 FAIL. Remaining PCA-MULTIRETURN read
+  has a synthetic FUNCTION_OUTPUT -> TRead `cfg-function-output-value:X` edge, not
+  a compiled TWrite source. It requires its own typed compatibility design.
+- Do not disguise a function-output boundary as TWrite, narrow the fixture, delete
+  the failing assertion, or claim this as a production DP runtime failure.
+- Evidence: control `LEGACY_TYPED_CFG_REPAIR_20260905T195021Z.json`; production path
+  evidence `PRODUCTION_DP_PRIVACY_AND_LEGACY_RECEIPTS_20260905T194024Z.json`.
+- Potential risk: direct users of the legacy enumerator still hit the nested return
+  gap. Packaging/final reporting must disclose this separately from production gates.
+
+## Conditional FULL transfer: stale-provider safety repair (20:22 UTC)
+
+- **Status**: targeted proof/KMeans regressions pass; integration still in progress,
+  not packaged or deployed. Architect re-review CLEAR after the changes below.
+- **Problem**: the first ordinary-MM cardinality repair kept its previous endpoint
+  while ignoring UNKNOWN operands. A later-closing conflicting CFG definition could
+  widen the only provider to UNKNOWN without invalidating the consumer's certificate.
+  In-place IdentityHashMap closure could also yield traversal-dependent recursive facts.
+- **RED evidence**: `FULL_MM_TRANSFER_SAFETY_RED_20260905T201452Z`: 9 tests, 2 assertion
+  failures (late provider invalidation, TSMM all-input preservation), no errors.
+- **Repair**: each round reads a snapshot, computes a fresh MM transfer, then joins
+  with the old fact. No exact provider + unresolved bottom waits; all-final-UNKNOWN
+  becomes UNKNOWN; conflicts stay UNKNOWN. TSMM keeps the conservative all-input
+  transfer. No unconditional FULL state/geometry/placement/privacy authority is added.
+- **Verification**: `FULL_MM_TRANSFER_SAFETY_GREEN_20260905T201716Z`: 44 tests, 43 pass,
+  1 failure. SinglePartitionFacts 9/9, KMeans 1/1, Oracle 20/20 and native continuity
+  pass. The failure is the explicit legacy typed-CFG fixture, not production DP.
+  `LocalCostPlacementPrivacyContractTest` in that command was nonexistent and is
+  NOT counted as executed; real `FederatedPlanLocalCostPrivacyConstraintTest` must run.
+- **Remaining legacy fixture issue**: selecting only matrix TReads reveals that the
+  simple four-planner fixture contains non-replayable raw CFG evidence only for a
+  scalar. A dedicated real matrix CFG fixture is needed without deleting all-source,
+  partial-receipt or foreign-identity assertions. Separate legacy PCA return gap remains.
+- **Files**: SinglePartitionFacts.java, SinglePartitionFactsTest.java,
+  PrivateAggregateFourPlannerContractTest.java.
+- **Risk**: Hop-level conditional cardinality must never be interpreted as actual
+  availability or endpoint alignment. Per-selected-FULL guards, all-source joins,
+  source grounding, exact materialization and origin-bound privacy remain independent.
+
+## Release-boundary scope correction: P1 is not the P2 recode pipeline
+
+- **Status**: source-verified; no runtime resumed (so007 empty at 20:15 UTC).
+- **Problem**: listing P1/P2/SliceLine as a single metadata-support gap overstates the
+  blocked scope. Actual P1_FULL.dml has no transformencode/recode; GLM/GNMF/GMM-VVI
+  templates also use numeric federated input directly.
+- **Decision**: these numeric workloads may pass their own fresh privacy/planning/
+  Docker correctness gates independently. P2_PREP and SliceLine remain blocked on
+  transform-spec-specific release authority, including internal worker encoder replies
+  and coordinator dictionary merge, not only the final metadata-frame output.
+- **Evidence**: EncoderFactory implicit recode; ColumnEncoderRecode#getMetaData;
+  MultiReturnParameterizedBuiltinFEDInstruction CreateFrameEncoder/merge/setFrameOutput;
+  SharedPrivacyPlacementAnalysisContractTest.privateAggregateRecodeMetadataCannotExposeDistinctRawValues.
+- **Residual test conflict**: CampaignBG014ExactSingleInputDirectFoutTest still expects
+  native transformencode under PRIVATE_AGGREGATE; this is an old permissive privacy
+  fixture and cannot serve as release certification. Track separately before any
+  full-suite success claim. Do not relabel experimental input or alter the benchmark.
+- **Risk**: ignoring dead metadata output is not enough: dictionary exchange survives.
+  Reuse no invalid old runtime solely because its physical plan hash is unchanged.
+
+## Exact direct-unary fixture: separate legal consumption from illegal recode release
+
+- **Status**: test contract split, revalidation pending. No production/DML benchmark edit.
+- **Evidence**: LEGACY_MATRIX_AND_RELEASE_AUDIT_20260905T202308Z reproduces the old
+  positive fixture failing closed at PRIVATE_AGGREGATE `FunOut M`; LocalCost 2/2
+  and the nine normal four-planner contracts pass in the same receipt.
+- **Repair**: retain all two-label split/direct-FOUT unary authority and cost-choice
+  assertions on protected numeric input (no recode dependency). Keep the original
+  protected recode pipeline as an explicit negative test, including unused M.
+  Runtime-native transform support is not aggregate declassification authority.
+- **Files**: CampaignBG014ExactSingleInputDirectFoutTest.java only.
+- **Risk**: the unit-fixture separation must never be misrepresented as fixing P2.
+  Neither experimental dataset privacy nor workload scripts were changed. P2 remains
+  fail-closed until a real spec-specific encoder/dictionary release protocol exists.
+
+## Direct split-label test diagnosis: lexical aliases, not a missing FED domain
+
+- **Status**: selector-test identification repaired; wide verification running.
+- **Evidence**: NUMERIC_SPLIT_FOUT_DIAG_20260905T202749Z reports four sum inputs
+  named `_sbcvar0`...`_sbcvar3`, ALL with PRIVATE_AGGREGATE FED/FOUT/ROW domains.
+  The old `getName().startsWith("y")` filter saw zero solely because HOP rewrite
+  renames the user-level split outputs. This observation is NOT a candidate-space bug.
+- **Repair**: identify the two label vectors through shared column-size facts (one
+  column), retaining the count=2 and exact input-authority/cost-choice assertions.
+  Strengthen the recode negative to require the actual `FunOut M` rejection site.
+- **Risks**: unknown label shape must fail the assertion rather than guess a name;
+  no planner-domain modification or experimental script change was made.
+
+## Non-replayable matrix CFG regression: actual legacy scheduling conflict
+
+- **Status**: new negative evidence, not a production DP failure; investigation pending.
+- A shape-changing conditional uses ROW `cbind(A,A)` vs `A+1`: same partition axis,
+  unequal column extents, real compiled TWrite sources, logical replay unavailable.
+  The earlier rbind fixture changed the ROW partition axis and was legitimately not
+  native-continuous; cbind fixes that fixture precondition without weakening receipts.
+- **Evidence**: LEGACY_MATRIX_RELEASE_CONTRACT_20260905T202515Z reaches legacy
+  `TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS`. This is distinct from the prior
+  scalar-only fixture mismatch. The nine production factory contracts and LocalCost
+  privacy 2/2 still pass.
+- Adapter's scheduling-only rewire fallback requires an unused CP/LOUT/null child.
+  A collected FED child that is not matched to raw CFG/logical/physical authority
+  violates that contract. The exact failed parent/source is still to be identified;
+  do not call it fixed or simply change the fixture again.
+- **Boundary**: retain all-definition/partial/foreign-identity assertions. Do not
+  create TWrite authority for synthetic function returns, relax privacy, or label
+  this legacy enumerator path as runtime DP's LocalPhysicalOptimizer algorithm.
+
+## Legacy branch-PHI cause confirmed and minimum operation-kind repair
+
+- **Status**: corrected; focused branch/CFG/production privacy tests pass. Separate
+  legacy PCA synthetic-function-return gap still fails and remains disclosed.
+- **Newest evidence supersedes the earlier fixture hypothesis**:
+  LEGACY_MATRIX_PARENT_DIAG_20260905T203609Z identifies the actual parent as TRead B
+  with BOTH compiled CFG definitions and BOTH logical transient facts present.
+  Unknown joined width plus native continuity legitimately retains logical facts;
+  different known branch widths alone do not guarantee non-replayable analysis.
+- **Root cause**: DpPlacementAdapter required semantic NodeKind.TRANSIENT_READ,
+  misclassifying an actual TRead labeled BRANCH_JOIN as a scheduling-only carrier.
+- **Repair**: dispatch on the analysis-owned actual DataOp TRANSIENTREAD, with the
+  existing zero-input, exact logical fact/state identities, all-source closure and
+  equal logical-slot FType checks unchanged. Independent architect review: CLEAR.
+- **Regression separation**: preserve the original protected cbind branch as a new
+  logical branch-PHI test; exercise the separate raw-CFG path using local matrices
+  released by approved colSums of PA input. No raw source is relabeled or collected.
+  Partial/foreign CFG receipt assertions are retained and pass.
+- **Receipt**: LEGACY_PHI_OPERATION_REPAIR_20260905T204124Z: 18 tests, 17 PASS, 1 FAIL.
+  Four-planner/branch/CFG class 11/11; LocalCost privacy 2/2; legacy snapshot 4/5.
+  Only remaining failure is the previously known PCA-MULTIRETURN function output.
+  The 204040Z attempt failed compilation due to an unqualified enum reference; no
+  test XML was produced or counted. The reference was corrected to Types.OpOpData.
+- **Remaining gate**: fresh wider regression after this minimal adapter change;
+  packaging/immutable stage and authenticated numeric-workload canaries not yet run.
+
+## Verified numeric-production candidate checkpoint (20:48 UTC)
+
+- Fresh `POST_PHI_INTEGRATED_WIDE_20260905T204429Z` completes 194/194 tests across
+  all 37 requested classes; 0 failures/errors/skips/missing classes. This includes
+  the new branch-PHI logical receipt and raw-CFG tests, production four-selector
+  privacy, KMeans FULL, Exact/GLM, numeric split, and GNMF seed regressions.
+- `git diff --check` passes. This is a focused numeric-production candidate gate,
+  not an assertion that the complete repository suite or all workloads pass.
+- Known separate failure: legacy `CampaignBG014CandidateOccurrenceSnapshotRedTest`
+  PCA synthetic FUNCTION_OUTPUT -> TRead (4/5 in its last run). Current production
+  DP factory uses LocalPhysicalOptimizer, not this legacy compatibility path.
+- P2/SliceLine PA recode release remains unsupported/fail-closed. Numeric extra ML
+  and P1 do not require that protocol, but still need immutable-stage Docker checks.
+- Packaging this source does not certify any old runtime measurement. New authenticated
+  planning and numeric parity must precede accepting replacement runtime evidence.
+- Missing operational piece found: local seeded-GNMF stage preparer exists, but
+  there is no remote seeded-stage deployer. A bounded separate helper/test/contract
+  is being implemented under the control directory; no servers/stages modified yet.

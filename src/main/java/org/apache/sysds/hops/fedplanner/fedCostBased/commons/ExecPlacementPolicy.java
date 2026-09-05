@@ -92,6 +92,12 @@ public final class ExecPlacementPolicy {
 		// utility class
 	}
 
+	/** Unreleased payloads may not be materialized at the coordinator. */
+	public static boolean requiresOriginResidency(Privacy privacy) {
+		Objects.requireNonNull(privacy, "privacy");
+		return privacy == Privacy.PRIVATE || privacy == Privacy.PRIVATE_AGGREGATE;
+	}
+
 	/**
 	 * Some HOPs do not expose FED lops directly even though runtime can still execute them via
 	 * CP/SP instructions that get recompiled into FED instructions at runtime. Keep the planner
@@ -195,6 +201,14 @@ public final class ExecPlacementPolicy {
 			decision.allowCP_FOUT = false;
 			decision.allowCP_LOUT = true;
 		}
+		// Capability adaptation must never reopen a release rejected by privacy.
+		// A DML call is a coordinator control placeholder, not its matrix formal.
+		if(requiresOriginResidency(request.privacy())
+			&& !request.analysis().isDmlFunctionCallBoundary(request.parentOccurrence())) {
+			decision.allowCP_LOUT = false;
+			decision.allowCP_FOUT = false;
+			decision.allowFED_LOUT = false;
+		}
 		return decision;
 	}
 
@@ -220,7 +234,7 @@ public final class ExecPlacementPolicy {
 	private static boolean hasExactFedLoutAlternative(CapturedPlacementRequest request) {
 		Hop hop = request.hop();
 		Privacy privacy = request.privacy();
-		if(hop == null || privacy == Privacy.PRIVATE)
+		if(hop == null || requiresOriginResidency(privacy))
 			return false;
 		if(hop instanceof DataOp && isTransientDataOp(hop))
 			return false;
@@ -257,49 +271,21 @@ public final class ExecPlacementPolicy {
 		}
 
 		if (HopUtils.isPrintOrPWrite(hop)) {
-			decision.allowCP_LOUT = true;
+			decision.allowCP_LOUT = !requiresOriginResidency(privacy);
 			return decision;
 		}
 
 		switch (privacy) {
 			case PRIVATE:
-				// FED/FOUT only (oracleExec == FED && placement == FOUT)
+			case PRIVATE_AGGREGATE:
+				// The result has not been declassified by an aggregation. Neither a
+				// CP execution nor FED/LOUT (including collect-then-upload) can release it.
 				if (oracleExec == ExecType.FED && placement == FederatedOutput.FOUT) {
 					decision.allowFED_FOUT = true;
 				}
-				break;
-			case PRIVATE_AGGREGATE:
-				// PRIVATE_AGGREGATE results are still allowed to materialize locally on the
-				// coordinator; only public release is disallowed. Keeping the CP/LOUT competitor
-				// open is important for cost-based planners because some private-aggregate hops
-				// (e.g., ALS masks, steplm rightIndex chains) can otherwise be forced into FED-only
-				// regimes even though a legal local/private plan exists. This mirrors Exact's
-				// alternative-cap merge, which already compares the local/private competitor on
-				// the same workloads.
-				//
-				// Likewise, if a concrete FType is known and the hop can be materialized safely
-				// onto an existing federated anchor, keep CP->FOUT open as a common competitor
-				// for both DP and Exact. The planners' downstream safety checks still close the
-				// candidate when no realizable anchor/materialization path exists, so this gate
-				// should model "materializable" rather than a narrow subset of oracle reasons.
-				decision.allowCP_LOUT = true;
-				if (oracleExec == ExecType.FED) {
-					if (placement == FederatedOutput.FOUT)
-						decision.allowFED_FOUT = true;
-					else
-						decision.allowFED_LOUT = true;
-					if (supportsForcedLocalFederatedOutput(hop))
-						decision.allowFED_LOUT = true;
-				}
-				if (allowCpFout(hop, fType))
-					decision.allowCP_FOUT = true;
-				// A DML FunctionOp is only a coordinator-side call placeholder; the concrete
-				// execution happens inside the callee. Even if the oracle exposes a federated
-				// placeholder path here, local execution of the call boundary remains legal
-				// whenever privacy permits aggregate release.
+				// Calling a DML function passes handles. Its formal/output value nodes
+				// and payload edges are separately constrained by the shared analysis.
 				if (dmlFunctionPlaceholder)
-					decision.allowCP_LOUT = true;
-				if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
 					decision.allowCP_LOUT = true;
 				break;
 			case PRIVATE_AGGREGATE_TO_PUBLIC:

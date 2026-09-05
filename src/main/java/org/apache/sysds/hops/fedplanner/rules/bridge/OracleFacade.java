@@ -132,9 +132,9 @@ public final class OracleFacade {
     Objects.requireNonNull(hop, "hop");
     OpSig sig = buildSignature(hop);
     List<FType> mapped = mapFederatedTypes(hop, inFTypes);
-    ShapeHint effectiveHint = (hint != null)
-        ? mergeFullSinglePartitionHint(hint, hop, inFTypes)
-        : buildShapeHint(hop, inFTypes);
+    // A caller-supplied hint is occurrence authority, including UNKNOWN. Never
+    // supplement it from global lexical-name registries left by another program.
+    ShapeHint effectiveHint = hint != null ? hint : buildShapeHint(hop, inFTypes);
     logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
     RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop,
         oracle.decide(sig, mapped, effectiveHint));
@@ -734,19 +734,6 @@ public final class OracleFacade {
     long colsB = (b != null) ? b.getDim2() : -1;
     Optional<Boolean> fullSinglePartition = inferFullSinglePartition(hop, inFTypes);
     return new ShapeHint(rows, cols, blockSize, fullSinglePartition, rowsA, colsA, rowsB, colsB);
-  }
-
-  private static ShapeHint mergeFullSinglePartitionHint(
-      ShapeHint hint, Hop hop, List<FTypes.FType> inFTypes) {
-    if (hint == null)
-      return hint;
-    if (hint.fullSinglePartition().isPresent())
-      return hint;
-    Optional<Boolean> inferred = inferFullSinglePartition(hop, inFTypes);
-    if (!inferred.isPresent())
-      return hint;
-    return new ShapeHint(hint.rows(), hint.cols(), hint.blockSize(), inferred,
-        hint.rowsA(), hint.colsA(), hint.rowsB(), hint.colsB());
   }
 
   private static Optional<Boolean> inferFullSinglePartition(Hop hop, List<FTypes.FType> inFTypes) {

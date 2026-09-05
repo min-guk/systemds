@@ -102,12 +102,7 @@ final class ExactMaxDemandFactorDecomposition {
 			return maximum;
 		});
 
-		List<ExactCategoricalSolver.Variable> auxiliaries = new ArrayList<>();
-		List<ExactCategoricalSolver.Factor> solverFactors = new ArrayList<>();
 		Projection sourceProjection = sourceProjection(key, source, activeSource, demands);
-		auxiliaries.add(sourceProjection.variable);
-		solverFactors.add(sourceProjection.linkFactor(source));
-
 		IdentityHashMap<ExactCategoricalSolver.Variable,List<Integer>> demandIndexes =
 			new IdentityHashMap<>();
 		List<ExactCategoricalSolver.Variable> consumers = new ArrayList<>();
@@ -127,6 +122,20 @@ final class ExactMaxDemandFactorDecomposition {
 			Projection projection = consumerProjection(key, consumer, demands,
 				demandIndexes.get(consumer));
 			consumerProjections.put(consumer, projection);
+		}
+		if(isIdenticallyZero(activeSource, demands)) {
+			String descriptor = descriptor(key, source, activeSource, demands, scope,
+				sourceProjection, consumerProjections, consumers, List.of(), List.of())
+				+ "|identicallyZero=true";
+			return new Decomposition(canonical, List.of(), List.of(), descriptor);
+		}
+
+		List<ExactCategoricalSolver.Variable> auxiliaries = new ArrayList<>();
+		List<ExactCategoricalSolver.Factor> solverFactors = new ArrayList<>();
+		auxiliaries.add(sourceProjection.variable);
+		solverFactors.add(sourceProjection.linkFactor(source));
+		for(ExactCategoricalSolver.Variable consumer : consumers) {
+			Projection projection = consumerProjections.get(consumer);
 			auxiliaries.add(projection.variable);
 			solverFactors.add(projection.linkFactor(consumer));
 		}
@@ -169,6 +178,21 @@ final class ExactMaxDemandFactorDecomposition {
 		String descriptor = descriptor(key, source, activeSource, demands, scope,
 			sourceProjection, consumerProjections, consumers, maxima, solverFactors);
 		return new Decomposition(canonical, auxiliaries, solverFactors, descriptor);
+	}
+
+	private static boolean isIdenticallyZero(boolean[] activeSource, List<Demand> demands) {
+		for(int sourceValue = 0; sourceValue < activeSource.length; sourceValue++) {
+			if(!activeSource[sourceValue])
+				continue;
+			for(Demand demand : demands) {
+				if(demand.sourcePrices[sourceValue] == 0d)
+					continue;
+				for(boolean activeConsumer : demand.activeConsumerValues)
+					if(activeConsumer)
+						return false;
+			}
+		}
+		return true;
 	}
 
 	private static int updatedMaximum(int previous, int demandIndex, int sourceClass,

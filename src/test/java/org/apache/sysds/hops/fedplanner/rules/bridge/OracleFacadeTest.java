@@ -269,6 +269,80 @@ public class OracleFacadeTest {
   }
 
   @Test
+  public void explicitHintMergeDoesNotCreateShapeRequirementsForTransientWrite() {
+    Hop input = matrix("input", -1, -1);
+    DataOp write = new DataOp("write", DataType.MATRIX, ValueType.FP64,
+        input, OpOpData.TRANSIENTWRITE, "A");
+    ShapeHint hint = new ShapeHint(-1, -1, -1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(write, List.of(FType.ROW), hint);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
+  }
+
+  @Test
+  public void explicitAlignedBinaryHintDoesNotRequireSingleFullPartition() {
+    BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+        matrix("left", -1, -1), matrix("right", -1, -1));
+    ShapeHint hint = new ShapeHint(4, 2, 1000, Optional.empty(), 4, 2, 4, 2);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.ROW), hint);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
+    assertEquals(Set.of(), evidence.shapeProof().missingRequiredFacts());
+    assertFalse(evidence.shapeProof().requiredFacts().contains("fullSinglePartition"));
+    assertFalse("the rule still certifies its actual shape requirements",
+        evidence.shapeProof().requiredFacts().isEmpty());
+  }
+
+  @Test
+  public void explicitUnknownFullHintCannotReadAnotherProgramsVariableRegistry() {
+    org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    try {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.registerFedInitVar(
+          "B", FType.FULL, "localhost:1234/old|[0,0]-[4,2]|FULL");
+      BinaryOp append = new BinaryOp("append", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND,
+          matrix("B", 4, 2), matrix("C", 4, 2));
+      OracleFacade.DecisionEvidence evidence = facade.decideWithEvidence(append,
+          List.of(FType.FULL, FType.FULL),
+          new ShapeHint(4, 4, 1000, Optional.empty(), 4, 2, 4, 2));
+      assertFalse("Unknown occurrence evidence is not a single-partition certificate",
+          evidence.caps().exec() == ExecType.FED && evidence.caps().placement() == FederatedOutput.FOUT);
+      assertEquals("UNKNOWN", evidence.shapeProof().consultedFacts().get("fullSinglePartition"));
+    }
+    finally {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    }
+  }
+
+  @Test
+  public void ruleConsultationStillRecordsAnUnknownSinglePartitionRequirement() {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of("+"); }
+      @Override public OpCaps caps(OpSig sig, List<FType> inputs, ShapeHint hint) {
+        hint.fullSinglePartition();
+        return super.caps(sig, inputs, hint);
+      }
+    });
+    BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+        matrix("left", 4, 2), matrix("right", 4, 2));
+
+    OracleFacade.DecisionEvidence evidence = new OracleFacade(registry).decideWithEvidence(
+        plus, List.of(FType.ROW, FType.ROW), new ShapeHint(4, 2, 1000));
+
+    assertEquals(new ShapeProof(Map.of("fullSinglePartition", "UNKNOWN"),
+        Set.of("fullSinglePartition"), Set.of("fullSinglePartition")), evidence.shapeProof());
+  }
+
+  @Test
   public void binaryProofIncludesOnlyRuleConsultedMissingShapeFacts() {
     Hop left = matrix("left", 4, 7);
     Hop right = matrix("right", 4, 7);

@@ -34,6 +34,7 @@
 # rnk    Number of components into which matrix X is to be factored
 # eps    Tolerance
 # maxi   Maximum number of conjugate gradient iterations
+# seed   Optional seed for reproducible initialization; -1 selects a runtime seed
 # --------------------------------------------------------------------------------------
 #
 # OUTPUT:
@@ -42,12 +43,16 @@
 # H     List of amplitude matrices, one for each repetition
 # --------------------------------------------------------------------------------------
 
-m_gnmf = function(Matrix[Double] X, Integer rnk, Double eps = 1e-8, Integer maxi = 10)
+m_gnmf = function(Matrix[Double] X, Integer rnk, Double eps = 1e-8, Integer maxi = 10,
+  Integer seed = -1)
   return (Matrix[Double] W, Matrix[Double] H) 
 {
   #initialize W and H
-  W = rand(rows=nrow(X), cols=rnk, min=-0.05, max=0.05);
-  H = rand(rows=rnk, cols=ncol(X), min=-0.05, max=0.05);
+  seedH = -1;
+  if(seed != -1)
+    seedH = seed + 1;
+  W = rand(rows=nrow(X), cols=rnk, min=-0.05, max=0.05, seed=seed);
+  H = rand(rows=rnk, cols=ncol(X), min=-0.05, max=0.05, seed=seedH);
 
   i = 0;
   while(i < maxi) {

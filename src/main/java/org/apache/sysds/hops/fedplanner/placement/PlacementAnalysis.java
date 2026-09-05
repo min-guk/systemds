@@ -29,7 +29,9 @@ import java.util.Set;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
@@ -1022,6 +1024,7 @@ public final class PlacementAnalysis {
 	private final CandidateRuleFacts candidateRuleFacts;
 	private final CandidateReceiptDomain candidateReceiptDomain;
 	private final RelocationSelections.CanonicalOrderIndex relocationOrder;
+	private volatile RelocationSelections.RelocationPrivacyIndex relocationPrivacy;
 	private final Map<NeutralPlacementGraph.RelocationAction,Boolean> relocationActionsByIdentity;
 	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
@@ -1346,17 +1349,22 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Logical transient input has a foreign occurrence");
 			NeutralPlacementGraph.Node source = graph.node(fact.sourceWrite()).orElseThrow();
 			NeutralPlacementGraph.Node read = graph.node(fact.targetRead()).orElseThrow();
-			if(source.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE
-				|| read.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_READ)
+			if(!isCompiledTransientAccess(hopsByKey.get(source.key()), source, OpOpData.TRANSIENTWRITE)
+				|| !isCompiledTransientAccess(hopsByKey.get(read.key()), read, OpOpData.TRANSIENTREAD))
 				throw new IllegalArgumentException("Logical transient input endpoints have wrong node kinds");
 			if(source.valueVersion() != fact.sourceValueVersion() || read.valueVersion() != fact.readValueVersion())
 				throw new IllegalArgumentException("Logical transient input value identity differs");
 			if(fact.anchor() == null) {
-				if(!source.anchors().isEmpty() || !read.anchors().isEmpty())
-					throw new IllegalArgumentException("Plan-carried logical transient input owns a durable anchor");
+				// A seed write may retain its own exact map while a loop read denotes
+				// multiple shapes. Null certifies no common/read value-range identity;
+				// it does not erase the independent source's exact geometry.
+				if(!read.anchors().isEmpty())
+					throw new IllegalArgumentException("Plan-carried logical transient read owns a durable anchor");
 			}
 			else if(source.anchors().size() != 1 || read.anchors().size() != 1
-				|| source.anchors().get(0) != fact.anchor() || !read.anchors().get(0).equals(fact.anchor()))
+				|| source.anchors().get(0) != fact.anchor()
+				|| read.anchors().get(0).fType() != fact.anchor().fType()
+				|| !read.anchors().get(0).partitions().equals(fact.anchor().partitions()))
 				throw new IllegalArgumentException("Logical transient input anchor differs");
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
 				throw new IllegalArgumentException("Logical transient read has physical inputs");
@@ -1500,6 +1508,20 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Duplicate logical function input fact");
 		}
 		return List.copyOf(sorted);
+	}
+
+	static boolean isCompiledTransientAccess(Hop hop, NeutralPlacementGraph.Node node, OpOpData operation) {
+		if(operation != OpOpData.TRANSIENTREAD && operation != OpOpData.TRANSIENTWRITE
+			|| !(hop instanceof DataOp data) || data.getOp() != operation
+			|| !isCompiledHopOccurrenceKey(node.key(), node.kind()))
+			return false;
+		NodeKind physicalKind = operation == OpOpData.TRANSIENTREAD
+			? NodeKind.TRANSIENT_READ : NodeKind.TRANSIENT_WRITE;
+		// Phi is the value/control classification of a real compiled read or write,
+		// not a replacement for its runtime operation. Clones/synthetic boundaries
+		// remain outside this exact CFG forwarding authority.
+		return node.kind() == physicalKind || node.kind() == NodeKind.LOOP_PHI
+			|| node.kind() == NodeKind.BRANCH_JOIN;
 	}
 
 	private static boolean isLogicalFunctionRead(NeutralPlacementGraph.Node read) {
@@ -1854,6 +1876,34 @@ public final class PlacementAnalysis {
 		return RelocationSelections.canonicalOrderIndex(actions);
 	}
 
+	/**
+	 * Reuses the immutable full-analysis source-privacy authority for the exact graph,
+	 * including copied or filtered action collections. A projected authority graph
+	 * owns a different source-occurrence scope and must rebuild its own index.
+	 */
+	RelocationSelections.RelocationPrivacyIndex relocationPrivacyFor(
+		NeutralPlacementGraph authorityGraph,
+		java.util.Collection<NeutralPlacementGraph.RelocationAction> actions) {
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
+		Objects.requireNonNull(actions, "actions");
+		if(authorityGraph == graph) {
+			RelocationSelections.RelocationPrivacyIndex common = relocationPrivacy;
+			if(common == null) {
+				synchronized(this) {
+					common = relocationPrivacy;
+					if(common == null) {
+						common = RelocationSelections.buildRelocationPrivacyIndex(
+							this, graph, graph.relocationActions());
+						relocationPrivacy = common;
+					}
+				}
+			}
+			if(actions == graph.relocationActions() || common.containsAllSources(actions))
+				return common;
+		}
+		return RelocationSelections.buildRelocationPrivacyIndex(this, authorityGraph, actions);
+	}
+
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {
 		return compiledInputEdgesInCanonicalOrder;
@@ -1909,17 +1959,21 @@ public final class PlacementAnalysis {
 		for(CompiledInputEdgeFact edge : edges) {
 			Hop producer = hopsByKey.get(edge.producer());
 			Hop consumer = hopsByKey.get(edge.consumer());
-			boolean federationMapMetadata = edge.inputPosition() == 0
-				&& producer != null && producer.getDataType() != null
-				&& (producer.getDataType().isMatrix() || producer.getDataType().isFrame())
-				&& consumer instanceof UnaryOp unary
-				&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL
-					|| unary.getOp() == OpOp1.LENGTH);
-			result.put(edge, federationMapMetadata
-				? CoordinatorInputAccess.FEDERATION_MAP_METADATA
-				: CoordinatorInputAccess.PAYLOAD);
+			result.put(edge, coordinatorInputAccess(producer, consumer, edge.inputPosition()));
 		}
 		return Collections.unmodifiableMap(result);
+	}
+
+	/** Construction-time kernel shared with the pre-selector privacy closure. */
+	static CoordinatorInputAccess coordinatorInputAccess(Hop producer, Hop consumer, int inputPosition) {
+		boolean federationMapMetadata = inputPosition == 0
+			&& producer != null && producer.getDataType() != null
+			&& (producer.getDataType().isMatrix() || producer.getDataType().isFrame())
+			&& consumer instanceof UnaryOp unary
+			&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL
+				|| unary.getOp() == OpOp1.LENGTH);
+		return federationMapMetadata ? CoordinatorInputAccess.FEDERATION_MAP_METADATA
+			: CoordinatorInputAccess.PAYLOAD;
 	}
 
 	/**
@@ -1974,7 +2028,13 @@ public final class PlacementAnalysis {
 	public boolean isDmlFunctionCallBoundary(CompiledHopKey key) {
 		Hop owner = hop(Objects.requireNonNull(key, "function call key")).orElseThrow(
 			() -> new IllegalArgumentException("Function call boundary key is outside the analysis"));
-		return owner instanceof FunctionOp function && function.getFunctionType() == FunctionType.DML;
+		return isDmlFunctionCallBoundary(graph.node(key).orElseThrow(), owner);
+	}
+
+	static boolean isDmlFunctionCallBoundary(NeutralPlacementGraph.Node node, Hop owner) {
+		// Synthetic formals may share a FunctionOp origin but carry actual payloads.
+		return node.kind() == NodeKind.FUNCTION_CALL && owner instanceof FunctionOp function
+			&& function.getFunctionType() == FunctionType.DML;
 	}
 
 	public List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder() {

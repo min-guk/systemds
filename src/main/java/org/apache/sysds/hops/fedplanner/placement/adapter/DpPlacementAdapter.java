@@ -191,10 +191,23 @@ public final class DpPlacementAdapter {
 		}
 	}
 
+	/** Analysis-owned CFG definition dependency; excluded from physical candidate-oracle arity. */
+	public record CfgTransientDependencyEntry(NeutralPlacementGraph.Constraint constraint,
+		CompiledHopKey sourceOccurrence, int collectedPosition, PlacementState selectedSourceState) {
+		public CfgTransientDependencyEntry {
+			Objects.requireNonNull(constraint, "constraint");
+			Objects.requireNonNull(sourceOccurrence, "sourceOccurrence");
+			Objects.requireNonNull(selectedSourceState, "selectedSourceState");
+			if(sourceOccurrence != constraint.left() || collectedPosition < 0)
+				throw new IllegalArgumentException("CFG transient dependency identity differs");
+		}
+	}
+
 	public record CandidateOccurrenceSnapshot(NeutralEnumerationContext context,
 		CompiledHopKey parentOccurrence, List<CandidateMapEntry> rawEntries,
 		List<CandidateMapEntry> promotedEntries, List<LogicalCandidateInputEntry> logicalEntries,
 		List<TransientForwardDependencyEntry> transientForwardDependencies,
+		List<CfgTransientDependencyEntry> cfgTransientDependencies,
 		List<FunctionOutputDependencyEntry> functionOutputDependencies,
 		List<OracleInputState> orderedOracleInputs,
 		ConstructionDisposition disposition, String reasonCode) {
@@ -204,7 +217,18 @@ public final class DpPlacementAdapter {
 			List<TransientForwardDependencyEntry> transientForwardDependencies,
 			List<OracleInputState> orderedOracleInputs, ConstructionDisposition disposition, String reasonCode) {
 			this(context, parentOccurrence, rawEntries, promotedEntries, logicalEntries,
-				transientForwardDependencies, List.of(), orderedOracleInputs, disposition, reasonCode);
+				transientForwardDependencies, List.of(), List.of(), orderedOracleInputs, disposition, reasonCode);
+		}
+
+		public CandidateOccurrenceSnapshot(NeutralEnumerationContext context, CompiledHopKey parentOccurrence,
+			List<CandidateMapEntry> rawEntries, List<CandidateMapEntry> promotedEntries,
+			List<LogicalCandidateInputEntry> logicalEntries,
+			List<TransientForwardDependencyEntry> transientForwardDependencies,
+			List<FunctionOutputDependencyEntry> functionOutputDependencies,
+			List<OracleInputState> orderedOracleInputs, ConstructionDisposition disposition, String reasonCode) {
+			this(context, parentOccurrence, rawEntries, promotedEntries, logicalEntries,
+				transientForwardDependencies, List.of(), functionOutputDependencies,
+				orderedOracleInputs, disposition, reasonCode);
 		}
 
 		public CandidateOccurrenceSnapshot {
@@ -214,6 +238,7 @@ public final class DpPlacementAdapter {
 			promotedEntries = List.copyOf(promotedEntries);
 			logicalEntries = List.copyOf(logicalEntries);
 			transientForwardDependencies = List.copyOf(transientForwardDependencies);
+			cfgTransientDependencies = List.copyOf(cfgTransientDependencies);
 			functionOutputDependencies = List.copyOf(functionOutputDependencies);
 			orderedOracleInputs = List.copyOf(orderedOracleInputs);
 			Objects.requireNonNull(disposition, "disposition");
@@ -303,6 +328,40 @@ public final class DpPlacementAdapter {
 					throw new IllegalArgumentException("Transient-forward dependency ownership differs");
 				previousPosition = dependency.collectedPosition();
 			}
+			Set<CompiledHopKey> cfgSources = Collections.newSetFromMap(new IdentityHashMap<>());
+			int previousCfgPosition = -1;
+			for(CfgTransientDependencyEntry dependency : cfgTransientDependencies) {
+				NeutralPlacementGraph.Constraint constraint = dependency.constraint();
+				CompiledHopKey source = dependency.sourceOccurrence();
+				PlacementState selected = dependency.selectedSourceState();
+				Hop sourceHop = context.analysis().hop(source).orElseThrow();
+				if(constraint.right() != parentOccurrence
+					|| !isCfgTransientPlacementConstraintKind(constraint)
+					|| !constraint.evidence().startsWith("cfg-transient-value:")
+					|| !(sourceHop instanceof DataOp sourceData)
+					|| sourceData.getOp() != Types.OpOpData.TRANSIENTWRITE
+					|| carrierSources.contains(source) || dependencySources.contains(source)
+					|| functionOutputSources.contains(source) || !cfgSources.add(source)
+					|| dependency.collectedPosition() <= previousCfgPosition
+					|| context.analysis().cfgDefinitionSourcesInCanonicalOrder(parentOccurrence).stream()
+						.filter(candidate -> candidate == source).count() != 1
+					|| context.analysis().graph().constraints().stream()
+						.filter(candidate -> candidate == constraint).count() != 1
+					|| context.analysis().graph().node(source).orElseThrow().legalAlternatives().stream()
+						.filter(state -> state == selected).count() != 1)
+					throw new IllegalArgumentException("CFG transient dependency ownership differs");
+				previousCfgPosition = dependency.collectedPosition();
+			}
+			List<CompiledHopKey> expectedCfgSources = context.analysis()
+				.cfgDefinitionSourcesInCanonicalOrder(parentOccurrence).stream()
+				.filter(source -> {
+					Hop hop = context.analysis().hop(source).orElseThrow();
+					return hop instanceof DataOp data && data.getOp() == Types.OpOpData.TRANSIENTWRITE;
+				}).toList();
+			if(!cfgTransientDependencies.isEmpty()
+				&& !sameIdentityOrder(cfgTransientDependencies.stream()
+					.map(CfgTransientDependencyEntry::sourceOccurrence).toList(), expectedCfgSources))
+				throw new IllegalArgumentException("CFG transient source set differs");
 			List<CandidateInputState> factInputs = orderedOracleInputs.stream()
 				.map(input -> input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
 					: CandidateInputState.present(FType.valueOf(input.name()))).toList();
@@ -334,6 +393,11 @@ public final class DpPlacementAdapter {
 			if(left.get(i) != right.get(i))
 				return false;
 		return true;
+	}
+
+	private static boolean isCfgTransientPlacementConstraintKind(NeutralPlacementGraph.Constraint constraint) {
+		return constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT
+			|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT;
 	}
 
 	public record PreSelectionSemanticBlock(NeutralEnumerationContext context,
@@ -393,6 +457,7 @@ public final class DpPlacementAdapter {
 			int promotedIndex = 0;
 			int logicalIndex = 0;
 			int dependencyIndex = 0;
+			int cfgDependencyIndex = 0;
 			int functionOutputDependencyIndex = 0;
 			for(int i = 0; i < exactCollectedHops.size(); i++) {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
@@ -430,6 +495,16 @@ public final class DpPlacementAdapter {
 						throw new IllegalArgumentException("Transient-forward dependency has a federated carrier type");
 					dependencyIndex++;
 				}
+				else if(cfgDependencyIndex < snapshot.cfgTransientDependencies().size()
+					&& projected.key() == snapshot.cfgTransientDependencies().get(cfgDependencyIndex).sourceOccurrence()
+					&& i == snapshot.cfgTransientDependencies().get(cfgDependencyIndex).collectedPosition()) {
+					PlacementState selected = snapshot.cfgTransientDependencies().get(cfgDependencyIndex)
+						.selectedSourceState();
+					FType expected = selected.output() == FederatedOutput.FOUT ? selected.fType() : null;
+					if(effectiveCollectedFTypes.get(i) != expected)
+						throw new IllegalArgumentException("CFG transient dependency FType differs from selected state");
+					cfgDependencyIndex++;
+				}
 				else
 					throw new IllegalArgumentException(
 						"Normalized collected dependency has no exact physical, logical, function-output, or transient-forward owner");
@@ -437,7 +512,8 @@ public final class DpPlacementAdapter {
 			if(promotedIndex != snapshot.promotedEntries().size()
 				|| logicalIndex != snapshot.logicalEntries().size()
 				|| functionOutputDependencyIndex != snapshot.functionOutputDependencies().size()
-				|| dependencyIndex != snapshot.transientForwardDependencies().size())
+				|| dependencyIndex != snapshot.transientForwardDependencies().size()
+				|| cfgDependencyIndex != snapshot.cfgTransientDependencies().size())
 				throw new IllegalArgumentException("Normalized carrier order differs");
 		}
 	}
@@ -778,6 +854,7 @@ public final class DpPlacementAdapter {
 		List<CandidateMapEntry> promotedEntries = new ArrayList<>(collectedHops.size());
 		List<LogicalCandidateInputEntry> logicalEntries = new ArrayList<>(collectedHops.size());
 		List<TransientForwardDependencyEntry> transientForwardDependencies = new ArrayList<>(1);
+		List<CfgTransientDependencyEntry> cfgTransientDependencies = new ArrayList<>(1);
 		List<FunctionOutputDependencyEntry> functionOutputDependencies = new ArrayList<>(1);
 		List<OracleInputState> rawOrderOracleStates = new ArrayList<>(collectedHops.size());
 		List<OracleInputState> orderedOracleInputs = new ArrayList<>(collectedHops.size());
@@ -857,8 +934,9 @@ public final class DpPlacementAdapter {
 			}
 			boolean hasLogicalTransientInput = !parentTransientInputs.isEmpty();
 			if(remaining == 0 && hasLogicalTransientInput && parentHop.getInput().isEmpty()
-				&& context.analysis().graph().node(parent.key()).orElseThrow().kind()
-					== NeutralPlacementGraph.NodeKind.TRANSIENT_READ) {
+				// A compiled TRead can carry a semantic branch/loop phi kind.
+				// Logical value authority follows the actual operation, not that label.
+				&& parentHop instanceof DataOp data && data.getOp() == Types.OpOpData.TRANSIENTREAD) {
 				LogicalTransientInputFact fact;
 				try {
 					fact = context.analysis().requireExactLogicalTransientInput(occurrence.key(), parent.key(), 0);
@@ -935,6 +1013,39 @@ public final class DpPlacementAdapter {
 				}
 			}
 			if(remaining == 0) {
+				List<NeutralPlacementGraph.Constraint> cfgConstraints = parentHop.getDataType().isMatrix()
+					&& parentTransientInputs.isEmpty()
+					&& context.analysis().cfgDefinitionSourcesInCanonicalOrder(parent.key()).stream()
+						.anyMatch(source -> source == occurrence.key())
+					? context.analysis().graph().constraints().stream()
+						.filter(constraint -> constraint.left() == occurrence.key()
+							&& constraint.right() == parent.key()
+							&& isCfgTransientPlacementConstraintKind(constraint)
+							&& constraint.evidence().startsWith("cfg-transient-value:"))
+						.toList() : List.of();
+				if(!cfgConstraints.isEmpty()) {
+					PlacementState selected = childPlan == null ? null : childPlan.getSelectedPlacementState();
+					FType effectiveType = selected != null && selected.output() == FederatedOutput.FOUT
+						? selected.fType() : null;
+					if(cfgConstraints.size() != 1 || cfgTransientDependencies.stream()
+						.anyMatch(dependency -> dependency.sourceOccurrence() == occurrence.key())
+						|| childPlan == null || selected == null
+						|| context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
+							.filter(state -> state == selected).count() != 1
+						|| edge.getRight() != selected.output() || childPlan.getExecType() != selected.execType()
+						|| selected.output() == FederatedOutput.FOUT && childPlan.getFType() != selected.fType()
+						|| rawContainsKey != (effectiveType != null)
+						|| rawContainsKey && rawType != effectiveType || collectedType != effectiveType)
+						throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+							"CFG_TRANSIENT_DEPENDENCY_AUTHORITY_DIFFERS");
+					effectiveCollectedFTypes.set(i, effectiveType);
+					// The selected source state is exact dependency authority, not a physical
+					// parent input. Keep it out of the legacy FType map and oracle arity.
+					effectiveMap.remove(hop.getHopID());
+					cfgTransientDependencies.add(new CfgTransientDependencyEntry(cfgConstraints.get(0),
+						occurrence.key(), i, selected));
+					continue;
+				}
 				List<RewireTransientForwardEdge> forwards = context.rewireSnapshot().transientForwardEdges().stream()
 					.filter(forward -> forward.writeOccurrence() == occurrence.key()
 						&& forward.readOccurrence() == parent.key()).toList();
@@ -1020,7 +1131,8 @@ public final class DpPlacementAdapter {
 		orderedOracleInputs.addAll(groupedLogicalOracleInputs(logicalEntries));
 
 		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
-			promotedEntries, logicalEntries, transientForwardDependencies, functionOutputDependencies, orderedOracleInputs,
+			promotedEntries, logicalEntries, transientForwardDependencies, cfgTransientDependencies,
+			functionOutputDependencies, orderedOracleInputs,
 			ConstructionDisposition.AVAILABLE, "AVAILABLE");
 		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
 	}
@@ -1144,7 +1256,8 @@ public final class DpPlacementAdapter {
 				continue;
 			CandidateOccurrenceSnapshot materializedSnapshot = new CandidateOccurrenceSnapshot(
 				context, parent.key(), base.rawEntries(), candidatePromotedEntries, base.logicalEntries(),
-				base.transientForwardDependencies(), base.functionOutputDependencies(), candidateOrdered,
+				base.transientForwardDependencies(), base.cfgTransientDependencies(),
+				base.functionOutputDependencies(), candidateOrdered,
 				ConstructionDisposition.AVAILABLE, "AVAILABLE");
 			alternatives.add(new NormalizedCandidateInputs(materializedSnapshot, effectiveMap,
 				effectiveTypes, literal.exactCollectedHops()));
@@ -1214,6 +1327,7 @@ public final class DpPlacementAdapter {
 				resolved.fact(), invocationEvidence, variantOrdinal));
 		Map<CandidatePlacementArm, CandidateEmissionFact> catalog = new LinkedHashMap<>();
 		NeutralPlacementGraph.Node node = context.analysis().graph().node(snapshot.parentOccurrence()).orElseThrow();
+		boolean hasCfgTransientDependencies = !snapshot.cfgTransientDependencies().isEmpty();
 		for(CandidateEmissionFact emissionFact : resolved.fact().allowedEmissionFacts()) {
 			PlacementEmissionState emissionState = emissionFact.emissionState();
 			PlacementState state = emissionState.placementState();
@@ -1223,10 +1337,18 @@ public final class DpPlacementAdapter {
 					+ ", emitted=" + state
 					+ ", legal=" + node.legalAlternatives()
 					+ ", reason=" + caps.reasonCode());
-			boolean allowed = state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+			boolean cfgCompatible = hasCfgTransientDependencies
+				&& snapshot.cfgTransientDependencies().stream().allMatch(dependency ->
+					NeutralPlacementGraph.constraintSatisfied(dependency.constraint(),
+						dependency.selectedSourceState(), state));
+			boolean policyAllowed = state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 				? placement.allowCP_LOUT : state.execType() == ExecType.CP && state.output() == FederatedOutput.FOUT
 				? placement.allowCP_FOUT : state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT
 				? placement.allowFED_LOUT : placement.allowFED_FOUT;
+			boolean cfgFedFoutBridge = state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.FOUT && state.fType() != null;
+			boolean allowed = hasCfgTransientDependencies
+				? cfgCompatible && (policyAllowed || cfgFedFoutBridge) : policyAllowed;
 			if(allowed) {
 				CandidatePlacementArm arm = new CandidatePlacementArm(emissionFact);
 				if(catalog.containsKey(arm))
@@ -1234,10 +1356,17 @@ public final class DpPlacementAdapter {
 				catalog.put(arm, emissionFact);
 			}
 		}
+		boolean cfgCpLoutAuthorized = catalog.keySet().stream().anyMatch(arm ->
+			arm.execType() == ExecType.CP && arm.output() == FederatedOutput.LOUT);
+		boolean cfgFedFoutAuthorized = catalog.keySet().stream().anyMatch(arm ->
+			arm.execType() == ExecType.FED && arm.output() == FederatedOutput.FOUT);
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
 			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
-			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT,
+			hasCfgTransientDependencies ? cfgCpLoutAuthorized : placement.allowCP_LOUT,
+			hasCfgTransientDependencies ? false : placement.allowCP_FOUT,
+			hasCfgTransientDependencies ? false : placement.allowFED_LOUT,
+			hasCfgTransientDependencies ? cfgFedFoutAuthorized : placement.allowFED_FOUT,
 			resolved.fact(), caps, catalog);
 	}
 

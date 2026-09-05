@@ -213,7 +213,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testPrivateAggregateDecisionKeepsCpfoutOpenForMaterializableMatrixHop() {
+	public void testPrivateAggregateDecisionRejectsCoordinatorMaterializationDespiteConcreteFType() {
 		DataOp localLeft = transientRead("LocalLeft", ROWS, 1);
 		DataOp fedRight = federatedRead("FedRight", ROWS, 1);
 		BinaryOp cbind = new BinaryOp("cbindPrivateAgg", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND, localLeft, fedRight);
@@ -228,13 +228,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
 			cbind, Privacy.PRIVATE_AGGREGATE, FType.ROW, oracleCaps);
-		assertTrue("PRIVATE_AGGREGATE should keep CP/LOUT open", decision.allowCP_LOUT);
-		assertTrue("PRIVATE_AGGREGATE should keep CP/FOUT open whenever the matrix hop has a concrete materializable FType",
+		assertFalse("origin-bound data cannot be collected for CP execution", decision.allowCP_LOUT);
+		assertFalse("a concrete upload anchor does not authorize a protected coordinator payload",
 			decision.allowCP_FOUT);
 	}
 
 	@Test
-	public void testPrivateAggregateDecisionRequiresConcreteFTypeForCpfout() {
+	public void testPrivateAggregateDecisionRejectsCoordinatorMaterializationWithoutFType() {
 		DataOp localLeft = transientRead("LocalLeft", ROWS, 1);
 		DataOp fedRight = federatedRead("FedRight", ROWS, 1);
 		BinaryOp cbind = new BinaryOp("cbindPrivateAggUnknownFType", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND,
@@ -250,7 +250,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
 			cbind, Privacy.PRIVATE_AGGREGATE, null, oracleCaps);
-		assertTrue("PRIVATE_AGGREGATE should keep CP/LOUT open", decision.allowCP_LOUT);
+		assertFalse("origin-bound data cannot be collected for CP execution", decision.allowCP_LOUT);
 		assertFalse("PRIVATE_AGGREGATE should not expose CP/FOUT without a concrete materializable FType hint",
 			decision.allowCP_FOUT);
 	}
@@ -5053,7 +5053,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision aggregateCall = ExecPlacementPolicy.decide(
 			transform, Privacy.PRIVATE_AGGREGATE, FType.ROW, callCaps);
-		assertTrue(aggregateCall.allowCP_LOUT);
+		assertFalse("aggregate-only inputs cannot be collected for CP transformencode",
+			aggregateCall.allowCP_LOUT);
 		assertTrue(aggregateCall.allowFED_FOUT);
 		assertFalse("multi-return lowering cannot express CP transform followed by FOUT",
 			aggregateCall.allowCP_FOUT);
@@ -5065,13 +5066,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision aggregateEncoded = ExecPlacementPolicy.decide(
 			encoded, Privacy.PRIVATE_AGGREGATE, FType.ROW, encodedCaps);
-		assertTrue(aggregateEncoded.allowCP_LOUT);
+		assertFalse("encoded row-level data retains origin residency", aggregateEncoded.allowCP_LOUT);
 		assertTrue(aggregateEncoded.allowFED_FOUT);
 		assertFalse(aggregateEncoded.allowCP_FOUT);
 
 		ExecPlacementPolicy.Decision aggregateMetadata = ExecPlacementPolicy.decide(
 			metadata, Privacy.PRIVATE_AGGREGATE, null, metadataCaps);
-		assertTrue(aggregateMetadata.allowCP_LOUT);
+		assertFalse("metadata needs output-specific aggregation proof before local release",
+			aggregateMetadata.allowCP_LOUT);
 		assertFalse(aggregateMetadata.allowFED_FOUT);
 		ExecPlacementPolicy.Decision privateMetadata = ExecPlacementPolicy.decide(
 			metadata, Privacy.PRIVATE, null, metadataCaps);

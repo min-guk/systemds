@@ -149,6 +149,80 @@ public class ExactMaxDemandFactorDecompositionTest {
 		Assert.assertNotEquals(first.semanticDescriptor(), second.semanticDescriptor());
 	}
 
+	@Test
+	public void zeroFrequencyDemandKeepsCanonicalOriginalScopeButNeedsNoAuxiliaries() {
+		var source = new ExactCategoricalSolver.Variable("zero-source", 3);
+		var firstConsumer = new ExactCategoricalSolver.Variable("zero-consumer-a", 2);
+		var secondConsumer = new ExactCategoricalSolver.Variable("zero-consumer-b", 3);
+		var decomposition = ExactMaxDemandFactorDecomposition.create("zero-frequency", source,
+			new boolean[] {true, true, true}, List.of(
+				new ExactMaxDemandFactorDecomposition.Demand(firstConsumer,
+					new boolean[] {false, true}, new double[] {0d, 0d, 0d}),
+				new ExactMaxDemandFactorDecomposition.Demand(secondConsumer,
+					new boolean[] {true, false, true}, new double[] {0d, 0d, 0d})));
+
+		Assert.assertEquals(List.of(source, firstConsumer, secondConsumer),
+			decomposition.canonicalFactor().scope());
+		Assert.assertTrue(decomposition.auxiliaryVariables().isEmpty());
+		Assert.assertTrue(decomposition.solverFactors().isEmpty());
+		Assert.assertTrue(decomposition.semanticDescriptor().contains("|identicallyZero=true"));
+		for(int sourceValue = 0; sourceValue < source.domainSize(); sourceValue++)
+			for(int firstValue = 0; firstValue < firstConsumer.domainSize(); firstValue++)
+				for(int secondValue = 0; secondValue < secondConsumer.domainSize(); secondValue++)
+					Assert.assertEquals(Double.doubleToRawLongBits(0d),
+						Double.doubleToRawLongBits(ExactCategoricalSolver.evaluate(
+							List.of(source, firstConsumer, secondConsumer),
+							List.of(decomposition.canonicalFactor()), TEST_LIMITS,
+							List.of(sourceValue, firstValue, secondValue))));
+	}
+
+	@Test
+	public void dormantNonzeroPricesDoNotCreateAuxiliaryFeasibilityConstraints() {
+		var source = new ExactCategoricalSolver.Variable("dormant-source", 3);
+		var activeConsumer = new ExactCategoricalSolver.Variable("active-consumer", 2);
+		var dormantConsumer = new ExactCategoricalSolver.Variable("dormant-consumer", 2);
+		var decomposition = ExactMaxDemandFactorDecomposition.create("dormant", source,
+			new boolean[] {false, true, true}, List.of(
+				new ExactMaxDemandFactorDecomposition.Demand(activeConsumer,
+					new boolean[] {false, true}, new double[] {17d, 0d, 0d}),
+				new ExactMaxDemandFactorDecomposition.Demand(dormantConsumer,
+					new boolean[] {false, false}, new double[] {19d, 23d, 29d})));
+
+		Assert.assertTrue(decomposition.auxiliaryVariables().isEmpty());
+		Assert.assertTrue(decomposition.solverFactors().isEmpty());
+		for(int sourceValue = 0; sourceValue < source.domainSize(); sourceValue++)
+			for(int activeValue = 0; activeValue < activeConsumer.domainSize(); activeValue++)
+				for(int dormantValue = 0; dormantValue < dormantConsumer.domainSize(); dormantValue++)
+					Assert.assertEquals(Double.doubleToRawLongBits(0d),
+						Double.doubleToRawLongBits(ExactCategoricalSolver.evaluate(
+							List.of(source, activeConsumer, dormantConsumer),
+							List.of(decomposition.canonicalFactor()), TEST_LIMITS,
+							List.of(sourceValue, activeValue, dormantValue))));
+	}
+
+	@Test
+	public void activePositiveDemandRetainsExactFactorization() {
+		var source = new ExactCategoricalSolver.Variable("positive-source", 2);
+		var consumer = new ExactCategoricalSolver.Variable("positive-consumer", 2);
+		var decomposition = ExactMaxDemandFactorDecomposition.create("positive", source,
+			new boolean[] {true, true}, List.of(new ExactMaxDemandFactorDecomposition.Demand(
+				consumer, new boolean[] {false, true}, new double[] {0d, 1d})));
+
+		Assert.assertFalse(decomposition.auxiliaryVariables().isEmpty());
+		Assert.assertFalse(decomposition.solverFactors().isEmpty());
+		Assert.assertFalse(decomposition.semanticDescriptor().contains("|identicallyZero=true"));
+	}
+
+	@Test
+	public void nonFiniteAndNegativeZeroPricesRemainRejectedBeforeElision() {
+		var consumer = new ExactCategoricalSolver.Variable("invalid-consumer", 1);
+		for(double invalid : List.of(Double.NaN, Double.POSITIVE_INFINITY,
+			Double.NEGATIVE_INFINITY, -0d))
+			Assert.assertThrows(IllegalArgumentException.class,
+				() -> new ExactMaxDemandFactorDecomposition.Demand(consumer,
+					new boolean[] {false}, new double[] {invalid}));
+	}
+
 	private static ExactCategoricalSolver.Factor fixed(
 		ExactCategoricalSolver.Variable variable, int accepted) {
 		return ExactCategoricalSolver.Factor.lazy(List.of(variable), values ->

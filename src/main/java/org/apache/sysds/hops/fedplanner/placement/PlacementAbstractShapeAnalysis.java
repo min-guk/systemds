@@ -65,10 +65,14 @@ import org.apache.sysds.parser.DataExpression;
 final class PlacementAbstractShapeAnalysis {
 	private PlacementAbstractShapeAnalysis() { }
 
-	record HopFacts(Map<Hop,AbstractShapeFact> shapes, Map<Hop,ScalarState> scalars) {
+	record HopFacts(Map<Hop,AbstractShapeFact> shapes, Map<Hop,ScalarState> scalars,
+		Map<Hop,List<Hop>> valueSources) {
 		HopFacts {
 			shapes = Collections.unmodifiableMap(new IdentityHashMap<>(shapes));
 			scalars = Collections.unmodifiableMap(new IdentityHashMap<>(scalars));
+			Map<Hop,List<Hop>> sources = new IdentityHashMap<>();
+			valueSources.forEach((hop, values) -> sources.put(hop, List.copyOf(values)));
+			valueSources = Collections.unmodifiableMap(sources);
 		}
 	}
 
@@ -122,8 +126,17 @@ final class PlacementAbstractShapeAnalysis {
 	static HopFacts inferOriginalOccurrences(List<Hop> hops, List<String> namespaces,
 		List<Set<Integer>> reachingDefinitions, List<Boolean> reachingFunctionInputs,
 		FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
+		return inferOriginalOccurrences(hops, namespaces, reachingDefinitions,
+			reachingFunctionInputs, fgraph, fcallSizes, Map.of());
+	}
+
+	static HopFacts inferOriginalOccurrences(List<Hop> hops, List<String> namespaces,
+		List<Set<Integer>> reachingDefinitions, List<Boolean> reachingFunctionInputs,
+		FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
+		Map<Hop,NodeShapeFact> concreteShapes) {
 		Objects.requireNonNull(fgraph, "fgraph");
 		Objects.requireNonNull(fcallSizes, "fcallSizes");
+		Objects.requireNonNull(concreteShapes, "concreteShapes");
 		if(hops.size() != namespaces.size() || hops.size() != reachingDefinitions.size()
 			|| hops.size() != reachingFunctionInputs.size())
 			throw new IllegalArgumentException("Abstract-analysis occurrence inputs differ in size");
@@ -131,7 +144,9 @@ final class PlacementAbstractShapeAnalysis {
 		Map<Hop,AbstractShapeFact> shapes = new IdentityHashMap<>();
 		Map<Hop,ScalarState> scalars = new IdentityHashMap<>();
 		for(Hop hop : hops) {
-			shapes.put(hop, concreteSeed(hop));
+			NodeShapeFact supplied = concreteShapes.get(hop);
+			shapes.put(hop, supplied == null ? concreteSeed(hop)
+				: AbstractShapeFact.fromConcrete(supplied));
 			scalars.put(hop, hop instanceof LiteralOp literal ? ScalarState.exact(literal) : ScalarState.bottom());
 		}
 
@@ -162,12 +177,19 @@ final class PlacementAbstractShapeAnalysis {
 		}
 
 		closeHopFacts(hops, shapes, scalars, valueSources, unsafeScalarFunctionInputs);
-		return new HopFacts(shapes, scalars);
+		return new HopFacts(shapes, scalars, valueSources);
 	}
 
 	static KeyFacts closeCompiledOccurrences(NeutralPlacementGraph graph,
 		List<HopOccurrenceProjection> projections,
 		FunctionCallSizeInfo fcallSizes) {
+		return closeCompiledOccurrences(graph, projections, fcallSizes, Map.of());
+	}
+
+	static KeyFacts closeCompiledOccurrences(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections, FunctionCallSizeInfo fcallSizes,
+		Map<CompiledHopKey,NodeShapeFact> concreteShapes) {
+		Objects.requireNonNull(concreteShapes, "concreteShapes");
 		Map<CompiledHopKey,Hop> hops = new LinkedHashMap<>();
 		Map<CompiledHopKey,AbstractShapeFact> shapes = new LinkedHashMap<>();
 		Map<CompiledHopKey,ScalarState> scalars = new LinkedHashMap<>();
@@ -177,7 +199,9 @@ final class PlacementAbstractShapeAnalysis {
 			hops.put(key, hop);
 			NodeKind kind = graph.node(key).orElseThrow().kind();
 			boolean synthetic = kind == NodeKind.FUNCTION_INPUT || kind == NodeKind.FUNCTION_OUTPUT;
-			shapes.put(key, synthetic ? AbstractShapeFact.bottom(DataType.UNKNOWN) : concreteSeed(hop));
+			NodeShapeFact supplied = concreteShapes.get(key);
+			shapes.put(key, synthetic ? AbstractShapeFact.bottom(DataType.UNKNOWN)
+				: supplied == null ? concreteSeed(hop) : AbstractShapeFact.fromConcrete(supplied));
 			scalars.put(key, synthetic ? ScalarState.bottom()
 				: hop instanceof LiteralOp literal ? ScalarState.exact(literal) : ScalarState.bottom());
 		}
@@ -370,6 +394,9 @@ final class PlacementAbstractShapeAnalysis {
 			return inputShape(inputs, 0);
 		if(hop instanceof UnaryOp unary && hop.getDataType() == DataType.MATRIX)
 			return inputShape(inputs, 0);
+		if(hop instanceof BinaryOp binary && hop.getDataType() == DataType.MATRIX
+			&& (binary.getOp() == OpOp2.CBIND || binary.getOp() == OpOp2.RBIND))
+			return appendShape(binary, inputs);
 		if(hop instanceof BinaryOp && hop.getDataType() == DataType.MATRIX)
 			return broadcastShape(hop.getDataType(), inputs);
 		if(hop.getDataType() == DataType.MATRIX || hop.getDataType() == DataType.FRAME) {
@@ -537,6 +564,39 @@ final class PlacementAbstractShapeAnalysis {
 		if(left.isExact(1)) return right;
 		if(right.isExact(1)) return left;
 		return left.join(right);
+	}
+
+	private static AbstractShapeFact appendShape(BinaryOp append, List<AbstractShapeFact> inputs) {
+		AbstractShapeFact left = inputShape(inputs, 0);
+		AbstractShapeFact right = inputShape(inputs, 1);
+		if(append.getOp() == OpOp2.CBIND)
+			return new AbstractShapeFact(append.getDataType(),
+				invariantAppendDimension(left.rows(), right.rows()),
+				growingAppendDimension(left.cols(), right.cols()));
+		return new AbstractShapeFact(append.getDataType(),
+			growingAppendDimension(left.rows(), right.rows()),
+			invariantAppendDimension(left.cols(), right.cols()));
+	}
+
+	private static DimensionFact invariantAppendDimension(DimensionFact left, DimensionFact right) {
+		if(left.knowledge() == DimensionKnowledge.BOTTOM || right.knowledge() == DimensionKnowledge.BOTTOM)
+			return DimensionFact.bottom();
+		if(!left.isExact() || !right.isExact())
+			return DimensionFact.unknown();
+		return left.value() == right.value() ? left : DimensionFact.unknown();
+	}
+
+	private static DimensionFact growingAppendDimension(DimensionFact left, DimensionFact right) {
+		if(left.knowledge() == DimensionKnowledge.BOTTOM || right.knowledge() == DimensionKnowledge.BOTTOM)
+			return DimensionFact.bottom();
+		if(!left.isExact() || !right.isExact())
+			return DimensionFact.unknown();
+		try {
+			return DimensionFact.exact(Math.addExact(left.value(), right.value()));
+		}
+		catch(ArithmeticException ignored) {
+			return DimensionFact.unknown();
+		}
 	}
 
 	private static AbstractShapeFact concreteSeed(Hop hop) {

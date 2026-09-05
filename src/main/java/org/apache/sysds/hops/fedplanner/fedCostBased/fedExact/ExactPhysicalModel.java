@@ -35,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
@@ -645,6 +646,9 @@ final class ExactPhysicalModel {
 	private static void addInputAuthorityFactors(PlacementAnalysis analysis,
 		Map<CompiledHopKey,List<Link>> incoming, Map<CompiledHopKey,DecisionDomain> domains,
 		List<ExactCategoricalSolver.Factor> factors) {
+		RelocationSelections.RelocationPrivacyIndex relocationPrivacy =
+			RelocationSelections.relocationPrivacyIndex(analysis, analysis.graph(),
+				analysis.graph().relocationActions());
 		for(Map.Entry<CompiledHopKey,List<Link>> entry : incoming.entrySet()) {
 			DecisionDomain consumer = domains.get(entry.getKey());
 			if(consumer == null)
@@ -664,12 +668,15 @@ final class ExactPhysicalModel {
 				List<DecisionDomain> scope = List.copyOf(scopeDomains);
 				factors.add(ExactCategoricalSolver.Factor.lazy(
 					scope.stream().map(DecisionDomain::variable).toList(), values ->
-						inputSatisfied(analysis, link, consumer, directSource, scope, values)));
+						inputSatisfied(analysis, relocationPrivacy, link, consumer,
+							directSource, scope, values)));
 			}
 		}
 	}
 
-	private static double inputSatisfied(PlacementAnalysis analysis, Link link, DecisionDomain consumer,
+	private static double inputSatisfied(PlacementAnalysis analysis,
+		RelocationSelections.RelocationPrivacyIndex relocationPrivacy,
+		Link link, DecisionDomain consumer,
 		DecisionDomain directSource, List<DecisionDomain> scope, int[] values) {
 		NeutralPlacementGraph graph = analysis.graph();
 		Alternative selectedConsumer = selected(consumer, scope, values);
@@ -707,6 +714,8 @@ final class ExactPhysicalModel {
 		if(!required)
 			return Double.POSITIVE_INFINITY;
 		if(!graph.isRelocationActive(action, assignment, selectedCandidates))
+			return Double.POSITIVE_INFINITY;
+		if(!relocationPrivacy.isPrivacySafe(action, true))
 			return Double.POSITIVE_INFINITY;
 		return source.state().output() == FederatedOutput.LOUT
 			|| source.state().output() == FederatedOutput.FOUT ? 0.0 : Double.POSITIVE_INFINITY;
