@@ -478,7 +478,7 @@ public final class RelocationSelections {
 			List<DemandOptions> demands = rankedDemands.stream()
 				.map(RankedDemandOptions::demand).toList();
 			Search search = new Search(demands, null, order);
-			search.solve(0);
+			search.solveExactlyByInteractionComponent();
 			if(search.best == null)
 				throw new IllegalStateException("Exact indexed relocation-choice search has no solution");
 			return new Selection(search.best, search.bestEmitted, search.bestEmissionCount);
@@ -1522,6 +1522,98 @@ public final class RelocationSelections {
 							demand -> demand.options().size()).max().orElse(0));
 		}
 
+		/**
+		 * Reconstructs the canonical exact choice certificate without multiplying
+		 * independent relocation factors. Demands are connected when they share a
+		 * consumer anchor or a physical emission. The minimum-emission objective is
+		 * additive across these components, and the canonical rank tie-break is
+		 * separable over their ordered subsequences.
+		 */
+		private void solveExactlyByInteractionComponent() {
+			if(requiredEmitted != null || !hasAlternative || demands.isEmpty()) {
+				solve(0);
+				return;
+			}
+			List<List<DemandOptions>> components = exactInteractionComponents();
+			if(components.size() < 2) {
+				solve(0);
+				return;
+			}
+			List<RankedChoice> combined = new ArrayList<>(demands.size());
+			Set<RelocationActionKey> combinedEmitted =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<Integer> physicalEmissions = new LinkedHashSet<>();
+			for(List<DemandOptions> component : components) {
+				Search search = new Search(component, null, order);
+				search.solve(0);
+				if(search.best == null)
+					return;
+				for(int index = 0; index < search.best.size(); index++)
+					combined.add(new RankedChoice(search.best.get(index),
+						search.bestChoiceRanks.get(index)));
+				for(RelocationActionKey action : search.bestEmitted)
+					if(combinedEmitted.add(action))
+						physicalEmissions.add(order.physicalEmissionId(action));
+			}
+			combined.sort(Comparator.comparingInt(RankedChoice::rank));
+			best = combined.stream().map(RankedChoice::receipt).toList();
+			bestChoiceRanks = combined.stream().map(RankedChoice::rank).toList();
+			bestEmitted = canonicalEmittedActions(combinedEmitted, order);
+			bestEmissionCount = physicalEmissions.size();
+		}
+
+		private List<List<DemandOptions>> exactInteractionComponents() {
+			int size = demands.size();
+			int[] parent = new int[size];
+			for(int index = 0; index < size; index++)
+				parent[index] = index;
+			Map<Integer,Integer> consumerOwners = new HashMap<>();
+			Map<Integer,Integer> physicalOwners = new HashMap<>();
+			for(int demandIndex = 0; demandIndex < size; demandIndex++)
+				for(Option option : demands.get(demandIndex).options()) {
+					unionWithOwner(parent, consumerOwners,
+						order.consumerId(option.obligation().consumer()), demandIndex);
+					if(option.requiresEmission())
+						unionWithOwner(parent, physicalOwners,
+							order.physicalEmissionId(option.action().key()), demandIndex);
+				}
+			Map<Integer,List<DemandOptions>> byRoot = new LinkedHashMap<>();
+			for(int index = 0; index < size; index++)
+				byRoot.computeIfAbsent(find(parent, index), ignored -> new ArrayList<>())
+					.add(demands.get(index));
+			return byRoot.values().stream().map(List::copyOf).toList();
+		}
+
+		private static <T> void unionWithOwner(int[] parent, Map<T,Integer> owners,
+			T factor, int demand) {
+			Integer owner = owners.putIfAbsent(factor, demand);
+			if(owner != null)
+				union(parent, owner, demand);
+		}
+
+		private static int find(int[] parent, int node) {
+			int root = node;
+			while(parent[root] != root)
+				root = parent[root];
+			while(parent[node] != node) {
+				int next = parent[node];
+				parent[node] = root;
+				node = next;
+			}
+			return root;
+		}
+
+		private static void union(int[] parent, int left, int right) {
+			int leftRoot = find(parent, left);
+			int rightRoot = find(parent, right);
+			if(leftRoot == rightRoot)
+				return;
+			if(leftRoot < rightRoot)
+				parent[rightRoot] = leftRoot;
+			else
+				parent[leftRoot] = rightRoot;
+		}
+
 		private void solve(int index) {
 			if(index == 0 && !hasAlternative) {
 				solveDeterministic();
@@ -1656,8 +1748,10 @@ public final class RelocationSelections {
 			}
 			if(requiredEmitted != null && !selectedEmitted.equals(requiredEmitted))
 				return;
-			best = choices.stream().sorted(Comparator.comparingInt(RankedChoice::rank))
-				.map(RankedChoice::receipt).toList();
+			List<RankedChoice> ordered = choices.stream()
+				.sorted(Comparator.comparingInt(RankedChoice::rank)).toList();
+			best = ordered.stream().map(RankedChoice::receipt).toList();
+			bestChoiceRanks = ordered.stream().map(RankedChoice::rank).toList();
 			bestEmitted = List.copyOf(selectedEmitted);
 			bestEmissionCount = physical.size();
 		}

@@ -2,7 +2,8 @@
 
 ## Candidate-row materialization search expands a whole-program Cartesian product
 
-- **Status**: resolved in source; immutable-stage planning smoke pending
+- **Status**: resolved and verified in immutable stage `7ac6818`; the smoke exposed a
+  subsequent independent certificate-reconstruction bottleneck documented below
 - **Environment/conditions**: `cofee-fournet-w1357-20260901` at `59819b48d9`; GLM planning-only; FedAll (`mkl-fout`); LAN; one worker; PRIVATE_AGGREGATE input.
 - **Reproduction**: run the single GLM planning cell from
   `/home/mchoi/g014-runtime-4net-w1357-20260901-control/run_extra_ml_campaign_20260904_1785d1f.py`
@@ -57,13 +58,63 @@
     `localhost:1234/1235` and failed closed. That pre-existing, non-hermetic test was excluded from
     the authoritative regression batch in accordance with the repository instruction to ignore
     public/live privacy cases; all other 26 tests in that invocation passed.
-- **Remaining issues**:
-  - build and deploy an immutable stage from the resulting commit;
-  - rerun GLM planning-only for FedAll, Heuristic, and Exact and inspect selected-plan fingerprints,
-    privacy/feasibility certification, and planning time before resuming runtime cells.
+- **Immutable-stage evidence**:
+  - commit `7ac681894383064c19a491634cb3757d63471c0d` was built into
+    `/home/mchoi/cofee-w1357-stage-20260905-7ac6818` and deployed with matching JAR and
+    manifest hashes to `so002`--`so009` (never the proxy `so001`);
+  - GLM/LAN/worker=1/FedAll passed the candidate-row component solve, but then remained in
+    the downstream relocation certificate search. This establishes that the first Cartesian
+    product was removed rather than merely shifted within `CandidateSelections`.
 - **Potential regression risk**: omitting a shared factor would make sequential component choices
   non-exact. Detect this through exhaustive-oracle equality tests and canonical post-selection
   validation of relocation/local/FOUT emission counts.
 - **Decision basis**: changed only the exact search decomposition. Runtime capability, privacy
   constraints, candidate availability, and planner policy remain authoritative and unchanged;
   no candidate, placement state, or physical movement was removed.
+
+## Final relocation certificate reconstruction expands independent demands globally
+
+- **Status**: resolved in source; successor immutable-stage GLM planning smoke pending
+- **Environment/conditions**: immutable stage `7ac6818`; GLM planning-only; FedAll; LAN;
+  one worker; the candidate-row component solve above already completed.
+- **Observed symptom**: after approximately 157 seconds the coordinator still had not emitted
+  the compile timer. A live JVM stack showed hundreds of recursive frames in
+  `RelocationSelections$Search.solve` (then lines 1543/1579), called from
+  `RelocationSelections$CandidateProblemIndex.select`, then
+  `CandidateSelections$Search.requireBest`, while scoring the selected placement.
+- **Cause analysis**: the indexed scorer correctly factors candidate-row optimization, but its
+  final canonical certificate reconstruction rebuilt all selected relocation demands and ran a
+  second global Cartesian recursion. Most demands are independent. Only demands sharing the same
+  physical consumer constrain a common anchor, while only demands capable of emitting the same
+  physical relocation share the minimum-emission objective. Multiplying all other demands is
+  unnecessary and does not change the exact result.
+- **Resolution**:
+  1. Build exact connected components over relocation demands using the authoritative consumer
+     identity and physical-emission identity already assigned by `RelocationOrder`.
+  2. Solve every component with the existing exact recursion, then merge component certificates
+     in global canonical-rank order and recompute the unique physical-emission count.
+  3. Retain the original global recursion for constrained `requiredEmitted` queries and for a
+     single component. Deterministic components now also materialize their canonical rank vector
+     so they can be merged without a special case.
+- **Correctness argument**: anchor feasibility is local to a consumer component; emission cost is
+  the cardinality of physical emission identities and therefore additive between components that
+  share no such identity; and the global canonical tie-break is the ordered merge of the
+  lexicographically minimal subsequence from each independent component. Thus the decomposition
+  preserves the feasible domain, exact objective, and canonical result.
+- **Files changed**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java`
+- **Verification**:
+  - the bounded builtin-GLM exhaustive oracle still passes and compares the production
+    componentized path against the independent original global relocation search;
+  - `RelocationSelectionsPhysicalAnchorTest`, `ExactPlacementSelectorBranchAndBoundTest`, and
+    `PolicyFirstFeasiblePlacementSelectorTest` pass together;
+  - the wider legacy fixtures that contact `localhost:1234/1235` fail closed when no privacy
+    workers are running. This is expected non-hermetic fixture behavior and is not treated as
+    evidence about this change.
+- **Remaining issues**:
+  - package and commit the source change;
+  - build and deploy a successor immutable stage;
+  - rerun GLM planning-only for FedAll, Heuristic, and Exact, inspect privacy/feasibility receipts
+    and plan fingerprints, and only then resume the remaining planning campaign.
+- **Decision basis**: this is an exact factorization of certificate search, not a heuristic,
+  top-K cap, candidate-space restriction, DML rewrite, or runtime fallback.
