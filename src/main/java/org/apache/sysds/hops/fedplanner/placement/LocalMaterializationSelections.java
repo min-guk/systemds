@@ -270,6 +270,15 @@ public final class LocalMaterializationSelections {
 			return physicalEmissionCount;
 		}
 
+		/** Exact local-materialization factors whose truth value this row can change. */
+		int[] exactInteractionProducerIds(CandidateSelectionReceipt receipt) {
+			Integer id = receiptIds.get(receipt);
+			if(id == null)
+				throw new IllegalArgumentException(
+					"Candidate receipt is outside its exact local-materialization index");
+			return affectedProducerIdsByReceipt[id].clone();
+		}
+
 		private void updateReceiptSelection(int receiptId, boolean selected) {
 			for(int producerId : affectedProducerIdsByReceipt[receiptId])
 				if(emissionRequired(producers[producerId]))

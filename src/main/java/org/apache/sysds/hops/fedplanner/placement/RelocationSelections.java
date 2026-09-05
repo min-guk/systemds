@@ -276,6 +276,7 @@ public final class RelocationSelections {
 		private final Map<RelocationAction,int[]> suppressorIds;
 		private final Map<CandidateSelectionReceipt,ScoredReceipt> scoredReceipts;
 		private final Map<CandidateSelectionReceipt,Object> exactScoringEffects;
+		private final Map<CandidateSelectionReceipt,long[]> exactInteractionTokens;
 		private final ScoredAction[] scoredActions;
 		private final int scoredConsumerCount;
 		private final int scoredAnchorCount;
@@ -419,14 +420,33 @@ public final class RelocationSelections {
 				for(int suppressorId : scoredActionArray[actionId].suppressorIds())
 					suppressedActionsByReceipt.get(suppressorId).add(actionId);
 			Map<CandidateSelectionReceipt,Object> effects = new IdentityHashMap<>();
+			Map<CandidateSelectionReceipt,long[]> interactions = new IdentityHashMap<>();
 			for(CandidateSelectionReceipt receipt : exactReceipts) {
 				List<List<ScoredOption>> demandEffects = new ArrayList<>();
-				for(ScoredDemand demand : scored.get(receipt).demands())
+				Set<Long> interactionTokens = new LinkedHashSet<>();
+				for(ScoredDemand demand : scored.get(receipt).demands()) {
 					demandEffects.add(List.copyOf(Arrays.asList(demand.options())));
-				effects.put(receipt, new ExactReceiptScoringEffect(List.copyOf(demandEffects),
-					List.copyOf(suppressedActionsByReceipt.get(ids.get(receipt)))));
+					interactionTokens.add(interactionToken(0, demand.consumerId()));
+					for(ScoredOption option : demand.options()) {
+						interactionTokens.add(interactionToken(1, option.actionId()));
+						interactionTokens.add(interactionToken(2,
+							scoredActionArray[option.actionId()].physicalId()));
+					}
+				}
+				List<Integer> suppressedActions =
+					List.copyOf(suppressedActionsByReceipt.get(ids.get(receipt)));
+				for(int actionId : suppressedActions) {
+					interactionTokens.add(interactionToken(1, actionId));
+					interactionTokens.add(interactionToken(2,
+						scoredActionArray[actionId].physicalId()));
+				}
+				effects.put(receipt, new ExactReceiptScoringEffect(
+					List.copyOf(demandEffects), suppressedActions));
+				interactions.put(receipt, interactionTokens.stream()
+					.mapToLong(Long::longValue).toArray());
 			}
 			this.exactScoringEffects = Collections.unmodifiableMap(effects);
+			this.exactInteractionTokens = Collections.unmodifiableMap(interactions);
 		}
 
 		Selection select(Collection<CandidateSelectionReceipt> selectedReceipts) {
@@ -474,6 +494,23 @@ public final class RelocationSelections {
 				throw new IllegalArgumentException(
 					"Candidate receipt is outside its exact relocation index");
 			return effect;
+		}
+
+		/**
+		 * Exact factor identities touched by one candidate row. Equal tokens mean
+		 * that two row variables can affect the same anchor constraint, relocation
+		 * action/suppression predicate, or shared physical relocation emission.
+		 */
+		long[] exactInteractionTokens(CandidateSelectionReceipt receipt) {
+			long[] tokens = exactInteractionTokens.get(receipt);
+			if(tokens == null)
+				throw new IllegalArgumentException(
+					"Candidate receipt is outside its exact relocation index");
+			return tokens.clone();
+		}
+
+		private static long interactionToken(int kind, int id) {
+			return ((long)kind << Integer.SIZE) | Integer.toUnsignedLong(id);
 		}
 
 		/**
