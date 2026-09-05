@@ -85,7 +85,8 @@ public final class NeutralPlacementGraph {
 		NO_FEDERATED_INPUT,
 		RUNTIME_UNSUPPORTED,
 		RULE_ERROR,
-		NON_EMITTED_FUNCTION_BODY_CONTEXT
+		NON_EMITTED_FUNCTION_BODY_CONTEXT,
+		NON_EMITTED_INLINED_FUNCTION_INPUT
 	}
 
 	public record Exclusion(PlacementState state, ReasonCode reasonCode, String detail)

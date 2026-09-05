@@ -195,3 +195,115 @@
   - package and immutable-stage smoke remain to be rerun.
 - **Decision basis**: deterministic evaluation is the closed form of the same exact recurrence;
   no legal candidate or physical movement is removed.
+
+## Inlined function input provenance is incorrectly exposed as an emitted decision
+
+- **Status**: initial null-dependent fix rejected in review; structural replacement and stronger
+  regressions in progress. No version of the rejected fix was deployed.
+- **Environment/conditions**: stage `58291b2`; GLM / LAN / one worker;
+  `COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS`; private-aggregate input. No DML changes.
+- **Observed symptom**: the single-pass diagnostic finished its candidate search but failed
+  during normalized emission projection with `DP synthetic boundary has invalid exact authority
+  cardinality: kind=FUNCTION_INPUT ... authorities=0`. The occurrence is the inlined
+  `get_trust_boundary_point` input `pp`, sourced from `pp_CG` in `glm.dml:1001-1003`.
+  The failed process wall time (11.41 s) is **not** a successful compilation/planning measurement.
+- **Cause**: commit `59819b4` correctly allowed a named actual HOP to be absent after inlining
+  and expression substitution, but still created a CP/LOUT **decision** for the now carrierless
+  synthetic input. Its real expression remains in the rewritten HOP DAG; no separate
+  FunctionCallCP input exists at this inlined site. Later normalized-plan validation correctly
+  rejects an emitted boundary with no compiler-owned source authority.
+- **Initial fix (superseded, not deployed)**:
+  1. Lock the failure using the real builtin-GLM hermetic fixture. The new test failed before
+     the implementation change and passes afterward.
+  2. Only in the compiler-owned **inlined** call path, retain an absent rewritten input as a
+     trace-only identity node with no placement domain and the explicit reason
+     `NON_EMITTED_REWRITTEN_FUNCTION_INPUT`.
+  3. Leave ordinary rewritten HOP nodes, candidate rules, value edges, privacy propagation,
+     live input boundary constraints, and every non-inlined FunctionOp boundary unchanged.
+  4. Validate the complete normalized single-pass result, not merely raw selector assignment.
+- **Files**: `NeutralPlacementGraph.java`, `NeutralPlacementGraphBuilder.java`,
+  `NeutralPlacementGraphUploadRelocationRedTest.java`.
+- **Verification so far**:
+  - RED: new GLM test rejected the emitted authorityless input before the source fix.
+  - GREEN: the same test passes, including normalized selected-emission coverage.
+  - Combined batch: 36/36 tests pass across three GLM tests, relocation anchors, exact-policy
+    branch-and-bound, first-feasible policy selection, and shared privacy analysis.
+  - Three additional old null/unnamed-FunctionOp fixture tests fail while creating frequency
+    authority (`PLACEMENT_FUNCTION_ROOT_UNPROVEN` / null input name). Re-running those five
+    tests with the **unchanged `58291b2` JAR** reproduces exactly the same three failures;
+    they are not introduced here. Baseline log:
+    `/home/mchoi/g014-runtime-4net-w1357-20260901-control/baseline-invalid-boundary-fixtures-58291b2.log`.
+- **Review finding and corrected design**: a missing named HOP alone does not prove a valid rewrite,
+  so null-dependent suppression is unsound. The correct distinction is structural: **all**
+  compiler-owned AST-inlined input boundaries are provenance, not runtime input operations.
+  `DMLTranslator.processExpression(DataIdentifier)` returns the existing `ids` HOP; the binding
+  assignment stores that same RHS HOP. There is no FunctionOp or FunctionCallCP input carrier.
+  The neutral builder separately covers all surviving compiled HOPs and `data-input` edges.
+  Inlined input markers have no outgoing `function-formal-input` replay edge. They must therefore
+  all be non-emitted, whether their old lexical names survive or not. Preserve their exact context,
+  optional incoming argument constraint, but no executable placement anchors; use
+  `NON_EMITTED_INLINED_FUNCTION_INPUT`.
+  Non-inlined FunctionOp inputs continue to own real boundary state and fail closed on missing
+  exact authority. Inlined output handling is unchanged.
+- **Rejected alternative**: propagating new RHS tokens through every compiler rewrite, CSE,
+  constant folding and clone would add broad redundant machinery merely to certify a nonphysical
+  marker. The revised representation needs no such new rewrite/runtime mechanism.
+- **Residual risks**: trace markers must not become an alternative source of candidate or movement
+  state. Regressions must cover present/missing lexical names, literal/scalar/matrix arguments,
+  real HOP privacy/candidate preservation, nested contexts, and ordinary function fail-closed checks.
+- **Decision basis**: this removes a spurious decision with no emitted runtime carrier, not a
+  runtime-supported state. It does not add CP/FOUT to transients or recompilation, waive privacy,
+  introduce fallback, or alter any selector objective.
+
+## Remaining legacy exact-policy FedAll search and explicit single-pass comparison
+
+- **Status**: diagnosis complete; single-pass end-to-end validation in progress.
+- `58291b2` eliminated the repeated deterministic relocation certificate searches (roughly
+  eight times fewer generic certificate-search invocations at the same outer-search prefix).
+  Packaging and immutable stage deployment succeeded, correcting the pending status above.
+- The GLM legacy `COMPILE_FED_ALL` diagnostic still visits more than one million outer prefixes.
+  Its component has 338 decisions / 198 variable groups. A sampled stack is now in
+  `ExactPlacementSelector.candidateAwarePhysicalEmissionLowerBound` and candidate reachability,
+  not the eliminated global candidate/relocation Cartesian products. It globally maximizes FED,
+  then FOUT, then minimizes physical transfers and canonical tie-breaks; this exact policy
+  optimization can remain exponential even after removing redundant inner products.
+- The cost-based planner labeled **Exact** is a different optimizer; these observations about
+  exact-policy FedAll must not be attributed to that cost-based optimizer.
+- The prior smoke was interrupted and its containers cleaned to run a sequential, uncontended
+  single-pass diagnostic on the same authenticated topology. No runtime cell was run or replaced.
+- The existing `mkl-single-pass` config provides the previously implemented and validated
+  frequency-aware first-feasible FedAll policy. It consumes the same shared filtered domain but
+  is **not guaranteed to return the global lexicographic optimum** of legacy `mkl-fout`.
+  The runner default and published historical results must not be silently relabeled. Any new
+  comparison uses an explicit selector variant in the campaign identity and separate output root.
+- GLM exact-policy did not complete, so plan parity or a numerical speedup against it cannot yet
+  be claimed. Successful first-feasible planning, legality, and privacy are separate gates from
+  equality to an unavailable exact-policy reference.
+
+### Structural inlined-input correction: final safety review and regression outcome
+
+- All AST-inlined input markers are non-emitted, have no selectable alternatives, and carry no
+  placement anchors. Optional argument edges preserve trace provenance only. Anchor consumers
+  can resolve all graph nodes, so keeping anchors on these markers would incorrectly assign
+  executable authority to the call-site projection rather than the real argument HOP.
+- Removed an invalid exclusivity check on inlined call physical RHS nodes. Nested calls such as
+  `outer(A) { B=inner(A); }` legitimately share one compiled RHS. The function key, exact
+  call-statement position, and boundary argument/output index continue to distinguish trace keys;
+  graph duplicate-key validation and repeated-function DISTINCT_CONTEXT remain enforced.
+- Added compiler-driven matrix/scalar/literal and nested-call regressions, PRIVATE and
+  PRIVATE_AGGREGATE source/body/actual-TRead privacy and physical-edge checks, and preserved real
+  FunctionOp emitted-input/missing-authority fail-closed tests. Inlined trace anchors must be empty
+  while the real private federated source retains executable anchors.
+- A test originally assumed the main-block federated source is the inlined body’s immediate HOP
+  input. Fresh compiler evidence showed the exact inter-block TRead input; the assertion now
+  checks that actual compiled edge and its unchanged propagated privacy instead. This was a test
+  fixture error, not a source privacy fix.
+- Final targeted batch: **43 tests, zero failures/errors/skips** after the anchor correction;
+  `git diff --check` passes and the independent code review approves. Evidence:
+  `/home/mchoi/g014-runtime-4net-w1357-20260901-control/inlined-markers-final-regressions-20260905.log`.
+  Packaging and immutable-stage GLM smoke follow. The prior null-dependent JAR is superseded.
+- PRIVATE_AGGREGATE parity is tested against the equivalent direct `F+1` physical HOP. The
+  repository’s pre-existing policy permits coordinator-private local intermediates at this level;
+  the inlined-marker change neither expands nor closes that domain. This is not a claim that PA
+  data never leaves workers. Strict PRIVATE remains FED/FOUT-only. Broader PA threat-model
+  semantics are a separate audit, not a policy change hidden inside this representation repair.

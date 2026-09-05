@@ -262,6 +262,35 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 	}
 
 	@Test(timeout = 60000)
+	public void inlinedGlmInputsAreTraceOnlyWithOrWithoutLexicalCarriers() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileBuiltinGlmFixture());
+		List<Node> inputs = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.FUNCTION_INPUT)
+			.filter(node -> node.key().canonicalSourceOrigin().startsWith(
+				"function-boundary:.builtinNS::get_trust_boundary_point:input:"))
+			.toList();
+		List<Node> authoritylessInputs = inputs.stream()
+			.filter(node -> analysis.graph().constraints().stream().noneMatch(constraint ->
+				constraint.right() == node.key()
+					&& constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+					&& (constraint.evidence().startsWith("function-argument:")
+						|| constraint.evidence().startsWith("inlined-function-argument:"))))
+			.toList();
+
+		Assert.assertFalse("GLM rewrites must expose at least one substituted inlined input",
+			authoritylessInputs.isEmpty());
+		Assert.assertTrue("fixture must also retain named argument provenance", inputs.size() > authoritylessInputs.size());
+		Assert.assertTrue("no inlined input is a runtime call carrier, regardless of surviving lexical names",
+			inputs.stream().allMatch(node -> !node.emittedWork()
+				&& node.legalAlternatives().isEmpty()));
+		NormalizedPlannerResult plan = new FedAllPlacementAdapter(
+			new PolicyFirstFeasiblePlacementSelector()).select(analysis);
+		Assert.assertEquals("single-pass FedAll must return one state for every emitted decision",
+			analysis.graph().decisionNodes().size(), plan.selectedEmissionStates().size());
+	}
+
+	@Test(timeout = 60000)
 	public void candidateMaterializationSearchMatchesBoundedExhaustiveOracle() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildAnalysis(compileBuiltinGlmFixture());

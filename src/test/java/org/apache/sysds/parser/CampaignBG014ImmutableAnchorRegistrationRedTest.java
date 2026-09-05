@@ -225,6 +225,7 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		Assert.assertEquals("G014_RED2_NESTED_CALL_POSITIONS_COLLIDE", 2,
 			boundaries.stream().map(StatementBlock.InlinedFunctionCallBoundary::callStatementPosition)
 				.distinct().count());
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(compiled);
 		PlacementAnalysis analysis = compiled.bindPlacementAnalysisAtFinalHopBoundary();
 		List<NeutralPlacementGraph.Node> functionInputs = analysis.graph().nodes().stream()
 			.filter(node -> node.kind() == NodeKind.FUNCTION_INPUT)

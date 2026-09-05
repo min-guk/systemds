@@ -2799,7 +2799,6 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Long> expandedScopes = new java.util.LinkedHashMap<>(scopes);
 		Map<StatementBlock,Map<Hop,Node>> nodesByBlock = new IdentityHashMap<>();
 		Map<String,List<Node>> inlinedContextBoundariesByFunction = new LinkedHashMap<>();
-		Set<Node> claimedInlinedPhysicalAuthorities = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int i = 0; i < occurrences.size(); i++) {
 			nodesByBlock.computeIfAbsent(occurrences.get(i).block(), ignored -> new IdentityHashMap<>())
 				.put(occurrences.get(i).hop(), nodes.get(i));
@@ -3023,9 +3022,9 @@ public final class NeutralPlacementGraphBuilder {
 				int callIndex = inlinedCall.callStatementPosition();
 				if(callScope == null)
 					throw new IllegalStateException("Inlined function call has no exact occurrence authority");
-				if(!claimedInlinedPhysicalAuthorities.add(callAuthority))
-					throw new IllegalStateException("Inlined function calls share one emitted authority: "
-						+ inlinedCall.functionKey() + " callStatement=" + callIndex);
+				// Nested inlining and CSE may map several lexical calls to one physical RHS.
+				// Their function key and statement position distinguish the boundary markers;
+				// the real HOP remains a single operation, not an exclusive call placeholder.
 				// An inlined DML call has no FunctionCallCPInstruction.  Its result/argument Hop is
 				// still a real physical operation and must retain its original node kind so every
 				// planner costs, selects, lowers, and audits that operation.  Call-site identity is
@@ -3044,6 +3043,7 @@ public final class NeutralPlacementGraphBuilder {
 						inputPosition,
 						VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives,
 						argument == null ? List.of() : argument.anchors());
+					input = traceOnlyInlinedFunctionInput(input);
 					expanded.add(input);
 					if(contextBoundary == null)
 						contextBoundary = input;
@@ -3400,6 +3400,26 @@ public final class NeutralPlacementGraphBuilder {
 			versionKind, List.of("callsite:" + call.key().normalizedSignature()));
 		return variable.isKnown() ? new Node(key, nodeKind, value, true, alternatives, List.of(), anchors)
 			: new Node(key, nodeKind, value, false, List.of(), unknownBoundaryExclusions(alternatives, variable), List.of());
+	}
+
+	/**
+	 * AST inlining binds the actual RHS directly in DMLTranslator's ids map: no FunctionOp or
+	 * runtime call-input carrier is emitted, even when the actual's lexical name survives.
+	 * Every physical expression and data-input edge is already represented by the compiled HOP
+	 * occurrences. Retain this marker's call-site identity and optional argument constraint, but
+	 * no placement anchors: anchors are executable authority, not passive trace metadata. Never
+	 * create a duplicate physical decision. Ordinary (non-inlined) function inputs still
+	 * require their exact runtime boundary authority.
+	 */
+	private static Node traceOnlyInlinedFunctionInput(Node input) {
+		if(input.kind() != NodeKind.FUNCTION_INPUT)
+			throw new IllegalArgumentException("Trace-only inlined input requires a function input marker");
+		List<Exclusion> exclusions = input.legalAlternatives().stream()
+			.map(state -> new Exclusion(state, ReasonCode.NON_EMITTED_INLINED_FUNCTION_INPUT,
+				"ast-inlined-input-has-no-runtime-call-carrier"))
+			.toList();
+		return new Node(input.key(), input.kind(), input.valueVersion(), false,
+			List.of(), exclusions, List.of());
 	}
 
 	private static List<Exclusion> unknownBoundaryExclusions(List<PlacementState> alternatives, BoundaryName variable) {
