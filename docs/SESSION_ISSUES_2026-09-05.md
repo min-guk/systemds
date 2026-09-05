@@ -74,7 +74,8 @@
 
 ## Final relocation certificate reconstruction expands independent demands globally
 
-- **Status**: resolved in source; successor immutable-stage GLM planning smoke pending
+- **Status**: resolved and verified in immutable stage `71019ad`; the smoke exposed a
+  separate hot-scorer recursion documented below
 - **Environment/conditions**: immutable stage `7ac6818`; GLM planning-only; FedAll; LAN;
   one worker; the candidate-row component solve above already completed.
 - **Observed symptom**: after approximately 157 seconds the coordinator still had not emitted
@@ -111,10 +112,51 @@
   - the wider legacy fixtures that contact `localhost:1234/1235` fail closed when no privacy
     workers are running. This is expected non-hermetic fixture behavior and is not treated as
     evidence about this change.
+- **Immutable-stage evidence**:
+  - commit `71019ad7133566abf356d101083d381017545cc6` was built into
+    `/home/mchoi/cofee-w1357-stage-20260905-71019ad` and deployed with manifest
+    `f5cd7f9342d6a62994642371ad202b0c14fc775abfdf079072f91ed1167c3700` to
+    `so002`--`so009`;
+  - GLM/LAN/worker=1/FedAll passed final certificate reconstruction but remained in the
+    incremental exact emission scorer, proving the certificate recursion itself was removed.
+- **Decision basis**: this is an exact factorization of certificate search, not a heuristic,
+  top-K cap, candidate-space restriction, DML rewrite, or runtime fallback.
+
+## Incremental exact emission scorer multiplies independent alternative demands
+
+- **Status**: resolved in source; successor immutable-stage GLM planning smoke pending
+- **Environment/conditions**: immutable stage `71019ad`; GLM planning-only; FedAll; LAN;
+  one worker; both preceding componentized searches already completed.
+- **Observed symptom**: after 106.9 seconds at approximately two CPU cores, a live JVM stack
+  showed 24 recursive frames in `RelocationSelections$ExactEmissionScorer.solve`, called from
+  `minimumPhysicalEmissionCount`, `CandidateSelections$Search$ComponentSearch.solve`, and the
+  outer `ExactPlacementSelector` leaf scorer. The campaign was interrupted and all containers
+  were cleaned before changing source.
+- **Cause analysis**: the allocation-free hot scorer maintained singleton emissions and anchor
+  feasibility incrementally, but then recursively multiplied every selected alternative demand.
+  Its choice interactions are the same exact factors as certificate reconstruction: alternatives
+  interact only when they constrain the same consumer anchor or can emit the same physical
+  relocation. Receipt-based suppression is already fixed at each scorer invocation and therefore
+  creates no additional choice-variable edge.
+- **Resolution**:
+  1. Reuse preallocated primitive arrays to form a DSU over active alternative demands, preserving
+     the scorer's allocation-free hot-path contract.
+  2. Connect demands by consumer identity and by currently emitting physical-relocation identity.
+  3. Solve each component with the existing exact recursion against the fixed singleton-emission
+     baseline and sum its incremental minimum. Components share neither constraints nor variable
+     emission identities, so this is an exact additive decomposition.
+- **Files changed**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java`
+- **Verification**:
+  - the bounded builtin-GLM exhaustive oracle passes against the independent global Cartesian
+    relocation oracle;
+  - relocation-anchor, Exact-selector branch-and-bound, and policy-selector regressions pass;
+  - source packaging remains to be rerun after this change.
 - **Remaining issues**:
   - package and commit the source change;
   - build and deploy a successor immutable stage;
-  - rerun GLM planning-only for FedAll, Heuristic, and Exact, inspect privacy/feasibility receipts
-    and plan fingerprints, and only then resume the remaining planning campaign.
-- **Decision basis**: this is an exact factorization of certificate search, not a heuristic,
-  top-K cap, candidate-space restriction, DML rewrite, or runtime fallback.
+  - rerun the three GLM planning smoke cells, validate privacy/feasibility receipts and plan
+    fingerprints, then resume the remaining planning-only campaign.
+- **Decision basis**: no planner policy, candidate, placement state, privacy rule, runtime
+  capability, objective, or canonical certificate was changed; only independent exact factors
+  are evaluated separately.

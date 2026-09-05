@@ -641,6 +641,10 @@ public final class RelocationSelections {
 		private final int[] selectedDemandCounts;
 		private final int[][] allowedAnchorDemandRefs;
 		private final int[] feasibleAnchorCounts;
+		private final int[] componentParents;
+		private final int[] consumerComponentOwners;
+		private final int[] physicalComponentOwners;
+		private final int[] componentRoots;
 		private int activeSingletonActionCount;
 		private int alternativeCount;
 		private int anchorConflictCount;
@@ -662,6 +666,10 @@ public final class RelocationSelections {
 			this.allowedAnchorDemandRefs = new int[problem.scoredConsumerCount]
 				[problem.scoredAnchorCount];
 			this.feasibleAnchorCounts = new int[problem.scoredConsumerCount];
+			this.componentParents = new int[problem.maximumScoredDemandCount];
+			this.consumerComponentOwners = new int[problem.scoredConsumerCount];
+			this.physicalComponentOwners = new int[problem.order.physicalEmissionCount()];
+			this.componentRoots = new int[problem.maximumScoredDemandCount];
 		}
 
 		void selectReceipt(CandidateSelectionReceipt receipt) {
@@ -710,13 +718,80 @@ public final class RelocationSelections {
 			best = Integer.MAX_VALUE;
 			for(int index = 0; index < activeSingletonActionCount; index++)
 				acquirePhysical(problem.scoredActions[activeSingletonActions[index]]);
-			solve(0);
-			return best;
+			int fixedEmissionCount = physicalEmissionCount;
+			if(alternativeCount == 0)
+				return fixedEmissionCount;
+			int componentCount = prepareExactInteractionComponents();
+			int minimum = fixedEmissionCount;
+			for(int component = 0; component < componentCount; component++) {
+				best = Integer.MAX_VALUE;
+				solveComponent(componentRoots[component], 0);
+				if(best == Integer.MAX_VALUE)
+					return Integer.MAX_VALUE;
+				minimum = Math.addExact(minimum, best - fixedEmissionCount);
+			}
+			return minimum;
 		}
 
-		private void solve(int index) {
+		private int prepareExactInteractionComponents() {
+			Arrays.fill(consumerComponentOwners, -1);
+			Arrays.fill(physicalComponentOwners, -1);
+			for(int index = 0; index < alternativeCount; index++)
+				componentParents[index] = index;
+			for(int demandIndex = 0; demandIndex < alternativeCount; demandIndex++) {
+				ScoredDemand demand = selectedAlternatives[demandIndex];
+				unionComponentWithOwner(consumerComponentOwners,
+					demand.consumerId(), demandIndex);
+				for(ScoredOption option : demand.options()) {
+					ScoredAction action = problem.scoredActions[option.actionId()];
+					if(requiresEmission(action))
+						unionComponentWithOwner(physicalComponentOwners,
+							action.physicalId(), demandIndex);
+				}
+			}
+			int componentCount = 0;
+			for(int index = 0; index < alternativeCount; index++)
+				if(findComponent(index) == index)
+					componentRoots[componentCount++] = index;
+			return componentCount;
+		}
+
+		private void unionComponentWithOwner(int[] owners, int factor, int demand) {
+			int owner = owners[factor];
+			if(owner < 0)
+				owners[factor] = demand;
+			else
+				unionComponents(owner, demand);
+		}
+
+		private int findComponent(int demand) {
+			int root = demand;
+			while(componentParents[root] != root)
+				root = componentParents[root];
+			while(componentParents[demand] != demand) {
+				int next = componentParents[demand];
+				componentParents[demand] = root;
+				demand = next;
+			}
+			return root;
+		}
+
+		private void unionComponents(int left, int right) {
+			int leftRoot = findComponent(left);
+			int rightRoot = findComponent(right);
+			if(leftRoot == rightRoot)
+				return;
+			if(leftRoot < rightRoot)
+				componentParents[rightRoot] = leftRoot;
+			else
+				componentParents[leftRoot] = rightRoot;
+		}
+
+		private void solveComponent(int componentRoot, int index) {
 			if(physicalEmissionCount > best)
 				return;
+			while(index < alternativeCount && findComponent(index) != componentRoot)
+				index++;
 			if(index == alternativeCount) {
 				best = Math.min(best, physicalEmissionCount);
 				return;
@@ -728,7 +803,7 @@ public final class RelocationSelections {
 				if(previous < 0)
 					anchors[option.consumerId()] = option.anchorId();
 				int physical = acquirePhysical(problem.scoredActions[option.actionId()]);
-				solve(index + 1);
+				solveComponent(componentRoot, index + 1);
 				if(physical >= 0)
 					releasePhysical(physical);
 				if(previous < 0)
