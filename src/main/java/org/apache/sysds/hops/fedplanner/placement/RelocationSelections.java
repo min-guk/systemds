@@ -1618,7 +1618,39 @@ public final class RelocationSelections {
 			Set<RelocationActionKey> combinedEmitted =
 				Collections.newSetFromMap(new IdentityHashMap<>());
 			Set<Integer> physicalEmissions = new LinkedHashSet<>();
+			DurableAnchorKey[] deterministicAnchors =
+				new DurableAnchorKey[order.consumerCount()];
 			for(List<DemandOptions> component : components) {
+				if(component.size() == 1) {
+					DemandOptions demand = component.get(0);
+					Option winner = null;
+					for(Option option : demand.options())
+						if(winner == null
+							|| Boolean.compare(option.requiresEmission(), winner.requiresEmission()) < 0
+							|| option.requiresEmission() == winner.requiresEmission()
+								&& option.choiceRank() < winner.choiceRank())
+							winner = option;
+					appendExactChoice(demand, winner, combined, combinedEmitted,
+						physicalEmissions);
+					continue;
+				}
+				boolean deterministic = component.stream()
+					.noneMatch(demand -> demand.options().size() > 1);
+				if(deterministic) {
+					for(DemandOptions demand : component) {
+						Option option = demand.options().get(0);
+						int consumer = order.consumerId(option.obligation().consumer());
+						DurableAnchorKey selected = deterministicAnchors[consumer];
+						DurableAnchorKey anchor = option.action().key().durableAnchor();
+						if(selected != null
+							&& !PlacementIdentity.samePhysicalWorkerPool(selected, anchor))
+							return;
+						deterministicAnchors[consumer] = anchor;
+						appendExactChoice(demand, option, combined, combinedEmitted,
+							physicalEmissions);
+					}
+					continue;
+				}
 				Search search = new Search(component, null, order);
 				search.solve(0);
 				if(search.best == null)
@@ -1635,6 +1667,16 @@ public final class RelocationSelections {
 			bestChoiceRanks = combined.stream().map(RankedChoice::rank).toList();
 			bestEmitted = canonicalEmittedActions(combinedEmitted, order);
 			bestEmissionCount = physicalEmissions.size();
+		}
+
+		private void appendExactChoice(DemandOptions demand, Option option,
+			List<RankedChoice> combined, Set<RelocationActionKey> combinedEmitted,
+			Set<Integer> physicalEmissions) {
+			RelocationActionKey action = option.action().key();
+			combined.add(new RankedChoice(
+				new RelocationChoiceReceipt(demand.demand(), action), option.choiceRank()));
+			if(option.requiresEmission() && combinedEmitted.add(action))
+				physicalEmissions.add(order.physicalEmissionId(action));
 		}
 
 		private List<List<DemandOptions>> exactInteractionComponents() {

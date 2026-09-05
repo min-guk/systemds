@@ -124,7 +124,8 @@
 
 ## Incremental exact emission scorer multiplies independent alternative demands
 
-- **Status**: resolved in source; successor immutable-stage GLM planning smoke pending
+- **Status**: resolved and verified in immutable stage `0e39413`; the smoke exposed
+  avoidable deterministic certificate overhead documented below
 - **Environment/conditions**: immutable stage `71019ad`; GLM planning-only; FedAll; LAN;
   one worker; both preceding componentized searches already completed.
 - **Observed symptom**: after 106.9 seconds at approximately two CPU cores, a live JVM stack
@@ -152,11 +153,45 @@
     relocation oracle;
   - relocation-anchor, Exact-selector branch-and-bound, and policy-selector regressions pass;
   - source packaging remains to be rerun after this change.
-- **Remaining issues**:
-  - package and commit the source change;
-  - build and deploy a successor immutable stage;
-  - rerun the three GLM planning smoke cells, validate privacy/feasibility receipts and plan
-    fingerprints, then resume the remaining planning-only campaign.
+- **Immutable-stage evidence**:
+  - commit `0e394139c37bd7781fc32d59a933218b21b66f72` was built into
+    `/home/mchoi/cofee-w1357-stage-20260905-0e39413` and deployed with manifest
+    `c0320fc2c86c1f7290410926472777fc7c2e118fd0ebcf22db0ab7bb502a2290` to
+    `so002`--`so009`;
+  - the hot scorer recursion disappeared from the live stack. The remaining time was spent in
+    canonical relocation certificate reconstruction for tiny, mostly deterministic components.
 - **Decision basis**: no planner policy, candidate, placement state, privacy rule, runtime
   capability, objective, or canonical certificate was changed; only independent exact factors
   are evaluated separately.
+
+## Deterministic relocation components invoke millions of generic exact-search objects
+
+- **Status**: resolved in source; successor immutable-stage GLM planning smoke pending
+- **Environment/conditions**: immutable stage `0e39413`; GLM planning-only; FedAll; LAN;
+  one worker; 338 decisions and 198 exact outer-search groups.
+- **Observed symptom**: after roughly four minutes, the outer selector had visited 524,288
+  prefixes and 17,926 complete placements. Candidate search had reached ID 16,384, while
+  relocation certificate searches exceeded ID 2,097,152. Power-of-two trace samples were
+  overwhelmingly one-demand deterministic searches; live stacks showed only one or two
+  `RelocationSelections$Search.solve` frames, with time in deep identity hashing and canonical
+  worker-address comparison rather than in a large interacting choice component.
+- **Cause analysis**: componentization was exact, but every singleton/deterministic component was
+  still wrapped in a fresh generic `Search`, `AnchorBindings`, maps, sets, ranked-choice lists, and
+  canonicalization. Repeating that fixed work for more than two million components dominated the
+  outer exact placement search even though no branch existed.
+- **Resolution**:
+  1. A one-demand component now selects directly by exact objective: prefer a non-emitting option,
+     then the canonical choice rank.
+  2. A multi-demand component with one option per demand now validates common physical-anchor
+     compatibility once and emits its canonical receipts directly.
+  3. Only components containing a genuine interacting alternative instantiate the original exact
+     recursive search. Combined action/physical-emission deduplication and final canonical order
+     remain unchanged.
+- **Files changed**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java`
+- **Verification**:
+  - builtin-GLM bounded exhaustive oracle passes;
+  - relocation-anchor, Exact-selector, and policy-selector regressions pass together;
+  - package and immutable-stage smoke remain to be rerun.
+- **Decision basis**: deterministic evaluation is the closed form of the same exact recurrence;
+  no legal candidate or physical movement is removed.
