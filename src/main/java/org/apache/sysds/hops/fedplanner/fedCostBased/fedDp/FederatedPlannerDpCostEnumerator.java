@@ -2885,6 +2885,11 @@ public class FederatedPlannerDpCostEnumerator {
 		Hop input = (inputs != null && !inputs.isEmpty()) ? inputs.get(0) : null;
 		if (input == null)
 			return true;
+		// Exact copy/function-binding identity is carrier-scoped. A retained recompile
+		// clone must be checked against its own direct input, not the resolved original's.
+		List<Hop> carrierInputs = tWriteCarrier.getInput();
+		Hop carrierInput = (carrierInputs != null && !carrierInputs.isEmpty())
+			? carrierInputs.get(0) : input;
 		if (FederatedPlannerUtils.hasConcreteMatchedWriteReuseSource(input, tWrite.getName()))
 			return true;
 		// A compiler-generated formal TRead -> TWrite binding is an identity alias of
@@ -2895,7 +2900,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// SAME_PLACEMENT contract; an arithmetic/update TWrite has no such proof and
 		// remains rejected.  This expands a graph-proven runtime capability rather than
 		// introducing a fallback or weakening TRead/TWrite equality.
-		if(isExactTransparentFunctionInputBinding(tWriteCarrier, input, capture))
+		if(isExactTransparentFunctionInputBinding(tWriteCarrier, carrierInput, capture))
 			return true;
 		// A compiler-generated TWrite(v) <- TRead(v) carry is also a pure alias,
 		// but unlike the formal-input binding it can sit between loop/branch CFG
@@ -2903,7 +2908,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// consumes the exact read occurrence as FOUT and that read is itself backed
 		// by analysis-owned logical transient sources with the same layout.  This
 		// proves a grounded placement chain and does not admit an unseeded self-cycle.
-		if(isExactTransparentTransientCopyBinding(tWritePlan, input, capture))
+		if(isExactTransparentTransientCopyBinding(tWritePlan, carrierInput, capture))
 			return true;
 		return !dependsOnSameTransientRead(input, tWrite.getName(), new HashSet<>());
 	}

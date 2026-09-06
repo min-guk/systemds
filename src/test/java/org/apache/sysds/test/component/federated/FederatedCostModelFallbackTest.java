@@ -19,8 +19,13 @@
 
 package org.apache.sysds.test.component.federated;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -1002,6 +1007,22 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
+	public void testInBandResultSerdesStaticInitializationPrecedence() throws Exception {
+		assertInBandResultSerdesStaticInitialization(210.0,
+			"SYSDS_FED_COST_NET_SERDES_BW", "210");
+		assertInBandResultSerdesStaticInitialization(14.7,
+			"SYSDS_FED_COST_NET_SERDES_BW", "210",
+			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7");
+		assertInBandResultSerdesStaticInitialization(333.0,
+			"SYSDS_FED_COST_NET_SERDES_BW", "210",
+			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7",
+			"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C", "333");
+		assertInBandResultSerdesStaticInitialization(0.0,
+			"SYSDS_FED_COST_NET_SERDES_BW", "210",
+			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "0");
+	}
+
+	@Test
 	public void testInBandResultUsesPerWorkerResponseCriticalPath() throws Exception {
 		double totalBytes = 256d * 1024 * 1024;
 		double networkBwMBps = 125.0;
@@ -1164,6 +1185,49 @@ public class FederatedCostModelFallbackTest {
 		double inputAccessCost = FederatedCostModel.computeMemoryAccessCost(inputMem);
 		double outputAccessCost = FederatedCostModel.computeMemoryAccessCost(outputMem);
 		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
+	}
+
+	private static void assertInBandResultSerdesStaticInitialization(double expected,
+			String... properties) throws Exception {
+		List<String> command = new ArrayList<>();
+		command.add(System.getProperty("java.home") + File.separator + "bin" + File.separator + "java");
+		for(int i = 0; i < properties.length; i += 2)
+			command.add("-D" + properties[i] + "=" + properties[i + 1]);
+		command.add("-cp");
+		command.add(System.getProperty("java.class.path"));
+		command.add(InBandResultSerdesStaticInitializationProbe.class.getName());
+		command.add(Double.toString(expected));
+
+		ProcessBuilder processBuilder = new ProcessBuilder(command).redirectErrorStream(true);
+		for(String key : new String[] {
+			"SYSDS_FED_COST_NET_SERDES_BW",
+			"SYSDS_FED_COST_NET_SERDES_BW_W2C",
+			"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C"})
+			processBuilder.environment().remove(key);
+		Process process = processBuilder.start();
+		StringBuilder output = new StringBuilder();
+		try(BufferedReader reader = new BufferedReader(
+			new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+			String line;
+			while((line = reader.readLine()) != null)
+				output.append(line).append(System.lineSeparator());
+		}
+		int exitCode = process.waitFor();
+		Assert.assertEquals("Fresh-JVM in-band serdes initialization failed: " + output,
+			0, exitCode);
+	}
+
+	public static final class InBandResultSerdesStaticInitializationProbe {
+		private InBandResultSerdesStaticInitializationProbe() {
+			// test process entry point
+		}
+
+		public static void main(String[] args) throws Exception {
+			double expected = Double.parseDouble(args[0]);
+			double actual = getFederatedCostModelConstant("MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C");
+			if(Double.compare(expected, actual) != 0)
+				throw new AssertionError("expected=" + expected + ", actual=" + actual);
+		}
 	}
 
 	private static double getFederatedCostModelConstant(String fieldName) throws Exception {

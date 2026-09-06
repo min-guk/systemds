@@ -211,15 +211,13 @@ public final class FederatedCostModel {
 			MBS_NETWORK_SERDES_BANDWIDTH);
 	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
 			MBS_NETWORK_SERDES_BANDWIDTH);
-	// Native FED/LOUT results are returned by the already-open worker channels in
-	// one FederationMap batch.  Keep their MatrixBlock codec throughput distinct
-	// from the standalone W2C collection calibration: the latter includes
-	// whole-result coordinator materialization and must remain conservative.
+	// Native FED/LOUT results use a distinct response critical path, but the same
+	// worker response codec as directional W2C collection. A dedicated in-band
+	// calibration can override the directional W2C default.
 	private static final double MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
 		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
 			ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
-			MBS_NETWORK_SERDES_BANDWIDTH > 0.0
-				? MBS_NETWORK_SERDES_BANDWIDTH : MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+			MBS_NETWORK_SERDES_BANDWIDTH_W2C);
 	private static final double REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_BYTES =
 		Math.max(0.0, FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
 			ENV_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB,

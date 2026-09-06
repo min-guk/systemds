@@ -43,3 +43,39 @@
 - Added two-worker shifted ROW/COL partition regression to `RelocationSelectionsPhysicalAnchorTest.java`; **6/6 PASS** (four existing plus two new), `CONTROL/GLM_SHIFTED_PARTITION_SAFETY_20260906.log`. Matching endpoints are not sufficient to align partition boundaries.
 - Composite receipt: `CONTROL/GLM_SAME_AXIS_INTEGRATED_REGRESSION_20260906.json`. `git diff --check` is clean. Docker canary remains the next gate; these are not runtime performance results.
 - Read-only review correction: an empty inferred profile is not `PROFILE_ERROR`; `CandidateProfileFact.available()` checks the evaluation failure string. The exact GLM ROW/ROW fact is AVAILABLE with no profile failure and retains its native emission. No unrelated profile expansion is included.
+
+## GLM Docker promotion — resolved for the failed planning cell
+
+- Committed backend: `6c659929b0f2cf5a04b4cce68900a0ef0d0f14ab`; pinned JAR SHA-256 `cc1224e0dcbd87d419e85dae455f3dc3eff35af9b08ec477c3e93506cbf51128`. Build approval and complete so002–so009 deployment receipts are under CONTROL. so001 is not an execution host.
+- The previously failed `GLM/LAN/w3/FedAll` authenticated Docker planning canary passed at 2026-09-06T02:19:23Z: FedPlanner1.623969s, compilation11.337206s, execution0s, FED instructions/UDFs0, output files0. These trace-enabled planning timers are not overhead-free runtime-campaign measurements.
+- Evidence: `/home/mchoi/g014-extra-ml-glm-w3-canary-20260906-6c65992/results.jsonl` and archived receipts; subsequent full54 planning root `/home/mchoi/g014-extra-ml-planning-20260906-6c65992-seeded`.
+- Remaining: full54 planning and actual runtime/numeric parity. The conditional runtime continuation authenticates all54 planning archives before launching, uses the same immutable stage and shared lane, and preserves failed-run evidence. Root28/28 Python tests and independent4/4 focused tests pass. Runtime has not started at this update.
+- Regression risk: successful planning is not proof of runtime feasibility or numerical equality; both are separate gates. Future source changes must not alter the running immutable stage.
+
+## ALS DP selected transient carrier identity — in progress
+
+- Symptom: current DP fails `No valid federated plan ... TRead W` for real ALS maxinneriter10, worker4/5. Exact and Heuristic pass. This is distinct from historical small single-run performance reversals.
+- Cause isolated by debugger: exact transient reuse resolves a cloned TWrite to its original for validation, but then passes the original's TRead to a selected-plan identity check that correctly expects the clone's direct input. Clone and original identities are not interchangeable at this boundary.
+- Repair plan: retain canonical metadata checks while using the selected carrier's own direct input for exact binding checks. Do not weaken function/copy/privacy guards or select an arbitrary alternate candidate. Regression RED and narrow implementation are in progress in the dedicated agent lane.
+- Evidence: CONTROL/ALS_DP_TRANSIENT_CARRIER_REPAIR_20260906; initial inspector `/tmp/als-dp-failure-w5-predicates.log`.
+- Remaining: root integration, affected-surface tests, actual planning delta and changed-cell runtime validation.
+- Risk: carrier/canonical mixing can also affect function-copy bindings; require exact sibling/occurrence negatives, not merely a positive ALS canary.
+
+## Native result W2C configuration precedence — in progress
+
+- Symptom: generic codec210 and explicit W2C14.7 yield native FED/LOUT in-band210. A fresh-JVM property probe is RED; a dedicated in-band333 override is already honored.
+- Cause: the native-result fallback explicitly prefers generic before directional W2C. Generic210 has C2W upload-hotspot provenance, not a measured native W2C codec benchmark. Native and explicit GET responses use the same Netty Java ObjectEncoder/ObjectDecoder plus MatrixBlock Externalizable serialization; their batching/materialization critical paths can still differ.
+- Repair plan: dedicated in-band override > directional W2C > generic fallback, using the existing configuration capture rather than a duplicate helper. Preserve explicit zero/disabled codec semantics and fail-closed privacy/physical candidate domains. Test fresh JVMs to avoid captured-static property contamination.
+- Evidence: CONTROL/KMEANS_INBAND_DIRECTIONAL_PRECEDENCE_20260906, isolated probe `/tmp/g014-inband-precedence.wVWmr4/receipt.log`.
+- Remaining: integrate tests, compare DP/Exact selected plans, measure authenticated runtime; the absolute correctness of14.7 remains a calibration question, and the fallback change alone is not evidence that KMeans ordering is repaired.
+- Risk: changing a shared estimated transfer rate can affect many cost-selected plans; immutable-stage versioning and changed-plan-only replay are required. Do not retune the constant solely to enforce an observed ranking.
+
+## ALS carrier and native W2C repair integration — source verified; runtime pending
+
+- Changes: `FederatedPlannerDpCostEnumerator.java` now supplies the selected TWrite carrier's direct input to the two exact binding predicates; canonical inputs remain in the logical-source and cycle guards. `FederatedCostModel.java` now obtains its in-band default from the existing directional W2C setting, which already inherits the generic default. No new helper, candidate exclusion, privacy relaxation, or runtime fallback was added.
+- Regression evidence: the real worker-5 ALS test is RED before the carrier fix and GREEN afterward; worker-4/5 metadata-only planning also succeeds. Fresh Maven runs the new ALS test **1/1 PASS** and the complete cost fallback suite **47/47 PASS**, including four fresh-JVM configuration-precedence cases (generic, directional, dedicated, and explicit zero).
+- Wider validation: `CONTROL/DP_CARRIER_W2C_INTEGRATED_20260906T023214Z.json` records **380 tests: 366 passed, 9 failures, 2 errors, 3 skips**. Every one of the eleven failing/error methods reproduces with the same semantic cause against the independently pinned pre-fix 6c JAR. This establishes no introduced failure in the affected-surface run; it does **not** make the wider suite green. Source hashes did not change during validation; independent bounded code review and `git diff --check` pass.
+- Baseline attribution: `CONTROL/ALS_PINNED_6C_SIX_FAILURE_CLASSES_20260906.log` (SHA-256 `59301ac559d0f627ce362bf44a6b3430b55f4a856e3a3454fedde856326650cf`) and `CONTROL/ALS_DP_TRANSIENT_CARRIER_REPAIR_20260906.md` (SHA-256 `23e96eab029860257d3ae1582884bf11262fd60e00aaf61fe692cd6b40930c67`). Existing unsupported receipt assertions are separate from the real StepLM local-conflict and LogReg REXPAND failures. The three pre-existing public-fixture skips are retained, not expanded.
+- Remaining: isolate the pre-existing StepLM failure, authenticate a new immutable backend, compare physical plans against the existing runtime evidence, and rerun changed cells only. Running GLM/GNMF/GMM-VVI stages remain on their independently pinned 6c backend; this working-tree repair must not replace their JAR mid-campaign.
+- Calibration caveat: an isolated pinned-backend Docker codec diagnostic on so009 measured about 404–493 MiB/s median encode+decode throughput for the 10000 x 50 result block. Therefore the configured 14.7 MB/s must not be described as a measured pure native codec rate. The precedence repair fixes the configuration contract; actual transport/binding and matched workload runtime still require separate measurement. Evidence: `CONTROL/KMEANS_FEDERATED_RESPONSE_CODEC_BENCHMARK_20260906`.
+- Regression risks: carrier-vs-canonical identity mistakes remain guarded by exact edges, occurrence identity, state/layout agreement, and grounded logical sources. Absolute transfer-rate accuracy remains open; runtime ordering is not an acceptance shortcut for tuning constants.
