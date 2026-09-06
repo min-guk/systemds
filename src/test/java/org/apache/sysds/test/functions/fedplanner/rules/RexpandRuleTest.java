@@ -29,6 +29,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
@@ -66,5 +67,35 @@ public class RexpandRuleTest {
     OpCaps caps = rule.caps(REXPAND_COLS, List.of(FType.BROADCAST), null);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.BROADCAST_CONSTRAINT, caps.reason());
+  }
+
+  @Test
+  public void provenSingleFullInputKeepsFullInBothDirections() {
+    for (OpSig direction : List.of(REXPAND_COLS, REXPAND_ROWS)) {
+      ShapeHint hint = new ShapeHint(-1, -1, 1000, true);
+      OpCaps caps = rule.caps(direction, List.of(FType.FULL), hint);
+      assertEquals(ExecType.FED, caps.exec());
+      assertEquals(FederatedOutput.FOUT, caps.placement());
+      assertEquals(FType.FULL, caps.foutFType().orElseThrow());
+      assertTrue(hint.proof().requiredFacts().contains("fullSinglePartition"));
+    }
+  }
+
+  @Test
+  public void fullInputNeedsPositiveSinglePartitionEvidence() {
+    for (ShapeHint hint : List.of(new ShapeHint(-1, -1, 1000),
+        new ShapeHint(-1, -1, 1000, false))) {
+      OpCaps caps = rule.caps(REXPAND_COLS, List.of(FType.FULL), hint);
+      assertEquals(ExecType.CP, caps.exec());
+      assertEquals(FederatedOutput.LOUT, caps.placement());
+    }
+    assertEquals(ExecType.CP, rule.caps(REXPAND_COLS, List.of(FType.FULL), null).exec());
+  }
+
+  @Test
+  public void unsupportedLayoutsDoNotBorrowSinglePartitionEvidence() {
+    for (FType input : List.of(FType.COL, FType.PART, FType.OTHER, FType.BROADCAST))
+      assertEquals(ExecType.CP,
+          rule.caps(REXPAND_COLS, List.of(input), new ShapeHint(-1, -1, 1000, true)).exec());
   }
 }

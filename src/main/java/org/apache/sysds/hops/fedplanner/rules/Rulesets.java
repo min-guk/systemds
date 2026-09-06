@@ -1103,6 +1103,14 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      // The runtime's isFederated(ROW) predicate includes FULL. REXPAND copies
+      // its map (and optionally transposes ranges), preserving a proven single
+      // FULL entry in both directions; it does not collect the expanded rows.
+      if (in == FType.FULL) {
+        if (hint == null || !hint.fullSinglePartition().orElse(false))
+          return cpCaps(sig, ReasonCode.FULL_MULTI_PARTITIONS_UNSUPPORTED);
+        return guardAwareFout(sig, FType.FULL, ReasonCode.OK, Guard.eval(sig));
+      }
       if (in != FType.ROW)
         return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
 

@@ -32,6 +32,39 @@ import org.junit.Test;
 
 public class SinglePartitionFactsTest {
 	@Test
+	public void rexpandPreservesSingleEndpointWithoutInventingGeometry() {
+		DataOp input = source("labels", "localhost:1234/labels");
+		for(String direction : List.of("rows", "cols")) {
+			Hop expanded = rexpand(input, direction);
+			SinglePartitionFacts facts = new SinglePartitionFacts(List.of(input, expanded), Map.of(), Set.of());
+			Assert.assertTrue("Native REXPAND copies one map entry for each input entry",
+				facts.isSinglePartition(expanded));
+			Assert.assertEquals("Cardinality proof must not stamp output dimensions", -1, expanded.getDim1());
+		}
+	}
+
+	@Test
+	public void rexpandCannotInventUnknownOrMultiRangeEndpoint() {
+		for(DataOp input : List.of(read("unknownLabels"),
+			source("splitLabels", "localhost:1234/part1", "localhost:1234/part2"))) {
+			Hop expanded = rexpand(input, "cols");
+			SinglePartitionFacts facts = new SinglePartitionFacts(List.of(input, expanded), Map.of(), Set.of());
+			Assert.assertFalse("A shared host is not proof of one exact range", facts.isSinglePartition(expanded));
+		}
+	}
+
+	private static Hop rexpand(Hop input, String direction) {
+		LinkedHashMap<String,Hop> params = new LinkedHashMap<>();
+		params.put("target", input);
+		params.put("max", new DataOp("dynamicMaximum", DataType.SCALAR, ValueType.INT64,
+			OpOpData.TRANSIENTREAD, "dynamicMaximum", 0, 0, -1, 1000));
+		params.put("dir", new LiteralOp(direction));
+		params.put("cast", new LiteralOp(true));
+		params.put("ignore", new LiteralOp(true));
+		return HopRewriteUtils.createParameterizedBuiltinOp(input, params, ParamBuiltinOp.REXPAND);
+	}
+
+	@Test
 	public void nativeFullLeftIndexCarriesRhsEndpointIntoNextUpdate() {
 		DataOp local = read("localZeros");
 		DataOp rhs = source("probability", "localhost:1234/probability");

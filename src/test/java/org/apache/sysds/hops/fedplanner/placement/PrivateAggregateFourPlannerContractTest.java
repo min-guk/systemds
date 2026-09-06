@@ -28,6 +28,7 @@ import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
@@ -67,6 +68,49 @@ public class PrivateAggregateFourPlannerContractTest {
 			+ "print(sum(B));\n";
 	private static final String NON_REPLAYABLE_MATRIX_CFG_PROGRAM = FEDERATED_SOURCE
 		+ "if(sum(A)>0){B=colSums(A);}else{B=colSums(cbind(A,A));}C=B+1;print(sum(C));\n";
+
+	@Test
+	public void fourPlannersKeepPrivateSingleWorkerOneHotExpansionRemote() throws Exception {
+		String source = "A=federated(addresses=list(\"localhost:1234/labels\"),"
+			+ "ranges=list(list(0,0),list(4,1)));\n";
+		String domain = null;
+		try {
+			for(PlannerKind planner : PlannerKind.values()) {
+				FederatedPlannerUtils.resetFederatedPlannerRunState();
+				// Exercise the static one-hot rewrite without requiring remote shape
+				// acquisition before shared analysis, and retain per-category counts.
+				DMLProgram program = compile(source
+					+ "B=outer(A,t(seq(1,3)),\"==\");C=colSums(B);print(sum(C*C));\n");
+				new DMLTranslator(program).rewriteHopsDAG(program);
+				PlannedProgram plan = planFresh(planner, program, false);
+				if(domain == null)
+					domain = plan.analysis().analysisFingerprint();
+				Assert.assertEquals(planner.name(), domain, plan.analysis().analysisFingerprint());
+				var expansions = plan.analysis().compiledHopOccurrences().stream()
+					.filter(occurrence -> occurrence.hop() instanceof ParameterizedBuiltinOp builtin
+						&& builtin.getOp() == org.apache.sysds.common.Types.ParamBuiltinOp.REXPAND).toList();
+				Assert.assertFalse("Fixture must exercise the production one-hot-to-REXPAND rewrite", expansions.isEmpty());
+				for(var expansion : expansions) {
+					Assert.assertEquals(planner.name(), Privacy.PRIVATE_AGGREGATE,
+						plan.analysis().requirePrivacy(expansion.key()));
+					var selected = plan.result().selectedStates().get(expansion.key());
+					assertProtectedRemote(planner, selected);
+					Assert.assertEquals(planner.name(), org.apache.sysds.hops.fedplanner.FTypes.FType.FULL,
+						selected.fType());
+					Assert.assertTrue("One-hot encoding must not release row-level labels",
+						plan.analysis().graph().node(expansion.key()).orElseThrow().legalAlternatives().stream()
+							.allMatch(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT));
+				}
+				Assert.assertTrue("A protected expansion needs neither collection nor relocation",
+					plan.result().selectedRelocations().isEmpty());
+				Assert.assertTrue("A protected expansion must not have a local materialization",
+					plan.result().selectedLocalMaterializations().isEmpty());
+			}
+		}
+		finally {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
 
 	@Test
 	public void fourPlannersConsumeTheSameFilteredPrivateAggregateDomain() throws Exception {
@@ -379,7 +423,10 @@ public class PrivateAggregateFourPlannerContractTest {
 	}
 
 	private static PlannedProgram planFresh(PlannerKind planner, String script, boolean legacyDp) throws Exception {
-		DMLProgram program = compile(script);
+		return planFresh(planner, compile(script), legacyDp);
+	}
+
+	private static PlannedProgram planFresh(PlannerKind planner, DMLProgram program, boolean legacyDp) throws Exception {
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		PlannerInvocationReceipt receipt = switch(planner) {

@@ -137,9 +137,10 @@ final class SinglePartitionFacts {
 			return nary.getOp() == OpOpN.PLUS || nary.getOp() == OpOpN.MULT
 				|| nary.getOp() == OpOpN.MIN || nary.getOp() == OpOpN.MAX;
 		if(hop instanceof ParameterizedBuiltinOp builtin)
-			// REPLACE changes entries, not the map. Other parameterized builtins
-			// (e.g. RMEMPTY/REXPAND) require operation-specific topology evidence.
-			return builtin.getOp() == ParamBuiltinOp.REPLACE;
+			// REPLACE copies the map. Native REXPAND also retains one output entry
+			// per target entry: copyWithNewID/transpose changes ranges, not cardinality.
+			// This conditional FULL fact proves neither output dimensions nor legality.
+			return builtin.getOp() == ParamBuiltinOp.REPLACE || builtin.getOp() == ParamBuiltinOp.REXPAND;
 		// These native kernels copy/filter the input map; aligned append modifies
 		// its ranges in place. All matrix inputs must ultimately name the SAME
 		// endpoint, so map-binding across different workers is not certified here.
