@@ -262,17 +262,18 @@ public class LibMatrixAgg {
 	}
 
 	public static void aggregateUnaryMatrix(MatrixBlock in, MatrixBlock out, AggregateUnaryOperator uaop, int k) {
+		AggType aggtype = getAggType(uaop);
+		if((aggtype == AggType.MIN_INDEX || aggtype == AggType.MAX_INDEX)
+			&& uaop.aggOp.correction.getNumRemovedRowsColumns() == 0)
+			out.clen = 2;
+
 		//fall back to sequential version if necessary
 		if( !satisfiesMultiThreadingConstraints(in, out, uaop, k) ) {
-			if(uaop.aggOp.increOp.fn instanceof Builtin && (((((Builtin) uaop.aggOp.increOp.fn).getBuiltinCode() == BuiltinCode.MININDEX)
-				|| (((Builtin) uaop.aggOp.increOp.fn).getBuiltinCode() == BuiltinCode.MAXINDEX)) && uaop.aggOp.correction.getNumRemovedRowsColumns()==0))
-					out.clen = 2;
 			aggregateUnaryMatrix(in, out, uaop);
 			return;
 		}
 		
 		//prepare meta data
-		AggType aggtype = getAggType(uaop);
 		final int m = in.rlen;
 		final int m2 = out.rlen;
 		final int n2 = out.clen;
