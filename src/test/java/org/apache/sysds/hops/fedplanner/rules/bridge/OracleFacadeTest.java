@@ -324,10 +324,10 @@ public class OracleFacadeTest {
   }
 
   @Test
-  public void explicitAlignedBinaryHintDoesNotRequireSingleFullPartition() {
+  public void exactRowBinaryDoesNotConsultShapeFacts() {
     BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
         matrix("left", -1, -1), matrix("right", -1, -1));
-    ShapeHint hint = new ShapeHint(4, 2, 1000, Optional.empty(), 4, 2, 4, 2);
+    ShapeHint hint = new ShapeHint(-1, -1, -1, Optional.empty(), -1, -1, -1, -1);
 
     OracleFacade.DecisionEvidence evidence =
         facade.decideWithEvidence(plus, List.of(FType.ROW, FType.ROW), hint);
@@ -335,10 +335,7 @@ public class OracleFacadeTest {
     assertEquals(ExecType.FED, evidence.caps().exec());
     assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
     assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
-    assertEquals(Set.of(), evidence.shapeProof().missingRequiredFacts());
-    assertFalse(evidence.shapeProof().requiredFacts().contains("fullSinglePartition"));
-    assertFalse("the rule still certifies its actual shape requirements",
-        evidence.shapeProof().requiredFacts().isEmpty());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
   }
 
   @Test
@@ -383,22 +380,42 @@ public class OracleFacadeTest {
   }
 
   @Test
-  public void binaryProofIncludesOnlyRuleConsultedMissingShapeFacts() {
-    Hop left = matrix("left", 4, 7);
-    Hop right = matrix("right", 4, 7);
+  public void exactColumnBinaryDoesNotConsultShapeFacts() {
+    Hop left = matrix("left", -1, -1);
+    Hop right = matrix("right", -1, -1);
     BinaryOp plus = new BinaryOp(
         "plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
     plus.setDim1(-1);
-    plus.setDim2(7);
+    plus.setDim2(-1);
     plus.setBlocksize(-1);
 
     OracleFacade.DecisionEvidence evidence =
-        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.ROW), null);
+        facade.decideWithEvidence(plus, List.of(FType.COL, FType.COL), null);
 
     assertEquals(ExecType.FED, evidence.caps().exec());
     assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
-    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
-    assertEquals(Set.of("rows"), evidence.shapeProof().missingRequiredFacts());
+    assertEquals(Optional.of(FType.COL), evidence.caps().foutFType());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
+  }
+
+  @Test
+  public void mixedAxisBinaryStillRequiresShapeFacts() {
+    Hop left = matrix("left", -1, -1);
+    Hop right = matrix("right", -1, -1);
+    BinaryOp plus = new BinaryOp(
+        "plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+    plus.setDim1(-1);
+    plus.setDim2(-1);
+    plus.setBlocksize(-1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.COL), null);
+
+    assertEquals(ExecType.CP, evidence.caps().exec());
+    assertEquals(FederatedOutput.LOUT, evidence.caps().placement());
+    assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, evidence.caps().reason());
+    assertEquals(Set.of("rows", "cols", "rowsA", "colsA", "rowsB", "colsB"),
+        evidence.shapeProof().missingRequiredFacts());
   }
 
   @Test

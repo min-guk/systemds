@@ -86,8 +86,6 @@ public final class Rulesets {
       "WUMM supports only ROW or COL partitioned X (per QuaternaryWUMMFEDInstruction)";
   private static final String APPEND_FULL_SINGLE_RANGE_DETAIL =
       "Append with FType.FULL requires single federated range";
-  private static final String ALIGNMENT_NOT_PROVABLE_NOTE =
-      "alignment not statically provable; runtime may broadcast-slice";
   private static final String CUMOFF_FULL_SINGLE_RANGE_DETAIL =
       "FULL input assumed single federated range; runtime validates mapping";
 
@@ -3300,6 +3298,19 @@ public final class Rulesets {
         return builder.build();
       }
 
+      // Equal ROW/ROW or COL/COL layouts are native runtime candidates independent of
+      // compile-time dimensions. Exact worker/range compatibility is certified later by
+      // the candidate relocation/common-anchor authority. Decide this case before any
+      // speculative shape probes so failed alternative paths do not manufacture missing
+      // metadata requirements for an otherwise executable candidate.
+      FType exactSameAxis = matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW)
+          ? FType.ROW
+          : matchesAxis(left, FType.COL) && matchesAxis(right, FType.COL) ? FType.COL : null;
+      if (exactSameAxis != null) {
+        Guard.Result guard = Guard.eval(sig);
+        return guardAwareFout(sig, exactSameAxis, ReasonCode.OK, guard);
+      }
+
       boolean outerLike = isOuterLike(left, right, hint);
 
       FType axis = null;
@@ -3387,37 +3398,6 @@ public final class Rulesets {
       if (axis != null && hasFedInput) {
         Guard.Result guard = Guard.eval(sig);
         return guardAwareFout(sig, axis, ReasonCode.OK, guard);
-      }
-
-      FType softAxis = null;
-      if (!outerLike && hasFedInput) {
-        if (matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW))
-          softAxis = FType.ROW;
-        else if (matchesAxis(left, FType.COL) && matchesAxis(right, FType.COL))
-          softAxis = FType.COL;
-      }
-
-      if (softAxis != null && !axisKnown(softAxis, hint)) {
-        Guard.Result guard = Guard.eval(sig);
-        if (guard != null && guard.isFail())
-          return guardFallbackBuilder(sig, guard).build();
-        OpCaps.Builder builder = OpCaps.newBuilder()
-            .category(sig.category())
-            .opcode(sig.opcode())
-            .exec(ExecType.FED)
-            .placement(FederatedOutput.FOUT)
-            .fout(true, softAxis)
-            .reason(ReasonCode.OK)
-            .note(
-                softAxis == FType.ROW
-                    ? ReasonCode.BROADCAST_OR_ALIGNED_ROW
-                    : ReasonCode.BROADCAST_OR_ALIGNED_COL,
-                ALIGNMENT_NOT_PROVABLE_NOTE);
-        if (guard == null || guard.isUnknown())
-          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
-        else
-          appendGuardPassNote(builder, guard);
-        return builder.build();
       }
 
       ReasonCode reason;

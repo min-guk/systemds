@@ -35,6 +35,8 @@ import org.junit.Test;
 public class GlmPrivateAggregatePlanningContractTest {
 	private static final String SELECTOR_PROPERTY =
 		"sysds.test.glm.private.aggregate.selector";
+	private static final String WORKERS_PROPERTY =
+		"sysds.test.glm.private.aggregate.workers";
 
 	@Test
 	public void workerOneBinomialGlmRetainsProtectedAppendCandidates() throws Exception {
@@ -86,23 +88,44 @@ public class GlmPrivateAggregatePlanningContractTest {
 
 	@Test
 	public void optInWorkerOneBinomialGlmPlansWithSelectedAdditionalSelector() throws Exception {
+		planWithSelectedAdditionalSelectors(1);
+	}
+
+	@Test
+	public void optInPartitionedBinomialGlmPlansWithSelectedAdditionalSelector() throws Exception {
+		int workers = Integer.getInteger(WORKERS_PROPERTY, 0);
+		Assume.assumeTrue("enable the partitioned canary with -D" + WORKERS_PROPERTY
+			+ "=3 or 5", workers == 3 || workers == 5);
+		planWithSelectedAdditionalSelectors(workers);
+	}
+
+	private static void planWithSelectedAdditionalSelectors(int workers) throws Exception {
 		String requestedSelector = System.getProperty(SELECTOR_PROPERTY, "").trim();
 		Assume.assumeTrue("enable the local compile-only canary with -D" + SELECTOR_PROPERTY
 			+ "=FED_ALL, HEURISTIC, EXACT, or ALL", !requestedSelector.isEmpty());
 		List<SelectorKind> selectors = requestedSelector.equalsIgnoreCase("ALL")
 			? List.of(SelectorKind.values())
 			: List.of(parseSelector(requestedSelector));
-		Path features = Files.createTempFile("glm-pa-selector-features-", ".data");
-		Path labels = Files.createTempFile("glm-pa-selector-labels-", ".data");
+		List<Path> features = new ArrayList<>();
+		List<Path> labels = new ArrayList<>();
 		try {
-			writeMetadata(features, 2100);
-			writeMetadata(labels, 1);
+			int blockRows = (50000 + workers - 1) / workers;
+			for(int worker = 0; worker < workers; worker++) {
+				Path x = Files.createTempFile("glm-pa-selector-features-", ".data");
+				features.add(x);
+				Path y = Files.createTempFile("glm-pa-selector-labels-", ".data");
+				labels.add(y);
+				int rows = Math.min(blockRows, 50000 - worker * blockRows);
+				writeMetadata(x, rows, 2100);
+				writeMetadata(y, rows, 1);
+			}
 			List<PlannedGlm> plans = new ArrayList<>();
 			for(SelectorKind selector : selectors) {
 				long started = System.nanoTime();
 				PlannedGlm plan = planFresh(selector, features, labels);
 				plans.add(plan);
 				System.out.println("GLM private-aggregate selector profile: selector=" + selector
+					+ " workers=" + workers
 					+ " elapsedMs=" + ((System.nanoTime() - started) / 1_000_000L)
 					+ " decisions=" + plan.analysis().graph().decisionNodes().size()
 					+ " certificateChars=" + plan.result().objectiveCertificate().length()
@@ -150,14 +173,14 @@ public class GlmPrivateAggregatePlanningContractTest {
 		}
 		finally {
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
-			Files.deleteIfExists(Path.of(features + ".mtd"));
-			Files.deleteIfExists(Path.of(labels + ".mtd"));
-			Files.deleteIfExists(features);
-			Files.deleteIfExists(labels);
+			for(Path data : java.util.stream.Stream.concat(features.stream(), labels.stream()).toList()) {
+				Files.deleteIfExists(Path.of(data + ".mtd"));
+				Files.deleteIfExists(data);
+			}
 		}
 	}
 
-	private static PlannedGlm planFresh(SelectorKind selector, Path features, Path labels)
+	private static PlannedGlm planFresh(SelectorKind selector, List<Path> features, List<Path> labels)
 		throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		DMLProgram program = compile(glmScript(features, labels));
@@ -202,7 +225,7 @@ public class GlmPrivateAggregatePlanningContractTest {
 		return program;
 	}
 
-	private static String glmScript(Path features, Path labels) {
+	private static String glmScript(List<Path> features, List<Path> labels) {
 		return federatedInput("X", features, 2100)
 			+ federatedInput("Y", labels, 1)
 			+ "threshold=mean(Y);\nY=(Y>threshold)*1;\n"
@@ -226,16 +249,33 @@ public class GlmPrivateAggregatePlanningContractTest {
 	}
 
 	private static void writeMetadata(Path data, int columns) throws Exception {
+		writeMetadata(data, 50000, columns);
+	}
+
+	private static void writeMetadata(Path data, int rows, int columns) throws Exception {
 		Files.writeString(Path.of(data + ".mtd"), "{\"data_type\":\"matrix\","
-			+ "\"value_type\":\"double\",\"format\":\"binary\",\"rows\":50000,\"cols\":"
+			+ "\"value_type\":\"double\",\"format\":\"binary\",\"rows\":" + rows + ",\"cols\":"
 			+ columns + ",\"rows_in_block\":1000,\"cols_in_block\":1000,\"nnz\":"
-			+ (50000L * columns) + ",\"privacy\":\"private-aggregate\"}");
+			+ ((long) rows * columns) + ",\"privacy\":\"private-aggregate\"}");
 	}
 
 	private static String federatedInput(String name, Path data, int columns) {
-		String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
-		return name + "=federated(addresses=list(\"localhost:1234/" + path
-			+ "\"),ranges=list(list(0,0),list(50000," + columns + ")));\n";
+		return federatedInput(name, List.of(data), columns);
+	}
+
+	private static String federatedInput(String name, List<Path> data, int columns) {
+		List<String> addresses = new ArrayList<>();
+		List<String> ranges = new ArrayList<>();
+		int blockRows = (50000 + data.size() - 1) / data.size();
+		for(int worker = 0; worker < data.size(); worker++) {
+			String path = data.get(worker).toString().replace("\\", "\\\\").replace("\"", "\\\"");
+			addresses.add("\"localhost:" + (1234 + worker) + "/" + path + "\"");
+			int begin = worker * blockRows;
+			ranges.add("list(" + begin + ",0),list(" + Math.min(50000, begin + blockRows)
+				+ "," + columns + ")");
+		}
+		return name + "=federated(addresses=list(" + String.join(",", addresses)
+			+ "),ranges=list(" + String.join(",", ranges) + "));\n";
 	}
 
 	private enum SelectorKind { FED_ALL, HEURISTIC, EXACT }

@@ -98,6 +98,56 @@ public class RelocationSelectionsPhysicalAnchorTest {
 			() -> RelocationSelections.selectCanonical(incompatible, assignment));
 	}
 
+	@Test
+	public void sameWorkersDoNotAlignShiftedRowPartitions() {
+		assertShiftedPartitionsRejected(FType.ROW);
+	}
+
+	@Test
+	public void sameWorkersDoNotAlignShiftedColumnPartitions() {
+		assertShiftedPartitionsRejected(FType.COL);
+	}
+
+	private static void assertShiftedPartitionsRejected(FType axis) {
+		PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, axis, false);
+		DurableAnchorKey left = partitionedAnchor("left", axis, 4);
+		DurableAnchorKey right = partitionedAnchor("right", axis, 3);
+		CandidateRuleKey rule = new CandidateRuleKey(CONSUMER,
+			List.of(CandidateInputState.present(axis), CandidateInputState.present(axis)));
+		CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(rule,
+			new CandidateEmissionFact(new PlacementEmissionState(state, false), axis), List.of());
+		RelocationActionKey leftKey = new RelocationActionKey(VERSION_A, state, left,
+			"scope", List.of(CONSUMER));
+		RelocationActionKey rightKey = new RelocationActionKey(VERSION_B, state, right,
+			"scope", List.of(CONSUMER));
+		List<RelocationAction> actions = List.of(
+			new RelocationAction(leftKey, List.of(new ObligationKey(CONSUMER, 0, VERSION_A,
+				state, leftKey, "scope"))),
+			new RelocationAction(rightKey, List.of(new ObligationKey(CONSUMER, 1, VERSION_B,
+				state, rightKey, "scope"))));
+		NeutralPlacementGraph graph = new NeutralPlacementGraph(List.of(
+			new Node(SOURCE_A, NodeKind.OPERATION, VERSION_A, true,
+				List.of(state), List.of(), List.of(left)),
+			new Node(SOURCE_B, NodeKind.OPERATION, VERSION_B, true,
+				List.of(state), List.of(), List.of(right)),
+			new Node(CONSUMER, NodeKind.OPERATION, CONSUMER_VERSION, true,
+				List.of(state), List.of(), List.of())), List.of(), actions);
+
+		Assert.assertFalse(PlacementIdentity.samePhysicalWorkerPool(left, right));
+		Assert.assertFalse(RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(actions, receipt));
+		Assert.assertThrows(IllegalStateException.class, () -> RelocationSelections.selectCanonical(
+			graph, Map.of(SOURCE_A, state, SOURCE_B, state, CONSUMER, state)));
+	}
+
+	private static DurableAnchorKey partitionedAnchor(String name, FType axis, long split) {
+		boolean row = axis == FType.ROW;
+		return new DurableAnchorKey(name, axis, List.of(
+			new AnchorPartition("localhost:1234", List.of(0L, 0L),
+				List.of(row ? split : 2L, row ? 2L : split)),
+			new AnchorPartition("localhost:1235", List.of(row ? split : 0L, row ? 0L : split),
+				List.of(row ? 8L : 2L, row ? 2L : 8L))));
+	}
+
 	private static CandidateSelectionReceipt receipt() {
 		CandidateRuleKey rule = new CandidateRuleKey(CONSUMER,
 			List.of(CandidateInputState.present(FType.ROW),
