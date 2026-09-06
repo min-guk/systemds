@@ -477,25 +477,16 @@ public final class FederatedCostModel {
 	 * plans that produce a local matrix result.
 	 *
 	 * <p>The worker compute, result GET, and cleanup requests form one logical FED
-	 * instruction batch, but {@code FED/LOUT} is a blocking boundary: unlike FOUT,
-	 * the coordinator must wait for the worker response and bind it before the next
-	 * local operation can run. The ordinary FED execution term owns dispatch and
-	 * control; this result boundary owns one additional critical-path network wait
-	 * plus the returned payload. The fixed stage is per logical execution and is
-	 * never multiplied by worker fan-in.</p>
+	 * request/response batch. The ordinary FED execution term therefore owns the
+	 * request's fixed latency and control cost; this {@code FED/LOUT} result term
+	 * owns only the returned payload transfer. Coordinator binding remains part of
+	 * the runtime semantics but has no separately quantified cost here. A later
+	 * standalone FOUT materialization remains a separate request and retains its
+	 * own stage.</p>
 	 */
 	public static double computeNativeFederatedAggBinaryLoutResultCost(Hop hop,
 			FType logicalFType, double outputMemEstimate, int numWorkers,
 			double genericResultDownloadCost) {
-		double blockingResultStage = computeFixedFederatedInstructionStageCost(1.0,
-			MBS_NETWORK_LATENCY * TO_MS, 0.0);
-		return computeNativeFederatedAggBinaryLoutResultCost(hop, logicalFType,
-			outputMemEstimate, numWorkers, genericResultDownloadCost, blockingResultStage);
-	}
-
-	static double computeNativeFederatedAggBinaryLoutResultCost(Hop hop,
-			FType logicalFType, double outputMemEstimate, int numWorkers,
-			double genericResultDownloadCost, double blockingResultStage) {
 		if (!(hop instanceof AggBinaryOp) || !((AggBinaryOp) hop).isMatrixMultiply())
 			return genericResultDownloadCost;
 		double resultMemEstimate = outputMemEstimate > 0.0
@@ -504,8 +495,7 @@ public final class FederatedCostModel {
 			return genericResultDownloadCost;
 		int fanIn = estimateDownloadFanIn(logicalFType, numWorkers);
 		double resultCost = computeInBandWorkerResultDownloadCost(resultMemEstimate, fanIn, false);
-		return resultCost > 0.0 ? resultCost + Math.max(0.0, blockingResultStage)
-			: genericResultDownloadCost;
+		return resultCost > 0.0 ? resultCost : genericResultDownloadCost;
 	}
 
 	private static double estimateNativeAggregateUnaryPayloadFanIn(AggUnaryOp aggregate,
@@ -655,7 +645,7 @@ public final class FederatedCostModel {
 				inputFTypes, numWorkers);
 		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType)) {
 			return computePartialAggregationCost("wdivmm-local-aggregation",
-				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, 0.0, false);
+				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, 0.0);
 		}
 		if (wdivmmInputPreparationCost > 0.0) {
 			return new MixedFedLocalCost("wdivmm-input-preparation",
@@ -673,7 +663,7 @@ public final class FederatedCostModel {
 				computeAggBinarySlicedInputBroadcastCost(hop, inputHops,
 					inputMemEstimates, inputFTypes, numWorkers);
 			return computePartialAggregationCost("aggbinary-add-aggregation",
-				hop, outputMemEstimate, numWorkers, inputPreparationCost, 0.0, true);
+				hop, outputMemEstimate, numWorkers, inputPreparationCost, 0.0);
 		}
 		return MixedFedLocalCost.none();
 	}
@@ -746,7 +736,7 @@ public final class FederatedCostModel {
 
 	private static MixedFedLocalCost computePartialAggregationCost(String label, Hop hop,
 			double outputMemEstimate, int numWorkers, double inputPreparationCost,
-			double federatedComputeFloor, boolean fixedResultControlOwnedByFedUnary) {
+			double federatedComputeFloor) {
 		double partialResultMem = outputMemEstimate > 0.0 ? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
 		if (partialResultMem <= 0.0)
 			partialResultMem = getEffectiveUploadMemEstimate(hop);
@@ -754,12 +744,7 @@ public final class FederatedCostModel {
 			return new MixedFedLocalCost(label, inputPreparationCost, 0.0, 0.0, federatedComputeFloor);
 
 		int fanIn = Math.max(1, numWorkers);
-		double partialDownloadCost = fixedResultControlOwnedByFedUnary
-			? computeInBandWorkerResultDownloadCost(partialResultMem, fanIn, true)
-			: computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
-		if(fixedResultControlOwnedByFedUnary && partialDownloadCost > 0.0)
-			partialDownloadCost += computeFixedFederatedInstructionStageCost(1.0,
-				MBS_NETWORK_LATENCY * TO_MS, 0.0);
+		double partialDownloadCost = computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
 		double coordinatorAggregationCost = computeCoordinatorAggregationCost(hop, partialResultMem, fanIn);
 		double cleanupControlCost = computeLocalAggregationCleanupControlCost(fanIn);
 		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,

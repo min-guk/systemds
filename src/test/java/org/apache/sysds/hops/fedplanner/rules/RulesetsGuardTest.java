@@ -59,6 +59,59 @@ public class RulesetsGuardTest {
   }
 
   @Test
+  public void ewiseFullRequiresProvenSingleRange() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig sig = sig(OpOp2.MULT.toString(), OpCategory.BINARY_EWISE, Map.of());
+
+    OpCaps unknown = rule.caps(sig, java.util.Arrays.asList(FType.FULL, null),
+        new ShapeHint(10, 10, 1000));
+    assertEquals(ExecType.CP, unknown.exec());
+    assertEquals(ReasonCode.FULL_MULTI_PARTITIONS_UNSUPPORTED, unknown.reason());
+
+    OpCaps single = rule.caps(sig, java.util.Arrays.asList(FType.FULL, null),
+        new ShapeHint(10, 10, 1000, true));
+    assertEquals(ExecType.FED, single.exec());
+    assertEquals(FederatedOutput.FOUT, single.placement());
+    assertEquals(FType.FULL, single.foutFType().orElse(null));
+  }
+
+
+  @Test
+  public void ewiseFullCompanionsRequireProvenSingleRange() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig sig = sig(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of());
+    ShapeHint unknown = new ShapeHint(10, 10, 1000);
+    ShapeHint single = new ShapeHint(10, 10, 1000, true);
+
+    for(List<FType> selected : List.of(
+        List.of(FType.FULL, FType.FULL),
+        List.of(FType.FULL, FType.BROADCAST))) {
+      OpCaps rejected = rule.caps(sig, selected, unknown);
+      assertEquals("Unknown FULL cardinality must cap the candidate at CP: " + selected,
+          ExecType.CP, rejected.exec());
+      assertEquals(ReasonCode.FULL_MULTI_PARTITIONS_UNSUPPORTED, rejected.reason());
+
+      OpCaps accepted = rule.caps(sig, selected, single);
+      assertEquals("Proven one-range FULL remains a native candidate: " + selected,
+          ExecType.FED, accepted.exec());
+      assertEquals(FederatedOutput.FOUT, accepted.placement());
+      assertEquals(FType.FULL, accepted.foutFType().orElse(null));
+    }
+    OpSig commonPoolBlocked = sig(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(
+        "rc.execMode", "SINGLE_NODE",
+        "rc.cachingActive", "true",
+        "rc.memReqEstBytes", Long.toString(134_217_728L),
+        "rc.memIn1EstBytes", Long.toString(33_554_432L),
+        "rc.memIn2EstBytes", Long.toString(33_554_432L)));
+    OpCaps guarded = rule.caps(commonPoolBlocked,
+        List.of(FType.FULL, FType.BROADCAST), single);
+    assertEquals("A one-range proof must not bypass the active-cache representation guard",
+        ExecType.CP, guarded.exec());
+    assertFalse(guarded.foutEnabled());
+    assertEquals(ReasonCode.REPR_CHANGE_GUARD_FAIL, guarded.reason());
+  }
+
+  @Test
   public void mmMemRequirementTriggersGuardFail() {
     Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
     Map<String,String> attrs = Map.of(

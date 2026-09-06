@@ -307,11 +307,12 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		Set<Hop> unresolvedValueSources = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++)
-			if(!cfg.reachingFunctionOutputDefinitions().get(ordinal).isEmpty())
+			if(cfg.reachingFunctionInputs().get(ordinal)
+				|| !cfg.reachingFunctionOutputDefinitions().get(ordinal).isEmpty())
 				unresolvedValueSources.add(occurrences.get(ordinal).hop());
-		// The existing abstract source relation covers CFG writes and formal inputs,
-		// not synthetic function-return boundaries. A partial union is not a FULL
-		// cardinality certificate; those reads remain UNKNOWN until represented.
+		// The Hop-keyed abstract source relation cannot distinguish the expanded
+		// function-boundary occurrences. A partial union is not a FULL cardinality
+		// certificate; those reads remain UNKNOWN until the occurrence closure below.
 		SinglePartitionFacts singlePartitions = new SinglePartitionFacts(
 			occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
 			preliminaryAbstractFacts.valueSources(), unresolvedValueSources);
@@ -471,9 +472,20 @@ public final class NeutralPlacementGraphBuilder {
 		addStableOriginConstraints(nodes, constraints);
 		List<CompiledInputEdgeFact> compiledInputEdges = deriveCompiledInputEdges(occurrences, nodes,
 			ordinalsByBlock, factsByHop);
+		singlePartitions = singlePartitions.closeOccurrences(nodes, origins, compiledInputEdges, constraints);
+		List<Integer> cardinalityReplayOrdinals =
+			singlePartitions.changedOccurrenceOrdinals(nodes, occurrences.size(), origins);
+		CandidateReplay cardinalityReplay = closePostCfgPhysicalCandidateDependencies(occurrences,
+			new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts,
+				logicalTransientInputs, cardinalityReplayOrdinals), factsByHop,
+			preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
+		nodes = cardinalityReplay.nodes();
+		candidateRuleDomainKeys = cardinalityReplay.domainKeys();
+		candidateRuleFacts = cardinalityReplay.facts();
+		logicalTransientInputs = cardinalityReplay.logicalInputs();
 		CandidateReplay materializationReplay = closeWorkerPoolMaterializationDependencies(
 			occurrences, nodes, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
-			compiledInputEdges, constraints, origins, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+			compiledInputEdges, constraints, origins, factsByHop, concreteShapes, preliminaryAbstractFacts.shapes(), singlePartitions,
 			ordinalsByBlock, cfg);
 		nodes = materializationReplay.nodes();
 		candidateRuleDomainKeys = materializationReplay.domainKeys();
@@ -498,7 +510,7 @@ public final class NeutralPlacementGraphBuilder {
 					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				materializationReplay = closeWorkerPoolMaterializationDependencies(
 					occurrences, functionReplay.nodes(), functionReplay.domainKeys(), functionReplay.facts(),
-					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, factsByHop,
+					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, factsByHop, concreteShapes,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				nodes = materializationReplay.nodes();
 				candidateRuleDomainKeys = materializationReplay.domainKeys();
@@ -525,7 +537,7 @@ public final class NeutralPlacementGraphBuilder {
 					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				materializationReplay = closeWorkerPoolMaterializationDependencies(
 					occurrences, functionReplay.nodes(), functionReplay.domainKeys(), functionReplay.facts(),
-					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, factsByHop,
+					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, factsByHop, concreteShapes,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				nodes = materializationReplay.nodes();
 				candidateRuleDomainKeys = materializationReplay.domainKeys();
@@ -549,7 +561,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(!cfgReplay.changedOrdinals().isEmpty()) {
 				materializationReplay = closeWorkerPoolMaterializationDependencies(
 					occurrences, nodes, candidateRuleDomainKeys, candidateRuleFacts,
-					logicalTransientInputs, compiledInputEdges, constraints, origins, factsByHop,
+					logicalTransientInputs, compiledInputEdges, constraints, origins, factsByHop, concreteShapes,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
 				nodes = materializationReplay.nodes();
 				candidateRuleDomainKeys = materializationReplay.domainKeys();
@@ -564,6 +576,11 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		if(!functionClosureConverged)
 			throw new IllegalStateException("Logical function boundary candidate closure did not converge");
+		CandidateReplay finalLatentWdivmmClosure = closeLatentWdivmmRuntimeOutputContracts(
+			new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts,
+				logicalTransientInputs, List.of()), compiledInputEdges, origins, factsByHop, concreteShapes);
+		nodes = finalLatentWdivmmClosure.nodes();
+		candidateRuleFacts = finalLatentWdivmmClosure.facts();
 		List<Node> prePrivacyNodes = PlannerCandidateSpaceAudit.isEnabled()
 			? List.copyOf(nodes) : List.of();
 		List<CandidateRuleFact> prePrivacyCandidateRuleFacts = PlannerCandidateSpaceAudit.isEnabled()
@@ -585,7 +602,8 @@ public final class NeutralPlacementGraphBuilder {
 				input.sourceWrite(), input.targetRead(), input.logicalPosition(),
 				"logical-transient-input"));
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
-			nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop, privacyFacts.asMap());
+			nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop, concreteShapes,
+			privacyFacts.asMap());
 		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions = candidateRuleFacts.stream()
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.map(CandidateEmissionFact::derivedFoutAction).filter(Objects::nonNull).distinct()
@@ -604,16 +622,21 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		Set<CompiledHopKey> expectedKeys = new LinkedHashSet<>();
 		var factsByKey = new LinkedHashMap<CompiledHopKey, NodeShapeFact>();
+		var sourceCompiledFactsByKey = new LinkedHashMap<CompiledHopKey, NodeShapeFact>();
 		for(HopOccurrenceProjection projection : projections) {
 			expectedKeys.add(projection.key());
 			NodeShapeFact shapeFact = factsByHop.get(projection.hop());
 			if(shapeFact == null)
 				throw new IllegalStateException("Placement projection has no builder-owned shape fact: " + projection.key());
 			factsByKey.put(projection.key(), shapeFact);
+			NodeShapeFact sourceCompiledShape = concreteShapes.get(projection.hop());
+			if(sourceCompiledShape == null)
+				throw new IllegalStateException("Placement projection has no source-compiled shape fact: " + projection.key());
+			sourceCompiledFactsByKey.put(projection.key(), sourceCompiledShape);
 		}
 		PlacementAbstractShapeAnalysis.KeyFacts abstractFacts =
 			PlacementAbstractShapeAnalysis.closeCompiledOccurrences(graph, projections, fcallSizes, factsByKey);
-		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey,
+		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, sourceCompiledFactsByKey,
 			abstractFacts.shapes(), abstractFacts.scalarLiterals(), expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections, shapeFacts);
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts,
@@ -2412,11 +2435,15 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static boolean sameTransientForwardContext(Node source, Node read) {
+		// The exact CFG reaching-definition edge owns the logical transient value;
+		// compiled versus dynamic-recompile is a physical compilation mode. Admit only
+		// the two supported concrete occurrence modes and retain every logical identity
+		// check. Exact shape, placement-domain, and anchor checks follow at the caller.
 		return source.key().programFingerprint().equals(read.key().programFingerprint())
 			&& source.valueVersion().programFingerprint().equals(read.valueVersion().programFingerprint())
 			&& source.valueVersion().lexicalVariable().equals(read.valueVersion().lexicalVariable())
 			&& source.key().functionNamespace().equals(read.key().functionNamespace())
-			&& source.key().recompileContext().equals(read.key().recompileContext());
+			&& supportedLocalPathOccurrence(source) && supportedLocalPathOccurrence(read);
 	}
 
 	private CandidateReplay closePostCfgPhysicalCandidateDependencies(
@@ -3979,7 +4006,8 @@ public final class NeutralPlacementGraphBuilder {
 			boolean shapeDependent;
 			try {
 				evidence = oracle.decideWithEvidence(hop, inputs,
-					exactShapeHint(hop, shape, inputShapeFacts, singlePartitions.fullInputHint(hop, inputs)));
+					exactShapeHint(hop, shape, inputShapeFacts,
+						singlePartitions.fullInputHint(hop, inputAnchorOwners, inputs)));
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
 			}
@@ -4734,12 +4762,13 @@ public final class NeutralPlacementGraphBuilder {
 		List<LogicalTransientInputFact> logicalTransientInputs,
 		List<CompiledInputEdgeFact> compiledInputEdges, java.util.Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop,
+		Map<Hop,NodeShapeFact> sourceCompiledFactsByHop,
 		Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
 		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock, CfgAnalysis cfg) {
 		CandidateReplay current = closeLatentWdivmmRuntimeOutputContracts(
 			new CandidateReplay(List.copyOf(nodes), List.copyOf(domainKeys),
 				List.copyOf(candidateRuleFacts), List.copyOf(logicalTransientInputs), List.of()),
-			compiledInputEdges, origins, factsByHop);
+			compiledInputEdges, origins, factsByHop, sourceCompiledFactsByHop);
 		java.util.TreeSet<Integer> changedOrdinals = new java.util.TreeSet<>();
 		changedOrdinals.addAll(current.changedOrdinals());
 		int maxPasses = Math.max(1, nodes.size() * (FType.values().length + 1) * 2);
@@ -4764,7 +4793,7 @@ public final class NeutralPlacementGraphBuilder {
 				: retainRecompileMaterializationLayoutChanges(replayed, current,
 					recompileDescendants);
 			current = closeLatentWdivmmRuntimeOutputContracts(current,
-				compiledInputEdges, origins, factsByHop);
+				compiledInputEdges, origins, factsByHop, sourceCompiledFactsByHop);
 			changedOrdinals.addAll(current.changedOrdinals());
 		}
 		throw new IllegalStateException("Worker-pool materialization candidate closure did not converge");
@@ -4784,7 +4813,8 @@ public final class NeutralPlacementGraphBuilder {
 	 */
 	private static CandidateReplay closeLatentWdivmmRuntimeOutputContracts(
 		CandidateReplay replay, List<CompiledInputEdgeFact> compiledInputEdges,
-		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop) {
+		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop,
+		Map<Hop,NodeShapeFact> sourceCompiledFactsByHop) {
 		List<Node> nodes = new ArrayList<>(replay.nodes());
 		List<CandidateRuleFact> facts = new ArrayList<>(replay.facts());
 		Map<CompiledHopKey,Integer> nodeIndexes = new IdentityHashMap<>();
@@ -4798,7 +4828,7 @@ public final class NeutralPlacementGraphBuilder {
 		java.util.TreeSet<Integer> changed = new java.util.TreeSet<>(replay.changedOrdinals());
 		for(Node node : List.copyOf(nodes)) {
 			PlacementCostSemantics.LatentWdivmmTransposePairFact runtime =
-				PlacementCostSemantics.latentWdivmmTransposePairFact(origins, factsByHop,
+				PlacementCostSemantics.latentWdivmmTransposePairFact(origins, factsByHop, sourceCompiledFactsByHop,
 					compiledInputEdges, nodes, node.key());
 			if(runtime == null || !runtime.nativeOutputMustBeLocal()
 				|| runtime.partitionedInputFType() == null)
@@ -4809,9 +4839,7 @@ public final class NeutralPlacementGraphBuilder {
 			boolean factChanged = false;
 			for(int factIndex : indexes) {
 				CandidateRuleFact prior = facts.get(factIndex);
-				if(prior.status() != CandidateEvaluationStatus.AVAILABLE
-					|| prior.allowedEmissionFacts().stream().noneMatch(emission ->
-						emission.emissionState().placementState().execType() == ExecType.FED))
+				if(prior.status() != CandidateEvaluationStatus.AVAILABLE)
 					continue;
 				CandidateRuleFact corrected = latentWdivmmLocalOutputFact(prior,
 					runtime.partitionedInputFType());
@@ -4863,6 +4891,10 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateEmissionFact exact = candidateEmissionFact(local, false, executionFType);
 			emissions.putIfAbsent(exact.emissionState(), exact);
 		}
+		PlacementState runtimeLocal = new PlacementState(ExecType.FED, FederatedOutput.LOUT,
+			executionFType, false);
+		CandidateEmissionFact runtimeEmission = candidateEmissionFact(runtimeLocal, false, executionFType);
+		emissions.putIfAbsent(runtimeEmission.emissionState(), runtimeEmission);
 		CandidateCapabilityFact capability = prior.capability();
 		List<CandidateRuleNote> notes = new ArrayList<>(capability.notes());
 		org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reason =
@@ -5192,7 +5224,8 @@ public final class NeutralPlacementGraphBuilder {
 		List<Node> nodes, List<LogicalTransientInputFact> logicalTransientInputs,
 		java.util.Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes,
-		Map<Hop,NodeShapeFact> factsByHop, Map<CompiledHopKey,Privacy> privacyByKey) {
+		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,NodeShapeFact> sourceCompiledFactsByHop,
+		Map<CompiledHopKey,Privacy> privacyByKey) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
@@ -5209,7 +5242,7 @@ public final class NeutralPlacementGraphBuilder {
 			latentWdivmmPairsByOwner = new IdentityHashMap<>();
 		for(Node node : nodes) {
 			PlacementCostSemantics.LatentWdivmmTransposePairFact pair =
-				PlacementCostSemantics.latentWdivmmTransposePairFact(origins, factsByHop,
+				PlacementCostSemantics.latentWdivmmTransposePairFact(origins, factsByHop, sourceCompiledFactsByHop,
 					compiledInputEdges, nodes, node.key());
 			if(pair != null)
 				latentWdivmmPairsByOwner.put(node.key(), pair);

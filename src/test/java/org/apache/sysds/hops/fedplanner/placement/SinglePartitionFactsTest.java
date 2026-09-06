@@ -32,6 +32,35 @@ import org.junit.Test;
 
 public class SinglePartitionFactsTest {
 	@Test
+	public void endpointIdentityChangeDoesNotReplayUnchangedCardinalityEvidence() {
+		Assert.assertEquals(List.of(), SinglePartitionFacts.changedCardinalityEvidenceOrdinals(
+			List.of("worker-a"), List.of("worker-b"), 1));
+	}
+
+	@Test
+	public void knownToUnknownCardinalityEvidenceSeedsReplay() {
+		Assert.assertEquals(List.of(0), SinglePartitionFacts.changedCardinalityEvidenceOrdinals(
+			List.of("worker-a"), List.of(""), 1));
+	}
+
+	@Test
+	public void unknownToKnownCardinalityEvidenceSeedsReplay() {
+		Assert.assertEquals(List.of(0), SinglePartitionFacts.changedCardinalityEvidenceOrdinals(
+			List.of(""), List.of("worker-a"), 1));
+	}
+
+	@Test
+	public void unchangedUnknownCardinalityEvidenceDoesNotReplay() {
+		Assert.assertEquals(List.of(), SinglePartitionFacts.changedCardinalityEvidenceOrdinals(
+			List.of(""), List.of(""), 1));
+	}
+
+	@Test
+	public void syntheticTailIsExcludedFromPhysicalReplayOrdinals() {
+		Assert.assertEquals(List.of(), SinglePartitionFacts.changedCardinalityEvidenceOrdinals(
+			List.of("worker-a", ""), List.of("worker-a", "worker-b"), 1));
+	}
+	@Test
 	public void rexpandPreservesSingleEndpointWithoutInventingGeometry() {
 		DataOp input = source("labels", "localhost:1234/labels");
 		for(String direction : List.of("rows", "cols")) {
@@ -297,6 +326,72 @@ public class SinglePartitionFactsTest {
 		Assert.assertFalse("A coordinator value is not itself an existing single-range FULL input",
 			facts.isSinglePartition(selection));
 		Assert.assertEquals("No exact value geometry may be invented by a cardinality fact", -1, read.getDim2());
+	}
+
+	@Test
+	public void localElementwiseCompanionKeepsFullResultCardinality() {
+		DataOp weights = source("W", "localhost:1234/W");
+		Hop localInner = HopRewriteUtils.createDataGenOpByVal(new LiteralOp(4L), new LiteralOp(4L),
+			null, DataType.MATRIX, ValueType.FP64, 1);
+		BinaryOp weighted = new BinaryOp("weighted", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, weights, localInner);
+		Hop localRight = HopRewriteUtils.createDataGenOpByVal(new LiteralOp(4L), new LiteralOp(4L),
+			null, DataType.MATRIX, ValueType.FP64, 1);
+		AggBinaryOp next = new AggBinaryOp("next", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, weighted, localRight);
+		SinglePartitionFacts facts = new SinglePartitionFacts(
+			List.of(weights, localInner, weighted, localRight, next), Map.of(), Set.of());
+		Assert.assertEquals(Optional.of(true),
+			facts.fullInputHint(weighted, Arrays.asList(FType.FULL, null)));
+		Assert.assertEquals("A legal single-FULL elementwise result copies its provider's one range",
+			Optional.of(true), facts.fullInputHint(next, Arrays.asList(FType.FULL, null)));
+		Assert.assertFalse("The local companion is not itself a FULL cardinality source",
+			facts.isSinglePartition(localInner));
+	}
+
+
+	@Test
+	public void ewiseFullTransferRejectsConflictingAndUnknownSelectedFullInputs() {
+		DataOp left = source("left", "localhost:1234/left");
+		DataOp other = source("other", "localhost:1235/other");
+		DataOp unknown = read("unknown");
+		BinaryOp conflicting = new BinaryOp("conflicting", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, left, other);
+		Hop local = HopRewriteUtils.createDataGenOpByVal(new LiteralOp(4L), new LiteralOp(4L),
+			null, DataType.MATRIX, ValueType.FP64, 1);
+		AggBinaryOp downstream = new AggBinaryOp("downstream", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, conflicting, local);
+		BinaryOp partiallyKnown = new BinaryOp("partiallyKnown", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, left, unknown);
+		SinglePartitionFacts facts = new SinglePartitionFacts(
+			List.of(left, other, unknown, conflicting, local, downstream, partiallyKnown), Map.of(), Set.of());
+		Assert.assertFalse("Different one-range endpoints cannot produce one FULL result",
+			facts.isSinglePartition(conflicting));
+		Assert.assertEquals("A conflicting elementwise result cannot become a downstream FULL input",
+			Optional.empty(), facts.fullInputHint(downstream, Arrays.asList(FType.FULL, null)));
+		Assert.assertEquals("Every selected FULL operand needs its own exact one-range proof",
+			Optional.empty(), facts.fullInputHint(partiallyKnown, List.of(FType.FULL, FType.FULL)));
+	}
+
+	@Test
+	public void ungroundedElementwiseCycleIsUnknownForEveryHopOrder() {
+		DataOp leftRead = read("left"), rightRead = read("right");
+		Hop leftLocal = HopRewriteUtils.createDataGenOpByVal(new LiteralOp(4L), new LiteralOp(4L),
+			null, DataType.MATRIX, ValueType.FP64, 1);
+		Hop rightLocal = HopRewriteUtils.createDataGenOpByVal(new LiteralOp(4L), new LiteralOp(4L),
+			null, DataType.MATRIX, ValueType.FP64, 1);
+		BinaryOp left = new BinaryOp("leftUpdate", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, leftRead, leftLocal);
+		BinaryOp right = new BinaryOp("rightUpdate", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, rightRead, rightLocal);
+		List<Hop> hops = new ArrayList<>(List.of(leftRead, rightRead, leftLocal, rightLocal, left, right));
+		for(int rotation = 0; rotation < hops.size(); rotation++) {
+			java.util.Collections.rotate(hops, 1);
+			SinglePartitionFacts facts = new SinglePartitionFacts(hops,
+				Map.of(leftRead, List.of(right), rightRead, List.of(left)), Set.of());
+			Assert.assertFalse("Ungrounded left elementwise SCC must stay unknown", facts.isSinglePartition(left));
+			Assert.assertFalse("Ungrounded right elementwise SCC must stay unknown", facts.isSinglePartition(right));
+		}
 	}
 
 	@Test

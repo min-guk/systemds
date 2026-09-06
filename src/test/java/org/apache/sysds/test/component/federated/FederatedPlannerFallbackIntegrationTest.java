@@ -4889,7 +4889,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testAggBinaryLocalResultChargesBlockingRetrievalStage() throws Exception {
+	public void testAggBinaryLocalResultReusesFederatedInstructionRoundTrip() throws Exception {
 		DataOp left = federatedRead("XaggBinarySingleControlPlan", ROWS, COLS);
 		DataOp right = transientRead("YaggBinarySingleControlPlan", COLS, 2);
 		AggBinaryOp ba = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
@@ -4902,11 +4902,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 				100.0, resultMem, 1);
 		assertTrue("AggregateBinary local-result retrieval must retain the result payload cost",
 			runtimeStages.getPartialResultDownloadCost() > 0.0);
-		double sharedBlockingResultCost =
+		double sharedInBandResultCost =
 			FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
 				ba, FType.ROW, resultMem, 1, Double.POSITIVE_INFINITY);
 		assertEquals("AggregateBinary local aggregation and ordinary FED/LOUT bind share the"
-			+ " same one-worker blocking result-stage contract", sharedBlockingResultCost,
+			+ " same one-worker in-band payload contract without a second RTT", sharedInBandResultCost,
 			runtimeStages.getPartialResultDownloadCost(), 0.0);
 	}
 

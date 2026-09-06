@@ -3288,6 +3288,12 @@ public final class Rulesets {
       // exclude an executable FULL candidate. FULL is deliberately not an axis wildcard, so a
       // mixed ROW/COL + FULL pair still falls through to the ordinary alignment checks.
       if (fullCompatiblePair(left, right)) {
+        // BinaryMatrixMatrixFEDInstruction only supports a FULL input when every
+        // selected FULL mapping has one range. Keep the same cardinality gate as
+        // BinaryMMRule; a local companion contributes no worker endpoint.
+        boolean fullSingle = hint != null && hint.fullSinglePartition().orElse(false);
+        if (!fullSingle)
+          return cpCaps(sig, ReasonCode.FULL_MULTI_PARTITIONS_UNSUPPORTED);
         Guard.Result guard = Guard.eval(sig);
         if (guard != null && guard.isFail())
           return guardFallbackBuilder(sig, guard).build();

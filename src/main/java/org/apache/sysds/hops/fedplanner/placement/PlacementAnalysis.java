@@ -1806,6 +1806,11 @@ public final class PlacementAnalysis {
 		return shapeFacts.shapeFact(key);
 	}
 
+	/** Source-compiled dimensions captured before conservative CFG shape closure. */
+	public Optional<NodeShapeFact> sourceCompiledShapeFact(CompiledHopKey key) {
+		return shapeFacts.sourceCompiledShapeFact(key);
+	}
+
 	public Optional<AbstractShapeFact> abstractShapeFact(CompiledHopKey key) {
 		return shapeFacts.abstractShapeFact(key);
 	}

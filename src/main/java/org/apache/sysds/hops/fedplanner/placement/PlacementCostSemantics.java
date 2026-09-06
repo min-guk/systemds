@@ -224,7 +224,8 @@ public final class PlacementCostSemantics {
 			Hop hop = analysis.hop(key).orElse(null);
 			if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.TRANSIENTREAD)
 				return hop == null ? null : new ExactInput(key, hop,
-					analysis.shapeFact(key).orElse(null));
+					analysis.shapeFact(key).orElse(null),
+					analysis.sourceCompiledShapeFact(key).orElse(null));
 			return exactTransientDefinitionInput(key);
 		}
 
@@ -269,7 +270,8 @@ public final class PlacementCostSemantics {
 				return null;
 			Hop hop = analysis.hop(producer).orElse(null);
 			return hop == null ? null : new ExactInput(producer, hop,
-				analysis.shapeFact(producer).orElse(null));
+				analysis.shapeFact(producer).orElse(null),
+				analysis.sourceCompiledShapeFact(producer).orElse(null));
 		}
 	}
 
@@ -533,10 +535,12 @@ public final class PlacementCostSemantics {
 	 */
 	static LatentWdivmmTransposePairFact latentWdivmmTransposePairFact(
 			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop,
+			Map<Hop,NodeShapeFact> sourceCompiledFactsByHop,
 			List<PlacementAnalysis.CompiledInputEdgeFact> compiledInputEdges,
 			List<NeutralPlacementGraph.Node> nodes, CompiledHopKey ownerKey) {
 		Objects.requireNonNull(origins, "origins");
 		Objects.requireNonNull(factsByHop, "factsByHop");
+		Objects.requireNonNull(sourceCompiledFactsByHop, "sourceCompiledFactsByHop");
 		Objects.requireNonNull(compiledInputEdges, "compiledInputEdges");
 		Objects.requireNonNull(nodes, "nodes");
 		Objects.requireNonNull(ownerKey, "ownerKey");
@@ -548,6 +552,10 @@ public final class PlacementCostSemantics {
 			@Override public NodeShapeFact shape(CompiledHopKey key) {
 				Hop hop = origins.get(key);
 				return hop == null ? null : factsByHop.get(hop);
+			}
+			@Override public NodeShapeFact sourceShape(CompiledHopKey key) {
+				Hop hop = origins.get(key);
+				return hop == null ? null : sourceCompiledFactsByHop.get(hop);
 			}
 			@Override public List<PlacementAnalysis.CompiledInputEdgeFact> edges() {
 				return compiledInputEdges;
@@ -695,7 +703,8 @@ public final class PlacementCostSemantics {
 			return -1.0;
 		WeightedOuter weighted = weightedOuter(analysis,
 			new ExactInput(consumer, weightedHop,
-				analysis.shapeFact(consumer).orElse(null)));
+				analysis.shapeFact(consumer).orElse(null),
+				analysis.sourceCompiledShapeFact(consumer).orElse(null)));
 		if(weighted == null || weighted.outer().key() != producer)
 			return -1.0;
 
@@ -718,15 +727,15 @@ public final class PlacementCostSemantics {
 		ExactInput right = findExactInput(analysis, rootEdge.consumer(), 1);
 		if(left == null || right == null)
 			return -1.0;
-		NodeShapeFact weights = weighted.weights().shape();
+		NodeShapeFact weights = provenLatentShape(weighted.weights());
 		if(rootEdge.inputPosition() == 0
 			&& latentLeftWeightedWdivmmFloor(analysis, rootEdge.consumer(), left, right) > 0.0) {
-			long rank = right.shape().cols();
+			long rank = provenLatentShape(right).cols();
 			return denseMatrixBytes(weights.rows(), rank);
 		}
 		if(rootEdge.inputPosition() == 1
 			&& latentRightWeightedWdivmmFloor(analysis, rootEdge.consumer(), left, right) > 0.0) {
-			long rank = left.shape().rows();
+			long rank = provenLatentShape(left).rows();
 			return denseMatrixBytes(weights.cols(), rank);
 		}
 		return -1.0;
@@ -768,7 +777,8 @@ public final class PlacementCostSemantics {
 			|| !binary.getInput().get(inputPosition).getDataType().isMatrix())
 			return null;
 		NodeShapeFact input = analysis.shapeFact(producer).orElse(null);
-		NodeShapeFact output = analysis.shapeFact(consumer).orElse(null);
+		NodeShapeFact output = concreteCostShape(analysis.shapeFact(consumer).orElse(null),
+			analysis.sourceCompiledShapeFact(consumer).orElse(null));
 		if(input == null || input.dataType() == null || !input.dataType().isMatrix()
 			|| output == null || !output.knownPositiveMatrix())
 			return null;
@@ -806,6 +816,27 @@ public final class PlacementCostSemantics {
 
 	private static boolean dimensionCompatible(long known, long candidate) {
 		return known <= 0 || known == candidate;
+	}
+
+	/**
+	 * Resolves a concrete shape for cost estimation only.  The source-compiled snapshot
+	 * may fill axes lost by conservative abstract propagation, but it cannot contradict
+	 * any known conservative axis.  This result is not placement or legality authority.
+	 */
+	static NodeShapeFact concreteCostShape(NodeShapeFact conservative, NodeShapeFact source) {
+		if(conservative == null || conservative.dataType() == null
+			|| !conservative.dataType().isMatrix() || source == null
+			|| source.dataType() != conservative.dataType()
+			|| conservative.rows() >= 0 && source.rows() >= 0
+				&& conservative.rows() != source.rows()
+			|| conservative.cols() >= 0 && source.cols() >= 0
+				&& conservative.cols() != source.cols())
+			return null;
+		if(conservative.knownPositiveMatrix())
+			return conservative;
+		NodeShapeFact compatibleSource = provenLatentShape(conservative, source);
+		return compatibleSource != null && compatibleSource.knownPositiveMatrix()
+			? compatibleSource : null;
 	}
 
 	public record NativeLocalInputTransferEstimate(double logicalBytesUpperBound,
@@ -995,23 +1026,22 @@ public final class PlacementCostSemantics {
 		if(weighted == null || !HopRewriteUtils.isTransposeOfItself(
 			left.hop(), weighted.outerLeft().hop()))
 			return 0.0;
-		NodeShapeFact weights = weighted.weights().shape();
-		NodeShapeFact weightedShape = weightedInput.shape();
-		NodeShapeFact root = facts.shape(rootKey);
-		NodeShapeFact transposeU = left.shape();
-		NodeShapeFact u = weighted.outerLeft().shape();
-		NodeShapeFact transposedV = weighted.outerRight().shape();
-		if(!sameKnownMatrixShape(weights, weightedShape) || !knownMatrix(root)
-			|| !knownMatrix(transposeU) || !knownMatrix(u)
-			|| !knownPositiveOrDeferredMatrix(transposedV))
+		NodeShapeFact weights = provenLatentShape(weighted.weights());
+		NodeShapeFact weightedShape = provenLatentShape(weightedInput);
+		NodeShapeFact root = provenLatentShape(facts.shape(rootKey), facts.sourceShape(rootKey));
+		NodeShapeFact transposeU = provenLatentShape(left);
+		NodeShapeFact u = provenLatentShape(weighted.outerLeft());
+		NodeShapeFact transposedV = provenLatentShape(weighted.outerRight());
+		if(!knownMatrix(weights))
 			return 0.0;
-		long rank = transposeU.rows();
-		if(rank <= 1 || transposeU.cols() != weights.rows()
-			|| root.rows() != rank || root.cols() != weights.cols()
-			|| u.rows() != weights.rows() || u.cols() != rank
-			|| (transposedV.rows() > 0 && transposedV.rows() != rank)
-			|| (transposedV.cols() > 0 && transposedV.cols() != weights.cols())
-			|| !singleColumnBlock(u, weighted.outerLeft().hop()))
+		long rank = transposeU == null ? -1 : transposeU.rows();
+		if(rank <= 1 || !matchesMatrix(weightedShape, weights.rows(), weights.cols())
+			|| !matchesMatrix(root, rank, weights.cols())
+			|| !matchesMatrix(transposeU, rank, weights.rows())
+			|| !matchesMatrix(u, weights.rows(), rank)
+			|| !matchesMatrix(transposedV, rank, weights.cols())
+			|| weighted.outerLeft().hop().getBlocksize() <= 0
+			|| rank > weighted.outerLeft().hop().getBlocksize())
 			return 0.0;
 		return FederatedCostModel.computeWdivmmRankAwareComputeTimeFloor(
 			weights.rows(), weights.cols(), rank);
@@ -1030,23 +1060,22 @@ public final class PlacementCostSemantics {
 		if(weighted == null || !HopRewriteUtils.isTransposeOfItself(
 			right.hop(), weighted.outerRight().hop()))
 			return 0.0;
-		NodeShapeFact weights = weighted.weights().shape();
-		NodeShapeFact weightedShape = weightedInput.shape();
-		NodeShapeFact root = facts.shape(rootKey);
-		NodeShapeFact v = right.shape();
-		NodeShapeFact u = weighted.outerLeft().shape();
-		NodeShapeFact transposedV = weighted.outerRight().shape();
-		if(!sameKnownMatrixShape(weights, weightedShape) || !knownMatrix(root)
-			|| !knownMatrix(v) || !knownPositiveOrDeferredMatrix(u)
-			|| !knownMatrix(transposedV))
+		NodeShapeFact weights = provenLatentShape(weighted.weights());
+		NodeShapeFact weightedShape = provenLatentShape(weightedInput);
+		NodeShapeFact root = provenLatentShape(facts.shape(rootKey), facts.sourceShape(rootKey));
+		NodeShapeFact v = provenLatentShape(right);
+		NodeShapeFact u = provenLatentShape(weighted.outerLeft());
+		NodeShapeFact transposedV = provenLatentShape(weighted.outerRight());
+		if(!knownMatrix(weights))
 			return 0.0;
-		long rank = v.cols();
-		if(rank <= 1 || v.rows() != weights.cols()
-			|| root.rows() != weights.rows() || root.cols() != rank
-			|| transposedV.rows() != rank || transposedV.cols() != weights.cols()
-			|| (u.rows() > 0 && u.rows() != weights.rows())
-			|| (u.cols() > 0 && u.cols() != rank)
-			|| !singleColumnBlock(u, weighted.outerLeft().hop()))
+		long rank = v == null ? -1 : v.cols();
+		if(rank <= 1 || !matchesMatrix(weightedShape, weights.rows(), weights.cols())
+			|| !matchesMatrix(root, weights.rows(), rank)
+			|| !matchesMatrix(v, weights.cols(), rank)
+			|| !matchesMatrix(u, weights.rows(), rank)
+			|| !matchesMatrix(transposedV, rank, weights.cols())
+			|| weighted.outerLeft().hop().getBlocksize() <= 0
+			|| rank > weighted.outerLeft().hop().getBlocksize())
 			return 0.0;
 		return FederatedCostModel.computeWdivmmRankAwareComputeTimeFloor(
 			weights.rows(), weights.cols(), rank);
@@ -1100,9 +1129,10 @@ public final class PlacementCostSemantics {
 		if(hop == null)
 			throw new IllegalArgumentException("Placement cost input has no owned Hop");
 		NodeShapeFact shape = facts.shape(match.producer());
-		if(shape == null)
+		NodeShapeFact sourceShape = facts.sourceShape(match.producer());
+		if(shape == null || sourceShape == null)
 			throw new IllegalArgumentException("Placement cost input has no shape fact");
-		return new ExactInput(match.producer(), hop, shape);
+		return new ExactInput(match.producer(), hop, shape, sourceShape);
 	}
 
 	private static ExactPlacementFacts exactPlacementFacts(PlacementAnalysis analysis) {
@@ -1110,6 +1140,9 @@ public final class PlacementCostSemantics {
 			@Override public Hop hop(CompiledHopKey key) { return analysis.hop(key).orElse(null); }
 			@Override public NodeShapeFact shape(CompiledHopKey key) {
 				return analysis.shapeFact(key).orElse(null);
+			}
+			@Override public NodeShapeFact sourceShape(CompiledHopKey key) {
+				return analysis.sourceCompiledShapeFact(key).orElse(null);
 			}
 			@Override public List<PlacementAnalysis.CompiledInputEdgeFact> edges() {
 				return analysis.compiledInputEdgesInCanonicalOrder();
@@ -1119,6 +1152,25 @@ public final class PlacementCostSemantics {
 					.orElse(List.of());
 			}
 		};
+	}
+
+	private static NodeShapeFact provenLatentShape(ExactInput input) {
+		return input == null ? null : provenLatentShape(input.shape(), input.sourceShape());
+	}
+
+	static NodeShapeFact provenLatentShape(NodeShapeFact conservative, NodeShapeFact source) {
+		if(source == null || !source.dataType().isMatrix() || conservative == null
+			|| conservative.dataType() != source.dataType()
+			|| conservative.rows() > 0 && conservative.rows() != source.rows()
+			|| conservative.cols() > 0 && conservative.cols() != source.cols())
+			return null;
+		return source;
+	}
+
+	private static boolean matchesMatrix(NodeShapeFact shape, long rows, long cols) {
+		return shape != null && shape.dataType().isMatrix()
+			&& (shape.rows() <= 0 || shape.rows() == rows)
+			&& (shape.cols() <= 0 || shape.cols() == cols);
 	}
 
 	private static boolean knownMatrix(NodeShapeFact shape) {
@@ -1146,7 +1198,7 @@ public final class PlacementCostSemantics {
 		return OptimizerUtils.estimateSizeExactSparsity(rows, cols, 1.0, DataType.MATRIX);
 	}
 
-	private record ExactInput(CompiledHopKey key, Hop hop, NodeShapeFact shape) { }
+	private record ExactInput(CompiledHopKey key, Hop hop, NodeShapeFact shape, NodeShapeFact sourceShape) { }
 	private record WeightedOuter(ExactInput weights, ExactInput outer,
 		ExactInput outerLeft, ExactInput outerRight) { }
 	public record LatentWdivmmTransposePairFact(CompiledHopKey inner,
@@ -1179,6 +1231,7 @@ public final class PlacementCostSemantics {
 	private interface ExactPlacementFacts {
 		Hop hop(CompiledHopKey key);
 		NodeShapeFact shape(CompiledHopKey key);
+		NodeShapeFact sourceShape(CompiledHopKey key);
 		List<PlacementAnalysis.CompiledInputEdgeFact> edges();
 		List<PlacementState> legalAlternatives(CompiledHopKey key);
 	}

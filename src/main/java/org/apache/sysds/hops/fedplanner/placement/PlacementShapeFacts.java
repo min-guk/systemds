@@ -26,32 +26,45 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 /** Immutable shape metadata derived at the placement-analysis construction boundary. */
 final class PlacementShapeFacts {
 	private final Map<CompiledHopKey, NodeShapeFact> facts;
+	private final Map<CompiledHopKey, NodeShapeFact> sourceCompiledFacts;
 	private final Map<CompiledHopKey, AbstractShapeFact> abstractFacts;
 	private final Map<CompiledHopKey, ScalarLiteralFact> scalarLiterals;
 
 	PlacementShapeFacts(Map<CompiledHopKey, NodeShapeFact> facts,
+		Map<CompiledHopKey, NodeShapeFact> sourceCompiledFacts,
 		Map<CompiledHopKey, AbstractShapeFact> abstractFacts,
 		Map<CompiledHopKey, ScalarLiteralFact> scalarLiterals,
 		Set<CompiledHopKey> expectedKeys) {
 		Objects.requireNonNull(facts, "facts");
+		Objects.requireNonNull(sourceCompiledFacts, "sourceCompiledFacts");
 		Objects.requireNonNull(abstractFacts, "abstractFacts");
 		Objects.requireNonNull(scalarLiterals, "scalarLiterals");
 		Objects.requireNonNull(expectedKeys, "expectedKeys");
 		if(!facts.keySet().equals(expectedKeys))
 			throw new IllegalArgumentException("Shape-fact keys must exactly match placement projection keys");
+		if(!sourceCompiledFacts.keySet().equals(expectedKeys))
+			throw new IllegalArgumentException("Source-compiled shape keys must exactly match placement projection keys");
 		if(!abstractFacts.keySet().equals(expectedKeys))
 			throw new IllegalArgumentException("Abstract-shape keys must exactly match placement projection keys");
 		if(!expectedKeys.containsAll(scalarLiterals.keySet()))
 			throw new IllegalArgumentException("Scalar-literal facts reference a foreign placement projection");
 		this.facts = Map.copyOf(facts);
+		this.sourceCompiledFacts = Map.copyOf(sourceCompiledFacts);
 		this.abstractFacts = Map.copyOf(abstractFacts);
 		this.scalarLiterals = Map.copyOf(scalarLiterals);
 	}
 
 	PlacementShapeFacts(Map<CompiledHopKey, NodeShapeFact> facts, Set<CompiledHopKey> expectedKeys) {
-		this(facts, facts.entrySet().stream().collect(java.util.stream.Collectors.toMap(
+		this(facts, facts, facts.entrySet().stream().collect(java.util.stream.Collectors.toMap(
 			Map.Entry::getKey, entry -> AbstractShapeFact.fromConcrete(entry.getValue()),
 			(left, right) -> left, java.util.LinkedHashMap::new)), Map.of(), expectedKeys);
+	}
+
+	PlacementShapeFacts(Map<CompiledHopKey, NodeShapeFact> facts,
+		Map<CompiledHopKey, AbstractShapeFact> abstractFacts,
+		Map<CompiledHopKey, ScalarLiteralFact> scalarLiterals,
+		Set<CompiledHopKey> expectedKeys) {
+		this(facts, facts, abstractFacts, scalarLiterals, expectedKeys);
 	}
 
 	Set<CompiledHopKey> keys() {
@@ -60,6 +73,10 @@ final class PlacementShapeFacts {
 
 	Optional<NodeShapeFact> shapeFact(CompiledHopKey key) {
 		return Optional.ofNullable(facts.get(Objects.requireNonNull(key, "key")));
+	}
+
+	Optional<NodeShapeFact> sourceCompiledShapeFact(CompiledHopKey key) {
+		return Optional.ofNullable(sourceCompiledFacts.get(Objects.requireNonNull(key, "key")));
 	}
 
 	Optional<AbstractShapeFact> abstractShapeFact(CompiledHopKey key) {
@@ -75,7 +92,9 @@ final class PlacementShapeFacts {
 		for(CompiledHopKey key : new java.util.TreeSet<>(abstractFacts.keySet())) {
 			String scalar = scalarLiterals.containsKey(key)
 				? scalarLiterals.get(key).normalizedSignature() : "-";
-			rows.add(key.normalizedSignature() + "|abstract="
+			NodeShapeFact source = sourceCompiledFacts.get(key);
+			rows.add(key.normalizedSignature() + "|source=" + source.dataType() + ":"
+				+ source.rows() + ":" + source.cols() + "|abstract="
 				+ abstractFacts.get(key).normalizedSignature() + "|scalar=" + scalar);
 		}
 		return String.join("\n", rows);
