@@ -762,33 +762,32 @@ This non-negativity makes the resulting matrices easier to inspect.
 ### Usage
 
 ```r
-gnmf(X, rnk, eps = 10^-8, maxi = 10)
+gnmf(X, rnk, eps = 10^-8, maxi = 10, seed = -1)
 ```
 
 ### Arguments
 
 | Name    | Type           | Default  | Description |
 | :------ | :------------- | -------- | :---------- |
-| X       | Matrix[Double] | required | Matrix of feature vectors. |
+| X       | Matrix[Double] | required | Matrix of nonnegative feature vectors. |
 | rnk     | Integer        | required | Number of components into which matrix X is to be factored. |
-| eps     | Double         | `10^-8`  | Tolerance |
-| maxi    | Integer        | `10`     | Maximum number of conjugate gradient iterations. |
+| eps     | Double         | `10^-8`  | Additive stabilizer in the update denominators. |
+| maxi    | Integer        | `10`     | Number of multiplicative-update iterations. |
+| seed    | Integer        | `-1`     | Seed for reproducible factor initialization; `-1` chooses runtime seeds. |
 
 
 ### Returns
 
 | Type           | Description |
 | :------------- | :---------- |
-| Matrix[Double] | List of pattern matrices, one for each repetition. |
-| Matrix[Double] | List of amplitude matrices, one for each repetition. |
+| Matrix[Double] | Nonnegative pattern matrix W, with `nrow(X)` rows and `rnk` columns. |
+| Matrix[Double] | Nonnegative amplitude matrix H, with `rnk` rows and `ncol(X)` columns. |
 
 ### Example
 
 ```r
 X = rand(rows = 50, cols = 10)
-W = rand(rows = nrow(X), cols = 2, min = -0.05, max = 0.05);
-H = rand(rows = 2, cols = ncol(X), min = -0.05, max = 0.05);
-gnmf(X = X, rnk = 2, eps = 10^-8, maxi = 10)
+[W, H] = gnmf(X = X, rnk = 2, eps = 10^-8, maxi = 10, seed = 73)
 ```
 
 

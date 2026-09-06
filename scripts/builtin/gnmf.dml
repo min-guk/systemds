@@ -51,8 +51,8 @@ m_gnmf = function(Matrix[Double] X, Integer rnk, Double eps = 1e-8, Integer maxi
   seedH = -1;
   if(seed != -1)
     seedH = seed + 1;
-  W = rand(rows=nrow(X), cols=rnk, min=-0.05, max=0.05, seed=seed);
-  H = rand(rows=rnk, cols=ncol(X), min=-0.05, max=0.05, seed=seedH);
+  W = rand(rows=nrow(X), cols=rnk, min=0, max=0.05, seed=seed);
+  H = rand(rows=rnk, cols=ncol(X), min=0, max=0.05, seed=seedH);
 
   i = 0;
   while(i < maxi) {
