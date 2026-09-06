@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -165,6 +166,13 @@ public class Recompiler {
 	private static ThreadLocal<LopRewriter> _lopRewriter = new ThreadLocal<>() {
 		@Override protected LopRewriter initialValue() {return new LopRewriter();}
 	};
+
+	/**
+	 * The federated lowering registries are process-global compiler scratch. Runtime
+	 * recompilation may run concurrently for distinct ParFor DAGs, so the entire
+	 * clear/rebuild/consume interval must be isolated across those DAGs.
+	 */
+	private static final ReentrantLock FEDERATED_RECOMPILE_REGISTRY_LOCK = new ReentrantLock();
 	
 	// additional reused objects to avoid repeated, incremental reallocation on deepCopyDags
 	private static ThreadLocal<Map<Long,Hop>> _memoHop = new ThreadLocal<>() {
@@ -256,14 +264,28 @@ public class Recompiler {
 		StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec, RecompileStatus status,
 		boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt,
 		boolean pred, ExecType et, long tid) {
-		if(owner == null)
-			return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
-				updateStats, forceEt, pred, et, tid);
-		try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
-			FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
-			return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
-				updateStats, forceEt, pred, et, tid);
+		FEDERATED_RECOMPILE_REGISTRY_LOCK.lock();
+		try {
+			clearFederatedRecompileRegistries();
+			if(owner == null)
+				return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+					updateStats, forceEt, pred, et, tid);
+			try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+				FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
+				return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+					updateStats, forceEt, pred, et, tid);
+			}
 		}
+		finally {
+			clearFederatedRecompileRegistries();
+			FEDERATED_RECOMPILE_REGISTRY_LOCK.unlock();
+		}
+	}
+
+	private static void clearFederatedRecompileRegistries() {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
 	}
 	
 	public static ArrayList<Instruction> recompileHopsDag2Forced( StatementBlock sb, ArrayList<Hop> hops, long tid, ExecType et )

@@ -23,17 +23,29 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileState;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry;
+import org.apache.sysds.lops.Lop;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.ConsumerInputSpec;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.VariableSet;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
+import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.After;
 import org.junit.Test;
@@ -43,6 +55,163 @@ public class PlannerRecompileProgramAuthorityTest {
 	@After
 	public void clearLegacyDiagnosticAuthority() {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+		PlannerRuntimeActionRegistry.clear();
+	}
+
+	@Test
+	public void compiledRecompileClearsStaleDefaultMaterializationBeforeConstantFolding() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			FederatedRefedRegistry.register(-1L, 12343L, -1L, "stale-anchor", List.of(67889L));
+			FederatedFoutMaterializeRegistry.register(-1L, 12344L, -1L, "COL");
+			FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, 12345L,
+				List.of(new ConsumerInputSpec(67891L, 0)), "COL", "stale-compiler-temp");
+			BinaryOp foldable = new BinaryOp("foldable", DataType.SCALAR, ValueType.FP64,
+				OpOp2.PLUS, new LiteralOp(1D), new LiteralOp(2D));
+
+			Recompiler.recompileHopsDag(foldable, new LocalVariableMap(), null,
+				false, false, 0, new DMLProgram());
+
+			assertTrue("Per-call compiler scratch must be empty after recompilation",
+				FederatedLocalMaterializeRegistry.isEmpty());
+			assertTrue(FederatedRefedRegistry.isEmpty());
+			assertTrue(FederatedFoutMaterializeRegistry.isEmpty());
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+	}
+
+	@Test
+	public void ownerlessRecompileAlsoClearsStaleDefaultMaterializationBeforeConstantFolding() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, "none");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, 22345L,
+				List.of(new ConsumerInputSpec(77891L, 0)), "COL", "stale-ownerless-temp");
+			BinaryOp foldable = new BinaryOp("foldable-ownerless", DataType.SCALAR, ValueType.FP64,
+				OpOp2.PLUS, new LiteralOp(1D), new LiteralOp(2D));
+
+			Recompiler.recompileHopsDag(foldable, new LocalVariableMap(), null,
+				false, false, 0);
+
+			assertTrue(FederatedLocalMaterializeRegistry.isEmpty());
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+	}
+
+	@Test
+	public void concurrentDifferentDagRecompilesCannotClearActiveCompilerScratch() throws Exception {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		CountDownLatch scratchPublished = new CountDownLatch(1);
+		CountDownLatch releaseFirst = new CountDownLatch(1);
+		AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+		AtomicReference<Throwable> secondFailure = new AtomicReference<>();
+		try {
+			Hop first = new RegistryPublishingUnary("first", scratchPublished, releaseFirst, false);
+			Hop second = hop("second", ExecType.CP, FederatedOutput.LOUT);
+			Thread firstThread = recompileThread(first, new DMLProgram(), firstFailure);
+			Thread secondThread = recompileThread(second, new DMLProgram(), secondFailure);
+			firstThread.start();
+			assertTrue("First recompile did not publish its compiler scratch",
+				scratchPublished.await(10, TimeUnit.SECONDS));
+			secondThread.start();
+			Thread.sleep(250);
+			releaseFirst.countDown();
+			firstThread.join(10000);
+			secondThread.join(10000);
+			assertFalse(firstThread.isAlive());
+			assertFalse(secondThread.isAlive());
+			if(firstFailure.get() != null)
+				throw new AssertionError("First recompile lost its active scratch", firstFailure.get());
+			if(secondFailure.get() != null)
+				throw new AssertionError("Second recompile failed", secondFailure.get());
+		}
+		finally {
+			releaseFirst.countDown();
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+	}
+
+	@Test
+	public void failedCompiledRecompileClearsAllCompilerScratch() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			Hop failing = new RegistryPublishingUnary("failing",
+				new CountDownLatch(0), new CountDownLatch(0), true);
+			assertThrows(RuntimeException.class, () -> Recompiler.recompileHopsDag(failing,
+				new LocalVariableMap(), null, true, false, 0, new DMLProgram()));
+			assertTrue(FederatedRefedRegistry.isEmpty());
+			assertTrue(FederatedFoutMaterializeRegistry.isEmpty());
+			assertTrue(FederatedLocalMaterializeRegistry.isEmpty());
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+	}
+
+	@Test
+	public void durableSelectedLocalActionStillLowersInsideIsolatedRecompile() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			DataOp producer = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+				OpOpData.TRANSIENTREAD, "X", 10, 10, 100, 1000);
+			producer.setForcedExecType(ExecType.FED);
+			producer.setFederatedOutput(FederatedOutput.FOUT);
+			producer.setPlannerPlacementSelected(true);
+			UnaryOp consumer = new UnaryOp("abs", DataType.MATRIX, ValueType.FP64,
+				OpOp1.ABS, producer);
+			consumer.setForcedExecType(ExecType.CP);
+			consumer.setFederatedOutput(FederatedOutput.LOUT);
+			consumer.setPlannerPlacementSelected(true);
+			FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, producer.getHopID(),
+				List.of(new ConsumerInputSpec(consumer.getHopID(), 0)), "COL", "durable-local",
+				"LOCAL:test-durable-action");
+			PlannerRuntimeActionRegistry.commitCurrentLoweringAuthorities();
+			FederatedLocalMaterializeRegistry.clear();
+
+			ArrayList<Instruction> instructions = Recompiler.recompileHopsDag(consumer,
+				new LocalVariableMap(), null, true, false, 0, new DMLProgram());
+
+			assertTrue("Durable exact local action must lower to a prefetch instruction: " + instructions,
+				instructions.stream().map(Object::toString).anyMatch(value -> value.contains("prefetch")));
+			assertTrue("Durable action authority must survive compiler-scratch cleanup",
+				PlannerRuntimeActionRegistry.snapshot().local().scopes().values().stream()
+					.anyMatch(scope -> scope.containsKey(producer.getHopID())));
+			assertTrue(FederatedLocalMaterializeRegistry.isEmpty());
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
 	}
 
 	@Test
@@ -200,6 +369,65 @@ public class PlannerRecompileProgramAuthorityTest {
 				failure.compareAndSet(null, ex);
 			}
 		});
+	}
+
+	private static Thread recompileThread(Hop root, DMLProgram owner,
+		AtomicReference<Throwable> failure) {
+		return new Thread(() -> {
+			try {
+				Recompiler.recompileHopsDag(root, new LocalVariableMap(), null,
+					true, false, 0, owner);
+			}
+			catch(Throwable ex) {
+				failure.compareAndSet(null, ex);
+			}
+		});
+	}
+
+	private static final class RegistryPublishingUnary extends UnaryOp {
+		private final CountDownLatch _published;
+		private final CountDownLatch _release;
+		private final boolean _fail;
+
+		private RegistryPublishingUnary(String name, CountDownLatch published,
+			CountDownLatch release, boolean fail) {
+			super(name, DataType.MATRIX, ValueType.FP64, OpOp1.EXP,
+				new DataOp(name + "-input", DataType.MATRIX, ValueType.FP64,
+					OpOpData.TRANSIENTREAD, name + "-input", 10, 10, 100, 1000));
+			_published = published;
+			_release = release;
+			_fail = fail;
+			setForcedExecType(ExecType.CP);
+			setFederatedOutput(FederatedOutput.LOUT);
+		}
+
+		@Override
+		public Lop constructLops() {
+			Lop result = super.constructLops();
+			FederatedRefedRegistry.register(-1L, 70001L, -1L, "active-anchor", List.of(70002L));
+			FederatedFoutMaterializeRegistry.register(-1L, 70003L, -1L, "COL");
+			FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, 70004L,
+				List.of(new ConsumerInputSpec(70005L, 0)), "COL", "active-compiler-scratch");
+			_published.countDown();
+			try {
+				if(!_release.await(10, TimeUnit.SECONDS))
+					throw new AssertionError("Timed out waiting to finish compiler scratch probe");
+			}
+			catch(InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				throw new AssertionError("Interrupted while probing compiler scratch", ex);
+			}
+			if(_fail)
+				throw new IllegalStateException("injected compiler failure");
+			if(!FederatedRefedRegistry.hasEntry(70001L)
+				|| !FederatedFoutMaterializeRegistry.hasEntry(70003L)
+				|| !FederatedLocalMaterializeRegistry.hasEntry(70004L))
+				throw new AssertionError("Another recompile cleared active compiler scratch");
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
+			return result;
+		}
 	}
 
 	private static void publish(DMLProgram program, Hop hop, ExecType exec,
