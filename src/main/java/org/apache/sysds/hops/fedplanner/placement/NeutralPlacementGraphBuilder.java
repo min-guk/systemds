@@ -585,7 +585,7 @@ public final class NeutralPlacementGraphBuilder {
 				input.sourceWrite(), input.targetRead(), input.logicalPosition(),
 				"logical-transient-input"));
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
-			nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop);
+			nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop, privacyFacts.asMap());
 		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions = candidateRuleFacts.stream()
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.map(CandidateEmissionFact::derivedFoutAction).filter(Objects::nonNull).distinct()
@@ -5192,14 +5192,15 @@ public final class NeutralPlacementGraphBuilder {
 		List<Node> nodes, List<LogicalTransientInputFact> logicalTransientInputs,
 		java.util.Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes,
-		Map<Hop,NodeShapeFact> factsByHop) {
+		Map<Hop,NodeShapeFact> factsByHop, Map<CompiledHopKey,Privacy> privacyByKey) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer =
 			matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
 		WorkerPoolAnchorResolver workerPoolAnchors = new WorkerPoolAnchorResolver(nodesByKey,
-			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs, constraints, origins, factsByHop);
+			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs, constraints, origins, factsByHop,
+			privacyByKey);
 		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByConsumer = new IdentityHashMap<>();
 		for(CandidateRuleFact fact : candidateRuleFacts)
 			candidateFactsByConsumer.computeIfAbsent(fact.key().parentOccurrence(),
@@ -5470,9 +5471,12 @@ public final class NeutralPlacementGraphBuilder {
 		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead =
 			new IdentityHashMap<>();
 		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead = new IdentityHashMap<>();
+		private final Set<CompiledHopKey> declaredFunctionInputs =
+			Collections.newSetFromMap(new IdentityHashMap<>());
 		private final Map<CompiledHopKey,List<CompiledHopKey>> functionOutputSourcesByAlias =
 			new IdentityHashMap<>();
 		private final Map<String,List<CompiledHopKey>> cfgDefinitionSourcesByReference = new LinkedHashMap<>();
+		private final NativePlacementContinuity nativeContinuity;
 		private final Map<CompiledHopKey,Hop> origins;
 		private final Map<Hop,NodeShapeFact> factsByHop;
 		private final Map<CompiledHopKey,Map<FType,Set<DurableAnchorKey>>> memo = new IdentityHashMap<>();
@@ -5484,6 +5488,17 @@ public final class NeutralPlacementGraphBuilder {
 			List<LogicalTransientInputFact> logicalTransientInputs,
 			java.util.Collection<Constraint> constraints,
 			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop) {
+			this(nodesByKey, matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs,
+				constraints, origins, factsByHop, Map.of());
+		}
+
+		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
+			List<CandidateRuleFact> candidateRuleFacts,
+			List<LogicalTransientInputFact> logicalTransientInputs,
+			java.util.Collection<Constraint> constraints,
+			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> factsByHop,
+			Map<CompiledHopKey,Privacy> privacyByKey) {
 			this.nodesByKey = nodesByKey;
 			this.matrixEdgesByConsumer = matrixEdgesByConsumer;
 			this.origins = origins;
@@ -5521,6 +5536,7 @@ public final class NeutralPlacementGraphBuilder {
 				if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
 					|| !"function-formal-input".equals(constraint.evidence()))
 					continue;
+				declaredFunctionInputs.add(constraint.right());
 				List<CompiledHopKey> arguments = argumentsByBoundary.getOrDefault(constraint.left(), List.of());
 				if(arguments.isEmpty())
 					continue;
@@ -5539,6 +5555,38 @@ public final class NeutralPlacementGraphBuilder {
 					if(keys.get(index).equals(keys.get(index - 1)))
 						keys.remove(index);
 			});
+			Map<CompiledHopKey,List<CompiledHopKey>> continuitySources = new IdentityHashMap<>();
+			Set<CompiledHopKey> incompleteContinuitySources =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			for(Node node : nodesByKey.values()) {
+				List<CompiledHopKey> sources = new ArrayList<>();
+				List<String> cfgReferences = node.valueVersion().predecessorVersions().stream()
+					.filter(value -> value.startsWith("cfg-definition:"))
+					.map(value -> value.substring("cfg-definition:".length()))
+					.distinct().sorted().toList();
+				for(String reference : cfgReferences) {
+					List<CompiledHopKey> definitions = cfgDefinitionSourcesByReference
+						.getOrDefault(reference, List.of());
+					if(definitions.isEmpty())
+						incompleteContinuitySources.add(node.key());
+					else
+						sources.addAll(definitions);
+				}
+				List<CompiledHopKey> functionInputs = functionInputsByRead
+					.getOrDefault(node.key(), List.of());
+				if((hasCfgFunctionInputPredecessor(node) || declaredFunctionInputs.contains(node.key()))
+					&& functionInputs.isEmpty())
+					incompleteContinuitySources.add(node.key());
+				sources.addAll(functionInputs);
+				sources.addAll(functionOutputSourcesByAlias.getOrDefault(node.key(), List.of()));
+				List<CompiledHopKey> canonicalSources = sources.stream().distinct().sorted().toList();
+				if(!canonicalSources.isEmpty())
+					continuitySources.put(node.key(), canonicalSources);
+			}
+			List<CompiledInputEdgeFact> compiledEdges = matrixEdgesByConsumer.values().stream()
+				.flatMap(edges -> edges.values().stream()).toList();
+			nativeContinuity = new NativePlacementContinuity(nodesByKey, origins,
+				candidateRuleFacts, compiledEdges, continuitySources, incompleteContinuitySources, privacyByKey);
 		}
 
 		private Set<DurableAnchorKey> resolve(CompiledHopKey producer, FType fType) {
@@ -5782,8 +5830,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(common.isEmpty())
 				return Set.of();
 			Node node = nodesByKey.get(producer);
-			boolean hasFunctionInput = functionInputsByRead.containsKey(producer)
-				|| node != null && hasCfgFunctionInputPredecessor(node);
+			boolean hasFunctionInput = hasFunctionInputSource(producer);
 			if(hasFunctionInput) {
 				common = intersectWorkerPools(common, resolveFunctionInput(producer, fType));
 				if(common.isEmpty())
@@ -5798,9 +5845,15 @@ public final class NeutralPlacementGraphBuilder {
 
 		private boolean hasMixedCfgFunctionSources(CompiledHopKey producer) {
 			Node node = nodesByKey.get(producer);
-			return node != null && hasCfgFunctionInputPredecessor(node)
+			return node != null && hasFunctionInputSource(producer)
 				&& node.valueVersion().predecessorVersions().stream()
 					.anyMatch(value -> value.startsWith("cfg-definition:"));
+		}
+
+		private boolean hasFunctionInputSource(CompiledHopKey producer) {
+			Node node = nodesByKey.get(producer);
+			return functionInputsByRead.containsKey(producer) || declaredFunctionInputs.contains(producer)
+				|| node != null && hasCfgFunctionInputPredecessor(node);
 		}
 
 		private Set<DurableAnchorKey> resolveMixedCfgFunctionInputs(CompiledHopKey producer,
@@ -5826,6 +5879,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(references.isEmpty())
 				return Set.of();
 			Set<DurableAnchorKey> common = null;
+			boolean unresolvedReference = false;
 			for(String reference : references) {
 				List<CompiledHopKey> sources = cfgDefinitionSourcesByReference.getOrDefault(reference, List.of());
 				if(sources.isEmpty())
@@ -5834,8 +5888,10 @@ public final class NeutralPlacementGraphBuilder {
 				for(CompiledHopKey source : sources)
 					referencePools.addAll(resolve(source, fType));
 				referencePools = canonicalWorkerPools(referencePools);
-				if(referencePools.isEmpty())
-					return Set.of();
+				if(referencePools.isEmpty()) {
+					unresolvedReference = true;
+					continue;
+				}
 				if(common == null)
 					common = referencePools;
 				else {
@@ -5848,7 +5904,24 @@ public final class NeutralPlacementGraphBuilder {
 				if(common.isEmpty())
 					return Set.of();
 			}
+			if(unresolvedReference) {
+				Set<DurableAnchorKey> seeds = common == null ? directSeedAnchors(fType) : common;
+				Set<DurableAnchorKey> proven = new java.util.TreeSet<>();
+				for(DurableAnchorKey seed : seeds)
+					if(nativeContinuity.proves(List.of(producer), seed))
+						proven.add(seed);
+				common = canonicalWorkerPools(proven);
+			}
 			return common == null ? Set.of() : common;
+		}
+
+		private Set<DurableAnchorKey> directSeedAnchors(FType fType) {
+			Set<DurableAnchorKey> seeds = new java.util.TreeSet<>();
+			for(Node node : nodesByKey.values())
+				for(DurableAnchorKey anchor : node.anchors())
+					if(anchor.fType() == fType)
+						seeds.add(anchor);
+			return canonicalWorkerPools(seeds);
 		}
 
 		private static Set<DurableAnchorKey> canonicalWorkerPools(

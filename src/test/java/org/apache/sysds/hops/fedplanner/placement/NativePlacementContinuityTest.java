@@ -21,6 +21,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
@@ -44,6 +45,7 @@ import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
@@ -172,6 +174,107 @@ public class NativePlacementContinuityTest {
 		Ref fullAppend = full.binary("cbind", OpOp2.CBIND, fullSeed, fullSeed, false);
 		Ref fullTranspose = full.transpose("transpose", fullAppend, false);
 		Assert.assertTrue(full.resolver().proves(List.of(fullAppend.key, fullTranspose.key), fullSeed.anchor));
+	}
+
+	@Test
+	public void fullAppendEverySelectableRowRetainsTheSameOutputPool() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref loopRead = full.logicalRead("loopRead");
+		Ref append = full.binary("append", OpOp2.CBIND, loopRead, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.absentLocal()));
+		full.additionalCandidate(append, List.of(CandidateInputState.absentLocal(),
+			CandidateInputState.present(FType.FULL)));
+		Ref write = full.write("loopWrite", append, NodeKind.LOOP_PHI, false);
+		full.reaching.put(loopRead.key, List.of(seed.key, write.key));
+
+		Assert.assertTrue("Every local/FULL append row retains the same FULL worker pool",
+			full.resolver().proves(List.of(loopRead.key), seed.anchor));
+	}
+
+	@Test
+	public void publicSourceWithoutDirectBroadcastKeepsRelocationRowActive() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+
+		Assert.assertFalse("A public source may still reach BROADCAST through explicit relocation",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void protectedSourceWithoutDirectBroadcastMakesRelocationRowInactive() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+
+		Assert.assertTrue("Origin residency makes the unsupported BROADCAST relocation row inactive",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void protectedSourceWithSelectableBroadcastAliasKeepsRowActive() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		full.broadcastAlias("seed-alias", seed);
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+
+		Assert.assertFalse("Any same-value BROADCAST alias keeps the exact row selectable",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void fullAppendWithBroadcastOnAnotherPoolIsNotNativeFullContinuity() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref broadcast = full.source("broadcast",
+			anchor(FType.BROADCAST, "worker2:8002", 0, 50));
+		Ref append = full.binaryWithoutCandidate("append", OpOp2.CBIND, seed, broadcast);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+
+		Assert.assertFalse("A native or unbound BROADCAST emission has no materialization authority",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void fullAppendWithBroadcastLeftOperandCannotClaimFullOutputContinuity() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref broadcast = full.source("broadcast",
+			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref append = full.binaryWithoutCandidate("append", OpOp2.CBIND, broadcast, seed);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.BROADCAST),
+			CandidateInputState.present(FType.FULL)));
+
+		Assert.assertFalse("Aligned append copies the left BROADCAST map, not a FULL map",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void fullAppendOneSelectableRowOnAnotherPoolInvalidatesTheProof() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref other = full.source("other", anchor(FType.FULL, "worker2:8002", 0, 50));
+		Ref loopRead = full.logicalRead("loopRead");
+		Ref append = full.binaryWithoutCandidate("append", OpOp2.CBIND, loopRead, other);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.absentLocal()));
+		full.additionalCandidate(append, List.of(CandidateInputState.absentLocal(),
+			CandidateInputState.present(FType.FULL)));
+		Ref write = full.write("loopWrite", append, NodeKind.LOOP_PHI, false);
+		full.reaching.put(loopRead.key, List.of(seed.key, write.key));
+
+		Assert.assertFalse(full.resolver().proves(List.of(loopRead.key), seed.anchor));
 	}
 
 	@Test
@@ -396,6 +499,7 @@ public class NativePlacementContinuityTest {
 		private final List<CandidateRuleFact> candidates = new ArrayList<>();
 		private final List<CompiledInputEdgeFact> edges = new ArrayList<>();
 		private final Map<CompiledHopKey,List<CompiledHopKey>> reaching = new IdentityHashMap<>();
+		private final Map<CompiledHopKey,Privacy> privacy = new IdentityHashMap<>();
 		private int ordinal;
 
 		private Fixture(FType fType) {
@@ -443,11 +547,34 @@ public class NativePlacementContinuityTest {
 			return result;
 		}
 
+		private Ref binaryWithoutCandidate(String name, OpOp2 op, Ref left, Ref right) {
+			Ref result = add(name, new BinaryOp(name, DataType.MATRIX, ValueType.FP64,
+				op, left.hop, right.hop), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			edges.add(new CompiledInputEdgeFact(left.key, result.key, 0));
+			edges.add(new CompiledInputEdgeFact(right.key, result.key, 1));
+			return result;
+		}
+
 		private Ref unary(String name, OpOp1 op, Ref input, boolean derivedEmission) {
 			Ref result = add(name, new UnaryOp(name, DataType.MATRIX, ValueType.FP64,
 				op, input.hop), NodeKind.OPERATION, VersionKind.ORDINARY, null);
 			candidate(result, List.of(input), derivedEmission);
 			return result;
+		}
+
+		private void privacy(Ref ref, Privacy value) {
+			privacy.put(ref.key, value);
+		}
+
+		private void broadcastAlias(String name, Ref source) {
+			DataOp hop = new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.TRANSIENTREAD,
+				name, 4, 2, 8, 1000);
+			Ref alias = add(name, hop, NodeKind.TRANSIENT_READ, VersionKind.ORDINARY,
+				anchor(FType.BROADCAST, "worker1:8001", 0, 50));
+			Node node = nodes.get(alias.key);
+			PlacementState broadcast = state(FType.BROADCAST);
+			nodes.put(alias.key, new Node(node.key(), node.kind(), nodes.get(source.key).valueVersion(),
+				node.emittedWork(), List.of(state(FType.FULL), broadcast), node.exclusions(), node.anchors()));
 		}
 
 		private Ref matrixScalar(String name, OpOp2 op, Ref matrix) {
@@ -611,6 +738,17 @@ public class NativePlacementContinuityTest {
 				edges.add(new CompiledInputEdgeFact(input.key, owner.key, position)));
 		}
 
+		private void additionalCandidate(Ref owner, List<CandidateInputState> inputs) {
+			CandidateRuleKey rule = new CandidateRuleKey(owner.key, inputs);
+			CandidateEmissionFact emission = new CandidateEmissionFact(
+				new PlacementEmissionState(state(fType), false), fType);
+			candidates.add(new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
+				new CandidateCapabilityFact(OpCategory.OTHER, "fixture", ExecType.FED,
+					FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
+				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
+				new CandidateProfileFact(List.of(fType), ""), List.of(emission), ""));
+		}
+
 		private void candidateLogicalRead(Ref owner) {
 			CandidateRuleKey rule = new CandidateRuleKey(owner.key,
 				List.of(CandidateInputState.present(fType)));
@@ -636,7 +774,8 @@ public class NativePlacementContinuityTest {
 		}
 
 		private NativePlacementContinuity resolver() {
-			return new NativePlacementContinuity(nodes, origins, candidates, edges, reaching);
+			return new NativePlacementContinuity(nodes, origins, candidates, edges, reaching,
+				Set.of(), privacy);
 		}
 	}
 

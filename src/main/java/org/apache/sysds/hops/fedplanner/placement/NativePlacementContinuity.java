@@ -42,6 +42,8 @@ import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -50,8 +52,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartit
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Conservative proof that native FED/FOUT execution preserves one physical worker pool. */
 final class NativePlacementContinuity {
@@ -64,14 +66,37 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
+	private final Set<CompiledHopKey> incompleteSources;
+	private final Map<CompiledHopKey,Privacy> privacyByKey;
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
 		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
 		List<CompiledInputEdgeFact> compiledEdges,
 		Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions) {
+		this(nodesByKey, originsByKey, candidateFacts, compiledEdges, reachingDefinitions, Set.of());
+	}
+
+	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
+		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
+		List<CompiledInputEdgeFact> compiledEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions,
+		Set<CompiledHopKey> incompleteSources) {
+		this(nodesByKey, originsByKey, candidateFacts, compiledEdges, reachingDefinitions,
+			incompleteSources, Map.of());
+	}
+
+	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
+		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
+		List<CompiledInputEdgeFact> compiledEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions,
+		Set<CompiledHopKey> incompleteSources, Map<CompiledHopKey,Privacy> privacyByKey) {
 		this.nodesByKey = copyIdentityMap(nodesByKey, "nodesByKey");
 		this.originsByKey = copyIdentityMap(originsByKey, "originsByKey");
+		this.privacyByKey = copyIdentityMap(privacyByKey, "privacyByKey");
 		this.reachingDefinitions = copyIdentityLists(reachingDefinitions, "reachingDefinitions");
+		Set<CompiledHopKey> incomplete = Collections.newSetFromMap(new IdentityHashMap<>());
+		incomplete.addAll(Objects.requireNonNull(incompleteSources, "incompleteSources"));
+		this.incompleteSources = Collections.unmodifiableSet(incomplete);
 		candidateFactsByKey = new IdentityHashMap<>();
 		for(CandidateRuleFact fact : List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts")))
 			candidateFactsByKey.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
@@ -136,13 +161,16 @@ final class NativePlacementContinuity {
 		current.directGround = node.anchors().stream()
 			.map(NativePoolWitness::from).filter(Objects::nonNull).anyMatch(witness::equals);
 
-		if(hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD)
-			for(CompiledHopKey definition : reachingDefinitions.getOrDefault(key, List.of()))
-				addDependency(current, definition);
+		if(incompleteSources.contains(key))
+			current.valid = false;
+		for(CompiledHopKey source : reachingDefinitions.getOrDefault(key, List.of()))
+			addDependency(current, source);
 
 		boolean matchedNativeRow = false;
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			if(isBroadcastRowProvablyUnselectable(fact))
 				continue;
 			boolean matchingNativeRow = false;
 			for(var emission : fact.allowedEmissionFacts()) {
@@ -174,6 +202,33 @@ final class NativePlacementContinuity {
 			current.valid = false;
 		for(CompiledHopKey dependency : current.dependencies)
 			buildProof(dependency, witness, proof);
+	}
+
+	private boolean isBroadcastRowProvablyUnselectable(CandidateRuleFact fact) {
+		// Candidate input rows can outlive privacy exclusion of their producer's
+		// BROADCAST emission. Exclude such a row from this proof only if no owner
+		// of the same value can supply it and origin residency also forbids the
+		// explicit relocation. Public inputs may still use a sibling anchor;
+		// absent preprivacy authority therefore never makes a row unselectable.
+		Map<Integer,CompiledInputEdgeFact> edges = edgesByConsumer
+			.getOrDefault(fact.key().parentOccurrence(), Map.of());
+		for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+			var input = fact.key().orderedInputs().get(position);
+			if(!input.present() || input.fType() != FType.BROADCAST)
+				continue;
+			CompiledInputEdgeFact edge = edges.get(position);
+			Node source = edge == null ? null : nodesByKey.get(edge.producer());
+			if(source == null)
+				return false;
+			boolean direct = nodesByKey.values().stream()
+				.filter(alias -> alias.valueVersion().equals(source.valueVersion()))
+				.anyMatch(alias -> alias.legalAlternatives().stream().anyMatch(state ->
+					state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST));
+			Privacy privacy = privacyByKey.get(source.key());
+			if(!direct && privacy != null && ExecPlacementPolicy.requiresOriginResidency(privacy))
+				return true;
+		}
+		return false;
 	}
 
 	private void collectCandidateDependencies(CandidateRuleFact fact, Hop owner,
