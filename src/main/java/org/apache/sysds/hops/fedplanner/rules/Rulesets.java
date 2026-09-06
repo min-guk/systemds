@@ -3606,6 +3606,29 @@ public final class Rulesets {
       boolean cbind = parseCbind(sig);
       List<NoteEntry> pendingNotes = new ArrayList<>();
 
+      if (cbind) {
+        if (rowsKnown(hint) && hint.rowsA() != hint.rowsB()) {
+          return baseCaps(sig)
+
+              .reason(ReasonCode.DIM_MISMATCH_ROWS)
+              .detail("cbind requires matching row counts")
+              .build();
+        }
+        if (!rowsKnown(hint))
+          pendingNotes.add(NoteEntry.ok("rows unknown — deferring cbind check"));
+      }
+      else {
+        if (colsKnown(hint) && hint.colsA() != hint.colsB()) {
+          return baseCaps(sig)
+
+              .reason(ReasonCode.DIM_MISMATCH_COLS)
+              .detail("rbind requires matching column counts")
+              .build();
+        }
+        if (!colsKnown(hint))
+          pendingNotes.add(NoteEntry.ok("cols unknown — deferring rbind check"));
+      }
+
       if (containsType(inFTypes, FType.FULL)) {
         boolean singleRange = hint != null && hint.fullSinglePartition().orElse(false);
         if (!singleRange) {
@@ -3633,29 +3656,6 @@ public final class Rulesets {
         else
           appendGuardPassNote(builder, guard);
         return builder.build();
-      }
-
-      if (cbind) {
-        if (rowsKnown(hint) && hint.rowsA() != hint.rowsB()) {
-          return baseCaps(sig)
-              
-              .reason(ReasonCode.DIM_MISMATCH_ROWS)
-              .detail("cbind requires matching row counts")
-              .build();
-        }
-        if (!rowsKnown(hint))
-          pendingNotes.add(NoteEntry.ok("rows unknown — deferring cbind check"));
-      }
-      else {
-        if (colsKnown(hint) && hint.colsA() != hint.colsB()) {
-          return baseCaps(sig)
-              
-              .reason(ReasonCode.DIM_MISMATCH_COLS)
-              .detail("rbind requires matching column counts")
-              .build();
-        }
-        if (!colsKnown(hint))
-          pendingNotes.add(NoteEntry.ok("cols unknown — deferring rbind check"));
       }
 
       FType left = typeAt(inFTypes, 0);

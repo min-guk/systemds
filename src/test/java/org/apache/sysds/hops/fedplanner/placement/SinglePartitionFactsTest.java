@@ -468,7 +468,8 @@ public class SinglePartitionFactsTest {
 		Assert.assertFalse("One endpoint does not imply one range", facts.isSinglePartition(multi));
 		Assert.assertFalse(facts.isSinglePartition(unknown));
 		Assert.assertEquals(Optional.empty(), facts.fullInputHint(append, List.of(FType.FULL, FType.FULL)));
-		Assert.assertFalse(facts.isSinglePartition(append));
+		Assert.assertTrue("The potential FULL+local row may inherit the known provider;"
+			+ " the selected FULL+FULL row remains rejected by fullInputHint", facts.isSinglePartition(append));
 	}
 
 	private static DataOp read(String name) {

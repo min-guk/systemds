@@ -104,7 +104,8 @@ final class SinglePartitionFacts {
 					&& binary.getInput().size() == 2
 					&& binary.getInput(0).getDataType().isMatrix()
 					&& binary.getInput(1).getDataType().isMatrix()
-					&& new Rulesets.BinaryElemwiseRule().opcodes().contains(binary.getOp().toString()))
+					&& (new Rulesets.BinaryElemwiseRule().opcodes().contains(binary.getOp().toString())
+						|| new Rulesets.AppendRule().opcodes().contains(binary.getOp().toString())))
 					conditionalFullResultTransfers.add(hop);
 				List<Hop> inputs = hop.getInput().stream().filter(input -> input.getDataType().isMatrix()).toList();
 				if(inputs.isEmpty())
@@ -178,7 +179,8 @@ final class SinglePartitionFacts {
 					&& binary.getInput().size() == 2
 					&& binary.getInput(0).getDataType().isMatrix()
 					&& binary.getInput(1).getDataType().isMatrix()
-					&& new Rulesets.BinaryElemwiseRule().opcodes().contains(binary.getOp().toString())))
+					&& (new Rulesets.BinaryElemwiseRule().opcodes().contains(binary.getOp().toString())
+						|| new Rulesets.AppendRule().opcodes().contains(binary.getOp().toString()))))
 				conditional.add(node.key());
 		}
 
@@ -375,10 +377,10 @@ final class SinglePartitionFacts {
 	}
 
 	private static String fullResultTransfer(List<Hop> sources, Map<Hop,String> facts) {
-		// Ordinary MM and native matrix-matrix elementwise kernels can broadcast a
-		// local matrix to a single FULL provider. Their legal FULL/FOUT result copies
-		// that provider's one range. BinaryElemwiseRule independently requires this
-		// same fullSinglePartition proof before admitting FULL, so an UNKNOWN matrix
+		// Ordinary MM, binary append, and native matrix-matrix elementwise kernels can
+		// broadcast a local matrix to a single FULL provider. Their legal FULL/FOUT
+		// result copies that provider's one range. The corresponding rules independently
+		// require this same fullSinglePartition proof before admitting FULL, so an UNKNOWN matrix
 		// can never be silently treated as a second selected FULL input. This grants
 		// no availability/placement authority: fullInputHint still checks EVERY
 		// selected FULL operand, and the other candidate guards still apply.
