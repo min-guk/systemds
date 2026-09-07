@@ -65,28 +65,57 @@ import org.apache.sysds.runtime.util.UtilFunctions;
  */
 public final class OccurrenceExecutionFrequencyFacts {
 	private static final long MAX_EXACT_DOUBLE_INTEGER = 1L << 53;
+	/** One branch literal that must hold for an occurrence to activate. */
+	public record BranchActivationFact(String decisionKey, boolean ifArm, double probability,
+		List<Long> enclosingLoopIds) {
+		public BranchActivationFact {
+			decisionKey = Objects.requireNonNull(decisionKey, "decisionKey");
+			if(decisionKey.isBlank())
+				throw new IllegalArgumentException("PLACEMENT_BRANCH_DECISION_KEY_INVALID");
+			if(Double.doubleToRawLongBits(probability) != Double.doubleToRawLongBits(0.0)
+				&& Double.doubleToRawLongBits(probability) != Double.doubleToRawLongBits(1.0)
+				&& Double.doubleToRawLongBits(probability)
+					!= Double.doubleToRawLongBits(RewireConstants.DEFAULT_IF_ELSE_WEIGHT))
+				throw new IllegalArgumentException(
+					"PLACEMENT_BRANCH_PROBABILITY_INVALID|value=" + probability);
+			enclosingLoopIds = List.copyOf(Objects.requireNonNull(enclosingLoopIds,
+				"enclosingLoopIds"));
+		}
+	}
+
 	/** One exact call-context occurrence profile for one control-region path. */
 	public record OccurrenceProfileFact(double expectedExecutions,
-		List<Pair<Long,Double>> loopContext, long contextOrdinal) {
+		List<Pair<Long,Double>> loopContext, long contextOrdinal,
+		List<BranchActivationFact> activationConditions) {
+		public OccurrenceProfileFact(double expectedExecutions,
+			List<Pair<Long,Double>> loopContext, long contextOrdinal) {
+			this(expectedExecutions, loopContext, contextOrdinal, List.of());
+		}
+
 		public OccurrenceProfileFact {
 			expectedExecutions = requireNonnegativeWeight(expectedExecutions,
 				"PLACEMENT_OCCURRENCE_WEIGHT_UNPROVEN");
 			loopContext = List.copyOf(Objects.requireNonNull(loopContext, "loopContext"));
 			if(contextOrdinal < 0L)
 				throw new IllegalArgumentException("PLACEMENT_OCCURRENCE_CONTEXT_INVALID");
+			activationConditions = List.copyOf(Objects.requireNonNull(activationConditions,
+				"activationConditions"));
 		}
 	}
 
 	private static final long MAIN_CONTEXT = 0L;
 	private final Map<String,List<OccurrenceProfileFact>> profilesByPath;
+	private final Set<String> conservativeFallbackPaths;
 	private final boolean exactFunctionContextsProven;
 
 	private OccurrenceExecutionFrequencyFacts(
 		Map<String,List<OccurrenceProfileFact>> profilesByPath,
+		Set<String> conservativeFallbackPaths,
 		boolean exactFunctionContextsProven) {
 		Map<String,List<OccurrenceProfileFact>> frozen = new LinkedHashMap<>();
 		profilesByPath.forEach((path, profiles) -> frozen.put(path, List.copyOf(profiles)));
 		this.profilesByPath = Collections.unmodifiableMap(frozen);
+		this.conservativeFallbackPaths = Set.copyOf(conservativeFallbackPaths);
 		this.exactFunctionContextsProven = exactFunctionContextsProven;
 	}
 
@@ -138,6 +167,11 @@ public final class OccurrenceExecutionFrequencyFacts {
 		for(OccurrenceProfileFact profile : requireExactProfiles(key))
 			total += profile.expectedExecutions();
 		return requireNonnegativeWeight(total, "EXACT_EXECUTION_WEIGHT_UNPROVEN");
+	}
+
+	/** Exact compiler-proven profiles for consumers that must reject conservative fallbacks. */
+	public List<OccurrenceProfileFact> exactProfiles(CompiledHopKey key) {
+		return requireExactProfiles(key);
 	}
 
 	/**
@@ -270,12 +304,16 @@ public final class OccurrenceExecutionFrequencyFacts {
 		List<OccurrenceProfileFact> result = profilesByPath.get(paths.get(0));
 		if(result == null || result.isEmpty())
 			throw new IllegalArgumentException("EXACT_OCCURRENCE_PATH_UNPROVEN|path=" + paths.get(0));
+		if(conservativeFallbackPaths.contains(paths.get(0)))
+			throw new IllegalArgumentException(
+				"EXACT_OCCURRENCE_PROFILE_FALLBACK_UNPROVEN|path=" + paths.get(0));
 		return result;
 	}
 
 	private static final class Builder {
 		private final PlacementAnalysis analysis;
 		private final Map<String,List<OccurrenceProfileFact>> profiles = new LinkedHashMap<>();
+		private final Set<String> conservativeFallbackPaths = new LinkedHashSet<>();
 		private final Map<String,List<FunctionCallContext>> functionCalls = new LinkedHashMap<>();
 		private final Map<Hop,List<FunctionCallContext>> indexedFunctionCalls = new IdentityHashMap<>();
 		private long nextContextOrdinal = MAIN_CONTEXT + 1L;
@@ -292,13 +330,14 @@ public final class OccurrenceExecutionFrequencyFacts {
 					&& function.getFunctionType() == FunctionOp.FunctionType.DML);
 			boolean exactFunctions = !hasDmlFunction || analysis.hasGuardedFunctionRoots();
 			indexBlocks(analysis.topLevelStatementBlocks(), "main", 1.0, List.of(), List.of(),
-				List.of(), MAIN_CONTEXT);
+				List.of(), List.of(), MAIN_CONTEXT);
 			if(exactFunctions)
 				indexCalledFunctions();
 			indexDetachedStraightLineProfiles();
 			indexMissingProfilesConservatively();
 			analysis.assertProgramStructureUnchanged();
-			return new OccurrenceExecutionFrequencyFacts(profiles, exactFunctions);
+			return new OccurrenceExecutionFrequencyFacts(
+				profiles, conservativeFallbackPaths, exactFunctions);
 		}
 
 		private void indexCalledFunctions() {
@@ -317,7 +356,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 						FunctionCallContext call = calls.get(processed++);
 						indexBlock(function, "function/" + functionKey, call.networkWeight,
 							call.loopContext, call.transTables, Map.of(), call.callStack,
-							call.contextOrdinal);
+							call.activationConditions, call.contextOrdinal);
 						advanced = true;
 					}
 					processedCalls.put(functionKey, processed);
@@ -340,18 +379,21 @@ public final class OccurrenceExecutionFrequencyFacts {
 		private void indexMissingProfilesConservatively() {
 			for(HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences())
 				for(String path : occurrence.key().controlRegion().regionPath())
-					if(!profiles.containsKey(path))
+					if(!profiles.containsKey(path)) {
+						conservativeFallbackPaths.add(path);
 						putProfile(path, new OccurrenceProfileFact(1.0, List.of(), MAIN_CONTEXT));
+					}
 		}
 
 		private Map<String,List<Hop>> indexBlocks(List<StatementBlock> blocks, String path,
 			double networkWeight, List<Pair<Long,Double>> loopContext,
 			List<Map<String,List<Hop>>> outerTransTables, List<String> callStack,
-			long contextOrdinal) {
+			List<BranchActivationFact> activationConditions, long contextOrdinal) {
 			Map<String,List<Hop>> former = new LinkedHashMap<>();
 			for(int index = 0; blocks != null && index < blocks.size(); index++) {
 				Map<String,List<Hop>> writes = indexBlock(blocks.get(index), path + '/' + index,
-					networkWeight, loopContext, outerTransTables, former, callStack, contextOrdinal);
+					networkWeight, loopContext, outerTransTables, former, callStack,
+					activationConditions, contextOrdinal);
 				replaceMappings(former, writes);
 			}
 			return former;
@@ -360,15 +402,16 @@ public final class OccurrenceExecutionFrequencyFacts {
 		private Map<String,List<Hop>> indexBlock(StatementBlock block, String path,
 			double networkWeight, List<Pair<Long,Double>> loopContext,
 			List<Map<String,List<Hop>>> outerTransTables, Map<String,List<Hop>> formerTransTable,
-			List<String> callStack, long contextOrdinal) {
+			List<String> callStack, List<BranchActivationFact> activationConditions,
+			long contextOrdinal) {
 			List<Map<String,List<Hop>>> visible = appendTransTable(outerTransTables, formerTransTable);
 			Map<String,List<Hop>> headerWrites;
 			if(block instanceof ForStatementBlock forBlock) {
 				double loopWeight = forLoopWeight(forBlock, visible);
 				OccurrenceProfileFact nested = nestedLoopProfile(block, networkWeight, loopContext,
-					loopWeight, contextOrdinal);
+					loopWeight, activationConditions, contextOrdinal);
 				headerWrites = scanBlockRoots(blockRoots(block), nested.expectedExecutions(),
-					nested.loopContext(), visible, callStack, contextOrdinal);
+					nested.loopContext(), visible, callStack, activationConditions, contextOrdinal);
 				putProfile(path, nested);
 				ForStatement statement = (ForStatement)block.getStatement(0);
 				Map<String,List<Hop>> loopUnknowns = loopWrittenUnknowns(statement.getBody());
@@ -376,7 +419,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 				Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/loop-body",
 					nested.expectedExecutions(), nested.loopContext(),
 					appendTransTable(appendTransTable(visible, headerWrites), loopUnknowns),
-					callStack, contextOrdinal);
+					callStack, activationConditions, contextOrdinal);
 				replaceMappings(headerWrites, bodyWrites);
 				replaceMappings(headerWrites, loopUnknowns);
 			}
@@ -387,24 +430,25 @@ public final class OccurrenceExecutionFrequencyFacts {
 					RewireConstants.estimateWhileLoopWeight(whileBlock, boundedVisible),
 					"PLACEMENT_WHILE_OCCURRENCE_WEIGHT_UNPROVEN");
 				OccurrenceProfileFact nested = nestedLoopProfile(block, networkWeight, loopContext,
-					loopWeight, contextOrdinal);
+					loopWeight, activationConditions, contextOrdinal);
 				headerWrites = scanBlockRoots(blockRoots(block), nested.expectedExecutions(),
-					nested.loopContext(), visible, callStack, contextOrdinal);
+					nested.loopContext(), visible, callStack, activationConditions, contextOrdinal);
 				putProfile(path, nested);
 				WhileStatement statement = (WhileStatement)block.getStatement(0);
 				Map<String,List<Hop>> loopUnknowns = loopWrittenUnknowns(statement.getBody());
 				Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/loop-body",
 					nested.expectedExecutions(), nested.loopContext(),
 					appendTransTable(appendTransTable(visible, headerWrites), loopUnknowns),
-					callStack, contextOrdinal);
+					callStack, activationConditions, contextOrdinal);
 				replaceMappings(headerWrites, bodyWrites);
 				replaceMappings(headerWrites, loopUnknowns);
 			}
 			else if(block instanceof IfStatementBlock ifBlock) {
 				Boolean predicate = exactPredicate(ifBlock.getPredicateHops(), visible);
 				headerWrites = scanBlockRoots(blockRoots(block), networkWeight, loopContext,
-					visible, callStack, contextOrdinal);
-				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal));
+					visible, callStack, activationConditions, contextOrdinal);
+				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal,
+					activationConditions));
 				double ifWeight = predicate == null ? networkWeight == 0.0 ? 0.0
 					: requirePositiveWeight(networkWeight * RewireConstants.DEFAULT_IF_ELSE_WEIGHT,
 						"PLACEMENT_BRANCH_WEIGHT_UNPROVEN")
@@ -412,10 +456,20 @@ public final class OccurrenceExecutionFrequencyFacts {
 				double elseWeight = predicate == null ? ifWeight : predicate ? 0.0 : networkWeight;
 				IfStatement statement = (IfStatement)block.getStatement(0);
 				List<Map<String,List<Hop>>> branchOuter = appendTransTable(visible, headerWrites);
+				double ifProbability = predicate == null ? RewireConstants.DEFAULT_IF_ELSE_WEIGHT
+					: predicate ? 1.0 : 0.0;
+				double elseProbability = predicate == null ? RewireConstants.DEFAULT_IF_ELSE_WEIGHT
+					: predicate ? 0.0 : 1.0;
+				String decisionKey = path + "|context=" + contextOrdinal;
+				List<Long> enclosingLoopIds = loopContext.stream().map(Pair::getLeft).toList();
+				List<BranchActivationFact> ifConditions = appendActivationCondition(activationConditions,
+					new BranchActivationFact(decisionKey, true, ifProbability, enclosingLoopIds));
+				List<BranchActivationFact> elseConditions = appendActivationCondition(activationConditions,
+					new BranchActivationFact(decisionKey, false, elseProbability, enclosingLoopIds));
 				Map<String,List<Hop>> ifWrites = indexBlocks(statement.getIfBody(), path + "/branch-if",
-					ifWeight, loopContext, branchOuter, callStack, contextOrdinal);
+					ifWeight, loopContext, branchOuter, callStack, ifConditions, contextOrdinal);
 				Map<String,List<Hop>> elseWrites = indexBlocks(statement.getElseBody(), path + "/branch-else",
-					elseWeight, loopContext, branchOuter, callStack, contextOrdinal);
+					elseWeight, loopContext, branchOuter, callStack, elseConditions, contextOrdinal);
 				if(predicate != null)
 					replaceMappings(headerWrites, predicate ? ifWrites : elseWrites);
 				else
@@ -423,27 +477,38 @@ public final class OccurrenceExecutionFrequencyFacts {
 			}
 			else if(block instanceof FunctionStatementBlock) {
 				headerWrites = scanBlockRoots(blockRoots(block), networkWeight, loopContext,
-					visible, callStack, contextOrdinal);
-				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal));
+					visible, callStack, activationConditions, contextOrdinal);
+				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal,
+					activationConditions));
 				FunctionStatement statement = (FunctionStatement)block.getStatement(0);
 				Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/body",
 					networkWeight, loopContext, appendTransTable(visible, headerWrites), callStack,
-					contextOrdinal);
+					activationConditions, contextOrdinal);
 				replaceMappings(headerWrites, bodyWrites);
 			}
 			else {
 				headerWrites = scanBlockRoots(blockRoots(block), networkWeight, loopContext,
-					visible, callStack, contextOrdinal);
-				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal));
+					visible, callStack, activationConditions, contextOrdinal);
+				putProfile(path, new OccurrenceProfileFact(networkWeight, loopContext, contextOrdinal,
+					activationConditions));
 			}
 			return headerWrites;
 		}
 
 		private OccurrenceProfileFact nestedLoopProfile(StatementBlock block, double networkWeight,
-			List<Pair<Long,Double>> loopContext, double loopWeight, long contextOrdinal) {
+			List<Pair<Long,Double>> loopContext, double loopWeight,
+			List<BranchActivationFact> activationConditions, long contextOrdinal) {
 			List<Pair<Long,Double>> nested = new ArrayList<>(loopContext);
 			nested.add(Pair.of(block.getSBID(), loopWeight));
-			return new OccurrenceProfileFact(networkWeight * loopWeight, nested, contextOrdinal);
+			return new OccurrenceProfileFact(networkWeight * loopWeight, nested, contextOrdinal,
+				activationConditions);
+		}
+
+		private List<BranchActivationFact> appendActivationCondition(
+			List<BranchActivationFact> conditions, BranchActivationFact condition) {
+			List<BranchActivationFact> nested = new ArrayList<>(conditions);
+			nested.add(condition);
+			return List.copyOf(nested);
 		}
 
 		private double forLoopWeight(ForStatementBlock block,
@@ -737,7 +802,8 @@ public final class OccurrenceExecutionFrequencyFacts {
 				if(existing.contextOrdinal() == profile.contextOrdinal()) {
 					if(Double.doubleToRawLongBits(existing.expectedExecutions())
 						!= Double.doubleToRawLongBits(profile.expectedExecutions())
-						|| !existing.loopContext().equals(profile.loopContext()))
+						|| !existing.loopContext().equals(profile.loopContext())
+						|| !existing.activationConditions().equals(profile.activationConditions()))
 						throw new IllegalArgumentException(
 							"PLACEMENT_OCCURRENCE_CONTEXT_CONFLICT|path=" + path);
 					return;
@@ -764,12 +830,13 @@ public final class OccurrenceExecutionFrequencyFacts {
 
 		private Map<String,List<Hop>> scanBlockRoots(List<Hop> roots, double networkWeight,
 			List<Pair<Long,Double>> loopContext, List<Map<String,List<Hop>>> visibleTransTables,
-			List<String> callStack, long contextOrdinal) {
+			List<String> callStack, List<BranchActivationFact> activationConditions,
+			long contextOrdinal) {
 			Map<String,List<Hop>> writes = new LinkedHashMap<>();
 			for(Hop root : roots) {
 				List<Map<String,List<Hop>>> current = appendTransTable(visibleTransTables, writes);
 				collectFunctionCalls(List.of(root), networkWeight, loopContext, current,
-					callStack, contextOrdinal);
+					callStack, activationConditions, contextOrdinal);
 				mergeMappings(writes, snapshotScalarWrites(transientWrites(List.of(root)), current));
 				replaceMappings(writes, functionOutputUnknowns(List.of(root)));
 			}
@@ -852,21 +919,23 @@ public final class OccurrenceExecutionFrequencyFacts {
 
 		private void collectFunctionCalls(List<Hop> roots, double networkWeight,
 			List<Pair<Long,Double>> loopContext, List<Map<String,List<Hop>>> visibleTransTables,
-			List<String> callStack, long contextOrdinal) {
+			List<String> callStack, List<BranchActivationFact> activationConditions,
+			long contextOrdinal) {
 			Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(Hop root : roots)
 				collectFunctionCalls(root, networkWeight, loopContext, visibleTransTables,
-					callStack, contextOrdinal, visited);
+					callStack, activationConditions, contextOrdinal, visited);
 		}
 
 		private void collectFunctionCalls(Hop hop, double networkWeight,
 			List<Pair<Long,Double>> loopContext, List<Map<String,List<Hop>>> visibleTransTables,
-			List<String> callStack, long contextOrdinal, Set<Hop> visited) {
+			List<String> callStack, List<BranchActivationFact> activationConditions,
+			long contextOrdinal, Set<Hop> visited) {
 			if(hop == null || !visited.add(hop))
 				return;
 			for(Hop input : hop.getInput())
 				collectFunctionCalls(input, networkWeight, loopContext, visibleTransTables,
-					callStack, contextOrdinal, visited);
+					callStack, activationConditions, contextOrdinal, visited);
 			if(!(hop instanceof FunctionOp function)
 				|| function.getFunctionType() != FunctionOp.FunctionType.DML)
 				return;
@@ -890,7 +959,8 @@ public final class OccurrenceExecutionFrequencyFacts {
 			}
 			List<Map<String,List<Hop>>> functionTransTables = appendTransTable(visibleTransTables, inputs);
 			FunctionCallContext candidate = new FunctionCallContext(networkWeight, loopContext,
-				functionTransTables, appendCallStack(callStack, functionIdentity), contextOrdinal, -1L);
+				functionTransTables, appendCallStack(callStack, functionIdentity), activationConditions,
+				contextOrdinal, -1L);
 			List<FunctionCallContext> indexed = indexedFunctionCalls.computeIfAbsent(hop,
 				ignored -> new ArrayList<>());
 			if(indexed.stream().anyMatch(existing -> existing.sameAs(candidate)))
@@ -951,12 +1021,14 @@ public final class OccurrenceExecutionFrequencyFacts {
 		private final List<Pair<Long,Double>> loopContext;
 		private final List<Map<String,List<Hop>>> transTables;
 		private final List<String> callStack;
+		private final List<BranchActivationFact> activationConditions;
 		private final long callerContextOrdinal;
 		private final long contextOrdinal;
 
 		private FunctionCallContext(double networkWeight, List<Pair<Long,Double>> loopContext,
 			List<Map<String,List<Hop>>> transTables, List<String> callStack,
-			long callerContextOrdinal, long contextOrdinal) {
+			List<BranchActivationFact> activationConditions, long callerContextOrdinal,
+			long contextOrdinal) {
 			this.networkWeight = requireNonnegativeWeight(networkWeight,
 				"PLACEMENT_FUNCTION_CALL_WEIGHT_UNPROVEN");
 			this.loopContext = List.copyOf(loopContext);
@@ -969,13 +1041,14 @@ public final class OccurrenceExecutionFrequencyFacts {
 			}
 			this.transTables = List.copyOf(copied);
 			this.callStack = List.copyOf(callStack);
+			this.activationConditions = List.copyOf(activationConditions);
 			this.callerContextOrdinal = callerContextOrdinal;
 			this.contextOrdinal = contextOrdinal;
 		}
 
 		private FunctionCallContext withContextOrdinal(long ordinal) {
 			return new FunctionCallContext(networkWeight, loopContext, transTables, callStack,
-				callerContextOrdinal, ordinal);
+				activationConditions, callerContextOrdinal, ordinal);
 		}
 
 		private boolean sameAs(FunctionCallContext that) {
@@ -983,6 +1056,7 @@ public final class OccurrenceExecutionFrequencyFacts {
 				!= Double.doubleToRawLongBits(that.networkWeight)
 				|| callerContextOrdinal != that.callerContextOrdinal
 				|| !loopContext.equals(that.loopContext) || !callStack.equals(that.callStack)
+				|| !activationConditions.equals(that.activationConditions)
 				|| transTables.size() != that.transTables.size())
 				return false;
 			for(int tableIndex = 0; tableIndex < transTables.size(); tableIndex++) {

@@ -112,7 +112,7 @@ public final class ExactPhysicalCostModel {
 		}
 	}
 
-	private static record SolverFactorization(
+	static record SolverFactorization(
 		List<ExactCategoricalSolver.Variable> auxiliaryVariables,
 		List<ExactCategoricalSolver.Factor> factors, String semanticDescriptor) {
 		SolverFactorization {
@@ -533,13 +533,18 @@ public final class ExactPhysicalCostModel {
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
 		List<PhysicalTransferKey> transferKeys) {
 		record Demand(PhysicalTransferEndpoint endpoint,
-			ExactPhysicalModel.DecisionDomain consumer, double cost, double sourceBytes,
-			double weight, boolean forwarded,
-			boolean[] activeConsumerAlternatives) { }
+			ExactPhysicalModel.DecisionDomain consumer, double sourceBytes, boolean forwarded,
+			boolean[] activeConsumerAlternatives, CompiledHopKey activationOccurrence) { }
 		record Key(Direction direction, FType type, BoundaryMode boundary,
 			String physicalEmissionIdentity) { }
-		record IndexedDemand(boolean[] activeConsumerAlternatives,
-			double[] sourcePrices) { }
+		record CreationScope(CompiledHopKey origin,
+			OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact profile) { }
+		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead = new IdentityHashMap<>();
+		for(var fact : analysis.logicalTransientInputsInCanonicalOrder())
+			transientByRead.computeIfAbsent(fact.targetRead(), ignored -> new ArrayList<>()).add(fact);
+		IdentityHashMap<CompiledHopKey,List<LogicalFunctionInputFact>> functionByRead = new IdentityHashMap<>();
+		for(var fact : analysis.logicalFunctionInputsInCanonicalOrder())
+			functionByRead.computeIfAbsent(fact.targetRead(), ignored -> new ArrayList<>()).add(fact);
 		for(ExactPhysicalModel.DecisionDomain producer : orderedDomains) {
 			boolean logicalSource = effectiveFunctionInputs.stream().anyMatch(input ->
 				input.authority().sourceArgument() == producer.node().key());
@@ -550,28 +555,21 @@ public final class ExactPhysicalCostModel {
 			if(producerHop.getDataType() == null
 				|| (!producerHop.getDataType().isMatrix() && !producerHop.getDataType().isFrame()))
 				continue;
-			double bytes = estimatedBytes(analysis, sparseAssignments,
-				producer.node().key(), producerHop);
+			double bytes = estimatedBytes(analysis, sparseAssignments, producer.node().key(), producerHop);
+			boolean forwarded = functionInputsForTarget(effectiveFunctionInputs, producer.node().key())
+				.stream().anyMatch(input -> input.forwardedAuthority() != null);
 			Map<Key,List<Demand>> grouped = new LinkedHashMap<>();
 			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.producer() != producer.node().key()
-					|| analysis.graph().node(edge.consumer()).orElseThrow().kind() == NodeKind.FUNCTION_CALL)
-					continue;
-				if(latentRuntimeBoundaries.contains(new LatentWdivmmRuntimeTransferBoundary(
-					edge.producer(), edge.consumer(), edge.inputPosition())))
+					|| analysis.graph().node(edge.consumer()).orElseThrow().kind() == NodeKind.FUNCTION_CALL
+					|| latentRuntimeBoundaries.contains(new LatentWdivmmRuntimeTransferBoundary(
+						edge.producer(), edge.consumer(), edge.inputPosition())))
 					continue;
 				ExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
 				if(consumer == null)
 					continue;
-				List<EffectiveLogicalFunctionInput> functionInputs = functionInputsForTarget(
-					effectiveFunctionInputs, producer.node().key());
-				List<EffectiveLogicalFunctionInput> forwardedInputs = functionInputs.stream()
-					.filter(input -> input.forwardedAuthority() != null).toList();
-				double weight = forwardedInputs.isEmpty()
-					? frequencies.exactForwardingWeight(edge.consumer(), edge.producer())
-					: logicalFunctionCallWeight(frequencies, forwardedInputs);
-				double downloadWeight = functionInputs.isEmpty() ? weight
-					: logicalFunctionCallWeight(frequencies, functionInputs);
+				PhysicalTransferEndpoint endpoint = new PhysicalTransferEndpoint(
+					edge.producer(), edge.consumer(), edge.inputPosition());
 				if(!analysis.isCoordinatorMetadataOnlyInput(edge))
 					for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
 						.filter(Objects::nonNull).distinct().toList()) {
@@ -579,46 +577,31 @@ public final class ExactPhysicalCostModel {
 						for(int value = 0; value < cpConsumers.length; value++)
 							cpConsumers[value] = consumer.alternatives().get(value).state().execType()
 								== ExecType.CP;
-						double download = requireCost(downloadWeight
-							* FederatedCostModel.computeReusableMaterializationDownloadCost(
-								bytes, type, workers),
-							"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
-						grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
-							BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-							.add(new Demand(new PhysicalTransferEndpoint(edge.producer(), edge.consumer(),
-								edge.inputPosition()), consumer, download, bytes, weight,
-								!forwardedInputs.isEmpty(), cpConsumers));
+						List<Demand> downloads = grouped.computeIfAbsent(new Key(Direction.DOWNLOAD,
+							type, BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>());
+						downloads.add(new Demand(endpoint, consumer, bytes, forwarded,
+							cpConsumers, edge.consumer()));
 						for(int value = 0; value < consumer.alternatives().size(); value++) {
 							ExactPhysicalModel.Alternative target = consumer.alternatives().get(value);
 							if(target.state().execType() != ExecType.FED
 								|| target.inputAuthorities().stream().noneMatch(authority ->
 									authority.inputPosition() == edge.inputPosition()
-										&& authority.kind()
-											== ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
+										&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
 								continue;
 							CandidateEmissionFact emission = target.captured()
 								? target.candidateEmission() : target.executionEmission();
 							FType executionFType = emission == null ? target.state().fType()
 								: emission.executionFType();
-							int targetWorkers = nativeLocalInputWorkerCount(
-								target.inputAuthorities(), workers);
-							PlacementCostSemantics.NativeLocalInputTransferEstimate boundedElementwise =
-								PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
-									analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
-									executionFType, targetWorkers);
+							int targetWorkers = nativeLocalInputWorkerCount(target.inputAuthorities(), workers);
+							var boundedElementwise = PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
+								analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
+								executionFType, targetWorkers);
 							double sourceBytes = boundedElementwise == null ? bytes
 								: boundedElementwise.logicalBytesUpperBound();
-							double nativeLocalDownload = requireCost(weight
-								* FederatedCostModel.computeReusableMaterializationDownloadCost(
-									sourceBytes, type, workers),
-								"EXACT_PHYSICAL_NATIVE_LOCAL_DOWNLOAD_COST_UNPROVEN");
 							boolean[] nativeLocalConsumer = new boolean[consumer.alternatives().size()];
 							nativeLocalConsumer[value] = true;
-							grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
-								BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-								.add(new Demand(new PhysicalTransferEndpoint(edge.producer(), edge.consumer(),
-									edge.inputPosition()), consumer, nativeLocalDownload, sourceBytes, weight,
-									!forwardedInputs.isEmpty(), nativeLocalConsumer));
+							downloads.add(new Demand(endpoint, consumer, sourceBytes, forwarded,
+								nativeLocalConsumer, edge.consumer()));
 						}
 					}
 				for(RelocationAction action : consumer.alternatives().stream()
@@ -626,21 +609,13 @@ public final class ExactPhysicalCostModel {
 					.filter(a -> a.inputPosition() == edge.inputPosition()
 						&& a.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
 						&& a.relocationAction().key().sourceValueVersion().equals(producer.node().valueVersion()))
-					.map(ExactPhysicalModel.InputAuthority::relocationAction)
-					.distinct().sorted().toList()) {
-					FType type = action.key().materializationFType();
-					double upload = requireCost(weight * (FederatedCostModel.computeUploadNetworkCost(bytes,
-						type, workers) + FederatedCostModel.computeLocalToFedForwardingPenalty(type, workers)),
-						"EXACT_PHYSICAL_UPLOAD_COST_UNPROVEN");
-					Key key = new Key(Direction.UPLOAD, type, uploadBoundaryMode(analysis, edge),
-						RelocationSelections.physicalEmissionIdentity(action.key()));
+					.map(ExactPhysicalModel.InputAuthority::relocationAction).distinct().sorted().toList()) {
+					Key key = new Key(Direction.UPLOAD, action.key().materializationFType(),
+						uploadBoundaryMode(analysis, edge), RelocationSelections.physicalEmissionIdentity(action.key()));
 					List<Demand> demands = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
-					if(demands.stream().noneMatch(demand -> demand.endpoint().producer() == edge.producer()
-						&& demand.endpoint().consumer() == edge.consumer()
-						&& demand.endpoint().inputPosition() == edge.inputPosition()))
-						demands.add(new Demand(new PhysicalTransferEndpoint(edge.producer(), edge.consumer(),
-							edge.inputPosition()), consumer, upload, bytes, weight,
-							!forwardedInputs.isEmpty(), null));
+					if(demands.stream().noneMatch(d -> d.endpoint().consumer() == edge.consumer()
+						&& d.endpoint().inputPosition() == edge.inputPosition()))
+						demands.add(new Demand(endpoint, consumer, bytes, forwarded, null, edge.consumer()));
 				}
 			}
 			for(EffectiveLogicalFunctionInput input : effectiveFunctionInputs) {
@@ -649,9 +624,12 @@ public final class ExactPhysicalCostModel {
 				ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
 				if(formal == null)
 					continue;
-				double logicalBytes = logicalFunctionInputBytes(analysis, sparseAssignments,
-					producer, formal);
-				double callWeight = frequencies.logicalFunctionCallWeight(input.authority());
+				double logicalBytes = logicalFunctionInputBytes(analysis, sparseAssignments, producer, formal);
+				// A formal binding is materialized at its compiler-owned caller boundary.
+				// Its function-body profile has a different context and can contain extra loops.
+				CompiledHopKey call = analysis.requireExactPhysicalFunctionInputConsumer(input.authority());
+				PhysicalTransferEndpoint endpoint = new PhysicalTransferEndpoint(producer.node().key(),
+					formal.node().key(), input.logicalPosition());
 				for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
 					.filter(Objects::nonNull).distinct().toList()) {
 					boolean[] cpLocalFormals = new boolean[formal.alternatives().size()];
@@ -660,15 +638,9 @@ public final class ExactPhysicalCostModel {
 						cpLocalFormals[value] = state.execType() == ExecType.CP
 							&& state.output() == FederatedOutput.LOUT;
 					}
-					double download = requireCost(callWeight
-						* FederatedCostModel.computeReusableMaterializationDownloadCost(
-							logicalBytes, type, workers),
-						"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
 					grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
 						BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-						.add(new Demand(new PhysicalTransferEndpoint(producer.node().key(),
-							formal.node().key(), input.logicalPosition()), formal, download,
-							logicalBytes, callWeight, false, cpLocalFormals));
+						.add(new Demand(endpoint, formal, logicalBytes, false, cpLocalFormals, call));
 				}
 				Map<String,RelocationAction> uploadActions = new LinkedHashMap<>();
 				formal.alternatives().stream().flatMap(alternative -> alternative.inputAuthorities().stream())
@@ -679,96 +651,340 @@ public final class ExactPhysicalCostModel {
 					.map(ExactPhysicalModel.InputAuthority::relocationAction).sorted()
 					.forEach(action -> uploadActions.putIfAbsent(
 						RelocationSelections.physicalEmissionIdentity(action.key()), action));
-				for(Map.Entry<String,RelocationAction> uploadEntry : uploadActions.entrySet()) {
-					RelocationAction action = uploadEntry.getValue();
-					FType type = action.key().materializationFType();
-					double upload = requireCost(callWeight
-						* (FederatedCostModel.computeUploadNetworkCost(logicalBytes, type, workers)
-							+ FederatedCostModel.computeLocalToFedForwardingPenalty(type, workers)),
-						"EXACT_PHYSICAL_LOGICAL_FUNCTION_UPLOAD_COST_UNPROVEN");
-					String emissionIdentity = uploadEntry.getKey();
+				for(var uploadEntry : uploadActions.entrySet()) {
+					FType type = uploadEntry.getValue().key().materializationFType();
 					grouped.computeIfAbsent(new Key(Direction.UPLOAD, type,
-						BoundaryMode.ANCHOR_TRANSFER, emissionIdentity), ignored -> new ArrayList<>())
-						.add(new Demand(new PhysicalTransferEndpoint(producer.node().key(),
-							formal.node().key(), input.logicalPosition()), formal, upload,
-							logicalBytes, callWeight, true, null));
+						BoundaryMode.ANCHOR_TRANSFER, uploadEntry.getKey()), ignored -> new ArrayList<>())
+						.add(new Demand(endpoint, formal, logicalBytes, true, null, call));
 				}
 			}
+			// Transient/formal reads do not create a new payload. Resolve the same
+			// compiler-owned alias provenance used by latent reusable input costing.
+			List<RuntimeMaterializationSource> creationSources = grouped.isEmpty() ? List.of()
+				: runtimeMaterializationSources(analysis, producer.node().key(), transientByRead,
+					functionByRead, Collections.newSetFromMap(new IdentityHashMap<>()));
 			for(Map.Entry<Key,List<Demand>> entry : grouped.entrySet()) {
 				List<Demand> demands = entry.getValue().stream().sorted(Comparator
 					.comparing((Demand d) -> d.endpoint().consumer().normalizedSignature())
 					.thenComparingInt(d -> d.endpoint().inputPosition())).toList();
 				Key key = entry.getKey();
-				boolean[] activeSourceAlternatives = new boolean[producer.alternatives().size()];
-				for(int value = 0; value < activeSourceAlternatives.length; value++) {
+				boolean[] activeSource = new boolean[producer.alternatives().size()];
+				for(int value = 0; value < activeSource.length; value++) {
 					PlacementState state = producer.alternatives().get(value).state();
-					activeSourceAlternatives[value] = key.direction() == Direction.UPLOAD
-						|| state.execType() == ExecType.FED
-							&& state.output() == FederatedOutput.FOUT && state.fType() == key.type()
-							&& !isDerivedFout(producer.alternatives().get(value));
+					activeSource[value] = key.direction() == Direction.UPLOAD
+						|| state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+							&& state.fType() == key.type() && !isDerivedFout(producer.alternatives().get(value));
 				}
-				List<IndexedDemand> indexedDemands = new ArrayList<>(demands.size());
-				for(Demand demand : demands) {
-					boolean[] activeConsumers = new boolean[demand.consumer().alternatives().size()];
-					for(int value = 0; value < activeConsumers.length; value++) {
-						ExactPhysicalModel.Alternative consumer =
-							demand.consumer().alternatives().get(value);
-						if(key.direction() == Direction.DOWNLOAD)
-							activeConsumers[value] = demand.activeConsumerAlternatives()[value];
-						else
-							activeConsumers[value] = consumer.inputAuthorities().stream().anyMatch(authority ->
-								authority.inputPosition() == demand.endpoint().inputPosition()
-									&& authority.kind()
-										== ExactPhysicalModel.InputAuthorityKind.RELOCATION
-									&& authority.expectedFType() == key.type()
-									&& authority.relocationAction().key().sourceValueVersion()
-										.equals(producer.node().valueVersion())
-									&& RelocationSelections.physicalEmissionIdentity(
-										authority.relocationAction().key())
-										.equals(key.physicalEmissionIdentity()));
-					}
-					double[] sourcePrices = new double[producer.alternatives().size()];
-					for(int value = 0; value < sourcePrices.length; value++) {
-						double price = demand.cost();
-						PlacementState source = producer.alternatives().get(value).state();
-						if(key.direction() == Direction.UPLOAD
-							&& source.output() == FederatedOutput.FOUT) {
-							FType sourceType = Objects.requireNonNull(source.fType(),
-								"FOUT relocation source has no exact FType");
-							price = requireCost(price + demand.weight()
-								* (demand.forwarded()
-									? FederatedCostModel.computeDownloadNetworkCost(demand.sourceBytes())
-									: FederatedCostModel.computeReusableMaterializationDownloadCost(
-										demand.sourceBytes(), sourceType, workers)),
-								"EXACT_PHYSICAL_REFED_DOWNLOAD_COST_UNPROVEN");
-						}
-						sourcePrices[value] = price;
-					}
-					indexedDemands.add(new IndexedDemand(activeConsumers, sourcePrices));
-				}
-				List<ExactMaxDemandFactorDecomposition.Demand> maxDemands = new ArrayList<>();
-				for(int demandIndex = 0; demandIndex < demands.size(); demandIndex++) {
-					Demand demand = demands.get(demandIndex);
-					IndexedDemand indexed = indexedDemands.get(demandIndex);
-					maxDemands.add(new ExactMaxDemandFactorDecomposition.Demand(
-						demand.consumer().variable(), indexed.activeConsumerAlternatives(),
-						indexed.sourcePrices()));
-				}
-				String decompositionKey = "exact-max-demand|" + producer.node().key().normalizedSignature()
+				String groupKey = "exact-materialization|" + producer.node().key().normalizedSignature()
 					+ '|' + key.direction() + '|' + key.type() + '|' + key.boundary()
 					+ '|' + key.physicalEmissionIdentity() + '|' + transferKeys.size();
-				ExactMaxDemandFactorDecomposition.Decomposition decomposition =
-					ExactMaxDemandFactorDecomposition.create(decompositionKey,
-						producer.variable(), activeSourceAlternatives, maxDemands);
-				factors.add(decomposition.canonicalFactor());
-				factorizations.put(decomposition.canonicalFactor(), new SolverFactorization(
-					decomposition.auxiliaryVariables(), decomposition.solverFactors(),
-					decomposition.semanticDescriptor()));
+				Map<CreationScope,List<PricedActivationDemand>> demandsByCreation = new LinkedHashMap<>();
+				for(var readProfile : exactOccurrenceProfiles(frequencies, producer.node().key())) {
+					CompiledHopKey origin = producer.node().key();
+					var sourceProfile = readProfile;
+					if(creationSources.size() == 1) {
+						CompiledHopKey candidate = creationSources.get(0).occurrence();
+						var profiles = exactOccurrenceProfiles(frequencies, candidate);
+						var matched = profiles.stream().filter(profile -> profile.contextOrdinal()
+							== readProfile.contextOrdinal()).findFirst().orElse(null);
+						if(matched == null && profiles.size() == 1)
+							matched = profiles.get(0);
+						if(matched != null) {
+							origin = candidate;
+							sourceProfile = matched;
+						}
+					}
+					// Ambiguous reaching definitions retain the read scope; they never
+					// authorize reuse of an earlier value version or a different call.
+					List<PricedActivationDemand> activations = demandsByCreation.computeIfAbsent(
+						new CreationScope(origin, sourceProfile), ignored -> new ArrayList<>());
+					for(Demand demand : demands) {
+						boolean[] activeConsumers = new boolean[demand.consumer().alternatives().size()];
+						for(int value = 0; value < activeConsumers.length; value++) {
+							var consumer = demand.consumer().alternatives().get(value);
+							activeConsumers[value] = key.direction() == Direction.DOWNLOAD
+								? demand.activeConsumerAlternatives()[value]
+								: consumer.inputAuthorities().stream().anyMatch(authority ->
+									authority.inputPosition() == demand.endpoint().inputPosition()
+										&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
+										&& authority.expectedFType() == key.type()
+										&& authority.relocationAction().key().sourceValueVersion()
+											.equals(producer.node().valueVersion())
+										&& RelocationSelections.physicalEmissionIdentity(authority.relocationAction().key())
+											.equals(key.physicalEmissionIdentity()));
+						}
+						double[] unitPrices = new double[activeSource.length];
+						for(int value = 0; value < unitPrices.length; value++) {
+							PlacementState source = producer.alternatives().get(value).state();
+							double unit = key.direction() == Direction.DOWNLOAD
+								? FederatedCostModel.computeReusableMaterializationDownloadCost(
+									demand.sourceBytes(), key.type(), workers)
+								: FederatedCostModel.computeUploadNetworkCost(demand.sourceBytes(), key.type(), workers)
+									+ FederatedCostModel.computeLocalToFedForwardingPenalty(key.type(), workers);
+							if(key.direction() == Direction.UPLOAD && source.output() == FederatedOutput.FOUT)
+								unit += demand.forwarded() ? FederatedCostModel.computeDownloadNetworkCost(demand.sourceBytes())
+									: FederatedCostModel.computeReusableMaterializationDownloadCost(demand.sourceBytes(),
+										Objects.requireNonNull(source.fType(), "FOUT source layout"), workers);
+							unitPrices[value] = requireCost(unit, "EXACT_PHYSICAL_MATERIALIZATION_UNIT_UNPROVEN");
+						}
+						var consumerProfile = requireContextProfile(frequencies, demand.activationOccurrence(),
+							readProfile.contextOrdinal());
+						activations.add(new PricedActivationDemand(new ActivationDemand(
+							List.of(demand.consumer().variable()), List.of(activeConsumers),
+							materializationActivation(sourceProfile, consumerProfile)), unitPrices));
+					}
+				}
+				for(var creation : demandsByCreation.entrySet())
+					addPricedMaterializationActivationFactors(groupKey + "|creation="
+						+ creation.getKey().origin().normalizedSignature()
+						+ "|context=" + creation.getKey().profile().contextOrdinal(), producer.variable(),
+						activeSource, creation.getValue(), creation.getKey().profile().expectedExecutions(),
+						factors, factorizations, null);
 				transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(), demands.stream()
 					.map(Demand::endpoint).distinct().toList(), key.direction(), key.type(), key.boundary(),
 					key.physicalEmissionIdentity()));
 			}
 		}
+	}
+
+	/** A selected plan demands a copy when every observation in this demand is true. */
+	record ActivationDemand(List<ExactCategoricalSolver.Variable> variables,
+		List<boolean[]> observations, ExactMaterializationActivation.Event event) {
+		ActivationDemand {
+			variables = List.copyOf(variables);
+			observations = observations.stream().map(boolean[]::clone).toList();
+			if(variables.isEmpty() || variables.size() != observations.size())
+				throw new IllegalArgumentException("EXACT_ACTIVATION_OBSERVATION_INVALID");
+			for(int index = 0; index < variables.size(); index++)
+				if(variables.get(index).domainSize() != observations.get(index).length)
+					throw new IllegalArgumentException("EXACT_ACTIVATION_OBSERVATION_DOMAIN_INVALID");
+		}
+
+		boolean active(int[] values, IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions) {
+			for(int index = 0; index < variables.size(); index++)
+				if(!observations.get(index)[values[positions.get(variables.get(index))]])
+					return false;
+			return true;
+		}
+	}
+
+	/**
+	 * Project a demand onto one source creation lifetime. Conditions outside repeated
+	 * consumer-only loops retain their conditional compiler weight. Inside such loops,
+	 * opposite arms can both occur during one copy lifetime: their existence events are
+	 * unresolved, not mutually exclusive. Raw occurrence counts give a union upper bound.
+	 */
+	static ExactMaterializationActivation.Event materializationActivation(
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact source,
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact consumer) {
+		Set<Long> sourceLoops = source.loopContext().stream().map(Pair::getLeft)
+			.collect(java.util.stream.Collectors.toSet());
+		double cap = source.expectedExecutions();
+		List<BranchLiteral> conditions = new ArrayList<>();
+		for(var condition : consumer.activationConditions()) {
+			var sourceCondition = source.activationConditions().stream()
+				.filter(candidate -> candidate.decisionKey().equals(condition.decisionKey()))
+				.findFirst().orElse(null);
+			if(sourceCondition != null) {
+				if(sourceCondition.ifArm() != condition.ifArm())
+					return new ExactMaterializationActivation.Event(0d, List.of());
+				continue;
+			}
+			boolean repeated = !sourceLoops.containsAll(condition.enclosingLoopIds());
+			if(repeated)
+				conditions.add(new BranchLiteral(condition.decisionKey()
+					+ "|repeated-arm=" + condition.ifArm(), true));
+			else {
+				cap *= condition.probability();
+				conditions.add(new BranchLiteral(condition.decisionKey(), condition.ifArm()));
+			}
+		}
+		return new ExactMaterializationActivation.Event(
+			Math.min(cap, consumer.expectedExecutions()), conditions);
+	}
+
+	/** Per-creation prices can differ for bounded native-local and full-copy demands. */
+	record PricedActivationDemand(ActivationDemand activation, double[] unitPrices) {
+		PricedActivationDemand {
+			Objects.requireNonNull(activation, "activation");
+			unitPrices = unitPrices.clone();
+			for(double price : unitPrices)
+				requireCost(price, "EXACT_ACTIVATION_UNIT_PRICE_UNPROVEN");
+		}
+
+		@Override
+		public double[] unitPrices() {
+			return unitPrices.clone();
+		}
+	}
+
+	/**
+	 * E[max active unit price] is the sum of price increments times the activation
+	 * union above each threshold. The same union machinery therefore handles mixed
+	 * binding costs without multiplying a demand's execution frequency twice.
+	 */
+	static void addPricedMaterializationActivationFactors(String key,
+		ExactCategoricalSolver.Variable source, boolean[] activeSource,
+		List<PricedActivationDemand> demands, double scopeWeight,
+		List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds) {
+		if(activeSource.length != source.domainSize()
+			|| demands.stream().anyMatch(demand -> demand.unitPrices.length != source.domainSize()))
+			throw new IllegalArgumentException("EXACT_ACTIVATION_PRICE_DOMAIN_INVALID");
+		List<ActivationDemand> activations = demands.stream().map(PricedActivationDemand::activation).toList();
+		double[] firstPrices = demands.isEmpty() ? new double[source.domainSize()] : demands.get(0).unitPrices;
+		if(demands.stream().allMatch(demand -> java.util.Arrays.equals(firstPrices, demand.unitPrices))) {
+			// Preserve the compact common-unit encoding and its atomic arithmetic.
+			addMaterializationActivationFactors(key, source, activeSource, firstPrices, activations,
+				scopeWeight, factors, factorizations, factorKinds);
+			return;
+		}
+		boolean emitted = false;
+		for(int value = 0; value < source.domainSize(); value++) {
+			if(!activeSource[value])
+				continue;
+			int sourceValue = value;
+			List<Double> thresholds = demands.stream().map(demand -> demand.unitPrices[sourceValue])
+				.filter(price -> price > 0d).distinct().sorted().toList();
+			double previous = 0d;
+			for(double threshold : thresholds) {
+				List<ActivationDemand> members = demands.stream()
+					.filter(demand -> demand.unitPrices[sourceValue] >= threshold)
+					.map(PricedActivationDemand::activation).toList();
+				boolean[] sourceMask = new boolean[source.domainSize()];
+				sourceMask[sourceValue] = true;
+				double[] prices = new double[source.domainSize()];
+				prices[sourceValue] = requireCost(threshold - previous, "EXACT_ACTIVATION_PRICE_LEVEL_INVALID");
+				addMaterializationActivationFactors(key + "|source=" + sourceValue + "|price-level="
+					+ Long.toHexString(Double.doubleToRawLongBits(threshold)), source, sourceMask, prices,
+					members, scopeWeight, factors, factorizations, factorKinds);
+				previous = threshold;
+				emitted = true;
+			}
+		}
+		if(!emitted)
+			addMaterializationActivationFactors(key, source, activeSource, new double[source.domainSize()],
+				activations, scopeWeight, factors, factorizations, factorKinds);
+	}
+
+	static void addMaterializationActivationFactors(String key,
+		ExactCategoricalSolver.Variable source, boolean[] activeSource, double[] unitPrices,
+		List<ActivationDemand> demands, double scopeWeight,
+		List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds) {
+		List<ExactMaterializationActivation.Event> events = demands.stream().map(ActivationDemand::event).toList();
+		var partition = ExactMaterializationActivation.partition(events, scopeWeight);
+		StringBuilder descriptor = new StringBuilder("MATERIALIZATION_ACTIVATION_V1|")
+			.append(key).append('|').append(partition.semanticDescriptor())
+			.append("|source=").append(source.key()).append("|sourceActive=")
+			.append(java.util.Arrays.toString(activeSource));
+		for(double unit : unitPrices)
+			descriptor.append("|unitBits=").append(Long.toUnsignedString(Double.doubleToRawLongBits(unit), 16));
+		for(ActivationDemand demand : demands)
+			for(int index = 0; index < demand.variables().size(); index++)
+				descriptor.append("|observation=").append(demand.variables().get(index).key())
+					.append(':').append(java.util.Arrays.toString(demand.observations().get(index)));
+		if(!partition.resolved()) {
+			List<ExactCategoricalSolver.Variable> scope = activationScope(source, demands);
+			var positions = variablePositions(scope);
+			ExactCategoricalSolver.Factor canonical = ExactCategoricalSolver.Factor.lazy(scope, values -> {
+				int sourceValue = values[positions.get(source)];
+				if(!activeSource[sourceValue])
+					return 0d;
+				boolean[] active = new boolean[demands.size()];
+				for(int index = 0; index < active.length; index++)
+					active[index] = demands.get(index).active(values, positions);
+				return requireCost(unitPrices[sourceValue]
+					* ExactMaterializationActivation.conservativeUnion(events, scopeWeight, active),
+					"EXACT_ACTIVATION_UNION_COST_UNPROVEN");
+			});
+			factors.add(canonical);
+			factorizations.put(canonical, new SolverFactorization(List.of(), List.of(canonical),
+				descriptor + "|encoding=CONSERVATIVE_CAPPED_ACTIVATION_UNION"));
+			if(factorKinds != null)
+				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|CONSERVATIVE_UNION");
+			return;
+		}
+		int ordinal = 0;
+		for(var activationClass : partition.classes()) {
+			String classKey = key + "|activation-class=" + ordinal++;
+			List<ActivationDemand> members = activationClass.demandIndexes().stream().map(demands::get).toList();
+			double[] prices = new double[unitPrices.length];
+			for(int index = 0; index < prices.length; index++)
+				prices[index] = requireCost(activationClass.multiplicity() * unitPrices[index],
+					"EXACT_ACTIVATION_CLASS_PRICE_UNPROVEN");
+			List<ExactCategoricalSolver.Variable> scope = activationScope(source, members);
+			var positions = variablePositions(scope);
+			ExactCategoricalSolver.Factor canonical = ExactCategoricalSolver.Factor.lazy(scope, values -> {
+				int sourceValue = values[positions.get(source)];
+				return activeSource[sourceValue] && members.stream().anyMatch(demand -> demand.active(values, positions))
+					? prices[sourceValue] : 0d;
+			});
+			List<ExactCategoricalSolver.Variable> auxiliaries = new ArrayList<>();
+			List<ExactCategoricalSolver.Factor> solverFactors = new ArrayList<>();
+			List<ExactActivationClassFactorDecomposition.Demand> observations = new ArrayList<>();
+			for(int index = 0; index < members.size(); index++) {
+				ActivationDemand demand = members.get(index);
+				if(demand.variables().size() == 1)
+					observations.add(new ExactActivationClassFactorDecomposition.Demand(
+						demand.variables().get(0), demand.observations().get(0)));
+				else {
+					ExactCategoricalSolver.Variable active = new ExactCategoricalSolver.Variable(
+						classKey + "|demand=" + index, 2);
+					auxiliaries.add(active);
+					List<ExactCategoricalSolver.Variable> demandScope = new ArrayList<>();
+					for(var variable : demand.variables())
+						if(demandScope.stream().noneMatch(existing -> existing == variable))
+							demandScope.add(variable);
+					var demandPositions = variablePositions(demandScope);
+					demandScope.add(active);
+					int activePosition = demandScope.size() - 1;
+					solverFactors.add(ExactCategoricalSolver.Factor.lazy(demandScope, values ->
+						values[activePosition] == (demand.active(values, demandPositions) ? 1 : 0)
+							? 0d : Double.POSITIVE_INFINITY));
+					observations.add(new ExactActivationClassFactorDecomposition.Demand(active,
+						new boolean[] {false, true}));
+				}
+			}
+			var decomposition = ExactActivationClassFactorDecomposition.create(classKey, source,
+				activeSource, prices, observations);
+			auxiliaries.addAll(decomposition.auxiliaryVariables());
+			solverFactors.addAll(decomposition.solverFactors());
+			factors.add(canonical);
+			factorizations.put(canonical, new SolverFactorization(auxiliaries, solverFactors,
+				descriptor + "|class=" + activationClass + '|' + decomposition.semanticDescriptor()));
+			if(factorKinds != null)
+				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|ACTIVATION_CLASS");
+		}
+		// Even a zero-cost group binds its scope, event facts and prices in the receipt.
+		if(partition.classes().isEmpty()) {
+			var canonical = ExactCategoricalSolver.Factor.lazy(activationScope(source, demands), values -> 0d);
+			factors.add(canonical);
+			factorizations.put(canonical, new SolverFactorization(List.of(), List.of(), descriptor.toString()));
+			if(factorKinds != null)
+				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|ACTIVATION_CLASS");
+		}
+	}
+
+	private static List<ExactCategoricalSolver.Variable> activationScope(
+		ExactCategoricalSolver.Variable source, List<ActivationDemand> demands) {
+		List<ExactCategoricalSolver.Variable> scope = new ArrayList<>();
+		scope.add(source);
+		for(ActivationDemand demand : demands)
+			for(var variable : demand.variables())
+				if(scope.stream().noneMatch(existing -> existing == variable))
+					scope.add(variable);
+		return List.copyOf(scope);
+	}
+
+	private static IdentityHashMap<ExactCategoricalSolver.Variable,Integer> variablePositions(
+		List<ExactCategoricalSolver.Variable> scope) {
+		var positions = new IdentityHashMap<ExactCategoricalSolver.Variable,Integer>();
+		for(int index = 0; index < scope.size(); index++)
+			positions.put(scope.get(index), index);
+		return positions;
 	}
 
 	/**
@@ -816,6 +1032,9 @@ public final class ExactPhysicalCostModel {
 			List<RuntimeMaterializationSource> sources = runtimeMaterializationSources(
 				analysis, runtime.weights(), transientByRead, functionByRead,
 				Collections.newSetFromMap(new IdentityHashMap<>()));
+			if(sources.isEmpty())
+				throw new IllegalArgumentException("EXACT_LATENT_WDIVMM_RUNTIME_SOURCE_CYCLE|read="
+					+ runtime.weights().normalizedSignature());
 			for(RuntimeMaterializationSource sourceFact : sources) {
 				if(!domains.containsKey(sourceFact.occurrence()))
 					throw new IllegalArgumentException(
@@ -825,9 +1044,6 @@ public final class ExactPhysicalCostModel {
 					exactOccurrenceProfiles(frequencies, sourceFact.occurrence());
 				for(OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact ownerProfile
 						: exactOccurrenceProfiles(frequencies, owner.node().key())) {
-					OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact readProfile =
-						requireContextProfile(frequencies, runtime.weights(),
-							ownerProfile.contextOrdinal());
 					OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact sourceProfile =
 						sourceProfiles.stream().filter(profile -> profile.contextOrdinal()
 							== ownerProfile.contextOrdinal()).findFirst().orElse(null);
@@ -839,25 +1055,12 @@ public final class ExactPhysicalCostModel {
 								+ sourceFact.occurrence().normalizedSignature()
 								+ "|owner=" + owner.node().key().normalizedSignature()
 								+ "|context=" + ownerProfile.contextOrdinal());
-					// This strict profile distinguishes proven zero from the legacy helper's
-					// zero-as-missing sentinel. Never revive an unreachable runtime demand.
-					double forwardingWeight = ownerProfile.expectedExecutions() == 0.0 ? 0.0
-						: PlacementCostSemantics.forwardingWeight(
-						ownerProfile.expectedExecutions(), ownerProfile.loopContext(),
-						readProfile.loopContext());
-					double demandWeight = Math.min(sourceProfile.expectedExecutions(),
-						forwardingWeight);
-					if(!Double.isFinite(demandWeight) || demandWeight < 0.0)
-						throw new IllegalArgumentException(
-							"EXACT_LATENT_WDIVMM_RUNTIME_ACTIVATION_UNPROVEN|owner="
-								+ owner.node().key().normalizedSignature()
-								+ "|context=" + sourceProfile.contextOrdinal());
+					var activation = materializationActivation(sourceProfile, ownerProfile);
 					Source key = new Source(sourceFact.occurrence(), sourceFact.valueVersion(),
 						sourceProfile.contextOrdinal(), sourceProfile.expectedExecutions());
 					demandsBySource.computeIfAbsent(key, ignored -> new ArrayList<>())
-						.add(new RuntimeMaterializationDemand(owner, read, demandWeight,
-							relativeBranchLiterals(sourceFact.occurrence(), owner.node().key(),
-								sourceProfile.contextOrdinal(), ownerProfile.contextOrdinal())));
+						.add(new RuntimeMaterializationDemand(owner, read, activation.weight(),
+							activation.conditions()));
 				}
 			}
 		}
@@ -887,61 +1090,41 @@ public final class ExactPhysicalCostModel {
 				sourceKey.occurrence(), sourceHop);
 			double productionWeight = sourceKey.productionWeight();
 
-			LinkedHashSet<ExactCategoricalSolver.Variable> scopeSet = new LinkedHashSet<>();
-			scopeSet.add(source.variable());
+			List<ActivationDemand> activations = new ArrayList<>();
+			Set<ExactCategoricalSolver.Variable> compatibleReads =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			PlacementState cpOwner = null;
 			for(RuntimeMaterializationDemand demand : demands) {
-				scopeSet.add(demand.read().variable());
-				scopeSet.add(demand.owner().variable());
-			}
-			List<ExactCategoricalSolver.Variable> scope = List.copyOf(scopeSet);
-			IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions =
-				new IdentityHashMap<>();
-			for(int index = 0; index < scope.size(); index++)
-				positions.put(scope.get(index), index);
-
-			ExactCategoricalSolver.Factor runtimeInputFactor =
-				ExactCategoricalSolver.Factor.lazy(scope, values -> {
-				PlacementState selectedSource = source.alternatives()
-					.get(values[positions.get(source.variable())]).state();
-				List<RuntimeMaterializationDemand> active = new ArrayList<>();
-				for(RuntimeMaterializationDemand demand : demands) {
-					PlacementState selectedRead = demand.read().alternatives()
-						.get(values[positions.get(demand.read().variable())]).state();
-					PlacementState selectedOwner = demand.owner().alternatives()
-						.get(values[positions.get(demand.owner().variable())]).state();
-					if(selectedRead.output() == FederatedOutput.FOUT
-						&& (selectedSource.output() != FederatedOutput.FOUT
-							|| selectedSource.fType() != selectedRead.fType()))
-						return Double.POSITIVE_INFINITY;
-					if(selectedOwner.execType() == ExecType.CP
-						&& selectedRead.output() == FederatedOutput.FOUT)
-						active.add(demand);
+				if(compatibleReads.add(demand.read().variable())) {
+					// Feasibility survives zero-frequency costing and every class split.
+					var compatibility = runtimeReadCompatibilityFactor(source, demand.read());
+					factors.add(compatibility);
+					factorKinds.put(compatibility, "RUNTIME_FUSED_INPUT_COMPATIBILITY");
 				}
-				if(active.isEmpty())
-					return 0.0;
-				double activation = reusableActivationUnion(active, productionWeight);
-				double unit = PlacementCostSemantics
-					.latentWdivmmCpRuntimeInputMaterializationCost(bytes,
-						active.get(0).owner().alternatives()
-							.get(values[positions.get(active.get(0).owner().variable())]).state(),
-						selectedSource, workers);
-				return requireCost(activation * unit,
-					"EXACT_LATENT_WDIVMM_RUNTIME_INPUT_COST_UNPROVEN");
-			});
-			factors.add(runtimeInputFactor);
-			factorKinds.put(runtimeInputFactor, "RUNTIME_FUSED_INPUT");
-			String runtimeDescriptor = runtimeInputDescriptor(
-					sourceKey.occurrence().normalizedSignature() + '|'
-						+ sourceKey.valueVersion().normalizedSignature() + '|'
-						+ sourceKey.contextOrdinal(), source, demands,
-					bytes, productionWeight, workers);
-			boolean sameEvent = demands.size() >= 2 && demands.stream().allMatch(demand ->
-				demand.branchLiterals().equals(demands.get(0).branchLiterals()));
-			factorizations.put(runtimeInputFactor, sameEvent
-				? sameEventRuntimeInputFactorization(sourceKey.occurrence().normalizedSignature()
-					+ '|' + sourceKey.contextOrdinal(), source, demands, bytes, workers,
-					runtimeDescriptor)
-				: new SolverFactorization(List.of(), List.of(runtimeInputFactor), runtimeDescriptor));
+				boolean[] owners = new boolean[demand.owner().alternatives().size()];
+				for(int index = 0; index < owners.length; index++) {
+					PlacementState state = demand.owner().alternatives().get(index).state();
+					owners[index] = state.execType() == ExecType.CP;
+					if(owners[index])
+						cpOwner = state;
+				}
+				boolean[] reads = new boolean[demand.read().alternatives().size()];
+				for(int index = 0; index < reads.length; index++)
+					reads[index] = demand.read().alternatives().get(index).state().output() == FederatedOutput.FOUT;
+				activations.add(new ActivationDemand(List.of(demand.owner().variable(), demand.read().variable()),
+					List.of(owners, reads), new ExactMaterializationActivation.Event(
+						demand.activationWeight(), demand.branchLiterals())));
+			}
+			double[] unitPrices = new double[source.alternatives().size()];
+			for(int index = 0; index < unitPrices.length; index++)
+				unitPrices[index] = cpOwner == null ? 0d : requireCost(PlacementCostSemantics
+					.latentWdivmmCpRuntimeInputMaterializationCost(bytes, cpOwner,
+						source.alternatives().get(index).state(), workers),
+					"EXACT_LATENT_WDIVMM_RUNTIME_INPUT_UNIT_UNPROVEN");
+			addMaterializationActivationFactors("exact-runtime-input|"
+				+ sourceKey.occurrence().normalizedSignature() + '|' + sourceKey.valueVersion().normalizedSignature()
+				+ "|context=" + sourceKey.contextOrdinal(), source.variable(), allTrue(unitPrices.length),
+				unitPrices, activations, productionWeight, factors, factorizations, factorKinds);
 
 			List<PhysicalTransferEndpoint> endpoints = demands.stream()
 				.map(demand -> new PhysicalTransferEndpoint(sourceKey.occurrence(),
@@ -954,81 +1137,6 @@ public final class ExactPhysicalCostModel {
 				transferKeys.add(new PhysicalTransferKey(sourceKey.valueVersion(), endpoints,
 					Direction.DOWNLOAD, type, BoundaryMode.RUNTIME_FUSED_INPUT));
 		}
-	}
-
-	private static String runtimeInputDescriptor(String sourceKey,
-		ExactPhysicalModel.DecisionDomain source,
-		List<RuntimeMaterializationDemand> demands, double bytes,
-		double productionWeight, int workers) {
-		StringBuilder descriptor = new StringBuilder("RUNTIME_FUSED_INPUT_V1|source=")
-			.append(sourceKey).append("|sourceVariable=").append(source.variable().key())
-			.append("|bytesBits=").append(Long.toUnsignedString(
-				Double.doubleToRawLongBits(bytes), 16))
-			.append("|productionWeightBits=").append(Long.toUnsignedString(
-				Double.doubleToRawLongBits(productionWeight), 16))
-			.append("|workers=").append(workers);
-		for(RuntimeMaterializationDemand demand : demands)
-			descriptor.append("|demand=").append(demand.owner().variable().key())
-				.append(':').append(demand.read().variable().key())
-				.append(":weightBits=").append(Long.toUnsignedString(
-					Double.doubleToRawLongBits(demand.activationWeight()), 16))
-				.append(":event=").append(demand.branchLiterals());
-		for(int sourceValue = 0; sourceValue < source.alternatives().size(); sourceValue++) {
-			PlacementState sourceState = source.alternatives().get(sourceValue).state();
-			for(RuntimeMaterializationDemand demand : demands)
-				for(int ownerValue = 0; ownerValue < demand.owner().alternatives().size(); ownerValue++) {
-					PlacementState ownerState = demand.owner().alternatives().get(ownerValue).state();
-					double unit = PlacementCostSemantics.latentWdivmmCpRuntimeInputMaterializationCost(
-						bytes, ownerState, sourceState, workers);
-					descriptor.append("|unit=").append(sourceValue).append(':')
-						.append(demand.owner().variable().key()).append(':').append(ownerValue)
-						.append(':').append(Long.toUnsignedString(
-							Double.doubleToRawLongBits(unit), 16));
-				}
-		}
-		return descriptor.toString();
-	}
-
-	private static SolverFactorization sameEventRuntimeInputFactorization(String key,
-		ExactPhysicalModel.DecisionDomain source,
-		List<RuntimeMaterializationDemand> demands, double bytes, int workers,
-		String runtimeDescriptor) {
-		List<ExactCategoricalSolver.Variable> auxiliaries = new ArrayList<>();
-		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
-		Set<ExactCategoricalSolver.Variable> compatibleReads =
-			Collections.newSetFromMap(new IdentityHashMap<>());
-		List<ExactMaxDemandFactorDecomposition.Demand> maximumDemands = new ArrayList<>();
-		for(int index = 0; index < demands.size(); index++) {
-			RuntimeMaterializationDemand demand = demands.get(index);
-			if(compatibleReads.add(demand.read().variable()))
-				factors.add(runtimeReadCompatibilityFactor(source, demand.read()));
-			ExactCategoricalSolver.Variable active = new ExactCategoricalSolver.Variable(
-				"exact-runtime-input-active|" + key + '|' + index, 2);
-			auxiliaries.add(active);
-			factors.add(runtimeDemandActivationFactor(demand, active));
-			double[] prices = new double[source.alternatives().size()];
-			PlacementState cpOwner = demand.owner().alternatives().stream()
-				.map(ExactPhysicalModel.Alternative::state)
-				.filter(state -> state.execType() == ExecType.CP).findFirst().orElse(null);
-			for(int sourceValue = 0; sourceValue < prices.length; sourceValue++)
-				prices[sourceValue] = cpOwner == null ? 0d : requireCost(
-					demand.activationWeight() * PlacementCostSemantics
-						.latentWdivmmCpRuntimeInputMaterializationCost(bytes, cpOwner,
-							source.alternatives().get(sourceValue).state(), workers),
-					"EXACT_LATENT_WDIVMM_RUNTIME_INPUT_COST_UNPROVEN");
-			maximumDemands.add(new ExactMaxDemandFactorDecomposition.Demand(active,
-				new boolean[] {false, true}, prices));
-		}
-		ExactMaxDemandFactorDecomposition.Decomposition maximum =
-			ExactMaxDemandFactorDecomposition.create("exact-runtime-input-max|" + key,
-				source.variable(), allTrue(source.alternatives().size()), maximumDemands);
-		auxiliaries.addAll(maximum.auxiliaryVariables());
-		factors.addAll(maximum.solverFactors());
-		return new SolverFactorization(auxiliaries, factors,
-			runtimeDescriptor + "|sameEventDecomposition=RUNTIME_SAME_EVENT_V1|"
-				+ maximum.semanticDescriptor() + "|runtimeSolverScopes="
-				+ factors.stream().map(factor -> factor.scope().stream()
-					.map(variable -> variable.key() + ':' + variable.domainSize()).toList()).toList());
 	}
 
 	private static ExactCategoricalSolver.Factor runtimeReadCompatibilityFactor(
@@ -1046,23 +1154,6 @@ public final class ExactPhysicalCostModel {
 		});
 	}
 
-	private static ExactCategoricalSolver.Factor runtimeDemandActivationFactor(
-		RuntimeMaterializationDemand demand, ExactCategoricalSolver.Variable active) {
-		List<ExactCategoricalSolver.Variable> scope = demand.read().variable() == demand.owner().variable()
-			? List.of(demand.read().variable(), active)
-			: List.of(demand.read().variable(), demand.owner().variable(), active);
-		return ExactCategoricalSolver.Factor.lazy(scope, values -> {
-			PlacementState read = demand.read().alternatives().get(values[0]).state();
-			int ownerValue = demand.read().variable() == demand.owner().variable()
-				? values[0] : values[1];
-			int activeValue = values[values.length - 1];
-			PlacementState owner = demand.owner().alternatives().get(ownerValue).state();
-			boolean expected = owner.execType() == ExecType.CP
-				&& read.output() == FederatedOutput.FOUT;
-			return activeValue == (expected ? 1 : 0) ? 0d : Double.POSITIVE_INFINITY;
-		});
-	}
-
 	private static boolean[] allTrue(int size) {
 		boolean[] values = new boolean[size];
 		java.util.Arrays.fill(values, true);
@@ -1072,18 +1163,7 @@ public final class ExactPhysicalCostModel {
 	private static List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact>
 			exactOccurrenceProfiles(OccurrenceExecutionFrequencyFacts frequencies,
 			CompiledHopKey key) {
-		List<String> paths = key.controlRegion().regionPath();
-		if(paths.size() != 1)
-			throw new IllegalArgumentException(
-				"EXACT_LATENT_WDIVMM_OCCURRENCE_PATH_UNPROVEN|key="
-					+ key.normalizedSignature());
-		List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> profiles =
-			frequencies.profilesByPath().get(paths.get(0));
-		if(profiles == null || profiles.isEmpty())
-			throw new IllegalArgumentException(
-				"EXACT_LATENT_WDIVMM_OCCURRENCE_PROFILE_UNPROVEN|key="
-					+ key.normalizedSignature());
-		return profiles;
+		return frequencies.exactProfiles(key);
 	}
 
 	private static OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact
@@ -1122,10 +1202,11 @@ public final class ExactPhysicalCostModel {
 		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead,
 		IdentityHashMap<CompiledHopKey,List<LogicalFunctionInputFact>> functionByRead,
 		Set<CompiledHopKey> visiting) {
+		// Loop-backedge alias cycles do not prove a unique payload origin. Ordinary
+		// costing retains the read's creation scope; latent source authority requires
+		// a complete resolution and rejects this empty result at its call site.
 		if(!visiting.add(read))
-			throw new IllegalArgumentException(
-				"EXACT_LATENT_WDIVMM_RUNTIME_SOURCE_CYCLE|read="
-					+ read.normalizedSignature());
+			return List.of();
 		try {
 			List<CompiledHopKey> direct = new ArrayList<>();
 			for(LogicalTransientInputFact fact : transientByRead.getOrDefault(read, List.of()))
@@ -1142,11 +1223,15 @@ public final class ExactPhysicalCostModel {
 				return List.of(new RuntimeMaterializationSource(read, value));
 			}
 			Map<String,RuntimeMaterializationSource> resolved = new LinkedHashMap<>();
-			for(CompiledHopKey source : direct.stream().distinct().sorted().toList())
-				for(RuntimeMaterializationSource authority : runtimeMaterializationSources(
-					analysis, source, transientByRead, functionByRead, visiting))
+			for(CompiledHopKey source : direct.stream().distinct().sorted().toList()) {
+				List<RuntimeMaterializationSource> authorities = runtimeMaterializationSources(
+					analysis, source, transientByRead, functionByRead, visiting);
+				if(authorities.isEmpty())
+					return List.of();
+				for(RuntimeMaterializationSource authority : authorities)
 					resolved.putIfAbsent(authority.occurrence().normalizedSignature() + '|'
 						+ authority.valueVersion().normalizedSignature(), authority);
+			}
 			return resolved.values().stream().sorted(Comparator
 				.comparing((RuntimeMaterializationSource source) ->
 					source.occurrence().normalizedSignature())
@@ -1180,112 +1265,15 @@ public final class ExactPhysicalCostModel {
 			&& Objects.equals(write.getName(), read.getName()) ? producer : null;
 	}
 
-	private static List<BranchLiteral> relativeBranchLiterals(
-		CompiledHopKey source, CompiledHopKey owner, long sourceContext,
-		long ownerContext) {
-		List<BranchLiteral> sourceLiterals = branchLiterals(source);
-		List<BranchLiteral> relative = branchLiterals(owner).stream()
-			.filter(literal -> !sourceLiterals.contains(literal)).toList();
-		if(sourceContext == ownerContext)
-			return relative;
-		return relative.stream().map(literal -> new BranchLiteral(
-			"context-" + ownerContext + '|' + literal.decisionPath(), literal.ifArm()))
-			.toList();
-	}
-
-	private static List<BranchLiteral> branchLiterals(CompiledHopKey key) {
-		List<String> paths = key.controlRegion().regionPath();
-		if(paths.size() != 1)
-			throw new IllegalArgumentException(
-				"EXACT_LATENT_WDIVMM_RUNTIME_OWNER_PATH_UNPROVEN|owner="
-					+ key.normalizedSignature());
-		List<BranchLiteral> literals = new ArrayList<>();
-		String[] tokens = paths.get(0).split("/");
-		StringBuilder prefix = new StringBuilder();
-		for(String token : tokens) {
-			String decisionPath = prefix.toString();
-			if(prefix.length() > 0)
-				prefix.append('/');
-			prefix.append(token);
-			if("branch-if".equals(token))
-				literals.add(new BranchLiteral(decisionPath, true));
-			else if("branch-else".equals(token))
-				literals.add(new BranchLiteral(decisionPath, false));
-		}
-		return literals.stream().sorted().toList();
-	}
-
-	private static double reusableActivationUnion(
-		List<RuntimeMaterializationDemand> active, double productionWeight) {
-		return reusableActivationUnion(active.stream()
-			.map(RuntimeMaterializationDemand::branchLiterals).toList(), active.stream()
-			.map(RuntimeMaterializationDemand::activationWeight).toList(), productionWeight);
-	}
-
 	static double reusableActivationUnion(List<List<BranchLiteral>> events,
 		List<Double> activationWeights, double productionWeight) {
-		if(events == null || activationWeights == null
-			|| events.size() != activationWeights.size() || events.isEmpty()
-			|| !Double.isFinite(productionWeight) || productionWeight < 0.0)
-			throw new IllegalArgumentException(
-				"EXACT_LATENT_WDIVMM_BRANCH_ACTIVATION_INPUT_INVALID");
-		Map<List<BranchLiteral>,Double> byEvent = new LinkedHashMap<>();
-		for(int index = 0; index < events.size(); index++) {
-			double weight = activationWeights.get(index);
-			if(!Double.isFinite(weight) || weight < 0.0 || weight > productionWeight)
-				throw new IllegalArgumentException(
-					"EXACT_LATENT_WDIVMM_BRANCH_ACTIVATION_WEIGHT_INVALID");
-			List<BranchLiteral> event = List.copyOf(events.get(index));
-			// Zero affects cost only, never candidate/hard-factor feasibility. A dead
-			// broad event must not subsume a narrower event that actually executes.
-			if(weight > 0.0)
-				byEvent.merge(event, weight, Math::max);
-		}
-		List<Map.Entry<List<BranchLiteral>,Double>> ordered = new ArrayList<>(byEvent.entrySet());
-		ordered.sort(Comparator.comparingInt(entry -> entry.getKey().size()));
-		List<Map.Entry<List<BranchLiteral>,Double>> minimal = new ArrayList<>();
-		for(Map.Entry<List<BranchLiteral>,Double> event : ordered) {
-			if(minimal.stream().anyMatch(existing -> eventSubsumes(
-				existing.getKey(), event.getKey())))
-				continue;
-			minimal.add(event);
-		}
-		if(minimal.size() == 1)
-			return Math.min(productionWeight, minimal.get(0).getValue());
-		boolean mutuallyExclusive = everyPair(minimal,
-			(left, right) -> eventsMutuallyExclusive(left.getKey(), right.getKey()));
-		if(mutuallyExclusive)
-			return Math.min(productionWeight, minimal.stream()
-				.mapToDouble(Map.Entry::getValue).sum());
-		// Distinct branch paths do not prove statistical independence: sequential
-		// predicates may be identical or negated.  Without a compiler-owned joint
-		// predicate fact, use the union bound rather than inventing a product model.
-		return Math.min(productionWeight, minimal.stream()
-			.mapToDouble(Map.Entry::getValue).sum());
-	}
-
-	private static boolean eventSubsumes(List<BranchLiteral> broader,
-		List<BranchLiteral> narrower) {
-		return narrower.containsAll(broader);
-	}
-
-	private static boolean eventsMutuallyExclusive(List<BranchLiteral> left,
-		List<BranchLiteral> right) {
-		for(BranchLiteral literal : left)
-			if(right.stream().anyMatch(candidate ->
-				candidate.decisionPath().equals(literal.decisionPath())
-					&& candidate.ifArm() != literal.ifArm()))
-				return true;
-		return false;
-	}
-
-	private static <T> boolean everyPair(List<T> values,
-		java.util.function.BiPredicate<T,T> predicate) {
-		for(int left = 0; left < values.size(); left++)
-			for(int right = left + 1; right < values.size(); right++)
-				if(!predicate.test(values.get(left), values.get(right)))
-					return false;
-		return true;
+		if(events == null || activationWeights == null || events.isEmpty()
+			|| events.size() != activationWeights.size())
+			throw new IllegalArgumentException("EXACT_ACTIVATION_UNION_INPUT_INVALID");
+		List<ExactMaterializationActivation.Event> demands = new ArrayList<>();
+		for(int index = 0; index < events.size(); index++)
+			demands.add(new ExactMaterializationActivation.Event(activationWeights.get(index), events.get(index)));
+		return ExactMaterializationActivation.conservativeUnion(demands, productionWeight, allTrue(demands.size()));
 	}
 
 	private static void addPhysicalNativeLocalInputTransferFactors(PlacementAnalysis analysis,
@@ -1650,13 +1638,6 @@ public final class ExactPhysicalCostModel {
 		return effectiveFunctionInputs.stream()
 			.filter(input -> input.targetRead() == target)
 			.toList();
-	}
-
-	private static double logicalFunctionCallWeight(OccurrenceExecutionFrequencyFacts frequencies,
-		List<EffectiveLogicalFunctionInput> inputs) {
-		double total = inputs.stream().map(EffectiveLogicalFunctionInput::authority).distinct()
-			.mapToDouble(frequencies::logicalFunctionCallWeight).sum();
-		return requireCost(total, "EXACT_FUNCTION_INPUT_CALL_WEIGHT_UNPROVEN");
 	}
 
 	private static double cpUnaryCost(PlacementAnalysis analysis, CompiledHopKey key,

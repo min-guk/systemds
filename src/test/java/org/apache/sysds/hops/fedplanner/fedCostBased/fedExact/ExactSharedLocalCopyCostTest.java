@@ -53,10 +53,12 @@ public class ExactSharedLocalCopyCostTest {
 		for(var candidate : model.domains()) {
 			if(candidate.alternatives().stream().noneMatch(ExactSharedLocalCopyCostTest::isRemoteFout))
 				continue;
-			List<ExactPhysicalModel.DecisionDomain> outgoing = analysis.compiledInputEdgesInCanonicalOrder()
-				.stream().filter(edge -> edge.producer() == candidate.node().key())
+			List<ExactPhysicalModel.DecisionDomain> outgoing = analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.producer() == candidate.node().key())
+				.filter(edge -> !analysis.isCoordinatorMetadataOnlyInput(edge))
 				.map(edge -> domains.get(edge.consumer())).filter(domain -> domain != null).distinct().toList();
-			long nativeLocal = outgoing.stream().filter(ExactSharedLocalCopyCostTest::hasNativeLocal).count();
+			long nativeLocal = outgoing.stream()
+				.filter(consumer -> hasNativeLocalFor(analysis, candidate, consumer)).count();
 			if(nativeLocal >= 2 && outgoing.stream().anyMatch(ExactSharedLocalCopyCostTest::hasCp)) {
 				producer = candidate;
 				consumers = outgoing;
@@ -68,55 +70,71 @@ public class ExactSharedLocalCopyCostTest {
 
 		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		List<ExactPhysicalModel.DecisionDomain> groupedConsumers = consumers;
-		var shared = surface.contributions().stream().map(ExactPhysicalCostModel.PhysicalContribution::factor)
-			.filter(factor -> factor.scope().get(0) == sharedProducer.variable())
-			.filter(factor -> groupedConsumers.stream().filter(ExactSharedLocalCopyCostTest::hasNativeLocal)
-				.limit(2).allMatch(domain -> factor.scope().contains(domain.variable())))
-			.filter(factor -> groupedConsumers.stream().filter(ExactSharedLocalCopyCostTest::hasCp)
-				.anyMatch(domain -> factor.scope().contains(domain.variable())))
-			.findFirst().orElseThrow();
-
 		int remoteSource = alternative(sharedProducer, ExactSharedLocalCopyCostTest::isRemoteFout);
 		Map<ExactCategoricalSolver.Variable,Integer> inactive = new IdentityHashMap<>();
+		model.domains().forEach(domain -> inactive.put(domain.variable(), inactiveAlternative(domain)));
 		inactive.put(sharedProducer.variable(), remoteSource);
-		for(var consumer : consumers)
-			inactive.put(consumer.variable(), inactiveAlternative(consumer));
-		double inactiveCost = cost(shared, inactive);
-
-		List<Double> singles = new ArrayList<>();
-		singles.add(inactiveCost);
 		Map<ExactCategoricalSolver.Variable,Integer> all = new IdentityHashMap<>(inactive);
 		for(var consumer : consumers) {
-			int active = activeAlternative(consumer);
-			if(active < 0 || !shared.scope().contains(consumer.variable()))
+			int inputPosition = inputPosition(analysis, sharedProducer, consumer);
+			java.util.function.Predicate<ExactPhysicalModel.Alternative> intended =
+				hasNativeLocalFor(analysis, sharedProducer, consumer)
+				? alternative -> alternative.state().execType() == ExecType.FED
+					&& alternative.inputAuthorities().stream().anyMatch(authority ->
+						authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL
+							&& authority.inputPosition() == inputPosition)
+				: alternative -> alternative.state().execType() == ExecType.CP;
+			int active = alternativeOrNegative(consumer, intended);
+			if(active >= 0)
+				all.put(consumer.variable(), active);
+		}
+		var shared = surface.contributions().stream().map(ExactPhysicalCostModel.PhysicalContribution::factor)
+			.filter(factor -> !factor.scope().isEmpty() && factor.scope().get(0) == sharedProducer.variable())
+			.filter(factor -> groupedConsumers.stream()
+				.allMatch(consumer -> factor.scope().contains(consumer.variable())))
+			.filter(factor -> Double.isFinite(cost(factor, all)) && cost(factor, all) > 0d).toList();
+		Assert.assertFalse("Shared materialization must have priced activation factors", shared.isEmpty());
+		double inactiveCost = cost(shared, inactive);
+		Assert.assertEquals("No consumer activation creates the shared local copy", 0d, inactiveCost, 0d);
+		List<Double> singles = new ArrayList<>();
+		singles.add(inactiveCost);
+		int nativeActivations = 0;
+		int cpActivations = 0;
+		for(var consumer : consumers) {
+			int active = all.get(consumer.variable());
+			if(active < 0 || shared.stream().noneMatch(factor -> factor.scope().contains(consumer.variable())))
 				continue;
 			Map<ExactCategoricalSolver.Variable,Integer> one = new IdentityHashMap<>(inactive);
 			one.put(consumer.variable(), active);
 			double single = cost(shared, one);
 			if(single > 0.0) {
 				singles.add(single);
-				all.put(consumer.variable(), active);
+				var selected = consumer.alternatives().get(active);
+				if(selected.state().execType() == ExecType.CP)
+					cpActivations++;
+				else
+					nativeActivations++;
 			}
 		}
-		Assert.assertTrue("Fixture must expose mixed CP/FED reusable local-copy demands", singles.size() >= 4);
-		Assert.assertEquals("All active uses share one copy charged at the largest weighted demand",
+		Assert.assertTrue("Fixture must expose a CP activation: " + singles, cpActivations >= 1);
+		Assert.assertTrue("Fixture must expose two correctly bound FED native-local activations: " + singles,
+			nativeActivations >= 2);
+		Assert.assertEquals("Co-active uses share one copy charged at the largest per-creation unit cost",
 			singles.stream().mapToDouble(Double::doubleValue).max().orElseThrow(), cost(shared, all), 1e-12);
-
-		int localSource = alternativeOrNegative(sharedProducer,
-			alternative -> !isRemoteFout(alternative));
+		int localSource = alternativeOrNegative(sharedProducer, alternative -> !isRemoteFout(alternative));
 		if(localSource >= 0) {
-			Map<ExactCategoricalSolver.Variable,Integer> local = new IdentityHashMap<>(all);
+			var local = new IdentityHashMap<>(all);
 			local.put(sharedProducer.variable(), localSource);
 			Assert.assertEquals("Native LOUT and derived local-held sources require no FOUT download",
-				0.0, cost(shared, local), 0.0);
+				0d, cost(shared, local), 0d);
 		}
 	}
 
 	@Test
 	public void logicalAndCompiledUsesActivateOneSharedDownload() throws Exception {
 		String script = "f=function(matrix[double] P,matrix[double] Q,matrix[double] R)"
-			+ " return (scalar[double] z) {z=sum(P)+sum(Q)+sum(R);"
-			+ "i=1;while(i<2){z=z+1;i=i+1;}}\n"
+			+ " return (scalar[double] z) {z=sum(Q)+sum(R);"
+			+ "i=1;while(i<2){z=z+sum(P);i=i+1;}}\n"
 			+ "X=federated(addresses=list(\"localhost:1234/X\",\"localhost:1235/X\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
 			+ "A=rowSums(X); z=f(A,A,rowSums(A)); print(z);\n";
@@ -133,6 +151,15 @@ public class ExactSharedLocalCopyCostTest {
 		var logical = logicalUses.stream().map(input -> domains.get(input.targetRead())).distinct().toList();
 		Assert.assertEquals("P and Q must be distinct formal uses of the identical actual source", 2, logical.size());
 		logicalUses.forEach(input -> Assert.assertSame(producer.node().key(), input.sourceArgument()));
+		var callsites = logicalUses.stream()
+			.map(analysis::requireExactPhysicalFunctionInputConsumer).distinct().toList();
+		Assert.assertEquals("The repeated formal use must retain its one physical callsite", 1, callsites.size());
+		var callsiteProfiles = analysis.executionFrequencyFacts().exactProfiles(callsites.get(0));
+		Assert.assertEquals(1, callsiteProfiles.size());
+		Assert.assertEquals("Formal use inside the callee loop activates at caller scope", 1,
+			callsiteProfiles.get(0).expectedExecutions(), 0);
+		Assert.assertTrue("Callee loops must not be projected onto the caller binding",
+			callsiteProfiles.get(0).loopContext().isEmpty());
 		var compiled = analysis.compiledInputEdgesInCanonicalOrder().stream()
 			.filter(edge -> edge.producer() == producer.node().key())
 			.map(edge -> domains.get(edge.consumer())).distinct().filter(domain -> domain != null)
@@ -149,11 +176,9 @@ public class ExactSharedLocalCopyCostTest {
 		for(var user : downloadUsers)
 			all.put(user.variable(), alternative(user, choice -> choice.state().execType() == ExecType.CP
 				&& choice.state().output() == FederatedOutput.LOUT));
-		var shared = surface.contributions().stream().map(ExactPhysicalCostModel.PhysicalContribution::factor)
-			.filter(factor -> factor.scope().get(0) == producer.variable())
-			.filter(factor -> downloadUsers.stream().allMatch(user -> factor.scope().contains(user.variable())))
-			.filter(factor -> cost(factor, all) > 0d && Double.isFinite(cost(factor, all)))
-			.findFirst().orElseThrow();
+		var shared = materializationFactors(surface, producer, downloadUsers, inactive, all);
+		Assert.assertFalse("Shared logical/compiled materialization must have priced activation factors",
+			shared.isEmpty());
 		Assert.assertEquals("No local use activates this download", 0d, cost(shared, inactive), 0d);
 		double maximum = 0d;
 		for(var user : downloadUsers) {
@@ -163,7 +188,8 @@ public class ExactSharedLocalCopyCostTest {
 			Assert.assertTrue("Each compiled/logical use must independently activate the shared copy", price > 0d);
 			maximum = Math.max(maximum, price);
 		}
-		Assert.assertEquals("Logical and compiled downloads share one maximum", maximum, cost(shared, all), 1e-12);
+		Assert.assertEquals("Logical and compiled activations share one per-creation maximum",
+			maximum, cost(shared, all), 1e-12);
 
 		Assert.assertTrue("These direct/local-only formals do not admit relocation alternatives",
 			logical.stream().flatMap(user -> user.alternatives().stream())
@@ -182,23 +208,36 @@ public class ExactSharedLocalCopyCostTest {
 		var cp = new ExactCategoricalSolver.Variable("cp", 2);
 		var fedOne = new ExactCategoricalSolver.Variable("fed-one", 2);
 		var fedTwo = new ExactCategoricalSolver.Variable("fed-two", 2);
-		var factor = ExactMaxDemandFactorDecomposition.create("shared-local-copy", source,
+		var event = new ExactMaterializationActivation.Event(1, List.of());
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+		var factorizations = new IdentityHashMap<ExactCategoricalSolver.Factor,
+			ExactPhysicalCostModel.SolverFactorization>();
+		ExactPhysicalCostModel.addPricedMaterializationActivationFactors("shared-local-copy", source,
 			new boolean[] {true, false}, List.of(
-				new ExactMaxDemandFactorDecomposition.Demand(cp,
-					new boolean[] {false, true}, new double[] {9.0, 9.0}),
-				new ExactMaxDemandFactorDecomposition.Demand(fedOne,
-					new boolean[] {false, true}, new double[] {4.0, 4.0}),
-				new ExactMaxDemandFactorDecomposition.Demand(fedTwo,
-					new boolean[] {false, true}, new double[] {7.0, 7.0})))
-			.canonicalFactor();
+				new ExactPhysicalCostModel.PricedActivationDemand(
+					new ExactPhysicalCostModel.ActivationDemand(List.of(cp),
+						List.of(new boolean[] {false, true}), event), new double[] {9.0, 9.0}),
+				new ExactPhysicalCostModel.PricedActivationDemand(
+					new ExactPhysicalCostModel.ActivationDemand(List.of(fedOne),
+						List.of(new boolean[] {false, true}), event), new double[] {4.0, 4.0}),
+				new ExactPhysicalCostModel.PricedActivationDemand(
+					new ExactPhysicalCostModel.ActivationDemand(List.of(fedTwo),
+						List.of(new boolean[] {false, true}), event), new double[] {7.0, 7.0})),
+			1, factors, factorizations, null);
 		Assert.assertEquals("Inactive supplies do not activate a copy", 0.0,
-			factor.cost(new int[] {0, 0, 0, 0}), 0.0);
-		Assert.assertEquals("Two FED uses share the larger weighted demand", 7.0,
-			factor.cost(new int[] {0, 0, 1, 1}), 0.0);
-		Assert.assertEquals("CP and FED uses share one cross-kind maximum", 9.0,
-			factor.cost(new int[] {0, 1, 1, 1}), 0.0);
+			cost(factors, List.of(source, cp, fedOne, fedTwo), 0, 0, 0, 0), 0.0);
+		Assert.assertEquals("Two FED uses share the larger per-creation unit cost", 7.0,
+			cost(factors, List.of(source, cp, fedOne, fedTwo), 0, 0, 1, 1), 0.0);
+		Assert.assertEquals("CP and FED activations share one cross-kind unit maximum", 9.0,
+			cost(factors, List.of(source, cp, fedOne, fedTwo), 0, 1, 1, 1), 0.0);
 		Assert.assertEquals("A local-held source has no download activation", 0.0,
-			factor.cost(new int[] {1, 1, 1, 1}), 0.0);
+			cost(factors, List.of(source, cp, fedOne, fedTwo), 1, 1, 1, 1), 0.0);
+	}
+
+	private static double cost(List<ExactCategoricalSolver.Factor> factors,
+		List<ExactCategoricalSolver.Variable> variables, Integer... values) {
+		return ExactCategoricalSolver.evaluate(variables, factors,
+			new ExactCategoricalSolver.Limits(100_000, 1_000_000), List.of(values));
 	}
 
 	private static boolean isRemoteFout(ExactPhysicalModel.Alternative alternative) {
@@ -215,18 +254,21 @@ public class ExactSharedLocalCopyCostTest {
 			alternative.state().execType() == ExecType.CP);
 	}
 
-	private static boolean hasNativeLocal(ExactPhysicalModel.DecisionDomain domain) {
-		return domain.alternatives().stream().anyMatch(alternative ->
+	private static boolean hasNativeLocalFor(PlacementAnalysis analysis,
+		ExactPhysicalModel.DecisionDomain producer, ExactPhysicalModel.DecisionDomain consumer) {
+		int inputPosition = inputPosition(analysis, producer, consumer);
+		return consumer.alternatives().stream().anyMatch(alternative ->
 			alternative.state().execType() == ExecType.FED && alternative.inputAuthorities().stream()
-				.anyMatch(authority -> authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL));
+				.anyMatch(authority -> authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL
+					&& authority.inputPosition() == inputPosition));
 	}
 
-	private static int activeAlternative(ExactPhysicalModel.DecisionDomain domain) {
-		int nativeLocal = alternativeOrNegative(domain, alternative ->
-			alternative.state().execType() == ExecType.FED && alternative.inputAuthorities().stream()
-				.anyMatch(authority -> authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL));
-		return nativeLocal >= 0 ? nativeLocal : alternativeOrNegative(domain,
-			alternative -> alternative.state().execType() == ExecType.CP);
+	private static int inputPosition(PlacementAnalysis analysis,
+		ExactPhysicalModel.DecisionDomain producer, ExactPhysicalModel.DecisionDomain consumer) {
+		return analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.producer() == producer.node().key()
+				&& edge.consumer() == consumer.node().key())
+			.mapToInt(edge -> edge.inputPosition()).findFirst().orElseThrow();
 	}
 
 	private static int inactiveAlternative(ExactPhysicalModel.DecisionDomain domain) {
@@ -258,13 +300,32 @@ public class ExactSharedLocalCopyCostTest {
 		return factor.cost(values);
 	}
 
+	private static double cost(List<ExactCategoricalSolver.Factor> factors,
+		Map<ExactCategoricalSolver.Variable,Integer> assignment) {
+		return factors.stream().mapToDouble(factor -> cost(factor, assignment)).sum();
+	}
+
+	private static List<ExactCategoricalSolver.Factor> materializationFactors(
+		ExactPhysicalCostModel.PhysicalCostSurface surface, ExactPhysicalModel.DecisionDomain producer,
+		List<ExactPhysicalModel.DecisionDomain> consumers,
+		Map<ExactCategoricalSolver.Variable,Integer> inactive,
+		Map<ExactCategoricalSolver.Variable,Integer> active) {
+		return surface.contributions().stream().map(ExactPhysicalCostModel.PhysicalContribution::factor)
+			.filter(factor -> !factor.scope().isEmpty() && factor.scope().get(0) == producer.variable())
+			.filter(factor -> factor.scope().size() > 1 && factor.scope().stream().skip(1).allMatch(variable ->
+				consumers.stream().anyMatch(consumer -> consumer.variable() == variable)))
+			.filter(factor -> Double.isFinite(cost(factor, active))
+				&& cost(factor, active) > cost(factor, inactive))
+			.toList();
+	}
+
 	private static PlacementAnalysis analysis() throws Exception {
 		String script = "X=federated(addresses=list(\"localhost:1234/X\",\"localhost:1235/X\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
 			+ "R=federated(addresses=list(\"localhost:1234/R\",\"localhost:1235/R\"),"
 			+ "ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));\n"
-			+ "A=rowSums(X); B=rowSums(R); O1=A; O1[1:4,1]=B; O2=A; O2[1:4,1]=B;\n"
-			+ "for(i in 1:3) print(sum(A)); print(sum(O1)); print(sum(O2));\n";
+			+ "A=rowSums(X); B=rowSums(R); O1=A+B; O2=A-B;\n"
+			+ "for(i in 1:3) print(sum(B)); print(sum(O1)); print(sum(O2));\n";
 		return analysis(script);
 	}
 

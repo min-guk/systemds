@@ -49,6 +49,11 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 		Assert.assertEquals("Duplicate consumers in one branch event share one transfer",
 			0.5, ExactPhysicalCostModel.reusableActivationUnion(
 				List.of(List.of(branchAIf), List.of(branchAIf)),
+				List.of(0.5, 0.5), 1.0), 0.0);
+		Assert.assertEquals("Matching branch literals with different counts do not prove"
+			+ " activation containment without a loop/context witness",
+			0.75, ExactPhysicalCostModel.reusableActivationUnion(
+				List.of(List.of(branchAIf), List.of(branchAIf)),
 				List.of(0.5, 0.25), 1.0), 0.0);
 		Assert.assertEquals("Mutually exclusive if/else arms cover the whole production",
 			1.0, ExactPhysicalCostModel.reusableActivationUnion(
