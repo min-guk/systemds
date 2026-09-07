@@ -59,10 +59,15 @@ final class ExactPhysicalPlacementProjector {
 		String certificate = algorithmCertificate + "-objective=" + selection.objectiveBits()
 			+ ";costSurface=" + selection.costSurfaceFingerprint()
 			+ ";assignment=" + selection.assignmentInDecisionOrder()
+			+ ";bindings=" + selection.inputBindings().size()
+			+ ";bindingFingerprint=" + selection.bindingFingerprint()
 			+ ";maxFactorCells=" + selection.statistics().maximumFactorCells();
 		NormalizedPlannerResult normalized = NormalizedPlannerResults
-			.createWithEmissionStatesAndCandidateSelections(analysis, plannerId, emissions,
-				selection.candidateReceipts(), selection.relocationChoices(), certificate);
+			.createWithPhysicalSelections(analysis, plannerId, emissions,
+				selection.candidateReceipts(), selection.relocationChoices(),
+				selection.localMaterializations(), selection.inputBindingReceipts(), certificate);
+		if(!normalized.selectedInputBindings().equals(selection.inputBindingReceipts()))
+			throw new IllegalArgumentException("EXACT_PHYSICAL_PROJECTED_BINDINGS_MISMATCH");
 		List<ExactPlacementInput.OccurrenceReceipt> occurrences = occurrenceReceipts(analysis, states);
 		ExactPlacementInput.ProducerReceipt producer = new ExactPlacementInput.ProducerReceipt(
 			selection.analysisFingerprint(), selection.objectiveBits());

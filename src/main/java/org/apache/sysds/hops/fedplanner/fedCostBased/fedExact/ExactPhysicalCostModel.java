@@ -293,8 +293,6 @@ public final class ExactPhysicalCostModel {
 			factorizations, transferKeys);
 		addPhysicalNativeLocalInputTransferFactors(analysis, sparseAssignments, domains,
 			workers, frequencies, latentRuntimeBoundaries, factors);
-		addPhysicalLogicalFunctionFactors(analysis, sparseAssignments, domains, workers,
-			frequencies, latentRuntimeBoundaries, factors, transferKeys);
 		List<PhysicalContribution> contributions = new ArrayList<>(factors.size());
 		List<ExactCategoricalSolver.Variable> exactSolverVariables =
 			new ArrayList<>(model.variables());
@@ -518,6 +516,12 @@ public final class ExactPhysicalCostModel {
 			"EXACT_RESULT_UPLOAD_COST_UNPROVEN");
 	}
 
+	private static boolean isDerivedFout(ExactPhysicalModel.Alternative alternative) {
+		CandidateEmissionFact emission = alternative.captured()
+			? alternative.candidateEmission() : alternative.executionEmission();
+		return emission != null && emission.emissionState().derivedFedFout();
+	}
+
 	private static void addPhysicalCompiledTransferFactors(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
@@ -528,16 +532,19 @@ public final class ExactPhysicalCostModel {
 		List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
 		List<PhysicalTransferKey> transferKeys) {
-		record Demand(CompiledInputEdgeFact edge,
-			ExactPhysicalModel.DecisionDomain consumer, double cost,
-			double weight, boolean forwarded) { }
+		record Demand(PhysicalTransferEndpoint endpoint,
+			ExactPhysicalModel.DecisionDomain consumer, double cost, double sourceBytes,
+			double weight, boolean forwarded,
+			boolean[] activeConsumerAlternatives) { }
 		record Key(Direction direction, FType type, BoundaryMode boundary,
 			String physicalEmissionIdentity) { }
 		record IndexedDemand(boolean[] activeConsumerAlternatives,
 			double[] sourcePrices) { }
 		for(ExactPhysicalModel.DecisionDomain producer : orderedDomains) {
-			if(producer.node().kind() == NodeKind.FUNCTION_INPUT
-				|| producer.node().kind() == NodeKind.FUNCTION_OUTPUT)
+			boolean logicalSource = effectiveFunctionInputs.stream().anyMatch(input ->
+				input.authority().sourceArgument() == producer.node().key());
+			if((producer.node().kind() == NodeKind.FUNCTION_INPUT
+				|| producer.node().kind() == NodeKind.FUNCTION_OUTPUT) && !logicalSource)
 				continue;
 			Hop producerHop = analysis.hop(producer.node().key()).orElseThrow();
 			if(producerHop.getDataType() == null
@@ -568,14 +575,51 @@ public final class ExactPhysicalCostModel {
 				if(!analysis.isCoordinatorMetadataOnlyInput(edge))
 					for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
 						.filter(Objects::nonNull).distinct().toList()) {
+						boolean[] cpConsumers = new boolean[consumer.alternatives().size()];
+						for(int value = 0; value < cpConsumers.length; value++)
+							cpConsumers[value] = consumer.alternatives().get(value).state().execType()
+								== ExecType.CP;
 						double download = requireCost(downloadWeight
 							* FederatedCostModel.computeReusableMaterializationDownloadCost(
 								bytes, type, workers),
 							"EXACT_PHYSICAL_DOWNLOAD_COST_UNPROVEN");
 						grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
 							BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-							.add(new Demand(edge, consumer, download, weight,
-								!forwardedInputs.isEmpty()));
+							.add(new Demand(new PhysicalTransferEndpoint(edge.producer(), edge.consumer(),
+								edge.inputPosition()), consumer, download, bytes, weight,
+								!forwardedInputs.isEmpty(), cpConsumers));
+						for(int value = 0; value < consumer.alternatives().size(); value++) {
+							ExactPhysicalModel.Alternative target = consumer.alternatives().get(value);
+							if(target.state().execType() != ExecType.FED
+								|| target.inputAuthorities().stream().noneMatch(authority ->
+									authority.inputPosition() == edge.inputPosition()
+										&& authority.kind()
+											== ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
+								continue;
+							CandidateEmissionFact emission = target.captured()
+								? target.candidateEmission() : target.executionEmission();
+							FType executionFType = emission == null ? target.state().fType()
+								: emission.executionFType();
+							int targetWorkers = nativeLocalInputWorkerCount(
+								target.inputAuthorities(), workers);
+							PlacementCostSemantics.NativeLocalInputTransferEstimate boundedElementwise =
+								PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
+									analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
+									executionFType, targetWorkers);
+							double sourceBytes = boundedElementwise == null ? bytes
+								: boundedElementwise.logicalBytesUpperBound();
+							double nativeLocalDownload = requireCost(weight
+								* FederatedCostModel.computeReusableMaterializationDownloadCost(
+									sourceBytes, type, workers),
+								"EXACT_PHYSICAL_NATIVE_LOCAL_DOWNLOAD_COST_UNPROVEN");
+							boolean[] nativeLocalConsumer = new boolean[consumer.alternatives().size()];
+							nativeLocalConsumer[value] = true;
+							grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
+								BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
+								.add(new Demand(new PhysicalTransferEndpoint(edge.producer(), edge.consumer(),
+									edge.inputPosition()), consumer, nativeLocalDownload, sourceBytes, weight,
+									!forwardedInputs.isEmpty(), nativeLocalConsumer));
+						}
 					}
 				for(RelocationAction action : consumer.alternatives().stream()
 					.flatMap(a -> a.inputAuthorities().stream())
@@ -591,23 +635,77 @@ public final class ExactPhysicalCostModel {
 					Key key = new Key(Direction.UPLOAD, type, uploadBoundaryMode(analysis, edge),
 						RelocationSelections.physicalEmissionIdentity(action.key()));
 					List<Demand> demands = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
-					if(demands.stream().noneMatch(demand -> demand.edge().producer() == edge.producer()
-						&& demand.edge().consumer() == edge.consumer()
-						&& demand.edge().inputPosition() == edge.inputPosition()))
-						demands.add(new Demand(edge, consumer, upload, weight,
-							!forwardedInputs.isEmpty()));
+					if(demands.stream().noneMatch(demand -> demand.endpoint().producer() == edge.producer()
+						&& demand.endpoint().consumer() == edge.consumer()
+						&& demand.endpoint().inputPosition() == edge.inputPosition()))
+						demands.add(new Demand(new PhysicalTransferEndpoint(edge.producer(), edge.consumer(),
+							edge.inputPosition()), consumer, upload, bytes, weight,
+							!forwardedInputs.isEmpty(), null));
+				}
+			}
+			for(EffectiveLogicalFunctionInput input : effectiveFunctionInputs) {
+				if(input.authority().sourceArgument() != producer.node().key())
+					continue;
+				ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
+				if(formal == null)
+					continue;
+				double logicalBytes = logicalFunctionInputBytes(analysis, sparseAssignments,
+					producer, formal);
+				double callWeight = frequencies.logicalFunctionCallWeight(input.authority());
+				for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
+					.filter(Objects::nonNull).distinct().toList()) {
+					boolean[] cpLocalFormals = new boolean[formal.alternatives().size()];
+					for(int value = 0; value < cpLocalFormals.length; value++) {
+						PlacementState state = formal.alternatives().get(value).state();
+						cpLocalFormals[value] = state.execType() == ExecType.CP
+							&& state.output() == FederatedOutput.LOUT;
+					}
+					double download = requireCost(callWeight
+						* FederatedCostModel.computeReusableMaterializationDownloadCost(
+							logicalBytes, type, workers),
+						"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
+					grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
+						BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
+						.add(new Demand(new PhysicalTransferEndpoint(producer.node().key(),
+							formal.node().key(), input.logicalPosition()), formal, download,
+							logicalBytes, callWeight, false, cpLocalFormals));
+				}
+				Map<String,RelocationAction> uploadActions = new LinkedHashMap<>();
+				formal.alternatives().stream().flatMap(alternative -> alternative.inputAuthorities().stream())
+					.filter(authority -> authority.inputPosition() == input.logicalPosition()
+						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
+						&& authority.relocationAction().key().sourceValueVersion()
+							.equals(producer.node().valueVersion()))
+					.map(ExactPhysicalModel.InputAuthority::relocationAction).sorted()
+					.forEach(action -> uploadActions.putIfAbsent(
+						RelocationSelections.physicalEmissionIdentity(action.key()), action));
+				for(Map.Entry<String,RelocationAction> uploadEntry : uploadActions.entrySet()) {
+					RelocationAction action = uploadEntry.getValue();
+					FType type = action.key().materializationFType();
+					double upload = requireCost(callWeight
+						* (FederatedCostModel.computeUploadNetworkCost(logicalBytes, type, workers)
+							+ FederatedCostModel.computeLocalToFedForwardingPenalty(type, workers)),
+						"EXACT_PHYSICAL_LOGICAL_FUNCTION_UPLOAD_COST_UNPROVEN");
+					String emissionIdentity = uploadEntry.getKey();
+					grouped.computeIfAbsent(new Key(Direction.UPLOAD, type,
+						BoundaryMode.ANCHOR_TRANSFER, emissionIdentity), ignored -> new ArrayList<>())
+						.add(new Demand(new PhysicalTransferEndpoint(producer.node().key(),
+							formal.node().key(), input.logicalPosition()), formal, upload,
+							logicalBytes, callWeight, true, null));
 				}
 			}
 			for(Map.Entry<Key,List<Demand>> entry : grouped.entrySet()) {
 				List<Demand> demands = entry.getValue().stream().sorted(Comparator
-					.comparing((Demand d) -> d.edge().consumer().normalizedSignature())
-					.thenComparingInt(d -> d.edge().inputPosition())).toList();
+					.comparing((Demand d) -> d.endpoint().consumer().normalizedSignature())
+					.thenComparingInt(d -> d.endpoint().inputPosition())).toList();
 				Key key = entry.getKey();
 				boolean[] activeSourceAlternatives = new boolean[producer.alternatives().size()];
 				for(int value = 0; value < activeSourceAlternatives.length; value++) {
 					PlacementState state = producer.alternatives().get(value).state();
 					activeSourceAlternatives[value] = key.direction() == Direction.UPLOAD
-						|| state.output() == FederatedOutput.FOUT && state.fType() == key.type();
+						|| state.execType() == ExecType.FED
+							&& state.output() == FederatedOutput.FOUT && state.fType() == key.type()
+							&& !isDerivedFout(producer.alternatives().get(value));
 				}
 				List<IndexedDemand> indexedDemands = new ArrayList<>(demands.size());
 				for(Demand demand : demands) {
@@ -616,10 +714,10 @@ public final class ExactPhysicalCostModel {
 						ExactPhysicalModel.Alternative consumer =
 							demand.consumer().alternatives().get(value);
 						if(key.direction() == Direction.DOWNLOAD)
-							activeConsumers[value] = consumer.state().execType() == ExecType.CP;
+							activeConsumers[value] = demand.activeConsumerAlternatives()[value];
 						else
 							activeConsumers[value] = consumer.inputAuthorities().stream().anyMatch(authority ->
-								authority.inputPosition() == demand.edge().inputPosition()
+								authority.inputPosition() == demand.endpoint().inputPosition()
 									&& authority.kind()
 										== ExactPhysicalModel.InputAuthorityKind.RELOCATION
 									&& authority.expectedFType() == key.type()
@@ -639,9 +737,9 @@ public final class ExactPhysicalCostModel {
 								"FOUT relocation source has no exact FType");
 							price = requireCost(price + demand.weight()
 								* (demand.forwarded()
-									? FederatedCostModel.computeDownloadNetworkCost(bytes)
+									? FederatedCostModel.computeDownloadNetworkCost(demand.sourceBytes())
 									: FederatedCostModel.computeReusableMaterializationDownloadCost(
-										bytes, sourceType, workers)),
+										demand.sourceBytes(), sourceType, workers)),
 								"EXACT_PHYSICAL_REFED_DOWNLOAD_COST_UNPROVEN");
 						}
 						sourcePrices[value] = price;
@@ -667,8 +765,7 @@ public final class ExactPhysicalCostModel {
 					decomposition.auxiliaryVariables(), decomposition.solverFactors(),
 					decomposition.semanticDescriptor()));
 				transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(), demands.stream()
-					.map(d -> new PhysicalTransferEndpoint(d.edge().producer(), d.edge().consumer(),
-						d.edge().inputPosition())).toList(), key.direction(), key.type(), key.boundary(),
+					.map(Demand::endpoint).distinct().toList(), key.direction(), key.type(), key.boundary(),
 					key.physicalEmissionIdentity()));
 			}
 		}
@@ -1228,7 +1325,6 @@ public final class ExactPhysicalCostModel {
 				.mapToInt(target -> nativeLocalInputWorkerCount(target.inputAuthorities(), workers)).toArray();
 			factors.add(ExactCategoricalSolver.Factor.lazy(
 				List.of(producer.variable(), consumer.variable()), values -> {
-					ExactPhysicalModel.Alternative source = producer.alternatives().get(values[0]);
 					ExactPhysicalModel.Alternative target = consumer.alternatives().get(values[1]);
 					if(target.state().execType() != ExecType.FED
 						|| target.inputAuthorities().stream().noneMatch(authority ->
@@ -1264,14 +1360,6 @@ public final class ExactPhysicalCostModel {
 					else
 						cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
 							executionFType, targetWorkers);
-					if(source.state().output() == FederatedOutput.FOUT) {
-						FType sourceType = Objects.requireNonNull(source.state().fType(),
-							"FOUT native-local source has no exact FType");
-						double sourceBytes = boundedElementwise == null ? bytes
-							: boundedElementwise.logicalBytesUpperBound();
-						cost += FederatedCostModel.computeReusableMaterializationDownloadCost(
-							sourceBytes, sourceType, workers);
-					}
 					return requireCost(weight * cost,
 						"EXACT_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
 				}));
@@ -1315,78 +1403,15 @@ public final class ExactPhysicalCostModel {
 			? executionFType : FType.BROADCAST;
 	}
 
-	private static void addPhysicalLogicalFunctionFactors(PlacementAnalysis analysis,
+	private static double logicalFunctionInputBytes(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
-		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
-		int workers, OccurrenceExecutionFrequencyFacts frequencies,
-		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries,
-		List<ExactCategoricalSolver.Factor> factors,
-		List<PhysicalTransferKey> transferKeys) {
-		for(EffectiveLogicalFunctionInput input : effectiveLogicalFunctionInputs(analysis)) {
-			ExactPhysicalModel.DecisionDomain source = domains.get(input.authority().sourceArgument());
-			ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
-			if(source == null || formal == null)
-				continue;
-			double bytes = sparseAssignments.serializedEstimate(source.node().key());
-			if(!Double.isFinite(bytes) || bytes <= 0.0)
-				bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
-					analysis.hop(formal.node().key()).orElseThrow(),
-					analysis.hop(source.node().key()).orElseThrow());
-			double callWeight = frequencies.logicalFunctionCallWeight(input.authority());
-			List<FType> sourceTypes = source.alternatives().stream().map(a -> a.state().fType())
-				.filter(Objects::nonNull).distinct().toList();
-			for(FType type : sourceTypes) {
-				double cost = requireCost(callWeight
-					* FederatedCostModel.computeReusableMaterializationDownloadCost(
-						bytes, type, workers),
-					"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
-				factors.add(ExactCategoricalSolver.Factor.lazy(
-					List.of(source.variable(), formal.variable()), values -> {
-						PlacementState sourceState = source.alternatives().get(values[0]).state();
-						return sourceState.output() == FederatedOutput.FOUT && sourceState.fType() == type
-							&& formal.alternatives().get(values[1]).state().execType() == ExecType.CP ? cost : 0.0;
-					}));
-				transferKeys.add(new PhysicalTransferKey(source.node().valueVersion(),
-					List.of(new PhysicalTransferEndpoint(source.node().key(), formal.node().key(),
-						input.logicalPosition())), Direction.DOWNLOAD, type, BoundaryMode.ANCHOR_TRANSFER));
-				}
-				Map<String,RelocationAction> uploadActions = new LinkedHashMap<>();
-				formal.alternatives().stream().flatMap(alternative -> alternative.inputAuthorities().stream())
-					.filter(authority -> authority.inputPosition() == input.logicalPosition()
-						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
-						&& authority.relocationAction().key().sourceValueVersion()
-							.equals(source.node().valueVersion()))
-					.map(ExactPhysicalModel.InputAuthority::relocationAction).sorted()
-					.forEach(action -> uploadActions.putIfAbsent(
-						RelocationSelections.physicalEmissionIdentity(action.key()), action));
-				for(Map.Entry<String,RelocationAction> uploadEntry : uploadActions.entrySet()) {
-					RelocationAction action = uploadEntry.getValue();
-					FType type = action.key().materializationFType();
-					double upload = requireCost(callWeight * (FederatedCostModel.computeUploadNetworkCost(bytes,
-						type, workers) + FederatedCostModel.computeLocalToFedForwardingPenalty(type, workers)),
-						"EXACT_PHYSICAL_LOGICAL_FUNCTION_UPLOAD_COST_UNPROVEN");
-					double refedDownload = requireCost(callWeight
-						* FederatedCostModel.computeDownloadNetworkCost(bytes),
-						"EXACT_PHYSICAL_LOGICAL_FUNCTION_REFED_DOWNLOAD_COST_UNPROVEN");
-					String emissionIdentity = uploadEntry.getKey();
-					factors.add(ExactCategoricalSolver.Factor.lazy(
-						List.of(source.variable(), formal.variable()), values -> {
-							PlacementState sourceState = source.alternatives().get(values[0]).state();
-							boolean active = formal.alternatives().get(values[1]).inputAuthorities().stream()
-								.anyMatch(authority -> authority.inputPosition() == input.logicalPosition()
-									&& authority.kind()
-										== ExactPhysicalModel.InputAuthorityKind.RELOCATION
-									&& RelocationSelections.physicalEmissionIdentity(
-										authority.relocationAction().key()).equals(emissionIdentity));
-							return active ? upload + (sourceState.output() == FederatedOutput.FOUT
-								? refedDownload : 0.0) : 0.0;
-						}));
-					transferKeys.add(new PhysicalTransferKey(source.node().valueVersion(),
-						List.of(new PhysicalTransferEndpoint(source.node().key(), formal.node().key(),
-							input.logicalPosition())), Direction.UPLOAD, type, BoundaryMode.ANCHOR_TRANSFER,
-						emissionIdentity));
-			}
-		}
+		ExactPhysicalModel.DecisionDomain source,
+		ExactPhysicalModel.DecisionDomain formal) {
+		double bytes = sparseAssignments.serializedEstimate(source.node().key());
+		return Double.isFinite(bytes) && bytes > 0.0 ? bytes
+			: FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+				analysis.hop(formal.node().key()).orElseThrow(),
+				analysis.hop(source.node().key()).orElseThrow());
 	}
 
 	private static FType exactInputAuthorityType(PlacementAnalysis analysis, CompiledHopKey producer) {

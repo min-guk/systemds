@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
+import org.apache.sysds.hops.fedplanner.placement.InputBindingReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -134,6 +135,34 @@ public final class NormalizedPlannerResults {
 		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
 		List<CandidateSelectionReceipt> selectedCandidateSelections,
 		List<RelocationChoiceReceipt> selectedRelocationChoices, String objectiveCertificate) {
+		Map<CompiledHopKey, PlacementState> selectedStates = new java.util.LinkedHashMap<>();
+		selectedEmissionStates.forEach((key, state) -> selectedStates.put(key, state.placementState()));
+		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(
+			analysis, selectedStates, selectedEmissionStates, selectedCandidateSelections);
+		return createWithPhysicalSelections(analysis, plannerId, selectedEmissionStates,
+			selectedCandidateSelections, selectedRelocationChoices, locals, objectiveCertificate);
+	}
+
+	/** Preserves explicitly selected movement authority; normalization validates it without repair. */
+	public static NormalizedPlannerResult createWithPhysicalSelections(
+		PlacementAnalysis analysis, String plannerId,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices,
+		List<LocalMaterializationActionKey> selectedLocalMaterializations, String objectiveCertificate) {
+		return createWithPhysicalSelections(analysis, plannerId, selectedEmissionStates,
+			selectedCandidateSelections, selectedRelocationChoices, selectedLocalMaterializations,
+			List.of(), objectiveCertificate);
+	}
+
+	/** Preserves explicit ordered-use input supplies in addition to movement authority. */
+	public static NormalizedPlannerResult createWithPhysicalSelections(
+		PlacementAnalysis analysis, String plannerId,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices,
+		List<LocalMaterializationActionKey> selectedLocalMaterializations,
+		List<InputBindingReceipt> selectedInputBindings, String objectiveCertificate) {
 		Objects.requireNonNull(analysis, "analysis");
 		Map<CompiledHopKey, PlacementState> selectedStates = new java.util.LinkedHashMap<>();
 		selectedEmissionStates.forEach((key, state) -> selectedStates.put(key, state.placementState()));
@@ -144,11 +173,17 @@ public final class NormalizedPlannerResults {
 			selectedRelocationChoices, "selectedRelocationChoices"));
 		List<RelocationActionKey> relocations = RelocationSelections.emittedActions(
 			analysis, selectedStates, candidates, choices);
-		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(
-			analysis, selectedStates, selectedEmissionStates, candidates);
+		List<LocalMaterializationActionKey> locals = List.copyOf(Objects.requireNonNull(
+			selectedLocalMaterializations, "selectedLocalMaterializations"));
+		if(!locals.stream().sorted().toList().equals(deriveLocalMaterializations(
+			analysis, selectedStates, selectedEmissionStates, candidates)))
+			throw new IllegalArgumentException("SELECTED_LOCAL_MATERIALIZATIONS_MISMATCH");
+		List<InputBindingReceipt> bindings = InputBindingReceipt.validateAndCanonicalize(
+			analysis, selectedEmissionStates, relocations, locals,
+			Objects.requireNonNull(selectedInputBindings, "selectedInputBindings"));
 		NormalizedPlannerResult draft = new Draft(analysis, plannerId, analysis.analysisFingerprint(),
 			Map.copyOf(selectedStates), Map.copyOf(selectedEmissionStates), candidates, choices, relocations, locals,
-			objectiveCertificate);
+			bindings, objectiveCertificate);
 		return PlacementPlannerAdapter.normalize(analysis, draft);
 	}
 
@@ -175,6 +210,7 @@ public final class NormalizedPlannerResults {
 		List<RelocationChoiceReceipt> selectedRelocationChoices,
 		List<RelocationActionKey> selectedRelocations,
 		List<LocalMaterializationActionKey> selectedLocalMaterializations,
+		List<InputBindingReceipt> selectedInputBindings,
 		String objectiveCertificate) implements NormalizedPlannerResult {
 		@Override public List<CandidateSelectionReceipt> selectedCandidateSelections() {
 			return selectedCandidateSelections;
@@ -182,6 +218,7 @@ public final class NormalizedPlannerResults {
 		@Override public List<RelocationChoiceReceipt> selectedRelocationChoices() {
 			return selectedRelocationChoices;
 		}
+		@Override public List<InputBindingReceipt> selectedInputBindings() { return selectedInputBindings; }
 		@Override public String normalizedPlanFingerprint() { return "canonicalized-at-boundary"; }
 	}
 }

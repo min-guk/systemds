@@ -15,6 +15,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.InputBindingReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -43,6 +44,7 @@ public final class ExactPlacementInput implements AFederatedPlanner.PlannerInvoc
 	private final Map<CompiledHopKey, PlacementState> exactSelectedStates;
 	private final NormalizedPlannerResult normalizedResult;
 	private final PlacementEmissionReceipt emissionReceipt;
+	private final List<InputBindingReceipt> selectedInputBindings;
 
 	private ExactPlacementInput(PlacementAnalysis owner, ProducerReceipt producer,
 		List<OccurrenceReceipt> occurrences,
@@ -57,6 +59,8 @@ public final class ExactPlacementInput implements AFederatedPlanner.PlannerInvoc
 		this.exactSelectedStates = Collections.unmodifiableMap(exact);
 		this.normalizedResult = normalizedResult;
 		this.emissionReceipt = emissionReceipt;
+		this.selectedInputBindings = normalizedResult == null ? List.of()
+			: List.copyOf(normalizedResult.selectedInputBindings());
 		validateOwnerBinding();
 	}
 
@@ -94,6 +98,7 @@ public final class ExactPlacementInput implements AFederatedPlanner.PlannerInvoc
 	public Map<CompiledHopKey, PlacementState> exactSelectedStates() { return exactSelectedStates; }
 	public NormalizedPlannerResult normalizedResult() { return normalizedResult; }
 	public PlacementEmissionReceipt emissionReceipt() { return emissionReceipt; }
+	public List<InputBindingReceipt> selectedInputBindings() { return selectedInputBindings; }
 
 	void validateUnchanged() {
 		validateOwnerBinding();

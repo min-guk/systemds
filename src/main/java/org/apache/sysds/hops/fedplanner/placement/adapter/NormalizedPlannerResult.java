@@ -29,6 +29,7 @@ import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.InputBindingReceipt;
 
 /** Read-only common projection of a planner-specific selection result. */
 public interface NormalizedPlannerResult {
@@ -60,6 +61,8 @@ public interface NormalizedPlannerResult {
 	default List selectedLocalMaterializations() {
 		return List.of();
 	}
+
+	default List<InputBindingReceipt> selectedInputBindings() { return List.of(); }
 
 	String objectiveCertificate();
 
