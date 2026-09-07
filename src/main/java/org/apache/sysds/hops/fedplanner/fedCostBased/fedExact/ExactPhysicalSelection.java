@@ -16,8 +16,6 @@ import java.util.Objects;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.InputAuthorityKind;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
-import org.apache.sysds.hops.fedplanner.placement.InputBindingReceipt;
-import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
@@ -25,7 +23,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
@@ -55,8 +52,6 @@ final class ExactPhysicalSelection {
 	private final List<CandidateSelectionReceipt> candidateReceipts;
 	private final List<RelocationChoiceReceipt> relocationChoices;
 	private final List<RelocationActionKey> emittedRelocations;
-	private final List<ExactPhysicalBindingModel.SelectedBinding> inputBindings;
-	private final List<LocalMaterializationActionKey> localMaterializations;
 	private final ExactCategoricalSolver.Statistics statistics;
 
 	private ExactPhysicalSelection(PlacementAnalysis analysis, String costSurfaceFingerprint,
@@ -68,8 +63,6 @@ final class ExactPhysicalSelection {
 		List<CandidateSelectionReceipt> candidateReceipts,
 		List<RelocationChoiceReceipt> relocationChoices,
 		List<RelocationActionKey> emittedRelocations,
-		List<ExactPhysicalBindingModel.SelectedBinding> inputBindings,
-		List<LocalMaterializationActionKey> localMaterializations,
 		ExactCategoricalSolver.Statistics statistics) {
 		this.analysis = Objects.requireNonNull(analysis, "analysis");
 		this.analysisFingerprint = analysis.analysisFingerprint();
@@ -93,8 +86,6 @@ final class ExactPhysicalSelection {
 		this.candidateReceipts = List.copyOf(candidateReceipts);
 		this.relocationChoices = List.copyOf(relocationChoices);
 		this.emittedRelocations = List.copyOf(emittedRelocations);
-		this.inputBindings = List.copyOf(inputBindings);
-		this.localMaterializations = List.copyOf(localMaterializations);
 		this.statistics = Objects.requireNonNull(statistics, "statistics");
 	}
 
@@ -155,63 +146,11 @@ final class ExactPhysicalSelection {
 			analysis, physical, selected, candidates);
 		List<RelocationActionKey> emitted = RelocationSelections.emittedActions(
 			analysis, analysis.graph().relocationActions(), selected, candidates, choices);
-		ExactPhysicalBindingModel bindingModel = ExactPhysicalBindingModel.build(model);
-		if(optimized.jointSearch() != null && (!bindingModel.reconstruct(
-			optimized.jointSearch().assignment()).equals(result.assignmentInVariableOrder())
-			|| optimized.jointSearch().operatorVariables() != model.domains().size()
-			|| !bindingModel.bindings(optimized.jointSearch().assignment()).equals(optimized.inputBindings())))
-			throw new IllegalArgumentException("EXACT_PHYSICAL_JOINT_ASSIGNMENT_MISMATCH");
-		List<ExactPhysicalBindingModel.SelectedBinding> expectedBindings = bindingModel.bindings(
-			bindingModel.encode(result.assignmentInVariableOrder()));
-		List<ExactPhysicalBindingModel.SelectedBinding> bindings = optimized.inputBindings();
-		if(bindings == null)
-			bindings = expectedBindings; // The LocalCost path already selected complete catalog rows.
-		else if(!bindings.equals(expectedBindings))
-			throw new IllegalArgumentException("EXACT_PHYSICAL_SELECTED_BINDING_MISMATCH");
-		List<LocalMaterializationActionKey> locals = LocalMaterializationSelections.derive(
-			analysis, selected, selectedEmissions, candidates);
-		validateLocalBindings(analysis, bindings, locals);
 		return new ExactPhysicalSelection(analysis, optimized.contributionFingerprint(),
 			optimized.canonicalObjectiveBits(),
 			result.objective(), result.assignmentInVariableOrder(),
 			physical.alternativesInDecisionOrder(), selected, selectedEmissions, candidates, choices,
-			emitted, bindings, locals, result.statistics());
-	}
-
-	private static void validateLocalBindings(
-		PlacementAnalysis analysis,
-		List<ExactPhysicalBindingModel.SelectedBinding> bindings,
-		List<LocalMaterializationActionKey> locals) {
-		for(var binding : bindings) {
-			if(binding.supplyKind() != ExactPhysicalBindingModel.SupplyKind.LOCAL_COPY
-				&& binding.supplyKind() != ExactPhysicalBindingModel.SupplyKind.NATIVE_LOUT)
-				continue;
-			boolean hasCopy = selectedLocalCopyFor(analysis, binding, locals) != null;
-			if(binding.supplyKind() == ExactPhysicalBindingModel.SupplyKind.LOCAL_COPY && !hasCopy
-				|| binding.supplyKind() == ExactPhysicalBindingModel.SupplyKind.NATIVE_LOUT && hasCopy)
-				throw new IllegalArgumentException("EXACT_PHYSICAL_LOCAL_BINDING_AUTHORITY_MISMATCH");
-		}
-	}
-
-	private static LocalMaterializationActionKey selectedLocalCopyFor(PlacementAnalysis analysis,
-		ExactPhysicalBindingModel.SelectedBinding binding, List<LocalMaterializationActionKey> locals) {
-		CompiledHopKey consumer = binding.consumer();
-		int position = binding.inputPosition();
-		if(binding.use().ownerKind() == ExactPhysicalBindingModel.OwnerKind.LOGICAL_FUNCTION) {
-			var input = analysis.logicalFunctionInputsInCanonicalOrder().stream().filter(fact ->
-				fact.sourceArgument() == binding.sourceDecision() && fact.targetRead() == binding.consumer()
-					&& fact.logicalPosition() == binding.inputPosition())
-				.skip(binding.use().sourceOccurrence()).findFirst().orElseThrow(() ->
-					new IllegalArgumentException("EXACT_PHYSICAL_BINDING_FUNCTION_USE_MISSING"));
-			consumer = analysis.requireExactPhysicalFunctionInputConsumer(input);
-			position = input.callInputPosition();
-		}
-		CompiledHopKey physicalConsumer = consumer;
-		int physicalPosition = position;
-		return locals.stream().filter(action -> action.sourceOccurrence() == binding.sourceDecision()
-			&& action.obligations().stream().anyMatch(obligation ->
-				obligation.consumerOccurrence() == physicalConsumer && obligation.inputPosition() == physicalPosition))
-			.findFirst().orElse(null);
+			emitted, result.statistics());
 	}
 
 	private static List<CandidateSelectionReceipt> exactCandidateReceipts(
@@ -361,38 +300,5 @@ final class ExactPhysicalSelection {
 	List<CandidateSelectionReceipt> candidateReceipts() { return candidateReceipts; }
 	List<RelocationChoiceReceipt> relocationChoices() { return relocationChoices; }
 	List<RelocationActionKey> emittedRelocations() { return emittedRelocations; }
-	List<ExactPhysicalBindingModel.SelectedBinding> inputBindings() { return inputBindings; }
-	List<LocalMaterializationActionKey> localMaterializations() { return localMaterializations; }
-	List<InputBindingReceipt> inputBindingReceipts() {
-		return inputBindings.stream().map(binding -> new InputBindingReceipt(
-			InputBindingReceipt.OwnerKind.valueOf(binding.use().ownerKind().name()),
-			binding.sourceDecision(), analysis.graph().node(binding.sourceDecision()).orElseThrow().valueVersion(),
-			binding.consumer(), binding.inputPosition(), binding.use().sourceOccurrence(),
-			InputBindingReceipt.SupplyKind.valueOf(binding.supplyKind().name()),
-			binding.authority().relocationAction() == null ? null : binding.authority().relocationAction().key(),
-			binding.supplyKind() == ExactPhysicalBindingModel.SupplyKind.LOCAL_COPY
-				? selectedLocalCopyFor(analysis, binding, localMaterializations) : null)).sorted().toList();
-	}
-	String bindingFingerprint() {
-		try {
-			var digest = java.security.MessageDigest.getInstance("SHA-256");
-			for(var binding : inputBindings) {
-				List<String> fields = List.of(binding.use().ownerKind().name(),
-					binding.sourceDecision().normalizedSignature(),
-					analysis.graph().node(binding.sourceDecision()).orElseThrow()
-						.valueVersion().normalizedSignature(),
-					binding.consumer().normalizedSignature(), Integer.toString(binding.inputPosition()),
-					Integer.toString(binding.use().sourceOccurrence()), binding.supplyKind().name(),
-					binding.authority().signature());
-				for(String field : fields)
-					digest.update((field.length() + ":" + field)
-						.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-			}
-			return java.util.HexFormat.of().formatHex(digest.digest());
-		}
-		catch(java.security.NoSuchAlgorithmException impossible) {
-			throw new IllegalStateException(impossible);
-		}
-	}
 	ExactCategoricalSolver.Statistics statistics() { return statistics; }
 }

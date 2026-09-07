@@ -5,8 +5,6 @@
 - 대상: creation scope의 activation union을 사용하는 materialization 비용 모델과 Global DP의 Boolean OR factor 분해
 - 검증 범위: 정적 컴파일, 비용 계산, 계획 선택, solver objective 및 factor 표현
 
-**최신 소스 병합 검증 추가:** explicit input binding이 포함된 `4fa24c5d6370337ecacd8423b43abe1a46e0002e`에 병합하면서 서로 다른 단위 비용을 activation class별 가격 단계로 처리했다. 병합본은 별도의 선별 테스트 **49개 전부 통과, 실패·오류·skip 0, 패키징 성공**으로 2026-09-08 01:16:03 CEST에 검증했다. [병합 및 충돌 해결 기록](SESSION_ISSUES_2026-09-08.md#merge-activation-classes-with-the-latest-explicit-binding-source--verified)을 참고한다. 아래 95/35개 테스트와 workload ablation은 원래 activation 구현의 이력이며, 최신 binding 병합본에 대한 새 workload ablation 결과로 해석하지 않는다.
-
 ## 1. 핵심 판단
 
 **핵심 activation 의미론과 factor 분해는 수행한 테스트 범위에서 검증됐다. 전체 저장소 테스트 통과나 실제 실행 환경의 포괄적인 robustness가 입증된 상태는 아니다.**

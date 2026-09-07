@@ -9,35 +9,12 @@ final class ExactPhysicalOptimizer {
 	static final ExactCategoricalSolver.Limits PRODUCTION_LIMITS =
 		new ExactCategoricalSolver.Limits(10_000_000L, 50_000_000L);
 
-	record JointSearch(List<Integer> assignment, int operatorVariables, int bindingVariables) {
-		JointSearch {
-			assignment = List.copyOf(assignment);
-			if(operatorVariables < 0 || bindingVariables < 0
-				|| assignment.size() != operatorVariables + bindingVariables)
-				throw new IllegalArgumentException("EXACT_BINDING_SEARCH_CARDINALITY_MISMATCH");
-		}
-	}
-
 	record Result(ExactCategoricalSolver.Result solverResult,
-		long canonicalObjectiveBits, String contributionFingerprint,
-		List<ExactPhysicalBindingModel.SelectedBinding> inputBindings, JointSearch jointSearch) {
-		// LocalCost and explicit catalog fixtures already select complete physical rows.
-		Result(ExactCategoricalSolver.Result solverResult, long canonicalObjectiveBits,
-			String contributionFingerprint) {
-			this(solverResult, canonicalObjectiveBits, contributionFingerprint, null, null);
-		}
-		Result(ExactCategoricalSolver.Result solverResult, long canonicalObjectiveBits,
-			String contributionFingerprint, List<ExactPhysicalBindingModel.SelectedBinding> inputBindings) {
-			this(solverResult, canonicalObjectiveBits, contributionFingerprint, inputBindings, null);
-		}
+		long canonicalObjectiveBits, String contributionFingerprint) {
 		Result {
 			Objects.requireNonNull(solverResult, "solverResult");
 			if(contributionFingerprint == null || contributionFingerprint.isBlank())
 				throw new IllegalArgumentException("EXACT_PHYSICAL_COST_FINGERPRINT_INVALID");
-			if(jointSearch != null && inputBindings == null)
-				throw new IllegalArgumentException("EXACT_PHYSICAL_SEARCHED_BINDINGS_MISSING");
-			if(inputBindings != null)
-				inputBindings = List.copyOf(inputBindings);
 		}
 	}
 
@@ -65,21 +42,17 @@ final class ExactPhysicalOptimizer {
 		if(forced != null)
 			factors.add(forced.factor());
 		factors.addAll(surface.exactSolverFactors());
-		ExactPhysicalBindingModel bindings = ExactPhysicalBindingModel.build(model);
 		ExactCategoricalSolver.Result solved;
 		try {
-			solved = ExactPhysicalReducedSolver.solve(bindings.variables().size(),
-				bindings.solverVariables(surface.exactSolverVariables()),
-				bindings.translateFactors(factors), limits);
+			solved = ExactPhysicalReducedSolver.solve(modelVariables.size(),
+				surface.exactSolverVariables(), factors, limits);
 		}
 		catch(IllegalArgumentException failure) {
 			ExactPhysicalForcedStateAudit.recordSolverFailure(model, forced, failure);
 			throw failure;
 		}
-		List<Integer> jointAssignment = solved.assignmentInVariableOrder()
-			.subList(0, bindings.variables().size());
 		ExactCategoricalSolver.Result decisionResult = new ExactCategoricalSolver.Result(
-			solved.objective(), bindings.reconstruct(jointAssignment),
+			solved.objective(), solved.assignmentInVariableOrder().subList(0, modelVariables.size()),
 			solved.statistics());
 		ExactPhysicalForcedStateAudit.verify(model, forced, decisionResult);
 		long canonicalBits = surface.evaluateCanonical(decisionResult.assignmentInVariableOrder());
@@ -87,8 +60,6 @@ final class ExactPhysicalOptimizer {
 			throw new IllegalArgumentException("EXACT_PHYSICAL_SOLVER_CANONICAL_OBJECTIVE_MISMATCH"
 				+ "|solver=" + decisionResult.objective() + "|canonical="
 				+ Double.longBitsToDouble(canonicalBits));
-		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint(),
-			bindings.bindings(jointAssignment), new JointSearch(jointAssignment, model.domains().size(),
-				bindings.variables().size() - model.domains().size()));
+		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint());
 	}
 }

@@ -25,7 +25,6 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.InputBindingReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -49,7 +48,6 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 	private final List<CandidateSelectionReceipt> selectedCandidateSelections;
 	private final List<RelocationChoiceReceipt> selectedRelocationChoices;
 	private final List<LocalMaterializationActionKey> selectedLocalMaterializations;
-	private final List<InputBindingReceipt> selectedInputBindings;
 
 	private ImmutableNormalizedPlannerResult(PlannerPlacementContext context, NormalizedPlannerResult draft) {
 		analysis = context.analysis();
@@ -124,9 +122,6 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 			throw new IllegalArgumentException(
 				"planner-supplied local materialization authority differs from the canonical projection");
 		selectedLocalMaterializations = Collections.unmodifiableList(derivedLocals);
-		selectedInputBindings = Collections.unmodifiableList(InputBindingReceipt.validateAndCanonicalize(
-			analysis, selectedEmissionStates, selectedRelocations, selectedLocalMaterializations,
-			Objects.requireNonNull(draft.selectedInputBindings(), "selectedInputBindings")));
 		normalizedPlanFingerprint = PlacementEmissionTransaction.canonicalPlanHash(this);
 	}
 
@@ -170,7 +165,6 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 		return selectedRelocationChoices;
 	}
 	@Override public List<LocalMaterializationActionKey> selectedLocalMaterializations() { return selectedLocalMaterializations; }
-	@Override public List<InputBindingReceipt> selectedInputBindings() { return selectedInputBindings; }
 	@Override public String objectiveCertificate() { return objectiveCertificate; }
 	@Override public String normalizedPlanFingerprint() { return normalizedPlanFingerprint; }
 }
