@@ -267,8 +267,10 @@ public final class PlacementEmissionTransaction {
 		List<RelocationChoiceReceipt> choices = List.copyOf(Objects.requireNonNull(
 			result.selectedRelocationChoices(), "selectedRelocationChoices"));
 		List<LocalMaterializationActionKey> locals = typedLocalMaterializations(result);
+		List<InputBindingReceipt> bindings = List.copyOf(Objects.requireNonNull(
+			result.selectedInputBindings(), "selectedInputBindings"));
 		return canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected, candidates,
-			choices, relocations, locals, objective);
+			choices, relocations, locals, bindings, objective);
 	}
 
 	private static String canonicalPlanHash(PlacementAnalysis analysis,
@@ -276,7 +278,8 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, PlacementEmissionState> selected,
 		List<CandidateSelectionReceipt> candidates, List<RelocationChoiceReceipt> choices,
 		List<RelocationActionKey> relocations,
-		List<LocalMaterializationActionKey> locals, String objective) {
+		List<LocalMaterializationActionKey> locals,
+		List<InputBindingReceipt> bindings, String objective) {
 		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
 			.append(analysisFingerprint).append('\n');
 		selected.entrySet().stream().sorted(Comparator.comparing(entry ->
@@ -296,6 +299,9 @@ public final class PlacementEmissionTransaction {
 		locals.stream().map(key -> Objects.requireNonNull(key, "selected local materialization"))
 			.sorted(Comparator.comparing(LocalMaterializationActionKey::normalizedSignature))
 			.forEach(local -> canonical.append("LOCAL=").append(local.normalizedSignature()).append('\n'));
+		bindings.stream().map(binding -> Objects.requireNonNull(binding, "selected input binding"))
+			.sorted().forEach(binding -> canonical.append("BINDING=")
+				.append(binding.normalizedSignature()).append('\n'));
 		canonical.append(objective);
 		return sha256(canonical.toString());
 	}
@@ -319,8 +325,11 @@ public final class PlacementEmissionTransaction {
 			result.selectedRelocationChoices());
 		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
 		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
+		List<InputBindingReceipt> selectedBindings = List.copyOf(Objects.requireNonNull(
+			result.selectedInputBindings(), "selectedInputBindings"));
 		if(!planHash.equals(canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected,
-			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals, objective)))
+			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals,
+			selectedBindings, objective)))
 			throw new PlacementEmissionException("Normalized plan changed during prevalidation");
 
 		List<Node> decisionNodes = analysis.graph().decisionNodes();
@@ -386,6 +395,16 @@ public final class PlacementEmissionTransaction {
 			analysis, occurrences, selected, selectedCandidates);
 		List<LocalMaterializationActionKey> locals = exactLocalMaterializations(analysis, occurrences,
 			selected, selectedCandidates, selectedLocals);
+		List<InputBindingReceipt> bindings;
+		try {
+			bindings = InputBindingReceipt.validateAndCanonicalize(analysis, selected,
+				selectedRelocations, locals, selectedBindings);
+		}
+		catch(IllegalArgumentException ex) {
+			throw new PlacementEmissionException("Invalid selected input bindings: " + ex.getMessage(), ex);
+		}
+		if(!bindings.equals(selectedBindings))
+			throw new PlacementEmissionException("Selected input bindings are not canonical");
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(
 			analysis, occurrences, selected, selectedCandidates, relocations,
 			foutMaterializations, locals);
@@ -655,8 +674,11 @@ public final class PlacementEmissionTransaction {
 		List<RelocationChoiceReceipt> selectedChoices = List.copyOf(Objects.requireNonNull(
 			result.selectedRelocationChoices(), "selectedRelocationChoices"));
 		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
+		List<InputBindingReceipt> selectedBindings = List.copyOf(Objects.requireNonNull(
+			result.selectedInputBindings(), "selectedInputBindings"));
 		if(!planHash.equals(canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected,
-			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals, objective)))
+			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals,
+			selectedBindings, objective)))
 			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
 		return planHash;
 	}
