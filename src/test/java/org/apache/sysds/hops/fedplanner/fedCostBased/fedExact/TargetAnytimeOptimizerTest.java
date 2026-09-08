@@ -154,6 +154,67 @@ public class TargetAnytimeOptimizerTest {
 	}
 
 	@Test
+	public void compactPreparationKeepsCertificateAndReducesWorkForFixedVariables() {
+		Fixture base = frustratedClique();
+		List<Variable> variables = new ArrayList<>(base.variables());
+		List<Factor> factors = new ArrayList<>(base.factors());
+		List<Integer> seed = new ArrayList<>(base.seed());
+		for(int i = 0; i < 40; i++) {
+			Variable fixed = new Variable("fixed" + i, 1);
+			variables.add(fixed);
+			factors.add(Factor.dense(List.of(fixed), 1d));
+			seed.add(0);
+		}
+		Fixture fixture = new Fixture(variables, factors, seed, base.optimum() + 40d);
+		CertifiedRegionalOptimizer.Options common = common(1, 1, 1, variables.size(), false);
+		Options beforeOptions = new Options(Algorithm.ANYTIME_TARGET, common, 1, 1, 1,
+			16, Long.MAX_VALUE, 100_000L, 0, false);
+		Options compactOptions = new Options(Algorithm.ANYTIME_TARGET, common, 1, 1, 1,
+			16, Long.MAX_VALUE, 100_000L, 0, true);
+		RegionalSearchProblem reusable = RegionalSearchProblem.generic(variables, factors);
+		Result before = RegionalSearchOptimizer.optimize(reusable, seed, beforeOptions, ignored -> { });
+		Result compact = RegionalSearchOptimizer.optimize(reusable, seed, compactOptions, ignored -> { });
+		Result after = RegionalSearchOptimizer.optimize(reusable, seed, beforeOptions, ignored -> { });
+		Assert.assertEquals(StopReason.GLOBAL_EXACT, compact.stopReason());
+		Assert.assertEquals(Double.doubleToRawLongBits(before.upperBound()),
+			Double.doubleToRawLongBits(compact.upperBound()));
+		Assert.assertTrue(compact.statistics().get("wholePreflightAssignments")
+			< before.statistics().get("wholePreflightAssignments"));
+		Assert.assertEquals(before.statistics().get("wholePreflightAssignments"),
+			after.statistics().get("wholePreflightAssignments"));
+		Assert.assertEquals(before.orderFingerprint(), compact.orderFingerprint());
+		assertCertificate(fixture, compact);
+	}
+
+	@Test
+	public void compactPreparationPropertyIsValidatedAndCanBeDisabled() {
+		String prefix = CertifiedRegionalOptimizer.PROPERTY_PREFIX;
+		String oldAlgorithm = System.getProperty(prefix + "algorithm");
+		String oldCompact = System.getProperty(prefix + "targetCompactPreparation");
+		try {
+			System.setProperty(prefix + "algorithm", "anytime-target");
+			System.setProperty(prefix + "targetCompactPreparation", "false");
+			Assert.assertFalse(Options.configured(common(1, 1, 1, 4, true)).targetCompactPreparation());
+			System.setProperty(prefix + "targetCompactPreparation", "True");
+			Assert.assertTrue(Options.configured(common(1, 1, 1, 4, true)).targetCompactPreparation());
+			System.setProperty(prefix + "targetCompactPreparation", "invalid");
+			try {
+				Options.configured(common(1, 1, 1, 4, true));
+				Assert.fail("Invalid compact preparation flag must be rejected");
+			}
+			catch(IllegalArgumentException expected) {
+				Assert.assertTrue(expected.getMessage().startsWith("REGIONAL_SEARCH_BOOLEAN_INVALID"));
+			}
+		}
+		finally {
+			if(oldAlgorithm == null) System.clearProperty(prefix + "algorithm");
+			else System.setProperty(prefix + "algorithm", oldAlgorithm);
+			if(oldCompact == null) System.clearProperty(prefix + "targetCompactPreparation");
+			else System.setProperty(prefix + "targetCompactPreparation", oldCompact);
+		}
+	}
+
+	@Test
 	public void legacyOptimizerStillHonorsItsSingleRoundLimit() {
 		Fixture fixture = frustratedClique();
 		CertifiedRegionalOptimizer.Result legacy = CertifiedRegionalOptimizer.optimize(

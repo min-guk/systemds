@@ -63,7 +63,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					+ "timeMillis=%d factorCells=%d totalCells=%d seed=%d absoluteTarget=%.17g relativeTarget=%.17g "
 					+ "maxSteps=%d probeCandidates=%d coveragePeriod=%d maxFrontierLimit=%d exactClosureAssignments=%d "
 					+ "regionWorkLimit=%d incumbentRescueAttempts=%d seedRevisitPasses=%d "
-					+ "exactAdmission=reduced-prepared targetResumeDeferredWidths=true "
+					+ "exactAdmission=reduced-prepared targetResumeDeferredWidths=true targetCompactPreparation=%s "
 					+ "refineBound=%s expandRegions=%s policy=%s targetIgnoresRoundsSteps=%s "
 					+ "targetBoundMinResidualFraction=%.17g budgetScope=after-seed softDeadline=true",
 				searchOptions.algorithm(), options.initialWidth(), options.maximumWidth(), options.rounds(),
@@ -72,8 +72,10 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.maxSteps(),
 				searchOptions.probeCandidates(), searchOptions.coveragePeriod(), searchOptions.maximumFrontier(),
 				searchOptions.exactClosureAssignments(), searchOptions.regionWorkLimit(),
-				searchOptions.incumbentRescueAttempts(), LocalPhysicalOptimizer.configuredSeedRevisitPasses(),
-				options.refineBound(), options.expandRegions(), options.policy(),
+					searchOptions.incumbentRescueAttempts(), LocalPhysicalOptimizer.configuredSeedRevisitPasses(),
+					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET
+						&& searchOptions.targetCompactPreparation(),
+					options.refineBound(), options.expandRegions(), options.policy(),
 				searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
 				TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION));
 		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())

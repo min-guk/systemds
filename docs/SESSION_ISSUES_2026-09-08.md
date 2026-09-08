@@ -436,3 +436,27 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - 검증 근거: evidence/validation/pilot-comparison-seed-v1/pilot_comparison.json; 두 campaign의 native raw42행 각각 전체 asset 재해시 통과, 모든14개 paired cell 검증 통과. v2 package/전체 focused suite는 진행 중이다.
 - 잔여 이슈/회귀 위험: pilot1회 결과로 timing speedup을 확정하지 않는다. 기본값과 CONFIG가 달라지는 오류는 property regression 및 새 JAR smoke로 검출한다. 실행 중인 v1 rescue pilot의 JAR/소스/설정은 수정하지 않는다.
 - 의사결정 근거: 원래 Regional 비용 계약을 유지하면서 실측 품질 이득이 없는 추가 작업을 기본 실행에서 제외한다.
+
+
+---
+
+# AnytimeTarget 성능 개선 이슈 — 2026-09-08
+
+## 1. 3%·5% 인증의 preparation 비용 (진행 중)
+
+- 증상: GLM/WAN에서 AnytimeTarget preparation/진단이 약 10–14초로 MBE 및 Regional solve보다 크고, Global보다 오래 걸린 뒤 목표에 미달한다.
+- 원인 근거: 조건부 모델의 모든 auxiliary를 유지한 뒤, reduction으로 singleton이 된 변수도 네 번의 elimination-order planning에 포함한다. 전체 진단 시간은 측정값이나 내부 함수별 비율은 아직 profiler로 분해하지 않았다.
+- 변경: 기존 raw cap과 hard feasibility reduction 뒤 singleton을 정확히 대입한 compact preparation 경로를 추가한다. AnytimeTarget만 targetCompactPreparation 설정(기본 true)으로 사용하며 Global의 기존 prepare/solve 호출은 유지한다.
+- 적용 원칙: 후보 legality/privacy/runtime 규칙을 바꾸지 않는다. 대입은 hard reduction과 objective-preserving quotient로 singleton이 된 변수만 대상이다. 모든 auxiliary를 incumbent에 임의 고정하지 않는다.
+- 수정 파일: ExactPhysicalReducedSolver.java, RegionalSearchProblem.java, RegionalSearchOptimizer.java, FederatedPlanLocalCost.java 및 focused regressions.
+- 검증: all-singleton, 혼합 scope와 상수, 원래 representative 복원, exhaustive objective bit parity, raw cap의 사전 거절, 준비 결과 1회 재사용을 검사한다. Native 32회 before/after pilot의 준비 시간·전체 시간·인증 성공률을 비교한다. 로컬 clean package: 19개 클래스 158개 테스트, failures/errors/skipped 0. 독립 구현 검토 CLEAR. Native 개선 버전의 성능 결과는 아직 없다.
+- 잔여 이슈: preparation 단축만으로 약한 LB나 region coverage cap이 해결된다고 볼 수 없다. 후속 reduced global MBE는 별도 설계·검증 대상이다.
+- 잠재 회귀: compact/원래 assignment 인덱스 혼동, 상수 누락, auxiliary 값의 잘못된 복원. 모든 checkpoint의 independent Global enclosure와 canonical raw-bit 검증으로 탐지한다.
+
+## 2. 이전 대규모 비교의 중단과 증거 보존 (해결)
+
+- 사용자 요청: Anytime 하나에 집중해 3%·5%를 Global보다 빠르게 인증할 방법을 개선·검증한다.
+- 처리: 2026-09-08 16:55 UTC에 기존 main-refined-5-3-1-v2의 supervisor를 검증 후 SIGTERM했다. 완료 350행과 원본 자료를 보존하고 나머지 1,378행은 취소했다. 소유한 실행 프로세스가 남지 않았음을 확인했다.
+- 근거: /home/mchoi/so007-regional-refinement-evidence-20260908/validation/main-v2-user-priority-stop.json.
+- 잔여 이슈: 중단된 350행을 완료된 1,728행 benchmark로 보고하지 않는다. 기존 3%·5% 보고서는 첫 283행에 기반한 시점별 중간 기록이다.
+- 잠재 회귀: 이전 WORK_STATE의 계속 실행 지시로 자동 재개하는 문제. 기존 파일 최상단에 최신 중단 상태와 새 작업 경로를 기록했다.

@@ -39,6 +39,7 @@ final class RegionalSearchProblem {
 	private final List<int[]> scopes = new ArrayList<>();
 	private final List<List<Integer>> incidence = new ArrayList<>();
 	private final String orderFingerprint;
+	private final boolean compactPreparation;
 	private PendingPreparation pendingPreparation;
 
 	record Conditional(List<Variable> variables, List<Factor> factors,
@@ -90,10 +91,16 @@ final class RegionalSearchProblem {
 
 	private RegionalSearchProblem(List<Variable> variables, List<Factor> factors, int decisionCount,
 		ToDoubleFunction<List<Integer>> evaluator) {
+		this(variables, factors, decisionCount, evaluator, false);
+	}
+
+	private RegionalSearchProblem(List<Variable> variables, List<Factor> factors, int decisionCount,
+		ToDoubleFunction<List<Integer>> evaluator, boolean compactPreparation) {
 		this.variables = List.copyOf(variables);
 		this.factors = List.copyOf(factors);
 		this.decisionCount = decisionCount;
 		this.evaluator = evaluator;
+		this.compactPreparation = compactPreparation;
 		Set<String> keys = new LinkedHashSet<>();
 		StringBuilder identity = new StringBuilder();
 		for(int i = 0; i < variables.size(); i++) {
@@ -130,6 +137,12 @@ final class RegionalSearchProblem {
 	int domainSize(int decision) { return variables.get(decision).domainSize(); }
 	int indexOf(Variable variable) { return positions.getOrDefault(variable, -1); }
 	String orderFingerprint() { return orderFingerprint; }
+	RegionalSearchProblem usingCompactedPreparation(boolean enabled) {
+		// Each mode has its own pending prepared solve. Original factor identities,
+		// ordering and the canonical evaluator remain the same.
+		return compactPreparation == enabled ? this
+			: new RegionalSearchProblem(variables, factors, decisionCount, evaluator, enabled);
+	}
 	int[] unconstrained() {
 		int[] fixed = new int[decisionCount];
 		Arrays.fill(fixed, -1);
@@ -348,9 +361,12 @@ final class RegionalSearchProblem {
 		return new Solution(true, canonical, assignment, solved.statistics());
 	}
 
-	private static ExactPhysicalReducedSolver.Prepared prepare(Conditional conditional, Limits limits) {
-		return ExactPhysicalReducedSolver.prepare(conditional.originalFreeCount(),
-			conditional.variables(), conditional.factors(), limits);
+	private ExactPhysicalReducedSolver.Prepared prepare(Conditional conditional, Limits limits) {
+		return compactPreparation
+			? ExactPhysicalReducedSolver.prepareCompacted(conditional.originalFreeCount(),
+				conditional.variables(), conditional.factors(), limits)
+			: ExactPhysicalReducedSolver.prepare(conditional.originalFreeCount(),
+				conditional.variables(), conditional.factors(), limits);
 	}
 
 	private PendingPreparation takePreparation(PreparationKey key) {

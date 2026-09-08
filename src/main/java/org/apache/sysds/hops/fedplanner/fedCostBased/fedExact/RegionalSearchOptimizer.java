@@ -31,7 +31,13 @@ final class RegionalSearchOptimizer {
 
 	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
 		int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
-		long regionWorkLimit, int incumbentRescueAttempts) {
+		long regionWorkLimit, int incumbentRescueAttempts, boolean targetCompactPreparation) {
+		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
+			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
+			long regionWorkLimit, int incumbentRescueAttempts) {
+			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
+				exactClosureAssignments, regionWorkLimit, incumbentRescueAttempts, true);
+		}
 		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
 			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
 			long regionWorkLimit) {
@@ -69,11 +75,21 @@ final class RegionalSearchOptimizer {
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
 					+ "exactClosureAssignments", "100000")),
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "regionWorkLimit", "100000")), integer("incumbentRescueAttempts", 2));
+					+ "regionWorkLimit", "100000")), integer("incumbentRescueAttempts", 2),
+				booleanOption("targetCompactPreparation", true));
 		}
 		private static int integer(String key, int fallback) {
 			return Integer.parseInt(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + key,
 				Integer.toString(fallback)));
+		}
+		private static boolean booleanOption(String key, boolean fallback) {
+			String value = System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + key,
+				Boolean.toString(fallback)).toLowerCase(Locale.ROOT);
+			return switch(value) {
+				case "true" -> true;
+				case "false" -> false;
+				default -> throw new IllegalArgumentException("REGIONAL_SEARCH_BOOLEAN_INVALID|key=" + key);
+			};
 		}
 	}
 
@@ -142,11 +158,12 @@ final class RegionalSearchOptimizer {
 		MiniBucketLowerBound.Result initialBound;
 
 		State(RegionalSearchProblem problem, List<Integer> seed, Options options, Consumer<Checkpoint> observer) {
-			this.problem = Objects.requireNonNull(problem, "problem");
 			this.options = Objects.requireNonNull(options, "options");
+			this.problem = Objects.requireNonNull(problem, "problem").usingCompactedPreparation(
+				options.algorithm() == Algorithm.ANYTIME_TARGET && options.targetCompactPreparation());
 			this.observer = Objects.requireNonNull(observer, "observer");
 			assignment = List.copyOf(seed);
-			upper = problem.evaluate(assignment);
+			upper = this.problem.evaluate(assignment);
 			seedUpperBound = upper;
 			start = System.nanoTime();
 			budgetNanos = options.common().timeBudgetMillis() > Long.MAX_VALUE / 1_000_000L
