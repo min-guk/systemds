@@ -5,10 +5,14 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +50,56 @@ final class MiniBucketLowerBound {
 	record Statistics(int splitBuckets, long maximumFactorCells,
 		long materializedCells, long evaluatedAssignments) { }
 
+	/**
+	 * Explicit variable-replica encoding of the relaxation induced by one
+	 * deterministic mini-bucket partition. Original factors retain their order and
+	 * evaluator; only occurrences of a split variable are redirected to distinct
+	 * replicas. Consequently, assigning every replica the corresponding original
+	 * value preserves the original objective exactly.
+	 */
+	static final class ReplicaModel {
+		private final List<ExactCategoricalSolver.Variable> originalVariables;
+		private final List<ExactCategoricalSolver.Variable> variables;
+		private final List<ExactCategoricalSolver.Factor> factors;
+		private final List<List<ExactCategoricalSolver.Variable>> replicas;
+		private final Statistics statistics;
+		private final String partitionIdentity;
+
+		private ReplicaModel(List<ExactCategoricalSolver.Variable> originalVariables,
+			List<ExactCategoricalSolver.Variable> variables,
+			List<ExactCategoricalSolver.Factor> factors,
+			List<List<ExactCategoricalSolver.Variable>> replicas, Statistics statistics,
+			String partitionIdentity) {
+			this.originalVariables = List.copyOf(originalVariables);
+			this.variables = List.copyOf(variables);
+			this.factors = List.copyOf(factors);
+			this.replicas = replicas.stream().map(List::copyOf).toList();
+			this.statistics = statistics;
+			this.partitionIdentity = partitionIdentity;
+		}
+
+		List<ExactCategoricalSolver.Variable> variables() { return variables; }
+		List<ExactCategoricalSolver.Factor> factors() { return factors; }
+		List<List<ExactCategoricalSolver.Variable>> replicas() { return replicas; }
+		Statistics statistics() { return statistics; }
+		String partitionIdentity() { return partitionIdentity; }
+
+		List<Integer> diagonalAssignment(List<Integer> originalAssignment) {
+			Objects.requireNonNull(originalAssignment, "originalAssignment");
+			if(originalAssignment.size() != originalVariables.size())
+				throw new IllegalArgumentException("MINI_BUCKET_REPLICA_ASSIGNMENT_SIZE_MISMATCH");
+			List<Integer> lifted = new ArrayList<>(variables.size());
+			for(int original = 0; original < originalVariables.size(); original++) {
+				int value = Objects.requireNonNull(originalAssignment.get(original), "assignment value");
+				if(value < 0 || value >= originalVariables.get(original).domainSize())
+					throw new IllegalArgumentException("MINI_BUCKET_REPLICA_ASSIGNMENT_VALUE_INVALID");
+				for(int replica = 0; replica < replicas.get(original).size(); replica++)
+					lifted.add(value);
+			}
+			return List.copyOf(lifted);
+		}
+	}
+
 	static final class ResourceLimitException extends RuntimeException {
 		private static final long serialVersionUID = 1L;
 
@@ -80,6 +134,104 @@ final class MiniBucketLowerBound {
 		Statistics statistics = new Statistics(plan.splitBuckets, plan.maximumFactorCells,
 			plan.materializedCells, plan.evaluatedAssignments);
 		return new Result(lowerBound, conflicts, statistics);
+	}
+
+	static ReplicaModel replicaModel(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors, int iBound,
+		ExactCategoricalSolver.Limits limits, BooleanSupplier cancelled) {
+		Objects.requireNonNull(variables, "variables");
+		Objects.requireNonNull(factors, "factors");
+		Objects.requireNonNull(limits, "limits");
+		Objects.requireNonNull(cancelled, "cancelled");
+		if(iBound < 1)
+			throw new IllegalArgumentException("MINI_BUCKET_I_BOUND_INVALID|iBound=" + iBound);
+		checkCancelled(cancelled);
+
+		Definition definition = validateStructure(variables, factors);
+		validateExactFactorRepresentations(variables, factors, limits);
+		Plan plan = plan(definition, iBound, limits, cancelled);
+		return buildReplicaModel(definition, factors, plan, iBound, cancelled);
+	}
+
+	private static ReplicaModel buildReplicaModel(Definition definition,
+		List<ExactCategoricalSolver.Factor> factors, Plan plan, int iBound,
+		BooleanSupplier cancelled) {
+		int[][] occurrenceReplica = new int[factors.size()][];
+		for(int factor = 0; factor < factors.size(); factor++) {
+			occurrenceReplica[factor] = new int[factors.get(factor).scope().size()];
+			Arrays.fill(occurrenceReplica[factor], -1);
+		}
+		int[] replicaCounts = new int[definition.variables.size()];
+		for(PlannedStep step : plan.steps) {
+			for(PlannedMiniBucket mini : step.miniBuckets) {
+				checkCancelled(cancelled);
+				int replica = replicaCounts[step.variable]++;
+				for(int leaf : mini.leaves) {
+					ExactCategoricalSolver.Factor source = factors.get(leaf);
+					for(int position = 0; position < source.scope().size(); position++)
+						if(identityIndex(definition.variables, source.scope().get(position)) == step.variable) {
+							if(occurrenceReplica[leaf][position] >= 0)
+								throw new IllegalStateException("MINI_BUCKET_REPLICA_LINEAGE_DUPLICATE"
+									+ "|factor=" + leaf + "|position=" + position);
+							occurrenceReplica[leaf][position] = replica;
+						}
+				}
+			}
+		}
+		for(int variable = 0; variable < replicaCounts.length; variable++)
+			if(replicaCounts[variable] == 0)
+				replicaCounts[variable] = 1;
+
+		List<ExactCategoricalSolver.Variable> liftedVariables = new ArrayList<>();
+		List<List<ExactCategoricalSolver.Variable>> replicas = new ArrayList<>();
+		for(int original = 0; original < definition.variables.size(); original++) {
+			ExactCategoricalSolver.Variable source = definition.variables.get(original);
+			List<ExactCategoricalSolver.Variable> group = new ArrayList<>();
+			for(int replica = 0; replica < replicaCounts[original]; replica++) {
+				ExactCategoricalSolver.Variable lifted = new ExactCategoricalSolver.Variable(
+					"mb-replica-" + original + '-' + replica, source.domainSize());
+				group.add(lifted);
+				liftedVariables.add(lifted);
+			}
+			replicas.add(List.copyOf(group));
+		}
+
+		List<ExactCategoricalSolver.Factor> liftedFactors = new ArrayList<>(factors.size());
+		for(int factor = 0; factor < factors.size(); factor++) {
+			checkCancelled(cancelled);
+			ExactCategoricalSolver.Factor source = factors.get(factor);
+			List<ExactCategoricalSolver.Variable> scope = new ArrayList<>(source.scope().size());
+			for(int position = 0; position < source.scope().size(); position++) {
+				int original = identityIndex(definition.variables, source.scope().get(position));
+				int replica = occurrenceReplica[factor][position];
+				if(replica < 0)
+					throw new IllegalStateException("MINI_BUCKET_REPLICA_OCCURRENCE_UNASSIGNED"
+						+ "|factor=" + factor + "|position=" + position);
+				scope.add(replicas.get(original).get(replica));
+			}
+			liftedFactors.add(ExactCategoricalSolver.Factor.lazy(scope, source::cost));
+		}
+		Statistics statistics = new Statistics(plan.splitBuckets, plan.maximumFactorCells,
+			plan.materializedCells, plan.evaluatedAssignments);
+		return new ReplicaModel(definition.variables, liftedVariables, liftedFactors,
+			replicas, statistics, partitionIdentity(definition, occurrenceReplica, iBound));
+	}
+
+	private static String partitionIdentity(Definition definition, int[][] occurrenceReplica,
+		int iBound) {
+		StringBuilder serialized = new StringBuilder("mb-replica-v1;width=").append(iBound).append(';');
+		for(ExactCategoricalSolver.Variable variable : definition.variables)
+			serialized.append(variable.key().length()).append(':').append(variable.key())
+				.append(':').append(variable.domainSize()).append(';');
+		for(int[] factor : occurrenceReplica)
+			serialized.append(Arrays.toString(factor)).append(';');
+		try {
+			return "mb-replica-v1-" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+				.digest(serialized.toString().getBytes(StandardCharsets.UTF_8)));
+		}
+		catch(NoSuchAlgorithmException impossible) {
+			throw new IllegalStateException(impossible);
+		}
 	}
 
 	private static Definition validateStructure(List<ExactCategoricalSolver.Variable> variables,
@@ -139,7 +291,8 @@ final class MiniBucketLowerBound {
 			checkFactorLimit(cells, limits);
 			materialized = addCells(materialized, cells, limits);
 			maximum = Math.max(maximum, cells);
-			active.add(new SymbolicFactor(factor, scope, scope.length > iBound));
+			active.add(new SymbolicFactor(factor, scope, scope.length > iBound,
+				new int[] {factor}));
 		}
 
 		List<PlannedStep> steps = new ArrayList<>();
@@ -173,10 +326,12 @@ final class MiniBucketLowerBound {
 				int[] inputs = miniBucket.stream().mapToInt(factor -> factor.id).toArray();
 				boolean exempt = outputScope.length > iBound && miniBucket.size() == 1
 					&& miniBucket.get(0).nativeWidthExempt;
+				int[] leaves = miniBucket.stream().flatMapToInt(factor -> Arrays.stream(factor.leaves))
+					.sorted().toArray();
 				PlannedMiniBucket planned = new PlannedMiniBucket(inputs, union, outputScope,
-					nextFactor, Math.toIntExact(outputCells));
+					nextFactor, Math.toIntExact(outputCells), leaves);
 				plannedMiniBuckets.add(planned);
-				active.add(new SymbolicFactor(nextFactor++, outputScope, exempt));
+				active.add(new SymbolicFactor(nextFactor++, outputScope, exempt, leaves));
 			}
 			steps.add(new PlannedStep(variable, List.copyOf(plannedMiniBuckets)));
 		}
@@ -443,9 +598,10 @@ final class MiniBucketLowerBound {
 
 	private record Definition(List<ExactCategoricalSolver.Variable> variables,
 		int[] domains, List<int[]> scopes) { }
-	private record SymbolicFactor(int id, int[] scope, boolean nativeWidthExempt) { }
+	private record SymbolicFactor(int id, int[] scope, boolean nativeWidthExempt,
+		int[] leaves) { }
 	private record PlannedMiniBucket(int[] inputs, int[] unionScope, int[] outputScope,
-		int outputId, int outputCells) { }
+		int outputId, int outputCells, int[] leaves) { }
 	private record PlannedStep(int variable, List<PlannedMiniBucket> miniBuckets) { }
 	private record Plan(List<PlannedStep> steps, int factorCount, int splitBuckets,
 		long maximumFactorCells, long materializedCells, long evaluatedAssignments) { }

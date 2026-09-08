@@ -34,7 +34,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 final class LocalPhysicalOptimizer {
 	record Result(ExactPhysicalOptimizer.Result physicalResult,
 		LocalCategoricalOptimizer.Statistics localStatistics,
-		CertifiedRegionalOptimizer.Result certificate) {
+		CertifiedRegionalOptimizer.Result certificate, RegionalSearchOptimizer.Result search) {
 		Result {
 			Objects.requireNonNull(physicalResult, "physicalResult");
 			Objects.requireNonNull(localStatistics, "localStatistics");
@@ -95,12 +95,24 @@ final class LocalPhysicalOptimizer {
 
 	static Result optimize(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface) {
-		return optimize(model, surface, CertifiedRegionalOptimizer.Options.configured(), ignored -> { });
+		CertifiedRegionalOptimizer.Options options = CertifiedRegionalOptimizer.Options.configured();
+		return optimize(model, surface, options, ignored -> { },
+			RegionalSearchOptimizer.Options.configured(options), ignored -> { });
 	}
 
 	static Result optimize(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface, CertifiedRegionalOptimizer.Options options,
 		java.util.function.Consumer<CertifiedRegionalOptimizer.Checkpoint> observer) {
+		return optimize(model, surface, options, observer, null, ignored -> { });
+	}
+
+	static Result optimize(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, CertifiedRegionalOptimizer.Options options,
+		java.util.function.Consumer<CertifiedRegionalOptimizer.Checkpoint> observer,
+		RegionalSearchOptimizer.Options searchOptions,
+		java.util.function.Consumer<RegionalSearchOptimizer.Checkpoint> searchObserver) {
+		if(searchOptions != null && !searchOptions.common().equals(options))
+			throw new IllegalArgumentException("REGIONAL_SEARCH_COMMON_OPTIONS_MISMATCH");
 		Objects.requireNonNull(model, "model");
 		Objects.requireNonNull(surface, "surface");
 		validateSharedSurface(model, surface);
@@ -139,8 +151,16 @@ final class LocalPhysicalOptimizer {
 			throw new IllegalArgumentException("LOCAL_PHYSICAL_CANONICAL_OBJECTIVE_MISMATCH|local="
 				+ local.objective() + "|canonical=" + canonicalObjective);
 		CertifiedRegionalOptimizer.Result certificate = null;
+		RegionalSearchOptimizer.Result search = null;
 		List<Integer> selectedAssignment = local.assignmentInVariableOrder();
-		if(options != null) {
+		if(searchOptions != null) {
+			search = RegionalSearchOptimizer.optimizePhysical(model, surface, forced,
+				selectedAssignment, searchOptions, searchObserver);
+			selectedAssignment = search.assignment();
+			canonicalObjective = search.upperBound();
+			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
+		}
+		else if(options != null) {
 			certificate = CertifiedRegionalOptimizer.optimizePhysical(model, surface, forced,
 				selectedAssignment, options, observer);
 			selectedAssignment = certificate.assignment();
@@ -159,7 +179,7 @@ final class LocalPhysicalOptimizer {
 			ExactPhysicalForcedStateAudit.verify(model, forced, solverResult);
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
 			solverResult, canonicalBits, surface.contributionFingerprint());
-		return new Result(physical, statistics, certificate);
+		return new Result(physical, statistics, certificate, search);
 	}
 
 	private static List<List<Variable>> localInteractionBlocks(ExactPhysicalModel model,

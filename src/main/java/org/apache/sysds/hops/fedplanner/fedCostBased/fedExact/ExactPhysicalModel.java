@@ -649,7 +649,10 @@ final class ExactPhysicalModel {
 		RelocationSelections.RelocationPrivacyIndex relocationPrivacy =
 			RelocationSelections.relocationPrivacyIndex(analysis, analysis.graph(),
 				analysis.graph().relocationActions());
-		for(Map.Entry<CompiledHopKey,List<Link>> entry : incoming.entrySet()) {
+		// Identity lookup is required for authority, but its iteration order is not
+		// stable across JVMs. A stable factor order also fixes mini-bucket partitions.
+		for(Map.Entry<CompiledHopKey,List<Link>> entry : incoming.entrySet().stream()
+			.sorted(Comparator.comparing(item -> item.getKey().normalizedSignature())).toList()) {
 			DecisionDomain consumer = domains.get(entry.getKey());
 			if(consumer == null)
 				continue;

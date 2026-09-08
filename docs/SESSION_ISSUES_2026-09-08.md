@@ -289,3 +289,30 @@ Decision rationale: refine and verify the encoded cost objective while preservin
   claims. Keep resource/fairness assumptions, distinguish exact relaxation optima
   from incomplete raw bounds, and retain the explicit proposal status when
   reusing this document.
+
+### Three supplied Regional algorithms — implementation in progress
+
+- **Request**: implement Threshold, Target-gap and cached-probe Regional search
+  separately and evaluate them on so007 at planning only.
+- **Isolation**: branch `feature/regional-threeway-20260908`, source
+  `/home/mchoi/so007-regional-threeway-20260908`, evidence
+  `/home/mchoi/so007-regional-threeway-evidence-20260908`. Earlier source/JAR and
+  completed pilot are preserved. An unrelated existing coordinator container
+  on so007 is outside this task and is not stopped or modified.
+- **Design**: shared original-model canonical validation and conditional factors;
+  persistent replica equality relaxation for algorithm 1; complete frontier
+  partitions with deferred-node accounting for algorithms 2 and 3. New selector
+  `regional.algorithm` requires `regional.mode=anytime`; default `legacy` keeps
+  the existing planner path. Source plan is
+  `docs/REGIONAL_THREEWAY_IMPLEMENTATION_PLAN.md`.
+- **Review**: an independent architecture pass identified factor ownership,
+  overlapping probe partitions, auxiliary conditioning, work-based scheduling
+  reproducibility, config compatibility and threshold-specific experiment
+  controls. Its artifact is in the new evidence root `reviews/architecture-plan.md`.
+- **Verification pending**: new targeted tests, existing targeted regressions,
+  fresh so007 package, planning-only smoke and paired measurements. No new
+  correctness or performance result is claimed by this in-progress entry.
+- **Risks / detection**: weak bounds may still prevent requested thresholds;
+  exact phases have soft deadlines; interrupted probes must preserve coverage;
+  deferred nodes stay in global LB. Preserve all failed/censored rows and verify
+  initial objectives, model/order identity and algorithm-specific work traces.
