@@ -45,6 +45,7 @@ final class IncrementalReplicaBound {
 		Collections.newSetFromMap(new IdentityHashMap<>());
 	private final Set<VariableKey> resourceBlocked = new HashSet<>();
 	private List<Component> components;
+	private int[] componentByReplica;
 	private double lowerBound;
 	private int restoredEqualities;
 	private int nextFactorOrder;
@@ -155,6 +156,7 @@ final class IncrementalReplicaBound {
 		for(int index = 0; index < equalityParent.length; index++)
 			equalityParent[index] = index;
 		components = initialComponents(cancelled);
+		componentByReplica = buildComponentIndex(components);
 		lowerBound = sumComponents(components);
 	}
 
@@ -470,7 +472,10 @@ final class IncrementalReplicaBound {
 			else if(!touched.contains(index))
 				updated.add(components.get(index));
 		}
-		components = List.copyOf(updated);
+		List<Component> committed = List.copyOf(updated);
+		int[] committedComponentByReplica = buildComponentIndex(committed);
+		components = committed;
+		componentByReplica = committedComponentByReplica;
 		for(ExactCategoricalSolver.Factor equality : selected.equalities) {
 			factorOrder.put(equality, nextFactorOrder++);
 			restoredEqualityFactors.add(equality);
@@ -497,15 +502,10 @@ final class IncrementalReplicaBound {
 		for(int original = 0; original < replicasByOriginal.size(); original++) {
 			int[] group = replicasByOriginal.get(original);
 			List<Integer> representatives = new ArrayList<>();
+			Set<Integer> seenRoots = new HashSet<>();
 			for(int replicaPosition : group) {
 				int root = find(replicaPosition);
-				boolean known = false;
-				for(int representative : representatives)
-					if(find(representative) == root) {
-						known = true;
-						break;
-					}
-				if(!known)
+				if(seenRoots.add(root))
 					representatives.add(replicaPosition);
 			}
 			if(representatives.size() < 2)
@@ -567,10 +567,26 @@ final class IncrementalReplicaBound {
 	}
 
 	private int componentIndex(ExactCategoricalSolver.Variable variable) {
-		for(int index = 0; index < components.size(); index++)
-			if(components.get(index).variables.contains(variable))
-				return index;
-		throw new IllegalStateException("INCREMENTAL_REPLICA_COMPONENT_MISSING");
+		int index = componentByReplica[position(variable)];
+		if(index < 0 || index >= components.size())
+			throw new IllegalStateException("INCREMENTAL_REPLICA_COMPONENT_MISSING");
+		return index;
+	}
+
+	private int[] buildComponentIndex(List<Component> indexedComponents) {
+		int[] result = new int[model.variables().size()];
+		java.util.Arrays.fill(result, -1);
+		for(int component = 0; component < indexedComponents.size(); component++)
+			for(ExactCategoricalSolver.Variable variable : indexedComponents.get(component).variables) {
+				int replica = position(variable);
+				if(result[replica] >= 0)
+					throw new IllegalStateException("INCREMENTAL_REPLICA_COMPONENT_DUPLICATE");
+				result[replica] = component;
+			}
+		for(int component : result)
+			if(component < 0)
+				throw new IllegalStateException("INCREMENTAL_REPLICA_COMPONENT_MISSING");
+		return result;
 	}
 
 	private double proposedLower(List<Integer> touched, Component replacement) {

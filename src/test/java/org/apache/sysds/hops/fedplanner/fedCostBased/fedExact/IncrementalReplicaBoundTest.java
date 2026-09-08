@@ -65,6 +65,54 @@ public class IncrementalReplicaBoundTest {
 	}
 
 	@Test
+	public void componentIndexPreservesKnownSequenceAcrossCommitsAndCancellation() {
+		Model first = conflictingFork("indexed-a", 2, 10d, 4d);
+		Model second = conflictingFork("indexed-b", 2, 10d, 4d);
+		Model third = conflictingFork("indexed-c", 2, 10d, 4d);
+		List<ExactCategoricalSolver.Variable> variables = List.of(
+			first.variables.get(0), first.variables.get(1), first.variables.get(2),
+			second.variables.get(0), second.variables.get(1), second.variables.get(2),
+			third.variables.get(0), third.variables.get(1), third.variables.get(2));
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			first.factors.get(0), first.factors.get(1), first.factors.get(2), first.factors.get(3),
+			second.factors.get(0), second.factors.get(1), second.factors.get(2), second.factors.get(3),
+			third.factors.get(0), third.factors.get(1), third.factors.get(2), third.factors.get(3));
+		double optimum = ExactCategoricalSolver.solve(variables, factors, GENEROUS).objective();
+		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+			variables, factors, 2, GENEROUS, 1_000_000, () -> false);
+		Assert.assertEquals(6, bound.componentCount());
+
+		IncrementalReplicaBound.Refinement firstRefinement = bound.refine(1, () -> false);
+		Assert.assertEquals(0, firstRefinement.originalVariable());
+		Assert.assertEquals(2, firstRefinement.selection().touchedComponents());
+		Assert.assertEquals(5, bound.componentCount());
+		Assert.assertTrue(bound.lowerBound() <= optimum);
+		double afterFirst = bound.lowerBound();
+		List<Integer> assignmentAfterFirst = bound.suggestedAssignment(false);
+
+		Assert.assertThrows(CancellationException.class, () -> bound.refine(1, () -> true));
+		Assert.assertEquals(5, bound.componentCount());
+		Assert.assertEquals(afterFirst, bound.lowerBound(), 0d);
+		Assert.assertEquals(assignmentAfterFirst, bound.suggestedAssignment(false));
+
+		IncrementalReplicaBound.Refinement secondRefinement = bound.refine(1, () -> false);
+		Assert.assertEquals(3, secondRefinement.originalVariable());
+		Assert.assertEquals(2, secondRefinement.selection().touchedComponents());
+		Assert.assertEquals(4, bound.componentCount());
+		Assert.assertTrue(bound.lowerBound() <= optimum);
+
+		IncrementalReplicaBound.Refinement thirdRefinement = bound.refine(1, () -> false);
+		Assert.assertEquals(6, thirdRefinement.originalVariable());
+		Assert.assertEquals(2, thirdRefinement.selection().touchedComponents());
+		Assert.assertEquals(3, bound.componentCount());
+		Assert.assertEquals(9, bound.workStats().reusedComponents());
+		Assert.assertTrue(bound.fullyRestored());
+		Assert.assertEquals(optimum, bound.lowerBound(), Math.ulp(optimum) * 8);
+		Assert.assertEquals(optimum, ExactCategoricalSolver.evaluate(variables, factors,
+			GENEROUS, bound.suggestedAssignment(false)), Math.ulp(optimum) * 8);
+	}
+
+	@Test
 	public void constantsIsolatedAndAuxiliaryReplicasRemainInCertificateAndSuggestion() {
 		Model fork = conflictingFork("kept", 2, 10d, 4d);
 		ExactCategoricalSolver.Variable auxiliary = variable("activation-aux", 3);
