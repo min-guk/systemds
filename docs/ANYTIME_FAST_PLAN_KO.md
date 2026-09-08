@@ -28,3 +28,17 @@ GLM 첫 반복의 WAN-light/mid/heavy에서 AnytimeTarget은 진단·exact prepa
 Compact 변경 후에도 하한이 약하면, 동일 reduced global model을 이용한 MBE strengthening을 별도 변경으로 검토한다. 이 후속안은 아직 구현·검증하지 않았으며, 초기 raw MBE로 이미 목표를 달성하는 경우에 추가 준비 비용을 부과하지 않는 구조가 필요하다.
 
 유망한 변경만 추가 workload/network와 paired repetition으로 검증한다. 모든 입력에서 Global보다 항상 빠르다는 보장은 목표로 주장하지 않는다. Native so007 planning-only, 기존 legality/privacy/canonical 계약, Docker의 bandwidth/RTT 수치만 사용하는 제약을 유지한다.
+
+## 첫 pilot 결과에 따른 두 번째 조정
+
+Compact-only 32회가 완료됐다. 독립 Global과 16개 조건의 certificate/model/canonical 검증, 이전 버전과 초기 U·assignment·MBE·order의 동일성, native 원본 및 479개 외부 파일 해시 검증을 통과했다. 목표 달성은 여전히 14/16으로, GLM/WAN-mid 3%·5%는 미달했다. 다만 3%의 준비 시간은 10.42초에서 3.12초, 전체 planner는 16.14초에서 10.32초로 줄었고, U는 Global C*까지 내려갔다. 남은 인증 gap은 11.6965%다.
+
+이 실행에서 root exact의 compact 예상 작업량은 688,683이었으나 whole gate=100,000으로 거절했다. 이후 13개 region에 7,400,179 작업을 썼다. 따라서 새 알고리즘을 추가하기 전에 **whole gate만 1,000,000으로 올려 region gate와 맞추는 설정 비교**를 진행했다. 같은 prepared root를 한 번 소비하는 기존 경로를 재사용하며, hard factor/cell cap, 모델, initial seed/MBE는 유지했다.
+
+## 완료한 검증과 채택 결과
+
+Whole 1m pilot은 32회 완료, AnytimeTarget 16/16 목표 달성과 독립 oracle·원본 감사 검증을 통과했다. 이어 GLM 네 환경·3%/5%·각 2회 반복으로 32개 JVM 실행을 완료했다. Target 16/16 성공, planner와 JVM 시작→인증 시간이 각각 모든 16개 pair에서 기존 Global보다 짧았다. 각 환경·목표당 2회로 제한된 결과이며, Global에는 같은 compact kernel을 적용하지 않았다.
+
+채택한 것은 singleton compact preparation과 config-only whole 1m이다. 세 WAN 환경에서는 저렴해진 root exact로 gap 0을 얻었다. Reduced-global MBE 및 새로운 region/scheduler 정책은 구현하지 않았다. LM·StepLM의 초기 비용 문제는 남아 있어 보편적인 speedup을 주장하지 않는다. 상세 수치, 실패 분모, 메모리, 코드 기본값과 실험 설정의 구분은 [결과 보고서](ANYTIME_FAST_RESULTS_KO.md)에 기록했다.
+
+이 조정으로 빨라지면 L=U인 exact closure를 통한 개선이다. Global에 동일 singleton compact kernel을 적용한 비교는 수행하지 않았으므로, 기존 Global 대비 승리를 threshold 탐색 자체의 알고리즘 우위라고 주장하지 않는다. Root exact가 계속 비싸거나 gate에 막히는 경우에만 reduced global MBE를 다음 구현 후보로 검토한다.

@@ -442,15 +442,17 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 
 # AnytimeTarget 성능 개선 이슈 — 2026-09-08
 
-## 1. 3%·5% 인증의 preparation 비용 (진행 중)
+## 1. 3%·5% 인증의 preparation 비용 (구현·집중 검증 완료)
 
 - 증상: GLM/WAN에서 AnytimeTarget preparation/진단이 약 10–14초로 MBE 및 Regional solve보다 크고, Global보다 오래 걸린 뒤 목표에 미달한다.
 - 원인 근거: 조건부 모델의 모든 auxiliary를 유지한 뒤, reduction으로 singleton이 된 변수도 네 번의 elimination-order planning에 포함한다. 전체 진단 시간은 측정값이나 내부 함수별 비율은 아직 profiler로 분해하지 않았다.
 - 변경: 기존 raw cap과 hard feasibility reduction 뒤 singleton을 정확히 대입한 compact preparation 경로를 추가한다. AnytimeTarget만 targetCompactPreparation 설정(기본 true)으로 사용하며 Global의 기존 prepare/solve 호출은 유지한다.
 - 적용 원칙: 후보 legality/privacy/runtime 규칙을 바꾸지 않는다. 대입은 hard reduction과 objective-preserving quotient로 singleton이 된 변수만 대상이다. 모든 auxiliary를 incumbent에 임의 고정하지 않는다.
 - 수정 파일: ExactPhysicalReducedSolver.java, RegionalSearchProblem.java, RegionalSearchOptimizer.java, FederatedPlanLocalCost.java 및 focused regressions.
-- 검증: all-singleton, 혼합 scope와 상수, 원래 representative 복원, exhaustive objective bit parity, raw cap의 사전 거절, 준비 결과 1회 재사용을 검사한다. Native 32회 before/after pilot의 준비 시간·전체 시간·인증 성공률을 비교한다. 로컬 clean package: 19개 클래스 158개 테스트, failures/errors/skipped 0. 독립 구현 검토 CLEAR. Native 개선 버전의 성능 결과는 아직 없다.
-- 잔여 이슈: preparation 단축만으로 약한 LB나 region coverage cap이 해결된다고 볼 수 없다. 후속 reduced global MBE는 별도 설계·검증 대상이다.
+- 검증: all-singleton, 혼합 scope와 상수, 원래 representative 복원, exhaustive objective bit parity, raw cap의 사전 거절, 준비 결과 1회 재사용을 검사했다. 로컬·native clean package는 각각 19개 클래스 158개 테스트, failures/errors/skipped 0이며 JAR SHA가 동일하다. 독립 구현 검토 CLEAR. 세 단계 pilot 각 32회와 GLM 4개 환경·두 threshold·각 2회 확인 32회를 완료했다. 모든 128행의 raw audit, 각 479개 외부 자산 해시와 64개 paired oracle 검증이 통과했다. 초기 모델·seed assignment·MBE·order도 비교했다.
+- 추가 조정: compaction만으로 GLM/WAN-mid는 목표 미달이었다. Compact root의 예상 작업량 688,683을 100k 한도가 거절한 뒤 13개 region에 7,400,179 작업을 사용했다. Whole gate를 기존 region gate와 같은 1m으로 맞춘 config-only 비교에서 이미 준비된 root를 exact로 닫았다. Generic Java 기본값은 100k를 유지한다.
+- 결과: GLM 최종 16개 Target 실행 모두 3%·5%를 달성했고 paired Global보다 planner/launcher TTT가 짧았다. WAN 세 환경은 exact gap 0, LAN은 초기 1.888% gap이다. 세 pilot의 Target 성공은 14/16→14/16→16/16이었다. 각 최종 cell 2회이므로 보편적·통계적 speedup은 주장하지 않는다.
+- 잔여 이슈: Global에는 같은 compact kernel을 적용하지 않아 동일 kernel 대비 threshold 탐색의 이득은 분리하지 못했다. LM·StepLM은 seed·setup 비용이 남아 Global보다 일관되게 빠르지 않다. 후속 reduced global MBE는 미구현 제안으로 남겼다. 상세는 ANYTIME_FAST_RESULTS_KO.md를 참조한다.
 - 잠재 회귀: compact/원래 assignment 인덱스 혼동, 상수 누락, auxiliary 값의 잘못된 복원. 모든 checkpoint의 independent Global enclosure와 canonical raw-bit 검증으로 탐지한다.
 
 ## 2. 이전 대규모 비교의 중단과 증거 보존 (해결)
@@ -460,3 +462,10 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - 근거: /home/mchoi/so007-regional-refinement-evidence-20260908/validation/main-v2-user-priority-stop.json.
 - 잔여 이슈: 중단된 350행을 완료된 1,728행 benchmark로 보고하지 않는다. 기존 3%·5% 보고서는 첫 283행에 기반한 시점별 중간 기록이다.
 - 잠재 회귀: 이전 WORK_STATE의 계속 실행 지시로 자동 재개하는 문제. 기존 파일 최상단에 최신 중단 상태와 새 작업 경로를 기록했다.
+
+## 3. Native build 메타데이터의 종료 시각 (정정 기록 완료)
+
+- 증상: native build command JSON이 local command를 복사하면서 local `finished_utc`를 남겨 native `started_utc`보다 앞선 시각이 표시됐다.
+- 처리: 원본 command JSON은 보존하고 `validation/native-build-command-compact-v1.correction.json`에 잘못된 필드와 정정 근거를 기록했다. 실제 native subprocess 종료 시각은 별도로 관측되지 않았으므로 새 값을 만들어 넣지 않았다. Native test report의 `completed_utc`는 build와 검증 완료가 확인된 상한 시각이다.
+- 검증: native test report는 subprocess returncode=0 뒤 작성됐으며 158개 테스트, source 7,502개, local/native 동일 JAR을 별도로 검증했다. 이 메타데이터 문제는 raw trial, 성능 시간이나 production code를 변경하지 않는다.
+- 잔여 위험: native build duration 계산에 원본의 `finished_utc`를 사용하면 안 된다. 이번 보고서는 build 실행 시간을 성능 비교에 사용하지 않는다.
