@@ -6,6 +6,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -40,6 +41,8 @@ final class IncrementalReplicaBound {
 	private final int[] originalByReplica;
 	private final List<int[]> replicasByOriginal;
 	private final int[] equalityParent;
+	private final Set<ExactCategoricalSolver.Factor> restoredEqualityFactors =
+		Collections.newSetFromMap(new IdentityHashMap<>());
 	private final Set<VariableKey> resourceBlocked = new HashSet<>();
 	private List<Component> components;
 	private double lowerBound;
@@ -81,6 +84,14 @@ final class IncrementalReplicaBound {
 		List<Integer> touched, List<Integer> affectedOriginalVariables,
 		double proposedLowerBound, double gain, long measuredNanos) {
 		Trial { equalities = List.copyOf(equalities); }
+	}
+	private record ContractedComponent(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors, int[] contractedVariableByOriginal) {
+		ContractedComponent {
+			variables = List.copyOf(variables);
+			factors = List.copyOf(factors);
+			contractedVariableByOriginal = contractedVariableByOriginal.clone();
+		}
 	}
 
 	private static final class Component {
@@ -288,11 +299,116 @@ final class IncrementalReplicaBound {
 			previousAffected = addDown(previousAffected, components.get(component).lowerBound);
 		long beforePreparation = preparationNanos;
 		long beforeSolve = solveNanos;
-		Component solved = solveComponent(variables, factors, previousAffected, cancelled);
+		int[] trialParent = equalityParent.clone();
+		for(int index = 1; index < candidate.representatives.size(); index++)
+			union(trialParent, candidate.representatives.get(0), candidate.representatives.get(index));
+		Set<ExactCategoricalSolver.Factor> contractedEqualities =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		contractedEqualities.addAll(restoredEqualityFactors);
+		contractedEqualities.addAll(equalities);
+		Component solved = solveContractedComponent(variables, factors, contractedEqualities,
+			trialParent, previousAffected, cancelled);
 		long measured = saturatedAdd(preparationNanos - beforePreparation, solveNanos - beforeSolve);
 		double proposed = proposedLower(touched, solved);
 		return new Trial(candidate, equalities, solved, touched, affectedOriginalVariables(variables),
 			proposed, nonNegativeDifference(proposed, lowerBound), Math.max(1L, measured));
+	}
+
+	private Component solveContractedComponent(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		Set<ExactCategoricalSolver.Factor> equalityFactors, int[] contractionParent,
+		double previousLower, BooleanSupplier cancelled) {
+		checkCancelled(cancelled);
+		long prepared = System.nanoTime();
+		ContractedComponent contracted = contract(
+			variables, factors, equalityFactors, contractionParent);
+		ExactCategoricalSolver.CompiledProblem compiled;
+		try {
+			compiled = ExactCategoricalSolver.compile(
+				contracted.variables, contracted.factors, limits);
+		}
+		catch(IllegalArgumentException failure) {
+			preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - prepared);
+			if(RegionalSearchProblem.isResourceLimit(failure))
+				throw new MiniBucketLowerBound.ResourceLimitException(
+					"INCREMENTAL_REPLICA_COMPONENT_RESOURCE_LIMIT|" + failure.getMessage(), failure);
+			throw failure;
+		}
+		preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - prepared);
+		ExactCategoricalSolver.Statistics planned = ExactCategoricalSolver.statistics(compiled);
+		if(planned.eliminationAssignments() > maximumWork)
+			throw new MiniBucketLowerBound.ResourceLimitException(
+				"INCREMENTAL_REPLICA_COMPONENT_WORK_LIMIT|work="
+					+ planned.eliminationAssignments() + "|limit=" + maximumWork);
+		checkCancelled(cancelled);
+		long solving = System.nanoTime();
+		exactCalls = saturatedAdd(exactCalls, 1L);
+		ExactCategoricalSolver.Result contractedResult = ExactCategoricalSolver.solve(compiled);
+		solveNanos = saturatedAdd(solveNanos, System.nanoTime() - solving);
+		assignments = saturatedAdd(assignments, planned.eliminationAssignments());
+		materializedCells = saturatedAdd(materializedCells, planned.materializedFactorCells());
+		maximumFactorCells = Math.max(maximumFactorCells, planned.maximumFactorCells());
+		checkCancelled(cancelled);
+		List<Integer> expandedAssignment = new ArrayList<>(variables.size());
+		for(int contractedVariable : contracted.contractedVariableByOriginal)
+			expandedAssignment.add(
+				contractedResult.assignmentInVariableOrder().get(contractedVariable));
+		ExactCategoricalSolver.Result expandedResult = new ExactCategoricalSolver.Result(
+			contractedResult.objective(), expandedAssignment, contractedResult.statistics());
+		double conservative = conservative(contractedResult.objective());
+		return new Component(variables, factors, expandedResult,
+			Math.max(previousLower, conservative));
+	}
+
+	private ContractedComponent contract(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		Set<ExactCategoricalSolver.Factor> equalityFactors, int[] contractionParent) {
+		Map<Integer, ExactCategoricalSolver.Variable> variableByRoot = new LinkedHashMap<>();
+		for(ExactCategoricalSolver.Variable variable : variables) {
+			int root = find(contractionParent, position(variable));
+			variableByRoot.putIfAbsent(root, model.variables().get(root));
+		}
+		List<ExactCategoricalSolver.Variable> contractedVariables =
+			variableByRoot.entrySet().stream().sorted(Map.Entry.comparingByKey())
+				.map(Map.Entry::getValue).toList();
+		IdentityHashMap<ExactCategoricalSolver.Variable, Integer> contractedPosition =
+			new IdentityHashMap<>();
+		for(int index = 0; index < contractedVariables.size(); index++)
+			contractedPosition.put(contractedVariables.get(index), index);
+		int[] contractedVariableByOriginal = new int[variables.size()];
+		for(int index = 0; index < variables.size(); index++) {
+			int root = find(contractionParent, position(variables.get(index)));
+			contractedVariableByOriginal[index] = contractedPosition.get(variableByRoot.get(root));
+		}
+
+		List<ExactCategoricalSolver.Factor> contractedFactors = new ArrayList<>();
+		for(ExactCategoricalSolver.Factor factor : factors) {
+			if(equalityFactors.contains(factor))
+				continue;
+			List<ExactCategoricalSolver.Variable> scope = new ArrayList<>();
+			IdentityHashMap<ExactCategoricalSolver.Variable, Integer> scopePosition =
+				new IdentityHashMap<>();
+			int[] originalValueFromContracted = new int[factor.scope().size()];
+			for(int index = 0; index < factor.scope().size(); index++) {
+				int root = find(contractionParent, position(factor.scope().get(index)));
+				ExactCategoricalSolver.Variable contractedVariable = variableByRoot.get(root);
+				Integer local = scopePosition.get(contractedVariable);
+				if(local == null) {
+					local = scope.size();
+					scopePosition.put(contractedVariable, local);
+					scope.add(contractedVariable);
+				}
+				originalValueFromContracted[index] = local;
+			}
+			int[] originalValues = new int[originalValueFromContracted.length];
+			contractedFactors.add(ExactCategoricalSolver.Factor.lazy(scope, values -> {
+				for(int index = 0; index < originalValues.length; index++)
+					originalValues[index] = values[originalValueFromContracted[index]];
+				return factor.cost(originalValues);
+			}));
+		}
+		return new ContractedComponent(
+			contractedVariables, contractedFactors, contractedVariableByOriginal);
 	}
 
 	private Component solveComponent(List<ExactCategoricalSolver.Variable> variables,
@@ -342,8 +458,10 @@ final class IncrementalReplicaBound {
 				updated.add(components.get(index));
 		}
 		components = List.copyOf(updated);
-		for(ExactCategoricalSolver.Factor equality : selected.equalities)
+		for(ExactCategoricalSolver.Factor equality : selected.equalities) {
 			factorOrder.put(equality, nextFactorOrder++);
+			restoredEqualityFactors.add(equality);
+		}
 		int anchor = selected.candidate.representatives.get(0);
 		for(int index = 1; index < selected.candidate.representatives.size(); index++)
 			union(equalityParent, anchor, selected.candidate.representatives.get(index));

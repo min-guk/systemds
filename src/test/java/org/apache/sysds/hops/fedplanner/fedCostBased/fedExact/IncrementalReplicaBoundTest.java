@@ -89,19 +89,38 @@ public class IncrementalReplicaBoundTest {
 		var right = variable("right", 2);
 		List<ExactCategoricalSolver.Variable> variables = List.of(shared, bridge, left, right);
 		List<ExactCategoricalSolver.Factor> factors = List.of(
-			ExactCategoricalSolver.Factor.dense(List.of(shared, bridge, left), new double[8]),
-			ExactCategoricalSolver.Factor.dense(List.of(shared, bridge, right), new double[8]),
+			ExactCategoricalSolver.Factor.dense(List.of(), 1.25d),
+			ExactCategoricalSolver.Factor.dense(List.of(shared, bridge, left),
+				0d, 7d, 2d, 6d, 5d, 1d, 4d, 3d),
+			ExactCategoricalSolver.Factor.dense(List.of(shared, bridge, right),
+				6d, 0d, 5d, 2d, 1d, 7d, 3d, 4d),
 			ExactCategoricalSolver.Factor.dense(List.of(left), 0d, 4d),
 			ExactCategoricalSolver.Factor.dense(List.of(right), 4d, 0d));
+		double optimum = ExactCategoricalSolver.solve(variables, factors, GENEROUS).objective();
+		MiniBucketLowerBound.ReplicaModel replica = MiniBucketLowerBound.replicaModel(
+			variables, factors, 3, GENEROUS, () -> false);
+		Assert.assertEquals(2, replica.replicas().get(0).size());
+		List<ExactCategoricalSolver.Factor> uncontractedFactors = new java.util.ArrayList<>(replica.factors());
+		uncontractedFactors.add(ExactCategoricalSolver.Factor.lazy(replica.replicas().get(0),
+			values -> values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY));
+		long uncontractedWork = ExactCategoricalSolver.analyze(
+			replica.variables(), uncontractedFactors, GENEROUS).eliminationAssignments();
 		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
 			variables, factors, 3, GENEROUS, 1_000_000, () -> false);
 		Assert.assertTrue(bound.replicaVariables() > variables.size());
-		Assert.assertEquals(1, bound.componentCount());
+		Assert.assertEquals(2, bound.componentCount());
 		long calls = bound.workStats().calls();
+		long assignments = bound.workStats().assignments();
 		IncrementalReplicaBound.Refinement refinement = bound.refine(1, () -> false);
 		Assert.assertTrue(refinement.changed());
-		Assert.assertEquals(1, bound.componentCount());
+		Assert.assertEquals(2, bound.componentCount());
 		Assert.assertEquals(calls + 1, bound.workStats().calls());
+		Assert.assertTrue(bound.workStats().assignments() - assignments < uncontractedWork);
+		Assert.assertTrue(bound.lowerBound() <= optimum);
+		Assert.assertTrue(bound.fullyRestored());
+		Assert.assertEquals(optimum, bound.lowerBound(), Math.ulp(optimum) * 16);
+		Assert.assertEquals(optimum, ExactCategoricalSolver.evaluate(variables, factors,
+			GENEROUS, bound.suggestedAssignment(false)), Math.ulp(optimum) * 16);
 	}
 
 	@Test
