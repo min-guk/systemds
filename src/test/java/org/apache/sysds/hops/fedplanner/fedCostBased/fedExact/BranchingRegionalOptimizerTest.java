@@ -64,6 +64,77 @@ public class BranchingRegionalOptimizerTest {
 	}
 
 	@Test
+	public void twoResourceLimitedRescuesPreserveParentUntilCompleteBranchCommit() {
+		Fixture fixture = frustratedTriangle();
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(1, 2, 8, 1, 1,
+			60_000L, 0d, 0d, false, true, ExpansionPolicy.DISAGREEMENT, 19L, LIMITS);
+		Options options = new Options(Algorithm.REUSE, common, 32, 1, 1, 32,
+			0L, 0L, 2);
+
+		Result result = RegionalSearchOptimizer.optimize(
+			fixture.variables, fixture.factors, fixture.seed, options);
+		List<RegionalSearchOptimizer.Checkpoint> rescues = result.checkpoints().stream()
+			.filter(row -> row.phase().equals("INCUMBENT_REGION")).toList();
+
+		Assert.assertEquals("the configured rescue cap must be exercised exactly", 2, rescues.size());
+		Assert.assertEquals(2L, result.statistics().get("incumbentRescueAttempts").longValue());
+		Assert.assertTrue("both independent rescue solves must be rejected by preflight",
+			rescues.stream().allMatch(row -> row.details().contains("resource=limited")));
+		Assert.assertTrue("a skipped rescue must leave the unresolved parent represented",
+			rescues.stream().allMatch(row -> row.statistics().get("frontier") >= 1L));
+		Assert.assertTrue("the unresolved root must survive both skips until an atomic branch",
+			result.checkpoints().stream().anyMatch(row -> row.phase().equals("BRANCH_COMMIT")
+				&& row.details().contains("parent=0") && row.details().contains("children=2")));
+		Assert.assertTrue("both rescue preflights must contribute resource skips",
+			result.statistics().get("regionWorkSkips") >= 2L);
+		assertCertificate(fixture, 10d, result);
+	}
+
+	@Test
+	public void rescueEnabledFiniteModelsKeepFeasibleIncumbentsWithLiveFrontiers() {
+		Random random = new Random(20260908L);
+		int completedRescues = 0;
+		for(int trial = 0; trial < 6; trial++) {
+			List<Variable> variables = new ArrayList<>();
+			for(int i = 0; i < 4; i++)
+				variables.add(new Variable("rescue-" + trial + '-' + i, 2));
+			List<Factor> factors = new ArrayList<>();
+			for(int i = 0; i < variables.size(); i++) {
+				factors.add(Factor.dense(List.of(variables.get(i)),
+					random.nextInt(8), random.nextInt(8)));
+				for(int j = i + 1; j < variables.size(); j++)
+					if(random.nextBoolean())
+						factors.add(Factor.dense(List.of(variables.get(i), variables.get(j)),
+							random.nextInt(11), random.nextInt(11),
+							random.nextInt(11), random.nextInt(11)));
+			}
+			Fixture fixture = new Fixture(variables, factors, List.of(0, 0, 0, 0));
+			double optimum = ExactCategoricalSolver.solve(variables, factors, LIMITS).objective();
+			CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+				1, 2, 8, 1, 1, 60_000L, 0d, 0d, false, true,
+				ExpansionPolicy.DISAGREEMENT, 19L, LIMITS);
+			Options options = new Options(Algorithm.REUSE, common, 64, 1, 1, 128,
+				0L, 100_000L, 2);
+			Result result = RegionalSearchOptimizer.optimize(
+				variables, factors, fixture.seed, options);
+
+			for(RegionalSearchOptimizer.Checkpoint checkpoint : result.checkpoints()) {
+				if(!checkpoint.phase().equals("INCUMBENT_REGION")
+					|| checkpoint.details().contains("resource=limited"))
+					continue;
+				Assert.assertTrue("an independent rescue is evaluated while coverage remains live",
+					checkpoint.statistics().get("frontier") >= 1L);
+				Assert.assertEquals(checkpoint.upperBound(), CertifiedRegionalOptimizer.evaluate(
+					variables, factors, checkpoint.assignment()), 0d);
+				completedRescues++;
+			}
+			assertCertificate(fixture, optimum, result);
+		}
+		Assert.assertTrue("the finite fixtures must exercise at least one admitted rescue",
+			completedRescues > 0);
+	}
+
+	@Test
 	public void fallbackProbeBoundsCannotBeCountedAsCacheHits() {
 		Assert.assertEquals(0L,
 			BranchingRegionalOptimizer.reusableProbeBounds(List.of(false, false)));
