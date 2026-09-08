@@ -49,6 +49,7 @@ public class IncrementalAnytimeOptimizerTest {
 		Result result = IncrementalAnytimeOptimizer.optimize(problem, fixture.seed, options, ignored -> { }, initialization);
 		Assert.assertTrue(result.targetReached());
 		Assert.assertEquals(0L, result.statistics().get("projectionSeedAvailable").longValue());
+		Assert.assertTrue(result.statistics().get("projectionCacheHits") > 0L);
 		assertCertificate(fixture, result);
 	}
 

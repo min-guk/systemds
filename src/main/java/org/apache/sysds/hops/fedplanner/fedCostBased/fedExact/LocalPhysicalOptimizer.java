@@ -164,7 +164,17 @@ final class LocalPhysicalOptimizer {
 		Seed seed = initialization != null && initialization.hasProjectedSeed()
 			? new Seed(new LocalCategoricalOptimizer.Result(initialization.projectedCost(),
 				initialization.projectedSeed(), emptyLocalStatistics()), model.variables())
-			: regionalSeed(model, surface, hardFactors);
+			: null;
+		long orderedSeedNanos = 0L;
+		if(incremental && !initializationLimited) {
+			long started = System.nanoTime();
+			Seed ordered = regionalSeed(model, surface, hardFactors, false);
+			orderedSeedNanos = System.nanoTime() - started;
+			if(seed == null || ordered.local().objective() < seed.local().objective())
+				seed = ordered;
+		}
+		if(seed == null)
+			seed = regionalSeed(model, surface, hardFactors);
 		LocalCategoricalOptimizer.Result local = seed.local();
 		List<Variable> localOrder = seed.order();
 
@@ -186,7 +196,7 @@ final class LocalPhysicalOptimizer {
 			}
 			else if(incremental)
 				search = IncrementalAnytimeOptimizer.optimize(incrementalProblem, selectedAssignment,
-					searchOptions, searchObserver, initialization);
+					searchOptions, searchObserver, initialization, orderedSeedNanos);
 			else
 				search = RegionalSearchOptimizer.optimizePhysical(model, surface, forced,
 					selectedAssignment, searchOptions, searchObserver);
@@ -222,11 +232,19 @@ final class LocalPhysicalOptimizer {
 
 	private static Seed regionalSeed(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Factor> hardFactors) {
+		return regionalSeed(model, surface, hardFactors, true);
+	}
+
+	private static Seed regionalSeed(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Factor> hardFactors, boolean improveNeighborhoods) {
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
-		ValueBoundaryHardClosure hardClosure = new ValueBoundaryHardClosure(model.domains(), hardFactors);
-		List<List<Variable>> localBlocks = localInteractionBlocks(model, localOrder, hardClosure);
-		MaterializationConflictBlockProvider materializationBlocks =
-			new MaterializationConflictBlockProvider(model, hardClosure);
+		List<List<Variable>> localBlocks = List.of();
+		LocalCategoricalOptimizer.DeferredBlockProvider materializationBlocks = ignored -> List.of();
+		if(improveNeighborhoods) {
+			ValueBoundaryHardClosure hardClosure = new ValueBoundaryHardClosure(model.domains(), hardFactors);
+			localBlocks = localInteractionBlocks(model, localOrder, hardClosure);
+			materializationBlocks = new MaterializationConflictBlockProvider(model, hardClosure);
+		}
 		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
 		for(DecisionDomain domain : model.domains())
 			domains.put(domain.variable(), domain);
@@ -237,7 +255,7 @@ final class LocalPhysicalOptimizer {
 				if(domain == null)
 					throw new IllegalArgumentException("LOCAL_PHYSICAL_STATE_DOMAIN_MISSING");
 				return domain.alternatives().get(value).signature();
-			}, configuredSeedRevisitPasses());
+			}, improveNeighborhoods ? configuredSeedRevisitPasses() : 0);
 		return new Seed(local, localOrder);
 	}
 

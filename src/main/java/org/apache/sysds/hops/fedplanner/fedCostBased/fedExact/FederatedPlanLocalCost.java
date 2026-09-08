@@ -82,7 +82,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION,
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL,
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
-						? "replica-projection-or-regional" : "regional"));
+						? "ordered-greedy-and-replica" : "regional"));
 		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
 				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "

@@ -122,6 +122,53 @@ public class IncrementalReplicaBoundTest {
 	}
 
 	@Test
+	public void oneRefinementAtomicallyRestoresAllReplicaGroupsOfOneVariable() {
+		Model model = threeWayFork("batch", 2, 10d, 4d);
+		double optimum = ExactCategoricalSolver.solve(model.variables, model.factors, GENEROUS).objective();
+		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+			model.variables, model.factors, 2, GENEROUS, 1_000_000, () -> false);
+		Assert.assertEquals(3, bound.componentCount());
+		Assert.assertFalse(bound.fullyRestored());
+		long calls = bound.workStats().calls();
+
+		IncrementalReplicaBound.Refinement refinement = bound.refine(1, () -> false);
+
+		Assert.assertTrue(refinement.changed());
+		Assert.assertEquals(0, refinement.originalVariable());
+		Assert.assertEquals(List.of(0, 1, 2, 3), refinement.affectedOriginalVariables());
+		Assert.assertEquals(2, bound.restoredEqualities());
+		Assert.assertEquals(1, bound.componentCount());
+		Assert.assertEquals(calls + 1, bound.workStats().calls());
+		Assert.assertTrue(bound.fullyRestored());
+		Assert.assertTrue(bound.lowerBound() <= optimum);
+		Assert.assertEquals(optimum, bound.lowerBound(), Math.ulp(optimum) * 8);
+		Assert.assertEquals(optimum, ExactCategoricalSolver.evaluate(model.variables, model.factors,
+			GENEROUS, bound.suggestedAssignment(false)), Math.ulp(optimum) * 8);
+	}
+
+	@Test
+	public void resourceFailureDoesNotPartiallyCommitVariableEqualityBatch() {
+		Model model = threeWayFork("limited-batch", 10, 10d, 4d);
+		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+			model.variables, model.factors, 2, GENEROUS, 110, () -> false);
+		double lower = bound.lowerBound();
+		int components = bound.componentCount();
+		List<Integer> assignment = bound.suggestedAssignment(false);
+
+		IncrementalReplicaBound.Refinement refinement = bound.refine(1, () -> false);
+
+		Assert.assertFalse(refinement.changed());
+		Assert.assertEquals(1, bound.workStats().resourceSkips());
+		Assert.assertEquals(0, bound.restoredEqualities());
+		Assert.assertEquals(components, bound.componentCount());
+		Assert.assertEquals(lower, bound.lowerBound(), 0d);
+		Assert.assertEquals(assignment, bound.suggestedAssignment(false));
+		long probes = bound.workStats().probes();
+		Assert.assertFalse(bound.refine(1, () -> false).changed());
+		Assert.assertEquals(probes, bound.workStats().probes());
+	}
+
+	@Test
 	public void resourceAndCancellationFailuresAreCertificateAtomicAndBlocked() {
 		Model model = conflictingFork("large", 10, 10d, 4d);
 		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
@@ -201,6 +248,31 @@ public class IncrementalReplicaBoundTest {
 			ExactCategoricalSolver.Factor.dense(List.of(shared, right), equality),
 			ExactCategoricalSolver.Factor.dense(List.of(left), preferFirst),
 			ExactCategoricalSolver.Factor.dense(List.of(right), preferLast)));
+	}
+
+	private static Model threeWayFork(String prefix, int domain, double mismatch,
+		double preference) {
+		var shared = variable(prefix + "-shared", domain);
+		var first = variable(prefix + "-first", domain);
+		var second = variable(prefix + "-second", domain);
+		var third = variable(prefix + "-third", domain);
+		double[] equality = new double[domain * domain];
+		for(int a = 0; a < domain; a++)
+			for(int b = 0; b < domain; b++)
+				equality[a * domain + b] = a == b ? 0d : mismatch;
+		double[] preferFirst = new double[domain];
+		double[] preferLast = new double[domain];
+		for(int value = 0; value < domain; value++) {
+			preferFirst[value] = value == 0 ? 0d : preference;
+			preferLast[value] = value == domain - 1 ? 0d : preference;
+		}
+		return new Model(List.of(shared, first, second, third), List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(shared, first), equality),
+			ExactCategoricalSolver.Factor.dense(List.of(shared, second), equality),
+			ExactCategoricalSolver.Factor.dense(List.of(shared, third), equality),
+			ExactCategoricalSolver.Factor.dense(List.of(first), preferFirst),
+			ExactCategoricalSolver.Factor.dense(List.of(second), preferLast),
+			ExactCategoricalSolver.Factor.dense(List.of(third), preferLast)));
 	}
 
 	private static ExactCategoricalSolver.Variable variable(String key, int domain) {

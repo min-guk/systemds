@@ -21,10 +21,11 @@ import java.util.function.BooleanSupplier;
  * Incrementally restores equalities in an explicit mini-bucket replica model.
  *
  * <p>The replica factor graph is solved as independent factor-connected
- * components. Adding an equality re-solves only the component containing its
- * endpoints (or the union of two such components); all other exact results are
- * retained. Published component values and their sum are rounded downward, so
- * every completed state remains a lower bound on the original model.</p>
+ * components. One refinement atomically restores all currently disconnected
+ * replica groups of one encoded variable and re-solves only the components
+ * touched by that batch; all other exact results are retained. Published
+ * component values and their sum are rounded downward, so every completed
+ * state remains a lower bound on the original model.</p>
  */
 final class IncrementalReplicaBound {
 	private static final int MAXIMUM_PROBES = 2;
@@ -39,7 +40,7 @@ final class IncrementalReplicaBound {
 	private final int[] originalByReplica;
 	private final List<int[]> replicasByOriginal;
 	private final int[] equalityParent;
-	private final Set<EqualityKey> resourceBlocked = new HashSet<>();
+	private final Set<VariableKey> resourceBlocked = new HashSet<>();
 	private List<Component> components;
 	private double lowerBound;
 	private int restoredEqualities;
@@ -65,13 +66,22 @@ final class IncrementalReplicaBound {
 		Refinement { affectedOriginalVariables = List.copyOf(affectedOriginalVariables); }
 	}
 
-	private record EqualityCandidate(int originalVariable, int leftReplica,
-		int rightReplica, boolean assignmentDisagrees) { }
-	private record EqualityKey(int originalVariable, int leftRoot, int rightRoot) { }
-	private record Trial(EqualityCandidate candidate, ExactCategoricalSolver.Factor equality,
+	private record VariableCandidate(int originalVariable, List<Integer> representatives,
+		int disagreeingGroups, List<Integer> touchedComponents, long scopedWorkProxy) {
+		VariableCandidate {
+			representatives = List.copyOf(representatives);
+			touchedComponents = List.copyOf(touchedComponents);
+		}
+	}
+	private record VariableKey(int originalVariable, List<Integer> roots) {
+		VariableKey { roots = List.copyOf(roots); }
+	}
+	private record Trial(VariableCandidate candidate, List<ExactCategoricalSolver.Factor> equalities,
 		Component component,
 		List<Integer> touched, List<Integer> affectedOriginalVariables,
-		double proposedLowerBound, double gain, long measuredNanos) { }
+		double proposedLowerBound, double gain, long measuredNanos) {
+		Trial { equalities = List.copyOf(equalities); }
+	}
 
 	private static final class Component {
 		private final List<ExactCategoricalSolver.Variable> variables;
@@ -176,13 +186,13 @@ final class IncrementalReplicaBound {
 		Objects.requireNonNull(cancelled, "cancelled");
 		checkCancelled(cancelled);
 		long started = System.nanoTime();
-		List<EqualityCandidate> candidates = candidates();
+		List<VariableCandidate> candidates = candidates();
 		Trial bestPositive = null;
 		Trial cheapestZero = null;
-		List<EqualityKey> newlyBlocked = new ArrayList<>();
+		List<VariableKey> newlyBlocked = new ArrayList<>();
 		for(int index = 0; index < Math.min(maximumCandidateProbes, candidates.size()); index++) {
 			checkCancelled(cancelled);
-			EqualityCandidate candidate = candidates.get(index);
+			VariableCandidate candidate = candidates.get(index);
 			probes = saturatedAdd(probes, 1L);
 			Trial trial;
 			try {
@@ -251,14 +261,8 @@ final class IncrementalReplicaBound {
 		return List.copyOf(result);
 	}
 
-	private Trial trial(EqualityCandidate candidate, BooleanSupplier cancelled) {
-		int leftPosition = replicasByOriginal.get(candidate.originalVariable)[candidate.leftReplica];
-		int rightPosition = replicasByOriginal.get(candidate.originalVariable)[candidate.rightReplica];
-		int leftComponent = componentIndex(model.variables().get(leftPosition));
-		int rightComponent = componentIndex(model.variables().get(rightPosition));
-		List<Integer> touched = leftComponent == rightComponent ? List.of(leftComponent)
-			: leftComponent < rightComponent ? List.of(leftComponent, rightComponent)
-			: List.of(rightComponent, leftComponent);
+	private Trial trial(VariableCandidate candidate, BooleanSupplier cancelled) {
+		List<Integer> touched = candidate.touchedComponents;
 		List<ExactCategoricalSolver.Variable> variables = new ArrayList<>();
 		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
 		for(int component : touched) {
@@ -268,11 +272,17 @@ final class IncrementalReplicaBound {
 		variables.sort(Comparator.comparingInt(this::position));
 		factors.sort(Comparator.comparingInt(
 			factor -> factorOrder.getOrDefault(factor, Integer.MAX_VALUE)));
-		ExactCategoricalSolver.Variable left = model.variables().get(leftPosition);
-		ExactCategoricalSolver.Variable right = model.variables().get(rightPosition);
-		ExactCategoricalSolver.Factor equality = ExactCategoricalSolver.Factor.lazy(
-			List.of(left, right), values -> values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY);
-		factors.add(equality);
+		List<ExactCategoricalSolver.Factor> equalities = new ArrayList<>();
+		ExactCategoricalSolver.Variable anchor = model.variables().get(candidate.representatives.get(0));
+		for(int index = 1; index < candidate.representatives.size(); index++) {
+			ExactCategoricalSolver.Variable replica =
+				model.variables().get(candidate.representatives.get(index));
+			ExactCategoricalSolver.Factor equality = ExactCategoricalSolver.Factor.lazy(
+				List.of(anchor, replica),
+				values -> values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY);
+			equalities.add(equality);
+			factors.add(equality);
+		}
 		double previousAffected = 0d;
 		for(int component : touched)
 			previousAffected = addDown(previousAffected, components.get(component).lowerBound);
@@ -281,7 +291,7 @@ final class IncrementalReplicaBound {
 		Component solved = solveComponent(variables, factors, previousAffected, cancelled);
 		long measured = saturatedAdd(preparationNanos - beforePreparation, solveNanos - beforeSolve);
 		double proposed = proposedLower(touched, solved);
-		return new Trial(candidate, equality, solved, touched, affectedOriginalVariables(variables),
+		return new Trial(candidate, equalities, solved, touched, affectedOriginalVariables(variables),
 			proposed, nonNegativeDifference(proposed, lowerBound), Math.max(1L, measured));
 	}
 
@@ -332,45 +342,64 @@ final class IncrementalReplicaBound {
 				updated.add(components.get(index));
 		}
 		components = List.copyOf(updated);
-		factorOrder.put(selected.equality, nextFactorOrder++);
-		int[] group = replicasByOriginal.get(selected.candidate.originalVariable);
-		union(equalityParent, group[selected.candidate.leftReplica], group[selected.candidate.rightReplica]);
-		restoredEqualities++;
+		for(ExactCategoricalSolver.Factor equality : selected.equalities)
+			factorOrder.put(equality, nextFactorOrder++);
+		int anchor = selected.candidate.representatives.get(0);
+		for(int index = 1; index < selected.candidate.representatives.size(); index++)
+			union(equalityParent, anchor, selected.candidate.representatives.get(index));
+		restoredEqualities += selected.equalities.size();
 		reusedComponents = saturatedAdd(reusedComponents,
 			Math.max(0, components.size() - 1));
 		lowerBound = Math.max(lowerBound, sumComponents(components));
 	}
 
-	private List<EqualityCandidate> candidates() {
+	/**
+	 * Builds a bounded structural shortlist. Disagreement estimates possible
+	 * tightening and cached component work estimates its local cost; neither is
+	 * an optimality claim. The final choice still uses measured global bound gain
+	 * per preparation-plus-solve time.
+	 */
+	private List<VariableCandidate> candidates() {
 		int[] assignment = replicaAssignment();
-		List<EqualityCandidate> result = new ArrayList<>();
+		List<VariableCandidate> result = new ArrayList<>();
 		for(int original = 0; original < replicasByOriginal.size(); original++) {
 			int[] group = replicasByOriginal.get(original);
 			List<Integer> representatives = new ArrayList<>();
-			for(int replica = 0; replica < group.length; replica++) {
-				int root = find(group[replica]);
+			for(int replicaPosition : group) {
+				int root = find(replicaPosition);
 				boolean known = false;
 				for(int representative : representatives)
-					if(find(group[representative]) == root) {
+					if(find(representative) == root) {
 						known = true;
 						break;
 					}
 				if(!known)
-					representatives.add(replica);
+					representatives.add(replicaPosition);
 			}
-			for(int index = 1; index < representatives.size(); index++) {
-				int left = representatives.get(0);
-				int right = representatives.get(index);
-				EqualityCandidate candidate = new EqualityCandidate(original, left, right,
-					assignment[group[left]] != assignment[group[right]]);
-				if(!resourceBlocked.contains(key(candidate)))
-					result.add(candidate);
-			}
+			if(representatives.size() < 2)
+				continue;
+			int disagreeing = 0;
+			for(int index = 1; index < representatives.size(); index++)
+				if(assignment[representatives.get(0)] != assignment[representatives.get(index)])
+					disagreeing++;
+			Set<Integer> componentIndexes = new HashSet<>();
+			for(int representative : representatives)
+				componentIndexes.add(componentIndex(model.variables().get(representative)));
+			List<Integer> touched = componentIndexes.stream().sorted().toList();
+			long workProxy = 0L;
+			for(int component : touched)
+				workProxy = saturatedAdd(workProxy,
+					components.get(component).result.statistics().eliminationAssignments());
+			VariableCandidate candidate = new VariableCandidate(
+				original, representatives, disagreeing, touched, workProxy);
+			if(!resourceBlocked.contains(key(candidate)))
+				result.add(candidate);
 		}
-		result.sort(Comparator.comparing(EqualityCandidate::assignmentDisagrees).reversed()
-			.thenComparingInt(EqualityCandidate::originalVariable)
-			.thenComparingInt(EqualityCandidate::leftReplica)
-			.thenComparingInt(EqualityCandidate::rightReplica));
+		result.sort(Comparator.comparingInt(VariableCandidate::disagreeingGroups).reversed()
+			.thenComparing(Comparator.comparingInt(
+				(VariableCandidate candidate) -> candidate.representatives.size()).reversed())
+			.thenComparingLong(VariableCandidate::scopedWorkProxy)
+			.thenComparingInt(VariableCandidate::originalVariable));
 		return List.copyOf(result);
 	}
 
@@ -426,12 +455,9 @@ final class IncrementalReplicaBound {
 
 	private int find(int position) { return find(equalityParent, position); }
 
-	private EqualityKey key(EqualityCandidate candidate) {
-		int[] group = replicasByOriginal.get(candidate.originalVariable);
-		int left = find(group[candidate.leftReplica]);
-		int right = find(group[candidate.rightReplica]);
-		return left < right ? new EqualityKey(candidate.originalVariable, left, right)
-			: new EqualityKey(candidate.originalVariable, right, left);
+	private VariableKey key(VariableCandidate candidate) {
+		return new VariableKey(candidate.originalVariable,
+			candidate.representatives.stream().map(this::find).sorted().toList());
 	}
 
 	private static boolean betterRate(Trial left, Trial right) {
@@ -444,13 +470,16 @@ final class IncrementalReplicaBound {
 		return compared != 0 ? compared > 0 : compare(left.candidate, right.candidate) < 0;
 	}
 
-	private static int compare(EqualityCandidate left, EqualityCandidate right) {
+	private static int compare(VariableCandidate left, VariableCandidate right) {
 		int compared = Integer.compare(left.originalVariable, right.originalVariable);
-		if(compared == 0)
-			compared = Integer.compare(left.leftReplica, right.leftReplica);
-		if(compared == 0)
-			compared = Integer.compare(left.rightReplica, right.rightReplica);
-		return compared;
+		if(compared != 0)
+			return compared;
+		for(int index = 0; index < Math.min(left.representatives.size(), right.representatives.size()); index++) {
+			compared = Integer.compare(left.representatives.get(index), right.representatives.get(index));
+			if(compared != 0)
+				return compared;
+		}
+		return Integer.compare(left.representatives.size(), right.representatives.size());
 	}
 
 	private static int find(int[] parent, int index) {

@@ -9,8 +9,11 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.util.ArrayDeque;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
@@ -21,8 +24,12 @@ final class IncrementalAnytimeOptimizer {
 
 	record Initialization(ExactPhysicalReducedSolver.CompactModel compact,
 		IncrementalReplicaBound bound, long reductionNanos, long initialBoundNanos,
-		long projectionNanos, List<Integer> projectedSeed, double projectedCost) {
-		Initialization { projectedSeed = List.copyOf(projectedSeed); }
+		long projectionNanos, List<Integer> projectedSeed, double projectedCost,
+		Map<List<Integer>,Double> candidateCosts) {
+		Initialization {
+			projectedSeed = List.copyOf(projectedSeed);
+			candidateCosts = new LinkedHashMap<>(candidateCosts);
+		}
 		boolean hasProjectedSeed() { return Double.isFinite(projectedCost); }
 	}
 
@@ -38,24 +45,33 @@ final class IncrementalAnytimeOptimizer {
 		started = System.nanoTime();
 		List<Integer> best = List.of();
 		double bestCost = Double.POSITIVE_INFINITY;
+		Map<List<Integer>,Double> costs = new LinkedHashMap<>();
 		for(boolean majority : new boolean[] {false, true}) {
 			List<Integer> candidate = expandDecisions(problem, compact, bound.suggestedAssignment(majority));
 			if(candidate.equals(best))
 				continue;
 			double cost = candidateCost(problem, candidate);
+			costs.put(candidate, cost);
 			if(cost < bestCost) {
 				best = candidate;
 				bestCost = cost;
 			}
 		}
 		return new Initialization(compact, bound, reductionNanos, initialBoundNanos,
-			System.nanoTime() - started, best, bestCost);
+			System.nanoTime() - started, best, bestCost, costs);
 	}
 
 	static RegionalSearchOptimizer.Result optimize(RegionalSearchProblem problem, List<Integer> seed,
 		RegionalSearchOptimizer.Options options, Consumer<RegionalSearchOptimizer.Checkpoint> observer,
 		Initialization initialized) {
+		return optimize(problem, seed, options, observer, initialized, 0L);
+	}
+
+	static RegionalSearchOptimizer.Result optimize(RegionalSearchProblem problem, List<Integer> seed,
+		RegionalSearchOptimizer.Options options, Consumer<RegionalSearchOptimizer.Checkpoint> observer,
+		Initialization initialized, long orderedSeedNanos) {
 		RegionalSearchOptimizer.State state = new RegionalSearchOptimizer.State(problem, seed, options, observer);
+		state.stats.set("orderedSeedNanos", orderedSeedNanos);
 		state.publish("INITIAL");
 		return run(state, initialized);
 	}
@@ -149,7 +165,20 @@ final class IncrementalAnytimeOptimizer {
 				if(candidate.equals(state.assignment))
 					continue;
 				state.stats.add("projectionAttempts", 1);
-				double cost = candidateCost(state.problem, candidate);
+				Double cached = initialized.candidateCosts().get(candidate);
+				double cost;
+				if(cached != null) {
+					state.stats.add("projectionCacheHits", 1);
+					cost = cached;
+				}
+				else {
+					cost = candidateCost(state.problem, candidate);
+					// Cache entries are only original assignments and canonical costs;
+					// no solver tables or unresolved search coverage are discarded.
+					if(initialized.candidateCosts().size() >= 256)
+						initialized.candidateCosts().remove(initialized.candidateCosts().keySet().iterator().next());
+					initialized.candidateCosts().put(candidate, cost);
+				}
 				if(Double.isFinite(cost) && state.accept(new RegionalSearchProblem.Solution(true, cost, candidate, null)))
 					state.stats.add("projectionImprovements", 1);
 			}
@@ -182,10 +211,25 @@ final class IncrementalAnytimeOptimizer {
 		int maximum = Math.min(state.options.common().maximumRegionVariables(),
 			Math.min(state.options.common().regionGrowth(), Math.max(0, active.size() - 1)));
 		Set<Integer> region = new LinkedHashSet<>();
-		for(int index : refined.affectedOriginalVariables()) {
+		ArrayDeque<Integer> queue = new ArrayDeque<>();
+		if(refined.originalVariable() >= 0)
+			queue.add(refined.originalVariable());
+		Set<Integer> visited = new LinkedHashSet<>();
+		while(!queue.isEmpty() && region.size() < maximum) {
+			int index = queue.removeFirst();
+			if(!visited.add(index))
+				continue;
 			int source = state.problem.indexOf(compact.sourceVariables().get(index));
-			if(active.contains(source) && region.size() < maximum)
+			if(active.contains(source))
 				region.add(source);
+			ExactCategoricalSolver.Variable variable = compact.variables().get(index);
+			for(ExactCategoricalSolver.Factor factor : compact.factors())
+				if(factor.scope().contains(variable))
+					for(ExactCategoricalSolver.Variable neighbor : factor.scope()) {
+						int next = compact.variables().indexOf(neighbor);
+						if(!visited.contains(next))
+							queue.addLast(next);
+					}
 		}
 		return region;
 	}
