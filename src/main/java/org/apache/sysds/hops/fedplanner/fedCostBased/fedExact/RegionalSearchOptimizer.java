@@ -26,12 +26,18 @@ final class RegionalSearchOptimizer {
 	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT, STEP_LIMIT, REGION_LIMIT, FRONTIER_LIMIT }
 
 	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
-		int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments) {
+		int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
+		long regionWorkLimit) {
+		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
+			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments) {
+			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
+				exactClosureAssignments, 100_000L);
+		}
 		Options {
 			Objects.requireNonNull(algorithm, "algorithm");
 			Objects.requireNonNull(common, "common");
 			if(maxSteps < 1 || probeCandidates < 1 || coveragePeriod < 1 || maximumFrontier < 1
-				|| exactClosureAssignments < 0 || !common.expandRegions())
+				|| exactClosureAssignments < 0 || regionWorkLimit < 0 || !common.expandRegions())
 				throw new IllegalArgumentException("REGIONAL_SEARCH_OPTIONS_INVALID");
 		}
 		static Options configured(CertifiedRegionalOptimizer.Options common) {
@@ -49,7 +55,9 @@ final class RegionalSearchOptimizer {
 			return new Options(algorithm, common, integer("maxSteps", 256), integer("probeCandidates", 2),
 				integer("coveragePeriod", 3), integer("maxFrontier", 2048),
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "exactClosureAssignments", "100000")));
+					+ "exactClosureAssignments", "100000")),
+				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
+					+ "regionWorkLimit", "100000")));
 		}
 		private static int integer(String key, int fallback) {
 			return Integer.parseInt(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + key,
@@ -65,7 +73,9 @@ final class RegionalSearchOptimizer {
 				"frontier", "maxFrontier", "regionVariables", "maxRegion", "replicaVariables", "restoredEqualities",
 				"boundAssignments", "exactAssignments", "boundMaterializedCells", "maxFactorCells",
 				"boundNanos", "regionNanos", "exactNanos", "diagnosticNanos", "zeroGainActions", "forcedExpansions",
-				"boundActions", "regionActions", "resourceFailures", "widthStrengthenings", "steps"))
+				"boundActions", "regionActions", "resourceFailures", "widthStrengthenings", "steps",
+				"regionPreflightCalls", "regionWorkSkips", "regionHardResourceSkips",
+				"regionPreflightAssignments", "regionPreflightMaterializedCells"))
 				counts.put(key, 0L);
 		}
 		void add(String key, long value) { counts.put(key, Math.addExact(get(key), value)); }
@@ -170,6 +180,27 @@ final class RegionalSearchOptimizer {
 			finally { stats.add("boundNanos", System.nanoTime() - phaseStart); }
 		}
 		RegionalSearchProblem.Solution region(int[] fixed, Set<Integer> region, List<Integer> reference) {
+			long diagnosticStart = System.nanoTime();
+			stats.add("regionPreflightCalls", 1);
+			RegionalSearchProblem.RegionalWork work;
+			try {
+				work = problem.preflightRegion(fixed, region, reference, options.common().limits(),
+					options.regionWorkLimit(), this::expired);
+				stats.add("regionPreflightAssignments", work.eliminationAssignments());
+				stats.add("regionPreflightMaterializedCells", work.materializedFactorCells());
+				stats.max("maxFactorCells", work.maximumFactorCells());
+			}
+			finally {
+				stats.add("diagnosticNanos", System.nanoTime() - diagnosticStart);
+			}
+			if(!work.admitted()) {
+				stats.add("regionWorkSkips", 1);
+				if(work.hardResourceLimited())
+					stats.add("regionHardResourceSkips", 1);
+				throw new IllegalArgumentException("REGIONAL_SEARCH_WORK_LIMIT_EXCEEDED|assignments="
+					+ work.eliminationAssignments() + "|limit=" + options.regionWorkLimit()
+					+ "|hardResource=" + work.hardResourceLimited());
+			}
 			long phaseStart = System.nanoTime();
 			stats.add("regionCalls", 1);
 			stats.set("regionVariables", region.size());

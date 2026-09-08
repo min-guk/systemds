@@ -31,9 +31,19 @@ public class BranchingRegionalOptimizerTest {
 			Assert.assertEquals(10d, result.upperBound(), 0d);
 			assertCertificate(fixture, 10d, result);
 			Assert.assertTrue(result.statistics().get("cacheHits") > 0);
+			Assert.assertTrue(result.statistics().get("probeBoundSuccess") >= result.statistics().get("cacheHits"));
+			Assert.assertEquals(0L, result.statistics().get("probeBoundFallback").longValue());
 			Assert.assertTrue(result.checkpoints().stream().filter(row -> row.phase().equals("BRANCH_COMMIT"))
 				.allMatch(row -> row.details().contains("children=2")));
 		}
+	}
+
+	@Test
+	public void fallbackProbeBoundsCannotBeCountedAsCacheHits() {
+		Assert.assertEquals(0L,
+			BranchingRegionalOptimizer.reusableProbeBounds(List.of(false, false)));
+		Assert.assertEquals(1L,
+			BranchingRegionalOptimizer.reusableProbeBounds(List.of(false, true)));
 	}
 
 	@Test

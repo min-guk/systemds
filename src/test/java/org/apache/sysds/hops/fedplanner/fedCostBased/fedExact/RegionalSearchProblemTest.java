@@ -6,8 +6,10 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.lang.reflect.Constructor;
 import java.util.List;
 import java.util.Set;
+import java.util.function.ToDoubleFunction;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
@@ -71,6 +73,40 @@ public class RegionalSearchProblemTest {
 	}
 
 	@Test
+	public void regionalPreflightCountsFreeAuxiliaryWorkAndPreservesIncumbentOnSkip()
+		throws ReflectiveOperationException {
+		Variable decision = new Variable("decision", 2);
+		Variable auxA = new Variable("aux-a", 3), auxB = new Variable("aux-b", 3),
+			auxC = new Variable("aux-c", 3);
+		double[] zeros = new double[27];
+		RegionalSearchProblem problem = encodedProblem(List.of(decision, auxA, auxB, auxC), List.of(
+			Factor.dense(List.of(decision), 0d, 1d),
+			Factor.dense(List.of(auxA, auxB, auxC), zeros)), 1);
+
+		RegionalSearchOptimizer.State limited = new RegionalSearchOptimizer.State(problem,
+			List.of(1), searchOptions(1), ignored -> { });
+		IllegalArgumentException skipped = Assert.assertThrows(IllegalArgumentException.class,
+			() -> limited.region(problem.unconstrained(), Set.of(0), List.of(1)));
+		Assert.assertTrue(skipped.getMessage().startsWith("REGIONAL_SEARCH_WORK_LIMIT_EXCEEDED"));
+		Assert.assertEquals(List.of(1), limited.assignment);
+		Assert.assertEquals(1d, limited.upper, 0d);
+		Assert.assertEquals(0d, limited.lower, 0d);
+		Assert.assertEquals(1L, limited.stats.get("regionWorkSkips"));
+		Assert.assertTrue(limited.stats.get("regionPreflightAssignments") > 1L);
+		Assert.assertEquals(0L, limited.stats.get("regionCalls"));
+
+		RegionalSearchOptimizer.State admitted = new RegionalSearchOptimizer.State(problem,
+			List.of(1), searchOptions(10_000), ignored -> { });
+		RegionalSearchProblem.Solution solution = admitted.region(
+			problem.unconstrained(), Set.of(0), List.of(1));
+		Assert.assertTrue(solution.feasible());
+		Assert.assertEquals(List.of(0), solution.assignment());
+		Assert.assertEquals(0d, solution.objective(), 0d);
+		Assert.assertEquals(0L, admitted.stats.get("regionWorkSkips"));
+		Assert.assertEquals(1L, admitted.stats.get("regionCalls"));
+	}
+
+	@Test
 	public void configurationRejectsMixedModesAndUnknownAlgorithms() {
 		String key = CertifiedRegionalOptimizer.PROPERTY_PREFIX + "algorithm";
 		String previous = System.getProperty(key);
@@ -88,5 +124,23 @@ public class RegionalSearchProblemTest {
 			else
 				System.setProperty(key, previous);
 		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static RegionalSearchProblem encodedProblem(List<Variable> variables,
+		List<Factor> factors, int decisionCount) throws ReflectiveOperationException {
+		Constructor<RegionalSearchProblem> constructor = RegionalSearchProblem.class
+			.getDeclaredConstructor(List.class, List.class, int.class, ToDoubleFunction.class);
+		constructor.setAccessible(true);
+		ToDoubleFunction<List<Integer>> evaluator = assignment -> assignment.get(0);
+		return constructor.newInstance(variables, factors, decisionCount, evaluator);
+	}
+
+	private static RegionalSearchOptimizer.Options searchOptions(long regionalWorkLimit) {
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+			1, 1, 2, 1, 1, 10_000, 0d, 0d, true, true,
+			CertifiedRegionalOptimizer.ExpansionPolicy.DISAGREEMENT, 19L, LIMITS);
+		return new RegionalSearchOptimizer.Options(RegionalSearchOptimizer.Algorithm.THRESHOLD,
+			common, 4, 1, 1, 8, 0L, regionalWorkLimit);
 	}
 }

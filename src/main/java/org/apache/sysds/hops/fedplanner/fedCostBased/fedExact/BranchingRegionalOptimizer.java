@@ -38,9 +38,11 @@ final class BranchingRegionalOptimizer {
 		List<MiniBucketLowerBound.Conflict> conflicts;
 		List<Integer> feasible;
 		final Set<Integer> region;
+		final boolean probeBoundAvailable;
 
 		Node(long id, int[] fixed, int depth, double lower, int width,
-			List<MiniBucketLowerBound.Conflict> conflicts, List<Integer> feasible, Set<Integer> region) {
+			List<MiniBucketLowerBound.Conflict> conflicts, List<Integer> feasible, Set<Integer> region,
+			boolean probeBoundAvailable) {
 			this.id = id;
 			this.fixed = fixed.clone();
 			this.depth = depth;
@@ -49,10 +51,12 @@ final class BranchingRegionalOptimizer {
 			this.conflicts = List.copyOf(conflicts);
 			this.feasible = feasible == null ? null : List.copyOf(feasible);
 			this.region = new LinkedHashSet<>(region);
+			this.probeBoundAvailable = probeBoundAvailable;
 		}
 	}
 
-	private record Partition(int variable, List<Node> children, double lower) {
+	private record Partition(int variable, List<Node> children, double lower,
+		long successfulBounds, long fallbackBounds) {
 		Partition { children = List.copyOf(children); }
 	}
 
@@ -66,9 +70,11 @@ final class BranchingRegionalOptimizer {
 		Map<Long,Node> frontier = new LinkedHashMap<>();
 		long nextId = 1L;
 		Node root = new Node(0L, state.problem.unconstrained(), 0, state.lower,
-			state.options.common().initialWidth(), state.initialBound.conflicts(), state.assignment, Set.of());
+			state.options.common().initialWidth(), state.initialBound.conflicts(), state.assignment, Set.of(), false);
 		frontier.put(root.id, root);
 		state.stats.set("generatedNodes", 1);
+		state.stats.set("probeBoundSuccess", 0);
+		state.stats.set("probeBoundFallback", 0);
 		publishFrontier(state, frontier, "FRONTIER_INITIALIZED", "root=0 condition=root");
 
 		while(true) {
@@ -223,7 +229,8 @@ final class BranchingRegionalOptimizer {
 			}
 			state.stats.add("branchedNodes", 1);
 			state.stats.add("generatedNodes", selected.children().size());
-			state.stats.add("cacheHits", selected.children().size());
+			state.stats.add("cacheHits", reusableProbeBounds(selected.children().stream()
+				.map(child -> child.probeBoundAvailable).toList()));
 			state.stats.set("selectedSplitVariable", selected.variable() + 1L);
 			prune(state, frontier);
 			publishFrontier(state, frontier, "BRANCH_COMMIT", "parent=" + node.id
@@ -235,6 +242,8 @@ final class BranchingRegionalOptimizer {
 	private static Partition probe(State state, Node parent, int variable, long firstId) {
 		List<Node> children = new ArrayList<>();
 		double partitionLower = Double.POSITIVE_INFINITY;
+		long successfulBounds = 0L;
+		long fallbackBounds = 0L;
 		for(int value = 0; value < state.problem.domainSize(variable); value++) {
 			int[] fixed = parent.fixed.clone();
 			fixed[variable] = value;
@@ -248,10 +257,19 @@ final class BranchingRegionalOptimizer {
 				state.stats.add("resourceFailures", 1);
 			}
 			double childLower = result == null ? parent.lower : Math.max(parent.lower, result.lowerBound());
+			if(result == null) {
+				fallbackBounds++;
+				state.stats.add("probeBoundFallback", 1);
+			}
+			else {
+				successfulBounds++;
+				state.stats.add("probeBoundSuccess", 1);
+			}
 			List<Integer> localSeed = parent.feasible != null && state.problem.matches(fixed, parent.feasible)
 				? parent.feasible : null;
 			Node child = new Node(firstId + value, fixed, parent.depth + 1, childLower,
-				parent.width, result == null ? parent.conflicts : result.conflicts(), localSeed, parent.region);
+				parent.width, result == null ? parent.conflicts : result.conflicts(), localSeed, parent.region,
+				result != null);
 			checkNodeSeed(state, child);
 			children.add(child);
 			partitionLower = Math.min(partitionLower, childLower);
@@ -259,7 +277,7 @@ final class BranchingRegionalOptimizer {
 		}
 		if(children.isEmpty())
 			throw new IllegalStateException("REGIONAL_SEARCH_EMPTY_BRANCH_DOMAIN");
-		return new Partition(variable, children, partitionLower);
+		return new Partition(variable, children, partitionLower, successfulBounds, fallbackBounds);
 	}
 
 	private static String conditionalRegional(State state, Node parent, Node child) {
@@ -368,6 +386,10 @@ final class BranchingRegionalOptimizer {
 		return result;
 	}
 
+	static long reusableProbeBounds(List<Boolean> successfulBounds) {
+		return successfulBounds.stream().filter(Boolean.TRUE::equals).count();
+	}
+
 	private static String nodeDetails(Node node) {
 		return node == null ? "active=none" : "node=" + node.id + " condition=" + condition(node.fixed)
 			+ " nodeLower=" + node.lower + " depth=" + node.depth;
@@ -378,7 +400,9 @@ final class BranchingRegionalOptimizer {
 		for(Partition partition : partitions) {
 			if(text.length() > 0)
 				text.append(',');
-			text.append(partition.variable()).append(':').append(partition.lower());
+			text.append(partition.variable()).append(':').append(partition.lower())
+				.append(":success=").append(partition.successfulBounds())
+				.append(":fallback=").append(partition.fallbackBounds());
 		}
 		return text.toString();
 	}

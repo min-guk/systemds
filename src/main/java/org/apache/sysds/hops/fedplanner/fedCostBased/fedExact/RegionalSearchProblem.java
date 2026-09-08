@@ -46,6 +46,9 @@ final class RegionalSearchProblem {
 		ExactCategoricalSolver.Statistics statistics) {
 		Solution { assignment = List.copyOf(assignment); }
 	}
+	record RegionalWork(boolean admitted, boolean hardResourceLimited,
+		long eliminationAssignments, long materializedFactorCells,
+		long maximumFactorCells) { }
 
 	static RegionalSearchProblem generic(List<Variable> variables, List<Factor> factors) {
 		return new RegionalSearchProblem(variables, factors, variables.size(),
@@ -215,6 +218,32 @@ final class RegionalSearchProblem {
 	}
 	Solution solveRegion(int[] fixed, Set<Integer> region, List<Integer> reference,
 		Limits limits, BooleanSupplier cancelled) {
+		return solve(regionalConditional(fixed, region, reference), limits, cancelled);
+	}
+	RegionalWork preflightRegion(int[] fixed, Set<Integer> region, List<Integer> reference,
+		Limits limits, long maximumAssignments, BooleanSupplier cancelled) {
+		if(maximumAssignments < 0)
+			throw new IllegalArgumentException("REGIONAL_SEARCH_WORK_LIMIT_INVALID");
+		if(cancelled.getAsBoolean())
+			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_BEFORE_PREFLIGHT");
+		Conditional conditional = regionalConditional(fixed, region, reference);
+		try {
+			ExactCategoricalSolver.Statistics statistics = ExactCategoricalSolver.analyze(
+				conditional.variables(), conditional.factors(), limits);
+			if(cancelled.getAsBoolean())
+				throw new CancellationException("REGIONAL_SEARCH_CANCELLED_AFTER_PREFLIGHT");
+			return new RegionalWork(statistics.eliminationAssignments() <= maximumAssignments,
+				false, statistics.eliminationAssignments(), statistics.materializedFactorCells(),
+				statistics.maximumFactorCells());
+		}
+		catch(IllegalArgumentException failure) {
+			if(!isResourceLimit(failure))
+				throw failure;
+			return new RegionalWork(false, true, 0L, 0L, 0L);
+		}
+	}
+	private Conditional regionalConditional(int[] fixed, Set<Integer> region,
+		List<Integer> reference) {
 		checkCondition(fixed);
 		evaluate(reference);
 		for(int variable : region)
@@ -227,7 +256,7 @@ final class RegionalSearchProblem {
 			if(!region.contains(i))
 				boundary[i] = reference.get(i);
 		}
-		return solve(condition(boundary), limits, cancelled);
+		return condition(boundary);
 	}
 	private Solution solve(Conditional conditional, Limits limits, BooleanSupplier cancelled) {
 		if(cancelled.getAsBoolean())
@@ -319,6 +348,7 @@ final class RegionalSearchProblem {
 			|| message.startsWith("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED")
 			|| message.startsWith("EXACT_VE_FACTOR_CELL_OVERFLOW")
 			|| message.startsWith("EXACT_VE_MATERIALIZED_CELL_OVERFLOW")
-			|| message.startsWith("EXACT_VE_ELIMINATION_ASSIGNMENT_OVERFLOW"));
+			|| message.startsWith("EXACT_VE_ELIMINATION_ASSIGNMENT_OVERFLOW")
+			|| message.startsWith("REGIONAL_SEARCH_WORK_LIMIT_EXCEEDED"));
 	}
 }
