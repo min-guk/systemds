@@ -233,3 +233,30 @@ Decision rationale: refine and verify the encoded cost objective while preservin
   descriptors, raw logs/receipts, harness source/patch, independent review and
   byte-checked portable copies. The SystemDS implementation/JAR is unchanged from
   the 97-test package above.
+
+### Detailed Korean implementation report — resolved
+
+- **Request / symptom**: the implementation and pilot evidence were distributed
+  across source, a short results document and raw artifacts; a detailed report
+  file was requested for review and subsequent research.
+- **Resolution**: added `docs/CERTIFIED_REGIONAL_IMPLEMENTATION_REPORT_KO.md`,
+  covering the implemented algorithm, model/canonical-cost contract, proof outline,
+  configuration, tests, all eight planning ablations, phase work, provenance,
+  limitations and clearly unexecuted follow-up studies.
+- **Decision rationale / scope**: documentation only. Preserve the user's
+  planning-only experimental boundary and the existing source, JAR, frozen stage,
+  raw pilot results and failed-attempt history. No new build or experiment ran.
+- **Validation**: checked the report against source; regenerated expected pilot,
+  phase and bound table rows from the stored JSON and the Java test table from
+  all 13 JUnit XML reports. All 17 file links resolve; UTF-8, code fences, formula
+  delimiters and missing-placeholder checks pass. The validation record is
+  `/home/mchoi/so007-certified-regional-evidence-20260908/reports/implementation-report-validation.json`.
+  Independent report review passed; the Java/Maven label was narrowed to the
+  directly evidenced so007 build environment to avoid implying container versions.
+- **Remaining issues**: implementation limitations remain as documented above.
+  In particular, non-nested MBE partitions, soft deadlines and the pilot's lack
+  of incumbent improvement are explicit; no runtime or policy-advantage claim
+  was added.
+- **Potential regression / detection**: future source or evidence changes can
+  make the report stale. Preserve commit/artifact identities, check the recorded
+  evidence hashes and regenerate numerical comparisons before revising claims.
