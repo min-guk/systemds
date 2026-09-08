@@ -68,6 +68,8 @@ final class BranchingRegionalOptimizer {
 			throw new IllegalArgumentException("BRANCHING_REGIONAL_ALGORITHM_INVALID");
 
 		Map<Long,Node> frontier = new LinkedHashMap<>();
+		Set<Integer> incumbentRegion = new LinkedHashSet<>();
+		int conditionalWithoutImprovement = 0;
 		long nextId = 1L;
 		Node root = new Node(0L, state.problem.unconstrained(), 0, state.lower,
 			state.options.common().initialWidth(), state.initialBound.conflicts(), state.assignment, Set.of(), false);
@@ -120,6 +122,19 @@ final class BranchingRegionalOptimizer {
 					state.publish("NODE_EXACT_LIMIT", "node=" + node.id
 						+ " condition=" + condition(node.fixed) + " fallback=branch");
 				}
+			}
+
+			if(!targetGap && state.options.incumbentRescueAttempts() > 0
+				&& state.stats.get("incumbentRescueAttempts") == 0L) {
+				String details = improveIncumbent(state, incumbentRegion, node.conflicts);
+				prune(state, frontier);
+				publishFrontier(state, frontier, "INCUMBENT_REGION", details);
+				if(state.reached())
+					return state.finish(state.lower == state.upper ? StopReason.GLOBAL_EXACT : StopReason.TARGET_REACHED);
+				if(state.expired())
+					return state.finish(StopReason.TIME_BUDGET);
+				if(!frontier.containsKey(node.id) || state.nodeSufficient(node.lower))
+					continue;
 			}
 
 			if(targetGap && state.options.common().refineBound()
@@ -207,7 +222,9 @@ final class BranchingRegionalOptimizer {
 			Node promising = selected.children().stream().filter(child -> !state.nodeSufficient(child.lower))
 				.min(Comparator.comparingDouble((Node child) -> child.lower).thenComparingLong(child -> child.id))
 				.orElseGet(() -> selected.children().stream().min(Comparator.comparingLong(child -> child.id)).orElseThrow());
+			double upperBeforeRegion = state.upper;
 			String regionDetails = conditionalRegional(state, node, promising);
+			conditionalWithoutImprovement = state.upper < upperBeforeRegion ? 0 : conditionalWithoutImprovement + 1;
 			prune(state, frontier);
 			publishFrontier(state, frontier, "CONDITIONAL_REGION", regionDetails);
 			if(frontier.isEmpty())
@@ -218,6 +235,20 @@ final class BranchingRegionalOptimizer {
 				continue;
 			if(state.nodeSufficient(node.lower))
 				continue;
+
+			if(!targetGap && conditionalWithoutImprovement >= state.options.coveragePeriod()
+				&& state.stats.get("incumbentRescueAttempts") < state.options.incumbentRescueAttempts()) {
+				String details = improveIncumbent(state, incumbentRegion, node.conflicts);
+				conditionalWithoutImprovement = 0;
+				prune(state, frontier);
+				publishFrontier(state, frontier, "INCUMBENT_REGION", details);
+				if(state.reached())
+					return state.finish(state.lower == state.upper ? StopReason.GLOBAL_EXACT : StopReason.TARGET_REACHED);
+				if(state.expired())
+					return state.finish(StopReason.TIME_BUDGET);
+				if(!frontier.containsKey(node.id) || state.nodeSufficient(node.lower))
+					continue;
+			}
 
 			if(frontier.size() - 1L + selected.children().size() > state.options.maximumFrontier())
 				return state.finish(StopReason.FRONTIER_LIMIT);
@@ -236,6 +267,37 @@ final class BranchingRegionalOptimizer {
 			publishFrontier(state, frontier, "BRANCH_COMMIT", "parent=" + node.id
 				+ " condition=" + condition(node.fixed) + " variable=" + selected.variable()
 				+ " candidateLower=" + selected.lower() + " children=" + selected.children().size());
+		}
+	}
+
+	/** Bounded primal work, independent of branch conditions and frontier coverage. */
+	private static String improveIncumbent(State state, Set<Integer> region,
+		List<MiniBucketLowerBound.Conflict> conflicts) {
+		state.stats.add("incumbentRescueAttempts", 1);
+		int maximum = Math.min(state.problem.decisionCount(), state.options.common().maximumRegionVariables());
+		int target = (int) Math.min(maximum, (long) region.size() + state.options.common().regionGrowth());
+		state.problem.growRegion(region, target, conflicts);
+		double before = state.upper;
+		state.stats.add("regionActions", 1);
+		try {
+			RegionalSearchProblem.Solution candidate = state.region(state.problem.unconstrained(), region, state.assignment);
+			if(!candidate.feasible() || candidate.objective() > before)
+				throw new IllegalStateException("REGIONAL_SEARCH_INCUMBENT_REGION_INVALID");
+			if(state.accept(candidate))
+				state.stats.add("incumbentRescueImprovements", 1);
+			else
+				state.stats.add("zeroGainActions", 1);
+			// Only this all-original-decisions endpoint is a global exact solve.
+			if(region.size() == state.problem.decisionCount())
+				state.raiseLower(state.upper);
+			return "condition=root region=" + indexes(region) + " deltaU=" + (before - state.upper)
+				+ " whole=" + (region.size() == state.problem.decisionCount());
+		}
+		catch(IllegalArgumentException failure) {
+			if(!RegionalSearchProblem.isResourceLimit(failure))
+				throw failure;
+			state.stats.add("resourceFailures", 1);
+			return "condition=root region=" + indexes(region) + " resource=limited reason=" + failure.getMessage();
 		}
 	}
 

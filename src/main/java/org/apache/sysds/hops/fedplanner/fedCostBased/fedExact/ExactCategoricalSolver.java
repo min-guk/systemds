@@ -182,6 +182,10 @@ public final class ExactCategoricalSolver {
 		return solve(compiled.prepared, compiled.factors, (variable, value) -> 0L);
 	}
 
+	static Statistics statistics(CompiledProblem compiled) {
+		return Objects.requireNonNull(compiled, "compiled").prepared.statistics;
+	}
+
 	static FrozenInputs freezeInputs(List<Variable> variables, List<Factor> factors,
 		Limits limits) {
 		InputDefinition definition = validateInputs(variables, factors, limits);

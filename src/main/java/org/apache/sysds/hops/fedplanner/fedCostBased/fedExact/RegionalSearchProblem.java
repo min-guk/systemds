@@ -39,6 +39,7 @@ final class RegionalSearchProblem {
 	private final List<int[]> scopes = new ArrayList<>();
 	private final List<List<Integer>> incidence = new ArrayList<>();
 	private final String orderFingerprint;
+	private PendingPreparation pendingPreparation;
 
 	record Conditional(List<Variable> variables, List<Factor> factors,
 		int originalFreeCount, List<Integer> freeIndexes, int[] fixed) { }
@@ -48,7 +49,18 @@ final class RegionalSearchProblem {
 	}
 	record RegionalWork(boolean admitted, boolean hardResourceLimited,
 		long eliminationAssignments, long materializedFactorCells,
-		long maximumFactorCells) { }
+		long maximumFactorCells, long preparationNanos) {
+		RegionalWork(boolean admitted, boolean hardResourceLimited,
+			long eliminationAssignments, long materializedFactorCells,
+			long maximumFactorCells) {
+			this(admitted, hardResourceLimited, eliminationAssignments,
+				materializedFactorCells, maximumFactorCells, 0L);
+		}
+	}
+	private record PreparationKey(String kind, List<Integer> fixed,
+		List<Integer> region, List<Integer> reference, Limits limits) { }
+	private record PendingPreparation(PreparationKey key, Conditional conditional,
+		ExactPhysicalReducedSolver.Prepared prepared) { }
 
 	static RegionalSearchProblem generic(List<Variable> variables, List<Factor> factors) {
 		return new RegionalSearchProblem(variables, factors, variables.size(),
@@ -200,11 +212,15 @@ final class RegionalSearchProblem {
 	}
 
 	boolean canSolveWhole(int[] fixed, Limits limits, long maximumAssignments) {
+		pendingPreparation = null;
 		Conditional conditional = condition(fixed);
+		PreparationKey key = wholeKey(fixed, limits);
 		try {
-			ExactCategoricalSolver.Statistics stats = ExactCategoricalSolver.analyze(
-				conditional.variables(), conditional.factors(), limits);
-			return stats.eliminationAssignments() <= maximumAssignments;
+			ExactPhysicalReducedSolver.Prepared prepared = prepare(conditional, limits);
+			boolean admitted = prepared.statistics().eliminationAssignments() <= maximumAssignments;
+			if(admitted)
+				pendingPreparation = new PendingPreparation(key, conditional, prepared);
+			return admitted;
 		}
 		catch(IllegalArgumentException failure) {
 			if(isResourceLimit(failure))
@@ -214,54 +230,72 @@ final class RegionalSearchProblem {
 	}
 	RegionalWork preflightWhole(int[] fixed, Limits limits, long maximumAssignments,
 		BooleanSupplier cancelled) {
+		pendingPreparation = null;
 		if(maximumAssignments < 0)
 			throw new IllegalArgumentException("REGIONAL_SEARCH_WORK_LIMIT_INVALID");
 		if(cancelled.getAsBoolean())
 			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_BEFORE_PREFLIGHT");
 		Conditional conditional = condition(fixed);
+		PreparationKey key = wholeKey(fixed, limits);
+		long start = System.nanoTime();
 		try {
-			ExactCategoricalSolver.Statistics statistics = ExactCategoricalSolver.analyze(
-				conditional.variables(), conditional.factors(), limits);
+			ExactPhysicalReducedSolver.Prepared prepared = prepare(conditional, limits);
+			ExactCategoricalSolver.Statistics statistics = prepared.statistics();
 			if(cancelled.getAsBoolean())
 				throw new CancellationException("REGIONAL_SEARCH_CANCELLED_AFTER_PREFLIGHT");
-			return new RegionalWork(statistics.eliminationAssignments() <= maximumAssignments,
+			boolean admitted = statistics.eliminationAssignments() <= maximumAssignments;
+			if(admitted)
+				pendingPreparation = new PendingPreparation(key, conditional, prepared);
+			return new RegionalWork(admitted,
 				false, statistics.eliminationAssignments(), statistics.materializedFactorCells(),
-				statistics.maximumFactorCells());
+				statistics.maximumFactorCells(), System.nanoTime() - start);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!isResourceLimit(failure))
 				throw failure;
-			return new RegionalWork(false, true, 0L, 0L, 0L);
+			return new RegionalWork(false, true, 0L, 0L, 0L, System.nanoTime() - start);
 		}
 	}
 
 	Solution solveWhole(int[] fixed, Limits limits, BooleanSupplier cancelled) {
-		return solve(condition(fixed), limits, cancelled);
+		PreparationKey key = wholeKey(fixed, limits);
+		PendingPreparation pending = takePreparation(key);
+		return pending == null ? solve(condition(fixed), limits, cancelled)
+			: solve(pending.conditional(), pending.prepared(), cancelled);
 	}
 	Solution solveRegion(int[] fixed, Set<Integer> region, List<Integer> reference,
 		Limits limits, BooleanSupplier cancelled) {
-		return solve(regionalConditional(fixed, region, reference), limits, cancelled);
+		PreparationKey key = regionKey(fixed, region, reference, limits);
+		PendingPreparation pending = takePreparation(key);
+		return pending == null ? solve(regionalConditional(fixed, region, reference), limits, cancelled)
+			: solve(pending.conditional(), pending.prepared(), cancelled);
 	}
 	RegionalWork preflightRegion(int[] fixed, Set<Integer> region, List<Integer> reference,
 		Limits limits, long maximumAssignments, BooleanSupplier cancelled) {
+		pendingPreparation = null;
 		if(maximumAssignments < 0)
 			throw new IllegalArgumentException("REGIONAL_SEARCH_WORK_LIMIT_INVALID");
 		if(cancelled.getAsBoolean())
 			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_BEFORE_PREFLIGHT");
 		Conditional conditional = regionalConditional(fixed, region, reference);
+		PreparationKey key = regionKey(fixed, region, reference, limits);
+		long start = System.nanoTime();
 		try {
-			ExactCategoricalSolver.Statistics statistics = ExactCategoricalSolver.analyze(
-				conditional.variables(), conditional.factors(), limits);
+			ExactPhysicalReducedSolver.Prepared prepared = prepare(conditional, limits);
+			ExactCategoricalSolver.Statistics statistics = prepared.statistics();
 			if(cancelled.getAsBoolean())
 				throw new CancellationException("REGIONAL_SEARCH_CANCELLED_AFTER_PREFLIGHT");
-			return new RegionalWork(statistics.eliminationAssignments() <= maximumAssignments,
+			boolean admitted = statistics.eliminationAssignments() <= maximumAssignments;
+			if(admitted)
+				pendingPreparation = new PendingPreparation(key, conditional, prepared);
+			return new RegionalWork(admitted,
 				false, statistics.eliminationAssignments(), statistics.materializedFactorCells(),
-				statistics.maximumFactorCells());
+				statistics.maximumFactorCells(), System.nanoTime() - start);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!isResourceLimit(failure))
 				throw failure;
-			return new RegionalWork(false, true, 0L, 0L, 0L);
+			return new RegionalWork(false, true, 0L, 0L, 0L, System.nanoTime() - start);
 		}
 	}
 	private Conditional regionalConditional(int[] fixed, Set<Integer> region,
@@ -283,10 +317,19 @@ final class RegionalSearchProblem {
 	private Solution solve(Conditional conditional, Limits limits, BooleanSupplier cancelled) {
 		if(cancelled.getAsBoolean())
 			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_BEFORE_EXACT");
+		ExactPhysicalReducedSolver.Prepared prepared = prepare(conditional, limits);
+		if(cancelled.getAsBoolean())
+			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_AFTER_EXACT_PREPARATION");
+		return solve(conditional, prepared, cancelled);
+	}
+
+	private Solution solve(Conditional conditional, ExactPhysicalReducedSolver.Prepared prepared,
+		BooleanSupplier cancelled) {
+		if(cancelled.getAsBoolean())
+			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_BEFORE_EXACT");
 		ExactCategoricalSolver.Result solved;
 		try {
-			solved = ExactPhysicalReducedSolver.solve(conditional.originalFreeCount(),
-				conditional.variables(), conditional.factors(), limits);
+			solved = ExactPhysicalReducedSolver.solve(prepared);
 		}
 		catch(IllegalArgumentException failure) {
 			if("EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
@@ -303,6 +346,31 @@ final class RegionalSearchProblem {
 			throw new IllegalStateException("REGIONAL_SEARCH_CANONICAL_MISMATCH|solver="
 				+ solved.objective() + "|canonical=" + canonical);
 		return new Solution(true, canonical, assignment, solved.statistics());
+	}
+
+	private static ExactPhysicalReducedSolver.Prepared prepare(Conditional conditional, Limits limits) {
+		return ExactPhysicalReducedSolver.prepare(conditional.originalFreeCount(),
+			conditional.variables(), conditional.factors(), limits);
+	}
+
+	private PendingPreparation takePreparation(PreparationKey key) {
+		PendingPreparation pending = pendingPreparation;
+		pendingPreparation = null;
+		return pending != null && pending.key().equals(key) ? pending : null;
+	}
+
+	private static PreparationKey wholeKey(int[] fixed, Limits limits) {
+		return new PreparationKey("WHOLE", integers(fixed), List.of(), List.of(), limits);
+	}
+
+	private static PreparationKey regionKey(int[] fixed, Set<Integer> region,
+		List<Integer> reference, Limits limits) {
+		return new PreparationKey("REGION", integers(fixed), region.stream().sorted().toList(),
+			List.copyOf(reference), limits);
+	}
+
+	private static List<Integer> integers(int[] values) {
+		return Arrays.stream(values).boxed().toList();
 	}
 
 	List<Integer> rankedDecisions(int[] fixed, List<MiniBucketLowerBound.Conflict> conflicts) {

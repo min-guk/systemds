@@ -16,6 +16,10 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
@@ -27,7 +31,13 @@ final class RegionalSearchOptimizer {
 
 	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
 		int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
-		long regionWorkLimit) {
+		long regionWorkLimit, int incumbentRescueAttempts) {
+		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
+			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
+			long regionWorkLimit) {
+			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
+				exactClosureAssignments, regionWorkLimit, 0);
+		}
 		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
 			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments) {
 			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
@@ -37,7 +47,8 @@ final class RegionalSearchOptimizer {
 			Objects.requireNonNull(algorithm, "algorithm");
 			Objects.requireNonNull(common, "common");
 			if(maxSteps < 1 || probeCandidates < 1 || coveragePeriod < 1 || maximumFrontier < 1
-				|| exactClosureAssignments < 0 || regionWorkLimit < 0 || !common.expandRegions())
+				|| exactClosureAssignments < 0 || regionWorkLimit < 0 || !common.expandRegions()
+				|| incumbentRescueAttempts < 0 || incumbentRescueAttempts > 2)
 				throw new IllegalArgumentException("REGIONAL_SEARCH_OPTIONS_INVALID");
 		}
 		static Options configured(CertifiedRegionalOptimizer.Options common) {
@@ -58,7 +69,7 @@ final class RegionalSearchOptimizer {
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
 					+ "exactClosureAssignments", "100000")),
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "regionWorkLimit", "100000")));
+					+ "regionWorkLimit", "100000")), integer("incumbentRescueAttempts", 2));
 		}
 		private static int integer(String key, int fallback) {
 			return Integer.parseInt(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + key,
@@ -80,7 +91,8 @@ final class RegionalSearchOptimizer {
 				"wholePreflightCalls", "wholePreflightSkips", "wholeHardResourceSkips",
 				"wholePreflightAssignments", "wholePreflightMaterializedCells", "coverageAttempts",
 				"coverageVariables", "zeroUbGrowthAccelerations", "boundWidthPasses",
-				"boundWidthSuspensions", "wholeClosureAttempts", "wholeClosureCompleted"))
+				"boundWidthSuspensions", "boundWidthResumptions", "wholeClosureAttempts", "wholeClosureCompleted",
+				"incumbentRescueAttempts", "incumbentRescueImprovements"))
 				counts.put(key, 0L);
 		}
 		void add(String key, long value) { counts.put(key, Math.addExact(get(key), value)); }
@@ -247,11 +259,7 @@ final class RegionalSearchOptimizer {
 			finally { stats.add("diagnosticNanos", System.nanoTime() - phaseStart); }
 		}
 		boolean canSolveWhole(int[] fixed) {
-			long phaseStart = System.nanoTime();
-			try {
-				return problem.canSolveWhole(fixed, options.common().limits(), options.exactClosureAssignments());
-			}
-			finally { stats.add("diagnosticNanos", System.nanoTime() - phaseStart); }
+			return preflightWhole(fixed).admitted();
 		}
 		private void recordExact(RegionalSearchProblem.Solution solution) {
 			if(solution.statistics() != null) {
@@ -333,6 +341,17 @@ final class RegionalSearchOptimizer {
 				+ "relativeGap=%.17g elapsedMs=%.6f%s", checkpoint.phase(), checkpoint.algorithm(), checkpoint.iteration(),
 			checkpoint.lowerBound(), checkpoint.upperBound(), checkpoint.absoluteGap(), checkpoint.relativeGap(),
 			checkpoint.elapsedNanos() / 1e6, statisticsTrace(checkpoint.statistics()))
+			+ " assignmentFingerprint=" + assignmentFingerprint(checkpoint.assignment())
 			+ (checkpoint.details().isEmpty() ? "" : " " + checkpoint.details());
+	}
+
+	static String assignmentFingerprint(List<Integer> assignment) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+				.digest(assignment.toString().getBytes(StandardCharsets.UTF_8)));
+		}
+		catch(NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 unavailable", failure);
+		}
 	}
 }

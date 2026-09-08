@@ -42,6 +42,7 @@ final class TargetAnytimeOptimizer {
 		int nextWidth = state.options.common().initialWidth() + 1;
 		boolean boundAvailable = state.options.common().refineBound()
 			&& nextWidth <= state.options.common().maximumWidth();
+		boolean deferredWidths = false;
 		MiniBucketLowerBound.Result guidance = state.initialBound;
 		long step = 0;
 
@@ -72,6 +73,7 @@ final class TargetAnytimeOptimizer {
 					nextWidth++;
 					boundAvailable = useful && nextWidth <= state.options.common().maximumWidth();
 					if(!useful) {
+						deferredWidths = nextWidth <= state.options.common().maximumWidth();
 						state.stats.add("boundWidthSuspensions", 1);
 						if(gain == 0d)
 							state.stats.add("zeroGainActions", 1);
@@ -137,6 +139,15 @@ final class TargetAnytimeOptimizer {
 					return state.finish(RegionalSearchOptimizer.StopReason.TIME_BUDGET);
 			}
 
+			if(region.size() >= maximumRegion && !boundAvailable && deferredWidths) {
+				// A flat width does not prove that every larger relaxation is flat.
+				// Defer the remaining finite width schedule while improving U, then
+				// resume it before declaring that both progress paths are exhausted.
+				boundAvailable = true;
+				deferredWidths = false;
+				state.stats.add("boundWidthResumptions", 1);
+				state.publish("ANYTIME_TARGET_BOUND_RESUMED", "nextWidth=" + nextWidth);
+			}
 			if(region.size() >= maximumRegion && !boundAvailable)
 				return state.finish(maximumRegion < state.problem.decisionCount()
 					? RegionalSearchOptimizer.StopReason.REGION_LIMIT

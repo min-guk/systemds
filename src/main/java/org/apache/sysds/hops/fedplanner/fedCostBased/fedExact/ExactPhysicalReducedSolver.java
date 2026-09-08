@@ -36,14 +36,65 @@ import java.util.Objects;
  * representative. This is an exact quotient, not candidate pruning.</p>
  */
 final class ExactPhysicalReducedSolver {
+	static final class Prepared {
+		private final int variableCount;
+		private final int[][] representatives;
+		private final ExactCategoricalSolver.CompiledProblem compiled;
+		private final ExactCategoricalSolver.Statistics statistics;
+
+		private Prepared(int variableCount, int[][] representatives,
+			ExactCategoricalSolver.CompiledProblem compiled,
+			ExactCategoricalSolver.Statistics statistics) {
+			this.variableCount = variableCount;
+			this.representatives = representatives;
+			this.compiled = compiled;
+			this.statistics = Objects.requireNonNull(statistics, "statistics");
+		}
+
+		ExactCategoricalSolver.Statistics statistics() { return statistics; }
+		boolean infeasible() { return compiled == null; }
+	}
+
+	private record Reduction(int variableCount, int[][] representatives,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.TieCostFunction tieCost) { }
+
 	private ExactPhysicalReducedSolver() { }
 
 	static ExactCategoricalSolver.Result solve(int originalVariableCount,
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
-		return solve(originalVariableCount, variables, factors, limits,
-			(variable, value) -> 0L);
+		return solve(prepare(originalVariableCount, variables, factors, limits));
+	}
+
+	static Prepared prepare(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits) {
+		try {
+			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
+				(variable, value) -> 0L, false);
+			ExactCategoricalSolver.CompiledProblem compiled = ExactCategoricalSolver.compile(
+				reduction.variables(), reduction.factors(), limits);
+			return new Prepared(reduction.variableCount(), reduction.representatives(), compiled,
+				ExactCategoricalSolver.statistics(compiled));
+		}
+		catch(IllegalArgumentException failure) {
+			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
+				throw failure;
+			return new Prepared(variables.size(), null, null,
+				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L));
+		}
+	}
+
+	static ExactCategoricalSolver.Result solve(Prepared prepared) {
+		Objects.requireNonNull(prepared, "prepared");
+		if(prepared.infeasible())
+			throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
+		ExactCategoricalSolver.Result reduced = ExactCategoricalSolver.solve(prepared.compiled);
+		return expand(reduced, prepared.variableCount, prepared.representatives);
 	}
 
 	static ExactCategoricalSolver.Result solve(int originalVariableCount,
@@ -62,6 +113,18 @@ final class ExactPhysicalReducedSolver {
 	}
 
 	private static ExactCategoricalSolver.Result solve(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactCategoricalSolver.TieCostFunction tieCost, boolean constantObservationHash) {
+		Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
+			tieCost, constantObservationHash);
+		ExactCategoricalSolver.Result reduced = ExactCategoricalSolver.solve(
+			reduction.variables(), reduction.factors(), limits, reduction.tieCost());
+		return expand(reduced, reduction.variableCount(), reduction.representatives());
+	}
+
+	private static Reduction reduce(int originalVariableCount,
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits,
@@ -106,11 +169,6 @@ final class ExactPhysicalReducedSolver {
 				"exact-reduced|" + variable + '|' + variables.get(variable).key(),
 				classValues[variable].length));
 		}
-		IdentityHashMap<ExactCategoricalSolver.Variable,Integer> reducedIndexes =
-			new IdentityHashMap<>();
-		for(int variable = 0; variable < variableCount; variable++)
-			reducedIndexes.put(reducedVariables.get(variable), variable);
-
 		List<ExactCategoricalSolver.Factor> reducedFactors = new ArrayList<>(frozen.factorCount());
 		for(int factor = 0; factor < frozen.factorCount(); factor++) {
 			int[] scope = frozen.scope(factor);
@@ -131,13 +189,22 @@ final class ExactPhysicalReducedSolver {
 			reducedFactors.add(ExactCategoricalSolver.Factor.dense(reducedScope, values));
 		}
 
-		ExactCategoricalSolver.Result reduced = ExactCategoricalSolver.solve(
-			reducedVariables, reducedFactors, limits, (variable, reducedValue) -> {
-				Integer original = reducedIndexes.get(variable);
-				if(original == null)
-					throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_VARIABLE_UNKNOWN");
-				return tieCosts[original][representatives[original][reducedValue]];
-			});
+		IdentityHashMap<ExactCategoricalSolver.Variable,Integer> reducedIndexes =
+			new IdentityHashMap<>();
+		for(int variable = 0; variable < variableCount; variable++)
+			reducedIndexes.put(reducedVariables.get(variable), variable);
+		ExactCategoricalSolver.TieCostFunction reducedTieCost = (variable, reducedValue) -> {
+			Integer original = reducedIndexes.get(variable);
+			if(original == null)
+				throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_VARIABLE_UNKNOWN");
+			return tieCosts[original][representatives[original][reducedValue]];
+		};
+		return new Reduction(variableCount, representatives, List.copyOf(reducedVariables),
+			List.copyOf(reducedFactors), reducedTieCost);
+	}
+
+	private static ExactCategoricalSolver.Result expand(ExactCategoricalSolver.Result reduced,
+		int variableCount, int[][] representatives) {
 		List<Integer> expanded = new ArrayList<>(variableCount);
 		for(int variable = 0; variable < variableCount; variable++)
 			expanded.add(representatives[variable][reduced.assignmentInVariableOrder().get(variable)]);

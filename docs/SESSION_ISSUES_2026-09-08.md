@@ -392,3 +392,27 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - **잔여 위험**: Linux의 single-threaded launcher를 전제로 한다. SIGKILL이나 host crash는
   Python cleanup 자체를 실행할 수 없으므로 재개 전 해당 실행의 process 상태를 확인해야 한다.
   일반 SIGTERM/SIGINT cleanup은 대상 group만 종료하며 다른 workload/컨테이너는 건드리지 않는다.
+
+
+## C / AnytimeTarget 재설계 및 기존 실험 중단 — 진행 중
+
+- 증상: C는 LM에서 충분한 primal 개선 없이 LB 탐색을 지속했고, Target은 raw
+  admission 때문에 reduced exact solve가 가능한 작업도 거절했다. Regional의 기존
+  block은 연결된 assignment가 바뀌어도 재방문하지 않았다.
+- 사용자 변경: 기존 실험을 2,072행에서 중단. C/Target을 개선하고 Global과 함께
+  5%, 3%, 1%에서 새로 비교한다. 이전 84행 후속 실험은 취소했다.
+- 해결 방향: prepared reduced admission, C 최대2회 무조건부 incumbent 개선,
+  bounded seed revisit, Target의 보류 width 재개. 상세 계획은
+  REGIONAL_REFINEMENT_PLAN_KO.md를 참조한다.
+- 수정 파일: ExactPhysicalReducedSolver, ExactCategoricalSolver의 좁은 통계 accessor,
+  RegionalSearchProblem/Optimizer, BranchingRegionalOptimizer, TargetAnytimeOptimizer,
+  LocalCategorical/PhysicalOptimizer, FederatedPlanLocalCost 및 관련 테스트.
+- 검증: 새 worktree에서 clean package와 focused19클래스147테스트 통과(실패·오류·skip0).
+  독립 구현 검토와 so007 native pilot은 진행 중이다. 최종 성능은 아직 주장하지 않는다.
+- 잔여 이슈: 100k reduced gate로도 StepLM/LM 전체 exact는 제한될 수 있다. Seed의
+  추가 비용 및 준비 단계의 실측 비용을 ablation에서 확인해야 한다.
+- 잠재 회귀: 잘못된 캐시 재사용, partial-region infeasibility의 오해, 추가 seed 비용,
+  floating-point false certificate. 조건·limit 변경 테스트 및 모든 checkpoint의
+  독립 Global oracle enclosure/monotonicity 검증으로 탐지한다.
+- 적용 원칙: planner 정책만 변경한다. Privacy/placement legality, canonical objective와
+  runtime 계약은 유지한다. 사용자의 native JVM 지시가 과거 Docker-only 절차를 대체한다.

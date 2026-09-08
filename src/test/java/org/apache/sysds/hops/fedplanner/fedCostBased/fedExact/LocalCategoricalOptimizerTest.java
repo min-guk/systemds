@@ -240,6 +240,124 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
+	public void explicitRevisitImprovesAnOverlappingChain() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 1d),
+			Factor.dense(List.of(x, a), 0d, 4d, 4d, 0d),
+			Factor.dense(List.of(a, b), 10d, 10d, 10d, 0d));
+
+		LocalCategoricalOptimizer.Result legacy = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a), List.of(a, b)), (v, value) -> value);
+		LocalCategoricalOptimizer.Result revisited = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a), List.of(a, b)), (v, value) -> value, 2);
+
+		Assert.assertEquals("the legacy overload remains a single block pass",
+			List.of(0, 1, 1), legacy.assignmentInVariableOrder());
+		Assert.assertEquals(4d, legacy.objective(), 0d);
+		Assert.assertEquals(List.of(1, 1, 1), revisited.assignmentInVariableOrder());
+		Assert.assertEquals(1d, revisited.objective(), 0d);
+		Assert.assertEquals(2, revisited.statistics().localBlockRevisits());
+	}
+
+	@Test
+	public void factorDependencyInvalidatesDisjointBlocks() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		Variable c = new Variable("c", 2);
+		List<Variable> variables = List.of(x, a, b, c);
+		List<Factor> hard = List.of(Factor.lazy(List.of(b, c), values ->
+			values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY));
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 1d),
+			Factor.dense(List.of(x, a), 0d, 4d, 4d, 0d),
+			Factor.dense(List.of(a, b), 0d, 4d, 4d, 0d),
+			Factor.dense(List.of(b, c), 10d, 10d, 10d, 0d));
+
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			variables, hard, costs, variables,
+			List.of(List.of(x, a), List.of(b, c)), (v, value) -> value, 1);
+
+		Assert.assertEquals("the a-b factor must dirty the disjoint x-a block",
+			List.of(1, 1, 1, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(1d, result.objective(), 0d);
+		Assert.assertEquals(0, result.statistics().finalHardViolations());
+		Assert.assertTrue(result.statistics().localBlockRevisits() > 0);
+	}
+
+	@Test
+	public void unchangedBoundariesAvoidRevisitExactWork() {
+		Variable x = new Variable("x", 2);
+		Variable y = new Variable("y", 2);
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			List.of(x, y), List.of(), List.of(
+				Factor.dense(List.of(x), 0d, 2d),
+				Factor.dense(List.of(y), 0d, 3d),
+				Factor.dense(List.of(x, y), 0d, 4d, 5d, 6d)),
+			List.of(x, y), List.of(List.of(x, y)), (v, value) -> value, 2);
+
+		Assert.assertEquals(List.of(0, 0), result.assignmentInVariableOrder());
+		Assert.assertEquals(0, result.statistics().localBlockRevisits());
+		Assert.assertEquals(0, result.statistics().factorizedBlockCompilations());
+		Assert.assertEquals(0L, result.statistics().blockAssignments());
+	}
+
+	@Test
+	public void revisitPassCapBoundsDirtyBlockWork() {
+		Variable x = new Variable("x", 2);
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		List<Variable> variables = List.of(x, a, b);
+		List<Factor> costs = List.of(
+			Factor.dense(List.of(x), 0d, 1d),
+			Factor.dense(List.of(x, a), 0d, 4d, 4d, 0d),
+			Factor.dense(List.of(a, b), 10d, 10d, 10d, 0d));
+
+		LocalCategoricalOptimizer.Result capped = LocalCategoricalOptimizer.optimize(
+			variables, List.of(), costs, variables,
+			List.of(List.of(x, a), List.of(a, b)), (v, value) -> value, 1);
+
+		Assert.assertTrue(capped.statistics().localBlockRevisits()
+			<= capped.statistics().localBlocks());
+		Assert.assertEquals(1d, capped.objective(), 0d);
+		Assert.assertThrows(IllegalArgumentException.class, () ->
+			LocalCategoricalOptimizer.optimize(variables, List.of(), costs, variables,
+				List.of(List.of(x, a)), (v, value) -> value, 17));
+	}
+
+	@Test
+	public void physicalSeedRevisitPropertyIsValidated() {
+		String key = LocalPhysicalOptimizer.SEED_REVISIT_PASSES_PROPERTY;
+		String previous = System.getProperty(key);
+		try {
+			System.clearProperty(key);
+			Assert.assertEquals(2, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
+			System.setProperty(key, "0");
+			Assert.assertEquals(0, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
+			System.setProperty(key, "16");
+			Assert.assertEquals(16, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
+			System.setProperty(key, "17");
+			Assert.assertThrows(IllegalArgumentException.class,
+				LocalPhysicalOptimizer::configuredSeedRevisitPasses);
+			System.setProperty(key, "invalid");
+			Assert.assertThrows(IllegalArgumentException.class,
+				LocalPhysicalOptimizer::configuredSeedRevisitPasses);
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(key);
+			else
+				System.setProperty(key, previous);
+		}
+	}
+
+	@Test
 	public void deferredBlockDoesNotRestartCompletedLocalPass() {
 		Variable x = new Variable("x", 2);
 		Variable w = new Variable("w", 2);

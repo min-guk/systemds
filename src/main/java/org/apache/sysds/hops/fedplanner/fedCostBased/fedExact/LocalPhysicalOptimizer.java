@@ -32,6 +32,11 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Connects the shared physical factor model to the local-conflict optimizer. */
 final class LocalPhysicalOptimizer {
+	static final String SEED_REVISIT_PASSES_PROPERTY =
+		CertifiedRegionalOptimizer.PROPERTY_PREFIX + "seedRevisitPasses";
+	static final int DEFAULT_SEED_REVISIT_PASSES = 2;
+	static final int MAX_SEED_REVISIT_PASSES = 16;
+
 	record Result(ExactPhysicalOptimizer.Result physicalResult,
 		LocalCategoricalOptimizer.Statistics localStatistics,
 		CertifiedRegionalOptimizer.Result certificate, RegionalSearchOptimizer.Result search) {
@@ -42,6 +47,23 @@ final class LocalPhysicalOptimizer {
 	}
 
 	private LocalPhysicalOptimizer() { }
+
+	static int configuredSeedRevisitPasses() {
+		String raw = System.getProperty(SEED_REVISIT_PASSES_PROPERTY,
+			Integer.toString(DEFAULT_SEED_REVISIT_PASSES));
+		final int passes;
+		try {
+			passes = Integer.parseInt(raw);
+		}
+		catch(NumberFormatException ex) {
+			throw new IllegalArgumentException(
+				"LOCAL_SEED_REVISIT_PASSES_INVALID|value=" + raw + "|range=0..16", ex);
+		}
+		if(passes < 0 || passes > MAX_SEED_REVISIT_PASSES)
+			throw new IllegalArgumentException(
+				"LOCAL_SEED_REVISIT_PASSES_INVALID|value=" + raw + "|range=0..16");
+		return passes;
+	}
 
 	private static final class ValueBoundaryHardClosure {
 		private final List<DecisionDomain> domains;
@@ -143,7 +165,7 @@ final class LocalPhysicalOptimizer {
 				// Alternative.signature is the complete future-observable state: it includes
 				// placement plus exact candidate, input, and movement authority.
 				return domain.alternatives().get(value).signature();
-			});
+			}, configuredSeedRevisitPasses());
 
 		long canonicalBits = surface.evaluateCanonical(local.assignmentInVariableOrder());
 		double canonicalObjective = Double.longBitsToDouble(canonicalBits);

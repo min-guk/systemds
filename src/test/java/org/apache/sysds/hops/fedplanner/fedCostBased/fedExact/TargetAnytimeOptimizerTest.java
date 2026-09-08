@@ -64,6 +64,21 @@ public class TargetAnytimeOptimizerTest {
 	}
 
 	@Test
+	public void deferredWidthIsRetriedAfterRegionalCoverageStops() {
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		Variable c = new Variable("c", 2);
+		Fixture fixture = new Fixture(List.of(a, b, c),
+			List.of(pair(a, b, false), pair(b, c, false), pair(a, c, true)), List.of(0, 0, 0), 10d);
+		Result result = solve(fixture, common(1, 3, 1, 1, true), 1, 0L, 100_000L);
+		Assert.assertTrue(result.targetReached());
+		Assert.assertTrue(result.statistics().get("boundWidthResumptions") >= 1L);
+		Assert.assertTrue(result.checkpoints().stream().anyMatch(row ->
+			row.phase().equals("ANYTIME_TARGET_BOUND_RESUMED") && row.details().contains("nextWidth=3")));
+		assertCertificate(fixture, result);
+	}
+
+	@Test
 	public void admittedWholePreflightClosesBeforeCoverage() {
 		Fixture fixture = frustratedClique();
 		Result result = solve(fixture, common(1, 1, 1, 4, true), 1, Long.MAX_VALUE, 100_000L);

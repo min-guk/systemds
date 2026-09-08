@@ -89,6 +89,32 @@ public class ExactPhysicalReducedSolverTest {
 	}
 
 	@Test
+	public void preparedReductionExposesAdmissibleWorkAndReusesFrozenLazyFactors() {
+		List<ExactCategoricalSolver.Variable> variables = variables(4, 8);
+		AtomicInteger evaluations = new AtomicInteger();
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+		for(int left = 0; left < variables.size(); left++)
+			for(int right = left + 1; right < variables.size(); right++)
+				factors.add(ExactCategoricalSolver.Factor.lazy(
+					List.of(variables.get(left), variables.get(right)), values -> {
+						evaluations.incrementAndGet();
+						return 0d;
+					}));
+		ExactCategoricalSolver.Limits small = new ExactCategoricalSolver.Limits(100, 2_000);
+
+		ExactPhysicalReducedSolver.Prepared prepared = ExactPhysicalReducedSolver.prepare(
+			variables.size(), variables, factors, small);
+		int afterPreparation = evaluations.get();
+
+		Assert.assertFalse(prepared.infeasible());
+		Assert.assertTrue(prepared.statistics().maximumFactorCells() <= 100);
+		Assert.assertEquals(List.of(0, 0, 0, 0),
+			ExactPhysicalReducedSolver.solve(prepared).assignmentInVariableOrder());
+		Assert.assertEquals("prepared solve reevaluated original lazy factors",
+			afterPreparation, evaluations.get());
+	}
+
+	@Test
 	public void distinctRawObservationsAreNeverMerged() {
 		List<ExactCategoricalSolver.Variable> variables = variables(4, 8);
 		List<ExactCategoricalSolver.Factor> factors = completeBinaryClique(variables, true);

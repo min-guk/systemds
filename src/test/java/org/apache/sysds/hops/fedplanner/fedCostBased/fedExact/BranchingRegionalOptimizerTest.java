@@ -39,6 +39,31 @@ public class BranchingRegionalOptimizerTest {
 	}
 
 	@Test
+	public void independentIncumbentRegionImprovesPlanWithoutClosingConditionalSpace() {
+		Variable a = new Variable("a", 2);
+		Variable b = new Variable("b", 2);
+		Variable c = new Variable("c", 2);
+		Variable d = new Variable("d", 2);
+		Fixture fixture = new Fixture(List.of(a, b, c, d), List.of(
+			Factor.dense(List.of(a, b), 0, 10, 10, 0),
+			Factor.dense(List.of(b, c), 0, 10, 10, 0),
+			Factor.dense(List.of(a, c), 10, 0, 0, 10),
+			Factor.dense(List.of(d), 5, 6)), List.of(0, 1, 0, 0));
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(1, 2, 8, 1, 1,
+			60_000L, 0d, 0d, false, true, ExpansionPolicy.DISAGREEMENT, 19L, LIMITS);
+		Options options = new Options(Algorithm.REUSE, common, 16, 1, 3, 1, 0L, 100_000L, 2);
+		Result result = RegionalSearchOptimizer.optimize(fixture.variables, fixture.factors, fixture.seed, options);
+		RegionalSearchOptimizer.Checkpoint improved = result.checkpoints().stream()
+			.filter(row -> row.phase().equals("INCUMBENT_REGION")).findFirst().orElseThrow();
+		Assert.assertEquals(15d, improved.upperBound(), 0d);
+		Assert.assertTrue(improved.lowerBound() < improved.upperBound());
+		Assert.assertTrue(improved.details().contains("condition=root"));
+		Assert.assertEquals(0L, improved.statistics().get("closedNodes").longValue());
+		Assert.assertTrue(result.statistics().get("incumbentRescueAttempts") <= 2L);
+		assertCertificate(fixture, 15d, result);
+	}
+
+	@Test
 	public void fallbackProbeBoundsCannotBeCountedAsCacheHits() {
 		Assert.assertEquals(0L,
 			BranchingRegionalOptimizer.reusableProbeBounds(List.of(false, false)));
