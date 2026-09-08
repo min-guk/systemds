@@ -316,3 +316,79 @@ Decision rationale: refine and verify the encoded cost objective while preservin
   exact phases have soft deadlines; interrupted probes must preserve coverage;
   deferred nodes stay in global LB. Preserve all failed/censored rows and verify
   initial objectives, model/order identity and algorithm-specific work traces.
+
+## 기존·수정 Anytime를 포함한 네 환경 native JVM 검증 — 진행 중
+
+- **상태**: Target Anytime 구현·테스트 완료, 전체 반복 측정 전 사전 점검 중.
+- **문제 정의**: 사용자는 10 ML + P1/P2 + 실제 SliceLine 입력에 대해 Global,
+  Regional, 기존 Anytime, 수정 Anytime, Algorithm 1/2/3을 네 network cost
+  profile에서 비교하도록 요청했다. 기존 Anytime도 U/L 개선과 threshold 검사가
+  있었으므로 단순히 같은 검사를 새 기능으로 설명해서는 안 된다.
+- **해결 / 수정 파일**: `TargetAnytimeOptimizer.java`를 별도 selector
+  `algorithm=anytime-target`로 추가했다. typed whole preflight, 누적 region growth,
+  무개선 시 growth 가속, 목표 residual 기여가 작은 후속 MBE width 중단을 구현했다.
+  `RegionalSearchOptimizer`, `RegionalSearchProblem`, `FederatedPlanLocalCost`와
+  관련 테스트만 확장했다. Legacy 및 Algorithm 1/2/3 정책 소스는 그대로다.
+- **규칙과 의사결정 근거**: 최신 사용자가 Docker를 실행하지 않고 네 환경의
+  bandwidth/latency 값만 채택한 로컬 JVM planning을 명시했다. 따라서 이전
+  Docker-only 실험 지침에 대한 해당 세션의 override로 native compile-only 경로를
+  사용한다. `run_LAN.sh`나 Docker/worker/workload/CP reference 실행은 사용하지 않는다.
+  privacy, legality, runtime, cost surface 규칙은 수정하지 않았다.
+- **구현 검증**: commit `370d6a8ba3eb99425c3b5c1c83ffb113ee554e07`, so007 clean
+  package 19 classes / 136 tests, 실패·오류·skip 0. JAR SHA-256
+  `0b896e12ebbdf0a061bece458e826ac02923eeadae0307fea143995e5909ed4a`.
+  근거 `/home/mchoi/so007-sevenway-evidence-20260908/validation/implementation-provenance.json`.
+  [구현 보고서](ANYTIME_TARGET_IMPLEMENTATION_KO.md)에 설정·정리·테스트를 설명한다.
+- **실험 조건**: 기본 16 workloads × 4 profiles × 7 methods × 5 paired repetitions,
+  상대 목표 1%, seed 이후 soft budget 20초, JVM watchdog 60초. 별도 KMeans/L2SVM
+  LAN/WAN-heavy × 7 × 3회에서는 초기 whole exact gate를 0으로 설정한다.
+  이 항목 작성 시 protocol은 draft이고 본 측정은 아직 시작하지 않았다.
+- **사전 점검**: 새 JAR의 KMeans/PCA/L2SVM LAN 21행 모두 compile-only receipt 통과.
+  같은 encoded model, Regional initial U, initial MBE 및 oracle enclosure 검증 통과.
+  다른 workload와 WAN 설정 점검은 진행 중이며 smoke는 성능 집계에서 제외한다.
+- **잔여 이슈**: phase는 soft deadline을 초과할 수 있다. 초기 whole closure를 사용한
+  결과는 누적 Regional 정책 자체의 효과와 구분한다. Legacy와 Global에는 새 controller의
+  work-estimate gate가 적용되지 않으므로 동일 설정 문자열만으로 동일 자원 정책이라고
+  주장하지 않는다. 5회 cyclic 실행 순서는 cell별 7개 position의 완전 균형이 아니다.
+- **잠재 회귀 위험 / 감지**: false certificate, 잘못된 full-Q closure, output 생성,
+  초기 model/seed 불일치를 targeted tests, raw traces와 독립 Global로 검출한다.
+  source/input/runtime hash는 각 campaign 전후, 입력과 JAR는 각 JVM 전에 확인한다.
+
+### P2_PREP 공통 배치 실패 — 기존 제약 확인, 실패 행 보존
+
+- **상태**: 원인 확인; privacy 규칙을 완화하지 않고 해당 입력의 실패로 기록.
+- **조건 / 재현**: 기존 P2 X/Y metadata의 `PRIVATE_AGGREGATE`를 보존한
+  `native/inputs-v1/programs/P2_PREP.dml`, worker 1, LAN, 7개 selector.
+- **관측**: `No privacy-safe physical placement`가 transformencode의 metadata
+  `DataOp:FunOut M:M`에서 발생한다. optimizer 선택 이전의 공통 legality 분석이다.
+- **원인**: metadata M은 local 출력이고 PRIVATE_AGGREGATE로 전파된 해당 상태를
+  원래 규칙 아래 배치할 수 없다. 2026-09-06 세션에도 같은 P2 조건이 기록되어 있다.
+- **해결**: template의 M output, metadata privacy, candidate space를 변경하지 않는다.
+  실제 실패를 남기고 인증 성공률의 분모에 포함한다. hash가 일치하는 raw log에서
+  privacy 실패를 구분하며, 실패한 행에 계획·LB·certificate를 채우지 않는다.
+- **수정 파일 / 검증**: planner 수정 없음. native analyzer의 실패 분류만 보강했고
+  hash-bound 분류 회귀 테스트를 포함한 analyzer 9개 Python 테스트가 통과했다.
+  input smoke의 Regional 1행과 새 JAR의 7개 방법에서 같은 배치 실패를 관측했다.
+- **로그 근거**: `/home/mchoi/so007-sevenway-evidence-20260908/native/runs/remaining-workloads-smoke-v1/`.
+- **잔여 이슈 / 위험 감지**: P2의 feasible 계획 성능은 이 조건에서 비교할 수 없다.
+  privacy를 변경한 후속 실험은 다른 문제이므로 이번 행을 대체할 수 없다.
+  main campaign에서 다른 failure 원인이 발생하면 raw log로 따로 분류한다.
+
+### 실험 launcher의 중단 복구 — 보강 완료, 새 smoke 검증 중
+
+- **문제**: JSONL append 중 중단되면 마지막 fragment 때문에 resume parsing이
+  실패할 수 있고 Python interruption 정리가 없으면 child JVM이 lock보다 오래 살아
+  다음 측정에 영향을 줄 수 있다. 정상 완료 행의 certificate 의미와는 별개다.
+- **해결**: newline으로 완료된 record를 먼저 모두 검증하고 마지막 미완료 fragment만
+  hash 이름으로 보존한 뒤 atomic `collected.json`으로 복구한다. parent는 Popen 전에
+  SIGTERM/SIGINT를 잠시 block하고, child는 exec 전에 원래 mask를 복원한다. parent는
+  process group과 pipe 소유권을 얻은 뒤 pending signal을 처리하므로 시작 직후 중단도
+  해당 group의 kill/reap을 거친다. 원래 handler/mask와 raw log를 보존한다.
+- **수정 파일 / 검증**: native `run_sevenway.py`와 테스트만 변경. runner 12개,
+  analyzer 9개 Python 테스트가 live 통합 후 통과했다. injected launch-window SIGTERM,
+  child mask와 graceful watchdog, malformed committed JSONL, 마지막 fragment 복구를
+  검증했고 독립 review가 CLEAR for integration으로 판정했다. 이후 WAN smoke가 새
+  runner SHA `dc43037d8241609ca354ed5c17e76a42cff577109b89ec5a45edd6e6794ff179`를 사용한다.
+- **잔여 위험**: Linux의 single-threaded launcher를 전제로 한다. SIGKILL이나 host crash는
+  Python cleanup 자체를 실행할 수 없으므로 재개 전 해당 실행의 process 상태를 확인해야 한다.
+  일반 SIGTERM/SIGINT cleanup은 대상 group만 종료하며 다른 workload/컨테이너는 건드리지 않는다.
