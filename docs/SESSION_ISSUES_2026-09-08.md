@@ -263,3 +263,29 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - **Potential regression / detection**: future source or evidence changes can
   make the report stale. Preserve commit/artifact identities, check the recorded
   evidence hashes and regenerate numerical comparisons before revising claims.
+
+### Threshold Regional proposal report — resolved
+
+- **Request / symptom**: the proposed threshold-driven algorithm needed a durable
+  report that distinguishes its design from the already implemented optimizer.
+- **Resolution**: added `docs/THRESHOLD_REGIONAL_ALGORITHM_PROPOSAL_KO.md` with
+  cost-bound/error definitions, threshold residual scheduling, explicit nested
+  relaxation requirements, mandatory coverage, proof conditions, pseudocode,
+  KMeans necessity calculations and future planning-only ablations.
+- **Decision rationale / scope**: document the requested proposal without changing
+  planner/runtime behavior or experimental conditions. The report marks all new
+  scheduler/relaxation features and follow-up tests as unimplemented/unexecuted.
+- **Validation**: recomputed the 11 displayed numerical quantities from the stored
+  pilot comparison with decimal arithmetic. Both one-sided improvement floors
+  exceed 1%. Checked eight local evidence/source links and document formatting;
+  repaired one relative evidence link before delivery. Validation metadata is
+  `/home/mchoi/so007-certified-regional-evidence-20260908/reports/threshold-regional-proposal-validation.json`.
+  Independent mathematical/report review passed; consistency restoration was
+  clarified to cover replicated auxiliary variables as well as original decisions.
+- **Remaining issues**: implementation and empirical evaluation of this proposed
+  extension remain future work. The existing 148 tests validate the earlier
+  implementation and do not establish correctness or speedup for the proposal.
+- **Potential regression / detection**: misleading completeness or convergence
+  claims. Keep resource/fairness assumptions, distinguish exact relaxation optima
+  from incomplete raw bounds, and retain the explicit proposal status when
+  reusing this document.
