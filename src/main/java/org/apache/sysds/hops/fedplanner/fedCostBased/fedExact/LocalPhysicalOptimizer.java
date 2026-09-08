@@ -168,10 +168,17 @@ final class LocalPhysicalOptimizer {
 		long orderedSeedNanos = 0L;
 		if(incremental && !initializationLimited) {
 			long started = System.nanoTime();
-			Seed ordered = regionalSeed(model, surface, hardFactors, false);
-			orderedSeedNanos = System.nanoTime() - started;
-			if(seed == null || ordered.local().objective() < seed.local().objective())
-				seed = ordered;
+			try {
+				Seed ordered = regionalSeed(model, surface, hardFactors, false);
+				if(seed == null || ordered.local().objective() < seed.local().objective())
+					seed = ordered;
+			}
+			catch(IllegalArgumentException limited) {
+				// An optional seed attempt must not discard a verified projection.
+				if(seed == null || !RegionalSearchProblem.isResourceLimit(limited))
+					throw limited;
+			}
+			finally { orderedSeedNanos = System.nanoTime() - started; }
 		}
 		if(seed == null)
 			seed = regionalSeed(model, surface, hardFactors);
