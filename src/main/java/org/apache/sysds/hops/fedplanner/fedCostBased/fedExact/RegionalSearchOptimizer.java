@@ -26,7 +26,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 
 /** Shared numerical certificate, budget and trace boundary; algorithm policies are separate. */
 final class RegionalSearchOptimizer {
-	enum Algorithm { ANYTIME_TARGET, THRESHOLD, TARGET_GAP, REUSE }
+	enum Algorithm { ANYTIME_TARGET, ANYTIME_INCREMENTAL, THRESHOLD, TARGET_GAP, REUSE }
 	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT, STEP_LIMIT, REGION_LIMIT, FRONTIER_LIMIT }
 
 	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
@@ -56,6 +56,8 @@ final class RegionalSearchOptimizer {
 				|| exactClosureAssignments < 0 || regionWorkLimit < 0 || !common.expandRegions()
 				|| incumbentRescueAttempts < 0 || incumbentRescueAttempts > 2)
 				throw new IllegalArgumentException("REGIONAL_SEARCH_OPTIONS_INVALID");
+			if(algorithm == Algorithm.ANYTIME_INCREMENTAL && (probeCandidates > 2 || regionWorkLimit == 0))
+				throw new IllegalArgumentException("INCREMENTAL_SEARCH_OPTIONS_INVALID");
 		}
 		static Options configured(CertifiedRegionalOptimizer.Options common) {
 			String value = System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "algorithm", "legacy");
@@ -63,6 +65,7 @@ final class RegionalSearchOptimizer {
 				return null;
 			Algorithm algorithm = switch(value) {
 				case "anytime-target" -> Algorithm.ANYTIME_TARGET;
+				case "anytime-incremental" -> Algorithm.ANYTIME_INCREMENTAL;
 				case "threshold" -> Algorithm.THRESHOLD;
 				case "target-gap" -> Algorithm.TARGET_GAP;
 				case "reuse" -> Algorithm.REUSE;
@@ -160,7 +163,8 @@ final class RegionalSearchOptimizer {
 		State(RegionalSearchProblem problem, List<Integer> seed, Options options, Consumer<Checkpoint> observer) {
 			this.options = Objects.requireNonNull(options, "options");
 			this.problem = Objects.requireNonNull(problem, "problem").usingCompactedPreparation(
-				options.algorithm() == Algorithm.ANYTIME_TARGET && options.targetCompactPreparation());
+				(options.algorithm() == Algorithm.ANYTIME_TARGET
+					|| options.algorithm() == Algorithm.ANYTIME_INCREMENTAL) && options.targetCompactPreparation());
 			this.observer = Objects.requireNonNull(observer, "observer");
 			assignment = List.copyOf(seed);
 			upper = this.problem.evaluate(assignment);
@@ -316,6 +320,12 @@ final class RegionalSearchOptimizer {
 		if(state.reached())
 			return state.finish(state.upper == 0 ? StopReason.GLOBAL_EXACT : StopReason.TARGET_REACHED);
 		try {
+			if(options.algorithm() == Algorithm.ANYTIME_INCREMENTAL) {
+				if(state.expired())
+					return state.finish(StopReason.TIME_BUDGET);
+				return IncrementalAnytimeOptimizer.run(state,
+					IncrementalAnytimeOptimizer.initialize(state.problem, options));
+			}
 			state.initialBound = state.bound(problem.unconstrained(), options.common().initialWidth());
 			state.raiseLower(state.initialBound.lowerBound());
 			state.publish("INITIAL_BOUND");
@@ -325,6 +335,7 @@ final class RegionalSearchOptimizer {
 				return state.finish(StopReason.TIME_BUDGET);
 			return switch(options.algorithm()) {
 				case ANYTIME_TARGET -> TargetAnytimeOptimizer.run(state);
+				case ANYTIME_INCREMENTAL -> throw new IllegalStateException("INCREMENTAL_DISPATCH_INVALID");
 				case THRESHOLD -> AdaptiveThresholdOptimizer.run(state);
 				case TARGET_GAP, REUSE -> BranchingRegionalOptimizer.run(state);
 			};

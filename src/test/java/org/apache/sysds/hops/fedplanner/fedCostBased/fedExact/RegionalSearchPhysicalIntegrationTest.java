@@ -46,6 +46,8 @@ public class RegionalSearchPhysicalIntegrationTest {
 		ExactPhysicalOptimizer.Result global = ExactPhysicalOptimizer.optimize(fixture.model(), fixture.surface(),
 			ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 		for(RegionalSearchOptimizer.Algorithm algorithm : RegionalSearchOptimizer.Algorithm.values()) {
+			if(algorithm == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL)
+				continue; // Its projected seed and positive-gap contract are tested separately below.
 			CertifiedRegionalOptimizer.Options common = common(60000);
 			RegionalSearchOptimizer.Options options = new RegionalSearchOptimizer.Options(algorithm, common,
 				256, 2, 2, 4096, Long.MAX_VALUE);
@@ -97,6 +99,8 @@ public class RegionalSearchPhysicalIntegrationTest {
 	public void zeroSchedulingBudgetReturnsVerifiedSeedForEveryAlgorithm() throws Exception {
 		Fixture fixture = fixture();
 		for(RegionalSearchOptimizer.Algorithm algorithm : RegionalSearchOptimizer.Algorithm.values()) {
+			if(algorithm == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL)
+				continue; // Initialization is part of seed creation, outside the scheduling budget.
 			CertifiedRegionalOptimizer.Options common = common(0);
 			RegionalSearchOptimizer.Result result = LocalPhysicalOptimizer.optimize(fixture.model(), fixture.surface(), common,
 				ignored -> { }, new RegionalSearchOptimizer.Options(algorithm, common, 10, 2, 2, 32, 100), ignored -> { }).search();
@@ -104,6 +108,33 @@ public class RegionalSearchPhysicalIntegrationTest {
 			Assert.assertEquals(result.seedUpperBound(), result.upperBound(), 0);
 			Assert.assertEquals(0, result.lowerBound(), 0);
 			Assert.assertFalse(result.targetReached());
+		}
+	}
+
+	@Test
+	public void incrementalSearchPreservesPhysicalAuthorityWithProjectedSeed() throws Exception {
+		Fixture fixture = fixture();
+		double optimum = ExactPhysicalOptimizer.optimize(fixture.model(), fixture.surface(),
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS).solverResult().objective();
+		for(double target : new double[] {0.05, 0.03}) {
+			CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+				2, 2, 8, 8, 24, 60000, 0, target, true, true,
+				CertifiedRegionalOptimizer.ExpansionPolicy.DISAGREEMENT, 20260908,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			RegionalSearchOptimizer.Options options = new RegionalSearchOptimizer.Options(
+				RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL, common, 64, 2, 3, 64, 0, 1_000_000, 2);
+			RegionalSearchOptimizer.Result result = LocalPhysicalOptimizer.optimize(fixture.model(), fixture.surface(),
+				common, ignored -> { }, options, ignored -> { }).search();
+			Assert.assertTrue(result.targetReached());
+			Assert.assertEquals(0L, result.statistics().get("wholeClosureAttempts").longValue());
+			for(RegionalSearchOptimizer.Checkpoint row : result.checkpoints()) {
+				Assert.assertTrue(row.lowerBound() <= optimum);
+				Assert.assertTrue(row.upperBound() >= optimum);
+				Assert.assertTrue(Double.isFinite(CertifiedRegionalOptimizer.evaluate(fixture.model().variables(),
+					fixture.model().hardFactors(), row.assignment())));
+				Assert.assertEquals(fixture.surface().evaluateCanonical(row.assignment()),
+					Double.doubleToRawLongBits(row.upperBound()));
+			}
 		}
 	}
 

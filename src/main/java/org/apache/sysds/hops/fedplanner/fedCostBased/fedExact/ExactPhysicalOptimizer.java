@@ -44,7 +44,7 @@ final class ExactPhysicalOptimizer {
 		factors.addAll(surface.exactSolverFactors());
 		ExactCategoricalSolver.Result solved;
 		try {
-			solved = ExactPhysicalReducedSolver.solve(modelVariables.size(),
+			solved = ExactPhysicalReducedSolver.solveCompacted(modelVariables.size(),
 				surface.exactSolverVariables(), factors, limits);
 		}
 		catch(IllegalArgumentException failure) {

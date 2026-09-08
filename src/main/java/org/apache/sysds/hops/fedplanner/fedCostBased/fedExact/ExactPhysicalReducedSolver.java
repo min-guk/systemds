@@ -36,6 +36,60 @@ import java.util.Objects;
  * representative. This is an exact quotient, not candidate pruning.</p>
  */
 final class ExactPhysicalReducedSolver {
+	/**
+	 * Immutable exact-reduced input model shared by exact and bounded-width solvers.
+	 * This object contains no elimination plan and therefore performs no exact compile.
+	 */
+	static final class CompactModel {
+		private final int originalDecisionCount;
+		private final List<ExactCategoricalSolver.Variable> variables;
+		private final List<ExactCategoricalSolver.Factor> factors;
+		private final List<ExactCategoricalSolver.Variable> sourceVariables;
+		private final int sourceVariableCount;
+		private final int[][] representatives;
+		private final int[] sourceToCompact;
+
+		private CompactModel(int originalDecisionCount,
+			List<ExactCategoricalSolver.Variable> variables,
+			List<ExactCategoricalSolver.Factor> factors,
+			List<ExactCategoricalSolver.Variable> sourceVariables,
+			int sourceVariableCount, int[][] representatives, int[] sourceToCompact) {
+			this.originalDecisionCount = originalDecisionCount;
+			this.variables = List.copyOf(variables);
+			this.factors = List.copyOf(factors);
+			this.sourceVariables = List.copyOf(sourceVariables);
+			this.sourceVariableCount = sourceVariableCount;
+			this.representatives = Arrays.stream(representatives)
+				.map(int[]::clone).toArray(int[][]::new);
+			this.sourceToCompact = sourceToCompact.clone();
+		}
+
+		int originalDecisionCount() { return originalDecisionCount; }
+		List<ExactCategoricalSolver.Variable> variables() { return variables; }
+		List<ExactCategoricalSolver.Factor> factors() { return factors; }
+		List<ExactCategoricalSolver.Variable> sourceVariables() { return sourceVariables; }
+
+		List<Integer> expandAssignment(List<Integer> compactAssignment) {
+			Objects.requireNonNull(compactAssignment, "compactAssignment");
+			if(compactAssignment.size() != variables.size())
+				throw new IllegalArgumentException(
+					"EXACT_PHYSICAL_COMPACT_ASSIGNMENT_SIZE_MISMATCH");
+			for(int compact = 0; compact < compactAssignment.size(); compact++) {
+				Integer value = compactAssignment.get(compact);
+				if(value == null || value < 0 || value >= variables.get(compact).domainSize())
+					throw new IllegalArgumentException(
+						"EXACT_PHYSICAL_COMPACT_ASSIGNMENT_VALUE_INVALID");
+			}
+			List<Integer> expanded = new ArrayList<>(sourceVariableCount);
+			for(int source = 0; source < sourceVariableCount; source++) {
+				int compact = sourceToCompact[source];
+				int reducedValue = compact < 0 ? 0 : compactAssignment.get(compact);
+				expanded.add(representatives[source][reducedValue]);
+			}
+			return List.copyOf(expanded);
+		}
+	}
+
 	static final class Prepared {
 		private final int variableCount;
 		private final int[][] representatives;
@@ -112,13 +166,11 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
 		try {
-			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
-				(variable, value) -> 0L, false);
-			Compaction compaction = compact(reduction);
+			CompactModel compact = compactModel(originalVariableCount, variables, factors, limits);
 			ExactCategoricalSolver.CompiledProblem compiled = ExactCategoricalSolver.compile(
-				compaction.variables(), compaction.factors(), limits);
-			return new Prepared(reduction.variableCount(), reduction.representatives(),
-				compaction.reducedToCompiled(), compiled, ExactCategoricalSolver.statistics(compiled));
+				compact.variables(), compact.factors(), limits);
+			return new Prepared(compact.sourceVariableCount, compact.representatives,
+				compact.sourceToCompact, compiled, ExactCategoricalSolver.statistics(compiled));
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
@@ -126,6 +178,29 @@ final class ExactPhysicalReducedSolver {
 			return new Prepared(variables.size(), null, null, null,
 				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L));
 		}
+	}
+
+	static CompactModel compactModel(int originalDecisionCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits) {
+		Reduction reduction = reduce(originalDecisionCount, variables, factors, limits,
+			(variable, value) -> 0L, false);
+		Compaction compaction = compact(reduction);
+		List<ExactCategoricalSolver.Variable> compactSources = new ArrayList<>();
+		for(int source = 0; source < reduction.variableCount(); source++)
+			if(compaction.reducedToCompiled()[source] >= 0)
+				compactSources.add(variables.get(source));
+		return new CompactModel(originalDecisionCount, compaction.variables(),
+			compaction.factors(), compactSources, reduction.variableCount(),
+			reduction.representatives(), compaction.reducedToCompiled());
+	}
+
+	static ExactCategoricalSolver.Result solveCompacted(int originalDecisionCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits) {
+		return solve(prepareCompacted(originalDecisionCount, variables, factors, limits));
 	}
 
 	static ExactCategoricalSolver.Result solve(Prepared prepared) {

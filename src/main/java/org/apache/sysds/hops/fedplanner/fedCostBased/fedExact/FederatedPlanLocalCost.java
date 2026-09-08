@@ -65,7 +65,8 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					+ "regionWorkLimit=%d incumbentRescueAttempts=%d seedRevisitPasses=%d "
 					+ "exactAdmission=reduced-prepared targetResumeDeferredWidths=true targetCompactPreparation=%s "
 					+ "refineBound=%s expandRegions=%s policy=%s targetIgnoresRoundsSteps=%s "
-					+ "targetBoundMinResidualFraction=%.17g budgetScope=after-seed softDeadline=true",
+					+ "targetBoundMinResidualFraction=%.17g budgetScope=after-seed softDeadline=true "
+					+ "incrementalComponentBounds=%s seedPolicy=%s",
 				searchOptions.algorithm(), options.initialWidth(), options.maximumWidth(), options.rounds(),
 				options.regionGrowth(), options.maximumRegionVariables(), options.timeBudgetMillis(),
 				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(), options.seed(),
@@ -73,11 +74,15 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 				searchOptions.probeCandidates(), searchOptions.coveragePeriod(), searchOptions.maximumFrontier(),
 				searchOptions.exactClosureAssignments(), searchOptions.regionWorkLimit(),
 					searchOptions.incumbentRescueAttempts(), LocalPhysicalOptimizer.configuredSeedRevisitPasses(),
-					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET
+					(searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET
+						|| searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL)
 						&& searchOptions.targetCompactPreparation(),
 					options.refineBound(), options.expandRegions(), options.policy(),
 				searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
-				TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION));
+					TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION,
+					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL,
+					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
+						? "replica-projection-or-regional" : "regional"));
 		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
 				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "

@@ -137,6 +137,10 @@ final class RegionalSearchProblem {
 	int domainSize(int decision) { return variables.get(decision).domainSize(); }
 	int indexOf(Variable variable) { return positions.getOrDefault(variable, -1); }
 	String orderFingerprint() { return orderFingerprint; }
+	/** Whole original model only: conditional/Regional optima are not global lower bounds. */
+	ExactPhysicalReducedSolver.CompactModel compactRoot(Limits limits) {
+		return ExactPhysicalReducedSolver.compactModel(decisionCount, variables, factors, limits);
+	}
 	RegionalSearchProblem usingCompactedPreparation(boolean enabled) {
 		// Each mode has its own pending prepared solve. Original factor identities,
 		// ordering and the canonical evaluator remain the same.

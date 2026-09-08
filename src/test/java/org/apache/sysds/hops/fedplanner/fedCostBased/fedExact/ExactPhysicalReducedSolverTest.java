@@ -153,6 +153,97 @@ public class ExactPhysicalReducedSolverTest {
 	}
 
 	@Test
+	public void compactModelExposesStableMixedSourceMappingWithoutExactCompile() {
+		var originalForced = variable("original-forced", 2);
+		var originalFree = variable("original-free", 3);
+		var auxiliaryFree = variable("auxiliary-free", 2);
+		var auxiliaryForced = variable("auxiliary-forced", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(originalForced, originalFree,
+			auxiliaryFree, auxiliaryForced);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			forcingFactor(originalForced, 1, 0d),
+			ExactCategoricalSolver.Factor.dense(List.of(originalFree), 2d, 0d, 1d),
+			ExactCategoricalSolver.Factor.dense(List.of(auxiliaryFree), 1d, 0d),
+			forcingFactor(auxiliaryForced, 0, 0d),
+			ExactCategoricalSolver.Factor.dense(
+				List.of(originalForced, originalFree, auxiliaryFree, auxiliaryForced),
+				new double[24]));
+
+		ExactPhysicalReducedSolver.CompactModel compact = ExactPhysicalReducedSolver.compactModel(
+			2, variables, factors, GENEROUS);
+
+		Assert.assertEquals(2, compact.originalDecisionCount());
+		Assert.assertEquals(2, compact.variables().size());
+		Assert.assertSame(originalFree, compact.sourceVariables().get(0));
+		Assert.assertSame(auxiliaryFree, compact.sourceVariables().get(1));
+		Assert.assertEquals(List.of(1, 2, 1, 0), compact.expandAssignment(List.of(2, 1)));
+		try {
+			compact.variables().add(variable("forbidden", 2));
+			Assert.fail("compact variable list was mutable");
+		}
+		catch(UnsupportedOperationException expected) {
+			// Expected immutable view.
+		}
+	}
+
+	@Test
+	public void compactModelDoesNotCompileExactEliminationPlan() {
+		List<ExactCategoricalSolver.Variable> variables = variables(4, 3);
+		List<ExactCategoricalSolver.Factor> factors = completeBinaryClique(variables, true, 3);
+		ExactCategoricalSolver.Limits inputFitsButEliminationDoesNot =
+			new ExactCategoricalSolver.Limits(10, 1_000);
+
+		ExactPhysicalReducedSolver.CompactModel compact = ExactPhysicalReducedSolver.compactModel(
+			4, variables, factors, inputFitsButEliminationDoesNot);
+		Assert.assertEquals(4, compact.variables().size());
+		try {
+			ExactPhysicalReducedSolver.prepareCompacted(4, variables, factors,
+				inputFitsButEliminationDoesNot);
+			Assert.fail("exact compilation unexpectedly fit the factor limit");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		}
+	}
+
+	@Test
+	public void compactModelExpansionRejectsInvalidAssignments() {
+		var forced = variable("forced", 2);
+		var free = variable("free", 2);
+		ExactPhysicalReducedSolver.CompactModel compact = ExactPhysicalReducedSolver.compactModel(
+			1, List.of(forced, free), List.of(forcingFactor(forced, 1, 0d)), GENEROUS);
+
+		assertCompactExpansionFailure(compact, List.of(),
+			"EXACT_PHYSICAL_COMPACT_ASSIGNMENT_SIZE_MISMATCH");
+		assertCompactExpansionFailure(compact, List.of(-1),
+			"EXACT_PHYSICAL_COMPACT_ASSIGNMENT_VALUE_INVALID");
+		assertCompactExpansionFailure(compact, List.of(2),
+			"EXACT_PHYSICAL_COMPACT_ASSIGNMENT_VALUE_INVALID");
+	}
+
+	@Test
+	public void compactModelChecksRawCapBeforeFreezingLazyFactor() {
+		var a = variable("a", 3);
+		var b = variable("b", 3);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(a, b), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		try {
+			ExactPhysicalReducedSolver.compactModel(2, List.of(a, b), List.of(lazy),
+				new ExactCategoricalSolver.Limits(8, 100));
+			Assert.fail("oversized raw factor accepted by shared compact model");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage(),
+				expected.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		}
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
 	public void compactPreparationPreservesArityCollapseConstantsAndAllSingletonSolve() {
 		var a = variable("a", 2);
 		var b = variable("b", 2);
@@ -494,18 +585,35 @@ public class ExactPhysicalReducedSolverTest {
 
 	private static List<ExactCategoricalSolver.Factor> completeBinaryClique(
 		List<ExactCategoricalSolver.Variable> variables, boolean distinct) {
+		return completeBinaryClique(variables, distinct, 8);
+	}
+
+	private static List<ExactCategoricalSolver.Factor> completeBinaryClique(
+		List<ExactCategoricalSolver.Variable> variables, boolean distinct, int domain) {
 		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
 		for(int left = 0; left < variables.size(); left++)
 			for(int right = left + 1; right < variables.size(); right++) {
-				double[] values = new double[64];
+				double[] values = new double[domain * domain];
 				if(distinct)
-					for(int row = 0; row < 8; row++)
-						for(int column = 0; column < 8; column++)
-							values[row * 8 + column] = row + column / 16d;
+					for(int row = 0; row < domain; row++)
+						for(int column = 0; column < domain; column++)
+							values[row * domain + column] = row + column / 16d;
 				factors.add(ExactCategoricalSolver.Factor.dense(
 					List.of(variables.get(left), variables.get(right)), values));
 			}
 		return factors;
+	}
+
+	private static void assertCompactExpansionFailure(
+		ExactPhysicalReducedSolver.CompactModel compact, List<Integer> assignment,
+		String expectedMessage) {
+		try {
+			compact.expandAssignment(assignment);
+			Assert.fail("invalid compact assignment was expanded");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertEquals(expectedMessage, expected.getMessage());
+		}
 	}
 
 	private static ExactCategoricalSolver.Factor randomFactor(Random random,

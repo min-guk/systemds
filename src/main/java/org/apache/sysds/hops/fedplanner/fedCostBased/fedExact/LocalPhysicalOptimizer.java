@@ -45,6 +45,7 @@ final class LocalPhysicalOptimizer {
 			Objects.requireNonNull(localStatistics, "localStatistics");
 		}
 	}
+	private record Seed(LocalCategoricalOptimizer.Result local, List<Variable> order) { }
 
 	private LocalPhysicalOptimizer() { }
 
@@ -143,29 +144,29 @@ final class LocalPhysicalOptimizer {
 			: ExactPhysicalForcedStateAudit.prepare(model);
 		if(forced != null)
 			hardFactors.add(forced.factor());
-		List<Variable> variables = model.variables();
-		List<Variable> localOrder = producerBeforeConsumerOrder(model);
-		ValueBoundaryHardClosure hardClosure =
-			new ValueBoundaryHardClosure(model.domains(), hardFactors);
-		List<List<Variable>> localBlocks =
-			localInteractionBlocks(model, localOrder, hardClosure);
-		MaterializationConflictBlockProvider materializationBlocks =
-			new MaterializationConflictBlockProvider(model, hardClosure);
-		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
-		for(DecisionDomain domain : model.domains())
-			domains.put(domain.variable(), domain);
-
-		LocalCategoricalOptimizer.Result local = LocalCategoricalOptimizer.optimize(
-			variables, hardFactors, surface.factors(), localOrder, localBlocks,
-			materializationBlocks,
-			(variable, value) -> {
-				DecisionDomain domain = domains.get(variable);
-				if(domain == null)
-					throw new IllegalArgumentException("LOCAL_PHYSICAL_STATE_DOMAIN_MISSING");
-				// Alternative.signature is the complete future-observable state: it includes
-				// placement plus exact candidate, input, and movement authority.
-				return domain.alternatives().get(value).signature();
-			}, configuredSeedRevisitPasses());
+		boolean incremental = searchOptions != null
+			&& searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL;
+		RegionalSearchProblem incrementalProblem = incremental
+			? RegionalSearchProblem.physical(model, surface, forced) : null;
+		IncrementalAnytimeOptimizer.Initialization initialization = null;
+		boolean initializationLimited = false;
+		if(incremental) {
+			try { initialization = IncrementalAnytimeOptimizer.initialize(incrementalProblem, searchOptions); }
+			catch(MiniBucketLowerBound.ResourceLimitException limited) { initializationLimited = true; }
+			catch(IllegalArgumentException limited) {
+				if(!RegionalSearchProblem.isResourceLimit(limited))
+					throw limited;
+				initializationLimited = true;
+			}
+		}
+		// Relaxed assignments are only seed proposals. They replace the Regional
+		// seed only after the original physical legality/canonical check succeeds.
+		Seed seed = initialization != null && initialization.hasProjectedSeed()
+			? new Seed(new LocalCategoricalOptimizer.Result(initialization.projectedCost(),
+				initialization.projectedSeed(), emptyLocalStatistics()), model.variables())
+			: regionalSeed(model, surface, hardFactors);
+		LocalCategoricalOptimizer.Result local = seed.local();
+		List<Variable> localOrder = seed.order();
 
 		long canonicalBits = surface.evaluateCanonical(local.assignmentInVariableOrder());
 		double canonicalObjective = Double.longBitsToDouble(canonicalBits);
@@ -176,8 +177,19 @@ final class LocalPhysicalOptimizer {
 		RegionalSearchOptimizer.Result search = null;
 		List<Integer> selectedAssignment = local.assignmentInVariableOrder();
 		if(searchOptions != null) {
-			search = RegionalSearchOptimizer.optimizePhysical(model, surface, forced,
-				selectedAssignment, searchOptions, searchObserver);
+			if(incremental && initializationLimited) {
+				RegionalSearchOptimizer.State state = new RegionalSearchOptimizer.State(
+					incrementalProblem, selectedAssignment, searchOptions, searchObserver);
+				state.stats.add("resourceFailures", 1);
+				state.publish("INITIAL");
+				search = state.finish(RegionalSearchOptimizer.StopReason.RESOURCE_LIMIT);
+			}
+			else if(incremental)
+				search = IncrementalAnytimeOptimizer.optimize(incrementalProblem, selectedAssignment,
+					searchOptions, searchObserver, initialization);
+			else
+				search = RegionalSearchOptimizer.optimizePhysical(model, surface, forced,
+					selectedAssignment, searchOptions, searchObserver);
 			selectedAssignment = search.assignment();
 			canonicalObjective = search.upperBound();
 			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
@@ -202,6 +214,31 @@ final class LocalPhysicalOptimizer {
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
 			solverResult, canonicalBits, surface.contributionFingerprint());
 		return new Result(physical, statistics, certificate, search);
+	}
+
+	private static LocalCategoricalOptimizer.Statistics emptyLocalStatistics() {
+		return new LocalCategoricalOptimizer.Statistics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+	}
+
+	private static Seed regionalSeed(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Factor> hardFactors) {
+		List<Variable> localOrder = producerBeforeConsumerOrder(model);
+		ValueBoundaryHardClosure hardClosure = new ValueBoundaryHardClosure(model.domains(), hardFactors);
+		List<List<Variable>> localBlocks = localInteractionBlocks(model, localOrder, hardClosure);
+		MaterializationConflictBlockProvider materializationBlocks =
+			new MaterializationConflictBlockProvider(model, hardClosure);
+		IdentityHashMap<Variable,DecisionDomain> domains = new IdentityHashMap<>();
+		for(DecisionDomain domain : model.domains())
+			domains.put(domain.variable(), domain);
+		LocalCategoricalOptimizer.Result local = LocalCategoricalOptimizer.optimize(
+			model.variables(), hardFactors, surface.factors(), localOrder, localBlocks, materializationBlocks,
+			(variable, value) -> {
+				DecisionDomain domain = domains.get(variable);
+				if(domain == null)
+					throw new IllegalArgumentException("LOCAL_PHYSICAL_STATE_DOMAIN_MISSING");
+				return domain.alternatives().get(value).signature();
+			}, configuredSeedRevisitPasses());
+		return new Seed(local, localOrder);
 	}
 
 	private static List<List<Variable>> localInteractionBlocks(ExactPhysicalModel model,
