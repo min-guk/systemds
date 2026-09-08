@@ -119,3 +119,117 @@ The optional reference directory must contain the preserved `selected-states.tsv
 - The additional planning suite has two existing failures, and the PRIVATE_AGGREGATE StepLM fixture remains infeasible. Therefore the repository is not reported as fully green or comprehensively robust.
 
 Decision rationale: refine and verify the encoded cost objective while preserving compiler authority, privacy and runtime feasibility rules. Broader pre-existing planner defects are documented rather than concealed by candidate restrictions or runtime fallback.
+
+## Certified / Anytime Regional implementation on so007 — initial verification
+
+- **Problem / symptoms**: Regional solves local neighborhoods exactly but exposes no
+  global modeled suboptimality bound and does not revisit earlier overlapping regions.
+- **Baseline / environment**: isolated source `/home/mchoi/so007-certified-regional-20260908`,
+  based on `ad5b3ba52fa6a59154e99a34d0a76641a01c1500`. Source is mirrored to so007;
+  historical stages and the original integration checkout are preserved. Java 17,
+  Maven 3.9.7. The source provenance of the new build is recorded separately.
+- **Cause**: a conditional regional optimum is an upper bound on the global optimum,
+  while its local objective is not a global lower bound. Increasing relaxation width
+  without preserving partitions also does not imply monotone raw bounds.
+- **Solution**: global bounded-width min-sum relaxation with downward arithmetic;
+  a max-L/min-feasible-U envelope; cumulative exact regions selected by relaxed
+  argmin disagreement; typed original/auxiliary model boundary; full canonical/hard
+  reevaluation; explicit resource/time/gap/Global stop reasons and trace metrics.
+  The existing `COMPILE_COST_BASED` route enables it with
+  `sysds.fedplanner.regional.mode=certify|anytime`, default `off` for controlled ablations.
+- **Changed files**: `MiniBucketLowerBound.java`, `CertifiedRegionalOptimizer.java`,
+  `LocalPhysicalOptimizer.java`, `FederatedPlanLocalCost.java`, corresponding new
+  tests, and `docs/CERTIFIED_REGIONAL_ABLATION_PLAN.md`.
+- **Decision rationale / principles**: change search and certificate computation
+  only. Preserve the same cost surface, privacy/candidate/placement authority,
+  original hard constraints, and executable emission path; no runtime fallback.
+- **Fresh validation so far**: baseline selected tests 34/34 passed on so007.
+  New core plus baseline selected tests 54/54 passed with fresh main/test compilation.
+  Forty independently enumerated five-variable cost networks under three policies
+  verify all checkpoint bounds and monotonicity. Shared-producer barrier, initial
+  infeasibility, zero budget, exact endpoint, resource limits and seeded determinism
+  are explicit regressions. Detailed logs are
+  `/home/mchoi/so007-certified-regional-{baseline,core}-tests.log` on so007.
+- **Remaining work**: complete PRIVATE_AGGREGATE compiler/emission regression,
+  build the artifact, and run an isolated Docker planning ablation pilot through
+  `run_LAN_docker.sh`. Final counts/results will be appended below.
+- **Potential regressions / detection**: invalid encoded/canonical pairing, stale
+  raw bound after cancellation, swallowed malformed factors and underreported gap.
+  Detect with typed owner checks, original-model reevaluation, independent optimum
+  oracles, explicit aborted-bound markers and conservative arithmetic tests.
+- **Limits**: scheduling time begins after the feasible Regional seed. Existing
+  exact solves check time only at phase boundaries, so this is not hard preemption.
+  Native high-arity factors must fit existing ceilings. Disagreement is a heuristic,
+  with possible tie ambiguity. No model/runtime approximation ratio or speedup is
+  inferred from unit tests or a single pilot repetition.
+
+### Final implementation build and compiler ablation evidence
+
+- **Validated on so007**: the final targeted `mvn package` completed successfully
+  with **97 tests, zero failures/errors/skips**, including the PRIVATE_AGGREGATE
+  compiler/emission tests and existing activation, privacy and exact/local solver
+  regressions. The optional eight-variant physical ablation report was enabled.
+- **Artifact**: `target/SystemDS.jar`, SHA-256
+  `3ce3aa9ec8a95b6407afdc0bdf1f60b397ba414981e51bcd65fd5ed079f4d9b0`.
+  The 7,488 source/resource/POM files in the provenance manifest match local and
+  so007. `git diff --check` passes. No dependency was added or cost-model behavior
+  deliberately changed; baseline mode remains off for controlled comparisons.
+- **Observed compiler pilot**: all eight variants share the same Global optimum
+  `2.5008440979570152`. Certify/Bound-only preserve the initial assignment; increasing
+  widths tighten L and all full-region variants reach L=U. The seed is already
+  optimal, so this fixture does not show a policy advantage. The independent
+  shared-producer barrier demonstrates U=8→2 only after all three coupled decisions
+  are included. This is correctness evidence, not a workload speedup result.
+- **Durable evidence**: `/home/mchoi/so007-certified-regional-evidence-20260908/validation/`
+  contains the build log, JUnit XML, source/JAR provenance, raw compiler ablation TSV
+  and summary. `docs/CERTIFIED_REGIONAL_RESULTS.md` records the exact reproduction
+  command, results and Docker pilot disposition. The ablation plan specifies eight
+  controlled rows, paired operation budgets and the later workload campaign.
+- **Regression boundary**: no full-suite green claim is made. The pre-existing
+  workload failures documented above remain outside this implementation. Scheduling
+  deadlines, native factor ceilings and disagreement tie ambiguity remain explicit.
+
+### Final Docker planning-only ablation evidence
+
+- **Scope**: KMeans/P2P2D, PRIVATE_AGGREGATE, 50,000 × 2,100 features, one worker
+  placement, LAN, one pilot replication across eight planned ablation variants.
+  Only `run_LAN_docker.sh --planning-only` was used. All successful receipts prove
+  zero execution time and no workload output; worker JVMs and CP reference
+  generation were excluded.
+- **Staging issue and repair**: the preserved archive has exact four-worker data
+  bytes but lacks its original publisher filesystem lifecycle proof. A separate
+  `g007-planning-stage-descriptor-v1` binds the archive to one-worker compile-only
+  execution and records `publisher_lifecycle_verified=false`. Normal runtime,
+  publisher and five-worker gates were not changed. The planning stage validates
+  complete data hashes, privacy, seed streams, reference payload, source/JAR and
+  the invoked experiment paths; runtime/lifecycle use of it is rejected.
+- **Harness failures and detection**: initial smoke attempts failed before a
+  valid receipt because Compose was absent, then because the receipt CLI could
+  not import its stage validator and its failure branch read an unset runtime
+  bundle variable. An existing Compose binary was selected in an experiment-local
+  configuration. CLI path handling and the planning failure branch were repaired;
+  an unrelated-working-directory subprocess regression was added. Those failed
+  attempts remain failures. No ordinary reference or model validation was relaxed.
+- **Validation**: 42 harness tests and 9 collector tests pass on so007, plus shell
+  syntax and Python compilation checks. Stage identities, receipt self-hashes,
+  log/config hashes, full traced budget/seed settings, canonical objective bits,
+  gap arithmetic and monotone checkpoints are checked before a row can pass.
+- **Observed result**: all eight rows pass, and all ten paired comparison checks
+  pass. Global is `29057.63845842688` modeled ms; Regional and all six feature rows
+  return `29701.732755786634`, an actual modeled gap of **2.216609%**. The valid
+  certificate is approximately `[28020.9543606126, 29701.7327557866]`, or at most
+  **5.998291%** relative gap. Every checkpoint encloses Global. Certify and BoundOnly
+  preserve the Regional emission plan exactly.
+- **Negative result and limits**: width 2→4 provides no meaningful L improvement,
+  and Structural/Random/GuidedFixed/Anytime complete three region passes (24 original
+  decisions) without U improvement. No 1% certificate or policy advantage is shown.
+  Planner times range from 0.676193 to 1.049665 seconds in this single pilot;
+  neither speedup nor uncertainty claims are supported. The larger paired
+  multi-seed/multi-workload planning campaign remains a documented future study.
+- **Artifacts**: the final stage is `ce823de74bc0387ff2f493ada32f8d4465f3b36fcdb42156e5efa0b6b100d07a`,
+  harness commit `0d2ebd0`. Evidence is under
+  `/home/mchoi/so007-certified-regional-evidence-20260908/docker/`, with comparison
+  in `runs/20260908t0351ablation-kmeans/comparison.json`, exact commands, frozen
+  descriptors, raw logs/receipts, harness source/patch, independent review and
+  byte-checked portable copies. The SystemDS implementation/JAR is unchanged from
+  the 97-test package above.
