@@ -49,17 +49,34 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  */
 public final class PolicyFirstFeasiblePlacementSelector
 	implements PlacementSelector, PlacementAnalysisSelector {
+	public enum StateOrdering { FEDERATED_FIRST, MOVEMENT_FIRST }
+
 	private static final Comparator<PlacementState> POLICY_ORDER = Comparator
 		.comparingInt(PolicyFirstFeasiblePlacementSelector::policyRank)
 		.thenComparing(PlacementState::normalizedSignature);
 	private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
+	private final StateOrdering stateOrdering;
 
 	public PolicyFirstFeasiblePlacementSelector() {
-		this(null);
+		this(StateOrdering.FEDERATED_FIRST, null);
+	}
+
+	public PolicyFirstFeasiblePlacementSelector(StateOrdering stateOrdering) {
+		this(stateOrdering, null);
+	}
+
+	public StateOrdering stateOrdering() {
+		return stateOrdering;
 	}
 
 	/** Package-private deterministic frequency seam for selector contract tests. */
 	PolicyFirstFeasiblePlacementSelector(ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
+		this(StateOrdering.FEDERATED_FIRST, executionWeightOverride);
+	}
+
+	private PolicyFirstFeasiblePlacementSelector(StateOrdering stateOrdering,
+		ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
+		this.stateOrdering = Objects.requireNonNull(stateOrdering, "stateOrdering");
 		this.executionWeightOverride = executionWeightOverride;
 	}
 
@@ -85,7 +102,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 		for(PolicyComponent component : policyComponents(graph, reachability)) {
 			Solver solver = new Solver(candidateAnalysis, graph, component.nodes(),
 				component.constraints(), component.relocationActions(), reachability,
-				executionWeightOverride);
+				stateOrdering, executionWeightOverride);
 			Map<CompiledHopKey,PlacementState> selected = solver.solve();
 			for(Map.Entry<CompiledHopKey,PlacementState> entry : selected.entrySet())
 				if(assignment.put(entry.getKey(), entry.getValue()) != null)
@@ -103,7 +120,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			1, pruned, sha256(score.normalizedSignature()),
 			sha256(graph.normalizedSignature()), graph.nodes().size(), graph.constraints().size(),
 			bounds.size(), maxDepth, bounds,
-			"deterministic-component-first-feasible-with-localized-arc-consistency",
+			"deterministic-component-first-feasible-with-localized-arc-consistency"
+				+ (stateOrdering == StateOrdering.MOVEMENT_FIRST ? "-movement_first" : ""),
 			"policy", -1L, TerminationReason.POLICY_FEASIBLE);
 		return new PlacementSelection(plan.assignment(), plan.candidates(), plan.choices(),
 			new LinkedHashSet<>(plan.relocations()), score, certificate);
@@ -325,6 +343,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			CandidateSelections.PartialReachabilityIndex.ChangedNodesReachabilityProbe>
 			reachabilityProbes;
 		private final OccurrenceExecutionFrequencyFacts frequencyFacts;
+		private final StateOrdering stateOrdering;
 		private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
 		private final Map<CompiledHopKey,Double> executionWeights = new IdentityHashMap<>();
 		private final Map<RelocationAction,Double> relocationWeights = new IdentityHashMap<>();
@@ -339,6 +358,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			List<Node> decisions, List<Constraint> constraints,
 			List<RelocationAction> relocationActions,
 			CandidateSelections.PartialReachabilityIndex reachability,
+			StateOrdering stateOrdering,
 			ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
 			this.analysis = analysis != null && !analysis.candidateRuleFacts().orderedFacts().isEmpty()
 				? analysis : null;
@@ -346,6 +366,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			this.constraints = List.copyOf(constraints);
 			this.relocationActions = List.copyOf(relocationActions);
 			this.frequencyFacts = analysis == null ? null : analysis.executionFrequencyFacts();
+			this.stateOrdering = Objects.requireNonNull(stateOrdering, "stateOrdering");
 			this.executionWeightOverride = executionWeightOverride;
 			this.decisions = decisions.stream().sorted().toList();
 			this.groups = samePlacementGroups(this.decisions, this.constraints);
@@ -426,10 +447,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 		}
 
 		/**
-		 * Preserve the FedAll FED/FOUT policy order, but break equal-policy layout ties
-		 * with only the movement actions incident to this equality group.  This is a
-		 * greedy ordering hint, not a global objective proof: the selector still accepts
-		 * the first candidate-reachable complete assignment.
+		 * Apply the caller's explicit policy order using only movement actions incident
+		 * to this equality group. This remains a greedy ordering hint, not a global
+		 * objective proof: the selector still accepts the first candidate-reachable
+		 * complete assignment.
 		 */
 		private List<PlacementState> orderedAlternatives(DecisionGroup group,
 			List<List<PlacementState>> domains) {
@@ -438,10 +459,12 @@ public final class PolicyFirstFeasiblePlacementSelector
 			for(PlacementState state : ordered)
 				hints.put(state, movementHint(group, state, domains));
 			ordered.sort((left, right) -> {
+				int movement = hints.get(left).compareTo(hints.get(right));
 				int policy = Integer.compare(policyRank(left), policyRank(right));
+				if(stateOrdering == StateOrdering.MOVEMENT_FIRST && movement != 0)
+					return movement;
 				if(policy != 0)
 					return policy;
-				int movement = hints.get(left).compareTo(hints.get(right));
 				return movement != 0 ? movement
 					: left.normalizedSignature().compareTo(right.normalizedSignature());
 			});

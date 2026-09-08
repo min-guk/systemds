@@ -15,6 +15,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector.StateOrdering;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -51,7 +52,8 @@ public class HeuristicProtectedNestedDemotionTest {
 				analysis.graph().node(fact.consumer()).orElseThrow().legalAlternatives().stream()
 					.anyMatch(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT));
 		}
-		var result = new HeuristicPlacementAdapter(new PolicyFirstFeasiblePlacementSelector())
+		var result = new HeuristicPlacementAdapter(
+			new PolicyFirstFeasiblePlacementSelector(StateOrdering.MOVEMENT_FIRST))
 			.select(analysis, markers);
 		for(var occurrence : analysis.compiledHopOccurrences())
 			if(occurrence.hop() instanceof AggBinaryOp) {

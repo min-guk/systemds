@@ -119,3 +119,15 @@ The optional reference directory must contain the preserved `selected-states.tsv
 - The additional planning suite has two existing failures, and the PRIVATE_AGGREGATE StepLM fixture remains infeasible. Therefore the repository is not reported as fully green or comprehensively robust.
 
 Decision rationale: refine and verify the encoded cost objective while preserving compiler authority, privacy and runtime feasibility rules. Broader pre-existing planner defects are documented rather than concealed by candidate restrictions or runtime fallback.
+
+## Activation + AggLocal worker-1/3/5 experimental integration — in progress
+
+- **Symptom / cause:** the approved d55fc68 experiment JAR includes AggLocal movement-first policy but predates activation-aware materialization. The activation-only rollback tree lacks that newer policy. Neither alone is the user's requested combined experiment source.
+- **Fix:** start from clean `ad5b3ba52f` (tracked tree identical to activation-only `04fcd88a3e`); apply only the six `src/` files in `git diff 8c929e1370 be18ce7a41`. Keep Explicit Binding removed. Do not import the uncommitted CertifiedRegional work from the other active session.
+- **Changed files:** `FederatedPlannerFedHeuristicSinglePass`, `HeuristicPlacementAdapter`, `PolicyFirstFeasiblePlacementSelector`, and their three existing policy regression files. Activation code is inherited unchanged.
+- **Validation:** source diff checks and isolated build/selected tests precede planning-only in Docker. Check PRIVATE_AGGREGATE four-planner domains and activation factors. The historical L2 locality fixture is PUBLIC despite sidecars; do not treat it as protected-data evidence. Fresh actual-stage planning binds PA inputs and exact emitted authority.
+- **Experiment contract:** workers 1/3/5, original coordinator so007 and workers so002..so006; so001 proxy only; worker7 deferred. Reclaimed so006 was idle before build. Build finishes before it becomes a measured worker. New immutable stage and receipts, no mutation of historical stages/results.
+- **Rerun authorization:** compare complete authenticated physical plans to those underlying actual retained runtime. Only changed plans enter runtime; missing evidence stays unknown. L2 labels-v1 additionally requires its distinct reference gate. P2 historical privacy exclusion is not overridden.
+- **Remaining issues:** targeted tests, full planning, baseline recovery, changed-only runtime are not yet complete. Pre-existing KMeans/LM fixture failures and PA StepLM fixture limits above remain recorded. No claim of full-suite success or empirical ordering guarantee.
+- **Regression risk / detection:** combining independent policy and cost changes can select different legal layouts; detect with selected-candidate/input/output/registry comparisons, lowering authority validation, runtime semantic checks, and per-cell provenance.
+- **Decision rationale:** integrate already reviewed policy and cost changes without changing oracle legality, privacy constraints, runtime kernels, or search algorithms beyond the explicitly requested policy.

@@ -48,6 +48,8 @@ import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelecto
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector.StateOrdering;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Provenance-scoped Heuristic policy over one immutable placement analysis. */
@@ -121,7 +123,12 @@ public final class HeuristicPlacementAdapter {
 			"CP_FOUT_MATERIALIZATIONS=" + CandidateSelections.cpFoutPhysicalEmissionCount(candidateReceipts),
 			"DERIVED_FOUT_MATERIALIZATIONS="
 				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidateReceipts));
-		List<String> ties = List.of("MAX_FED", "MAX_FOUT", "MIN_RELOCATIONS", "NORMALIZED_ASSIGNMENT");
+		String stateOrdering = selector instanceof PolicyFirstFeasiblePlacementSelector policySelector
+			? policySelector.stateOrdering().name() : "EXHAUSTIVE_SCORE_ORDER";
+		boolean movementFirst = StateOrdering.MOVEMENT_FIRST.name().equals(stateOrdering);
+		List<String> ties = movementFirst
+			? List.of("MIN_INCIDENT_WEIGHTED_MOVEMENT", "MAX_FED", "MAX_FOUT", "NORMALIZED_ASSIGNMENT")
+			: List.of("MAX_FED", "MAX_FOUT", "MIN_RELOCATIONS", "NORMALIZED_ASSIGNMENT");
 		List<String> relationships = base.constraints().stream().filter(c -> isTransient(base, c.left())
 			|| isTransient(base, c.right())).map(NeutralPlacementGraph.Constraint::normalizedSignature).sorted().toList();
 		List<String> boundaries = base.constraints().stream().filter(c -> c.left().controlRegion()
@@ -139,11 +146,13 @@ public final class HeuristicPlacementAdapter {
 			"frontierEdgeCount", Integer.toString(policy.frontiers().size()),
 			"nativeContinuationCount", Integer.toString(policy.nativeContinuations().size()), "search",
 				firstFeasible ? "FIRST_FEASIBLE" : "EXHAUSTIVE",
+			"stateOrdering", stateOrdering,
 			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_CANDIDATE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
 			: assignmentHash(assignment);
 		String policyFingerprint = sha256("PATHWISE_REENTRY_POLICY_V2|" + analysis.analysisFingerprint() + '|'
-			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions);
+			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions
+			+ (movementFirst ? "|MOVEMENT_FIRST" : ""));
 		String incumbent = selection.score().normalizedSignature();
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
 			selection.score().distinctRelocationCount(), incumbent);
