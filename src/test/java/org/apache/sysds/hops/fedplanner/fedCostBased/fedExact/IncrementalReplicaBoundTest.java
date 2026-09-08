@@ -169,6 +169,25 @@ public class IncrementalReplicaBoundTest {
 	}
 
 	@Test
+	public void cancellationAfterBatchSolveDoesNotCommitAnyEquality() {
+		Model model = threeWayFork("cancelled-batch", 2, 10d, 4d);
+		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+			model.variables, model.factors, 2, GENEROUS, 1_000_000, () -> false);
+		double lower = bound.lowerBound();
+		int components = bound.componentCount();
+		List<Integer> assignment = bound.suggestedAssignment(false);
+		int[] cancellationPolls = {0};
+
+		Assert.assertThrows(CancellationException.class,
+			() -> bound.refine(1, () -> ++cancellationPolls[0] >= 5));
+
+		Assert.assertEquals(0, bound.restoredEqualities());
+		Assert.assertEquals(components, bound.componentCount());
+		Assert.assertEquals(lower, bound.lowerBound(), 0d);
+		Assert.assertEquals(assignment, bound.suggestedAssignment(false));
+	}
+
+	@Test
 	public void resourceAndCancellationFailuresAreCertificateAtomicAndBlocked() {
 		Model model = conflictingFork("large", 10, 10d, 4d);
 		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
