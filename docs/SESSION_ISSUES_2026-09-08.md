@@ -253,6 +253,9 @@ Decision rationale: refine and verify the encoded cost objective while preservin
   `/home/mchoi/so007-certified-regional-evidence-20260908/reports/implementation-report-validation.json`.
   Independent report review passed; the Java/Maven label was narrowed to the
   directly evidenced so007 build environment to avoid implying container versions.
+  A so007 link audit found two missing derived JSON summaries (`provenance.json`
+  and `physical-ablation-summary.json`); their existing local copies were saved
+  in the corresponding evidence directory without rerunning the experiments.
 - **Remaining issues**: implementation limitations remain as documented above.
   In particular, non-nested MBE partitions, soft deadlines and the pilot's lack
   of incumbent improvement are explicit; no runtime or policy-advantage claim
