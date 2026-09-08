@@ -34,7 +34,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 final class LocalPhysicalOptimizer {
 	static final String SEED_REVISIT_PASSES_PROPERTY =
 		CertifiedRegionalOptimizer.PROPERTY_PREFIX + "seedRevisitPasses";
-	static final int DEFAULT_SEED_REVISIT_PASSES = 2;
+	static final int DEFAULT_SEED_REVISIT_PASSES = 0;
 	static final int MAX_SEED_REVISIT_PASSES = 16;
 
 	record Result(ExactPhysicalOptimizer.Result physicalResult,

@@ -72,8 +72,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.maxSteps(),
 				searchOptions.probeCandidates(), searchOptions.coveragePeriod(), searchOptions.maximumFrontier(),
 				searchOptions.exactClosureAssignments(), searchOptions.regionWorkLimit(),
-				searchOptions.incumbentRescueAttempts(), Integer.parseInt(System.getProperty(
-					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "seedRevisitPasses", "2")),
+				searchOptions.incumbentRescueAttempts(), LocalPhysicalOptimizer.configuredSeedRevisitPasses(),
 				options.refineBound(), options.expandRegions(), options.policy(),
 				searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
 				TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION));

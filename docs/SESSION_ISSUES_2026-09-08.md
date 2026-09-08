@@ -416,3 +416,23 @@ Decision rationale: refine and verify the encoded cost objective while preservin
   독립 Global oracle enclosure/monotonicity 검증으로 탐지한다.
 - 적용 원칙: planner 정책만 변경한다. Privacy/placement legality, canonical objective와
   runtime 계약은 유지한다. 사용자의 native JVM 지시가 과거 Docker-only 절차를 대체한다.
+
+### 개선 실험의 raw auditor API 호출 오류 — 수정, native 재검증 중
+
+- 상태/증상: baseline42행의 so007 원본 감사에서 `validate_compile_config() takes 1 positional argument but 2 were given`가 발생했다.
+- 원인: 감사 helper가 keyword-only `allow_runtime`을 positional로 전달했다. 로컬 snapshot에는 외부 설정 파일이 없어 해당 경로가 실행되지 않았다. 원본 trial 실패와 다른 수집 후 검증 도구의 오류다.
+- 해결: `validate_compile_config(config_path, allow_runtime=False)`로 수정하고 반환 SHA 및 planner를 receipt와 대조한다. 기존 실패 감사 파일은 보존한다.
+- 수정 파일: 새 evidence/native/audit_raw_evidence.py 및 test_audit_raw_evidence.py. Frozen runner/수집 모듈과 raw trial은 수정하지 않았다.
+- 검증: 실제 존재하는 compile-only config를 이용한 회귀와 planner mismatch 거절 검증을 포함해 Python37테스트 통과. Native 원본 전체 감사 재실행 중. 최초 native 감사에서 외부 asset479개의 SHA는 모두 일치했다.
+- 잔여 이슈/회귀 위험: 로컬 snapshot에 없는 외부 자산의 검증을 완료로 오해할 수 있다. 최종 감사는 실제 경로가 존재하는 so007에서 실행하고 matched/absent 수를 별도 기록한다.
+- 의사결정 근거: planning-only receipt의 기존 계약을 더 정확히 검사하며 privacy나 실행 범위를 변경하지 않는다.
+
+### Regional seed 재방문의 기본값 재조정 — v2 검증 중
+
+- 증상/조건: core(seed0,rescue0)와 seed(seed2,rescue0)의 7개 입력 ×LAN/WAN-mid 비교42행씩에서, 28개 certified 행의 초기 U가 모두 동일했고 성공 수(Target10/14,C11/14)도 같았다. 재방문 자체는 여러 입력에서 발생했다.
+- 원인/판단: 기존 block의 재해결이 이 pilot의 계획 비용을 추가 개선하지 못했다. 이 결과는 모든 모델에서 재방문이 무효라는 정리는 아니다.
+- 해결: 재방문 기능과 정확성 테스트는 유지하고 기본 pass 수를0으로 되돌린다. `seedRevisitPasses=2` 등으로 명시적인 ablation이 가능하다. CONFIG trace는 실행 경로와 동일한 검증 helper를 사용해 기본값/유효 범위의 중복 파싱을 없앤다.
+- 수정 파일: LocalPhysicalOptimizer.java, FederatedPlanLocalCost.java, LocalCategoricalOptimizerTest.java.
+- 검증 근거: evidence/validation/pilot-comparison-seed-v1/pilot_comparison.json; 두 campaign의 native raw42행 각각 전체 asset 재해시 통과, 모든14개 paired cell 검증 통과. v2 package/전체 focused suite는 진행 중이다.
+- 잔여 이슈/회귀 위험: pilot1회 결과로 timing speedup을 확정하지 않는다. 기본값과 CONFIG가 달라지는 오류는 property regression 및 새 JAR smoke로 검출한다. 실행 중인 v1 rescue pilot의 JAR/소스/설정은 수정하지 않는다.
+- 의사결정 근거: 원래 Regional 비용 계약을 유지하면서 실측 품질 이득이 없는 추가 작업을 기본 실행에서 제외한다.

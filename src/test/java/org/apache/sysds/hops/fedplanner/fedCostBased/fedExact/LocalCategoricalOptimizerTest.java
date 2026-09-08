@@ -337,7 +337,7 @@ public class LocalCategoricalOptimizerTest {
 		String previous = System.getProperty(key);
 		try {
 			System.clearProperty(key);
-			Assert.assertEquals(2, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
+			Assert.assertEquals(0, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
 			System.setProperty(key, "0");
 			Assert.assertEquals(0, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
 			System.setProperty(key, "16");
