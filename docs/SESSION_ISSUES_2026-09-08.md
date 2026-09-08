@@ -131,3 +131,64 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - **Remaining issues:** targeted tests, full planning, baseline recovery, changed-only runtime are not yet complete. Pre-existing KMeans/LM fixture failures and PA StepLM fixture limits above remain recorded. No claim of full-suite success or empirical ordering guarantee.
 - **Regression risk / detection:** combining independent policy and cost changes can select different legal layouts; detect with selected-candidate/input/output/registry comparisons, lowering authority validation, runtime semantic checks, and per-cell provenance.
 - **Decision rationale:** integrate already reviewed policy and cost changes without changing oracle legality, privacy constraints, runtime kernels, or search algorithms beyond the explicitly requested policy.
+
+
+## Candidate-space failure transparency and left-index isolation — validated fix, bounded planning follow-up
+
+- **상태**: 원인 수정/회귀 검증 완료; 아래 16-cell Docker planning 재검증 결과는 artifact 보고서 참조.
+- **환경/조건**: isolated branch `fix/candidate-failfast-20260908`, base `3033340146`.
+  PRIVATE_AGGREGATE StepLM/WAN-Mid/w3, KMeans/LAN/w1, LM/WAN-Heavy/w3,
+  P1_FULL/WAN-Mid/w3, all four planners. `run_LAN_docker.sh` saved commands,
+  `BENCHMARK_COMPILE_ONLY=1`, `SKIP_WORKER_CONTROL=1`, `--network none`.
+  기존 실험의 source/JAR/metadata/worker는 수정하지 않음.
+- **증상**: rule/profile 예외가 empty profile, CP fallback, RULE_ERROR 제외로 변환됨.
+  fail-fast 후 StepLM/KMeans는 LeftIndexRule NPE, P1은 Spark 설정 초기화 중
+  `UnknownHostException: coordinator`로 실패. ML 오류를 출력한 wrapper가 exit=0을
+  반환하여 종료 코드만으로는 성공 판정이 불가능했음.
+- **원인**: immutable `List.of(ROW).contains(null)`은 NPE를 발생시킴. 또한 FED
+  semantic opcode 분류가 Spark broadcast-memory-budget 기반의 물리 전략 예측을
+  수행함. 두 opcode alias는 FED rule/runtime에서 같은 구현을 사용함.
+- **수정**: RulesCore 및 builder의 unexpected RuntimeException은 문맥/원인을 보존해
+  전파; JVM Error도 전파. TransformEncode/Covariance/Spoof 내부 masking 제거.
+  LeftIndex null 검사를 null-safe iteration으로 교체. OracleFacade/logger는 모든
+  LeftIndexingOp을 LEFT_INDEX로 정규화하고 중복 Spark 예측 helper 삭제.
+  정상 unsupported/empty/no-rule과 runtime MAPLEFTINDEX alias는 유지.
+- **수정 파일**: `RulesCore.java`, `Rulesets.java`, `OracleFacade.java`,
+  `NeutralPlacementGraphBuilder.java`, `FederatedPlannerLogger.java`; 새 regression
+  6개 클래스(22 tests), 기존 OracleFacadeTest의 직접 영향받은 canonical opcode
+  assertion 1개. 비용/선택 정책/privacy/runtime/DML/Explicit Binding은 수정 안 함.
+- **검증**: test-first fail-fast/LeftIndex RED logs와 GREEN을 보존.
+  통합 회귀 125 tests: 124 pass, 1 failure. 유일한 failure
+  `OracleFacadeTest.binaryFullMatrixWithLocalMatrixDoesNotRequireEncodedWidth`는
+  원래 staged JAR에서도 동일하게 재현(원본 24 tests 중 동일 1 failure).
+  assertion을 약화하거나 ignore하지 않음. 별도 diagnostic validator 5 tests pass;
+  로그 오류, compilation 완료, execution=0, complete physical authority, audit를 확인.
+  `git diff --check` clean. 전체 suite 성공으로 보고하지 않음.
+- **재현/근거 경로**: `/home/mchoi/g014-candidate-space-audit-20260908`.
+  `replay_planning.py`, `validate_replay.py`, `compare_replays.py`,
+  `logs/regression-v2.log`, `logs/baseline-oracle-regression.log`,
+  `REPORT_CANDIDATE_SPACE_20260908.md` 참조.
+- **잔여 이슈**: unknown-shape materialization의 positive-shape 증명 및 complete
+  runtime-vs-domain audit는 별도 범위. StepLM hop1400은 m_lm occurrence이며 현재
+  abstract rows/cols/orientation UNKNOWN이라 기존 fact만으로 positive shape를
+  증명할 수 없음. known-positive gate를 무조건 제거하지 않음.
+- **잠재 회귀 위험/감지**: 이전에 감춰졌던 다른 예외가 compile failure로 드러날 수 있음.
+  원인을 고쳐야 하며 candidate 제외/CP fallback으로 복구하지 않음. Full trace와
+  raw domain을 비교하고, authority-record 복원과 실제 instruction 변화도 구분.
+- **의사결정 근거/원칙**: oracle/compiler 경계의 결함만 수정; privacy/legality
+  완화와 runtime fallback 금지. 플래너 간 성능 차이를 인위적으로 확대하지 않음.
+
+
+### 최종 16-cell 재검증 결과
+
+- 수정본 `bd3bb4c2db01f3e880091df90c18f2f71b9b2cbd7b3ac7cf894fa0b4e161d566`:
+  StepLM/KMeans/LM/P1 × 4 planners 전부 application-level planning 성공.
+- 16개 pre-/post-privacy output domain과 exact runtime program 텍스트 동일.
+- comparator는 P1 4개를 candidate-authority changed로 표시: 각 셀에서 CP/LOUT
+  local indexing 후보 기록 5개만 복원. selection/registry/instruction은 동일.
+  이 차이를 숨기지 않고 `repair-v2/comparisons/REPAIR_CLASSIFICATION.json`에 분류.
+- 최초 fixed 시도의 exit=0 ML 12개를 성공으로 해석하면 안 됨: 실제로 LM 4개만
+  성공, StepLM/KMeans 8개 application error. P1 4개도 실패. 원본 receipt 보존 후
+  별도 validated status 작성. 수정본의 최종 16/16은 로그/trace/audit까지 검증한 수치.
+- 이번 결함 수정에 따른 runtime improvement는 관측/주장하지 않음. active campaign
+  source/staged JAR는 원본 그대로이며, 동일 instruction의 runtime 재실행은 안 함.

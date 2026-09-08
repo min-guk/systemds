@@ -119,7 +119,7 @@ public class OracleFacadeTest {
   }
 
   @Test
-  public void canonicalizesMapLeftIndexing() {
+  public void canonicalizesLeftIndexingWithoutPredictingRuntimeStrategy() {
     Hop target = matrix("target", 10, 10);
     Hop rhs = new LiteralOp(42.0);
     Hop rowL = lit(1);
@@ -131,7 +131,7 @@ public class OracleFacadeTest {
         target, rhs, rowL, rowU, colL, colU, false, false);
 
     OpSig sig = facade.describe(lix);
-    assertEquals(Opcodes.MAPLEFTINDEX.toString(), sig.opcode());
+    assertEquals(Opcodes.LEFT_INDEX.toString(), sig.opcode());
   }
 
   @Test

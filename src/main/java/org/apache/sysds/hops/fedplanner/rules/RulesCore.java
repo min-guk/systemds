@@ -60,6 +60,19 @@ public final class RulesCore {
         .build();
   }
 
+  private static IllegalStateException ruleFailure(String phase, Rule rule, OpSig sig,
+      Object inputLayout, ShapeHint hint, RuntimeException cause) {
+    String opcode = (sig != null) ? sig.opcode() : "";
+    Object shape = (hint != null) ? hint.diagnosticSnapshot() : null;
+    return new IllegalStateException("Federated rule failure"
+        + "|phase=" + phase
+        + "|opcode=" + opcode
+        + "|rule=" + rule.getClass().getName()
+        + "|inputLayout=" + inputLayout
+        + "|shape=" + shape,
+        cause);
+  }
+
   // --- Common base with safe defaults ----------------------------------------------------------
   public abstract static class BaseRule implements Rule {
     @Override public Set<String> opcodes() { return Collections.emptySet(); }
@@ -297,8 +310,8 @@ public final class RulesCore {
     private static FTypeProfile safeProfile(Rule rule, OpSig sig, List<List<FType>> inCandidates, ShapeHint hint) {
       try {
         return rule.profile(sig, inCandidates, hint);
-      } catch (Throwable t) {
-        return FTypeProfile.empty();
+      } catch (RuntimeException ex) {
+        throw ruleFailure("profile", rule, sig, inCandidates, hint, ex);
       }
     }
   }
@@ -326,8 +339,8 @@ public final class RulesCore {
       try {
         OpCaps caps = rule.caps(sig, inFTypes, hint);
         return (caps == null) ? cpDefault(sig, fallbackReason) : caps;
-      } catch (Throwable t) {
-        return cpDefault(sig, ReasonCode.RULE_ERROR);
+      } catch (RuntimeException ex) {
+        throw ruleFailure("caps", rule, sig, inFTypes, hint, ex);
       }
     }
   }

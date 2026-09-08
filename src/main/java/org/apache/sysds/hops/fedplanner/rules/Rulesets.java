@@ -1848,7 +1848,7 @@ public final class Rulesets {
       if (lhs.contains(FType.FULL))
         outs.add(FType.FULL);
       if (sig != null && sig.inputKind(0) == OpSig.InputKind.MATRIX
-          && lhs.contains(null) && rhs.contains(FType.FULL))
+          && lhs.stream().anyMatch(Objects::isNull) && rhs.contains(FType.FULL))
         outs.add(FType.FULL);
       return profileOf(outs);
     }
@@ -2116,52 +2116,46 @@ public final class Rulesets {
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       Objects.requireNonNull(sig, "sig");
-      try {
-        // The HOP carries the frame plus local scalar parameters such as the JSON spec.
-        // Only the primary frame input determines the federated layout.
-        if (inFTypes == null || inFTypes.isEmpty())
-          return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+      // The HOP carries the frame plus local scalar parameters such as the JSON spec.
+      // Only the primary frame input determines the federated layout.
+      if (inFTypes == null || inFTypes.isEmpty())
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
-        FType in = typeAt(inFTypes, 0);
-        if (in == null)
-          return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
-        if (in == FType.BROADCAST) {
-          return OpCaps.newBuilder()
-              .category(sig.category())
-              .opcode(sig.opcode())
-              .exec(ExecType.CP)
-              .placement(FederatedOutput.LOUT)
-              
-              .reason(ReasonCode.BROADCAST_CONSTRAINT)
-              .detail("broadcast input not supported by transformencode")
-              .build();
-        }
-
-        if (in != FType.ROW && in != FType.COL && in != FType.PART && in != FType.FULL)
-          return cpCaps(sig, ReasonCode.NO_FED_INPUT);
-
-        Guard.Result guard = Guard.eval(sig);
-        if (guard != null && guard.isFail())
-          return guardFallbackBuilder(sig, guard).build();
-
-        OpCaps.Builder builder = OpCaps.newBuilder()
+      if (in == FType.BROADCAST) {
+        return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(ExecType.FED)
-            .placement(FederatedOutput.FOUT)
-            .fout(true, in)
-            .reason(ReasonCode.OK)
-            .detail("second output (meta) is LOUT");
-        if (guard == null || guard.isUnknown())
-          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
-        else
-          appendGuardPassNote(builder, guard);
-        return builder.build();
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            .reason(ReasonCode.BROADCAST_CONSTRAINT)
+            .detail("broadcast input not supported by transformencode")
+            .build();
       }
-      catch (Throwable t) {
-        return cpCaps(sig, ReasonCode.RULE_ERROR);
-      }
+
+      if (in != FType.ROW && in != FType.COL && in != FType.PART && in != FType.FULL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      Guard.Result guard = Guard.eval(sig);
+      if (guard != null && guard.isFail())
+        return guardFallbackBuilder(sig, guard).build();
+
+      OpCaps.Builder builder = OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
+          .fout(true, in)
+          .reason(ReasonCode.OK)
+          .detail("second output (meta) is LOUT");
+      if (guard == null || guard.isUnknown())
+        builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+      else
+        appendGuardPassNote(builder, guard);
+      return builder.build();
     }
   }
 
@@ -4235,51 +4229,47 @@ public final class Rulesets {
 
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
-      try {
-        if (sig == null)
-          return cpLocal(null, ReasonCode.OPCODE_UNSUPPORTED).build();
-        if (sig.category() != category())
-          return cpLocal(sig, ReasonCode.OPCODE_UNSUPPORTED).build();
-        if (!OPCODES.contains(normalizedOpcode(sig)))
-          return cpLocal(sig, ReasonCode.OPCODE_UNSUPPORTED).build();
-        if (inFTypes == null || inFTypes.size() < 2)
-          return cpLocal(sig, ReasonCode.ARITY_MISMATCH).build();
+      if (sig == null)
+        return cpLocal(null, ReasonCode.OPCODE_UNSUPPORTED).build();
+      if (sig.category() != category())
+        return cpLocal(sig, ReasonCode.OPCODE_UNSUPPORTED).build();
+      if (!OPCODES.contains(normalizedOpcode(sig)))
+        return cpLocal(sig, ReasonCode.OPCODE_UNSUPPORTED).build();
+      if (inFTypes == null || inFTypes.size() < 2)
+        return cpLocal(sig, ReasonCode.ARITY_MISMATCH).build();
 
-        FType left = typeAt(inFTypes, 0);
-        FType right = typeAt(inFTypes, 1);
-        if (left == null || right == null)
-          return cpLocal(sig, ReasonCode.MISSING_IN_FTYPE).build();
+      FType left = typeAt(inFTypes, 0);
+      FType right = typeAt(inFTypes, 1);
+      if (left == null || right == null)
+        return cpLocal(sig, ReasonCode.MISSING_IN_FTYPE).build();
 
-        FType weights = (inFTypes.size() >= 3) ? typeAt(inFTypes, 2) : null;
-        boolean leftFed = isFederatedLike(left);
-        boolean rightFed = isFederatedLike(right);
+      FType weights = (inFTypes.size() >= 3) ? typeAt(inFTypes, 2) : null;
+      boolean leftFed = isFederatedLike(left);
+      boolean rightFed = isFederatedLike(right);
 
-        if (!leftFed && !rightFed)
-          return addWeightNote(cpLocal(sig, ReasonCode.NO_FED_INPUT), weights).build();
+      if (!leftFed && !rightFed)
+        return addWeightNote(cpLocal(sig, ReasonCode.NO_FED_INPUT), weights).build();
 
-        if (leftFed && rightFed) {
-          boolean sameRow = matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW);
-          boolean sameCol = matchesAxis(left, FType.COL) && matchesAxis(right, FType.COL);
-          boolean hasPart = left == FType.PART || right == FType.PART;
-          FType hintAxis = parseAlignHint(sig);
-          boolean hintAligned = hasPart && hintAxis != null;
+      if (leftFed && rightFed) {
+        boolean sameRow = matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW);
+        boolean sameCol = matchesAxis(left, FType.COL) && matchesAxis(right, FType.COL);
+        boolean hasPart = left == FType.PART || right == FType.PART;
+        FType hintAxis = parseAlignHint(sig);
+        boolean hintAligned = hasPart && hintAxis != null;
 
-          if (sameRow || sameCol || hintAligned) {
-            OpCaps.Builder ok = fedLocal(sig, ReasonCode.OK);
-            if (hintAligned)
-              ok.note(ReasonCode.ALIGNED_HINT, alignNote(hintAxis));
-            return addWeightNote(ok, weights).build();
-          }
-
-          return addWeightNote(
-              cpLocal(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY),
-              weights).build();
+        if (sameRow || sameCol || hintAligned) {
+          OpCaps.Builder ok = fedLocal(sig, ReasonCode.OK);
+          if (hintAligned)
+            ok.note(ReasonCode.ALIGNED_HINT, alignNote(hintAxis));
+          return addWeightNote(ok, weights).build();
         }
 
-        return addWeightNote(fedLocal(sig, ReasonCode.OK), weights).build();
-      } catch (Exception ex) {
-        return cpLocal(sig, ReasonCode.RULE_ERROR).build();
+        return addWeightNote(
+            cpLocal(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY),
+            weights).build();
       }
+
+      return addWeightNote(fedLocal(sig, ReasonCode.OK), weights).build();
     }
 
     private static OpCaps.Builder cpLocal(OpSig sig, ReasonCode reason) {
