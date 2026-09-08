@@ -469,3 +469,47 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - 처리: 원본 command JSON은 보존하고 `validation/native-build-command-compact-v1.correction.json`에 잘못된 필드와 정정 근거를 기록했다. 실제 native subprocess 종료 시각은 별도로 관측되지 않았으므로 새 값을 만들어 넣지 않았다. Native test report의 `completed_utc`는 build와 검증 완료가 확인된 상한 시각이다.
 - 검증: native test report는 subprocess returncode=0 뒤 작성됐으며 158개 테스트, source 7,502개, local/native 동일 JAR을 별도로 검증했다. 이 메타데이터 문제는 raw trial, 성능 시간이나 production code를 변경하지 않는다.
 - 잔여 위험: native build duration 계산에 원본의 `finished_utc`를 사용하면 안 된다. 이번 보고서는 build 실행 시간을 성능 비교에 사용하지 않는다.
+
+## 4. 동일 compact Global과 incremental Anytime 비교 (완료, 성능 한계 기록)
+
+- **최신 요청/원칙**: Global도 compact+exact를 사용하고, Anytime은 global relaxation의 일부 coupling을 점진적으로 복원해 3%·5%에서 종료한다. 1%는 exact 권장 범위다. 앞선 사용자 native JVM planning-only 지시가 이 세션의 Docker-only 지침보다 우선한다. Privacy, legality, auxiliary와 canonical objective 계약은 유지한다.
+- **구현**: `ExactPhysicalReducedSolver.CompactModel`을 Global과 새 `ANYTIME_INCREMENTAL` 입력에 공유한다. `IncrementalReplicaBound`는 명시적 MBE replica 공간의 독립 component exact 결과를 재사용한다. 한 encoded variable의 consistency를 복원할 때 영향을 받는 component만 재계산한다. `IncrementalAnytimeOptimizer`는 원래 feasibility와 canonical 비용으로 검증한 계획만 U에 반영하고, 목표에 도달하면 중단한다. 전체 exact shortcut은 호출하지 않는다.
+- **V1 증상/원인**: GLM 4개 profile × 3%·5%의 Anytime 8회 모두 64-step 제한에서 목표 미달이었다. Replica projection만으로 만든 초기 U가 약했고, equality 하나씩 복원하는 작업은 진전이 느렸다. 완료 16행의 원본 감사 및 paired oracle 8개 검증은 통과했다. 성공한 JVM과 목표 달성을 구분한다.
+- **V2 해결**: 기존 ordered greedy + hard repair를 neighborhood pass 없이 사용하고, 더 나은 검증된 projection과 비교해 seed를 고른다. 반복 canonical projection은 원래 assignment 단위로 최대 256개 캐시한다. Equality는 한 변수의 모든 replica group을 한 번에 복원한다. Primal region은 선택한 coupling에서 BFS로 최대 24개 active original을 택하고, 최대 2회만 시도한다. Optional greedy가 resource 한도를 넘으면 이미 검증한 projection을 보존한다.
+- **V2 검증**: 구현 `8a91a903820208aad9677fcbbf8b0ba69841bc19`; local/native 각각 22개 클래스 187개 테스트, failures/errors/skips 0. JAR SHA-256 `80dd696e1338a14306052cc26b2c8557082d1b634d6b4aa58d92944f22280cd8`. Python 43개 테스트 통과. Native GLM 16행 완료, 8개 paired oracle 및 모든 checkpoint enclosure/monotonicity 검증 통과. 16개 raw trial과 선언된 외부 자산 전체 SHA 감사 통과.
+- **V2 결과**: Anytime 8/8회가 목표를 달성했고 첫 목표 checkpoint의 `fullyRestored=0`이다. LAN은 INITIAL_BOUND에서 gap 2.79298%, planning 2.321/2.425초로 compact Global 3.066/3.020초보다 짧았다. LAN에서는 incremental action을 실행할 필요가 없었다. WAN은 31~54회 action 후 목표에 도달했지만 planning 12.159~22.146초로 Global보다 느렸다. Profile·threshold별 1회이므로 통계적 speedup을 주장하지 않는다.
+- **남은 병목**: WAN의 bound 계산 8.933~18.603초 중 component preparation이 6.974~15.048초다. 제한된 primal solve는 0.225~0.298초에 불과하다. 초기 약 12~14개 consistency action은 global L을 높이지 못했다. 이미 복원한 equality를 명시적 factor로 계속 유지해 replica가 큰 compile 입력에 남아 있는 것이 다음 개선 대상이다.
+- **V3 조치/검증 완료**: 복원한 equality class만 정확히 변수 하나로 대입하여 affected component compile 크기를 줄였다. Trial의 결과와 전체 replica assignment를 복원하고, 중단/실패 시 이전 인증 상태를 보존한다. Local/native 각각 187개 focused 테스트와 GLM 16회 raw audit를 통과했다. GLM의 8개 목표 모두 partial 상태로 달성했고, WAN Anytime planner 범위는 8.634~11.428초였다. 같은 compact Global보다 여전히 느렸다.
+- **V4 조치/검증 완료**: 후보 우선순위를 modal minority groups / cached component elimination assignments로 바꾸고 기본 probe를 1개로 제한했다. 최빈값과 다른 group 수는 replica 순서 의존성을 줄이는 휴리스틱이며 argmin-set tie 분석이나 실제 gain 보장은 아니다. 190개 focused 테스트, GLM 16회 및 본 측정 256회 원본 감사를 통과했다. GLM WAN planner는 3.131~4.360초였으나 cell당 1회로 개별 변경의 독립 기여나 통계적 speedup을 주장하지 않는다.
+- **V4 본 결과**: 128개 Anytime 시도 중 112개 목표 인증(초기 partial 13개, 실제 incremental partial 99개), partial planner 승리 24개, 그중 실제 incremental 승리 14개였다. 검증 가능한 120쌍의 planner 중앙값 Global 1.153초 / Anytime 1.447초다. P1 8회는 STEP_LIMIT64 미달, P2는 양쪽 각각 8회가 기존 privacy-safe placement 실패여서 oracle 검증에서 분리했다. 실패와 미달은 전체 분모에 남겼다.
+- **V5 조치/빌드 검증 완료**: replica→component 배열을 초기화 및 성공한 merge에서만 재구성해 후보 조회를 O(1)로 줄이고, 첫 등장 순서를 유지하는 집합으로 replica root 중복 검사를 수행한다. 선택 순서/수치/자원 실패 계약은 유지한다. 세 번의 merge 사이에 cancellation을 넣는 회귀를 추가했다. Source `db092e3fea85789b28e4e4570f14f9ffc48a0036`, local/native 각각 191개 테스트(22 classes, 실패·오류·skip 0), JAR `a9c8afd660d5fdff9a3149a9748646a79a639a36611955465570054b6caa3b1f`가 일치한다. 독립 index review CLEAR.
+- **V5 실험 변경/상태**: V4 P1이 after-seed 1초 미만에 64-step 한도로 멈춘 근거에 따라 시간·work·cell 제한은 유지하고 maxSteps/rounds를 256으로 늘렸다. 따라서 index 변경만의 ablation은 아니다. 2026-09-08 21:44 UTC에 시작한 새 256회 native planning은 완료했다. 선언된 256회 원본 감사 및 479개 외부 자산 대조가 통과했고, 정상 planning 120쌍의 독립 oracle와 모든 checkpoint 검증에 모순이 없었다. P2의 양쪽 각 8회는 공통 privacy 배치 실패다.
+- **증거/문서**: `/home/mchoi/so007-anytime-incremental-evidence-20260908/native/runs/glm-incremental-v1`, `glm-incremental-v2`; `docs/ANYTIME_INCREMENTAL_RESULTS_V1_KO.md`, `docs/ANYTIME_INCREMENTAL_RESULTS_V2_KO.md`.
+- **잔여 이슈/회귀 위험**: 처음부터 split이 없거나 모든 equality가 복원된 결과를 부분 강화의 성공으로 분류하지 않는다. 새로운 contraction은 비용 factor/상수 누락, source/replica index 혼동, trial 도중 equality commit을 exhaustive oracle와 cancellation 회귀로 검출해야 한다. Initial component work에는 별도 누적 cap이 없으며 after-seed budget은 soft deadline이다.
+
+## 5. V2 build 증거 재생성 및 runtime freeze 경로 (해결)
+
+- **증상/원인**: 하위 구현자가 완료 handoff 뒤 추가 회귀 테스트와 Maven을 실행해 parent package와 겹쳤다. 또한 freeze helper의 버전 문자열 일괄 변경으로 존재하지 않는 inputs-v2 경로가 잠시 만들어졌다.
+- **해결**: 겹친 package 결과를 성능 근거로 사용하지 않고 superseded 파일로 보존했다. 최종 source를 고정한 뒤 양쪽 host에서 clean package를 다시 수행하고 187개 테스트 및 동일 JAR을 확인했다. 기존 frozen inputs-v1 절대 경로를 유지하도록 helper를 고쳤다. 최종 build 이후 freeze가 성공하기 전에는 V2 trial을 시작하지 않았다.
+- **검증**: `validation/local-v2-rebuild-reason.json`, `local-tests-v2.json`, `native-tests-v2.json`, `prefreeze-v2.json` 및 raw audit. Source manifest는 build 전후 7,506개 파일을 대조했다.
+- **잔여 이슈**: 없음. 다음 버전도 구현 handoff 후 source/test 변경을 중지하고, parent가 최종 package와 runtime freeze를 소유한다.
+- **잠재 회귀**: 동시 Maven이 target/surefire 결과를 섞을 수 있다. 최종 source manifest, clean build의 독립 테스트 개수와 양쪽 JAR hash를 다시 확인한다.
+
+## 6. 실패·초기 성공의 집계 및 phase 명칭 (해결)
+
+- **증상/원인**: 기존 요약 helper는 Global 또는 Anytime의 planning JVM 실패가 있는 campaign의 전체 비교를 거부했고, 일부 초기-bound 성공을 incremental 승리와 혼동할 여지가 있었다. 독립 검증이 없는 특수 partial target을 fully restored로 분류하는 분기도 발견했다. 기존 `mbe_bound_seconds` 명칭은 초기 MBE만의 시간으로 오해할 수 있었다.
+- **해결**: 모든 선언된 paired 시도를 보존하고 oracle/model identity가 검증된 결과에만 인증·속도 승리를 부여한다. Initial partial, 실제 incremental partial, 기타 partial, fully restored 및 실패/미달을 분리한다. Bound 시간은 `bound_control_seconds`로 추가 명시하고 기존 필드는 호환 alias로 남겼다. Component preparation/solve는 그 내부 항목임을 문서화했다.
+- **수정 파일**: evidence/native/summarize_incremental.py, test_summarize_incremental.py 및 보고서 생성 helper. Frozen runner 네 파일과 raw trial은 변경하지 않았다.
+- **검증**: 수정 후 부모 에이전트가 fresh Python suite 45개를 실행하여 실패·오류 0을 확인했다. 근거 `validation/harness-final-tests-v5.json`은 실제 검사한 파일 해시를 포함한다. V4 본 128쌍의 합계는 초기 13 + incremental 99 + 미달·실패 16으로 일치한다.
+- **잔여 이슈/잠재 회귀**: P2의 실패는 이 집계 수정으로 해결되는 것이 아니다. 최종 표에서 검증 분모·전체 시도 분모와 성공-only TTT를 혼동하지 않도록 원본 감사와 보고서 합계 검사를 함께 유지한다.
+- **적용 원칙**: 실패를 성공으로 바꾸거나 privacy/placement를 완화하지 않고, 실제로 검증한 범위만 보고한다.
+
+## 7. V5 최종 결과와 비교 해석 (완료)
+
+- **결과**: 3%와 5% 각각 60/64회 목표 인증, 합계 120/128회다. 남은 8회는 P2_PREP의 공통 planning 실패다. 성공 120회는 초기 partial 13회와 실제 incremental partial 107회로 나뉘며 fully restored 성공은 0회다. Root whole closure도 정상 Anytime 120회 모두 시도·완료 0이다.
+- **속도**: 같은 조건의 Global보다 빠른 partial 인증은 38회이며 이 중 실제 incremental 강화 후 빠른 경우는 26회다. 120개 검증 쌍의 전체 planner 중앙값은 Global 1.2547505초 / Anytime 1.446368초다. 3%는 1.289219 / 1.462774초, 5%는 1.2384975 / 1.446368초다. 각 조건 1회이므로 보편적·통계적 speedup을 주장하지 않는다.
+- **V4/V5 경로 검증**: 두 버전의 성공한 240개 JVM 시도에서 analysis/cost fingerprint가 같고, 120개 Anytime의 초기 L/U, seed·초기 assignment와 replica partition도 같다. 112개는 전체 semantic checkpoint 경로가 같았다. P1 8개는 첫 64개 action까지 같고 V4의 STEP_LIMIT 종료 뒤 V5가 계속 진행했다. P1 목표 인증은 0/8→8/8이지만 V5의 planner 중앙값은 Global 3.531초 / Anytime 4.231초로 더 길다.
+- **해결/변경 범위**: Global과 Anytime의 같은 compact kernel, 점진적 component LB 강화, contraction, 재사용, 저렴한 1-probe 후보 선택과 lookup index를 구현·검증했다. 허용 gap이 커졌다는 사실만으로 초기화·진단·projection overhead가 사라지는 것은 아니다.
+- **남은 이슈**: P2는 동일 원래 privacy/placement 계약에서 feasible planning을 비교할 수 없다. 모든 입력에서 Anytime의 속도 우위는 확인되지 않았다. Soft deadline, 초기 component 누적 work cap 부재, resource-blocked key 재시도 한계는 구현 보고서에 남겼다.
+- **증거/보고서**: `ANYTIME_INCREMENTAL_RESULTS_KO.md`, `ANYTIME_INCREMENTAL_RESULTS_MAIN_V5_KO.md`, `ANYTIME_INCREMENTAL_IMPLEMENTATION_REPORT_KO.md`; evidence `validation/main-incremental-v5-audit.json`, `incremental-final-aggregate.json`, `main-v4-v5-comparison-summary.json` 및 `native/runs/main-incremental-v5`.
+- **잠재 회귀/감지**: 미검증·실패를 성공 분모에서 제거하거나 초기 성공을 incremental 성과에 합치는 오류는 분류 회귀와 보고서 합계 검사로 검출한다. Index 변경만으로 성능 개선을 단정하지 않고, 명시한 64→256 단계 상한 변경과 실제 공통 경로 대조를 함께 보존한다.
