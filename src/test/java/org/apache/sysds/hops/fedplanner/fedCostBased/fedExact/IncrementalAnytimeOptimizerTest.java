@@ -93,6 +93,42 @@ public class IncrementalAnytimeOptimizerTest {
 		assertCertificate(fixture, result);
 	}
 
+	@Test
+	public void resourceLimitedProbeDoesNotAbandonOtherRefinements() {
+		Variable shared = new Variable("large-shared", 10);
+		Variable left = new Variable("large-left", 10);
+		Variable right = new Variable("large-right", 10);
+		Variable small = new Variable("small-shared", 2);
+		Variable a = new Variable("small-left", 2);
+		Variable b = new Variable("small-right", 2);
+		double[] coupling = new double[100];
+		double[] preferFirst = new double[10], preferLast = new double[10];
+		for(int i = 0; i < 10; i++) {
+			preferFirst[i] = i == 0 ? 0d : 4d;
+			preferLast[i] = i == 9 ? 0d : 4d;
+			for(int j = 0; j < 10; j++)
+				coupling[i * 10 + j] = i == j ? 0d : 10d;
+		}
+		Fixture fixture = new Fixture(List.of(shared, left, right, small, a, b), List.of(
+			Factor.dense(List.of(shared, left), coupling),
+			Factor.dense(List.of(shared, right), coupling),
+			Factor.dense(List.of(left), preferFirst),
+			Factor.dense(List.of(right), preferLast),
+			Factor.dense(List.of(small, a), 0d, 1d, 1d, 0d),
+			Factor.dense(List.of(small, b), 0d, 1d, 1d, 0d)),
+			List.of(0, 0, 0, 0, 0, 0));
+		Options oneProbe = new Options(Algorithm.ANYTIME_INCREMENTAL,
+			options(0.03, 8, 60000, 110).common(), 8, 1, 3, 64, 0, 110, 0);
+		Result result = solve(fixture, oneProbe);
+		Assert.assertEquals(StopReason.RESOURCE_LIMIT, result.stopReason());
+		Assert.assertFalse(result.targetReached());
+		Assert.assertTrue(result.statistics().get("componentResourceSkips") > 0L);
+		Assert.assertTrue("another candidate must run after the first resource failure",
+			result.statistics().get("restoredEqualities") > 0L);
+		Assert.assertTrue(result.statistics().get("boundActions") > 1L);
+		assertCertificate(fixture, result);
+	}
+
 	private static Options options(double target, int steps, long millis, long work) {
 		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
 			2, 2, 8, 2, 8, millis, 0, target, true, true,
@@ -106,11 +142,16 @@ public class IncrementalAnytimeOptimizerTest {
 
 	private static void assertCertificate(Fixture fixture, Result result) {
 		double optimum = Double.POSITIVE_INFINITY;
-		int states = 1 << fixture.variables.size();
-		for(int bits = 0; bits < states; bits++) {
+		int states = 1;
+		for(Variable variable : fixture.variables)
+			states = Math.multiplyExact(states, variable.domainSize());
+		for(int ordinal = 0; ordinal < states; ordinal++) {
 			List<Integer> assignment = new ArrayList<>();
-			for(int i = 0; i < fixture.variables.size(); i++)
-				assignment.add(fixture.variables.get(i).domainSize() == 1 ? 0 : (bits >> i) & 1);
+			int remaining = ordinal;
+			for(Variable variable : fixture.variables) {
+				assignment.add(remaining % variable.domainSize());
+				remaining /= variable.domainSize();
+			}
 			optimum = Math.min(optimum, CertifiedRegionalOptimizer.evaluate(fixture.variables, fixture.factors, assignment));
 		}
 		double previousLower = 0d, previousUpper = Double.POSITIVE_INFINITY;

@@ -73,7 +73,8 @@ final class RegionalSearchOptimizer {
 			};
 			if(common == null || !common.expandRegions())
 				throw new IllegalArgumentException("REGIONAL_SEARCH_REQUIRES_ANYTIME_MODE");
-			return new Options(algorithm, common, integer("maxSteps", 256), integer("probeCandidates", 2),
+			return new Options(algorithm, common, integer("maxSteps", 256),
+				integer("probeCandidates", algorithm == Algorithm.ANYTIME_INCREMENTAL ? 1 : 2),
 				integer("coveragePeriod", 3), integer("maxFrontier", 2048),
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
 					+ "exactClosureAssignments", "100000")),

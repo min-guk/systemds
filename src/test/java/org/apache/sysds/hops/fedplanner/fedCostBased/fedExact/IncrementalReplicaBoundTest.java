@@ -36,6 +36,7 @@ public class IncrementalReplicaBoundTest {
 		Assert.assertEquals(1, bound.restoredEqualities());
 		Assert.assertEquals(1, bound.componentCount());
 		Assert.assertEquals(model.variables.size(), bound.suggestedAssignment(false).size());
+		Assert.assertFalse(bound.hasRefinementCandidates());
 	}
 
 	@Test
@@ -163,6 +164,70 @@ public class IncrementalReplicaBoundTest {
 		Assert.assertEquals(optimum, bound.lowerBound(), Math.ulp(optimum) * 8);
 		Assert.assertEquals(optimum, ExactCategoricalSolver.evaluate(model.variables, model.factors,
 			GENEROUS, bound.suggestedAssignment(false)), Math.ulp(optimum) * 8);
+		Assert.assertEquals(1, refinement.selection().modalMinorityGroups());
+		Assert.assertEquals(3, refinement.selection().representativeGroups());
+		Assert.assertEquals(3, refinement.selection().touchedComponents());
+		Assert.assertTrue(refinement.selection().cachedAssignments() > 0L);
+		Assert.assertTrue(refinement.selection().plannedAssignments() > 0L);
+		Assert.assertTrue(refinement.selection().measuredNanos() > 0L);
+	}
+
+	@Test
+	public void modalMinorityTelemetryIsInvariantToReplicaGroupOrder() {
+		Model forward = threeWayFork("order", 2, 10d, 4d);
+		List<ExactCategoricalSolver.Factor> reversedFactors = List.of(
+			forward.factors.get(2), forward.factors.get(1), forward.factors.get(0),
+			forward.factors.get(5), forward.factors.get(4), forward.factors.get(3));
+		IncrementalReplicaBound forwardBound = IncrementalReplicaBound.create(
+			forward.variables, forward.factors, 2, GENEROUS, 1_000_000, () -> false);
+		IncrementalReplicaBound reversedBound = IncrementalReplicaBound.create(
+			forward.variables, reversedFactors, 2, GENEROUS, 1_000_000, () -> false);
+
+		IncrementalReplicaBound.Refinement forwardRefinement = forwardBound.refine(1, () -> false);
+		IncrementalReplicaBound.Refinement reversedRefinement = reversedBound.refine(1, () -> false);
+
+		Assert.assertTrue(forwardRefinement.changed());
+		Assert.assertTrue(reversedRefinement.changed());
+		Assert.assertEquals(1, forwardRefinement.selection().modalMinorityGroups());
+		Assert.assertEquals(forwardRefinement.selection().modalMinorityGroups(),
+			reversedRefinement.selection().modalMinorityGroups());
+		Assert.assertEquals(forwardRefinement.selection().representativeGroups(),
+			reversedRefinement.selection().representativeGroups());
+		Assert.assertEquals(forwardRefinement.selection().touchedComponents(),
+			reversedRefinement.selection().touchedComponents());
+		Assert.assertEquals(forwardRefinement.selection().cachedAssignments(),
+			reversedRefinement.selection().cachedAssignments());
+		Assert.assertEquals(forwardBound.lowerBound(), reversedBound.lowerBound(),
+			Math.ulp(forwardBound.lowerBound()) * 8);
+	}
+
+	@Test
+	public void resourceBlockedFirstChoiceLeavesAnotherValidCandidate() {
+		Model large = conflictingFork("first-limited", 10, 10d, 4d);
+		Model tied = tiedFork("remaining", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(
+			large.variables.get(0), large.variables.get(1), large.variables.get(2),
+			tied.variables.get(0), tied.variables.get(1), tied.variables.get(2));
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			large.factors.get(0), large.factors.get(1), large.factors.get(2), large.factors.get(3),
+			tied.factors.get(0), tied.factors.get(1));
+		double optimum = ExactCategoricalSolver.solve(variables, factors, GENEROUS).objective();
+		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+			variables, factors, 2, GENEROUS, 110, () -> false);
+
+		IncrementalReplicaBound.Refinement limited = bound.refine(1, () -> false);
+
+		Assert.assertFalse(limited.changed());
+		Assert.assertEquals(new IncrementalReplicaBound.Selection(0, 0, 0, 0L, 0L, 0L),
+			limited.selection());
+		Assert.assertTrue(bound.hasRefinementCandidates());
+		Assert.assertTrue(bound.lowerBound() <= optimum);
+
+		IncrementalReplicaBound.Refinement remaining = bound.refine(1, () -> false);
+		Assert.assertTrue(remaining.changed());
+		Assert.assertEquals(3, remaining.originalVariable());
+		Assert.assertEquals(0, remaining.selection().modalMinorityGroups());
+		Assert.assertTrue(bound.lowerBound() <= optimum);
 	}
 
 	@Test
@@ -311,6 +376,15 @@ public class IncrementalReplicaBoundTest {
 			ExactCategoricalSolver.Factor.dense(List.of(first), preferFirst),
 			ExactCategoricalSolver.Factor.dense(List.of(second), preferLast),
 			ExactCategoricalSolver.Factor.dense(List.of(third), preferLast)));
+	}
+
+	private static Model tiedFork(String prefix, int domain) {
+		var shared = variable(prefix + "-shared", domain);
+		var left = variable(prefix + "-left", domain);
+		var right = variable(prefix + "-right", domain);
+		return new Model(List.of(shared, left, right), List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(shared, left), new double[domain * domain]),
+			ExactCategoricalSolver.Factor.dense(List.of(shared, right), new double[domain * domain])));
 	}
 
 	private static ExactCategoricalSolver.Variable variable(String key, int domain) {

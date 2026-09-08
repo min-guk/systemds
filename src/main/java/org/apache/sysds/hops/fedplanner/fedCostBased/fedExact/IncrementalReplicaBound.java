@@ -63,14 +63,21 @@ final class IncrementalReplicaBound {
 		long maximumFactorCells, long preparationNanos, long solveNanos,
 		long probes, long reusedComponents, long resourceSkips) { }
 
+	record Selection(int modalMinorityGroups, int representativeGroups,
+		int touchedComponents, long cachedAssignments, long plannedAssignments,
+		long measuredNanos) { }
+
 	record Refinement(boolean changed, int originalVariable,
 		List<Integer> affectedOriginalVariables, double lowerBound, double gain,
-		long elapsedNanos) {
-		Refinement { affectedOriginalVariables = List.copyOf(affectedOriginalVariables); }
+		long elapsedNanos, Selection selection) {
+		Refinement {
+			affectedOriginalVariables = List.copyOf(affectedOriginalVariables);
+			Objects.requireNonNull(selection, "selection");
+		}
 	}
 
 	private record VariableCandidate(int originalVariable, List<Integer> representatives,
-		int disagreeingGroups, List<Integer> touchedComponents, long scopedWorkProxy) {
+		int modalMinorityGroups, List<Integer> touchedComponents, long scopedWorkProxy) {
 		VariableCandidate {
 			representatives = List.copyOf(representatives);
 			touchedComponents = List.copyOf(touchedComponents);
@@ -82,7 +89,8 @@ final class IncrementalReplicaBound {
 	private record Trial(VariableCandidate candidate, List<ExactCategoricalSolver.Factor> equalities,
 		Component component,
 		List<Integer> touched, List<Integer> affectedOriginalVariables,
-		double proposedLowerBound, double gain, long measuredNanos) {
+		double proposedLowerBound, double gain, long measuredNanos,
+		long plannedAssignments) {
 		Trial { equalities = List.copyOf(equalities); }
 	}
 	private record ContractedComponent(List<ExactCategoricalSolver.Variable> variables,
@@ -165,6 +173,7 @@ final class IncrementalReplicaBound {
 					return false;
 		return true;
 	}
+	boolean hasRefinementCandidates() { return !candidates().isEmpty(); }
 	Work workStats() {
 		return new Work(exactCalls, assignments, materializedCells, maximumFactorCells,
 			preparationNanos, solveNanos, probes, reusedComponents, resourceSkips);
@@ -229,13 +238,16 @@ final class IncrementalReplicaBound {
 		Trial selected = bestPositive != null ? bestPositive : cheapestZero;
 		if(selected == null)
 			return new Refinement(false, -1, List.of(), lowerBound, 0d,
-				System.nanoTime() - started);
+				System.nanoTime() - started, new Selection(0, 0, 0, 0L, 0L, 0L));
 
 		double previous = lowerBound;
 		commit(selected);
+		Selection selection = new Selection(selected.candidate.modalMinorityGroups,
+			selected.candidate.representatives.size(), selected.candidate.touchedComponents.size(),
+			selected.candidate.scopedWorkProxy, selected.plannedAssignments, selected.measuredNanos);
 		return new Refinement(true, selected.candidate.originalVariable,
 			selected.affectedOriginalVariables, lowerBound, nonNegativeDifference(lowerBound, previous),
-			System.nanoTime() - started);
+			System.nanoTime() - started, selection);
 	}
 
 	private List<Component> initialComponents(BooleanSupplier cancelled) {
@@ -311,7 +323,8 @@ final class IncrementalReplicaBound {
 		long measured = saturatedAdd(preparationNanos - beforePreparation, solveNanos - beforeSolve);
 		double proposed = proposedLower(touched, solved);
 		return new Trial(candidate, equalities, solved, touched, affectedOriginalVariables(variables),
-			proposed, nonNegativeDifference(proposed, lowerBound), Math.max(1L, measured));
+			proposed, nonNegativeDifference(proposed, lowerBound), Math.max(1L, measured),
+			solved.result.statistics().eliminationAssignments());
 	}
 
 	private Component solveContractedComponent(List<ExactCategoricalSolver.Variable> variables,
@@ -472,10 +485,11 @@ final class IncrementalReplicaBound {
 	}
 
 	/**
-	 * Builds a bounded structural shortlist. Disagreement estimates possible
-	 * tightening and cached component work estimates its local cost; neither is
-	 * an optimality claim. The final choice still uses measured global bound gain
-	 * per preparation-plus-solve time.
+	 * Builds a bounded structural shortlist. Modal minority groups estimate
+	 * possible tightening independent of representative order, while cached
+	 * component assignments estimate local cost. Their ratio is a heuristic, not
+	 * an optimality claim. The final choice among probed candidates still uses
+	 * measured global bound gain per preparation-plus-solve time.
 	 */
 	private List<VariableCandidate> candidates() {
 		int[] assignment = replicaAssignment();
@@ -496,10 +510,13 @@ final class IncrementalReplicaBound {
 			}
 			if(representatives.size() < 2)
 				continue;
-			int disagreeing = 0;
-			for(int index = 1; index < representatives.size(); index++)
-				if(assignment[representatives.get(0)] != assignment[representatives.get(index)])
-					disagreeing++;
+			int[] frequencies = new int[model.variables().get(representatives.get(0)).domainSize()];
+			for(int representative : representatives)
+				frequencies[assignment[representative]]++;
+			int modalFrequency = 0;
+			for(int frequency : frequencies)
+				modalFrequency = Math.max(modalFrequency, frequency);
+			int modalMinority = representatives.size() - modalFrequency;
 			Set<Integer> componentIndexes = new HashSet<>();
 			for(int representative : representatives)
 				componentIndexes.add(componentIndex(model.variables().get(representative)));
@@ -509,16 +526,28 @@ final class IncrementalReplicaBound {
 				workProxy = saturatedAdd(workProxy,
 					components.get(component).result.statistics().eliminationAssignments());
 			VariableCandidate candidate = new VariableCandidate(
-				original, representatives, disagreeing, touched, workProxy);
+				original, representatives, modalMinority, touched, workProxy);
 			if(!resourceBlocked.contains(key(candidate)))
 				result.add(candidate);
 		}
-		result.sort(Comparator.comparingInt(VariableCandidate::disagreeingGroups).reversed()
-			.thenComparing(Comparator.comparingInt(
-				(VariableCandidate candidate) -> candidate.representatives.size()).reversed())
-			.thenComparingLong(VariableCandidate::scopedWorkProxy)
-			.thenComparingInt(VariableCandidate::originalVariable));
+		result.sort((left, right) -> {
+			int compared = Double.compare(priority(right), priority(left));
+			if(compared != 0)
+				return compared;
+			compared = Long.compare(denominator(left), denominator(right));
+			if(compared != 0)
+				return compared;
+			return Integer.compare(left.originalVariable, right.originalVariable);
+		});
 		return List.copyOf(result);
+	}
+
+	private static double priority(VariableCandidate candidate) {
+		return (double) candidate.modalMinorityGroups / denominator(candidate);
+	}
+
+	private static long denominator(VariableCandidate candidate) {
+		return Math.max(1L, candidate.scopedWorkProxy);
 	}
 
 	private int[] replicaAssignment() {

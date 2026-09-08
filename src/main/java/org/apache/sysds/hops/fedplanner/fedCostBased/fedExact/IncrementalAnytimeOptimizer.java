@@ -111,11 +111,26 @@ final class IncrementalAnytimeOptimizer {
 					recordWork(state, bound);
 				}
 				double previousLower = state.lower;
+				double previousUpper = state.upper;
 				state.raiseLower(bound.lowerBound());
 				trySuggestions(state, initialized);
+				IncrementalReplicaBound.Selection selected = refined.selection();
+				state.stats.set("selectedMinorityGroups", selected.modalMinorityGroups());
+				state.stats.set("selectedReplicaGroups", selected.representativeGroups());
+				state.stats.set("selectedTouchedComponents", selected.touchedComponents());
+				state.stats.set("selectedCachedAssignments", selected.cachedAssignments());
+				state.stats.set("selectedPlannedAssignments", selected.plannedAssignments());
+				state.stats.set("selectedTrialNanos", selected.measuredNanos());
+				if(refined.changed() && state.lower == previousLower) {
+					state.stats.add("zeroBoundGainActions", 1);
+					if(state.upper == previousUpper)
+						state.stats.add("zeroGainActions", 1);
+				}
 				state.publish("INCREMENTAL_LOWER", details(bound)
 					+ " changed=" + refined.changed() + " variable=" + refined.originalVariable()
-					+ " deltaL=" + (state.lower - previousLower));
+					+ " deltaL=" + (state.lower - previousLower)
+					+ " selectionPriority=" + ((double) selected.modalMinorityGroups()
+						/ Math.max(1L, selected.cachedAssignments())));
 				if(state.reached())
 					return state.finish(RegionalSearchOptimizer.StopReason.TARGET_REACHED);
 				if(state.expired())
@@ -146,7 +161,7 @@ final class IncrementalAnytimeOptimizer {
 							return state.finish(RegionalSearchOptimizer.StopReason.TARGET_REACHED);
 					}
 				}
-				if(!refined.changed())
+				if(!refined.changed() && !bound.hasRefinementCandidates())
 					return state.finish(RegionalSearchOptimizer.StopReason.RESOURCE_LIMIT);
 			}
 			return state.finish(RegionalSearchOptimizer.StopReason.STEP_LIMIT);

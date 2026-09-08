@@ -66,7 +66,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					+ "exactAdmission=reduced-prepared targetResumeDeferredWidths=true targetCompactPreparation=%s "
 					+ "refineBound=%s expandRegions=%s policy=%s targetIgnoresRoundsSteps=%s "
 					+ "targetBoundMinResidualFraction=%.17g budgetScope=after-seed softDeadline=true "
-					+ "incrementalComponentBounds=%s seedPolicy=%s",
+					+ "incrementalComponentBounds=%s seedPolicy=%s incrementalPriority=%s",
 				searchOptions.algorithm(), options.initialWidth(), options.maximumWidth(), options.rounds(),
 				options.regionGrowth(), options.maximumRegionVariables(), options.timeBudgetMillis(),
 				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(), options.seed(),
@@ -82,7 +82,9 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION,
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL,
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
-						? "ordered-greedy-and-replica" : "regional"));
+						? "ordered-greedy-and-replica" : "regional",
+					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
+						? "modal-minority-per-cached-work" : "not-applicable"));
 		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
 				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "
