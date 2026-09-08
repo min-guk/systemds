@@ -33,7 +33,8 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 /** Connects the shared physical factor model to the local-conflict optimizer. */
 final class LocalPhysicalOptimizer {
 	record Result(ExactPhysicalOptimizer.Result physicalResult,
-		LocalCategoricalOptimizer.Statistics localStatistics) {
+		LocalCategoricalOptimizer.Statistics localStatistics,
+		CertifiedRegionalOptimizer.Result certificate) {
 		Result {
 			Objects.requireNonNull(physicalResult, "physicalResult");
 			Objects.requireNonNull(localStatistics, "localStatistics");
@@ -94,13 +95,24 @@ final class LocalPhysicalOptimizer {
 
 	static Result optimize(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface) {
+		return optimize(model, surface, CertifiedRegionalOptimizer.Options.configured(), ignored -> { });
+	}
+
+	static Result optimize(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, CertifiedRegionalOptimizer.Options options,
+		java.util.function.Consumer<CertifiedRegionalOptimizer.Checkpoint> observer) {
 		Objects.requireNonNull(model, "model");
 		Objects.requireNonNull(surface, "surface");
 		validateSharedSurface(model, surface);
+		List<Factor> hardFactors = new ArrayList<>(model.hardFactors());
+		ExactPhysicalForcedStateAudit.Constraint forced = options == null ? null
+			: ExactPhysicalForcedStateAudit.prepare(model);
+		if(forced != null)
+			hardFactors.add(forced.factor());
 		List<Variable> variables = model.variables();
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
 		ValueBoundaryHardClosure hardClosure =
-			new ValueBoundaryHardClosure(model.domains(), model.hardFactors());
+			new ValueBoundaryHardClosure(model.domains(), hardFactors);
 		List<List<Variable>> localBlocks =
 			localInteractionBlocks(model, localOrder, hardClosure);
 		MaterializationConflictBlockProvider materializationBlocks =
@@ -110,7 +122,7 @@ final class LocalPhysicalOptimizer {
 			domains.put(domain.variable(), domain);
 
 		LocalCategoricalOptimizer.Result local = LocalCategoricalOptimizer.optimize(
-			variables, model.hardFactors(), surface.factors(), localOrder, localBlocks,
+			variables, hardFactors, surface.factors(), localOrder, localBlocks,
 			materializationBlocks,
 			(variable, value) -> {
 				DecisionDomain domain = domains.get(variable);
@@ -126,6 +138,15 @@ final class LocalPhysicalOptimizer {
 		if(Double.doubleToRawLongBits(local.objective()) != canonicalBits)
 			throw new IllegalArgumentException("LOCAL_PHYSICAL_CANONICAL_OBJECTIVE_MISMATCH|local="
 				+ local.objective() + "|canonical=" + canonicalObjective);
+		CertifiedRegionalOptimizer.Result certificate = null;
+		List<Integer> selectedAssignment = local.assignmentInVariableOrder();
+		if(options != null) {
+			certificate = CertifiedRegionalOptimizer.optimizePhysical(model, surface, forced,
+				selectedAssignment, options, observer);
+			selectedAssignment = certificate.assignment();
+			canonicalObjective = certificate.upperBound();
+			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
+		}
 		LocalCategoricalOptimizer.Statistics statistics = local.statistics();
 		ExactCategoricalSolver.Statistics solverStatistics = new ExactCategoricalSolver.Statistics(
 			localOrder.stream().map(Variable::key).toList(),
@@ -133,10 +154,12 @@ final class LocalPhysicalOptimizer {
 			statistics.maximumBlockAssignments(), 0L,
 			statistics.maximumBlockAssignments(), statistics.blockAssignments());
 		ExactCategoricalSolver.Result solverResult = new ExactCategoricalSolver.Result(
-			canonicalObjective, local.assignmentInVariableOrder(), solverStatistics);
+			canonicalObjective, selectedAssignment, solverStatistics);
+		if(forced != null)
+			ExactPhysicalForcedStateAudit.verify(model, forced, solverResult);
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
 			solverResult, canonicalBits, surface.contributionFingerprint());
-		return new Result(physical, statistics);
+		return new Result(physical, statistics, certificate);
 	}
 
 	private static List<List<Variable>> localInteractionBlocks(ExactPhysicalModel model,

@@ -54,10 +54,29 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
-		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface);
+		CertifiedRegionalOptimizer.Options options = CertifiedRegionalOptimizer.Options.configured();
+		if(options != null && FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
+				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "
+					+ "regionGrowth=%d maxRegion=%d timeMillis=%d factorCells=%d totalCells=%d seed=%d",
+				options.policy(), options.expandRegions(), options.refineBound(), options.initialWidth(),
+				options.maximumWidth(), options.rounds(), options.regionGrowth(), options.maximumRegionVariables(),
+				options.timeBudgetMillis(), options.limits().maximumFactorCells(),
+				options.limits().maximumMaterializedCells(), options.seed()));
+		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface,
+			options, FederatedPlanLocalCost::traceCheckpoint);
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(
 			model, optimized.physicalResult());
 		trace(selection, model, surface, optimized.localStatistics());
+		if(optimized.certificate() != null && FederatedPlannerTrace.isEnabled()) {
+			CertifiedRegionalOptimizer.Result certificate = optimized.certificate();
+			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
+				"phase=FINAL lower=%.17g upper=%.17g gap=%.17g relativeGap=%.17g stop=%s "
+					+ "scope=encoded-model costFingerprint=%s analysis=%s",
+				certificate.lowerBound(), certificate.upperBound(), certificate.absoluteGap(),
+				certificate.relativeGap(), certificate.stopReason(), selection.costSurfaceFingerprint(),
+				selection.analysisFingerprint()));
+		}
 		ExactPlacementInput input = ExactPhysicalPlacementProjector.project(
 			selection, "DP-LocalConflict", "local-conflict");
 		adapter.select(analysis, input);
@@ -65,6 +84,22 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			"local physical projector normalized result");
 		return input.withEmissionReceipt(PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none()));
+	}
+
+	private static void traceCheckpoint(CertifiedRegionalOptimizer.Checkpoint checkpoint) {
+		if(!FederatedPlannerTrace.isEnabled())
+			return;
+		FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
+			"iteration=%d phase=%s width=%d regionVariables=%d rawLower=%.17g lower=%.17g "
+				+ "upper=%.17g gap=%.17g relativeGap=%.17g elapsedMs=%.6f boundMs=%.6f "
+				+ "regionMs=%.6f splitBuckets=%d disagreements=%d maxFactorCells=%d "
+				+ "boundMaterializedCells=%d boundAssignments=%d regionAssignments=%d improved=%s",
+			checkpoint.iteration(), checkpoint.phase(), checkpoint.width(), checkpoint.regionVariables(),
+			checkpoint.rawLowerBound(), checkpoint.lowerBound(), checkpoint.upperBound(),
+			checkpoint.absoluteGap(), checkpoint.relativeGap(), checkpoint.elapsedNanos() / 1e6,
+			checkpoint.boundNanos() / 1e6, checkpoint.regionNanos() / 1e6, checkpoint.splitBuckets(),
+			checkpoint.disagreements(), checkpoint.maximumFactorCells(), checkpoint.boundMaterializedCells(),
+			checkpoint.boundAssignments(), checkpoint.regionAssignments(), checkpoint.improved()));
 	}
 
 	private static void trace(ExactPhysicalSelection selection, ExactPhysicalModel model,
