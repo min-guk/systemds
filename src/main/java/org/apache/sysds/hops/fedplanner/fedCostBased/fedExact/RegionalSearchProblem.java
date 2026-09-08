@@ -212,6 +212,28 @@ final class RegionalSearchProblem {
 			throw failure;
 		}
 	}
+	RegionalWork preflightWhole(int[] fixed, Limits limits, long maximumAssignments,
+		BooleanSupplier cancelled) {
+		if(maximumAssignments < 0)
+			throw new IllegalArgumentException("REGIONAL_SEARCH_WORK_LIMIT_INVALID");
+		if(cancelled.getAsBoolean())
+			throw new CancellationException("REGIONAL_SEARCH_CANCELLED_BEFORE_PREFLIGHT");
+		Conditional conditional = condition(fixed);
+		try {
+			ExactCategoricalSolver.Statistics statistics = ExactCategoricalSolver.analyze(
+				conditional.variables(), conditional.factors(), limits);
+			if(cancelled.getAsBoolean())
+				throw new CancellationException("REGIONAL_SEARCH_CANCELLED_AFTER_PREFLIGHT");
+			return new RegionalWork(statistics.eliminationAssignments() <= maximumAssignments,
+				false, statistics.eliminationAssignments(), statistics.materializedFactorCells(),
+				statistics.maximumFactorCells());
+		}
+		catch(IllegalArgumentException failure) {
+			if(!isResourceLimit(failure))
+				throw failure;
+			return new RegionalWork(false, true, 0L, 0L, 0L);
+		}
+	}
 
 	Solution solveWhole(int[] fixed, Limits limits, BooleanSupplier cancelled) {
 		return solve(condition(fixed), limits, cancelled);

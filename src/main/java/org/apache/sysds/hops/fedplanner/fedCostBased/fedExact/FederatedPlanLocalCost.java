@@ -63,14 +63,17 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					+ "timeMillis=%d factorCells=%d totalCells=%d seed=%d absoluteTarget=%.17g relativeTarget=%.17g "
 					+ "maxSteps=%d probeCandidates=%d coveragePeriod=%d maxFrontierLimit=%d exactClosureAssignments=%d "
 					+ "regionWorkLimit=%d "
-					+ "refineBound=%s expandRegions=%s policy=%s budgetScope=after-seed softDeadline=true",
+					+ "refineBound=%s expandRegions=%s policy=%s targetIgnoresRoundsSteps=%s "
+					+ "targetBoundMinResidualFraction=%.17g budgetScope=after-seed softDeadline=true",
 				searchOptions.algorithm(), options.initialWidth(), options.maximumWidth(), options.rounds(),
 				options.regionGrowth(), options.maximumRegionVariables(), options.timeBudgetMillis(),
 				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(), options.seed(),
 				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.maxSteps(),
 				searchOptions.probeCandidates(), searchOptions.coveragePeriod(), searchOptions.maximumFrontier(),
 				searchOptions.exactClosureAssignments(), searchOptions.regionWorkLimit(),
-				options.refineBound(), options.expandRegions(), options.policy()));
+				options.refineBound(), options.expandRegions(), options.policy(),
+				searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
+				TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION));
 		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
 				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "

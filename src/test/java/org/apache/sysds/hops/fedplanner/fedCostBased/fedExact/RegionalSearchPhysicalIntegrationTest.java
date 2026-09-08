@@ -118,7 +118,7 @@ public class RegionalSearchPhysicalIntegrationTest {
 		Map<String,String> previous = new HashMap<>();
 		settings.forEach((key, value) -> { previous.put(key, System.getProperty(prefix + key)); System.setProperty(prefix + key, value); });
 		try {
-			for(String algorithm : List.of("threshold", "target-gap", "reuse")) {
+			for(String algorithm : List.of("anytime-target", "threshold", "target-gap", "reuse")) {
 				System.setProperty(prefix + "algorithm", algorithm);
 				Fixture fixture = fixture();
 				ExactPlacementInput receipt = new FederatedPlanLocalCost().rewriteProgram(fixture.program(), null, null, fixture.analysis());

@@ -113,6 +113,12 @@ public class RegionalSearchProblemTest {
 		try {
 			System.setProperty(key, "legacy");
 			Assert.assertNull(RegionalSearchOptimizer.Options.configured(null));
+			CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+				1, 1, 1, 1, 1, 1, 0d, 0d, true, true,
+				CertifiedRegionalOptimizer.ExpansionPolicy.DISAGREEMENT, 1L, LIMITS);
+			System.setProperty(key, "anytime-target");
+			Assert.assertEquals(RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
+				RegionalSearchOptimizer.Options.configured(common).algorithm());
 			System.setProperty(key, "reuse");
 			Assert.assertThrows(IllegalArgumentException.class, () -> RegionalSearchOptimizer.Options.configured(null));
 			System.setProperty(key, "typo");

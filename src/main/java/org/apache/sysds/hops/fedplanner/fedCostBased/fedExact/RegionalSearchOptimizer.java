@@ -22,7 +22,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 
 /** Shared numerical certificate, budget and trace boundary; algorithm policies are separate. */
 final class RegionalSearchOptimizer {
-	enum Algorithm { THRESHOLD, TARGET_GAP, REUSE }
+	enum Algorithm { ANYTIME_TARGET, THRESHOLD, TARGET_GAP, REUSE }
 	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT, STEP_LIMIT, REGION_LIMIT, FRONTIER_LIMIT }
 
 	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
@@ -45,6 +45,7 @@ final class RegionalSearchOptimizer {
 			if(value.equals("legacy"))
 				return null;
 			Algorithm algorithm = switch(value) {
+				case "anytime-target" -> Algorithm.ANYTIME_TARGET;
 				case "threshold" -> Algorithm.THRESHOLD;
 				case "target-gap" -> Algorithm.TARGET_GAP;
 				case "reuse" -> Algorithm.REUSE;
@@ -75,7 +76,11 @@ final class RegionalSearchOptimizer {
 				"boundNanos", "regionNanos", "exactNanos", "diagnosticNanos", "zeroGainActions", "forcedExpansions",
 				"boundActions", "regionActions", "resourceFailures", "widthStrengthenings", "steps",
 				"regionPreflightCalls", "regionWorkSkips", "regionHardResourceSkips",
-				"regionPreflightAssignments", "regionPreflightMaterializedCells"))
+				"regionPreflightAssignments", "regionPreflightMaterializedCells",
+				"wholePreflightCalls", "wholePreflightSkips", "wholeHardResourceSkips",
+				"wholePreflightAssignments", "wholePreflightMaterializedCells", "coverageAttempts",
+				"coverageVariables", "zeroUbGrowthAccelerations", "boundWidthPasses",
+				"boundWidthSuspensions", "wholeClosureAttempts", "wholeClosureCompleted"))
 				counts.put(key, 0L);
 		}
 		void add(String key, long value) { counts.put(key, Math.addExact(get(key), value)); }
@@ -223,6 +228,24 @@ final class RegionalSearchOptimizer {
 			}
 			finally { stats.add("exactNanos", System.nanoTime() - phaseStart); }
 		}
+		RegionalSearchProblem.RegionalWork preflightWhole(int[] fixed) {
+			long phaseStart = System.nanoTime();
+			stats.add("wholePreflightCalls", 1);
+			try {
+				RegionalSearchProblem.RegionalWork work = problem.preflightWhole(fixed,
+					options.common().limits(), options.exactClosureAssignments(), this::expired);
+				stats.add("wholePreflightAssignments", work.eliminationAssignments());
+				stats.add("wholePreflightMaterializedCells", work.materializedFactorCells());
+				stats.max("maxFactorCells", work.maximumFactorCells());
+				if(!work.admitted()) {
+					stats.add("wholePreflightSkips", 1);
+					if(work.hardResourceLimited())
+						stats.add("wholeHardResourceSkips", 1);
+				}
+				return work;
+			}
+			finally { stats.add("diagnosticNanos", System.nanoTime() - phaseStart); }
+		}
 		boolean canSolveWhole(int[] fixed) {
 			long phaseStart = System.nanoTime();
 			try {
@@ -276,6 +299,7 @@ final class RegionalSearchOptimizer {
 			if(state.expired())
 				return state.finish(StopReason.TIME_BUDGET);
 			return switch(options.algorithm()) {
+				case ANYTIME_TARGET -> TargetAnytimeOptimizer.run(state);
 				case THRESHOLD -> AdaptiveThresholdOptimizer.run(state);
 				case TARGET_GAP, REUSE -> BranchingRegionalOptimizer.run(state);
 			};
