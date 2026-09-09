@@ -1317,8 +1317,11 @@ public final class PlacementAnalysis {
 			|| exactCandidate.status() != CandidateEvaluationStatus.AVAILABLE
 			|| exactCandidate.capability() == null
 			|| exactCandidate.capability().nativeExec() != fact.consumerState().execType()
-			|| exactCandidate.capability().nativeOutput() != FederatedOutput.FOUT
-			|| exactCandidate.capability().nativeFoutFType() != fact.consumerState().fType()
+			|| !(exactCandidate.capability().nativeOutput() == FederatedOutput.FOUT
+				&& exactCandidate.capability().nativeFoutFType() == fact.consumerState().fType()
+				|| fact.consumerState().output() == FederatedOutput.LOUT
+					&& exactCandidate.capability().nativeOutput() == FederatedOutput.LOUT
+					&& exactCandidate.capability().nativeFoutFType() == null)
 			|| fact.localInputPosition() >= inputs.size()
 			|| !inputs.get(fact.localInputPosition()).equals(CandidateInputState.absentLocal())
 			|| fact.siblingInputPosition() >= inputs.size()

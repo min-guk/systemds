@@ -35,7 +35,6 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types;
-import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Opcodes;
@@ -48,7 +47,6 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.NaryOp;
-import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
@@ -284,9 +282,7 @@ public class FederatedPlannerLogger {
         if (hop instanceof AggBinaryOp && ((AggBinaryOp) hop).isMatrixMultiply())
             return Opcodes.MMULT.toString();
         if (hop instanceof LeftIndexingOp)
-            return isMapLeftIndex((LeftIndexingOp) hop)
-                ? Opcodes.MAPLEFTINDEX.toString()
-                : Opcodes.LEFT_INDEX.toString();
+            return Opcodes.LEFT_INDEX.toString();
         if (hop instanceof IndexingOp)
             return Opcodes.RIGHT_INDEX.toString();
         if (hop instanceof ReorgOp)
@@ -312,36 +308,6 @@ public class FederatedPlannerLogger {
         if (hop instanceof DataOp)
             return ((DataOp) hop).getOp().toString();
         return fallbackOpcode(hop);
-    }
-
-    private static boolean isMapLeftIndex(LeftIndexingOp hop) {
-        if (hop == null || hop.getInput() == null || hop.getInput().size() < 2)
-            return false;
-        Hop lhs = hop.getInput().get(0);
-        Hop rhs = hop.getInput().get(1);
-        if (rhs == null)
-            return false;
-        if (rhs.getDataType() == DataType.SCALAR)
-            return true;
-
-        long m1Rows = (lhs != null) ? lhs.getDim1() : -1;
-        long m1Cols = (lhs != null) ? lhs.getDim2() : -1;
-        long m1Blen = (lhs != null) ? lhs.getBlocksize() : -1;
-        long m2Rows = rhs.getDim1();
-        long m2Cols = rhs.getDim2();
-        long m2Nnz = rhs.getNnz();
-        if (m1Rows <= 0 || m1Cols <= 0 || m2Rows <= 0 || m2Cols <= 0 || m1Blen <= 0)
-            return false;
-
-        boolean broadcastRhs = OptimizerUtils.checkSparkBroadcastMemoryBudget(
-            m2Rows, m2Cols, (int) m1Blen, m2Nnz);
-        if (broadcastRhs)
-            return true;
-
-        boolean aligned = rhs.getDataType() == DataType.MATRIX
-            && ((m1Rows == m2Rows && m1Cols <= m1Blen)
-            || (m1Cols == m2Cols && m1Rows <= m1Blen));
-        return aligned;
     }
 
     private static String fallbackOpcode(Hop hop) {

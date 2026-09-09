@@ -300,6 +300,106 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 	}
 
 	@Test
+	public void authorizedRecodeMetadataReleaseKeepsEncodedRowsProtected() throws Exception {
+		String property = "sysds.privacy.allowPublicRecodeMetadata";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, "true");
+			DMLProgram program = compile(FEDERATED_SOURCE
+				+ "Fall=as.frame(A);[X0,M]=transformencode(target=Fall,"
+				+ "spec=\"{ids:true,dummycode:[1],cofeePublicRecodeMetadata:true}\");"
+				+ "N=M;write(N,\"metadata\");C=A+nrow(M);print(sum(C));print(sum(X0));\n", false);
+			ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+			int metadataOutputs = 0;
+			int encodedOutputs = 0;
+			int privateJoins = 0;
+			for(var occurrence : analysis.compiledHopOccurrences()) {
+				if(occurrence.hop() instanceof BinaryOp binary && binary.getOp() == OpOp2.PLUS) {
+					privateJoins++;
+					Assert.assertEquals("joining public metadata with protected rows stays protected",
+						Privacy.PRIVATE_AGGREGATE, analysis.requirePrivacy(occurrence.key()));
+				}
+				if(!(occurrence.hop() instanceof DataOp data) || data.getOp() != OpOpData.FUNCTIONOUTPUT)
+					continue;
+				var parent = FederatedPlannerUtils.getMultiReturnFunctionOutputParent(data);
+				if(parent == null || !"transformencode".equalsIgnoreCase(parent.getFunctionName()))
+					continue;
+				var states = analysis.graph().node(occurrence.key()).orElseThrow().legalAlternatives();
+				if(parent.getOutputs().get(1) == data) {
+					metadataOutputs++;
+					Assert.assertEquals(Privacy.PUBLIC, analysis.requirePrivacy(occurrence.key()));
+					Assert.assertTrue(states.stream().anyMatch(state -> state.execType() == ExecType.CP
+						&& state.output() == FederatedOutput.LOUT));
+				}
+				else {
+					encodedOutputs++;
+					Assert.assertEquals(Privacy.PRIVATE_AGGREGATE, analysis.requirePrivacy(occurrence.key()));
+					Assert.assertTrue(states.stream().allMatch(state -> state.execType() == ExecType.FED
+						&& state.output() == FederatedOutput.FOUT));
+				}
+			}
+			Assert.assertTrue("private join must be observed", privateJoins > 0);
+			Assert.assertTrue("metadata exact output must be observed", metadataOutputs > 0);
+			Assert.assertTrue("encoded exact output must be observed", encodedOutputs > 0);
+			for(var occurrence : analysis.compiledHopOccurrences())
+				if(occurrence.hop() instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
+					Assert.assertEquals(Privacy.PRIVATE_AGGREGATE, analysis.requirePrivacy(occurrence.key()));
+		}
+		finally {
+			if(prior == null) System.clearProperty(property);
+			else System.setProperty(property, prior);
+		}
+	}
+
+	@Test
+	public void declarationAloneCannotReleaseRecodeMetadata() throws Exception {
+		assertDeclaredMetadataRejected(false, Privacy.PRIVATE_AGGREGATE);
+	}
+
+	@Test
+	public void authorizedDeclarationCannotReleaseStrictPrivateMetadata() throws Exception {
+		assertDeclaredMetadataRejected(true, Privacy.PRIVATE);
+	}
+
+	@Test
+	public void unresolvedDeclaredMetadataCannotBeReleased() throws Exception {
+		assertDeclaredMetadataRejected(true, Privacy.PRIVATE_AGGREGATE,
+			"jspec=\"{ids:true,dummycode:[1],cofeePublicRecodeMetadata:true}\";", "jspec");
+	}
+
+	@Test
+	public void unsupportedMarkedEncoderCannotBeReleased() throws Exception {
+		assertDeclaredMetadataRejected(true, Privacy.PRIVATE_AGGREGATE, "",
+			"\"{ids:true,dummycode:[1],omit:[2],cofeePublicRecodeMetadata:true}\"");
+	}
+
+	private static void assertDeclaredMetadataRejected(boolean authorized, Privacy privacy) throws Exception {
+		assertDeclaredMetadataRejected(authorized, privacy, "",
+			"\"{ids:true,dummycode:[1],cofeePublicRecodeMetadata:true}\"");
+	}
+
+	private static void assertDeclaredMetadataRejected(boolean authorized, Privacy privacy,
+		String prefix, String spec) throws Exception {
+		String property = "sysds.privacy.allowPublicRecodeMetadata";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, Boolean.toString(authorized));
+			DMLProgram program = compile(FEDERATED_SOURCE + prefix
+				+ "Fall=as.frame(A);[X0,M]=transformencode(target=Fall,"
+				+ "spec=" + spec + ");"
+				+ "write(M,\"metadata\");print(sum(X0));\n", false);
+			ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, privacy);
+			Assert.assertThrows(DMLRuntimeException.class,
+				() -> new NeutralPlacementGraphBuilder().buildAnalysis(program));
+		}
+		finally {
+			if(prior == null) System.clearProperty(property);
+			else System.setProperty(property, prior);
+		}
+	}
+
+	@Test
 	public void unknownWidthRetainsSafeFederatedAggregateAndCenteringDomain() throws Exception {
 		DMLProgram program = compile(FEDERATED_SOURCE
 			+ "colMean=colMeans(A);X=A-colMean;print(sum(X));\n", false);

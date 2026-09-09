@@ -34,7 +34,7 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		var result = new HeuristicPlacementAdapter().select(analysis, Set.of(marker.valueVersion()));
 
 		Assert.assertSame("policy must retain the common immutable analysis", analysis, result.analysis());
-		Assert.assertEquals("PATHWISE_REENTRY_POLICY_V2", result.plannerFacts().get("policy"));
+		Assert.assertEquals("LOCAL_CONTINUATION_FIRST_POLICY_V3", result.plannerFacts().get("policy"));
 		Assert.assertEquals("one pathwise-minimal eligible frontier", "1",
 			result.plannerFacts().get("frontierEdgeCount"));
 		Assert.assertTrue("a marker must retain CP/LOUT as a candidate-consistent demotion fallback",
@@ -343,7 +343,7 @@ public class CampaignBHeuristicPathwiseReentryTest {
 	private static String script() {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
-			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));",
+			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
 			"v=matrix(1,2,1);", "z=X%*%v;", "w=z+1;", "y=A*w;", "q=y+1;",
 			"print(sum(q));") + "\n";
 	}
@@ -351,7 +351,7 @@ public class CampaignBHeuristicPathwiseReentryTest {
 	private static String branchScript() {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
-			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));",
+			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
 			"v=matrix(1,2,1);", "z=X%*%v;", "if(sum(v)>0){y=A*(z+1);}else{y=A*(z-1);}",
 			"print(sum(y));") + "\n";
 	}
@@ -383,7 +383,7 @@ public class CampaignBHeuristicPathwiseReentryTest {
 	private static String mergeScript() {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
-			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));",
+			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
 			"v=matrix(1,2,1);", "z=X%*%v;", "if(sum(v)>0){s=1;}else{s=2;}",
 			"w=z+s;", "y=A*w;", "q=y+1;", "print(sum(q));") + "\n";
 	}

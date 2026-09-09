@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpN;
@@ -34,6 +36,7 @@ import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
@@ -71,7 +74,8 @@ final class SinglePartitionFacts {
 		Set<Hop> owned = Collections.newSetFromMap(new IdentityHashMap<>());
 		owned.addAll(hops);
 		for(Hop hop : hops) {
-			if(!hop.getDataType().isMatrix() || incompleteSources.contains(hop)) {
+			if((!hop.getDataType().isMatrix() && !isFederatedFrameSource(hop)
+				&& !isNativeMatrixFrameCast(hop)) || incompleteSources.contains(hop)) {
 				facts.put(hop, UNKNOWN);
 				continue;
 			}
@@ -91,6 +95,8 @@ final class SinglePartitionFacts {
 			if(hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD
 				&& sources != null && !sources.isEmpty())
 				dependencies.put(hop, sources);
+			else if(isTransformEncodePrimaryOutputCarrier(hop))
+				dependencies.put(hop, List.of(hop.getInput(0)));
 			else if(hop instanceof ParameterizedBuiltinOp builtin
 				&& builtin.getOp() == ParamBuiltinOp.RMEMPTY)
 				// Native rmempty copies only its target FederationMap. A matrix-valued
@@ -107,7 +113,8 @@ final class SinglePartitionFacts {
 					&& (new Rulesets.BinaryElemwiseRule().opcodes().contains(binary.getOp().toString())
 						|| new Rulesets.AppendRule().opcodes().contains(binary.getOp().toString())))
 					conditionalFullResultTransfers.add(hop);
-				List<Hop> inputs = hop.getInput().stream().filter(input -> input.getDataType().isMatrix()).toList();
+				List<Hop> inputs = isNativeMatrixFrameCast(hop) ? List.of(hop.getInput(0))
+					: hop.getInput().stream().filter(input -> input.getDataType().isMatrix()).toList();
 				if(inputs.isEmpty())
 					facts.put(hop, UNKNOWN);
 				else
@@ -150,7 +157,8 @@ final class SinglePartitionFacts {
 		for(Node node : nodes) {
 			owned.add(node.key());
 			Hop hop = origins.get(node.key());
-			if(hop == null || !hop.getDataType().isMatrix()) {
+			if(hop == null || (!hop.getDataType().isMatrix() && !isFederatedFrameSource(hop)
+				&& !isNativeMatrixFrameCast(hop))) {
 				facts.put(node.key(), UNKNOWN);
 				continue;
 			}
@@ -309,6 +317,39 @@ final class SinglePartitionFacts {
 
 	boolean isSinglePartition(Hop hop) {
 		return !endpoints.getOrDefault(hop, UNKNOWN).isEmpty();
+	}
+
+	private static boolean isFederatedFrameSource(Hop hop) {
+		// Cardinality comes from the literal federation ranges, independent of the
+		// payload data type. Keep FRAME admission restricted to exact fed-init sources.
+		return hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED
+			&& data.getDataType().isFrame();
+	}
+
+	private static boolean isNativeMatrixFrameCast(Hop hop) {
+		if(!(hop instanceof UnaryOp unary) || hop.getInput().size() != 1)
+			return false;
+		Hop input = hop.getInput(0);
+		return (unary.getOp() == OpOp1.CAST_AS_FRAME
+			&& hop.getDataType().isFrame() && input.getDataType().isMatrix())
+			|| (unary.getOp() == OpOp1.CAST_AS_MATRIX
+				&& hop.getDataType().isMatrix() && input.getDataType().isFrame());
+	}
+
+	private static boolean isTransformEncodePrimaryOutputCarrier(Hop hop) {
+		// MultiReturnParameterizedBuiltinFEDInstruction maps each input range to one
+		// encoded primary-output range. Metadata is coordinator-local and excluded.
+		if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.FUNCTIONOUTPUT
+			|| hop.getInput().isEmpty())
+			return false;
+		for(Hop parent : hop.getInput(0).getParent())
+			if(parent instanceof FunctionOp function
+				&& function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+				&& Opcodes.TRANSFORMENCODE.toString().equalsIgnoreCase(function.getFunctionName())
+				&& function.getOutputs() != null && !function.getOutputs().isEmpty()
+				&& function.getOutputs().get(0) == hop)
+				return true;
+		return false;
 	}
 
 	private static boolean preservesSingleEndpoint(Hop hop) {

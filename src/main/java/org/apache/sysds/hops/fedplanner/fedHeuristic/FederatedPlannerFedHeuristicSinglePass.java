@@ -8,7 +8,13 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersion
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
 
-/** Heuristic policy variant that stops after the first constraint-coherent filtered placement. */
+/**
+ * Apache-style FedAll preference with analysis-owned local aggregate-vector paths.
+ * The adapter applies the Heuristic policy; the shared selector retains FedFirst's
+ * producer-first FED/FOUT preference and stops at the first legal assignment.
+ * Scalar/vector-only continuations prefer legal CP supply, including shared collection
+ * of public vector siblings. Other work re-enters FED through certified input frontiers.
+ */
 public final class FederatedPlannerFedHeuristicSinglePass extends FederatedPlannerFedHeuristic {
 	private final HeuristicPlacementAdapter adapter = new HeuristicPlacementAdapter(
 		new PolicyFirstFeasiblePlacementSelector());

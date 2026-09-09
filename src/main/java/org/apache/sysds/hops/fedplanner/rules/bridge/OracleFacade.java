@@ -30,7 +30,6 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.NaryOp;
-import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
@@ -499,28 +498,24 @@ public final class OracleFacade {
     Class<?> generator = hop.getGeneratorClass();
     if (generator == null)
       return;
-    try {
-      SpoofOperator op = CodegenUtils.createInstance(generator);
-      if (op instanceof SpoofCellwise) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "cellwise");
-        attrs.put(ATTR_SPOOF_CELL_TYPE,
-            cellTypeToken(((SpoofCellwise) op).getCellType()));
-      }
-      else if (op instanceof SpoofRowwise) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "rowwise");
-        attrs.put(ATTR_SPOOF_ROW_TYPE,
-            rowTypeToken(((SpoofRowwise) op).getRowType()));
-      }
-      else if (op instanceof SpoofMultiAggregate) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "multiagg");
-      }
-      else if (op instanceof SpoofOuterProduct) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "outer");
-        attrs.put(ATTR_SPOOF_OUTER_TYPE,
-            outerTypeToken(((SpoofOuterProduct) op).getOuterProdType()));
-      }
-    } catch (Exception ex) {
-      // Ignore instantiation issues; attributes remain unset.
+    SpoofOperator op = CodegenUtils.createInstance(generator);
+    if (op instanceof SpoofCellwise) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "cellwise");
+      attrs.put(ATTR_SPOOF_CELL_TYPE,
+          cellTypeToken(((SpoofCellwise) op).getCellType()));
+    }
+    else if (op instanceof SpoofRowwise) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "rowwise");
+      attrs.put(ATTR_SPOOF_ROW_TYPE,
+          rowTypeToken(((SpoofRowwise) op).getRowType()));
+    }
+    else if (op instanceof SpoofMultiAggregate) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "multiagg");
+    }
+    else if (op instanceof SpoofOuterProduct) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "outer");
+      attrs.put(ATTR_SPOOF_OUTER_TYPE,
+          outerTypeToken(((SpoofOuterProduct) op).getOuterProdType()));
     }
   }
 
@@ -892,36 +887,6 @@ public final class OracleFacade {
     return (attrs == null) ? null : attrs.get(key);
   }
 
-  private static boolean isMapLeftIndex(LeftIndexingOp hop) {
-    if (hop == null || hop.getInput() == null || hop.getInput().size() < 2)
-      return false;
-    Hop lhs = hop.getInput().get(0);
-    Hop rhs = hop.getInput().get(1);
-    if (rhs == null)
-      return false;
-    if (rhs.getDataType() == DataType.SCALAR)
-      return true;
-
-    long m1Rows = (lhs != null) ? lhs.getDim1() : -1;
-    long m1Cols = (lhs != null) ? lhs.getDim2() : -1;
-    long m1Blen = (lhs != null) ? lhs.getBlocksize() : -1;
-    long m2Rows = rhs.getDim1();
-    long m2Cols = rhs.getDim2();
-    long m2Nnz = rhs.getNnz();
-    if (m1Rows <= 0 || m1Cols <= 0 || m2Rows <= 0 || m2Cols <= 0 || m1Blen <= 0)
-      return false;
-
-    boolean broadcastRhs = OptimizerUtils.checkSparkBroadcastMemoryBudget(
-        m2Rows, m2Cols, (int) m1Blen, m2Nnz);
-    if (broadcastRhs)
-      return true;
-
-    boolean aligned = rhs.getDataType() == DataType.MATRIX
-        && ((m1Rows == m2Rows && m1Cols <= m1Blen)
-        || (m1Cols == m2Cols && m1Rows <= m1Blen));
-    return aligned;
-  }
-
   private static final class CanonicalOpcode {
     private CanonicalOpcode() {}
 
@@ -932,9 +897,7 @@ public final class OracleFacade {
       if (hop instanceof AggBinaryOp && ((AggBinaryOp) hop).isMatrixMultiply())
         return Opcodes.MMULT.toString();
       if (hop instanceof LeftIndexingOp)
-        return isMapLeftIndex((LeftIndexingOp) hop)
-            ? Opcodes.MAPLEFTINDEX.toString()
-            : Opcodes.LEFT_INDEX.toString();
+        return Opcodes.LEFT_INDEX.toString();
       if (hop instanceof IndexingOp)
         return Opcodes.RIGHT_INDEX.toString();
       if (hop instanceof ReorgOp)

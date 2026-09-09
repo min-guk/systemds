@@ -64,6 +64,7 @@ import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacy;
 import org.apache.sysds.runtime.transform.encode.ColumnEncoderBin;
 import org.apache.sysds.runtime.transform.encode.ColumnEncoderComposite;
 import org.apache.sysds.runtime.transform.encode.ColumnEncoderDummycode;
@@ -159,7 +160,8 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 	public void processInstruction(ExecutionContext ec) {
 		// obtain and pin input frame
 		FrameObject fin = ec.getFrameObject(input1.getName());
-		String spec = ec.getScalarInput(input2).getStringValue();
+		String spec = TransformEncodeMetadataPrivacy.validateAndStripReleaseRequest(
+			ec.getScalarInput(input2).getStringValue());
 
 		String[] colNames = new String[(int) fin.getNumColumns()];
 		Arrays.fill(colNames, "");

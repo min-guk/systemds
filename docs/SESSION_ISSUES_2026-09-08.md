@@ -513,3 +513,78 @@ Decision rationale: refine and verify the encoded cost objective while preservin
 - **남은 이슈**: P2는 동일 원래 privacy/placement 계약에서 feasible planning을 비교할 수 없다. 모든 입력에서 Anytime의 속도 우위는 확인되지 않았다. Soft deadline, 초기 component 누적 work cap 부재, resource-blocked key 재시도 한계는 구현 보고서에 남겼다.
 - **증거/보고서**: `ANYTIME_INCREMENTAL_RESULTS_KO.md`, `ANYTIME_INCREMENTAL_RESULTS_MAIN_V5_KO.md`, `ANYTIME_INCREMENTAL_IMPLEMENTATION_REPORT_KO.md`; evidence `validation/main-incremental-v5-audit.json`, `incremental-final-aggregate.json`, `main-v4-v5-comparison-summary.json` 및 `native/runs/main-incremental-v5`.
 - **잠재 회귀/감지**: 미검증·실패를 성공 분모에서 제거하거나 초기 성공을 incremental 성과에 합치는 오류는 분류 회귀와 보고서 합계 검사로 검출한다. Index 변경만으로 성능 개선을 단정하지 않고, 명시한 64→256 단계 상한 변경과 실제 공통 경로 대조를 함께 보존한다.
+
+<!-- Existing main session records retained during publication merge. -->
+
+## Activation + AggLocal worker-1/3/5 experimental integration — in progress
+
+- **Symptom / cause:** the approved d55fc68 experiment JAR includes AggLocal movement-first policy but predates activation-aware materialization. The activation-only rollback tree lacks that newer policy. Neither alone is the user's requested combined experiment source.
+- **Fix:** start from clean `ad5b3ba52f` (tracked tree identical to activation-only `04fcd88a3e`); apply only the six `src/` files in `git diff 8c929e1370 be18ce7a41`. Keep Explicit Binding removed. Do not import the uncommitted CertifiedRegional work from the other active session.
+- **Changed files:** `FederatedPlannerFedHeuristicSinglePass`, `HeuristicPlacementAdapter`, `PolicyFirstFeasiblePlacementSelector`, and their three existing policy regression files. Activation code is inherited unchanged.
+- **Validation:** source diff checks and isolated build/selected tests precede planning-only in Docker. Check PRIVATE_AGGREGATE four-planner domains and activation factors. The historical L2 locality fixture is PUBLIC despite sidecars; do not treat it as protected-data evidence. Fresh actual-stage planning binds PA inputs and exact emitted authority.
+- **Experiment contract:** workers 1/3/5, original coordinator so007 and workers so002..so006; so001 proxy only; worker7 deferred. Reclaimed so006 was idle before build. Build finishes before it becomes a measured worker. New immutable stage and receipts, no mutation of historical stages/results.
+- **Rerun authorization:** compare complete authenticated physical plans to those underlying actual retained runtime. Only changed plans enter runtime; missing evidence stays unknown. L2 labels-v1 additionally requires its distinct reference gate. P2 historical privacy exclusion is not overridden.
+- **Remaining issues:** targeted tests, full planning, baseline recovery, changed-only runtime are not yet complete. Pre-existing KMeans/LM fixture failures and PA StepLM fixture limits above remain recorded. No claim of full-suite success or empirical ordering guarantee.
+- **Regression risk / detection:** combining independent policy and cost changes can select different legal layouts; detect with selected-candidate/input/output/registry comparisons, lowering authority validation, runtime semantic checks, and per-cell provenance.
+- **Decision rationale:** integrate already reviewed policy and cost changes without changing oracle legality, privacy constraints, runtime kernels, or search algorithms beyond the explicitly requested policy.
+
+
+## Candidate-space failure transparency and left-index isolation — validated fix, bounded planning follow-up
+
+- **상태**: 원인 수정/회귀 검증 완료; 아래 16-cell Docker planning 재검증 결과는 artifact 보고서 참조.
+- **환경/조건**: isolated branch `fix/candidate-failfast-20260908`, base `3033340146`.
+  PRIVATE_AGGREGATE StepLM/WAN-Mid/w3, KMeans/LAN/w1, LM/WAN-Heavy/w3,
+  P1_FULL/WAN-Mid/w3, all four planners. `run_LAN_docker.sh` saved commands,
+  `BENCHMARK_COMPILE_ONLY=1`, `SKIP_WORKER_CONTROL=1`, `--network none`.
+  기존 실험의 source/JAR/metadata/worker는 수정하지 않음.
+- **증상**: rule/profile 예외가 empty profile, CP fallback, RULE_ERROR 제외로 변환됨.
+  fail-fast 후 StepLM/KMeans는 LeftIndexRule NPE, P1은 Spark 설정 초기화 중
+  `UnknownHostException: coordinator`로 실패. ML 오류를 출력한 wrapper가 exit=0을
+  반환하여 종료 코드만으로는 성공 판정이 불가능했음.
+- **원인**: immutable `List.of(ROW).contains(null)`은 NPE를 발생시킴. 또한 FED
+  semantic opcode 분류가 Spark broadcast-memory-budget 기반의 물리 전략 예측을
+  수행함. 두 opcode alias는 FED rule/runtime에서 같은 구현을 사용함.
+- **수정**: RulesCore 및 builder의 unexpected RuntimeException은 문맥/원인을 보존해
+  전파; JVM Error도 전파. TransformEncode/Covariance/Spoof 내부 masking 제거.
+  LeftIndex null 검사를 null-safe iteration으로 교체. OracleFacade/logger는 모든
+  LeftIndexingOp을 LEFT_INDEX로 정규화하고 중복 Spark 예측 helper 삭제.
+  정상 unsupported/empty/no-rule과 runtime MAPLEFTINDEX alias는 유지.
+- **수정 파일**: `RulesCore.java`, `Rulesets.java`, `OracleFacade.java`,
+  `NeutralPlacementGraphBuilder.java`, `FederatedPlannerLogger.java`; 새 regression
+  6개 클래스(22 tests), 기존 OracleFacadeTest의 직접 영향받은 canonical opcode
+  assertion 1개. 비용/선택 정책/privacy/runtime/DML/Explicit Binding은 수정 안 함.
+- **검증**: test-first fail-fast/LeftIndex RED logs와 GREEN을 보존.
+  통합 회귀 125 tests: 124 pass, 1 failure. 유일한 failure
+  `OracleFacadeTest.binaryFullMatrixWithLocalMatrixDoesNotRequireEncodedWidth`는
+  원래 staged JAR에서도 동일하게 재현(원본 24 tests 중 동일 1 failure).
+  assertion을 약화하거나 ignore하지 않음. 별도 diagnostic validator 5 tests pass;
+  로그 오류, compilation 완료, execution=0, complete physical authority, audit를 확인.
+  `git diff --check` clean. 전체 suite 성공으로 보고하지 않음.
+- **재현/근거 경로**: `/home/mchoi/g014-candidate-space-audit-20260908`.
+  `replay_planning.py`, `validate_replay.py`, `compare_replays.py`,
+  `logs/regression-v2.log`, `logs/baseline-oracle-regression.log`,
+  `REPORT_CANDIDATE_SPACE_20260908.md` 참조.
+- **잔여 이슈**: unknown-shape materialization의 positive-shape 증명 및 complete
+  runtime-vs-domain audit는 별도 범위. StepLM hop1400은 m_lm occurrence이며 현재
+  abstract rows/cols/orientation UNKNOWN이라 기존 fact만으로 positive shape를
+  증명할 수 없음. known-positive gate를 무조건 제거하지 않음.
+- **잠재 회귀 위험/감지**: 이전에 감춰졌던 다른 예외가 compile failure로 드러날 수 있음.
+  원인을 고쳐야 하며 candidate 제외/CP fallback으로 복구하지 않음. Full trace와
+  raw domain을 비교하고, authority-record 복원과 실제 instruction 변화도 구분.
+- **의사결정 근거/원칙**: oracle/compiler 경계의 결함만 수정; privacy/legality
+  완화와 runtime fallback 금지. 플래너 간 성능 차이를 인위적으로 확대하지 않음.
+
+
+### 최종 16-cell 재검증 결과
+
+- 수정본 `bd3bb4c2db01f3e880091df90c18f2f71b9b2cbd7b3ac7cf894fa0b4e161d566`:
+  StepLM/KMeans/LM/P1 × 4 planners 전부 application-level planning 성공.
+- 16개 pre-/post-privacy output domain과 exact runtime program 텍스트 동일.
+- comparator는 P1 4개를 candidate-authority changed로 표시: 각 셀에서 CP/LOUT
+  local indexing 후보 기록 5개만 복원. selection/registry/instruction은 동일.
+  이 차이를 숨기지 않고 `repair-v2/comparisons/REPAIR_CLASSIFICATION.json`에 분류.
+- 최초 fixed 시도의 exit=0 ML 12개를 성공으로 해석하면 안 됨: 실제로 LM 4개만
+  성공, StepLM/KMeans 8개 application error. P1 4개도 실패. 원본 receipt 보존 후
+  별도 validated status 작성. 수정본의 최종 16/16은 로그/trace/audit까지 검증한 수치.
+- 이번 결함 수정에 따른 runtime improvement는 관측/주장하지 않음. active campaign
+  source/staged JAR는 원본 그대로이며, 동일 instruction의 runtime 재실행은 안 함.

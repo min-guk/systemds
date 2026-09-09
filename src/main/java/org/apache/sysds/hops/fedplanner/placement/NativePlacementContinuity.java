@@ -26,6 +26,7 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpN;
@@ -34,6 +35,11 @@ import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.wink.json4j.JSONObject;
+import org.apache.wink.json4j.JSONException;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.NaryOp;
@@ -266,7 +272,8 @@ final class NativePlacementContinuity {
 			}
 			addDependency(proof, edge.producer());
 		}
-		if(!presentMatrix)
+		if(!presentMatrix && !(transformEncodePreservesPool(owner, witness.fType)
+			&& !reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of()).isEmpty()))
 			proof.valid = false;
 	}
 
@@ -284,6 +291,8 @@ final class NativePlacementContinuity {
 	}
 
 	private static boolean operationPreservesWitness(Hop hop, NativePoolWitness witness, CandidateRuleFact fact) {
+		if(transformEncodePreservesPool(hop, witness.fType))
+			return true;
 		if(hop instanceof LeftIndexingOp) {
 			var inputs = fact.key().orderedInputs();
 			if(witness.fType != FType.FULL || !witness.singleEndpoint() || inputs.size() != hop.getInput().size()
@@ -303,6 +312,11 @@ final class NativePlacementContinuity {
 		if(hop instanceof DataOp data)
 			return data.getOp() == OpOpData.FEDERATED || data.getOp() == OpOpData.TRANSIENTREAD
 				|| data.getOp() == OpOpData.TRANSIENTWRITE;
+		if(hop instanceof UnaryOp unary && unary.getOp() == OpOp1.CAST_AS_FRAME
+			&& unary.getDataType().isFrame() && unary.getInput().size() == 1
+			&& unary.getInput(0).getDataType().isMatrix())
+			// CastFEDInstruction copies the same ranges/endpoints; no row filtering.
+			return true;
 		if(hop instanceof UnaryOp unary) {
 			var inputs = fact.key().orderedInputs();
 			return unary.getDataType().isMatrix() && unary.getInput().size() == 1
@@ -357,6 +371,39 @@ final class NativePlacementContinuity {
 			&& !hop.getInput().isEmpty() && hop.getInput(0).getDataType().isMatrix())
 			return witness.fType == FType.FULL && witness.singleEndpoint();
 		return false;
+	}
+
+	/** Pool/partition-axis proof only: encoded columns and value identity are not copied. */
+	static boolean transformEncodePreservesPool(Hop hop, FType type) {
+		if(type != FType.ROW && type != FType.FULL || !(hop instanceof DataOp data)
+			|| data.getOp() != OpOpData.FUNCTIONOUTPUT || !hop.getDataType().isMatrix()
+			|| hop.getInput().size() != 1 || !hop.getInput(0).getDataType().isFrame())
+			return false;
+		FunctionOp call = FederatedPlannerUtils.getMultiReturnFunctionOutputParent(hop);
+		if(call == null || call.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			|| !"transformencode".equalsIgnoreCase(call.getFunctionName())
+			|| call.getInput().size() != 2 || call.getOutputs().size() != 2
+			|| call.getOutputs().get(0) != hop)
+			return false;
+		// Native mapParallel preserves endpoints/cardinality. ROW additionally needs
+		// unchanged row intervals: legacy omit removes rows, whereas dummycode changes
+		// only columns. Never reuse input COL intervals for an encoded output.
+		if(type == FType.FULL)
+			return true;
+		if(!(call.getInput(1) instanceof LiteralOp literal))
+			return false;
+		try {
+			JSONObject spec = new JSONObject(literal.getStringValue());
+			// Keep this proof restricted to known row-preserving transforms, without
+			// consulting privacy authorization or widening generic encoder support.
+			for(Object key : spec.keySet())
+				if(!Set.of("ids", "recode", "dummycode", "cofeePublicRecodeMetadata").contains(key))
+					return false;
+			return spec.containsKey("recode") || spec.containsKey("dummycode");
+		}
+		catch(JSONException ex) {
+			return false;
+		}
 	}
 
 	private static void addDependency(ProofNode proof, CompiledHopKey dependency) {

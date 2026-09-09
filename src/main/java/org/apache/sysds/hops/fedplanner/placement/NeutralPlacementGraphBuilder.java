@@ -396,7 +396,7 @@ public final class NeutralPlacementGraphBuilder {
 				inputAnchorOwners.add(inputNode == null ? null : inputNode.key());
 			}
 			DurableAnchorKey occurrenceAnchor = !anchors.isEmpty() ? anchors.get(0)
-				: inheritableDurableAnchor(hop, shapeFact, inputShapeFacts, inputAnchors);
+				: inheritableDurableAnchor(hop, key.normalizedSignature(), shapeFact, inputShapeFacts, inputAnchors);
 			if(occurrenceAnchor == null)
 				anchorProvenance.remove(hop);
 			else
@@ -714,6 +714,12 @@ public final class NeutralPlacementGraphBuilder {
 				effective.put(node.key(), Privacy.PUBLIC);
 		}
 
+		// Authorization is output- and spec-specific, captured once for this snapshot.
+		Set<Hop> publicRecodeMetadata = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop hop : origins.values())
+			if(isAuthorizedRecodeMetadataOutput(hop))
+				publicRecodeMetadata.add(hop);
+
 		boolean changed;
 		int pass = 0;
 		int maxPasses = Math.max(1, nodes.size() * (Privacy.values().length + 1));
@@ -732,6 +738,10 @@ public final class NeutralPlacementGraphBuilder {
 						? strongestPrivacy(inputPrivacy)
 						: FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
 				}
+				// A declared dictionary release is not a release of the primary encoded
+				// matrix. Strict PRIVATE inputs still dominate this limited authorization.
+				if(derived == Privacy.PRIVATE_AGGREGATE && publicRecodeMetadata.contains(hop))
+					derived = Privacy.PUBLIC;
 				Privacy prior = effective.get(node.key());
 				Privacy next = FederatedPlannerUtils.joinPrivacy(prior, derived);
 				if(next != prior) {
@@ -844,6 +854,20 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementPrivacyFacts authority = new PlacementPrivacyFacts(filteredNodes, privacyFacts,
 			FederatedWorkerUtils.countDistinctWorkers(allPartitions));
 		return new PrivacyClosure(List.copyOf(filteredNodes), List.copyOf(filteredFacts), authority);
+	}
+
+	private static boolean isAuthorizedRecodeMetadataOutput(Hop hop) {
+		FunctionOp call = FederatedPlannerUtils.getMultiReturnFunctionOutputParent(hop);
+		if(call == null || call.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			|| !"transformencode".equalsIgnoreCase(call.getFunctionName())
+			|| call.getInput().size() != 2 || call.getOutputs().size() != 2 || call.getOutputs().get(1) != hop)
+			return false;
+		// Multi-return builtins store target and specification positionally.
+		Hop spec = call.getInput().get(1);
+		// An unresolved spec is not permission to publish an unknown encoder.
+		return spec instanceof LiteralOp literal
+			&& org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacy
+				.allowsPublicRecodeMetadata(literal.getStringValue());
 	}
 
 	static List<CandidateEmissionFact> sourceClosedCandidateEmissions(List<CandidateEmissionFact> emissions) {
@@ -979,6 +1003,8 @@ public final class NeutralPlacementGraphBuilder {
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg) {
 		Map<CompiledHopKey,List<PlacementState>> supported = constraintSupportedPolicyStates(graph);
+		Map<CompiledHopKey,Set<Integer>> localContinuations = exactHeuristicLocalContinuations(
+			graph, shapeFacts, compiledInputEdges, candidateRuleFacts, supported);
 		List<HeuristicPolicyFact> demotions = new ArrayList<>();
 		for(HopOccurrenceProjection projection : projections) {
 			Hop hop = projection.hop();
@@ -992,7 +1018,7 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		while(true) {
 			List<HeuristicPathFact> paths = heuristicPaths(graph, projections, shapeFacts, demotions,
-				compiledInputEdges, candidateRuleFacts, occurrences, cfg);
+				compiledInputEdges, candidateRuleFacts, occurrences, cfg, localContinuations);
 			Set<CompiledHopKey> incompatible = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(HeuristicPathFact path : paths)
 				if(path.localPrefix().stream().anyMatch(key -> key != path.demotion().producer()
@@ -1057,11 +1083,72 @@ public final class NeutralPlacementGraphBuilder {
 		return Collections.unmodifiableMap(supported);
 	}
 
+	/** Analysis-owned local preference; full assignments still require shared certification. */
+	private static Map<CompiledHopKey,Set<Integer>> exactHeuristicLocalContinuations(
+		NeutralPlacementGraph graph, PlacementShapeFacts shapes,
+		List<CompiledInputEdgeFact> inputEdges, List<CandidateRuleFact> candidates,
+		Map<CompiledHopKey,List<PlacementState>> supported) {
+		Map<CompiledHopKey,List<CompiledInputEdgeFact>> byConsumer = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : inputEdges)
+			byConsumer.computeIfAbsent(edge.consumer(), ignored -> new ArrayList<>()).add(edge);
+		Map<CompiledHopKey,Set<Integer>> local = new IdentityHashMap<>();
+		for(CandidateRuleFact candidate : candidates) {
+			CompiledHopKey consumer = candidate.key().parentOccurrence();
+			if(candidate.status() != CandidateEvaluationStatus.AVAILABLE
+				|| !exactHeuristicReentryOccurrence(graph.node(consumer).orElseThrow())
+				|| !isScalarOrVector(shapes.abstractShapeFact(consumer).orElse(null))
+				|| candidate.allowedEmissionFacts().stream().noneMatch(emission -> {
+					PlacementState state = emission.emissionState().placementState();
+					return state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+						&& supported.getOrDefault(consumer, List.of()).contains(state);
+				}))
+				continue;
+			List<CompiledInputEdgeFact> edges = byConsumer.getOrDefault(consumer, List.of());
+			// Unknown shapes and large matrix siblings are not vector-only work.
+			if(edges.stream().anyMatch(edge -> !isScalarOrVector(
+				shapes.abstractShapeFact(edge.producer()).orElse(null)))
+				|| edges.stream().map(CompiledInputEdgeFact::inputPosition).distinct().count() != edges.size())
+				continue;
+			for(CompiledInputEdgeFact active : edges) {
+				List<CandidateInputState> inputs = candidate.key().orderedInputs();
+				// CP consumes the path-local payload independently of the oracle
+				// tuple's input FType; PRESENT is an execution requirement only for FED.
+				if(active.inputPosition() >= inputs.size())
+					continue;
+				boolean supplied = true;
+				for(CompiledInputEdgeFact sibling : edges) {
+					if(sibling == active)
+						continue;
+					if(sibling.inputPosition() >= inputs.size()) {
+						supplied = false;
+						break;
+					}
+					CandidateInputState input = inputs.get(sibling.inputPosition());
+					if(supported.getOrDefault(sibling.producer(), List.of()).stream().noneMatch(state ->
+						input.present() ? state.execType() == ExecType.FED
+							&& state.output() == FederatedOutput.FOUT && state.fType() == input.fType()
+							: state.output() == FederatedOutput.LOUT)) {
+						supplied = false;
+						break;
+					}
+				}
+				if(supplied)
+					local.computeIfAbsent(consumer, ignored -> new HashSet<>()).add(active.inputPosition());
+			}
+		}
+		return local;
+	}
+
+	private static boolean isScalarOrVector(AbstractShapeFact shape) {
+		return shape != null && (shape.dataType().isScalar() || shape.provablyVector());
+	}
+
 	private static List<HeuristicPathFact> heuristicPaths(NeutralPlacementGraph graph,
 		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
 		List<HeuristicPolicyFact> demotions,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg) {
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg,
+		Map<CompiledHopKey,Set<Integer>> localContinuations) {
 		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : compiledInputEdges) {
 			Node producer = graph.node(edge.producer()).orElseThrow();
@@ -1076,7 +1163,7 @@ public final class NeutralPlacementGraphBuilder {
 		outgoing.values().forEach(edges -> edges.sort(null));
 
 		List<HeuristicPathFact> paths = traceHeuristicPaths(graph, shapeFacts, demotions,
-			compiledInputEdges, candidateRuleFacts, outgoing);
+			compiledInputEdges, candidateRuleFacts, outgoing, localContinuations);
 		for(int pass = 0; pass < Math.max(1, occurrences.size()); pass++) {
 			Set<CompiledHopKey> provenLocal = paths.stream().flatMap(path -> path.localPrefix().stream())
 				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
@@ -1094,7 +1181,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(!changed)
 				return paths;
 			paths = traceHeuristicPaths(graph, shapeFacts, demotions, compiledInputEdges,
-				candidateRuleFacts, outgoing);
+				candidateRuleFacts, outgoing, localContinuations);
 		}
 		throw new IllegalStateException("Heuristic CFG local-phi closure did not converge");
 	}
@@ -1102,7 +1189,8 @@ public final class NeutralPlacementGraphBuilder {
 	private static List<HeuristicPathFact> traceHeuristicPaths(NeutralPlacementGraph graph,
 		PlacementShapeFacts shapeFacts, List<HeuristicPolicyFact> demotions,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
-		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing) {
+		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing,
+		Map<CompiledHopKey,Set<Integer>> localContinuations) {
 		Set<CompiledHopKey> demotionProducers = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 		for(HeuristicPolicyFact demotion : demotions)
 			demotionProducers.add(demotion.producer());
@@ -1119,6 +1207,16 @@ public final class NeutralPlacementGraphBuilder {
 				CompiledHopKey producerKey = pending.removeFirst();
 				for(HeuristicPathEdgeFact edge : outgoing.getOrDefault(producerKey, List.of())) {
 					if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT) {
+						// A legal local vector continuation takes precedence over a possible
+						// FED re-entry. Only this consumer joins the prefix: its public
+						// sibling remains independently placed and may share a local copy.
+						if(localContinuations.getOrDefault(edge.consumer(), Set.of()).contains(edge.inputPosition())) {
+							usedEdges.add(edge);
+							if(localPrefix.add(edge.consumer())
+								&& supportedLocalPathNode(graph, shapeFacts, edge.consumer()))
+								pending.addLast(edge.consumer());
+							continue;
+						}
 						HeuristicPathwiseReentryFact reentry = exactHeuristicReentry(graph, compiledInputEdges,
 							candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition());
 						if(reentry != null) {
@@ -1126,18 +1224,16 @@ public final class NeutralPlacementGraphBuilder {
 							continue;
 						}
 						boolean nestedDemotion = demotionProducers.contains(edge.consumer());
-						boolean remoteDemotionRequired = nestedDemotion && graph.node(edge.consumer())
+						boolean remoteComputationRequired = nestedDemotion && graph.node(edge.consumer())
 							.orElseThrow().legalAlternatives().stream().noneMatch(state ->
 								state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT);
 						HeuristicNativeContinuationFact nativeContinuation =
 							exactHeuristicNativeContinuation(graph, compiledInputEdges,
 								candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition(),
-								remoteDemotionRequired ? FederatedOutput.LOUT : FederatedOutput.FOUT);
-						// A nested demotion normally stays CP. If a protected sibling makes
-						// CP illegal, an exact native local-input FED/LOUT row can still
-						// return a safe local result. Its own marker starts the next prefix;
-						// do not force that remote computation into the preceding CP prefix.
-						if(nativeContinuation != null && (!nestedDemotion || remoteDemotionRequired)) {
+								remoteComputationRequired ? FederatedOutput.LOUT : FederatedOutput.FOUT);
+						// A downstream demotion may require FED computation while
+						// natively returning LOUT. Its own path governs the local result.
+						if(nativeContinuation != null && (!nestedDemotion || remoteComputationRequired)) {
 							nativeContinuations.add(nativeContinuation);
 							continue;
 						}
@@ -1362,14 +1458,11 @@ public final class NeutralPlacementGraphBuilder {
 			|| candidate.status() != CandidateEvaluationStatus.AVAILABLE
 			|| candidate.capability() == null
 			|| candidate.capability().nativeExec() != ExecType.FED
-			|| candidate.capability().nativeOutput() != FederatedOutput.FOUT
-			|| candidate.capability().nativeFoutFType() == null
 			|| !candidate.profile().available()
 			|| localInputPosition >= candidate.key().orderedInputs().size()
 			|| !candidate.key().orderedInputs().get(localInputPosition)
 				.equals(CandidateInputState.absentLocal()))
 			return;
-		FType layout = candidate.capability().nativeFoutFType();
 		List<Integer> presentPositions = new ArrayList<>();
 		for(int position = 0; position < candidate.key().orderedInputs().size(); position++)
 			if(candidate.key().orderedInputs().get(position).present())
@@ -1380,6 +1473,14 @@ public final class NeutralPlacementGraphBuilder {
 		if(presentPositions.size() != 1)
 			return;
 		int siblingInputPosition = presentPositions.get(0);
+		FType layout = candidate.key().orderedInputs().get(siblingInputPosition).fType();
+		boolean nativeFout = candidate.capability().nativeOutput() == FederatedOutput.FOUT
+			&& candidate.capability().nativeFoutFType() == layout;
+		boolean nativeLout = output == FederatedOutput.LOUT
+			&& candidate.capability().nativeOutput() == FederatedOutput.LOUT
+			&& candidate.capability().nativeFoutFType() == null;
+		if(!nativeFout && !nativeLout)
+			return;
 		if(!candidate.key().orderedInputs().get(siblingInputPosition)
 			.equals(CandidateInputState.present(layout)))
 			return;
@@ -1857,7 +1958,8 @@ public final class NeutralPlacementGraphBuilder {
 			DurableAnchorKey anchor = occurrenceAnchors.get(i);
 			if(isTransientRead(occurrences.get(i).hop()) && (cfg.reachingFunctionInputs().get(i)
 				|| !cfg.reachingDefinitions().get(i).isEmpty()))
-				anchor = cfgTransientReadAnchor(occurrences.get(i).hop(), factsByHop.get(occurrences.get(i).hop()),
+				anchor = cfgTransientReadAnchor(occurrences.get(i).hop(), nodes.get(i).key().normalizedSignature(),
+					factsByHop.get(occurrences.get(i).hop()),
 					cfg.reachingDefinitions().get(i), cfg.reachingFunctionInputs().get(i), anchor,
 					occurrenceAnchors);
 			Node node = nodes.get(i);
@@ -1874,7 +1976,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	// Durable-anchor propagation preserves an existing FederationMap identity only when the matrix inputs,
 	// output geometry, and Oracle profile all prove the same FType domain; it is not a runtime-capability closure.
-	private DurableAnchorKey cfgTransientReadAnchor(Hop hop, NodeShapeFact outputShape,
+	private DurableAnchorKey cfgTransientReadAnchor(Hop hop, String occurrence, NodeShapeFact outputShape,
 		Set<Integer> reachingDefinitions, boolean reachesFunctionInput,
 		DurableAnchorKey functionInputAnchor, List<DurableAnchorKey> occurrenceAnchors) {
 		if(!isTransientRead(hop) || !hop.getInput().isEmpty()
@@ -1893,11 +1995,11 @@ public final class NeutralPlacementGraphBuilder {
 				return null;
 		}
 		return anchor != null && outputShape != null && outputShape.dataType().isMatrix()
-			&& outputGeometryCompatible(outputShape, anchor) && oracleConfirmsAnchorDomain(hop,
+			&& outputGeometryCompatible(outputShape, anchor) && oracleConfirmsAnchorDomain(hop, occurrence,
 				Collections.singletonList(Collections.singletonList(anchor.fType())), anchor) ? anchor : null;
 	}
 
-	private DurableAnchorKey inheritableDurableAnchor(Hop hop, NodeShapeFact outputShape,
+	private DurableAnchorKey inheritableDurableAnchor(Hop hop, String occurrence, NodeShapeFact outputShape,
 		List<NodeShapeFact> inputShapeFacts, List<DurableAnchorKey> inputAnchors) {
 		if(outputShape == null || !outputShape.dataType().isMatrix())
 			return null;
@@ -1931,13 +2033,19 @@ public final class NeutralPlacementGraphBuilder {
 		boolean exactAlias = hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE
 			&& hop.getInput().size() == 1 && inputAnchors.get(0) != null;
 		return (exactAlias || outputGeometryCompatible(outputShape, anchor))
-			&& oracleConfirmsAnchorDomain(hop, domains, anchor)
+			&& oracleConfirmsAnchorDomain(hop, occurrence, domains, anchor)
 			? anchor : null;
 	}
 
-	private boolean oracleConfirmsAnchorDomain(Hop hop, List<List<FType>> domains, DurableAnchorKey anchor) {
-		FTypeProfile profile = oracle.inferProfile(hop, domains, null);
-		return profile != null && profile.outputs() != null && profile.outputs().contains(anchor.fType());
+	private boolean oracleConfirmsAnchorDomain(Hop hop, String occurrence, List<List<FType>> domains,
+		DurableAnchorKey anchor) {
+		try {
+			FTypeProfile profile = oracle.inferProfile(hop, domains, null);
+			return profile != null && profile.outputs() != null && profile.outputs().contains(anchor.fType());
+		}
+		catch(RuntimeException e) {
+			throw oracleRuntimeFailure("anchor profile", occurrence, hop, domains, e);
+		}
 	}
 
 	private static boolean knownBroadcastableLocalMatrix(NodeShapeFact shape) {
@@ -2532,7 +2640,8 @@ public final class NeutralPlacementGraphBuilder {
 				// independently established intrinsic/function-boundary authority.
 				DurableAnchorKey outputAnchor = hop.getInput().isEmpty() && current.anchors().size() == 1
 					? current.anchors().get(0)
-					: inheritableDurableAnchor(hop, outputShape, inputShapes, inputAnchors);
+					: inheritableDurableAnchor(hop, current.key().normalizedSignature(), outputShape,
+						inputShapes, inputAnchors);
 				List<DurableAnchorKey> outputAnchors = outputAnchor == null ? List.of() : List.of(outputAnchor);
 				Node replacement = buildNode(hop, current.key(), current.valueVersion(), outputAnchors,
 					inputAnchors, Collections.unmodifiableList(inputAnchorOwners),
@@ -4011,13 +4120,11 @@ public final class NeutralPlacementGraphBuilder {
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
 			}
-			catch(Throwable t) {
-				candidateRuleFacts.add(candidateRuleFailureFact(key, inputs, t));
-				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
-				addGlobalExclusion(legal, excluded, new Exclusion(failure, ReasonCode.RULE_ERROR,
-					"RULE_ERROR:" + t.getClass().getSimpleName()));
-				continue;
+			catch(RuntimeException e) {
+				throw oracleRuntimeFailure("oracle decision", key.normalizedSignature(), hop, inputs, e);
 			}
+			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
+				throw oracleReportedRuleError(key.normalizedSignature(), hop, inputs, caps);
 			ExactRightIndexRuntimeFact exactRightIndex = exactRightIndexRuntimeFact(
 				hop, inputs, inputAnchors, caps);
 			FType exactVectorLocalType = exactAggregateBinaryVectorLocalType(hop, abstractShape, inputs);
@@ -4034,9 +4141,7 @@ public final class NeutralPlacementGraphBuilder {
 			PlacementState state = new PlacementState(caps.exec(), caps.placement(), outType, exactShapeDependent);
 			String detail = "inputs=" + inputEvidence(inputs) + "|proof=" + evidence.shapeProof()
 				+ '|' + caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
-			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
-				addGlobalExclusion(legal, excluded, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
-			else if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP
+			if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
 				addGlobalExclusion(legal, excluded, new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
 			else if(transientAccess && !isLegalTransient(state))
@@ -4119,6 +4224,20 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
+	}
+
+	private static IllegalStateException oracleRuntimeFailure(String phase, String occurrence, Hop hop,
+		Object inputLayouts, RuntimeException cause) {
+		return new IllegalStateException("Federated " + phase + " failed: occurrence=" + occurrence
+			+ ", hop=" + hop.getHopID() + ", op=" + hop.getOpString()
+			+ ", inputLayouts=" + inputLayouts, cause);
+	}
+
+	private static IllegalStateException oracleReportedRuleError(String occurrence, Hop hop,
+		List<FType> inputLayouts, OpCaps caps) {
+		return new IllegalStateException("Federated oracle decision reported RULE_ERROR: occurrence=" + occurrence
+			+ ", hop=" + hop.getHopID() + ", op=" + hop.getOpString()
+			+ ", inputLayouts=" + inputLayouts + ", detail=" + caps.detail().orElse(""));
 	}
 
 	private static ShapeHint exactShapeHint(Hop hop, NodeShapeFact output,
@@ -4404,8 +4523,8 @@ public final class NeutralPlacementGraphBuilder {
 		for(int inputPosition = 0; inputPosition < inputShapeFacts.size(); inputPosition++) {
 			CandidateConsumerProfileKey key = new CandidateConsumerProfileKey(consumerKey, inputPosition);
 			domainKeys.add(key);
-			ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(consumer, inputShapeFacts,
-				List.of(inputPosition));
+			ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(consumer,
+				consumerKey.normalizedSignature(), inputShapeFacts, List.of(inputPosition));
 			facts.add(new CandidateConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
 				evaluation.failureCode()));
 		}
@@ -4439,10 +4558,10 @@ public final class NeutralPlacementGraphBuilder {
 				}
 				if(producerInputPositions.isEmpty())
 					continue;
-				ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(parent, inputShapeFacts,
-					producerInputPositions);
 				DetachedConsumerProfileKey key = new DetachedConsumerProfileKey(producerKey, parentOrdinal,
 					PlacementGraphFingerprint.semanticStructuralKey(parent), producerInputPositions);
+				ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(parent, key.toString(), inputShapeFacts,
+					producerInputPositions);
 				facts.add(new DetachedConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
 					evaluation.failureCode()));
 			}
@@ -4490,25 +4609,22 @@ public final class NeutralPlacementGraphBuilder {
 		return shape.dataType().isMatrix() || shape.dataType().isFrame();
 	}
 
-	private ConsumerProfileEvaluation evaluateConsumerProfile(Hop consumer, List<NodeShapeFact> inputShapeFacts,
-		List<Integer> targetPositions) {
+	private ConsumerProfileEvaluation evaluateConsumerProfile(Hop consumer, String occurrence,
+		List<NodeShapeFact> inputShapeFacts, List<Integer> targetPositions) {
 		List<FType> allowed = new ArrayList<>();
-		String failure = "";
 		for(FType candidate : PlacementCandidateRuleResolver.matrixFTypeCandidates()) {
+			List<List<FType>> inputLayouts =
+				consumerProfileInputDomains(inputShapeFacts, targetPositions, candidate);
 			try {
-				FTypeProfile profile = oracle.inferProfile(consumer,
-					consumerProfileInputDomains(inputShapeFacts, targetPositions, candidate), null);
+				FTypeProfile profile = oracle.inferProfile(consumer, inputLayouts, null);
 				if(profile != null && profile.outputs() != null && !profile.outputs().isEmpty())
 					allowed.add(candidate);
 			}
-			catch(Throwable t) {
-				failure = "PROFILE_ERROR:" + t.getClass().getSimpleName();
-				allowed.clear();
-				break;
+			catch(RuntimeException e) {
+				throw oracleRuntimeFailure("consumer profile", occurrence, consumer, inputLayouts, e);
 			}
 		}
-		return new ConsumerProfileEvaluation(failure.isEmpty() ? CandidateEvaluationStatus.AVAILABLE
-			: CandidateEvaluationStatus.PROFILE_ERROR, List.copyOf(allowed), failure);
+		return new ConsumerProfileEvaluation(CandidateEvaluationStatus.AVAILABLE, List.copyOf(allowed), "");
 	}
 
 	private static List<List<FType>> consumerProfileInputDomains(List<NodeShapeFact> inputShapeFacts,
@@ -4564,22 +4680,19 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(consultedFacts,
 			requiredFacts, new ArrayList<>(proof.missingRequiredFacts()));
-		if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR) {
-			String failure = "RULE_ERROR" + caps.detail().map(detail -> ":" + detail).orElse("");
-			return new CandidateRuleFact(key, CandidateEvaluationStatus.RULE_ERROR, capability, shapeProof,
-				new CandidateProfileFact(List.of(), failure), List.of(), failure);
-		}
+		List<List<FType>> profileInputs = profileInputDomains(inputShapeFacts, inputs);
 		CandidateProfileFact profile;
 		try {
 			if(exactRightIndex != null)
 				profile = new CandidateProfileFact(List.of(exactRightIndex.outputFType()), "");
 			else {
-				FTypeProfile inferred = oracle.inferProfile(hop, profileInputDomains(inputShapeFacts, inputs), null);
+				FTypeProfile inferred = oracle.inferProfile(hop, profileInputs, null);
 				profile = new CandidateProfileFact(inferred == null ? List.of() : inferred.outputs(), "");
 			}
 		}
-		catch(Throwable t) {
-			profile = new CandidateProfileFact(List.of(), "PROFILE_ERROR:" + t.getClass().getSimpleName());
+		catch(RuntimeException e) {
+			throw oracleRuntimeFailure("candidate profile", key.parentOccurrence().normalizedSignature(), hop,
+				profileInputs, e);
 		}
 		CandidateEvaluationStatus status = profile.available() ? CandidateEvaluationStatus.AVAILABLE
 			: CandidateEvaluationStatus.PROFILE_ERROR;
@@ -4646,14 +4759,6 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record ExactRightIndexRuntimeFact(FType outputFType, String literalBounds,
 		String inputAnchor, int filteredPartitions) { }
-
-	private static CandidateRuleFact candidateRuleFailureFact(CompiledHopKey key, List<FType> inputs, Throwable t) {
-		String failure = "RULE_ERROR:" + t.getClass().getSimpleName();
-		return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
-			CandidateEvaluationStatus.RULE_ERROR, null,
-			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
-			new CandidateProfileFact(List.of(), failure), List.of(), failure);
-	}
 
 	private static List<List<FType>> profileInputDomains(List<NodeShapeFact> inputShapeFacts,
 		List<FType> inputs) {
@@ -5565,6 +5670,17 @@ public final class NeutralPlacementGraphBuilder {
 					functionOutputSourcesByAlias
 						.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
 						.add(constraint.left());
+			// A native encoded-primary carrier has a logical FRAME input, not a
+			// compiled matrix edge. Transfer ROW pool/axis or single-FULL endpoint evidence; do not
+			// promote a generic multi-return control coupling or raw column ranges.
+			for(Constraint constraint : constraints)
+				if(constraint.kind() == ConstraintKind.DOMINATES && constraint.inputPosition() == 0
+					&& "multi-return-output-value".equals(constraint.evidence())
+					&& NativePlacementContinuity.transformEncodePreservesPool(
+						origins.get(constraint.right()), FType.ROW)
+					&& origins.get(constraint.left()) == origins.get(constraint.right()).getInput(0))
+					functionOutputSourcesByAlias.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+						.add(constraint.left());
 			for(Constraint constraint : constraints) {
 				if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
 					|| !"function-formal-input".equals(constraint.evidence()))
@@ -5830,9 +5946,15 @@ public final class NeutralPlacementGraphBuilder {
 				producer, List.of());
 			if(sources.isEmpty())
 				return Set.of();
+			boolean encodedPrimary = NativePlacementContinuity.transformEncodePreservesPool(
+				origins.get(producer), FType.ROW);
+			if(encodedPrimary && fType != FType.ROW && fType != FType.FULL)
+				return Set.of(); // Encoding does not preserve column partition intervals.
 			Set<DurableAnchorKey> common = null;
 			for(CompiledHopKey source : sources) {
-				Set<DurableAnchorKey> sourcePools = canonicalWorkerPools(resolve(source, fType));
+				Set<DurableAnchorKey> sourcePools = new java.util.TreeSet<>(canonicalWorkerPools(resolve(source, fType)));
+				if(encodedPrimary && fType == FType.FULL)
+					sourcePools.removeIf(pool -> pool.partitions().size() != 1);
 				if(sourcePools.isEmpty())
 					return Set.of();
 				if(common == null)
