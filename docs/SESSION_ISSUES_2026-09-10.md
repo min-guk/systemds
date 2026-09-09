@@ -30,3 +30,9 @@
 - Report: /home/mchoi/g014-workload-layout-audit-20260910/fix/REPORT.md
 
 - Review follow-up: exact [local,BROADCAST] AggBinaryOp candidate profile incorrectly became ROW because local was widened to all matrix FTypes. Narrowly preserve the actual local input in NeutralPlacementGraphBuilder; exact BROADCAST profile assertion reproduces failure before the fix and passes after. Added non-TSMM MM arity regression.
+
+## Publication verification follow-up
+- Committed all local source/test changes for publication without overwriting the separate newer GitHub main history. Active experiment stage remains unchanged.
+- BROADCAST targeted regressions: 37/37 PASS; paired compile-only probes: 24/24 PASS (see fix report above).
+- Additional existing compiled tests (ExactSparseFunctionBoundaryCostTest, PlacementCostSemanticsAnalysisMemoryCostTest, FederatedRefedPolicyTest): 84 run / 16 failures. All 16 are in FederatedRefedPolicyTest; the identical 16 test methods also fail against the unchanged frozen JAR without the new overlay. This is not a full clean-source Maven verification and these failures remain unresolved; do not advertise an all-green repository suite.
+- Logs: /tmp/cofee-systemds-publish-tests.log and /tmp/cofee-systemds-publish-baseline-tests.log. The publication task does not change runtime behavior to work around these pre-existing test failures.
