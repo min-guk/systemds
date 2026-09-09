@@ -714,6 +714,12 @@ public final class NeutralPlacementGraphBuilder {
 				effective.put(node.key(), Privacy.PUBLIC);
 		}
 
+		// Authorization is output- and spec-specific, captured once for this snapshot.
+		Set<Hop> publicRecodeMetadata = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop hop : origins.values())
+			if(isAuthorizedRecodeMetadataOutput(hop))
+				publicRecodeMetadata.add(hop);
+
 		boolean changed;
 		int pass = 0;
 		int maxPasses = Math.max(1, nodes.size() * (Privacy.values().length + 1));
@@ -732,6 +738,10 @@ public final class NeutralPlacementGraphBuilder {
 						? strongestPrivacy(inputPrivacy)
 						: FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
 				}
+				// A declared dictionary release is not a release of the primary encoded
+				// matrix. Strict PRIVATE inputs still dominate this limited authorization.
+				if(derived == Privacy.PRIVATE_AGGREGATE && publicRecodeMetadata.contains(hop))
+					derived = Privacy.PUBLIC;
 				Privacy prior = effective.get(node.key());
 				Privacy next = FederatedPlannerUtils.joinPrivacy(prior, derived);
 				if(next != prior) {
@@ -844,6 +854,20 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementPrivacyFacts authority = new PlacementPrivacyFacts(filteredNodes, privacyFacts,
 			FederatedWorkerUtils.countDistinctWorkers(allPartitions));
 		return new PrivacyClosure(List.copyOf(filteredNodes), List.copyOf(filteredFacts), authority);
+	}
+
+	private static boolean isAuthorizedRecodeMetadataOutput(Hop hop) {
+		FunctionOp call = FederatedPlannerUtils.getMultiReturnFunctionOutputParent(hop);
+		if(call == null || call.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			|| !"transformencode".equalsIgnoreCase(call.getFunctionName())
+			|| call.getInput().size() != 2 || call.getOutputs().size() != 2 || call.getOutputs().get(1) != hop)
+			return false;
+		// Multi-return builtins store target and specification positionally.
+		Hop spec = call.getInput().get(1);
+		// An unresolved spec is not permission to publish an unknown encoder.
+		return spec instanceof LiteralOp literal
+			&& org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacy
+				.allowsPublicRecodeMetadata(literal.getStringValue());
 	}
 
 	static List<CandidateEmissionFact> sourceClosedCandidateEmissions(List<CandidateEmissionFact> emissions) {
@@ -5569,6 +5593,17 @@ public final class NeutralPlacementGraphBuilder {
 					functionOutputSourcesByAlias
 						.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
 						.add(constraint.left());
+			// A native encoded-primary carrier has a logical FRAME input, not a
+			// compiled matrix edge. Transfer ROW pool/axis or single-FULL endpoint evidence; do not
+			// promote a generic multi-return control coupling or raw column ranges.
+			for(Constraint constraint : constraints)
+				if(constraint.kind() == ConstraintKind.DOMINATES && constraint.inputPosition() == 0
+					&& "multi-return-output-value".equals(constraint.evidence())
+					&& NativePlacementContinuity.transformEncodePreservesPool(
+						origins.get(constraint.right()), FType.ROW)
+					&& origins.get(constraint.left()) == origins.get(constraint.right()).getInput(0))
+					functionOutputSourcesByAlias.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+						.add(constraint.left());
 			for(Constraint constraint : constraints) {
 				if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
 					|| !"function-formal-input".equals(constraint.evidence()))
@@ -5834,9 +5869,15 @@ public final class NeutralPlacementGraphBuilder {
 				producer, List.of());
 			if(sources.isEmpty())
 				return Set.of();
+			boolean encodedPrimary = NativePlacementContinuity.transformEncodePreservesPool(
+				origins.get(producer), FType.ROW);
+			if(encodedPrimary && fType != FType.ROW && fType != FType.FULL)
+				return Set.of(); // Encoding does not preserve column partition intervals.
 			Set<DurableAnchorKey> common = null;
 			for(CompiledHopKey source : sources) {
-				Set<DurableAnchorKey> sourcePools = canonicalWorkerPools(resolve(source, fType));
+				Set<DurableAnchorKey> sourcePools = new java.util.TreeSet<>(canonicalWorkerPools(resolve(source, fType)));
+				if(encodedPrimary && fType == FType.FULL)
+					sourcePools.removeIf(pool -> pool.partitions().size() != 1);
 				if(sourcePools.isEmpty())
 					return Set.of();
 				if(common == null)

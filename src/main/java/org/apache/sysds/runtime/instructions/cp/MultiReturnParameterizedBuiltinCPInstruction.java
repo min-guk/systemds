@@ -35,6 +35,7 @@ import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacy;
 import org.apache.sysds.runtime.transform.encode.EncoderFactory;
 import org.apache.sysds.runtime.transform.encode.MultiColumnEncoder;
 
@@ -87,9 +88,10 @@ public class MultiReturnParameterizedBuiltinCPInstruction extends ComputationCPI
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
-		// obtain and pin input frame
+		String spec = TransformEncodeMetadataPrivacy.validateAndStripReleaseRequest(
+			ec.getScalarInput(input2).getStringValue());
+		// obtain and pin input frame only after the release request passes validation
 		FrameBlock fin = ec.getFrameInput(input1.getName());
-		String spec = ec.getScalarInput(input2).getStringValue();
 		String[] colnames = fin.getColumnNames();
 
 		// execute block transform encode
