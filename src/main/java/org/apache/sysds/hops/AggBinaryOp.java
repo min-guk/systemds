@@ -449,13 +449,13 @@ public class AggBinaryOp extends MultiThreadedHop {
 
 		if (HopRewriteUtils.isTransposeOperation(in1)
 				&& in1.getInput().get(0) == in2
-				&& !hasPlannerMaterializationBoundary(in1)) {
+				&& !hasPlannerFusionBoundary(in1)) {
 			ret = MMTSJType.LEFT;
 		}
 
 		if (HopRewriteUtils.isTransposeOperation(in2)
 				&& in2.getInput().get(0) == in1
-				&& !hasPlannerMaterializationBoundary(in2)) {
+				&& !hasPlannerFusionBoundary(in2)) {
 			ret = MMTSJType.RIGHT;
 		}
 
@@ -485,7 +485,7 @@ public class AggBinaryOp extends MultiThreadedHop {
 
 		//check for transpose left input (both chain types)
 		if (HopRewriteUtils.isTransposeOperation(in1)
-				&& !hasPlannerMaterializationBoundary(in1)) {
+				&& !hasPlannerFusionBoundary(in1)) {
 			Hop X = in1.getInput().get(0);
 
 			//check mapmultchain patterns
@@ -497,8 +497,8 @@ public class AggBinaryOp extends MultiThreadedHop {
 					// MapMultChain erases both intermediate hops. Preserve any explicit
 					// planner relocation/materialization boundary so Dag lowering can
 					// resolve the selected hop to a concrete Lop.
-					if (X == in4 && !hasPlannerMaterializationBoundary(in2)
-							&& !hasPlannerMaterializationBoundary(in3b)) //common input
+					if (X == in4 && !hasPlannerFusionBoundary(in2)
+							&& !hasPlannerFusionBoundary(in3b)) //common input
 						chainType = ChainType.XtwXv;
 				}
 			}
@@ -508,15 +508,15 @@ public class AggBinaryOp extends MultiThreadedHop {
 				Hop in3b = in2.getInput().get(1);
 				if (in3a instanceof AggBinaryOp && in3b.getDataType() == DataType.MATRIX) {
 					Hop in4 = in3a.getInput().get(0);
-					if (X == in4 && !hasPlannerMaterializationBoundary(in2)
-							&& !hasPlannerMaterializationBoundary(in3a)) //common input
+					if (X == in4 && !hasPlannerFusionBoundary(in2)
+							&& !hasPlannerFusionBoundary(in3a)) //common input
 						chainType = ChainType.XtXvy;
 				}
 			}
 			//t(X)%*%(X%*%v)
 			else if (in2 instanceof AggBinaryOp) {
 				Hop in3 = in2.getInput().get(0);
-				if (X == in3 && !hasPlannerMaterializationBoundary(in2)) //common input
+				if (X == in3 && !hasPlannerFusionBoundary(in2)) //common input
 					chainType = ChainType.XtXv;
 			}
 		}
@@ -618,9 +618,9 @@ public class AggBinaryOp extends MultiThreadedHop {
 			Hop h2 = getInput().get(1);
 			int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
 			boolean leftTrans = HopRewriteUtils.isTransposeOperation(h1)
-				&& !hasPlannerMaterializationBoundary(h1);
+				&& !hasPlannerFusionBoundary(h1);
 			boolean rightTrans = HopRewriteUtils.isTransposeOperation(h2)
-				&& !hasPlannerMaterializationBoundary(h2);
+				&& !hasPlannerFusionBoundary(h2);
 			Lop left = !leftTrans ? h1.constructLops() :
 					h1.getInput().get(0).constructLops();
 			Lop right = !rightTrans ? h2.constructLops() :
@@ -683,8 +683,26 @@ public class AggBinaryOp extends MultiThreadedHop {
 		boolean directFout = input.getFederatedOutput() == FederatedOutput.FOUT
 			&& !input.isFederatedOutputDerived();
 		return directFout || FederatedRefedRegistry.hasEntry(hopId)
+			|| FederatedRefedRegistry.hasSelectedConsumerInput(hopId)
 			|| FederatedFoutMaterializeRegistry.hasEntry(hopId)
-			|| FederatedLocalMaterializeRegistry.hasEntry(hopId);
+			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(hopId)
+			|| FederatedLocalMaterializeRegistry.hasEntry(hopId)
+			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(hopId);
+	}
+
+	/**
+	 * Returns whether Lop fusion would cross an exact planner-selected physical placement.
+	 * Materialization/relocation boundaries are always explicit.  Otherwise, selected Hops may
+	 * still fuse when parent and child have the same execution and result-residency contract, but
+	 * a CP/FED or LOUT/FOUT transition must remain an explicit Lop so lowering realizes the plan
+	 * priced by the selector.
+	 */
+	private boolean hasPlannerFusionBoundary(Hop input) {
+		if(hasPlannerMaterializationBoundary(input))
+			return true;
+		return isPlannerPlacementSelected() && input.isPlannerPlacementSelected()
+			&& (getExecType() != input.getExecType()
+				|| getFederatedOutput() != input.getFederatedOutput());
 	}
 
 	private Lop constructCPLopsMMWithLeftTransposeRewrite(ExecType et) {

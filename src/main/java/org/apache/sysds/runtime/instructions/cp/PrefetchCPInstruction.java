@@ -20,6 +20,7 @@
 package org.apache.sysds.runtime.instructions.cp;
 
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.frame.data.FrameBlock;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 import org.apache.sysds.runtime.lineage.LineageItem;
@@ -58,6 +59,11 @@ public class PrefetchCPInstruction extends UnaryCPInstruction {
 		 * behavior below.
 		 */
 		if(getPlannerSyntheticActionKey() != null) {
+			if(input1.isFrame()) {
+				FrameBlock materialized = ec.getFrameObject(input1).acquireReadAndRelease();
+				ec.setFrameOutput(output.getName(), materialized);
+				return;
+			}
 			LineageItem li = !LineageCacheConfig.ReuseCacheType.isNone()
 				? getLineageItem(ec).getValue() : null;
 			MatrixBlock materialized = ec.getMatrixObject(input1).acquireReadAndRelease();

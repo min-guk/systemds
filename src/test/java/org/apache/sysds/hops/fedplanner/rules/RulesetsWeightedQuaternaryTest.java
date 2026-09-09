@@ -41,9 +41,12 @@ import org.junit.Test;
 
 public class RulesetsWeightedQuaternaryTest {
   private static final String SCALAR_DETAIL = "scalar output → LOUT";
-  private static final String WDIVMM_ALIGN_DETAIL = "output dims derive from U/V; partition misalignment risk";
+  private static final String WDIVMM_AGGREGATION_DETAIL =
+      "LEFT/ROW and RIGHT/COL worker results overlap and require coordinator aggregation";
   private static final String WSLOSS_X_AXIS_ONLY_DETAIL =
       "federated WSLoss runtime supports ROW/COL partitioned X only";
+  private static final String WSIGMOID_X_AXIS_ONLY_DETAIL =
+      "federated WSigmoid runtime supports ROW/COL partitioned X only";
 
   @Test
   public void weightedQuaternarySmokeTable() {
@@ -167,6 +170,32 @@ public class RulesetsWeightedQuaternaryTest {
             ReasonCode.OK,
             null,
             ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
+        Scenario.of("wsSigmoid-full-forbidden",
+            new Rulesets.WeightedSigmoidRule(),
+            Opcodes.WSIGMOID.toString(),
+            Map.of("q.type", "WSIGMOID"),
+            Arrays.asList(FType.FULL, null, null),
+            null,
+            ExecType.CP,
+            FederatedOutput.LOUT,
+            false,
+            null,
+            ReasonCode.PARTITION_FORBIDDEN,
+            WSIGMOID_X_AXIS_ONLY_DETAIL,
+            null),
+        Scenario.of("wsSigmoid-part-forbidden",
+            new Rulesets.WeightedSigmoidRule(),
+            Opcodes.WSIGMOID.toString(),
+            Map.of("q.type", "WSIGMOID"),
+            Arrays.asList(FType.PART, null, null),
+            null,
+            ExecType.CP,
+            FederatedOutput.LOUT,
+            false,
+            null,
+            ReasonCode.PARTITION_FORBIDDEN,
+            WSIGMOID_X_AXIS_ONLY_DETAIL,
+            null),
         Scenario.of("wumm-col",
             new Rulesets.WeightedUnaryMMRule(),
             Opcodes.WUMM.toString(),
@@ -195,7 +224,7 @@ public class RulesetsWeightedQuaternaryTest {
             ReasonCode.OK,
             null,
             null),
-        Scenario.of("wdivmm-left-misaligned",
+        Scenario.of("wdivmm-left-row-aggregates",
             new Rulesets.WeightedDivMMRule(),
             Opcodes.WDIVMM.toString(),
             Map.ofEntries(
@@ -207,10 +236,25 @@ public class RulesetsWeightedQuaternaryTest {
             FederatedOutput.LOUT,
             false,
             null,
-            ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
-            WDIVMM_ALIGN_DETAIL,
+            ReasonCode.OK,
+            WDIVMM_AGGREGATION_DETAIL,
             null),
-        Scenario.of("wdivmm-right-misaligned",
+        Scenario.of("wdivmm-left-col-transposes-partition-axis",
+            new Rulesets.WeightedDivMMRule(),
+            Opcodes.WDIVMM.toString(),
+            Map.ofEntries(
+                Map.entry("q.type", "WDIVMM"),
+                Map.entry("wdivmm.baseType", "1")),
+            Arrays.asList(FType.COL, null, null, null),
+            wdivColMismatch,
+            ExecType.FED,
+            FederatedOutput.FOUT,
+            true,
+            FType.ROW,
+            ReasonCode.OK,
+            null,
+            null),
+        Scenario.of("wdivmm-right-col-aggregates",
             new Rulesets.WeightedDivMMRule(),
             Opcodes.WDIVMM.toString(),
             Map.ofEntries(
@@ -222,8 +266,23 @@ public class RulesetsWeightedQuaternaryTest {
             FederatedOutput.LOUT,
             false,
             null,
-            ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
-            WDIVMM_ALIGN_DETAIL,
+            ReasonCode.OK,
+            WDIVMM_AGGREGATION_DETAIL,
+            null),
+        Scenario.of("wdivmm-right-row-preserves-partition-axis",
+            new Rulesets.WeightedDivMMRule(),
+            Opcodes.WDIVMM.toString(),
+            Map.ofEntries(
+                Map.entry("q.type", "WDIVMM"),
+                Map.entry("wdivmm.baseType", "2")),
+            Arrays.asList(FType.ROW, null, null, null),
+            wdivRowMismatch,
+            ExecType.FED,
+            FederatedOutput.FOUT,
+            true,
+            FType.ROW,
+            ReasonCode.OK,
+            null,
             null),
         Scenario.of("wdivmm-basetype-missing",
             new Rulesets.WeightedDivMMRule(),
@@ -324,6 +383,26 @@ public class RulesetsWeightedQuaternaryTest {
         assertTrue(msg + " expected guard note " + scenario.expectedNote, found);
       }
     }
+  }
+
+  @Test
+  public void weightedDivMMProfileReflectsRuntimeOutputAxis() {
+    Rulesets.WeightedDivMMRule rule = new Rulesets.WeightedDivMMRule();
+    List<List<FType>> row = Arrays.asList(List.of(FType.ROW), List.of(), List.of(), List.of());
+    List<List<FType>> col = Arrays.asList(List.of(FType.COL), List.of(), List.of(), List.of());
+
+    assertEquals(List.of(FType.ROW), rule.profile(quaternarySig(Opcodes.WDIVMM.toString(),
+        Map.of("q.type", "WDIVMM", "wdivmm.baseType", "0"), 4), row, null).outputs());
+    assertEquals(List.of(FType.COL), rule.profile(quaternarySig(Opcodes.WDIVMM.toString(),
+        Map.of("q.type", "WDIVMM", "wdivmm.baseType", "0"), 4), col, null).outputs());
+    assertEquals(List.of(), rule.profile(quaternarySig(Opcodes.WDIVMM.toString(),
+        Map.of("q.type", "WDIVMM", "wdivmm.baseType", "1"), 4), row, null).outputs());
+    assertEquals(List.of(FType.ROW), rule.profile(quaternarySig(Opcodes.WDIVMM.toString(),
+        Map.of("q.type", "WDIVMM", "wdivmm.baseType", "1"), 4), col, null).outputs());
+    assertEquals(List.of(FType.ROW), rule.profile(quaternarySig(Opcodes.WDIVMM.toString(),
+        Map.of("q.type", "WDIVMM", "wdivmm.baseType", "2"), 4), row, null).outputs());
+    assertEquals(List.of(), rule.profile(quaternarySig(Opcodes.WDIVMM.toString(),
+        Map.of("q.type", "WDIVMM", "wdivmm.baseType", "2"), 4), col, null).outputs());
   }
 
   private static OpSig quaternarySig(String opcode, Map<String,String> attrs, int arity) {

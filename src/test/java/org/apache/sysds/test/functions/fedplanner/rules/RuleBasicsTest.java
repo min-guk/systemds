@@ -84,6 +84,18 @@ public class RuleBasicsTest {
   }
 
   @Test
+  public void naryCbindIsExcludedWithoutAFederatedRuntimeKernel() {
+    Rulesets.AppendRule rule = new Rulesets.AppendRule();
+    OpSig sig = OpSig.of(Opcodes.CBIND.toString(), OpCategory.APPEND, Map.of("cbind", "true"),
+        InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX);
+
+    OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW, FType.ROW), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
+    assertEquals(ReasonCode.NOT_IMPLEMENTED, caps.reason());
+  }
+
+  @Test
   public void quantilePickIncludesQpick() {
     Rulesets.QuantilePickRule rule = new Rulesets.QuantilePickRule();
     OpSig sig = OpSig.of(Opcodes.QPICK.toString(), OpCategory.QUANTILE_PICK, Map.of());

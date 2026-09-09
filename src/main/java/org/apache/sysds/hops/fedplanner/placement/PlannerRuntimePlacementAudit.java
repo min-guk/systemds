@@ -19,6 +19,7 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayDeque;
@@ -38,10 +39,16 @@ import java.util.concurrent.atomic.LongAdder;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.FileFormat;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -76,6 +83,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
+import org.apache.sysds.runtime.meta.MetaDataFormat;
 
 /**
  * Fail-closed proof that planner authority survives Hop-to-Lop lowering and runtime preprocessing.
@@ -88,7 +96,7 @@ public final class PlannerRuntimePlacementAudit {
 	public static final String PROPERTY = "sysds.fedplanner.runtime.audit";
 
 	/** Immutable exact occurrence projection retained independently of mutable Hop fields. */
-	public record PlannedHop(long hopId, String recompileSignature, String plannerId, String keyHash,
+	public record PlannedHop(long hopId, long originHopId, String recompileSignature, String plannerId, String keyHash,
 		String opcode, NodeKind nodeKind, String sourceLocation, String valueName, String controlTarget,
 		List<String> inputHops, boolean emittedWork, PlacementEmissionState selectedTarget,
 		ExecType physicalExec, FederatedOutput physicalOutput, FType physicalFType,
@@ -96,6 +104,8 @@ public final class PlannerRuntimePlacementAudit {
 		public PlannedHop {
 			if(hopId < 0)
 				throw new IllegalArgumentException("Planned Hop id must be non-negative");
+			if(originHopId < 0)
+				throw new IllegalArgumentException("Planned Hop origin id must be non-negative");
 			plannerId = requireText(plannerId, "plannerId");
 			keyHash = requireText(keyHash, "keyHash");
 			opcode = opcode == null ? "" : opcode;
@@ -187,7 +197,16 @@ public final class PlannerRuntimePlacementAudit {
 	 * The consumer may therefore participate in normal same-placement Lop fusion, but only
 	 * after every synthetic prefetch token for that exact edge has itself been proved.
 	 */
-	private record PlanEntry(PlannedHop plan, Hop hop, List<String> fusedInputBoundaryTokens) {
+	private record PlanEntry(PlannedHop plan, Hop hop, List<String> fusedInputBoundaryTokens,
+		String persistentReadPath, FileFormat persistentReadFormat) {
+		private PlanEntry(PlannedHop plan, Hop hop, List<String> fusedInputBoundaryTokens) {
+			this(plan, hop, fusedInputBoundaryTokens,
+				hop instanceof DataOp data && data.getOp() == OpOpData.PERSISTENTREAD
+					? data.getFileName() : null,
+				hop instanceof DataOp data && data.getOp() == OpOpData.PERSISTENTREAD
+					? data.getFileFormat() : null);
+		}
+
 		private PlanEntry {
 			fusedInputBoundaryTokens = List.copyOf(
 				Objects.requireNonNull(fusedInputBoundaryTokens, "fusedInputBoundaryTokens"));
@@ -204,28 +223,39 @@ public final class PlannerRuntimePlacementAudit {
 	private record WorkerFragmentExecutionKey(String planHash, String parentAuditKey,
 		String requestType, String fragmentOpcode, String actual, long parentHopId,
 		long parentLopId) { }
-	private record FusedResolution(String runtimeAuditKey, boolean samePhysical) { }
+	private record FusedResolution(String runtimeAuditKey, boolean samePhysical,
+		ExecType exec, FederatedOutput output, String opcode, long hopId, long lopId,
+		List<String> planKeys) {
+		private FusedResolution {
+			planKeys = List.copyOf(planKeys);
+		}
+	}
 	private record RuntimePlacement(FederatedOutput output, FType fType, String outputVariable) { }
 
 	private static final class Authority {
 		private final String planHash;
+		private final String analysisFingerprint;
 		private final List<PlannedHop> plans;
 		private final Map<Long,List<PlanEntry>> byHopId;
+		private final Map<Long,List<PlanEntry>> byOriginHopId;
 		private final Map<String,List<PlanEntry>> bySignature;
 		private final Map<String,PlanEntry> byPlanKey;
 		private final Map<String,PlanEntry> byKeyHash;
 		private final Map<String,PlannedSyntheticAction> syntheticByToken;
 
-		private Authority(String planHash, List<PlanEntry> entries,
+		private Authority(String planHash, String analysisFingerprint, List<PlanEntry> entries,
 			List<PlannedSyntheticAction> syntheticActions) {
 			this.planHash = requireText(planHash, "planHash");
+			this.analysisFingerprint = requireText(analysisFingerprint, "analysisFingerprint");
 			this.plans = entries.stream().map(PlanEntry::plan).toList();
 			Map<Long,List<PlanEntry>> ids = new LinkedHashMap<>();
+			Map<Long,List<PlanEntry>> origins = new LinkedHashMap<>();
 			Map<String,List<PlanEntry>> signatures = new LinkedHashMap<>();
 			Map<String,PlanEntry> keys = new LinkedHashMap<>();
 			Map<String,PlanEntry> stableKeys = new LinkedHashMap<>();
 			for(PlanEntry entry : entries) {
 				ids.computeIfAbsent(entry.plan().hopId(), ignored -> new ArrayList<>()).add(entry);
+				origins.computeIfAbsent(entry.plan().originHopId(), ignored -> new ArrayList<>()).add(entry);
 				if(entry.plan().recompileSignature() != null && !entry.plan().recompileSignature().isBlank())
 					signatures.computeIfAbsent(entry.plan().recompileSignature(), ignored -> new ArrayList<>()).add(entry);
 				String key = planKey(planHash, entry.plan());
@@ -236,6 +266,7 @@ public final class PlannerRuntimePlacementAudit {
 						"Duplicate planner runtime audit stable occurrence: " + entry.plan().keyHash());
 			}
 			byHopId = immutableLists(ids);
+			byOriginHopId = immutableLists(origins);
 			bySignature = immutableLists(signatures);
 			byPlanKey = Collections.unmodifiableMap(keys);
 			byKeyHash = Collections.unmodifiableMap(stableKeys);
@@ -250,6 +281,8 @@ public final class PlannerRuntimePlacementAudit {
 
 	private static volatile Authority CURRENT;
 	private static final Map<String,LoweredExpectation> LOWERED = new ConcurrentHashMap<>();
+	private static final Map<String,List<String>> SELECTED_INPUT_SIGNATURES = new ConcurrentHashMap<>();
+	private static final Map<String,List<String>> SELECTED_INPUT_ROLES = new ConcurrentHashMap<>();
 	private static final Map<ExecutionKey,LongAdder> EXECUTED = new ConcurrentHashMap<>();
 	private static final Map<FederatedDispatchKey,LongAdder> FEDERATED_DISPATCHED = new ConcurrentHashMap<>();
 	private static final Map<WorkerFragmentExecutionKey,LongAdder> WORKER_FRAGMENTS = new ConcurrentHashMap<>();
@@ -257,6 +290,7 @@ public final class PlannerRuntimePlacementAudit {
 	private static final Set<String> LOWERED_PLAN_KEYS = ConcurrentHashMap.newKeySet();
 	private static final Set<String> LOWERED_SYNTHETIC_KEYS = ConcurrentHashMap.newKeySet();
 	private static final Set<String> AUTHORITY_PLAN_HASHES = ConcurrentHashMap.newKeySet();
+	private static final Map<String,String> AUTHORITY_ANALYSIS_FINGERPRINTS = new ConcurrentHashMap<>();
 	// Federated implementations such as transformencode deliberately create short-lived
 	// worker-dispatch pools inside one already-proved coordinator FED instruction.  The
 	// child callbacks must carry the same immutable parent proof; otherwise the audit either
@@ -382,8 +416,17 @@ public final class PlannerRuntimePlacementAudit {
 			List<String> fusedInputBoundaryTokens = localInputBoundaryTokens
 				.getOrDefault(node.key(), List.of()).stream().distinct().sorted().toList();
 			String signature = FederatedPlannerUtils.plannerRecompileSignature(occurrence.hop());
-			PlannedHop plan = new PlannedHop(occurrence.hop().getHopID(), signature,
-				result.plannerId(), shortHash(node.key().normalizedSignature()), opcode, node.kind(),
+			String occurrenceKeyHash = shortHash(node.key().normalizedSignature());
+			if(candidate != null) {
+				SELECTED_INPUT_SIGNATURES.put(occurrenceKeyHash, candidate.rule().orderedInputs().stream()
+					.map(PlacementAnalysis.CandidateInputState::normalizedSignature).toList());
+				List<String> inputRoles = namedInputRoles(occurrence.hop());
+				if(!inputRoles.isEmpty())
+					SELECTED_INPUT_ROLES.put(occurrenceKeyHash, inputRoles);
+			}
+			PlannedHop plan = new PlannedHop(occurrence.hop().getHopID(),
+				occurrence.hop().getPlannerOriginHopID(), signature,
+				result.plannerId(), occurrenceKeyHash, opcode, node.kind(),
 				sourceLocation(occurrence.hop()), occurrence.hop().getName(),
 				functionControlTarget(occurrence.hop(), node.kind()),
 				occurrence.hop().getInput().stream().map(PlannerRuntimePlacementAudit::describeHop).toList(),
@@ -444,8 +487,8 @@ public final class PlannerRuntimePlacementAudit {
 			syntheticActions.add(new PlannedSyntheticAction(syntheticActionKey(base, "LOCAL"), base,
 				"LOCAL", "prefetch", ExecType.CP, FederatedOutput.LOUT, null));
 		});
-		return new PreparedRegistration(new Authority(result.normalizedPlanFingerprint(), entries,
-			syntheticActions));
+		return new PreparedRegistration(new Authority(result.normalizedPlanFingerprint(),
+			analysis.analysisFingerprint(), entries, syntheticActions));
 	}
 
 	private static String exactPhysicalOpcode(Hop hop, String oracleOpcode) {
@@ -506,7 +549,13 @@ public final class PlannerRuntimePlacementAudit {
 	static void installForTesting(String planHash, List<PlannedHop> plans,
 		List<PlannedSyntheticAction> syntheticActions) {
 		List<PlanEntry> entries = plans.stream().map(plan -> new PlanEntry(plan, null, List.of())).toList();
-		commitAuthority(new Authority(planHash, entries, syntheticActions));
+		commitAuthority(new Authority(planHash, "test-analysis", entries, syntheticActions));
+	}
+
+	/** Test-only authority installation retaining the exact Hop object used by lowering. */
+	static void installForTesting(PlannedHop plan, Hop hop) {
+		commitAuthority(new Authority("test-plan", "test-analysis",
+			List.of(new PlanEntry(plan, Objects.requireNonNull(hop, "hop"), List.of())), List.of()));
 	}
 
 	/**
@@ -523,6 +572,7 @@ public final class PlannerRuntimePlacementAudit {
 			carryForwardUnchangedLowering(previous, next);
 		CURRENT = next;
 		AUTHORITY_PLAN_HASHES.add(next.planHash);
+		AUTHORITY_ANALYSIS_FINGERPRINTS.put(next.planHash, next.analysisFingerprint);
 	}
 
 	private static void carryForwardUnchangedLowering(Authority previous, Authority next) {
@@ -587,6 +637,18 @@ public final class PlannerRuntimePlacementAudit {
 				continue;
 			String opcode = safeOpcode(instruction);
 			if(isLifecycleAuxiliary(instruction)) {
+				List<PlanEntry> entries = currentEntries(
+					resolve(authority, instruction), limitToCurrentDag, currentHops);
+				if(isLocalPersistentReadAuthority(entries)) {
+					if(isCompilerScratchCopyDescriptor(instruction)) {
+						observeAuxiliary(authority, instruction,
+							"AUXILIARY_PERSISTENT_READ_SCRATCH_COPY");
+						continue;
+					}
+					verifyLocalPersistentReadDescriptor(
+						authority, entries, instruction, covered, coveredHopObjects);
+					continue;
+				}
 				observeAuxiliary(authority, instruction, "AUXILIARY_LIFECYCLE");
 				continue;
 			}
@@ -599,13 +661,8 @@ public final class PlannerRuntimePlacementAudit {
 				observeAuxiliary(authority, instruction, "AUXILIARY_LIFECYCLE");
 				continue;
 			}
-			List<PlanEntry> entries = resolve(authority, instruction);
-			if(limitToCurrentDag) {
-				List<PlanEntry> currentEntries = entries.stream()
-					.filter(entry -> entry.hop() != null && currentHops.contains(entry.hop())).toList();
-				if(!currentEntries.isEmpty())
-					entries = currentEntries;
-			}
+			List<PlanEntry> entries = currentEntries(
+				resolve(authority, instruction), limitToCurrentDag, currentHops);
 			if(entries.isEmpty()) {
 				if(isAuxiliary(instruction)) {
 					observeAuxiliary(authority, instruction, "AUXILIARY");
@@ -762,7 +819,14 @@ public final class PlannerRuntimePlacementAudit {
 					+ entry.plan().keyHash() + " plannedPhysical=" + entry.plan().physicalSignature()
 					+ " fusedRuntimeAuditKey=" + fused.runtimeAuditKey()
 					+ " samePhysical=" + fused.samePhysical()
-					+ " requiresOwnInstruction=" + entry.plan().requiresOwnInstruction());
+					+ " requiresOwnInstruction=" + entry.plan().requiresOwnInstruction()
+					+ " fusedPhysical=" + placement(fused.exec(), fused.output(), null)
+					+ " fusedOpcode=" + fused.opcode() + " fusedHop=" + fused.hopId()
+					+ " fusedLop=" + fused.lopId() + " fusedPlans=" + fused.planKeys()
+					+ " missingParents=" + (entry.hop() == null ? List.of()
+						: entry.hop().getParent().stream().map(PlannerRuntimePlacementAudit::describeHop).toList())
+					+ " missingLop=" + (entry.hop() == null || entry.hop().getLops() == null ? "-"
+						: entry.hop().getLops().getClass().getSimpleName() + '#' + entry.hop().getLops().getID()));
 			if(!entry.plan().requiresOwnInstruction()) {
 				// The compiler may retain non-executable or previously materialized Lops in a
 				// Dag linearization. This is not an executed runtime Hop. Keep it explicit in
@@ -794,12 +858,129 @@ public final class PlannerRuntimePlacementAudit {
 		return instructions;
 	}
 
+	private static List<PlanEntry> currentEntries(List<PlanEntry> entries,
+		boolean limitToCurrentDag, Set<Hop> currentHops) {
+		if(!limitToCurrentDag)
+			return entries;
+		List<PlanEntry> current = entries.stream()
+			.filter(entry -> entry.hop() != null && currentHops.contains(entry.hop())).toList();
+		return current.isEmpty() ? entries : current;
+	}
+
+	private static boolean isLocalPersistentReadAuthority(List<PlanEntry> entries) {
+		return !entries.isEmpty() && entries.stream().allMatch(entry ->
+			entry.hop() instanceof DataOp data && data.getOp() == OpOpData.PERSISTENTREAD
+				&& "PRead".equals(entry.plan().opcode())
+				&& entry.plan().physicalExec() == ExecType.CP
+				&& entry.plan().physicalOutput() == FederatedOutput.LOUT
+				&& entry.plan().physicalFType() == null);
+	}
+
+	/**
+	 * Codegen may materialize a planner-owned persistent input into an internal scratch file and
+	 * attach the original Hop provenance to that lifecycle descriptor.  It is not the lazy PRead
+	 * descriptor itself.  Admit only the closed compiler-temp shape: a non-reserved symbol, the
+	 * explicit scratch/create override bit, and a path below the configured scratch root.  A
+	 * different external source (including one using the reserved pREAD symbol) still fails closed.
+	 */
+	private static boolean isCompilerScratchCopyDescriptor(Instruction instruction) {
+		if(!(instruction instanceof VariableCPInstruction variable)
+			|| variable.getVariableOpcode() != VariableOperationCode.CreateVariable)
+			return false;
+		String symbol = variable.getInput1() == null ? null : variable.getInput1().getName();
+		String descriptor = variable.getInput2() == null ? null : variable.getInput2().getName();
+		String override = variable.getInput3() == null ? null : variable.getInput3().getName();
+		String scratch = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.SCRATCH_SPACE);
+		if(symbol == null || symbol.startsWith(org.apache.sysds.lops.Data.PREAD_PREFIX)
+			|| descriptor == null || !Boolean.parseBoolean(override)
+			|| scratch == null || scratch.isBlank())
+			return false;
+		Path scratchPath = Path.of(scratch).toAbsolutePath().normalize();
+		Path descriptorPath = Path.of(descriptor).toAbsolutePath().normalize();
+		return descriptorPath.startsWith(scratchPath) && !descriptorPath.equals(scratchPath);
+	}
+
+	/**
+	 * Prove the closed lowering contract for a coordinator-local persistent read. SystemDS
+	 * represents this operation as a lazy {@code createvar} descriptor rather than a separate
+	 * read instruction. Dynamic recompilation creates a fresh Lop, so Lop IDs are not stable
+	 * identity. Only immutable PRead Hop/origin/signature provenance, the exact source descriptor,
+	 * and the reserved pREAD symbol are accepted; ordinary lifecycle createvar instructions remain
+	 * auxiliary.
+	 */
+	private static void verifyLocalPersistentReadDescriptor(Authority authority,
+		List<PlanEntry> entries, Instruction instruction, Set<String> covered,
+		Map<Hop,String> coveredHopObjects) {
+		assertOnePhysicalPlacement(entries, instruction);
+		if(!(instruction instanceof VariableCPInstruction variable)
+			|| variable.getVariableOpcode() != VariableOperationCode.CreateVariable)
+			throw new IllegalStateException(
+				"[PlannerRuntimeAudit] PERSISTENT_READ_DESCRIPTOR_OPCODE_MISMATCH instruction="
+					+ describeInstruction(instruction));
+		String createdVariable = variable.getInput1() == null ? null : variable.getInput1().getName();
+		String descriptorPath = variable.getInput2() == null ? null : variable.getInput2().getName();
+		FileFormat descriptorFormat = variable.getMetaData() instanceof MetaDataFormat metadata
+			? metadata.getFileFormat() : null;
+		boolean exactDescriptor = entries.stream().allMatch(entry ->
+			exactPersistentReadProvenance(entry.plan(), instruction)
+				&& Objects.equals(entry.persistentReadPath(), descriptorPath)
+				&& entry.persistentReadFormat() == descriptorFormat);
+		if(!exactDescriptor || createdVariable == null
+			|| !createdVariable.startsWith(org.apache.sysds.lops.Data.PREAD_PREFIX))
+			throw new IllegalStateException(
+				"[PlannerRuntimeAudit] PERSISTENT_READ_DESCRIPTOR_IDENTITY_MISMATCH planned="
+					+ entries.stream().map(PlanEntry::plan)
+						.map(PlannerRuntimePlacementAudit::describePlan).toList()
+					+ " actualVariable=" + Objects.toString(createdVariable, "-")
+					+ " actualPath=" + Objects.toString(descriptorPath, "-")
+					+ " actualFormat=" + Objects.toString(descriptorFormat, "-")
+					+ " actualHop=" + instruction.getHopID()
+					+ " actualOrigin=" + instruction.getPlannerOriginHopID()
+					+ " actualSignature="
+					+ signatureToken(instruction.getPlannerRecompileSignature())
+					+ " actualLop=" + instruction.getLopID()
+					+ " instruction=" + quotedInstruction(instruction));
+		ExecType actualExec = actualExec(instruction);
+		FederatedOutput actualOutput = actualOutput(instruction);
+		if(actualExec != ExecType.CP || actualOutput != FederatedOutput.LOUT)
+			throw mismatch("PERSISTENT_READ_DESCRIPTOR_PLACEMENT_MISMATCH",
+				entries.get(0).plan(), instruction, actualExec, actualOutput);
+		List<PlannedHop> plans = entries.stream().map(PlanEntry::plan)
+			.sorted(Comparator.comparing(PlannedHop::keyHash)).toList();
+		String auditKey = runtimeKey(authority.planHash, plans, instruction);
+		LoweredExpectation expected = new LoweredExpectation(auditKey, authority.planHash,
+			plans, null, ExecType.CP, FederatedOutput.LOUT, null, safeOpcode(instruction),
+			instruction.getHopID(), instruction.getLopID(),
+			instruction.getPlannerRecompileSignature(), false);
+		LoweredExpectation prior = LOWERED.putIfAbsent(auditKey, expected);
+		if(prior != null && !sameExpectation(prior, expected))
+			throw new IllegalStateException(
+				"[PlannerRuntimeAudit] conflicting persistent-read proof key=" + auditKey);
+		instruction.setPlannerAuditKey(auditKey);
+		for(PlanEntry entry : entries) {
+			String key = planKey(authority.planHash, entry.plan());
+			covered.add(key);
+			coveredHopObjects.put(entry.hop(), auditKey);
+			observeLowering(authority.planHash, key, entry.plan(), instruction,
+				"PERSISTENT_READ_DESCRIPTOR_MATCH",
+				"lazy coordinator-local descriptor variable=" + createdVariable);
+		}
+	}
+
+	private static boolean exactPersistentReadProvenance(PlannedHop plan, Instruction instruction) {
+		boolean exactHop = instruction.getHopID() == plan.hopId()
+			|| instruction.getPlannerOriginHopID() == plan.originHopId();
+		return exactHop && Objects.equals(
+			plan.recompileSignature(), instruction.getPlannerRecompileSignature());
+	}
+
 	/**
 	 * Prove an explicitly tagged compiler helper that belongs to a planner Hop but is not an
 	 * independent placement decision. The contract is deliberately closed: only explicitly tagged
 	 * physical data-flow wrappers, the scalar nrow/ncol offset emitted by CP append lowering, the
-	 * scalar cast inserted by the dynamic matrix-scalar/dot-product rewrites, and the temporary
-	 * result binding used by constant folding are currently admitted. New helper kinds
+	 * scalar cast inserted by the dynamic matrix-scalar/dot-product rewrites, the physical sort
+	 * stage of quantile lowering, and the temporary result binding used by constant folding are
+	 * currently admitted. New helper kinds
 	 * must define their exact owner opcode and physical placement here instead of being treated
 	 * as generic runtime auxiliaries.
 	 */
@@ -816,6 +997,7 @@ public final class PlannerRuntimePlacementAudit {
 			case "DYNAMIC_BINARY_SCALAR_CAST" -> "castdts";
 			case "DYNAMIC_SCALAR_MM_CAST", "DYNAMIC_DOT_PRODUCT_SCALAR_CAST" -> "castdts";
 			case "DYNAMIC_DOT_PRODUCT_TRANSPOSE" -> "r'";
+			case "QUANTILE_SORT" -> "qsort";
 			case "CONSTANT_FOLD_RESULT_BIND" -> "mvvar";
 			default -> throw new IllegalStateException(
 				"[PlannerRuntimeAudit] LOWERING_AUXILIARY_UNKNOWN kind=" + kind
@@ -836,6 +1018,9 @@ public final class PlannerRuntimePlacementAudit {
 			case "DYNAMIC_DOT_PRODUCT_SCALAR_CAST", "DYNAMIC_DOT_PRODUCT_TRANSPOSE" ->
 				entries.stream().allMatch(entry -> entry.plan().nodeKind() == NodeKind.OPERATION
 					&& isFullSumAggregateOpcode(entry.plan().opcode()));
+			case "QUANTILE_SORT" -> entries.stream().allMatch(entry ->
+				entry.plan().nodeKind() == NodeKind.OPERATION
+					&& isQuantileOpcode(entry.plan().opcode()));
 			case "CONSTANT_FOLD_RESULT_BIND" -> entries.stream().allMatch(entry ->
 				entry.plan().nodeKind() == NodeKind.OPERATION
 					&& isConstantFoldablePlannerOpcode(entry.plan().opcode()));
@@ -864,6 +1049,8 @@ public final class PlannerRuntimePlacementAudit {
 		if(physicalReblock)
 			ownerPlacementCompatible = cpLocalOwner || fedFoutOwner;
 		else if(physicalCsvReblock)
+			ownerPlacementCompatible = cpLocalOwner;
+		else if("QUANTILE_SORT".equals(kind))
 			ownerPlacementCompatible = cpLocalOwner;
 		if(!requiredOpcode.equals(opcode) || !validOwner || !ownerPlacementCompatible
 			|| actualExec(instruction) != helperExec
@@ -896,6 +1083,12 @@ public final class PlannerRuntimePlacementAudit {
 				planKey(authority.planHash, entry.plan()) + ":auxiliary:"
 				+ kind + ':' + instruction.getLopID(), entry.plan(), instruction,
 				"LOWERING_HELPER_MATCH", "kind=" + kind + " helperOpcode=" + opcode);
+	}
+
+	private static boolean isQuantileOpcode(String opcode) {
+		return "quantile".equals(opcode) || "interquantile".equals(opcode)
+			|| "b(quantile)".equals(opcode) || "b(interquantile)".equals(opcode)
+			|| "t(quantile)".equals(opcode) || "t(interquantile)".equals(opcode);
 	}
 
 	private static boolean isMatrixScalarBinaryOpcode(String opcode) {
@@ -941,7 +1134,13 @@ public final class PlannerRuntimePlacementAudit {
 	private static boolean isOrdinaryOpcodeCompatible(String planned, String actual) {
 		if(planned.equalsIgnoreCase(actual))
 			return true;
+		// Binary Lop lowering uses the dedicated unary-shaped instruction for X * 2.
+		// The planner still owns the rewritten BinaryOp MULT occurrence.
+		if("*".equals(planned) && "*2".equals(actual))
+			return true;
 		if(isAggregateUnaryOpcodeCompatible(planned, actual))
+			return true;
+		if(isSpoofOpcodeCompatible(planned, actual))
 			return true;
 		if(planned.startsWith("Fed ") && "fedinit".equals(actual))
 			return true;
@@ -949,20 +1148,51 @@ public final class PlannerRuntimePlacementAudit {
 			&& planned.substring(3, planned.length() - 1).equalsIgnoreCase(actual))
 			return true;
 		return switch(planned) {
+			// Quantile is physically lowered as an explicitly proved qsort helper
+			// followed by qpick, which remains the logical result-producing stage.
+			case "quantile", "interquantile", "b(quantile)", "b(interquantile)",
+				"t(quantile)", "t(interquantile)" -> "qpick".equals(actual);
 			case "cbind", "rbind" -> "append".equals(actual);
 			case "sort" -> "rsort".equals(actual);
+			// ParameterizedBuiltinOp records the enum-style logical names, whereas
+			// ParameterizedBuiltin instructions use the compact runtime opcodes.
+			case "LOWER_TRI" -> "lowertri".equalsIgnoreCase(actual);
+			case "UPPER_TRI" -> "uppertri".equalsIgnoreCase(actual);
 			// Ctable's sequence-input specialization is selected by Ctable Lop lowering;
 			// it remains the same planner-owned CTABLE operation and placement.
 			case "ctable" -> "ctableexpand".equals(actual);
 			case "mapLeftIndex" -> "leftIndex".equals(actual);
 			case "ua(+rc)" -> "uak+".equals(actual);
 			case "ua(minindexr)" -> "uarimin".equals(actual);
-			case "ba+*" -> "tsmm".equals(actual);
+			// AggregateBinary may retain its generic opcode or lower to a specialized
+			// physical matrix-multiply kernel. Opcode equivalence does not relax the
+			// placement proof: verifyInstruction still requires the selected CP/FED
+			// execution and LOUT/FOUT contract to match exactly.
+			case "ba+*" -> "tsmm".equals(actual) || "mapmm".equals(actual)
+				|| "cpmm".equals(actual) || "rmm".equals(actual);
 			case "^" -> "^2".equals(actual);
 			case "PRead" -> "read".equals(actual);
 			case "PWrite" -> "write".equals(actual);
 			default -> false;
 		};
+	}
+
+	/**
+	 * Codegen records the generated operator as {@code spoof(ClassName)} on the Hop, while
+	 * runtime instructions prefix that exact generated class name with the closed Spoof template
+	 * family ({@code Cell}, {@code RA}, {@code MA}, or {@code OP}).
+	 */
+	private static boolean isSpoofOpcodeCompatible(String planned, String actual) {
+		if(planned == null || actual == null || !planned.regionMatches(true, 0, "spoof(", 0, 6)
+			|| !planned.endsWith(")"))
+			return false;
+		String generatedClass = planned.substring(6, planned.length() - 1);
+		if(generatedClass.isEmpty())
+			return false;
+		for(String template : List.of("Cell", "RA", "MA", "OP"))
+			if(("spoof" + template + generatedClass).equalsIgnoreCase(actual))
+				return true;
+		return false;
 	}
 
 	/** Exact Hop {@code ua(op,direction)} to PartialAggregate physical-opcode contract. */
@@ -1143,9 +1373,9 @@ public final class PlannerRuntimePlacementAudit {
 		if(planned == null || actual == null)
 			return false;
 		return switch(planned.toLowerCase(java.util.Locale.ROOT)) {
-			case "ua(+c)" -> "uacmean".equalsIgnoreCase(actual);
-			case "ua(+r)" -> "uarmean".equalsIgnoreCase(actual);
-			case "ua(+rc)" -> "uamean".equalsIgnoreCase(actual);
+			case "ua(+c)", "ua(meanc)" -> "uacmean".equalsIgnoreCase(actual);
+			case "ua(+r)", "ua(meanr)" -> "uarmean".equalsIgnoreCase(actual);
+			case "ua(+rc)", "ua(meanrc)" -> "uamean".equalsIgnoreCase(actual);
 			default -> false;
 		};
 	}
@@ -1257,7 +1487,7 @@ public final class PlannerRuntimePlacementAudit {
 		validateParentAuthority(parent);
 		String requestOpcode = requestFragmentOpcode(request);
 		String actualOpcode = safeOpcode(instruction);
-		if(!requestOpcode.equals(actualOpcode))
+		if(!isWorkerFragmentOpcodeCompatible(requestOpcode, actualOpcode))
 			throw new IllegalStateException(
 				"[PlannerRuntimeAudit] WORKER_FRAGMENT_OPCODE_MISMATCH parent="
 					+ parent.getParentAuditKey() + " requestOpcode=" + requestOpcode
@@ -1266,6 +1496,17 @@ public final class PlannerRuntimePlacementAudit {
 			parent.getParentAuditKey(), parent.getParentOpcode(), parent.getParentPhysical(),
 			parent.getParentHopId(), parent.getParentLopId(),
 			parent.getParentRecompileSignature(), request.getType().name(), actualOpcode));
+	}
+
+	private static boolean isWorkerFragmentOpcodeCompatible(String requestOpcode, String actualOpcode) {
+		if(Objects.equals(requestOpcode, actualOpcode))
+			return true;
+		if(!"spoof".equals(requestOpcode) || actualOpcode == null)
+			return false;
+		for(String template : List.of("spoofCell", "spoofRA", "spoofMA", "spoofOP"))
+			if(actualOpcode.startsWith(template) && actualOpcode.length() > template.length())
+				return true;
+		return false;
 	}
 
 	/** Validate one worker UDF dispatch against its exact coordinator FED parent. */
@@ -1386,6 +1627,92 @@ public final class PlannerRuntimePlacementAudit {
 		EXECUTED.computeIfAbsent(key, ignored -> new LongAdder()).increment();
 	}
 
+	/** Exact occurrence identities associated with one lowered instruction, if runtime audit is active. */
+	public static List<String> plannedOccurrenceKeyHashes(Instruction instruction) {
+		if(instruction == null || instruction.getPlannerAuditKey() == null)
+			return List.of();
+		LoweredExpectation expected = LOWERED.get(instruction.getPlannerAuditKey());
+		if(expected == null)
+			return List.of();
+		return expected.plans().stream().map(PlannedHop::keyHash).distinct().sorted().toList();
+	}
+
+	/** Candidate input signature selected for every exact occurrence fused into this instruction. */
+	public static Map<String,List<String>> plannedInputSignatures(Instruction instruction) {
+		if(instruction == null || instruction.getPlannerAuditKey() == null)
+			return Map.of();
+		LoweredExpectation expected = LOWERED.get(instruction.getPlannerAuditKey());
+		if(expected == null)
+			return Map.of();
+		Map<String,List<String>> signatures = new java.util.TreeMap<>();
+		for(PlannedHop plan : expected.plans()) {
+			List<String> selected = SELECTED_INPUT_SIGNATURES.get(plan.keyHash());
+			if(selected != null)
+				signatures.put(plan.keyHash(), selected);
+		}
+		return Collections.unmodifiableMap(signatures);
+	}
+
+	/** Named HOP input roles used when physical instructions encode operands in a parameter map. */
+	public static Map<String,List<String>> plannedInputRoles(Instruction instruction) {
+		if(instruction == null || instruction.getPlannerAuditKey() == null)
+			return Map.of();
+		LoweredExpectation expected = LOWERED.get(instruction.getPlannerAuditKey());
+		if(expected == null)
+			return Map.of();
+		Map<String,List<String>> roles = new java.util.TreeMap<>();
+		for(PlannedHop plan : expected.plans()) {
+			List<String> selected = SELECTED_INPUT_ROLES.get(plan.keyHash());
+			if(selected != null)
+				roles.put(plan.keyHash(), selected);
+		}
+		return Collections.unmodifiableMap(roles);
+	}
+
+	/** Whole-program planner generation that owns one lowered instruction. */
+	public static String plannedPlanHash(Instruction instruction) {
+		LoweredExpectation expected = loweredExpectation(instruction);
+		return expected == null ? null : expected.planHash();
+	}
+
+	/** Exact shared PlacementAnalysis generation that produced the selected plan. */
+	public static String plannedAnalysisFingerprint(Instruction instruction) {
+		LoweredExpectation expected = loweredExpectation(instruction);
+		return expected == null ? null
+			: AUTHORITY_ANALYSIS_FINGERPRINTS.get(expected.planHash());
+	}
+
+	/** Selector-visible target state for every exact occurrence represented by an instruction. */
+	public static Map<String,String> plannedTargetStates(Instruction instruction) {
+		LoweredExpectation expected = loweredExpectation(instruction);
+		if(expected == null)
+			return Map.of();
+		Map<String,String> states = new java.util.TreeMap<>();
+		for(PlannedHop plan : expected.plans()) {
+			PlacementState target = plan.selectedTarget().placementState();
+			states.put(plan.keyHash(), spaceState(target.execType(), target.output(), target.fType()));
+		}
+		return Collections.unmodifiableMap(states);
+	}
+
+	/** Concrete source placement validated at HOP-to-LOP/instruction lowering. */
+	public static Map<String,String> plannedPhysicalStates(Instruction instruction) {
+		LoweredExpectation expected = loweredExpectation(instruction);
+		if(expected == null)
+			return Map.of();
+		Map<String,String> states = new java.util.TreeMap<>();
+		for(PlannedHop plan : expected.plans())
+			states.put(plan.keyHash(), spaceState(
+				plan.physicalExec(), plan.physicalOutput(), plan.physicalFType()));
+		return Collections.unmodifiableMap(states);
+	}
+
+	private static LoweredExpectation loweredExpectation(Instruction instruction) {
+		if(instruction == null || instruction.getPlannerAuditKey() == null)
+			return null;
+		return LOWERED.get(instruction.getPlannerAuditKey());
+	}
+
 	public static String display() {
 		if(!isEnabled())
 			return "";
@@ -1489,6 +1816,8 @@ public final class PlannerRuntimePlacementAudit {
 	public static void resetForTesting() {
 		CURRENT = null;
 		LOWERED.clear();
+		SELECTED_INPUT_SIGNATURES.clear();
+		SELECTED_INPUT_ROLES.clear();
 		EXECUTED.clear();
 		FEDERATED_DISPATCHED.clear();
 		WORKER_FRAGMENTS.clear();
@@ -1496,7 +1825,19 @@ public final class PlannerRuntimePlacementAudit {
 		LOWERED_PLAN_KEYS.clear();
 		LOWERED_SYNTHETIC_KEYS.clear();
 		AUTHORITY_PLAN_HASHES.clear();
+		AUTHORITY_ANALYSIS_FINGERPRINTS.clear();
 		ACTIVE_FEDERATED_PARENT.remove();
+	}
+
+	/**
+	 * Drops a completed compiled-plan authority before compiling a program that
+	 * has no compiled federated planner. Without this boundary, a later ordinary
+	 * CP/Spark program in the same JVM is incorrectly checked against the prior
+	 * program's immutable occurrence set.
+	 */
+	public static void clearForUnplannedCompilation() {
+		if(isEnabled())
+			resetForTesting();
 	}
 
 	private static PlannerRuntimeAuthority authorityFor(LoweredExpectation expected) {
@@ -1617,6 +1958,7 @@ public final class PlannerRuntimePlacementAudit {
 	private static boolean isDefinitiveLoweringStatus(String status) {
 		return "MATCH".equals(status) || "REWRITE_MATCH".equals(status)
 			|| "CONTROL_MATCH".equals(status) || "VALUE_CONTROL_MATCH".equals(status)
+			|| "PERSISTENT_READ_DESCRIPTOR_MATCH".equals(status)
 			|| "FUSED_MATCH".equals(status) || "AUTHORITY_CARRY_FORWARD_MATCH".equals(status);
 	}
 
@@ -1624,7 +1966,9 @@ public final class PlannerRuntimePlacementAudit {
 		List<PlanEntry> byId = instruction.getHopID() < 0 ? List.of()
 			: authority.byHopId.getOrDefault(instruction.getHopID(), List.of());
 		List<PlanEntry> byOrigin = instruction.getPlannerOriginHopID() < 0 ? List.of()
-			: authority.byHopId.getOrDefault(instruction.getPlannerOriginHopID(), List.of());
+			: authority.byOriginHopId.getOrDefault(instruction.getPlannerOriginHopID(), List.of());
+		if(byOrigin.isEmpty() && instruction.getPlannerOriginHopID() >= 0)
+			byOrigin = authority.byHopId.getOrDefault(instruction.getPlannerOriginHopID(), List.of());
 		List<PlanEntry> byIdentity = !byId.isEmpty() ? byId : byOrigin;
 		String signature = instruction.getPlannerRecompileSignature();
 		List<PlanEntry> bySignature = signature == null ? List.of()
@@ -1668,8 +2012,12 @@ public final class PlannerRuntimePlacementAudit {
 			if(covered != null) {
 				LoweredExpectation expected = LOWERED.get(covered);
 				return new FusedResolution(covered, expected != null
-					&& expected.exec() == missing.plan().physicalExec()
-					&& expected.output() == missing.plan().physicalOutput());
+						&& expected.exec() == missing.plan().physicalExec()
+						&& expected.output() == missing.plan().physicalOutput(),
+					expected == null ? null : expected.exec(), expected == null ? null : expected.output(),
+					expected == null ? "-" : expected.opcode(), expected == null ? -1 : expected.hopId(),
+					expected == null ? -1 : expected.lopId(), expected == null ? List.of()
+						: expected.plans().stream().map(PlannedHop::keyHash).toList());
 			}
 			PlanEntry parentPlan = authority.byHopId.getOrDefault(parent.getHopID(), List.of()).stream()
 				.filter(entry -> entry.hop() == parent).findFirst().orElse(null);
@@ -1817,7 +2165,7 @@ public final class PlannerRuntimePlacementAudit {
 	}
 
 	private static RuntimePlacement materializedPlacement(Instruction instruction, ExecutionContext ec) {
-		String outputVariable = instruction.getOutputVariableName();
+		String outputVariable = runtimeOutputVariableName(instruction);
 		if(ec == null || outputVariable == null || outputVariable.isBlank()
 			|| !ec.containsVariable(outputVariable))
 			return new RuntimePlacement(null, actualSyntheticFType(instruction), outputVariable);
@@ -1829,6 +2177,15 @@ public final class PlannerRuntimePlacementAudit {
 			return new RuntimePlacement(FederatedOutput.LOUT, null, outputVariable);
 		}
 		return new RuntimePlacement(FederatedOutput.LOUT, null, outputVariable);
+	}
+
+	private static String runtimeOutputVariableName(Instruction instruction) {
+		String outputVariable = instruction.getOutputVariableName();
+		if(outputVariable == null && instruction instanceof VariableCPInstruction variable
+			&& variable.getVariableOpcode() == VariableOperationCode.CreateVariable
+			&& variable.getInput1() != null)
+			return variable.getInput1().getName();
+		return outputVariable;
 	}
 
 	private static IllegalStateException mismatch(String code, PlannedHop plan, Instruction instruction,
@@ -1874,6 +2231,23 @@ public final class PlannerRuntimePlacementAudit {
 		return hop.getHopID() + ":" + hop.getClass().getSimpleName() + ':'
 			+ hop.getOpString() + ":" + Objects.toString(hop.getName(), "-") + ':'
 			+ sourceLocation(hop);
+	}
+
+	static List<String> namedInputRoles(Hop hop) {
+		if(!(hop instanceof ParameterizedBuiltinOp parameterized))
+			return List.of();
+		List<String> roles = new ArrayList<>(Collections.nCopies(hop.getInput().size(), null));
+		for(Map.Entry<String,Integer> entry : parameterized.getParamIndexMap().entrySet()) {
+			int position = entry.getValue();
+			if(position < 0 || position >= roles.size() || roles.get(position) != null)
+				throw new IllegalStateException("Invalid parameterized HOP input role position: "
+					+ entry.getKey() + '=' + position + " hop=" + describeHop(hop));
+			roles.set(position, entry.getKey());
+		}
+		if(roles.stream().anyMatch(Objects::isNull))
+			throw new IllegalStateException("Incomplete parameterized HOP input roles: "
+				+ roles + " hop=" + describeHop(hop));
+		return List.copyOf(roles);
 	}
 
 	private static String quotedInstruction(Instruction instruction) {
@@ -2024,6 +2398,10 @@ public final class PlannerRuntimePlacementAudit {
 		return exec + "/" + output + (fType == null ? "" : "/" + fType);
 	}
 
+	private static String spaceState(ExecType exec, FederatedOutput output, FType fType) {
+		return exec + "/" + output + "/" + (fType == null ? "-" : fType);
+	}
+
 	private static <K,V> Map<K,List<V>> immutableLists(Map<K,List<V>> values) {
 		Map<K,List<V>> copy = new LinkedHashMap<>();
 		values.forEach((key, value) -> copy.put(key, List.copyOf(value)));
@@ -2050,7 +2428,7 @@ public final class PlannerRuntimePlacementAudit {
 		return matches.get(0);
 	}
 
-	private static String shortHash(String value) {
+	public static String shortHash(String value) {
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256")
 				.digest(value.getBytes(StandardCharsets.UTF_8));

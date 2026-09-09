@@ -30,9 +30,11 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
+import org.apache.sysds.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.frame.data.FrameBlock;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.junit.Test;
@@ -67,6 +69,24 @@ public class PrefetchCPInstructionPlannerMaterializationTest {
 		assertTrue(ec.getMatrixObject("Y").isFederated(FType.FULL));
 	}
 
+	@Test
+	public void plannerSelectedPrefetchMaterializesFederatedFrameLocally() {
+		ExecutionContext ec = contextWithFederatedCachedFrameInput();
+		PrefetchCPInstruction instruction = instruction(DataType.FRAME, ValueType.STRING);
+		instruction.setPlannerSyntheticActionKey("planner-frame-local-action");
+
+		instruction.processInstruction(ec);
+
+		FrameObject input = ec.getFrameObject("X");
+		FrameObject output = ec.getFrameObject("Y");
+		assertNotSame("exact LOCAL frame action must not alias its federated source", input, output);
+		assertTrue(input.isFederated(FType.FULL));
+		assertFalse("exact LOCAL frame output must not retain a FederationMap", output.isFederated());
+		FrameBlock block = output.acquireReadAndRelease();
+		assertEquals(1, block.getNumRows());
+		assertEquals("value", block.get(0, 0));
+	}
+
 	private static ExecutionContext contextWithFederatedCachedInput() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 		ec.setAutoCreateVars(true);
@@ -80,10 +100,27 @@ public class PrefetchCPInstructionPlannerMaterializationTest {
 		return ec;
 	}
 
+	private static ExecutionContext contextWithFederatedCachedFrameInput() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setAutoCreateVars(true);
+		FrameBlock block = new FrameBlock(new ValueType[] {ValueType.STRING});
+		block.appendRow(new Object[] {"value"});
+		FrameObject input = ExecutionContext.createFrameObject(block);
+		input.setFedMapping(new FederationMap(19, List.of(), FType.FULL));
+		ec.setVariable("X", input);
+		ec.setVariable("Y", ExecutionContext.createFrameObject(new FrameBlock(
+			new ValueType[] {ValueType.STRING})));
+		return ec;
+	}
+
 	private static PrefetchCPInstruction instruction() {
+		return instruction(DataType.MATRIX, ValueType.FP64);
+	}
+
+	private static PrefetchCPInstruction instruction(DataType dataType, ValueType valueType) {
 		String instruction = InstructionUtils.concatOperands("CP", "prefetch",
-			InstructionUtils.concatOperandParts("X", DataType.MATRIX.name(), ValueType.FP64.name(), "false"),
-			InstructionUtils.concatOperandParts("Y", DataType.MATRIX.name(), ValueType.FP64.name()), "1");
+			InstructionUtils.concatOperandParts("X", dataType.name(), valueType.name(), "false"),
+			InstructionUtils.concatOperandParts("Y", dataType.name(), valueType.name()), "1");
 		return PrefetchCPInstruction.parseInstruction(instruction);
 	}
 }

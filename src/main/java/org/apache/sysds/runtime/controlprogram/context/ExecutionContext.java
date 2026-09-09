@@ -695,6 +695,8 @@ public class ExecutionContext {
 		if( isAutoCreateVars() && !containsVariable(varName) )
 			setVariable(varName, createFrameObject(outputData));
 		FrameObject fo = getFrameObject(varName);
+		// A concrete local frame replaces any prior federated residency, just as for matrices.
+		fo.setFedMapping(null);
 		fo.setSchema(outputData.getSchema());
 		fo.acquireModify(outputData);
 		fo.release();

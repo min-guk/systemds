@@ -206,10 +206,13 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 	 * @param fr1 federated request holding the instruction execution call
 	 */
 	private void deriveNewOutputFedMapping(MatrixObject in, MatrixObject out, FederatedRequest fr1){
-		//Get agg type
-		//if ( !(instOpcode.equals("uack+") || instOpcode.equals("uark+")) )
-		//	throw new DMLRuntimeException("Operation " + instOpcode + " is unknown to FOUT processing");
-		boolean isColAgg = ((AggregateUnaryOperator) _optr).isColAggregate();
+		// A dynamically sized input can leave the aggregate HOP output with one unknown
+		// dimension even though the runtime input already has exact dimensions. FOUT
+		// ranges must never inherit that -1 because downstream local materialization
+		// allocates blocks directly from these ranges.
+		AggregateUnaryOperator aop = (AggregateUnaryOperator) _optr;
+		deriveRuntimeOutputDimensions(in, out, aop);
+		boolean isColAgg = aop.isColAggregate();
 		//Get partition type
 		FType inFtype = in.getFedMapping().getType();
 		// Preserve replication semantics for replicated inputs.
@@ -262,6 +265,31 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 				+ " dims=" + out.getNumRows() + "x" + out.getNumColumns()
 				+ " ftype=" + inputFedMapCopy.getType());
 		}
+	}
+
+	private static void deriveRuntimeOutputDimensions(MatrixObject in, MatrixObject out,
+		AggregateUnaryOperator aop) {
+		long rows = out.getNumRows();
+		long cols = out.getNumColumns();
+		if(rows >= 0 && cols >= 0)
+			return;
+		if(aop.isColAggregate()) {
+			rows = 1;
+			cols = in.getNumColumns();
+		}
+		else if(aop.isRowAggregate()) {
+			rows = in.getNumRows();
+			cols = 1;
+		}
+		else if(aop.isFullAggregate()) {
+			rows = 1;
+			cols = 1;
+		}
+		if(rows < 0 || cols < 0)
+			throw new DMLRuntimeException("Cannot derive federated aggregate output dimensions for opcode="
+				+ aop + " input=" + in.getNumRows() + "x" + in.getNumColumns()
+				+ " output=" + out.getNumRows() + "x" + out.getNumColumns());
+		out.getDataCharacteristics().setDimension(rows, cols).setBlocksize(in.getBlocksize());
 	}
 
 	/**

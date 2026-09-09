@@ -22,6 +22,7 @@ package org.apache.sysds.runtime.instructions.fed;
 import java.util.concurrent.Future;
 
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.AlignType;
@@ -74,6 +75,7 @@ public class MMFEDInstruction extends BinaryFEDInstruction
 	public void processInstruction(ExecutionContext ec) {
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
+		String workerInstruction = getWorkerInstruction();
 
 		long id = FederationUtils.getNextFedDataID();
 		FederatedRequest frEmpty = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR,
@@ -83,12 +85,12 @@ public class MMFEDInstruction extends BinaryFEDInstruction
 		//#1 federated matrix-vector multiplication
 		if(mo1.isFederated(FType.COL) && mo2.isFederated(FType.ROW)
 			&& mo1.getFedMapping().isAligned(mo2.getFedMapping(), AlignType.COL_T) ) {
-			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id,
+			FederatedRequest fr1 = FederationUtils.callInstruction(workerInstruction, output, id,
 				new CPOperand[]{input1, input2},
-				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, ExecType.SPARK, false);
+				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, ExecType.CP, false);
 
 			if ( _fedOut.isForcedFederated() ){
-				mo1.getFedMapping().execute(getTID(), frEmpty, fr1);
+				FederationUtils.sumNonZeros(mo1.getFedMapping().execute(getTID(), true, frEmpty, fr1));
 				setPartialOutput(mo1.getFedMapping(), mo1.getMO(), mo2.getMO(), fr1.getID(), ec);
 			}
 			else {
@@ -98,21 +100,24 @@ public class MMFEDInstruction extends BinaryFEDInstruction
 		else if(mo1.isFederated(FType.ROW) || mo1.isFederated(FType.PART)) { // MV + MM
 			//construct commands: broadcast rhs, fed mv, retrieve results
 			FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
-			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output, id,
+			FederatedRequest fr2 = FederationUtils.callInstruction(workerInstruction, output, id,
 				new CPOperand[]{input1, input2},
-				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, ExecType.SPARK, false);
+				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, ExecType.CP, false);
 
 			boolean isVector = (mo2.getNumColumns() == 1);
 			boolean isPartOut = mo1.isFederated(FType.PART) || // MV and MM
 				(!isVector && mo2.isFederated(FType.PART)); // only MM
 			if(isPartOut && _fedOut.isForcedFederated()) {
-				mo1.getFedMapping().execute(getTID(), true, frEmpty, fr1, fr2);
+				FederationUtils.sumNonZeros(
+					mo1.getFedMapping().execute(getTID(), true, frEmpty, fr1, fr2));
 				setPartialOutput(mo1.getFedMapping(), mo1.getMO(), mo2.getMO(), fr2.getID(), ec);
 			}
 			else if((_fedOut.isForcedFederated() || (!isVector && !_fedOut.isForcedLocal()))
 				&& !isPartOut) { // not creating federated output in the MV case for reasons of performance
-				mo1.getFedMapping().execute(getTID(), true, frEmpty, fr1, fr2);
+				long nnz = FederationUtils.sumNonZeros(
+					mo1.getFedMapping().execute(getTID(), true, frEmpty, fr1, fr2));
 				setOutputFedMapping(mo1.getFedMapping(), mo1.getMO(), mo2.getMO(), fr2.getID(), ec);
+				ec.getMatrixObject(output).getDataCharacteristics().setNonZeros(nnz);
 			}
 			else {
 				aggregateLocally(mo1.getFedMapping(), mo1.isFederated(FType.PART), ec, frEmpty, fr1, fr2);
@@ -122,12 +127,13 @@ public class MMFEDInstruction extends BinaryFEDInstruction
 		else if (mo2.isFederated(FType.ROW)) {// VM + MM
 			//construct commands: broadcast rhs, fed mv, retrieve results
 			FederatedRequest[] fr1 = mo2.getFedMapping().broadcastSliced(mo1, true);
-			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output, id,
+			FederatedRequest fr2 = FederationUtils.callInstruction(workerInstruction, output, id,
 				new CPOperand[]{input1, input2},
-				new long[]{fr1[0].getID(), mo2.getFedMapping().getID()}, ExecType.SPARK, false);
+				new long[]{fr1[0].getID(), mo2.getFedMapping().getID()}, ExecType.CP, false);
 			if ( _fedOut.isForcedFederated() ){
 				// Partial aggregates (set fedmapping to the partial aggs)
-				mo2.getFedMapping().execute(getTID(), true, fr1, frEmpty, fr2);
+				FederationUtils.sumNonZeros(
+					mo2.getFedMapping().execute(getTID(), true, fr1, frEmpty, fr2));
 				setPartialOutput(mo2.getFedMapping(), mo1.getMO(), mo2.getMO(), fr2.getID(), ec);
 			}
 			else {
@@ -138,12 +144,13 @@ public class MMFEDInstruction extends BinaryFEDInstruction
 		else if (mo1.isFederated(FType.COL)) {// VM + MM
 			//construct commands: broadcast rhs, fed mv, retrieve results
 			FederatedRequest[] fr1 = mo1.getFedMapping().broadcastSliced(mo2, true);
-			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output, id,
+			FederatedRequest fr2 = FederationUtils.callInstruction(workerInstruction, output, id,
 				new CPOperand[]{input1, input2},
-				new long[]{mo1.getFedMapping().getID(), fr1[0].getID()}, ExecType.SPARK, false);
+				new long[]{mo1.getFedMapping().getID(), fr1[0].getID()}, ExecType.CP, false);
 			if ( _fedOut.isForcedFederated() ){
 				// Partial aggregates (set fedmapping to the partial aggs)
-				mo1.getFedMapping().execute(getTID(), true, fr1, frEmpty, fr2);
+				FederationUtils.sumNonZeros(
+					mo1.getFedMapping().execute(getTID(), true, fr1, frEmpty, fr2));
 				setPartialOutput(mo1.getFedMapping(), mo1.getMO(), mo2.getMO(), fr2.getID(), ec);
 			}
 			else {
@@ -155,6 +162,21 @@ public class MMFEDInstruction extends BinaryFEDInstruction
 				+ "following federated objects: "+mo1.isFederated()+":"+mo1.getFedMapping()
 				+" "+mo2.isFederated()+":"+mo2.getFedMapping());
 		}
+	}
+
+	/**
+	 * A Spark aggregate-binary instruction cannot be executed by merely replacing
+	 * its execution-type token with {@code CP}: {@code mapmm}, {@code cpmm}, and
+	 * {@code rmm} are Spark-only opcodes with Spark-specific trailing operands.
+	 * Federated workers operate on their local MatrixBlocks, so the equivalent
+	 * worker kernel is the ordinary CP matrix multiplication instruction.
+	 */
+	private String getWorkerInstruction() {
+		return InstructionUtils.concatOperands(
+			ExecType.CP.name(), Opcodes.MMULT.toString(),
+			InstructionUtils.createOperand(input1),
+			InstructionUtils.createOperand(input2),
+			InstructionUtils.createOperand(output), "1");
 	}
 
 	/**

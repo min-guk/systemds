@@ -175,6 +175,21 @@ public class QuaternaryWDivMMFEDInstructionOutputContractTest {
 		assertEquals(0, map._cleanupRequests);
 	}
 
+	@Test
+	public void forcedFederatedRightFullUsesTheSingleRangeNativePath() {
+		ExecutionContext ec = executionContext(FType.FULL, 4, 3, 4, 2);
+
+		QuaternaryFEDInstruction.parseInstruction(
+			instruction(WDivMMType.MULT_RIGHT, FederatedOutput.FOUT)).processInstruction(ec);
+
+		MatrixObject output = ec.getMatrixObject("Y");
+		assertNotNull(output.getFedMapping());
+		assertEquals(FType.FULL, output.getFedMapping().getType());
+		ResultFederationMap map = inputMap(ec);
+		assertEquals(0, map._retrievalCalls);
+		assertEquals(0, map._cleanupRequests);
+	}
+
 	private static ExecutionContext executionContext(FType type, int rows, int cols,
 		int workerResultRows, int workerResultCols) {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
@@ -205,11 +220,15 @@ public class QuaternaryWDivMMFEDInstructionOutputContractTest {
 			entries.add(entry(0, 0, split, cols, 18001));
 			entries.add(entry(split, 0, rows, cols, 18002));
 		}
-		else {
+		else if(type == FType.COL) {
 			int split = cols / 2;
 			entries.add(entry(0, 0, rows, split, 18001));
 			entries.add(entry(0, split, rows, cols, 18002));
 		}
+		else if(type == FType.FULL)
+			entries.add(entry(0, 0, rows, cols, 18001));
+		else
+			throw new IllegalArgumentException("Unsupported test layout: " + type);
 		return entries;
 	}
 

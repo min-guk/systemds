@@ -200,16 +200,37 @@ public class Dag<N extends Lop>
 	 * DAG and therefore cannot identify rewrite-created or clone-specific Hop occurrences.
 	 */
 	public ArrayList<Instruction> getJobs(StatementBlock sb, DMLConfig config, List<Hop> logicalHopRoots) {
+		return getJobs(sb, sb, config, logicalHopRoots);
+	}
+
+	/**
+	 * Compiles a control-expression Lop DAG without applying statement-block live-variable
+	 * cleanup to the predicate/bound instructions. The planner registries are nevertheless
+	 * resolved against the owning control statement block, which preserves exact selected
+	 * relocations and materializations for predicates and loop bounds.
+	 *
+	 * @param plannerScope owning control statement block used by planner registries
+	 * @param config dml configuration
+	 * @param logicalHopRoots exact Hop roots that produced this control-expression Lop DAG
+	 * @return list of instructions
+	 */
+	public ArrayList<Instruction> getJobsForControlExpression(StatementBlock plannerScope, DMLConfig config,
+		List<Hop> logicalHopRoots) {
+		return getJobs(null, plannerScope, config, logicalHopRoots);
+	}
+
+	private ArrayList<Instruction> getJobs(StatementBlock instructionStatementBlock,
+		StatementBlock plannerScope, DMLConfig config, List<Hop> logicalHopRoots) {
 		if (config != null) {
 			scratch = config.getTextValue(DMLConfig.SCRATCH_SPACE) + "/";
 		}
 
 		IDagLinearizer dl = IDagLinearizerFactory.createDagLinearizer();
 		List<Lop> node_v = dl.linearize(nodes);
-		boolean modified = insertLocalMaterializeLops(node_v, sb, logicalHopRoots);
+		boolean modified = insertLocalMaterializeLops(node_v, plannerScope, logicalHopRoots);
 		modified |= prefetchFederated(node_v);
-		modified |= insertRefedLops(node_v, sb, logicalHopRoots);
-		modified |= insertFoutMaterializeLops(node_v, sb, logicalHopRoots);
+		modified |= insertRefedLops(node_v, plannerScope, logicalHopRoots);
+		modified |= insertFoutMaterializeLops(node_v, plannerScope, logicalHopRoots);
 
 		// The default linearizer for CP/Spark relies on lop IDs (creation order) to satisfy dependencies.
 		// Lops inserted in these post-processing passes are created after their consumers, so we must
@@ -218,7 +239,7 @@ public class Dag<N extends Lop>
 		node_v = linearizeTopological(modified ? dl.linearize(nodes) : node_v);
 
 		// do greedy grouping of operations
-		ArrayList<Instruction> inst = doPlainInstructionGen(sb, node_v);
+		ArrayList<Instruction> inst = doPlainInstructionGen(instructionStatementBlock, node_v);
 
 		// cleanup instruction (e.g., create packed rmvar instructions), then prove that
 		// the exact selected physical placement survived lowering before runtime sees it.
@@ -226,8 +247,9 @@ public class Dag<N extends Lop>
 		return PlannerRuntimePlacementAudit.verifyLowering(logicalHopRoots, node_v, cleaned);
 	}
 
-	private static boolean isFederatedMatrixLop(Lop lop) {
-		if (lop == null || lop.getDataType() == null || !lop.getDataType().isMatrix())
+	private static boolean isFederatedCacheableLop(Lop lop) {
+		if (lop == null || lop.getDataType() == null
+			|| (!lop.getDataType().isMatrix() && !lop.getDataType().isFrame()))
 			return false;
 		// explicit federated lops always provide a federation map
 		if (lop instanceof Federated || lop instanceof FederatedRefed || lop instanceof FederatedFoutMaterialize)
@@ -255,6 +277,11 @@ public class Dag<N extends Lop>
 			return fedOut != null && fedOut.isForcedFederated();
 		}
 		return false;
+	}
+
+	private static boolean isFederatedMatrixLop(Lop lop) {
+		return lop != null && lop.getDataType() != null && lop.getDataType().isMatrix()
+			&& isFederatedCacheableLop(lop);
 	}
 
 	/**
@@ -332,7 +359,7 @@ public class Dag<N extends Lop>
 				&& spec.getConsumerInputs().stream().noneMatch(
 					FederatedLocalMaterializeRegistry.ConsumerInputSpec::allInputs);
 			Lop producer = hopToLop.get(producerHopId);
-			if (producer == null || !isFederatedMatrixLop(producer)) {
+			if (producer == null || !isFederatedCacheableLop(producer)) {
 				if(exact)
 					throw new LopsException("exact local materialization requires a federated producer lop for hop="
 						+ producerHopId + " sbId=" + sbId + " inputs=" + spec.getConsumerInputs()
@@ -406,7 +433,7 @@ public class Dag<N extends Lop>
 								"local materialization lowering lost selected exact input edge for hop="
 									+ producerHopId + " consumer=" + edge.consumer.getHopID()
 									+ " input=" + inputPosition);
-						edge.consumer.getInputs().set(inputPosition, materialize);
+						edge.consumer.replaceInput(inputPosition, materialize);
 						producer.removeOutput(edge.consumer);
 						materialize.addOutput(edge.consumer);
 					}
@@ -669,7 +696,7 @@ public class Dag<N extends Lop>
 						throw new LopsException("fed_refed lowering lost selected exact input edge for hop="
 							+ plan.hopId + " consumer=" + edge.consumer.getHopID()
 							+ " input=" + inputPosition);
-					edge.consumer.getInputs().set(inputPosition, refed);
+					edge.consumer.replaceInput(inputPosition, refed);
 					plan.local.removeOutput(edge.consumer);
 					refed.addOutput(edge.consumer);
 				}
@@ -725,7 +752,9 @@ public class Dag<N extends Lop>
 					if(!fused.isEmpty()) {
 						if(fused.size() != 1)
 							throw new LopsException("fed_refed lowering found ambiguous fused selected consumer hop="
-								+ consumerHopId + " for local hop=" + hopId + " matches=" + fused.size());
+								+ consumerHopId + " for local hop=" + hopId + " matches=" + fused.size()
+								+ " edges=" + fused.stream().map(edge -> lopIdentity(edge.consumer)
+									+ edge.inputPositions).toList());
 						RefedConsumerEdge edge = fused.get(0);
 						int inputMultiplicity = countOccurrences(edge.consumer.getInputs(), local);
 						int outputMultiplicity = countOccurrences(local.getOutputs(), edge.consumer);
@@ -888,6 +917,19 @@ public class Dag<N extends Lop>
 		if(!allInputs && selectedLogicalPositions.size() != logicalPositions.size())
 			return List.of();
 		int logicalMultiplicity = selectedLogicalPositions.size();
+		Lop logicalConsumerLop = logicalConsumer.getLops();
+		if(logicalConsumerLop != null && lops.contains(logicalConsumerLop)) {
+			for(Lop directConsumer : local.getOutputs()) {
+				if(directConsumer == null || !lops.contains(directConsumer)
+					|| directConsumer.getHopID() >= 0
+					|| countOccurrences(directConsumer.getInputs(), local) != logicalMultiplicity)
+					continue;
+				if(reachesLogicalConsumerThroughSyntheticLops(directConsumer, logicalConsumerLop, lops,
+					Collections.newSetFromMap(new IdentityHashMap<>())))
+					return List.of(new RefedConsumerEdge(directConsumer,
+						inputPositions(directConsumer.getInputs(), local)));
+			}
+		}
 		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
 		Map<Lop,List<Integer>> physicalConsumers = new IdentityHashMap<>();
 		// The selected logical consumer may already own a Lop whose Hop id was inherited
@@ -900,19 +942,45 @@ public class Dag<N extends Lop>
 			if (candidate == null || !visited.add(candidate))
 				continue;
 			Lop candidateLop = candidate.getLops();
-			if (candidateLop != null) {
+			if (candidateLop != null && lops.contains(candidateLop)) {
 				List<Integer> physicalPositions = inputPositions(candidateLop.getInputs(), local);
-				if (lops.contains(candidateLop) && physicalPositions.size() == logicalMultiplicity)
+				if (physicalPositions.size() == logicalMultiplicity)
 					physicalConsumers.put(candidateLop, physicalPositions);
 				// The first materialized Lop on each parent path owns that fused subgraph. If it
 				// does not consume the selected local Lop exactly, no later ancestor may be used
 				// as an implicit replacement for the planner-selected edge.
 				continue;
 			}
+			// A Hop may retain the Lop object created before fusion even though that Lop is
+			// absent from the final executable DAG. Such an eliminated Lop is not a physical
+			// consumer boundary; continue to the first parent whose Lop is actually emitted.
 			pending.addAll(candidate.getParent());
 		}
 		return physicalConsumers.entrySet().stream()
 			.map(entry -> new RefedConsumerEdge(entry.getKey(), entry.getValue())).toList();
+	}
+
+	/**
+	 * Quantile and similar multi-Lop lowerings insert compiler-owned Lops (Hop id -1)
+	 * between one logical input edge and the Lop carrying the logical consumer's Hop id.
+	 * Project exact authority only through such a synthetic-only, identity-preserving path.
+	 */
+	private static boolean reachesLogicalConsumerThroughSyntheticLops(Lop current, Lop target,
+		List<Lop> lops, Set<Lop> visited) {
+		if(current == target)
+			return true;
+		if(current == null || !visited.add(current))
+			return false;
+		for(Lop output : current.getOutputs()) {
+			if(output == null || !lops.contains(output))
+				continue;
+			if(output == target)
+				return true;
+			if(output.getHopID() < 0
+				&& reachesLogicalConsumerThroughSyntheticLops(output, target, lops, visited))
+				return true;
+		}
+		return false;
 	}
 
 	private static List<Hop> collectLogicalHops(List<Hop> roots) {
@@ -1298,8 +1366,15 @@ public class Dag<N extends Lop>
 				}
 
 				// If the input is already federated (e.g., produced by a FED op and written via TWrite),
-				// a fed_fout materialize would fail at runtime because it expects a local input.
-					if (isFederatedMatrixLop(materializeInput)) {
+				// a fed_fout materialize would fail at runtime because it expects a local input. A common-
+				// planner CP/FOUT producer is different: the forced FOUT marker is the selected post-
+				// materialization residency, while its CP Lop still produces the local value that fed_fout
+				// must upload. Do not confuse this target marker with an already-federated runtime value.
+				boolean exactLocalFoutSource = plannerExact && materializeInput == local
+					&& local.getExecType() == ExecType.CP
+					&& local.getFederatedOutput() == FederatedOutput.FOUT
+					&& !serializesConcreteFederatedAnchor(local);
+					if (isFederatedMatrixLop(materializeInput) && !exactLocalFoutSource) {
 						if(plannerExact)
 							throw new LopsException("selected exact FOUT source is already FED/FOUT for hop="
 								+ hopId + " source=" + lopIdentity(materializeInput)
@@ -1397,7 +1472,7 @@ public class Dag<N extends Lop>
 									"FOUT lowering lost selected exact input edge for hop=" + hopId
 										+ " consumer=" + edge.consumer.getHopID()
 										+ " input=" + inputPosition);
-							edge.consumer.getInputs().set(inputPosition, fout);
+							edge.consumer.replaceInput(inputPosition, fout);
 							materializeInput.removeOutput(edge.consumer);
 							fout.addOutput(edge.consumer);
 						}

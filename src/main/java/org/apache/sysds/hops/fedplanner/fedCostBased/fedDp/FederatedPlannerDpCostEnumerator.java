@@ -166,6 +166,10 @@ public class FederatedPlannerDpCostEnumerator {
 		private ExactPlanClosureConflict(String message) {
 			super(message);
 		}
+
+		private ExactPlanClosureConflict(String message, Throwable cause) {
+			super(message, cause);
+		}
 	}
 
 	private static final class EnumerationCapture {
@@ -274,7 +278,8 @@ public class FederatedPlannerDpCostEnumerator {
 					forward.readOccurrence(), List.of(), List.of(), List.of(),
 					List.of(new DpPlacementAdapter.TransientForwardDependencyEntry(
 						forward, forward.writeOccurrence(), 0, selected)),
-					List.of(), List.of(), DpPlacementAdapter.ConstructionDisposition.AVAILABLE, "AVAILABLE");
+					List.of(), List.of(), List.of(),
+					DpPlacementAdapter.ConstructionDisposition.AVAILABLE, "AVAILABLE");
 				long variantOrdinal = nextVariantOrdinal(forward.readOccurrence());
 				capture(snapshot, variantOrdinal);
 				Hop schedulingCarrier = context.analysis().hop(forward.writeOccurrence()).orElseThrow();
@@ -532,7 +537,9 @@ public class FederatedPlannerDpCostEnumerator {
 		// TRead -> ... -> TWrite path, so one depth-first pass observes a mixed-generation
 		// frontier.  Shared function formals have the analogous multi-caller join.
 		return hasSharedLogicalFunctionInputs(analysis)
-			|| !analysis.logicalTransientInputsInCanonicalOrder().isEmpty();
+			|| !analysis.logicalTransientInputsInCanonicalOrder().isEmpty()
+			|| analysis.compiledHopOccurrences().stream().anyMatch(occurrence ->
+				!analysis.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).isEmpty());
 	}
 
 	private static void closeExactMemoFrontier(DMLProgram prog,
@@ -778,7 +785,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 		// Todo: Check if is right
 		if ((hop instanceof DataOp) && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			List<Hop> exactLogicalSources = collectLogicalTransientSourceChildHops((DataOp) hop, capture);
+			List<Hop> exactLogicalSources = collectExactTransientSourceChildHops((DataOp) hop, capture);
 			if(capture.seedExactTransientFrontier && exactLogicalSources.size() > 1) {
 				List<Hop> completeSources = exactLogicalSources;
 				List<Hop> availableSources = exactLogicalSources.stream().filter(source ->
@@ -931,7 +938,7 @@ public class FederatedPlannerDpCostEnumerator {
 			} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 				Set<Hop> retained = Collections.newSetFromMap(new IdentityHashMap<>());
 				retained.addAll(childHops);
-				for(Hop logicalSource : collectLogicalTransientSourceChildHops((DataOp) hop, capture))
+				for(Hop logicalSource : collectExactTransientSourceChildHops((DataOp) hop, capture))
 					if(retained.add(logicalSource))
 						childHops.add(logicalSource);
 				List<Hop> transChildHops = rewireTable.get(hop.getHopID());
@@ -1280,7 +1287,7 @@ public class FederatedPlannerDpCostEnumerator {
 					nativeResultDownloadCost = exactEstimator.nativeFederatedLoutResultCost(
 						hop, outputMemEstimate, numOfWorkers, nativeResultDownloadCost);
 						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
-								FederatedCostModel.computeMixedFedLocalCost(
+								exactEstimator.mixedFedLocalCost(
 										hop, exactCollectedHops, effectiveCollectedFTypes, oracleLogicalFType,
 										baseSelfCost, outputMemEstimate, numOfWorkers);
 						double nativeAggUnaryFedComputeCost =
@@ -1694,6 +1701,13 @@ public class FederatedPlannerDpCostEnumerator {
 					action -> exactRelocationActionCost(action, selectedSources, exactEstimator,
 						parentHop, parentCommon, hopCommonTable, memoTable, numWorkers));
 		}
+		catch(RelocationSelections.InfeasibleRelocationSelectionException ex) {
+			// Privacy or anchor feasibility can exclude one otherwise well-formed
+			// arm. Continue comparing its legal siblings, but never swallow broken
+			// identity/candidate authority as if it were an ordinary planning choice.
+			throw new ExactPlanClosureConflict("DP arm has no legal relocation for parent="
+				+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature(), ex);
+		}
 		catch(IllegalStateException ex) {
 			throw new IllegalStateException("DP exact relocation selection failed for parent="
 				+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature(), ex);
@@ -2028,7 +2042,7 @@ public class FederatedPlannerDpCostEnumerator {
 		List<Hop> completeLogicalTransientSources = List.of();
 		boolean incompleteTransientSeed = false;
 		if(sourceChildHops.isEmpty()) {
-			completeLogicalTransientSources = collectLogicalTransientSourceChildHops(dataOp, capture);
+			completeLogicalTransientSources = collectExactTransientSourceChildHops(dataOp, capture);
 			sourceChildHops = completeLogicalTransientSources;
 			if(capture.seedExactTransientFrontier && sourceChildHops.size() > 1) {
 				sourceChildHops = sourceChildHops.stream().filter(source ->
@@ -2097,14 +2111,23 @@ public class FederatedPlannerDpCostEnumerator {
 				sourceOccurrence, FederatedOutput.LOUT);
 			List<FederatedPlannerDpMemoTable.FedPlan> exactFoutPlans = memoTable.getExactPlansAfterPrune(
 				sourceOccurrence, FederatedOutput.FOUT);
+			if(exactTransientJoin) {
+				if(!hasFederatedTransientInputAuthority(dataOp, sourceChildHop, capture))
+					throw new IllegalStateException("Transient join source lacks exact input authority: "
+						+ sourceOccurrence.key().normalizedSignature());
+				loutPlansBySource.add(exactLoutPlans);
+				foutPlansBySource.add(exactFoutPlans);
+				// The shared analysis has certified every reaching definition, including
+				// loop updates that read the same variable. The joined path below checks
+				// a common exact state and its candidate receipt without embedding the
+				// cyclic producer subtrees. Applying the single-source self-dependency
+				// guard here would reject those legal updates before that check runs.
+				continue;
+			}
 			FederatedPlannerDpMemoTable.FedPlan loutPlan = exactLoutPlans.isEmpty()
 				? null : exactLoutPlans.get(0);
 			FederatedPlannerDpMemoTable.FedPlan foutPlan = exactFoutPlans.isEmpty()
 				? null : exactFoutPlans.get(0);
-			if(exactTransientJoin) {
-				loutPlansBySource.add(exactLoutPlans);
-				foutPlansBySource.add(exactFoutPlans);
-			}
 			boolean mayMaterializeFout = loutPlan == null && foutPlan != null
 				&& foutPlan.getFType() != null
 				&& isExactMaterializableTransientSource(dataOp, sourceOccurrence, capture);
@@ -2164,13 +2187,13 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 		}
 
+		if(exactTransientJoin)
+			return enumerateJoinedTransientRead(dataOp, readOccurrence, loutPlansBySource,
+				foutPlansBySource, memoTable, hopCommon, capture, baseSelfCost);
 		if (!allowLOUT && !allowFOUT) {
 			throw new DMLRuntimeException("No valid federated plan for hop " + dataOp.getHopID()
 					+ " (" + dataOp.getOpString() + ") based on transient write placements");
 		}
-		if(exactTransientJoin)
-			return enumerateJoinedTransientRead(dataOp, readOccurrence, loutPlansBySource,
-				foutPlansBySource, memoTable, hopCommon, capture, baseSelfCost);
 		// TRANSIENTREAD with a matching TRANSIENTWRITE LOUT source is already paying the
 		// local materialization/download cost in the producer cumulative cost. Charging a
 		// second synthetic local-acquire download here double-counts the CP/LOUT path and
@@ -2278,7 +2301,8 @@ public class FederatedPlannerDpCostEnumerator {
 							+ source.getHopID());
 					FederatedPlannerDpMemoTable.FedPlan sourcePlan = memoTable
 						.getExactPlansAfterPrune(sourceOccurrence, output).stream()
-						.filter(plan -> readState.equals(plan.getSelectedPlacementState()))
+						.filter(plan -> transientSourceSatisfiesRead(sourceOccurrence.key(), readOccurrence.key(),
+							plan.getSelectedPlacementState(), readState, capture))
 						.min(Comparator.comparingDouble(
 							FederatedPlannerDpMemoTable.FedPlan::getCumulativeCost))
 						.orElse(null);
@@ -2366,14 +2390,23 @@ public class FederatedPlannerDpCostEnumerator {
 		Map<String,List<FederatedPlannerDpMemoTable.FedPlan>> uniformByState = new LinkedHashMap<>();
 		for(FederatedPlannerDpMemoTable.FedPlan plan : plansBySource.get(0)) {
 			PlacementState state = plan.getSelectedPlacementState();
-			if(state == null || state.output() != output)
+			HopOccurrenceProjection firstSource = capture.context.rewireSnapshot()
+				.projectExactCarrier(plan.getHopRef());
+			if(state == null || state.output() != output || firstSource == null
+				|| !transientSourceSatisfiesRead(firstSource.key(), readOccurrence.key(),
+					state, state, capture))
 				continue;
 			List<FederatedPlannerDpMemoTable.FedPlan> selected = new ArrayList<>();
 			selected.add(plan);
 			boolean common = true;
 			for(int source = 1; source < plansBySource.size(); source++) {
 				FederatedPlannerDpMemoTable.FedPlan matching = plansBySource.get(source).stream()
-					.filter(candidate -> state.equals(candidate.getSelectedPlacementState()))
+					.filter(candidate -> {
+						HopOccurrenceProjection occurrence = capture.context.rewireSnapshot()
+							.projectExactCarrier(candidate.getHopRef());
+						return occurrence != null && transientSourceSatisfiesRead(occurrence.key(),
+							readOccurrence.key(), candidate.getSelectedPlacementState(), state, capture);
+					})
 					.min(Comparator.comparingDouble(
 						FederatedPlannerDpMemoTable.FedPlan::getCumulativeCost)).orElse(null);
 				if(matching == null) {
@@ -2423,6 +2456,22 @@ public class FederatedPlannerDpCostEnumerator {
 			joined.setExactRecurrenceCosts(embedded, 0d);
 			variants.addFedPlan(joined);
 		}
+	}
+
+	private static boolean transientSourceSatisfiesRead(CompiledHopKey source, CompiledHopKey read,
+		PlacementState sourceState, PlacementState readState, EnumerationCapture capture) {
+		if(sourceState == null || readState == null)
+			return false;
+		List<Constraint> exact = capture.context.analysis().graph().constraints().stream()
+			.filter(constraint -> constraint.left() == source && constraint.right() == read)
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_PLACEMENT
+				|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
+			.toList();
+		if(exact.isEmpty())
+			return sourceState.equals(readState);
+		return exact.stream().allMatch(constraint ->
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.constraintSatisfied(
+				constraint, sourceState, readState));
 	}
 
 	private static boolean isExactMaterializableTransientSource(DataOp transientRead,
@@ -2482,6 +2531,59 @@ public class FederatedPlannerDpCostEnumerator {
 				sources.add(source);
 		}
 		return List.copyOf(sources);
+	}
+
+	/**
+	 * Uses logical transient facts when replay produced them; otherwise admits only the
+	 * analysis-owned raw CFG definition set backed by exact cfg-transient-value constraints.
+	 */
+	private static List<Hop> collectExactTransientSourceChildHops(DataOp transientRead,
+		EnumerationCapture capture) {
+		List<Hop> logical = collectLogicalTransientSourceChildHops(transientRead, capture);
+		if(!logical.isEmpty() || transientRead == null || capture == null)
+			return logical;
+		// Scalar transient reads are CP-only and retain the existing exact rewire-forward
+		// receipt. The CFG bridge exists only for matrix placement alternatives.
+		if(!transientRead.getDataType().isMatrix())
+			return List.of();
+		HopOccurrenceProjection read = findOccurrence(capture, transientRead);
+		List<CompiledHopKey> sourceKeys = capture.context.analysis()
+			.cfgDefinitionSourcesInCanonicalOrder(read.key());
+		if(sourceKeys.isEmpty())
+			return List.of();
+		List<Hop> sources = new ArrayList<>(sourceKeys.size());
+		for(CompiledHopKey sourceKey : sourceKeys) {
+			Hop source = capture.context.analysis().hop(sourceKey).orElseThrow(() ->
+				new IllegalArgumentException("CFG transient DP source Hop is missing"));
+			if(!(source instanceof DataOp sourceData)
+				|| sourceData.getOp() != Types.OpOpData.TRANSIENTWRITE)
+				throw new IllegalArgumentException("CFG transient DP source is not a compiled TWrite: "
+					+ sourceKey.normalizedSignature());
+			requireExactCfgTransientConstraint(sourceKey, read.key(), capture);
+			HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(source);
+			if(projected == null || projected.key() != sourceKey)
+				throw new IllegalArgumentException("CFG transient DP source carrier differs from analysis authority");
+			sources.add(source);
+		}
+		return List.copyOf(sources);
+	}
+
+	private static Constraint requireExactCfgTransientConstraint(CompiledHopKey source,
+		CompiledHopKey read, EnumerationCapture capture) {
+		List<Constraint> matches = capture.context.analysis().graph().constraints().stream()
+			.filter(constraint -> constraint.left() == source && constraint.right() == read
+				&& isCfgTransientPlacementConstraintKind(constraint)
+				&& constraint.evidence().startsWith("cfg-transient-value:"))
+			.toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException("CFG transient dependency lacks one exact value constraint: source="
+				+ source.normalizedSignature() + ", read=" + read.normalizedSignature());
+		return matches.get(0);
+	}
+
+	private static boolean isCfgTransientPlacementConstraintKind(Constraint constraint) {
+		return constraint.kind() == ConstraintKind.SAME_PLACEMENT
+			|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT;
 	}
 
 	/**
@@ -2783,6 +2885,11 @@ public class FederatedPlannerDpCostEnumerator {
 		Hop input = (inputs != null && !inputs.isEmpty()) ? inputs.get(0) : null;
 		if (input == null)
 			return true;
+		// Exact copy/function-binding identity is carrier-scoped. A retained recompile
+		// clone must be checked against its own direct input, not the resolved original's.
+		List<Hop> carrierInputs = tWriteCarrier.getInput();
+		Hop carrierInput = (carrierInputs != null && !carrierInputs.isEmpty())
+			? carrierInputs.get(0) : input;
 		if (FederatedPlannerUtils.hasConcreteMatchedWriteReuseSource(input, tWrite.getName()))
 			return true;
 		// A compiler-generated formal TRead -> TWrite binding is an identity alias of
@@ -2793,7 +2900,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// SAME_PLACEMENT contract; an arithmetic/update TWrite has no such proof and
 		// remains rejected.  This expands a graph-proven runtime capability rather than
 		// introducing a fallback or weakening TRead/TWrite equality.
-		if(isExactTransparentFunctionInputBinding(tWriteCarrier, input, capture))
+		if(isExactTransparentFunctionInputBinding(tWriteCarrier, carrierInput, capture))
 			return true;
 		// A compiler-generated TWrite(v) <- TRead(v) carry is also a pure alias,
 		// but unlike the formal-input binding it can sit between loop/branch CFG
@@ -2801,7 +2908,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// consumes the exact read occurrence as FOUT and that read is itself backed
 		// by analysis-owned logical transient sources with the same layout.  This
 		// proves a grounded placement chain and does not admit an unseeded self-cycle.
-		if(isExactTransparentTransientCopyBinding(tWritePlan, input, capture))
+		if(isExactTransparentTransientCopyBinding(tWritePlan, carrierInput, capture))
 			return true;
 		return !dependsOnSameTransientRead(input, tWrite.getName(), new HashSet<>());
 	}
@@ -2876,7 +2983,13 @@ public class FederatedPlannerDpCostEnumerator {
 		boolean logicalFunction = analysis.logicalFunctionInputsInCanonicalOrder().stream().anyMatch(fact ->
 			fact.sourceArgument() == source.key() && fact.targetRead() == read.key()
 				&& fact.logicalPosition() == 0);
-		return physical || logicalTransient || logicalFunction;
+		boolean cfgTransient = analysis.cfgDefinitionSourcesInCanonicalOrder(read.key()).stream()
+			.anyMatch(key -> key == source.key())
+			&& analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.left() == source.key() && constraint.right() == read.key()
+					&& isCfgTransientPlacementConstraintKind(constraint)
+					&& constraint.evidence().startsWith("cfg-transient-value:"));
+		return physical || logicalTransient || logicalFunction || cfgTransient;
 	}
 
 	private static boolean dependsOnSameTransientRead(Hop hop, String varName, Set<Long> visited) {
@@ -3057,7 +3170,7 @@ public class FederatedPlannerDpCostEnumerator {
 			hop, executionFType, outputMemEstimate, numOfWorkers, nativeAggUnaryResultDownloadCost);
 		nativeResultDownloadCost = exactEstimator.nativeFederatedLoutResultCost(
 			hop, outputMemEstimate, numOfWorkers, nativeResultDownloadCost);
-		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost = FederatedCostModel.computeMixedFedLocalCost(
+		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost = exactEstimator.mixedFedLocalCost(
 			hop, exactCollectedHops, effectiveCollectedFTypes, executionFType, baseSelfCost, outputMemEstimate,
 			numOfWorkers);
 		double nativeAggUnaryFedComputeCost = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(

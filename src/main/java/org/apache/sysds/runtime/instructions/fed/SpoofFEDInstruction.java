@@ -62,8 +62,8 @@ public class SpoofFEDInstruction extends FEDInstruction
 	private final CPOperand _output;
 
 	private SpoofFEDInstruction(SpoofOperator op, CPOperand[] in,
-		CPOperand out, String opcode, String instStr) {
-		super(FEDInstruction.FEDType.SpoofFused, opcode, instStr);
+		CPOperand out, String opcode, String instStr, FederatedOutput fedOut) {
+		super(FEDInstruction.FEDType.SpoofFused, null, opcode, instStr, fedOut);
 		_op = op;
 		_inputs = in;
 		_output = out;
@@ -96,28 +96,29 @@ public class SpoofFEDInstruction extends FEDInstruction
 
 	private static SpoofFEDInstruction parseInstruction(SpoofCPInstruction instr) {
 		return new SpoofFEDInstruction(instr.getSpoofOperator(), instr.getInputs(), instr.getOutput(),
-			instr.getOpcode(), instr.getInstructionString());
+			instr.getOpcode(), instr.getInstructionString(), FederatedOutput.NONE);
 	}
 
 	private static SpoofFEDInstruction parseInstruction(SpoofSPInstruction instr) {
 		SpoofOperator op = CodegenUtils.createInstance(instr.getOperatorClass());
 		return new SpoofFEDInstruction(op, instr.getInputs(), instr.getOutput(), instr.getOpcode(),
-			instr.getInstructionString());
+			instr.getInstructionString(), FederatedOutput.NONE);
 	}
 
 	public static SpoofFEDInstruction parseInstruction(String str) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 
-		CPOperand[] inputCpo = new CPOperand[parts.length - 3 - 2];
+		FederatedOutput fedOut = FederatedOutput.valueOf(parts[parts.length - 1]);
+		CPOperand[] inputCpo = new CPOperand[parts.length - 3 - 3];
 		Class<?> cla = CodegenUtils.getClass(parts[2]);
 		SpoofOperator op = CodegenUtils.createInstance(cla);
 		String opcode = parts[0] + op.getSpoofType();
 
-		for(int counter = 3; counter < parts.length - 2; counter++)
+		for(int counter = 3; counter < parts.length - 3; counter++)
 			inputCpo[counter - 3] = new CPOperand(parts[counter]);
-		CPOperand out = new CPOperand(parts[parts.length - 2]);
+		CPOperand out = new CPOperand(parts[parts.length - 3]);
 
-		return new SpoofFEDInstruction(op, inputCpo, out, opcode, str);
+		return new SpoofFEDInstruction(op, inputCpo, out, opcode, str, fedOut);
 	}
 
 	@Override
@@ -145,10 +146,16 @@ public class SpoofFEDInstruction extends FEDInstruction
 			throw new DMLRuntimeException("Federated code generation only supported" +
 				" for cellwise, rowwise, multiaggregate, and outerproduct templates.");
 
-		processRequest(ec, fedMap, spoofType);
+		boolean nativeFedOutput = spoofType.isFedOutput();
+		if(_fedOut.isForcedFederated() && !nativeFedOutput)
+			throw new DMLRuntimeException("Spoof operator cannot satisfy forced federated output: " + instOpcode);
+		boolean keepFederated = _fedOut.isForcedFederated()
+			|| (!_fedOut.isForcedLocal() && nativeFedOutput);
+		processRequest(ec, fedMap, spoofType, keepFederated);
 	}
 
-	private void processRequest(ExecutionContext ec, FederationMap fedMap, SpoofFEDType spoofType) {
+	private void processRequest(ExecutionContext ec, FederationMap fedMap, SpoofFEDType spoofType,
+		boolean keepFederated) {
 		ArrayList<FederatedRequest> frBroadcast = new ArrayList<>();
 		ArrayList<FederatedRequest[]> frBroadcastSliced = new ArrayList<>();
 		long[] frIds = new long[_inputs.length];
@@ -188,7 +195,7 @@ public class SpoofFEDInstruction extends FEDInstruction
 
 		FederatedRequest frGet = null;
 		FederatedRequest frCleanup = null;
-		if(!spoofType.isFedOutput()) {
+		if(!keepFederated) {
 			// get partial results from federated workers
 			frGet = new FederatedRequest(RequestType.GET_VAR, frCompute.getID());
 			// cleanup the federated request of callInstruction
@@ -208,7 +215,7 @@ public class SpoofFEDInstruction extends FEDInstruction
 
 		// setting the output with respect to the different aggregation types
 		// of the different spoof templates
-		spoofType.setOutput(ec, response, fedMap, frCompute.getID());
+		spoofType.setOutput(ec, response, fedMap, frCompute.getID(), keepFederated);
 	}
 
 
@@ -263,8 +270,8 @@ public class SpoofFEDInstruction extends FEDInstruction
 		 * or calling aggResult to aggregate the partial results locally
 		 */
 		protected void setOutput(ExecutionContext ec, Future<FederatedResponse>[] response,
-			FederationMap fedMap, long frComputeID) {
-			if(isFedOutput())
+			FederationMap fedMap, long frComputeID, boolean keepFederated) {
+			if(keepFederated)
 				setFedOutput(ec, fedMap, frComputeID);
 			else
 				aggResult(ec, response, fedMap);

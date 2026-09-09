@@ -35,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
@@ -523,6 +524,35 @@ final class ExactPhysicalModel {
 					return selectedWeights.output() == FederatedOutput.FOUT
 						&& selectedWeights.fType() == runtime.partitionedInputFType()
 						? 0.0 : Double.POSITIVE_INFINITY;
+					}));
+		}
+		for(Node ownerNode : analysis.graph().decisionNodes()) {
+			DecisionDomain owner = domains.get(ownerNode.key());
+			if(owner == null)
+				continue;
+			org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+				.DirectWdivmmRuntimeFact runtime =
+				org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+					.directWdivmmRuntimeFact(analysis, owner.node().key());
+			if(runtime == null || runtime.runtimeInputFType() == null)
+				continue;
+			DecisionDomain weights = domains.get(runtime.weights());
+			if(weights == null)
+				throw new IllegalArgumentException(
+					"EXACT_DIRECT_WDIVMM_RUNTIME_INPUT_DOMAIN_MISSING|owner="
+						+ owner.node().key().normalizedSignature());
+			factors.add(ExactCategoricalSolver.Factor.lazy(
+				List.of(owner.variable(), weights.variable()), values -> {
+					Alternative selectedOwner = owner.alternatives().get(values[0]);
+					CandidateEmissionFact emission = selectedOwner.captured()
+						? selectedOwner.candidateEmission() : selectedOwner.executionEmission();
+					return org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics
+						.directWdivmmRuntimeAssignmentCompatible(runtime,
+							selectedOwner.state(), emission == null ? selectedOwner.state().fType()
+								: emission.executionFType(), emission != null
+									&& emission.emissionState().derivedFedFout(),
+							weights.alternatives().get(values[1]).state())
+							? 0.0 : Double.POSITIVE_INFINITY;
 				}));
 		}
 	}
@@ -616,6 +646,9 @@ final class ExactPhysicalModel {
 	private static void addInputAuthorityFactors(PlacementAnalysis analysis,
 		Map<CompiledHopKey,List<Link>> incoming, Map<CompiledHopKey,DecisionDomain> domains,
 		List<ExactCategoricalSolver.Factor> factors) {
+		RelocationSelections.RelocationPrivacyIndex relocationPrivacy =
+			RelocationSelections.relocationPrivacyIndex(analysis, analysis.graph(),
+				analysis.graph().relocationActions());
 		for(Map.Entry<CompiledHopKey,List<Link>> entry : incoming.entrySet()) {
 			DecisionDomain consumer = domains.get(entry.getKey());
 			if(consumer == null)
@@ -635,12 +668,15 @@ final class ExactPhysicalModel {
 				List<DecisionDomain> scope = List.copyOf(scopeDomains);
 				factors.add(ExactCategoricalSolver.Factor.lazy(
 					scope.stream().map(DecisionDomain::variable).toList(), values ->
-						inputSatisfied(analysis, link, consumer, directSource, scope, values)));
+						inputSatisfied(analysis, relocationPrivacy, link, consumer,
+							directSource, scope, values)));
 			}
 		}
 	}
 
-	private static double inputSatisfied(PlacementAnalysis analysis, Link link, DecisionDomain consumer,
+	private static double inputSatisfied(PlacementAnalysis analysis,
+		RelocationSelections.RelocationPrivacyIndex relocationPrivacy,
+		Link link, DecisionDomain consumer,
 		DecisionDomain directSource, List<DecisionDomain> scope, int[] values) {
 		NeutralPlacementGraph graph = analysis.graph();
 		Alternative selectedConsumer = selected(consumer, scope, values);
@@ -678,6 +714,8 @@ final class ExactPhysicalModel {
 		if(!required)
 			return Double.POSITIVE_INFINITY;
 		if(!graph.isRelocationActive(action, assignment, selectedCandidates))
+			return Double.POSITIVE_INFINITY;
+		if(!relocationPrivacy.isPrivacySafe(action, true))
 			return Double.POSITIVE_INFINITY;
 		return source.state().output() == FederatedOutput.LOUT
 			|| source.state().output() == FederatedOutput.FOUT ? 0.0 : Double.POSITIVE_INFINITY;

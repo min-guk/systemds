@@ -142,6 +142,7 @@ public class SpoofFusedOp extends MultiThreadedHop
 		
 		int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
 		SpoofFused lop = new SpoofFused(inputs, getDataType(), getValueType(), _class, _api, _genVarName, k, et);
+		updateLopFedOut(lop, et, getFederatedOutput());
 		setOutputDimensions(lop);
 		setLineNumbers(lop);
 		setLops(lop);

@@ -331,7 +331,14 @@ public class DMLTranslator
 				dmlconf.getIntValue(DMLConfig.CODEGEN_LITERALS)==2);
 			SpoofCompiler.setConfiguredPlanSelector();
 			SpoofCompiler.setExecTypeSpecificJavaCompiler();
-			if( SpoofCompiler.INTEGRATION==IntegrationType.HOPS )
+			// A compiled federated selector must observe the final fused operation,
+			// rather than planning the pre-codegen HOPs and discovering a new Spoof
+			// instruction after its placement authority has been sealed.  Force only
+			// this compilation mode through the existing HOPS integration path; the
+			// runtime-program path below is correspondingly disabled to avoid applying
+			// codegen twice.
+			if( SpoofCompiler.INTEGRATION==IntegrationType.HOPS
+				|| isCompiledFederatedPlannerConfigured() )
 				codgenHopsDAG(dmlp);
 		}
 
@@ -342,8 +349,19 @@ public class DMLTranslator
 		String planner = ConfigurationManager.getDMLConfig()
 			.getTextValue(DMLConfig.FEDERATED_PLANNER);
 		if( !(OptimizerUtils.FEDERATED_COMPILATION
-			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
-		return;
+			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) ) {
+			// A JVM may compile a planner-controlled program followed by an ordinary
+			// CP/Spark program (for example a reference run in the same JUnit class).
+			// No prior selector authority or materialization registry is valid at this
+			// new final-HOP boundary.
+			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit
+				.clearForUnplannedCompilation();
+			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
+			return;
+		}
 			synchronized(dmlp) {
 			// The generic dynamic rewrite pass runs before final memory estimates are
 			// available.  Normalize lowering-level physical choices only now, while
@@ -358,12 +376,17 @@ public class DMLTranslator
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
 			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
+			org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes =
+				new org.apache.sysds.hops.ipa.FunctionCallSizeInfo(fgraph);
 			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
 
 			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
 			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
 			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
 			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
+				org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalForcedStateAudit
+					.targetsAnalysis(analysis) ?
+					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_EXACT :
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
@@ -374,11 +397,10 @@ public class DMLTranslator
 				+ " impl=" + implementation.getClass().getName()
 				+ " boundary=final-hop"
 				+ " analysis=" + analysis.analysisFingerprint());
-			// fcallSizes are not recomputed here; planner uses null when unavailable.
 			long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
 			AFederatedPlanner.PlannerInvocationReceipt receipt;
 			try {
-				receipt = implementation.rewriteProgram(dmlp, fgraph, null, analysis);
+				receipt = implementation.rewriteProgram(dmlp, fgraph, fcallSizes, analysis);
 				if(receipt.analysis() != analysis)
 					throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
 			}
@@ -398,6 +420,13 @@ public class DMLTranslator
 			registerFedRmvarProtectedVarsFromProgram(dmlp);
 			receiptConsumer.accept(receipt);
 		}
+	}
+
+	private static boolean isCompiledFederatedPlannerConfigured() {
+		String planner = ConfigurationManager.getDMLConfig()
+			.getTextValue(DMLConfig.FEDERATED_PLANNER);
+		return OptimizerUtils.FEDERATED_COMPILATION
+			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner);
 	}
 
 	private static void verifyFinalBoundaryEmission(DMLProgram program,
@@ -631,21 +660,33 @@ public class DMLTranslator
 	public void constructLops(DMLProgram dmlp,
 		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
 		Objects.requireNonNull(receiptConsumer, "receiptConsumer");
-		runFederatedPlannerAtFinalHopBoundary(dmlp, receiptConsumer);
-		// for each namespace, handle function program blocks
-		for( FunctionDictionary<FunctionStatementBlock> fdict : dmlp.getNamespaces().values() ) {
-			//handle optimized functions
-			for( FunctionStatementBlock fsb : fdict.getFunctions().values() )
-				constructLops(fsb);
-			//handle unoptimized functions
-			if( fdict.getFunctions(false) != null )
-				for( FunctionStatementBlock fsb : fdict.getFunctions(false).values() )
-					constructLops(fsb);
-		}
+		try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+			FederatedPlannerUtils.activatePlannerRecompileOwner(dmlp)) {
+			dmlp.getPlannerRecompileAuthority().beginPlanning();
+			try {
+				runFederatedPlannerAtFinalHopBoundary(dmlp, receiptConsumer);
+				dmlp.getPlannerRecompileAuthority().seal();
+				// for each namespace, handle function program blocks
+				for( FunctionDictionary<FunctionStatementBlock> fdict : dmlp.getNamespaces().values() ) {
+					//handle optimized functions
+					for( FunctionStatementBlock fsb : fdict.getFunctions().values() )
+						constructLops(fsb);
+					//handle unoptimized functions
+					if( fdict.getFunctions(false) != null )
+						for( FunctionStatementBlock fsb : fdict.getFunctions(false).values() )
+							constructLops(fsb);
+				}
 
-		// handle regular program blocks
-		for( StatementBlock sb : dmlp.getStatementBlocks() )
-			constructLops(sb);
+				// handle regular program blocks
+				for( StatementBlock sb : dmlp.getStatementBlocks() )
+					constructLops(sb);
+			}
+			catch(RuntimeException | Error failure) {
+				dmlp.getPlannerRecompileAuthority().beginPlanning();
+				dmlp.getPlannerRecompileAuthority().seal();
+				throw failure;
+			}
+		}
 	}
 
 	public boolean constructLops(StatementBlock sb) 
@@ -769,8 +810,9 @@ public class DMLTranslator
 		}
 
 		//enhance runtime program by automatic operator fusion
-		if( ConfigurationManager.isCodegenEnabled() 
-			&& SpoofCompiler.INTEGRATION==IntegrationType.RUNTIME ){
+		if( ConfigurationManager.isCodegenEnabled()
+			&& SpoofCompiler.INTEGRATION==IntegrationType.RUNTIME
+			&& !isCompiledFederatedPlannerConfigured() ){
 			codgenHopsDAG(rtprog);
 		}
 
@@ -804,7 +846,8 @@ public class DMLTranslator
 
 			// create instructions for loop predicates
 			pred_instruct = new ArrayList<>();
-			ArrayList<Instruction> pInst = pred_dag.getJobs(null, config);
+			ArrayList<Instruction> pInst = pred_dag.getJobsForControlExpression(sb, config,
+				List.of(((WhileStatementBlock) sb).getPredicateHops()));
 			for (Instruction i : pInst ) {
 				pred_instruct.add(i);
 			}
@@ -844,7 +887,8 @@ public class DMLTranslator
 
 			// create instructions for loop predicates
 			pred_instruct = new ArrayList<>();
-			ArrayList<Instruction> pInst = pred_dag.getJobs(null, config);
+			ArrayList<Instruction> pInst = pred_dag.getJobsForControlExpression(sb, config,
+				List.of(((IfStatementBlock) sb).getPredicateHops()));
 			for (Instruction i : pInst ) {
 				pred_instruct.add(i);
 			}
@@ -898,9 +942,12 @@ public class DMLTranslator
 				fsb.getIncrementLops().addToDag(incrementDag);
 
 			// create instructions for loop predicates
-			ArrayList<Instruction> fromInstructions = fromDag.getJobs(null, config);
-			ArrayList<Instruction> toInstructions = toDag.getJobs(null, config);
-			ArrayList<Instruction> incrementInstructions = incrementDag.getJobs(null, config);
+			ArrayList<Instruction> fromInstructions = fromDag.getJobsForControlExpression(sb, config,
+				fsb.getFromHops() != null ? List.of(fsb.getFromHops()) : null);
+			ArrayList<Instruction> toInstructions = toDag.getJobsForControlExpression(sb, config,
+				fsb.getToHops() != null ? List.of(fsb.getToHops()) : null);
+			ArrayList<Instruction> incrementInstructions = incrementDag.getJobsForControlExpression(sb, config,
+				fsb.getIncrementHops() != null ? List.of(fsb.getIncrementHops()) : null);
 
 			// create for program block
 			ForProgramBlock rtpb = null;

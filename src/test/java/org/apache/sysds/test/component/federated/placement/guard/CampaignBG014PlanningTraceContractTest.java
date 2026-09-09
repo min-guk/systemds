@@ -86,6 +86,7 @@ public class CampaignBG014PlanningTraceContractTest {
 		assertTrue("Heuristic trace must expose its pathwise demotion policy",
 			heuristic.contains("markerCount=") && heuristic.contains("localPrefixCount=")
 				&& heuristic.contains("frontierEdgeCount=")
+				&& heuristic.contains("nativeContinuationCount=")
 				&& heuristic.contains("explicitRelocationCount=")
 				&& heuristic.contains("localMaterializationCount=")
 				&& heuristic.contains("derivedFoutMaterializationCount="));

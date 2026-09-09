@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -123,14 +124,22 @@ public abstract class BinaryFEDInstruction extends ComputationFEDInstruction {
 				return BinaryMatrixMatrixFEDInstruction.parseInstruction((BinaryMatrixMatrixSPInstruction) inst);
 			}
 		}
+		else if(inst instanceof CumulativeOffsetSPInstruction) {
+			// The federated implementation executes the original data partition as a
+			// unary CP cumulative operation; the Spark-only offset input is ignored.
+			// Consequently, conversion is legal only when the data input itself is
+			// federated, not merely when the derived offset happens to be federated.
+			Data data = ec.getVariable(inst.input1);
+			if(data instanceof MatrixObject && ((MatrixObject) data).isFederatedExcept(FType.BROADCAST)
+				&& !(Opcodes.BCUMOFFPM.toString().equals(inst.getOpcode())
+					&& ((MatrixObject) data).getFedMapping().getType() == FType.COL))
+				return CumulativeOffsetFEDInstruction.parseInstruction((CumulativeOffsetSPInstruction) inst);
+		}
 		else if((inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederatedExcept(FType.BROADCAST)) ||
 			(inst.input2.isMatrix() && ec.getMatrixObject(inst.input2).isFederatedExcept(FType.BROADCAST))) {
 			if(inst instanceof CovarianceSPInstruction && (ec.getMatrixObject(inst.input1).isFederated(FType.ROW) ||
 				ec.getMatrixObject(inst.input2).isFederated(FType.ROW)))
 				return CovarianceFEDInstruction.parseInstruction((CovarianceSPInstruction) inst);
-			else if(inst instanceof CumulativeOffsetSPInstruction) {
-				return CumulativeOffsetFEDInstruction.parseInstruction((CumulativeOffsetSPInstruction) inst);
-			}
 			else
 				return BinaryFEDInstruction.parseInstruction(InstructionUtils.concatOperands(inst.getInstructionString(),
 					FEDInstruction.FederatedOutput.NONE.name()));

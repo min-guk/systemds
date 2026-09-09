@@ -19,7 +19,9 @@
 
 package org.apache.sysds.lops;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map.Entry;
 
 
@@ -40,6 +42,7 @@ public class ParameterizedBuiltin extends Lop
 {
 	private ParamBuiltinOp _operation;
 	private HashMap<String, Lop> _inputParams;
+	private final ArrayList<String> _inputParamNames;
 	private boolean _bRmEmptyBC;
 
 	//cp-specific parameters
@@ -53,12 +56,14 @@ public class ParameterizedBuiltin extends Lop
 		super(Lop.Type.ParameterizedBuiltin, dt, vt);
 		_operation = op;
 		
-		for (Lop lop : paramLops.values()) {
+		_inputParamNames = new ArrayList<>(paramLops.keySet());
+		_inputParams = new LinkedHashMap<>();
+		for (String name : _inputParamNames) {
+			Lop lop = paramLops.get(name);
 			addInput(lop);
 			lop.addOutput(this);
+			_inputParams.put(name, lop);
 		}
-		
-		_inputParams = paramLops;
 		_numThreads = k;
 		
 		lps.setProperties(inputs, et);
@@ -78,11 +83,7 @@ public class ParameterizedBuiltin extends Lop
 	}
 	
 	public int getInputIndex(String name) { 
-		Lop n = _inputParams.get(name);
-		for(int i=0; i<getInputs().size(); i++) 
-			if(getInputs().get(i) == n)
-				return i;
-		return -1;
+		return _inputParamNames.indexOf(name);
 	}
 	
 	public Lop getNamedInput(String name) {
@@ -91,13 +92,20 @@ public class ParameterizedBuiltin extends Lop
 
 	@Override
 	public void replaceInput(Lop oldInp, Lop newInp) {
-		super.replaceInput(oldInp, newInp);
-		if (_inputParams == null || _inputParams.isEmpty())
-			return;
-		for (Entry<String, Lop> e : _inputParams.entrySet()) {
-			if (e.getValue() == oldInp)
-				e.setValue(newInp);
-		}
+		int inputPosition = getInputs().indexOf(oldInp);
+		if(inputPosition >= 0)
+			replaceInput(inputPosition, newInp);
+	}
+
+	@Override
+	public void replaceInput(int inputPosition, Lop newInp) {
+		Lop oldInp = getInput(inputPosition);
+		String inputName = _inputParamNames.get(inputPosition);
+		if(_inputParams.get(inputName) != oldInp)
+			throw new LopsException("ParameterizedBuiltin input metadata is inconsistent for parameter="
+				+ inputName + " position=" + inputPosition);
+		super.replaceInput(inputPosition, newInp);
+		_inputParams.put(inputName, newInp);
 	}
 	
 	@Override

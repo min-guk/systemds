@@ -28,6 +28,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileAuthority;
+import org.apache.sysds.hops.ipa.FunctionCallGraph;
+import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.runtime.controlprogram.Program;
 
 public class DMLProgram 
@@ -40,6 +43,7 @@ public class DMLProgram
 	private Map<String, FunctionDictionary<FunctionStatementBlock>> _namespaces;
 	private boolean _containsRemoteParfor;
 	private final AtomicReference<PlacementAnalysis> _placementAnalysisAuthority = new AtomicReference<>();
+	private final PlannerRecompileAuthority _plannerRecompileAuthority = new PlannerRecompileAuthority();
 	
 	public DMLProgram(){
 		_blocks = new ArrayList<>();
@@ -53,9 +57,12 @@ public class DMLProgram
 	}
 
 	PlacementAnalysis bindPlacementAnalysisAtFinalHopBoundary() {
+		FunctionCallGraph fgraph = new FunctionCallGraph(this);
+		FunctionCallSizeInfo fcallSizes = new FunctionCallSizeInfo(fgraph);
 		PlacementAnalysis current = _placementAnalysisAuthority.get();
 		if(current == null) {
-			PlacementAnalysis candidate = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(this);
+			PlacementAnalysis candidate = new NeutralPlacementGraphBuilder(fgraph, fcallSizes)
+				.buildDetachedAnalysis(this);
 			_placementAnalysisAuthority.compareAndSet(null, candidate);
 			current = _placementAnalysisAuthority.get();
 		}
@@ -77,6 +84,10 @@ public class DMLProgram
 	void requirePlacementAnalysisUnboundForHopRewrite() {
 		if(_placementAnalysisAuthority.get() != null)
 			throw new IllegalStateException("Compiled Hop structure cannot be rewritten after placement authority binding");
+	}
+
+	public PlannerRecompileAuthority getPlannerRecompileAuthority() {
+		return _plannerRecompileAuthority;
 	}
 	
 	public Map<String,FunctionDictionary<FunctionStatementBlock>> getNamespaces(){

@@ -1,0 +1,10 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+F = as.frame(read($X))
+MapRow = map(F, "x -> x.replace(\"1\", \"9\")", 0)
+MapCol = map(F, "x -> x.replace(\"1\", \"9\")", 0)
+write(MapRow,$MapRow); write(MapCol,$MapCol)

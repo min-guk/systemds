@@ -436,7 +436,15 @@ final class LocalCategoricalOptimizer {
 
 		LocalBlockOptimizer blockOptimizer =
 			new LocalBlockOptimizer(context, assignment, statistics);
-		blockOptimizer.optimize(blockOptimizer.addBlocks(normalizeBlocks(context, localBlocks)));
+		List<int[]> initialBlocks = new ArrayList<>(normalizeBlocks(context, localBlocks));
+		// Derive materialization-sensitive blocks from the first complete feasible
+		// assignment before solving ordinary neighborhoods. Adding both sets as one
+		// batch lets a broader conflict region retire its contained operator blocks
+		// before they are compiled and solved. The provider is still reevaluated below
+		// because a later local move can expose a new materialization boundary.
+		initialBlocks.addAll(normalizeBlocks(context,
+			deferredBlocks.localBlocks(Arrays.stream(assignment).boxed().toList())));
+		blockOptimizer.optimize(blockOptimizer.addBlocks(initialBlocks));
 
 		while(true) {
 			List<Integer> added = blockOptimizer.addBlocks(normalizeBlocks(context,

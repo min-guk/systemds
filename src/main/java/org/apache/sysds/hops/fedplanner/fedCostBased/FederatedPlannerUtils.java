@@ -52,6 +52,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DataExpression;
+import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.VariableSet;
 import org.apache.sysds.runtime.meta.MetaDataAll;
@@ -77,15 +78,18 @@ import java.util.function.Function;
  * Utility class for federated planners.
  */
 public class FederatedPlannerUtils {
+	public static final String REWRITE_DIRECT_WDIVMM_PATTERN_2 = "DIRECT_WDIVMM_PATTERN_2";
 	private static final String FED_MATRIX_IDENTIFIER = "matrix";
 	private static final java.util.Set<String> FED_INIT_VARS = ConcurrentHashMap.newKeySet();
 	private static final Map<String, FType> FED_INIT_FTYPES = new ConcurrentHashMap<>();
 	private static final Map<String, String> FED_INIT_SIGNATURES = new ConcurrentHashMap<>();
 	private static final Map<String, String> FED_ANCHOR_KEYS = new ConcurrentHashMap<>();
 	private static final java.util.Set<String> FED_RMVAR_PROTECTED_VARS = ConcurrentHashMap.newKeySet();
-	private static final Map<String, PlannerRecompileState> PLANNER_RECOMPILE_STATES = new ConcurrentHashMap<>();
-	private static final java.util.Set<String> AMBIGUOUS_PLANNER_RECOMPILE_STATES = ConcurrentHashMap.newKeySet();
-	private static final Map<Long, String> PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID = new ConcurrentHashMap<>();
+	// Compatibility for direct planner/unit invocations that have no DMLProgram.
+	// This is deliberately thread-confined and never backs an executable Program.
+	private static final ThreadLocal<PlannerRecompileAuthority> LEGACY_PLANNER_RECOMPILE_AUTHORITY =
+		ThreadLocal.withInitial(PlannerRecompileAuthority::new);
+	private static final ThreadLocal<DMLProgram> ACTIVE_PLANNER_RECOMPILE_OWNER = new ThreadLocal<>();
 	private static final Map<DataOp, Privacy> FEDERATED_SOURCE_PRIVACY_TEST_OVERRIDES =
 		Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -95,18 +99,24 @@ public class FederatedPlannerUtils {
 
 	/** Immutable copy of one planner recompile decision. */
 	public record PlannerRecompileStateSnapshot(Types.ExecType execType, FederatedOutput federatedOutput,
-		boolean federatedOutputDerived) { }
+		boolean federatedOutputDerived, Set<String> modeledRewriteKinds) {
+		public PlannerRecompileStateSnapshot {
+			modeledRewriteKinds = Set.copyOf(Objects.requireNonNull(modeledRewriteKinds));
+		}
+	}
 
 	public static final class PlannerRecompileState {
 		private final Types.ExecType _execType;
 		private final FederatedOutput _fedOut;
 		private final boolean _fedOutDerived;
+		private final Set<String> _modeledRewriteKinds;
 
 		private PlannerRecompileState(Types.ExecType execType, FederatedOutput fedOut,
-			boolean fedOutDerived) {
+			boolean fedOutDerived, Set<String> modeledRewriteKinds) {
 			_execType = execType;
 			_fedOut = fedOut;
 			_fedOutDerived = fedOutDerived;
+			_modeledRewriteKinds = Set.copyOf(Objects.requireNonNull(modeledRewriteKinds));
 		}
 
 		public Types.ExecType getExecType() {
@@ -121,12 +131,84 @@ public class FederatedPlannerUtils {
 			return _fedOutDerived;
 		}
 
+		public boolean permitsModeledRewrite(String kind) {
+			return kind != null && _modeledRewriteKinds.contains(kind);
+		}
+
+		public Set<String> getModeledRewriteKinds() {
+			return _modeledRewriteKinds;
+		}
+
 		private boolean sameAs(PlannerRecompileState that) {
 			if (that == null)
 				return false;
 			return _execType == that._execType && _fedOut == that._fedOut
-				&& _fedOutDerived == that._fedOutDerived;
+				&& _fedOutDerived == that._fedOutDerived
+				&& _modeledRewriteKinds.equals(that._modeledRewriteKinds);
 		}
+	}
+
+	/**
+	 * Program-owned placement authority used by runtime recompilation. It is mutable
+	 * only while one program is being planned and sealed before the compiled program
+	 * becomes executable.
+	 */
+	public static final class PlannerRecompileAuthority {
+		private volatile Map<String, PlannerRecompileState> _states = new HashMap<>();
+		private volatile Set<String> _ambiguous = new HashSet<>();
+		private volatile Map<Long, String> _signaturesByHopId = new HashMap<>();
+		private volatile boolean _sealed;
+
+		public synchronized void beginPlanning() {
+			_states = new HashMap<>();
+			_ambiguous = new HashSet<>();
+			_signaturesByHopId = new HashMap<>();
+			_sealed = false;
+		}
+
+		public synchronized void seal() {
+			_states = Map.copyOf(_states);
+			_ambiguous = Set.copyOf(_ambiguous);
+			_signaturesByHopId = Map.copyOf(_signaturesByHopId);
+			_sealed = true;
+		}
+
+		private synchronized void requireMutable() {
+			if(_sealed)
+				throw new IllegalStateException("Planner recompile authority is sealed");
+		}
+	}
+
+	/** Scoped access to a persistent program-owned authority; the ThreadLocal is only a lookup scope. */
+	public static final class PlannerRecompileOwnerScope implements AutoCloseable {
+		private final DMLProgram _previous;
+		private boolean _closed;
+
+		private PlannerRecompileOwnerScope(DMLProgram owner) {
+			_previous = ACTIVE_PLANNER_RECOMPILE_OWNER.get();
+			ACTIVE_PLANNER_RECOMPILE_OWNER.set(Objects.requireNonNull(owner));
+		}
+
+		@Override
+		public void close() {
+			if(_closed)
+				return;
+			if(_previous == null)
+				ACTIVE_PLANNER_RECOMPILE_OWNER.remove();
+			else
+				ACTIVE_PLANNER_RECOMPILE_OWNER.set(_previous);
+			_closed = true;
+		}
+	}
+
+	public static PlannerRecompileOwnerScope activatePlannerRecompileOwner(DMLProgram owner) {
+		return new PlannerRecompileOwnerScope(owner);
+	}
+
+	private static PlannerRecompileAuthority plannerRecompileAuthority() {
+		DMLProgram owner = ACTIVE_PLANNER_RECOMPILE_OWNER.get();
+		return owner != null ? owner.getPlannerRecompileAuthority()
+			: LEGACY_PLANNER_RECOMPILE_AUTHORITY.get();
 	}
 
 	/**
@@ -368,10 +450,16 @@ public class FederatedPlannerUtils {
 		Hop rangeListHop = initFedOp.getInput(initFedOp.getParameterIndex("ranges"));
 		List<long[]> rangeList = new ArrayList<>();
 		for (Hop rangeHop : rangeListHop.getInput()) {
+			if(rangeHop.getInput().size() < 2)
+				throw malformedFederatedSourceMetadata(initFedOp, addressListHop, rangeListHop,
+					"range coordinate does not contain two dimensions");
 			long beginRange = (long) Double.parseDouble(rangeHop.getInput(0).getName());
 			long endRange = (long) Double.parseDouble(rangeHop.getInput(1).getName());
 			rangeList.add(new long[] { beginRange, endRange });
 		}
+		if(rangeList.size() != addressList.size() * 2)
+			throw malformedFederatedSourceMetadata(initFedOp, addressListHop, rangeListHop,
+				"expected exactly two range coordinates per worker address");
 
 		// Type
 		String type = initFedOp.getInput(initFedOp.getParameterIndex("type")).getName();
@@ -471,6 +559,22 @@ public class FederatedPlannerUtils {
 		return new FederatedSourceMetadata(privacyConstraint, partitions);
 	}
 
+	private static DMLRuntimeException malformedFederatedSourceMetadata(DataOp source,
+		Hop addressList, Hop rangeList, String reason) {
+		return new DMLRuntimeException("Malformed federated source metadata before planner selection: " + reason
+			+ " [source=" + source.getName() + '#' + source.getHopID()
+			+ ", addresses=" + addressList.getInput().size()
+			+ ", ranges=" + rangeList.getInput().size()
+			+ ", addressList=" + hopSummary(addressList)
+			+ ", rangeList=" + hopSummary(rangeList) + ']');
+	}
+
+	private static String hopSummary(Hop hop) {
+		return hop == null ? "null" : hop.getClass().getSimpleName() + '#' + hop.getHopID()
+			+ "(" + hop.getName() + ",inputs=" + hop.getInput().size()
+			+ ",parents=" + hop.getParent().size() + ')';
+	}
+
 	public static void registerFedInitVar(String varName) {
 		registerFedInitVar(varName, null);
 	}
@@ -533,9 +637,8 @@ public class FederatedPlannerUtils {
 	}
 
 	public static void clearPlannerRecompileStates() {
-		PLANNER_RECOMPILE_STATES.clear();
-		AMBIGUOUS_PLANNER_RECOMPILE_STATES.clear();
-		PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.clear();
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
+		authority.beginPlanning();
 	}
 
 	public static String plannerRecompileSignature(Hop hop) {
@@ -559,38 +662,49 @@ public class FederatedPlannerUtils {
 
 	public static void registerPlannerRecompileState(
 		Hop hop, Types.ExecType execType, FederatedOutput fedOut) {
+		registerPlannerRecompileState(hop, execType, fedOut, Set.of());
+	}
+
+	public static void registerPlannerRecompileState(Hop hop, Types.ExecType execType,
+		FederatedOutput fedOut, Set<String> modeledRewriteKinds) {
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
 		String signature = plannerRecompileSignature(hop);
-		if (signature == null || signature.isEmpty() || execType == null || fedOut == null)
+		if (signature == null || signature.isEmpty() || execType == null || fedOut == null
+			|| modeledRewriteKinds == null)
 			return;
-		String priorHopSignature = PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.putIfAbsent(
-			hop.getHopID(), signature);
-		if(priorHopSignature != null && !priorHopSignature.equals(signature))
-			throw new IllegalStateException("One planner Hop id has conflicting recompile signatures: hop="
-				+ hop.getHopID());
 		boolean fedOutDerived = hop.isFederatedOutputDerived();
 		if (fedOutDerived && (execType != Types.ExecType.FED || fedOut != FederatedOutput.FOUT))
 			throw new IllegalArgumentException("Derived federated output requires FED/FOUT planner state");
-		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut, fedOutDerived);
-		if (AMBIGUOUS_PLANNER_RECOMPILE_STATES.contains(signature)) {
-			tracePlannerRecompileState(hop, "PlannerRecompileState-SkipAmbiguous",
-				signature, state, null);
-			return;
-		}
-		PlannerRecompileState existing = PLANNER_RECOMPILE_STATES.putIfAbsent(signature, state);
-		if (existing == null) {
-			tracePlannerRecompileState(hop, "PlannerRecompileState-Register",
-				signature, state, null);
-			return;
-		}
-		if (existing.sameAs(state)) {
-			tracePlannerRecompileState(hop, "PlannerRecompileState-Repeat",
+		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut, fedOutDerived,
+			modeledRewriteKinds);
+		synchronized(authority) {
+			authority.requireMutable();
+			String priorHopSignature = authority._signaturesByHopId.putIfAbsent(
+				hop.getHopID(), signature);
+			if(priorHopSignature != null && !priorHopSignature.equals(signature))
+				throw new IllegalStateException("One planner Hop id has conflicting recompile signatures: hop="
+					+ hop.getHopID());
+			if (authority._ambiguous.contains(signature)) {
+				tracePlannerRecompileState(hop, "PlannerRecompileState-SkipAmbiguous",
+					signature, state, null);
+				return;
+			}
+			PlannerRecompileState existing = authority._states.putIfAbsent(signature, state);
+			if (existing == null) {
+				tracePlannerRecompileState(hop, "PlannerRecompileState-Register",
+					signature, state, null);
+				return;
+			}
+			if (existing.sameAs(state)) {
+				tracePlannerRecompileState(hop, "PlannerRecompileState-Repeat",
+					signature, state, existing);
+				return;
+			}
+			tracePlannerRecompileState(hop, "PlannerRecompileState-Ambiguous",
 				signature, state, existing);
-			return;
+			authority._states.remove(signature);
+			authority._ambiguous.add(signature);
 		}
-		tracePlannerRecompileState(hop, "PlannerRecompileState-Ambiguous",
-			signature, state, existing);
-		PLANNER_RECOMPILE_STATES.remove(signature);
-		AMBIGUOUS_PLANNER_RECOMPILE_STATES.add(signature);
 	}
 
 	private static void tracePlannerRecompileState(Hop hop, String event,
@@ -610,7 +724,8 @@ public class FederatedPlannerUtils {
 
 	private static String formatPlannerRecompileState(PlannerRecompileState state) {
 		return state == null ? "null" : state.getExecType() + "/" + state.getFederatedOutput()
-			+ "/derived=" + state.isFederatedOutputDerived();
+			+ "/derived=" + state.isFederatedOutputDerived()
+			+ "/rewrites=" + state.getModeledRewriteKinds();
 	}
 
 	public static PlannerRecompileState getPlannerRecompileState(Hop hop) {
@@ -618,22 +733,31 @@ public class FederatedPlannerUtils {
 	}
 
 	public static PlannerRecompileState getPlannerRecompileState(String signature) {
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
 		if (signature == null || signature.isEmpty()
-			|| AMBIGUOUS_PLANNER_RECOMPILE_STATES.contains(signature))
+			|| authority._ambiguous.contains(signature))
 			return null;
-		return PLANNER_RECOMPILE_STATES.get(signature);
+		return authority._states.get(signature);
 	}
 
 	/** True while one emitted whole-program plan owns dynamic-recompile placement state. */
 	public static boolean hasPlannerRecompileStateAuthority() {
-		return !PLANNER_RECOMPILE_STATES.isEmpty()
-			|| !AMBIGUOUS_PLANNER_RECOMPILE_STATES.isEmpty();
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
+		return !authority._states.isEmpty() || !authority._ambiguous.isEmpty();
 	}
 
 	/** Whether this exact occurrence has a selected placement, directly or by recompile signature. */
 	public static boolean hasPlannerPlacement(Hop hop) {
 		return hop != null && (hop.isPlannerPlacementSelected()
 			|| getPlannerRecompileState(hop) != null);
+	}
+
+	/** Whether the committed shared placement explicitly certified one runtime substitution. */
+	public static boolean hasPlannerModeledRewrite(Hop hop, String kind) {
+		if(hop == null || kind == null)
+			return false;
+		PlannerRecompileState state = getPlannerRecompileState(hop);
+		return state != null && state.permitsModeledRewrite(kind);
 	}
 
 	/** Whether one exact occurrence is selected at the layout-free coordinator boundary. */
@@ -688,7 +812,7 @@ public class FederatedPlannerUtils {
 
 	/** Stable signature of the original planner-owned Hop, used to re-project exact edge actions. */
 	public static String getPlannerRecompileSignatureForHopId(long hopId) {
-		return PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.get(hopId);
+		return plannerRecompileAuthority()._signaturesByHopId.get(hopId);
 	}
 
 
@@ -726,21 +850,23 @@ public class FederatedPlannerUtils {
 	}
 
 	public static Map<String, PlannerRecompileStateSnapshot> snapshotPlannerRecompileStates() {
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
 		Map<String, PlannerRecompileStateSnapshot> snapshot = new HashMap<>();
-		for(Entry<String, PlannerRecompileState> entry : PLANNER_RECOMPILE_STATES.entrySet()) {
+		for(Entry<String, PlannerRecompileState> entry : authority._states.entrySet()) {
 			PlannerRecompileState state = entry.getValue();
 			snapshot.put(entry.getKey(), new PlannerRecompileStateSnapshot(
-				state.getExecType(), state.getFederatedOutput(), state.isFederatedOutputDerived()));
+				state.getExecType(), state.getFederatedOutput(), state.isFederatedOutputDerived(),
+				state.getModeledRewriteKinds()));
 		}
 		return Collections.unmodifiableMap(snapshot);
 	}
 
 	public static Set<String> snapshotAmbiguousPlannerRecompileSignatures() {
-		return Collections.unmodifiableSet(new HashSet<>(AMBIGUOUS_PLANNER_RECOMPILE_STATES));
+		return Collections.unmodifiableSet(new HashSet<>(plannerRecompileAuthority()._ambiguous));
 	}
 
 	public static Map<Long, String> snapshotPlannerRecompileHopSignatures() {
-		return Collections.unmodifiableMap(new HashMap<>(PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID));
+		return Collections.unmodifiableMap(new HashMap<>(plannerRecompileAuthority()._signaturesByHopId));
 	}
 
 	/** Restore one exact planner-recompile registry snapshot for transactional emission rollback/replacement. */
@@ -748,27 +874,33 @@ public class FederatedPlannerUtils {
 		Map<String, PlannerRecompileStateSnapshot> states, Set<String> ambiguousSignatures) {
 		if (states == null || ambiguousSignatures == null)
 			throw new IllegalArgumentException("Planner recompile snapshots must not be null");
-		clearPlannerRecompileStates();
-		for (Entry<String, PlannerRecompileStateSnapshot> entry : states.entrySet()) {
-			String signature = entry.getKey();
-			PlannerRecompileStateSnapshot state = entry.getValue();
-			if (signature == null || signature.isEmpty() || state == null
-				|| state.execType() == null || state.federatedOutput() == null)
-				throw new IllegalArgumentException("Planner recompile snapshot contains an invalid entry");
-			if (state.federatedOutputDerived()
-				&& (state.execType() != Types.ExecType.FED
-					|| state.federatedOutput() != FederatedOutput.FOUT))
-				throw new IllegalArgumentException(
-					"Derived planner recompile snapshot must be FED/FOUT");
-			PLANNER_RECOMPILE_STATES.put(signature,
-				new PlannerRecompileState(state.execType(), state.federatedOutput(),
-					state.federatedOutputDerived()));
-		}
-		for (String signature : ambiguousSignatures) {
-			if (signature == null || signature.isEmpty())
-				throw new IllegalArgumentException("Ambiguous planner recompile signature must not be blank");
-			PLANNER_RECOMPILE_STATES.remove(signature);
-			AMBIGUOUS_PLANNER_RECOMPILE_STATES.add(signature);
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
+		synchronized(authority) {
+			authority.requireMutable();
+			authority._states.clear();
+			authority._ambiguous.clear();
+			for (Entry<String, PlannerRecompileStateSnapshot> entry : states.entrySet()) {
+				String signature = entry.getKey();
+				PlannerRecompileStateSnapshot state = entry.getValue();
+				if (signature == null || signature.isEmpty() || state == null
+					|| state.execType() == null || state.federatedOutput() == null
+					|| state.modeledRewriteKinds() == null)
+					throw new IllegalArgumentException("Planner recompile snapshot contains an invalid entry");
+				if (state.federatedOutputDerived()
+					&& (state.execType() != Types.ExecType.FED
+						|| state.federatedOutput() != FederatedOutput.FOUT))
+					throw new IllegalArgumentException(
+						"Derived planner recompile snapshot must be FED/FOUT");
+				authority._states.put(signature,
+					new PlannerRecompileState(state.execType(), state.federatedOutput(),
+						state.federatedOutputDerived(), state.modeledRewriteKinds()));
+			}
+			for (String signature : ambiguousSignatures) {
+				if (signature == null || signature.isEmpty())
+					throw new IllegalArgumentException("Ambiguous planner recompile signature must not be blank");
+				authority._states.remove(signature);
+				authority._ambiguous.add(signature);
+			}
 		}
 	}
 
@@ -776,12 +908,16 @@ public class FederatedPlannerUtils {
 	public static void restorePlannerRecompileHopSignatures(Map<Long, String> signatures) {
 		if(signatures == null)
 			throw new IllegalArgumentException("Planner Hop signature snapshot must not be null");
-		PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.clear();
-		for(Entry<Long,String> entry : signatures.entrySet()) {
-			if(entry.getKey() == null || entry.getKey() < 0 || entry.getValue() == null
-				|| entry.getValue().isBlank())
-				throw new IllegalArgumentException("Planner Hop signature snapshot contains an invalid entry");
-			PLANNER_RECOMPILE_SIGNATURES_BY_HOP_ID.put(entry.getKey(), entry.getValue());
+		PlannerRecompileAuthority authority = plannerRecompileAuthority();
+		synchronized(authority) {
+			authority.requireMutable();
+			authority._signaturesByHopId.clear();
+			for(Entry<Long,String> entry : signatures.entrySet()) {
+				if(entry.getKey() == null || entry.getKey() < 0 || entry.getValue() == null
+					|| entry.getValue().isBlank())
+					throw new IllegalArgumentException("Planner Hop signature snapshot contains an invalid entry");
+				authority._signaturesByHopId.put(entry.getKey(), entry.getValue());
+			}
 		}
 	}
 

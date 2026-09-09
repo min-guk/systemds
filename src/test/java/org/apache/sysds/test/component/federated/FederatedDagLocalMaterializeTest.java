@@ -27,6 +27,8 @@ import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import org.apache.sysds.common.Types.DataType;
@@ -34,11 +36,15 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOpN;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.lops.Data;
 import org.apache.sysds.lops.FederatedFoutMaterialize;
 import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
+import org.apache.sysds.lops.Nary;
+import org.apache.sysds.lops.ParameterizedBuiltin;
 import org.apache.sysds.lops.UnaryCP;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -130,6 +136,65 @@ public class FederatedDagLocalMaterializeTest {
 	}
 
 	@Test
+	public void exactFederatedFrameCanBeMaterializedForSelectedLocalConsumer() throws Exception {
+		Data producer = frameData("fed-frame", 113L, ExecType.FED, FederatedOutput.FOUT);
+		FunctionCallCP consumer = new FunctionCallCP(new ArrayList<>(List.of(producer)),
+			DMLProgram.INTERNAL_NAMESPACE, "consumeFrame", new String[] {"input"},
+			new String[] {"out"}, false, ExecType.CP);
+		consumer.setHopID(213L);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+		List<Lop> lops = new ArrayList<>(List.of(producer, consumer));
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, producer.getHopID(),
+			List.of(new ConsumerInputSpec(consumer.getHopID(), 0)), "ROW", "selected-frame-local");
+
+		Method insert = Dag.class.getDeclaredMethod("insertLocalMaterializeLops",
+			List.class, StatementBlock.class, List.class);
+		insert.setAccessible(true);
+		assertTrue((boolean) insert.invoke(new Dag<>(), lops, null, null));
+
+		assertTrue(consumer.getInput(0) instanceof UnaryCP);
+		assertTrue("the exact local materializer must retain frame data type",
+			consumer.getInput(0).getDataType().isFrame());
+		assertSame(producer, consumer.getInput(0).getInput(0));
+	}
+
+	@Test
+	public void exactLocalMaterializeRewritesParameterizedBuiltinNamedInput() throws Exception {
+		Data target = matrixData("target", 121L, ExecType.CP, FederatedOutput.LOUT);
+		Data select = matrixData("select-fed", 122L, ExecType.FED, FederatedOutput.FOUT);
+		HashMap<String, Lop> params = new LinkedHashMap<>();
+		params.put("target", target);
+		params.put("select", select);
+		ParameterizedBuiltin consumer = new ParameterizedBuiltin(params, ParamBuiltinOp.RMEMPTY,
+			DataType.MATRIX, ValueType.FP64, ExecType.CP);
+		consumer.setHopID(221L);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+		int selectPosition = consumer.getInputIndex("select");
+		List<Lop> lops = new ArrayList<>(List.of(target, select, consumer));
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, select.getHopID(),
+			List.of(new ConsumerInputSpec(consumer.getHopID(), selectPosition)), "ROW",
+			"selected-remove-empty-select");
+
+		Method insert = Dag.class.getDeclaredMethod("insertLocalMaterializeLops",
+			List.class, StatementBlock.class, List.class);
+		insert.setAccessible(true);
+		assertTrue((boolean) insert.invoke(new Dag<>(), lops, null, null));
+
+		Lop materialize = consumer.getInput(selectPosition);
+		assertTrue(materialize instanceof UnaryCP);
+		assertSame("the named select parameter must follow the exact physical input slot",
+			materialize, consumer.getNamedInput("select"));
+		assertSame("the unselected target parameter must remain unchanged",
+			target, consumer.getNamedInput("target"));
+		String instruction = consumer.getInstructions("out");
+		String materializedLabel = materialize.getOutputParameters().getLabel();
+		assertTrue("rmempty must reference the local materialization in its named select operand",
+			instruction.contains("select=" + materializedLabel));
+		assertFalse("rmempty must not retain the removed federated temporary",
+			instruction.contains("select=" + select.getOutputParameters().getLabel()));
+	}
+
+	@Test
 	public void derivedFoutRewiresOnlyExactPresentConsumerInput() throws Exception {
 		Data localResult = matrixData("local-result", 301L, ExecType.FED, FederatedOutput.LOUT);
 		Data anchor = matrixData("anchor", 302L, ExecType.FED, FederatedOutput.FOUT);
@@ -167,10 +232,52 @@ public class FederatedDagLocalMaterializeTest {
 			unrelated, absentLocalConsumer.getInput(1));
 	}
 
+	@Test
+	public void exactCpFoutMarkerStillMaterializesLocalNaryResult() throws Exception {
+		Data left = matrixData("left", 501L, ExecType.CP, FederatedOutput.LOUT);
+		Data right = matrixData("right", 502L, ExecType.CP, FederatedOutput.LOUT);
+		Nary localResult = new Nary(OpOpN.MIN, DataType.MATRIX, ValueType.FP64,
+			new Lop[] {left, right}, ExecType.CP);
+		localResult.setHopID(503L);
+		localResult.setFederatedOutput(FederatedOutput.FOUT);
+		Data anchor = matrixData("anchor", 504L, ExecType.FED, FederatedOutput.FOUT);
+		FunctionCallCP consumer = new FunctionCallCP(
+			new ArrayList<>(List.of(localResult)), DMLProgram.INTERNAL_NAMESPACE, "consume",
+			new String[] {"input"}, new String[] {"out"}, false, ExecType.FED);
+		consumer.setHopID(505L);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+		List<Lop> lops = new ArrayList<>(List.of(left, right, localResult, anchor, consumer));
+
+		FederatedFoutMaterializeRegistry.registerConsumerInputs(-1L, localResult.getHopID(),
+			anchor.getHopID(), "ROW", "anchor", "worker:1;|0,10;0,4;|ROW",
+			List.of(new FederatedRefedRegistry.ConsumerInputSpec(consumer.getHopID(), 0)),
+			"exact-cp-fout-nary");
+
+		Method insert = Dag.class.getDeclaredMethod("insertFoutMaterializeLops",
+			List.class, StatementBlock.class, List.class);
+		insert.setAccessible(true);
+		assertTrue((boolean) insert.invoke(new Dag<>(), lops, null, null));
+
+		assertTrue("exact CP/FOUT must insert the selected fed_fout materializer",
+			consumer.getInput(0) instanceof FederatedFoutMaterialize);
+		assertSame("fed_fout must upload the local CP Nary result",
+			localResult, consumer.getInput(0).getInput(0));
+	}
+
 	private static Data matrixData(String name, long hopId, ExecType execType,
 		FederatedOutput output) {
 		Data lop = new Data(OpOpData.TRANSIENTREAD, null, null, name, null,
 			DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+		lop.setHopID(hopId);
+		lop.setExecType(execType);
+		lop.setFederatedOutput(output);
+		return lop;
+	}
+
+	private static Data frameData(String name, long hopId, ExecType execType,
+		FederatedOutput output) {
+		Data lop = new Data(OpOpData.TRANSIENTREAD, null, null, name, null,
+			DataType.FRAME, ValueType.STRING, FileFormat.BINARY);
 		lop.setHopID(hopId);
 		lop.setExecType(execType);
 		lop.setFederatedOutput(output);

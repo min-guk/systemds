@@ -510,7 +510,6 @@ public class FederationUtils {
 		String[] linst = inst;
 		FederatedRequest[] fr = new FederatedRequest[inst.length];
 		for(int j=0; j<inst.length; j++) {
-			boolean isFedInstr = linst[j].startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
 			ExecType targetExec = type == null ? InstructionUtils.getExecType(linst[j]) : type;
 			if(targetExec == ExecType.SPARK)
 				targetExec = ExecType.CP;
@@ -532,7 +531,10 @@ public class FederationUtils {
 					Lop.OPERAND_DELIMITOR + varOldOut.getName() + Lop.DATATYPE_PREFIX,
 					Lop.OPERAND_DELIMITOR + String.valueOf(outputId) + Lop.DATATYPE_PREFIX);
 			}
-			if(isFedInstr && targetExec != ExecType.FED)
+			// Planner output flags are coordinator-only metadata. They can be appended
+			// to FED as well as dynamically converted SPARK instructions, but no CP
+			// worker parser accepts them as an extra operand.
+			if(targetExec != ExecType.FED)
 				linst[j] = InstructionUtils.removeFEDOutputFlag(linst[j]);
 
 			fr[j] = new FederatedRequest(RequestType.EXEC_INST, outputId, (Object) linst[j]);
@@ -541,7 +543,6 @@ public class FederationUtils {
 	}
 
 	public static FederatedRequest callInstruction(String inst, CPOperand varOldOut, long outputId, CPOperand[] varOldIn, long[] varNewIn, ExecType type, boolean rmFedOutputFlag) {
-		boolean isFedInstr = inst.startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
 		ExecType targetExec = type == null ? InstructionUtils.getExecType(inst) : type;
 		if(targetExec == ExecType.SPARK)
 			targetExec = ExecType.CP;
@@ -554,7 +555,7 @@ public class FederationUtils {
 					Lop.OPERAND_DELIMITOR+(varNewIn[i])+Lop.DATATYPE_PREFIX);
 				linst = linst.replace("="+varOldIn[i].getName(), "="+(varNewIn[i])); //parameterized
 			}
-		if(isFedInstr && (rmFedOutputFlag || type != ExecType.FED))
+		if(rmFedOutputFlag || targetExec != ExecType.FED)
 			linst = InstructionUtils.removeFEDOutputFlag(linst);
 		return new FederatedRequest(RequestType.EXEC_INST, outputId, linst);
 	}
@@ -831,13 +832,15 @@ public class FederationUtils {
 	public static void waitFor(List<Future<FederatedResponse>> responses) {
 		try {
 			final int timeout = ConfigurationManager.getFederatedTimeout();
-			if(timeout > 0){
-				for(Future<FederatedResponse> fr : responses)
-					fr.get(timeout, TimeUnit.SECONDS);
-			}
-			else {
-				for(Future<FederatedResponse> fr : responses)
-					fr.get();
+			for(Future<FederatedResponse> fr : responses) {
+				FederatedResponse response = timeout > 0
+					? fr.get(timeout, TimeUnit.SECONDS) : fr.get();
+				// A transport future completes normally even when the worker returns an
+				// ERROR response. Waiting without inspecting the response therefore lets
+				// callers publish nonexistent federated output IDs. Treat wait=true as a
+				// successful-completion barrier, as its API contract and callers expect.
+				if(!response.isSuccessful())
+					response.throwExceptionFromResponse();
 			}
 		}
 		catch(Exception ex) {

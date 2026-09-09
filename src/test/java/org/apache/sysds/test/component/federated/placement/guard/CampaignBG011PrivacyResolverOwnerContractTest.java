@@ -182,6 +182,18 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	}
 
 	@Test
+	public void workerEncodesAbsentPrivacyAsExplicitPublic() throws Exception {
+		Path dataPath = workerDataPath("worker-public-default");
+		Files.writeString(Path.of(dataPath + ".mtd"), "{\"data_type\":\"matrix\","
+			+ "\"value_type\":\"double\",\"rows\":1,\"cols\":1,\"nnz\":1,\"format\":\"csv\"}");
+
+		FederatedResponse response = new FederatedData.GetPrivacyConstraints(dataPath.toString()).execute(null);
+
+		Assert.assertTrue(response.isSuccessful());
+		Assert.assertArrayEquals(new Object[] {"public"}, response.getData());
+	}
+
+	@Test
 	public void nullWorkerResponseRecoversFromMetadataCreatedAfterRequest() throws Exception {
 		Path dataPath = workerDataPath("null-response");
 		FederatedData data = workerData(dataPath);

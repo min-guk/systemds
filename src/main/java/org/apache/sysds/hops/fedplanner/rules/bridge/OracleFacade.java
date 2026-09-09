@@ -13,6 +13,7 @@ import java.util.Set;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.FileFormat;
@@ -29,7 +30,6 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.NaryOp;
-import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
@@ -56,6 +56,7 @@ import org.apache.sysds.runtime.codegen.SpoofMultiAggregate;
 import org.apache.sysds.runtime.codegen.SpoofOperator;
 import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
 import org.apache.sysds.runtime.codegen.SpoofRowwise;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.parser.DataExpression;
@@ -130,13 +131,40 @@ public final class OracleFacade {
     Objects.requireNonNull(hop, "hop");
     OpSig sig = buildSignature(hop);
     List<FType> mapped = mapFederatedTypes(hop, inFTypes);
-    ShapeHint effectiveHint = (hint != null)
-        ? mergeFullSinglePartitionHint(hint, hop, inFTypes)
-        : buildShapeHint(hop, inFTypes);
+    // A caller-supplied hint is occurrence authority, including UNKNOWN. Never
+    // supplement it from global lexical-name registries left by another program.
+    ShapeHint effectiveHint = hint != null ? hint : buildShapeHint(hop, inFTypes);
     logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
-    RulesApi.OpCaps caps = oracle.decide(sig, mapped, effectiveHint);
+    RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop,
+        oracle.decide(sig, mapped, effectiveHint));
     logOracleResult(hop, caps);
 	return new DecisionEvidence(caps, effectiveHint.proof());
+  }
+
+  /**
+   * The operation rules reason about input layouts, while the bridge owns the
+   * concrete HOP output type. A scalar has no {@code FederationMap}; therefore a
+   * native federated operation that returns a scalar materializes that value at
+   * the coordinator and must be represented as FED/LOUT. In particular,
+   * scalar right-indexing executes at the worker but cannot publish the input
+   * matrix's FType as a federated scalar result.
+   */
+  private static RulesApi.OpCaps normalizeConcreteOutputPlacement(Hop hop, RulesApi.OpCaps caps) {
+    if (hop == null || caps == null || hop.getDataType() == null || !hop.getDataType().isScalar()
+        || caps.exec() != ExecType.FED || caps.placement() != FederatedOutput.FOUT)
+      return caps;
+
+    RulesApi.OpCaps.Builder normalized = RulesApi.OpCaps.newBuilder()
+        .category(caps.category())
+        .opcode(caps.opcode())
+        .exec(caps.exec())
+        .placement(FederatedOutput.LOUT)
+        .reason(caps.reason())
+        .detail(caps.detail().map(detail -> detail + ";scalar-output-materialized-local")
+            .orElse("scalar-output-materialized-local"));
+    for (RulesApi.OpCaps.DecisionNote note : caps.notes())
+      normalized.note(note.code(), note.message());
+    return normalized.build();
   }
 
   public List<RulesApi.OpCaps> exploreAll(
@@ -155,7 +183,9 @@ public final class OracleFacade {
     Objects.requireNonNull(hop, "hop");
     OpSig sig = buildSignature(hop);
     ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop, null);
-    return inference.infer(sig, inCandidates, effectiveHint);
+    RulesApi.FTypeProfile profile = inference.infer(sig, inCandidates, effectiveHint);
+    return hop.getDataType() != null && hop.getDataType().isScalar()
+        ? RulesApi.FTypeProfile.empty() : profile;
   }
 
   OpSig describe(Hop hop) {
@@ -468,28 +498,24 @@ public final class OracleFacade {
     Class<?> generator = hop.getGeneratorClass();
     if (generator == null)
       return;
-    try {
-      SpoofOperator op = CodegenUtils.createInstance(generator);
-      if (op instanceof SpoofCellwise) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "cellwise");
-        attrs.put(ATTR_SPOOF_CELL_TYPE,
-            cellTypeToken(((SpoofCellwise) op).getCellType()));
-      }
-      else if (op instanceof SpoofRowwise) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "rowwise");
-        attrs.put(ATTR_SPOOF_ROW_TYPE,
-            rowTypeToken(((SpoofRowwise) op).getRowType()));
-      }
-      else if (op instanceof SpoofMultiAggregate) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "multiagg");
-      }
-      else if (op instanceof SpoofOuterProduct) {
-        attrs.put(ATTR_SPOOF_TEMPLATE, "outer");
-        attrs.put(ATTR_SPOOF_OUTER_TYPE,
-            outerTypeToken(((SpoofOuterProduct) op).getOuterProdType()));
-      }
-    } catch (Exception ex) {
-      // Ignore instantiation issues; attributes remain unset.
+    SpoofOperator op = CodegenUtils.createInstance(generator);
+    if (op instanceof SpoofCellwise) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "cellwise");
+      attrs.put(ATTR_SPOOF_CELL_TYPE,
+          cellTypeToken(((SpoofCellwise) op).getCellType()));
+    }
+    else if (op instanceof SpoofRowwise) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "rowwise");
+      attrs.put(ATTR_SPOOF_ROW_TYPE,
+          rowTypeToken(((SpoofRowwise) op).getRowType()));
+    }
+    else if (op instanceof SpoofMultiAggregate) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "multiagg");
+    }
+    else if (op instanceof SpoofOuterProduct) {
+      attrs.put(ATTR_SPOOF_TEMPLATE, "outer");
+      attrs.put(ATTR_SPOOF_OUTER_TYPE,
+          outerTypeToken(((SpoofOuterProduct) op).getOuterProdType()));
     }
   }
 
@@ -705,27 +731,13 @@ public final class OracleFacade {
     return new ShapeHint(rows, cols, blockSize, fullSinglePartition, rowsA, colsA, rowsB, colsB);
   }
 
-  private static ShapeHint mergeFullSinglePartitionHint(
-      ShapeHint hint, Hop hop, List<FTypes.FType> inFTypes) {
-    if (hint == null)
-      return hint;
-    if (hint.fullSinglePartition().isPresent())
-      return hint;
-    Optional<Boolean> inferred = inferFullSinglePartition(hop, inFTypes);
-    if (!inferred.isPresent())
-      return hint;
-    return new ShapeHint(hint.rows(), hint.cols(), hint.blockSize(), inferred,
-        hint.rowsA(), hint.colsA(), hint.rowsB(), hint.colsB());
-  }
-
   private static Optional<Boolean> inferFullSinglePartition(Hop hop, List<FTypes.FType> inFTypes) {
     if (hop == null || inFTypes == null || inFTypes.isEmpty())
       return Optional.empty();
 
     List<Hop> inputs = hop.getInput();
     boolean sawFull = false;
-    boolean anyMulti = false;
-    boolean anyKnown = false;
+    boolean allKnownSingle = true;
 
     for (int i = 0; i < inFTypes.size(); i++) {
       if (inFTypes.get(i) != FTypes.FType.FULL)
@@ -733,24 +745,15 @@ public final class OracleFacade {
       sawFull = true;
       Hop inHop = (inputs != null && i < inputs.size()) ? inputs.get(i) : null;
       Optional<Integer> count = inferFederatedRangeCount(inHop);
-      if (!count.isPresent())
+      if (!count.isPresent()) {
+        allKnownSingle = false;
         continue;
-      anyKnown = true;
-      if (count.get() > 1) {
-        anyMulti = true;
-        break;
       }
+      if (count.get() != 1)
+        return Optional.of(false);
     }
 
-    if (!sawFull)
-      return Optional.empty();
-    if (anyKnown)
-      return Optional.of(!anyMulti);
-
-    // Fallback: if the program is effectively single-worker, treat FULL as single-range.
-    return (FederatedPlannerUtils.getMaxFedInitWorkers() == 1)
-        ? Optional.of(true)
-        : Optional.empty();
+    return sawFull && allKnownSingle ? Optional.of(true) : Optional.empty();
   }
 
   private static Optional<Integer> inferFederatedRangeCount(Hop inputHop) {
@@ -884,36 +887,6 @@ public final class OracleFacade {
     return (attrs == null) ? null : attrs.get(key);
   }
 
-  private static boolean isMapLeftIndex(LeftIndexingOp hop) {
-    if (hop == null || hop.getInput() == null || hop.getInput().size() < 2)
-      return false;
-    Hop lhs = hop.getInput().get(0);
-    Hop rhs = hop.getInput().get(1);
-    if (rhs == null)
-      return false;
-    if (rhs.getDataType() == DataType.SCALAR)
-      return true;
-
-    long m1Rows = (lhs != null) ? lhs.getDim1() : -1;
-    long m1Cols = (lhs != null) ? lhs.getDim2() : -1;
-    long m1Blen = (lhs != null) ? lhs.getBlocksize() : -1;
-    long m2Rows = rhs.getDim1();
-    long m2Cols = rhs.getDim2();
-    long m2Nnz = rhs.getNnz();
-    if (m1Rows <= 0 || m1Cols <= 0 || m2Rows <= 0 || m2Cols <= 0 || m1Blen <= 0)
-      return false;
-
-    boolean broadcastRhs = OptimizerUtils.checkSparkBroadcastMemoryBudget(
-        m2Rows, m2Cols, (int) m1Blen, m2Nnz);
-    if (broadcastRhs)
-      return true;
-
-    boolean aligned = rhs.getDataType() == DataType.MATRIX
-        && ((m1Rows == m2Rows && m1Cols <= m1Blen)
-        || (m1Cols == m2Cols && m1Rows <= m1Blen));
-    return aligned;
-  }
-
   private static final class CanonicalOpcode {
     private CanonicalOpcode() {}
 
@@ -924,9 +897,7 @@ public final class OracleFacade {
       if (hop instanceof AggBinaryOp && ((AggBinaryOp) hop).isMatrixMultiply())
         return Opcodes.MMULT.toString();
       if (hop instanceof LeftIndexingOp)
-        return isMapLeftIndex((LeftIndexingOp) hop)
-            ? Opcodes.MAPLEFTINDEX.toString()
-            : Opcodes.LEFT_INDEX.toString();
+        return Opcodes.LEFT_INDEX.toString();
       if (hop instanceof IndexingOp)
         return Opcodes.RIGHT_INDEX.toString();
       if (hop instanceof ReorgOp)

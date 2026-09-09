@@ -422,6 +422,17 @@ public class RewriteSplitDagDataDependentOperators extends StatementBlockRewrite
 		if( hop.isVisited() )
 			return;
 
+		// A federated source owns compile-time physical metadata (addresses, ranges,
+		// and type).  Cutting a shared metadata expression into an artificial
+		// transient value removes the exact partition coordinates from the source
+		// Hop before the common pre-selector privacy/placement analysis runs.  The
+		// source is cloned with the split DAG below, so preserving its small metadata
+		// subgraph here does not leave cross-statement-block Hop references.
+		if( hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED ) {
+			hop.setVisited();
+			return;
+		}
+
 		if( hop.getInput() != null )
 			for( Hop c : hop.getInput() )  {
 				//probe for replicated operator, if any child is replicated, keep parent

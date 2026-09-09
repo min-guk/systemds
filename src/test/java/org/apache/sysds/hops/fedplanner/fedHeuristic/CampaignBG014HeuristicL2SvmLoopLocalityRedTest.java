@@ -3,36 +3,80 @@ package org.apache.sysds.hops.fedplanner.fedHeuristic;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
 /** Regression for preserving a demoted vector across L2SVM's nested loop CFG. */
+@net.jcip.annotations.NotThreadSafe
 public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 	@Test
 	public void demotedXdRemainsLocalAcrossNestedLoopTransientReads() throws Exception {
-		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(l2svmScript(2)));
+		try {
+			for(int workers : List.of(1, 3, 5, 7)) {
+				FederatedPlannerUtils.resetFederatedPlannerRunState();
+				assertDemotedXdRemainsLocal(workers);
+			}
+		}
+		finally {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
+	private static void assertDemotedXdRemainsLocal(int workers) throws Exception {
+		DMLProgram program = compile(l2svmScript(workers));
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig heuristicConfig = new DMLConfig(oldConfig);
+		heuristicConfig.setTextValue(DMLConfig.FEDERATED_PLANNER,
+			"compile_fed_heuristic_single_pass");
+		AtomicReference<PlannerInvocationReceipt> captured = new AtomicReference<>();
+		try {
+			ConfigurationManager.setGlobalConfig(heuristicConfig);
+			ConfigurationManager.setLocalConfig(heuristicConfig);
+			new DMLTranslator(program).constructLops(program, captured::set);
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+		Assert.assertTrue("workers=" + workers + " must invoke the AggLocal production planner",
+			captured.get() instanceof HeuristicInvocationReceipt);
+		HeuristicInvocationReceipt receipt = (HeuristicInvocationReceipt) captured.get();
+		var analysis = receipt.analysis();
 		var xdPath = analysis.heuristicPolicyFacts().paths().stream()
 			.filter(path -> {
 				var hop = analysis.hop(path.demotion().producer()).orElseThrow();
 				return "Xd".equals(hop.getName()) && hop.getBeginLine() == 99;
 			})
-			.findFirst().orElseThrow(() -> new AssertionError("L2SVM Xd demotion marker is missing"));
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"L2SVM Xd demotion marker is missing for workers=" + workers));
 
 		Set<CompiledHopKey> xdReads = new LinkedHashSet<>();
 		for(CompiledHopKey key : xdPath.localPrefix()) {
@@ -45,7 +89,8 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Set<Integer> xdReadLines = xdReads.stream()
 			.map(key -> analysis.hop(key).orElseThrow().getBeginLine())
 			.collect(java.util.stream.Collectors.toSet());
-		Assert.assertTrue("The line-99 Xd demotion must reach both nested-loop and update-block TReads: "
+		Assert.assertTrue("workers=" + workers
+			+ " line-99 Xd demotion must reach both nested-loop and update-block TReads: "
 			+ xdReadLines, xdReadLines.containsAll(Set.of(110, 118)));
 		Assert.assertTrue("The exact local path must cross both transient CFG boundaries",
 			xdPath.edges().stream().filter(edge -> edge.kind() == HeuristicPathEdgeKind.CFG_TRANSIENT_FORWARD)
@@ -54,10 +99,152 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
 			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
 				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-		var selected = new HeuristicPlacementAdapter().select(analysis, markers);
-		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop",
+		var selected = receipt.result();
+		Assert.assertEquals("workers=" + workers + " must consume every analysis-owned marker",
+			markers, receipt.markers());
+		Assert.assertEquals("workers=" + workers + " must use first-feasible policy search",
+			"FIRST_FEASIBLE", selected.plannerFacts().get("search"));
+		Assert.assertEquals("workers=" + workers + " must publish the AggLocal comparator",
+			"MOVEMENT_FIRST", selected.plannerFacts().get("stateOrdering"));
+		Assert.assertEquals("workers=" + workers + " must publish movement before placement ties",
+			"MIN_INCIDENT_WEIGHTED_MOVEMENT", selected.orderedTieBreaks().get(0));
+		Assert.assertEquals("workers=" + workers + " must terminate with a certified policy plan",
+			"POLICY_FEASIBLE", selected.certificate().terminationReason());
+		Assert.assertTrue("workers=" + workers + " certificate must bind the AggLocal comparator",
+			selected.certificate().boundDerivation().endsWith("movement_first"));
+		Assert.assertFalse("workers=" + workers + " must not use planner fallback",
+			selected.certificate().fallbackUsed());
+		Assert.assertEquals("workers=" + workers + " must emit exactly once without repair",
+			new FederatedPlannerFedHeuristic.InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0),
+			receipt.counters());
+		Assert.assertEquals("workers=" + workers + " must retain a complete assignment",
+			selected.selectorGraph().decisionNodes().size(), selected.assignment().size());
+		Assert.assertTrue("workers=" + workers + " must retain candidate reachability",
+			CandidateSelections.canStillBeReachable(analysis, selected.selectorGraph(),
+				selected.selectorGraph().relocationActions(), selected.assignment()));
+		var canonical = CandidateSelections.selectMaterializationMaximal(analysis,
+			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment());
+		Assert.assertEquals("workers=" + workers + " must retain exact candidate receipts",
+			canonical.candidates().stream().map(candidate -> candidate.normalizedSignature())
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)),
+			selected.selectedCandidateSelections().stream().map(candidate -> candidate.normalizedSignature())
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)));
+		var xdState = selected.assignment().get(xdPath.demotion().producer());
+		Assert.assertTrue("workers=" + workers + " Xd must use a legal local-result execution",
+			xdState.execType() == org.apache.sysds.common.Types.ExecType.CP
+				|| xdState.execType() == org.apache.sysds.common.Types.ExecType.FED);
+		if(workers > 1)
+			Assert.assertEquals("multi-partition Xd must execute at the federated workers",
+				org.apache.sysds.common.Types.ExecType.FED, xdState.execType());
+		Assert.assertEquals("workers=" + workers + " Xd must return its aggregate vector locally",
+			org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT,
+			xdState.output());
+		var xdHop = analysis.hop(xdPath.demotion().producer()).orElseThrow();
+		Assert.assertEquals("workers=" + workers + " selected Xd HOP must match the certified state",
+			xdState.execType(), xdHop.getExecType());
+		Assert.assertEquals("workers=" + workers + " must retain LOUT on the selected Xd HOP",
+			org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT,
+			xdHop.getFederatedOutput());
+		Assert.assertNotNull("workers=" + workers + " must construct the selected Xd Lop",
+			xdHop.getLops());
+		Assert.assertEquals("workers=" + workers + " selected Xd Lop must match the certified state",
+			xdState.execType(), xdHop.getLops().getExecType());
+		Assert.assertEquals("workers=" + workers + " must lower the selected Xd Lop with LOUT",
+			org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT,
+			xdHop.getLops().getFederatedOutput());
+		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop: "
+			+ selected.selectedRelocations(),
 			selected.selectedRelocations().stream().noneMatch(action ->
 				"Xd".equals(action.sourceValueVersion().lexicalVariable())));
+	}
+
+	@Test
+	public void singlePassComponentsRetainFunctionFormalCandidateDependencies() throws Exception {
+		var analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(
+			compile(l2svmScript(2)));
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
+			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
+				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+
+		var selected = new FederatedPlannerFedHeuristicSinglePass().select(analysis, markers);
+		var fedFirst = new HeuristicPlacementAdapter(new PolicyFirstFeasiblePlacementSelector())
+			.select(analysis, markers);
+
+		Assert.assertEquals("single-pass L2SVM must return a complete policy assignment",
+			selected.selectorGraph().decisionNodes().size(), selected.assignment().size());
+		Assert.assertTrue("merged single-pass components must remain exact-candidate reachable",
+			CandidateSelections.canStillBeReachable(analysis, selected.selectorGraph(),
+				selected.selectorGraph().relocationActions(), selected.assignment()));
+		var canonical = CandidateSelections.selectMaterializationMaximal(analysis,
+			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment());
+		Assert.assertEquals("adapter receipts must equal the exact candidate-row projection",
+			canonical.candidates().stream().map(candidate -> candidate.normalizedSignature())
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)),
+			selected.selectedCandidateSelections().stream().map(candidate -> candidate.normalizedSignature())
+				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)));
+		Assert.assertNotEquals("selector ordering is part of the immutable policy-view identity",
+			fedFirst.certificate().policyViewFingerprint(),
+			selected.certificate().policyViewFingerprint());
+		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop: "
+			+ selected.selectedRelocations(),
+			selected.selectedRelocations().stream().noneMatch(action ->
+				"Xd".equals(action.sourceValueVersion().lexicalVariable())));
+	}
+
+	@Test
+	public void candidateComponentDependenciesExposeRecursiveFunctionSourceClosure() throws Exception {
+		var analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(
+			compile(l2svmScript(2)));
+		var reachability = CandidateSelections.partialReachabilityIndex(analysis,
+			analysis.graph(), analysis.graph().relocationActions());
+		Set<CandidateSelections.ComponentDependency> dependencies =
+			new LinkedHashSet<>(reachability.componentDependencies());
+		Map<CompiledHopKey,List<CompiledHopKey>> sourcesByFormal = new HashMap<>();
+		for(var fact : analysis.logicalFunctionInputsInCanonicalOrder())
+			sourcesByFormal.computeIfAbsent(fact.targetRead(), ignored -> new ArrayList<>())
+				.add(fact.sourceArgument());
+		Map<CompiledHopKey,Set<Integer>> candidateInputs = new HashMap<>();
+		for(var fact : analysis.candidateRuleFacts().orderedFacts()) {
+			if(fact.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(int position = 0; position < fact.key().orderedInputs().size(); position++)
+				if(fact.key().orderedInputs().get(position).present())
+					candidateInputs.computeIfAbsent(fact.key().parentOccurrence(),
+						ignored -> new LinkedHashSet<>()).add(position);
+		}
+		Set<CompiledHopKey> decisions = analysis.graph().decisionNodes().stream()
+			.map(node -> node.key()).collect(java.util.stream.Collectors.toSet());
+		boolean witnessedFunctionClosure = false;
+		boolean witnessedDecisionCoupling = false;
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(!candidateInputs.getOrDefault(edge.consumer(), Set.of()).contains(edge.inputPosition())
+				|| !sourcesByFormal.containsKey(edge.producer()))
+				continue;
+			Assert.assertTrue("candidate dependency closure must retain the direct formal producer",
+				dependencies.contains(new CandidateSelections.ComponentDependency(
+					edge.producer(), edge.consumer())));
+			Set<CompiledHopKey> visited = new LinkedHashSet<>();
+			ArrayDeque<CompiledHopKey> pending = new ArrayDeque<>();
+			pending.add(edge.producer());
+			while(!pending.isEmpty()) {
+				CompiledHopKey formal = pending.removeFirst();
+				if(!visited.add(formal))
+					continue;
+				for(CompiledHopKey source : sourcesByFormal.getOrDefault(formal, List.of())) {
+					witnessedFunctionClosure = true;
+					Assert.assertTrue("recursive function/transient source must couple to its candidate consumer",
+						dependencies.contains(new CandidateSelections.ComponentDependency(
+							source, edge.consumer())));
+					witnessedDecisionCoupling |= decisions.contains(source)
+						&& decisions.contains(edge.consumer());
+					pending.addLast(source);
+				}
+			}
+		}
+		Assert.assertTrue("L2SVM w2 must expose a function/transient candidate dependency",
+			witnessedFunctionClosure);
+		Assert.assertTrue("the closure must connect independently selectable L2SVM occurrences",
+			witnessedDecisionCoupling);
 	}
 
 	private static String l2svmScript(int workers) throws Exception {
@@ -99,6 +286,7 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return program;
 	}
 }

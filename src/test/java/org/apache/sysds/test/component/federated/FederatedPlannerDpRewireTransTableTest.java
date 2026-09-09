@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
@@ -45,7 +44,6 @@ import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.UnaryOp;
-import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
@@ -57,8 +55,6 @@ import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
@@ -120,11 +116,9 @@ public class FederatedPlannerDpRewireTransTableTest {
 			Class<?> loopCtxClass = Class.forName(
 				FederatedPlannerDpRewireTransTable.class.getName() + "$LoopAnalysisContext");
 			Method method = FederatedPlannerDpRewireTransTable.class.getDeclaredMethod("rewireTransHop",
-				Hop.class, Map.class, List.class, Map.class, Map.class, Map.class, List.class, Set.class, Set.class,
-				loopCtxClass);
+				Hop.class, Map.class, List.class, Map.class, Map.class, Set.class, Set.class, loopCtxClass);
 			method.setAccessible(true);
 			method.invoke(null, tRead, rewireTable, new ArrayList<Map<String, List<Hop>>>(), null, innerTransTable,
-				new HashMap<Long, Privacy>(), new ArrayList<Pair<FederatedRange, FederatedData>>(),
 				new HashSet<Long>(), new HashSet<Long>(), null);
 
 			List<Hop> resolved = rewireTable.get(tRead.getHopID());
@@ -224,11 +218,12 @@ public class FederatedPlannerDpRewireTransTableTest {
 		WhileStatement whileStatement = new WhileStatement();
 		whileStatement.addStatementBlock(body);
 		WhileStatementBlock whileBlock = new WhileStatementBlock();
-		whileBlock.setPredicateHops(predicate);
+		whileBlock.setPredicateHops(new DataOp("__pred", DataType.SCALAR,
+			ValueType.BOOLEAN, predicate, OpOpData.TRANSIENTWRITE, null));
 		whileBlock.addStatement(whileStatement);
 
-		assertEquals("a data-dependent early-exit predicate must not price its hard cap as the expected count",
-			RewireConstants.DEFAULT_LOOP_WEIGHT,
+		assertEquals("a wrapped data-dependent predicate must retain a sublinear estimate of its hard cap",
+			Math.sqrt(2100.0),
 			RewireConstants.estimateWhileLoopWeight(whileBlock, List.of(transTable)), 0.0);
 	}
 

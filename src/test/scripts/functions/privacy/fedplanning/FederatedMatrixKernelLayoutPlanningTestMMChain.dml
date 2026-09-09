@@ -1,0 +1,19 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+XR = federated(addresses=list($XR1, $XR2),
+               ranges=list(list(0, 0), list($r / 2, $c),
+                           list($r / 2, 0), list($r, $c)))
+XC = federated(addresses=list($XC1, $XC2),
+               ranges=list(list(0, 0), list($r, $c / 2),
+                           list(0, $c / 2), list($r, $c)))
+V = read($V)
+W = read($W)
+Chain = t(XR) %*% (XR %*% V)
+WChain = t(XR) %*% (W * (XR %*% V))
+ColChain = t(XC) %*% (XC %*% V)
+write(Chain, $Chain)
+write(WChain, $WChain)
+write(ColChain, $ColChain)

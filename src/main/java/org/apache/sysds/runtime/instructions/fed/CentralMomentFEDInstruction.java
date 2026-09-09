@@ -140,6 +140,12 @@ public class CentralMomentFEDInstruction extends AggregateUnaryFEDInstruction {
 		@Override
 		public FederatedResponse execute(ExecutionContext ec, Data... data) {
 			MatrixBlock mb = ((MatrixObject) data[0]).acquireReadAndRelease();
+			// A column-federated logical vector is stored as row-vector shards.
+			// Central moments are orientation invariant, while the local kernel accepts
+			// column vectors only, so normalize this legal physical representation at
+			// the federated UDF boundary.
+			if(mb.getNumRows() == 1 && mb.getNumColumns() > 1)
+				mb = mb.transpose(_op.getNumThreads());
 			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, mb.cmOperations(_op));
 		}
 

@@ -1,0 +1,20 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+# The ASF licenses this file to you under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+
+X = read($X)
+RowRows = rowSums(X)
+RowCols = colSums(X)
+RowAll = sum(X)
+ColRows = rowSums(X)
+ColCols = colSums(X)
+ColAll = sum(X)
+write(RowRows, $RowRows)
+write(RowCols, $RowCols)
+write(RowAll, $RowAll)
+write(ColRows, $ColRows)
+write(ColCols, $ColCols)
+write(ColAll, $ColAll)

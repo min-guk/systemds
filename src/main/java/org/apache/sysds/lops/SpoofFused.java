@@ -132,6 +132,10 @@ public class SpoofFused extends Lop
 	
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( _numThreads );
+		if(getExecType() == ExecType.FED) {
+			sb.append(OPERAND_DELIMITOR);
+			sb.append(getFederatedOutput().name());
+		}
 		
 		return sb.toString();
 	}

@@ -33,19 +33,23 @@ public class TernaryFrameScalarFEDInstruction extends TernaryFEDInstruction
 {
 	protected TernaryFrameScalarFEDInstruction(TernaryOperator op, CPOperand in1,
 			CPOperand in2, CPOperand in3, CPOperand out, String opcode, String istr, FederatedOutput fedOut) {
-		super(op, in1, in2, in3, out, opcode, istr, fedOut);
+		// Frame map always derives a new remote frame on the input federation map.
+		// Dynamic CP/SP conversion historically passed NONE, which made physical
+		// placement auditing disagree with the actual FOUT residency.
+		super(op, in1, in2, in3, out, opcode, istr,
+			fedOut == null || fedOut == FederatedOutput.NONE ? FederatedOutput.FOUT : fedOut);
 	}
 
 	public static TernaryFrameScalarFEDInstruction parseInstruction(TernaryFrameScalarCPInstruction instr) {
 		return new TernaryFrameScalarFEDInstruction((TernaryOperator) instr.getOperator(), instr.input1, instr.input2,
 			instr.input3, instr.output, instr.getOpcode(), instr.getInstructionString(),
-			FEDInstruction.FederatedOutput.NONE);
+			FEDInstruction.FederatedOutput.FOUT);
 	}
 
 	public static TernaryFrameScalarFEDInstruction parseInstruction(TernaryFrameScalarSPInstruction instr) {
 		return new TernaryFrameScalarFEDInstruction((TernaryOperator) instr.getOperator(), instr.input1, instr.input2,
 			instr.input3, instr.output, instr.getOpcode(), instr.getInstructionString(),
-			FEDInstruction.FederatedOutput.NONE);
+			FEDInstruction.FederatedOutput.FOUT);
 	}
 
 	@Override

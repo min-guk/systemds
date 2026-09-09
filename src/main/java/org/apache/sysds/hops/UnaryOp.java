@@ -28,6 +28,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Checkpoint;
 import org.apache.sysds.lops.Compression;
@@ -178,6 +179,12 @@ public class UnaryOp extends MultiThreadedHop
 			setOutputDimensions(ret);
 			setLineNumbers(ret);
 			setLops(ret);
+			// setLops stamps the logical occurrence metadata and therefore clears an
+			// explicitly tagged result Lop. Restore the tag on the outer Spark
+			// cumulative stage; nested offset stages retain the tag assigned by
+			// constructCumOffBinary below.
+			if(ret instanceof CumulativeOffsetBinary)
+				ret.setPlannerLoweringAuxiliaryKind("CUMULATIVE_OFFSET");
 		}
 		catch (Exception e) {
 			throw new HopsException(this.printErrorLocation() + "error constructing Lops for UnaryOp Hop -- \n " , e);
@@ -319,6 +326,10 @@ public class UnaryOp extends MultiThreadedHop
 		
 		CumulativeOffsetBinary binary = new CumulativeOffsetBinary(data, offset, 
 				DataType.MATRIX, ValueType.FP64, initValue, broadcast, aggtype, ExecType.SPARK);
+		binary.setHopID(getHopID());
+		binary.setPlannerOriginHopID(getPlannerOriginHopID());
+		binary.setPlannerRecompileSignature(FederatedPlannerUtils.plannerRecompileSignature(this));
+		binary.setPlannerLoweringAuxiliaryKind("CUMULATIVE_OFFSET");
 		binary.getOutputParameters().setDimensions(rlen, clen, blen, -1);
 		setLineNumbers(binary);
 		return binary;

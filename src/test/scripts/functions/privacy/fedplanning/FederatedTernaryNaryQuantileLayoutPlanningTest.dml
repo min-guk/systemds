@@ -1,0 +1,36 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+TRX = federated(addresses=list($XR1,$XR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+TRY = federated(addresses=list($YR1,$YR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+TRZ = federated(addresses=list($ZR1,$ZR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+TCX = federated(addresses=list($XC1,$XC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+TCY = federated(addresses=list($YC1,$YC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+TCZ = federated(addresses=list($ZC1,$ZC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+AX = read($X)
+AY = read($Y)
+ARZ = federated(addresses=list($ZR1,$ZR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+ACZ = federated(addresses=list($ZC1,$ZC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+NRX = federated(addresses=list($XR1,$XR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+NRY = federated(addresses=list($YR1,$YR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+NRZ = federated(addresses=list($ZR1,$ZR2), ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+NCX = federated(addresses=list($XC1,$XC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+NCY = federated(addresses=list($YC1,$YC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+NCZ = federated(addresses=list($ZC1,$ZC2), ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+QR = federated(addresses=list($Q1,$Q2), ranges=list(list(0,0),list($qr/2,1),list($qr/2,0),list($qr,1)))
+QF = federated(addresses=list($QF), ranges=list(list(0,0),list($qr,1)))
+
+TerRow = ifelse(TRX > 0.5, TRY, TRZ)
+TerCol = ifelse(TCX > 0.5, TCY, TCZ)
+AggRow = as.matrix(sum(AX * AY * ARZ))
+AggCol = as.matrix(sum(AX * AY * ACZ))
+NaryRow = min(3, NRX, NRY, NRZ, 7)
+NaryCol = min(3, NCX, NCY, NCZ, 7)
+QRow = as.matrix(quantile(QR, 0.5))
+QFull = as.matrix(quantile(QF, 0.5))
+
+write(TerRow,$TerRow); write(TerCol,$TerCol); write(AggRow,$AggRow); write(AggCol,$AggCol)
+write(NaryRow,$NaryRow); write(NaryCol,$NaryCol); write(QRow,$QRow); write(QFull,$QFull)

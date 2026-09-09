@@ -166,14 +166,15 @@ public class NeutralPlacementGraphCfgCoreTest {
 	}
 
 	@Test
-	public void unknownMetadataKeepsShapeIndependentFedAndExcludesShapeDependentFed() throws Exception {
+	public void functionShapeClosureRetainsOnlyShapeIndependentFederatedCandidates() throws Exception {
 		NeutralPlacementGraph graph = build("f=function(matrix[double] X)return(matrix[double] Y){Y=rowSums(X);}"
 			+ "A=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));Z=sum(A);Y=f(A);print(Z+sum(Y));", false);
-		Assert.assertTrue(graph.normalizedExclusions().toString(), graph.normalizedExclusions().stream()
-			.anyMatch(s -> s.contains("UNKNOWN_METADATA")));
 		Assert.assertTrue(graph.normalizedCandidateUniverse().toString(), graph.normalizedCandidateUniverse().stream()
 			.anyMatch(s -> s.contains("FED/") && s.contains("SHAPE_INDEPENDENT")));
+		Assert.assertFalse("Interprocedural shape closure must not expose an unproved shape-dependent"
+			+ " federated state: " + graph.normalizedCandidateUniverse(), graph.normalizedCandidateUniverse().stream()
+			.anyMatch(s -> s.contains("FED/") && s.contains("SHAPE_DEPENDENT")));
 	}
 
 	@Test

@@ -19,6 +19,8 @@
 
 package org.apache.sysds.test.component.matrix;
 
+import static org.junit.Assert.assertEquals;
+
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.matrix.data.LibMatrixAgg;
@@ -103,6 +105,16 @@ public class MatrixAggKernelTest {
 		testMatrixAggregation(Opcodes.UAMAX.toString(), Opcodes.UARMAX.toString(), Opcodes.UACMAX.toString(), 0.1);
 	}
 
+	@Test
+	public void testDenseTwoOutputRowIndexMax() {
+		testTwoOutputRowIndexAggregation(Opcodes.UARIMAX.toString());
+	}
+
+	@Test
+	public void testDenseTwoOutputRowIndexMin() {
+		testTwoOutputRowIndexAggregation(Opcodes.UARIMIN.toString());
+	}
+
 	private void testMatrixAggregation(String opcode1, String opcode2, String opcode3, double sp) {
 		testMatrixAggregation(getOp(opcode1,1), getOp(opcode1,K), MIN_PAR, 1, sp);
 		testMatrixAggregation(getOp(opcode2,1), getOp(opcode2,K), 1, MIN_PAR, sp);
@@ -120,6 +132,36 @@ public class MatrixAggKernelTest {
 		MatrixBlock ret1 = mb1.aggregateUnaryOperations(uaop1);
 		MatrixBlock ret2 = mb1.aggregateUnaryOperations(uaopk);
 		TestUtils.compareMatrices(ret1, ret2, 1e-8);
+	}
+
+	private void testTwoOutputRowIndexAggregation(String opcode) {
+		MatrixBlock input = MatrixBlock.randOperations(MIN_PAR, 4, 1, -1, 1, "uniform", 7);
+		AggregateUnaryOperator sequential = InstructionUtils.parseAggregateUnaryRowIndexOperator(opcode, 2, 1);
+		AggregateUnaryOperator parallel = InstructionUtils.parseAggregateUnaryRowIndexOperator(opcode, 2, 8);
+
+		MatrixBlock expected = input.aggregateUnaryOperations(sequential);
+		MatrixBlock actual = input.aggregateUnaryOperations(parallel);
+
+		assertEquals(2, expected.getNumColumns());
+		assertEquals(2, actual.getNumColumns());
+		TestUtils.compareMatrices(expected, actual, 0);
+		assertRowIndexResult(input, actual, 0, opcode.equalsIgnoreCase(Opcodes.UARIMAX.toString()));
+		assertRowIndexResult(input, actual, MIN_PAR / 2, opcode.equalsIgnoreCase(Opcodes.UARIMAX.toString()));
+		assertRowIndexResult(input, actual, MIN_PAR - 1, opcode.equalsIgnoreCase(Opcodes.UARIMAX.toString()));
+	}
+
+	private void assertRowIndexResult(MatrixBlock input, MatrixBlock result, int row, boolean max) {
+		int expectedIndex = 0;
+		double expectedValue = input.get(row, 0);
+		for(int col = 1; col < input.getNumColumns(); col++) {
+			double value = input.get(row, col);
+			if(max ? value > expectedValue : value < expectedValue) {
+				expectedIndex = col;
+				expectedValue = value;
+			}
+		}
+		assertEquals(expectedIndex + 1, result.get(row, 0), 0);
+		assertEquals(expectedValue, result.get(row, 1), 0);
 	}
 	
 	private AggregateUnaryOperator getOp(String opcode, int threads) {

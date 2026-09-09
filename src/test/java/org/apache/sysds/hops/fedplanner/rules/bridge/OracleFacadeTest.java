@@ -23,6 +23,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +43,7 @@ import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
@@ -58,6 +60,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesCore.OracleEngine;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.FTypes;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
@@ -65,6 +68,44 @@ public class OracleFacadeTest {
 
   private final OracleFacade facade =
       new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+
+  @Test
+  public void fullSingleHintRequiresEverySelectedFullInputToBeKnownSingle() {
+    assertEquals("true", inferredFullSinglePartition(
+        binary(federated("left", 1), federated("right", 1)),
+        List.of(FType.FULL, FType.FULL)));
+    assertEquals("false", inferredFullSinglePartition(
+        binary(federated("left", 1), federated("right", 2)),
+        List.of(FType.FULL, FType.FULL)));
+  }
+
+  @Test
+  public void oneKnownFullDoesNotCertifyUnknownFullInEitherInputOrder() {
+    assertEquals("UNKNOWN", inferredFullSinglePartition(
+        binary(federated("left", 1), matrix("unknownRight", 4, 2)),
+        List.of(FType.FULL, FType.FULL)));
+    assertEquals("UNKNOWN", inferredFullSinglePartition(
+        binary(matrix("unknownLeft", 4, 2), federated("right", 1)),
+        List.of(FType.FULL, FType.FULL)));
+  }
+
+  @Test
+  public void unrelatedGlobalSingleWorkerDoesNotCertifyAnUnknownFullInput() {
+    org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    try {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.registerFedInitVar(
+          "unrelated", FType.FULL, "localhost:1234/unrelated|[0,0]-[4,2]|FULL");
+      assertEquals("UNKNOWN", inferredFullSinglePartition(
+          binary(matrix("localLeft", 4, 2), matrix("localRight", 4, 2)),
+          List.of(FType.FULL, FType.FULL)));
+      assertEquals("UNKNOWN", inferredFullSinglePartition(
+          binary(matrix("rowLeft", 4, 2), matrix("rowRight", 4, 2)),
+          List.of(FType.ROW, FType.ROW)));
+    }
+    finally {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    }
+  }
 
   @Test
   public void canonicalizesMatrixMultiply() {
@@ -78,7 +119,7 @@ public class OracleFacadeTest {
   }
 
   @Test
-  public void canonicalizesMapLeftIndexing() {
+  public void canonicalizesLeftIndexingWithoutPredictingRuntimeStrategy() {
     Hop target = matrix("target", 10, 10);
     Hop rhs = new LiteralOp(42.0);
     Hop rowL = lit(1);
@@ -90,7 +131,27 @@ public class OracleFacadeTest {
         target, rhs, rowL, rowU, colL, colU, false, false);
 
     OpSig sig = facade.describe(lix);
-    assertEquals(Opcodes.MAPLEFTINDEX.toString(), sig.opcode());
+    assertEquals(Opcodes.LEFT_INDEX.toString(), sig.opcode());
+  }
+
+  @Test
+  public void scalarRightIndexExecutesFederatedButMaterializesLocally() {
+    Hop input = matrix("input", 10, 10);
+    IndexingOp scalar = new IndexingOp("scalar", DataType.SCALAR, ValueType.FP64,
+        input, lit(1), lit(1), lit(1), lit(1), true, true);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(scalar, Arrays.asList(FType.FULL, null, null, null, null), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals("a scalar has no FederationMap and cannot be a federated output value",
+        FederatedOutput.LOUT, evidence.caps().placement());
+    assertEquals(Optional.empty(), evidence.caps().foutFType());
+    assertTrue(evidence.caps().detail().orElse("").contains("scalar-output-materialized-local"));
+    assertTrue("a scalar has no output FType profile",
+        facade.inferProfile(scalar,
+            List.of(List.of(FType.FULL), List.of(), List.of(), List.of(), List.of()), null)
+            .outputs().isEmpty());
   }
 
   @Test
@@ -248,22 +309,113 @@ public class OracleFacadeTest {
   }
 
   @Test
-  public void binaryProofIncludesOnlyRuleConsultedMissingShapeFacts() {
-    Hop left = matrix("left", 4, 7);
-    Hop right = matrix("right", 4, 7);
-    BinaryOp plus = new BinaryOp(
-        "plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
-    plus.setDim1(-1);
-    plus.setDim2(7);
-    plus.setBlocksize(-1);
+  public void explicitHintMergeDoesNotCreateShapeRequirementsForTransientWrite() {
+    Hop input = matrix("input", -1, -1);
+    DataOp write = new DataOp("write", DataType.MATRIX, ValueType.FP64,
+        input, OpOpData.TRANSIENTWRITE, "A");
+    ShapeHint hint = new ShapeHint(-1, -1, -1);
 
     OracleFacade.DecisionEvidence evidence =
-        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.ROW), null);
+        facade.decideWithEvidence(write, List.of(FType.ROW), hint);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
+  }
+
+  @Test
+  public void exactRowBinaryDoesNotConsultShapeFacts() {
+    BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+        matrix("left", -1, -1), matrix("right", -1, -1));
+    ShapeHint hint = new ShapeHint(-1, -1, -1, Optional.empty(), -1, -1, -1, -1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.ROW), hint);
 
     assertEquals(ExecType.FED, evidence.caps().exec());
     assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
     assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
-    assertEquals(Set.of("rows"), evidence.shapeProof().missingRequiredFacts());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
+  }
+
+  @Test
+  public void explicitUnknownFullHintCannotReadAnotherProgramsVariableRegistry() {
+    org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    try {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.registerFedInitVar(
+          "B", FType.FULL, "localhost:1234/old|[0,0]-[4,2]|FULL");
+      BinaryOp append = new BinaryOp("append", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND,
+          matrix("B", 4, 2), matrix("C", 4, 2));
+      OracleFacade.DecisionEvidence evidence = facade.decideWithEvidence(append,
+          List.of(FType.FULL, FType.FULL),
+          new ShapeHint(4, 4, 1000, Optional.empty(), 4, 2, 4, 2));
+      assertFalse("Unknown occurrence evidence is not a single-partition certificate",
+          evidence.caps().exec() == ExecType.FED && evidence.caps().placement() == FederatedOutput.FOUT);
+      assertEquals("UNKNOWN", evidence.shapeProof().consultedFacts().get("fullSinglePartition"));
+    }
+    finally {
+      org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.resetFederatedPlannerRunState();
+    }
+  }
+
+  @Test
+  public void ruleConsultationStillRecordsAnUnknownSinglePartitionRequirement() {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of("+"); }
+      @Override public OpCaps caps(OpSig sig, List<FType> inputs, ShapeHint hint) {
+        hint.fullSinglePartition();
+        return super.caps(sig, inputs, hint);
+      }
+    });
+    BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+        matrix("left", 4, 2), matrix("right", 4, 2));
+
+    OracleFacade.DecisionEvidence evidence = new OracleFacade(registry).decideWithEvidence(
+        plus, List.of(FType.ROW, FType.ROW), new ShapeHint(4, 2, 1000));
+
+    assertEquals(new ShapeProof(Map.of("fullSinglePartition", "UNKNOWN"),
+        Set.of("fullSinglePartition"), Set.of("fullSinglePartition")), evidence.shapeProof());
+  }
+
+  @Test
+  public void exactColumnBinaryDoesNotConsultShapeFacts() {
+    Hop left = matrix("left", -1, -1);
+    Hop right = matrix("right", -1, -1);
+    BinaryOp plus = new BinaryOp(
+        "plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+    plus.setDim1(-1);
+    plus.setDim2(-1);
+    plus.setBlocksize(-1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, List.of(FType.COL, FType.COL), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.COL), evidence.caps().foutFType());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
+  }
+
+  @Test
+  public void mixedAxisBinaryStillRequiresShapeFacts() {
+    Hop left = matrix("left", -1, -1);
+    Hop right = matrix("right", -1, -1);
+    BinaryOp plus = new BinaryOp(
+        "plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+    plus.setDim1(-1);
+    plus.setDim2(-1);
+    plus.setBlocksize(-1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.COL), null);
+
+    assertEquals(ExecType.CP, evidence.caps().exec());
+    assertEquals(FederatedOutput.LOUT, evidence.caps().placement());
+    assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, evidence.caps().reason());
+    assertEquals(Set.of("rows", "cols", "rowsA", "colsA", "rowsB", "colsB"),
+        evidence.shapeProof().missingRequiredFacts());
   }
 
   @Test
@@ -286,6 +438,44 @@ public class OracleFacadeTest {
         Set.of(), evidence.shapeProof().missingRequiredFacts());
   }
 
+  @Test
+  public void binaryFullMatrixWithLocalMatrixDoesNotRequireEncodedWidth() {
+    Hop full = matrix("encoded", 100_000, -1);
+    Hop local = matrix("bound", 1, -1);
+    BinaryOp less = new BinaryOp(
+        "less", DataType.MATRIX, ValueType.FP64, OpOp2.LESS, full, local);
+    less.setDim1(100_000);
+    less.setDim2(-1);
+    less.setBlocksize(1000);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(less, Arrays.asList(FType.FULL, null), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.FULL), evidence.caps().foutFType());
+    assertEquals("FULL plus a local operand is independent of ROW/COL shape proof",
+        Set.of(), evidence.shapeProof().missingRequiredFacts());
+  }
+
+  @Test
+  public void binaryFullDoesNotAlignWithRowPartition() {
+    Hop row = matrix("row", 100_000, -1);
+    Hop full = matrix("full", 100_000, -1);
+    BinaryOp less = new BinaryOp(
+        "less", DataType.MATRIX, ValueType.FP64, OpOp2.LESS, row, full);
+    less.setDim1(100_000);
+    less.setDim2(-1);
+    less.setBlocksize(1000);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(less, List.of(FType.ROW, FType.FULL), null);
+
+    assertEquals(ExecType.CP, evidence.caps().exec());
+    assertEquals(FederatedOutput.LOUT, evidence.caps().placement());
+    assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, evidence.caps().reason());
+  }
+
   private static void assertCapsEquivalent(OpCaps actual, OpCaps expected) {
     assertEquals(expected.exec(), actual.exec());
     assertEquals(expected.placement(), actual.placement());
@@ -297,6 +487,43 @@ public class OracleFacadeTest {
     for (int i = 0; i < actual.notes().size(); i++) {
       assertEquals(expected.notes().get(i).code(), actual.notes().get(i).code());
     }
+  }
+
+  private static String inferredFullSinglePartition(Hop hop, List<FType> inputTypes) {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public OpCaps caps(OpSig sig, List<FType> inputs, ShapeHint hint) {
+        hint.fullSinglePartition();
+        return super.caps(sig, inputs, hint);
+      }
+    });
+    OracleFacade.DecisionEvidence evidence =
+        new OracleFacade(registry).decideWithEvidence(hop, inputTypes, null);
+    return evidence.shapeProof().consultedFacts().get("fullSinglePartition");
+  }
+
+  private static BinaryOp binary(Hop left, Hop right) {
+    return new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+  }
+
+  private static DataOp federated(String name, int rangeCount) {
+    Hop[] addresses = new Hop[rangeCount];
+    Hop[] ranges = new Hop[rangeCount * 2];
+    for (int index = 0; index < rangeCount; index++) {
+      addresses[index] = new LiteralOp("localhost:" + (1234 + index) + '/' + name);
+      ranges[2 * index] = list(new LiteralOp(0L), new LiteralOp(0L));
+      ranges[2 * index + 1] = list(new LiteralOp(4L), new LiteralOp(2L));
+    }
+    HashMap<String,Hop> parameters = new HashMap<>();
+    parameters.put(DataExpression.FED_ADDRESSES, list(addresses));
+    parameters.put(DataExpression.FED_RANGES, list(ranges));
+    return new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.FEDERATED, parameters);
+  }
+
+  private static NaryOp list(Hop... inputs) {
+    return new NaryOp("list", DataType.LIST, ValueType.UNKNOWN, OpOpN.LIST, inputs);
   }
 
   private static DataOp matrix(String name, long rows, long cols) {

@@ -63,6 +63,8 @@ public class CovarianceCPInstruction extends BinaryCPInstruction {
 		String output_name = output.getName(); 
 		COVOperator cov_op = (COVOperator)_optr;
 		CM_COV_Object covobj = null;
+		matBlock1 = CMCovCPInstructionUtils.normalizeVectorOrientation(matBlock1, cov_op.getNumThreads());
+		matBlock2 = CMCovCPInstructionUtils.normalizeVectorOrientation(matBlock2, cov_op.getNumThreads());
 		
 		if ( input3 == null ) {
 			// Unweighted: cov.mvar0.mvar1.out
@@ -73,6 +75,7 @@ public class CovarianceCPInstruction extends BinaryCPInstruction {
 		else {
 			// Weighted: cov.mvar0.mvar1.weights.out
 			MatrixBlock wtBlock = ec.getMatrixInput(input3.getName());
+			wtBlock = CMCovCPInstructionUtils.normalizeVectorOrientation(wtBlock, cov_op.getNumThreads());
 			
 			covobj = matBlock1.covOperations(cov_op, matBlock2, wtBlock);
 			
@@ -83,4 +86,5 @@ public class CovarianceCPInstruction extends BinaryCPInstruction {
 		double val = covobj.getRequiredResult(_optr);
 		ec.setScalarOutput(output_name, new DoubleObject(val));
 	}
+
 }

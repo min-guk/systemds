@@ -23,6 +23,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Method;
+import java.util.List;
 
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
@@ -30,6 +31,7 @@ import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
@@ -43,8 +45,12 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.lops.Ctable;
 import org.apache.sysds.lops.Transform;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.ConsumerInputSpec;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.After;
 import org.junit.Test;
@@ -54,6 +60,7 @@ public class RewritePlannerRecompileAuthorityTest {
 	@After
 	public void clearPlannerAuthority() {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
+		FederatedLocalMaterializeRegistry.clear();
 	}
 
 	@Test
@@ -181,6 +188,29 @@ public class RewritePlannerRecompileAuthorityTest {
 			ConfigurationManager.setGlobalConfig(oldConfig);
 			ConfigurationManager.setLocalConfig(oldConfig);
 		}
+	}
+
+	@Test
+	public void ctableReshapeRewriteRetainsSelectedLocalMaterializationBoundary() {
+		LiteralOp rows = new LiteralOp(100L);
+		LiteralOp cols = new LiteralOp(1L);
+		LiteralOp dims = new LiteralOp(0L);
+		LiteralOp byRow = new LiteralOp(true);
+		ReorgOp left = new ReorgOp("left", DataType.MATRIX, ValueType.FP64,
+			ReOrgOp.RESHAPE, List.of(matrixRead("leftInput", 10, 10), rows, cols, dims, byRow));
+		ReorgOp right = new ReorgOp("right", DataType.MATRIX, ValueType.FP64,
+			ReOrgOp.RESHAPE, List.of(matrixRead("rightInput", 10, 10), rows, cols, dims, byRow));
+		TernaryOp ctable = new TernaryOp("table", DataType.MATRIX, ValueType.FP64,
+			OpOp3.CTABLE, left, right, new LiteralOp(1D));
+
+		assertTrue(ctable.isCTableReshapeRewriteApplicable(ExecType.CP,
+			Ctable.OperationTypes.CTABLE_TRANSFORM_SCALAR_WEIGHT));
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, right.getHopID(),
+			List.of(new ConsumerInputSpec(ctable.getHopID(), 1)), "ROW", "selected-boundary");
+
+		assertFalse("ctable fusion must not erase the selected FED/FOUT-to-CP edge",
+			ctable.isCTableReshapeRewriteApplicable(ExecType.CP,
+				Ctable.OperationTypes.CTABLE_TRANSFORM_SCALAR_WEIGHT));
 	}
 
 	@Test

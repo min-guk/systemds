@@ -60,6 +60,7 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlannerCandidateSpaceAudit;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.parser.ParseException;
@@ -1409,8 +1410,26 @@ public abstract class AutomatedTestBase {
 		String errMessage, int maxSparkInst) {
 		try{
 			final List<ByteArrayOutputStream> out = new ArrayList<>();
+			final String plannerAuditContext = PlannerCandidateSpaceAudit.isEnabled()
+				? PlannerCandidateSpaceAudit.captureCurrentTestContext() : null;
 			Thread t = new Thread(
-				() -> out.add(runTestWithTimeout(newWay, exceptionExpected, expectedException, errMessage, maxSparkInst)),
+				() -> {
+					String priorContext = System.getProperty(PlannerCandidateSpaceAudit.CONTEXT_PROPERTY);
+					try {
+						if(plannerAuditContext != null)
+							System.setProperty(PlannerCandidateSpaceAudit.CONTEXT_PROPERTY,
+								plannerAuditContext);
+						out.add(runTestWithTimeout(newWay, exceptionExpected, expectedException,
+							errMessage, maxSparkInst));
+					}
+					finally {
+						if(priorContext == null)
+							System.clearProperty(PlannerCandidateSpaceAudit.CONTEXT_PROPERTY);
+						else
+							System.setProperty(PlannerCandidateSpaceAudit.CONTEXT_PROPERTY,
+								priorContext);
+					}
+				},
 				"TestRunner_main");
 			Thread.UncaughtExceptionHandler h = new Thread.UncaughtExceptionHandler() {
 				@Override

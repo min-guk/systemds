@@ -211,15 +211,13 @@ public final class FederatedCostModel {
 			MBS_NETWORK_SERDES_BANDWIDTH);
 	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
 			MBS_NETWORK_SERDES_BANDWIDTH);
-	// Native FED/LOUT results are returned by the already-open worker channels in
-	// one FederationMap batch.  Keep their MatrixBlock codec throughput distinct
-	// from the standalone W2C collection calibration: the latter includes
-	// whole-result coordinator materialization and must remain conservative.
+	// Native FED/LOUT results use a distinct response critical path, but the same
+	// worker response codec as directional W2C collection. A dedicated in-band
+	// calibration can override the directional W2C default.
 	private static final double MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
 		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
 			ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
-			MBS_NETWORK_SERDES_BANDWIDTH > 0.0
-				? MBS_NETWORK_SERDES_BANDWIDTH : MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+			MBS_NETWORK_SERDES_BANDWIDTH_W2C);
 	private static final double REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_BYTES =
 		Math.max(0.0, FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
 			ENV_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB,
@@ -479,11 +477,12 @@ public final class FederatedCostModel {
 	 * plans that produce a local matrix result.
 	 *
 	 * <p>The worker compute, result GET, and cleanup requests form one logical FED
-	 * instruction batch. The FED unary already owns the first fixed instruction
-	 * control/round-trip term, so this boundary adds the result payload and only
-	 * the extra fan-in fixed stages beyond the first worker. This mirrors the
-	 * aggregate-unary result contract and avoids charging the first fixed
-	 * latency/control stage twice.</p>
+	 * request/response batch. The ordinary FED execution term therefore owns the
+	 * request's fixed latency and control cost; this {@code FED/LOUT} result term
+	 * owns only the returned payload transfer. Coordinator binding remains part of
+	 * the runtime semantics but has no separately quantified cost here. A later
+	 * standalone FOUT materialization remains a separate request and retains its
+	 * own stage.</p>
 	 */
 	public static double computeNativeFederatedAggBinaryLoutResultCost(Hop hop,
 			FType logicalFType, double outputMemEstimate, int numWorkers,
@@ -625,15 +624,28 @@ public final class FederatedCostModel {
 	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
 			List<FType> inputFTypes, FType logicalFType, double baseSelfCost,
 			double outputMemEstimate, int numWorkers) {
+		return computeMixedFedLocalCost(hop, inputHops, null, inputFTypes, logicalFType,
+			baseSelfCost, outputMemEstimate, numWorkers);
+	}
+
+	/**
+	 * Occurrence-aware variant whose input byte estimates come from the immutable
+	 * whole-program analysis when the compiled HOP still has unresolved dimensions.
+	 * A non-positive or non-finite entry falls back to the ordinary HOP estimate.
+	 */
+	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
+			List<Double> inputMemEstimates, List<FType> inputFTypes, FType logicalFType,
+			double baseSelfCost, double outputMemEstimate, int numWorkers) {
 		if (requiresFederatedAggUnaryLocalAggregation(hop)) {
 			return computeAggregateUnaryLocalAggregationCost("agg-unary-local-aggregation",
 				(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, 0.0);
 		}
 		double wdivmmInputPreparationCost =
-			computeWdivmmInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
+			computeWdivmmInputPreparationCost(hop, inputHops, inputMemEstimates,
+				inputFTypes, numWorkers);
 		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType)) {
 			return computePartialAggregationCost("wdivmm-local-aggregation",
-				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, 0.0, false);
+				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, 0.0);
 		}
 		if (wdivmmInputPreparationCost > 0.0) {
 			return new MixedFedLocalCost("wdivmm-input-preparation",
@@ -641,15 +653,17 @@ public final class FederatedCostModel {
 		}
 		if (requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes)) {
 			double inputPreparationCost =
-				computeAggBinaryRowLeftInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
+				computeAggBinaryRowLeftInputPreparationCost(hop, inputHops,
+					inputMemEstimates, inputFTypes, numWorkers);
 			return new MixedFedLocalCost("aggbinary-rowleft-input-prep",
 				inputPreparationCost, 0.0, 0.0, 0.0);
 		}
 		if (requiresFederatedAggBinaryAddAggregation(hop, inputFTypes)) {
 			double inputPreparationCost =
-				computeAggBinarySlicedInputBroadcastCost(hop, inputHops, inputFTypes, numWorkers);
+				computeAggBinarySlicedInputBroadcastCost(hop, inputHops,
+					inputMemEstimates, inputFTypes, numWorkers);
 			return computePartialAggregationCost("aggbinary-add-aggregation",
-				hop, outputMemEstimate, numWorkers, inputPreparationCost, 0.0, true);
+				hop, outputMemEstimate, numWorkers, inputPreparationCost, 0.0);
 		}
 		return MixedFedLocalCost.none();
 	}
@@ -707,14 +721,22 @@ public final class FederatedCostModel {
 
 	public static double computeAggBinaryRowLeftInputPreparationCost(Hop hop,
 			List<Hop> inputHops, List<FType> inputFTypes, int numWorkers) {
+		return computeAggBinaryRowLeftInputPreparationCost(hop, inputHops, null,
+			inputFTypes, numWorkers);
+	}
+
+	private static double computeAggBinaryRowLeftInputPreparationCost(Hop hop,
+			List<Hop> inputHops, List<Double> inputMemEstimates,
+			List<FType> inputFTypes, int numWorkers) {
 		if (!requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes))
 			return 0.0;
-		return computeFullBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+		return computeFullBroadcastInputCost(inputHopAt(inputHops, 1),
+			inputMemEstimateAt(inputMemEstimates, 1), numWorkers);
 	}
 
 	private static MixedFedLocalCost computePartialAggregationCost(String label, Hop hop,
 			double outputMemEstimate, int numWorkers, double inputPreparationCost,
-			double federatedComputeFloor, boolean fixedResultControlOwnedByFedUnary) {
+			double federatedComputeFloor) {
 		double partialResultMem = outputMemEstimate > 0.0 ? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
 		if (partialResultMem <= 0.0)
 			partialResultMem = getEffectiveUploadMemEstimate(hop);
@@ -722,9 +744,7 @@ public final class FederatedCostModel {
 			return new MixedFedLocalCost(label, inputPreparationCost, 0.0, 0.0, federatedComputeFloor);
 
 		int fanIn = Math.max(1, numWorkers);
-		double partialDownloadCost = fixedResultControlOwnedByFedUnary
-			? computeInBandWorkerResultDownloadCost(partialResultMem, fanIn, true)
-			: computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
+		double partialDownloadCost = computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
 		double coordinatorAggregationCost = computeCoordinatorAggregationCost(hop, partialResultMem, fanIn);
 		double cleanupControlCost = computeLocalAggregationCleanupControlCost(fanIn);
 		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
@@ -812,6 +832,11 @@ public final class FederatedCostModel {
 	 */
 	public static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
 			List<FType> inputFTypes, int numWorkers) {
+		return computeWdivmmInputPreparationCost(hop, inputHops, null, inputFTypes, numWorkers);
+	}
+
+	private static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
+			List<Double> inputMemEstimates, List<FType> inputFTypes, int numWorkers) {
 		if (!(hop instanceof QuaternaryOp))
 			return 0.0;
 		QuaternaryOp quaternaryOp = (QuaternaryOp) hop;
@@ -823,14 +848,18 @@ public final class FederatedCostModel {
 		if (isStrictRowPartition(xType)) {
 			FType uType = typeAt(inputFTypes, 1);
 			if (!isStrictRowPartition(uType))
-				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
-			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 2), numWorkers);
+				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1),
+					inputMemEstimateAt(inputMemEstimates, 1), numWorkers);
+			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 2),
+				inputMemEstimateAt(inputMemEstimates, 2), numWorkers);
 		}
 		else if (xType == FType.COL) {
-			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 1),
+				inputMemEstimateAt(inputMemEstimates, 1), numWorkers);
 			FType vType = typeAt(inputFTypes, 2);
 			if (vType != FType.COL)
-				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 2), numWorkers);
+				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 2),
+					inputMemEstimateAt(inputMemEstimates, 2), numWorkers);
 		}
 		else {
 			return 0.0;
@@ -840,7 +869,8 @@ public final class FederatedCostModel {
 		if (fourth != null && fourth.getDataType() != null && fourth.getDataType().isMatrix()) {
 			FType fourthType = typeAt(inputFTypes, 3);
 			if (fourthType != FType.FULL)
-				cost += computeSlicedBroadcastInputCost(fourth, numWorkers);
+				cost += computeSlicedBroadcastInputCost(fourth,
+					inputMemEstimateAt(inputMemEstimates, 3), numWorkers);
 		}
 		return cost;
 	}
@@ -903,6 +933,13 @@ public final class FederatedCostModel {
 	 */
 	public static double computeAggBinarySlicedInputBroadcastCost(Hop hop, List<Hop> inputHops,
 			List<FType> inputFTypes, int numWorkers) {
+		return computeAggBinarySlicedInputBroadcastCost(hop, inputHops, null,
+			inputFTypes, numWorkers);
+	}
+
+	private static double computeAggBinarySlicedInputBroadcastCost(Hop hop,
+			List<Hop> inputHops, List<Double> inputMemEstimates,
+			List<FType> inputFTypes, int numWorkers) {
 		if (!(hop instanceof AggBinaryOp))
 			return 0.0;
 		AggBinaryOp aggBinaryOp = (AggBinaryOp) hop;
@@ -922,12 +959,14 @@ public final class FederatedCostModel {
 				return 0.0;
 			if (isFederatedFullOrBroadcast(left))
 				return 0.0;
-			return computeSlicedBroadcastInputCost(inputHopAt(inputHops, 0), numWorkers);
+			return computeSlicedBroadcastInputCost(inputHopAt(inputHops, 0),
+				inputMemEstimateAt(inputMemEstimates, 0), numWorkers);
 		}
 		if (left == FType.COL) {
 			if (isFederatedFullOrBroadcast(right))
 				return 0.0;
-			return computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+			return computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1),
+				inputMemEstimateAt(inputMemEstimates, 1), numWorkers);
 		}
 		return 0.0;
 	}
@@ -942,8 +981,21 @@ public final class FederatedCostModel {
 		return inputHops.get(index);
 	}
 
+	private static double inputMemEstimateAt(List<Double> inputMemEstimates, int index) {
+		if(inputMemEstimates == null || index < 0 || index >= inputMemEstimates.size())
+			return Double.NaN;
+		Double estimate = inputMemEstimates.get(index);
+		return estimate == null ? Double.NaN : estimate;
+	}
+
 	private static double computeSlicedBroadcastInputCost(Hop inputHop, int numWorkers) {
-		double memEstimate = getEffectiveOutputMemEstimate(inputHop);
+		return computeSlicedBroadcastInputCost(inputHop, Double.NaN, numWorkers);
+	}
+
+	private static double computeSlicedBroadcastInputCost(Hop inputHop,
+			double occurrenceMemEstimate, int numWorkers) {
+		double memEstimate = Double.isFinite(occurrenceMemEstimate) && occurrenceMemEstimate > 0.0
+			? occurrenceMemEstimate : getEffectiveOutputMemEstimate(inputHop);
 		if (memEstimate <= 0.0)
 			memEstimate = getEffectiveUploadMemEstimate(inputHop);
 		if (memEstimate <= 0.0)
@@ -958,7 +1010,13 @@ public final class FederatedCostModel {
 	}
 
 	private static double computeFullBroadcastInputCost(Hop inputHop, int numWorkers) {
-		double memEstimate = getEffectiveOutputMemEstimate(inputHop);
+		return computeFullBroadcastInputCost(inputHop, Double.NaN, numWorkers);
+	}
+
+	private static double computeFullBroadcastInputCost(Hop inputHop,
+			double occurrenceMemEstimate, int numWorkers) {
+		double memEstimate = Double.isFinite(occurrenceMemEstimate) && occurrenceMemEstimate > 0.0
+			? occurrenceMemEstimate : getEffectiveOutputMemEstimate(inputHop);
 		if (memEstimate <= 0.0)
 			memEstimate = getEffectiveUploadMemEstimate(inputHop);
 		if (memEstimate <= 0.0)

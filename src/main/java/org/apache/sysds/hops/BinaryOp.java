@@ -337,6 +337,12 @@ public class BinaryOp extends MultiThreadedHop {
 			getInput().get(0).constructLops(), 
 			SortKeys.OperationTypes.WithoutWeights, 
 			DataType.MATRIX, ValueType.FP64, et, k );
+		// Quantile lowers one planner operation into a physical sort followed by the
+		// logical pick.  Retain the quantile occurrence on the sort and classify it
+		// explicitly so runtime placement auditing proves, rather than exempts, this
+		// compiler-introduced first stage.
+		sort.setHopID(getHopID());
+		sort.setPlannerLoweringAuxiliaryKind("QUANTILE_SORT");
 		sort.getOutputParameters().setDimensions(
 			getInput().get(0).getDim1(),
 			getInput().get(0).getDim2(),

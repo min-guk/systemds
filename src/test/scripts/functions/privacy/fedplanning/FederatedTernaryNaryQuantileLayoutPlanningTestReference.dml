@@ -1,0 +1,13 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to you under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+X=read($X); Y=read($Y); Z=read($Z); Q=read($Q)
+TerRow=ifelse(X>0.5,Y,Z); TerCol=ifelse(X>0.5,Y,Z)
+AggRow=as.matrix(sum(X*Y*Z)); AggCol=as.matrix(sum(X*Y*Z))
+NaryRow=min(3,X,Y,Z,7); NaryCol=min(3,X,Y,Z,7)
+QRow=as.matrix(quantile(Q,0.5)); QFull=as.matrix(quantile(Q,0.5))
+write(TerRow,$TerRow); write(TerCol,$TerCol); write(AggRow,$AggRow); write(AggCol,$AggCol)
+write(NaryRow,$NaryRow); write(NaryCol,$NaryCol); write(QRow,$QRow); write(QFull,$QFull)

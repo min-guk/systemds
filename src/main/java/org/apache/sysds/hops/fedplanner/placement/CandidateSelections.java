@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -75,13 +76,35 @@ public final class CandidateSelections {
 		return new PartialReachabilityIndex(analysis, authorityGraph, actionUniverse);
 	}
 
+	/**
+	 * Canonical coupling required when candidate-reachability decisions are split
+	 * into independent selector components. A participant may be the candidate
+	 * consumer itself, a physical input producer, a derived-FOUT anchor owner, or
+	 * a recursively forwarded function/transient source. Self edges are omitted.
+	 */
+	public record ComponentDependency(CompiledHopKey participant, CompiledHopKey consumer)
+		implements Comparable<ComponentDependency> {
+		public ComponentDependency {
+			Objects.requireNonNull(participant, "participant");
+			Objects.requireNonNull(consumer, "consumer");
+		}
+
+		@Override
+		public int compareTo(ComponentDependency that) {
+			int participantOrder = participant.compareTo(that.participant);
+			return participantOrder != 0 ? participantOrder : consumer.compareTo(that.consumer);
+		}
+	}
+
 	/** Immutable, allocation-free-on-success partial candidate reachability check. */
 	public static final class PartialReachabilityIndex {
 		private final PlacementAnalysis analysis;
+		private final RelocationSelections.RelocationPrivacyIndex relocationPrivacy;
 		private final List<IndexedConsumer> consumers;
 		private final Map<CompiledHopKey,List<PlacementAnalysis.LogicalFunctionInputFact>>
 			incomingFunctionInputs;
 		private final Map<CompiledHopKey,List<IndexedConsumer>> consumersByDependency;
+		private final List<ComponentDependency> componentDependencies;
 		private final Map<CompiledHopKey,List<RelocationAction>> actionsByConsumer;
 		private final Map<CandidateSelectionReceipt,List<IndexedCandidateAction>>
 			physicalEffectsByReceipt;
@@ -105,6 +128,8 @@ public final class CandidateSelections {
 			Objects.requireNonNull(authorityGraph, "authorityGraph");
 			List<RelocationAction> actions = List.copyOf(
 				Objects.requireNonNull(actionUniverse, "actionUniverse"));
+			this.relocationPrivacy = RelocationSelections.relocationPrivacyIndex(
+				analysis, authorityGraph, actions);
 			Map<CompiledHopKey,List<RelocationAction>> actionsByConsumerMutable =
 				new IdentityHashMap<>();
 			for(RelocationAction action : actions) {
@@ -135,6 +160,8 @@ public final class CandidateSelections {
 					factsByConsumer.computeIfAbsent(fact.key().parentOccurrence(),
 						ignored -> new ArrayList<>()).add(fact);
 			List<IndexedConsumer> indexedConsumers = new ArrayList<>();
+			Map<CandidateSelectionReceipt,List<IndexedCandidateAction>> physicalEffects =
+				new IdentityHashMap<>();
 			for(NeutralPlacementGraph.Node consumer : authorityGraph.decisionNodes()) {
 				List<CandidateRuleFact> facts = factsByConsumer.get(consumer.key());
 				if(facts == null || facts.isEmpty())
@@ -152,8 +179,14 @@ public final class CandidateSelections {
 						PlacementState selected = emission.emissionState().placementState();
 						CandidateSelectionReceipt receipt = analysis.canonicalCandidateReceipt(
 							fact.key(), emission);
+						List<IndexedCandidateAction> rowActions = indexCandidatePhysicalEffects(
+							authorityGraph, receipt, actionsByConsumer.getOrDefault(consumer.key(), List.of()));
+						physicalEffects.put(receipt, rowActions);
 						boolean emissionStructurallyReachable = foutMaterializationActionReachable(
 							authorityGraph, fact, receipt, null, true);
+						boolean relocationAnchorCompatible =
+							RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(
+								actionsByConsumer.getOrDefault(consumer.key(), List.of()), receipt);
 						CompiledHopKey anchorOwner = emission.derivedFoutAction() == null ? null
 							: emission.derivedFoutAction().durableAnchorOwner();
 						FType anchorOwnerType = emission.derivedFoutAction() == null ? null
@@ -166,12 +199,9 @@ public final class CandidateSelections {
 							List<PlacementAnalysis.CompiledInputEdgeFact> inputEdges = edges
 								.getOrDefault(consumer.key(), Map.of()).getOrDefault(position, List.of());
 							final int inputPosition = position;
-							boolean receipted = actions.stream().anyMatch(action ->
-								action.key().materializationFType() == input.fType()
-									&& action.key().targetPlacement().equals(selected)
-									&& action.obligations().stream().anyMatch(obligation ->
-										obligation.consumer() == consumer.key()
-											&& obligation.inputPosition() == inputPosition));
+							List<IndexedCandidateAction> supports = rowActions.stream().filter(action ->
+								action.effects().stream().anyMatch(effect ->
+									effect.demand().inputPosition() == inputPosition)).toList();
 							boolean directWhenUnassigned = presentInputs == 1 && inputEdges.size() == 1
 								&& analysis.graph().node(inputEdges.get(0).producer()).orElseThrow()
 									.legalAlternatives().stream().anyMatch(state ->
@@ -179,12 +209,15 @@ public final class CandidateSelections {
 											== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 											&& state.fType() == input.fType());
 							inputs.add(new IndexedInput(input.fType(), List.copyOf(inputEdges),
-								receipted, presentInputs == 1, presentPhysicalInputs == 1,
+								supports, presentInputs == 1, presentPhysicalInputs == 1,
 								directWhenUnassigned));
 						}
 						rows.add(new IndexedRow(receipt, selected, emissionStructurallyReachable,
+							relocationAnchorCompatible,
 							anchorOwner, anchorOwnerType,
-							analysis.isDmlFunctionCallBoundary(consumer.key()), List.copyOf(inputs)));
+							analysis.isDmlFunctionCallBoundary(consumer.key()),
+							rowActions.stream().anyMatch(action ->
+								relocationPrivacy.requiresOriginResidency(action.action())), List.copyOf(inputs)));
 					}
 				}
 				// Canonicalize once while constructing the immutable index. Complete
@@ -212,32 +245,42 @@ public final class CandidateSelections {
 					List.copyOf(rowsBySelectedState)));
 			}
 			this.consumers = List.copyOf(indexedConsumers);
-			Map<CandidateSelectionReceipt,List<IndexedCandidateAction>> physicalEffects =
-				new IdentityHashMap<>();
-			for(IndexedConsumer consumer : this.consumers)
-				for(IndexedRow row : consumer.rows())
-					physicalEffects.put(row.receipt(), indexCandidatePhysicalEffects(
-						authorityGraph, row.receipt(),
-						actionsByConsumer.getOrDefault(consumer.key(), List.of())));
 			this.physicalEffectsByReceipt = Collections.unmodifiableMap(physicalEffects);
 			Map<CompiledHopKey,List<IndexedConsumer>> dependencies = new IdentityHashMap<>();
+			Set<ComponentDependency> componentDependencies = new TreeSet<>();
 			for(IndexedConsumer consumer : this.consumers) {
 				Set<CompiledHopKey> keys = Collections.newSetFromMap(new IdentityHashMap<>());
 				keys.add(consumer.key());
 				for(IndexedRow row : consumer.rows()) {
 					if(row.anchorOwner() != null)
 						keys.add(row.anchorOwner());
-					for(IndexedInput input : row.inputs())
+					for(IndexedInput input : row.inputs()) {
+						for(IndexedCandidateAction support : input.relocationSupports())
+							keys.addAll(support.sources());
 						for(PlacementAnalysis.CompiledInputEdgeFact edge : input.edges()) {
 							keys.add(edge.producer());
 							collectParametricDependencies(edge.producer(), keys,
 								Collections.newSetFromMap(new IdentityHashMap<>()));
 						}
+					}
 				}
-				for(CompiledHopKey key : keys)
+				for(CompiledHopKey key : keys) {
 					dependencies.computeIfAbsent(key, ignored -> new ArrayList<>()).add(consumer);
+					if(!key.equals(consumer.key()))
+						componentDependencies.add(new ComponentDependency(key, consumer.key()));
+				}
 			}
 			this.consumersByDependency = immutableIdentityLists(dependencies);
+			this.componentDependencies = List.copyOf(componentDependencies);
+		}
+
+		/**
+		 * Returns the exact immutable dependency closure used by partial candidate
+		 * reachability. Selectors must use these facts when partitioning independent
+		 * components instead of reconstructing a weaker direct-input approximation.
+		 */
+		public List<ComponentDependency> componentDependencies() {
+			return componentDependencies;
 		}
 
 		/**
@@ -449,7 +492,11 @@ public final class CandidateSelections {
 						reachable.add(row.receipt());
 				if(!activeRows.isEmpty() && reachable.isEmpty())
 					throw new IllegalStateException(
-						"Active exact candidate has no source-reachable row");
+						"Active exact candidate has no source-reachable row: "
+							+ consumer.key().normalizedSignature() + " selected=" + selected
+							+ " rows=" + activeRows.stream()
+								.map(row -> rowReachabilityDetails(row, assignment))
+								.toList());
 				if(reachable.isEmpty())
 					continue;
 				boolean maximize = selected.execType() == ExecType.FED;
@@ -496,7 +543,12 @@ public final class CandidateSelections {
 				}
 				if(active && reachable.isEmpty())
 					throw new IllegalStateException(
-						"Active exact candidate has no source-reachable row");
+						"Active exact candidate has no source-reachable row: "
+							+ consumer.key().normalizedSignature() + " selected=" + selected
+							+ " possible=" + possible + " rows="
+							+ possible.stream().flatMap(state -> consumer.rowsFor(state).stream())
+								.map(row -> rowReachabilityDetails(row, partialAssignment))
+								.toList());
 				if(!reachable.isEmpty())
 					result.put(consumer.key(), List.copyOf(reachable));
 			}
@@ -511,7 +563,7 @@ public final class CandidateSelections {
 		private boolean rowReachable(IndexedRow row,
 			Map<CompiledHopKey,PlacementState> partialAssignment, boolean allowUnassigned,
 			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
-			if(!row.emissionStructurallyReachable())
+			if(!row.emissionStructurallyReachable() || !row.relocationAnchorCompatible())
 				return false;
 			if(row.anchorOwner() != null) {
 				PlacementState owner = partialAssignment.get(row.anchorOwner());
@@ -528,13 +580,27 @@ public final class CandidateSelections {
 			}
 			if(row.functionBoundary() || row.selectedConsumer().execType() != ExecType.FED)
 				return true;
+			List<RelocationAction> safeActions = row.hasProtectedRelocations() ? new ArrayList<>() : null;
 			for(IndexedInput input : row.inputs()) {
 				if(input.edges().isEmpty())
 					continue;
 				if(input.edges().size() != 1)
 					return false;
-				if(input.receipted())
+				if(!input.relocationSupports().isEmpty()) {
+					boolean supported = false;
+					for(IndexedCandidateAction support : input.relocationSupports())
+						if(relocationCanStillBeSafe(support, partialAssignment,
+							allowUnassigned, remainingStateDomains)) {
+							supported = true;
+							if(safeActions != null)
+								safeActions.add(support.action());
+						}
+					// A rejected anchored demand must not fall through to mere FType
+					// equality. That would hide a forbidden cross-pool materialization.
+					if(!supported)
+						return false;
 					continue;
+				}
 				CompiledHopKey producer = input.edges().get(0).producer();
 				boolean direct = false;
 				if(input.singlePresentInput()) {
@@ -557,7 +623,47 @@ public final class CandidateSelections {
 				if(!direct && !formal)
 					return false;
 			}
-			return true;
+			return safeActions == null || RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(
+				safeActions, row.receipt());
+		}
+
+		private boolean relocationCanStillBeSafe(IndexedCandidateAction support,
+			Map<CompiledHopKey,PlacementState> assignment, boolean allowUnassigned,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
+			// The indexed support already matches the proposed consumer row. Unlike
+			// graph.isRelocationActive, this does not interpret an unassigned consumer
+			// as absence of demand. Only an exact source/suppression can make it direct.
+			if(relocationPrivacy.isPrivacySafe(support.action(), support.requiresEmission(assignment)))
+				return true;
+			if(!allowUnassigned)
+				return false;
+			for(CompiledHopKey source : support.sources()) {
+				if(assignment.get(source) != null)
+					continue;
+				List<PlacementState> domain = remainingStateDomains.get(source);
+				if(domain == null)
+					domain = analysis.graph().node(source).orElseThrow().legalAlternatives();
+				for(PlacementState state : domain)
+					if(support.suppressesEmission(source, state))
+						return true;
+			}
+			return false;
+		}
+
+		private String rowReachabilityDetails(IndexedRow row,
+			Map<CompiledHopKey,PlacementState> assignment) {
+			List<String> inputs = new ArrayList<>();
+			for(IndexedInput input : row.inputs())
+				inputs.add("required=" + input.required() + ",receipted=" + !input.relocationSupports().isEmpty()
+					+ ",edges=" + input.edges().stream().map(edge -> edge.producer().normalizedSignature()
+						+ "=>" + assignment.get(edge.producer())).toList());
+			return row.receipt().normalizedSignature()
+				+ "{structural=" + row.emissionStructurallyReachable()
+				+ ",anchorCompatible=" + row.relocationAnchorCompatible()
+				+ ",anchorOwner=" + (row.anchorOwner() == null ? "none"
+					: row.anchorOwner().normalizedSignature() + "=>" + assignment.get(row.anchorOwner()))
+				+ ",anchorOwnerType=" + row.anchorOwnerType()
+				+ ",inputs=" + inputs + '}';
 		}
 
 		private boolean parametricFormalChainFoutCompatible(CompiledHopKey formal, FType required,
@@ -616,11 +722,12 @@ public final class CandidateSelections {
 	}
 	private record IndexedStateRows(PlacementState state, List<IndexedRow> rows) { }
 	private record IndexedRow(CandidateSelectionReceipt receipt, PlacementState selectedConsumer,
-		boolean emissionStructurallyReachable,
+		boolean emissionStructurallyReachable, boolean relocationAnchorCompatible,
 		CompiledHopKey anchorOwner, FType anchorOwnerType, boolean functionBoundary,
+		boolean hasProtectedRelocations,
 		List<IndexedInput> inputs) { }
 	private record IndexedInput(FType required,
-		List<PlacementAnalysis.CompiledInputEdgeFact> edges, boolean receipted,
+		List<PlacementAnalysis.CompiledInputEdgeFact> edges, List<IndexedCandidateAction> relocationSupports,
 		boolean singlePresentInput, boolean singlePresentPhysicalInput,
 		boolean directWhenUnassigned) { }
 	private record CandidateRelocationEffectSeed(RelocationDemandKey demand,
@@ -632,15 +739,19 @@ public final class CandidateSelections {
 		private boolean requiresEmission(Map<CompiledHopKey,PlacementState> assignment) {
 			for(CompiledHopKey source : sources) {
 				PlacementState selected = assignment.get(source);
-				if(selected != null && action.directSourcePlacements().contains(selected))
+				if(selected != null && suppressesEmission(source, selected))
 					return false;
-				if(selected == null)
-					continue;
-				for(DerivedSuppression derived : derivedSuppressions)
-					if(derived.source() == source && selected == derived.target())
-						return false;
 			}
 			return true;
+		}
+
+		private boolean suppressesEmission(CompiledHopKey source, PlacementState selected) {
+			if(action.directSourcePlacements().contains(selected))
+				return true;
+			for(DerivedSuppression derived : derivedSuppressions)
+				if(derived.source() == source && selected == derived.target())
+					return true;
+			return false;
 		}
 	}
 
@@ -920,14 +1031,36 @@ public final class CandidateSelections {
 		Map<CompiledHopKey,PlacementState> assignment,
 		RelocationSelections.CanonicalOrderIndex relocationOrder,
 		PartialReachabilityIndex reachabilityIndex) {
+		List<RelocationAction> actions = List.copyOf(actionUniverse);
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> byConsumer =
 			reachabilityIndex == null
 				? materializationMaximalVariantsForCompleteAssignment(
-					analysis, authorityGraph, actionUniverse, assignment)
-				: materializationMaximalVariants(analysis, authorityGraph, actionUniverse,
+					analysis, authorityGraph, actions, assignment)
+				: materializationMaximalVariants(analysis, authorityGraph, actions,
 					assignment, reachabilityIndex
 						.materializationObjectiveVariantsForCompleteAssignment(assignment),
 					reachabilityIndex);
+		return selectMaterializationMaximalPrevalidated(analysis, authorityGraph, actions,
+			assignment, relocationOrder, reachabilityIndex, byConsumer);
+	}
+
+	/**
+	 * Completes an already validated materialization-maximal row domain. Keeping this
+	 * boundary separate makes the exact factor solver independently testable without
+	 * changing candidate feasibility or pruning.
+	 */
+	static Selection selectMaterializationMaximalPrevalidated(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, List<RelocationAction> actions,
+		Map<CompiledHopKey,PlacementState> assignment,
+		RelocationSelections.CanonicalOrderIndex relocationOrder,
+		PartialReachabilityIndex reachabilityIndex,
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> byConsumer) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
+		Objects.requireNonNull(actions, "actions");
+		Objects.requireNonNull(assignment, "assignment");
+		Objects.requireNonNull(relocationOrder, "relocationOrder");
+		Objects.requireNonNull(byConsumer, "byConsumer");
 		// feasibleVariants projects the graph's constructor-canonical decision-node
 		// order into a LinkedHashMap, and materializationMaximalVariants preserves it.
 		// Reuse that order instead of repeatedly rebuilding deeply nested key signatures
@@ -939,8 +1072,8 @@ public final class CandidateSelections {
 		if(reachabilityIndex == null)
 			Collections.sort(consumers);
 		consumers = List.copyOf(consumers);
-		Search search = new Search(analysis, authorityGraph, List.copyOf(actionUniverse), assignment,
-			consumers, byConsumer, true, relocationOrder, reachabilityIndex);
+		Search search = new Search(analysis, authorityGraph, actions, assignment,
+			consumers, byConsumer, relocationOrder, reachabilityIndex);
 		search.solve();
 		Selection result = search.requireBest();
 		if(reachabilityIndex != null)
@@ -1134,7 +1267,7 @@ public final class CandidateSelections {
 			List.copyOf(options));
 	}
 
-	private static boolean actionMatchesSelectedCandidate(RelocationAction action,
+	static boolean actionMatchesSelectedCandidate(RelocationAction action,
 		PlacementIdentity.ObligationKey obligation, CandidateSelectionReceipt selected) {
 		if(!selected.emission().emissionState().placementState()
 			.equals(obligation.requiredPlacement())
@@ -1277,6 +1410,11 @@ public final class CandidateSelections {
 	private static boolean receiptReachable(PlacementAnalysis analysis,
 		Collection<RelocationAction> actions, Map<CompiledHopKey,PlacementState> assignment,
 		CandidateSelectionReceipt receipt, boolean allowUnassigned) {
+		// Exact relocation selection binds every materialized input of one FED
+		// consumer to one physical worker-pool layout. Reject a row before any
+		// selector can commit it when its relocation demands have no common pool.
+		if(!RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(actions, receipt))
+			return false;
 		// See candidateRowCanStillBeReachable: function arguments are forwarded by
 		// the compiler-owned actual/formal boundary, not consumed by this Hop.
 		if(analysis.isDmlFunctionCallBoundary(receipt.rule().parentOccurrence()))
@@ -1290,6 +1428,13 @@ public final class CandidateSelections {
 		if(latentWdivmm != null && latentWdivmm.partitionedInputFType() != null
 			&& !latentWdivmmRuntimeInputReachable(analysis, latentWdivmm,
 				assignment, allowUnassigned))
+			return false;
+		PlacementCostSemantics.DirectWdivmmRuntimeFact directWdivmm =
+			PlacementCostSemantics.directWdivmmRuntimeFact(
+				analysis, receipt.rule().parentOccurrence());
+		if(directWdivmm != null && !directWdivmmRuntimeInputReachable(analysis,
+			directWdivmm, receipt.emission(), assignment,
+			allowUnassigned))
 			return false;
 		for(int position = 0; position < receipt.rule().orderedInputs().size(); position++) {
 			final int inputPosition = position;
@@ -1342,6 +1487,26 @@ public final class CandidateSelections {
 			.anyMatch(state -> state.output()
 				== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 				&& state.fType() == runtime.partitionedInputFType());
+	}
+
+	private static boolean directWdivmmRuntimeInputReachable(PlacementAnalysis analysis,
+		PlacementCostSemantics.DirectWdivmmRuntimeFact runtime,
+		PlacementAnalysis.CandidateEmissionFact ownerEmission,
+		Map<CompiledHopKey,PlacementState> assignment, boolean allowUnassigned) {
+		PlacementState owner = ownerEmission.emissionState().placementState();
+		PlacementState selected = assignment.get(runtime.weights());
+		if(selected != null)
+			return PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+				runtime, owner, ownerEmission.executionFType(),
+				ownerEmission.emissionState().derivedFedFout(), selected);
+		if(owner.execType() != ExecType.FED)
+			return owner.execType() == ExecType.CP;
+		if(!allowUnassigned)
+			return false;
+		return analysis.graph().node(runtime.weights()).orElseThrow().legalAlternatives().stream()
+			.anyMatch(state -> PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+				runtime, owner, ownerEmission.executionFType(),
+				ownerEmission.emissionState().derivedFedFout(), state));
 	}
 
 	static boolean derivedFoutActionReachable(NeutralPlacementGraph graph,
@@ -1526,13 +1691,9 @@ public final class CandidateSelections {
 	private static final class Search {
 		private final long searchId;
 		private final PlacementAnalysis analysis;
-		private final NeutralPlacementGraph authorityGraph;
-		private final List<RelocationAction> actions;
 		private final Map<CompiledHopKey,PlacementState> assignment;
 		private final List<CompiledHopKey> consumers;
 		private final Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants;
-		private final boolean maximizeMaterialization;
-		private final RelocationSelections.CanonicalOrderIndex relocationOrder;
 		private final RelocationSelections.CandidateProblemIndex relocationProblems;
 		private final RelocationSelections.ExactEmissionScorer relocationScorer;
 		private final LocalMaterializationSelections.ExactPhysicalEmissionScorer
@@ -1540,6 +1701,7 @@ public final class CandidateSelections {
 		private final int physicalEmissionLowerBound;
 		private final List<CompiledHopKey> fixedConsumers;
 		private final List<CompiledHopKey> variableConsumers;
+		private final List<List<CompiledHopKey>> interactionComponents;
 		private final int materializedInputCount;
 		private final Map<CompiledHopKey,CandidateSelectionReceipt> selectedByConsumer =
 			new IdentityHashMap<>();
@@ -1562,7 +1724,6 @@ public final class CandidateSelections {
 		private Selection best;
 		private boolean bestCanonicalized;
 		private int bestPhysicalEmissionCount = Integer.MAX_VALUE;
-		private boolean optimumReached;
 		private long evaluatedLeaves;
 		private long incumbentMaterializations;
 
@@ -1570,18 +1731,14 @@ public final class CandidateSelections {
 			List<RelocationAction> actions,
 			Map<CompiledHopKey,PlacementState> assignment, List<CompiledHopKey> consumers,
 			Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants,
-			boolean maximizeMaterialization,
 			RelocationSelections.CanonicalOrderIndex relocationOrder,
 			PartialReachabilityIndex reachabilityIndex) {
 			this.analysis = analysis;
 			this.searchId = EXACT_SEARCH_IDS.incrementAndGet();
-			this.authorityGraph = authorityGraph;
-			this.actions = actions;
 			this.assignment = assignment;
 			this.consumers = consumers;
 			this.variants = variants;
-			this.maximizeMaterialization = maximizeMaterialization;
-			this.relocationOrder = Objects.requireNonNull(relocationOrder, "relocationOrder");
+			Objects.requireNonNull(relocationOrder, "relocationOrder");
 			List<CandidateSelectionReceipt> candidateUniverse = variants.values().stream()
 				.flatMap(Collection::stream).toList();
 			this.relocationProblems = RelocationSelections.candidateProblemIndex(
@@ -1651,6 +1808,7 @@ public final class CandidateSelections {
 			}
 			this.relocationScoreCache = encodable && effectProduct < rawProduct
 				? new HashMap<>() : null;
+			this.interactionComponents = exactInteractionComponents();
 			if(FederatedPlannerTrace.isEnabled()
 				&& (searchId <= 4 || (searchId & (searchId - 1L)) == 0L)) {
 				long product = 1L;
@@ -1663,17 +1821,42 @@ public final class CandidateSelections {
 				FederatedPlannerTrace.logGlobal("Candidate-Search-Start",
 					"id=" + searchId + " consumers=" + consumers.size()
 						+ " product=" + product + " lowerBound=" + physicalEmissionLowerBound
-						+ " domains=" + domainSizes);
+						+ " domains=" + domainSizes + " components="
+						+ interactionComponents.stream().map(this::componentProduct).toList());
 			}
+		}
+
+		private long componentProduct(List<CompiledHopKey> component) {
+			long product = 1;
+			for(CompiledHopKey consumer : component)
+				product = saturatedProduct(product, variants.get(consumer).size());
+			return product;
 		}
 
 		private void solve() {
 			for(CompiledHopKey consumer : fixedConsumers)
 				push(consumer, variants.get(consumer).get(0));
+			List<CompiledHopKey> selectedVariables = new ArrayList<>(variableConsumers.size());
 			try {
-				solveVariable(0);
+				for(List<CompiledHopKey> component : interactionComponents) {
+					if(relocationScoreCache != null)
+						relocationScoreCache.clear();
+					ComponentSearch componentSearch = new ComponentSearch(component);
+					componentSearch.solve(0);
+					List<CandidateSelectionReceipt> winner = componentSearch.requireBest();
+					for(int index = 0; index < component.size(); index++) {
+						CompiledHopKey consumer = component.get(index);
+						push(consumer, winner.get(index));
+						selectedVariables.add(consumer);
+					}
+				}
+				materializeBest();
 			}
 			finally {
+				for(int index = selectedVariables.size() - 1; index >= 0; index--) {
+					CompiledHopKey consumer = selectedVariables.get(index);
+					pop(consumer, selectedByConsumer.get(consumer));
+				}
 				for(int index = fixedConsumers.size() - 1; index >= 0; index--) {
 					CompiledHopKey consumer = fixedConsumers.get(index);
 					pop(consumer, variants.get(consumer).get(0));
@@ -1681,14 +1864,49 @@ public final class CandidateSelections {
 			}
 		}
 
-		private void solveVariable(int index) {
-			if(optimumReached || relocationScorer.hasAnchorConflict())
-				return;
-			if(index == variableConsumers.size()) {
-				// Search order is deterministic but is not necessarily the public receipt
-				// order because normalized identities use length-prefixed fields. Preserve
-				// this allocation-free internal order; the non-indexed public boundary
-				// canonicalizes the single winning result once.
+		private void materializeBest() {
+			if(relocationScorer.hasAnchorConflict())
+				throw new IllegalStateException(
+					"Exact component candidate search retained incompatible relocation anchors");
+			int relocationMaterializations = relocationScorer.minimumPhysicalEmissionCount();
+			if(relocationMaterializations == Integer.MAX_VALUE)
+				throw new IllegalStateException(
+					"Exact component candidate search has no relocation completion");
+			int localMaterializations = localMaterializationScorer.physicalEmissionCount();
+			bestPhysicalEmissionCount = Math.addExact(Math.addExact(relocationMaterializations,
+				localMaterializations), foutEmissionCount);
+			best = new Selection(selectedInConsumerOrder(), List.of(), List.of(),
+				materializedInputCount, relocationMaterializations, localMaterializations,
+				foutEmissionCount);
+		}
+
+		/**
+		 * Solves one connected factor component exactly. Components remain selected
+		 * after they are solved; because no later component touches any of their
+		 * physical-emission or feasibility factors, those contributions are constant
+		 * while every later component is optimized.
+		 */
+		private final class ComponentSearch {
+			private final List<CompiledHopKey> component;
+			private List<CandidateSelectionReceipt> bestRows;
+			private int bestPhysicalEmissionCount = Integer.MAX_VALUE;
+
+			private ComponentSearch(List<CompiledHopKey> component) {
+				this.component = component;
+			}
+
+			private void solve(int index) {
+				if(relocationScorer.hasAnchorConflict())
+					return;
+				if(index < component.size()) {
+					CompiledHopKey consumer = component.get(index);
+					for(CandidateSelectionReceipt receipt : variants.get(consumer)) {
+						push(consumer, receipt);
+						solve(index + 1);
+						pop(consumer, receipt);
+					}
+					return;
+				}
 				evaluatedLeaves++;
 				Integer cachedRelocation = relocationScoreCache == null ? null
 					: relocationScoreCache.get(currentRelocationEffectKey);
@@ -1705,35 +1923,116 @@ public final class CandidateSelections {
 				}
 				if(relocationMaterializations == Integer.MAX_VALUE)
 					return;
-				boolean potentiallyImproving = canImprove(materializedInputCount,
-					Math.addExact(relocationMaterializations, foutEmissionCount));
-				if(!potentiallyImproving)
-					return;
 				int localMaterializations = localMaterializationScorer.physicalEmissionCount();
 				int physicalEmissions = Math.addExact(Math.addExact(relocationMaterializations,
 					localMaterializations), foutEmissionCount);
-				potentiallyImproving = canImprove(materializedInputCount, physicalEmissions);
-				if(!potentiallyImproving)
-					return;
-				incumbentMaterializations++;
-				List<CandidateSelectionReceipt> selected = selectedInConsumerOrder();
-				// Candidate ordering and the objective require only exact physical counts.
-				// Reconstructing canonical choice/action receipts for every improving leaf
-				// repeats the same relocation sort/search inside the outer exponential
-				// placement search.  Defer that independent certificate to the one final
-				// winner in requireBest(); no candidate or objective value is removed.
-				Selection candidate = new Selection(selected, List.of(), List.of(), materializedInputCount,
-					relocationMaterializations, localMaterializations,
-					foutEmissionCount);
-				consider(candidate, physicalEmissions);
+				List<CandidateSelectionReceipt> rows = selectedComponentRows(component);
+				if(physicalEmissions < bestPhysicalEmissionCount
+					|| physicalEmissions == bestPhysicalEmissionCount
+						&& compareComponentRows(rows, bestRows) < 0) {
+					bestPhysicalEmissionCount = physicalEmissions;
+					bestRows = rows;
+					incumbentMaterializations++;
+				}
+			}
+
+			private List<CandidateSelectionReceipt> requireBest() {
+				if(bestRows == null)
+					throw new IllegalStateException(
+						"Candidate interaction component has no exact legal assignment");
+				return bestRows;
+			}
+		}
+
+		private List<List<CompiledHopKey>> exactInteractionComponents() {
+			int size = variableConsumers.size();
+			int[] parent = new int[size];
+			for(int index = 0; index < size; index++)
+				parent[index] = index;
+			Map<Long,Integer> relocationOwners = new HashMap<>();
+			Map<Integer,Integer> localOwners = new HashMap<>();
+			Map<Integer,Integer> foutOwners = new HashMap<>();
+			for(int consumerIndex = 0; consumerIndex < size; consumerIndex++) {
+				CompiledHopKey consumer = variableConsumers.get(consumerIndex);
+				for(CandidateSelectionReceipt receipt : variants.get(consumer)) {
+					for(long token : relocationProblems.exactInteractionTokens(receipt))
+						unionWithOwner(parent, relocationOwners, token, consumerIndex);
+					for(int producer : localMaterializationScorer
+						.exactInteractionProducerIds(receipt))
+						unionWithOwner(parent, localOwners, producer, consumerIndex);
+					Integer fout = foutEmissionIds.get(receipt);
+					if(fout != null)
+						unionWithOwner(parent, foutOwners, fout, consumerIndex);
+				}
+			}
+			Map<Integer,List<CompiledHopKey>> byRoot = new LinkedHashMap<>();
+			for(int index = 0; index < size; index++)
+				byRoot.computeIfAbsent(find(parent, index), ignored -> new ArrayList<>())
+					.add(variableConsumers.get(index));
+			return byRoot.values().stream().map(List::copyOf).toList();
+		}
+
+		private static <T> void unionWithOwner(int[] parent, Map<T,Integer> owners,
+			T factor, int consumer) {
+			Integer owner = owners.putIfAbsent(factor, consumer);
+			if(owner != null)
+				union(parent, owner, consumer);
+		}
+
+		private static int find(int[] parent, int node) {
+			int root = node;
+			while(parent[root] != root)
+				root = parent[root];
+			while(parent[node] != node) {
+				int next = parent[node];
+				parent[node] = root;
+				node = next;
+			}
+			return root;
+		}
+
+		private static void union(int[] parent, int left, int right) {
+			int leftRoot = find(parent, left);
+			int rightRoot = find(parent, right);
+			if(leftRoot == rightRoot)
 				return;
+			if(leftRoot < rightRoot)
+				parent[rightRoot] = leftRoot;
+			else
+				parent[leftRoot] = rightRoot;
+		}
+
+		private List<CandidateSelectionReceipt> selectedComponentRows(
+			List<CompiledHopKey> component) {
+			List<CandidateSelectionReceipt> selected = new ArrayList<>(component.size());
+			for(CompiledHopKey consumer : component) {
+				CandidateSelectionReceipt receipt = selectedByConsumer.get(consumer);
+				if(receipt == null)
+					throw new IllegalStateException(
+						"Candidate component search has an unselected consumer");
+				selected.add(receipt);
 			}
-			CompiledHopKey consumer = variableConsumers.get(index);
-			for(CandidateSelectionReceipt receipt : variants.get(consumer)) {
-				push(consumer, receipt);
-				solveVariable(index + 1);
-				pop(consumer, receipt);
+			return List.copyOf(selected);
+		}
+
+		private int compareComponentRows(List<CandidateSelectionReceipt> left,
+			List<CandidateSelectionReceipt> right) {
+			if(right == null)
+				return -1;
+			if(left.size() != right.size())
+				throw new IllegalStateException(
+					"Candidate component selections cover different consumers");
+			for(int index = 0; index < left.size(); index++) {
+				CandidateSelectionReceipt leftReceipt = left.get(index);
+				CandidateSelectionReceipt rightReceipt = right.get(index);
+				if(leftReceipt == rightReceipt)
+					continue;
+				int comparison = Integer.compare(candidateRanks.get(leftReceipt),
+					candidateRanks.get(rightReceipt));
+				if(comparison != 0)
+					return comparison;
 			}
+			return 0;
 		}
 
 		private void push(CompiledHopKey consumer, CandidateSelectionReceipt receipt) {
@@ -1780,44 +2079,6 @@ public final class CandidateSelections {
 			return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
 		}
 
-		private boolean canImprove(int materialized, int physicalEmissions) {
-			if(best == null)
-				return true;
-			if(maximizeMaterialization) {
-				int materialization = Integer.compare(materialized, best.materializedInputCount());
-				if(materialization != 0)
-					return materialization > 0;
-			}
-			int emitted = Integer.compare(physicalEmissions, bestPhysicalEmissionCount);
-			if(emitted != 0)
-				return emitted < 0;
-			// Before local materialization is counted, equality is a lower bound, but
-			// local cost is non-negative. Therefore an equal, canonical-worse row cannot
-			// improve the incumbent even if its exact local cost is zero.
-			return compareCurrentRowsToBest() < 0;
-		}
-
-		private int compareCurrentRowsToBest() {
-			if(best == null)
-				throw new IllegalStateException("Candidate row comparison requires an incumbent");
-			List<CandidateSelectionReceipt> incumbent = best.candidates();
-			if(incumbent.size() != consumers.size())
-				throw new IllegalStateException("Incumbent candidate rows do not cover every consumer");
-			for(int index = 0; index < consumers.size(); index++) {
-				CandidateSelectionReceipt selected = selectedByConsumer.get(consumers.get(index));
-				if(selected == null)
-					throw new IllegalStateException("Candidate row search has an unselected consumer");
-				CandidateSelectionReceipt previous = incumbent.get(index);
-				if(selected == previous)
-					continue;
-				int comparison = Integer.compare(candidateRanks.get(selected),
-					candidateRanks.get(previous));
-				if(comparison != 0)
-					return comparison;
-			}
-			return 0;
-		}
-
 		private List<CandidateSelectionReceipt> selectedInConsumerOrder() {
 			List<CandidateSelectionReceipt> selected = new ArrayList<>(consumers.size());
 			for(CompiledHopKey consumer : consumers) {
@@ -1827,68 +2088,6 @@ public final class CandidateSelections {
 				selected.add(receipt);
 			}
 			return List.copyOf(selected);
-		}
-
-		private void consider(Selection candidate, int physicalEmissionCount) {
-			if(best == null) {
-				best = candidate;
-				bestPhysicalEmissionCount = physicalEmissionCount;
-				if(FederatedPlannerTrace.isEnabled()
-					&& (searchId <= 4 || (searchId & (searchId - 1L)) == 0L))
-					FederatedPlannerTrace.logGlobal("Candidate-Search-First",
-						"id=" + searchId + " physical=" + physicalEmissionCount
-							+ " relocation=" + candidate.relocationPhysicalEmissionCount()
-							+ " local=" + candidate.localMaterializationActionCount()
-							+ " fout=" + candidate.foutMaterializationActionCount());
-				optimumReached = physicalEmissionCount == physicalEmissionLowerBound;
-				return;
-			}
-			if(maximizeMaterialization) {
-				int materialization = Integer.compare(candidate.materializedInputCount(),
-					best.materializedInputCount());
-				if(materialization != 0) {
-					if(materialization > 0) {
-						best = candidate;
-						bestPhysicalEmissionCount = physicalEmissionCount;
-						optimumReached = physicalEmissionCount == physicalEmissionLowerBound;
-					}
-					return;
-				}
-			}
-			int emitted = Integer.compare(physicalEmissionCount, bestPhysicalEmissionCount);
-			if(emitted != 0) {
-				if(emitted < 0) {
-					best = candidate;
-					bestPhysicalEmissionCount = physicalEmissionCount;
-					optimumReached = physicalEmissionCount == physicalEmissionLowerBound;
-				}
-				return;
-			}
-			if(compareCandidateRows(candidate.candidates(), best.candidates()) < 0) {
-				best = candidate;
-				bestPhysicalEmissionCount = physicalEmissionCount;
-			}
-			optimumReached = bestPhysicalEmissionCount == physicalEmissionLowerBound;
-		}
-
-		private int compareCandidateRows(List<CandidateSelectionReceipt> left,
-			List<CandidateSelectionReceipt> right) {
-			if(left.size() != right.size())
-				throw new IllegalStateException("Candidate selections cover different consumers");
-			for(int index = 0; index < left.size(); index++) {
-				CandidateSelectionReceipt leftReceipt = left.get(index);
-				CandidateSelectionReceipt rightReceipt = right.get(index);
-				if(leftReceipt == rightReceipt)
-					continue;
-				Integer leftRank = candidateRanks.get(leftReceipt);
-				Integer rightRank = candidateRanks.get(rightReceipt);
-				if(leftRank == null || rightRank == null)
-					throw new IllegalStateException("Candidate selection is outside its canonical row domain");
-				int comparison = Integer.compare(leftRank, rightRank);
-				if(comparison != 0)
-					return comparison;
-			}
-			return 0;
 		}
 
 		private Selection requireBest() {

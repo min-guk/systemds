@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -62,11 +63,15 @@ public final class LocalMaterializationSelections {
 		Set<CompiledHopKey> materialized = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(PlacementAnalysis.CompiledInputEdgeFact edge :
 			analysis.compiledInputEdgesInCanonicalOrder()) {
-			if(!eligible.contains(edge.producer()) || analysis.isDmlFunctionCallBoundary(edge.consumer()))
+			if(!eligible.contains(edge.producer()) || isDmlFunctionCallPlaceholder(analysis, edge.consumer()))
 				continue;
 			if(requiresLocalInput(analysis, edge, selected.get(edge.consumer()),
-				candidatesByConsumer.get(edge.consumer())))
+				candidatesByConsumer.get(edge.consumer()))) {
+				if(requiresOriginResidency(analysis, edge.producer()))
+					throw new IllegalStateException(
+						"Origin-bound source cannot be materialized on the coordinator");
 				materialized.add(edge.producer());
+			}
 		}
 		for(PlacementAnalysis.LogicalFunctionInputFact fact :
 			analysis.logicalFunctionInputsInCanonicalOrder()) {
@@ -80,6 +85,9 @@ public final class LocalMaterializationSelections {
 			if(selected.get(call) == null)
 				throw new IllegalArgumentException(
 					"Selected local function formal has no selected physical call owner");
+			if(requiresOriginResidency(analysis, fact.sourceArgument()))
+				throw new IllegalStateException(
+					"Origin-bound function argument cannot be materialized on the coordinator");
 			materialized.add(fact.sourceArgument());
 		}
 		return materialized.size();
@@ -120,7 +128,7 @@ public final class LocalMaterializationSelections {
 				new IdentityHashMap<>();
 			for(PlacementAnalysis.CompiledInputEdgeFact edge :
 				analysis.compiledInputEdgesInCanonicalOrder())
-				if(!analysis.isDmlFunctionCallBoundary(edge.consumer()))
+				if(!isDmlFunctionCallPlaceholder(analysis, edge.consumer()))
 					edges.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge);
 			this.edgesByProducer = immutableIdentityLists(edges);
 			Map<CompiledHopKey,List<IndexedFunctionInput>> functions = new IdentityHashMap<>();
@@ -193,8 +201,10 @@ public final class LocalMaterializationSelections {
 					if(consumer == null)
 						continue;
 					if(consumer.execType() == ExecType.CP
-						&& consumer.output() == FederatedOutput.LOUT
 						&& !index.analysis.isCoordinatorMetadataOnlyInput(edge)) {
+						if(requiresOriginResidency(index.analysis, edge.producer()))
+							throw new IllegalStateException(
+								"Origin-bound source cannot be materialized on the coordinator");
 						baseRequired = true;
 						continue;
 					}
@@ -225,6 +235,9 @@ public final class LocalMaterializationSelections {
 					if(selected.get(call) == null)
 						throw new IllegalArgumentException(
 							"Selected local function formal has no selected physical call owner");
+					if(requiresOriginResidency(index.analysis, fact.sourceArgument()))
+						throw new IllegalStateException(
+							"Origin-bound function argument cannot be materialized on the coordinator");
 					baseRequired = true;
 				}
 				scored.add(new ScoredProducer(baseRequired,
@@ -268,6 +281,15 @@ public final class LocalMaterializationSelections {
 
 		int physicalEmissionCount() {
 			return physicalEmissionCount;
+		}
+
+		/** Exact local-materialization factors whose truth value this row can change. */
+		int[] exactInteractionProducerIds(CandidateSelectionReceipt receipt) {
+			Integer id = receiptIds.get(receipt);
+			if(id == null)
+				throw new IllegalArgumentException(
+					"Candidate receipt is outside its exact local-materialization index");
+			return affectedProducerIdsByReceipt[id].clone();
 		}
 
 		private void updateReceiptSelection(int receiptId, boolean selected) {
@@ -328,7 +350,7 @@ public final class LocalMaterializationSelections {
 				.filter(edge -> edge.producer() == node.key())
 				// FunctionOp placement is a call placeholder. Its local-input demand is
 				// determined by the selected formal below, not by the call's own state.
-				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
+				.filter(edge -> !isDmlFunctionCallPlaceholder(analysis, edge.consumer()))
 				.filter(edge -> requiresLocalInput(analysis, edge,
 					selected.get(edge.consumer()), candidatesByConsumer.get(edge.consumer())))
 				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
@@ -352,6 +374,9 @@ public final class LocalMaterializationSelections {
 			obligations = obligations.stream().distinct().sorted().toList();
 			if(obligations.isEmpty())
 				continue;
+			if(requiresOriginResidency(analysis, node.key()))
+				throw new IllegalStateException(
+					"Origin-bound source cannot have a LOCAL materialization action");
 			var occurrence = analysis.occurrences().stream()
 				.filter(candidate -> candidate.key() == node.key()).findFirst().orElseThrow();
 			result.add(new LocalMaterializationActionKey(node.key(), node.valueVersion(), producer,
@@ -384,7 +409,7 @@ public final class LocalMaterializationSelections {
 		CandidateSelectionReceipt candidate) {
 		if(consumer == null)
 			return false;
-		if(consumer.execType() == ExecType.CP && consumer.output() == FederatedOutput.LOUT)
+		if(consumer.execType() == ExecType.CP)
 			return !analysis.isCoordinatorMetadataOnlyInput(edge);
 		if(consumer.execType() != ExecType.FED)
 			return false;
@@ -396,6 +421,17 @@ public final class LocalMaterializationSelections {
 			throw new IllegalArgumentException(
 				"Selected candidate does not cover an exact compiled input edge");
 		return !candidate.rule().orderedInputs().get(inputPosition).present();
+	}
+
+	private static boolean requiresOriginResidency(PlacementAnalysis analysis, CompiledHopKey source) {
+		return ExecPlacementPolicy.requiresOriginResidency(analysis.requirePrivacy(source));
+	}
+
+	private static boolean isDmlFunctionCallPlaceholder(PlacementAnalysis analysis,
+		CompiledHopKey key) {
+		return analysis.graph().node(key).map(node ->
+			node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_CALL).orElse(false)
+			&& analysis.isDmlFunctionCallBoundary(key);
 	}
 
 	/** Exact analysis-owned provenance for one selected FED/FOUT source. */

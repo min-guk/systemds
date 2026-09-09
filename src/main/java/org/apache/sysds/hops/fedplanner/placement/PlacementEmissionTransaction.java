@@ -38,6 +38,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
@@ -312,6 +313,8 @@ public final class PlacementEmissionTransaction {
 		selected.forEach((key, state) -> selectedStates.put(key, state.placementState()));
 		List<CandidateSelectionReceipt> selectedCandidates = List.copyOf(
 			result.selectedCandidateSelections());
+		Map<CompiledHopKey,CandidateSelectionReceipt> selectedCandidatesByConsumer =
+			CandidateSelections.indexByConsumer(selectedCandidates);
 		List<RelocationChoiceReceipt> selectedChoices = List.copyOf(
 			result.selectedRelocationChoices());
 		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
@@ -336,6 +339,13 @@ public final class PlacementEmissionTransaction {
 			if(emissionState.derivedFedFout() && (state.execType() != ExecType.FED
 				|| state.output() != FederatedOutput.FOUT))
 				throw new PlacementEmissionException("Derived FED/FOUT authority requires FED/FOUT placement");
+			if(requiresOriginResidency(analysis, node.key())
+				&& !isDmlFunctionCallPlaceholder(analysis, node.key())
+				&& (state.execType() != ExecType.FED
+					|| state.output() != FederatedOutput.FOUT
+					|| emissionState.derivedFedFout()))
+				throw new PlacementEmissionException(
+					"Origin-bound value must retain native FED/FOUT residency");
 			if("recompile".equals(node.key().recompileContext()) && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
 				throw new PlacementEmissionException("Recompile regions cannot emit CP/FOUT");
@@ -348,17 +358,27 @@ public final class PlacementEmissionTransaction {
 			// above and is projected structurally by the planner from its source.
 			if(!analysis.isCompiledHopOccurrence(node.key()))
 				continue;
+			Set<String> modeledRewriteKinds = modeledRewriteKinds(analysis, node.key(),
+				emissionState, selectedStates, selectedCandidatesByConsumer.get(node.key()));
 			HopWrite prior = writesByHop.get(occurrence.hop());
 			if(prior != null && (!prior.state().equals(state)
 				|| prior.derivedFedFout() != emissionState.derivedFedFout()))
 				throw new PlacementEmissionException("One concrete Hop has conflicting occurrence authority");
-			writesByHop.putIfAbsent(occurrence.hop(), new HopWrite(occurrence.hop(), state,
-				emissionState.derivedFedFout()));
+			if(prior == null)
+				writesByHop.put(occurrence.hop(), new HopWrite(occurrence.hop(), state,
+					emissionState.derivedFedFout(), modeledRewriteKinds));
+			else {
+				Set<String> commonRewriteKinds = new LinkedHashSet<>(prior.modeledRewriteKinds());
+				commonRewriteKinds.retainAll(modeledRewriteKinds);
+				writesByHop.put(occurrence.hop(), new HopWrite(occurrence.hop(), state,
+					emissionState.derivedFedFout(), Set.copyOf(commonRewriteKinds)));
+			}
 		}
 		for(CompiledHopKey key : selected.keySet())
 			if(!selectedIdentities.contains(key))
 				throw new PlacementEmissionException("Selected placement contains a foreign decision key");
 		validateExactGraphConstraints(analysis, selectedStates);
+		validateProtectedInputMovement(analysis, selectedStates, selectedCandidatesByConsumer);
 
 		List<SelectedRelocation> relocations = exactRelocations(
 			analysis, selectedStates, selectedCandidates, selectedChoices, selectedRelocations);
@@ -371,6 +391,29 @@ public final class PlacementEmissionTransaction {
 			foutMaterializations, locals);
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites),
 			runtimeActionSnapshot(registryWrites));
+	}
+
+	private static Set<String> modeledRewriteKinds(PlacementAnalysis analysis, CompiledHopKey key,
+		PlacementEmissionState ownerEmission, Map<CompiledHopKey,PlacementState> selectedStates,
+		CandidateSelectionReceipt selectedCandidate) {
+		PlacementCostSemantics.DirectWdivmmRuntimeFact runtime =
+			PlacementCostSemantics.directWdivmmRuntimeFact(analysis, key);
+		if(runtime == null)
+			return Set.of();
+		PlacementState owner = ownerEmission.placementState();
+		PlacementState weights = selectedStates.get(runtime.weights());
+		FType executionFType = selectedCandidate == null ? owner.fType()
+			: selectedCandidate.emission().executionFType();
+		if(!PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(runtime, owner,
+			executionFType, ownerEmission.derivedFedFout(), weights)) {
+			if(owner.execType() == ExecType.FED)
+				throw new PlacementEmissionException(
+					"Selected direct WDivMM placement violates its shared runtime-input contract");
+			return Set.of();
+		}
+		if(owner.execType() == ExecType.CP && owner.output() != FederatedOutput.LOUT)
+			return Set.of();
+		return Set.of(FederatedPlannerUtils.REWRITE_DIRECT_WDIVMM_PATTERN_2);
 	}
 
 	private static void validateExactGraphConstraints(PlacementAnalysis analysis,
@@ -393,6 +436,57 @@ public final class PlacementEmissionTransaction {
 					+ constraint.normalizedSignature() + " left=" + left.normalizedSignature()
 					+ " right=" + right.normalizedSignature());
 		}
+	}
+
+	private static void validateProtectedInputMovement(PlacementAnalysis analysis,
+		Map<CompiledHopKey, PlacementState> selected,
+		Map<CompiledHopKey,CandidateSelectionReceipt> candidatesByConsumer) {
+		for(PlacementAnalysis.CompiledInputEdgeFact edge :
+			analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(!requiresOriginResidency(analysis, edge.producer())
+				|| analysis.isCoordinatorMetadataOnlyInput(edge)
+				|| isDmlFunctionCallPlaceholder(analysis, edge.consumer()))
+				continue;
+			PlacementState consumer = selected.get(edge.consumer());
+			if(consumer == null)
+				throw new PlacementEmissionException(
+					"Protected input consumer has no selected placement");
+			if(consumer.execType() == ExecType.CP)
+				throw new PlacementEmissionException(
+					"Coordinator execution cannot consume origin-bound payload");
+			if(consumer.execType() != ExecType.FED)
+				continue;
+			CandidateSelectionReceipt candidate = candidatesByConsumer.get(edge.consumer());
+			if(candidate == null || edge.inputPosition() < 0
+				|| edge.inputPosition() >= candidate.rule().orderedInputs().size())
+				throw new PlacementEmissionException(
+					"Protected FED input lacks exact candidate movement authority");
+			if(!candidate.rule().orderedInputs().get(edge.inputPosition()).present())
+				throw new PlacementEmissionException(
+					"Origin-bound payload cannot satisfy a FED input through coordinator-local materialization");
+		}
+	}
+
+	private static boolean requiresOriginResidency(PlacementAnalysis analysis, CompiledHopKey key) {
+		return ExecPlacementPolicy.requiresOriginResidency(analysis.requirePrivacy(key));
+	}
+
+	private static boolean isDmlFunctionCallPlaceholder(PlacementAnalysis analysis,
+		CompiledHopKey key) {
+		return analysis.graph().node(key).map(node ->
+			node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_CALL).orElse(false)
+			&& analysis.isDmlFunctionCallBoundary(key);
+	}
+
+	private static boolean relocationSourceRequiresOriginResidency(PlacementAnalysis analysis,
+		RelocationActionKey action) {
+		List<Node> sources = analysis.graph().nodes().stream()
+			.filter(node -> node.valueVersion().equals(action.sourceValueVersion()))
+			.filter(node -> analysis.isCompiledHopOccurrence(node.key())).toList();
+		if(sources.isEmpty())
+			throw new PlacementEmissionException(
+				"Relocation source has no emitted privacy owner");
+		return sources.stream().anyMatch(source -> requiresOriginResidency(analysis, source.key()));
 	}
 
 	private static PlannerRuntimeActionRegistry.Snapshot runtimeActionSnapshot(List<RegistryWrite> writes) {
@@ -478,7 +572,11 @@ public final class PlacementEmissionTransaction {
 						? "-" : candidate.emission().executionFType().name())
 					+ " derivedFedFout=" + candidate.emission().emissionState().derivedFedFout()
 					+ " foutMaterializationAction=" + (candidate.emission().derivedFoutAction() == null
-						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature())));
+						? "-" : sha256(candidate.emission().derivedFoutAction().normalizedSignature()))
+					+ " foutMaterializationAuthorityB64="
+					+ PhysicalEmissionTraceFormatter.derivedFoutAction(
+						candidate.emission().derivedFoutAction() == null ? null
+							: candidate.emission().derivedFoutAction().normalizedSignature()));
 		}
 		prepared.registryWrites().stream()
 			.sorted(Comparator.comparing(write -> write.slot().kind().name()
@@ -500,7 +598,8 @@ public final class PlacementEmissionTransaction {
 					+ " localInputs=" + (write.localConsumerInputs() == null ? List.of()
 						: write.localConsumerInputs())
 					+ " anchorKey=" + write.anchorKey()
-					+ " reason=" + write.reason()));
+					+ " reason=" + write.reason()
+					+ " runtimeAuthorityB64=" + traceRuntimeAuthority(write)));
 		String candidateAuthority = String.join("\n", candidates.stream()
 			.map(CandidateSelectionReceipt::normalizedSignature).toList());
 		FederatedPlannerTrace.logGlobal("Emission-Summary", "planner=" + result.plannerId()
@@ -524,6 +623,16 @@ public final class PlacementEmissionTransaction {
 			+ " selectedCandidates=" + candidates.size()
 			+ " hopMutations=" + prepared.hopWrites().size()
 			+ " registryWrites=" + prepared.registryWrites().size());
+	}
+
+	private static String traceRuntimeAuthority(RegistryWrite write) {
+		return switch(write.slot().kind()) {
+			case REFED -> PhysicalEmissionTraceFormatter.refed(write.refedAuthority());
+			case FOUT -> PhysicalEmissionTraceFormatter.fout(write.anchorHopId(), write.fType(), write.label(),
+				write.anchorKey(), write.foutConsumerInputs(), write.plannerActionKey());
+			case LOCAL -> PhysicalEmissionTraceFormatter.local(write.fType(), write.reason(),
+				write.localConsumerInputs(), write.plannerActionKey());
+		};
 	}
 
 	private static String validateAuthorityAndHash(DMLProgram program, NormalizedPlannerResult result) {
@@ -610,6 +719,9 @@ public final class PlacementEmissionTransaction {
 			if(source == null || !analysis.isCompiledHopOccurrence(action.sourceOccurrence()))
 				throw new PlacementEmissionException("LOCAL source occurrence is foreign or virtual");
 			Node sourceNode = analysis.graph().node(action.sourceOccurrence()).orElseThrow();
+			if(requiresOriginResidency(analysis, sourceNode.key()))
+				throw new PlacementEmissionException(
+					"Origin-bound source cannot have a LOCAL materialization action");
 			if(!sourceNode.valueVersion().equals(action.sourceValueVersion()))
 				throw new PlacementEmissionException("LOCAL source value version differs");
 			PlacementEmissionState sourceState = exactEmissionState(selected, action.sourceOccurrence());
@@ -691,6 +803,9 @@ public final class PlacementEmissionTransaction {
 		for(RelocationSelections.ResolvedChoice choice : resolved) {
 			if(!choice.requiresEmission())
 				continue;
+			if(relocationSourceRequiresOriginResidency(analysis, choice.action().key()))
+				throw new PlacementEmissionException(
+					"Origin-bound source cannot emit an active relocation");
 			actions.putIfAbsent(choice.action().key(), choice.action());
 			obligations.computeIfAbsent(choice.action().key(), ignored -> new ArrayList<>())
 				.add(choice.obligation());
@@ -823,7 +938,7 @@ public final class PlacementEmissionTransaction {
 		List<ConsumerInputSpec> direct = new ArrayList<>();
 		for(PlacementAnalysis.CompiledInputEdgeFact edge :
 			analysis.compiledInputEdgesInCanonicalOrder()) {
-			if(edge.producer() != producer || analysis.isDmlFunctionCallBoundary(edge.consumer()))
+			if(edge.producer() != producer || isDmlFunctionCallPlaceholder(analysis, edge.consumer()))
 				continue;
 			CandidateSelectionReceipt candidate = candidates.get(edge.consumer());
 			if(candidate == null)
@@ -857,6 +972,12 @@ public final class PlacementEmissionTransaction {
 			PlacementEmissionState selectedState = exactEmissionState(selected, node.key());
 			if(selectedState == null || !analysis.isCompiledHopOccurrence(node.key()))
 				continue;
+			if(requiresOriginResidency(analysis, node.key())
+				&& (selectedState.derivedFedFout()
+					|| selectedState.placementState().execType() == ExecType.CP
+						&& selectedState.placementState().output() == FederatedOutput.FOUT))
+				throw new PlacementEmissionException(
+					"Origin-bound result cannot be uploaded through a derived FOUT action");
 			List<CandidateSelectionReceipt> exactCandidates = selectedCandidates.stream()
 				.filter(candidate -> candidate.rule().parentOccurrence() == node.key())
 				.filter(candidate -> candidate.emission().emissionState().equals(selectedState))
@@ -1044,7 +1165,7 @@ public final class PlacementEmissionTransaction {
 			// Dynamic function/loop recompilation can rebuild Hops with new IDs. Publish the exact
 			// emitted state by stable source signature so recompilation preserves planner authority.
 			FederatedPlannerUtils.registerPlannerRecompileState(write.hop(),
-				write.state().execType(), write.state().output());
+				write.state().execType(), write.state().output(), write.modeledRewriteKinds());
 			if(i == 0)
 				injector.inject(FailurePoint.AFTER_FIRST_HOP_MUTATION);
 		}
@@ -1197,7 +1318,12 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
-	private record HopWrite(Hop hop, PlacementState state, boolean derivedFedFout) { }
+	private record HopWrite(Hop hop, PlacementState state, boolean derivedFedFout,
+		Set<String> modeledRewriteKinds) {
+		private HopWrite {
+			modeledRewriteKinds = Set.copyOf(Objects.requireNonNull(modeledRewriteKinds));
+		}
+	}
 
 	private record HopSnapshot(ExecType execType, ExecType forcedExecType, FederatedOutput output,
 		boolean outputDerived, boolean plannerPlacementSelected) {

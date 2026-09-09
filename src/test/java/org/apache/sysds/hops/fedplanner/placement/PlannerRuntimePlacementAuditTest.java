@@ -27,13 +27,20 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.FileFormat;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeCapabilityAudit.Observation;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
@@ -42,11 +49,13 @@ import org.apache.sysds.runtime.instructions.Instruction.IType;
 import org.apache.sysds.runtime.instructions.FEDInstructionParser;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.FunctionCallCPInstruction;
+import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysds.runtime.instructions.fed.CastFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.MultiReturnParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.After;
 import org.junit.Before;
@@ -86,6 +95,18 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void unplannedCompilationClearsPriorProgramAuthority() {
+		PlannerRuntimePlacementAudit.installForTesting(
+			List.of(plan(4100, "prior-program", FED_FOUT, FED_FOUT, true)));
+		PlannerRuntimePlacementAudit.clearForUnplannedCompilation();
+		AuditCpInstruction unrelated = new AuditCpInstruction("append", IType.CONTROL_PROGRAM);
+		unrelated.setAuditLocation(9999, "unplanned-program");
+		ArrayList<Instruction> lowered = new ArrayList<>(List.of(unrelated));
+		assertEquals(lowered, PlannerRuntimePlacementAudit.verifyLowering(List.of(), lowered));
+		assertTrue(PlannerRuntimePlacementAudit.display().contains("plan=-"));
+	}
+
+	@Test
 	public void exactLoweringAndRuntimeExecutionProduceOneCountedMatch() {
 		PlannerRuntimePlacementAudit.installForTesting(List.of(plan(42, "sig-42", FED_FOUT, FED_FOUT, true)));
 		AuditFedInstruction lowered = new AuditFedInstruction("ba+*", FEDInstruction.FederatedOutput.FOUT);
@@ -102,6 +123,163 @@ public class PlannerRuntimePlacementAuditTest {
 		assertTrue(report.contains("plannedPhysical=FED/FOUT"));
 		assertTrue(report.contains("actual=FED/FOUT"));
 		assertTrue(report.contains("count=2"));
+	}
+
+	@Test
+	public void localPersistentReadIsProvedByItsExactLazyCreatevarDescriptor() {
+		DataOp read = persistentRead("L");
+		org.apache.sysds.lops.Data readLop = persistentReadLop("L");
+		read.setLops(readLop);
+		PlannerRuntimePlacementAudit.PlannedHop plan = planWithName(read.getHopID(),
+			readLop.getPlannerRecompileSignature(), "PRead", "L", CP_LOUT, CP_LOUT,
+			false, NodeKind.OPERATION);
+		PlannerRuntimePlacementAudit.installForTesting(plan, read);
+		VariableCPInstruction descriptor = persistentReadDescriptor("pREADL");
+		descriptor.setPlannerLocation(readLop);
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(read), List.of(readLop), new ArrayList<>(List.of(descriptor)));
+		PlannerRuntimePlacementAudit.validateExecution(descriptor);
+
+		assertTrue(descriptor.getPlannerAuditKey() != null);
+		assertTrue(PlannerRuntimePlacementAudit.display()
+			.contains("status=PERSISTENT_READ_DESCRIPTOR_MATCH"));
+	}
+
+	@Test
+	public void localPersistentReadAcceptsARecompiledLopWithExactImmutableDescriptorIdentity() {
+		DataOp read = persistentRead("L");
+		org.apache.sysds.lops.Data plannedLop = persistentReadLop("L");
+		read.setLops(plannedLop);
+		PlannerRuntimePlacementAudit.PlannedHop plan = planWithName(read.getHopID(),
+			plannedLop.getPlannerRecompileSignature(), "PRead", "L", CP_LOUT, CP_LOUT,
+			false, NodeKind.OPERATION);
+		PlannerRuntimePlacementAudit.installForTesting(plan, read);
+
+		org.apache.sysds.lops.Data recompiledLop = persistentReadLop("L");
+		recompiledLop.setHopID(read.getHopID());
+		recompiledLop.setPlannerOriginHopID(read.getPlannerOriginHopID());
+		recompiledLop.setPlannerRecompileSignature(plannedLop.getPlannerRecompileSignature());
+		VariableCPInstruction descriptor = persistentReadDescriptor("pREADL");
+		descriptor.setPlannerLocation(recompiledLop);
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(read), List.of(recompiledLop), new ArrayList<>(List.of(descriptor)));
+
+		assertTrue(descriptor.getPlannerAuditKey() != null);
+		assertTrue(PlannerRuntimePlacementAudit.display()
+			.contains("status=PERSISTENT_READ_DESCRIPTOR_MATCH"));
+	}
+
+	@Test
+	public void localPersistentReadIgnoresOnlyAnExactCompilerScratchCopyBeforeItsDescriptor() {
+		DataOp read = persistentRead("L");
+		org.apache.sysds.lops.Data readLop = persistentReadLop("L");
+		read.setLops(readLop);
+		PlannerRuntimePlacementAudit.PlannedHop plan = planWithName(read.getHopID(),
+			readLop.getPlannerRecompileSignature(), "PRead", "L", CP_LOUT, CP_LOUT,
+			false, NodeKind.OPERATION);
+		PlannerRuntimePlacementAudit.installForTesting(plan, read);
+		String scratch = org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+			.getTextValue(org.apache.sysds.conf.DMLConfig.SCRATCH_SPACE);
+		VariableCPInstruction copy = (VariableCPInstruction)
+			VariableCPInstruction.prepCreatevarInstruction("_mVarScratch",
+				scratch + "/audit/temp0", true, DataType.MATRIX, "binary",
+				new MatrixCharacteristics(12, 12, 1000, 144), UpdateType.COPY);
+		copy.setPlannerLocation(readLop);
+		VariableCPInstruction descriptor = persistentReadDescriptor("pREADL");
+		descriptor.setPlannerLocation(readLop);
+
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(read), List.of(readLop),
+			new ArrayList<>(List.of(copy, descriptor)));
+
+		assertNull(copy.getPlannerAuditKey());
+		assertTrue(descriptor.getPlannerAuditKey() != null);
+		assertTrue(PlannerRuntimePlacementAudit.display()
+			.contains("status=AUXILIARY_PERSISTENT_READ_SCRATCH_COPY"));
+	}
+
+	@Test
+	public void localPersistentReadRejectsAReservedSymbolForAnotherSourceDescriptor() {
+		DataOp read = persistentRead("L");
+		org.apache.sysds.lops.Data readLop = persistentReadLop("L");
+		read.setLops(readLop);
+		PlannerRuntimePlacementAudit.PlannedHop plan = planWithName(read.getHopID(),
+			readLop.getPlannerRecompileSignature(), "PRead", "L", CP_LOUT, CP_LOUT,
+			false, NodeKind.OPERATION);
+		PlannerRuntimePlacementAudit.installForTesting(plan, read);
+		VariableCPInstruction descriptor = (VariableCPInstruction)
+			VariableCPInstruction.prepCreatevarInstruction(
+				"pREADL", "/tmp/another-source", false, DataType.MATRIX, "binary",
+				new MatrixCharacteristics(12, 12, 1000, 144), UpdateType.COPY);
+		descriptor.setPlannerLocation(readLop);
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(read), List.of(readLop), new ArrayList<>(List.of(descriptor))));
+		assertTrue(failure.getMessage().contains("PERSISTENT_READ_DESCRIPTOR_IDENTITY_MISMATCH"));
+		assertTrue(failure.getMessage().contains("/tmp/another-source"));
+	}
+
+	@Test
+	public void localPersistentReadRejectsANonPersistentCreatevarSymbol() {
+		DataOp read = persistentRead("L");
+		org.apache.sysds.lops.Data readLop = persistentReadLop("L");
+		read.setLops(readLop);
+		PlannerRuntimePlacementAudit.PlannedHop plan = planWithName(read.getHopID(),
+			readLop.getPlannerRecompileSignature(), "PRead", "L", CP_LOUT, CP_LOUT,
+			false, NodeKind.OPERATION);
+		PlannerRuntimePlacementAudit.installForTesting(plan, read);
+		VariableCPInstruction descriptor = persistentReadDescriptor("ordinaryTemporary");
+		descriptor.setPlannerLocation(readLop);
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(read), List.of(readLop), new ArrayList<>(List.of(descriptor))));
+		assertTrue(failure.getMessage().contains("PERSISTENT_READ_DESCRIPTOR_IDENTITY_MISMATCH"));
+	}
+
+	@Test
+	public void runtimeCapabilitySeparatesSelectedTargetFromConcretePhysicalState() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(421, "sig-421", FED_FOUT, FED_LOUT, true)));
+		AuditFedInstruction lowered = new AuditFedInstruction("ba+*", FEDInstruction.FederatedOutput.LOUT);
+		lowered.setAuditLocation(421, "sig-421");
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(lowered)));
+
+		System.setProperty(PlannerRuntimeCapabilityAudit.PROPERTY, Boolean.TRUE.toString());
+		try {
+			Observation observation = PlannerRuntimeCapabilityAudit.begin(lowered, null);
+			assertEquals("test-plan", observation.instruction().get("plannerPlanHash"));
+			assertEquals("test-analysis", observation.instruction().get("plannerAnalysisFingerprint"));
+			assertEquals(java.util.Map.of("key-421", "FED/FOUT/-"),
+				observation.instruction().get("plannedTargetStates"));
+			assertEquals(java.util.Map.of("key-421", "FED/LOUT/-"),
+				observation.instruction().get("plannedPhysicalStates"));
+		}
+		finally {
+			System.clearProperty(PlannerRuntimeCapabilityAudit.PROPERTY);
+		}
+	}
+
+	@Test
+	public void recompiledCloneResolvesByStableOriginWhenSignatureHasDifferentPlacements() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			planWithOrigin(4201, 776, "shared-recompile-signature", CP_LOUT),
+			planWithOrigin(4202, 778, "shared-recompile-signature", FED_FOUT)));
+		AuditCpInstruction recompiled = new AuditCpInstruction("ba+*", IType.CONTROL_PROGRAM);
+		recompiled.setAuditLocation(9001, "shared-recompile-signature");
+		recompiled.setPlannerOriginHopID(776);
+		AuditFedInstruction other = new AuditFedInstruction("ba+*", FEDInstruction.FederatedOutput.FOUT);
+		other.setAuditLocation(9002, "shared-recompile-signature");
+		other.setPlannerOriginHopID(778);
+
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(recompiled, other)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("hop=4201"));
+		assertTrue(report.contains("plannedPhysical=CP/LOUT"));
+		assertTrue(report.contains("actualIdentity=9001/origin=776"));
 	}
 
 	@Test
@@ -132,6 +310,31 @@ public class PlannerRuntimePlacementAuditTest {
 		assertTrue(report.contains("[Worker-Fragment] status=MATCH"));
 		assertTrue(report.contains("fragmentOpcode=ba+*"));
 		assertTrue(report.contains("actual=CP/LOUT"));
+	}
+
+	@Test
+	public void workerSpoofInstructionAcceptsOnlyAConcreteSpoofTemplateOpcode() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(plan(460, "sig-460", "spoof(TMP6)",
+			FED_FOUT, FED_FOUT, true, NodeKind.OPERATION)));
+		AuditFedInstruction coordinator = new AuditFedInstruction("spoofCellTMP6",
+			FEDInstruction.FederatedOutput.FOUT);
+		coordinator.setAuditLocation(460, "sig-460");
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(coordinator)));
+
+		FederatedRequest request;
+		try(PlannerRuntimePlacementAudit.RuntimeExecutionScope ignored =
+			PlannerRuntimePlacementAudit.beginRuntimeExecution(coordinator)) {
+			request = new FederatedRequest(RequestType.EXEC_INST, 70,
+				"CP" + Instruction.OPERAND_DELIM + "spoof" + Instruction.OPERAND_DELIM + "payload");
+			PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(request);
+		}
+		AuditCpInstruction workerFragment = new AuditCpInstruction("spoofCellTMP6", IType.CONTROL_PROGRAM);
+		PlannerRuntimePlacementAudit.attachWorkerFragment(request, workerFragment);
+
+		AuditCpInstruction unrelated = new AuditCpInstruction("spoofUnknownTMP6", IType.CONTROL_PROGRAM);
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.attachWorkerFragment(request, unrelated));
+		assertTrue(failure.getMessage().contains("WORKER_FRAGMENT_OPCODE_MISMATCH"));
 	}
 
 	@Test
@@ -525,6 +728,42 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void dynamicSumDivideToMeanAcceptsAlreadyRewrittenOwnersByDirection() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			derivedFoutPlan(740, "rewritten-colmean-owner", "ua(meanC)", FED_FOUT,
+				FED_LOUT),
+			plan(741, "rewritten-rowmean-owner", "ua(meanR)", CP_LOUT, CP_LOUT,
+				true, NodeKind.OPERATION),
+			plan(742, "rewritten-fullmean-owner", "ua(meanRC)", CP_LOUT, CP_LOUT,
+				true, NodeKind.OPERATION)));
+		AuditFedInstruction colMean = new AuditFedInstruction(
+			"uacmean", FEDInstruction.FederatedOutput.LOUT);
+		colMean.setAuditLocation(10740, "rewritten-colmean-owner");
+		colMean.setPlannerOriginHopID(740);
+		colMean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+		AuditCpInstruction rowMean = new AuditCpInstruction("uarmean", IType.CONTROL_PROGRAM);
+		rowMean.setAuditLocation(10741, "rewritten-rowmean-owner");
+		rowMean.setPlannerOriginHopID(741);
+		rowMean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+		AuditCpInstruction fullMean = new AuditCpInstruction("uamean", IType.CONTROL_PROGRAM);
+		fullMean.setAuditLocation(10742, "rewritten-fullmean-owner");
+		fullMean.setPlannerOriginHopID(742);
+		fullMean.setPlannerRewriteReplacementKind("DYNAMIC_SUM_DIVIDE_TO_MEAN");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(colMean, rowMean, fullMean)));
+
+		String report = PlannerRuntimePlacementAudit.display();
+		assertTrue(report.contains("status=REWRITE_MATCH"));
+		assertTrue(report.contains("kind=DYNAMIC_SUM_DIVIDE_TO_MEAN"));
+		assertTrue(report.contains("plannedTarget=FED/FOUT"));
+		assertTrue(report.contains("plannedPhysical=FED/LOUT"));
+		assertTrue(report.contains("replacementOpcode=uacmean"));
+		assertTrue(report.contains("replacementOpcode=uarmean"));
+		assertTrue(report.contains("replacementOpcode=uamean"));
+	}
+
+	@Test
 	public void dynamicSumDivideToMeanCannotBorrowTheWrongAggregateDirection() {
 		PlannerRuntimePlacementAudit.installForTesting(List.of(
 			plan(75, "rowsum-mean-owner", "ua(+R)", CP_LOUT, CP_LOUT, true,
@@ -699,6 +938,92 @@ public class PlannerRuntimePlacementAuditTest {
 		append.setAuditLocation(58, "append-owner");
 
 		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(append)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains("status=MATCH"));
+	}
+
+	@Test
+	public void ordinaryLoweringAcceptsTheExactGeneratedSpoofTemplateOpcode() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(580, "spoof-owner", "spoof(TMP6)", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction spoof = new AuditCpInstruction("spoofCellTMP6", IType.CONTROL_PROGRAM);
+		spoof.setAuditLocation(580, "spoof-owner");
+
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(spoof)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains("status=MATCH"));
+	}
+
+	@Test
+	public void ordinaryLoweringRejectsADifferentGeneratedSpoofClass() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(581, "spoof-owner", "spoof(TMP6)", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction spoof = new AuditCpInstruction("spoofCellTMP7", IType.CONTROL_PROGRAM);
+		spoof.setAuditLocation(581, "spoof-owner");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(spoof))));
+		assertTrue(failure.getMessage().contains("LOWERING_OPCODE_MISMATCH"));
+	}
+
+	@Test
+	public void ordinaryLoweringAcceptsTheDedicatedMultiplyByTwoOpcode() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(580, "multiply-two-owner", "*", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION)));
+		AuditCpInstruction multiplyTwo = new AuditCpInstruction("*2", IType.CONTROL_PROGRAM);
+		multiplyTwo.setAuditLocation(580, "multiply-two-owner");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(multiplyTwo)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains("status=MATCH"));
+	}
+
+	@Test
+	public void aggregateBinaryAuthorityAcceptsSpecializedMapmmOpcodeAtTheSamePlacement() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(582, "mapmm-owner", "ba+*", FED_LOUT, FED_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditFedInstruction mapmm = new AuditFedInstruction("mapmm",
+			FEDInstruction.FederatedOutput.LOUT);
+		mapmm.setAuditLocation(582, "mapmm-owner");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(mapmm)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains("status=MATCH"));
+	}
+
+	@Test
+	public void aggregateBinaryAuthorityRejectsSpecializedMapmmAtAnUnselectedSparkPlacement() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(583, "mapmm-owner", "ba+*", CP_LOUT, CP_LOUT, true,
+				NodeKind.OPERATION)));
+		AuditCpInstruction mapmm = new AuditCpInstruction("mapmm", IType.SPARK);
+		mapmm.setAuditLocation(583, "mapmm-owner");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(
+				List.of(), new ArrayList<>(List.of(mapmm))));
+
+		assertTrue(failure.getMessage().contains("LOWERING_MISMATCH"));
+		assertTrue(failure.getMessage().contains("actual=SPARK/LOUT"));
+	}
+
+	@Test
+	public void triangularParameterizedBuiltinsUseCompactPhysicalOpcodes() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(
+			plan(581, "lower-tri-owner", "LOWER_TRI", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION),
+			plan(582, "upper-tri-owner", "UPPER_TRI", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION)));
+		AuditCpInstruction lower = new AuditCpInstruction("lowertri", IType.CONTROL_PROGRAM);
+		lower.setAuditLocation(581, "lower-tri-owner");
+		AuditCpInstruction upper = new AuditCpInstruction("uppertri", IType.CONTROL_PROGRAM);
+		upper.setAuditLocation(582, "upper-tri-owner");
+
+		PlannerRuntimePlacementAudit.verifyLowering(
+			List.of(), new ArrayList<>(List.of(lower, upper)));
 
 		assertTrue(PlannerRuntimePlacementAudit.display().contains("status=MATCH"));
 	}
@@ -1043,18 +1368,53 @@ public class PlannerRuntimePlacementAuditTest {
 	private static PlannerRuntimePlacementAudit.PlannedHop planWithNameAndControlTarget(long hopId,
 		String signature, String opcode, String valueName, String controlTarget, PlacementState target,
 		PlacementState physical, boolean requiresOwnInstruction, NodeKind nodeKind) {
-		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, signature, "DP", "key-" + hopId,
+		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, hopId, signature, "DP", "key-" + hopId,
 			opcode, nodeKind, "test.dml:1:1-1:1", valueName, controlTarget, List.of(), true,
 			new PlacementEmissionState(target, false),
 			physical.execType(), physical.output(), physical.fType(), requiresOwnInstruction, false);
 	}
 
+	private static PlannerRuntimePlacementAudit.PlannedHop planWithOrigin(long hopId, long originHopId,
+		String signature, PlacementState physical) {
+		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, originHopId, signature, "DP", "key-" + hopId,
+			"ba+*", NodeKind.OPERATION, "test.dml:1:1-1:1", "value-" + hopId, "-", List.of(), true,
+			new PlacementEmissionState(physical, false), physical.execType(), physical.output(),
+			physical.fType(), true, false);
+	}
+
+	private static PlannerRuntimePlacementAudit.PlannedHop derivedFoutPlan(long hopId,
+		String signature, String opcode, PlacementState target, PlacementState physical) {
+		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, hopId, signature, "DP",
+			"key-" + hopId, opcode, NodeKind.OPERATION, "test.dml:1:1-1:1",
+			"value-" + hopId, "-", List.of(), true,
+			new PlacementEmissionState(target, true), physical.execType(), physical.output(),
+			physical.fType(), true, false);
+	}
+
 	private static PlannerRuntimePlacementAudit.PlannedHop reblockPlan(long hopId, String signature,
 		String opcode, PlacementState physical) {
-		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, signature, "DP", "key-" + hopId,
+		return new PlannerRuntimePlacementAudit.PlannedHop(hopId, hopId, signature, "DP", "key-" + hopId,
 			opcode, NodeKind.OPERATION, "test.dml:1:1-1:1", "value-" + hopId, "-", List.of(), true,
 			new PlacementEmissionState(physical, false), physical.execType(), physical.output(),
 			physical.fType(), true, true);
+	}
+
+	private static DataOp persistentRead(String name) {
+		DataOp read = new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.PERSISTENTREAD,
+			"/tmp/" + name, 12, 12, 144, 1000);
+		read.setFileFormat(FileFormat.BINARY);
+		return read;
+	}
+
+	private static org.apache.sysds.lops.Data persistentReadLop(String name) {
+		return new org.apache.sysds.lops.Data(OpOpData.PERSISTENTREAD, null, null,
+			name, null, DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+	}
+
+	private static VariableCPInstruction persistentReadDescriptor(String variable) {
+		return (VariableCPInstruction) VariableCPInstruction.prepCreatevarInstruction(
+			variable, "/tmp/L", false, DataType.MATRIX, "binary",
+			new MatrixCharacteristics(12, 12, 1000, 144), UpdateType.COPY);
 	}
 
 	private static class AuditCpInstruction extends Instruction {

@@ -182,6 +182,10 @@ public class Ctable extends Lop
 			sb.append( OPERAND_DELIMITOR );
 			sb.append(_numThreads);
 		}
+		if( getExecType() == ExecType.FED ) {
+			sb.append( OPERAND_DELIMITOR );
+			sb.append(_fedOutput.name());
+		}
 		
 		return sb.toString();
 	}

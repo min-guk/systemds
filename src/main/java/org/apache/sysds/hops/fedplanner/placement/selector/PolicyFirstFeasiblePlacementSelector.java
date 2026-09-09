@@ -49,17 +49,34 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  */
 public final class PolicyFirstFeasiblePlacementSelector
 	implements PlacementSelector, PlacementAnalysisSelector {
+	public enum StateOrdering { FEDERATED_FIRST, MOVEMENT_FIRST }
+
 	private static final Comparator<PlacementState> POLICY_ORDER = Comparator
 		.comparingInt(PolicyFirstFeasiblePlacementSelector::policyRank)
 		.thenComparing(PlacementState::normalizedSignature);
 	private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
+	private final StateOrdering stateOrdering;
 
 	public PolicyFirstFeasiblePlacementSelector() {
-		this(null);
+		this(StateOrdering.FEDERATED_FIRST, null);
+	}
+
+	public PolicyFirstFeasiblePlacementSelector(StateOrdering stateOrdering) {
+		this(stateOrdering, null);
+	}
+
+	public StateOrdering stateOrdering() {
+		return stateOrdering;
 	}
 
 	/** Package-private deterministic frequency seam for selector contract tests. */
 	PolicyFirstFeasiblePlacementSelector(ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
+		this(StateOrdering.FEDERATED_FIRST, executionWeightOverride);
+	}
+
+	private PolicyFirstFeasiblePlacementSelector(StateOrdering stateOrdering,
+		ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
+		this.stateOrdering = Objects.requireNonNull(stateOrdering, "stateOrdering");
 		this.executionWeightOverride = executionWeightOverride;
 	}
 
@@ -82,10 +99,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 		Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
 		long pruned = 0;
 		int maxDepth = 0;
-		for(PolicyComponent component : policyComponents(candidateAnalysis, graph)) {
+		for(PolicyComponent component : policyComponents(graph, reachability)) {
 			Solver solver = new Solver(candidateAnalysis, graph, component.nodes(),
 				component.constraints(), component.relocationActions(), reachability,
-				executionWeightOverride);
+				stateOrdering, executionWeightOverride);
 			Map<CompiledHopKey,PlacementState> selected = solver.solve();
 			for(Map.Entry<CompiledHopKey,PlacementState> entry : selected.entrySet())
 				if(assignment.put(entry.getKey(), entry.getValue()) != null)
@@ -103,7 +120,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			1, pruned, sha256(score.normalizedSignature()),
 			sha256(graph.normalizedSignature()), graph.nodes().size(), graph.constraints().size(),
 			bounds.size(), maxDepth, bounds,
-			"deterministic-component-first-feasible-with-localized-arc-consistency",
+			"deterministic-component-first-feasible-with-localized-arc-consistency"
+				+ (stateOrdering == StateOrdering.MOVEMENT_FIRST ? "-movement_first" : ""),
 			"policy", -1L, TerminationReason.POLICY_FEASIBLE);
 		return new PlacementSelection(plan.assignment(), plan.candidates(), plan.choices(),
 			new LinkedHashSet<>(plan.relocations()), score, certificate);
@@ -175,8 +193,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 	 * assignment of one component cannot invalidate another component and avoids
 	 * constructing their Cartesian product.
 	 */
-	private static List<PolicyComponent> policyComponents(PlacementAnalysis analysis,
-		NeutralPlacementGraph graph) {
+	private static List<PolicyComponent> policyComponents(NeutralPlacementGraph graph,
+		CandidateSelections.PartialReachabilityIndex reachability) {
 		List<Node> decisions = graph.decisionNodes().stream().sorted().toList();
 		Map<CompiledHopKey,Node> decisionByKey = new LinkedHashMap<>();
 		Map<CompiledHopKey,Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
@@ -195,8 +213,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 			if(decisionByKey.containsKey(action.key().producer())
 				&& decisionByKey.containsKey(action.key().durableAnchorOwner()))
 				connect(adjacency, action.key().producer(), action.key().durableAnchorOwner());
-		for(CandidateDependency dependency : candidateDependencies(analysis, decisionByKey))
-			connect(adjacency, dependency.producer(), dependency.consumer());
+		if(reachability != null)
+			for(CandidateSelections.ComponentDependency dependency :
+				reachability.componentDependencies())
+				connect(adjacency, dependency.participant(), dependency.consumer());
 
 		List<Set<CompiledHopKey>> members = connectedDecisionSets(adjacency);
 		Map<CompiledHopKey,Integer> componentByNode = new LinkedHashMap<>();
@@ -305,39 +325,6 @@ public final class PolicyFirstFeasiblePlacementSelector
 		return List.copyOf(result);
 	}
 
-	private static List<CandidateDependency> candidateDependencies(PlacementAnalysis analysis,
-		Map<CompiledHopKey,Node> nodes) {
-		if(analysis == null)
-			return List.of();
-		Map<CompiledHopKey,Map<Integer,List<CompiledHopKey>>> producers = new IdentityHashMap<>();
-		for(PlacementAnalysis.CompiledInputEdgeFact edge :
-			analysis.compiledInputEdgesInCanonicalOrder())
-			producers.computeIfAbsent(edge.consumer(), ignored -> new LinkedHashMap<>())
-				.computeIfAbsent(edge.inputPosition(), ignored -> new ArrayList<>())
-				.add(edge.producer());
-		Set<CandidateDependency> dependencies = new java.util.TreeSet<>();
-		for(PlacementAnalysis.CandidateRuleFact fact :
-			analysis.candidateRuleFacts().orderedFacts()) {
-			Node consumer = nodes.get(fact.key().parentOccurrence());
-			if(consumer == null
-				|| fact.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE
-				|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
-					consumer.legalAlternatives().stream().anyMatch(state ->
-						state == emission.emissionState().placementState())))
-				continue;
-			for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
-				List<CompiledHopKey> edges = producers.getOrDefault(consumer.key(), Map.of())
-					.getOrDefault(position, List.of());
-				if(edges.size() > 1)
-					throw new IllegalStateException(
-						"candidate input edge is ambiguous while constructing policy components");
-				if(edges.size() == 1 && nodes.containsKey(edges.get(0)))
-					dependencies.add(new CandidateDependency(edges.get(0), consumer.key(), position));
-			}
-		}
-		return List.copyOf(dependencies);
-	}
-
 	private static final class Solver {
 		private final PlacementAnalysis analysis;
 		private final NeutralPlacementGraph graph;
@@ -356,6 +343,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			CandidateSelections.PartialReachabilityIndex.ChangedNodesReachabilityProbe>
 			reachabilityProbes;
 		private final OccurrenceExecutionFrequencyFacts frequencyFacts;
+		private final StateOrdering stateOrdering;
 		private final ToDoubleFunction<CompiledHopKey> executionWeightOverride;
 		private final Map<CompiledHopKey,Double> executionWeights = new IdentityHashMap<>();
 		private final Map<RelocationAction,Double> relocationWeights = new IdentityHashMap<>();
@@ -370,6 +358,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			List<Node> decisions, List<Constraint> constraints,
 			List<RelocationAction> relocationActions,
 			CandidateSelections.PartialReachabilityIndex reachability,
+			StateOrdering stateOrdering,
 			ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
 			this.analysis = analysis != null && !analysis.candidateRuleFacts().orderedFacts().isEmpty()
 				? analysis : null;
@@ -377,6 +366,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			this.constraints = List.copyOf(constraints);
 			this.relocationActions = List.copyOf(relocationActions);
 			this.frequencyFacts = analysis == null ? null : analysis.executionFrequencyFacts();
+			this.stateOrdering = Objects.requireNonNull(stateOrdering, "stateOrdering");
 			this.executionWeightOverride = executionWeightOverride;
 			this.decisions = decisions.stream().sorted().toList();
 			this.groups = samePlacementGroups(this.decisions, this.constraints);
@@ -457,10 +447,10 @@ public final class PolicyFirstFeasiblePlacementSelector
 		}
 
 		/**
-		 * Preserve the FedAll FED/FOUT policy order, but break equal-policy layout ties
-		 * with only the movement actions incident to this equality group.  This is a
-		 * greedy ordering hint, not a global objective proof: the selector still accepts
-		 * the first candidate-reachable complete assignment.
+		 * Apply the caller's explicit policy order using only movement actions incident
+		 * to this equality group. This remains a greedy ordering hint, not a global
+		 * objective proof: the selector still accepts the first candidate-reachable
+		 * complete assignment.
 		 */
 		private List<PlacementState> orderedAlternatives(DecisionGroup group,
 			List<List<PlacementState>> domains) {
@@ -469,10 +459,12 @@ public final class PolicyFirstFeasiblePlacementSelector
 			for(PlacementState state : ordered)
 				hints.put(state, movementHint(group, state, domains));
 			ordered.sort((left, right) -> {
+				int movement = hints.get(left).compareTo(hints.get(right));
 				int policy = Integer.compare(policyRank(left), policyRank(right));
+				if(stateOrdering == StateOrdering.MOVEMENT_FIRST && movement != 0)
+					return movement;
 				if(policy != 0)
 					return policy;
-				int movement = hints.get(left).compareTo(hints.get(right));
 				return movement != 0 ? movement
 					: left.normalizedSignature().compareTo(right.normalizedSignature());
 			});
@@ -599,7 +591,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			double weight = 0.0;
 			for(var obligation : action.obligations()) {
 				double obligationWeight = executionWeight(obligation.consumer());
-				if(frequencyFacts != null && executionWeightOverride == null) {
+				if(obligationWeight > 0.0 && frequencyFacts != null && executionWeightOverride == null) {
 					for(Integer sourceGroup : sourceGroupsByValue.getOrDefault(
 						action.key().sourceValueVersion(), List.of()))
 						for(Node source : groups.get(sourceGroup).members())
@@ -611,7 +603,9 @@ public final class PolicyFirstFeasiblePlacementSelector
 				// the maximum dynamic demand rather than summing duplicate obligations.
 				weight = Math.max(weight, obligationWeight);
 			}
-			return weight > 0.0 ? weight : 1.0;
+			// An absent demand has no frequency evidence; a present, proven-dead
+			// demand has weight zero and must not be revived by that default.
+			return action.obligations().isEmpty() ? 1.0 : weight;
 		}
 
 		private double executionWeight(CompiledHopKey key) {
@@ -621,8 +615,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			double weight;
 			if(executionWeightOverride != null) {
 				weight = executionWeightOverride.applyAsDouble(key);
-				if(!Double.isFinite(weight) || weight <= 0.0)
-					throw new IllegalArgumentException("selector execution weight must be positive");
+				if(!Double.isFinite(weight) || weight < 0.0)
+					throw new IllegalArgumentException("selector execution weight must be nonnegative");
 			}
 			else
 				weight = frequencyFacts == null ? 1.0
@@ -917,18 +911,6 @@ public final class PolicyFirstFeasiblePlacementSelector
 			if(that.nodes.isEmpty())
 				return 1;
 			return nodes.get(0).compareTo(that.nodes.get(0));
-		}
-	}
-	private record CandidateDependency(CompiledHopKey producer, CompiledHopKey consumer,
-		int inputPosition) implements Comparable<CandidateDependency> {
-		@Override
-		public int compareTo(CandidateDependency that) {
-			int producerOrder = producer.compareTo(that.producer);
-			if(producerOrder != 0)
-				return producerOrder;
-			int consumerOrder = consumer.compareTo(that.consumer);
-			return consumerOrder != 0 ? consumerOrder
-				: Integer.compare(inputPosition, that.inputPosition);
 		}
 	}
 	private record MovementHint(double unavoidable, double exposed, double derived,

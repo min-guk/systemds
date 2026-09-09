@@ -1,0 +1,14 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+X = read($X)
+V = read($V)
+W = read($W)
+Chain = t(X) %*% (X %*% V)
+WChain = t(X) %*% (W * (X %*% V))
+ColChain = t(X) %*% (X %*% V)
+write(Chain, $Chain)
+write(WChain, $WChain)
+write(ColChain, $ColChain)

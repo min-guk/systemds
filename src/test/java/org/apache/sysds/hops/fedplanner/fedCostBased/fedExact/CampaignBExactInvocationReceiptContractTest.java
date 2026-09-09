@@ -32,11 +32,6 @@ import org.junit.Test;
 
 /** RED contract for an explicit, invocation-scoped Exact selection receipt. */
 public class CampaignBExactInvocationReceiptContractTest {
-	private static final String B09_CLONE_PREDECESSOR =
-		"input-0:64:6736da1dbbc6a6a05e3213f3c83cebba5d53ed0c6e6a3c7947c99d83ebe0f09f|2:M1|"
-			+ "105:64:6736da1dbbc6a6a05e3213f3c83cebba5d53ed0c6e6a3c7947c99d83ebe0f09f|4:main|"
-			+ "8:6:main/4|6:main/4|8:compiled|1:0|8:ORDINARY|0:";
-
 	@Test public void b09CloneRecompileProjectionPreservesExactNormalizedSelection() throws Exception {
 		FederatedPlanExact planner = new FederatedPlanExact();
 		Invocation first = invoke(planner, declaredRewrite(), "B-09");
@@ -91,7 +86,19 @@ public class CampaignBExactInvocationReceiptContractTest {
 		Assert.assertFalse("EXACT_B09_RECOMPILE_EXCLUSION_SHAPE", exclusions.get(0).state().shapeDependent());
 		Assert.assertEquals("EXACT_B09_RECOMPILE_EXCLUSION_DETAIL", "recompile-context forbids CP/FOUT",
 			exclusions.get(0).detail());
-		Assert.assertEquals("EXACT_B09_CLONE_PREDECESSOR_IDENTITY", List.of(B09_CLONE_PREDECESSOR),
+		var cloneHop = analysis.hop(clone.key()).orElseThrow();
+		List<String> expectedPredecessors = new java.util.ArrayList<>();
+		for(int inputPosition = 0; inputPosition < cloneHop.getInput().size(); inputPosition++) {
+			var inputHop = cloneHop.getInput().get(inputPosition);
+			var inputOccurrences = analysis.occurrences().stream()
+				.filter(occurrence -> occurrence.hop() == inputHop)
+				.toList();
+			Assert.assertEquals("EXACT_B09_CLONE_INPUT_OCCURRENCE_MULTIPLICITY", 1, inputOccurrences.size());
+			var inputNode = analysis.graph().node(inputOccurrences.get(0).key()).orElseThrow();
+			expectedPredecessors.add("input-" + inputPosition + ":"
+				+ inputNode.valueVersion().cfgReferenceSignature());
+		}
+		Assert.assertEquals("EXACT_B09_CLONE_PREDECESSOR_IDENTITY", expectedPredecessors,
 			clone.valueVersion().predecessorVersions());
 	}
 

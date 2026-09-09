@@ -1,0 +1,68 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+XR = federated(addresses=list($XR1, $XR2),
+  ranges=list(list(0,0), list($rows/2,$cols), list($rows/2,0), list($rows,$cols)))
+XC = federated(addresses=list($XC1, $XC2),
+  ranges=list(list(0,0), list(1,$rows/2), list(0,$rows/2), list(1,$rows)))
+XF = federated(addresses=list($XF), ranges=list(list(0,0), list($rows,$cols)))
+XB = federated(addresses=list($XB1, $XB2),
+  ranges=list(list(0,0), list($rows,$cols), list(0,0), list($rows,$cols)))
+YR = federated(addresses=list($YR1, $YR2),
+  ranges=list(list(0,0), list($rows/2,$cols), list($rows/2,0), list($rows,$cols)))
+YC = federated(addresses=list($YC1, $YC2),
+  ranges=list(list(0,0), list(1,$rows/2), list(0,$rows/2), list(1,$rows)))
+YF = federated(addresses=list($YF), ranges=list(list(0,0), list($rows,$cols)))
+YB = federated(addresses=list($YB1, $YB2),
+  ranges=list(list(0,0), list($rows,$cols), list(0,0), list($rows,$cols)))
+
+cmRow = as.matrix(moment(XR, 2))
+cmCol = as.matrix(moment(XC, 2))
+cmFull = as.matrix(moment(XF, 2))
+cmBroadcast = as.matrix(moment(XB, 2))
+covRow = as.matrix(cov(XR, YR))
+covCol = as.matrix(cov(XC, YC))
+covFull = as.matrix(cov(XF, YF))
+covBroadcast = as.matrix(cov(XB, YB))
+write(cmRow, $CMRow)
+write(cmCol, $CMCol)
+write(cmFull, $CMFull)
+write(cmBroadcast, $CMBroadcast)
+write(covRow, $CovRow)
+write(covCol, $CovCol)
+write(covFull, $CovFull)
+write(covBroadcast, $CovBroadcast)
+
+rowIndex = matrix(seq(1, $rows), rows=$rows, cols=1)
+overlapIndex = matrix((seq(1, $rows) %% 3) + 1, rows=$rows, cols=1)
+overlapIndexCol = t(overlapIndex)
+ctRowForward = table(XR, rowIndex)
+ctRowReverse = table(rowIndex, XR)
+ctRowOverlap = table(XR, overlapIndex)
+ctCol = table(XC, overlapIndexCol)
+ctFull = table(XF, overlapIndex)
+ctBroadcast = table(XB, overlapIndex)
+write(ctRowForward, $CTRowForward)
+write(ctRowReverse, $CTRowReverse)
+write(ctRowOverlap, $CTRowOverlap)
+write(ctCol, $CTCol)
+write(ctFull, $CTFull)
+write(ctBroadcast, $CTBroadcast)

@@ -30,6 +30,7 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeCapabilityAudit;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.parser.ParseInfo;
@@ -159,7 +160,8 @@ public abstract class ProgramBlock implements ParseInfo {
 		try {
 			long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
 			if(ConfigurationManager.isDynamicRecompilation() && requiresRecompile) {
-				tmp = Recompiler.recompileHopsDag(hops, ec.getVariables(), null, false, true, _tid);
+				tmp = Recompiler.recompileHopsDag(hops, ec.getVariables(), null, false, true, _tid,
+					_prog != null ? _prog.getDMLProg() : null);
 				tmp = JMLCUtils.cleanupRuntimeInstructions(tmp, PRED_VAR);
 			}
 			if(DMLScript.STATISTICS) {
@@ -221,6 +223,7 @@ public abstract class ProgramBlock implements ParseInfo {
 
 	private void executeSingleInstruction(Instruction currInst, ExecutionContext ec) {
 		Instruction tmp = null;
+		PlannerRuntimeCapabilityAudit.Observation capabilityObservation = null;
 		long t0 = 0;
 		long execTime = -1;
 		boolean instStats = DMLScript.INST_STATS;
@@ -231,6 +234,7 @@ public abstract class ProgramBlock implements ParseInfo {
 
 			// pre-process instruction (inst patching, listeners, lineage)
 			tmp = currInst.preprocessInstruction(ec);
+			PlannerRuntimeCapabilityAudit.recordRuntimeFrontier(currInst, tmp, ec);
 			PlannerRuntimePlacementAudit.validateExecution(tmp);
 			if (tmp instanceof FEDInstruction)
 				((FEDInstruction) tmp).setTID(ec.getTID());
@@ -240,6 +244,7 @@ public abstract class ProgramBlock implements ParseInfo {
 			// try to reuse instruction result from lineage cache
 			if(!LineageCache.reuse(tmp, ec)) {
 				long et0 = (!ReuseCacheType.isNone() || DMLScript.LINEAGE_ESTIMATE) ? System.nanoTime() : 0;
+				capabilityObservation = PlannerRuntimeCapabilityAudit.begin(tmp, ec);
 
 				// Debug block disabled; retained for potential future troubleshooting.
 				// if (tmp.toString().contains("FED") && tmp.toString().contains("r'")) {
@@ -275,6 +280,7 @@ public abstract class ProgramBlock implements ParseInfo {
 					LineageCache.putValue(tmp, ec, et0);
 					// post-process instruction (debug)
 					tmp.postprocessInstruction(ec);
+					PlannerRuntimeCapabilityAudit.recordSuccessful(capabilityObservation, tmp, ec);
 				}
 				finally {
 					ec.setCurrentInstruction(null);
@@ -310,9 +316,11 @@ public abstract class ProgramBlock implements ParseInfo {
 			}
 		}
 		catch(DMLScriptException e) {
+			PlannerRuntimeCapabilityAudit.recordFailure(capabilityObservation, tmp, e);
 			throw e;
 		}
 		catch(Exception e) {
+			PlannerRuntimeCapabilityAudit.recordFailure(capabilityObservation, tmp, e);
 			throw new DMLRuntimeException(
 				printBlockErrorLocation() + "Error evaluating instruction: " + currInst.toString(), e);
 		}

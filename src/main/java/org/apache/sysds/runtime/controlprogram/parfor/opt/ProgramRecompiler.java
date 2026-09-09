@@ -76,12 +76,20 @@ public class ProgramRecompiler
 		
 		//enhance runtime program by automatic operator fusion
 		if( ConfigurationManager.isCodegenEnabled() 
-			&& SpoofCompiler.INTEGRATION==IntegrationType.RUNTIME ) {
+			&& SpoofCompiler.INTEGRATION==IntegrationType.RUNTIME
+			&& !isCompiledFederatedPlannerConfigured() ) {
 			for( ProgramBlock pb : ret )
 				dmlt.codgenHopsDAG(pb);
 		}
 		
 		return ret;
+	}
+
+	private static boolean isCompiledFederatedPlannerConfigured() {
+		String planner = ConfigurationManager.getDMLConfig()
+			.getTextValue(DMLConfig.FEDERATED_PLANNER);
+		return OptimizerUtils.FEDERATED_COMPILATION
+			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner);
 	}
 	
 	
@@ -356,7 +364,8 @@ public class ProgramRecompiler
 			{
 				//construct new instructions
 				tmp = Recompiler.recompileHopsDag(
-					hop, ec.getVariables(), null, true, false, 0);
+					hop, ec.getVariables(), null, true, false, 0,
+					ec.getProgram() != null ? ec.getProgram().getDMLProg() : null);
 			}
 		}
 		catch(Exception ex)

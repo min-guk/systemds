@@ -609,9 +609,13 @@ public class FederatedData {
 					if(!mtd.mtdExists())
 						throw new FederatedWorkerHandlerException("Could not parse metadata file for " + filename);
 					privacyConstraints = mtd.getPrivacyConstraints();
-					
+
+					// An existing, valid metadata file without a privacy field denotes
+					// unrestricted data. Return that fact explicitly: a successful response
+					// with a null payload is otherwise indistinguishable from a malformed
+					// privacy response at the coordinator.
 					if(privacyConstraints == null)
-						LOG.warn("No privacy constraints found in metadata for " + filename);
+						privacyConstraints = "public";
 				}
 				
 				return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, privacyConstraints);

@@ -12,17 +12,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.DataType;
-import org.apache.sysds.conf.ConfigurationManager;
-import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.CandidateNormalizationFixture;
@@ -53,6 +49,7 @@ import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -61,7 +58,7 @@ import org.apache.sysds.test.component.federated.placement.shadow.ProductionShad
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Authoritative compile-time RED for neutral raw/promoted DP candidate facts. */
+/** Authoritative compile-time RED for neutral raw/promoted legacy DP enumerator candidate facts. */
 public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 	@Test
 	public void semanticDomainsHaveTheExactStableOrderAndDoNotCollapsePresentNull() {
@@ -258,7 +255,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 		assertIllegal(() -> new CandidateOccurrenceSnapshot(context, snapshot.parentOccurrence(), snapshot.rawEntries(),
 			snapshot.promotedEntries(), snapshot.logicalEntries(), snapshot.transientForwardDependencies(),
-			List.of(dependency, dependency), snapshot.orderedOracleInputs(),
+			List.of(), List.of(dependency, dependency), snapshot.orderedOracleInputs(),
 			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 		Assert.assertEquals("Function-output receipts must not be publicly forgeable", 0,
 			Arrays.stream(RewireFunctionOutputEdge.class.getConstructors())
@@ -518,15 +515,15 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 				: "B-21-SCALAR".equals(id) ? compileScalarTransientFixture()
 				: "PCA-MULTIRETURN".equals(id) ? compilePcaMultiReturnFixture()
 				: ProductionShadowFixtureFactory.compile(id);
-			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
-			AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
-			try {
-				ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
-				new DMLTranslator(program).constructLops(program, receipt::set);
-			}
-			finally { ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old); }
-			Assert.assertTrue(receipt.get() instanceof DpInvocationReceipt);
-			return new Fixture(program, (DpInvocationReceipt) receipt.get());
+			// This receipt contract targets the legacy DP enumerator directly; COMPILE_COST_BASED dispatches
+			// to the production local-cost planner and therefore cannot provide a DpInvocationReceipt.
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+				.bindAtFinalHopBoundary(program);
+			DpInvocationReceipt receipt = new FederatedPlannerDpFedCostBased()
+				.rewriteProgram(program, new FunctionCallGraph(program), null, analysis);
+			Assert.assertSame("fixture must consume the exact supplied DP analysis",
+				analysis, receipt.analysis());
+			return new Fixture(program, receipt);
 		}
 		catch(Exception e) { throw new AssertionError("Unable to compile G014 candidate fixture " + id, e); }
 	}

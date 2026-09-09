@@ -660,7 +660,9 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	}
 
 	private static boolean authorityNamed(String name) {
-		String lower = name.toLowerCase(); return lower.contains("authority") || lower.contains("placement");
+		// This guard owns only the PlacementAnalysis authority surface. Other
+		// program-scoped authorities must not be mistaken for alternate placement cells.
+		return name.toLowerCase().contains("placement");
 	}
 
 	private static String methodShape(Method method) {
@@ -680,7 +682,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			if(authorityNamed(methods.group(1)) || method.contains("_placementAnalysisAuthority"))
 				surface.append(method).append('\n');
 		}
-		source.lines().filter(line -> Pattern.compile("(?i)\\b[\\w<>?,. ]+\\s+\\w*(?:authority|placement)\\w*\\s*(?:=|;)")
+		source.lines().filter(line -> Pattern.compile("(?i)\\b[\\w<>?,. ]+\\s+\\w*placement\\w*\\s*(?:=|;)")
 			.matcher(line).find()).forEach(line -> surface.append(line).append('\n'));
 		return surface.toString();
 	}

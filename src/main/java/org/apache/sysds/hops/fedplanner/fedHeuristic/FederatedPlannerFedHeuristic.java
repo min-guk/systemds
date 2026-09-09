@@ -125,6 +125,7 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 			"markerCount=" + result.plannerFacts().get("markerCount")
 				+ " localPrefixCount=" + result.plannerFacts().get("localPrefixCount")
 				+ " frontierEdgeCount=" + result.plannerFacts().get("frontierEdgeCount")
+				+ " nativeContinuationCount=" + result.plannerFacts().get("nativeContinuationCount")
 				+ " fedCount=" + result.score().fedCount()
 				+ " foutCount=" + result.score().foutCount()
 				+ " relocationCount=" + result.score().relocationCount()

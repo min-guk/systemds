@@ -125,7 +125,11 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 			long[] varNewIn = new long[_qop.hasFourInputs() ? 4 : 3];
 			varNewIn[0] = fedMap.getID();
 
-			if(X.isFederated(FType.ROW)) { // row partitioned X
+			FType inputFType = fedMap.getType();
+			if(inputFType == FType.ROW || inputFType == FType.FULL) {
+				// A FULL map is one non-replicated range and follows the same slicing
+				// branch as ROW. Do not use FType.isType(ROW) here: BROADCAST is also
+				// row-capable in generic layout algebra but would duplicate WDivMM work.
 				if(U.isFederated(FType.ROW) && fedMap.isAligned(U.getFedMapping(), AlignType.ROW)) {
 					// U federated and aligned
 					varNewIn[1] = U.getFedMapping().getID();
@@ -139,7 +143,7 @@ public class QuaternaryWDivMMFEDInstruction extends QuaternaryFEDInstruction
 				varNewIn[2] = tmpFr.getID();
 				frB.add(tmpFr);
 			}
-			else if(X.isFederated(FType.COL)) { // col paritioned X
+			else if(inputFType == FType.COL) { // column-partitioned X
 				FederatedRequest tmpFr = fedMap.broadcast(U);
 				varNewIn[1] = tmpFr.getID();
 				frB.add(tmpFr);

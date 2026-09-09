@@ -107,10 +107,17 @@ public class FederatedMultiplyTest extends AutomatedTestBase {
 		double[][] Y1 = getRandomMatrix(cols, halfRows, 0, 1, 1, 44);
 		double[][] Y2 = getRandomMatrix(cols, halfRows, 0, 1, 1, 21);
 
-		writeInputMatrixWithMTD("X1", X1, false, new MatrixCharacteristics(halfRows, cols, blocksize, halfRows * cols));
-		writeInputMatrixWithMTD("X2", X2, false, new MatrixCharacteristics(halfRows, cols, blocksize, halfRows * cols));
-		writeInputMatrixWithMTD("Y1", Y1, false, new MatrixCharacteristics(cols, halfRows, blocksize, halfRows * cols));
-		writeInputMatrixWithMTD("Y2", Y2, false, new MatrixCharacteristics(cols, halfRows, blocksize, halfRows * cols));
+		// Federated compilation requires every source to return an explicit privacy
+		// contract. This legacy runtime-conversion test intentionally permits the
+		// coordinator collection/broadcast used by ROW x COL mapmm.
+		writeInputMatrixWithMTD("X1", X1, false,
+			new MatrixCharacteristics(halfRows, cols, blocksize, halfRows * cols), "public");
+		writeInputMatrixWithMTD("X2", X2, false,
+			new MatrixCharacteristics(halfRows, cols, blocksize, halfRows * cols), "public");
+		writeInputMatrixWithMTD("Y1", Y1, false,
+			new MatrixCharacteristics(cols, halfRows, blocksize, halfRows * cols), "public");
+		writeInputMatrixWithMTD("Y2", Y2, false,
+			new MatrixCharacteristics(cols, halfRows, blocksize, halfRows * cols), "public");
 
 		int port1 = getRandomAvailablePort();
 		int port2 = getRandomAvailablePort();

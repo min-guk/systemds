@@ -89,6 +89,7 @@ public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction {
 		CMOperator cm_op = ((CMOperator)_optr); 
 		if ( cm_op.getAggOpType() == AggregateOperationTypes.INVALID )
 			cm_op = cm_op.setCMAggOp((int)order.getLongValue());
+		matBlock = CMCovCPInstructionUtils.normalizeVectorOrientation(matBlock, cm_op.getNumThreads());
 		
 		CM_COV_Object cmobj = null; 
 		if (input3 == null ) {
@@ -96,6 +97,7 @@ public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction {
 		}
 		else {
 			MatrixBlock wtBlock = ec.getMatrixInput(input2.getName());
+			wtBlock = CMCovCPInstructionUtils.normalizeVectorOrientation(wtBlock, cm_op.getNumThreads());
 			cmobj = matBlock.cmOperations(cm_op, wtBlock);
 			ec.releaseMatrixInput(input2.getName());
 		}
@@ -104,5 +106,17 @@ public class CentralMomentCPInstruction extends AggregateUnaryCPInstruction {
 		
 		double val = cmobj.getRequiredResult(cm_op);
 		ec.setScalarOutput(output_name, new DoubleObject(val));
+	}
+
+}
+
+final class CMCovCPInstructionUtils {
+	private CMCovCPInstructionUtils() {
+		// utility class
+	}
+
+	static MatrixBlock normalizeVectorOrientation(MatrixBlock input, int numThreads) {
+		return input.getNumRows() == 1 && input.getNumColumns() > 1
+			? input.transpose(numThreads) : input;
 	}
 }

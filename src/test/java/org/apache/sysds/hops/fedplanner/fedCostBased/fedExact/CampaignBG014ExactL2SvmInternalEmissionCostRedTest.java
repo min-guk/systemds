@@ -15,7 +15,10 @@ import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CoordinatorInputAccess;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -24,7 +27,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Docker-shape regression for cost-equivalent internal FED/LOUT arms in two-worker L2SVM. */
+/** Compile-only regression for native origin residency in the two-worker L2SVM plan. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 	@Test
@@ -99,61 +102,37 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 				outerLoop.lines().anyMatch(line -> line.contains("FED ba+*")
 					&& line.contains(" X.MATRIX") && line.contains(" LOUT")));
 			var normalized = committedResult();
-			var anchorsBySource = normalized.selectedRelocationChoices().stream().collect(
-				java.util.stream.Collectors.groupingBy(choice -> choice.action().sourceValueVersion(),
-					java.util.stream.Collectors.mapping(choice -> choice.action().durableAnchor().placementId(),
-						java.util.stream.Collectors.toSet())));
-			Assert.assertTrue("Independent L2SVM consumers must retain their exact worker-pool authority "
-				+ "instead of expanding one selected action over every compatible obligation: "
-				+ anchorsBySource,
-				anchorsBySource.values().stream().anyMatch(anchors -> anchors.size() > 1));
+			assertExactRelocationEmissionCoverage(normalized);
 			Assert.assertFalse("Exact must not publish a relocation boundary on the loop-local X transpose",
-				normalized.selectedRelocations().stream().anyMatch(action -> {
-					var source = normalized.analysis().graph().nodes().stream()
+				normalized.selectedRelocations().stream().anyMatch(action ->
+					normalized.analysis().graph().nodes().stream()
 						.filter(node -> node.valueVersion().equals(action.sourceValueVersion()))
-						.findFirst().orElseThrow();
-					return normalized.analysis().hop(source.key()).orElseThrow().getBeginLine() == 124
-						&& "r(r')".equals(normalized.analysis().hop(source.key()).orElseThrow().getOpString());
-				}));
+						.anyMatch(source -> normalized.analysis().hop(source.key()).map(hop ->
+							hop.getBeginLine() == 124 && "r(r')".equals(hop.getOpString())).orElse(false))));
 			Assert.assertTrue("Exact must not relocate Xd inside the 30x20 nested loop; relocations="
 				+ normalized.selectedRelocations(), normalized.selectedRelocations().stream().noneMatch(action ->
 					normalized.analysis().graph().nodes().stream().anyMatch(node ->
 						node.valueVersion().equals(action.sourceValueVersion())
 							&& normalized.analysis().hop(node.key()).map(hop -> "Xd".equals(hop.getName())
 								&& hop.getBeginLine() == 110).orElse(false))));
-			String innerLoop = between(runtimeProgram, "GENERIC (lines 105-113)",
-				"CP rmvar h tmp_Xw sv g out");
-			Assert.assertTrue("The selected local boundary must be emitted once before the inner-loop"
-				+ " CP consumers", innerLoop.contains("CP prefetch"));
-			Assert.assertTrue("The locally materialized support-vector predicate must execute in CP",
-				innerLoop.lines().anyMatch(line -> line.contains("CP >")));
-			Assert.assertTrue("The local Hessian chain must lower to one fused ternary aggregate",
-				innerLoop.contains("CP tak+*"));
-			Assert.assertFalse("Exact must not retain the repeated FED comparison after reusable"
-				+ " materialization is priced on its actual GET_VAR path", innerLoop.contains("FED >"));
 			var xdNodes = normalized.analysis().graph().nodes().stream()
+				.filter(node -> normalized.analysis().isCompiledHopOccurrence(node.key()))
 				.filter(node -> normalized.analysis().hop(node.key()).map(hop ->
 					"Xd".equals(hop.getName()) && hop.getBeginLine() == 110
 						&& "b(*)".equals(hop.getOpString())).orElse(false))
 				.toList();
 			Assert.assertEquals("Expected one exact Xd loop occurrence", 1, xdNodes.size());
 			var xd = xdNodes.get(0);
-			var xdState = normalized.selectedStates().get(xd.key());
-			Assert.assertNotNull("Exact selection must contain the exact Xd occurrence", xdState);
-			Assert.assertEquals("The inner-loop Hessian product must execute locally after one reusable"
-				+ " producer materialization", ExecType.CP, xdState.execType());
-			Assert.assertEquals("The local Hessian product must remain coordinator-resident",
-				FederatedOutput.LOUT,
-				xdState.output());
-			Assert.assertNull("A coordinator-resident Hessian product has no federated layout",
-				xdState.fType());
-			long innerMaterializations = ((java.util.List<?>) normalized.selectedLocalMaterializations()).stream()
-				.map(action -> (LocalMaterializationActionKey) action)
-				.filter(action -> normalized.analysis().hop(action.sourceOccurrence()).map(hop ->
-					hop.getBeginLine() == 106 && "b(1-*)".equals(hop.getOpString())).orElse(false))
-				.count();
-			Assert.assertEquals("The loop-local out value must use one reusable materialization action: "
-				+ normalizedLocalSummary(), 1L, innerMaterializations);
+			assertOriginBoundNativeState(normalized, xd.key(), "exact Xd loop occurrence");
+			var labelReads = normalized.analysis().graph().nodes().stream()
+				.filter(node -> normalized.analysis().isCompiledHopOccurrence(node.key()))
+				.filter(node -> normalized.analysis().hop(node.key()).map(hop ->
+						hop.getBeginLine() == 109 && "TRead Y".equals(hop.getOpString())).orElse(false))
+				.toList();
+			Assert.assertFalse("Expected a loop-local TRead Y occurrence", labelReads.isEmpty());
+			labelReads.forEach(node -> assertOriginBoundNativeState(normalized, node.key(),
+				"loop-local TRead Y occurrence"));
+			assertProtectedEmissionContract(normalized);
 		}
 		finally {
 			Files.deleteIfExists(script);
@@ -176,6 +155,68 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 		}
 	}
 
+	private static void assertOriginBoundNativeState(
+			org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult normalized,
+			org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey key, String witness) {
+		Assert.assertTrue(witness + " must require origin residency",
+			ExecPlacementPolicy.requiresOriginResidency(normalized.analysis().requirePrivacy(key)));
+		var emission = normalized.selectedEmissionStates().get(key);
+		Assert.assertNotNull(witness + " must have a selected emission state", emission);
+		Assert.assertEquals(witness + " must execute on federated workers", ExecType.FED,
+			emission.placementState().execType());
+		Assert.assertEquals(witness + " must retain a federated result", FederatedOutput.FOUT,
+			emission.placementState().output());
+		Assert.assertNotNull(witness + " must retain a native federated layout",
+			emission.placementState().fType());
+		Assert.assertFalse(witness + " must not use a coordinator-derived FED/FOUT",
+			emission.derivedFedFout());
+	}
+
+	private static void assertProtectedEmissionContract(
+			org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult normalized) {
+		var analysis = normalized.analysis();
+		for(var node : analysis.graph().decisionNodes()) {
+			if(!node.emittedWork() || analysis.isDmlFunctionCallBoundary(node.key())
+				|| !ExecPlacementPolicy.requiresOriginResidency(analysis.requirePrivacy(node.key())))
+				continue;
+			assertOriginBoundNativeState(normalized, node.key(), "origin-bound emitted decision");
+		}
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(analysis.coordinatorInputAccess(edge) != CoordinatorInputAccess.PAYLOAD
+				|| analysis.isDmlFunctionCallBoundary(edge.consumer())
+				|| !ExecPlacementPolicy.requiresOriginResidency(analysis.requirePrivacy(edge.producer())))
+				continue;
+			var consumer = normalized.selectedStates().get(edge.consumer());
+			Assert.assertNotNull("Protected payload consumer must have a selected state", consumer);
+			Assert.assertEquals("Protected payload must be consumed on federated workers",
+				ExecType.FED, consumer.execType());
+			var candidate = normalized.selectedCandidateSelections().stream()
+				.filter(receipt -> receipt.rule().parentOccurrence() == edge.consumer()).findFirst().orElse(null);
+			Assert.assertNotNull("Protected FED payload must retain exact candidate authority", candidate);
+			Assert.assertTrue("Protected FED payload must be PRESENT in its selected candidate row",
+				edge.inputPosition() < candidate.rule().orderedInputs().size()
+					&& candidate.rule().orderedInputs().get(edge.inputPosition()).present());
+		}
+		for(Object raw : normalized.selectedLocalMaterializations()) {
+			LocalMaterializationActionKey action = (LocalMaterializationActionKey) raw;
+			Assert.assertFalse("Protected source must not have a selected local materialization",
+				ExecPlacementPolicy.requiresOriginResidency(
+					analysis.requirePrivacy(action.sourceOccurrence())));
+		}
+		for(var action : analysis.graph().relocationActions()) {
+			if(!analysis.graph().isRelocationActive(action, normalized.selectedStates(),
+				normalized.selectedCandidateSelections()))
+				continue;
+			var owners = analysis.graph().nodes().stream()
+				.filter(node -> node.valueVersion().equals(action.key().sourceValueVersion()))
+				.filter(node -> analysis.isCompiledHopOccurrence(node.key())).toList();
+			Assert.assertFalse("Active relocation must have compiled source owners", owners.isEmpty());
+			Assert.assertTrue("Every compiled owner of an active relocation source must be unprotected",
+				owners.stream().noneMatch(owner -> ExecPlacementPolicy.requiresOriginResidency(
+					analysis.requirePrivacy(owner.key()))));
+		}
+	}
+
 	private static String between(String value, String start, String end) {
 		int from = value.indexOf(start);
 		Assert.assertTrue("Missing runtime-program start marker: " + start, from >= 0);
@@ -189,6 +230,58 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 		for(int offset = 0; (offset = value.indexOf(needle, offset)) >= 0; offset += needle.length())
 			result++;
 		return result;
+	}
+
+	private static void assertExactRelocationEmissionCoverage(
+			org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult normalized) {
+		var selectedActions = normalized.selectedRelocations().stream().collect(
+			java.util.stream.Collectors.toMap(action -> action.normalizedSignature(), action -> action));
+		var graphActions = normalized.analysis().graph().relocationActions().stream().collect(
+			java.util.stream.Collectors.toMap(action -> action.key().normalizedSignature(), action -> action));
+		var expectedInputs = new java.util.TreeMap<String,java.util.Set<
+			FederatedRefedRegistry.ConsumerInputSpec>>();
+		var resolvedChoices = RelocationSelections.resolveAndValidate(normalized.analysis(),
+			normalized.selectedStates(), normalized.selectedCandidateSelections(),
+			normalized.selectedRelocationChoices());
+		for(var choice : resolvedChoices) {
+			String actionKey = choice.action().key().normalizedSignature();
+			var graphAction = graphActions.get(actionKey);
+			Assert.assertNotNull("Every selected choice must belong to the immutable placement graph", graphAction);
+			Assert.assertTrue("Every selected demand must be one exact graph obligation",
+				graphAction.obligations().stream().anyMatch(obligation ->
+					org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey
+						.from(obligation).equals(choice.receipt().demand())));
+			if(!choice.requiresEmission())
+				continue;
+			Assert.assertEquals("Every physically emitted exact choice must reference its selected action",
+				choice.action().key(), selectedActions.get(actionKey));
+			long consumerHop = normalized.analysis().hop(choice.receipt().demand().consumer()).orElseThrow().getHopID();
+			expectedInputs.computeIfAbsent(actionKey, ignored -> new java.util.TreeSet<>()).add(
+				new FederatedRefedRegistry.ConsumerInputSpec(consumerHop,
+					choice.receipt().demand().inputPosition()));
+		}
+		Assert.assertEquals("Selected physical actions and emission-requiring demand receipts must agree",
+			selectedActions.keySet(), expectedInputs.keySet());
+
+		var emittedInputs = new java.util.TreeMap<String,java.util.Set<
+			FederatedRefedRegistry.ConsumerInputSpec>>();
+		for(var scope : FederatedRefedRegistry.snapshotAll().scopes().values())
+			for(var spec : scope.values())
+				for(var authority : spec.getAuthorities()) {
+					String actionKey = authority.getPlannerActionKey();
+					Assert.assertNotNull("Exact REFED emission must retain its planner action identity", actionKey);
+					var selected = selectedActions.get(actionKey);
+					Assert.assertNotNull("Physical REFED emission must be backed by a selected action", selected);
+					Assert.assertEquals("Physical REFED layout must equal the selected materialization layout",
+						selected.materializationFType(), authority.getMaterializationFType());
+					Assert.assertTrue("Exact emission must never broaden a selected input to ALL_INPUTS",
+						authority.getConsumerInputs().stream().noneMatch(
+							FederatedRefedRegistry.ConsumerInputSpec::allInputs));
+					emittedInputs.computeIfAbsent(actionKey, ignored -> new java.util.TreeSet<>())
+						.addAll(authority.getConsumerInputs());
+				}
+		Assert.assertEquals("Lowering must emit exactly the selected consumer-input obligations, not every "
+			+ "compatible consumer of an action", expectedInputs, emittedInputs);
 	}
 
 	private static String boundaryRegistrySlots() {
@@ -209,8 +302,9 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 		return ((java.util.List<?>) result.selectedLocalMaterializations()).stream()
 			.map(value -> {
 				LocalMaterializationActionKey action = (LocalMaterializationActionKey) value;
-				long source = result.analysis().hop(action.sourceOccurrence()).orElseThrow().getHopID();
-				return source + "->" + action.obligations().stream().map(obligation -> {
+				var sourceHop = result.analysis().hop(action.sourceOccurrence()).orElseThrow();
+				return sourceHop.getHopID() + "@" + sourceHop.getBeginLine() + ":" + sourceHop.getOpString()
+					+ "->" + action.obligations().stream().map(obligation -> {
 					long consumer = result.analysis().hop(obligation.consumerOccurrence()).orElseThrow().getHopID();
 					return consumer + "=" + result.selectedStates().get(obligation.consumerOccurrence());
 				}).toList();

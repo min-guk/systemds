@@ -387,7 +387,12 @@ public abstract class Hop implements ParseInfo {
 				_etypeForced = ExecType.CP;
 			}
 		}
-		else if ( DMLScript.getGlobalExecMode() == ExecMode.SPARK )
+		// A compiled federated placement is a concrete CP/FED physical choice, not a
+		// hint. The global SPARK mode may force ordinary candidates to Spark, but it
+		// must not overwrite a selector-owned placement. It must also retain legacy
+		// explicitly forced FED operations that predate the compiled-planner marker.
+		else if ( DMLScript.getGlobalExecMode() == ExecMode.SPARK
+				&& !isPlannerPlacementSelected() && _etypeForced != ExecType.FED )
 			_etypeForced = ExecType.SPARK; // enabled with -exec spark option
 		else if ( DMLScript.getGlobalExecMode() == ExecMode.HYBRID
 				&& ConfigurationManager.getCompilerConfigFlag(ConfigType.RESOURCE_OPTIMIZATION))
@@ -603,8 +608,17 @@ public abstract class Hop implements ParseInfo {
 				|| _etypeForced == ExecType.CP ) ? ExecType.CP : ExecType.SPARK;
 		}
 
-		//add checkpoint lop to output if required
-		if( _requiresCheckpoint && et != ExecType.CP )
+		Lop input = getLops();
+		FederatedOutput inputFedOut = input != null ? input.getFederatedOutput() : null;
+		boolean federationMapBacked = inputFedOut != null && inputFedOut.isForcedFederated();
+
+		// A Spark checkpoint persists an RDD-backed value. A compiled FED placement instead
+		// publishes a FederationMap-backed MatrixObject (including fed-init Lops whose legacy
+		// execution type is INVALID but whose selected output is FOUT). Appending chkpoint to
+		// such a value creates an unselected SPARK placement and cannot preserve the selected
+		// federation map. The original checkpoint request is therefore inapplicable after the
+		// planner changes this Hop's physical value to FED/FOUT.
+		if( _requiresCheckpoint && et != ExecType.CP && !federationMapBacked )
 		{
 			try
 			{
@@ -624,8 +638,7 @@ public abstract class Hop implements ParseInfo {
 				}
 			
 				//construct checkpoint w/ right storage level
-				Lop input = getLops();
-				Lop chkpoint = new Checkpoint(input, getDataType(), getValueType(), 
+					Lop chkpoint = new Checkpoint(input, getDataType(), getValueType(),
 						serializedStorage ? Checkpoint.getSerializeStorageLevelString() :
 						Checkpoint.getDefaultStorageLevelString() );
 				

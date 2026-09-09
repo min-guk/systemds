@@ -199,16 +199,16 @@ final class LocalPhysicalOptimizer {
 	 * Builds a bounded neighborhood only for a physical FED/FOUT source that the
 	 * selected assignment would actually materialize for a coordinator-local input.
 	 * A producer-consumer pair can be trapped behind an intermediate cost barrier when
-	 * a selected FOUT chain must change with it. The block therefore contains the
-	 * selected downstream FOUT component plus the direct input/consumer fringe of that
-	 * component. Traversal stops at non-FOUT decisions, so this remains a physical
-	 * conflict region rather than a transitive whole-program component.
+	 * the materialized local component must move back to FED together. The block
+	 * therefore contains the selected downstream FOUT component and the contiguous
+	 * selected CP/LOUT component whose domains still expose a FED alternative. A
+	 * CP-only operator is a real materialization boundary and stops traversal, so this
+	 * remains a physical conflict region rather than an arbitrary whole-program component.
 	 */
 	private static final class MaterializationConflictBlockProvider
 		implements LocalCategoricalOptimizer.DeferredBlockProvider {
 		private final List<DecisionDomain> domains;
 		private final ValueBoundaryHardClosure hardClosure;
-		private final Map<Integer,Set<Integer>> inputsByConsumer = new LinkedHashMap<>();
 		private final Map<Integer,Set<Integer>> consumersByProducer = new LinkedHashMap<>();
 		private final List<IndexedCompiledInput> compiledInputs;
 		private final List<IndexedFunctionInput> functionInputs;
@@ -219,12 +219,12 @@ final class LocalPhysicalOptimizer {
 			this.hardClosure = hardClosure;
 			IdentityHashMap<CompiledHopKey,Integer> positions = decisionPositions(domains);
 			for(DecisionEdge edge : decisionEdges(model.analysis())) {
+				if(model.analysis().isDmlFunctionCallBoundary(edge.consumer()))
+					continue;
 				Integer producer = positions.get(edge.producer());
 				Integer consumer = positions.get(edge.consumer());
 				if(producer == null || consumer == null || producer.equals(consumer))
 					continue;
-				inputsByConsumer.computeIfAbsent(consumer, ignored -> new LinkedHashSet<>())
-					.add(producer);
 				consumersByProducer.computeIfAbsent(producer, ignored -> new LinkedHashSet<>())
 					.add(consumer);
 			}
@@ -280,7 +280,7 @@ final class LocalPhysicalOptimizer {
 			List<List<Variable>> blocks = new ArrayList<>(selectedSources.size());
 			for(int source : selectedSources) {
 				Set<Integer> block = materializationConflictNeighborhood(source,
-					domains, assignment, inputsByConsumer, consumersByProducer);
+					domains, assignment, consumersByProducer);
 				hardClosure.expand(block);
 				blocks.add(block.stream().sorted()
 					.map(index -> domains.get(index).variable()).toList());
@@ -295,33 +295,24 @@ final class LocalPhysicalOptimizer {
 
 	private static Set<Integer> materializationConflictNeighborhood(int source,
 		List<DecisionDomain> domains, List<Integer> assignment,
-		Map<Integer,Set<Integer>> inputsByConsumer,
 		Map<Integer,Set<Integer>> consumersByProducer) {
-		Set<Integer> foutComponent = new LinkedHashSet<>();
+		Set<Integer> component = new LinkedHashSet<>();
 		ArrayDeque<Integer> pending = new ArrayDeque<>();
-		foutComponent.add(source);
+		component.add(source);
 		pending.addLast(source);
 		while(!pending.isEmpty()) {
 			int current = pending.removeFirst();
-			for(int consumer : consumersByProducer.getOrDefault(current, Set.of()))
-				if(isPhysicalFout(selected(domains.get(consumer), assignment.get(consumer)))
-					&& foutComponent.add(consumer))
+			for(int consumer : consumersByProducer.getOrDefault(current, Set.of())) {
+				DecisionDomain consumerDomain = domains.get(consumer);
+				Alternative selectedConsumer = selected(consumerDomain,
+					assignment.get(consumer));
+				if((isPhysicalFout(selectedConsumer)
+					|| isFederatableLocalMaterialization(selectedConsumer, consumerDomain))
+					&& component.add(consumer))
 					pending.addLast(consumer);
+			}
 		}
-		Set<Integer> block = new LinkedHashSet<>();
-		for(int member : foutComponent)
-			block.addAll(operatorNeighborhood(member, inputsByConsumer, consumersByProducer));
-		return block;
-	}
-
-	private static Set<Integer> operatorNeighborhood(int source,
-		Map<Integer,Set<Integer>> inputsByConsumer,
-		Map<Integer,Set<Integer>> consumersByProducer) {
-		Set<Integer> block = new LinkedHashSet<>();
-		block.addAll(inputsByConsumer.getOrDefault(source, Set.of()));
-		block.add(source);
-		block.addAll(consumersByProducer.getOrDefault(source, Set.of()));
-		return block;
+		return component;
 	}
 
 	private static Alternative selected(DecisionDomain domain, int value) {
@@ -334,6 +325,14 @@ final class LocalPhysicalOptimizer {
 		return alternative.state().execType() == ExecType.FED
 			&& alternative.state().output() == FederatedOutput.FOUT
 			&& alternative.derivedFoutAction() == null;
+	}
+
+	private static boolean isFederatableLocalMaterialization(Alternative selected,
+		DecisionDomain domain) {
+		return selected.state().execType() == ExecType.CP
+			&& selected.state().output() == FederatedOutput.LOUT
+			&& domain.alternatives().stream()
+				.anyMatch(alternative -> alternative.state().execType() == ExecType.FED);
 	}
 
 	private static boolean requiresLocalInput(Alternative alternative, int inputPosition,

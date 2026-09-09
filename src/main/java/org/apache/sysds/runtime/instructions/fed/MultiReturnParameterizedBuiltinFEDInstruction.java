@@ -45,6 +45,8 @@ import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysds.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
@@ -62,8 +64,10 @@ import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacy;
 import org.apache.sysds.runtime.transform.encode.ColumnEncoderBin;
 import org.apache.sysds.runtime.transform.encode.ColumnEncoderComposite;
+import org.apache.sysds.runtime.transform.encode.ColumnEncoderDummycode;
 import org.apache.sysds.runtime.transform.encode.ColumnEncoderRecode;
 import org.apache.sysds.runtime.transform.encode.Encoder;
 import org.apache.sysds.runtime.transform.encode.EncoderFactory;
@@ -136,7 +140,10 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 			CPOperand in2 = new CPOperand(parts[2]);
 			int pos = 3;
 			boolean metaReturn = true;
-			if( parts.length == 7 ) //no need for meta data
+			// FED transformencode has no trailing thread-count operand. When metadata
+			// is dead-code eliminated, the optional meta-return flag therefore makes
+			// the decoded instruction six parts long (matching the SP form).
+			if(parts.length == 6) // no need for metadata
 				metaReturn = new CPOperand(parts[pos++]).getLiteral().getBooleanValue();
 			outputs.add(new CPOperand(parts[pos], Types.ValueType.FP64, Types.DataType.MATRIX));
 			outputs.add(new CPOperand(parts[pos+1], Types.ValueType.STRING, Types.DataType.FRAME));
@@ -153,7 +160,8 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 	public void processInstruction(ExecutionContext ec) {
 		// obtain and pin input frame
 		FrameObject fin = ec.getFrameObject(input1.getName());
-		String spec = ec.getScalarInput(input2).getStringValue();
+		String spec = TransformEncodeMetadataPrivacy.validateAndStripReleaseRequest(
+			ec.getScalarInput(input2).getStringValue());
 
 		String[] colNames = new String[(int) fin.getNumColumns()];
 		Arrays.fill(colNames, "");
@@ -170,37 +178,37 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 		} else {
 			// first create encoders at the federated workers, then collect them and aggregate them to a single large
 			// encoder
-			MultiColumnEncoder finalGlobalEncoder = globalEncoder;
-			String[] finalColNames = colNames;
-			fedMapping.forEachParallel((range, data) -> {
+			List<Pair<FederatedRange, FederatedData>> partitions = new ArrayList<>(fedMapping.getMap());
+			partitions.sort((left, right) -> {
+				int rowOrder = Long.compare(left.getKey().getBeginDims()[0], right.getKey().getBeginDims()[0]);
+				return rowOrder != 0 ? rowOrder :
+					Long.compare(left.getKey().getBeginDims()[1], right.getKey().getBeginDims()[1]);
+			});
+			List<Future<FederatedResponse>> responses = new ArrayList<>(partitions.size());
+			for(Pair<FederatedRange, FederatedData> partition : partitions) {
+				FederatedRange range = partition.getKey();
 				int columnOffset = (int) range.getBeginDims()[1];
-
-				// create an encoder with the given spec. The columnOffset (which is 0 based) has to be used to
-				// tell the federated worker how much the indexes in the spec have to be offset.
-				Future<FederatedResponse> responseFuture = data.executeFederatedOperation(new FederatedRequest(
+				responses.add(partition.getValue().executeFederatedOperation(new FederatedRequest(
 					RequestType.EXEC_UDF,
-					-1,
-					new CreateFrameEncoder(data.getVarID(), spec, columnOffset + 1)));
-				// collect responses with encoders
+					-1, new CreateFrameEncoder(partition.getValue().getVarID(), spec, columnOffset + 1))));
+			}
+			// RPCs are issued eagerly above, but their encoders are merged in logical
+			// range order. Recode IDs depend on first occurrence, so completion-order
+			// merging would make ROW-partitioned dummycoding nondeterministic.
+			for(int i = 0; i < partitions.size(); i++) {
+				FederatedRange range = partitions.get(i).getKey();
+				int columnOffset = (int) range.getBeginDims()[1];
 				try {
-					FederatedResponse response = responseFuture.get();
+					FederatedResponse response = responses.get(i).get();
 					MultiColumnEncoder encoder = (MultiColumnEncoder) response.getData()[0];
-
-					// merge this encoder into a composite encoder
-					synchronized(finalGlobalEncoder) {
-						finalGlobalEncoder.mergeAt(encoder, columnOffset, (int) (range.getBeginDims()[0] + 1));
-					}
-					// no synchronization necessary since names should anyway match
+					globalEncoder.mergeAt(encoder, columnOffset, (int) (range.getBeginDims()[0] + 1));
 					String[] subRangeColNames = (String[]) response.getData()[1];
-					System.arraycopy(subRangeColNames, 0, finalColNames, (int) range.getBeginDims()[1], subRangeColNames.length);
+					System.arraycopy(subRangeColNames, 0, colNames, columnOffset, subRangeColNames.length);
 				}
 				catch(Exception e) {
 					throw new DMLRuntimeException("Federated encoder creation failed: ", e);
 				}
-				return null;
-			});
-			globalEncoder = finalGlobalEncoder;
-			colNames = finalColNames;
+			}
 		}
 
 		// sort for consistent encoding in local and federated
@@ -316,7 +324,17 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 			// get the encoder segment that is relevant for this federated worker
 			MultiColumnEncoder encoder = globalencoder.subRangeEncoder(ixRange);
 			// update begin end dims (column part) considering columns added by dummycoding
-			encoder.updateIndexRanges(beginDims, endDims, globalencoder.getNumExtraCols(ixRangeInv));
+			int precedingExtraCols = globalencoder.getNumExtraCols(ixRangeInv);
+			boolean expandsColumns = !encoder.getColumnEncoders(ColumnEncoderDummycode.class).isEmpty();
+			encoder.updateIndexRanges(beginDims, endDims, precedingExtraCols);
+			// A column partition without a local dummycode encoder still has to move
+			// behind dummycoded columns emitted by preceding partitions. The encoder
+			// callback cannot apply this offset because that partition has no
+			// ColumnEncoderDummycode instance of its own.
+			if(!expandsColumns && precedingExtraCols != 0) {
+				beginDims[1] += precedingExtraCols;
+				endDims[1] += precedingExtraCols;
+			}
 
 			try {
 				FederatedResponse response = data.executeFederatedOperation(

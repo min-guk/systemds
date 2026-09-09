@@ -7,7 +7,9 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateFal
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -248,6 +251,203 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 				.noneMatch(action -> action.compatibleConsumers().contains(call.key())));
 	}
 
+	@Test
+	public void rewrittenInlinedOutputRetainsItsCompilerDeclaredTargetAuthority() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileBuiltinGlmFixture());
+
+		Assert.assertTrue("the boundary must bind to an emitted caller-side result",
+			analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.evidence().equals("inlined-function-result:new_z")));
+	}
+
+	@Test(timeout = 60000)
+	public void inlinedGlmInputsAreTraceOnlyWithOrWithoutLexicalCarriers() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileBuiltinGlmFixture());
+		List<Node> inputs = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.FUNCTION_INPUT)
+			.filter(node -> node.key().canonicalSourceOrigin().startsWith(
+				"function-boundary:.builtinNS::get_trust_boundary_point:input:"))
+			.toList();
+		List<Node> authoritylessInputs = inputs.stream()
+			.filter(node -> analysis.graph().constraints().stream().noneMatch(constraint ->
+				constraint.right() == node.key()
+					&& constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+					&& (constraint.evidence().startsWith("function-argument:")
+						|| constraint.evidence().startsWith("inlined-function-argument:"))))
+			.toList();
+
+		Assert.assertFalse("GLM rewrites must expose at least one substituted inlined input",
+			authoritylessInputs.isEmpty());
+		Assert.assertTrue("fixture must also retain named argument provenance", inputs.size() > authoritylessInputs.size());
+		Assert.assertTrue("no inlined input is a runtime call carrier, regardless of surviving lexical names",
+			inputs.stream().allMatch(node -> !node.emittedWork()
+				&& node.legalAlternatives().isEmpty()));
+		NormalizedPlannerResult plan = new FedAllPlacementAdapter(
+			new PolicyFirstFeasiblePlacementSelector()).select(analysis);
+		Assert.assertEquals("single-pass FedAll must return one state for every emitted decision",
+			analysis.graph().decisionNodes().size(), plan.selectedEmissionStates().size());
+	}
+
+	@Test(timeout = 60000)
+	public void candidateMaterializationSearchMatchesBoundedExhaustiveOracle() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileBuiltinGlmFixture());
+		List<RelocationAction> actions = analysis.graph().relocationActions();
+		var policy = new PolicyFirstFeasiblePlacementSelector().select(analysis, analysis.graph());
+		Map<CompiledHopKey,PlacementState> assignment = policy.assignment();
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> complete =
+			CandidateSelections.materializationMaximalVariantsForCompleteAssignment(
+				analysis, analysis.graph(), actions, assignment);
+		Map<CompiledHopKey,CandidateSelectionReceipt> policyRows = new IdentityHashMap<>();
+		for(CandidateSelectionReceipt row : policy.selectedCandidateSelections())
+			policyRows.put(row.rule().parentOccurrence(), row);
+
+		// The real GLM assignment has a multi-billion-row global product. Preserve
+		// several genuine variable domains and pin the rest to the already certified
+		// policy row, yielding a small product that an independent oracle can enumerate.
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> bounded = new LinkedHashMap<>();
+		long product = 1;
+		int variableDomains = 0;
+		for(Map.Entry<CompiledHopKey,List<CandidateSelectionReceipt>> entry : complete.entrySet()) {
+			List<CandidateSelectionReceipt> rows = entry.getValue();
+			if(rows.size() > 1 && product <= 64 / rows.size()) {
+				bounded.put(entry.getKey(), rows);
+				product = Math.multiplyExact(product, rows.size());
+				variableDomains++;
+				continue;
+			}
+			CandidateSelectionReceipt policyRow = policyRows.get(entry.getKey());
+			CandidateSelectionReceipt pinned = rows.stream()
+				.filter(row -> row == policyRow || row.equals(policyRow))
+				.findFirst().orElseThrow(() -> new AssertionError(
+					"certified policy row is absent from the complete exact domain"));
+			bounded.put(entry.getKey(), List.of(pinned));
+		}
+		Assert.assertTrue("fixture must exercise multiple non-singleton candidate domains",
+			variableDomains > 1);
+		Assert.assertTrue("bounded oracle product must remain independently enumerable",
+			product > 1 && product <= 64);
+
+		CandidateSelections.Selection exhaustive = exhaustiveCandidateSelection(
+			analysis, actions, assignment, bounded);
+		CandidateSelections.Selection selected =
+			CandidateSelections.selectMaterializationMaximalPrevalidated(
+				analysis, analysis.graph(), actions, assignment,
+				analysis.relocationOrderFor(actions), null, bounded);
+		Assert.assertEquals(exhaustive.candidates(), selected.candidates());
+		Assert.assertEquals(exhaustive.relocationChoices(), selected.relocationChoices());
+		Assert.assertEquals(exhaustive.emittedActions(), selected.emittedActions());
+		Assert.assertEquals(exhaustive.materializedInputCount(), selected.materializedInputCount());
+		Assert.assertEquals(exhaustive.relocationPhysicalEmissionCount(),
+			selected.relocationPhysicalEmissionCount());
+		Assert.assertEquals(exhaustive.localMaterializationActionCount(),
+			selected.localMaterializationActionCount());
+		Assert.assertEquals(exhaustive.foutMaterializationActionCount(),
+			selected.foutMaterializationActionCount());
+	}
+
+	private static CandidateSelections.Selection exhaustiveCandidateSelection(
+		PlacementAnalysis analysis, List<RelocationAction> actions,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants) {
+		List<CompiledHopKey> consumers = new ArrayList<>(variants.keySet());
+		Collections.sort(consumers);
+		ExhaustiveCandidateOracle oracle = new ExhaustiveCandidateOracle(
+			analysis, actions, assignment, consumers, variants);
+		oracle.solve(0);
+		return oracle.best;
+	}
+
+	private static final class ExhaustiveCandidateOracle {
+		private final PlacementAnalysis analysis;
+		private final List<RelocationAction> actions;
+		private final Map<CompiledHopKey,PlacementState> assignment;
+		private final List<CompiledHopKey> consumers;
+		private final List<CompiledHopKey> variableConsumers;
+		private final Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants;
+		private final Map<CompiledHopKey,CandidateSelectionReceipt> selected =
+			new IdentityHashMap<>();
+		private CandidateSelections.Selection best;
+		private int bestPhysical = Integer.MAX_VALUE;
+
+		private ExhaustiveCandidateOracle(PlacementAnalysis analysis,
+			List<RelocationAction> actions, Map<CompiledHopKey,PlacementState> assignment,
+			List<CompiledHopKey> consumers,
+			Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants) {
+			this.analysis = analysis;
+			this.actions = actions;
+			this.assignment = assignment;
+			this.consumers = consumers;
+			this.variants = variants;
+			List<CompiledHopKey> variables = new ArrayList<>();
+			for(CompiledHopKey consumer : consumers) {
+				List<CandidateSelectionReceipt> rows = variants.get(consumer);
+				if(rows.size() == 1)
+					selected.put(consumer, rows.get(0));
+				else
+					variables.add(consumer);
+			}
+			this.variableConsumers = List.copyOf(variables);
+		}
+
+		private void solve(int index) {
+			if(index < variableConsumers.size()) {
+				CompiledHopKey consumer = variableConsumers.get(index);
+				for(CandidateSelectionReceipt row : variants.get(consumer)) {
+					selected.put(consumer, row);
+					solve(index + 1);
+					selected.remove(consumer);
+				}
+				return;
+			}
+			List<CandidateSelectionReceipt> selectedRows = consumers.stream()
+				.map(selected::get).toList();
+			RelocationSelections.Selection relocation;
+			try {
+				relocation = RelocationSelections.selectCanonicalPrevalidated(
+					analysis, analysis.graph(), actions, assignment, selectedRows,
+					(demand, action) -> true);
+			}
+			catch(IllegalStateException incompatibleAnchors) {
+				return;
+			}
+			int materialized = selectedRows.stream().mapToInt(row -> (int)row.rule().orderedInputs()
+				.stream().filter(PlacementAnalysis.CandidateInputState::present).count()).sum();
+			int relocationCount = RelocationSelections.physicalEmissionCount(
+				relocation.emittedActions());
+			int localCount = LocalMaterializationSelections.physicalEmissionCount(
+				analysis, assignment, selectedRows);
+			int foutCount = CandidateSelections.foutMaterializationPhysicalEmissionCount(selectedRows);
+			int physical = Math.addExact(Math.addExact(relocationCount, localCount), foutCount);
+			if(best != null && (physical > bestPhysical
+				|| physical == bestPhysical && compareRows(selectedRows, best.candidates()) >= 0))
+				return;
+			bestPhysical = physical;
+			best = new CandidateSelections.Selection(
+				analysis.canonicalCandidateReceipts(selectedRows), relocation.choices(),
+				relocation.emittedActions(), materialized, relocationCount, localCount, foutCount);
+		}
+
+		private int compareRows(List<CandidateSelectionReceipt> left,
+			List<CandidateSelectionReceipt> canonicalRight) {
+			Map<CompiledHopKey,CandidateSelectionReceipt> right = new IdentityHashMap<>();
+			for(CandidateSelectionReceipt row : canonicalRight)
+				right.put(row.rule().parentOccurrence(), row);
+			for(int index = 0; index < consumers.size(); index++) {
+				CandidateSelectionReceipt leftRow = left.get(index);
+				CandidateSelectionReceipt rightRow = right.get(consumers.get(index));
+				if(leftRow == rightRow)
+					continue;
+				int order = leftRow.compareTo(rightRow);
+				if(order != 0)
+					return order;
+			}
+			return 0;
+		}
+	}
+
 	private static boolean selected(NormalizedPlannerResult plan, Node node, ExecType exec,
 		FederatedOutput output) {
 		PlacementState selected = plan.selectedStates().get(node.key());
@@ -306,6 +506,26 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileBuiltinGlmFixture() throws Exception {
+		String script = "X=federated(addresses=list(\"localhost:1234/X1\"),"
+			+ "ranges=list(list(0,0),list(8,4)));\n"
+			+ "Y=federated(addresses=list(\"localhost:1234/Y1\"),"
+			+ "ranges=list(list(0,0),list(8,1)));\n"
+			+ "Y=(Y>mean(Y))*1;\n"
+			+ "beta=glm(X=X,Y=Y,dfam=2,vpow=0.0,link=2,lpow=1.0,yneg=0.0,"
+			+ "icpt=0,disp=0.0,reg=0.0,tol=1e-6,moi=2,mii=2,verbose=FALSE);\n"
+			+ "write(beta,\"/tmp/g014-inlined-output\",format=\"csv\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		return program;
 	}
 

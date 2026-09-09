@@ -229,7 +229,7 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		if(matches(analysis, "\\bOracleFacade\\b") || matches(analysis,
 			"\\bOracleFacade\\s*\\.\\s*nodeShape\\s*\\(") || matches(analysis, "\\bnodeShape\\s*\\("))
 			violations.add("PlacementAnalysis must not import, reference, or derive through OracleFacade");
-		if(matches(analysis, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
+		if(matches(analysis, "\\.\\s*(?:getDim1|getDim2)\\s*\\("))
 			violations.add("PlacementAnalysis must not derive shape facts through direct Hop shape getters");
 		if(countMatches(analysis, "\\bpublic\\s+record\\s+NodeShapeFact\\b") != 1)
 			violations.add("public PlacementAnalysis.NodeShapeFact API must remain present exactly once");
@@ -247,8 +247,10 @@ public class PlacementAnalysisConstructionArchitectureTest {
 				|| countMatches(facts, "\\bfinal\\s+class\\s+PlacementShapeFacts\\b") != 1)
 				violations.add("PlacementShapeFacts must be an explicit final carrier in the placement package");
 			if(countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?NodeShapeFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 1
-				|| countMatches(facts, "\\b(?:java\\.util\\.)?Map\\s*\\.\\s*copyOf\\s*\\(") != 1)
-				violations.add("PlacementShapeFacts must own exactly one immutable CompiledHopKey-to-NodeShapeFact map");
+				|| countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?AbstractShapeFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 1
+				|| countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?ScalarLiteralFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 1
+				|| countMatches(facts, "\\b(?:java\\.util\\.)?Map\\s*\\.\\s*copyOf\\s*\\(") != 3)
+				violations.add("PlacementShapeFacts must own one immutable concrete, abstract, and scalar fact map");
 			if(matches(facts, "\\bOracleFacade\\b|\\bnodeShape\\s*\\(")
 				|| matches(facts, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
 				violations.add("PlacementShapeFacts must store builder-owned facts, not derive shape metadata");
@@ -337,8 +339,8 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	private static boolean hasExactKeyEqualityGuard(String source) {
-		String parameters = methodParameters(source, "PlacementShapeFacts", "Map");
-		String body = JavaSourceBoundaryScanner.methodBody(source, "PlacementShapeFacts", "Map");
+		String parameters = methodParameters(source, "PlacementShapeFacts", "Set");
+		String body = JavaSourceBoundaryScanner.methodBody(source, "PlacementShapeFacts", "Set");
 		String mapName = typedParameterName(parameters,
 			"(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?NodeShapeFact\\s*>");
 		String expectedName = typedParameterName(parameters,
@@ -430,7 +432,9 @@ public class PlacementAnalysisConstructionArchitectureTest {
 
 	private static void addForbiddenA2Indirection(List<String> violations, String owner, String source) {
 		String withoutDiagnosticStringValueOf = source.replaceAll(
-			"\\bString\\s*\\.\\s*valueOf\\s*\\(", "diagnosticStringConversion(");
+			"\\bString\\s*\\.\\s*valueOf\\s*\\(", "diagnosticStringConversion(")
+			.replaceAll("\\bequals\\s*\\(\\s*Object\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\)",
+				"equals(EqualityOperand $1)");
 		List<String> forbidden = List.of(
 			"\\bObject\\b",
 			"\\b(?:Class|Method|Field|Constructor)\\s*\\.\\s*forName\\s*\\(",

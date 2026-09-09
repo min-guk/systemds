@@ -1218,7 +1218,8 @@ public class LineageRewriteReuse
 	/*----------------------INSTRUCTIONS GENERATION & EXECUTION-----------------------*/
 
 	private static ArrayList<Instruction> genInst(Hop hops, ExecutionContext ec) {
-		ArrayList<Instruction> newInst = Recompiler.recompileHopsDag(hops, ec.getVariables(), null, true, true, 0);
+		ArrayList<Instruction> newInst = Recompiler.recompileHopsDag(hops, ec.getVariables(), null, true, true, 0,
+			ec.getProgram() != null ? ec.getProgram().getDMLProg() : null);
 		if (LOG.isDebugEnabled()) {
 			LOG.debug("COMPENSATION PLAN: ");
 			LOG.debug("EXPLAIN LINEAGE REWRITE (HOP) \n" + Explain.explain(hops,1));

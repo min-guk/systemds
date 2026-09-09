@@ -19,11 +19,11 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
@@ -31,8 +31,6 @@ import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.spark.ReblockSPInstruction;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
-import org.apache.sysds.runtime.meta.MatrixCharacteristics;
-import org.apache.sysds.runtime.meta.MetaDataFormat;
 
 public class ReblockFEDInstruction extends UnaryFEDInstruction {
 	private int blen;
@@ -70,32 +68,28 @@ public class ReblockFEDInstruction extends UnaryFEDInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
-		//set the output characteristics
+		// A worker stores one logical partition as a CP MatrixBlock/FrameBlock.  Spark
+		// block repartitioning therefore has no worker-local data transformation to
+		// perform; only the coordinator-side blocksize metadata changes.  The old
+		// implementation rewrote SPARK rblk to CP rblk, but CP has no rblk parser,
+		// so the asynchronous worker request failed while a nonexistent output ID
+		// was still published.  Create a distinct worker symbol with cpvar instead.
 		CacheableData<?> obj = ec.getCacheableData(input1.getName());
 		DataCharacteristics mc = ec.getDataCharacteristics(input1.getName());
 		DataCharacteristics mcOut = ec.getDataCharacteristics(output.getName());
 		mcOut.set(mc.getRows(), mc.getCols(), blen, mc.getNonZeros());
+		String copyInstruction = InstructionUtils.concatOperands(
+			Types.ExecType.CP.name(), Opcodes.CPVAR.toString(),
+			InstructionUtils.createOperand(input1), InstructionUtils.createOperand(output));
+		FederatedRequest copy = FederationUtils.callInstruction(copyInstruction, output,
+			new CPOperand[] {input1}, new long[] {obj.getFedMapping().getID()});
 
-		//get the source format from the meta data
-		MetaDataFormat iimd = (MetaDataFormat) obj.getMetaData();
-		if(iimd == null)
-			throw new DMLRuntimeException("Error ReblockFEDInstruction: Metadata not found");
-
-		long id = FederationUtils.getNextFedDataID();
-		FederatedRequest[] fr1 = new FederatedRequest[obj.getFedMapping().getSize()];
-		int i = 0;
-		for(FederatedRange range : obj.getFedMapping().getFederatedRanges()) {
-			fr1[i] = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
-				new MatrixCharacteristics(range.getSize(0), range.getSize(1)), obj.getDataType());
-			i++;
-		}
-		FederatedRequest fr2 = FederationUtils.callInstruction(instString, output, id,
-			new CPOperand[]{input1}, new long[]{ obj.getFedMapping().getID()}, Types.ExecType.SPARK, false);
-
-		//execute federated operations and set output
-		obj.getFedMapping().execute(getTID(), true, fr1, fr2);
+		// sumNonZeros synchronously consumes the responses and propagates any worker
+		// error instead of publishing an invalid mapping after an asynchronous fault.
+		long nnz = FederationUtils.sumNonZeros(
+			obj.getFedMapping().execute(getTID(), true, copy));
 		CacheableData<?> out = ec.getCacheableData(output);
-		out.setFedMapping(obj.getFedMapping().copyWithNewID(fr2.getID()));
-		out.getDataCharacteristics().set(mcOut);
+		out.setFedMapping(obj.getFedMapping().copyWithNewID(copy.getID()));
+		out.getDataCharacteristics().set(mcOut).setNonZeros(nnz);
 	}
 }

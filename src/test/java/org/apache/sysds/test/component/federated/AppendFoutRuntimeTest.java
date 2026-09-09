@@ -24,6 +24,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
@@ -66,6 +67,41 @@ public class AppendFoutRuntimeTest {
 		}
 	}
 
+	private static class ResultFederationMap extends FederationMap {
+		private final List<MatrixBlock> _results;
+
+		ResultFederationMap(long id, List<Pair<FederatedRange, FederatedData>> map,
+			FType type, List<MatrixBlock> results) {
+			super(id, map, type);
+			_results = results;
+		}
+
+		@Override
+		@SuppressWarnings("unchecked")
+		public Future<FederatedResponse>[] execute(long tid, boolean wait, FederatedRequest... requests) {
+			boolean get = false;
+			for(FederatedRequest request : requests)
+				get |= request != null && request.getType() == FederatedRequest.RequestType.GET_VAR;
+			Future<FederatedResponse>[] responses = new Future[getSize()];
+			for(int i = 0; i < responses.length; i++) {
+				MatrixBlock result = _results.get(i % _results.size());
+				Object data = get ? result : Long.valueOf(result.getNonZeros());
+				responses[i] = CompletableFuture.completedFuture(
+					new FederatedResponse(ResponseType.SUCCESS, data));
+			}
+			return responses;
+		}
+
+		@Override
+		public FederationMap copyWithNewID(long id) {
+			List<Pair<FederatedRange, FederatedData>> copy = new ArrayList<>();
+			for(Pair<FederatedRange, FederatedData> entry : getMap())
+				copy.add(Pair.of(new FederatedRange(entry.getLeft()),
+					entry.getRight().copyWithNewID(id)));
+			return new ResultFederationMap(id, copy, getType(), _results);
+		}
+	}
+
 	@Test
 	public void singleWorkerFullPlusLocalCbindFoutStaysRemoteFull() {
 		assertSingleWorkerFullLocalAppend(true, true, 4, 1, 4, 1, 4, 2);
@@ -84,6 +120,30 @@ public class AppendFoutRuntimeTest {
 	@Test
 	public void singleWorkerLocalPlusFullRbindFoutStaysRemoteFull() {
 		assertSingleWorkerFullLocalAppend(false, false, 2, 3, 2, 3, 4, 3);
+	}
+
+	@Test
+	public void rowCbindLoutIsLocal() {
+		assertPartitionedLout(FType.ROW, true, 4, 2, 4, 4,
+			List.of(new MatrixBlock(2, 4, 1.0), new MatrixBlock(2, 4, 2.0)));
+	}
+
+	@Test
+	public void rowRbindLoutIsLocal() {
+		assertPartitionedLout(FType.ROW, false, 4, 2, 8, 2,
+			List.of(new MatrixBlock(2, 2, 1.0), new MatrixBlock(2, 2, 2.0)));
+	}
+
+	@Test
+	public void colRbindLoutIsLocal() {
+		assertPartitionedLout(FType.COL, false, 4, 2, 8, 2,
+			List.of(new MatrixBlock(8, 1, 1.0), new MatrixBlock(8, 1, 2.0)));
+	}
+
+	@Test
+	public void colCbindLoutIsLocal() {
+		assertPartitionedLout(FType.COL, true, 4, 2, 4, 4,
+			List.of(new MatrixBlock(4, 1, 1.0), new MatrixBlock(4, 1, 2.0)));
 	}
 
 	private static void assertSingleWorkerFullLocalAppend(boolean federatedLeft, boolean cbind,
@@ -116,12 +176,60 @@ public class AppendFoutRuntimeTest {
 		assertEquals(outCols, out.getFedMapping().getFederatedRanges()[0].getEndDims()[1]);
 	}
 
+	private static void assertPartitionedLout(FType type, boolean cbind, int inputRows,
+		int inputCols, int outputRows, int outputCols, List<MatrixBlock> workerResults) {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		MatrixObject input = partitionedMatrix("I", inputRows, inputCols, type, workerResults);
+		ec.setVariable("I", input);
+		ec.setVariable("O", emptyMatrix("O", outputRows, outputCols));
+
+		String inst = InstructionUtils.concatOperands(
+			"FED", "append",
+			InstructionUtils.concatOperandParts("I", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts("I", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts(Integer.toString(inputRows), Types.DataType.SCALAR.name(),
+				ValueType.INT64.name(), "true"),
+			InstructionUtils.concatOperandParts("O", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
+			Boolean.toString(cbind), "LOUT");
+		AppendFEDInstruction.parseInstruction(inst).processInstruction(ec);
+
+		MatrixObject out = ec.getMatrixObject("O");
+		assertFalse("LOUT must clear the federated output mapping", out.isFederated());
+		MatrixBlock result = out.acquireReadAndRelease();
+		assertEquals(outputRows, result.getNumRows());
+		assertEquals(outputCols, result.getNumColumns());
+		for(int row = 0; row < outputRows; row++)
+			for(int col = 0; col < outputCols; col++) {
+				int partitionIndex = type == FType.ROW
+					? (cbind ? row : row % inputRows) / (inputRows / 2)
+					: (cbind ? col % inputCols : col) / (inputCols / 2);
+				assertEquals(partitionIndex + 1.0, result.get(row, col), 0.0);
+			}
+	}
+
 	private static MatrixObject remoteFullMatrix(String name, long rows, long cols, long id) {
 		MatrixObject matrix = emptyMatrix(name, rows, cols);
 		FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {rows, cols});
 		FederatedData data = new FederatedData(Types.DataType.MATRIX,
 			new InetSocketAddress("localhost", 14000), "dummy", id);
 		matrix.setFedMapping(new NoOpFederationMap(id, List.of(Pair.of(range, data)), FType.FULL));
+		return matrix;
+	}
+
+	private static MatrixObject partitionedMatrix(String name, int rows, int cols,
+		FType type, List<MatrixBlock> results) {
+		MatrixObject matrix = emptyMatrix(name, rows, cols);
+		List<Pair<FederatedRange, FederatedData>> entries = new ArrayList<>();
+		for(int i = 0; i < 2; i++) {
+			long[] begin = type == FType.ROW ? new long[] {i * (rows / 2), 0}
+				: new long[] {0, i * (cols / 2)};
+			long[] end = type == FType.ROW ? new long[] {(i + 1) * (rows / 2), cols}
+				: new long[] {rows, (i + 1) * (cols / 2)};
+			entries.add(Pair.of(new FederatedRange(begin, end),
+				new FederatedData(Types.DataType.MATRIX,
+					new InetSocketAddress("localhost", 14000 + i), "dummy", 21)));
+		}
+		matrix.setFedMapping(new ResultFederationMap(21, entries, type, results));
 		return matrix;
 	}
 

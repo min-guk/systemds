@@ -309,7 +309,10 @@ public class TernaryFEDInstruction extends ComputationFEDInstruction {
 
 		long id = FederationUtils.getNextFedDataID();
 		FederatedRequest fr5 = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, new MatrixCharacteristics(-1, -1), mo1.getDataType());
-		Types.ExecType execType = InstructionUtils.getExecType(instString);
+		// The coordinator instruction itself is FED, but workers execute the
+		// partition-local ternary kernel. Never recursively dispatch FED there.
+		Types.ExecType execType = InstructionUtils.getExecType(instString) == Types.ExecType.SPARK
+			? Types.ExecType.SPARK : Types.ExecType.CP;
 
 		// all 3 inputs fed aligned on the one worker
 		if(retAlignedValues._allAligned) {
@@ -320,8 +323,12 @@ public class TernaryFEDInstruction extends ComputationFEDInstruction {
 		// 2 fed aligned inputs
 		else if(retAlignedValues._twoAligned) {
 			fr3 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] {input1, input2, input3}, retAlignedValues._vars, execType, false);
-			fr4 = mo1.getFedMapping().cleanup(getTID(), retAlignedValues._fr[0].getID());
-			sendFederatedRequests(ec, mo1.getMO(), fr3.getID(), retAlignedValues._fr, fr5, fr3, fr4);
+			// The aligned pair is not necessarily rooted at input1 (for ifelse the
+			// condition can be local while inputs 2 and 3 are federated). Use the
+			// exact mapping that created the sliced broadcast for cleanup and dispatch.
+			MatrixLineagePair base = retAlignedValues._base;
+			fr4 = base.getFedMapping().cleanup(getTID(), retAlignedValues._fr[0].getID());
+			sendFederatedRequests(ec, base.getMO(), fr3.getID(), retAlignedValues._fr, fr5, fr3, fr4);
 		}
 		// 1 fed input or not aligned
 		else {
@@ -381,7 +388,8 @@ public class TernaryFEDInstruction extends ComputationFEDInstruction {
 			vars = new long[] {fr[0].getID(), mo1.getFedMapping().getID(), mo2.getFedMapping().getID()};
 		}
 
-		return new RetAlignedValues(twoAligned, allAligned, vars, fr);
+		MatrixLineagePair base = allAligned || twoAligned && mo1.isFederated() ? mo1 : null;
+		return new RetAlignedValues(twoAligned, allAligned, vars, fr, base);
 	}
 
 	private static final class RetAlignedValues {
@@ -389,12 +397,15 @@ public class TernaryFEDInstruction extends ComputationFEDInstruction {
 		public boolean _allAligned;
 		public long[] _vars;
 		public FederatedRequest[] _fr;
+		public MatrixLineagePair _base;
 
-		public RetAlignedValues(boolean twoAligned, boolean allAligned, long[] vars, FederatedRequest[] fr) {
+		public RetAlignedValues(boolean twoAligned, boolean allAligned, long[] vars, FederatedRequest[] fr,
+			MatrixLineagePair base) {
 			_twoAligned = twoAligned;
 			_allAligned = allAligned;
 			_vars = vars;
 			_fr = fr;
+			_base = base;
 		}
 	}
 

@@ -1,0 +1,15 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+XR = federated(addresses=list($XR1,$XR2),
+  ranges=list(list(0,0),list($r/2,$c),list($r/2,0),list($r,$c)))
+XC = federated(addresses=list($XC1,$XC2),
+  ranges=list(list(0,0),list($r,$c/2),list(0,$c/2),list($r,$c)))
+FR = as.frame(XR)
+FC = as.frame(XC)
+MapRow = map(FR, "x -> x.replace(\"1\", \"9\")", 0)
+MapCol = map(FC, "x -> x.replace(\"1\", \"9\")", 0)
+write(MapRow,$MapRow); write(MapCol,$MapCol)

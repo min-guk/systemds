@@ -28,6 +28,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
@@ -104,20 +105,30 @@ public class CovarianceFEDInstruction extends BinaryFEDInstruction {
 
 	private void processAlignedFedCov(ExecutionContext ec, MatrixObject mo1, MatrixObject mo2,
 		MatrixLineagePair moLin3) {
-		FederatedRequest fr1;
-		if(moLin3 == null) {
-			fr1 = FederationUtils.callInstruction(instString, output,
-				new CPOperand[]{input1, input2}, new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()});
+		Double[] cov;
+		if(moLin3 == null && mo1.isFederated(FType.COL)) {
+			FederatedRequest request = new FederatedRequest(FederatedRequest.RequestType.EXEC_UDF, -1,
+				new AlignedCOVFunction(mo1.getFedMapping().getID(), mo2.getFedMapping().getID(),
+					(COVOperator) _optr));
+			cov = getResponses(mo1.getFedMapping().execute(getTID(), request));
 		}
 		else {
-			fr1 = FederationUtils.callInstruction(instString, output,
-				new CPOperand[]{input1, input2, input3}, new long[]{mo1.getFedMapping().getID(),
-					mo2.getFedMapping().getID(), moLin3.getFedMapping().getID()});
-		}
+			FederatedRequest fr1;
+			if(moLin3 == null) {
+				fr1 = FederationUtils.callInstruction(instString, output,
+					new CPOperand[]{input1, input2},
+					new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()});
+			}
+			else {
+				fr1 = FederationUtils.callInstruction(instString, output,
+					new CPOperand[]{input1, input2, input3}, new long[]{mo1.getFedMapping().getID(),
+						mo2.getFedMapping().getID(), moLin3.getFedMapping().getID()});
+			}
 
-		FederatedRequest fr2 = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
-		FederatedRequest fr3 = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
-		Double[] cov = getResponses(mo1.getFedMapping().execute(getTID(), fr1, fr2, fr3));
+			FederatedRequest fr2 = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
+			FederatedRequest fr3 = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+			cov = getResponses(mo1.getFedMapping().execute(getTID(), fr1, fr2, fr3));
+		}
 		Double[] mean1 = getResponses(processMean(mo1, moLin3, 0));
 		Double[] mean2 = getResponses(processMean(mo2, moLin3, 1));
 
@@ -568,6 +579,33 @@ public class CovarianceFEDInstruction extends BinaryFEDInstruction {
 		}
 
 		@Override 
+		public Pair<String, LineageItem> getLineageItem(ExecutionContext ec) {
+			return null;
+		}
+	}
+
+	private static class AlignedCOVFunction extends FederatedUDF {
+		private static final long serialVersionUID = 5900449652705487289L;
+		private final COVOperator _op;
+
+		private AlignedCOVFunction(long input1, long input2, COVOperator op) {
+			super(new long[] {input1, input2});
+			_op = op;
+		}
+
+		@Override
+		public FederatedResponse execute(ExecutionContext ec, Data... data) {
+			MatrixBlock left = ((MatrixObject) data[0]).acquireReadAndRelease();
+			MatrixBlock right = ((MatrixObject) data[1]).acquireReadAndRelease();
+			if(left.getNumRows() == 1 && left.getNumColumns() > 1)
+				left = left.transpose(_op.getNumThreads());
+			if(right.getNumRows() == 1 && right.getNumColumns() > 1)
+				right = right.transpose(_op.getNumThreads());
+			double value = left.covOperations(_op, right).getRequiredResult(_op);
+			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, new DoubleObject(value));
+		}
+
+		@Override
 		public Pair<String, LineageItem> getLineageItem(ExecutionContext ec) {
 			return null;
 		}

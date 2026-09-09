@@ -28,6 +28,7 @@ import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp.SparkAggType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.common.Types.ExecType;
@@ -504,7 +505,15 @@ public class AggUnaryOp extends MultiThreadedHop
 				}
 			}
 		}
-		return ret && !hasTernaryAggregatePlannerBoundary(getInput().get(0));
+		return ret && !hasTernaryAggregatePlannerBoundary(getInput().get(0))
+			&& !hasPlannerSelectedConsumerInput(getHopID())
+			&& !crossesPlannerPlacementBoundary(getInput().get(0));
+	}
+
+	private boolean crossesPlannerPlacementBoundary(Hop aggregateInput) {
+		return FederatedPlannerUtils.hasPlannerPlacement(this)
+			&& FederatedPlannerUtils.hasPlannerPlacement(aggregateInput)
+			&& !FederatedPlannerUtils.haveSamePlannerPlacement(this, aggregateInput);
 	}
 
 	private static boolean hasTernaryAggregatePlannerBoundary(Hop aggregateInput) {
@@ -549,6 +558,17 @@ public class AggUnaryOp extends MultiThreadedHop
 			|| FederatedRefedRegistry.hasSelectedConsumerInput(hopId)
 			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(hopId)
 			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(hopId);
+	}
+
+	/**
+	 * A relocation selected on the aggregate's input edge belongs to the aggregate
+	 * consumer, not to the multiply producer that ternary lowering would remove.
+	 * Preserve that edge before replacing {@code ua(+RC)} with {@code tak+*}.
+	 */
+	private static boolean hasPlannerSelectedConsumerInput(long consumerHopId) {
+		return FederatedRefedRegistry.hasSelectedConsumerInput(consumerHopId)
+			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(consumerHopId)
+			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(consumerHopId);
 	}
 	
 	private static boolean isCompareOperator(OpOp2 opOp2)

@@ -37,6 +37,7 @@ import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.AppendCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.spark.AppendSPInstruction;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.matrix.operators.ReorgOperator;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
@@ -165,6 +166,19 @@ public class AppendFEDInstruction extends BinaryFEDInstruction {
 		// federated/federated misaligned, federated/local, local/federated bind
 		else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)) && !_cbind)
 			|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL)) && _cbind) ) {
+			// This branch normally implements append as a federation-map bind.  A
+			// bound map can contain the same worker and variable more than once (for
+			// example rbind(X, X)); issuing GET+cleanup through that aliased map would
+			// delete the variable after the first range.  For LOUT, collect each input
+			// map without deleting it and perform the final append locally instead.
+			if(_fedOut != null && _fedOut.isForcedLocal()) {
+				MatrixBlock left = collectInput(mo1);
+				MatrixBlock right = mo1.getMO() == mo2.getMO() ? left : collectInput(mo2);
+				ec.setMatrixOutput(output.getName(),
+					left.append(right, new MatrixBlock(), _cbind));
+				return;
+			}
+
 			long id = FederationUtils.getNextFedDataID();
 			long roff = _cbind ? 0 : dc1.getRows();
 			long coff = _cbind ? dc1.getCols() : 0;
@@ -215,6 +229,58 @@ public class AppendFEDInstruction extends BinaryFEDInstruction {
 				+ ", input 2 FType is " + (mo2.isFederated() ? mo2.getFedMapping().getType().name():"LOCAL")
 				+ ", and column bind is " + _cbind);
 		}
+
+		materializeForcedLocalOutput(ec, out);
+	}
+
+	/**
+	 * LOUT is a physical residency contract: the instruction may execute on the
+	 * federated workers, but the value visible after the instruction must be local.
+	 * Each worker-executed append branch above first constructs the exact output
+	 * map. Retrieving through that map keeps the branch-specific ranges
+	 * authoritative and avoids reimplementing append assembly at the coordinator.
+	 * The alias-prone map-only branch is handled separately before reaching here.
+	 */
+	private void materializeForcedLocalOutput(ExecutionContext ec, MatrixObject out) {
+		if(_fedOut == null || !_fedOut.isForcedLocal())
+			return;
+
+		FederationMap outMap = out.getFedMapping();
+		if(outMap == null || outMap.getSize() == 0)
+			throw new DMLRuntimeException(
+				"FED append cannot produce local output without a federated output map");
+
+		long outId = outMap.getID();
+		FederatedRequest get = new FederatedRequest(RequestType.GET_VAR, outId);
+		FederatedRequest cleanup = outMap.cleanup(getTID(), outId);
+		Future<FederatedResponse>[] responses = outMap.execute(getTID(), true, get, cleanup);
+		FType outputType = outMap.getType();
+		final MatrixBlock local;
+		if(outputType == FType.BROADCAST || outputType == FType.FULL)
+			local = FederationUtils.getResults(responses)[0];
+		else if(outputType == FType.ROW || outputType == FType.COL)
+			local = FederationUtils.bind(responses, outputType == FType.COL);
+		else
+			throw new DMLRuntimeException(
+				"FED append LOUT does not support output FType " + outputType);
+		ec.setMatrixOutput(output.getName(), local);
+	}
+
+	private MatrixBlock collectInput(MatrixLineagePair input) {
+		if(!input.isFederated())
+			return input.getMO().acquireReadAndRelease();
+
+		FederationMap map = input.getFedMapping();
+		if(map == null || map.getSize() == 0)
+			throw new DMLRuntimeException("FED append cannot collect an empty input map");
+		FederatedRequest get = new FederatedRequest(RequestType.GET_VAR, map.getID());
+		Future<FederatedResponse>[] responses = map.execute(getTID(), true, get);
+		FType type = map.getType();
+		if(type == FType.BROADCAST || type == FType.FULL)
+			return FederationUtils.getResults(responses)[0];
+		if(type == FType.ROW || type == FType.COL)
+			return FederationUtils.bind(responses, type == FType.COL);
+		throw new DMLRuntimeException("FED append LOUT cannot collect input FType " + type);
 	}
 
 	private static boolean isRemoteSingleWorkerFull(MatrixLineagePair input) {

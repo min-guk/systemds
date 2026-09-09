@@ -37,14 +37,29 @@ final class ExactPhysicalOptimizer {
 
 		List<ExactCategoricalSolver.Factor> factors =
 			new java.util.ArrayList<>(model.hardFactors());
-		factors.addAll(surface.factors());
-		ExactCategoricalSolver.Result solved = ExactCategoricalSolver.solve(
-			modelVariables, factors, limits);
-		long canonicalBits = surface.evaluateCanonical(solved.assignmentInVariableOrder());
-		if(Double.doubleToRawLongBits(solved.objective()) != canonicalBits)
+		ExactPhysicalForcedStateAudit.Constraint forced =
+			ExactPhysicalForcedStateAudit.prepare(model);
+		if(forced != null)
+			factors.add(forced.factor());
+		factors.addAll(surface.exactSolverFactors());
+		ExactCategoricalSolver.Result solved;
+		try {
+			solved = ExactPhysicalReducedSolver.solve(modelVariables.size(),
+				surface.exactSolverVariables(), factors, limits);
+		}
+		catch(IllegalArgumentException failure) {
+			ExactPhysicalForcedStateAudit.recordSolverFailure(model, forced, failure);
+			throw failure;
+		}
+		ExactCategoricalSolver.Result decisionResult = new ExactCategoricalSolver.Result(
+			solved.objective(), solved.assignmentInVariableOrder().subList(0, modelVariables.size()),
+			solved.statistics());
+		ExactPhysicalForcedStateAudit.verify(model, forced, decisionResult);
+		long canonicalBits = surface.evaluateCanonical(decisionResult.assignmentInVariableOrder());
+		if(Double.doubleToRawLongBits(decisionResult.objective()) != canonicalBits)
 			throw new IllegalArgumentException("EXACT_PHYSICAL_SOLVER_CANONICAL_OBJECTIVE_MISMATCH"
-				+ "|solver=" + solved.objective() + "|canonical="
+				+ "|solver=" + decisionResult.objective() + "|canonical="
 				+ Double.longBitsToDouble(canonicalBits));
-		return new Result(solved, canonicalBits, surface.contributionFingerprint());
+		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint());
 	}
 }

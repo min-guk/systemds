@@ -213,7 +213,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testPrivateAggregateDecisionKeepsCpfoutOpenForMaterializableMatrixHop() {
+	public void testPrivateAggregateDecisionRejectsCoordinatorMaterializationDespiteConcreteFType() {
 		DataOp localLeft = transientRead("LocalLeft", ROWS, 1);
 		DataOp fedRight = federatedRead("FedRight", ROWS, 1);
 		BinaryOp cbind = new BinaryOp("cbindPrivateAgg", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND, localLeft, fedRight);
@@ -228,13 +228,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
 			cbind, Privacy.PRIVATE_AGGREGATE, FType.ROW, oracleCaps);
-		assertTrue("PRIVATE_AGGREGATE should keep CP/LOUT open", decision.allowCP_LOUT);
-		assertTrue("PRIVATE_AGGREGATE should keep CP/FOUT open whenever the matrix hop has a concrete materializable FType",
+		assertFalse("origin-bound data cannot be collected for CP execution", decision.allowCP_LOUT);
+		assertFalse("a concrete upload anchor does not authorize a protected coordinator payload",
 			decision.allowCP_FOUT);
 	}
 
 	@Test
-	public void testPrivateAggregateDecisionRequiresConcreteFTypeForCpfout() {
+	public void testPrivateAggregateDecisionRejectsCoordinatorMaterializationWithoutFType() {
 		DataOp localLeft = transientRead("LocalLeft", ROWS, 1);
 		DataOp fedRight = federatedRead("FedRight", ROWS, 1);
 		BinaryOp cbind = new BinaryOp("cbindPrivateAggUnknownFType", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND,
@@ -250,7 +250,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
 			cbind, Privacy.PRIVATE_AGGREGATE, null, oracleCaps);
-		assertTrue("PRIVATE_AGGREGATE should keep CP/LOUT open", decision.allowCP_LOUT);
+		assertFalse("origin-bound data cannot be collected for CP execution", decision.allowCP_LOUT);
 		assertFalse("PRIVATE_AGGREGATE should not expose CP/FOUT without a concrete materializable FType hint",
 			decision.allowCP_FOUT);
 	}
@@ -4648,7 +4648,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testPlannerDoesNotAdvertiseNativeFederatedWdivmmForFullX() {
+	public void testPlannerAdvertisesNativeFederatedWdivmmForSingleRangeFullX() {
 		DataOp x = federatedRead("XwdivmmFullPlan", ROWS, COLS);
 		DataOp u = transientRead("UwdivmmFullPlan", ROWS, 2);
 		DataOp v = transientRead("VwdivmmFullPlan", COLS, 2);
@@ -4663,13 +4663,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
 			wdivmm, Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, caps.foutFType().orElse(null), caps);
 
-		assertEquals("FULL-X WDIVMM should use coordinator execution because QuaternaryWDivMMFEDInstruction "
-			+ "supports native FED only for ROW/COL X", ExecType.CP, caps.exec());
-		assertEquals("FULL-X WDIVMM may still materialize the local result as FOUT", FederatedOutput.FOUT,
+		assertEquals("A single-range FULL FederationMap follows the runtime's explicit row branch",
+			ExecType.FED, caps.exec());
+		assertEquals("FULL-X WDIVMM retains its single-range remote result", FederatedOutput.FOUT,
 			caps.placement());
-		assertTrue("FULL-X WDIVMM should retain CP->FOUT as a cost competitor", decision.allowCP_FOUT);
-		assertFalse("FULL-X WDIVMM must not advertise native FED/FOUT", decision.allowFED_FOUT);
-		assertFalse("FULL-X WDIVMM must not advertise native FED/LOUT", decision.allowFED_LOUT);
+		assertTrue("FULL-X WDIVMM must retain CP->FOUT as a cost competitor", decision.allowCP_FOUT);
+		assertTrue("FULL-X WDIVMM must advertise the runtime-backed FED/FOUT candidate",
+			decision.allowFED_FOUT);
+		assertTrue("Forced-local FULL-X WDIVMM is also executable", decision.allowFED_LOUT);
 	}
 
 	@Test
@@ -4694,8 +4695,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals("ROW-X left WDIVMM local aggregation produces a local coordinator result",
 			FederatedOutput.LOUT,
 			caps.placement());
-		assertEquals("Local aggregation is an alignment/topology detail, not a candidate-space ban",
-			ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, caps.reason());
+		assertEquals("Local aggregation is a supported runtime branch, not a candidate-space ban",
+			ReasonCode.OK, caps.reason());
 		assertTrue("WDivMM local aggregation must retain a local CP competitor", decision.allowCP_LOUT);
 		assertTrue("WDivMM local aggregation must retain the legal FED/LOUT candidate for cost comparison",
 			decision.allowFED_LOUT);
@@ -4888,7 +4889,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testAggBinaryLocalResultDoesNotRepeatLogicalInstructionFixedOverhead() throws Exception {
+	public void testAggBinaryLocalResultReusesFederatedInstructionRoundTrip() throws Exception {
 		DataOp left = federatedRead("XaggBinarySingleControlPlan", ROWS, COLS);
 		DataOp right = transientRead("YaggBinarySingleControlPlan", COLS, 2);
 		AggBinaryOp ba = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
@@ -4901,10 +4902,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 				100.0, resultMem, 1);
 		assertTrue("AggregateBinary local-result retrieval must retain the result payload cost",
 			runtimeStages.getPartialResultDownloadCost() > 0.0);
-		assertTrue("The enclosing FED unary owns the fixed latency/control stage, so its in-band"
-			+ " result retrieval must remain cheaper than a standalone explicit download",
-			runtimeStages.getPartialResultDownloadCost()
-				< FederatedCostModel.computeDownloadNetworkCost(resultMem, FType.FULL, 1));
+		double sharedInBandResultCost =
+			FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+				ba, FType.ROW, resultMem, 1, Double.POSITIVE_INFINITY);
+		assertEquals("AggregateBinary local aggregation and ordinary FED/LOUT bind share the"
+			+ " same one-worker in-band payload contract without a second RTT", sharedInBandResultCost,
+			runtimeStages.getPartialResultDownloadCost(), 0.0);
 	}
 
 	@Test
@@ -5050,7 +5053,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision aggregateCall = ExecPlacementPolicy.decide(
 			transform, Privacy.PRIVATE_AGGREGATE, FType.ROW, callCaps);
-		assertTrue(aggregateCall.allowCP_LOUT);
+		assertFalse("aggregate-only inputs cannot be collected for CP transformencode",
+			aggregateCall.allowCP_LOUT);
 		assertTrue(aggregateCall.allowFED_FOUT);
 		assertFalse("multi-return lowering cannot express CP transform followed by FOUT",
 			aggregateCall.allowCP_FOUT);
@@ -5062,13 +5066,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		ExecPlacementPolicy.Decision aggregateEncoded = ExecPlacementPolicy.decide(
 			encoded, Privacy.PRIVATE_AGGREGATE, FType.ROW, encodedCaps);
-		assertTrue(aggregateEncoded.allowCP_LOUT);
+		assertFalse("encoded row-level data retains origin residency", aggregateEncoded.allowCP_LOUT);
 		assertTrue(aggregateEncoded.allowFED_FOUT);
 		assertFalse(aggregateEncoded.allowCP_FOUT);
 
 		ExecPlacementPolicy.Decision aggregateMetadata = ExecPlacementPolicy.decide(
 			metadata, Privacy.PRIVATE_AGGREGATE, null, metadataCaps);
-		assertTrue(aggregateMetadata.allowCP_LOUT);
+		assertFalse("metadata needs output-specific aggregation proof before local release",
+			aggregateMetadata.allowCP_LOUT);
 		assertFalse(aggregateMetadata.allowFED_FOUT);
 		ExecPlacementPolicy.Decision privateMetadata = ExecPlacementPolicy.decide(
 			metadata, Privacy.PRIVATE, null, metadataCaps);

@@ -146,6 +146,36 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 	}
 
 	@Test
+	public void movementFirstIsExplicitAndDoesNotChangeTheDefaultFedFirstOrder() {
+		String fingerprint = "first-feasible-explicit-policy-order";
+		Node source = node(fingerprint, "source", 0, List.of(LOCAL));
+		Node consumer = node(fingerprint, "consumer", 1, List.of(LOCAL, FED));
+		DurableAnchorKey anchor = new DurableAnchorKey("row-workers", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(9L, 9L))));
+		RelocationActionKey key = new RelocationActionKey(source.valueVersion(), FED,
+			FType.ROW, anchor, "main", List.of(consumer.key()));
+		RelocationAction relocation = new RelocationAction(key, List.of(new ObligationKey(
+			consumer.key(), 0, source.valueVersion(), FED, key, "compiled")), List.of());
+		NeutralPlacementGraph graph = new NeutralPlacementGraph(
+			List.of(source, consumer), List.of(), List.of(relocation));
+
+		PlacementSelection fedFirst = new PolicyFirstFeasiblePlacementSelector().select(graph);
+		PlacementSelection movementFirst = new PolicyFirstFeasiblePlacementSelector(
+			PolicyFirstFeasiblePlacementSelector.StateOrdering.MOVEMENT_FIRST).select(graph);
+
+		Assert.assertEquals("default order remains FedFirst", FED,
+			fedFirst.assignment().get(consumer.key()));
+		Assert.assertEquals("AggLocal order avoids the incident upload", LOCAL,
+			movementFirst.assignment().get(consumer.key()));
+		Assert.assertEquals(1, fedFirst.score().distinctRelocationCount());
+		Assert.assertEquals(0, movementFirst.score().distinctRelocationCount());
+		Assert.assertEquals(1, movementFirst.certificate().exploredCount());
+		Assert.assertEquals("deterministic-component-first-feasible-with-localized-arc-consistency",
+			fedFirst.certificate().boundDerivation());
+		Assert.assertTrue(movementFirst.certificate().boundDerivation().endsWith("movement_first"));
+	}
+
+	@Test
 	public void certainDerivedMaterializationPrecedesSpeculativeRelocationRisk() {
 		String fingerprint = "first-feasible-derived-before-risk";
 		PlacementState fedLout = new PlacementState(
@@ -190,6 +220,15 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 
 	@Test
 	public void repeatedIncidentMovementDominatesCanonicalLayoutOrder() {
+		assertDynamicMovementPreference(30.0, 1.0);
+	}
+
+	@Test
+	public void provenZeroMovementMustNotRevertToOneExecution() {
+		assertDynamicMovementPreference(0.5, 0.0);
+	}
+
+	private void assertDynamicMovementPreference(double rowWeight, double broadcastWeight) {
 		String fingerprint = "first-feasible-frequency-weight";
 		Node source = node(fingerprint, "a-source", 0, List.of(FED_BROADCAST, FED));
 		Node hotRowConsumer = node(fingerprint, "b-hot-row", 1, List.of(FED));
@@ -210,7 +249,7 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 			broadcastKey, "compiled")), List.of(FED_BROADCAST));
 
 		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector(key ->
-			key == hotRowConsumer.key() ? 30.0 : 1.0).select(new NeutralPlacementGraph(
+			key == hotRowConsumer.key() ? rowWeight : broadcastWeight).select(new NeutralPlacementGraph(
 				List.of(source, hotRowConsumer, coldBroadcastConsumer), List.of(),
 				List.of(row, broadcast)));
 

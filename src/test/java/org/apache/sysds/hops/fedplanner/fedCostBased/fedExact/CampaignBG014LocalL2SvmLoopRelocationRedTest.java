@@ -12,16 +12,18 @@ import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Regression for legal but loop-amplified transfers selected by the local planner. */
+/** Compile-only regression for native origin residency in the local L2SVM plan. */
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014LocalL2SvmLoopRelocationRedTest {
 	@Test
@@ -89,13 +91,32 @@ public class CampaignBG014LocalL2SvmLoopRelocationRedTest {
 						"b(1-*)".equals(hop.getOpString())
 							&& (hop.getBeginLine() == 106 || hop.getBeginLine() == 120)).orElse(false);
 				}));
-			Assert.assertTrue("the repeated 1-Y*Xw expressions must remain coordinator-local; states="
-				+ loopExpressionStateSummary(result),
-				result.selectedStates().entrySet().stream().filter(entry ->
-					result.analysis().hop(entry.getKey()).map(hop ->
-						"b(1-*)".equals(hop.getOpString())
-							&& (hop.getBeginLine() == 106 || hop.getBeginLine() == 120))
-						.orElse(false)).allMatch(entry -> entry.getValue().execType() == ExecType.CP));
+			var protectedExpressions = result.analysis().graph().nodes().stream()
+				.filter(node -> result.analysis().isCompiledHopOccurrence(node.key()))
+				.filter(node -> result.analysis().hop(node.key()).map(hop ->
+					"b(1-*)".equals(hop.getOpString())
+						&& (hop.getBeginLine() == 106 || hop.getBeginLine() == 120)).orElse(false))
+				.toList();
+			Assert.assertEquals("Expected both loop-local 1-Y*Xw occurrences; states="
+				+ loopExpressionStateSummary(result), 2, protectedExpressions.size());
+			Assert.assertEquals("Expected explicit 1-Y*Xw occurrences at lines 106 and 120",
+				java.util.Set.of(106, 120), protectedExpressions.stream()
+					.map(node -> result.analysis().hop(node.key()).orElseThrow().getBeginLine())
+					.collect(java.util.stream.Collectors.toSet()));
+			for(var node : protectedExpressions) {
+				Assert.assertTrue("Each 1-Y*Xw occurrence must require origin residency",
+					ExecPlacementPolicy.requiresOriginResidency(result.analysis().requirePrivacy(node.key())));
+				var emission = result.selectedEmissionStates().get(node.key());
+				Assert.assertNotNull("Each 1-Y*Xw occurrence must have selected emission authority", emission);
+				Assert.assertEquals("Each protected 1-Y*Xw occurrence must execute federated",
+					ExecType.FED, emission.placementState().execType());
+				Assert.assertEquals("Each protected 1-Y*Xw occurrence must retain FOUT",
+					FederatedOutput.FOUT, emission.placementState().output());
+				Assert.assertNotNull("Each protected 1-Y*Xw occurrence must retain a native FType",
+					emission.placementState().fType());
+				Assert.assertFalse("Each protected 1-Y*Xw occurrence must not use derived FED/FOUT",
+					emission.derivedFedFout());
+			}
 		}
 		finally {
 			ConfigurationManager.setGlobalConfig(oldGlobal);

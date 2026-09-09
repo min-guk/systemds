@@ -147,6 +147,40 @@ public class FederatedDagExactRefedInputProjectionTest {
 	}
 
 	@Test
+	public void exactLogicalInputProjectsThroughEliminatedIntermediateLop() throws Exception {
+		DataOp localHop = localHop("L");
+		DataOp otherHop = localHop("R");
+		BinaryOp logicalConsumer = HopRewriteUtils.createBinary(localHop, otherHop, OpOp2.PLUS);
+		BinaryOp physicalParent = HopRewriteUtils.createBinary(otherHop, logicalConsumer, OpOp2.MULT);
+		Data localLop = localLop("L", localHop.getHopID());
+		Data otherLop = localLop("R", otherHop.getHopID());
+		FunctionCallCP eliminatedLogicalLop = new FunctionCallCP(
+			new ArrayList<>(List.of(localLop, otherLop)), DMLProgram.INTERNAL_NAMESPACE,
+			"eliminated", new String[] {"L", "R"}, new String[] {"Tmp"}, false, ExecType.CP);
+		eliminatedLogicalLop.setHopID(logicalConsumer.getHopID());
+		FunctionCallCP physicalConsumer = new FunctionCallCP(
+			new ArrayList<>(List.of(otherLop, localLop)), DMLProgram.INTERNAL_NAMESPACE,
+			"physical", new String[] {"R", "L"}, new String[] {"Out"}, false, ExecType.CP);
+		physicalConsumer.setHopID(physicalParent.getHopID());
+		localHop.setLops(localLop);
+		otherHop.setLops(otherLop);
+		logicalConsumer.setLops(eliminatedLogicalLop);
+		physicalParent.setLops(physicalConsumer);
+		List<Lop> lops = new ArrayList<>(List.of(localLop, otherLop, physicalConsumer));
+
+		FederatedRefedRegistry.registerConsumerInputs(-1L, localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(logicalConsumer.getHopID(), 0)));
+
+		assertTrue(invokeInsertRefedLops(lops, List.of(physicalParent)));
+		assertSame("The unrelated physical input must remain in position zero",
+			otherLop, physicalConsumer.getInput(0));
+		assertTrue("The selected source must project through the eliminated logical Lop "
+			+ "onto the unique physical parent input",
+			physicalConsumer.getInput(1) instanceof org.apache.sysds.lops.FederatedRefed);
+	}
+
+	@Test
 	public void selectedRefedSourceRemainsAnExplicitXtXvLopBoundary() {
 		DataOp x = localHop("X", 10, 4);
 		DataOp v = localHop("v", 4, 1);
@@ -247,6 +281,72 @@ public class FederatedDagExactRefedInputProjectionTest {
 
 		assertEquals("TSMM must not erase a planner-selected direct FOUT transpose",
 			MMTSJType.NONE, outer.checkTransposeSelf());
+	}
+
+	@Test
+	public void selectedIncomingRefedKeepsTransposeExplicitInsteadOfTsmmFusion() {
+		DataOp x = localHop("X", 10, 4);
+		Hop transpose = HopRewriteUtils.createTranspose(x);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(transpose, x);
+		assertEquals(MMTSJType.LEFT, outer.checkTransposeSelf());
+		FederatedRefedRegistry.registerConsumerInputs(-1L, x.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(transpose.getHopID(), 0)));
+
+		assertEquals("TSMM must not erase the consumer of a selected incoming relocation",
+			MMTSJType.NONE, outer.checkTransposeSelf());
+	}
+
+	@Test
+	public void selectedIncomingRefedKeepsChainTransposeExplicit() {
+		DataOp x = localHop("X", 10, 4);
+		DataOp v = localHop("v", 4, 1);
+		Hop transpose = HopRewriteUtils.createTranspose(x);
+		AggBinaryOp inner = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(x, v);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(transpose, inner);
+		assertEquals(ChainType.XtXv, outer.checkMapMultChain());
+		FederatedRefedRegistry.registerConsumerInputs(-1L, x.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(transpose.getHopID(), 0)));
+
+		assertEquals("MMChain must not erase the consumer of a selected incoming relocation",
+			ChainType.NONE, outer.checkMapMultChain());
+	}
+
+	@Test
+	public void selectedCrossPlacementTransposeRemainsExplicitInsteadOfTsmmFusion() {
+		DataOp x = localHop("X", 10, 4);
+		Hop transpose = HopRewriteUtils.createTranspose(x);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(transpose, x);
+		transpose.setExecType(ExecType.CP);
+		transpose.setForcedExecType(ExecType.CP);
+		transpose.setFederatedOutput(FederatedOutput.LOUT);
+		transpose.setPlannerPlacementSelected(true);
+		outer.setExecType(ExecType.FED);
+		outer.setForcedExecType(ExecType.FED);
+		outer.setFederatedOutput(FederatedOutput.LOUT);
+		outer.setPlannerPlacementSelected(true);
+
+		assertEquals("TSMM must not erase a planner-selected CP-to-FED placement boundary",
+			MMTSJType.NONE, outer.checkTransposeSelf());
+	}
+
+	@Test
+	public void selectedSamePlacementTransposeMayStillUseTsmmFusion() {
+		DataOp x = localHop("X", 10, 4);
+		Hop transpose = HopRewriteUtils.createTranspose(x);
+		AggBinaryOp outer = (AggBinaryOp) HopRewriteUtils.createMatrixMultiply(transpose, x);
+		transpose.setExecType(ExecType.FED);
+		transpose.setForcedExecType(ExecType.FED);
+		transpose.setFederatedOutput(FederatedOutput.LOUT);
+		transpose.setPlannerPlacementSelected(true);
+		outer.setExecType(ExecType.FED);
+		outer.setForcedExecType(ExecType.FED);
+		outer.setFederatedOutput(FederatedOutput.LOUT);
+		outer.setPlannerPlacementSelected(true);
+
+		assertEquals("same-placement planner Hops retain the existing TSMM lowering",
+			MMTSJType.LEFT, outer.checkTransposeSelf());
 	}
 
 	@Test

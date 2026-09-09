@@ -30,6 +30,7 @@ import java.util.stream.IntStream;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.AlignType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -58,20 +59,24 @@ import org.apache.sysds.runtime.matrix.operators.BinaryOperator;
 public class CtableFEDInstruction extends ComputationFEDInstruction {
 	private final CPOperand _outDim1;
 	private final CPOperand _outDim2;
+	private final boolean _isExpand;
 
 	private CtableFEDInstruction(CPOperand in1, CPOperand in2, CPOperand in3, CPOperand out, CPOperand outDim1,
-		CPOperand outDim2, boolean isExpand, boolean ignoreZeros, String opcode, String istr) {
-		super(FEDType.Ctable, null, in1, in2, in3, out, opcode, istr);
+		CPOperand outDim2, boolean isExpand, boolean ignoreZeros, String opcode, String istr,
+		FederatedOutput fedOut) {
+		super(FEDType.Ctable, null, in1, in2, in3, out, opcode, istr, fedOut);
 		_outDim1 = outDim1;
 		_outDim2 = outDim2;
+		_isExpand = isExpand;
 	}
 
 	public static CtableFEDInstruction parseInstruction(CtableCPInstruction inst, ExecutionContext ec) {
-		// TODO: add support for new tableexpand intruction. 
-		if((inst.getOpcode().equalsIgnoreCase("ctable") ) &&
-				((inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederated(FType.ROW) ||
-				(inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederated(FType.ROW)) ||
-				(inst.input3.isMatrix() && ec.getCacheableData(inst.input3).isFederated(FType.ROW)))))
+		if((inst.getOpcode().equalsIgnoreCase("ctableexpand") && inst.input2.isMatrix()
+				&& ec.getCacheableData(inst.input2).isFederated(FType.ROW)) ||
+			((inst.getOpcode().equalsIgnoreCase("ctable") ) &&
+					((inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederated(FType.ROW) ||
+					(inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederated(FType.ROW)) ||
+					(inst.input3.isMatrix() && ec.getCacheableData(inst.input3).isFederated(FType.ROW))))))
 			return CtableFEDInstruction.parseInstruction(inst);
 		return null;
 	}
@@ -79,13 +84,16 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 	private static CtableFEDInstruction parseInstruction(CtableCPInstruction instr) {
 		return new CtableFEDInstruction(instr.input1, instr.input2, instr.input3, instr.output, instr.getOutDim1(),
 			instr.getOutDim2(), instr.getIsExpand(), instr.getIgnoreZeros(), instr.getOpcode(),
-			instr.getInstructionString());
+			instr.getInstructionString(), FederatedOutput.NONE);
 	}
 	
 	public static CtableFEDInstruction parseInstruction(CtableSPInstruction inst, ExecutionContext ec) {
-		if(inst.getOpcode().equalsIgnoreCase("ctable") && (ec.getCacheableData(inst.input1).isFederated(FType.ROW) ||
-			(inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederated(FType.ROW)) ||
-			(inst.input3.isMatrix() && ec.getCacheableData(inst.input3).isFederated(FType.ROW))))
+		if((inst.getOpcode().equalsIgnoreCase("ctableexpand") && inst.input2.isMatrix()
+				&& ec.getCacheableData(inst.input2).isFederated(FType.ROW)) ||
+			(inst.getOpcode().equalsIgnoreCase("ctable")
+				&& (ec.getCacheableData(inst.input1).isFederated(FType.ROW) ||
+					(inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederated(FType.ROW)) ||
+					(inst.input3.isMatrix() && ec.getCacheableData(inst.input3).isFederated(FType.ROW)))))
 			return CtableFEDInstruction.parseInstruction(inst);
 		return null;
 	}
@@ -93,14 +101,14 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 	private static CtableFEDInstruction parseInstruction(CtableSPInstruction instr) {
 		return new CtableFEDInstruction(instr.input1, instr.input2, instr.input3, instr.output, instr.getOutDim1(),
 				instr.getOutDim2(), instr.getIsExpand(), instr.getIgnoreZeros(), instr.getOpcode(),
-				instr.getInstructionString());
+				instr.getInstructionString(), FederatedOutput.NONE);
 	}
 
 	public static CtableFEDInstruction parseInstruction(String inst) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(inst);
 		// CP/SP instructions include a trailing thread-count / outputEmptyBlocks flag.
 		// FED uses the CP-style format, so accept both variants and ignore the trailing field.
-		InstructionUtils.checkNumFields(parts, 7, 8);
+		InstructionUtils.checkNumFields(parts, 7, 8, 9);
 		String opcode = parts[0];
 		// handle opcode
 		if(!(opcode.equalsIgnoreCase("ctable")) && !(opcode.equalsIgnoreCase("ctableexpand"))) {
@@ -120,12 +128,28 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 		CPOperand outDim1 = new CPOperand(dim1Fields[0], ValueType.FP64, DataType.SCALAR, dim1Literal);
 		boolean dim2Literal = Boolean.parseBoolean(dim2Fields[1]);
 		CPOperand outDim2 = new CPOperand(dim2Fields[0], ValueType.FP64, DataType.SCALAR, dim2Literal);
+		FederatedOutput fedOut = parseFederatedOutput(parts);
 		// ctable does not require any operator, so we simply pass-in a dummy operator with null functionobject
-		return new CtableFEDInstruction(in1, in2, in3, out, outDim1, outDim2, false, ignoreZeros, opcode, inst);
+		return new CtableFEDInstruction(in1, in2, in3, out, outDim1, outDim2,
+			opcode.equalsIgnoreCase("ctableexpand"), ignoreZeros, opcode, inst,
+			fedOut);
+	}
+
+	private static FederatedOutput parseFederatedOutput(String[] parts) {
+		String last = parts[parts.length - 1];
+		for(FederatedOutput output : FederatedOutput.values())
+			if(output.name().equals(last))
+				return output;
+		return FederatedOutput.NONE;
 	}
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		if(_isExpand) {
+			processExpandInstruction(ec);
+			return;
+		}
+
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
 
@@ -153,9 +177,78 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 
 		// static non-partitioned output dimension (same for all federated partitions)
 		long staticDim = Collections.max(Arrays.asList(dims1), Long::compare);
-		boolean fedOutput = isFedOutput(mo1.getFedMapping(), mo2.getMO());
+		long partitionedDim = Collections.max(Arrays.asList(dims2), Long::compare);
+		boolean feasibleFedOutput = isFedOutput(mo1.getFedMapping(), mo2.getMO());
+		boolean fedOutput = resolveFederatedOutput(_fedOut, feasibleFedOutput);
+		String workerInstruction = withResolvedOutputDimensions(instString,
+			reversed ? partitionedDim : staticDim, reversed ? staticDim : partitionedDim);
 
-		processRequest(ec, mo1, mo2, mo3, reversed, reversedWeights, fedOutput, staticDim, dims2);
+		processRequest(ec, mo1, mo2, mo3, reversed, reversedWeights, fedOutput, staticDim, dims2,
+			workerInstruction);
+	}
+
+	/**
+	 * Execute the sequence-rewrite form table(seq(1,nrow(A)), A, w).  The first
+	 * operand is a compile-time sequence marker, not a runtime matrix.  With a
+	 * row-federated A, each worker therefore expands only its local rows and the
+	 * coordinator either row-binds these disjoint results or preserves the input
+	 * row ranges for a federated output.
+	 */
+	private void processExpandInstruction(ExecutionContext ec) {
+		MatrixLineagePair values = ec.getMatrixLineagePair(input2);
+		if(!values.isFederated(FType.ROW))
+			throw new DMLRuntimeException("FED ctableexpand requires its value vector to be row-federated: "
+				+ instString);
+
+		FederationMap fedMap = values.getFedMapping();
+		FederatedRange[] ranges = fedMap.getFederatedRanges();
+		if(ranges.length == 0)
+			throw new DMLRuntimeException("FED ctableexpand received an empty federation map: " + instString);
+
+		Long[] workerMaxima = getOutputDimension(values.getMO(), input2, _outDim2, ranges);
+		long globalCols = Collections.max(Arrays.asList(workerMaxima), Long::compare);
+		long globalRows = Arrays.stream(ranges).mapToLong(r -> r.getEndDims()[0]).max().orElse(0);
+		String[] workerInstructions = IntStream.range(0, ranges.length)
+			.mapToObj(i -> withResolvedOutputDimensions(instString, ranges[i].getSize(0), globalCols))
+			.toArray(String[]::new);
+
+		long outputID = FederationUtils.getNextFedDataID();
+		FederatedRequest[] execute = FederationUtils.callInstruction(workerInstructions, output, outputID,
+			new CPOperand[] {input2}, new long[] {fedMap.getID()}, ExecType.CP);
+		boolean fedOutput = resolveFederatedOutput(_fedOut, true);
+
+		if(fedOutput) {
+			Future<FederatedResponse>[] responses = fedMap.execute(getTID(), true, execute,
+				new FederatedRequest[0]);
+			long nnz = FederationUtils.sumNonZeros(responses);
+			FederationMap outputMap = fedMap.copyWithNewID(outputID).modifyFedRanges(globalCols, 1);
+			MatrixObject out = ec.getMatrixObject(output);
+			out.getDataCharacteristics().setDimension(globalRows, globalCols)
+				.setBlocksize(values.getMO().getBlocksize()).setNonZeros(nnz);
+			out.setFedMapping(outputMap);
+		}
+		else {
+			FederatedRequest get = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, outputID);
+			FederatedRequest cleanup = fedMap.cleanup(getTID(), outputID);
+			Future<FederatedResponse>[] responses = fedMap.execute(getTID(), true, execute, get, cleanup);
+			ec.setMatrixOutput(output.getName(), FederationUtils.bind(responses, false));
+		}
+	}
+
+	static String withResolvedOutputDimensions(String instruction, long dim1, long dim2) {
+		String resolved = InstructionUtils.replaceOperand(instruction, 5,
+			Long.toString(dim1) + Instruction.LITERAL_PREFIX + Boolean.TRUE);
+		return InstructionUtils.replaceOperand(resolved, 6,
+			Long.toString(dim2) + Instruction.LITERAL_PREFIX + Boolean.TRUE);
+	}
+
+	static boolean resolveFederatedOutput(FederatedOutput requested, boolean feasible) {
+		if(requested.isForcedFederated() && !feasible)
+			throw new DMLRuntimeException("Planner selected FED/FOUT ctable, but the runtime value ranges are not "
+				+ "separable across federated partitions.");
+		if(requested.isForcedLocal())
+			return false;
+		return feasible;
 	}
 
 	/**
@@ -173,7 +266,8 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 	 * @param dims2 dimensions of the partial outputs along the federated partitioning
 	 */
 	private void processRequest(ExecutionContext ec, MatrixLineagePair mo1, MatrixLineagePair mo2,
-		MatrixLineagePair mo3, boolean reversed, boolean reversedWeights, boolean fedOutput, long staticDim, Long[] dims2) {
+		MatrixLineagePair mo3, boolean reversed, boolean reversedWeights, boolean fedOutput, long staticDim,
+		Long[] dims2, String workerInstruction) {
 
 		FederationMap fedMap = mo1.getFedMapping();
 
@@ -185,30 +279,30 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 		if(mo3 != null && mo1.isFederated() && mo3.isFederated()
 			&& fedMap.isAligned(mo3.getFedMapping(), AlignType.FULL)) { // mo1 and mo3 federated and aligned
 			if(!reversed)
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2, input3},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2, input3},
 					new long[] {fedMap.getID(), fr1[0].getID(), mo3.getFedMapping().getID()});
 			else
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2, input3},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2, input3},
 					new long[] {fr1[0].getID(), fedMap.getID(), mo3.getFedMapping().getID()});
 		}
 		else if(mo3 == null) {
 			if(!reversed)
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2},
 					new long[] {fedMap.getID(), fr1[0].getID()});
 			else
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2},
 					new long[] {fr1[0].getID(), fedMap.getID()});
 		}
 		else {
 			fr2 = fedMap.broadcastSliced(mo3, false);
 			if(!reversed && !reversedWeights)
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2, input3},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2, input3},
 					new long[] {fedMap.getID(), fr1[0].getID(), fr2[0].getID()});
 			else if(reversed && !reversedWeights)
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2, input3},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2, input3},
 					new long[] {fr1[0].getID(), fedMap.getID(), fr2[0].getID()});
 			else
-				fr3 = FederationUtils.callInstruction(instString, output, new CPOperand[] {input1, input2, input3},
+				fr3 = FederationUtils.callInstruction(workerInstruction, output, new CPOperand[] {input1, input2, input3},
 					new long[] {fr1[0].getID(), fr2[0].getID(), fedMap.getID()});
 		}
 
@@ -302,9 +396,12 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 		long varID = FederationUtils.getNextFedDataID();
 		fedMap.mapParallel(varID, (range, data) -> {
 			try {
+				int partitionAxis = reversed ? 0 : 1;
+				int beginDim = range.getBeginDimsInt()[partitionAxis];
+				int endDim = range.getEndDimsInt()[partitionAxis];
 				FederatedResponse response = data.executeFederatedOperation(new FederatedRequest(
 					FederatedRequest.RequestType.EXEC_UDF, -1,
-					new SliceOutput(data.getVarID(), staticDim, dims2, reversed))).get();
+					new SliceOutput(data.getVarID(), staticDim, beginDim, endDim, reversed))).get();
 				if(!response.isSuccessful())
 					response.throwExceptionFromResponse();
 			}
@@ -408,7 +505,7 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 				fedDims[i] = ((ScalarObject) tmp[i].get().getData()[0]).getLongValue();
 			}
 			catch(Exception e) {
-				e.printStackTrace();
+				throw new DMLRuntimeException("Failed to compute federated ctable output dimensions", e);
 			}
 		return fedDims;
 	}
@@ -435,13 +532,15 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 
 		private static final long serialVersionUID = -2808597461054603816L;
 		private final int _staticDim;
-		private final Long[] _fedDims;
+		private final int _beginDim;
+		private final int _endDim;
 		private final boolean _reversed;
 
-		protected SliceOutput(long input, long staticDim, Long[] fedDims, boolean reversed) {
+		protected SliceOutput(long input, long staticDim, int beginDim, int endDim, boolean reversed) {
 			super(new long[] {input});
 			_staticDim = (int)staticDim;
-			_fedDims = fedDims;
+			_beginDim = beginDim;
+			_endDim = endDim;
 			_reversed = reversed;
 		}
 
@@ -457,48 +556,37 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 		public FederatedResponse execute(ExecutionContext ec, Data... data) {
 			MatrixObject mo = (MatrixObject) data[0];
 			MatrixBlock mb = mo.acquireReadAndRelease();
-
-			int beginDim = 0;
-			int endDim = (_reversed ? mb.getNumRows() : mb.getNumColumns());
-			int localStaticDim = (_reversed ? mb.getNumColumns() : mb.getNumRows());
-			for(int counter = 0; counter < _fedDims.length; counter++) {
-				if(_fedDims[counter] == endDim) {
-					beginDim = (counter == 0 ? 0 : _fedDims[counter - 1].intValue());
-					break;
-				}
-			}
-
-			mb = expandMatrix(mb, localStaticDim);
-
-			// crop the output
-			MatrixBlock sliced = _reversed ? mb.slice(beginDim, endDim - 1, 0, _staticDim - 1)
-				: mb.slice(0, _staticDim - 1, beginDim, endDim - 1);
+			MatrixBlock sliced = sliceOutputBlock(mb, _staticDim, _beginDim, _endDim, _reversed);
 			mo.acquireModify(sliced);
 			mo.release();
 
 			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, new Object[] {});
 		}
 
-		/**
-		 * Expand the matrix with zeros up to the specified static dimension.
-		 *
-		 * @param mb the matrix block of the partial output
-		 * @param localStaticDim the static dimension of the output matrix block
-		 * @return MatrixBlock the output matrix block expanded to the global static dimension
-		 */
-		private MatrixBlock expandMatrix(MatrixBlock mb, int localStaticDim) {
-			int diff = _staticDim - localStaticDim;
-			if(diff > 0) {
-				MatrixBlock tmpMb = (_reversed ? new MatrixBlock(mb.getNumRows(), diff, (double) 0)
-					: new MatrixBlock(diff, mb.getNumColumns(), (double) 0));
-				mb = mb.append(tmpMb, null, _reversed);
-			}
-			return mb;
-		}
-
 		@Override
 		public Pair<String, LineageItem> getLineageItem(ExecutionContext ec) {
 			return null;
 		}
+	}
+
+	/**
+	 * Expand a partial ctable result along its non-partitioned axis and crop it
+	 * to the exact range assigned to the current worker.  The range must come
+	 * from the output {@link FederationMap}; output block dimensions cannot be
+	 * used to infer worker identity because resolved ctable dimensions are
+	 * global and therefore identical on every worker.
+	 */
+	static MatrixBlock sliceOutputBlock(MatrixBlock mb, int staticDim, int beginDim, int endDim,
+		boolean reversed) {
+		int localStaticDim = reversed ? mb.getNumColumns() : mb.getNumRows();
+		int diff = staticDim - localStaticDim;
+		if(diff > 0) {
+			MatrixBlock padding = reversed ? new MatrixBlock(mb.getNumRows(), diff, 0D)
+				: new MatrixBlock(diff, mb.getNumColumns(), 0D);
+			mb = mb.append(padding, null, reversed);
+		}
+
+		return reversed ? mb.slice(beginDim, endDim - 1, 0, staticDim - 1)
+			: mb.slice(0, staticDim - 1, beginDim, endDim - 1);
 	}
 }

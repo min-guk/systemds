@@ -20,6 +20,7 @@
 package org.apache.sysds.test.component.federated;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -27,15 +28,25 @@ import static org.junit.Assert.assertNull;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.lops.Lop;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse.ResponseType;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.instructions.InstructionUtils;
+import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -114,6 +125,41 @@ public class FederationUtilsRefedReuseLayoutTest {
 			assertEquals(origRanges[i].getEndDims()[0], rebuiltRanges[i].getEndDims()[0]);
 			assertEquals(original.getFederatedData()[i].getAddress(), rebuilt.getFederatedData()[i].getAddress());
 		}
+	}
+
+	@Test(expected = DMLRuntimeException.class)
+	public void testWaitForPropagatesWorkerErrorResponse() {
+		Future<FederatedResponse> failed = CompletableFuture.completedFuture(
+			new FederatedResponse(ResponseType.ERROR,
+				new DMLRuntimeException("worker execution failed")));
+		FederationUtils.waitFor(List.of(failed));
+	}
+
+	@Test
+	public void testSparkOriginWorkerInstructionDropsPlannerOutputFlag() {
+		CPOperand in = new CPOperand("X", Types.ValueType.FP64, Types.DataType.MATRIX);
+		CPOperand out = new CPOperand("Y", Types.ValueType.FP64, Types.DataType.MATRIX);
+		String instruction = InstructionUtils.concatOperands(
+			Types.ExecType.SPARK.name(), Opcodes.RIGHT_INDEX.toString(), InstructionUtils.createOperand(in),
+			InstructionUtils.createLiteralOperand("1", Types.ValueType.INT64),
+			InstructionUtils.createLiteralOperand("10", Types.ValueType.INT64),
+			InstructionUtils.createLiteralOperand("1", Types.ValueType.INT64),
+			InstructionUtils.createLiteralOperand("2", Types.ValueType.INT64),
+			InstructionUtils.createOperand(out), "NONE");
+
+		FederatedRequest arrayRequest = FederationUtils.callInstruction(new String[] {instruction}, out, 99,
+			new CPOperand[] {in}, new long[] {7}, Types.ExecType.SPARK)[0];
+		assertWorkerCPInstructionWithoutPlannerFlag((String) arrayRequest.getParam(0));
+
+		FederatedRequest singleRequest = FederationUtils.callInstruction(instruction, out, 100,
+			new CPOperand[] {in}, new long[] {8}, Types.ExecType.SPARK, false);
+		assertWorkerCPInstructionWithoutPlannerFlag((String) singleRequest.getParam(0));
+	}
+
+	private static void assertWorkerCPInstructionWithoutPlannerFlag(String instruction) {
+		assertEquals(Types.ExecType.CP, InstructionUtils.getExecType(instruction));
+		assertEquals(7, InstructionUtils.getInstructionPartsWithValueType(instruction).length);
+		assertFalse(instruction.endsWith(Lop.OPERAND_DELIMITOR + "NONE"));
 	}
 
 	private static FederationMap rowMap(long mapId, long r0, long r1, long r2, long r3) {

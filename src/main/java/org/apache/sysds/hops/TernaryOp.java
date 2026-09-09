@@ -39,7 +39,11 @@ import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.PickByCount;
 import org.apache.sysds.lops.SortKeys;
 import org.apache.sysds.lops.Ternary;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.Statement;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
@@ -247,6 +251,11 @@ public class TernaryOp extends MultiThreadedHop
 		SortKeys sort = SortKeys.constructSortByValueLop(getInput().get(0).constructLops(),
 			getInput().get(1).constructLops(), SortKeys.OperationTypes.WithWeights, 
 			getInput().get(0).getDataType(), getInput().get(0).getValueType(), et, k);
+		// Weighted quantile has the same two-stage lowering contract as the binary
+		// form: qsort is a physical helper owned by this occurrence, while qpick is
+		// the logical result-producing instruction.
+		sort.setHopID(getHopID());
+		sort.setPlannerLoweringAuxiliaryKind("QUANTILE_SORT");
 		PickByCount pick = new PickByCount(sort, getInput().get(2).constructLops(),
 			getDataType(), getValueType(), (_op == OpOp3.QUANTILE) ?
 			PickByCount.OperationTypes.VALUEPICK : PickByCount.OperationTypes.RANGEPICK, et, true);
@@ -771,6 +780,12 @@ public class TernaryOp extends MultiThreadedHop
 		if( opType==Ctable.OperationTypes.CTABLE_TRANSFORM_SCALAR_WEIGHT ) {
 			Hop input1 = getInput().get(0);
 			Hop input2 = getInput().get(1);
+			// The CP ctable shortcut normally bypasses both reshape Lops. A planner-selected
+			// relocation/materialization is an explicit physical edge, so bypassing either
+			// producer would erase its Hop identity before Dag can lower that edge.
+			if(hasPlannerMaterializationBoundary(input1, this)
+				|| hasPlannerMaterializationBoundary(input2, this))
+				return false;
 			//2) check for reshape pair
 			if(    input1 instanceof ReorgOp && ((ReorgOp)input1).getOp()==ReOrgOp.RESHAPE
 				&& input2 instanceof ReorgOp && ((ReorgOp)input2).getOp()==ReOrgOp.RESHAPE )
@@ -782,5 +797,18 @@ public class TernaryOp extends MultiThreadedHop
 		}
 		
 		return false;
+	}
+
+	private static boolean hasPlannerMaterializationBoundary(Hop producer, Hop consumer) {
+		long producerHopId = producer.getHopID();
+		long consumerHopId = consumer.getHopID();
+		boolean directFout = producer.getFederatedOutput() == FederatedOutput.FOUT
+			&& !producer.isFederatedOutputDerived();
+		return directFout || FederatedRefedRegistry.hasEntry(producerHopId)
+			|| FederatedFoutMaterializeRegistry.hasEntry(producerHopId)
+			|| FederatedLocalMaterializeRegistry.hasEntry(producerHopId)
+			|| FederatedRefedRegistry.hasSelectedConsumerInput(consumerHopId)
+			|| FederatedFoutMaterializeRegistry.hasSelectedConsumerInput(consumerHopId)
+			|| FederatedLocalMaterializeRegistry.hasSelectedConsumerInput(consumerHopId);
 	}
 }

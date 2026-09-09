@@ -2,8 +2,6 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -637,8 +635,9 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 	private static PlannerGlobalState snapshotPlannerGlobalState() {
 		return new PlannerGlobalState(FederatedPlannerUtils.snapshotFedState(),
 			FederatedRefedRegistry.snapshotAll(), FederatedFoutMaterializeRegistry.snapshotAll(),
-			FederatedLocalMaterializeRegistry.snapshotAll(), rawPlannerRecompileStates(),
-			rawAmbiguousPlannerRecompileSignatures());
+			FederatedLocalMaterializeRegistry.snapshotAll(),
+			FederatedPlannerUtils.snapshotPlannerRecompileStates(),
+			FederatedPlannerUtils.snapshotAmbiguousPlannerRecompileSignatures());
 	}
 
 	private static void restorePlannerGlobalState(PlannerGlobalState snapshot) {
@@ -653,54 +652,8 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		FederatedRefedRegistry.restoreAll(snapshot.refed());
 		FederatedFoutMaterializeRegistry.restoreAll(snapshot.foutMaterialize());
 		FederatedLocalMaterializeRegistry.restoreAll(snapshot.localMaterialize());
-		restoreRawPlannerRecompileState(snapshot.recompileStates(), snapshot.ambiguousRecompileSignatures());
-	}
-
-	@SuppressWarnings("unchecked")
-	private static Map<String, Object> rawPlannerRecompileStates() {
-		try {
-			java.lang.reflect.Field field = FederatedPlannerUtils.class.getDeclaredField("PLANNER_RECOMPILE_STATES");
-			field.setAccessible(true);
-			return new HashMap<>((Map<String, Object>) field.get(null));
-		}
-		catch(ReflectiveOperationException e) {
-			throw new AssertionError("Unable to snapshot planner recompile state", e);
-		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private static Set<String> rawAmbiguousPlannerRecompileSignatures() {
-		try {
-			java.lang.reflect.Field field = FederatedPlannerUtils.class
-				.getDeclaredField("AMBIGUOUS_PLANNER_RECOMPILE_STATES");
-			field.setAccessible(true);
-			return new HashSet<>((Set<String>) field.get(null));
-		}
-		catch(ReflectiveOperationException e) {
-			throw new AssertionError("Unable to snapshot ambiguous planner recompile state", e);
-		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private static void restoreRawPlannerRecompileState(
-		Map<String, Object> states, Set<String> ambiguousSignatures) {
-		try {
-			java.lang.reflect.Field statesField = FederatedPlannerUtils.class
-				.getDeclaredField("PLANNER_RECOMPILE_STATES");
-			statesField.setAccessible(true);
-			Map<String, Object> targetStates = (Map<String, Object>) statesField.get(null);
-			targetStates.clear();
-			targetStates.putAll(states);
-			java.lang.reflect.Field ambiguousField = FederatedPlannerUtils.class
-				.getDeclaredField("AMBIGUOUS_PLANNER_RECOMPILE_STATES");
-			ambiguousField.setAccessible(true);
-			Set<String> targetAmbiguous = (Set<String>) ambiguousField.get(null);
-			targetAmbiguous.clear();
-			targetAmbiguous.addAll(ambiguousSignatures);
-		}
-		catch(ReflectiveOperationException e) {
-			throw new AssertionError("Unable to restore planner recompile state", e);
-		}
+		FederatedPlannerUtils.restorePlannerRecompileStates(
+			snapshot.recompileStates(), snapshot.ambiguousRecompileSignatures());
 	}
 
 	private static void assertExactDisconnectedProducerConflict(DMLProgram program, Exception failure) {
@@ -752,7 +705,8 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		List<String> registryState) { }
 	private record PlannerGlobalState(Map<String, FederatedPlannerUtils.FedVarSnapshot> fedState,
 		FederatedRefedRegistry.Snapshot refed, FederatedFoutMaterializeRegistry.Snapshot foutMaterialize,
-		FederatedLocalMaterializeRegistry.Snapshot localMaterialize, Map<String, Object> recompileStates,
+		FederatedLocalMaterializeRegistry.Snapshot localMaterialize,
+		Map<String, FederatedPlannerUtils.PlannerRecompileStateSnapshot> recompileStates,
 		Set<String> ambiguousRecompileSignatures) { }
 	private record ProgramInvocation(DMLProgram program, DpInvocationReceipt receipt) { }
 }

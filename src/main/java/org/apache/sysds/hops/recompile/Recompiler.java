@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -51,6 +52,7 @@ import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.CompilerConfig.ConfigType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
@@ -72,6 +74,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -79,6 +82,9 @@ import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.MMTSJ.MMTSJType;
 import org.apache.sysds.lops.compile.Dag;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.rewrite.LopRewriter;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DataExpression;
@@ -160,6 +166,13 @@ public class Recompiler {
 	private static ThreadLocal<LopRewriter> _lopRewriter = new ThreadLocal<>() {
 		@Override protected LopRewriter initialValue() {return new LopRewriter();}
 	};
+
+	/**
+	 * The federated lowering registries are process-global compiler scratch. Runtime
+	 * recompilation may run concurrently for distinct ParFor DAGs, so the entire
+	 * clear/rebuild/consume interval must be isolated across those DAGs.
+	 */
+	private static final ReentrantLock FEDERATED_RECOMPILE_REGISTRY_LOCK = new ReentrantLock();
 	
 	// additional reused objects to avoid repeated, incremental reallocation on deepCopyDags
 	private static ThreadLocal<Map<Long,Hop>> _memoHop = new ThreadLocal<>() {
@@ -192,7 +205,8 @@ public class Recompiler {
 		//need for synchronization as we do temp changes in shared hops/lops
 		//however, we create deep copies for most dags to allow for concurrent recompile
 		synchronized( hops ) {
-			newInst = recompile(sb, hops, ec, status, inplace, replaceLit, true, false, false, null, tid);
+			newInst = recompileWithProgramOwner(sb != null ? sb.getDMLProg() : null,
+				sb, hops, ec, status, inplace, replaceLit, true, false, false, null, tid);
 		}
 		
 		// replace thread ids in new instructions
@@ -219,12 +233,20 @@ public class Recompiler {
 	public static ArrayList<Instruction> recompileHopsDag( Hop hop, LocalVariableMap vars, 
 			RecompileStatus status, boolean inplace, boolean replaceLit, long tid ) 
 	{
+		// Compatibility for synthetic, non-program DAGs (for example standalone codegen).
+		// Runtime callers owning a compiled Program must use the DMLProgram overload.
+		return recompileHopsDag(hop, vars, status, inplace, replaceLit, tid, null);
+	}
+
+	public static ArrayList<Instruction> recompileHopsDag(Hop hop, LocalVariableMap vars,
+		RecompileStatus status, boolean inplace, boolean replaceLit, long tid, DMLProgram owner)
+	{
 		ArrayList<Instruction> newInst = null;
 
 		//need for synchronization as we do temp changes in shared hops/lops
 		synchronized( hop ) {
-			newInst = recompile(null, new ArrayList<>(Arrays.asList(hop)),
-				vars, status, inplace, replaceLit, true, false, true, null, tid);
+			newInst = recompileWithProgramOwner(owner, null, new ArrayList<>(Arrays.asList(hop)),
+				new ExecutionContext(vars), status, inplace, replaceLit, true, false, true, null, tid);
 		}
 		
 		// replace thread ids in new instructions
@@ -236,6 +258,34 @@ public class Recompiler {
 			logExplainPred(hop, newInst);
 		
 		return newInst;
+	}
+
+	private static ArrayList<Instruction> recompileWithProgramOwner(DMLProgram owner,
+		StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec, RecompileStatus status,
+		boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt,
+		boolean pred, ExecType et, long tid) {
+		FEDERATED_RECOMPILE_REGISTRY_LOCK.lock();
+		try {
+			clearFederatedRecompileRegistries();
+			if(owner == null)
+				return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+					updateStats, forceEt, pred, et, tid);
+			try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+				FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
+				return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+					updateStats, forceEt, pred, et, tid);
+			}
+		}
+		finally {
+			clearFederatedRecompileRegistries();
+			FEDERATED_RECOMPILE_REGISTRY_LOCK.unlock();
+		}
+	}
+
+	private static void clearFederatedRecompileRegistries() {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
 	}
 	
 	public static ArrayList<Instruction> recompileHopsDag2Forced( StatementBlock sb, ArrayList<Hop> hops, long tid, ExecType et )
@@ -262,13 +312,20 @@ public class Recompiler {
 	
 	public static ArrayList<Instruction> recompileHopsDag2Forced( Hop hop, long tid, ExecType et ) 
 	{
+		// Compatibility for synthetic, non-program predicates only.
+		return recompileHopsDag2Forced(hop, tid, et, null);
+	}
+
+	public static ArrayList<Instruction> recompileHopsDag2Forced(
+		Hop hop, long tid, ExecType et, DMLProgram owner)
+	{
 		ArrayList<Instruction> newInst = null;
 
 		//need for synchronization as we do temp changes in shared hops/lops
 		synchronized( hop ) {
 			//always in place, no stats update/rewrites, but forced exec type
-			newInst = recompile(null, new ArrayList<>(Arrays.asList(hop)),
-				(LocalVariableMap)null, null, true, false, false, true, true, et, tid);
+			newInst = recompileWithProgramOwner(owner, null, new ArrayList<>(Arrays.asList(hop)),
+				new ExecutionContext((LocalVariableMap) null), null, true, false, false, true, true, et, tid);
 		}
 
 		// replace thread ids in new instructions
@@ -302,13 +359,19 @@ public class Recompiler {
 
 	public static ArrayList<Instruction> recompileHopsDagInstructions( Hop hop )
 	{
+		// Compatibility for synthetic, non-program predicates only.
+		return recompileHopsDagInstructions(hop, null);
+	}
+
+	public static ArrayList<Instruction> recompileHopsDagInstructions(Hop hop, DMLProgram owner)
+	{
 		ArrayList<Instruction> newInst = null;
 
 		//need for synchronization as we do temp changes in shared hops/lops
 		synchronized( hop ) {
 			//always in place, no stats update/rewrites
-			newInst = recompile(null, new ArrayList<>(Arrays.asList(hop)),
-				(LocalVariableMap)null, null, true, false, false, false, true, null, 0);
+			newInst = recompileWithProgramOwner(owner, null, new ArrayList<>(Arrays.asList(hop)),
+				new ExecutionContext((LocalVariableMap) null), null, true, false, false, false, true, null, 0);
 		}
 		
 		// explain recompiled instructions
@@ -336,7 +399,14 @@ public class Recompiler {
 	 * @param tid thread id, 0 for main or before worker creation
 	 * @return modified list of instructions
 	 */
-	public static ArrayList<Instruction> recompile(StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec, RecompileStatus status,
+	public static ArrayList<Instruction> recompile(StatementBlock sb, ArrayList<Hop> hops,
+		ExecutionContext ec, RecompileStatus status, boolean inplace, boolean replaceLit,
+		boolean updateStats, boolean forceEt, boolean pred, ExecType et, long tid) {
+		return recompileWithProgramOwner(sb != null ? sb.getDMLProg() : null,
+			sb, hops, ec, status, inplace, replaceLit, updateStats, forceEt, pred, et, tid);
+	}
+
+	private static ArrayList<Instruction> recompileInternal(StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec, RecompileStatus status,
 		boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt, boolean pred, ExecType et, long tid ) 
 	{
 		boolean codegen = ConfigurationManager.isCodegenEnabled()
@@ -439,13 +509,25 @@ public class Recompiler {
 		Set<Hop> fTypeRefreshDone = new HashSet<>();
 		for (Hop hopRoot : hops)
 			inferFTypeIfNeeded(hopRoot, fTypeMap, fTypeRefreshDone, new HashSet<>());
-		Set<Long> propagatedDemotedCloneIds = FederatedRefedPolicy.markHeuristicDemotedClones(deepCopyMemo);
-		try {
-			FederatedRefedPolicy.registerFromHops(hops, true, fTypeMap, sb != null ? sb.getSBID() : -1,
-				runtimeSignatures, runtimeTypes);
+		if(isCompiledFederatedPlanningActive()) {
+			Set<Long> propagatedDemotedCloneIds = FederatedRefedPolicy.markHeuristicDemotedClones(deepCopyMemo);
+			try {
+				FederatedRefedPolicy.registerFromHops(hops, true, fTypeMap, sb != null ? sb.getSBID() : -1,
+					runtimeSignatures, runtimeTypes);
+			}
+			finally {
+				FederatedRefedPolicy.unmarkHeuristicDemotedHops(propagatedDemotedCloneIds);
+			}
 		}
-		finally {
-			FederatedRefedPolicy.unmarkHeuristicDemotedHops(propagatedDemotedCloneIds);
+		else {
+			// The runtime planner has no selector-owned placement transaction to restore
+			// or validate. Applying compiled-plan TRead/TWrite invariants here rejects
+			// ordinary SP/CP dynamic recompilation (for example SP cumulative offsets).
+			// Also remove any lowering authority left by an earlier compiled script in
+			// the same JVM so the runtime conversion path remains registry-independent.
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
 		}
 		if (LOG_RECOMPILE_NEW_HOPS)
 			logPlannerRecompileStates("RecompilePostRefedPlannerState", hops, sb, pred, tid);
@@ -478,6 +560,11 @@ public class Recompiler {
 		}
 		
 		return newInst;
+	}
+
+	private static boolean isCompiledFederatedPlanningActive() {
+		String planner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		return OptimizerUtils.FEDERATED_COMPILATION || FederatedPlanner.isCompiled(planner);
 	}
 
 	private static ArrayList<Instruction> recompile(StatementBlock sb, ArrayList<Hop> hops, LocalVariableMap vars, RecompileStatus status,
@@ -1157,25 +1244,30 @@ public class Recompiler {
 			WhileProgramBlock wpb = (WhileProgramBlock)pb;
 			WhileStatementBlock wsb = (WhileStatementBlock) pb.getStatementBlock();
 			if( wsb!=null && wsb.getPredicateHops()!=null )
-				wpb.setPredicate(recompileHopsDagInstructions(wsb.getPredicateHops()));
+				wpb.setPredicate(recompileHopsDagInstructions(
+					wsb.getPredicateHops(), wsb.getDMLProg()));
 		}
 		else if( pb instanceof IfProgramBlock ) {
 			//recompile if predicate instructions
 			IfProgramBlock ipb = (IfProgramBlock)pb;
 			IfStatementBlock isb = (IfStatementBlock) pb.getStatementBlock();
 			if( isb!=null && isb.getPredicateHops()!=null )
-				ipb.setPredicate(recompileHopsDagInstructions(isb.getPredicateHops()));
+				ipb.setPredicate(recompileHopsDagInstructions(
+					isb.getPredicateHops(), isb.getDMLProg()));
 		}
 		else if( pb instanceof ForProgramBlock ) {
 			//recompile for/parfor predicate instructions
 			ForProgramBlock fpb = (ForProgramBlock)pb;
 			ForStatementBlock fsb = (ForStatementBlock) pb.getStatementBlock();
 			if( fsb!=null && fsb.getFromHops()!=null )
-				fpb.setFromInstructions(recompileHopsDagInstructions(fsb.getFromHops()));
+				fpb.setFromInstructions(recompileHopsDagInstructions(
+					fsb.getFromHops(), fsb.getDMLProg()));
 			if( fsb!=null && fsb.getToHops()!=null )
-				fpb.setToInstructions(recompileHopsDagInstructions(fsb.getToHops()));
+				fpb.setToInstructions(recompileHopsDagInstructions(
+					fsb.getToHops(), fsb.getDMLProg()));
 			if( fsb!=null && fsb.getIncrementHops()!=null )
-				fpb.setIncrementInstructions(recompileHopsDagInstructions(fsb.getIncrementHops()));
+				fpb.setIncrementInstructions(recompileHopsDagInstructions(
+					fsb.getIncrementHops(), fsb.getDMLProg()));
 		}
 		else if( pb instanceof BasicProgramBlock ) {
 			//recompile last-level program block instructions
@@ -1649,7 +1741,7 @@ public class Recompiler {
 			return;
 		Hop hops = wsb.getPredicateHops();
 		ArrayList<Instruction> tmp = recompileHopsDag(
-			hops, vars, status, status.isInPlace(), false, status.getTID());
+			hops, vars, status, status.isInPlace(), false, status.getTID(), wsb.getDMLProg());
 		wpb.setPredicate( tmp );
 		if( ParForProgramBlock.RESET_RECOMPILATION_FLAGs && status.isReset() ) {
 			Hop.resetRecompilationFlag(hops, ExecType.CP, status.getReset());
@@ -1669,17 +1761,17 @@ public class Recompiler {
 		// recompile predicates
 		if( fromHops != null ) {
 			ArrayList<Instruction> tmp = recompileHopsDag(
-				fromHops, vars, status, status.isInPlace(), false, status.getTID());
+				fromHops, vars, status, status.isInPlace(), false, status.getTID(), fsb.getDMLProg());
 			fpb.setFromInstructions(tmp);
 		}
 		if( toHops != null ) {
 			ArrayList<Instruction> tmp = recompileHopsDag(
-				toHops, vars, status, status.isInPlace(), false, status.getTID());
+				toHops, vars, status, status.isInPlace(), false, status.getTID(), fsb.getDMLProg());
 			fpb.setToInstructions(tmp);
 		}
 		if( incrHops != null ) {
 			ArrayList<Instruction> tmp = recompileHopsDag(
-				incrHops, vars, status, status.isInPlace(), false, status.getTID());
+				incrHops, vars, status, status.isInPlace(), false, status.getTID(), fsb.getDMLProg());
 			fpb.setIncrementInstructions(tmp);
 		}
 		
@@ -1703,7 +1795,8 @@ public class Recompiler {
 			WhileStatementBlock sbTmp = (WhileStatementBlock)pbTmp.getStatementBlock();
 			//recompile predicate
 			if( sbTmp!=null && !(et==ExecType.CP && !OptTreeConverter.containsSparkInstruction(pbTmp.getPredicate(), true)) )
-				pbTmp.setPredicate( Recompiler.recompileHopsDag2Forced(sbTmp.getPredicateHops(), tid, et) );
+				pbTmp.setPredicate(Recompiler.recompileHopsDag2Forced(
+					sbTmp.getPredicateHops(), tid, et, sbTmp.getDMLProg()));
 			
 			//recompile body
 			for (ProgramBlock pb2 : pbTmp.getChildBlocks())
@@ -1715,7 +1808,8 @@ public class Recompiler {
 			IfStatementBlock sbTmp = (IfStatementBlock)pbTmp.getStatementBlock();
 			//recompile predicate
 			if( sbTmp!=null &&!(et==ExecType.CP && !OptTreeConverter.containsSparkInstruction(pbTmp.getPredicate(), true)) )
-				pbTmp.setPredicate( Recompiler.recompileHopsDag2Forced(sbTmp.getPredicateHops(), tid, et) );
+				pbTmp.setPredicate(Recompiler.recompileHopsDag2Forced(
+					sbTmp.getPredicateHops(), tid, et, sbTmp.getDMLProg()));
 			//recompile body
 			for( ProgramBlock pb2 : pbTmp.getChildBlocksIfBody() )
 				rRecompileProgramBlock2Forced(pb2, tid, fnStack, et);
@@ -1727,11 +1821,14 @@ public class Recompiler {
 			ForStatementBlock sbTmp = (ForStatementBlock) pbTmp.getStatementBlock();
 			//recompile predicate
 			if( sbTmp!=null && sbTmp.getFromHops() != null && !(et==ExecType.CP && !OptTreeConverter.containsSparkInstruction(pbTmp.getFromInstructions(), true)) )
-				pbTmp.setFromInstructions( Recompiler.recompileHopsDag2Forced(sbTmp.getFromHops(), tid, et) );
+				pbTmp.setFromInstructions(Recompiler.recompileHopsDag2Forced(
+					sbTmp.getFromHops(), tid, et, sbTmp.getDMLProg()));
 			if( sbTmp!=null && sbTmp.getToHops() != null && !(et==ExecType.CP && !OptTreeConverter.containsSparkInstruction(pbTmp.getToInstructions(), true)) )
-				pbTmp.setToInstructions( Recompiler.recompileHopsDag2Forced(sbTmp.getToHops(), tid, et) );
+				pbTmp.setToInstructions(Recompiler.recompileHopsDag2Forced(
+					sbTmp.getToHops(), tid, et, sbTmp.getDMLProg()));
 			if( sbTmp!=null && sbTmp.getIncrementHops() != null && !(et==ExecType.CP && !OptTreeConverter.containsSparkInstruction(pbTmp.getIncrementInstructions(), true)) )
-				pbTmp.setIncrementInstructions( Recompiler.recompileHopsDag2Forced(sbTmp.getIncrementHops(), tid, et) );
+				pbTmp.setIncrementInstructions(Recompiler.recompileHopsDag2Forced(
+					sbTmp.getIncrementHops(), tid, et, sbTmp.getDMLProg()));
 			//recompile body
 			for( ProgramBlock pb2 : pbTmp.getChildBlocks() )
 				rRecompileProgramBlock2Forced(pb2, tid, fnStack, et);

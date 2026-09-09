@@ -31,7 +31,7 @@ import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestConfiguration;
 import org.apache.sysds.test.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -101,21 +101,29 @@ public class FederatedFullCumulativeTest extends AutomatedTestBase {
 	}
 
 	@Test
-	@Ignore
 	public void testSumDenseMatrixSP() {
 		runCumOperationTest(OpType.SUM, ExecType.SPARK);
 	}
 
 	@Test
-	@Ignore
 	public void testMaxDenseMatrixSP() {
 		runCumOperationTest(OpType.MAX, ExecType.SPARK);
 	}
 
 	@Test
-	@Ignore
 	public void testMinDenseMatrixSP() {
 		runCumOperationTest(OpType.MIN, ExecType.SPARK);
+	}
+
+	@Test
+	public void testProdDenseMatrixSP() {
+		runCumOperationTest(OpType.PROD, ExecType.SPARK);
+	}
+
+	@Test
+	public void testSumProdDenseMatrixSPRowPartitioned() {
+		Assume.assumeTrue("Federated cumsumprod requires a two-column row partition", rowPartitioned);
+		runCumOperationTest(OpType.SUMPROD, ExecType.SPARK);
 	}
 
 	private void runCumOperationTest(OpType type, ExecType instType) {

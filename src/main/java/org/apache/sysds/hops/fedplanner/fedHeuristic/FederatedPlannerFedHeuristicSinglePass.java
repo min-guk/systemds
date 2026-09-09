@@ -7,11 +7,12 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector.StateOrdering;
 
 /** Heuristic policy variant that stops after the first constraint-coherent filtered placement. */
 public final class FederatedPlannerFedHeuristicSinglePass extends FederatedPlannerFedHeuristic {
 	private final HeuristicPlacementAdapter adapter = new HeuristicPlacementAdapter(
-		new PolicyFirstFeasiblePlacementSelector());
+		new PolicyFirstFeasiblePlacementSelector(StateOrdering.MOVEMENT_FIRST));
 
 	@Override
 	public HeuristicPlacementAdapter.Result select(PlacementAnalysis analysis,

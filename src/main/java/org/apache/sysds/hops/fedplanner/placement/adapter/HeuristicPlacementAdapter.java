@@ -32,6 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicNativeContinuationFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -47,6 +48,8 @@ import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelecto
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector.StateOrdering;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Provenance-scoped Heuristic policy over one immutable placement analysis. */
@@ -120,7 +123,12 @@ public final class HeuristicPlacementAdapter {
 			"CP_FOUT_MATERIALIZATIONS=" + CandidateSelections.cpFoutPhysicalEmissionCount(candidateReceipts),
 			"DERIVED_FOUT_MATERIALIZATIONS="
 				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidateReceipts));
-		List<String> ties = List.of("MAX_FED", "MAX_FOUT", "MIN_RELOCATIONS", "NORMALIZED_ASSIGNMENT");
+		String stateOrdering = selector instanceof PolicyFirstFeasiblePlacementSelector policySelector
+			? policySelector.stateOrdering().name() : "EXHAUSTIVE_SCORE_ORDER";
+		boolean movementFirst = StateOrdering.MOVEMENT_FIRST.name().equals(stateOrdering);
+		List<String> ties = movementFirst
+			? List.of("MIN_INCIDENT_WEIGHTED_MOVEMENT", "MAX_FED", "MAX_FOUT", "NORMALIZED_ASSIGNMENT")
+			: List.of("MAX_FED", "MAX_FOUT", "MIN_RELOCATIONS", "NORMALIZED_ASSIGNMENT");
 		List<String> relationships = base.constraints().stream().filter(c -> isTransient(base, c.left())
 			|| isTransient(base, c.right())).map(NeutralPlacementGraph.Constraint::normalizedSignature).sorted().toList();
 		List<String> boundaries = base.constraints().stream().filter(c -> c.left().controlRegion()
@@ -135,13 +143,16 @@ public final class HeuristicPlacementAdapter {
 			"policy", "PATHWISE_REENTRY_POLICY_V2", "markerCount", Integer.toString(policy.markers().size()),
 			"localPrefixCount", Integer.toString(policy.localPrefix().size()),
 			"downstreamMarkerCount", Integer.toString(policy.downstreamMarkers().size()),
-			"frontierEdgeCount", Integer.toString(policy.frontiers().size()), "search",
+			"frontierEdgeCount", Integer.toString(policy.frontiers().size()),
+			"nativeContinuationCount", Integer.toString(policy.nativeContinuations().size()), "search",
 				firstFeasible ? "FIRST_FEASIBLE" : "EXHAUSTIVE",
-			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_AND_RELOCATION_FACTS")));
+			"stateOrdering", stateOrdering,
+			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_CANDIDATE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
 			: assignmentHash(assignment);
 		String policyFingerprint = sha256("PATHWISE_REENTRY_POLICY_V2|" + analysis.analysisFingerprint() + '|'
-			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions);
+			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions
+			+ (movementFirst ? "|MOVEMENT_FIRST" : ""));
 		String incumbent = selection.score().normalizedSignature();
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
 			selection.score().distinctRelocationCount(), incumbent);
@@ -187,7 +198,8 @@ public final class HeuristicPlacementAdapter {
 
 	private record PolicyView(Set<CompiledHopKey> markers, Set<CompiledHopKey> localPrefix,
 		Set<CompiledHopKey> downstreamMarkers,
-		Set<FrontierEdge> frontiers, List<Constraint> constraints, List<String> exclusions) { }
+		Set<FrontierEdge> frontiers, Set<HeuristicNativeContinuationFact> nativeContinuations,
+		List<Constraint> constraints, List<String> exclusions) { }
 
 	private static PolicyView policyView(PlacementAnalysis analysis, List<CompiledHopKey> requestedMarkers) {
 		Set<CompiledHopKey> typedMarkers = new LinkedHashSet<>();
@@ -196,6 +208,7 @@ public final class HeuristicPlacementAdapter {
 		Set<CompiledHopKey> local = new LinkedHashSet<>();
 		Set<CompiledHopKey> downstreamMarkers = new LinkedHashSet<>();
 		Set<FrontierEdge> frontiers = new java.util.TreeSet<>();
+		Set<HeuristicNativeContinuationFact> nativeContinuations = new java.util.TreeSet<>();
 		List<Constraint> constraints = new ArrayList<>(analysis.graph().constraints());
 		for(var path : analysis.heuristicPolicyFacts().paths()) {
 			if(!typedMarkers.contains(path.demotion().producer()))
@@ -210,6 +223,12 @@ public final class HeuristicPlacementAdapter {
 				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, fact.siblingProducer(), fact.consumer(),
 					fact.siblingInputPosition(), "pathwise-reentry-sibling"));
 			}
+			for(var fact : path.nativeContinuations()) {
+				nativeContinuations.add(fact);
+				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE,
+					fact.siblingProducer(), fact.consumer(), fact.siblingInputPosition(),
+					"native-continuation-sibling"));
+			}
 		}
 		List<String> exclusions = new ArrayList<>();
 		for(CompiledHopKey key : local) {
@@ -223,8 +242,16 @@ public final class HeuristicPlacementAdapter {
 			exclusions.add("REENTRY_FRONTIER|consumer=" + frontier.consumer().normalizedSignature()
 				+ "|input=" + frontier.inputPosition() + "|value=" + frontier.sourceValue().normalizedSignature()
 				+ "|relocation=" + frontier.relocation().normalizedSignature());
+		for(HeuristicNativeContinuationFact continuation : nativeContinuations)
+			exclusions.add("NATIVE_CONTINUATION|consumer="
+				+ continuation.consumer().normalizedSignature()
+				+ "|localInput=" + continuation.localInputPosition()
+				+ "|localValue=" + continuation.localValueVersion().normalizedSignature()
+				+ "|sibling=" + continuation.siblingProducer().normalizedSignature()
+				+ "|siblingInput=" + continuation.siblingInputPosition()
+				+ "|candidate=" + continuation.runtimeCandidate().key().normalizedSignature());
 		return new PolicyView(Set.copyOf(typedMarkers), Set.copyOf(local), Set.copyOf(downstreamMarkers),
-			Set.copyOf(frontiers),
+			Set.copyOf(frontiers), Set.copyOf(nativeContinuations),
 			constraints.stream().distinct().sorted().toList(),
 			exclusions.stream().sorted().toList());
 	}
@@ -244,9 +271,18 @@ public final class HeuristicPlacementAdapter {
 				legal = legal.stream().filter(state -> state.execType() == ExecType.CP
 					&& state.output() == FederatedOutput.LOUT).toList();
 			else if(policy.markers().contains(node.key()))
-				legal = legal.stream().filter(state -> state.execType() == ExecType.FED
-					&& state.output() == FederatedOutput.LOUT && state.fType() != null
-					&& state.shapeDependent()).toList();
+				// Prefer the native FED/LOUT aggregate-vector demotion, but retain its
+				// CP/LOUT realization as a candidate-consistent fallback. A legal FED
+				// marker state can still be globally unreachable when its apparent FULL
+				// input originates from a coordinator-local function/transient value.
+				// Candidate propagation then removes only that unreachable FED state and
+				// completes the same demotion on the coordinator instead of making the
+				// entire policy projection unsatisfiable.
+				legal = legal.stream().filter(state -> (state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT)
+					|| (state.execType() == ExecType.FED
+						&& state.output() == FederatedOutput.LOUT && state.fType() != null
+						&& state.shapeDependent())).toList();
 			else if(policy.localPrefix().contains(node.key()))
 				// Once the heuristic demotes a path after its FED/LOUT producer, the
 				// prefix is coordinator-local until an explicit pathwise frontier.

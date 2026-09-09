@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
@@ -50,8 +51,8 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 	private final CPOperand _opByRow;
 
 	private ReshapeFEDInstruction(Operator op, CPOperand in1, CPOperand in2, CPOperand in3, CPOperand in4,
-		CPOperand in5, CPOperand out, String opcode, String istr) {
-		super(FEDInstruction.FEDType.Reshape, op, in1, out, opcode, istr);
+		CPOperand in5, CPOperand out, String opcode, String istr, FederatedOutput fedOut) {
+		super(FEDInstruction.FEDType.Reshape, op, in1, out, opcode, istr, fedOut);
 		_opRows = in2;
 		_opCols = in3;
 		_opDims = in4;
@@ -60,13 +61,14 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 
 	public static ReshapeFEDInstruction parseInstruction(ReshapeCPInstruction instr) {
 		return new ReshapeFEDInstruction(instr.getOperator(), instr.input1, instr.getOpRows(), instr.getOpCols(),
-			instr.getOpDims(), instr.getOpByRow(), instr.output, instr.getOpcode(), instr.getInstructionString());
+			instr.getOpDims(), instr.getOpByRow(), instr.output, instr.getOpcode(), instr.getInstructionString(),
+			FederatedOutput.FOUT);
 	}
 
 	public static ReshapeFEDInstruction parseInstruction(MatrixReshapeSPInstruction instr) {
 		// TODO: add dims argument (for tensors) to MatrixReshapeSPInstruction
 		return new ReshapeFEDInstruction(instr.getOperator(), instr.input1, instr.getOpRows(), instr.getOpCols(), null,
-			instr.getOpByRow(), instr.output, instr.getOpcode(), instr.getInstructionString());
+			instr.getOpByRow(), instr.output, instr.getOpcode(), instr.getInstructionString(), FederatedOutput.FOUT);
 	}
 
 	public static ReshapeFEDInstruction parseInstruction(String str) {
@@ -79,10 +81,11 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 		CPOperand in4 = new CPOperand(parts[4]);
 		CPOperand in5 = new CPOperand(parts[5]);
 		CPOperand out = new CPOperand(parts[6]);
+		FederatedOutput fedOut = parts.length > 7 ? FederatedOutput.valueOf(parts[7]) : FederatedOutput.FOUT;
 		if(!opcode.equalsIgnoreCase("rshape"))
 			throw new DMLRuntimeException("Unknown opcode while parsing an ReshapeInstruction: " + str);
 		else
-			return new ReshapeFEDInstruction(new Operator(true), in1, in2, in3, in4, in5, out, opcode, str);
+			return new ReshapeFEDInstruction(new Operator(true), in1, in2, in3, in4, in5, out, opcode, str, fedOut);
 	}
 
 	@Override
@@ -127,10 +130,11 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 
 			//execute at federated site
 			FederatedRequest[] fr1 = FederationUtils.callInstruction(newInstString, output, id,
-				new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, InstructionUtils.getExecType(instString));
+				new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, Types.ExecType.CP);
 			mo1.getFedMapping().execute(getTID(), true, tmp);
 			Future<FederatedResponse>[] ffr =
 				mo1.getFedMapping().execute(getTID(), true, fr1, new FederatedRequest[0]);
+			long remoteNnz = FederationUtils.sumNonZeros(ffr);
 
 			// set new fed map
 				FederationMap reshapedFedMap = mo1.getFedMapping().copyWithNewID(fr1[0].getID());
@@ -150,10 +154,11 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 				reshapedFedMap.getFederatedRanges()[i]
 					.setEndDim(1, reshapedFedMap.getFederatedRanges()[i].getBeginDims()[1] + col);
 			}
+				reshapedFedMap.setType(fByRow ? FType.ROW : FType.COL);
 
 				//derive output federated mapping
 				MatrixObject out = ec.getMatrixObject(output);
-				long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
+				long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : remoteNnz;
 				out.getDataCharacteristics().setDimension(fRows, fCols)
 					.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
 			out.setFedMapping(reshapedFedMap);

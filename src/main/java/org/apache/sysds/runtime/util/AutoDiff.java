@@ -93,7 +93,8 @@ public class AutoDiff {
 		for(int i=0; i< allHops.size(); i++) {
 			DataOp dop = HopRewriteUtils.createTransientWrite("advar"+i, allHops.get(i));
 			ArrayList<Instruction> dInst = Recompiler
-				.recompileHopsDag(dop, ec.getVariables(), null, true, true, 0);
+				.recompileHopsDag(dop, ec.getVariables(), null, true, true, 0,
+					ec.getProgram() != null ? ec.getProgram().getDMLProg() : null);
 			if (DEBUG) {
 				System.out.println("HOP Dag and instructions for " + names.get(i));
 				System.out.println(Explain.explain(dop));

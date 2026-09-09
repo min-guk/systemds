@@ -35,6 +35,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysds.runtime.frame.data.FrameBlock;
+import org.apache.sysds.runtime.frame.data.lib.FrameLibApplySchema;
 import org.apache.sysds.runtime.instructions.spark.data.IndexedMatrixValue;
 import org.apache.sysds.runtime.instructions.spark.data.RDDObject;
 import org.apache.sysds.runtime.io.FileFormatProperties;
@@ -50,6 +51,7 @@ import org.apache.sysds.runtime.meta.MetaDataFormat;
 import org.apache.sysds.runtime.util.UtilFunctions;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Future;
@@ -258,16 +260,38 @@ public class FrameObject extends CacheableData<FrameBlock>
 	protected FrameBlock readBlobFromFederated(FederationMap fedMap, long[] dims)
 		throws IOException
 	{
-		FrameBlock ret = new FrameBlock(_schema);
-		// provide long support?
-		ret.ensureAllocatedColumns((int) dims[0]);
 		List<Pair<FederatedRange, Future<FederatedResponse>>> readResponses = fedMap.requestFederatedData();
 		try {
+			List<Pair<FederatedRange, FrameBlock>> partitions = new ArrayList<>(readResponses.size());
+			int numColumns = (int) dims[1];
+			ValueType[] mergedSchema = new ValueType[numColumns];
 			for(Pair<FederatedRange, Future<FederatedResponse>> readResponse : readResponses) {
 				FederatedRange range = readResponse.getLeft();
 				FederatedResponse response = readResponse.getRight().get();
-				// add result
 				FrameBlock multRes = (FrameBlock) response.getData()[0];
+				partitions.add(Pair.of(range, multRes));
+				for(int c = 0; c < multRes.getNumColumns(); c++) {
+					int destCol = range.getBeginDimsInt()[1] + c;
+					ValueType partitionType = multRes.getSchema()[c];
+					mergedSchema[destCol] = mergedSchema[destCol] == null ? partitionType
+						: ValueType.getHighestCommonTypeSafe(mergedSchema[destCol], partitionType);
+				}
+			}
+			for(int c = 0; c < mergedSchema.length; c++)
+				if(mergedSchema[c] == null)
+					mergedSchema[c] = _schema != null && c < _schema.length
+						? _schema[c] : ValueType.STRING;
+
+			FrameBlock ret = new FrameBlock(mergedSchema);
+			// provide long support?
+			ret.ensureAllocatedColumns((int) dims[0]);
+			for(Pair<FederatedRange, FrameBlock> partition : partitions) {
+				FederatedRange range = partition.getLeft();
+				FrameBlock multRes = partition.getRight();
+				ValueType[] localSchema = new ValueType[multRes.getNumColumns()];
+				System.arraycopy(mergedSchema, range.getBeginDimsInt()[1], localSchema, 0, localSchema.length);
+				if(!Arrays.equals(multRes.getSchema(), localSchema))
+					multRes = FrameLibApplySchema.applySchema(multRes, localSchema);
 				for (int r = 0; r < multRes.getNumRows(); r++) {
 					for (int c = 0; c < multRes.getNumColumns(); c++) {
 						int destRow = range.getBeginDimsInt()[0] + r;
@@ -276,12 +300,12 @@ public class FrameObject extends CacheableData<FrameBlock>
 					}
 				}
 			}
+			_schema = mergedSchema;
+			return ret;
 		}
 		catch(Exception e) {
 			throw new DMLRuntimeException("Federated Frame read failed.", e);
 		}
-		
-		return ret;
 	}
 
 	@Override

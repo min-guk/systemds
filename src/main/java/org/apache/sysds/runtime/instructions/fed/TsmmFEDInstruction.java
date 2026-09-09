@@ -106,7 +106,10 @@ public class TsmmFEDInstruction extends BinaryFEDInstruction {
 			fr1 = mo1.getFedMapping().broadcast(mo1);
 			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
 				new CPOperand[]{input1}, new long[]{fr1.getID()}, true);
-			mo1.getFedMapping().execute(getTID(), fr1, fr2);
+			// Do not expose the broadcast output ID until every worker has accepted
+			// and executed the TSMM request. A transport future may otherwise hide a
+			// worker ERROR and leave a dangling federated mapping.
+			mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
 			setOutputFederated(ec, mo1, fr2, FType.BROADCAST);
 		}
 		else if (mo1.isFederated(FType.BROADCAST)){

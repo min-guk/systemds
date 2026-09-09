@@ -44,6 +44,8 @@ import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuaternaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ReblockFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ReorgFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.ReshapeFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.SpoofFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TernaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.UnaryMatrixFEDInstruction;
@@ -94,6 +96,8 @@ public class FEDInstructionParser extends InstructionParser
 				return TernaryFEDInstruction.parseInstruction(str);
 			case Reorg:
 				return ReorgFEDInstruction.parseInstruction(str);
+			case Reshape:
+				return ReshapeFEDInstruction.parseInstruction(str);
 			case Reblock:
 				return ReblockFEDInstruction.parseInstruction(str);
 			case Append:
@@ -126,6 +130,8 @@ public class FEDInstructionParser extends InstructionParser
 				return CtableFEDInstruction.parseInstruction(str);
 			case Quaternary:
 				return QuaternaryFEDInstruction.parseInstruction(str);
+			case SpoofFused:
+				return SpoofFEDInstruction.parseInstruction(str);
 			default:
 				throw new DMLRuntimeException("Invalid FEDERATED Instruction Type: " + fedtype );
 		}

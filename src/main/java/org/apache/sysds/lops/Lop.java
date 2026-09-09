@@ -361,10 +361,21 @@ public abstract class Lop
 	 * @param newInp new input Lop
 	 */
 	public void replaceInput(Lop oldInp, Lop newInp) {
-		if (inputs.contains(oldInp)) {
-			int index = inputs.indexOf(oldInp);
-			inputs.set(index, newInp);
-		}
+		int index = inputs.indexOf(oldInp);
+		if (index >= 0)
+			replaceInput(index, newInp);
+	}
+
+	/**
+	 * Replaces one exact input occurrence. Subclasses that maintain input metadata
+	 * outside the generic input list must override this method and update both
+	 * representations atomically.
+	 *
+	 * @param inputPosition exact input position
+	 * @param newInp replacement input Lop
+	 */
+	public void replaceInput(int inputPosition, Lop newInp) {
+		inputs.set(inputPosition, newInp);
 	}
 
 	public void replaceAllInputs(ArrayList<Lop> newInputs) {

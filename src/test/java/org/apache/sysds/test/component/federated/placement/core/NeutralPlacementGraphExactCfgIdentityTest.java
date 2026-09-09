@@ -33,12 +33,14 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.parser.DMLProgram;
@@ -50,6 +52,93 @@ import org.junit.Test;
 
 /** Exact RED/GREEN contracts for CFG reaching definitions and stable semantic identities. */
 public class NeutralPlacementGraphExactCfgIdentityTest {
+	@Test
+	public void safeFunctionLiteralProvesAggregateOrientationWithoutConcreteHopDimensions() throws Exception {
+		PlacementAnalysis analysis = buildAnalysis("f=function(integer k)return(matrix[double] Y){"
+			+ "i=1;while(i<2){i=i+1;}A=matrix(0,rows=5,cols=k);B=matrix(1,rows=5,cols=3);Y=t(A)%*%B;}"
+			+ "Z=f(1);print(sum(Z));");
+		List<PlacementAnalysis.HopOccurrenceProjection> aggregates = analysis.occurrences().stream()
+			.filter(projection -> projection.hop() instanceof AggBinaryOp)
+			.filter(projection -> projection.key().functionNamespace().endsWith("f"))
+			.toList();
+		Assert.assertEquals("fixture must expose one function-body matrix multiply", 1, aggregates.size());
+		AbstractShapeFact shape = analysis.abstractShapeFact(aggregates.get(0).key()).orElseThrow();
+		Assert.assertTrue("safe literal k=1 must prove the matrix-multiply row orientation: " + shape,
+			shape.provablyRowVector());
+		Assert.assertTrue("known right operand must preserve the output width: " + shape,
+			shape.cols().isExact(3));
+		Assert.assertTrue("formal scalar literal must be published on its exact occurrence",
+			analysis.occurrences().stream()
+				.filter(projection -> projection.key().functionNamespace().endsWith("f"))
+				.filter(projection -> "k".equals(projection.hop().getName()))
+				.anyMatch(projection -> analysis.scalarLiteralFact(projection.key())
+					.map(fact -> "1".equals(fact.canonicalValue())).orElse(false)));
+	}
+
+	@Test
+	public void conflictingFunctionLiteralsJoinToUnknownRatherThanChoosingOneCallsite() throws Exception {
+		PlacementAnalysis analysis = buildAnalysis("f=function(integer k)return(matrix[double] Y){"
+			+ "i=1;while(i<2){i=i+1;}A=matrix(0,rows=5,cols=k);B=matrix(1,rows=5,cols=3);Y=t(A)%*%B;}"
+			+ "Z1=f(1);Z2=f(2);print(sum(Z1)+sum(Z2));");
+		PlacementAnalysis.HopOccurrenceProjection aggregate = analysis.occurrences().stream()
+			.filter(projection -> projection.hop() instanceof AggBinaryOp)
+			.filter(projection -> projection.key().functionNamespace().endsWith("f"))
+			.findFirst().orElseThrow();
+		AbstractShapeFact shape = analysis.abstractShapeFact(aggregate.key()).orElseThrow();
+		Assert.assertFalse("different callsite literals must not prove one shared-body orientation: " + shape,
+			shape.rows().isExact());
+		Assert.assertFalse("unsafe formal literal must not be published as exact",
+			analysis.occurrences().stream()
+				.filter(projection -> projection.key().functionNamespace().endsWith("f"))
+				.filter(projection -> "k".equals(projection.hop().getName()))
+				.anyMatch(projection -> analysis.scalarLiteralFact(projection.key()).isPresent()));
+	}
+
+	@Test
+	public void exactScalarGuardPrunesDeadFunctionBranchBeforeShapeJoin() throws Exception {
+		PlacementAnalysis analysis = buildAnalysis("f=function(matrix[double] X,integer k)"
+			+ "return(matrix[double] Y){D=ncol(X);if(k>D){k=D;}"
+			+ "C=matrix(1,rows=D,cols=k);Y=X%*%C;}"
+			+ "A=matrix(1,rows=7,cols=5);Z=f(A,2);print(sum(Z));");
+		PlacementAnalysis.HopOccurrenceProjection aggregate = analysis.occurrences().stream()
+			.filter(projection -> projection.hop() instanceof AggBinaryOp)
+			.filter(projection -> projection.key().functionNamespace().endsWith("f"))
+			.findFirst().orElseThrow();
+		AbstractShapeFact shape = analysis.abstractShapeFact(aggregate.key()).orElseThrow();
+		Assert.assertTrue("false k>D branch must preserve seven result rows: " + shape,
+			shape.rows().isExact(7));
+		Assert.assertTrue("false k>D branch must preserve callsite k=2: " + shape,
+			shape.cols().isExact(2));
+	}
+
+	@Test
+	public void loopCarriedBooleanToggleKeepsBothDynamicBranchesReachable() throws Exception {
+		NeutralPlacementGraph graph = build("flag=TRUE;i=1;X=matrix(0,2,2);"
+			+ "while(i<3){if(flag){X=matrix(1,2,2);}else{X=matrix(2,2,2);}"
+			+ "flag=!flag;i=i+1;}Y=X+1;print(sum(Y));");
+		Assert.assertTrue("the loop-carried toggle executes both branch arms across iterations;"
+			+ " CFG refinement must retain the entry and both branch definitions|identities="
+			+ graph.normalizedIdentities(), reads(graph, "X").stream().anyMatch(read ->
+				Set.of("X#1", "X#2", "X#3").equals(distinctCfgDefinitions(read))));
+	}
+
+	@Test
+	public void splitStyleFunctionJoinsBranchesAndPreservesOrientationThroughTransfers() throws Exception {
+		PlacementAnalysis analysis = buildAnalysis("split=function(matrix[double] X,boolean sampled)"
+			+ "return(matrix[double] Y){T=X;i=1;while(i<2){T=T+0;i=i+1;}"
+			+ "if(sampled){S=matrix(1,rows=nrow(T),cols=1);"
+			+ "Y=removeEmpty(target=T,margin=\"rows\",select=S);}else{Y=T[1:3,];}}"
+			+ "A=matrix(1,rows=7,cols=5);B=split(A,TRUE);C=t(B)%*%B;print(sum(C));");
+		PlacementAnalysis.HopOccurrenceProjection aggregate = analysis.occurrences().stream()
+			.filter(projection -> projection.hop() instanceof AggBinaryOp)
+			.filter(projection -> "main".equals(projection.key().functionNamespace()))
+			.findFirst().orElseThrow();
+		AbstractShapeFact shape = analysis.abstractShapeFact(aggregate.key()).orElseThrow();
+		Assert.assertTrue("split branches must agree on five output columns: " + shape,
+			shape.rows().isExact(5));
+		Assert.assertTrue("transpose/matmul must derive the matching five-column result: " + shape,
+			shape.cols().isExact(5));
+	}
 	@Test
 	public void sequentialOverwriteHasOnlyLatestReachingDefinition() throws Exception {
 		NeutralPlacementGraph graph = buildLinearOverwriteFixture();
@@ -151,7 +240,7 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	public void optionalFormalOverwriteKeepsFunctionInputAsExactBranchPredecessor() throws Exception {
 		PlacementAnalysis analysis = buildAnalysis("f=function(matrix[double] X, boolean flag)"
 			+ "return(matrix[double] Y){if(flag){X=X+1;}Y=X+1;}"
-			+ "A=matrix(1,2,2);Y=f(A,FALSE);print(sum(Y));");
+			+ "A=matrix(1,2,2);Y=f(A,sum(A)>0);print(sum(Y));");
 		NeutralPlacementGraph graph = analysis.graph();
 		List<Node> feedingReads = readsFeeding(graph, "Y", "X");
 		Assert.assertEquals("expected one post-branch formal X read", 1, feedingReads.size());

@@ -21,7 +21,7 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Future;
@@ -278,13 +278,23 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			}
 
 			FederationMap diagFedMap = updateFedRanges(result);
+			if(_fedOut != null && _fedOut.isForcedLocal()) {
+				long outputID = diagFedMap.getID();
+				FederatedRequest getOutput = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, outputID);
+				FederatedRequest cleanupOutput = diagFedMap.cleanup(getTID(), outputID);
+				Future<FederatedResponse>[] responses = diagFedMap.execute(getTID(), getOutput, cleanupOutput);
+				MatrixBlock localResult = diagFedMap.getType() == FType.BROADCAST
+					? FederationUtils.getResults(responses)[0]
+					: FederationUtils.bind(responses, diagFedMap.getType() == FType.COL);
+				ec.setMatrixOutput(output.getName(), localResult);
+				return;
+			}
 
 			// update output mapping and data characteristics
 			MatrixObject rdiag = ec.getMatrixObject(output);
 			rdiag.getDataCharacteristics()
 					.set(diagFedMap.getMaxIndexInRange(0), diagFedMap.getMaxIndexInRange(1), mo1.getBlocksize());
 			rdiag.setFedMapping(diagFedMap);
-			optionalForceLocal(rdiag);
 		}
 	}
 
@@ -346,21 +356,22 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 	private FederationMap updateFedRanges(RdiagResult result) {
 		FederationMap diagFedMap = result.getFedMap();
 		Map<FederatedRange, int[]> dcs = result.getDcs();
+		FType inputType = diagFedMap.getType();
+		long rowOffset = 0;
 
 		for (int i = 0; i < diagFedMap.getFederatedRanges().length; i++) {
-			int[] newRange = dcs.get(diagFedMap.getFederatedRanges()[i]);
-
-			diagFedMap.getFederatedRanges()[i].setBeginDim(0,
-					(diagFedMap.getFederatedRanges()[i].getBeginDims()[0] == 0 ||
-							i == 0) ? 0 : diagFedMap.getFederatedRanges()[i - 1].getEndDims()[0]);
-			diagFedMap.getFederatedRanges()[i].setEndDim(0,
-					diagFedMap.getFederatedRanges()[i].getBeginDims()[0] + newRange[0]);
-			diagFedMap.getFederatedRanges()[i].setBeginDim(1,
-					(diagFedMap.getFederatedRanges()[i].getBeginDims()[1] == 0 ||
-							i == 0) ? 0 : diagFedMap.getFederatedRanges()[i - 1].getEndDims()[1]);
-			diagFedMap.getFederatedRanges()[i].setEndDim(1,
-					diagFedMap.getFederatedRanges()[i].getBeginDims()[1] + newRange[1]);
+			FederatedRange range = diagFedMap.getFederatedRanges()[i];
+			int[] newRange = dcs.get(range);
+			long beginRow = inputType == FType.BROADCAST ? 0 : rowOffset;
+			range.setBeginDim(0, beginRow);
+			range.setEndDim(0, beginRow + newRange[0]);
+			range.setBeginDim(1, 0);
+			range.setEndDim(1, newRange[1]);
+			if(inputType != FType.BROADCAST)
+				rowOffset += newRange[0];
 		}
+		diagFedMap.setType(inputType == FType.BROADCAST ? FType.BROADCAST
+			: inputType == FType.FULL ? FType.FULL : FType.ROW);
 		return diagFedMap;
 	}
 
@@ -401,7 +412,10 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		boolean rowFed = mo1.isFederated(FType.ROW);
 
 		long varID = FederationUtils.getNextFedDataID();
-		Map<FederatedRange, int[]> dcs = new HashMap<>();
+		// Replicated maps contain equal ranges for distinct workers. Keep one
+		// response per concrete range object because updateFedRanges mutates those
+		// ranges after lookup and must not collapse equal BROADCAST entries.
+		Map<FederatedRange, int[]> dcs = new IdentityHashMap<>();
 		FederationMap diagFedMap;
 
 		diagFedMap = fedMap.mapParallel(varID, (range, data) -> {
@@ -433,7 +447,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		boolean rowFed = mo1.isFederated(FType.ROW);
 
 		long varID = FederationUtils.getNextFedDataID();
-		Map<FederatedRange, int[]> dcs = new HashMap<>();
+		Map<FederatedRange, int[]> dcs = new IdentityHashMap<>();
 		FederationMap diagFedMap;
 
 		diagFedMap = fedMap.mapParallel(varID, (range, data) -> {

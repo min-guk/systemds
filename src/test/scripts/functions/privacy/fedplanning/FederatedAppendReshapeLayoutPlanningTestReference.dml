@@ -1,0 +1,19 @@
+#-------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements. See the NOTICE file
+# distributed with this work for additional information.
+# Licensed under the Apache License, Version 2.0.
+#-------------------------------------------------------------
+X = read($X); Y = read($Y); L = read($L)
+RBindRow = rbind(X, X)
+CBindRow = cbind(X, Y)
+RBindCol = rbind(X, Y)
+CBindCol = cbind(X, X)
+CBindFull = cbind(X, L)
+ReshapeRow = matrix(X, rows=6, cols=16, byrow=TRUE)
+ReshapeCol = matrix(X, rows=24, cols=4, byrow=FALSE)
+ReshapeFull = matrix(X, rows=6, cols=16, byrow=TRUE)
+
+write(RBindRow,$RBindRow); write(CBindRow,$CBindRow)
+write(RBindCol,$RBindCol); write(CBindCol,$CBindCol); write(CBindFull,$CBindFull)
+write(ReshapeRow,$ReshapeRow); write(ReshapeCol,$ReshapeCol); write(ReshapeFull,$ReshapeFull)

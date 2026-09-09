@@ -29,6 +29,9 @@ import java.util.Set;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
@@ -661,10 +664,57 @@ public final class PlacementAnalysis {
 		}
 	}
 
+	/**
+	 * Exact common-analysis proof that one coordinator-local input can remain local while the
+	 * runtime executes its consumer natively over one exactly resident federated sibling. Unlike a
+	 * pathwise re-entry, this fact owns no reusable relocation action: the exact runtime candidate
+	 * consumes the local input as {@link InputPresence#ABSENT_LOCAL}. The sibling may itself be a
+	 * derived FOUT, so this proof deliberately depends on its exact placement state rather than on
+	 * a source-data durable anchor. The consumer may retain FOUT, or emit an exact legal LOUT
+	 * result when a protected sibling prevents a nested reduction from executing in CP.
+	 */
+	public record HeuristicNativeContinuationFact(CompiledHopKey localProducer,
+		ValueVersionKey localValueVersion, CompiledHopKey consumer, int localInputPosition,
+		CompiledHopKey siblingProducer, ValueVersionKey siblingValueVersion, int siblingInputPosition,
+		PlacementState siblingFoutState, PlacementState consumerState,
+		CandidateRuleFact runtimeCandidate)
+		implements Comparable<HeuristicNativeContinuationFact> {
+		public HeuristicNativeContinuationFact {
+			Objects.requireNonNull(localProducer, "localProducer");
+			Objects.requireNonNull(localValueVersion, "localValueVersion");
+			Objects.requireNonNull(consumer, "consumer");
+			if(localInputPosition < 0 || siblingInputPosition < 0
+				|| localInputPosition == siblingInputPosition)
+				throw new IllegalArgumentException(
+					"Heuristic native-continuation input positions differ and are non-negative");
+			Objects.requireNonNull(siblingProducer, "siblingProducer");
+			Objects.requireNonNull(siblingValueVersion, "siblingValueVersion");
+			Objects.requireNonNull(siblingFoutState, "siblingFoutState");
+			Objects.requireNonNull(consumerState, "consumerState");
+			Objects.requireNonNull(runtimeCandidate, "runtimeCandidate");
+		}
+
+		@Override public int compareTo(HeuristicNativeContinuationFact that) {
+			int consumerOrder = consumer.compareTo(that.consumer);
+			if(consumerOrder != 0)
+				return consumerOrder;
+			int localPositionOrder = Integer.compare(localInputPosition, that.localInputPosition);
+			if(localPositionOrder != 0)
+				return localPositionOrder;
+			return Integer.compare(siblingInputPosition, that.siblingInputPosition);
+		}
+	}
+
 	/** One exact marker-local path projection; no dominance or descendant closure is implied. */
 	public record HeuristicPathFact(HeuristicPolicyFact demotion, List<CompiledHopKey> localPrefix,
-		List<HeuristicPathEdgeFact> edges, List<HeuristicPathwiseReentryFact> reentries)
+		List<HeuristicPathEdgeFact> edges, List<HeuristicPathwiseReentryFact> reentries,
+		List<HeuristicNativeContinuationFact> nativeContinuations)
 		implements Comparable<HeuristicPathFact> {
+		public HeuristicPathFact(HeuristicPolicyFact demotion, List<CompiledHopKey> localPrefix,
+			List<HeuristicPathEdgeFact> edges, List<HeuristicPathwiseReentryFact> reentries) {
+			this(demotion, localPrefix, edges, reentries, List.of());
+		}
+
 		public HeuristicPathFact {
 			Objects.requireNonNull(demotion, "demotion");
 			localPrefix = Objects.requireNonNull(localPrefix, "localPrefix").stream()
@@ -676,6 +726,9 @@ public final class PlacementAnalysis {
 				.map(edge -> Objects.requireNonNull(edge, "path edge")).distinct().sorted().toList();
 			reentries = Objects.requireNonNull(reentries, "reentries").stream()
 				.map(fact -> Objects.requireNonNull(fact, "re-entry fact"))
+				.distinct().sorted().toList();
+			nativeContinuations = Objects.requireNonNull(nativeContinuations, "nativeContinuations").stream()
+				.map(fact -> Objects.requireNonNull(fact, "native continuation fact"))
 				.distinct().sorted().toList();
 		}
 
@@ -724,6 +777,130 @@ public final class PlacementAnalysis {
 	public record NodeShapeFact(DataType dataType, long rows, long cols) {
 		public NodeShapeFact { Objects.requireNonNull(dataType, "dataType"); }
 		public boolean knownPositiveMatrix() { return dataType == DataType.MATRIX && rows > 0 && cols > 0; }
+	}
+
+	/** Finite dimension lattice used by the occurrence-scoped common analysis. */
+	public enum DimensionKnowledge { BOTTOM, EXACT, UNKNOWN }
+
+	public record DimensionFact(DimensionKnowledge knowledge, long value) {
+		public DimensionFact {
+			Objects.requireNonNull(knowledge, "knowledge");
+			if(knowledge == DimensionKnowledge.EXACT && value < 0)
+				throw new IllegalArgumentException("An exact dimension must be non-negative");
+			if(knowledge != DimensionKnowledge.EXACT && value != -1)
+				throw new IllegalArgumentException("A non-exact dimension must use value -1");
+		}
+
+		public static DimensionFact bottom() {
+			return new DimensionFact(DimensionKnowledge.BOTTOM, -1);
+		}
+
+		public static DimensionFact unknown() {
+			return new DimensionFact(DimensionKnowledge.UNKNOWN, -1);
+		}
+
+		public static DimensionFact exact(long value) {
+			return new DimensionFact(DimensionKnowledge.EXACT, value);
+		}
+
+		public boolean isExact(long expected) {
+			return knowledge == DimensionKnowledge.EXACT && value == expected;
+		}
+
+		public boolean isExact() {
+			return knowledge == DimensionKnowledge.EXACT;
+		}
+
+		public DimensionFact join(DimensionFact that) {
+			Objects.requireNonNull(that, "that");
+			if(knowledge == DimensionKnowledge.BOTTOM)
+				return that;
+			if(that.knowledge == DimensionKnowledge.BOTTOM)
+				return this;
+			if(knowledge == DimensionKnowledge.UNKNOWN || that.knowledge == DimensionKnowledge.UNKNOWN)
+				return unknown();
+			return value == that.value ? this : unknown();
+		}
+
+		public String normalizedSignature() {
+			return knowledge.name() + (isExact() ? ":" + value : "");
+		}
+	}
+
+	public enum MatrixOrientation { UNKNOWN, MATRIX, ROW_VECTOR, COLUMN_VECTOR, SCALAR_MATRIX }
+
+	/**
+	 * Abstract matrix shape that remains sound when concrete HOP dimensions are unknown.
+	 * In particular, one exact dimension is sufficient to prove vector orientation.
+	 */
+	public record AbstractShapeFact(DataType dataType, DimensionFact rows, DimensionFact cols) {
+		public AbstractShapeFact {
+			Objects.requireNonNull(dataType, "dataType");
+			Objects.requireNonNull(rows, "rows");
+			Objects.requireNonNull(cols, "cols");
+		}
+
+		public static AbstractShapeFact bottom(DataType dataType) {
+			return new AbstractShapeFact(dataType, DimensionFact.bottom(), DimensionFact.bottom());
+		}
+
+		public static AbstractShapeFact fromConcrete(NodeShapeFact shape) {
+			return new AbstractShapeFact(shape.dataType(),
+				shape.rows() >= 0 ? DimensionFact.exact(shape.rows()) : DimensionFact.bottom(),
+				shape.cols() >= 0 ? DimensionFact.exact(shape.cols()) : DimensionFact.bottom());
+		}
+
+		public AbstractShapeFact join(AbstractShapeFact that) {
+			Objects.requireNonNull(that, "that");
+			DataType joinedType = dataType == DataType.UNKNOWN ? that.dataType
+				: that.dataType == DataType.UNKNOWN || dataType == that.dataType ? dataType : DataType.UNKNOWN;
+			return new AbstractShapeFact(joinedType, rows.join(that.rows), cols.join(that.cols));
+		}
+
+		public boolean isMatrix() {
+			return dataType == DataType.MATRIX;
+		}
+
+		public boolean provablyRowVector() {
+			return isMatrix() && rows.isExact(1);
+		}
+
+		public boolean provablyColumnVector() {
+			return isMatrix() && cols.isExact(1);
+		}
+
+		public boolean provablyVector() {
+			return provablyRowVector() || provablyColumnVector();
+		}
+
+		public MatrixOrientation orientation() {
+			if(!isMatrix())
+				return MatrixOrientation.UNKNOWN;
+			if(rows.isExact(1) && cols.isExact(1))
+				return MatrixOrientation.SCALAR_MATRIX;
+			if(rows.isExact(1))
+				return MatrixOrientation.ROW_VECTOR;
+			if(cols.isExact(1))
+				return MatrixOrientation.COLUMN_VECTOR;
+			return rows.isExact() && cols.isExact() ? MatrixOrientation.MATRIX : MatrixOrientation.UNKNOWN;
+		}
+
+		public String normalizedSignature() {
+			return dataType.name() + '|' + rows.normalizedSignature() + '|' + cols.normalizedSignature();
+		}
+	}
+
+	/** Exact occurrence-scoped scalar constant, after safe CFG/function joins. */
+	public record ScalarLiteralFact(ValueType valueType, String canonicalValue) {
+		public ScalarLiteralFact {
+			Objects.requireNonNull(valueType, "valueType");
+			if(canonicalValue == null)
+				throw new IllegalArgumentException("Scalar literal value must not be null");
+		}
+
+		public String normalizedSignature() {
+			return valueType.name() + ':' + canonicalValue;
+		}
 	}
 	/** Exact structural matrix/frame input edge between two compiled Hop owners. */
 	public static final class CompiledInputEdgeFact {
@@ -848,11 +1025,13 @@ public final class PlacementAnalysis {
 	private final CandidateRuleFacts candidateRuleFacts;
 	private final CandidateReceiptDomain candidateReceiptDomain;
 	private final RelocationSelections.CanonicalOrderIndex relocationOrder;
+	private volatile RelocationSelections.RelocationPrivacyIndex relocationPrivacy;
 	private final Map<NeutralPlacementGraph.RelocationAction,Boolean> relocationActionsByIdentity;
 	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
+	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> inputEdgesByConsumerIdentity;
 	private final Map<CompiledInputEdgeFact,CoordinatorInputAccess> coordinatorInputAccessByIdentity;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> cfgDefinitionSourcesByIdentity;
 	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
@@ -995,6 +1174,8 @@ public final class PlacementAnalysis {
 			analysisKeysByIdentity);
 		this.compiledInputEdgesInCanonicalOrder = validateCompiledInputEdges(compiledInputEdges);
 		this.inputEdgesByIdentity = indexCompiledInputEdges(this.compiledInputEdgesInCanonicalOrder);
+		this.inputEdgesByConsumerIdentity = indexCompiledInputEdgesByConsumer(
+			this.compiledInputEdgesInCanonicalOrder);
 		this.coordinatorInputAccessByIdentity = deriveCoordinatorInputAccess(
 			this.compiledInputEdgesInCanonicalOrder);
 		this.cfgDefinitionSourcesByIdentity = indexCfgDefinitionSources(graph);
@@ -1039,6 +1220,8 @@ public final class PlacementAnalysis {
 			}
 			for(HeuristicPathwiseReentryFact fact : path.reentries())
 				validateHeuristicReentry(path, fact, analysisKeysByIdentity);
+			for(HeuristicNativeContinuationFact fact : path.nativeContinuations())
+				validateHeuristicNativeContinuation(path, fact, analysisKeysByIdentity);
 		}
 	}
 
@@ -1088,10 +1271,71 @@ public final class PlacementAnalysis {
 			&& action.obligations().stream().anyMatch(obligation -> obligation == fact.obligation()));
 		if(!exactAction)
 			throw new IllegalArgumentException("Heuristic re-entry relocation is not analysis-owned");
-		if("recompile".equals(fact.localProducer().recompileContext())
-			|| "recompile".equals(fact.consumer().recompileContext())
-			|| "recompile".equals(fact.siblingProducer().recompileContext()))
-			throw new IllegalArgumentException("Heuristic re-entry cannot cross a recompile occurrence");
+		if(List.of(local, sibling, consumer).stream().anyMatch(node -> !node.emittedWork()
+			|| node.valueVersion().versionKind() == PlacementIdentity.VersionKind.CLONE_RECOMPILE
+			|| node.kind() == NodeKind.CLONE || node.kind() == NodeKind.FUNCTION_CALL
+			|| node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT
+			|| node.kind() == NodeKind.FUNCTION_BODY_NON_EMITTED))
+			throw new IllegalArgumentException(
+				"Heuristic re-entry must bind exact emitted non-boundary occurrences");
+	}
+
+	private void validateHeuristicNativeContinuation(HeuristicPathFact path,
+		HeuristicNativeContinuationFact fact,
+		Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		if(!analysisKeysByIdentity.containsKey(fact.localProducer())
+			|| !analysisKeysByIdentity.containsKey(fact.consumer())
+			|| !analysisKeysByIdentity.containsKey(fact.siblingProducer()))
+			throw new IllegalArgumentException("Heuristic native continuation contains a foreign occurrence");
+		if(!path.localPrefix().contains(fact.localProducer()))
+			throw new IllegalArgumentException(
+				"Heuristic native-continuation source is outside its exact local prefix");
+		NeutralPlacementGraph.Node local = graph.node(fact.localProducer()).orElseThrow();
+		NeutralPlacementGraph.Node sibling = graph.node(fact.siblingProducer()).orElseThrow();
+		NeutralPlacementGraph.Node consumer = graph.node(fact.consumer()).orElseThrow();
+		if(local.valueVersion() != fact.localValueVersion()
+			|| sibling.valueVersion() != fact.siblingValueVersion())
+			throw new IllegalArgumentException("Heuristic native-continuation value identity differs");
+		requireExactCompiledInputEdge(fact.localProducer(), fact.consumer(), fact.localInputPosition());
+		requireExactCompiledInputEdge(fact.siblingProducer(), fact.consumer(), fact.siblingInputPosition());
+		if(!sibling.legalAlternatives().contains(fact.siblingFoutState())
+			|| fact.siblingFoutState().execType() != ExecType.FED
+			|| fact.siblingFoutState().output() != FederatedOutput.FOUT
+			|| fact.siblingFoutState().fType() == null)
+			throw new IllegalArgumentException(
+				"Heuristic native-continuation sibling FOUT authority differs");
+		if(!consumer.legalAlternatives().contains(fact.consumerState())
+			|| fact.consumerState().execType() != ExecType.FED
+			|| (fact.consumerState().output() != FederatedOutput.FOUT
+				&& fact.consumerState().output() != FederatedOutput.LOUT)
+			|| fact.consumerState().fType() != fact.siblingFoutState().fType())
+			throw new IllegalArgumentException("Heuristic native-continuation consumer state differs");
+		CandidateRuleFact exactCandidate = candidateRuleFacts.requireExact(fact.consumer(),
+			fact.runtimeCandidate().key().orderedInputs());
+		List<CandidateInputState> inputs = exactCandidate.key().orderedInputs();
+		if(exactCandidate != fact.runtimeCandidate()
+			|| exactCandidate.status() != CandidateEvaluationStatus.AVAILABLE
+			|| exactCandidate.capability() == null
+			|| exactCandidate.capability().nativeExec() != fact.consumerState().execType()
+			|| exactCandidate.capability().nativeOutput() != FederatedOutput.FOUT
+			|| exactCandidate.capability().nativeFoutFType() != fact.consumerState().fType()
+			|| fact.localInputPosition() >= inputs.size()
+			|| !inputs.get(fact.localInputPosition()).equals(CandidateInputState.absentLocal())
+			|| fact.siblingInputPosition() >= inputs.size()
+			|| !inputs.get(fact.siblingInputPosition()).equals(
+				CandidateInputState.present(fact.siblingFoutState().fType()))
+			|| inputs.stream().filter(CandidateInputState::present).count() != 1
+			|| exactCandidate.allowedEmissionFacts().stream().noneMatch(emission ->
+				emission.emissionState().placementState().equals(fact.consumerState())
+					&& emission.executionFType() == fact.siblingFoutState().fType()))
+			throw new IllegalArgumentException("Heuristic native-continuation runtime candidate differs");
+		if(List.of(local, sibling, consumer).stream().anyMatch(node -> !node.emittedWork()
+			|| node.valueVersion().versionKind() == PlacementIdentity.VersionKind.CLONE_RECOMPILE
+			|| node.kind() == NodeKind.CLONE || node.kind() == NodeKind.FUNCTION_CALL
+			|| node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT
+			|| node.kind() == NodeKind.FUNCTION_BODY_NON_EMITTED))
+			throw new IllegalArgumentException(
+				"Heuristic native continuation must bind exact emitted non-boundary occurrences");
 	}
 
 	private List<LogicalTransientInputFact> validateLogicalTransientInputs(
@@ -1108,17 +1352,22 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Logical transient input has a foreign occurrence");
 			NeutralPlacementGraph.Node source = graph.node(fact.sourceWrite()).orElseThrow();
 			NeutralPlacementGraph.Node read = graph.node(fact.targetRead()).orElseThrow();
-			if(source.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE
-				|| read.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_READ)
+			if(!isCompiledTransientAccess(hopsByKey.get(source.key()), source, OpOpData.TRANSIENTWRITE)
+				|| !isCompiledTransientAccess(hopsByKey.get(read.key()), read, OpOpData.TRANSIENTREAD))
 				throw new IllegalArgumentException("Logical transient input endpoints have wrong node kinds");
 			if(source.valueVersion() != fact.sourceValueVersion() || read.valueVersion() != fact.readValueVersion())
 				throw new IllegalArgumentException("Logical transient input value identity differs");
 			if(fact.anchor() == null) {
-				if(!source.anchors().isEmpty() || !read.anchors().isEmpty())
-					throw new IllegalArgumentException("Plan-carried logical transient input owns a durable anchor");
+				// A seed write may retain its own exact map while a loop read denotes
+				// multiple shapes. Null certifies no common/read value-range identity;
+				// it does not erase the independent source's exact geometry.
+				if(!read.anchors().isEmpty())
+					throw new IllegalArgumentException("Plan-carried logical transient read owns a durable anchor");
 			}
 			else if(source.anchors().size() != 1 || read.anchors().size() != 1
-				|| source.anchors().get(0) != fact.anchor() || !read.anchors().get(0).equals(fact.anchor()))
+				|| source.anchors().get(0) != fact.anchor()
+				|| read.anchors().get(0).fType() != fact.anchor().fType()
+				|| !read.anchors().get(0).partitions().equals(fact.anchor().partitions()))
 				throw new IllegalArgumentException("Logical transient input anchor differs");
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
 				throw new IllegalArgumentException("Logical transient read has physical inputs");
@@ -1264,6 +1513,20 @@ public final class PlacementAnalysis {
 		return List.copyOf(sorted);
 	}
 
+	static boolean isCompiledTransientAccess(Hop hop, NeutralPlacementGraph.Node node, OpOpData operation) {
+		if(operation != OpOpData.TRANSIENTREAD && operation != OpOpData.TRANSIENTWRITE
+			|| !(hop instanceof DataOp data) || data.getOp() != operation
+			|| !isCompiledHopOccurrenceKey(node.key(), node.kind()))
+			return false;
+		NodeKind physicalKind = operation == OpOpData.TRANSIENTREAD
+			? NodeKind.TRANSIENT_READ : NodeKind.TRANSIENT_WRITE;
+		// Phi is the value/control classification of a real compiled read or write,
+		// not a replacement for its runtime operation. Clones/synthetic boundaries
+		// remain outside this exact CFG forwarding authority.
+		return node.kind() == physicalKind || node.kind() == NodeKind.LOOP_PHI
+			|| node.kind() == NodeKind.BRANCH_JOIN;
+	}
+
 	private static boolean isLogicalFunctionRead(NeutralPlacementGraph.Node read) {
 		return (read.kind() == NodeKind.TRANSIENT_READ || read.kind() == NodeKind.BRANCH_JOIN
 			|| read.kind() == NodeKind.LOOP_PHI)
@@ -1374,6 +1637,18 @@ public final class PlacementAnalysis {
 				ignored -> new LinkedHashMap<>());
 			if(byPosition.putIfAbsent(fact.inputPosition(), fact) != null)
 				throw new IllegalArgumentException("Duplicate compiled input edge fact");
+		}
+		return Collections.unmodifiableMap(indexed);
+	}
+
+	private static Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> indexCompiledInputEdgesByConsumer(
+		List<CompiledInputEdgeFact> facts) {
+		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> indexed = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact fact : facts) {
+			Map<Integer,CompiledInputEdgeFact> byPosition = indexed.computeIfAbsent(
+				fact.consumer(), ignored -> new LinkedHashMap<>());
+			if(byPosition.putIfAbsent(fact.inputPosition(), fact) != null)
+				throw new IllegalArgumentException("Duplicate compiled consumer input edge fact");
 		}
 		return Collections.unmodifiableMap(indexed);
 	}
@@ -1531,6 +1806,19 @@ public final class PlacementAnalysis {
 		return shapeFacts.shapeFact(key);
 	}
 
+	/** Source-compiled dimensions captured before conservative CFG shape closure. */
+	public Optional<NodeShapeFact> sourceCompiledShapeFact(CompiledHopKey key) {
+		return shapeFacts.sourceCompiledShapeFact(key);
+	}
+
+	public Optional<AbstractShapeFact> abstractShapeFact(CompiledHopKey key) {
+		return shapeFacts.abstractShapeFact(key);
+	}
+
+	public Optional<ScalarLiteralFact> scalarLiteralFact(CompiledHopKey key) {
+		return shapeFacts.scalarLiteralFact(key);
+	}
+
 	public PlacementPrivacyFacts privacyFactAuthority() {
 		return privacyFacts;
 	}
@@ -1596,9 +1884,48 @@ public final class PlacementAnalysis {
 		return RelocationSelections.canonicalOrderIndex(actions);
 	}
 
+	/**
+	 * Reuses the immutable full-analysis source-privacy authority for the exact graph,
+	 * including copied or filtered action collections. A projected authority graph
+	 * owns a different source-occurrence scope and must rebuild its own index.
+	 */
+	RelocationSelections.RelocationPrivacyIndex relocationPrivacyFor(
+		NeutralPlacementGraph authorityGraph,
+		java.util.Collection<NeutralPlacementGraph.RelocationAction> actions) {
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
+		Objects.requireNonNull(actions, "actions");
+		if(authorityGraph == graph) {
+			RelocationSelections.RelocationPrivacyIndex common = relocationPrivacy;
+			if(common == null) {
+				synchronized(this) {
+					common = relocationPrivacy;
+					if(common == null) {
+						common = RelocationSelections.buildRelocationPrivacyIndex(
+							this, graph, graph.relocationActions());
+						relocationPrivacy = common;
+					}
+				}
+			}
+			if(actions == graph.relocationActions() || common.containsAllSources(actions))
+				return common;
+		}
+		return RelocationSelections.buildRelocationPrivacyIndex(this, authorityGraph, actions);
+	}
+
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {
 		return compiledInputEdgesInCanonicalOrder;
+	}
+
+	/** O(1) exact compiled matrix/frame input lookup by consumer occurrence and position. */
+	public Optional<CompiledInputEdgeFact> compiledInputEdge(CompiledHopKey consumer,
+		int inputPosition) {
+		if(inputPosition < 0)
+			throw new IllegalArgumentException("inputPosition must be non-negative");
+		NeutralPlacementGraph.Node target = graph.node(Objects.requireNonNull(consumer, "consumer"))
+			.orElseThrow(() -> new IllegalArgumentException("Compiled input consumer is outside the analysis"));
+		Map<Integer,CompiledInputEdgeFact> byPosition = inputEdgesByConsumerIdentity.get(target.key());
+		return Optional.ofNullable(byPosition == null ? null : byPosition.get(inputPosition));
 	}
 
 	/**
@@ -1640,17 +1967,21 @@ public final class PlacementAnalysis {
 		for(CompiledInputEdgeFact edge : edges) {
 			Hop producer = hopsByKey.get(edge.producer());
 			Hop consumer = hopsByKey.get(edge.consumer());
-			boolean federationMapMetadata = edge.inputPosition() == 0
-				&& producer != null && producer.getDataType() != null
-				&& (producer.getDataType().isMatrix() || producer.getDataType().isFrame())
-				&& consumer instanceof UnaryOp unary
-				&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL
-					|| unary.getOp() == OpOp1.LENGTH);
-			result.put(edge, federationMapMetadata
-				? CoordinatorInputAccess.FEDERATION_MAP_METADATA
-				: CoordinatorInputAccess.PAYLOAD);
+			result.put(edge, coordinatorInputAccess(producer, consumer, edge.inputPosition()));
 		}
 		return Collections.unmodifiableMap(result);
+	}
+
+	/** Construction-time kernel shared with the pre-selector privacy closure. */
+	static CoordinatorInputAccess coordinatorInputAccess(Hop producer, Hop consumer, int inputPosition) {
+		boolean federationMapMetadata = inputPosition == 0
+			&& producer != null && producer.getDataType() != null
+			&& (producer.getDataType().isMatrix() || producer.getDataType().isFrame())
+			&& consumer instanceof UnaryOp unary
+			&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL
+				|| unary.getOp() == OpOp1.LENGTH);
+		return federationMapMetadata ? CoordinatorInputAccess.FEDERATION_MAP_METADATA
+			: CoordinatorInputAccess.PAYLOAD;
 	}
 
 	/**
@@ -1705,7 +2036,13 @@ public final class PlacementAnalysis {
 	public boolean isDmlFunctionCallBoundary(CompiledHopKey key) {
 		Hop owner = hop(Objects.requireNonNull(key, "function call key")).orElseThrow(
 			() -> new IllegalArgumentException("Function call boundary key is outside the analysis"));
-		return owner instanceof FunctionOp function && function.getFunctionType() == FunctionType.DML;
+		return isDmlFunctionCallBoundary(graph.node(key).orElseThrow(), owner);
+	}
+
+	static boolean isDmlFunctionCallBoundary(NeutralPlacementGraph.Node node, Hop owner) {
+		// Synthetic formals may share a FunctionOp origin but carry actual payloads.
+		return node.kind() == NodeKind.FUNCTION_CALL && owner instanceof FunctionOp function
+			&& function.getFunctionType() == FunctionType.DML;
 	}
 
 	public List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder() {
