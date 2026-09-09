@@ -367,6 +367,124 @@ public class IncrementalReplicaBoundTest {
 	}
 
 	@Test
+	public void connectedTwoVariableBatchClosesPlateauThatEitherSingleCannotImprove() {
+		Model model = twoVariablePlateau();
+		double optimum = ExactCategoricalSolver.solve(model.variables, model.factors, GENEROUS).objective();
+		Assert.assertEquals(3.5d, optimum, 0d);
+		MiniBucketLowerBound.ReplicaModel replica = MiniBucketLowerBound.replicaModel(
+			model.variables, model.factors, 1, GENEROUS, () -> false);
+		for(int original : new int[] {0, 1}) {
+			List<ExactCategoricalSolver.Factor> one = new java.util.ArrayList<>(replica.factors());
+			List<ExactCategoricalSolver.Variable> group = replica.replicas().get(original);
+			Assert.assertEquals(2, group.size());
+			one.add(ExactCategoricalSolver.Factor.lazy(group,
+				values -> values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY));
+			Assert.assertEquals(2.5d, ExactCategoricalSolver.solve(replica.variables(), one, GENEROUS).objective(), 0d);
+		}
+		for(boolean reuse : new boolean[] {false, true}) {
+			IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+				model.variables, model.factors, 1, GENEROUS, 1_000_000, reuse, () -> false);
+			long calls = bound.workStats().calls();
+			IncrementalReplicaBound.Refinement refined = bound.refine(1, 2, () -> false);
+			Assert.assertTrue(refined.changed());
+			Assert.assertEquals(2, refined.selection().batchVariables());
+			Assert.assertEquals(java.util.Set.of(0, 1), java.util.Set.copyOf(refined.restoredOriginalVariables()));
+			Assert.assertEquals(calls + 1, bound.workStats().calls());
+			Assert.assertEquals(1, bound.workStats().batchProbes());
+			Assert.assertEquals(2, bound.restoredEqualities());
+			Assert.assertTrue(bound.fullyRestored());
+			Assert.assertTrue(bound.lowerBound() <= optimum);
+			Assert.assertEquals(optimum, bound.lowerBound(), Math.ulp(optimum) * 8);
+			Assert.assertEquals(reuse ? 1 : 0, bound.workStats().preparedOrderHits());
+		}
+	}
+
+	@Test
+	public void failedConnectedBatchFallsBackToFeasibleSingleWithoutBlockingIt() {
+		var x = variable("limited-x", 2);
+		var y = variable("limited-y", 2);
+		var a = variable("limited-a", 2);
+		var b = variable("limited-b", 2);
+		var c = variable("limited-c", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x, y, a, b, c);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(x, a), 0d, 0d, 0d, 0d),
+			ExactCategoricalSolver.Factor.dense(List.of(x, b), 0d, 0d, 0d, 0d),
+			ExactCategoricalSolver.Factor.dense(List.of(y, b), 0d, 0d, 0d, 0d),
+			ExactCategoricalSolver.Factor.dense(List.of(y, c), 0d, 0d, 0d, 0d));
+		IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+			variables, factors, 1, GENEROUS, 14, () -> false);
+		IncrementalReplicaBound.Refinement refined = bound.refine(1, 2, () -> false);
+		Assert.assertTrue(refined.changed());
+		Assert.assertEquals(1, refined.selection().batchVariables());
+		Assert.assertEquals(1, bound.restoredEqualities());
+		Assert.assertEquals(1, bound.workStats().batchFallbacks());
+		Assert.assertEquals(1, bound.workStats().resourceSkips());
+		Assert.assertFalse(bound.fullyRestored());
+		Assert.assertEquals(0d, bound.lowerBound(), 0d);
+	}
+
+	@Test
+	public void cancellationAfterJointSolvePreservesAllPublishedState() {
+		Model model = twoVariablePlateau();
+		for(boolean reuse : new boolean[] {false, true}) {
+			IncrementalReplicaBound bound = IncrementalReplicaBound.create(
+				model.variables, model.factors, 1, GENEROUS, 1_000_000, reuse, () -> false);
+			long calls = bound.workStats().calls();
+			double lower = bound.lowerBound();
+			int count = bound.componentCount();
+			List<Integer> assignment = bound.suggestedAssignment(false);
+			Assert.assertThrows(CancellationException.class,
+				() -> bound.refine(1, 2, () -> bound.workStats().calls() > calls));
+			Assert.assertEquals(calls + 1, bound.workStats().calls());
+			Assert.assertEquals(0, bound.restoredEqualities());
+			Assert.assertEquals(lower, bound.lowerBound(), 0d);
+			Assert.assertEquals(count, bound.componentCount());
+			Assert.assertEquals(assignment, bound.suggestedAssignment(false));
+			Assert.assertTrue(bound.refine(1, 2, () -> false).changed());
+			Assert.assertTrue(bound.fullyRestored());
+		}
+	}
+
+	@Test
+	public void cachedOrderRetainsBoundsAndFeasibleProjectionAcrossSequentialRefinements() {
+		Model model = twoVariablePlateau();
+		IncrementalReplicaBound ordinary = IncrementalReplicaBound.create(
+			model.variables, model.factors, 1, GENEROUS, 1_000_000, false, () -> false);
+		IncrementalReplicaBound reused = IncrementalReplicaBound.create(
+			model.variables, model.factors, 1, GENEROUS, 1_000_000, true, () -> false);
+		while(!ordinary.fullyRestored()) {
+			double previous = reused.lowerBound();
+			ordinary.refine(1, () -> false);
+			reused.refine(1, () -> false);
+			Assert.assertEquals(ordinary.lowerBound(), reused.lowerBound(), 0d);
+			Assert.assertTrue(reused.lowerBound() >= previous);
+		}
+		Assert.assertTrue(reused.fullyRestored());
+		Assert.assertEquals(3.5d, ExactCategoricalSolver.evaluate(model.variables, model.factors,
+			GENEROUS, reused.suggestedAssignment(false)), 0d);
+		Assert.assertEquals(2, reused.workStats().preparedOrderHits());
+	}
+
+	private static Model twoVariablePlateau() {
+		var x = variable("plateau-x", 2);
+		var y = variable("plateau-y", 2);
+		var a = variable("plateau-a", 2);
+		var b = variable("plateau-b", 2);
+		double[] equal = new double[8];
+		double[] different = new double[8];
+		for(int index = 0; index < 8; index++) {
+			boolean same = index / 4 == (index / 2) % 2;
+			equal[index] = same ? 0d : 1d;
+			different[index] = same ? 1d : 0d;
+		}
+		return new Model(List.of(x, y, a, b), List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(), 2.5d),
+			ExactCategoricalSolver.Factor.dense(List.of(x, y, a), equal),
+			ExactCategoricalSolver.Factor.dense(List.of(x, y, b), different)));
+	}
+
+	@Test
 	public void rejectsInvalidLimitsAndProbeCountsWithoutMutation() {
 		Model model = conflictingFork("invalid", 2, 10d, 4d);
 		Assert.assertThrows(IllegalArgumentException.class, () -> IncrementalReplicaBound.create(
@@ -376,6 +494,8 @@ public class IncrementalReplicaBoundTest {
 		double lower = bound.lowerBound();
 		Assert.assertThrows(IllegalArgumentException.class, () -> bound.refine(0, () -> false));
 		Assert.assertThrows(IllegalArgumentException.class, () -> bound.refine(3, () -> false));
+		Assert.assertThrows(IllegalArgumentException.class, () -> bound.refine(1, 0, () -> false));
+		Assert.assertThrows(IllegalArgumentException.class, () -> bound.refine(1, 33, () -> false));
 		Assert.assertEquals(lower, bound.lowerBound(), 0d);
 	}
 

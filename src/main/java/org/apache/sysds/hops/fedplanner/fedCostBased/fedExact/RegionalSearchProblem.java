@@ -41,6 +41,30 @@ final class RegionalSearchProblem {
 	private final String orderFingerprint;
 	private final boolean compactPreparation;
 	private PendingPreparation pendingPreparation;
+	private ExactPhysicalReducedSolver.CompactModel reducedRoot;
+	private Limits reducedRootLimits;
+	private long reducedRootNanos;
+	private int reducedRootRequests;
+
+	/** Run-owned immutable encoded preparation; never a boundary-conditioned lower bound. */
+	ExactPhysicalReducedSolver.CompactModel reducedRoot(Limits limits) {
+		reducedRootRequests++;
+		if(reducedRoot != null) {
+			if(!limits.equals(reducedRootLimits))
+				throw new IllegalArgumentException("REGIONAL_SHARED_ROOT_LIMITS_MISMATCH");
+			return reducedRoot;
+		}
+		long started = System.nanoTime();
+		try {
+			reducedRoot = ExactPhysicalReducedSolver.reducedModel(decisionCount, variables, factors, limits);
+			reducedRootLimits = limits;
+			return reducedRoot;
+		}
+		finally { reducedRootNanos += System.nanoTime() - started; }
+	}
+	boolean hasReducedRoot() { return reducedRoot != null; }
+	long reducedRootNanos() { return reducedRootNanos; }
+	int reducedRootRequests() { return reducedRootRequests; }
 
 	record Conditional(List<Variable> variables, List<Factor> factors,
 		int originalFreeCount, List<Integer> freeIndexes, int[] fixed) { }

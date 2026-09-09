@@ -59,6 +59,13 @@ public class FederatedPlanExact extends AFederatedPlanner {
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		ExactPhysicalOptimizer.Result optimized = ExactPhysicalOptimizer.optimize(
 			model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Planner-Stage", String.format(Locale.ROOT,
+				"stage=GLOBAL_EXACT_READY plannerElapsedNanos=%d objective=%.17g objectiveBits=%s "
+					+ "costFingerprint=%s analysis=%s scope=encoded-model clock=compile-fedplanner",
+				FederatedPlannerTrace.plannerElapsedNanos(), optimized.solverResult().objective(),
+				Long.toUnsignedString(optimized.canonicalObjectiveBits()),
+				optimized.contributionFingerprint(), model.analysis().analysisFingerprint()));
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(model, optimized);
 		tracePhysicalSelection(model, surface, selection);
 		ExactPlacementInput input = ExactPhysicalPlacementProjector.project(selection);

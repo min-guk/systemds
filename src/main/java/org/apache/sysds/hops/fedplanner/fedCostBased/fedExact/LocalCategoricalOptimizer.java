@@ -14,10 +14,12 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
 
@@ -35,6 +37,19 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
  */
 final class LocalCategoricalOptimizer {
 	@FunctionalInterface
+	interface PreparedBlockSolver {
+		ExactCategoricalSolver.Result solve();
+	}
+
+	@FunctionalInterface
+	interface BlockPreparation {
+		/** Original decision indexes/values in, original block values out. */
+		PreparedBlockSolver prepare(int[] assignment, int[] block);
+	}
+
+	static final String COMPACT_PROPERTY = "sysds.fedplanner.regional.compact";
+
+	@FunctionalInterface
 	interface StateKeyProvider {
 		Object stateKey(Variable variable, int value);
 	}
@@ -44,6 +59,13 @@ final class LocalCategoricalOptimizer {
 		List<List<Variable>> localBlocks(List<Integer> assignmentInVariableOrder);
 	}
 
+	/**
+	 * Timing values use {@link System#nanoTime()}. Total optimization includes input
+	 * validation, context construction, the ordered pass, repairs, local blocks, and
+	 * final validation. Exact preparation and solve are accumulated nested subsets:
+	 * preparation covers block incidence plus factor reduction/compilation, while
+	 * solve covers direct enumeration or execution of a compiled factorized block.
+	 */
 	record Statistics(long rawLocalAlternatives, long retainedLocalStates,
 		long prunedLocalRepresentatives, int initialHardViolations,
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
@@ -51,7 +73,24 @@ final class LocalCategoricalOptimizer {
 		int factorizedBlockCompilations, int factorizedBlockSolves,
 		int factorwiseMinimumSkips,
 		int maximumBlockVariables,
-		long maximumBlockAssignments, long blockAssignments) { }
+		long maximumBlockAssignments, long blockAssignments,
+		long totalOptimizationNanos, long exactBlockPreparationNanos,
+		long exactBlockSolveNanos) {
+		Statistics(long rawLocalAlternatives, long retainedLocalStates,
+			long prunedLocalRepresentatives, int initialHardViolations,
+			int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
+			int localBlocks, int localBlockImprovements, int localBlockRevisits,
+			int factorizedBlockCompilations, int factorizedBlockSolves,
+			int factorwiseMinimumSkips, int maximumBlockVariables,
+			long maximumBlockAssignments, long blockAssignments) {
+			this(rawLocalAlternatives, retainedLocalStates, prunedLocalRepresentatives,
+				initialHardViolations, finalHardViolations, conflictBlocksSolved,
+				conflictBlockExpansions, localBlocks, localBlockImprovements,
+				localBlockRevisits, factorizedBlockCompilations, factorizedBlockSolves,
+				factorwiseMinimumSkips, maximumBlockVariables, maximumBlockAssignments,
+				blockAssignments, 0L, 0L, 0L);
+		}
+	}
 
 	record Result(double objective, List<Integer> assignmentInVariableOrder,
 		Statistics statistics) {
@@ -88,6 +127,9 @@ final class LocalCategoricalOptimizer {
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
 		long blockAssignments;
+		long totalOptimizationNanos;
+		long exactBlockPreparationNanos;
+		long exactBlockSolveNanos;
 
 		Statistics freeze(int finalHardViolations) {
 			return new Statistics(rawLocalAlternatives, retainedLocalStates,
@@ -97,7 +139,8 @@ final class LocalCategoricalOptimizer {
 				factorizedBlockCompilations, factorizedBlockSolves,
 				factorwiseMinimumSkips,
 				maximumBlockVariables, maximumBlockAssignments,
-				blockAssignments);
+				blockAssignments, totalOptimizationNanos,
+				exactBlockPreparationNanos, exactBlockSolveNanos);
 		}
 	}
 
@@ -109,11 +152,16 @@ final class LocalCategoricalOptimizer {
 		final List<List<IndexedFactor>> incidentCost;
 		final IdentityHashMap<Variable,Integer> positions;
 		final StateKeyProvider stateKeys;
+		final boolean compact;
+		final BlockPreparation sharedPreparation;
 
 		Context(List<Variable> variables, List<Factor> hardFactors,
-			List<Factor> costFactors, StateKeyProvider stateKeys) {
+			List<Factor> costFactors, StateKeyProvider stateKeys, boolean compact,
+			BlockPreparation sharedPreparation) {
 			this.variables = List.copyOf(Objects.requireNonNull(variables, "variables"));
 			this.stateKeys = Objects.requireNonNull(stateKeys, "stateKeys");
+			this.compact = compact;
+			this.sharedPreparation = sharedPreparation;
 			positions = new IdentityHashMap<>();
 			Set<String> keys = new LinkedHashSet<>();
 			for(int index = 0; index < this.variables.size(); index++) {
@@ -191,7 +239,14 @@ final class LocalCategoricalOptimizer {
 						active.set(prior, false);
 				int index = blocks.size();
 				int[] stored = candidate.clone();
-				PreparedBlock block = prepareBlock(context, stored);
+				long preparationStart = System.nanoTime();
+				PreparedBlock block;
+				try {
+					block = prepareBlock(context, stored);
+				}
+				finally {
+					statistics.exactBlockPreparationNanos += elapsedNanos(preparationStart);
+				}
 				blocks.add(stored);
 				prepared.add(block);
 				active.add(true);
@@ -309,13 +364,25 @@ final class LocalCategoricalOptimizer {
 
 		private BlockSolution solveBlock(PreparedBlock block) {
 			if(block.variables().length == 1)
-				return new BlockSearch(context, assignment, block.variables(),
-					block.incidentHard(), block.incidentCost()).solve();
-			FactorizedBlockSolver solver = new FactorizedBlockSolver(context, assignment,
-				block.variables(), block.incidentHard(), block.incidentCost());
+				return solveDirectBlock(context, assignment, block, statistics);
+			long preparationStart = System.nanoTime();
+			FactorizedBlockSolver solver;
+			try {
+				solver = new FactorizedBlockSolver(context, assignment,
+					block.variables(), block.incidentHard(), block.incidentCost());
+			}
+			finally {
+				statistics.exactBlockPreparationNanos += elapsedNanos(preparationStart);
+			}
 			statistics.factorizedBlockCompilations++;
 			statistics.factorizedBlockSolves++;
-			return solver.solve();
+			long solveStart = System.nanoTime();
+			try {
+				return solver.solve();
+			}
+			finally {
+				statistics.exactBlockSolveNanos += elapsedNanos(solveStart);
+			}
 		}
 	}
 
@@ -413,7 +480,8 @@ final class LocalCategoricalOptimizer {
 		final int[] block;
 		final List<IndexedFactor> hard;
 		final List<IndexedFactor> cost;
-		final ExactCategoricalSolver.CompiledProblem compiled;
+		final ExactPhysicalReducedSolver.Prepared prepared;
+		final PreparedBlockSolver shared;
 
 		FactorizedBlockSolver(Context context, int[] assignment, int[] block,
 			List<IndexedFactor> hard, List<IndexedFactor> cost) {
@@ -422,6 +490,13 @@ final class LocalCategoricalOptimizer {
 			this.block = block.clone();
 			this.hard = hard;
 			this.cost = cost;
+			shared = context.sharedPreparation == null ? null
+				: context.sharedPreparation.prepare(assignment, block);
+			if(shared != null) {
+				prepared = null;
+				return;
+			}
+			long preparationStart = System.nanoTime();
 			Set<Integer> blockVariables = new LinkedHashSet<>();
 			for(int variable : block)
 				blockVariables.add(variable);
@@ -432,14 +507,54 @@ final class LocalCategoricalOptimizer {
 				reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
 			for(IndexedFactor factor : cost)
 				reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
-			compiled = ExactCategoricalSolver.compile(variables, reducedFactors,
-				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			// Match Global's exact domain reduction on this conditional block.
+			// The compact flag controls only singleton substitution after reduction.
+			ExactPhysicalReducedSolver.Prepared reduced = null;
+			boolean usedCompact = false;
+			String fallback = "none";
+			try {
+				if(context.compact) {
+					try {
+						reduced = ExactPhysicalReducedSolver.prepareCompacted(block.length,
+							variables, reducedFactors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+						usedCompact = true;
+					}
+					catch(IllegalArgumentException failure) {
+						if(!RegionalSearchProblem.isResourceLimit(failure))
+							throw failure;
+						fallback = failure.getMessage().split("\\|", 2)[0];
+						reduced = ExactPhysicalReducedSolver.prepare(block.length,
+							variables, reducedFactors,
+							ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+					}
+				}
+				else
+					reduced = ExactPhysicalReducedSolver.prepare(block.length,
+						variables, reducedFactors,
+						ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			}
+			finally {
+				if(FederatedPlannerTrace.isEnabled()) {
+					if(reduced != null)
+						tracePreparation("original-regional-block", reduced.preparationStatistics());
+					int compiledVariables = reduced == null
+						? variables.size() : reduced.compiledVariableCount();
+					FederatedPlannerTrace.logGlobal("DP-RegionalBlockPreparation",
+						String.format(Locale.ROOT,
+							"requestedCompact=%s compact=%s exactReduction=true inputVariables=%d "
+								+ "compiledVariables=%d "
+								+ "preparationNanos=%d resourceFallback=%s fallbackReason=%s",
+							context.compact, usedCompact, variables.size(), compiledVariables,
+							elapsedNanos(preparationStart), !"none".equals(fallback), fallback));
+				}
+			}
+			prepared = reduced;
 		}
 
 		BlockSolution solve() {
 			ExactCategoricalSolver.Result solved;
 			try {
-				solved = ExactCategoricalSolver.solve(compiled);
+				solved = shared == null ? ExactPhysicalReducedSolver.solve(prepared) : shared.solve();
 			}
 			catch(IllegalArgumentException ex) {
 				if("EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(ex.getMessage()))
@@ -460,6 +575,13 @@ final class LocalCategoricalOptimizer {
 	}
 
 	private LocalCategoricalOptimizer() { }
+
+	static boolean configuredCompaction() {
+		String value = System.getProperty(COMPACT_PROPERTY, "false");
+		if(!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value))
+			throw new IllegalArgumentException("LOCAL_COMPACT_OPTION_INVALID|" + value);
+		return Boolean.parseBoolean(value);
+	}
 
 	static Result optimize(List<Variable> variables, List<Factor> hardFactors,
 		List<Factor> costFactors, List<Variable> localOrder,
@@ -487,10 +609,28 @@ final class LocalCategoricalOptimizer {
 		List<Factor> costFactors, List<Variable> localOrder,
 		List<List<Variable>> localBlocks, DeferredBlockProvider deferredBlocks,
 		StateKeyProvider stateKeys, int revisitPasses) {
+		return optimize(variables, hardFactors, costFactors, localOrder, localBlocks,
+			deferredBlocks, stateKeys, revisitPasses, configuredCompaction());
+	}
+
+	static Result optimize(List<Variable> variables, List<Factor> hardFactors,
+		List<Factor> costFactors, List<Variable> localOrder,
+		List<List<Variable>> localBlocks, DeferredBlockProvider deferredBlocks,
+		StateKeyProvider stateKeys, int revisitPasses, boolean compact) {
+		return optimize(variables, hardFactors, costFactors, localOrder, localBlocks,
+			deferredBlocks, stateKeys, revisitPasses, compact, null);
+	}
+
+	static Result optimize(List<Variable> variables, List<Factor> hardFactors,
+		List<Factor> costFactors, List<Variable> localOrder,
+		List<List<Variable>> localBlocks, DeferredBlockProvider deferredBlocks,
+		StateKeyProvider stateKeys, int revisitPasses, boolean compact,
+		BlockPreparation sharedPreparation) {
+		long optimizationStart = System.nanoTime();
 		if(revisitPasses < 0 || revisitPasses > 16)
 			throw new IllegalArgumentException(
 				"LOCAL_REVISIT_PASSES_INVALID|value=" + revisitPasses + "|range=0..16");
-		Context context = new Context(variables, hardFactors, costFactors, stateKeys);
+		Context context = new Context(variables, hardFactors, costFactors, stateKeys, compact, sharedPreparation);
 		List<Integer> order = validateOrder(context, localOrder);
 		Objects.requireNonNull(deferredBlocks, "deferredBlocks");
 		MutableStatistics statistics = new MutableStatistics();
@@ -543,6 +683,7 @@ final class LocalCategoricalOptimizer {
 		double objective = evaluateCost(context.costFactors, assignment);
 		if(!Double.isFinite(objective))
 			throw new IllegalArgumentException("LOCAL_FINAL_OBJECTIVE_INVALID|value=" + objective);
+		statistics.totalOptimizationNanos = elapsedNanos(optimizationStart);
 		return new Result(objective, Arrays.stream(assignment).boxed().toList(),
 			statistics.freeze(violations.size()));
 	}
@@ -681,7 +822,7 @@ final class LocalCategoricalOptimizer {
 			int[] block;
 			while(true) {
 				block = variables.stream().sorted().mapToInt(Integer::intValue).toArray();
-				solution = solveBlock(context, assignment, block);
+				solution = solveBlock(context, assignment, block, statistics);
 				if(solution != null)
 					break;
 				boolean expanded = false;
@@ -728,29 +869,70 @@ final class LocalCategoricalOptimizer {
 		return factors;
 	}
 
-	private static BlockSolution solveBlock(Context context, int[] assignment, int[] rawBlock) {
+	private static BlockSolution solveBlock(Context context, int[] assignment, int[] rawBlock,
+		MutableStatistics statistics) {
 		int[] block = Arrays.stream(rawBlock).distinct().sorted().toArray();
 		if(block.length == 0)
 			throw new IllegalArgumentException("LOCAL_BLOCK_EMPTY");
-		return solveBlock(context, assignment, prepareBlock(context, block));
+		long preparationStart = System.nanoTime();
+		PreparedBlock prepared;
+		try {
+			prepared = prepareBlock(context, block);
+		}
+		finally {
+			statistics.exactBlockPreparationNanos += elapsedNanos(preparationStart);
+		}
+		return solveBlock(context, assignment, prepared, statistics);
 	}
 
 	private static BlockSolution solveBlock(Context context, int[] assignment,
-		PreparedBlock block) {
+		PreparedBlock block, MutableStatistics statistics) {
 		// A singleton block has no internal coupling, so direct state-minimum
 		// enumeration is cheaper than constructing a factorized solver.  Multi-variable
 		// blocks are solved exactly by local variable elimination; this compares every
 		// legal local assignment logically without materializing the Cartesian product.
-		return block.variables().length == 1
-			? new BlockSearch(context, assignment, block.variables(), block.incidentHard(),
-				block.incidentCost()).solve()
-			: solveFactorizedBlock(context, assignment, block.variables(),
+		if(block.variables().length == 1)
+			return solveDirectBlock(context, assignment, block, statistics);
+		long preparationStart = System.nanoTime();
+		FactorizedBlockSolver solver;
+		try {
+			solver = new FactorizedBlockSolver(context, assignment, block.variables(),
 				block.incidentHard(), block.incidentCost());
+		}
+		finally {
+			statistics.exactBlockPreparationNanos += elapsedNanos(preparationStart);
+		}
+		long solveStart = System.nanoTime();
+		try {
+			return solver.solve();
+		}
+		finally {
+			statistics.exactBlockSolveNanos += elapsedNanos(solveStart);
+		}
 	}
 
-	private static BlockSolution solveFactorizedBlock(Context context, int[] assignment,
-		int[] block, List<IndexedFactor> hard, List<IndexedFactor> cost) {
-		return new FactorizedBlockSolver(context, assignment, block, hard, cost).solve();
+	private static BlockSolution solveDirectBlock(Context context, int[] assignment,
+		PreparedBlock block, MutableStatistics statistics) {
+		long solveStart = System.nanoTime();
+		try {
+			return new BlockSearch(context, assignment, block.variables(), block.incidentHard(),
+				block.incidentCost()).solve();
+		}
+		finally {
+			statistics.exactBlockSolveNanos += elapsedNanos(solveStart);
+		}
+	}
+
+	static void tracePreparation(String scope, ExactPhysicalReducedSolver.PreparationStatistics timing) {
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Exact-PreparationPhases", "scope=" + scope
+				+ " freezeNanos=" + timing.freezeNanos() + " supportNanos=" + timing.supportNanos()
+				+ " quotientNanos=" + timing.quotientNanos() + " rebuildNanos=" + timing.rebuildNanos()
+				+ " compileNanos=" + timing.compileNanos() + " totalNanos=" + timing.totalNanos());
+	}
+
+	private static long elapsedNanos(long start) {
+		return Math.max(0L, System.nanoTime() - start);
 	}
 
 	private static Factor reduceFactor(Context context, int[] assignment,
@@ -768,18 +950,21 @@ final class LocalCategoricalOptimizer {
 		}
 		if(localScope.isEmpty())
 			throw new IllegalArgumentException("LOCAL_BLOCK_FACTOR_NOT_INCIDENT");
+		int[] originalValues = new int[globalScope.length];
+		for(int position = 0; position < globalScope.length; position++) {
+			if(localPositionByScope[position] >= 0)
+				continue;
+			originalValues[position] = assignment[globalScope[position]];
+			if(originalValues[position] < 0)
+				throw new IllegalArgumentException("LOCAL_BLOCK_BOUNDARY_INCOMPLETE");
+		}
+		// Solve-local and serial: snapshot boundary once; no per-cell allocation.
 		return Factor.lazy(localScope, localValues -> {
-			int[] originalValues = new int[globalScope.length];
 			for(int scopePosition = 0; scopePosition < originalValues.length; scopePosition++) {
 				int local = localPositionByScope[scopePosition];
 				if(local >= 0)
 					originalValues[scopePosition] = localValues[local];
-				else {
-					int fixed = assignment[globalScope[scopePosition]];
-					if(fixed < 0)
-						throw new IllegalArgumentException("LOCAL_BLOCK_BOUNDARY_INCOMPLETE");
-					originalValues[scopePosition] = fixed;
-				}
+
 			}
 			return indexed.factor().cost(originalValues);
 		});

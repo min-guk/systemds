@@ -397,7 +397,10 @@ public class DMLTranslator
 				+ " impl=" + implementation.getClass().getName()
 				+ " boundary=final-hop"
 				+ " analysis=" + analysis.analysisFingerprint());
-			long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			long tFedPlanner = DMLScript.STATISTICS || FederatedPlannerTrace.isEnabled()
+				? System.nanoTime() : 0;
+			if(FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.startPlannerTiming(tFedPlanner);
 			AFederatedPlanner.PlannerInvocationReceipt receipt;
 			try {
 				receipt = implementation.rewriteProgram(dmlp, fgraph, fcallSizes, analysis);

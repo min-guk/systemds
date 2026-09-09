@@ -4,8 +4,11 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
+
 /** Adds one owner-bound canonical cost surface to an exact physical legality model. */
 final class ExactPhysicalOptimizer {
+	static final String COMPACT_PROPERTY = "sysds.fedplanner.exact.compact";
 	static final ExactCategoricalSolver.Limits PRODUCTION_LIMITS =
 		new ExactCategoricalSolver.Limits(10_000_000L, 50_000_000L);
 
@@ -44,8 +47,24 @@ final class ExactPhysicalOptimizer {
 		factors.addAll(surface.exactSolverFactors());
 		ExactCategoricalSolver.Result solved;
 		try {
-			solved = ExactPhysicalReducedSolver.solveCompacted(modelVariables.size(),
-				surface.exactSolverVariables(), factors, limits);
+			boolean compact = configuredCompaction();
+			long started = System.nanoTime();
+			// The off variant keeps the same exact domain reduction and quotient;
+			// only singleton substitution before elimination is disabled.
+			ExactPhysicalReducedSolver.Prepared prepared = compact
+				? ExactPhysicalReducedSolver.prepareCompacted(modelVariables.size(),
+					surface.exactSolverVariables(), factors, limits)
+				: ExactPhysicalReducedSolver.prepare(modelVariables.size(),
+					surface.exactSolverVariables(), factors, limits);
+			if(FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.logGlobal("Exact-Preparation", "compact=" + compact
+					+ " exactReduction=true encodedVariables=" + surface.exactSolverVariables().size()
+					+ " compiledVariables=" + prepared.compiledVariableCount()
+					+ " factorLimit=" + limits.maximumFactorCells()
+					+ " totalCellLimit=" + limits.maximumMaterializedCells()
+					+ " preparationNanos=" + (System.nanoTime() - started));
+			LocalCategoricalOptimizer.tracePreparation("global", prepared.preparationStatistics());
+			solved = ExactPhysicalReducedSolver.solve(prepared);
 		}
 		catch(IllegalArgumentException failure) {
 			ExactPhysicalForcedStateAudit.recordSolverFailure(model, forced, failure);
@@ -61,5 +80,12 @@ final class ExactPhysicalOptimizer {
 				+ "|solver=" + decisionResult.objective() + "|canonical="
 				+ Double.longBitsToDouble(canonicalBits));
 		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint());
+	}
+
+	private static boolean configuredCompaction() {
+		String value = System.getProperty(COMPACT_PROPERTY, "true");
+		if(!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value))
+			throw new IllegalArgumentException("EXACT_PHYSICAL_COMPACT_OPTION_INVALID|" + value);
+		return Boolean.parseBoolean(value);
 	}
 }

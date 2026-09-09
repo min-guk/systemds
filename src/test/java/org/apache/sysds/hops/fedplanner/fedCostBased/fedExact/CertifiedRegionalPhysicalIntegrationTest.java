@@ -80,6 +80,57 @@ public class CertifiedRegionalPhysicalIntegrationTest {
 	}
 
 	@Test
+	public void compactCertificatePreservesFullRegionalPlanAndStopsAfterOneBound() throws Exception {
+		Map<String,String> values = Map.of(PREFIX + "certifyCompact", "true");
+		Map<String,String> previous = setProperties(values);
+		try {
+			Fixture fixture = fixture();
+			LocalPhysicalOptimizer.Result regional = LocalPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), null, ignored -> { });
+			ExactPhysicalOptimizer.Result exact = ExactPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			Options once = options(2, 2, 1, 1, false, false,
+				ExpansionPolicy.STRUCTURAL, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			LocalPhysicalOptimizer.Result certified = LocalPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), once, ignored -> { });
+			Assert.assertEquals(regional.physicalResult().solverResult().assignmentInVariableOrder(),
+				certified.physicalResult().solverResult().assignmentInVariableOrder());
+			Assert.assertEquals(regional.physicalResult().canonicalObjectiveBits(),
+				certified.physicalResult().canonicalObjectiveBits());
+			Assert.assertTrue("the seed must perform the original local block optimization",
+				certified.localStatistics().localBlocks() > 0);
+			Assert.assertEquals(1L, certified.certificate().checkpoints().stream()
+				.filter(point -> point.phase().equals("BOUND")).count());
+			Assert.assertTrue(certified.certificate().checkpoints().stream()
+				.allMatch(point -> point.regionVariables() == 0 && point.regionAssignments() == 0));
+			assertCertificateEnvelope(certified.certificate(), exact.solverResult().objective(), fixture);
+		}
+		finally { restoreProperties(values.keySet(), previous); }
+	}
+
+	@Test
+	public void compactCertificateResourceLimitRetainsFullRegionalPlan() throws Exception {
+		Map<String,String> values = Map.of(PREFIX + "certifyCompact", "true");
+		Map<String,String> previous = setProperties(values);
+		try {
+			Fixture fixture = fixture();
+			LocalPhysicalOptimizer.Result regional = LocalPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), null, ignored -> { });
+			Options limited = options(2, 2, 1, 1, false, false,
+				ExpansionPolicy.STRUCTURAL, new ExactCategoricalSolver.Limits(1, 1));
+			LocalPhysicalOptimizer.Result certified = LocalPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), limited, ignored -> { });
+			Assert.assertEquals(StopReason.RESOURCE_LIMIT, certified.certificate().stopReason());
+			Assert.assertEquals(0d, certified.certificate().lowerBound(), 0d);
+			Assert.assertEquals(regional.physicalResult().canonicalObjectiveBits(),
+				certified.physicalResult().canonicalObjectiveBits());
+			Assert.assertEquals(regional.physicalResult().solverResult().assignmentInVariableOrder(),
+				certified.physicalResult().solverResult().assignmentInVariableOrder());
+		}
+		finally { restoreProperties(values.keySet(), previous); }
+	}
+
+	@Test
 	public void anytimeFullRegionReachesExactEndpointWithMonotoneCheckpoints() throws Exception {
 		Fixture fixture = fixture();
 		ExactPhysicalOptimizer.Result exact = ExactPhysicalOptimizer.optimize(

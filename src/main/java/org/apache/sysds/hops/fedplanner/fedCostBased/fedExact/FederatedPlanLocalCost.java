@@ -82,23 +82,36 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 					TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION,
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL,
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
-						? "ordered-greedy-and-replica" : "regional",
+						? (Boolean.getBoolean(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalFullSeed")
+							? "full-regional" : "ordered-greedy-and-replica") : "regional",
 					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
-						? "modal-minority-per-cached-work" : "not-applicable"));
+						? "modal-minority-per-cached-work" : "not-applicable")
+				+ " incrementalBatchVariables=" + System.getProperty(
+					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalBatchVariables", "1")
+				+ " incrementalReusePreparation=" + System.getProperty(
+					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalReusePreparation", "false")
+				+ " incrementalFullSeed=" + System.getProperty(
+					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalFullSeed", "false")
+				+ " remainingExactCompletion="
+					+ (searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.REMAINING_EXACT));
 		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
 				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "
 					+ "regionGrowth=%d maxRegion=%d timeMillis=%d factorCells=%d totalCells=%d seed=%d",
 				options.policy(), options.expandRegions(), options.refineBound(), options.initialWidth(),
 				options.maximumWidth(), options.rounds(), options.regionGrowth(), options.maximumRegionVariables(),
-				options.timeBudgetMillis(), options.limits().maximumFactorCells(),
-				options.limits().maximumMaterializedCells(), options.seed()));
+					options.timeBudgetMillis(), options.limits().maximumFactorCells(),
+					options.limits().maximumMaterializedCells(), options.seed())
+				+ " certifyCompact=" + System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
+					+ "certifyCompact", "false"));
 		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface,
 			options, checkpoint -> traceCheckpoint(checkpoint, searchEntryStart), searchOptions,
 			checkpoint -> {
 				if(FederatedPlannerTrace.isEnabled())
 					FederatedPlannerTrace.logGlobal("DP-RegionalSearch", RegionalSearchOptimizer.checkpointTrace(checkpoint)
-						+ String.format(Locale.ROOT, " methodElapsedMs=%.6f", (System.nanoTime() - searchEntryStart) / 1e6));
+						+ String.format(Locale.ROOT, " methodElapsedMs=%.6f plannerElapsedNanos=%d",
+							(System.nanoTime() - searchEntryStart) / 1e6,
+							FederatedPlannerTrace.plannerElapsedNanos()));
 			});
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(
 			model, optimized.physicalResult());

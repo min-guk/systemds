@@ -8,9 +8,11 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,17 +25,22 @@ import java.util.function.BooleanSupplier;
  *
  * <p>The replica factor graph is solved as independent factor-connected
  * components. One refinement atomically restores all currently disconnected
- * replica groups of one encoded variable and re-solves only the components
+ * replica groups of a bounded connected batch of encoded variables and re-solves
+ * only the components
  * touched by that batch; all other exact results are retained. Published
  * component values and their sum are rounded downward, so every completed
  * state remains a lower bound on the original model.</p>
  */
 final class IncrementalReplicaBound {
 	private static final int MAXIMUM_PROBES = 2;
+	private static final int MAXIMUM_BATCH_VARIABLES = 32;
 
 	private final MiniBucketLowerBound.ReplicaModel model;
 	private final ExactCategoricalSolver.Limits limits;
 	private final long maximumWork;
+	private final boolean reusePreparation;
+	private final ReplicaComponentPreparation componentPreparation = new ReplicaComponentPreparation();
+	private final Map<String, Integer> replicaByKey = new HashMap<>();
 	private final IdentityHashMap<ExactCategoricalSolver.Variable, Integer> replicaPosition =
 		new IdentityHashMap<>();
 	private final IdentityHashMap<ExactCategoricalSolver.Factor, Integer> factorOrder =
@@ -59,33 +66,66 @@ final class IncrementalReplicaBound {
 	private long probes;
 	private long reusedComponents;
 	private long resourceSkips;
+	private long batchProbes;
+	private long batchFallbacks;
+	private int maximumBatchVariables;
 
 	record Work(long calls, long assignments, long materializedCells,
 		long maximumFactorCells, long preparationNanos, long solveNanos,
-		long probes, long reusedComponents, long resourceSkips) { }
+		long probes, long reusedComponents, long resourceSkips,
+		long batchProbes, long batchFallbacks, int maximumBatchVariables,
+		long preparedOrderHits, long preparedOrderMisses, long preparedOrderFallbacks) { }
 
 	record Selection(int modalMinorityGroups, int representativeGroups,
 		int touchedComponents, long cachedAssignments, long plannedAssignments,
-		long measuredNanos) { }
+		long measuredNanos, int batchVariables) {
+		Selection(int modalMinorityGroups, int representativeGroups, int touchedComponents,
+			long cachedAssignments, long plannedAssignments, long measuredNanos) {
+			this(modalMinorityGroups, representativeGroups, touchedComponents,
+				cachedAssignments, plannedAssignments, measuredNanos, 0);
+		}
+	}
 
 	record Refinement(boolean changed, int originalVariable,
 		List<Integer> affectedOriginalVariables, double lowerBound, double gain,
-		long elapsedNanos, Selection selection) {
+		long elapsedNanos, Selection selection, List<Integer> restoredOriginalVariables) {
 		Refinement {
 			affectedOriginalVariables = List.copyOf(affectedOriginalVariables);
+			restoredOriginalVariables = List.copyOf(restoredOriginalVariables);
 			Objects.requireNonNull(selection, "selection");
 		}
+		Refinement(boolean changed, int originalVariable, List<Integer> affectedOriginalVariables,
+			double lowerBound, double gain, long elapsedNanos, Selection selection) {
+			this(changed, originalVariable, affectedOriginalVariables, lowerBound, gain,
+				elapsedNanos, selection, originalVariable < 0 ? List.of() : List.of(originalVariable));
+		}
+	}
+	record Closure(int unresolvedVariables, int affectedComponents,
+		int solvedComponents, int reusedComponents, int reusedOriginalVariables,
+		long reusedAssignments, int largestOriginalVariables, long elapsedNanos) { }
+	private record EqualityGroup(int originalVariable, List<Integer> representatives) {
+		EqualityGroup { representatives = List.copyOf(representatives); }
 	}
 
 	private record VariableCandidate(int originalVariable, List<Integer> representatives,
-		int modalMinorityGroups, List<Integer> touchedComponents, long scopedWorkProxy) {
+		int modalMinorityGroups, List<Integer> touchedComponents, long scopedWorkProxy,
+		List<EqualityGroup> groups) {
 		VariableCandidate {
 			representatives = List.copyOf(representatives);
 			touchedComponents = List.copyOf(touchedComponents);
+			groups = List.copyOf(groups);
+		}
+		VariableCandidate(int originalVariable, List<Integer> representatives,
+			int modalMinorityGroups, List<Integer> touchedComponents, long scopedWorkProxy) {
+			this(originalVariable, representatives, modalMinorityGroups, touchedComponents,
+				scopedWorkProxy, List.of(new EqualityGroup(originalVariable, representatives)));
 		}
 	}
-	private record VariableKey(int originalVariable, List<Integer> roots) {
-		VariableKey { roots = List.copyOf(roots); }
+	private record VariableKey(List<Integer> originalVariables, List<List<Integer>> roots) {
+		VariableKey {
+			originalVariables = List.copyOf(originalVariables);
+			roots = roots.stream().map(List::copyOf).toList();
+		}
 	}
 	private record Trial(VariableCandidate candidate, List<ExactCategoricalSolver.Factor> equalities,
 		Component component,
@@ -123,23 +163,33 @@ final class IncrementalReplicaBound {
 		List<ExactCategoricalSolver.Factor> factors, int width,
 		ExactCategoricalSolver.Limits limits, long maximumWork,
 		BooleanSupplier cancelled) {
+		return create(variables, factors, width, limits, maximumWork, false, cancelled);
+	}
+
+	static IncrementalReplicaBound create(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors, int width,
+		ExactCategoricalSolver.Limits limits, long maximumWork, boolean reusePreparation,
+		BooleanSupplier cancelled) {
 		Objects.requireNonNull(cancelled, "cancelled");
 		if(maximumWork <= 0)
 			throw new IllegalArgumentException("INCREMENTAL_REPLICA_WORK_LIMIT_INVALID");
 		checkCancelled(cancelled);
 		MiniBucketLowerBound.ReplicaModel replica = MiniBucketLowerBound.replicaModel(
 			variables, factors, width, limits, cancelled);
-		return new IncrementalReplicaBound(replica, limits, maximumWork, cancelled);
+		return new IncrementalReplicaBound(replica, limits, maximumWork, reusePreparation, cancelled);
 	}
 
 	private IncrementalReplicaBound(MiniBucketLowerBound.ReplicaModel model,
-		ExactCategoricalSolver.Limits limits, long maximumWork,
+		ExactCategoricalSolver.Limits limits, long maximumWork, boolean reusePreparation,
 		BooleanSupplier cancelled) {
 		this.model = model;
 		this.limits = Objects.requireNonNull(limits, "limits");
 		this.maximumWork = maximumWork;
-		for(int index = 0; index < model.variables().size(); index++)
+		this.reusePreparation = reusePreparation;
+		for(int index = 0; index < model.variables().size(); index++) {
 			replicaPosition.put(model.variables().get(index), index);
+			replicaByKey.put(model.variables().get(index).key(), index);
+		}
 		for(ExactCategoricalSolver.Factor factor : model.factors())
 			factorOrder.put(factor, nextFactorOrder++);
 		originalByReplica = new int[model.variables().size()];
@@ -177,8 +227,11 @@ final class IncrementalReplicaBound {
 	}
 	boolean hasRefinementCandidates() { return !candidates().isEmpty(); }
 	Work workStats() {
+		ReplicaComponentPreparation.Counters prepared = componentPreparation.counters();
 		return new Work(exactCalls, assignments, materializedCells, maximumFactorCells,
-			preparationNanos, solveNanos, probes, reusedComponents, resourceSkips);
+			preparationNanos, solveNanos, probes, reusedComponents, resourceSkips,
+			batchProbes, batchFallbacks, maximumBatchVariables,
+			prepared.reuseHits(), prepared.reuseMisses(), prepared.reuseFallbacks());
 	}
 
 	List<Integer> suggestedAssignment(boolean majority) {
@@ -202,9 +255,84 @@ final class IncrementalReplicaBound {
 		return List.copyOf(result);
 	}
 
+	/**
+	 * Restores every equality still missing at entry. Missing equality groups that
+	 * connect the same current components are solved together once. Each completed
+	 * connected group is committed independently, so a later resource limit or
+	 * cancellation preserves all earlier completed coverage.
+	 */
+	Closure closeRemaining(BooleanSupplier cancelled) {
+		Objects.requireNonNull(cancelled, "cancelled");
+		checkCancelled(cancelled);
+		long started = System.nanoTime();
+		List<EqualityGroup> missing = unresolvedEqualityGroups();
+		int entryComponents = components.size();
+		Set<Integer> affected = new HashSet<>();
+		for(EqualityGroup group : missing)
+			for(int representative : group.representatives)
+				affected.add(componentByReplica[representative]);
+		Set<Integer> untouched = new HashSet<>();
+		for(int component = 0; component < entryComponents; component++)
+			if(!affected.contains(component))
+				untouched.add(component);
+		Set<Integer> reusedOriginals = new HashSet<>();
+		long reusedWork = 0L;
+		for(int component : untouched) {
+			for(ExactCategoricalSolver.Variable variable : components.get(component).variables)
+				reusedOriginals.add(originalByReplica[position(variable)]);
+			reusedWork = saturatedAdd(reusedWork,
+				components.get(component).result.statistics().eliminationAssignments());
+		}
+		if(missing.isEmpty())
+			return new Closure(0, 0, 0, untouched.size(), reusedOriginals.size(),
+				reusedWork, 0, System.nanoTime() - started);
+
+		List<List<EqualityGroup>> closureGroups = connectedClosureGroups(missing);
+		int solved = 0;
+		int largest = 0;
+		for(List<EqualityGroup> groups : closureGroups) {
+			checkCancelled(cancelled);
+			VariableCandidate candidate = closureCandidate(groups);
+			Trial completed = trial(candidate, cancelled);
+			checkCancelled(cancelled);
+			commit(completed);
+			solved++;
+			largest = Math.max(largest, completed.affectedOriginalVariables.size());
+		}
+		if(!fullyRestored())
+			throw new IllegalStateException("INCREMENTAL_REPLICA_CLOSURE_INCOMPLETE");
+		return new Closure(missing.size(), affected.size(), solved, untouched.size(),
+			reusedOriginals.size(), reusedWork, largest, System.nanoTime() - started);
+	}
+
+	/** Evaluates the completed diagonal assignment over lifted source factors in order. */
+	double exactObjective() {
+		if(!fullyRestored())
+			throw new IllegalStateException("INCREMENTAL_REPLICA_EXACT_NOT_RESTORED");
+		int[] replicaValues = replicaAssignment();
+		List<Integer> originalValues = new ArrayList<>(replicasByOriginal.size());
+		for(int original = 0; original < replicasByOriginal.size(); original++) {
+			int[] replicas = replicasByOriginal.get(original);
+			int value = replicaValues[replicas[0]];
+			for(int replica : replicas)
+				if(replicaValues[replica] != value)
+					throw new IllegalStateException(
+						"INCREMENTAL_REPLICA_EXACT_ASSIGNMENT_INCONSISTENT|original=" + original);
+			originalValues.add(value);
+		}
+		List<Integer> diagonal = model.diagonalAssignment(originalValues);
+		return evaluateReplicaFactors(diagonal);
+	}
+
 	Refinement refine(int maximumCandidateProbes, BooleanSupplier cancelled) {
+		return refine(maximumCandidateProbes, 1, cancelled);
+	}
+
+	Refinement refine(int maximumCandidateProbes, int batchLimit, BooleanSupplier cancelled) {
 		if(maximumCandidateProbes < 1 || maximumCandidateProbes > MAXIMUM_PROBES)
 			throw new IllegalArgumentException("INCREMENTAL_REPLICA_PROBE_LIMIT_INVALID");
+		if(batchLimit < 1 || batchLimit > MAXIMUM_BATCH_VARIABLES)
+			throw new IllegalArgumentException("INCREMENTAL_REPLICA_BATCH_LIMIT_INVALID");
 		Objects.requireNonNull(cancelled, "cancelled");
 		checkCancelled(cancelled);
 		long started = System.nanoTime();
@@ -212,18 +340,32 @@ final class IncrementalReplicaBound {
 		Trial bestPositive = null;
 		Trial cheapestZero = null;
 		List<VariableKey> newlyBlocked = new ArrayList<>();
+		Set<VariableKey> attempted = new HashSet<>();
 		for(int index = 0; index < Math.min(maximumCandidateProbes, candidates.size()); index++) {
 			checkCancelled(cancelled);
-			VariableCandidate candidate = candidates.get(index);
-			probes = saturatedAdd(probes, 1L);
+			VariableCandidate single = candidates.get(index);
+			VariableCandidate candidate = connectedBatch(single, candidates, batchLimit);
+			if(!attempted.add(key(candidate)))
+				continue;
 			Trial trial;
 			try {
-				trial = trial(candidate, cancelled);
+				trial = probe(candidate, cancelled);
 			}
 			catch(MiniBucketLowerBound.ResourceLimitException limited) {
-				newlyBlocked.add(key(candidate));
 				resourceSkips = saturatedAdd(resourceSkips, 1L);
-				continue;
+				if(candidate.groups.size() == 1) {
+					newlyBlocked.add(key(single));
+					continue;
+				}
+				// A failed joint trial says nothing about the cost of its seed's
+				// single-variable action. Try that once before blocking it.
+				batchFallbacks = saturatedAdd(batchFallbacks, 1L);
+				try { trial = probe(single, cancelled); }
+				catch(MiniBucketLowerBound.ResourceLimitException singleLimited) {
+					resourceSkips = saturatedAdd(resourceSkips, 1L);
+					newlyBlocked.add(key(single));
+					continue;
+				}
 			}
 			checkCancelled(cancelled);
 			if(trial.gain > 0d) {
@@ -245,11 +387,112 @@ final class IncrementalReplicaBound {
 		double previous = lowerBound;
 		commit(selected);
 		Selection selection = new Selection(selected.candidate.modalMinorityGroups,
-			selected.candidate.representatives.size(), selected.candidate.touchedComponents.size(),
-			selected.candidate.scopedWorkProxy, selected.plannedAssignments, selected.measuredNanos);
+			selected.candidate.groups.stream().mapToInt(group -> group.representatives.size()).sum(),
+			selected.candidate.touchedComponents.size(), selected.candidate.scopedWorkProxy,
+			selected.plannedAssignments, selected.measuredNanos, selected.candidate.groups.size());
 		return new Refinement(true, selected.candidate.originalVariable,
 			selected.affectedOriginalVariables, lowerBound, nonNegativeDifference(lowerBound, previous),
-			System.nanoTime() - started, selection);
+			System.nanoTime() - started, selection,
+			selected.candidate.groups.stream().map(EqualityGroup::originalVariable).toList());
+	}
+
+	private Trial probe(VariableCandidate candidate, BooleanSupplier cancelled) {
+		probes = saturatedAdd(probes, 1L);
+		if(candidate.groups.size() > 1)
+			batchProbes = saturatedAdd(batchProbes, 1L);
+		maximumBatchVariables = Math.max(maximumBatchVariables, candidate.groups.size());
+		return trial(candidate, cancelled);
+	}
+
+	/** Greedily grows within already touched components before opening new ones. */
+	private VariableCandidate connectedBatch(VariableCandidate seed,
+		List<VariableCandidate> candidates, int limit) {
+		if(limit == 1)
+			return seed;
+		List<EqualityGroup> groups = new ArrayList<>(seed.groups);
+		Set<Integer> originals = new HashSet<>();
+		originals.add(seed.originalVariable);
+		Set<Integer> touched = new HashSet<>(seed.touchedComponents);
+		int minority = seed.modalMinorityGroups;
+		while(groups.size() < limit) {
+			VariableCandidate best = null;
+			int bestNewComponents = Integer.MAX_VALUE;
+			for(VariableCandidate candidate : candidates) {
+				if(originals.contains(candidate.originalVariable))
+					continue;
+				int added = 0;
+				for(int component : candidate.touchedComponents)
+					if(!touched.contains(component))
+						added++;
+				if(added == candidate.touchedComponents.size())
+					continue;
+				if(added < bestNewComponents) {
+					best = candidate;
+					bestNewComponents = added;
+				}
+			}
+			if(best == null)
+				break;
+			groups.addAll(best.groups);
+			originals.add(best.originalVariable);
+			touched.addAll(best.touchedComponents);
+			minority += best.modalMinorityGroups;
+		}
+		List<Integer> ordered = touched.stream().sorted().toList();
+		long work = 0L;
+		for(int component : ordered)
+			work = saturatedAdd(work, components.get(component).result.statistics().eliminationAssignments());
+		return new VariableCandidate(seed.originalVariable, seed.representatives,
+			minority, ordered, work, groups);
+	}
+
+	private List<EqualityGroup> unresolvedEqualityGroups() {
+		List<EqualityGroup> result = new ArrayList<>();
+		for(int original = 0; original < replicasByOriginal.size(); original++) {
+			List<Integer> representatives = new ArrayList<>();
+			Set<Integer> roots = new HashSet<>();
+			for(int replica : replicasByOriginal.get(original)) {
+				int root = find(replica);
+				if(roots.add(root))
+					representatives.add(replica);
+			}
+			if(representatives.size() > 1)
+				result.add(new EqualityGroup(original, representatives));
+		}
+		return List.copyOf(result);
+	}
+
+	private List<List<EqualityGroup>> connectedClosureGroups(List<EqualityGroup> missing) {
+		int[] parent = new int[components.size()];
+		for(int component = 0; component < parent.length; component++)
+			parent[component] = component;
+		for(EqualityGroup group : missing) {
+			int anchor = componentByReplica[group.representatives.get(0)];
+			for(int index = 1; index < group.representatives.size(); index++)
+				union(parent, anchor, componentByReplica[group.representatives.get(index)]);
+		}
+		Map<Integer,List<EqualityGroup>> grouped = new LinkedHashMap<>();
+		for(EqualityGroup group : missing) {
+			int component = componentByReplica[group.representatives.get(0)];
+			grouped.computeIfAbsent(find(parent, component), ignored -> new ArrayList<>())
+				.add(group);
+		}
+		return grouped.values().stream().map(List::copyOf).toList();
+	}
+
+	private VariableCandidate closureCandidate(List<EqualityGroup> groups) {
+		Set<Integer> touched = new HashSet<>();
+		for(EqualityGroup group : groups)
+			for(int representative : group.representatives)
+				touched.add(componentByReplica[representative]);
+		List<Integer> ordered = touched.stream().sorted().toList();
+		long work = 0L;
+		for(int component : ordered)
+			work = saturatedAdd(work,
+				components.get(component).result.statistics().eliminationAssignments());
+		EqualityGroup first = groups.get(0);
+		return new VariableCandidate(first.originalVariable, first.representatives,
+			0, ordered, work, groups);
 	}
 
 	private List<Component> initialComponents(BooleanSupplier cancelled) {
@@ -298,15 +541,16 @@ final class IncrementalReplicaBound {
 		factors.sort(Comparator.comparingInt(
 			factor -> factorOrder.getOrDefault(factor, Integer.MAX_VALUE)));
 		List<ExactCategoricalSolver.Factor> equalities = new ArrayList<>();
-		ExactCategoricalSolver.Variable anchor = model.variables().get(candidate.representatives.get(0));
-		for(int index = 1; index < candidate.representatives.size(); index++) {
-			ExactCategoricalSolver.Variable replica =
-				model.variables().get(candidate.representatives.get(index));
-			ExactCategoricalSolver.Factor equality = ExactCategoricalSolver.Factor.lazy(
-				List.of(anchor, replica),
-				values -> values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY);
-			equalities.add(equality);
-			factors.add(equality);
+		for(EqualityGroup group : candidate.groups) {
+			ExactCategoricalSolver.Variable anchor = model.variables().get(group.representatives.get(0));
+			for(int index = 1; index < group.representatives.size(); index++) {
+				ExactCategoricalSolver.Variable replica = model.variables().get(group.representatives.get(index));
+				ExactCategoricalSolver.Factor equality = ExactCategoricalSolver.Factor.lazy(
+					List.of(anchor, replica),
+					values -> values[0] == values[1] ? 0d : Double.POSITIVE_INFINITY);
+				equalities.add(equality);
+				factors.add(equality);
+			}
 		}
 		double previousAffected = 0d;
 		for(int component : touched)
@@ -314,14 +558,15 @@ final class IncrementalReplicaBound {
 		long beforePreparation = preparationNanos;
 		long beforeSolve = solveNanos;
 		int[] trialParent = equalityParent.clone();
-		for(int index = 1; index < candidate.representatives.size(); index++)
-			union(trialParent, candidate.representatives.get(0), candidate.representatives.get(index));
+		for(EqualityGroup group : candidate.groups)
+			for(int index = 1; index < group.representatives.size(); index++)
+				union(trialParent, group.representatives.get(0), group.representatives.get(index));
 		Set<ExactCategoricalSolver.Factor> contractedEqualities =
 			Collections.newSetFromMap(new IdentityHashMap<>());
 		contractedEqualities.addAll(restoredEqualityFactors);
 		contractedEqualities.addAll(equalities);
 		Component solved = solveContractedComponent(variables, factors, contractedEqualities,
-			trialParent, previousAffected, cancelled);
+			trialParent, previousAffected, touched, cancelled);
 		long measured = saturatedAdd(preparationNanos - beforePreparation, solveNanos - beforeSolve);
 		double proposed = proposedLower(touched, solved);
 		return new Trial(candidate, equalities, solved, touched, affectedOriginalVariables(variables),
@@ -332,15 +577,23 @@ final class IncrementalReplicaBound {
 	private Component solveContractedComponent(List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		Set<ExactCategoricalSolver.Factor> equalityFactors, int[] contractionParent,
-		double previousLower, BooleanSupplier cancelled) {
+		double previousLower, List<Integer> touched, BooleanSupplier cancelled) {
 		checkCancelled(cancelled);
 		long prepared = System.nanoTime();
 		ContractedComponent contracted = contract(
 			variables, factors, equalityFactors, contractionParent);
 		ExactCategoricalSolver.CompiledProblem compiled;
 		try {
-			compiled = ExactCategoricalSolver.compile(
-				contracted.variables, contracted.factors, limits);
+			if(reusePreparation)
+				compiled = componentPreparation.prepare(contracted.variables, contracted.factors,
+					limits, maximumWork, projectedOrder(contracted.variables, touched, contractionParent))
+					.compiled();
+			else
+				compiled = ExactCategoricalSolver.compile(contracted.variables, contracted.factors, limits);
+		}
+		catch(MiniBucketLowerBound.ResourceLimitException failure) {
+			preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - prepared);
+			throw failure;
 		}
 		catch(IllegalArgumentException failure) {
 			preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - prepared);
@@ -373,6 +626,26 @@ final class IncrementalReplicaBound {
 		double conservative = conservative(contractedResult.objective());
 		return new Component(variables, factors, expandedResult,
 			Math.max(previousLower, conservative));
+	}
+
+	/** Only the symbolic elimination order is retained; current factor scopes are rebuilt. */
+	private List<String> projectedOrder(List<ExactCategoricalSolver.Variable> variables,
+		List<Integer> touched, int[] contractionParent) {
+		Set<String> remaining = new LinkedHashSet<>();
+		for(ExactCategoricalSolver.Variable variable : variables)
+			remaining.add(variable.key());
+		List<String> result = new ArrayList<>(variables.size());
+		for(int index : touched)
+			for(String key : components.get(index).result.statistics().eliminationOrder()) {
+				Integer replica = replicaByKey.get(key);
+				if(replica == null)
+					throw new IllegalStateException("INCREMENTAL_REPLICA_PREPARED_VARIABLE_FOREIGN");
+				String projected = model.variables().get(find(contractionParent, replica)).key();
+				if(remaining.remove(projected))
+					result.add(projected);
+			}
+		result.addAll(remaining);
+		return List.copyOf(result);
 	}
 
 	private ContractedComponent contract(List<ExactCategoricalSolver.Variable> variables,
@@ -480,9 +753,11 @@ final class IncrementalReplicaBound {
 			factorOrder.put(equality, nextFactorOrder++);
 			restoredEqualityFactors.add(equality);
 		}
-		int anchor = selected.candidate.representatives.get(0);
-		for(int index = 1; index < selected.candidate.representatives.size(); index++)
-			union(equalityParent, anchor, selected.candidate.representatives.get(index));
+		for(EqualityGroup group : selected.candidate.groups) {
+			int anchor = group.representatives.get(0);
+			for(int index = 1; index < group.representatives.size(); index++)
+				union(equalityParent, anchor, group.representatives.get(index));
+		}
 		restoredEqualities += selected.equalities.size();
 		reusedComponents = saturatedAdd(reusedComponents,
 			Math.max(0, components.size() - 1));
@@ -619,8 +894,11 @@ final class IncrementalReplicaBound {
 	private int find(int position) { return find(equalityParent, position); }
 
 	private VariableKey key(VariableCandidate candidate) {
-		return new VariableKey(candidate.originalVariable,
-			candidate.representatives.stream().map(this::find).sorted().toList());
+		List<EqualityGroup> groups = candidate.groups.stream()
+			.sorted(Comparator.comparingInt(EqualityGroup::originalVariable)).toList();
+		return new VariableKey(groups.stream().map(EqualityGroup::originalVariable).toList(),
+			groups.stream().map(group -> group.representatives.stream().map(this::find).sorted().toList())
+				.toList());
 	}
 
 	private static boolean betterRate(Trial left, Trial right) {
@@ -685,6 +963,25 @@ final class IncrementalReplicaBound {
 		if(upper == Double.POSITIVE_INFINITY)
 			return Double.POSITIVE_INFINITY;
 		return Math.max(0d, upper - lower);
+	}
+
+	private double evaluateReplicaFactors(List<Integer> assignment) {
+		if(assignment.size() != model.variables().size())
+			throw new IllegalArgumentException("INCREMENTAL_REPLICA_EXACT_ASSIGNMENT_SIZE_INVALID");
+		ExactCompensatedCostSum total = new ExactCompensatedCostSum();
+		for(ExactCategoricalSolver.Factor factor : model.factors()) {
+			int[] local = new int[factor.scope().size()];
+			for(int index = 0; index < local.length; index++)
+				local[index] = assignment.get(position(factor.scope().get(index)));
+			double value = factor.cost(local);
+			if(value == Double.POSITIVE_INFINITY)
+				throw new IllegalStateException("INCREMENTAL_REPLICA_EXACT_ASSIGNMENT_INFEASIBLE");
+			total.addBits(Double.doubleToRawLongBits(value),
+				"INCREMENTAL_REPLICA_EXACT_FACTOR_COST_INVALID",
+				"INCREMENTAL_REPLICA_EXACT_OBJECTIVE_INVALID");
+		}
+		return Double.longBitsToDouble(
+			total.totalBits("INCREMENTAL_REPLICA_EXACT_OBJECTIVE_INVALID"));
 	}
 
 	private static long saturatedAdd(long left, long right) {

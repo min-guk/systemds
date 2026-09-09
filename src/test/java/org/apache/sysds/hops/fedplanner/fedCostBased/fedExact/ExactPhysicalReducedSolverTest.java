@@ -112,6 +112,59 @@ public class ExactPhysicalReducedSolverTest {
 			ExactPhysicalReducedSolver.solve(prepared).assignmentInVariableOrder());
 		Assert.assertEquals("prepared solve reevaluated original lazy factors",
 			afterPreparation, evaluations.get());
+		assertPreparationTimings(prepared.preparationStatistics(), true);
+	}
+
+	@Test
+	public void reducedModelMapsRepresentativesEquivalentValuesAndPrunedValues() {
+		var value = variable("value", 3);
+		var support = ExactCategoricalSolver.Factor.dense(List.of(value),
+			0d, 0d, Double.POSITIVE_INFINITY);
+
+		ExactPhysicalReducedSolver.CompactModel reduced = ExactPhysicalReducedSolver.reducedModel(
+			1, List.of(value), List.of(support), GENEROUS);
+
+		Assert.assertEquals(1, reduced.variables().get(0).domainSize());
+		Assert.assertEquals(0, reduced.sourceValue(0, 0));
+		Assert.assertEquals(0, reduced.reducedValue(0, 0));
+		Assert.assertEquals(0, reduced.reducedValue(0, 1));
+		Assert.assertEquals(-1, reduced.reducedValue(0, 2));
+		assertPreparationTimings(reduced.preparationStatistics(), false);
+	}
+
+	@Test
+	public void compactPreparationReportsAllReductionPhaseTimings() {
+		var forced = variable("forced", 2);
+		var free = variable("free", 2);
+		var prepared = ExactPhysicalReducedSolver.prepareCompacted(2, List.of(forced, free),
+			List.of(
+				ExactCategoricalSolver.Factor.dense(List.of(forced),
+					Double.POSITIVE_INFINITY, 0d),
+				ExactCategoricalSolver.Factor.dense(List.of(forced, free), 2d, 1d, 0d, 3d)),
+			GENEROUS);
+
+		Assert.assertEquals(List.of(1, 0),
+			ExactPhysicalReducedSolver.solve(prepared).assignmentInVariableOrder());
+		assertPreparationTimings(prepared.preparationStatistics(), true);
+	}
+
+	@Test
+	public void identityReductionFreezesLazyTableOnceAndPreservesValues() {
+		var value = variable("identity", 3);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(value), assignment -> {
+			evaluations.incrementAndGet();
+			return new double[] {3d, 1d, 2d}[assignment[0]];
+		});
+
+		ExactPhysicalReducedSolver.Prepared prepared = ExactPhysicalReducedSolver.prepare(
+			0, List.of(value), List.of(lazy), GENEROUS);
+		Assert.assertEquals(3, evaluations.get());
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(prepared);
+
+		Assert.assertEquals(3, evaluations.get());
+		Assert.assertEquals(List.of(1), result.assignmentInVariableOrder());
+		Assert.assertEquals(1d, result.objective(), 0d);
 	}
 
 	@Test
@@ -574,6 +627,20 @@ public class ExactPhysicalReducedSolverTest {
 
 	private static ExactCategoricalSolver.Variable variable(String key, int domain) {
 		return new ExactCategoricalSolver.Variable(key, domain);
+	}
+
+	private static void assertPreparationTimings(
+		ExactPhysicalReducedSolver.PreparationStatistics statistics, boolean compiled) {
+		Assert.assertTrue(statistics.freezeNanos() >= 0);
+		Assert.assertTrue(statistics.supportNanos() >= 0);
+		Assert.assertTrue(statistics.quotientNanos() >= 0);
+		Assert.assertTrue(statistics.rebuildNanos() >= 0);
+		Assert.assertTrue(statistics.compileNanos() >= 0);
+		if(!compiled)
+			Assert.assertEquals(0L, statistics.compileNanos());
+		long measured = statistics.freezeNanos() + statistics.supportNanos()
+			+ statistics.quotientNanos() + statistics.rebuildNanos() + statistics.compileNanos();
+		Assert.assertTrue(statistics.totalNanos() >= measured);
 	}
 
 	private static List<ExactCategoricalSolver.Variable> variables(int count, int domain) {

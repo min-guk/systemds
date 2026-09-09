@@ -22,10 +22,28 @@ import java.util.function.Consumer;
 final class IncrementalAnytimeOptimizer {
 	private IncrementalAnytimeOptimizer() { }
 
+	record Tuning(int maximumBatchVariables, boolean reusePreparation, boolean fullSeed) {
+		Tuning {
+			if(maximumBatchVariables < 1 || maximumBatchVariables > 32)
+				throw new IllegalArgumentException("INCREMENTAL_REPLICA_BATCH_LIMIT_INVALID");
+		}
+		static Tuning configured() {
+			String prefix = CertifiedRegionalOptimizer.PROPERTY_PREFIX;
+			return new Tuning(Integer.parseInt(System.getProperty(prefix + "incrementalBatchVariables", "1")),
+				flag(prefix + "incrementalReusePreparation"), flag(prefix + "incrementalFullSeed"));
+		}
+		private static boolean flag(String name) {
+			String value = System.getProperty(name, "false");
+			if(!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value))
+				throw new IllegalArgumentException("INCREMENTAL_BOOLEAN_OPTION_INVALID|" + name);
+			return Boolean.parseBoolean(value);
+		}
+	}
+
 	record Initialization(ExactPhysicalReducedSolver.CompactModel compact,
 		IncrementalReplicaBound bound, long reductionNanos, long initialBoundNanos,
 		long projectionNanos, List<Integer> projectedSeed, double projectedCost,
-		Map<List<Integer>,Double> candidateCosts) {
+		Map<List<Integer>,Double> candidateCosts, Tuning tuning) {
 		Initialization {
 			projectedSeed = List.copyOf(projectedSeed);
 			candidateCosts = new LinkedHashMap<>(candidateCosts);
@@ -34,13 +52,18 @@ final class IncrementalAnytimeOptimizer {
 	}
 
 	static Initialization initialize(RegionalSearchProblem problem, RegionalSearchOptimizer.Options options) {
+		return initialize(problem, options, Tuning.configured());
+	}
+
+	static Initialization initialize(RegionalSearchProblem problem, RegionalSearchOptimizer.Options options,
+		Tuning tuning) {
 		long started = System.nanoTime();
 		ExactPhysicalReducedSolver.CompactModel compact = problem.compactRoot(options.common().limits());
 		long reductionNanos = System.nanoTime() - started;
 		started = System.nanoTime();
 		IncrementalReplicaBound bound = IncrementalReplicaBound.create(compact.variables(), compact.factors(),
 			options.common().initialWidth(), options.common().limits(), options.regionWorkLimit(),
-			() -> Thread.currentThread().isInterrupted());
+			tuning.reusePreparation(), () -> Thread.currentThread().isInterrupted());
 		long initialBoundNanos = System.nanoTime() - started;
 		started = System.nanoTime();
 		List<Integer> best = List.of();
@@ -58,7 +81,7 @@ final class IncrementalAnytimeOptimizer {
 			}
 		}
 		return new Initialization(compact, bound, reductionNanos, initialBoundNanos,
-			System.nanoTime() - started, best, bestCost, costs);
+			System.nanoTime() - started, best, bestCost, costs, tuning);
 	}
 
 	static RegionalSearchOptimizer.Result optimize(RegionalSearchProblem problem, List<Integer> seed,
@@ -70,8 +93,15 @@ final class IncrementalAnytimeOptimizer {
 	static RegionalSearchOptimizer.Result optimize(RegionalSearchProblem problem, List<Integer> seed,
 		RegionalSearchOptimizer.Options options, Consumer<RegionalSearchOptimizer.Checkpoint> observer,
 		Initialization initialized, long orderedSeedNanos) {
+		return optimize(problem, seed, options, observer, initialized, orderedSeedNanos, 0L);
+	}
+
+	static RegionalSearchOptimizer.Result optimize(RegionalSearchProblem problem, List<Integer> seed,
+		RegionalSearchOptimizer.Options options, Consumer<RegionalSearchOptimizer.Checkpoint> observer,
+		Initialization initialized, long orderedSeedNanos, long fullSeedNanos) {
 		RegionalSearchOptimizer.State state = new RegionalSearchOptimizer.State(problem, seed, options, observer);
 		state.stats.set("orderedSeedNanos", orderedSeedNanos);
+		state.stats.set("fullSeedNanos", fullSeedNanos);
 		state.publish("INITIAL");
 		return run(state, initialized);
 	}
@@ -104,7 +134,8 @@ final class IncrementalAnytimeOptimizer {
 				state.stats.add("boundActions", 1);
 				IncrementalReplicaBound.Refinement refined;
 				try {
-					refined = bound.refine(state.options.probeCandidates(), state::expired);
+					refined = bound.refine(state.options.probeCandidates(),
+						initialized.tuning().maximumBatchVariables(), state::expired);
 				}
 				finally {
 					state.stats.add("boundNanos", System.nanoTime() - started);
@@ -121,6 +152,7 @@ final class IncrementalAnytimeOptimizer {
 				state.stats.set("selectedCachedAssignments", selected.cachedAssignments());
 				state.stats.set("selectedPlannedAssignments", selected.plannedAssignments());
 				state.stats.set("selectedTrialNanos", selected.measuredNanos());
+				state.stats.set("selectedBatchVariables", selected.batchVariables());
 				if(refined.changed() && state.lower == previousLower) {
 					state.stats.add("zeroBoundGainActions", 1);
 					if(state.upper == previousUpper)
@@ -128,6 +160,7 @@ final class IncrementalAnytimeOptimizer {
 				}
 				state.publish("INCREMENTAL_LOWER", details(bound)
 					+ " changed=" + refined.changed() + " variable=" + refined.originalVariable()
+					+ " batchVariables=" + selected.batchVariables()
 					+ " deltaL=" + (state.lower - previousLower)
 					+ " selectionPriority=" + ((double) selected.modalMinorityGroups()
 						/ Math.max(1L, selected.cachedAssignments())));
@@ -227,8 +260,7 @@ final class IncrementalAnytimeOptimizer {
 			Math.min(state.options.common().regionGrowth(), Math.max(0, active.size() - 1)));
 		Set<Integer> region = new LinkedHashSet<>();
 		ArrayDeque<Integer> queue = new ArrayDeque<>();
-		if(refined.originalVariable() >= 0)
-			queue.add(refined.originalVariable());
+		queue.addAll(refined.restoredOriginalVariables());
 		Set<Integer> visited = new LinkedHashSet<>();
 		while(!queue.isEmpty() && region.size() < maximum) {
 			int index = queue.removeFirst();
@@ -264,6 +296,12 @@ final class IncrementalAnytimeOptimizer {
 		state.stats.set("componentProbes", work.probes());
 		state.stats.set("reusedComponents", work.reusedComponents());
 		state.stats.set("componentResourceSkips", work.resourceSkips());
+		state.stats.set("batchProbes", work.batchProbes());
+		state.stats.set("batchFallbacks", work.batchFallbacks());
+		state.stats.set("maximumBatchVariables", work.maximumBatchVariables());
+		state.stats.set("preparedOrderHits", work.preparedOrderHits());
+		state.stats.set("preparedOrderMisses", work.preparedOrderMisses());
+		state.stats.set("preparedOrderFallbacks", work.preparedOrderFallbacks());
 		state.stats.set("boundAssignments", work.assignments());
 		state.stats.set("boundMaterializedCells", work.materializedCells());
 		state.stats.max("maxFactorCells", work.maximumFactorCells());

@@ -36,6 +36,15 @@ import java.util.Objects;
  * representative. This is an exact quotient, not candidate pruning.</p>
  */
 final class ExactPhysicalReducedSolver {
+	record PreparationStatistics(long freezeNanos, long supportNanos,
+		long quotientNanos, long rebuildNanos, long compileNanos, long totalNanos) {
+		PreparationStatistics {
+			if(freezeNanos < 0 || supportNanos < 0 || quotientNanos < 0
+				|| rebuildNanos < 0 || compileNanos < 0 || totalNanos < 0)
+				throw new IllegalArgumentException("EXACT_PHYSICAL_PREPARATION_TIMING_INVALID");
+		}
+	}
+
 	/**
 	 * Immutable exact-reduced input model shared by exact and bounded-width solvers.
 	 * This object contains no elimination plan and therefore performs no exact compile.
@@ -47,13 +56,16 @@ final class ExactPhysicalReducedSolver {
 		private final List<ExactCategoricalSolver.Variable> sourceVariables;
 		private final int sourceVariableCount;
 		private final int[][] representatives;
+		private final int[][] sourceToReducedValue;
 		private final int[] sourceToCompact;
+		private final PreparationStatistics preparationStatistics;
 
 		private CompactModel(int originalDecisionCount,
 			List<ExactCategoricalSolver.Variable> variables,
 			List<ExactCategoricalSolver.Factor> factors,
 			List<ExactCategoricalSolver.Variable> sourceVariables,
-			int sourceVariableCount, int[][] representatives, int[] sourceToCompact) {
+			int sourceVariableCount, int[][] representatives, int[][] sourceToReducedValue,
+			int[] sourceToCompact, PreparationStatistics preparationStatistics) {
 			this.originalDecisionCount = originalDecisionCount;
 			this.variables = List.copyOf(variables);
 			this.factors = List.copyOf(factors);
@@ -61,13 +73,34 @@ final class ExactPhysicalReducedSolver {
 			this.sourceVariableCount = sourceVariableCount;
 			this.representatives = Arrays.stream(representatives)
 				.map(int[]::clone).toArray(int[][]::new);
+			this.sourceToReducedValue = Arrays.stream(sourceToReducedValue)
+				.map(int[]::clone).toArray(int[][]::new);
 			this.sourceToCompact = sourceToCompact.clone();
+			this.preparationStatistics = Objects.requireNonNull(
+				preparationStatistics, "preparationStatistics");
 		}
 
 		int originalDecisionCount() { return originalDecisionCount; }
 		List<ExactCategoricalSolver.Variable> variables() { return variables; }
 		List<ExactCategoricalSolver.Factor> factors() { return factors; }
 		List<ExactCategoricalSolver.Variable> sourceVariables() { return sourceVariables; }
+		PreparationStatistics preparationStatistics() { return preparationStatistics; }
+
+		int sourceValue(int sourceIndex, int reducedValue) {
+			if(sourceIndex < 0 || sourceIndex >= sourceVariableCount)
+				throw new IllegalArgumentException("EXACT_PHYSICAL_SOURCE_INDEX_INVALID");
+			if(reducedValue < 0 || reducedValue >= representatives[sourceIndex].length)
+				throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_VALUE_INVALID");
+			return representatives[sourceIndex][reducedValue];
+		}
+
+		int reducedValue(int sourceIndex, int sourceValue) {
+			if(sourceIndex < 0 || sourceIndex >= sourceVariableCount)
+				throw new IllegalArgumentException("EXACT_PHYSICAL_SOURCE_INDEX_INVALID");
+			if(sourceValue < 0 || sourceValue >= sourceToReducedValue[sourceIndex].length)
+				throw new IllegalArgumentException("EXACT_PHYSICAL_SOURCE_VALUE_INVALID");
+			return sourceToReducedValue[sourceIndex][sourceValue];
+		}
 
 		List<Integer> expandAssignment(List<Integer> compactAssignment) {
 			Objects.requireNonNull(compactAssignment, "compactAssignment");
@@ -96,18 +129,23 @@ final class ExactPhysicalReducedSolver {
 		private final int[] reducedToCompiled;
 		private final ExactCategoricalSolver.CompiledProblem compiled;
 		private final ExactCategoricalSolver.Statistics statistics;
+		private final PreparationStatistics preparationStatistics;
 
 		private Prepared(int variableCount, int[][] representatives, int[] reducedToCompiled,
 			ExactCategoricalSolver.CompiledProblem compiled,
-			ExactCategoricalSolver.Statistics statistics) {
+			ExactCategoricalSolver.Statistics statistics,
+			PreparationStatistics preparationStatistics) {
 			this.variableCount = variableCount;
 			this.representatives = representatives;
 			this.reducedToCompiled = reducedToCompiled;
 			this.compiled = compiled;
 			this.statistics = Objects.requireNonNull(statistics, "statistics");
+			this.preparationStatistics = Objects.requireNonNull(
+				preparationStatistics, "preparationStatistics");
 		}
 
 		ExactCategoricalSolver.Statistics statistics() { return statistics; }
+		PreparationStatistics preparationStatistics() { return preparationStatistics; }
 		boolean infeasible() { return compiled == null; }
 		int compiledVariableCount() {
 			if(reducedToCompiled == null)
@@ -121,11 +159,24 @@ final class ExactPhysicalReducedSolver {
 	}
 
 	private record Reduction(int variableCount, int[][] representatives,
+		int[][] sourceToReducedValue,
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.TieCostFunction tieCost) { }
 	private record Compaction(List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors, int[] reducedToCompiled) { }
+	private static final class PreparationTimer {
+		private final long startedNanos = System.nanoTime();
+		private long freezeNanos;
+		private long supportNanos;
+		private long quotientNanos;
+		private long rebuildNanos;
+
+		private PreparationStatistics freeze(long compileNanos, long extraRebuildNanos) {
+			return new PreparationStatistics(freezeNanos, supportNanos, quotientNanos,
+				rebuildNanos + extraRebuildNanos, compileNanos, elapsedNanos(startedNanos));
+		}
+	}
 
 	private ExactPhysicalReducedSolver() { }
 
@@ -140,19 +191,29 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
+		PreparationTimer timer = new PreparationTimer();
 		try {
 			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
-				(variable, value) -> 0L, false);
-			ExactCategoricalSolver.CompiledProblem compiled = ExactCategoricalSolver.compile(
-				reduction.variables(), reduction.factors(), limits);
+				(variable, value) -> 0L, false, timer);
+			long compileStarted = System.nanoTime();
+			ExactCategoricalSolver.CompiledProblem compiled;
+			long compileNanos;
+			try {
+				compiled = ExactCategoricalSolver.compile(
+					reduction.variables(), reduction.factors(), limits);
+			}
+			finally {
+				compileNanos = elapsedNanos(compileStarted);
+			}
 			return new Prepared(reduction.variableCount(), reduction.representatives(), null, compiled,
-				ExactCategoricalSolver.statistics(compiled));
+				ExactCategoricalSolver.statistics(compiled), timer.freeze(compileNanos, 0L));
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
 				throw failure;
 			return new Prepared(variables.size(), null, null, null,
-				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L));
+				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L),
+				timer.freeze(0L, 0L));
 		}
 	}
 
@@ -165,18 +226,33 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
+		PreparationTimer timer = new PreparationTimer();
 		try {
-			CompactModel compact = compactModel(originalVariableCount, variables, factors, limits);
-			ExactCategoricalSolver.CompiledProblem compiled = ExactCategoricalSolver.compile(
-				compact.variables(), compact.factors(), limits);
-			return new Prepared(compact.sourceVariableCount, compact.representatives,
-				compact.sourceToCompact, compiled, ExactCategoricalSolver.statistics(compiled));
+			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
+				(variable, value) -> 0L, false, timer);
+			long compactStarted = System.nanoTime();
+			Compaction compact = compact(reduction);
+			long compactNanos = elapsedNanos(compactStarted);
+			long compileStarted = System.nanoTime();
+			ExactCategoricalSolver.CompiledProblem compiled;
+			long compileNanos;
+			try {
+				compiled = ExactCategoricalSolver.compile(
+					compact.variables(), compact.factors(), limits);
+			}
+			finally {
+				compileNanos = elapsedNanos(compileStarted);
+			}
+			return new Prepared(reduction.variableCount(), reduction.representatives(),
+				compact.reducedToCompiled(), compiled, ExactCategoricalSolver.statistics(compiled),
+				timer.freeze(compileNanos, compactNanos));
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
 				throw failure;
 			return new Prepared(variables.size(), null, null, null,
-				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L));
+				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L),
+				timer.freeze(0L, 0L));
 		}
 	}
 
@@ -184,16 +260,36 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
+		PreparationTimer timer = new PreparationTimer();
 		Reduction reduction = reduce(originalDecisionCount, variables, factors, limits,
-			(variable, value) -> 0L, false);
+			(variable, value) -> 0L, false, timer);
+		long compactStarted = System.nanoTime();
 		Compaction compaction = compact(reduction);
+		long compactNanos = elapsedNanos(compactStarted);
 		List<ExactCategoricalSolver.Variable> compactSources = new ArrayList<>();
 		for(int source = 0; source < reduction.variableCount(); source++)
 			if(compaction.reducedToCompiled()[source] >= 0)
 				compactSources.add(variables.get(source));
 		return new CompactModel(originalDecisionCount, compaction.variables(),
 			compaction.factors(), compactSources, reduction.variableCount(),
-			reduction.representatives(), compaction.reducedToCompiled());
+			reduction.representatives(), reduction.sourceToReducedValue(),
+			compaction.reducedToCompiled(), timer.freeze(0L, compactNanos));
+	}
+
+	/** The same exact domain quotient as prepare(), retaining every singleton variable. */
+	static CompactModel reducedModel(int originalDecisionCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits) {
+		PreparationTimer timer = new PreparationTimer();
+		Reduction reduction = reduce(originalDecisionCount, variables, factors, limits,
+			(variable, value) -> 0L, false, timer);
+		int[] identity = new int[reduction.variableCount()];
+		for(int index = 0; index < identity.length; index++)
+			identity[index] = index;
+		return new CompactModel(originalDecisionCount, reduction.variables(), reduction.factors(),
+			variables, reduction.variableCount(), reduction.representatives(),
+			reduction.sourceToReducedValue(), identity, timer.freeze(0L, 0L));
 	}
 
 	static ExactCategoricalSolver.Result solveCompacted(int originalDecisionCount,
@@ -233,7 +329,7 @@ final class ExactPhysicalReducedSolver {
 		ExactCategoricalSolver.Limits limits,
 		ExactCategoricalSolver.TieCostFunction tieCost, boolean constantObservationHash) {
 		Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
-			tieCost, constantObservationHash);
+			tieCost, constantObservationHash, new PreparationTimer());
 		ExactCategoricalSolver.Result reduced = ExactCategoricalSolver.solve(
 			reduction.variables(), reduction.factors(), limits, reduction.tieCost());
 		return expand(reduced, reduction.variableCount(), reduction.representatives(), null);
@@ -273,7 +369,7 @@ final class ExactPhysicalReducedSolver {
 				}
 				values[cell] = factor.cost(reducedLocal);
 			}
-			compactFactors.add(ExactCategoricalSolver.Factor.dense(compactScope, values));
+			compactFactors.add(ExactCategoricalSolver.Factor.denseOwned(compactScope, values));
 		}
 		return new Compaction(List.copyOf(compactVariables), List.copyOf(compactFactors),
 			reducedToCompiled);
@@ -283,15 +379,24 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits,
-		ExactCategoricalSolver.TieCostFunction tieCost, boolean constantObservationHash) {
+		ExactCategoricalSolver.TieCostFunction tieCost, boolean constantObservationHash,
+		PreparationTimer timer) {
 		Objects.requireNonNull(tieCost, "tieCost");
+		Objects.requireNonNull(timer, "timer");
 		if(originalVariableCount < 0 || originalVariableCount > variables.size())
 			throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_PREFIX_INVALID");
 
 		// Validates scopes, domains and both input budgets before evaluating a lazy
 		// factor. Lazy factors are then evaluated exactly once for this solve.
-		ExactCategoricalSolver.FrozenInputs frozen =
-			ExactCategoricalSolver.freezeInputs(variables, factors, limits);
+		long phaseStarted = System.nanoTime();
+		ExactCategoricalSolver.FrozenInputs frozen;
+		try {
+			frozen = ExactCategoricalSolver.freezeInputs(variables, factors, limits);
+		}
+		finally {
+			timer.freezeNanos = elapsedNanos(phaseStarted);
+		}
+		phaseStarted = System.nanoTime();
 		int variableCount = variables.size();
 		boolean[][] active = new boolean[variableCount][];
 		long[][] tieCosts = new long[variableCount][];
@@ -306,11 +411,18 @@ final class ExactPhysicalReducedSolver {
 				tieCosts[variable][value] = cost;
 			}
 		}
-		arcConsistency(frozen, active);
+		try {
+			arcConsistency(frozen, active);
+		}
+		finally {
+			timer.supportNanos = elapsedNanos(phaseStarted);
+		}
 
+		phaseStarted = System.nanoTime();
 		List<List<Integer>> incident = incidentFactors(frozen, variableCount);
 		int[][][] classValues = new int[variableCount][][];
 		int[][] representatives = new int[variableCount][];
+		int[][] sourceToReducedValue = new int[variableCount][];
 		List<ExactCategoricalSolver.Variable> reducedVariables =
 			new ArrayList<>(variableCount);
 		for(int variable = 0; variable < variableCount; variable++) {
@@ -320,16 +432,34 @@ final class ExactPhysicalReducedSolver {
 				: singletonClasses(active[variable]);
 			representatives[variable] = Arrays.stream(classValues[variable])
 				.mapToInt(values -> values[0]).toArray();
+			sourceToReducedValue[variable] = new int[frozen.domainSize(variable)];
+			Arrays.fill(sourceToReducedValue[variable], -1);
+			for(int reducedValue = 0; reducedValue < classValues[variable].length; reducedValue++)
+				for(int sourceValue : classValues[variable][reducedValue])
+					sourceToReducedValue[variable][sourceValue] = reducedValue;
 			reducedVariables.add(new ExactCategoricalSolver.Variable(
 				"exact-reduced|" + variable + '|' + variables.get(variable).key(),
-				classValues[variable].length));
+					classValues[variable].length));
 		}
+		timer.quotientNanos = elapsedNanos(phaseStarted);
+		phaseStarted = System.nanoTime();
 		List<ExactCategoricalSolver.Factor> reducedFactors = new ArrayList<>(frozen.factorCount());
 		for(int factor = 0; factor < frozen.factorCount(); factor++) {
 			int[] scope = frozen.scope(factor);
 			List<ExactCategoricalSolver.Variable> reducedScope = Arrays.stream(scope)
 				.mapToObj(reducedVariables::get).toList();
 			double[] source = frozen.values(factor);
+			boolean identity = true;
+			for(int variable : scope)
+				if(!identityRepresentatives(representatives[variable],
+					frozen.domainSize(variable))) {
+					identity = false;
+					break;
+				}
+			if(identity) {
+				reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, source));
+				continue;
+			}
 			int cells = reducedScope.stream().mapToInt(
 				ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
 			double[] values = new double[cells];
@@ -341,7 +471,7 @@ final class ExactPhysicalReducedSolver {
 					originalLocal[position] = representatives[scope[position]][reducedLocal[position]];
 				values[cell] = source[encodeOriginal(originalLocal, scope, frozen)];
 			}
-			reducedFactors.add(ExactCategoricalSolver.Factor.dense(reducedScope, values));
+			reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, values));
 		}
 
 		IdentityHashMap<ExactCategoricalSolver.Variable,Integer> reducedIndexes =
@@ -354,8 +484,22 @@ final class ExactPhysicalReducedSolver {
 				throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_VARIABLE_UNKNOWN");
 			return tieCosts[original][representatives[original][reducedValue]];
 		};
-		return new Reduction(variableCount, representatives, List.copyOf(reducedVariables),
-			List.copyOf(reducedFactors), reducedTieCost);
+		timer.rebuildNanos = elapsedNanos(phaseStarted);
+		return new Reduction(variableCount, representatives, sourceToReducedValue,
+			List.copyOf(reducedVariables), List.copyOf(reducedFactors), reducedTieCost);
+	}
+
+	private static boolean identityRepresentatives(int[] representatives, int domainSize) {
+		if(representatives.length != domainSize)
+			return false;
+		for(int value = 0; value < domainSize; value++)
+			if(representatives[value] != value)
+				return false;
+		return true;
+	}
+
+	private static long elapsedNanos(long startedNanos) {
+		return Math.max(0L, System.nanoTime() - startedNanos);
 	}
 
 	private static ExactCategoricalSolver.Result expand(ExactCategoricalSolver.Result reduced,

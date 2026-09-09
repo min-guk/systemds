@@ -20,6 +20,7 @@ import java.util.PriorityQueue;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
@@ -146,12 +147,29 @@ final class LocalPhysicalOptimizer {
 			hardFactors.add(forced.factor());
 		boolean incremental = searchOptions != null
 			&& searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL;
+		boolean sharedEligible = searchOptions == null
+			|| searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.REMAINING_EXACT;
+		RegionalSearchProblem sharedProblem = sharedEligible && SharedRegionalPreparation.configured()
+			? RegionalSearchProblem.physical(model, surface, forced) : null;
+		SharedRegionalPreparation shared = sharedProblem == null ? null
+			: new SharedRegionalPreparation(sharedProblem,
+				options == null ? ExactPhysicalOptimizer.PRODUCTION_LIMITS : options.limits(),
+				LocalCategoricalOptimizer.configuredCompaction());
+		IncrementalAnytimeOptimizer.Tuning tuning = incremental
+			? IncrementalAnytimeOptimizer.Tuning.configured() : null;
 		RegionalSearchProblem incrementalProblem = incremental
 			? RegionalSearchProblem.physical(model, surface, forced) : null;
+		Seed seed = null;
+		long fullSeedNanos = 0L;
+		if(incremental && tuning.fullSeed()) {
+			long started = System.nanoTime();
+			seed = regionalSeed(model, surface, hardFactors, true);
+			fullSeedNanos = System.nanoTime() - started;
+		}
 		IncrementalAnytimeOptimizer.Initialization initialization = null;
 		boolean initializationLimited = false;
 		if(incremental) {
-			try { initialization = IncrementalAnytimeOptimizer.initialize(incrementalProblem, searchOptions); }
+			try { initialization = IncrementalAnytimeOptimizer.initialize(incrementalProblem, searchOptions, tuning); }
 			catch(MiniBucketLowerBound.ResourceLimitException limited) { initializationLimited = true; }
 			catch(IllegalArgumentException limited) {
 				if(!RegionalSearchProblem.isResourceLimit(limited))
@@ -161,12 +179,11 @@ final class LocalPhysicalOptimizer {
 		}
 		// Relaxed assignments are only seed proposals. They replace the Regional
 		// seed only after the original physical legality/canonical check succeeds.
-		Seed seed = initialization != null && initialization.hasProjectedSeed()
-			? new Seed(new LocalCategoricalOptimizer.Result(initialization.projectedCost(),
-				initialization.projectedSeed(), emptyLocalStatistics()), model.variables())
-			: null;
+		if(seed == null && initialization != null && initialization.hasProjectedSeed())
+			seed = new Seed(new LocalCategoricalOptimizer.Result(initialization.projectedCost(),
+				initialization.projectedSeed(), emptyLocalStatistics()), model.variables());
 		long orderedSeedNanos = 0L;
-		if(incremental && !initializationLimited) {
+		if(incremental && !initializationLimited && !tuning.fullSeed()) {
 			long started = System.nanoTime();
 			try {
 				Seed ordered = regionalSeed(model, surface, hardFactors, false);
@@ -181,7 +198,7 @@ final class LocalPhysicalOptimizer {
 			finally { orderedSeedNanos = System.nanoTime() - started; }
 		}
 		if(seed == null)
-			seed = regionalSeed(model, surface, hardFactors);
+			seed = regionalSeed(model, surface, hardFactors, true, shared);
 		LocalCategoricalOptimizer.Result local = seed.local();
 		List<Variable> localOrder = seed.order();
 
@@ -190,6 +207,13 @@ final class LocalPhysicalOptimizer {
 		if(Double.doubleToRawLongBits(local.objective()) != canonicalBits)
 			throw new IllegalArgumentException("LOCAL_PHYSICAL_CANONICAL_OBJECTIVE_MISMATCH|local="
 				+ local.objective() + "|canonical=" + canonicalObjective);
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Planner-Stage", String.format(java.util.Locale.ROOT,
+				"stage=REGIONAL_READY plannerElapsedNanos=%d objective=%.17g objectiveBits=%s "
+					+ "costFingerprint=%s analysis=%s scope=encoded-model clock=compile-fedplanner",
+				FederatedPlannerTrace.plannerElapsedNanos(), canonicalObjective,
+				Long.toUnsignedString(canonicalBits), surface.contributionFingerprint(),
+				model.analysis().analysisFingerprint()));
 		CertifiedRegionalOptimizer.Result certificate = null;
 		RegionalSearchOptimizer.Result search = null;
 		List<Integer> selectedAssignment = local.assignmentInVariableOrder();
@@ -203,7 +227,10 @@ final class LocalPhysicalOptimizer {
 			}
 			else if(incremental)
 				search = IncrementalAnytimeOptimizer.optimize(incrementalProblem, selectedAssignment,
-					searchOptions, searchObserver, initialization, orderedSeedNanos);
+					searchOptions, searchObserver, initialization, orderedSeedNanos, fullSeedNanos);
+			else if(sharedProblem != null)
+				search = RegionalSearchOptimizer.optimize(sharedProblem, selectedAssignment,
+					searchOptions, searchObserver);
 			else
 				search = RegionalSearchOptimizer.optimizePhysical(model, surface, forced,
 					selectedAssignment, searchOptions, searchObserver);
@@ -212,8 +239,13 @@ final class LocalPhysicalOptimizer {
 			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
 		}
 		else if(options != null) {
+			long certificateStarted = System.nanoTime();
 			certificate = CertifiedRegionalOptimizer.optimizePhysical(model, surface, forced,
 				selectedAssignment, options, observer);
+			long certificateNanos = System.nanoTime() - certificateStarted;
+			if(FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.logGlobal("DP-RegionalCertificateTiming", "certificateNanos="
+					+ certificateNanos + " scope=after-regional-includes-validation-and-bound");
 			selectedAssignment = certificate.assignment();
 			canonicalObjective = certificate.upperBound();
 			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
@@ -244,6 +276,14 @@ final class LocalPhysicalOptimizer {
 
 	private static Seed regionalSeed(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Factor> hardFactors, boolean improveNeighborhoods) {
+		return regionalSeed(model, surface, hardFactors, improveNeighborhoods, null);
+	}
+
+	private static Seed regionalSeed(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Factor> hardFactors,
+		boolean improveNeighborhoods, SharedRegionalPreparation shared) {
+		long seedStarted = System.nanoTime();
+		boolean regionalCompact = LocalCategoricalOptimizer.configuredCompaction();
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
 		List<List<Variable>> localBlocks = List.of();
 		LocalCategoricalOptimizer.DeferredBlockProvider materializationBlocks = ignored -> List.of();
@@ -262,7 +302,20 @@ final class LocalPhysicalOptimizer {
 				if(domain == null)
 					throw new IllegalArgumentException("LOCAL_PHYSICAL_STATE_DOMAIN_MISSING");
 				return domain.alternatives().get(value).signature();
-			}, improveNeighborhoods ? configuredSeedRevisitPasses() : 0);
+			}, improveNeighborhoods ? configuredSeedRevisitPasses() : 0, regionalCompact, shared);
+		if(shared != null)
+			shared.trace();
+		long seedNanos = System.nanoTime() - seedStarted;
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("DP-RegionalSeedTiming", "seedNanos=" + seedNanos
+				+ " improveNeighborhoods=" + improveNeighborhoods
+				+ " regionalCompact=" + regionalCompact
+				+ " revisitPasses=" + (improveNeighborhoods ? configuredSeedRevisitPasses() : 0)
+				+ " localBlocks=" + local.statistics().localBlocks()
+				+ " localOptimizationNanos=" + local.statistics().totalOptimizationNanos()
+				+ " exactBlockPreparationNanos=" + local.statistics().exactBlockPreparationNanos()
+				+ " exactBlockSolveNanos=" + local.statistics().exactBlockSolveNanos()
+				+ " objective=" + local.objective());
 		return new Seed(local, localOrder);
 	}
 

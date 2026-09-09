@@ -65,6 +65,7 @@ public final class FederatedPlannerTrace {
 	private static final int TRACE_MAX_RECORDS_PER_STAGE = parsePositiveInt(
 		resolveConfig(PROP_TRACE_MAX_RECORDS_PER_STAGE, ENV_TRACE_MAX_RECORDS_PER_STAGE), 4096);
 	private static final Map<String, StageRecordBudget> STAGE_RECORD_BUDGETS = new ConcurrentHashMap<>();
+	private static final ThreadLocal<Long> PLANNER_STARTED_NANOS = new ThreadLocal<>();
 
 	private FederatedPlannerTrace() {
 		// utility class
@@ -91,24 +92,46 @@ public final class FederatedPlannerTrace {
 
 	/** Reset bounded detail counters before one top-level planner invocation. */
 	public static void beginInvocation() {
+		clearPlannerTiming();
 		if (ENABLED)
 			STAGE_RECORD_BUDGETS.clear();
 	}
 
+	/** Starts the current thread's shared compile-to-planner-stage elapsed clock. */
+	public static void startPlannerTiming(long startedNanos) {
+		PLANNER_STARTED_NANOS.set(startedNanos);
+	}
+
+	/** Returns {@code -1} when the current thread has no active planner clock. */
+	public static long plannerElapsedNanos() {
+		Long started = PLANNER_STARTED_NANOS.get();
+		return started == null ? -1L : System.nanoTime() - started;
+	}
+
+	/** Clears the current thread's planner clock. */
+	public static void clearPlannerTiming() {
+		PLANNER_STARTED_NANOS.remove();
+	}
+
 	/** Emit a deterministic receipt for every stage whose detail records were suppressed. */
 	public static void completeInvocation() {
-		if (!ENABLED)
-			return;
-		for (Map.Entry<String, StageRecordBudget> entry :
-			new TreeMap<>(STAGE_RECORD_BUDGETS).entrySet()) {
-			StageRecordBudget budget = entry.getValue();
-			long omitted = budget.getOmitted();
-			if (omitted > 0) {
-				logGlobal("Trace-SuppressionSummary", "stage=" + entry.getKey()
-					+ " emitted=" + budget.getEmitted()
-					+ " omitted=" + omitted
-					+ " maxRecordsPerStage=" + TRACE_MAX_RECORDS_PER_STAGE);
+		try {
+			if (!ENABLED)
+				return;
+			for (Map.Entry<String, StageRecordBudget> entry :
+				new TreeMap<>(STAGE_RECORD_BUDGETS).entrySet()) {
+				StageRecordBudget budget = entry.getValue();
+				long omitted = budget.getOmitted();
+				if (omitted > 0) {
+					logGlobal("Trace-SuppressionSummary", "stage=" + entry.getKey()
+						+ " emitted=" + budget.getEmitted()
+						+ " omitted=" + omitted
+						+ " maxRecordsPerStage=" + TRACE_MAX_RECORDS_PER_STAGE);
+				}
 			}
+		}
+		finally {
+			clearPlannerTiming();
 		}
 	}
 

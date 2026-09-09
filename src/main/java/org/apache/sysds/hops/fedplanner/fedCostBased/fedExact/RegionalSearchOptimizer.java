@@ -26,7 +26,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 
 /** Shared numerical certificate, budget and trace boundary; algorithm policies are separate. */
 final class RegionalSearchOptimizer {
-	enum Algorithm { ANYTIME_TARGET, ANYTIME_INCREMENTAL, THRESHOLD, TARGET_GAP, REUSE }
+	enum Algorithm { ANYTIME_TARGET, ANYTIME_INCREMENTAL, THRESHOLD, TARGET_GAP, REUSE, REMAINING_EXACT }
 	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT, STEP_LIMIT, REGION_LIMIT, FRONTIER_LIMIT }
 
 	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
@@ -69,6 +69,7 @@ final class RegionalSearchOptimizer {
 				case "threshold" -> Algorithm.THRESHOLD;
 				case "target-gap" -> Algorithm.TARGET_GAP;
 				case "reuse" -> Algorithm.REUSE;
+				case "remaining-exact" -> Algorithm.REMAINING_EXACT;
 				default -> throw new IllegalArgumentException("REGIONAL_SEARCH_ALGORITHM_INVALID|value=" + value);
 			};
 			if(common == null || !common.expandRegions())
@@ -112,7 +113,8 @@ final class RegionalSearchOptimizer {
 				"wholePreflightAssignments", "wholePreflightMaterializedCells", "coverageAttempts",
 				"coverageVariables", "zeroUbGrowthAccelerations", "boundWidthPasses",
 				"boundWidthSuspensions", "boundWidthResumptions", "wholeClosureAttempts", "wholeClosureCompleted",
-				"incumbentRescueAttempts", "incumbentRescueImprovements"))
+				"incumbentRescueAttempts", "incumbentRescueImprovements",
+				"remainingClosureAttempts", "remainingClosureCompleted"))
 				counts.put(key, 0L);
 		}
 		void add(String key, long value) { counts.put(key, Math.addExact(get(key), value)); }
@@ -321,6 +323,8 @@ final class RegionalSearchOptimizer {
 		if(state.reached())
 			return state.finish(state.upper == 0 ? StopReason.GLOBAL_EXACT : StopReason.TARGET_REACHED);
 		try {
+			if(options.algorithm() == Algorithm.REMAINING_EXACT)
+				return RemainingExactOptimizer.run(state);
 			if(options.algorithm() == Algorithm.ANYTIME_INCREMENTAL) {
 				if(state.expired())
 					return state.finish(StopReason.TIME_BUDGET);
@@ -336,7 +340,8 @@ final class RegionalSearchOptimizer {
 				return state.finish(StopReason.TIME_BUDGET);
 			return switch(options.algorithm()) {
 				case ANYTIME_TARGET -> TargetAnytimeOptimizer.run(state);
-				case ANYTIME_INCREMENTAL -> throw new IllegalStateException("INCREMENTAL_DISPATCH_INVALID");
+				case ANYTIME_INCREMENTAL, REMAINING_EXACT ->
+					throw new IllegalStateException("REGIONAL_SPECIALIZED_DISPATCH_INVALID");
 				case THRESHOLD -> AdaptiveThresholdOptimizer.run(state);
 				case TARGET_GAP, REUSE -> BranchingRegionalOptimizer.run(state);
 			};

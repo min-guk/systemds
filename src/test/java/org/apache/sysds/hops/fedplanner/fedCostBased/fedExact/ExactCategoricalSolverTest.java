@@ -14,6 +14,19 @@ public class ExactCategoricalSolverTest {
 		new ExactCategoricalSolver.Limits(10_000_000, 50_000_000);
 
 	@Test
+	public void denseFactorDefensivelyCopiesCallerValues() {
+		var value = variable("value", 2);
+		double[] costs = {0d, 7d};
+		var factor = ExactCategoricalSolver.Factor.dense(List.of(value), costs);
+		costs[0] = 9d;
+		costs[1] = 0d;
+
+		var result = ExactCategoricalSolver.solve(List.of(value), List.of(factor), GENEROUS);
+		Assert.assertEquals(List.of(0), result.assignmentInVariableOrder());
+		Assert.assertEquals(0d, result.objective(), 0d);
+	}
+
+	@Test
 	public void compiledProblemReusesTopologyButReevaluatesDynamicFactors() {
 		var value = variable("value", 2);
 		AtomicInteger boundary = new AtomicInteger(0);

@@ -91,6 +91,23 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals(4d, result.objective(), 0d);
 		Assert.assertEquals(1, result.statistics().localBlocks());
 		Assert.assertEquals(1, result.statistics().localBlockImprovements());
+		Assert.assertTrue(result.statistics().totalOptimizationNanos() > 0L);
+		Assert.assertTrue(result.statistics().exactBlockPreparationNanos() > 0L);
+		Assert.assertTrue(result.statistics().exactBlockSolveNanos() > 0L);
+		Assert.assertTrue(result.statistics().totalOptimizationNanos()
+			>= result.statistics().exactBlockPreparationNanos()
+				+ result.statistics().exactBlockSolveNanos());
+	}
+
+	@Test
+	public void legacyStatisticsConstructorDefaultsTimingFieldsToZero() {
+		LocalCategoricalOptimizer.Statistics statistics =
+			new LocalCategoricalOptimizer.Statistics(0, 0, 0, 0, 0, 0, 0, 0,
+				0, 0, 0, 0, 0, 0, 0, 0);
+
+		Assert.assertEquals(0L, statistics.totalOptimizationNanos());
+		Assert.assertEquals(0L, statistics.exactBlockPreparationNanos());
+		Assert.assertEquals(0L, statistics.exactBlockSolveNanos());
 	}
 
 	@Test
@@ -211,7 +228,8 @@ public class LocalCategoricalOptimizerTest {
 			withContained.statistics().blockAssignments());
 		Assert.assertEquals(maximalOnly.assignmentInVariableOrder(),
 			withContainedAfter.assignmentInVariableOrder());
-		Assert.assertEquals(maximalOnly.statistics(), withContainedAfter.statistics());
+		Assert.assertEquals(withoutTimings(maximalOnly.statistics()),
+			withoutTimings(withContainedAfter.statistics()));
 	}
 
 	@Test
@@ -379,5 +397,18 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals(2, result.statistics().localBlocks());
 		Assert.assertEquals(1, result.statistics().localBlockImprovements());
 		Assert.assertEquals(0, result.statistics().localBlockRevisits());
+	}
+
+	private static LocalCategoricalOptimizer.Statistics withoutTimings(
+		LocalCategoricalOptimizer.Statistics statistics) {
+		return new LocalCategoricalOptimizer.Statistics(statistics.rawLocalAlternatives(),
+			statistics.retainedLocalStates(), statistics.prunedLocalRepresentatives(),
+			statistics.initialHardViolations(), statistics.finalHardViolations(),
+			statistics.conflictBlocksSolved(), statistics.conflictBlockExpansions(),
+			statistics.localBlocks(), statistics.localBlockImprovements(),
+			statistics.localBlockRevisits(), statistics.factorizedBlockCompilations(),
+			statistics.factorizedBlockSolves(), statistics.factorwiseMinimumSkips(),
+			statistics.maximumBlockVariables(), statistics.maximumBlockAssignments(),
+			statistics.blockAssignments());
 	}
 }

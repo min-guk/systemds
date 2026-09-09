@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.function.ToDoubleFunction;
 
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
@@ -70,7 +71,9 @@ final class CertifiedRegionalOptimizer {
 			return new Options(intOption("width", 2), intOption("maxWidth", 8),
 				intOption("rounds", 4), intOption("regionGrowth", 8), intOption("maxRegion", 64),
 				longOption("timeMillis", 1000L), doubleOption("absoluteGap", 0d),
-				doubleOption("relativeGap", 0.01d), booleanOption("refineBound", mode.equals("anytime")),
+				doubleOption("relativeGap", "remaining-exact".equalsIgnoreCase(
+					System.getProperty(PROPERTY_PREFIX + "algorithm", "legacy")) ? 0.05d : 0.01d),
+				booleanOption("refineBound", mode.equals("anytime")),
 				mode.equals("anytime"), ExpansionPolicy.valueOf(System.getProperty(
 					PROPERTY_PREFIX + "policy", "DISAGREEMENT").toUpperCase(Locale.ROOT)),
 				longOption("seed", 20260908L), new Limits(factorCells, totalCells));
@@ -170,6 +173,10 @@ final class CertifiedRegionalOptimizer {
 			randomOrder.add(index);
 		Collections.shuffle(randomOrder, new Random(options.seed()));
 		MiniBucketLowerBound.Result bound = null;
+		// Certificate-only compaction preserves the entire unconditioned objective.
+		// The incumbent remains in the original variable order and is never projected.
+		boolean compactBound = !options.expandRegions() && Options.booleanOption("certifyCompact", false);
+		ExactPhysicalReducedSolver.CompactModel compact = null;
 		int width = options.initialWidth();
 		double rawLower = 0d;
 		publish(history, observer, new Checkpoint(0, "INITIAL", 0, 0, rawLower, lower, upper,
@@ -184,10 +191,14 @@ final class CertifiedRegionalOptimizer {
 			if(iteration == 1 || (options.refineBound() && width < options.maximumWidth())) {
 				if(iteration > 1)
 					width++;
-				long phaseStart = System.nanoTime();
+				long phaseStart = 0L;
 				limited = false;
 				try {
-					bound = MiniBucketLowerBound.compute(variables, factors, width, options.limits(), expired);
+					if(compactBound && compact == null)
+						compact = prepareCertificateBound(decisionCount, variables, factors, options.limits());
+					phaseStart = System.nanoTime();
+					bound = MiniBucketLowerBound.compute(compact == null ? variables : compact.variables(),
+						compact == null ? factors : compact.factors(), width, options.limits(), expired);
 					rawLower = bound.lowerBound();
 					if(!Double.isFinite(rawLower) || rawLower > upper)
 						throw new IllegalStateException("REGIONAL_BOUND_INVALID|lower=" + rawLower + "|upper=" + upper);
@@ -197,13 +208,19 @@ final class CertifiedRegionalOptimizer {
 					limited = true;
 					rawLower = Double.NaN; // No raw result was completed at this attempted width.
 				}
+				catch(IllegalArgumentException exhausted) {
+					if(!RegionalSearchProblem.isResourceLimit(exhausted))
+						throw exhausted;
+					limited = true;
+					rawLower = Double.NaN;
+				}
 				catch(CancellationException cancelled) {
 					publish(history, observer, checkpoint(iteration, "BOUND_CANCELLED", width,
 						region.size(), Double.NaN, lower, upper, start,
-						System.nanoTime() - phaseStart, 0L, bound, assignment));
+						phaseStart == 0L ? 0L : System.nanoTime() - phaseStart, 0L, bound, assignment));
 					return result(assignment, lower, upper, StopReason.TIME_BUDGET, history);
 				}
-				boundNanos = System.nanoTime() - phaseStart;
+				boundNanos = phaseStart == 0L ? 0L : System.nanoTime() - phaseStart;
 				publish(history, observer, checkpoint(iteration, limited ? "BOUND_LIMIT" : "BOUND", width,
 					region.size(), rawLower, lower, upper, start, boundNanos, 0L, bound, assignment));
 			}
@@ -274,6 +291,24 @@ final class CertifiedRegionalOptimizer {
 		}
 		return result(assignment, lower, upper, expired.getAsBoolean() ? StopReason.TIME_BUDGET
 			: limited ? StopReason.RESOURCE_LIMIT : StopReason.ITERATION_LIMIT, history);
+	}
+
+	private static ExactPhysicalReducedSolver.CompactModel prepareCertificateBound(int decisionCount,
+		List<Variable> variables, List<Factor> factors, Limits limits) {
+		long started = System.nanoTime();
+		boolean completed = false;
+		try {
+			ExactPhysicalReducedSolver.CompactModel compact =
+				ExactPhysicalReducedSolver.compactModel(decisionCount, variables, factors, limits);
+			completed = true;
+			return compact;
+		}
+		finally {
+			long elapsed = System.nanoTime() - started;
+			if(FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.logGlobal("DP-RegionalBoundPreparation", "compactNanos=" + elapsed
+					+ " completed=" + completed + " scope=global-unconditioned");
+		}
 	}
 
 	private static boolean isExactResourceLimit(IllegalArgumentException failure) {

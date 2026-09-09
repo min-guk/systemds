@@ -27,6 +27,44 @@ import org.junit.Test;
 /** Compile/planning only: no federated workers or workload execution. */
 public class RegionalSearchPhysicalIntegrationTest {
 	@Test
+	public void globalCompactionSwitchPreservesCanonicalObjectiveAndOnlyRemovesSingletons() throws Exception {
+		String property = ExactPhysicalOptimizer.COMPACT_PROPERTY;
+		String previous = System.getProperty(property);
+		try {
+			Fixture fixture = fixture();
+			System.clearProperty(property);
+			ExactPhysicalOptimizer.Result compact = ExactPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			System.setProperty(property, "false");
+			ExactPhysicalOptimizer.Result uncompact = ExactPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			Assert.assertEquals(compact.canonicalObjectiveBits(), uncompact.canonicalObjectiveBits());
+			Assert.assertEquals(fixture.surface().exactSolverVariables().size(),
+				uncompact.solverResult().statistics().eliminationOrder().size());
+			Assert.assertTrue(compact.solverResult().statistics().eliminationOrder().size()
+				< uncompact.solverResult().statistics().eliminationOrder().size());
+			Assert.assertEquals(uncompact.canonicalObjectiveBits(), fixture.surface().evaluateCanonical(
+				uncompact.solverResult().assignmentInVariableOrder()));
+			Assert.assertTrue(Double.isFinite(CertifiedRegionalOptimizer.evaluate(fixture.model().variables(),
+				fixture.model().hardFactors(), uncompact.solverResult().assignmentInVariableOrder())));
+			System.setProperty(property, "true");
+			ExactPhysicalOptimizer.Result explicit = ExactPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			Assert.assertEquals(compact.solverResult().assignmentInVariableOrder(),
+				explicit.solverResult().assignmentInVariableOrder());
+			Assert.assertEquals(compact.solverResult().statistics(), explicit.solverResult().statistics());
+			System.setProperty(property, "typo");
+			IllegalArgumentException failure = Assert.assertThrows(IllegalArgumentException.class,
+				() -> ExactPhysicalOptimizer.optimize(fixture.model(), fixture.surface(),
+					ExactPhysicalOptimizer.PRODUCTION_LIMITS));
+			Assert.assertTrue(failure.getMessage().startsWith("EXACT_PHYSICAL_COMPACT_OPTION_INVALID"));
+		}
+		finally {
+			if(previous == null) System.clearProperty(property); else System.setProperty(property, previous);
+		}
+	}
+
+	@Test
 	public void independentlyBuiltModelsHaveStableEncodedFactorOrder() throws Exception {
 		String previous = null;
 		for(int repetition = 0; repetition < 5; repetition++) {
@@ -139,6 +177,53 @@ public class RegionalSearchPhysicalIntegrationTest {
 	}
 
 	@Test
+	public void incrementalBatchAndReuseVariantsStartFromSameFullRegionalPlan() throws Exception {
+		String prefix = CertifiedRegionalOptimizer.PROPERTY_PREFIX;
+		List<String> keys = List.of("incrementalFullSeed", "incrementalBatchVariables", "incrementalReusePreparation");
+		Map<String,String> previous = new HashMap<>();
+		for(String key : keys)
+			previous.put(key, System.getProperty(prefix + key));
+		try {
+			System.setProperty(prefix + "incrementalFullSeed", "true");
+			Fixture fixture = fixture();
+			LocalPhysicalOptimizer.Result regional = LocalPhysicalOptimizer.optimize(
+				fixture.model(), fixture.surface(), null, ignored -> { });
+			double optimum = ExactPhysicalOptimizer.optimize(fixture.model(), fixture.surface(),
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS).solverResult().objective();
+			for(int batch : new int[] {1, 8})
+				for(boolean reuse : new boolean[] {false, true}) {
+					System.setProperty(prefix + "incrementalBatchVariables", Integer.toString(batch));
+					System.setProperty(prefix + "incrementalReusePreparation", Boolean.toString(reuse));
+					CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+						2, 2, 8, 8, 24, 60000, 0, .03, true, true,
+						CertifiedRegionalOptimizer.ExpansionPolicy.DISAGREEMENT, 20260908,
+						ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+					RegionalSearchOptimizer.Options options = new RegionalSearchOptimizer.Options(
+						RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL, common, 64, 1, 3, 64, 0, 1_000_000, 2);
+					RegionalSearchOptimizer.Result result = LocalPhysicalOptimizer.optimize(fixture.model(), fixture.surface(),
+						common, ignored -> { }, options, ignored -> { }).search();
+					RegionalSearchOptimizer.Checkpoint initial = result.checkpoints().get(0);
+					Assert.assertEquals(regional.physicalResult().canonicalObjectiveBits(),
+						Double.doubleToRawLongBits(initial.upperBound()));
+					Assert.assertEquals(regional.physicalResult().solverResult().assignmentInVariableOrder(), initial.assignment());
+					Assert.assertTrue(result.statistics().get("fullSeedNanos") > 0L);
+					Assert.assertEquals(0L, result.statistics().get("orderedSeedNanos").longValue());
+					Assert.assertTrue(result.targetReached());
+					for(RegionalSearchOptimizer.Checkpoint point : result.checkpoints()) {
+						Assert.assertTrue(point.lowerBound() <= optimum && optimum <= point.upperBound());
+						Assert.assertEquals(fixture.surface().evaluateCanonical(point.assignment()),
+							Double.doubleToRawLongBits(point.upperBound()));
+					}
+				}
+		}
+		finally {
+			previous.forEach((key, value) -> {
+				if(value == null) System.clearProperty(prefix + key); else System.setProperty(prefix + key, value);
+			});
+		}
+	}
+
+	@Test
 	public void configuredAlgorithmsEmitCompleteLegalPlanningReceipt() throws Exception {
 		String prefix = CertifiedRegionalOptimizer.PROPERTY_PREFIX;
 		Map<String,String> settings = new LinkedHashMap<>();
@@ -165,6 +250,36 @@ public class RegionalSearchPhysicalIntegrationTest {
 				if(value == null) System.clearProperty(prefix + key); else System.setProperty(prefix + key, value);
 			});
 		}
+	}
+
+	@Test
+	public void sharedEncodedRegionsMatchWholeConditionalOracleIncludingAuxiliaries() throws Exception {
+		Fixture fixture = fixture();
+		RegionalSearchProblem problem = RegionalSearchProblem.physical(fixture.model(), fixture.surface(), null);
+		Assert.assertTrue(problem.variables().size() > problem.decisionCount());
+		List<Integer> reference = LocalPhysicalOptimizer.optimize(fixture.model(), fixture.surface(), null, ignored -> { })
+			.physicalResult().solverResult().assignmentInVariableOrder();
+		SharedRegionalPreparation shared = new SharedRegionalPreparation(problem,
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS, false);
+		for(int first = 0; first < problem.decisionCount() - 1; first++) {
+			int[] block = new int[] {first, first + 1};
+			int[] fixed = reference.stream().mapToInt(Integer::intValue).toArray();
+			LocalCategoricalOptimizer.PreparedBlockSolver prepared = shared.prepare(fixed, block);
+			Assert.assertNotNull("feasible boundaries must use shared encoding", prepared);
+			ExactCategoricalSolver.Result local = prepared.solve();
+			java.util.ArrayList<Integer> candidate = new java.util.ArrayList<>(reference);
+			for(int i = 0; i < block.length; i++) {
+				candidate.set(block[i], local.assignmentInVariableOrder().get(i));
+				fixed[block[i]] = -1;
+			}
+			RegionalSearchProblem.Solution oracle = problem.solveWhole(fixed,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS, () -> false);
+			Assert.assertTrue(oracle.feasible());
+			Assert.assertEquals(Double.doubleToRawLongBits(oracle.objective()),
+				Double.doubleToRawLongBits(problem.evaluate(candidate)));
+		}
+		Assert.assertEquals(1, problem.reducedRootRequests());
+		Assert.assertEquals(0, shared.fallbacks());
 	}
 
 	private static CertifiedRegionalOptimizer.Options common(long budget) {

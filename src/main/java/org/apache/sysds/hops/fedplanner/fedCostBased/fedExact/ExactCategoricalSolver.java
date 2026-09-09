@@ -53,20 +53,27 @@ public final class ExactCategoricalSolver {
 		private final double[] denseValues;
 		private final CostFunction evaluator;
 
-		private Factor(List<Variable> scope, double[] denseValues, CostFunction evaluator) {
+		private Factor(List<Variable> scope, double[] denseValues, CostFunction evaluator,
+			boolean copyDenseValues) {
 			this.scope = List.copyOf(Objects.requireNonNull(scope, "scope"));
-			this.denseValues = denseValues == null ? null : denseValues.clone();
+			this.denseValues = denseValues == null || !copyDenseValues
+				? denseValues : denseValues.clone();
 			this.evaluator = evaluator;
 			if((denseValues == null) == (evaluator == null))
 				throw new IllegalArgumentException("EXACT_VE_FACTOR_REPRESENTATION_INVALID");
 		}
 
 		public static Factor dense(List<Variable> scope, double... values) {
-			return new Factor(scope, Objects.requireNonNull(values, "values"), null);
+			return new Factor(scope, Objects.requireNonNull(values, "values"), null, true);
+		}
+
+		/** Internal ownership transfer; the caller must never mutate {@code values} again. */
+		static Factor denseOwned(List<Variable> scope, double[] values) {
+			return new Factor(scope, Objects.requireNonNull(values, "values"), null, false);
 		}
 
 		public static Factor lazy(List<Variable> scope, CostFunction evaluator) {
-			return new Factor(scope, null, Objects.requireNonNull(evaluator, "evaluator"));
+			return new Factor(scope, null, Objects.requireNonNull(evaluator, "evaluator"), false);
 		}
 
 		List<Variable> scope() { return scope; }
@@ -142,9 +149,11 @@ public final class ExactCategoricalSolver {
 		private final List<double[]> values;
 
 		private FrozenInputs(InputDefinition definition, List<DenseFactor> factors) {
-			domains = definition.domains.clone();
-			scopes = definition.scopes.stream().map(int[]::clone).toList();
-			values = factors.stream().map(factor -> factor.values.clone()).toList();
+			// Both inputs are solve-local immutable structures. Retaining their arrays avoids
+			// copying every dense table once more between materialization and reduction.
+			domains = definition.domains;
+			scopes = definition.scopes;
+			values = factors.stream().map(factor -> factor.values).toList();
 		}
 
 		int domainSize(int variable) { return domains[variable]; }
@@ -175,6 +184,18 @@ public final class ExactCategoricalSolver {
 	static CompiledProblem compile(List<Variable> variables, List<Factor> factors,
 		Limits limits) {
 		return new CompiledProblem(prepare(variables, factors, limits), factors);
+	}
+
+	/**
+	 * Compiles using a caller-supplied complete elimination order. The order is only a
+	 * structural hint: current variables, domains, factor scopes, and every resource
+	 * limit are validated and rebuilt exactly as for an ordinary compilation.
+	 */
+	static CompiledProblem compilePreferred(List<Variable> variables, List<Factor> factors,
+		Limits limits, List<String> preferredEliminationOrder) {
+		InputDefinition input = validateInputs(variables, factors, limits);
+		Plan plan = preferredPlan(input, preferredEliminationOrder);
+		return new CompiledProblem(prepare(input, limits, plan), factors);
 	}
 
 	static Result solve(CompiledProblem compiled) {
@@ -215,7 +236,7 @@ public final class ExactCategoricalSolver {
 			values[cell] = factor.evaluator.cost(local);
 			validateCost(values[cell]);
 		}
-		return Factor.dense(factor.scope, values);
+		return Factor.denseOwned(factor.scope, values);
 	}
 
 	private static Result solve(Prepared prepared, List<Factor> factors,
@@ -302,12 +323,15 @@ public final class ExactCategoricalSolver {
 
 	private static Prepared prepare(List<Variable> variables, List<Factor> factors, Limits limits) {
 		InputDefinition input = validateInputs(variables, factors, limits);
+		return prepare(input, limits,
+			minimumMaterializationPlan(input.variables, input.domains, input.scopes));
+	}
+
+	private static Prepared prepare(InputDefinition input, Limits limits, Plan plan) {
 		List<Variable> canonical = input.variables;
 		int[] domains = input.domains;
 		List<int[]> scopes = input.scopes;
 		long inputCells = input.inputCells;
-
-		Plan plan = minimumMaterializationPlan(canonical, domains, scopes);
 		long totalCells = inputCells;
 		long maximumCells = input.maximumInputCells;
 		String maximumSource = "input";
@@ -343,6 +367,25 @@ public final class ExactCategoricalSolver {
 			.map(step -> canonical.get(step.variable).key()).toList(), plan.inducedWidth,
 			maximumCells, totalCells, maximumAssignments, assignments);
 		return new Prepared(canonical, domains, scopes, plan.steps, statistics);
+	}
+
+	private static Plan preferredPlan(InputDefinition input,
+		List<String> preferredEliminationOrder) {
+		if(preferredEliminationOrder == null
+			|| preferredEliminationOrder.size() != input.variables.size())
+			throw new IllegalArgumentException("EXACT_VE_PREFERRED_ORDER_INVALID");
+		Map<String,Integer> positionByKey = new HashMap<>();
+		for(int index = 0; index < input.variables.size(); index++)
+			positionByKey.put(input.variables.get(index).key(), index);
+		Set<Integer> seen = new HashSet<>();
+		int[] order = new int[preferredEliminationOrder.size()];
+		for(int index = 0; index < order.length; index++) {
+			Integer position = positionByKey.get(preferredEliminationOrder.get(index));
+			if(position == null || !seen.add(position))
+				throw new IllegalArgumentException("EXACT_VE_PREFERRED_ORDER_INVALID");
+			order[index] = position;
+		}
+		return eliminationPlan(input.variables, input.scopes, order);
 	}
 
 	private static InputDefinition validateInputs(List<Variable> variables, List<Factor> factors,
@@ -465,15 +508,7 @@ public final class ExactCategoricalSolver {
 
 	private static Plan eliminationPlan(List<Variable> variables, int[] domains,
 		List<int[]> initialScopes, PlanOrdering ordering) {
-		List<Set<Integer>> graph = new ArrayList<>(variables.size());
-		for(int i = 0; i < variables.size(); i++)
-			graph.add(new HashSet<>());
-		for(int[] scope : initialScopes)
-			for(int i = 0; i < scope.length; i++)
-				for(int j = i + 1; j < scope.length; j++) {
-					graph.get(scope[i]).add(scope[j]);
-					graph.get(scope[j]).add(scope[i]);
-				}
+		List<Set<Integer>> graph = interactionGraph(variables.size(), initialScopes);
 		Set<Integer> remaining = new HashSet<>();
 		for(int i = 0; i < variables.size(); i++)
 			remaining.add(i);
@@ -511,6 +546,46 @@ public final class ExactCategoricalSolver {
 			steps.add(new Step(selected, separator));
 		}
 		return new Plan(List.copyOf(steps), width);
+	}
+
+	private static Plan eliminationPlan(List<Variable> variables,
+		List<int[]> initialScopes, int[] order) {
+		List<Set<Integer>> graph = interactionGraph(variables.size(), initialScopes);
+		Set<Integer> remaining = new HashSet<>();
+		for(int index = 0; index < variables.size(); index++)
+			remaining.add(index);
+		List<Step> steps = new ArrayList<>(variables.size());
+		int width = 0;
+		for(int selected : order) {
+			if(!remaining.remove(selected))
+				throw new IllegalArgumentException("EXACT_VE_PREFERRED_ORDER_INVALID");
+			int[] separator = graph.get(selected).stream().filter(remaining::contains)
+				.sorted().mapToInt(Integer::intValue).toArray();
+			width = Math.max(width, separator.length);
+			for(int i = 0; i < separator.length; i++)
+				for(int j = i + 1; j < separator.length; j++) {
+					graph.get(separator[i]).add(separator[j]);
+					graph.get(separator[j]).add(separator[i]);
+				}
+			steps.add(new Step(selected, separator));
+		}
+		if(!remaining.isEmpty())
+			throw new IllegalArgumentException("EXACT_VE_PREFERRED_ORDER_INVALID");
+		return new Plan(List.copyOf(steps), width);
+	}
+
+	private static List<Set<Integer>> interactionGraph(int variableCount,
+		List<int[]> initialScopes) {
+		List<Set<Integer>> graph = new ArrayList<>(variableCount);
+		for(int index = 0; index < variableCount; index++)
+			graph.add(new HashSet<>());
+		for(int[] scope : initialScopes)
+			for(int i = 0; i < scope.length; i++)
+				for(int j = i + 1; j < scope.length; j++) {
+					graph.get(scope[i]).add(scope[j]);
+					graph.get(scope[j]).add(scope[i]);
+				}
+		return graph;
 	}
 
 	private static long eliminationAssignments(int variable, List<Set<Integer>> graph,
@@ -575,14 +650,20 @@ public final class ExactCategoricalSolver {
 			Factor factor = factors.get(factorIndex);
 			int[] scope = prepared.scopes.get(factorIndex);
 			int cells = checkedCells(scope, prepared.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
-			double[] values = factor.denseValues == null ? new double[cells] : factor.denseValues.clone();
-			int[] local = new int[scope.length];
-			for(int cell = 0; cell < cells; cell++) {
-				if(factor.evaluator != null) {
+			double[] values;
+			if(factor.evaluator != null) {
+				values = new double[cells];
+				int[] local = new int[scope.length];
+				for(int cell = 0; cell < cells; cell++) {
 					decode(cell, scope, prepared.domains, local, global);
 					values[cell] = factor.evaluator.cost(local);
+					validateCost(values[cell]);
 				}
-				validateCost(values[cell]);
+			}
+			else {
+				// validateInputs already checked this immutable, defensively-owned table.
+				// DenseFactor only reads it, so solve/freeze need neither copy nor rescan it.
+				values = factor.denseValues;
 			}
 			result.add(new DenseFactor(scope, prepared.domains, values, null, null));
 		}
