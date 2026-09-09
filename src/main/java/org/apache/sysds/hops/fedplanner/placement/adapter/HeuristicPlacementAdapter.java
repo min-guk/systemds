@@ -140,7 +140,7 @@ public final class HeuristicPlacementAdapter {
 		boolean firstFeasible = selection.certificate().terminationReason()
 			== TerminationReason.POLICY_FEASIBLE;
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
-			"policy", "PATHWISE_REENTRY_POLICY_V2", "markerCount", Integer.toString(policy.markers().size()),
+			"policy", "LOCAL_CONTINUATION_FIRST_POLICY_V3", "markerCount", Integer.toString(policy.markers().size()),
 			"localPrefixCount", Integer.toString(policy.localPrefix().size()),
 			"downstreamMarkerCount", Integer.toString(policy.downstreamMarkers().size()),
 			"frontierEdgeCount", Integer.toString(policy.frontiers().size()),
@@ -150,7 +150,7 @@ public final class HeuristicPlacementAdapter {
 			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_CANDIDATE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
 			: assignmentHash(assignment);
-		String policyFingerprint = sha256("PATHWISE_REENTRY_POLICY_V2|" + analysis.analysisFingerprint() + '|'
+		String policyFingerprint = sha256("LOCAL_CONTINUATION_FIRST_POLICY_V3|" + analysis.analysisFingerprint() + '|'
 			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions
 			+ (movementFirst ? "|MOVEMENT_FIRST" : ""));
 		String incumbent = selection.score().normalizedSignature();
@@ -277,12 +277,16 @@ public final class HeuristicPlacementAdapter {
 				// input originates from a coordinator-local function/transient value.
 				// Candidate propagation then removes only that unreachable FED state and
 				// completes the same demotion on the coordinator instead of making the
-				// entire policy projection unsatisfiable.
+				// entire policy projection unsatisfiable. Exact native LOUT boundaries
+				// additionally retain their certified execution layout, which need not
+				// carry the shape-dependent flag of the original demotion candidate.
 				legal = legal.stream().filter(state -> (state.execType() == ExecType.CP
 					&& state.output() == FederatedOutput.LOUT)
 					|| (state.execType() == ExecType.FED
 						&& state.output() == FederatedOutput.LOUT && state.fType() != null
-						&& state.shapeDependent())).toList();
+						&& (state.shapeDependent() || policy.nativeContinuations().stream()
+							.anyMatch(fact -> fact.consumer() == node.key()
+								&& fact.consumerState().equals(state))))).toList();
 			else if(policy.localPrefix().contains(node.key()))
 				// Once the heuristic demotes a path after its FED/LOUT producer, the
 				// prefix is coordinator-local until an explicit pathwise frontier.

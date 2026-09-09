@@ -115,3 +115,6 @@ Root: `/home/mchoi/g014-p2-placement-repair-20260909`
 - 다른 row-preserving transform spec은 현재 보수적인 whitelist 밖일 수 있다. 필요 시 runtime 근거와 별도 회귀로 확장해야 한다.
 - metadata runtime validator 자체에는 privacy class 문맥이 없으며 PRIVATE와 PA 구분 강제는 기존 공통 planner가 담당한다. 이번 작업이 worker-side 보안 구조를 새로 구현한 것은 아니다.
 - pool provenance와 exact value/range identity 혼동이 잠재 회귀 위험이다. X0 no-anchor, 두 입력 authority, stale-width FULL 및 COL/omit negative 테스트로 감지한다.
+
+### 후속 게시 — 2026-09-09
+사용자의 추가 요청으로, 앞선 P2 커밋에서 제외했던 AggLocal/FedFirst 변경도 별도 후속 커밋에 포함한다. 위 frozen-backend P2 검증과 별개로, 후속 targeted suite는 58개 중 50 PASS / 8 worker-connection errors였다. 자세한 조건과 검증 한계는 `docs/SESSION_ISSUES_2026-09-09.md`의 마지막 항목을 참조한다.

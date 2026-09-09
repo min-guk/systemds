@@ -148,7 +148,7 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 				selectorGraph.normalizedCandidateUniverse().contains(candidate(assigned.getKey(), assigned.getValue())));
 		Assert.assertFalse("exact selection cannot use fallback", selection.certificate().fallback());
 		Assert.assertEquals(List.of(), selection.refedRegistry());
-		Assert.assertEquals("PATHWISE_REENTRY_POLICY_V2", selection.plannerFacts().get("policy"));
+		Assert.assertEquals("LOCAL_CONTINUATION_FIRST_POLICY_V3", selection.plannerFacts().get("policy"));
 	}
 
 	@Test
@@ -157,7 +157,7 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 		var before = R4Heuristic2Probe.snapshot(fixture.program(), fixture.analysis());
 		var heuristic = new HeuristicPlacementAdapter().select(fixture.analysis(), Set.of(fixture.marker()));
 		var fedAll = new FedAllPlacementAdapter().select(fixture.analysis());
-		Assert.assertEquals("PATHWISE_REENTRY_POLICY_V2", heuristic.plannerFacts().get("policy"));
+		Assert.assertEquals("LOCAL_CONTINUATION_FIRST_POLICY_V3", heuristic.plannerFacts().get("policy"));
 		Assert.assertTrue("legacy marker has no common pathwise demotion authority",
 			fixture.analysis().heuristicPolicyFacts().demotions().stream()
 				.noneMatch(fact -> fact.valueVersion().equals(fixture.marker())));

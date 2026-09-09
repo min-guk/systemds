@@ -123,6 +123,60 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 	}
 
 	@Test
+	public void fedFirstCommitsADataProducerBeforeItsSmallerDomainConsumer() {
+		String fingerprint = "first-feasible-producer-before-mrv-consumer";
+		Node producer = node(fingerprint, "z-producer", 0,
+			List.of(LOCAL, FED_ROW_LOUT, FED));
+		Node consumer = node(fingerprint, "a-consumer", 1, List.of(LOCAL, FED));
+		Constraint dataInput = new Constraint(ConstraintKind.DOMINATES,
+			producer.key(), consumer.key(), 0, "data-input");
+		Constraint conflict = new Constraint(ConstraintKind.CONJUNCTIVE,
+			producer.key(), consumer.key(), 0,
+			"forbid-pair:" + FED.normalizedSignature() + "=>" + FED.normalizedSignature());
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(consumer, producer),
+				List.of(dataInput, conflict), List.of()));
+
+		Assert.assertEquals("FedFirst must commit the data producer's preferred FED/FOUT state"
+			+ " before a smaller consumer domain can force an avoidable FED/LOUT fallback",
+			FED, selected.assignment().get(producer.key()));
+		Assert.assertEquals("the downstream consumer must take its legal fallback after the"
+			+ " producer has retained FED/FOUT", LOCAL, selected.assignment().get(consumer.key()));
+		Assert.assertTrue(NeutralPlacementGraph.constraintSatisfied(conflict,
+			selected.assignment().get(producer.key()), selected.assignment().get(consumer.key())));
+		Assert.assertEquals(1, selected.certificate().exploredCount());
+	}
+
+	@Test
+	public void cyclicDataDependenciesTerminateWithCanonicalFedFirstSelection() {
+		String fingerprint = "first-feasible-cyclic-data-dependencies";
+		Node left = node(fingerprint, "left", 0, List.of(LOCAL, FED));
+		Node right = node(fingerprint, "right", 1, List.of(LOCAL, FED));
+		Constraint leftToRight = new Constraint(ConstraintKind.DOMINATES,
+			left.key(), right.key(), 0, "data-input");
+		Constraint rightToLeft = new Constraint(ConstraintKind.DOMINATES,
+			right.key(), left.key(), 0, "data-input");
+		Constraint conflict = new Constraint(ConstraintKind.CONJUNCTIVE,
+			left.key(), right.key(), 0,
+			"forbid-pair:" + FED.normalizedSignature() + "=>" + FED.normalizedSignature());
+		List<Constraint> constraints = List.of(leftToRight, rightToLeft, conflict);
+
+		PlacementSelection first = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(left, right), constraints, List.of()));
+		PlacementSelection reversed = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(right, left), constraints, List.of()));
+
+		Assert.assertEquals("cycle backedges affect ordering only and must not make selection"
+			+ " depend on graph insertion order", first.assignment(), reversed.assignment());
+		Assert.assertEquals(first.score(), reversed.score());
+		Assert.assertTrue(NeutralPlacementGraph.constraintSatisfied(conflict,
+			first.assignment().get(left.key()), first.assignment().get(right.key())));
+		Assert.assertEquals(1, first.certificate().exploredCount());
+		Assert.assertEquals(1, reversed.certificate().exploredCount());
+	}
+
+	@Test
 	public void equalPolicyStatesPreferTheLocallyDirectLayout() {
 		String fingerprint = "first-feasible-local-movement";
 		Node source = node(fingerprint, "source", 0, List.of(FED_BROADCAST, FED));

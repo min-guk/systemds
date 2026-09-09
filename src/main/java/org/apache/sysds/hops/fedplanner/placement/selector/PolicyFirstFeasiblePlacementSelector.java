@@ -45,7 +45,10 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  * <p>The selector quotients mandatory SAME_PLACEMENT decisions, applies binary arc consistency,
  * and commits policy-ranked states with localized propagation. It backtracks only when a local
  * choice has no complete candidate-reachable continuation; unlike {@link ExactPlacementSelector},
- * it never continues after finding one feasible plan to prove a global policy optimum.</p>
+ * it never continues after finding one feasible plan to prove a global policy optimum.
+ * FEDERATED_FIRST visits producers before consumers where acyclic and, at equal output
+ * policy rank, favors reachable rows with more federated inputs. MOVEMENT_FIRST retains
+ * its minimum-remaining-domain ordering and movement-first preferences.</p>
  */
 public final class PolicyFirstFeasiblePlacementSelector
 	implements PlacementSelector, PlacementAnalysisSelector {
@@ -96,13 +99,16 @@ public final class PolicyFirstFeasiblePlacementSelector
 		RelocationSelections.CanonicalOrderIndex relocationOrder = candidateAnalysis == null
 			? RelocationSelections.canonicalOrderIndex(graph.relocationActions())
 			: candidateAnalysis.relocationOrderFor(graph.relocationActions());
+		Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies =
+			stateOrdering == StateOrdering.FEDERATED_FIRST
+				? producerDependencies(graph, reachability) : Map.of();
 		Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
 		long pruned = 0;
 		int maxDepth = 0;
 		for(PolicyComponent component : policyComponents(graph, reachability)) {
 			Solver solver = new Solver(candidateAnalysis, graph, component.nodes(),
 				component.constraints(), component.relocationActions(), reachability,
-				stateOrdering, executionWeightOverride);
+				stateOrdering, executionWeightOverride, producerDependencies);
 			Map<CompiledHopKey,PlacementState> selected = solver.solve();
 			for(Map.Entry<CompiledHopKey,PlacementState> entry : selected.entrySet())
 				if(assignment.put(entry.getKey(), entry.getValue()) != null)
@@ -125,6 +131,23 @@ public final class PolicyFirstFeasiblePlacementSelector
 			"policy", -1L, TerminationReason.POLICY_FEASIBLE);
 		return new PlacementSelection(plan.assignment(), plan.candidates(), plan.choices(),
 			new LinkedHashSet<>(plan.relocations()), score, certificate);
+	}
+
+	/** Index shared producer facts once, rather than rescanning the whole program per component. */
+	private static Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies(
+		NeutralPlacementGraph graph, CandidateSelections.PartialReachabilityIndex reachability) {
+		Map<CompiledHopKey,Set<CompiledHopKey>> indexed = new IdentityHashMap<>();
+		for(Constraint constraint : graph.constraints())
+			if(constraint.kind() == ConstraintKind.DOMINATES && "data-input".equals(constraint.evidence()))
+				indexed.computeIfAbsent(constraint.right(), ignored -> new LinkedHashSet<>())
+					.add(constraint.left());
+		if(reachability != null)
+			for(CandidateSelections.ComponentDependency dependency : reachability.componentDependencies())
+				indexed.computeIfAbsent(dependency.consumer(), ignored -> new LinkedHashSet<>())
+					.add(dependency.participant());
+		Map<CompiledHopKey,List<CompiledHopKey>> result = new IdentityHashMap<>();
+		indexed.forEach((key, inputs) -> result.put(key, inputs.stream().sorted().toList()));
+		return result;
 	}
 
 	private static int policyRank(PlacementState state) {
@@ -332,6 +355,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 		private final List<RelocationAction> relocationActions;
 		private final List<Node> decisions;
 		private final List<DecisionGroup> groups;
+		private final List<DecisionGroup> producerFirstOrder;
 		private final Map<CompiledHopKey,Integer> groupsByKey;
 		private final Map<ValueVersionKey,List<Integer>> sourceGroupsByValue;
 		private final List<Relation> relations;
@@ -359,7 +383,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			List<RelocationAction> relocationActions,
 			CandidateSelections.PartialReachabilityIndex reachability,
 			StateOrdering stateOrdering,
-			ToDoubleFunction<CompiledHopKey> executionWeightOverride) {
+			ToDoubleFunction<CompiledHopKey> executionWeightOverride,
+			Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies) {
 			this.analysis = analysis != null && !analysis.candidateRuleFacts().orderedFacts().isEmpty()
 				? analysis : null;
 			this.graph = graph;
@@ -378,6 +403,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			this.derivedActionsByGroup = derivedActionsByGroup(groups.size(),
 				graph.derivedFoutMaterializationActions());
 			this.reachability = reachability;
+			this.producerFirstOrder = stateOrdering == StateOrdering.FEDERATED_FIRST
+				? producerFirstGroups(producerDependencies) : List.of();
 			this.reachabilityProbes = new IdentityHashMap<>();
 			if(this.reachability != null)
 				for(DecisionGroup group : groups)
@@ -456,8 +483,29 @@ public final class PolicyFirstFeasiblePlacementSelector
 			List<List<PlacementState>> domains) {
 			List<PlacementState> ordered = new ArrayList<>(domains.get(group.index()));
 			Map<PlacementState,MovementHint> hints = new IdentityHashMap<>();
-			for(PlacementState state : ordered)
+			Map<PlacementState,Integer> federatedInputs = new IdentityHashMap<>();
+			Map<CompiledHopKey,List<PlacementState>> remaining =
+				stateOrdering == StateOrdering.FEDERATED_FIRST && reachability != null
+					? domainsByNode(domains) : Map.of();
+			for(PlacementState state : ordered) {
 				hints.put(state, movementHint(group, state, domains));
+				int present = 0;
+				if(stateOrdering == StateOrdering.FEDERATED_FIRST && reachability != null
+					&& state.execType() == ExecType.FED) {
+					// Apply the trial to all aliases, including self/anchor dependencies.
+					group.assign(current, state);
+					try {
+						// Compare rows, not independently best inputs from incompatible rows.
+						for(Node member : group.members())
+							present += reachability.maximumReachablePresentInputs(
+								member.key(), state, current, remaining);
+					}
+					finally {
+						group.remove(current);
+					}
+				}
+				federatedInputs.put(state, present);
+			}
 			ordered.sort((left, right) -> {
 				int movement = hints.get(left).compareTo(hints.get(right));
 				int policy = Integer.compare(policyRank(left), policyRank(right));
@@ -465,6 +513,9 @@ public final class PolicyFirstFeasiblePlacementSelector
 					return movement;
 				if(policy != 0)
 					return policy;
+				int inputs = Integer.compare(federatedInputs.get(right), federatedInputs.get(left));
+				if(inputs != 0)
+					return inputs;
 				return movement != 0 ? movement
 					: left.normalizedSignature().compareTo(right.normalizedSignature());
 			});
@@ -695,7 +746,67 @@ public final class PolicyFirstFeasiblePlacementSelector
 			return reachability == null || reachability.canStillBeReachable(assignment);
 		}
 
+		/**
+		 * Build a producer-first order once from shared occurrence dependencies, after
+		 * quotienting SAME_PLACEMENT. Acyclic dependencies are visited in postorder.
+		 * Loop/function backedges have no topological order: skip only their DFS revisit,
+		 * retaining every legality/reachability constraint during selection. The iterative
+		 * walk avoids recursive Java stack growth on long HOP chains.
+		 */
+		private List<DecisionGroup> producerFirstGroups(
+			Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies) {
+			List<Set<Integer>> inputs = new ArrayList<>();
+			for(int i = 0; i < groups.size(); i++)
+				inputs.add(new java.util.TreeSet<>());
+			for(DecisionGroup group : groups)
+				for(Node member : group.members())
+					for(CompiledHopKey producer : producerDependencies.getOrDefault(member.key(), List.of()))
+						addProducer(inputs, producer, member.key());
+			List<List<Integer>> orderedInputs = inputs.stream().map(List::copyOf).toList();
+			byte[] visited = new byte[groups.size()];
+			int[] nextInput = new int[groups.size()];
+			ArrayDeque<Integer> stack = new ArrayDeque<>();
+			List<DecisionGroup> result = new ArrayList<>();
+			for(DecisionGroup start : groups) {
+				if(visited[start.index()] != 0)
+					continue;
+				stack.push(start.index());
+				visited[start.index()] = 1;
+				while(!stack.isEmpty()) {
+					int group = stack.peek();
+					List<Integer> producers = orderedInputs.get(group);
+					if(nextInput[group] < producers.size()) {
+						int producer = producers.get(nextInput[group]++);
+						if(visited[producer] == 0) {
+							visited[producer] = 1;
+							stack.push(producer);
+						}
+					}
+					else {
+						stack.pop();
+						visited[group] = 2;
+						result.add(groups.get(group));
+					}
+				}
+			}
+			return List.copyOf(result);
+		}
+
+		private void addProducer(List<Set<Integer>> inputs,
+			CompiledHopKey producer, CompiledHopKey consumer) {
+			Integer from = groupsByKey.get(producer);
+			Integer to = groupsByKey.get(consumer);
+			if(from != null && to != null && !from.equals(to))
+				inputs.get(to).add(from);
+		}
+
 		private DecisionGroup nextGroup(List<List<PlacementState>> domains) {
+			if(stateOrdering == StateOrdering.FEDERATED_FIRST) {
+				for(DecisionGroup group : producerFirstOrder)
+					if(domains.get(group.index()).size() > 1)
+						return group;
+				return null;
+			}
 			DecisionGroup selected = null;
 			for(DecisionGroup group : groups) {
 				int size = domains.get(group.index()).size();

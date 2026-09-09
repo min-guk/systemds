@@ -15,7 +15,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
-import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector.StateOrdering;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -52,8 +52,7 @@ public class HeuristicProtectedNestedDemotionTest {
 				analysis.graph().node(fact.consumer()).orElseThrow().legalAlternatives().stream()
 					.anyMatch(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT));
 		}
-		var result = new HeuristicPlacementAdapter(
-			new PolicyFirstFeasiblePlacementSelector(StateOrdering.MOVEMENT_FIRST))
+		var result = new FederatedPlannerFedHeuristicSinglePass()
 			.select(analysis, markers);
 		for(var occurrence : analysis.compiledHopOccurrences())
 			if(occurrence.hop() instanceof AggBinaryOp) {
@@ -91,6 +90,22 @@ public class HeuristicProtectedNestedDemotionTest {
 			}
 		Assert.assertTrue(CandidateSelections.canStillBeReachable(analysis, result.selectorGraph(),
 			result.selectorGraph().relocationActions(), result.assignment()));
+	}
+
+	@Test
+	public void noVectorDemotionRetainsFedFirstAssignment() throws Exception {
+		PlacementAnalysis analysis = analyzeProtected(
+			"X=federated(addresses=list(\"localhost:1234/X\"),ranges=list(list(0,0),list(4,3)));\n"
+				+ "z=exp(X);print(sum(z));\n");
+		var markers = analysis.heuristicPolicyFacts().demotions().stream()
+			.map(fact -> fact.valueVersion()).collect(Collectors.toSet());
+		Assert.assertTrue("Elementwise input must not fabricate an aggregate-vector marker", markers.isEmpty());
+		var heuristic = new FederatedPlannerFedHeuristicSinglePass().select(analysis, markers);
+		var fedFirst = new PolicyFirstFeasiblePlacementSelector().select(analysis);
+		Assert.assertEquals("Without a demotion, AggLocal retains FedFirst choices",
+			fedFirst.assignment(), heuristic.assignment());
+		Assert.assertEquals("FEDERATED_FIRST", heuristic.plannerFacts().get("stateOrdering"));
+		Assert.assertEquals("FIRST_FEASIBLE", heuristic.plannerFacts().get("search"));
 	}
 
 	private static PlacementAnalysis analyzeProtected(String script) throws Exception {

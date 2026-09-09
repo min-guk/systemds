@@ -470,6 +470,26 @@ public final class CandidateSelections {
 		}
 
 		/**
+		 * FedFirst's existing PRESENT-input preference, queried before fixing the output
+		 * state. Only currently reachable rows count; this is an ordering hint, not a
+		 * domain filter, materialization cost, or promise about unresolved predecessors.
+		 * Reuses the immutable row/dependency index and the canonical reachability gate.
+		 */
+		public int maximumReachablePresentInputs(CompiledHopKey key, PlacementState state,
+			Map<CompiledHopKey,PlacementState> partialAssignment,
+			Map<CompiledHopKey,List<PlacementState>> remainingStateDomains) {
+			int maximum = 0;
+			for(IndexedConsumer consumer : consumersByDependency.getOrDefault(key, List.of()))
+				if(consumer.key() == key) {
+					for(IndexedRow row : consumer.rowsFor(state))
+						if(rowReachable(row, partialAssignment, true, remainingStateDomains))
+							maximum = Math.max(maximum, presentInputCount(row.receipt()));
+					break;
+				}
+			return maximum;
+		}
+
+		/**
 		 * Strict complete-assignment row domain after the FedAll PRESENT-input
 		 * objective. The immutable index reuses exact receipts and prejoined physical
 		 * dependencies. Rows and consumers retain the same canonical order and receipt
