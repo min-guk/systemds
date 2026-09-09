@@ -40,7 +40,7 @@ final class LocalPhysicalOptimizer {
 
 	record Result(ExactPhysicalOptimizer.Result physicalResult,
 		LocalCategoricalOptimizer.Statistics localStatistics,
-		CertifiedRegionalOptimizer.Result certificate, RegionalSearchOptimizer.Result search) {
+		RegionalSearchOptimizer.Result search) {
 		Result {
 			Objects.requireNonNull(physicalResult, "physicalResult");
 			Objects.requireNonNull(localStatistics, "localStatistics");
@@ -120,23 +120,13 @@ final class LocalPhysicalOptimizer {
 	static Result optimize(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface) {
 		CertifiedRegionalOptimizer.Options options = CertifiedRegionalOptimizer.Options.configured();
-		return optimize(model, surface, options, ignored -> { },
-			RegionalSearchOptimizer.Options.configured(options), ignored -> { });
+		return optimize(model, surface, RegionalSearchOptimizer.Options.configured(options), ignored -> { });
 	}
 
 	static Result optimize(ExactPhysicalModel model,
-		ExactPhysicalCostModel.PhysicalCostSurface surface, CertifiedRegionalOptimizer.Options options,
-		java.util.function.Consumer<CertifiedRegionalOptimizer.Checkpoint> observer) {
-		return optimize(model, surface, options, observer, null, ignored -> { });
-	}
-
-	static Result optimize(ExactPhysicalModel model,
-		ExactPhysicalCostModel.PhysicalCostSurface surface, CertifiedRegionalOptimizer.Options options,
-		java.util.function.Consumer<CertifiedRegionalOptimizer.Checkpoint> observer,
-		RegionalSearchOptimizer.Options searchOptions,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, RegionalSearchOptimizer.Options searchOptions,
 		java.util.function.Consumer<RegionalSearchOptimizer.Checkpoint> searchObserver) {
-		if(searchOptions != null && !searchOptions.common().equals(options))
-			throw new IllegalArgumentException("REGIONAL_SEARCH_COMMON_OPTIONS_MISMATCH");
+		CertifiedRegionalOptimizer.Options options = searchOptions == null ? null : searchOptions.common();
 		Objects.requireNonNull(model, "model");
 		Objects.requireNonNull(surface, "surface");
 		validateSharedSurface(model, surface);
@@ -145,60 +135,13 @@ final class LocalPhysicalOptimizer {
 			: ExactPhysicalForcedStateAudit.prepare(model);
 		if(forced != null)
 			hardFactors.add(forced.factor());
-		boolean incremental = searchOptions != null
-			&& searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL;
-		boolean sharedEligible = searchOptions == null
-			|| searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.REMAINING_EXACT;
-		RegionalSearchProblem sharedProblem = sharedEligible && SharedRegionalPreparation.configured()
+		RegionalSearchProblem sharedProblem = SharedRegionalPreparation.configured()
 			? RegionalSearchProblem.physical(model, surface, forced) : null;
 		SharedRegionalPreparation shared = sharedProblem == null ? null
 			: new SharedRegionalPreparation(sharedProblem,
 				options == null ? ExactPhysicalOptimizer.PRODUCTION_LIMITS : options.limits(),
 				LocalCategoricalOptimizer.configuredCompaction());
-		IncrementalAnytimeOptimizer.Tuning tuning = incremental
-			? IncrementalAnytimeOptimizer.Tuning.configured() : null;
-		RegionalSearchProblem incrementalProblem = incremental
-			? RegionalSearchProblem.physical(model, surface, forced) : null;
-		Seed seed = null;
-		long fullSeedNanos = 0L;
-		if(incremental && tuning.fullSeed()) {
-			long started = System.nanoTime();
-			seed = regionalSeed(model, surface, hardFactors, true);
-			fullSeedNanos = System.nanoTime() - started;
-		}
-		IncrementalAnytimeOptimizer.Initialization initialization = null;
-		boolean initializationLimited = false;
-		if(incremental) {
-			try { initialization = IncrementalAnytimeOptimizer.initialize(incrementalProblem, searchOptions, tuning); }
-			catch(MiniBucketLowerBound.ResourceLimitException limited) { initializationLimited = true; }
-			catch(IllegalArgumentException limited) {
-				if(!RegionalSearchProblem.isResourceLimit(limited))
-					throw limited;
-				initializationLimited = true;
-			}
-		}
-		// Relaxed assignments are only seed proposals. They replace the Regional
-		// seed only after the original physical legality/canonical check succeeds.
-		if(seed == null && initialization != null && initialization.hasProjectedSeed())
-			seed = new Seed(new LocalCategoricalOptimizer.Result(initialization.projectedCost(),
-				initialization.projectedSeed(), emptyLocalStatistics()), model.variables());
-		long orderedSeedNanos = 0L;
-		if(incremental && !initializationLimited && !tuning.fullSeed()) {
-			long started = System.nanoTime();
-			try {
-				Seed ordered = regionalSeed(model, surface, hardFactors, false);
-				if(seed == null || ordered.local().objective() < seed.local().objective())
-					seed = ordered;
-			}
-			catch(IllegalArgumentException limited) {
-				// An optional seed attempt must not discard a verified projection.
-				if(seed == null || !RegionalSearchProblem.isResourceLimit(limited))
-					throw limited;
-			}
-			finally { orderedSeedNanos = System.nanoTime() - started; }
-		}
-		if(seed == null)
-			seed = regionalSeed(model, surface, hardFactors, true, shared);
+		Seed seed = regionalSeed(model, surface, hardFactors, true, shared);
 		LocalCategoricalOptimizer.Result local = seed.local();
 		List<Variable> localOrder = seed.order();
 
@@ -214,21 +157,10 @@ final class LocalPhysicalOptimizer {
 				FederatedPlannerTrace.plannerElapsedNanos(), canonicalObjective,
 				Long.toUnsignedString(canonicalBits), surface.contributionFingerprint(),
 				model.analysis().analysisFingerprint()));
-		CertifiedRegionalOptimizer.Result certificate = null;
 		RegionalSearchOptimizer.Result search = null;
 		List<Integer> selectedAssignment = local.assignmentInVariableOrder();
 		if(searchOptions != null) {
-			if(incremental && initializationLimited) {
-				RegionalSearchOptimizer.State state = new RegionalSearchOptimizer.State(
-					incrementalProblem, selectedAssignment, searchOptions, searchObserver);
-				state.stats.add("resourceFailures", 1);
-				state.publish("INITIAL");
-				search = state.finish(RegionalSearchOptimizer.StopReason.RESOURCE_LIMIT);
-			}
-			else if(incremental)
-				search = IncrementalAnytimeOptimizer.optimize(incrementalProblem, selectedAssignment,
-					searchOptions, searchObserver, initialization, orderedSeedNanos, fullSeedNanos);
-			else if(sharedProblem != null)
+			if(sharedProblem != null)
 				search = RegionalSearchOptimizer.optimize(sharedProblem, selectedAssignment,
 					searchOptions, searchObserver);
 			else
@@ -236,18 +168,6 @@ final class LocalPhysicalOptimizer {
 					selectedAssignment, searchOptions, searchObserver);
 			selectedAssignment = search.assignment();
 			canonicalObjective = search.upperBound();
-			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
-		}
-		else if(options != null) {
-			long certificateStarted = System.nanoTime();
-			certificate = CertifiedRegionalOptimizer.optimizePhysical(model, surface, forced,
-				selectedAssignment, options, observer);
-			long certificateNanos = System.nanoTime() - certificateStarted;
-			if(FederatedPlannerTrace.isEnabled())
-				FederatedPlannerTrace.logGlobal("DP-RegionalCertificateTiming", "certificateNanos="
-					+ certificateNanos + " scope=after-regional-includes-validation-and-bound");
-			selectedAssignment = certificate.assignment();
-			canonicalObjective = certificate.upperBound();
 			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
 		}
 		LocalCategoricalOptimizer.Statistics statistics = local.statistics();
@@ -262,11 +182,7 @@ final class LocalPhysicalOptimizer {
 			ExactPhysicalForcedStateAudit.verify(model, forced, solverResult);
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
 			solverResult, canonicalBits, surface.contributionFingerprint());
-		return new Result(physical, statistics, certificate, search);
-	}
-
-	private static LocalCategoricalOptimizer.Statistics emptyLocalStatistics() {
-		return new LocalCategoricalOptimizer.Statistics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+		return new Result(physical, statistics, search);
 	}
 
 	private static Seed regionalSeed(ExactPhysicalModel model,

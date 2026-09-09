@@ -59,53 +59,15 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 		RegionalSearchOptimizer.Options searchOptions = RegionalSearchOptimizer.Options.configured(options);
 		if(searchOptions != null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalSearch", String.format(Locale.ROOT,
-				"phase=CONFIG algorithm=%s width=%d maxWidth=%d rounds=%d regionGrowth=%d maxRegion=%d "
-					+ "timeMillis=%d factorCells=%d totalCells=%d seed=%d absoluteTarget=%.17g relativeTarget=%.17g "
-					+ "maxSteps=%d probeCandidates=%d coveragePeriod=%d maxFrontierLimit=%d exactClosureAssignments=%d "
-					+ "regionWorkLimit=%d incumbentRescueAttempts=%d seedRevisitPasses=%d "
-					+ "exactAdmission=reduced-prepared targetResumeDeferredWidths=true targetCompactPreparation=%s "
-					+ "refineBound=%s expandRegions=%s policy=%s targetIgnoresRoundsSteps=%s "
-					+ "targetBoundMinResidualFraction=%.17g budgetScope=after-seed softDeadline=true "
-					+ "incrementalComponentBounds=%s seedPolicy=%s incrementalPriority=%s",
-				searchOptions.algorithm(), options.initialWidth(), options.maximumWidth(), options.rounds(),
-				options.regionGrowth(), options.maximumRegionVariables(), options.timeBudgetMillis(),
-				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(), options.seed(),
-				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.maxSteps(),
-				searchOptions.probeCandidates(), searchOptions.coveragePeriod(), searchOptions.maximumFrontier(),
-				searchOptions.exactClosureAssignments(), searchOptions.regionWorkLimit(),
-					searchOptions.incumbentRescueAttempts(), LocalPhysicalOptimizer.configuredSeedRevisitPasses(),
-					(searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET
-						|| searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL)
-						&& searchOptions.targetCompactPreparation(),
-					options.refineBound(), options.expandRegions(), options.policy(),
-				searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
-					TargetAnytimeOptimizer.MINIMUM_RESIDUAL_REDUCTION,
-					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL,
-					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
-						? (Boolean.getBoolean(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalFullSeed")
-							? "full-regional" : "ordered-greedy-and-replica") : "regional",
-					searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.ANYTIME_INCREMENTAL
-						? "modal-minority-per-cached-work" : "not-applicable")
-				+ " incrementalBatchVariables=" + System.getProperty(
-					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalBatchVariables", "1")
-				+ " incrementalReusePreparation=" + System.getProperty(
-					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalReusePreparation", "false")
-				+ " incrementalFullSeed=" + System.getProperty(
-					CertifiedRegionalOptimizer.PROPERTY_PREFIX + "incrementalFullSeed", "false")
-				+ " remainingExactCompletion="
-					+ (searchOptions.algorithm() == RegionalSearchOptimizer.Algorithm.REMAINING_EXACT));
-		if(options != null && searchOptions == null && FederatedPlannerTrace.isEnabled())
-			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
-				"phase=CONFIG policy=%s expandRegions=%s refineBound=%s width=%d maxWidth=%d rounds=%d "
-					+ "regionGrowth=%d maxRegion=%d timeMillis=%d factorCells=%d totalCells=%d seed=%d",
-				options.policy(), options.expandRegions(), options.refineBound(), options.initialWidth(),
-				options.maximumWidth(), options.rounds(), options.regionGrowth(), options.maximumRegionVariables(),
-					options.timeBudgetMillis(), options.limits().maximumFactorCells(),
-					options.limits().maximumMaterializedCells(), options.seed())
-				+ " certifyCompact=" + System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "certifyCompact", "false"));
-		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface,
-			options, checkpoint -> traceCheckpoint(checkpoint, searchEntryStart), searchOptions,
+				"phase=CONFIG algorithm=%s width=%d timeMillis=%d factorCells=%d totalCells=%d "
+					+ "absoluteTarget=%.17g relativeTarget=%.17g exactClosureAssignments=%d "
+					+ "seedRevisitPasses=%d budgetScope=after-seed softDeadline=true "
+					+ "remainingExactCompletion=true seedPolicy=regional sharedPreparation=%s",
+				searchOptions.algorithm(), options.initialWidth(), options.timeBudgetMillis(),
+				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(),
+				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.exactClosureAssignments(),
+				LocalPhysicalOptimizer.configuredSeedRevisitPasses(), SharedRegionalPreparation.configured()));
+		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface, searchOptions,
 			checkpoint -> {
 				if(FederatedPlannerTrace.isEnabled())
 					FederatedPlannerTrace.logGlobal("DP-RegionalSearch", RegionalSearchOptimizer.checkpointTrace(checkpoint)
@@ -127,15 +89,6 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 				search.orderFingerprint(), (System.nanoTime() - searchEntryStart) / 1e6,
 				RegionalSearchOptimizer.statisticsTrace(search.statistics())));
 		}
-		if(optimized.certificate() != null && FederatedPlannerTrace.isEnabled()) {
-			CertifiedRegionalOptimizer.Result certificate = optimized.certificate();
-			FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
-				"phase=FINAL lower=%.17g upper=%.17g gap=%.17g relativeGap=%.17g stop=%s "
-					+ "scope=encoded-model costFingerprint=%s analysis=%s methodElapsedMs=%.6f",
-				certificate.lowerBound(), certificate.upperBound(), certificate.absoluteGap(),
-				certificate.relativeGap(), certificate.stopReason(), selection.costSurfaceFingerprint(),
-				selection.analysisFingerprint(), (System.nanoTime() - searchEntryStart) / 1e6));
-		}
 		ExactPlacementInput input = ExactPhysicalPlacementProjector.project(
 			selection, "DP-LocalConflict", "local-conflict");
 		adapter.select(analysis, input);
@@ -143,23 +96,6 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			"local physical projector normalized result");
 		return input.withEmissionReceipt(PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none()));
-	}
-
-	private static void traceCheckpoint(CertifiedRegionalOptimizer.Checkpoint checkpoint, long searchEntryStart) {
-		if(!FederatedPlannerTrace.isEnabled())
-			return;
-		FederatedPlannerTrace.logGlobal("DP-RegionalCertificate", String.format(Locale.ROOT,
-			"iteration=%d phase=%s width=%d regionVariables=%d rawLower=%.17g lower=%.17g "
-				+ "upper=%.17g gap=%.17g relativeGap=%.17g elapsedMs=%.6f boundMs=%.6f "
-				+ "regionMs=%.6f splitBuckets=%d disagreements=%d maxFactorCells=%d "
-				+ "boundMaterializedCells=%d boundAssignments=%d regionAssignments=%d improved=%s methodElapsedMs=%.6f",
-			checkpoint.iteration(), checkpoint.phase(), checkpoint.width(), checkpoint.regionVariables(),
-			checkpoint.rawLowerBound(), checkpoint.lowerBound(), checkpoint.upperBound(),
-			checkpoint.absoluteGap(), checkpoint.relativeGap(), checkpoint.elapsedNanos() / 1e6,
-			checkpoint.boundNanos() / 1e6, checkpoint.regionNanos() / 1e6, checkpoint.splitBuckets(),
-			checkpoint.disagreements(), checkpoint.maximumFactorCells(), checkpoint.boundMaterializedCells(),
-			checkpoint.boundAssignments(), checkpoint.regionAssignments(), checkpoint.improved(),
-			(System.nanoTime() - searchEntryStart) / 1e6));
 	}
 
 	private static void trace(ExactPhysicalSelection selection, ExactPhysicalModel model,

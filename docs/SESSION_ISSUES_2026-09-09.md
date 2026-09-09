@@ -1,5 +1,15 @@
 # 2026-09-09 세션: 입력 privacy별 incremental planning 검증
 
+
+## Regional / Global 최종 게시 준비 — 검증 완료
+
+- 사용자 요청: 이전 실험은 커밋 이력에 보존하고 최종 트리에서는 이전 controller를 제외. 최신 Regional+LB+남은 결합 exact와 Global 게시.
+- 보존 commit `6b2f32143d`, 기존 main 병합 `1caf7a1a30`. 소스 충돌 없이 기존 기능 유지; 세션 문서 충돌은 양쪽 기록 보존.
+- 최종 컨트롤러 정리 후 145 tests / 17 classes clean package PASS. so007 native planning-only 4 JVM 정상 종료 및 재검증 PASS. L2SVM exact closure 1회와 Global objective bits 일치, GLM 첫 인증 gap 1.694623%에서 exact 없이 반환.
+- 수집기의 옛 regionCalls 요구를 최종 controller counter로 교정하고 원본 기록을 보존한 채 재검증. 기존 raw summary에는 collection failure 2행이 남으며 JVM failure가 아님.
+- 게시 대상 관련: 사용자가 GitHub min-guk/systemds의 기존 main으로 확정했다. 로컬 github remote로 일반 push하며 so003의 origin은 변경하지 않는다. 원격 SHA 확인 결과는 별도 게시 기록에 남긴다.
+- 상세: [최종 게시 검증 보고서](REGIONAL_FINAL_PUBLICATION_REPORT_2026-09-09_KO.md), [사용법](REGIONAL_REMAINING_EXACT.md).
+
 ## Regional 공통 준비 재사용 + 5% 즉시 exact — 구현·3회 검증 완료
 
 - **요청 / 성공 기준**: 준비 시간 세분화와 비용표 중복 생성·복사 제거, 분해된 encoded factor 및 전처리 결과 재사용. 첫 전역 LB의 보수적 상대 gap이 5% 이하면 반환하고 초과하면 남은 coupling을 exact로 닫는다. StepLM/L2SVM/GLM의 native JVM planning-only 각 3회로 기존 경로·새 경로·독립 Global을 비교한다.

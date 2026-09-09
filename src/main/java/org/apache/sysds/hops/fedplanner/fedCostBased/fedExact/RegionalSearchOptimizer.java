@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
 import java.nio.charset.StandardCharsets;
@@ -24,96 +23,39 @@ import java.util.HexFormat;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
 
-/** Shared numerical certificate, budget and trace boundary; algorithm policies are separate. */
+/** Certificate, budget and trace boundary for one initial bound and remaining exact completion. */
 final class RegionalSearchOptimizer {
-	enum Algorithm { ANYTIME_TARGET, ANYTIME_INCREMENTAL, THRESHOLD, TARGET_GAP, REUSE, REMAINING_EXACT }
-	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT, STEP_LIMIT, REGION_LIMIT, FRONTIER_LIMIT }
+	enum Algorithm { REMAINING_EXACT }
+	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT }
 
-	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
-		int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
-		long regionWorkLimit, int incumbentRescueAttempts, boolean targetCompactPreparation) {
-		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
-			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
-			long regionWorkLimit, int incumbentRescueAttempts) {
-			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
-				exactClosureAssignments, regionWorkLimit, incumbentRescueAttempts, true);
-		}
-		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
-			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments,
-			long regionWorkLimit) {
-			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
-				exactClosureAssignments, regionWorkLimit, 0);
-		}
-		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, int maxSteps,
-			int probeCandidates, int coveragePeriod, int maximumFrontier, long exactClosureAssignments) {
-			this(algorithm, common, maxSteps, probeCandidates, coveragePeriod, maximumFrontier,
-				exactClosureAssignments, 100_000L);
-		}
+	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, long exactClosureAssignments) {
 		Options {
 			Objects.requireNonNull(algorithm, "algorithm");
 			Objects.requireNonNull(common, "common");
-			if(maxSteps < 1 || probeCandidates < 1 || coveragePeriod < 1 || maximumFrontier < 1
-				|| exactClosureAssignments < 0 || regionWorkLimit < 0 || !common.expandRegions()
-				|| incumbentRescueAttempts < 0 || incumbentRescueAttempts > 2)
+			if(exactClosureAssignments < 0)
 				throw new IllegalArgumentException("REGIONAL_SEARCH_OPTIONS_INVALID");
-			if(algorithm == Algorithm.ANYTIME_INCREMENTAL && (probeCandidates > 2 || regionWorkLimit == 0))
-				throw new IllegalArgumentException("INCREMENTAL_SEARCH_OPTIONS_INVALID");
 		}
 		static Options configured(CertifiedRegionalOptimizer.Options common) {
-			String value = System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "algorithm", "legacy");
-			if(value.equals("legacy"))
+			String value = System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "algorithm",
+				common == null ? "off" : "remaining-exact");
+			if(common == null && (value.equals("off") || value.equals("legacy")))
 				return null;
-			Algorithm algorithm = switch(value) {
-				case "anytime-target" -> Algorithm.ANYTIME_TARGET;
-				case "anytime-incremental" -> Algorithm.ANYTIME_INCREMENTAL;
-				case "threshold" -> Algorithm.THRESHOLD;
-				case "target-gap" -> Algorithm.TARGET_GAP;
-				case "reuse" -> Algorithm.REUSE;
-				case "remaining-exact" -> Algorithm.REMAINING_EXACT;
-				default -> throw new IllegalArgumentException("REGIONAL_SEARCH_ALGORITHM_INVALID|value=" + value);
-			};
-			if(common == null || !common.expandRegions())
-				throw new IllegalArgumentException("REGIONAL_SEARCH_REQUIRES_ANYTIME_MODE");
-			return new Options(algorithm, common, integer("maxSteps", 256),
-				integer("probeCandidates", algorithm == Algorithm.ANYTIME_INCREMENTAL ? 1 : 2),
-				integer("coveragePeriod", 3), integer("maxFrontier", 2048),
+			if(!value.equals("remaining-exact"))
+				throw new IllegalArgumentException("REGIONAL_SEARCH_ALGORITHM_REMOVED|value=" + value
+					+ "|supported=remaining-exact");
+			if(common == null)
+				throw new IllegalArgumentException("REGIONAL_SEARCH_REQUIRES_ENABLED_MODE");
+			return new Options(Algorithm.REMAINING_EXACT, common,
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "exactClosureAssignments", "100000")),
-				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "regionWorkLimit", "100000")), integer("incumbentRescueAttempts", 2),
-				booleanOption("targetCompactPreparation", true));
-		}
-		private static int integer(String key, int fallback) {
-			return Integer.parseInt(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + key,
-				Integer.toString(fallback)));
-		}
-		private static boolean booleanOption(String key, boolean fallback) {
-			String value = System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + key,
-				Boolean.toString(fallback)).toLowerCase(Locale.ROOT);
-			return switch(value) {
-				case "true" -> true;
-				case "false" -> false;
-				default -> throw new IllegalArgumentException("REGIONAL_SEARCH_BOOLEAN_INVALID|key=" + key);
-			};
+					+ "exactClosureAssignments", "100000")));
 		}
 	}
 
 	static final class Statistics {
 		private final Map<String,Long> counts = new LinkedHashMap<>();
 		Statistics() {
-			for(String key : List.of("boundCalls", "regionCalls", "exactCalls", "probes", "probeVariables",
-				"cacheHits", "generatedNodes", "branchedNodes", "closedNodes", "prunedNodes", "deferredNodes",
-				"frontier", "maxFrontier", "regionVariables", "maxRegion", "replicaVariables", "restoredEqualities",
-				"boundAssignments", "exactAssignments", "boundMaterializedCells", "maxFactorCells",
-				"boundNanos", "regionNanos", "exactNanos", "diagnosticNanos", "zeroGainActions", "forcedExpansions",
-				"boundActions", "regionActions", "resourceFailures", "widthStrengthenings", "steps",
-				"regionPreflightCalls", "regionWorkSkips", "regionHardResourceSkips",
-				"regionPreflightAssignments", "regionPreflightMaterializedCells",
-				"wholePreflightCalls", "wholePreflightSkips", "wholeHardResourceSkips",
-				"wholePreflightAssignments", "wholePreflightMaterializedCells", "coverageAttempts",
-				"coverageVariables", "zeroUbGrowthAccelerations", "boundWidthPasses",
-				"boundWidthSuspensions", "boundWidthResumptions", "wholeClosureAttempts", "wholeClosureCompleted",
-				"incumbentRescueAttempts", "incumbentRescueImprovements",
+			for(String key : List.of("boundCalls", "exactCalls", "boundAssignments", "exactAssignments",
+				"boundMaterializedCells", "maxFactorCells", "boundNanos", "exactNanos", "resourceFailures",
 				"remainingClosureAttempts", "remainingClosureCompleted"))
 				counts.put(key, 0L);
 		}
@@ -161,13 +103,10 @@ final class RegionalSearchOptimizer {
 		List<Integer> assignment;
 		double lower;
 		double upper;
-		MiniBucketLowerBound.Result initialBound;
 
 		State(RegionalSearchProblem problem, List<Integer> seed, Options options, Consumer<Checkpoint> observer) {
 			this.options = Objects.requireNonNull(options, "options");
-			this.problem = Objects.requireNonNull(problem, "problem").usingCompactedPreparation(
-				(options.algorithm() == Algorithm.ANYTIME_TARGET
-					|| options.algorithm() == Algorithm.ANYTIME_INCREMENTAL) && options.targetCompactPreparation());
+			this.problem = Objects.requireNonNull(problem, "problem").usingCompactedPreparation(false);
 			this.observer = Objects.requireNonNull(observer, "observer");
 			assignment = List.copyOf(seed);
 			upper = this.problem.evaluate(assignment);
@@ -182,10 +121,6 @@ final class RegionalSearchOptimizer {
 		boolean reached() {
 			return gap(lower, upper) <= options.common().absoluteTolerance()
 				|| relative(lower, upper) <= options.common().relativeTolerance();
-		}
-		boolean nodeSufficient(double nodeLower) {
-			return gap(nodeLower, upper) <= options.common().absoluteTolerance()
-				|| relative(nodeLower, upper) <= options.common().relativeTolerance();
 		}
 		void raiseLower(double candidate) {
 			if(!Double.isFinite(candidate) || candidate < 0 || candidate > upper)
@@ -205,91 +140,6 @@ final class RegionalSearchOptimizer {
 			assignment = List.copyOf(solution.assignment());
 			upper = canonical;
 			return true;
-		}
-		MiniBucketLowerBound.Result bound(int[] fixed, int width) {
-			long phaseStart = System.nanoTime();
-			stats.add("boundCalls", 1);
-			try {
-				MiniBucketLowerBound.Result result = problem.bound(fixed, width, options.common().limits(), this::expired);
-				if(Double.isNaN(result.lowerBound()) || result.lowerBound() < 0)
-					throw new IllegalStateException("REGIONAL_SEARCH_NODE_BOUND_INVALID");
-				stats.add("boundAssignments", result.statistics().evaluatedAssignments());
-				stats.add("boundMaterializedCells", result.statistics().materializedCells());
-				stats.max("maxFactorCells", result.statistics().maximumFactorCells());
-				return result;
-			}
-			finally { stats.add("boundNanos", System.nanoTime() - phaseStart); }
-		}
-		RegionalSearchProblem.Solution region(int[] fixed, Set<Integer> region, List<Integer> reference) {
-			long diagnosticStart = System.nanoTime();
-			stats.add("regionPreflightCalls", 1);
-			RegionalSearchProblem.RegionalWork work;
-			try {
-				work = problem.preflightRegion(fixed, region, reference, options.common().limits(),
-					options.regionWorkLimit(), this::expired);
-				stats.add("regionPreflightAssignments", work.eliminationAssignments());
-				stats.add("regionPreflightMaterializedCells", work.materializedFactorCells());
-				stats.max("maxFactorCells", work.maximumFactorCells());
-			}
-			finally {
-				stats.add("diagnosticNanos", System.nanoTime() - diagnosticStart);
-			}
-			if(!work.admitted()) {
-				stats.add("regionWorkSkips", 1);
-				if(work.hardResourceLimited())
-					stats.add("regionHardResourceSkips", 1);
-				throw new IllegalArgumentException("REGIONAL_SEARCH_WORK_LIMIT_EXCEEDED|assignments="
-					+ work.eliminationAssignments() + "|limit=" + options.regionWorkLimit()
-					+ "|hardResource=" + work.hardResourceLimited());
-			}
-			long phaseStart = System.nanoTime();
-			stats.add("regionCalls", 1);
-			stats.set("regionVariables", region.size());
-			stats.max("maxRegion", region.size());
-			try {
-				RegionalSearchProblem.Solution solution = problem.solveRegion(fixed, region, reference,
-					options.common().limits(), this::expired);
-				recordExact(solution);
-				return solution;
-			}
-			finally { stats.add("regionNanos", System.nanoTime() - phaseStart); }
-		}
-		RegionalSearchProblem.Solution whole(int[] fixed) {
-			long phaseStart = System.nanoTime();
-			stats.add("exactCalls", 1);
-			try {
-				RegionalSearchProblem.Solution solution = problem.solveWhole(fixed, options.common().limits(), this::expired);
-				recordExact(solution);
-				return solution;
-			}
-			finally { stats.add("exactNanos", System.nanoTime() - phaseStart); }
-		}
-		RegionalSearchProblem.RegionalWork preflightWhole(int[] fixed) {
-			long phaseStart = System.nanoTime();
-			stats.add("wholePreflightCalls", 1);
-			try {
-				RegionalSearchProblem.RegionalWork work = problem.preflightWhole(fixed,
-					options.common().limits(), options.exactClosureAssignments(), this::expired);
-				stats.add("wholePreflightAssignments", work.eliminationAssignments());
-				stats.add("wholePreflightMaterializedCells", work.materializedFactorCells());
-				stats.max("maxFactorCells", work.maximumFactorCells());
-				if(!work.admitted()) {
-					stats.add("wholePreflightSkips", 1);
-					if(work.hardResourceLimited())
-						stats.add("wholeHardResourceSkips", 1);
-				}
-				return work;
-			}
-			finally { stats.add("diagnosticNanos", System.nanoTime() - phaseStart); }
-		}
-		boolean canSolveWhole(int[] fixed) {
-			return preflightWhole(fixed).admitted();
-		}
-		private void recordExact(RegionalSearchProblem.Solution solution) {
-			if(solution.statistics() != null) {
-				stats.add("exactAssignments", solution.statistics().eliminationAssignments());
-				stats.max("maxFactorCells", solution.statistics().maximumFactorCells());
-			}
 		}
 		void publish(String phase) {
 			publish(phase, "");
@@ -323,28 +173,7 @@ final class RegionalSearchOptimizer {
 		if(state.reached())
 			return state.finish(state.upper == 0 ? StopReason.GLOBAL_EXACT : StopReason.TARGET_REACHED);
 		try {
-			if(options.algorithm() == Algorithm.REMAINING_EXACT)
-				return RemainingExactOptimizer.run(state);
-			if(options.algorithm() == Algorithm.ANYTIME_INCREMENTAL) {
-				if(state.expired())
-					return state.finish(StopReason.TIME_BUDGET);
-				return IncrementalAnytimeOptimizer.run(state,
-					IncrementalAnytimeOptimizer.initialize(state.problem, options));
-			}
-			state.initialBound = state.bound(problem.unconstrained(), options.common().initialWidth());
-			state.raiseLower(state.initialBound.lowerBound());
-			state.publish("INITIAL_BOUND");
-			if(state.reached())
-				return state.finish(StopReason.TARGET_REACHED);
-			if(state.expired())
-				return state.finish(StopReason.TIME_BUDGET);
-			return switch(options.algorithm()) {
-				case ANYTIME_TARGET -> TargetAnytimeOptimizer.run(state);
-				case ANYTIME_INCREMENTAL, REMAINING_EXACT ->
-					throw new IllegalStateException("REGIONAL_SPECIALIZED_DISPATCH_INVALID");
-				case THRESHOLD -> AdaptiveThresholdOptimizer.run(state);
-				case TARGET_GAP, REUSE -> BranchingRegionalOptimizer.run(state);
-			};
+			return RemainingExactOptimizer.run(state);
 		}
 		catch(CancellationException cancelled) { return state.finish(StopReason.TIME_BUDGET); }
 		catch(MiniBucketLowerBound.ResourceLimitException limited) {

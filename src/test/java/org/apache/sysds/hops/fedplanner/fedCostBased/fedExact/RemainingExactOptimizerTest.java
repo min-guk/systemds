@@ -4,7 +4,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CertifiedRegionalOptimizer.ExpansionPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
@@ -172,10 +171,8 @@ public class RemainingExactOptimizerTest {
 	private static Result solve(RegionalSearchProblem problem, Fixture fixture,
 		double relativeTolerance, long closureWork) {
 		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
-			2, 2, 1, 1, fixture.variables.size(), 60_000L, 0d, relativeTolerance,
-			false, true, ExpansionPolicy.DISAGREEMENT, 20260908L, GENEROUS);
-		Options options = new Options(Algorithm.REMAINING_EXACT, common,
-			1, 1, 1, 16, closureWork, 100_000L);
+			2, 60_000L, 0d, relativeTolerance, GENEROUS);
+		Options options = new Options(Algorithm.REMAINING_EXACT, common, closureWork);
 		return RegionalSearchOptimizer.optimize(problem, fixture.seed, options, ignored -> { });
 	}
 

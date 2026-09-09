@@ -167,27 +167,18 @@ public class RegionalSearchProblemTest {
 			Factor.dense(List.of(decision), 0d, 1d),
 			Factor.dense(List.of(auxA, auxB, auxC), zeros)), 1);
 
-		RegionalSearchOptimizer.State limited = new RegionalSearchOptimizer.State(problem,
-			List.of(1), searchOptions(1), ignored -> { });
-		IllegalArgumentException skipped = Assert.assertThrows(IllegalArgumentException.class,
-			() -> limited.region(problem.unconstrained(), Set.of(0), List.of(1)));
-		Assert.assertTrue(skipped.getMessage().startsWith("REGIONAL_SEARCH_WORK_LIMIT_EXCEEDED"));
-		Assert.assertEquals(List.of(1), limited.assignment);
-		Assert.assertEquals(1d, limited.upper, 0d);
-		Assert.assertEquals(0d, limited.lower, 0d);
-		Assert.assertEquals(1L, limited.stats.get("regionWorkSkips"));
-		Assert.assertTrue(limited.stats.get("regionPreflightAssignments") > 1L);
-		Assert.assertEquals(0L, limited.stats.get("regionCalls"));
-
-		RegionalSearchOptimizer.State admitted = new RegionalSearchOptimizer.State(problem,
-			List.of(1), searchOptions(10_000), ignored -> { });
-		RegionalSearchProblem.Solution solution = admitted.region(
-			problem.unconstrained(), Set.of(0), List.of(1));
+		RegionalSearchProblem.RegionalWork limited = problem.preflightRegion(
+			problem.unconstrained(), Set.of(0), List.of(1), LIMITS, 1, () -> false);
+		Assert.assertFalse(limited.admitted());
+		Assert.assertTrue(limited.eliminationAssignments() > 1);
+		Assert.assertEquals(1d, problem.evaluate(List.of(1)), 0d);
+		Assert.assertTrue(problem.preflightRegion(problem.unconstrained(), Set.of(0),
+			List.of(1), LIMITS, 10_000, () -> false).admitted());
+		RegionalSearchProblem.Solution solution = problem.solveRegion(
+			problem.unconstrained(), Set.of(0), List.of(1), LIMITS, () -> false);
 		Assert.assertTrue(solution.feasible());
 		Assert.assertEquals(List.of(0), solution.assignment());
 		Assert.assertEquals(0d, solution.objective(), 0d);
-		Assert.assertEquals(0L, admitted.stats.get("regionWorkSkips"));
-		Assert.assertEquals(1L, admitted.stats.get("regionCalls"));
 	}
 
 	@Test
@@ -197,16 +188,19 @@ public class RegionalSearchProblemTest {
 		try {
 			System.setProperty(key, "legacy");
 			Assert.assertNull(RegionalSearchOptimizer.Options.configured(null));
-			CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
-				1, 1, 1, 1, 1, 1, 0d, 0d, true, true,
-				CertifiedRegionalOptimizer.ExpansionPolicy.DISAGREEMENT, 1L, LIMITS);
-			System.setProperty(key, "anytime-target");
-			Assert.assertEquals(RegionalSearchOptimizer.Algorithm.ANYTIME_TARGET,
+			CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(1, 1, 0d, 0d, LIMITS);
+			System.setProperty(key, "remaining-exact");
+			Assert.assertEquals(RegionalSearchOptimizer.Algorithm.REMAINING_EXACT,
 				RegionalSearchOptimizer.Options.configured(common).algorithm());
-			System.setProperty(key, "reuse");
 			Assert.assertThrows(IllegalArgumentException.class, () -> RegionalSearchOptimizer.Options.configured(null));
-			System.setProperty(key, "typo");
-			Assert.assertThrows(IllegalArgumentException.class, () -> RegionalSearchOptimizer.Options.configured(null));
+			for(String removed : List.of("legacy", "anytime-target", "anytime-incremental", "threshold", "target-gap", "reuse", "typo")) {
+				System.setProperty(key, removed);
+				Assert.assertThrows(IllegalArgumentException.class, () -> RegionalSearchOptimizer.Options.configured(common));
+			}
+			System.clearProperty(key);
+			Assert.assertNull(RegionalSearchOptimizer.Options.configured(null));
+			Assert.assertEquals(RegionalSearchOptimizer.Algorithm.REMAINING_EXACT,
+				RegionalSearchOptimizer.Options.configured(common).algorithm());
 		}
 		finally {
 			if(previous == null)
@@ -226,11 +220,4 @@ public class RegionalSearchProblemTest {
 		return constructor.newInstance(variables, factors, decisionCount, evaluator);
 	}
 
-	private static RegionalSearchOptimizer.Options searchOptions(long regionalWorkLimit) {
-		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
-			1, 1, 2, 1, 1, 10_000, 0d, 0d, true, true,
-			CertifiedRegionalOptimizer.ExpansionPolicy.DISAGREEMENT, 19L, LIMITS);
-		return new RegionalSearchOptimizer.Options(RegionalSearchOptimizer.Algorithm.THRESHOLD,
-			common, 4, 1, 1, 8, 0L, regionalWorkLimit);
-	}
 }
