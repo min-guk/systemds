@@ -4681,6 +4681,11 @@ public final class NeutralPlacementGraphBuilder {
 		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(consultedFacts,
 			requiredFacts, new ArrayList<>(proof.missingRequiredFacts()));
 		List<List<FType>> profileInputs = profileInputDomains(inputShapeFacts, inputs);
+		// This native replica matmul requires an actually local LHS. Expanding that
+		// exact absence into every matrix FType loses its BROADCAST output profile.
+		if(hop instanceof AggBinaryOp && inputs.size() == 2
+			&& inputs.get(0) == null && inputs.get(1) == FType.BROADCAST)
+			profileInputs = List.of(Collections.singletonList(null), List.of(FType.BROADCAST));
 		CandidateProfileFact profile;
 		try {
 			if(exactRightIndex != null)

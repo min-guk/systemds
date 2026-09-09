@@ -66,6 +66,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersion
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
 /** Shared exact physical objective over the canonical placement analysis. */
 public final class ExactPhysicalCostModel {
@@ -475,7 +476,8 @@ public final class ExactPhysicalCostModel {
 			ExactPhysicalModel.Alternative alternative = domain.alternatives().get(value);
 			PlacementState state = alternative.state();
 			if(state.execType() == ExecType.CP) {
-				execution[value] = cpUnaryCost(analysis, domain.node().key(), hop, weight);
+				execution[value] = cpUnaryCost(analysis, sparseAssignments,
+					domain.node().key(), hop, weight);
 				if(state.output() == FederatedOutput.FOUT)
 					nativeCpUpload[value] = physicalResultUploadCost(analysis, sparseAssignments,
 						domain.node().key(), hop, state.fType(), workers, weight);
@@ -1189,7 +1191,7 @@ public final class ExactPhysicalCostModel {
 					FederatedCostModel.MixedFedLocalCost mixed =
 						PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
 							edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
-							unitLocalCost(analysis, edge.consumer(), consumerHop),
+							unitLocalCost(analysis, sparseAssignments, edge.consumer(), consumerHop),
 							effectiveOutputBytes(analysis, sparseAssignments,
 								edge.consumer(), consumerHop), targetWorkers);
 					double cost;
@@ -1266,11 +1268,24 @@ public final class ExactPhysicalCostModel {
 			ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
 			if(source == null || formal == null)
 				continue;
+			Hop sourceHop = analysis.hop(source.node().key()).orElseThrow();
 			double bytes = sparseAssignments.serializedEstimate(source.node().key());
+			boolean unresolvedMatrixShape = sourceHop.getDataType() != null
+				&& sourceHop.getDataType().isMatrix()
+				&& (!sourceHop.dimsKnown() || sourceHop.getDim1() <= 0 || sourceHop.getDim2() <= 0);
+			if((!Double.isFinite(bytes) || bytes <= 0.0) && unresolvedMatrixShape) {
+				bytes = PlacementCostSemantics.analysisAwareDenseOutputBytes(
+					analysis, source.node().key());
+				if(Double.isFinite(bytes) && bytes > 0.0 && sourceHop.getNnz() >= 0) {
+					var shape = analysis.abstractShapeFact(source.node().key()).orElseThrow();
+					bytes = MatrixBlock.estimateSizeOnDisk(
+						shape.rows().value(), shape.cols().value(), sourceHop.getNnz());
+				}
+			}
 			if(!Double.isFinite(bytes) || bytes <= 0.0)
 				bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
 					analysis.hop(formal.node().key()).orElseThrow(),
-					analysis.hop(source.node().key()).orElseThrow());
+					sourceHop);
 			double callWeight = frequencies.logicalFunctionCallWeight(input.authority());
 			List<FType> sourceTypes = source.alternatives().stream().map(a -> a.state().fType())
 				.filter(Objects::nonNull).distinct().toList();
@@ -1342,7 +1357,7 @@ public final class ExactPhysicalCostModel {
 	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop,
 		List<FType> inputFTypes, FType executionFType, int workers, double executionWeight) {
-		double base = cpUnaryCost(analysis, key, hop, executionWeight);
+		double base = cpUnaryCost(analysis, sparseAssignments, key, hop, executionWeight);
 		return fedCostProjection(analysis, key, hop, inputFTypes, executionFType, workers,
 			executionWeight, base, effectiveOutputBytes(analysis, sparseAssignments, key, hop),
 			effectiveUploadBytes(analysis, sparseAssignments, key, hop));
@@ -1428,11 +1443,11 @@ public final class ExactPhysicalCostModel {
 		return hasMatrix;
 	}
 
-	private static double unitLocalCost(PlacementAnalysis analysis, CompiledHopKey key,
-			Hop hop) {
+	private static double unitLocalCost(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
 		if(analysis.hop(key).orElse(null) != hop)
 			throw new IllegalArgumentException("EXACT_COST_HOP_OCCURRENCE_MISMATCH");
-		return PlacementCostSemantics.analysisAwareUnitLocalCost(analysis, key);
+		return PlacementCostSemantics.analysisAwareUnitLocalCost(analysis, sparseAssignments, key);
 	}
 
 	private static double effectiveOutputBytes(PlacementAnalysis analysis,
@@ -1566,9 +1581,10 @@ public final class ExactPhysicalCostModel {
 			.toList();
 	}
 
-	private static double cpUnaryCost(PlacementAnalysis analysis, CompiledHopKey key,
+	private static double cpUnaryCost(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key,
 			Hop hop, double executionWeight) {
-		double unit = unitLocalCost(analysis, key, hop);
+		double unit = unitLocalCost(analysis, sparseAssignments, key, hop);
 		return requireCost(executionWeight * unit, "EXACT_CP_COST_UNPROVEN");
 	}
 

@@ -42,6 +42,19 @@ public class RulesetsGuardTest {
   private static final ShapeHint KNOWN_SHAPE = new ShapeHint(10, 10, 1000);
 
   @Test
+  public void mmReplicaCandidateRequiresExactlyTwoInputs() {
+    Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
+    OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, Map.of());
+    for (List<FType> inputs : List.of(List.of(FType.BROADCAST),
+        java.util.Arrays.asList(null, FType.BROADCAST, FType.ROW))) {
+      OpCaps caps = rule.caps(sig, inputs, KNOWN_SHAPE);
+      assertEquals(ExecType.CP, caps.exec());
+      assertEquals(ReasonCode.ARITY_MISMATCH, caps.reason());
+    }
+  }
+
+
+  @Test
   public void ewiseSingleNodeNoCachingKeepsFout() {
     Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
     OpSig sig = sig(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(
@@ -155,6 +168,61 @@ public class RulesetsGuardTest {
     assertEquals(ExecType.FED, capsLocalLeft.exec());
     assertEquals(FederatedOutput.FOUT, capsLocalLeft.placement());
     assertEquals(FType.FULL, capsLocalLeft.foutFType().orElse(null));
+  }
+
+  @Test
+  public void mmLocalTimesBroadcastRetainsReplicatedResult() {
+    Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
+    OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, Map.of());
+    OpCaps caps = rule.caps(sig, java.util.Arrays.asList(null, FType.BROADCAST), KNOWN_SHAPE);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
+    assertEquals(FType.BROADCAST, caps.foutFType().orElse(null));
+    assertTrue(caps.foutEnabled());
+    assertEquals(List.of(FType.BROADCAST), rule.profile(sig,
+        List.of(java.util.Arrays.asList((FType) null), List.of(FType.BROADCAST)), KNOWN_SHAPE).outputs());
+  }
+
+  @Test
+  public void mmLocalBroadcastRepairDoesNotEnableOtherReplicaCombinations() {
+    Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
+    OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, Map.of());
+    for(List<FType> inputs : List.of(java.util.Arrays.asList(FType.BROADCAST, null),
+        List.of(FType.BROADCAST, FType.BROADCAST))) {
+      assertEquals(ExecType.CP, rule.caps(sig, inputs, KNOWN_SHAPE).exec());
+      assertTrue(rule.profile(sig, List.of(java.util.Arrays.asList(inputs.get(0)),
+          java.util.Arrays.asList(inputs.get(1))), KNOWN_SHAPE).outputs().isEmpty());
+    }
+    OpCaps row = rule.caps(sig, java.util.Arrays.asList(null, FType.ROW), KNOWN_SHAPE);
+    assertEquals(ExecType.FED, row.exec());
+    assertEquals(FederatedOutput.LOUT, row.placement());
+  }
+
+  @Test
+  public void mmLocalBroadcastStillHonorsRepresentationGuard() {
+    Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
+    OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, Map.of(
+        "rc.guardOverride", "false"));
+    OpCaps caps = rule.caps(sig, java.util.Arrays.asList(null, FType.BROADCAST), KNOWN_SHAPE);
+    assertFalse(caps.foutEnabled());
+  }
+
+  @Test
+  public void transientBindingsPreserveBroadcastWithoutCollectingIt() {
+    OpSig write = sig("TWrite", OpCategory.OTHER, Map.of());
+    OpSig read = sig("TRead", OpCategory.OTHER, Map.of());
+    Rulesets.TransientWriteRule writer = new Rulesets.TransientWriteRule();
+    Rulesets.TransientReadRule reader = new Rulesets.TransientReadRule();
+    for(OpCaps caps : List.of(writer.caps(write, List.of(FType.BROADCAST), KNOWN_SHAPE),
+        reader.caps(read, List.of(FType.BROADCAST), KNOWN_SHAPE))) {
+      assertEquals(ExecType.FED, caps.exec());
+      assertEquals(FederatedOutput.FOUT, caps.placement());
+      assertEquals(FType.BROADCAST, caps.foutFType().orElse(null));
+    }
+    List<List<FType>> input = List.of(List.of(FType.BROADCAST));
+    assertEquals(List.of(FType.BROADCAST), writer.profile(write, input, KNOWN_SHAPE).outputs());
+    assertEquals(List.of(FType.BROADCAST), reader.profile(read, input, KNOWN_SHAPE).outputs());
+    assertEquals(ExecType.CP, writer.caps(write, java.util.Arrays.asList((FType) null), KNOWN_SHAPE).exec());
   }
 
   @Test

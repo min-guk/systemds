@@ -74,8 +74,199 @@ public class FederatedRefedPolicyTest {
 	public void clearFedInitState() {
 		// Tests mutate global planner state (fed-init vars / anchor keys). Reset for isolation.
 		FederatedPlannerUtils.clearFedInitVars();
+		FederatedPlannerUtils.clearPlannerRecompileStates();
 		FederatedRefedPolicy.registerFromProgram(null);
 		FederatedRefedPolicy.clearHeuristicDemotedHops();
+		FederatedLocalMaterializeRegistry.clear();
+	}
+
+	@Test
+	public void testRuntimeRecompileProjectsSameIdMembersOfRepeatedSignatureForLocalConsumers()
+		throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp first = createGmmReturnWrite("log_det", producer);
+		DataOp second = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(first, 1669L);
+		setPlannerOrigin(second, 1669L);
+		FederatedPlannerUtils.registerPlannerRecompileState(first, ExecType.CP, FederatedOutput.LOUT);
+		FederatedPlannerUtils.registerPlannerRecompileState(second, ExecType.CP, FederatedOutput.LOUT);
+
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, producer.getHopID(), List.of(
+			new FederatedLocalMaterializeRegistry.ConsumerInputSpec(first.getHopID(), 0),
+			new FederatedLocalMaterializeRegistry.ConsumerInputSpec(second.getHopID(), 0)),
+			"ROW", "GMM shared local result", "gmm-local-action");
+		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preserved =
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes();
+		FederatedLocalMaterializeRegistry.clear();
+
+		invokeRestoreRuntimeLocalMaterialize(preserved, List.of(producer, first, second));
+
+		FederatedLocalMaterializeRegistry.LocalMaterializeSpec restored =
+			FederatedLocalMaterializeRegistry.snapshot(-1L).get(producer.getHopID());
+		assertTrue("The shared LOCAL action must survive repeated-signature projection", restored != null);
+		assertEquals("Both exact GMM return-root input obligations must survive projection",
+			List.of(
+				new FederatedLocalMaterializeRegistry.ConsumerInputSpec(first.getHopID(), 0),
+				new FederatedLocalMaterializeRegistry.ConsumerInputSpec(second.getHopID(), 0)),
+			restored.getConsumerInputs());
+	}
+
+	@Test
+	public void testRuntimeRecompileCloneProjectsRepeatedSignatureAcrossGenerations()
+		throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp first = createGmmReturnWrite("log_det", producer);
+		DataOp second = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(first, 1669L);
+		setPlannerOrigin(second, 1669L);
+		FederatedPlannerUtils.registerPlannerRecompileState(first, ExecType.CP, FederatedOutput.LOUT);
+		FederatedPlannerUtils.registerPlannerRecompileState(second, ExecType.CP, FederatedOutput.LOUT);
+		FederatedLocalMaterializeRegistry.registerConsumerInputs(-1L, producer.getHopID(), List.of(
+			new FederatedLocalMaterializeRegistry.ConsumerInputSpec(first.getHopID(), 0),
+			new FederatedLocalMaterializeRegistry.ConsumerInputSpec(second.getHopID(), 0)),
+			"ROW", "GMM shared local result", "gmm-local-action");
+		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preserved =
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes();
+
+		Map<Long, Hop> firstCopyMemo = new HashMap<>();
+		List<Hop> firstCopyRoots = invokeDeepCopyHopsDagForRecompile(
+			List.of(first, second), firstCopyMemo);
+		Hop firstCopyProducer = firstCopyMemo.get(producer.getHopID());
+		assertTrue(firstCopyProducer != null);
+		assertTrue(firstCopyRoots.get(0).getHopID() != first.getHopID());
+		assertTrue(firstCopyRoots.get(1).getHopID() != second.getHopID());
+		invokeRestoreRuntimeLocalMaterialize(preserved,
+			List.of(firstCopyProducer, firstCopyRoots.get(0), firstCopyRoots.get(1)));
+		assertProjectedLocalConsumers(firstCopyProducer, firstCopyRoots);
+
+		Map<Long, Hop> secondCopyMemo = new HashMap<>();
+		List<Hop> secondCopyRoots = invokeDeepCopyHopsDagForRecompile(firstCopyRoots, secondCopyMemo);
+		Hop secondCopyProducer = secondCopyMemo.get(firstCopyProducer.getHopID());
+		assertTrue(secondCopyProducer != null);
+		invokeRestoreRuntimeLocalMaterialize(preserved,
+			List.of(secondCopyProducer, secondCopyRoots.get(0), secondCopyRoots.get(1)));
+		assertProjectedLocalConsumers(secondCopyProducer, secondCopyRoots);
+	}
+
+	@Test
+	public void testRuntimeRecompileCloneKeepsAncestryForUnregisteredAndGenericCopies() throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp unregistered = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(unregistered, 1669L);
+
+		Hop runtimeClone = invokeDeepCopyHopsDagForRecompile(
+			List.of(unregistered), new HashMap<>()).get(0);
+		assertEquals("An unregistered runtime root must retain its prior ancestry",
+			1669L, runtimeClone.getPlannerOriginHopID());
+		assertTrue(runtimeClone.getPlannerOriginHopID() != unregistered.getHopID());
+
+		FederatedPlannerUtils.registerPlannerRecompileState(unregistered,
+			ExecType.CP, FederatedOutput.LOUT);
+		Hop genericClone = Recompiler.deepCopyHopsDag(unregistered);
+
+		assertEquals("A generic copy must not acquire runtime-recompile occurrence authority",
+			1669L, genericClone.getPlannerOriginHopID());
+		assertTrue(genericClone.getPlannerOriginHopID() != unregistered.getHopID());
+	}
+
+	@Test
+	public void testRuntimeRecompileCloneKeepsAncestryWhenRegisteredSignatureNoLongerMatches()
+		throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp changed = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(changed, 1669L);
+		FederatedPlannerUtils.registerPlannerRecompileState(changed, ExecType.CP, FederatedOutput.LOUT);
+		changed.setBeginLine(314);
+		changed.setEndLine(314);
+
+		Hop clone = invokeDeepCopyHopsDagForRecompile(List.of(changed), new HashMap<>()).get(0);
+
+		assertEquals("A changed signature must not borrow the registered occurrence ID",
+			1669L, clone.getPlannerOriginHopID());
+		assertTrue(clone.getPlannerOriginHopID() != changed.getHopID());
+	}
+
+	@Test
+	public void testRuntimeRecompileCloneKeepsOwnerAncestryForLoweringAuxiliaryAndReplacement()
+		throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp owner = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(owner, 1669L);
+		FederatedPlannerUtils.registerPlannerRecompileState(owner, ExecType.CP, FederatedOutput.LOUT);
+		UnaryOp auxiliary = HopRewriteUtils.createUnary(owner, OpOp1.CAST_AS_MATRIX);
+		auxiliary.setPlannerLoweringAuxiliary(owner, "test-auxiliary");
+		setSourcePosition(auxiliary, 315);
+		UnaryOp replacement = HopRewriteUtils.createUnary(owner, OpOp1.CAST_AS_MATRIX);
+		replacement.setPlannerRewriteReplacementIdentity(owner, "test-replacement");
+		setSourcePosition(replacement, 316);
+		FederatedPlannerUtils.registerPlannerRecompileState(auxiliary,
+			ExecType.CP, FederatedOutput.LOUT);
+		FederatedPlannerUtils.registerPlannerRecompileState(replacement,
+			ExecType.CP, FederatedOutput.LOUT);
+
+		Hop auxiliaryClone = invokeDeepCopyHopsDagForRecompile(
+			List.of(auxiliary), new HashMap<>()).get(0);
+		Hop replacementClone = invokeDeepCopyHopsDagForRecompile(
+			List.of(replacement), new HashMap<>()).get(0);
+
+		assertEquals("A lowering auxiliary clone must retain its owner's ancestry",
+			owner.getPlannerOriginHopID(), auxiliaryClone.getPlannerOriginHopID());
+		assertEquals("A rewrite replacement clone must retain its owner's ancestry",
+			owner.getPlannerOriginHopID(), replacementClone.getPlannerOriginHopID());
+		assertTrue(auxiliaryClone.getPlannerOriginHopID() != auxiliary.getHopID());
+		assertTrue(replacementClone.getPlannerOriginHopID() != replacement.getHopID());
+	}
+
+	@Test
+	public void testRuntimeRecompileRejectsRepeatedSignatureWithoutExactIdMember() throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp first = createGmmReturnWrite("log_det", producer);
+		DataOp second = createGmmReturnWrite("log_det", producer);
+		DataOp absent = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(first, 1669L);
+		setPlannerOrigin(second, 1669L);
+		setPlannerOrigin(absent, 1669L);
+		FederatedPlannerUtils.registerPlannerRecompileState(absent, ExecType.CP, FederatedOutput.LOUT);
+
+		DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
+			() -> invokeResolveRuntimeHop(absent.getHopID(), List.of(first, second)));
+		assertTrue(ex.getMessage().contains("ambiguous recompile signature"));
+	}
+
+	@Test
+	public void testRuntimeRecompileRejectsSameIdWithWrongSignature() throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp first = createGmmReturnWrite("log_det", producer);
+		DataOp second = createGmmReturnWrite("log_det", producer);
+		DataOp wrongSignature = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(first, 1669L);
+		setPlannerOrigin(second, 1669L);
+		setPlannerOrigin(wrongSignature, 1669L);
+		FederatedPlannerUtils.registerPlannerRecompileState(wrongSignature,
+			ExecType.CP, FederatedOutput.LOUT);
+		wrongSignature.setBeginLine(314);
+		wrongSignature.setEndLine(314);
+
+		DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
+			() -> invokeResolveRuntimeHop(wrongSignature.getHopID(),
+				List.of(first, second, wrongSignature)));
+		assertTrue(ex.getMessage().contains("ambiguous recompile signature"));
+	}
+
+	@Test
+	public void testRuntimeRecompileRejectsDuplicateExactRuntimeId() throws Exception {
+		DataOp producer = createFederatedInput("shared", 10, 1);
+		DataOp selected = createGmmReturnWrite("log_det", producer);
+		DataOp duplicate = createGmmReturnWrite("log_det", producer);
+		setPlannerOrigin(selected, 1669L);
+		setPlannerOrigin(duplicate, 1669L);
+		setHopId(duplicate, selected.getHopID());
+		FederatedPlannerUtils.registerPlannerRecompileState(selected,
+			ExecType.CP, FederatedOutput.LOUT);
+
+		DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
+			() -> invokeResolveRuntimeHop(selected.getHopID(), List.of(selected, duplicate)));
+		assertTrue(ex.getMessage().contains("ambiguous recompile signature"));
 	}
 
 	@Test
@@ -1942,6 +2133,96 @@ public class FederatedRefedPolicyTest {
 		tWrite.setDim1(rows);
 		tWrite.setDim2(cols);
 		return tWrite;
+	}
+
+	private static DataOp createGmmReturnWrite(String name, Hop input) {
+		DataOp write = createTransientWrite(name, input, input.getDim1(), input.getDim2());
+		setSourcePosition(write, 313);
+		write.setForcedExecType(ExecType.CP);
+		write.setFederatedOutput(FederatedOutput.LOUT);
+		return write;
+	}
+
+	private static void setSourcePosition(Hop hop, int line) {
+		hop.setBeginLine(line);
+		hop.setBeginColumn(2);
+		hop.setEndLine(line);
+		hop.setEndColumn(2);
+	}
+
+	private static void setPlannerOrigin(Hop hop, long origin) throws Exception {
+		java.lang.reflect.Field field = Hop.class.getDeclaredField("_plannerOriginHopID");
+		field.setAccessible(true);
+		field.setLong(hop, origin);
+	}
+
+	private static void setHopId(Hop hop, long hopId) throws Exception {
+		java.lang.reflect.Field field = Hop.class.getDeclaredField("_ID");
+		field.setAccessible(true);
+		field.setLong(hop, hopId);
+	}
+
+	private static Hop invokeResolveRuntimeHop(long plannerHopId, List<Hop> runtimeHops)
+		throws Exception {
+		java.lang.reflect.Method indexMethod = FederatedRefedPolicy.class.getDeclaredMethod(
+			"runtimeHopIndex", List.class);
+		indexMethod.setAccessible(true);
+		Object index = indexMethod.invoke(null, runtimeHops);
+		Class<?> indexClass = Class.forName(FederatedRefedPolicy.class.getName() + "$RuntimeHopIndex");
+		java.lang.reflect.Method resolveMethod = FederatedRefedPolicy.class.getDeclaredMethod(
+			"resolveRuntimeHop", long.class, indexClass);
+		resolveMethod.setAccessible(true);
+		try {
+			return (Hop) resolveMethod.invoke(null, plannerHopId, index);
+		}
+		catch(java.lang.reflect.InvocationTargetException ex) {
+			if(ex.getCause() instanceof Exception cause)
+				throw cause;
+			throw ex;
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<Hop> invokeDeepCopyHopsDagForRecompile(List<Hop> roots,
+		Map<Long, Hop> memo) throws Exception {
+		java.lang.reflect.Method copy = Recompiler.class.getDeclaredMethod(
+			"deepCopyHopsDagForRecompile", List.class, Map.class);
+		copy.setAccessible(true);
+		try {
+			return (List<Hop>) copy.invoke(null, roots, memo);
+		}
+		catch(java.lang.reflect.InvocationTargetException ex) {
+			if(ex.getCause() instanceof Exception cause)
+				throw cause;
+			throw ex;
+		}
+	}
+
+	private static void invokeRestoreRuntimeLocalMaterialize(
+		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preserved,
+		List<Hop> runtimeHops) throws Exception {
+		java.lang.reflect.Method restore = FederatedRefedPolicy.class.getDeclaredMethod(
+			"restoreReachableRuntimeLocalMaterialize", Map.class, List.class);
+		restore.setAccessible(true);
+		try {
+			restore.invoke(null, preserved, runtimeHops);
+		}
+		catch(java.lang.reflect.InvocationTargetException ex) {
+			if(ex.getCause() instanceof Exception cause)
+				throw cause;
+			throw ex;
+		}
+	}
+
+	private static void assertProjectedLocalConsumers(Hop producer, List<Hop> consumers) {
+		FederatedLocalMaterializeRegistry.LocalMaterializeSpec restored =
+			FederatedLocalMaterializeRegistry.snapshot(-1L).get(producer.getHopID());
+		assertTrue("The shared LOCAL action must project to the cloned producer", restored != null);
+		assertEquals("Each clone generation must retain both exact consumer input obligations",
+			List.of(
+				new FederatedLocalMaterializeRegistry.ConsumerInputSpec(consumers.get(0).getHopID(), 0),
+				new FederatedLocalMaterializeRegistry.ConsumerInputSpec(consumers.get(1).getHopID(), 0)),
+			restored.getConsumerInputs());
 	}
 
 	@SuppressWarnings({"rawtypes", "unchecked"})

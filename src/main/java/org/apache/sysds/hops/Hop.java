@@ -213,6 +213,19 @@ public abstract class Hop implements ParseInfo {
 		return _plannerOriginHopID;
 	}
 
+	/**
+	 * Preserve a committed occurrence when recompilation clones its exact source Hop.
+	 * The caller supplies the source ID from the deep-copy memo, not from a signature match.
+	 * Unregistered copies and modeled helpers/replacements retain their existing ancestry.
+	 */
+	public void bindPlannerRecompileCloneIdentity(long sourceHopId) {
+		if(_plannerLoweringAuxiliaryKind != null || _plannerRewriteReplacementKind != null)
+			return;
+		String signature = FederatedPlannerUtils.getPlannerRecompileSignatureForHopId(sourceHopId);
+		if(signature != null && signature.equals(FederatedPlannerUtils.plannerRecompileSignature(this)))
+			_plannerOriginHopID = sourceHopId;
+	}
+
 	public String getPlannerLoweringAuxiliaryKind() {
 		return _plannerLoweringAuxiliaryKind;
 	}
