@@ -35,16 +35,13 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
@@ -82,7 +79,7 @@ public class PrivateAggregateFourPlannerContractTest {
 				DMLProgram program = compile(source
 					+ "B=outer(A,t(seq(1,3)),\"==\");C=colSums(B);print(sum(C*C));\n");
 				new DMLTranslator(program).rewriteHopsDAG(program);
-				PlannedProgram plan = planFresh(planner, program, false);
+				PlannedProgram plan = planFresh(planner, program);
 				if(domain == null)
 					domain = plan.analysis().analysisFingerprint();
 				Assert.assertEquals(planner.name(), domain, plan.analysis().analysisFingerprint());
@@ -164,98 +161,32 @@ public class PrivateAggregateFourPlannerContractTest {
 		}
 	}
 
-	@Test
-	public void legacyDpPreservesLogicalValueAuthorityForBranchPhiReads() throws Exception {
-		PlannedProgram plan = planFresh(PlannerKind.DP, FEDERATED_SOURCE
-			+ "if(sum(A)>0){B=A+1;}else{B=cbind(A,A);}C=B+1;print(sum(C));\n", true);
-		var analysis = plan.analysis();
-		var read = analysis.compiledHopOccurrences().stream()
-			.filter(occurrence -> occurrence.hop() instanceof DataOp data
-				&& data.getOp() == org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD
-				&& "B".equals(data.getName()))
-			.filter(occurrence -> analysis.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).size() == 2)
-			.findFirst().orElseThrow();
-		Assert.assertNotEquals("Fixture must distinguish semantic phi kind from the compiled TRead operation",
-			NodeKind.TRANSIENT_READ, analysis.graph().node(read.key()).orElseThrow().kind());
-		var sources = analysis.logicalTransientInputsInCanonicalOrder().stream()
-			.filter(fact -> fact.targetRead() == read.key()).toList();
-		Assert.assertEquals("Both native reaching definitions must retain their logical authority", 2, sources.size());
-		DpInvocationReceipt receipt = (DpInvocationReceipt) plan.receipt();
-		var snapshot = receipt.semanticConsumption().semanticBlock().candidateSnapshots().stream()
-			.filter(candidate -> candidate.parentOccurrence() == read.key() && candidate.logicalEntries().size() == 2)
-			.findFirst().orElseThrow();
-		Assert.assertTrue(snapshot.transientForwardDependencies().isEmpty());
-		Assert.assertTrue(snapshot.cfgTransientDependencies().isEmpty());
-		for(var source : sources)
-			Assert.assertTrue("The receipt must consume the exact analysis-owned logical fact",
-				snapshot.logicalEntries().stream().anyMatch(entry -> entry.fact() == source));
-		assertProtectedRemote(PlannerKind.DP, plan.result().selectedStates().get(read.key()));
-	}
+
 
 	@Test
-	public void legacyDpConsumesExactCfgDefinitionsWhenLogicalReplayIsUnavailable() throws Exception {
-		PlannedProgram plan = planFresh(PlannerKind.DP, NON_REPLAYABLE_MATRIX_CFG_PROGRAM, true);
+	public void regionalConsumesAllCfgDefinitionsWhenLogicalReplayIsUnavailable() throws Exception {
+		PlannedProgram plan = planFresh(PlannerKind.REGIONAL, NON_REPLAYABLE_MATRIX_CFG_PROGRAM);
 		PlacementAnalysis analysis = plan.analysis();
 		var read = analysis.compiledHopOccurrences().stream()
 			.filter(occurrence -> occurrence.hop() instanceof DataOp data
-				&& data.getDataType().isMatrix()
-				&& "B".equals(data.getName())
+				&& data.getDataType().isMatrix() && "B".equals(data.getName())
 				&& data.getOp() == org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD)
 			.filter(occurrence -> !analysis.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).isEmpty())
-			.filter(occurrence -> analysis.logicalTransientInputsInCanonicalOrder().stream()
-				.noneMatch(fact -> fact.targetRead() == occurrence.key()))
 			.findFirst().orElseThrow(() -> new AssertionError(
 				"fixture lost the non-replayable CFG transient boundary"));
-		List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey> sources =
-			analysis.cfgDefinitionSourcesInCanonicalOrder(read.key());
-		Assert.assertFalse(sources.isEmpty());
-		PlacementState readState = plan.result().selectedStates().get(read.key());
-		Assert.assertNotNull("DP omitted the CFG-backed transient read", readState);
-		DpInvocationReceipt dp = (DpInvocationReceipt) plan.receipt();
-		var snapshot = dp.semanticConsumption().semanticBlock().candidateSnapshots().stream()
-			.filter(candidate -> candidate.parentOccurrence() == read.key())
-			.filter(candidate -> !candidate.cfgTransientDependencies().isEmpty())
-			.findFirst().orElseThrow(() -> new AssertionError("DP omitted the typed CFG dependency receipt"));
-		Assert.assertTrue("CFG alternatives leaked into physical kernel oracle arity",
-			snapshot.orderedOracleInputs().isEmpty());
-		Assert.assertEquals(sources, snapshot.cfgTransientDependencies().stream()
-			.map(dependency -> dependency.sourceOccurrence()).toList());
+		var sources = analysis.cfgDefinitionSourcesInCanonicalOrder(read.key());
 		Assert.assertTrue("fixture must exercise an all-definitions CFG join", sources.size() > 1);
-		Assert.assertThrows("A partial CFG receipt must fail closed", IllegalArgumentException.class,
-			() -> new DpPlacementAdapter.CandidateOccurrenceSnapshot(snapshot.context(),
-				snapshot.parentOccurrence(), snapshot.rawEntries(), snapshot.promotedEntries(),
-				snapshot.logicalEntries(), snapshot.transientForwardDependencies(),
-				snapshot.cfgTransientDependencies().subList(0, 1), snapshot.functionOutputDependencies(),
-				snapshot.orderedOracleInputs(), snapshot.disposition(), snapshot.reasonCode()));
-		var firstDependency = snapshot.cfgTransientDependencies().get(0);
-		var copiedConstraint = new NeutralPlacementGraph.Constraint(firstDependency.constraint().kind(),
-			firstDependency.constraint().left(), firstDependency.constraint().right(),
-			firstDependency.constraint().inputPosition(), firstDependency.constraint().evidence());
-		var copiedDependency = new DpPlacementAdapter.CfgTransientDependencyEntry(copiedConstraint,
-			firstDependency.sourceOccurrence(), firstDependency.collectedPosition(),
-			firstDependency.selectedSourceState());
-		List<DpPlacementAdapter.CfgTransientDependencyEntry> foreign =
-			new ArrayList<>(snapshot.cfgTransientDependencies());
-		foreign.set(0, copiedDependency);
-		Assert.assertThrows("A value-equal but foreign CFG constraint must fail closed",
-			IllegalArgumentException.class,
-			() -> new DpPlacementAdapter.CandidateOccurrenceSnapshot(snapshot.context(),
-				snapshot.parentOccurrence(), snapshot.rawEntries(), snapshot.promotedEntries(),
-				snapshot.logicalEntries(), snapshot.transientForwardDependencies(), foreign,
-				snapshot.functionOutputDependencies(), snapshot.orderedOracleInputs(),
-				snapshot.disposition(), snapshot.reasonCode()));
+		PlacementState readState = plan.result().selectedStates().get(read.key());
+		Assert.assertNotNull("Regional omitted the CFG-backed transient read", readState);
 		for(var source : sources) {
-			Assert.assertTrue("CFG source is not an analysis-owned compiled TWrite",
-				analysis.hop(source).orElseThrow() instanceof DataOp data
-					&& data.getOp() == org.apache.sysds.common.Types.OpOpData.TRANSIENTWRITE);
 			PlacementState sourceState = plan.result().selectedStates().get(source);
-			Assert.assertNotNull("DP omitted a reaching CFG definition", sourceState);
+			Assert.assertNotNull("Regional omitted a reaching CFG definition", sourceState);
 			var constraints = analysis.graph().constraints().stream()
 				.filter(constraint -> constraint.left() == source && constraint.right() == read.key())
 				.filter(constraint -> constraint.evidence().startsWith("cfg-transient-value:"))
 				.toList();
 			Assert.assertEquals("CFG dependency must have one exact value constraint", 1, constraints.size());
-			Assert.assertTrue("DP selected incompatible CFG source/read layouts",
+			Assert.assertTrue("Regional selected incompatible CFG source/read layouts",
 				NeutralPlacementGraph.constraintSatisfied(constraints.get(0), sourceState, readState));
 		}
 	}
@@ -419,14 +350,10 @@ public class PrivateAggregateFourPlannerContractTest {
 	}
 
 	private static PlannedProgram planFresh(PlannerKind planner, String script) throws Exception {
-		return planFresh(planner, script, false);
+		return planFresh(planner, compile(script));
 	}
 
-	private static PlannedProgram planFresh(PlannerKind planner, String script, boolean legacyDp) throws Exception {
-		return planFresh(planner, compile(script), legacyDp);
-	}
-
-	private static PlannedProgram planFresh(PlannerKind planner, DMLProgram program, boolean legacyDp) throws Exception {
+	private static PlannedProgram planFresh(PlannerKind planner, DMLProgram program) throws Exception {
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		PlannerInvocationReceipt receipt = switch(planner) {
@@ -434,21 +361,8 @@ public class PrivateAggregateFourPlannerContractTest {
 				.rewriteProgram(program, null, null, analysis);
 			case HEURISTIC -> new FederatedPlannerFedHeuristicSinglePass()
 				.rewriteProgram(program, null, null, analysis);
-			case DP -> {
-				if(!legacyDp)
-					yield FederatedPlannerFactory.create(FederatedPlanner.COMPILE_COST_BASED)
-						.rewriteProgram(program, null, null, analysis);
-				try {
-					yield new FederatedPlannerDpFedCostBased().rewriteProgram(program, null, null, analysis);
-				}
-				catch(DpPlacementAdapter.DpSemanticConstructionException failure) {
-					var parent = failure.parentOccurrence();
-					throw new AssertionError(failure.reasonCode() + "|parent=" + parent.normalizedSignature()
-						+ "|cfgSources=" + analysis.cfgDefinitionSourcesInCanonicalOrder(parent)
-						+ "|logical=" + analysis.logicalTransientInputsInCanonicalOrder().stream()
-							.filter(fact -> fact.targetRead() == parent).toList(), failure);
-				}
-			}
+			case REGIONAL -> FederatedPlannerFactory.create(FederatedPlanner.COMPILE_COST_BASED)
+				.rewriteProgram(program, null, null, analysis);
 			case EXACT -> new FederatedPlanExact().rewriteProgram(program, null, null, analysis);
 		};
 		NormalizedPlannerResult result;
@@ -456,13 +370,11 @@ public class PrivateAggregateFourPlannerContractTest {
 			result = fedAll.normalizedResult();
 		else if(receipt instanceof HeuristicInvocationReceipt heuristic)
 			result = heuristic.normalizedResult();
-		else if(receipt instanceof DpInvocationReceipt dp)
-			result = dp.normalizedResult();
 		else if(receipt instanceof ExactPlacementInput exact)
 			result = exact.normalizedResult();
 		else
 			throw new AssertionError("Unexpected planner receipt " + receipt.getClass());
-		if(planner == PlannerKind.DP && !legacyDp)
+		if(planner == PlannerKind.REGIONAL)
 			Assert.assertEquals("Four-planner coverage must exercise the production local optimizer",
 				"DP-LocalConflict", result.plannerId());
 		return new PlannedProgram(planner, analysis, result, receipt);
@@ -504,7 +416,7 @@ public class PrivateAggregateFourPlannerContractTest {
 		return program;
 	}
 
-	private enum PlannerKind { FED_ALL, HEURISTIC, DP, EXACT }
+	private enum PlannerKind { FED_ALL, HEURISTIC, REGIONAL, EXACT }
 	private record PlannedProgram(PlannerKind planner, PlacementAnalysis analysis,
 		NormalizedPlannerResult result, PlannerInvocationReceipt receipt) { }
 }

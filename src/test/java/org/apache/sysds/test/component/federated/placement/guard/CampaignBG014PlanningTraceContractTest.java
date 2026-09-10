@@ -25,16 +25,12 @@ public class CampaignBG014PlanningTraceContractTest {
 	private static final Path TRACE = MAIN.resolve("fedplanner/fedCostBased/FederatedPlannerTrace.java");
 	private static final Path EMISSION = MAIN.resolve(
 		"fedplanner/placement/PlacementEmissionTransaction.java");
-	private static final Path DP = MAIN.resolve(
-		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
-	private static final Path DP_COST = MAIN.resolve(
-		"fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java");
 	private static final Path EXACT = MAIN.resolve(
 		"fedplanner/fedCostBased/fedExact/FederatedPlanExact.java");
 	private static final Path FEDALL = MAIN.resolve(
-		"fedplanner/fedAll/FederatedPlannerFedAll.java");
+		"fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java");
 	private static final Path HEURISTIC = MAIN.resolve(
-		"fedplanner/fedHeuristic/FederatedPlannerFedHeuristic.java");
+		"fedplanner/fedHeuristic/FederatedPlannerFedHeuristicSinglePass.java");
 
 	@Test
 	public void topLevelInvocationIdentifiesConfiguredPlannerAndImplementation() throws Exception {
@@ -105,63 +101,6 @@ public class CampaignBG014PlanningTraceContractTest {
 			"selected=", "inputs=", "executionFType=", "selectedCandidates=", "planFingerprint=",
 			"placementFingerprint=", "candidateFingerprint=", "hopMutations=", "registryWrites="})
 			assertTrue("emission audit is missing field " + field, source.contains(field));
-	}
-
-	@Test
-	public void dpDecisionMapDetailIsBoundedWithoutExplicitHopFilter() throws Exception {
-		String traceSource = Files.readString(TRACE);
-		String dpSource = Files.readString(DP);
-		assertTrue("trace API does not expose explicit hop-filter state",
-			traceSource.contains("boolean hasExplicitHopFilter()"));
-		assertTrue("DP unfiltered trace does not collapse repeated score targets",
-			dpSource.contains("FederatedPlannerTrace.hasExplicitHopFilter()"));
-		assertTrue("DP root detail does not use the configured edge budget",
-			dpSource.contains("FederatedPlannerTrace.getMaxEdgeLogsPerHop()"));
-		for(String summary : new String[] {"DP-DecisionMap-RootSummary",
-			"DP-DecisionMap-AltRootSummary", "DP-DecisionMap-BundleRootSummary"})
-			assertTrue("missing bounded-detail summary " + summary,
-				dpSource.contains("\"" + summary + "\""));
-	}
-
-	@Test
-	public void highVolumePlanningTraceIsInvocationScopedLazyAndStageBounded() throws Exception {
-		String traceSource = Files.readString(TRACE);
-		String dpSource = Files.readString(DP);
-		String dpCostSource = Files.readString(DP_COST);
-		assertTrue("trace API lacks a per-stage record budget",
-			traceSource.contains("TRACE_MAX_RECORDS_PER_STAGE"));
-		assertTrue("trace API eagerly formats messages that may be suppressed",
-			traceSource.contains("void logLazy(Hop hop, String stage, Supplier<String> messageSupplier)"));
-		assertTrue("trace budget is not reset for each planner invocation",
-			traceSource.contains("void beginInvocation()"));
-		assertTrue("trace budget does not emit an omission receipt",
-			traceSource.contains("void completeInvocation()")
-				&& traceSource.contains("Trace-SuppressionSummary"));
-
-		for(Path entryPoint : new Path[] {IPA, TRANSLATOR}) {
-			String source = Files.readString(entryPoint);
-			int begin = source.indexOf("FederatedPlannerTrace.beginInvocation()");
-			int invoke = source.indexOf("\"Planner-Invoke\"");
-			int complete = source.indexOf("FederatedPlannerTrace.completeInvocation()");
-			int receipt = source.indexOf("\"Planner-Complete\"");
-			assertTrue(entryPoint + " does not scope the trace budget around one planner invocation",
-				begin >= 0 && begin < invoke && complete > invoke && receipt > complete);
-		}
-
-		for(String stage : new String[] {"DP-OutputDecision-Member", "DP-ParentVariantCandidate",
-			"DP-ParentVariantSearch", "DP-ParentVariantResult", "DP-ParentVariantDelta",
-			"DP-OutputDecision-Entry"})
-			assertTrue("high-volume DP stage still eagerly logs: " + stage,
-				dpSource.contains("logLazy(") && lazyCallContains(dpSource, stage));
-		for(String stage : new String[] {"DP-BoundaryShare", "DP-StableTRShare", "DP-FoutCpShare"})
-			assertTrue("high-volume DP cost stage still eagerly logs: " + stage,
-				lazyCallContains(dpCostSource, stage));
-		assertFalse("enabling trace must not disable the production parent-variant cache",
-			dpSource.contains("if (!trace && parentVariantDeltaCache != null)"));
-		assertFalse("enabling trace must not disable the production decision-simulation cache",
-			dpSource.contains("simulationDecisionCache == null || FederatedPlannerTrace.isEnabled()"));
-		assertFalse("enabling trace must not disable the production transient-share cache",
-			dpSource.contains("transientReadPlanShareCache != null && !FederatedPlannerTrace.isEnabled()"));
 	}
 
 	private static boolean lazyCallContains(String source, String stage) {

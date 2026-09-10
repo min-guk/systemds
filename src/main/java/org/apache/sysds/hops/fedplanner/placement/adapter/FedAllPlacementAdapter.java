@@ -46,22 +46,21 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationCh
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
-import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
-import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementScore;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Mutation-free FedAll policy boundary over one supplied placement analysis. */
 public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<FedAllPlacementAdapter.Result> {
 	private static final String COMPONENT_DERIVATION = "independent-component-envelope";
-	private final PlacementAnalysisSelector selector;
+	private final PolicyFirstFeasiblePlacementSelector selector;
 
 	public FedAllPlacementAdapter() {
-		this(new ExactPlacementSelector());
+		this(new PolicyFirstFeasiblePlacementSelector());
 	}
 
-	public FedAllPlacementAdapter(PlacementAnalysisSelector selector) {
+	public FedAllPlacementAdapter(PolicyFirstFeasiblePlacementSelector selector) {
 		this.selector = Objects.requireNonNull(selector, "selector");
 	}
 
@@ -303,7 +302,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 			Objects.requireNonNull(boundDerivation, "boundDerivation");
 			Objects.requireNonNull(terminationReason, "terminationReason");
 			if(exploredCount < 0 || prunedCount < 0 || legalUniverseSize != exploredCount + prunedCount)
-				throw new IllegalArgumentException("invalid exact-search universe counts");
+				throw new IllegalArgumentException("invalid policy-selection universe counts");
 		}
 	}
 

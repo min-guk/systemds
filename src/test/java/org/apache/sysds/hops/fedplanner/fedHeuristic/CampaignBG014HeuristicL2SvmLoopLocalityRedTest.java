@@ -32,7 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPat
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -177,7 +177,7 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Assert.assertFalse("workers=" + workers + " must not use planner fallback",
 			selected.certificate().fallbackUsed());
 		Assert.assertEquals("workers=" + workers + " must emit exactly once without repair",
-			new FederatedPlannerFedHeuristic.InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0),
+			new FederatedPlannerFedHeuristicSinglePass.InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0),
 			receipt.counters());
 		Assert.assertEquals("workers=" + workers + " must retain a complete assignment",
 			selected.selectorGraph().decisionNodes().size(), selected.assignment().size());

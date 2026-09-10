@@ -79,11 +79,10 @@ import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.codegen.SpoofCompiler.IntegrationType;
 import org.apache.sysds.hops.codegen.SpoofCompiler.PlanCachePolicy;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
@@ -389,7 +388,7 @@ public class DMLTranslator
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_EXACT :
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
-					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
+					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
 			AFederatedPlanner implementation = Objects.requireNonNull(
 				FederatedPlannerFactory.create(fedPlanner), "compiled federated planner implementation");
 			FederatedPlannerTrace.beginInvocation();
@@ -441,10 +440,6 @@ public class DMLTranslator
 			emissionReceipt = receipt.emissionReceipt();
 		}
 		else if(plannerReceipt instanceof HeuristicInvocationReceipt receipt) {
-			result = receipt.normalizedResult();
-			emissionReceipt = receipt.emissionReceipt();
-		}
-		else if(plannerReceipt instanceof DpInvocationReceipt receipt) {
 			result = receipt.normalizedResult();
 			emissionReceipt = receipt.emissionReceipt();
 		}

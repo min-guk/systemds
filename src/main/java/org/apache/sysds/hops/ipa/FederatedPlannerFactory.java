@@ -21,11 +21,9 @@ package org.apache.sysds.hops.ipa;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 
 public final class FederatedPlannerFactory {
@@ -39,12 +37,8 @@ public final class FederatedPlannerFactory {
 				return null;
 			case RUNTIME:
 				return null;
-			case COMPILE_FED_ALL:
-				return new FederatedPlannerFedAll();
 			case COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS:
 				return new FederatedPlannerFedAllMaxFedFoutSinglePass();
-			case COMPILE_FED_HEURISTIC:
-				return new FederatedPlannerFedHeuristic();
 			case COMPILE_FED_HEURISTIC_SINGLE_PASS:
 				return new FederatedPlannerFedHeuristicSinglePass();
 			case COMPILE_COST_BASED:

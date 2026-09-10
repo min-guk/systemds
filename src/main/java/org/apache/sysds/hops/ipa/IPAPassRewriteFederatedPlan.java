@@ -87,7 +87,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 		PlacementShadowCoordinator.Session shadow = PlacementShadowCoordinator.begin(prog, analysis);
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
 			FederatedPlanner.valueOf(splanner.toUpperCase()) :
-			FederatedPlanner.COMPILE_FED_HEURISTIC;
+			FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
 		AFederatedPlanner implementation = Objects.requireNonNull(
 			FederatedPlannerFactory.create(planner), "compiled federated planner implementation");
 		FederatedPlannerTrace.beginInvocation();

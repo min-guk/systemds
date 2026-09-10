@@ -29,7 +29,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationCh
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.SyntheticBoundaryProjection;
 
 /**
  * Lossless physical Exact certificate.
@@ -263,8 +263,8 @@ final class ExactPhysicalSelection {
 					continue;
 				if(node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT)
 					continue;
-				DpPlacementAdapter.SyntheticBoundaryReceipt projection =
-					DpPlacementAdapter.projectSyntheticBoundary(analysis, node, selectedEmissions);
+				SyntheticBoundaryProjection.SyntheticBoundaryReceipt projection =
+					SyntheticBoundaryProjection.projectSyntheticBoundary(analysis, node, selectedEmissions);
 				if(projection == null)
 					continue;
 				PlacementEmissionState boundaryEmission = projection.selectedEmissionState();

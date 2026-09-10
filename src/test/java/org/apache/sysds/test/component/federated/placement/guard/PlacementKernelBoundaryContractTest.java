@@ -215,7 +215,7 @@ public class PlacementKernelBoundaryContractTest {
 
 	private static String forbiddenCategory(String fqcn) {
 		if(fqcn.endsWith(".NeutralPlacementGraphBuilder") || fqcn.endsWith(".FederatedPlannerUtils")
-			|| fqcn.endsWith(".FederatedRefedPolicy") || fqcn.endsWith(".OracleUtils"))
+			|| fqcn.endsWith(".FederatedRefedPolicy"))
 			return "G010";
 		if(fqcn.endsWith(".FederatedCostModel") || fqcn.endsWith(".FederatedPlannerLogger")
 			|| fqcn.endsWith(".FederatedPlannerTrace"))
@@ -223,10 +223,8 @@ public class PlacementKernelBoundaryContractTest {
 		if(fqcn.contains(".placement.adapter.") || fqcn.contains(".placement.selector.")
 			|| fqcn.endsWith(".PlacementShadowCoordinator") || fqcn.endsWith(".AFederatedPlanner")
 			|| fqcn.endsWith(".FederatedPlanExactGraph") || fqcn.endsWith(".FederatedPlanExact")
-			|| fqcn.endsWith(".FederatedPlannerFedAll")
 			|| fqcn.endsWith(".FederatedPlannerFedAllMaxFedFoutSinglePass")
-			|| fqcn.endsWith(".FederatedPlannerFedHeuristic")
-			|| fqcn.endsWith(".FederatedPlannerDpFedCostBased"))
+			|| fqcn.endsWith(".FederatedPlannerFedHeuristicSinglePass"))
 			return "G012";
 		return null;
 	}

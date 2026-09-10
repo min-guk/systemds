@@ -30,11 +30,9 @@ import java.util.Map;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.junit.Test;
 
@@ -65,14 +63,14 @@ public class FederatedPlannerFactoryContractTest {
 
 		Map<FederatedPlanner, Class<? extends AFederatedPlanner>> expected =
 			new EnumMap<>(FederatedPlanner.class);
-		expected.put(FederatedPlanner.COMPILE_FED_ALL, FederatedPlannerFedAll.class);
 		expected.put(FederatedPlanner.COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS,
 			FederatedPlannerFedAllMaxFedFoutSinglePass.class);
-		expected.put(FederatedPlanner.COMPILE_FED_HEURISTIC, FederatedPlannerFedHeuristic.class);
 		expected.put(FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS,
 			FederatedPlannerFedHeuristicSinglePass.class);
 		expected.put(FederatedPlanner.COMPILE_COST_BASED, FederatedPlanLocalCost.class);
 		expected.put(FederatedPlanner.COMPILE_EXACT, FederatedPlanExact.class);
+		assertEquals("Only four compiled planners plus two non-compiled sentinels",
+			expected.size() + 2, FederatedPlanner.values().length);
 		for(Map.Entry<FederatedPlanner, Class<? extends AFederatedPlanner>> entry : expected.entrySet())
 			assertEquals(entry.getKey().name(), entry.getValue(), create.invoke(null, entry.getKey()).getClass());
 	}
@@ -96,6 +94,41 @@ public class FederatedPlannerFactoryContractTest {
 		}
 		catch(IllegalArgumentException expected) {
 			// expected
+		}
+	}
+
+
+	@Test
+	public void removedPlannerNamesFailRatherThanSilentlySelectingAnotherAlgorithm() {
+		for(String name : new String[] {"compile_fed_all", "compile_fed_heuristic",
+			"compile_fed_minst", "compile_minst", "compile_fed_dp"}) {
+			try {
+				FederatedPlanner.isCompiled(name);
+				fail("Removed planner name must be rejected: " + name);
+			}
+			catch(IllegalArgumentException expected) {
+				assertTrue(expected.getMessage().contains(name.toUpperCase()));
+			}
+		}
+	}
+
+	@Test
+	public void removedImplementationsAreAbsentFromTheRuntimeClasspath() {
+		String root = "org.apache.sysds.hops.fedplanner.";
+		for(String name : new String[] {"fedAll.FederatedPlannerFedAll",
+			"fedHeuristic.FederatedPlannerFedHeuristic", "placement.selector.ExactPlacementSelector",
+			"fedCostBased.fedDp.FederatedPlannerDpFedCostBased",
+			"fedCostBased.fedDp.FederatedPlannerDpMemoTable",
+			"fedCostBased.fedDp.FederatedPlannerDpRewireTransTable",
+			"fedCostBased.fedDp.FederatedPlannerDpCostEnumerator",
+			"fedCostBased.fedDp.FederatedPlannerDpCostEstimator", "placement.adapter.DpPlacementAdapter"}) {
+			try {
+				Class.forName(root + name, false, getClass().getClassLoader());
+				fail("Obsolete implementation or stale build output remains: " + name);
+			}
+			catch(ClassNotFoundException expected) {
+				// Removed algorithms must not survive through stale output or dependency jars.
+			}
 		}
 	}
 

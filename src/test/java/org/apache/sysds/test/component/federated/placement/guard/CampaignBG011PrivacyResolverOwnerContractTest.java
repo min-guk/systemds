@@ -40,11 +40,9 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	private static final Path DML_TRANSLATOR = ROOT.resolve(
 		"src/main/java/org/apache/sysds/parser/DMLTranslator.java");
 	private static final List<Path> SELECTOR_SIDE_SOURCES = List.of(
-		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAll.java"),
-		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedHeuristic/FederatedPlannerFedHeuristic.java"),
-		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java"),
-		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpRewireTransTable.java"),
-		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedHeuristic/FederatedPlannerFedHeuristicSinglePass.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/SyntheticBoundaryProjection.java"),
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/FederatedPlanExact.java"));
 
 	@Rule

@@ -247,7 +247,7 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 		}
 		catch(NoSuchMethodException missing) {
 			throw new AssertionError(
-				"S4 requires the immutable graph actually supplied to ExactPlacementSelector", missing);
+				"S4 requires the immutable graph actually supplied to PolicyFirstFeasiblePlacementSelector", missing);
 		}
 	}
 

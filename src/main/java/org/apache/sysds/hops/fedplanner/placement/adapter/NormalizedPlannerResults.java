@@ -67,8 +67,8 @@ public final class NormalizedPlannerResults {
 					|| node.kind() != org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
 						&& node.kind() != org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
 					continue;
-				DpPlacementAdapter.SyntheticBoundaryReceipt projection =
-					DpPlacementAdapter.projectSyntheticBoundary(analysis, node, result,
+				SyntheticBoundaryProjection.SyntheticBoundaryReceipt projection =
+					SyntheticBoundaryProjection.projectSyntheticBoundary(analysis, node, result,
 						exactSelectedState(selectedStates, node.key()));
 				if(projection == null)
 					continue;

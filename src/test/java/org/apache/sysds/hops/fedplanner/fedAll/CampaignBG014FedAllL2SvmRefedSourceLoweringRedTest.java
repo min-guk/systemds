@@ -104,7 +104,7 @@ public class CampaignBG014FedAllL2SvmRefedSourceLoweringRedTest {
 		return "<root>\n"
 			+ "  <sysds.native.blas>none</sysds.native.blas>\n"
 			+ "  <sysds.local.spark>true</sysds.local.spark>\n"
-			+ "  <sysds.federated.planner>compile_fed_all</sysds.federated.planner>\n"
+			+ "  <sysds.federated.planner>compile_fed_all_max_fed_fout_single_pass</sysds.federated.planner>\n"
 			+ "  <sysds.benchmark.compile_only>true</sysds.benchmark.compile_only>\n"
 			+ "  <sysds.scratch>" + root.resolve("scratch") + "</sysds.scratch>\n"
 			+ "  <sysds.localtmpdir>" + root.resolve("localtmp") + "</sysds.localtmpdir>\n"

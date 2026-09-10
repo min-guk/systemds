@@ -21,7 +21,7 @@ import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -142,7 +142,7 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 	public void fedAllPublishesSelectedFunctionBodyStatesForRecompile() throws Exception {
 		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
 		DMLConfig config = new DMLConfig(oldConfig);
-		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_fed_all");
+		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_fed_all_max_fed_fout_single_pass");
 		ConfigurationManager.setGlobalConfig(config);
 		ConfigurationManager.setLocalConfig(config);
 		try {

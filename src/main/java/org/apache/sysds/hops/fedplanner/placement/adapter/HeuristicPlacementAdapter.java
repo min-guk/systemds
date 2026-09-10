@@ -44,8 +44,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
-import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
-import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.TerminationReason;
 import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
@@ -54,13 +52,13 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Provenance-scoped Heuristic policy over one immutable placement analysis. */
 public final class HeuristicPlacementAdapter {
-	private final PlacementAnalysisSelector selector;
+	private final PolicyFirstFeasiblePlacementSelector selector;
 
 	public HeuristicPlacementAdapter() {
-		this(new ExactPlacementSelector());
+		this(new PolicyFirstFeasiblePlacementSelector());
 	}
 
-	public HeuristicPlacementAdapter(PlacementAnalysisSelector selector) {
+	public HeuristicPlacementAdapter(PolicyFirstFeasiblePlacementSelector selector) {
 		this.selector = Objects.requireNonNull(selector, "selector");
 	}
 
@@ -123,8 +121,7 @@ public final class HeuristicPlacementAdapter {
 			"CP_FOUT_MATERIALIZATIONS=" + CandidateSelections.cpFoutPhysicalEmissionCount(candidateReceipts),
 			"DERIVED_FOUT_MATERIALIZATIONS="
 				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidateReceipts));
-		String stateOrdering = selector instanceof PolicyFirstFeasiblePlacementSelector policySelector
-			? policySelector.stateOrdering().name() : "EXHAUSTIVE_SCORE_ORDER";
+		String stateOrdering = selector.stateOrdering().name();
 		boolean movementFirst = StateOrdering.MOVEMENT_FIRST.name().equals(stateOrdering);
 		List<String> ties = movementFirst
 			? List.of("MIN_INCIDENT_WEIGHTED_MOVEMENT", "MAX_FED", "MAX_FOUT", "NORMALIZED_ASSIGNMENT")
@@ -137,15 +134,15 @@ public final class HeuristicPlacementAdapter {
 		List<String> clones = base.nodes().stream().filter(n -> n.kind() == NodeKind.CLONE
 			|| "recompile".equals(n.key().recompileContext())).map(Node::normalizedIdentity).sorted().toList();
 		List<String> structural = base.normalizedExclusions();
-		boolean firstFeasible = selection.certificate().terminationReason()
-			== TerminationReason.POLICY_FEASIBLE;
+		if(selection.certificate().terminationReason() != TerminationReason.POLICY_FEASIBLE)
+			throw new IllegalStateException("Heuristic selector did not stop at the first feasible assignment");
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
 			"policy", "LOCAL_CONTINUATION_FIRST_POLICY_V3", "markerCount", Integer.toString(policy.markers().size()),
 			"localPrefixCount", Integer.toString(policy.localPrefix().size()),
 			"downstreamMarkerCount", Integer.toString(policy.downstreamMarkers().size()),
 			"frontierEdgeCount", Integer.toString(policy.frontiers().size()),
 			"nativeContinuationCount", Integer.toString(policy.nativeContinuations().size()), "search",
-				firstFeasible ? "FIRST_FEASIBLE" : "EXHAUSTIVE",
+				"FIRST_FEASIBLE",
 			"stateOrdering", stateOrdering,
 			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_CANDIDATE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
@@ -157,16 +154,15 @@ public final class HeuristicPlacementAdapter {
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
 			selection.score().distinctRelocationCount(), incumbent);
 		List<Bound> boundComponents = componentBounds(filtered);
-		long explored = firstFeasible ? selection.certificate().exploredCount() : candidateUniverse.size();
-		long pruned = firstFeasible ? selection.certificate().prunedCount() : 0;
+		long explored = selection.certificate().exploredCount();
+		long pruned = selection.certificate().prunedCount();
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
 			assignmentHash, explored + pruned, explored, pruned,
-			firstFeasible ? List.of("first-feasible") : List.of("complete"), incumbent,
+			List.of("first-feasible"), incumbent,
 			incumbent, selection.certificate().terminationReason().name(), false,
 			sha256(filtered.normalizedSignature()), score, score,
 			boundComponents, filtered.nodes().size(), filtered.constraints().size(), boundComponents.size(),
-			firstFeasible ? selection.certificate().boundDerivation()
-				: "complete-cartesian-enumeration-with-partial-legality-pruning");
+			selection.certificate().boundDerivation());
 		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment,
 			candidateReceipts, choices, candidateUniverse, exclusions, relocations, obligations, anchors,
 			List.of(), List.of(), List.of(), objective, ties, relationships,

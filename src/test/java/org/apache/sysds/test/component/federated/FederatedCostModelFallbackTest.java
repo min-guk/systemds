@@ -59,9 +59,7 @@ import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEstimator;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -219,56 +217,6 @@ public class FederatedCostModelFallbackTest {
 		Assert.assertEquals(OptimizerUtils.BOOLEAN_SIZE, boolInjected[0], 0.0);
 		Assert.assertEquals(OptimizerUtils.DOUBLE_SIZE, fp64Injected[0], 0.0);
 		Assert.assertEquals(OptimizerUtils.BOOLEAN_SIZE + OptimizerUtils.DOUBLE_SIZE, inputMem, 0.0);
-	}
-
-	@Test
-	public void testDpComputeHopCostUsesFallbackMemEstimates() {
-		LiteralOp hop = new LiteralOp(1.0) {
-			@Override
-			public double getInputMemEstimate() {
-				return 0.0;
-			}
-
-			@Override
-			public double getInputMemEstimate(double injectedDefault) {
-				return 8 * 1024 * 1024;
-			}
-
-			@Override
-			public double getOutputMemEstimate() {
-				return 0.0;
-			}
-
-			@Override
-			public double getOutputMemEstimate(double injectedDefault) {
-				return 4 * 1024 * 1024;
-			}
-		};
-
-		FederatedPlannerDpMemoTable.HopCommon hopCommon = new FederatedPlannerDpMemoTable.HopCommon(
-				hop, 1.0, 1.0, 1.0, 1, Collections.emptyList());
-		double selfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
-
-		Assert.assertTrue("DP self cost should be positive with fallback mem estimates", selfCost > 0.0);
-		Assert.assertTrue("DP forwarding cost should be positive with fallback mem estimates",
-				hopCommon.getForwardingCost() > 0.0);
-	}
-
-	@Test
-	public void testDpComputeHopCostUsesOutputMemEstimateForDownloadCost() {
-		TestMatrixHop hop = new TestMatrixHop("unknownOutput", 2100, -1,
-			32 * 1024 * 1024, 0.0);
-
-		double effectiveOutputMem = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-		double effectiveUploadMem = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
-		FederatedPlannerDpMemoTable.HopCommon hopCommon = new FederatedPlannerDpMemoTable.HopCommon(
-			hop, 1.0, 1.0, 1.0, 1, Collections.emptyList());
-		FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
-
-		Assert.assertTrue("Test precondition: upload estimate should exceed the output estimate for this unknown-dim hop",
-			effectiveUploadMem > effectiveOutputMem);
-		Assert.assertEquals("DP forwarding cost should follow the download payload, not the upload payload",
-			FederatedCostModel.computeDownloadNetworkCost(effectiveOutputMem), hopCommon.getForwardingCost(), 1e-9);
 	}
 
 	@Test
@@ -461,74 +409,6 @@ public class FederatedCostModelFallbackTest {
 			8.4E5, FederatedCostModel.getEffectiveOutputMemEstimate(elementwise), 0.0);
 		Assert.assertEquals("Upload sizing should keep the same bounded elementwise envelope",
 			8.4E5, FederatedCostModel.getEffectiveUploadMemEstimate(elementwise), 0.0);
-	}
-
-	@Test
-	public void testDpScalarLiteralForwardingUploadCostIsZero() throws Exception {
-		LiteralOp literal = new LiteralOp(2.0);
-		TestMatrixHop parent = new TestMatrixHop("parent", 100, 10,
-			8 * 1024 * 1024, 8 * 1024 * 1024);
-
-		Method m = FederatedPlannerDpCostEstimator.class.getDeclaredMethod(
-			"computeUploadCostWithFallback", Hop.class, Hop.class, FType.class, int.class);
-		m.setAccessible(true);
-		double uploadCost = (double) m.invoke(null, literal, parent, FType.ROW, 4);
-
-		Assert.assertEquals("Scalar literals should use inline control-plane propagation, not matrix upload cost",
-			0.0, uploadCost, 0.0);
-	}
-
-	@Test
-	public void testDpMatrixForwardingUploadCostRemainsPositive() throws Exception {
-		TestMatrixHop child = new TestMatrixHop("child", 100, 10,
-			8 * 1024 * 1024, 8 * 1024 * 1024);
-		TestMatrixHop parent = new TestMatrixHop("parent", 100, 10,
-			8 * 1024 * 1024, 8 * 1024 * 1024);
-
-		Method m = FederatedPlannerDpCostEstimator.class.getDeclaredMethod(
-			"computeUploadCostWithFallback", Hop.class, Hop.class, FType.class, int.class);
-		m.setAccessible(true);
-		double uploadCost = (double) m.invoke(null, child, parent, FType.ROW, 4);
-
-		Assert.assertTrue("Matrix boundary forwarding must still pay a positive upload cost", uploadCost > 0.0);
-	}
-
-	@Test
-	public void testStableTransientReadFoutCumulativeShareDoesNotGoNegativeWhenForwardingIsExternal()
-		throws Exception {
-		FederatedPlannerUtils.clearFedInitVars();
-		FederatedPlannerUtils.registerFedInitVar("fedInput", FType.FULL);
-		try {
-			DataOp transientRead = new DataOp("fedInput", DataType.MATRIX, ValueType.FP64,
-				OpOpData.TRANSIENTREAD, "fedInput", 100, 20, -1, 1024);
-			FederatedPlannerDpMemoTable.HopCommon hopCommon = new FederatedPlannerDpMemoTable.HopCommon(
-				transientRead, 1.0, 1.0, 1.0, 3, Collections.emptyList());
-			Field forwardingField = FederatedPlannerDpMemoTable.HopCommon.class.getDeclaredField("forwardingCost");
-			forwardingField.setAccessible(true);
-			forwardingField.setDouble(hopCommon, 9.0);
-
-			FederatedPlannerDpMemoTable.FedPlanVariants variants =
-				new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.FOUT);
-			FederatedPlannerDpMemoTable.FedPlan plan =
-				new FederatedPlannerDpMemoTable.FedPlan(0.0, variants, Collections.emptyList());
-			plan.setExecType(Types.ExecType.FED);
-			plan.setFType(FType.FULL);
-			variants.addFedPlan(plan);
-
-			Method m = FederatedPlannerDpCostEstimator.class.getDeclaredMethod(
-				"computeStableTransientReadFoutCumulativeShareForParent",
-				FederatedPlannerDpMemoTable.FedPlan.class,
-				FederatedPlannerDpMemoTable.class);
-			m.setAccessible(true);
-			double share = (double) m.invoke(null, plan, null);
-
-			Assert.assertEquals("Stable FED-input transient reads whose cumulative cost excludes the forwarding edge"
-				+ " must not produce a negative cumulative-share correction",
-				0.0, share, 1e-9);
-		}
-		finally {
-			FederatedPlannerUtils.clearFedInitVars();
-		}
 	}
 
 	@Test
@@ -858,25 +738,6 @@ public class FederatedCostModelFallbackTest {
 		Assert.assertEquals("Native FED indexing submits all worker requests before waiting; it owns one"
 			+ " parallel critical-path network round trip in addition to calibrated coordinator control",
 			expected, controlDominatedTopup, 1e-9);
-	}
-
-	@Test
-	public void testDpComputeHopCostUsesDmlFunctionOpSharedFloor() throws Exception {
-		TestDmlFunctionOp functionHop = createTestDmlFunctionOp();
-		double inputMem = FederatedCostModel.getEffectiveInputMemEstimate(functionHop);
-		double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(functionHop);
-		double placeholderBaseline = computeGenericPlaceholderBaseline(functionHop, inputMem, outputMem);
-
-		FederatedPlannerDpMemoTable.HopCommon hopCommon = new FederatedPlannerDpMemoTable.HopCommon(
-				functionHop, 1.0, 1.0, 1.0, 1, Collections.emptyList());
-		double selfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
-
-		Assert.assertEquals("DP estimator should consume the shared FunctionOp op cost",
-				FederatedCostModel.computeOpCostWithFallback(functionHop), selfCost, 1e-12);
-		Assert.assertTrue("DP self cost should exceed the generic placeholder baseline",
-				selfCost > placeholderBaseline);
-		Assert.assertTrue("DP forwarding cost should remain positive for DML FunctionOp placeholders",
-				hopCommon.getForwardingCost() > 0.0);
 	}
 
 	@Test

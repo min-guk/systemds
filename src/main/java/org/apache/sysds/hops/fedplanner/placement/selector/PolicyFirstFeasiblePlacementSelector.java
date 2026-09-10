@@ -44,8 +44,8 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  *
  * <p>The selector quotients mandatory SAME_PLACEMENT decisions, applies binary arc consistency,
  * and commits policy-ranked states with localized propagation. It backtracks only when a local
- * choice has no complete candidate-reachable continuation; unlike {@link ExactPlacementSelector},
- * it never continues after finding one feasible plan to prove a global policy optimum.
+ * choice has no complete candidate-reachable continuation. It never continues after finding one
+ * feasible plan to prove a global policy optimum.
  * FEDERATED_FIRST visits producers before consumers where acyclic and, at equal output
  * policy rank, favors reachable rows with more federated inputs. MOVEMENT_FIRST retains
  * its minimum-remaining-domain ordering and movement-first preferences.</p>

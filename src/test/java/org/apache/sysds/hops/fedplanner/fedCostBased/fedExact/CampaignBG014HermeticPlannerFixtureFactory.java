@@ -1,5 +1,5 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
-package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
+package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

@@ -51,7 +51,7 @@ public class CampaignBG014FedAllLmMixedRowColDerivedFoutRedTest {
 			Files.writeString(config, String.join("\n",
 				"<root>",
 				"  <sysds.local.spark>true</sysds.local.spark>",
-				"  <sysds.federated.planner>compile_fed_all</sysds.federated.planner>",
+				"  <sysds.federated.planner>compile_fed_all_max_fed_fout_single_pass</sysds.federated.planner>",
 				"  <sysds.benchmark.compile_only>true</sysds.benchmark.compile_only>",
 				"  <sysds.scratch>" + root.resolve("scratch") + "</sysds.scratch>",
 				"  <sysds.localtmpdir>" + root.resolve("localtmp") + "</sysds.localtmpdir>",

@@ -2,30 +2,20 @@
 package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge.ProjectionOrder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementState;
-import org.apache.sysds.test.component.federated.placement.guard.R4SharedFedAllAdapterBridge.Score;
-import org.apache.sysds.test.component.federated.placement.oracle.selector.ExactSelectorOracle;
-import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Choice;
 import org.apache.sysds.test.component.federated.placement.selector.CampaignBSelectorFixtureBridge;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Executable RED: FedAll result and every proof field equal independent exhaustive authority. */
-public class CampaignBFedAllExactAdapterContractTest {
+/** Contract coverage for the active deterministic first-feasible FedAll adapter. */
+public class CampaignBFedAllFirstFeasibleAdapterContractTest {
 	@Test public void nonEmittedFunctionTraceNodesStayAuditableButOutsideFedAllDecisionProjection() throws Exception {
 		List<String> failures = new ArrayList<>();
 		for(String id : List.of("B-07", "B-08", "B-17", "B-21")) {
@@ -49,20 +39,22 @@ public class CampaignBFedAllExactAdapterContractTest {
 		}
 		Assert.assertEquals("all four actual function fixtures must select", List.of(), failures);
 	}
-	@Test public void exactAssignmentScoreRelocationsHashesBoundsUniverseAndTerminationEqualOracle() throws Exception {
-		List<String> missing=new ArrayList<>();
-		for(var fixture:CampaignBSelectorFixtureBridge.all()) {
-			PlacementAnalysis analysis=CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production());
-			var oracle=ExactSelectorOracle.select(fixture.oracle(),ExactSelectorOracle.Policy.FED_ALL);
-			var expected=expected(fixture,analysis,oracle);
+	@Test public void everyFixtureReturnsOneCompleteLegalFirstFeasibleAssignment() throws Exception {
+		List<String> failures = new ArrayList<>();
+		for(var fixture : CampaignBSelectorFixtureBridge.all()) {
+			PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production());
 			try {
-				var handle=R4SharedFedAllAdapterBridge.open(R4SharedFedAllAdapterBridge.Planner.FED_ALL);
-				var actual=R4SharedFedAllAdapterBridge.select(handle,analysis);
-				R4SharedFedAllSemanticValidator.shared(analysis,actual); R4SharedFedAllSemanticValidator.fedAll(expected,actual);
+				var handle = R4SharedFedAllAdapterBridge.open(R4SharedFedAllAdapterBridge.Planner.FED_ALL);
+				var actual = R4SharedFedAllAdapterBridge.select(handle, analysis);
+				R4SharedFedAllSemanticValidator.shared(analysis, actual);
+				Assert.assertEquals(fixture.id(), "POLICY_FEASIBLE", actual.certificate().termination());
+				Assert.assertEquals(fixture.id(), 1, actual.certificate().explored());
+				Assert.assertEquals(fixture.id(), actual.certificate().universe(),
+					actual.certificate().explored() + actual.certificate().pruned());
 			}
-			catch(AssertionError e){recordMissing(missing,fixture.id(),e);}
+			catch(AssertionError failure) { recordMissing(failures, fixture.id(), failure); }
 		}
-		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING",List.of(),missing);
+		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING", List.of(), failures);
 	}
 
 	@Test public void fedAllNormalReverseRepeatAndStartBarrierConcurrentProofsAreIdentical() throws Exception {
@@ -85,25 +77,5 @@ public class CampaignBFedAllExactAdapterContractTest {
 		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING",List.of(),missing);
 	}
 
-	private static R4SharedFedAllSemanticValidator.Expected expected(CampaignBSelectorFixtureBridge.Case fixture,
-		PlacementAnalysis analysis,ExactSelectorOracle.Result oracle) {
-		Map<String,CompiledHopKey> keys=new LinkedHashMap<>();for(var n:fixture.production().nodes())keys.put(n.key().emittedHopInstance(),n.key());
-		Map<CompiledHopKey,PlacementState> assignment=new LinkedHashMap<>();LinkedHashSet<String> relocationIds=new LinkedHashSet<>();
-		for(Map.Entry<String,Choice> e:oracle.getAssignment().entrySet()) {
-			CompiledHopKey key=keys.get(e.getKey());String signature=CampaignBSelectorFixtureBridge.productionChoice(fixture.id(),e.getKey(),e.getValue().getId());
-			PlacementState state=fixture.production().node(key).orElseThrow().legalAlternatives().stream()
-				.filter(s->s.normalizedSignature().equals(signature)).findFirst().orElseThrow();assignment.put(key,state);relocationIds.addAll(e.getValue().getRelocationActions());
-		}
-		Map<String,RelocationActionKey> relocationMap=CampaignBSelectorFixtureBridge.productionRelocations(fixture);
-		List<RelocationActionKey> relocations=relocationIds.stream().map(id->{RelocationActionKey k=relocationMap.get(id);if(k==null)throw new AssertionError("R4_RELOCATION_KEY|unmapped="+id);return k;})
-			.sorted().toList();
-		Score score=new Score(oracle.getScore().getFedCount(),oracle.getScore().getFoutCount(),oracle.getScore().getRelocationCount(),oracle.getScore().getSignature());
-		long explored=oracle.getCertificate().getExploredCount(),pruned=oracle.getCertificate().getPrunedCount();
-		var bounds=R4SharedFedAllSemanticValidator.componentBounds(fixture.production());
-		return new R4SharedFedAllSemanticValidator.Expected(Map.copyOf(assignment),relocations,score,
-			R4SharedFedAllAdapterBridge.graphHash(analysis),R4SharedFedAllAdapterBridge.assignmentHash(assignment),
-			explored,pruned,explored+pruned,fixture.production().nodes().size(),fixture.production().constraints().size(),
-			oracle.getCertificate().getComponentCount(),oracle.getCertificate().getBoundDerivation(),bounds);
-	}
 	private static void recordMissing(List<String> out,String id,AssertionError e){if(e.getMessage()!=null&&e.getMessage().startsWith("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING"))out.add(id+'|'+e.getMessage());else throw e;}
 }

@@ -3,7 +3,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.nio.file.Files;
 
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014HermeticPlannerFixtureFactory;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlannerCandidateSpaceAudit;
 import org.junit.After;

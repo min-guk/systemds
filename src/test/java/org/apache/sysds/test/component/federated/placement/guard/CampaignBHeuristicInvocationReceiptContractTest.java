@@ -22,7 +22,7 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge.ProjectionOrder;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -58,24 +58,21 @@ import org.junit.Test;
 /** RED contract for the real Heuristic supplied-analysis root and immutable typed provenance receipt. */
 public class CampaignBHeuristicInvocationReceiptContractTest {
 	private static final AtomicLong NEXT_SENTINEL_SCOPE = new AtomicLong(8_105_000_000L);
-	private static final String RECEIPT_TYPE = FederatedPlannerFedHeuristic.class.getName()
+	private static final String RECEIPT_TYPE = FederatedPlannerFedHeuristicSinglePass.class.getName()
 		+ "$HeuristicInvocationReceipt";
-	private static final String COUNTERS_TYPE = FederatedPlannerFedHeuristic.class.getName()
+	private static final String COUNTERS_TYPE = FederatedPlannerFedHeuristicSinglePass.class.getName()
 		+ "$InvocationCounters";
 
 	@Test
 	public void realFourArgumentRootUsesExactTypedFactsAndSelectsExactlyOnce() throws Exception {
 		Fixture fixture = vectorFixture();
-		TrackingHeuristic planner = new TrackingHeuristic(fixture.program());
+		FederatedPlannerFedHeuristicSinglePass planner = new FederatedPlannerFedHeuristicSinglePass();
 
 		AFederatedPlanner.PlannerInvocationReceipt receipt = isolatedEmission(List.of(fixture.program()),
 			() -> planner.rewriteProgram(fixture.program(), null, null, fixture.analysis()));
 
-		Assert.assertEquals("HEURISTIC_ROOT_SELECTION_COUNT", 1, planner.selectionCount);
-		Assert.assertNotNull("HEURISTIC_ROOT_SELECTED_RESULT", planner.selected);
-		Assert.assertSame("HEURISTIC_ROOT_MARKER_SET_REUSED_BY_RECEIPT", planner.selectedMarkers,
-			invoke(receipt, "markers"));
-		assertTypedReceipt(receipt, fixture, planner.selected);
+		Assert.assertEquals("HEURISTIC_ROOT_MARKERS", fixture.markers(), invoke(receipt, "markers"));
+		assertTypedReceipt(receipt, fixture, result(receipt));
 	}
 
 	@Test
@@ -88,10 +85,9 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 		// Reordered analysis copies are not rebound as the program's canonical full-rewrite
 		// authority; verify order invariance at the selection seam while fresh canonical
 		// factory rewrites above preserve first-emission applied/not-noop semantics.
-		TrackingHeuristic reversePlanner = new TrackingHeuristic(reverseFixture.program());
-		Invocation reverse = new Invocation(reversePlanner.select(reversed,
-			markers(reversed.heuristicPolicyFacts())));
-		Assert.assertEquals("HEURISTIC_REVERSE_SELECTION_COUNT", 1, reversePlanner.selectionCount);
+		FederatedPlannerFedHeuristicSinglePass reversePlanner = new FederatedPlannerFedHeuristicSinglePass();
+		Invocation reverse = new Invocation(mutationFree(List.of(reverseFixture.program()), () ->
+			reversePlanner.select(reversed, markers(reversed.heuristicPolicyFacts()))));
 
 		Assert.assertEquals("HEURISTIC_FACTORY_ASSIGNMENT", first.result().assignment(),
 			repeat.result().assignment());
@@ -118,6 +114,21 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 	}
 
 	@Test
+	public void directSelectionIsMutationFreeAndReturnsImmutablePolicyState() throws Exception {
+		Fixture fixture = vectorFixture();
+		String analysisBefore = fixture.analysis().analysisFingerprint();
+		HeuristicPlacementAdapter.Result selected = mutationFree(List.of(fixture.program()), () ->
+			new FederatedPlannerFedHeuristicSinglePass().select(fixture.analysis(), fixture.markers()));
+
+		Assert.assertEquals("HEURISTIC_SELECT_MUTATED_ANALYSIS", analysisBefore,
+			fixture.analysis().analysisFingerprint());
+		R4Heuristic2Probe.immutable(selected.assignment());
+		R4Heuristic2Probe.immutable(selected.filteredCandidateUniverse());
+		R4Heuristic2Probe.immutable(selected.policyExclusions());
+		R4Heuristic2Probe.immutable(selected.selectedRelocations());
+	}
+
+	@Test
 	public void factoryFirstFeasibleRouteUsesSharedAnalysisAndEmitsCompleteLegalPlan() throws Exception {
 		Fixture fixture = vectorFixture();
 		Invocation invocation = invokeFactory(fixture,
@@ -135,7 +146,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 	@Test
 	public void emptyFactsRemainValidWhileForeignAnalysisAndLegacyRoutesFailClosed() throws Exception {
 		Fixture fixture = vectorFixture();
-		TrackingHeuristic planner = new TrackingHeuristic(fixture.program());
+		FederatedPlannerFedHeuristicSinglePass planner = new FederatedPlannerFedHeuristicSinglePass();
 		var before = R4Heuristic2Probe.snapshot(fixture.program(), fixture.analysis());
 
 		Assert.assertThrows("HEURISTIC_ROOT_NULL_ANALYSIS", NullPointerException.class,
@@ -148,14 +159,12 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 				() -> planner.rewriteProgram(foreignFixture.program(), null, null, fixture.analysis())));
 		Assert.assertTrue("HEURISTIC_ROOT_FOREIGN_OWNER_MESSAGE", foreign.getMessage().contains("foreign"));
 
-		Assert.assertEquals("HEURISTIC_REJECTION_BEFORE_SELECTION", 0, planner.selectionCount);
 		Fixture empty = fixture("B-01");
 		Assert.assertTrue("HEURISTIC_EMPTY_POLICY_VIEW_PRECONDITION", empty.facts().demotions().isEmpty());
-		TrackingHeuristic emptyPlanner = new TrackingHeuristic(empty.program());
+		FederatedPlannerFedHeuristicSinglePass emptyPlanner = new FederatedPlannerFedHeuristicSinglePass();
 		AFederatedPlanner.PlannerInvocationReceipt emptyReceipt = isolatedEmission(List.of(empty.program()),
 			() -> emptyPlanner.rewriteProgram(empty.program(), null, null, empty.analysis()));
-		Assert.assertEquals("HEURISTIC_EMPTY_POLICY_SELECTION_COUNT", 1, emptyPlanner.selectionCount);
-		assertTypedReceipt(emptyReceipt, empty, emptyPlanner.selected);
+		assertTypedReceipt(emptyReceipt, empty, result(emptyReceipt));
 		Assert.assertThrows("HEURISTIC_LEGACY_ROUTE_MUST_FAIL_CLOSED", UnsupportedOperationException.class,
 			() -> mutationFree(List.of(fixture.program()),
 				() -> {
@@ -173,7 +182,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 	}
 
 	private static Invocation invokeFactory(Fixture fixture) throws Exception {
-		return invokeFactory(fixture, FederatedPlanner.COMPILE_FED_HEURISTIC);
+		return invokeFactory(fixture, FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS);
 	}
 
 	private static Invocation invokeFactory(Fixture fixture, FederatedPlanner kind) throws Exception {
@@ -601,49 +610,6 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 	@FunctionalInterface
 	private interface CheckedSupplier<T> {
 		T get() throws Exception;
-	}
-
-	private static final class TrackingHeuristic extends FederatedPlannerFedHeuristic {
-		private final List<DMLProgram> programs;
-		private int selectionCount;
-		private Set<ValueVersionKey> selectedMarkers;
-		private HeuristicPlacementAdapter.Result selected;
-
-		private TrackingHeuristic(DMLProgram... programs) {
-			this.programs = List.of(programs);
-		}
-
-		@Override
-		public HeuristicPlacementAdapter.Result select(PlacementAnalysis analysis, Set<ValueVersionKey> markers) {
-			String fingerprintBefore = analysis.analysisFingerprint();
-			R4Heuristic2Probe.Snapshot snapshotBefore = snapshotForTrackedProgram(analysis);
-			try {
-				return mutationFree(programs, () -> {
-					selectionCount++;
-					selectedMarkers = markers;
-					try {
-						selected = super.select(analysis, markers);
-						return selected;
-					}
-					finally {
-						Assert.assertEquals("HEURISTIC_SELECT_ANALYSIS_FINGERPRINT_MUTATION",
-							fingerprintBefore, analysis.analysisFingerprint());
-						R4Heuristic2Probe.unchanged(snapshotBefore, snapshotForTrackedProgram(analysis));
-					}
-				});
-			}
-			catch(RuntimeException | Error failure) {
-				throw failure;
-			}
-			catch(Exception failure) {
-				throw new AssertionError("HEURISTIC_SELECT_MUTATION_PROOF_FAILED", failure);
-			}
-		}
-
-		private R4Heuristic2Probe.Snapshot snapshotForTrackedProgram(PlacementAnalysis analysis) {
-			Assert.assertEquals("HEURISTIC_SELECT_TRACKED_PROGRAM_COUNT", 1, programs.size());
-			return R4Heuristic2Probe.snapshot(programs.get(0), analysis);
-		}
 	}
 
 	private record Fixture(DMLProgram program, PlacementAnalysis analysis,

@@ -21,10 +21,9 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
@@ -135,7 +134,7 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			DMLProgram program = als(1);
 			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
 				.bindAtFinalHopBoundary(program);
-			var invocation = new FederatedPlannerFedAll().rewriteProgram(
+			var invocation = new FederatedPlannerFedAllMaxFedFoutSinglePass().rewriteProgram(
 				program, null, null, analysis);
 			var selected = invocation.result();
 			Assert.assertEquals("FedAll must assign every ALS occurrence from the shared legal domain",
@@ -238,20 +237,6 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 			restoreProperties(oldProperties);
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 		}
-	}
-
-	private static org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan
-		findPlan(org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan root,
-			Predicate<org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan>
-				predicate) {
-		if(predicate.test(root))
-			return root;
-		for(var child : root.getExactChildPlanEdges()) {
-			var match = findPlan(child.selectedPlan(), predicate);
-			if(match != null)
-				return match;
-		}
-		return null;
 	}
 
 	@Test
@@ -664,14 +649,14 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 				model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 			NormalizedPlannerResult exact = ExactPhysicalPlacementProjector.project(
 				ExactPhysicalSelection.create(model, optimized)).normalizedResult();
-			NormalizedPlannerResult dp = new FederatedPlannerDpFedCostBased()
-				.selectProgram(program, null, null, analysis).normalizedResult();
+			NormalizedPlannerResult regional = new FederatedPlanLocalCost()
+				.rewriteProgram(program, null, null, analysis).normalizedResult();
 
 			List<CompiledHopKey> targets = largeInnerElementwiseHops(analysis, exact);
 			Assert.assertFalse("ALS regression fixture did not expose the 50000x2100 inner-CG b(*) stage",
 				targets.isEmpty());
 			assertFederated("Exact", analysis, exact, targets);
-			assertDpSelectionUsesOpenLegalCandidateSpace(analysis, dp, targets);
+			assertRegionalSelectionUsesOpenLegalCandidateSpace(analysis, regional, targets);
 		}
 		finally {
 			restoreProperties(oldProperties);
@@ -765,7 +750,7 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 				&& result.selectedStates().get(key).execType() == ExecType.FED));
 	}
 
-	private static void assertDpSelectionUsesOpenLegalCandidateSpace(PlacementAnalysis analysis,
+	private static void assertRegionalSelectionUsesOpenLegalCandidateSpace(PlacementAnalysis analysis,
 			NormalizedPlannerResult dp, List<CompiledHopKey> targets) {
 		for(CompiledHopKey key : targets) {
 			var alternatives = analysis.graph().node(key).orElseThrow().legalAlternatives();

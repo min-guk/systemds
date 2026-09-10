@@ -36,13 +36,12 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
@@ -151,7 +150,7 @@ public class MixedPrivacyRelocationContractTest {
 				.rewriteProgram(program, null, null, analysis);
 			case HEURISTIC -> new FederatedPlannerFedHeuristicSinglePass()
 				.rewriteProgram(program, null, null, analysis);
-			case DP -> new FederatedPlannerDpFedCostBased().rewriteProgram(program, null, null, analysis);
+			case REGIONAL -> new FederatedPlanLocalCost().rewriteProgram(program, null, null, analysis);
 			case EXACT -> new FederatedPlanExact().rewriteProgram(program, null, null, analysis);
 		};
 	}
@@ -161,8 +160,6 @@ public class MixedPrivacyRelocationContractTest {
 			return fedAll.normalizedResult();
 		if(receipt instanceof HeuristicInvocationReceipt heuristic)
 			return heuristic.normalizedResult();
-		if(receipt instanceof DpInvocationReceipt dp)
-			return dp.normalizedResult();
 		if(receipt instanceof ExactPlacementInput exact)
 			return exact.normalizedResult();
 		throw new AssertionError("Unexpected planner receipt " + receipt.getClass());
@@ -220,7 +217,7 @@ public class MixedPrivacyRelocationContractTest {
 		return program;
 	}
 
-	private enum PlannerKind { FED_ALL, HEURISTIC, DP, EXACT }
+	private enum PlannerKind { FED_ALL, HEURISTIC, REGIONAL, EXACT }
 	private record PlannedProgram(PlannerKind planner, PlacementAnalysis analysis,
 		NormalizedPlannerResult result) { }
 }

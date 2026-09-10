@@ -14,8 +14,8 @@ import org.junit.Test;
 public class CampaignBArchitectureGuardTest {
 	private static final Path ROOT = Path.of("").toAbsolutePath().normalize();
 	private static final Map<String,String> ROOTS = Map.of(
-		"FED_ALL", "org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll",
-		"HEURISTIC", "org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic",
+		"FED_ALL", "org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass",
+		"HEURISTIC", "org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass",
 		"DP", "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost",
 		"EXACT", "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact");
 	private static final Map<String,String> ADAPTERS = Map.of("FED_ALL", "FedAllPlacementAdapter",

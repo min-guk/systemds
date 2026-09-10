@@ -15,7 +15,7 @@ import java.util.Map;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -32,57 +32,70 @@ import org.junit.Test;
 
 /** RED contract for the real FedAll supplied-analysis root and its immutable typed receipt. */
 public class CampaignBFedAllInvocationReceiptContractTest {
-	private static final String RECEIPT_TYPE = FederatedPlannerFedAll.class.getName()
+	private static final String RECEIPT_TYPE = FederatedPlannerFedAllMaxFedFoutSinglePass.class.getName()
 		+ "$FedAllInvocationReceipt";
-	private static final String COUNTERS_TYPE = FederatedPlannerFedAll.class.getName()
+	private static final String COUNTERS_TYPE = FederatedPlannerFedAllMaxFedFoutSinglePass.class.getName()
 		+ "$InvocationCounters";
 
 	@Test
 	public void realFourArgumentRootSelectsExactlyOnceAndReturnsTheExactTypedReceipt() throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile("B-01");
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
-		List<String> hopStateBefore = hopState(analysis);
 		String fingerprintBefore = analysis.analysisFingerprint();
-		TrackingFedAll planner = new TrackingFedAll();
+		FederatedPlannerFedAllMaxFedFoutSinglePass planner =
+			new FederatedPlannerFedAllMaxFedFoutSinglePass();
 
 		AFederatedPlanner.PlannerInvocationReceipt receipt =
 			planner.rewriteProgram(program, null, null, analysis);
 
-		Assert.assertEquals("FEDALL_ROOT_SELECTION_COUNT", 1, planner.selectionCount);
-		Assert.assertNotNull("FEDALL_ROOT_SELECTED_RESULT", planner.selected);
-		assertTypedReceipt(receipt, analysis, planner.selected);
+		FedAllPlacementAdapter.Result selected = result(receipt);
+		assertTypedReceipt(receipt, analysis, selected);
 		Assert.assertEquals("FEDALL_ROOT_ANALYSIS_FINGERPRINT_MUTATION", fingerprintBefore,
 			analysis.analysisFingerprint());
-		Assert.assertEquals("FEDALL_ROOT_SELECTION_PHASE_HOP_MUTATION", hopStateBefore,
-			planner.selectionPhaseHopState);
 		assertExactAppliedEmission(receipt, analysis);
 		Assert.assertThrows("FEDALL_ROOT_ASSIGNMENT_MUTABLE", UnsupportedOperationException.class,
-			() -> planner.selected.assignment().clear());
+			() -> selected.assignment().clear());
 		Assert.assertThrows("FEDALL_ROOT_RELOCATIONS_MUTABLE", UnsupportedOperationException.class,
-			() -> planner.selected.selectedRelocations().clear());
+			() -> selected.selectedRelocations().clear());
 	}
 
 	@Test
-	public void exactAndFirstFeasibleFactoryRoutesShareAnalysisAndEmissionContracts() throws Exception {
-		Invocation fedAll = invokeFactory(FederatedPlanner.COMPILE_FED_ALL, "B-15");
+	public void factoryRouteUsesFirstFeasibleSelectionAndCompleteEmission() throws Exception {
 		Invocation firstFeasible = invokeFactory(
 			FederatedPlanner.COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS, "B-15");
 
-		Assert.assertEquals("FEDALL_POLICY_SHARED_ANALYSIS_FINGERPRINT",
-			fedAll.result.analysisFingerprint(), firstFeasible.result.analysisFingerprint());
-		Assert.assertNotEquals("FEDALL_EXACT_MUST_RETAIN_PROOF_COMPLETE_TERMINATION",
-			"POLICY_FEASIBLE", fedAll.result.certificate().terminationReason());
 		Assert.assertEquals("FEDALL_FIRST_FEASIBLE_TERMINATION", "POLICY_FEASIBLE",
 			firstFeasible.result.certificate().terminationReason());
 		Assert.assertEquals("FEDALL_FIRST_FEASIBLE_DECISION_COVERAGE",
-			fedAll.result.assignment().keySet(), firstFeasible.result.assignment().keySet());
+			firstFeasible.result.analysis().graph().decisionNodes().size(),
+			firstFeasible.result.assignment().size());
+	}
+
+	@Test
+	public void directSelectionIsMutationFreeAndReturnsImmutablePolicyState() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-01");
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
+		String analysisBefore = analysis.analysisFingerprint();
+		String hopsBefore = decisionHopFingerprint(analysis);
+
+		FedAllPlacementAdapter.Result selected =
+			new FederatedPlannerFedAllMaxFedFoutSinglePass().select(analysis);
+
+		Assert.assertEquals("FEDALL_SELECT_MUTATED_ANALYSIS", analysisBefore,
+			analysis.analysisFingerprint());
+		Assert.assertEquals("FEDALL_SELECT_MUTATED_CONCRETE_HOPS", hopsBefore,
+			decisionHopFingerprint(analysis));
+		Assert.assertThrows("FEDALL_SELECT_ASSIGNMENT_MUTABLE", UnsupportedOperationException.class,
+			() -> selected.assignment().clear());
+		Assert.assertThrows("FEDALL_SELECT_RELOCATIONS_MUTABLE", UnsupportedOperationException.class,
+			() -> selected.selectedRelocations().clear());
 	}
 
 	@Test
 	public void suppliedAnalysisOwnershipAndLegacyRoutesRemainFailClosed() throws Exception {
 		DMLProgram owner = ProductionShadowFixtureFactory.compile("B-01");
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(owner);
-		FederatedPlannerFedAll planner = new FederatedPlannerFedAll();
+		FederatedPlannerFedAllMaxFedFoutSinglePass planner = new FederatedPlannerFedAllMaxFedFoutSinglePass();
 
 		Assert.assertThrows("FEDALL_ROOT_NULL_ANALYSIS", NullPointerException.class,
 			() -> planner.rewriteProgram(owner, null, null, null));
@@ -199,6 +212,18 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 		return null;
 	}
 
+	private static String decisionHopFingerprint(PlacementAnalysis analysis) {
+		return analysis.graph().decisionNodes().stream().map(Node::key).sorted()
+			.map(key -> {
+				Hop hop = analysis.hop(key).orElseThrow(AssertionError::new);
+				return key.normalizedSignature() + '|' + System.identityHashCode(hop) + '|'
+					+ hop.getExecType() + '|' + hop.getForcedExecType() + '|'
+					+ hop.getFederatedOutput() + '|' + hop.isFederatedOutputDerived() + '|'
+					+ hop.requiresRecompile() + '|' + hop.isVisited();
+			})
+			.collect(java.util.stream.Collectors.joining("\n"));
+	}
+
 	private static FedAllPlacementAdapter.Result result(Object receipt) throws Exception {
 		Method accessor = receipt.getClass().getMethod("result");
 		Assert.assertEquals("FEDALL_RECEIPT_RESULT_TYPE", FedAllPlacementAdapter.Result.class,
@@ -214,31 +239,6 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 		Method method = counters.getClass().getMethod(accessor);
 		Assert.assertEquals("FEDALL_COUNTER_TYPE_" + accessor, int.class, method.getReturnType());
 		Assert.assertEquals("FEDALL_COUNTER_" + accessor, expected, method.invoke(counters));
-	}
-
-	private static List<String> hopState(PlacementAnalysis analysis) {
-		return analysis.occurrences().stream().map(occurrence -> occurrence.key().normalizedSignature()
-			+ '|' + occurrence.hop().getForcedExecType() + '|' + occurrence.hop().getFederatedOutput()
-			+ '|' + occurrence.hop().isFederatedOutputDerived()).sorted().toList();
-	}
-
-	private static final class TrackingFedAll extends FederatedPlannerFedAll {
-		private int selectionCount;
-		private FedAllPlacementAdapter.Result selected;
-		private List<String> selectionPhaseHopState;
-
-		@Override
-		public FedAllPlacementAdapter.Result select(PlacementAnalysis analysis) {
-			String fingerprintBefore = analysis.analysisFingerprint();
-			List<String> hopStateBefore = hopState(analysis);
-			selectionCount++;
-			selected = super.select(analysis);
-			Assert.assertEquals("FEDALL_SELECT_ANALYSIS_FINGERPRINT_MUTATION", fingerprintBefore,
-				analysis.analysisFingerprint());
-			selectionPhaseHopState = hopState(analysis);
-			Assert.assertEquals("FEDALL_SELECT_HOP_MUTATION", hopStateBefore, selectionPhaseHopState);
-			return selected;
-		}
 	}
 
 	private record Invocation(FedAllPlacementAdapter.Result result) { }
