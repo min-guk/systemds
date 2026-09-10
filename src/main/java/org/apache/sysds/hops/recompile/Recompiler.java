@@ -421,7 +421,7 @@ public class Recompiler {
 		if( !inplace ){ 
 			// deep copy hop dag (for non-reversable rewrites)
 			deepCopyMemo = new HashMap<>();
-			hops = deepCopyHopsDag(hops, deepCopyMemo);
+			hops = deepCopyHopsDagForRecompile(hops, deepCopyMemo);
 		}
 		else if( !codegen ) {
 			// clear existing lops
@@ -486,7 +486,7 @@ public class Recompiler {
 			//create deep copy for in-place
 			if( inplace ) {
 				deepCopyMemo = new HashMap<>();
-				hops = deepCopyHopsDag(hops, deepCopyMemo);
+				hops = deepCopyHopsDagForRecompile(hops, deepCopyMemo);
 			}
 			Hop.resetVisitStatus(hops);
 			hops = SpoofCompiler.optimize(hops,
@@ -1299,9 +1299,18 @@ public class Recompiler {
 	}
 	
 
+	private static ArrayList<Hop> deepCopyHopsDagForRecompile(List<Hop> hops,
+		Map<Long, Hop> memo) {
+		ArrayList<Hop> copies = deepCopyHopsDag(hops, memo);
+		// Bind before dynamic rewrites so their modeled replacements inherit the
+		// committed occurrence, not the shared ancestor of several planner roots.
+		memo.forEach((sourceHopId, copy) -> copy.bindPlannerRecompileCloneIdentity(sourceHopId));
+		return copies;
+	}
+
 	/**
 	 * Deep copy of hops dags for parallel recompilation.
-	 * 
+	 *
 	 * @param hops list of high-level operators
 	 * @return list of high-level operators
 	 */

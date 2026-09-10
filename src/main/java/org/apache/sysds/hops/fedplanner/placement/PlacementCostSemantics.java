@@ -391,21 +391,85 @@ public final class PlacementCostSemantics {
 	 */
 	public static double analysisAwareUnitLocalCost(PlacementAnalysis analysis,
 			CompiledHopKey key) {
+		return analysisAwareUnitLocalCost(analysis, null, key);
+	}
+
+	public static double analysisAwareUnitLocalCost(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(key, "key");
+		if(sparseAssignments != null && sparseAssignments.analysis != analysis)
+			throw new IllegalArgumentException("Sparse estimates are not owned by placement analysis");
 		Hop hop = analysis.hop(key).orElseThrow(() ->
 			new IllegalArgumentException("Placement cost key has no owned Hop"));
 		if(isLatentWdivmmTransposePairInner(analysis, key, hop)
 			|| isDirectWdivmmRemovedIntermediate(analysis, key))
 			return 0.0;
 		double dynamicKernelFloor = latentWdivmmComputeTimeFloor(analysis, key, hop);
-		double operation = FederatedCostModel.computeOpCostWithFallback(hop, dynamicKernelFloor);
+		double operation = FederatedCostModel.computeOpCostWithFallback(hop, dynamicKernelFloor,
+			analysisAwareInputBytes(analysis, sparseAssignments, key, hop),
+			analysisAwareOutputBytes(analysis, sparseAssignments, key, hop));
 		if(hop instanceof DataOp) {
 			OpOpData op = ((DataOp)hop).getOp();
 			return op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE
 				? 0.0 : operation;
 		}
 		return FederatedCostModel.computeLocalIndexingCostWithFallback(hop, operation);
+	}
+
+	private static double analysisAwareInputBytes(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey owner, Hop hop) {
+		boolean replacedUnknownInput = false;
+		double total = 0.0;
+		Set<CompiledHopKey> countedLargeInputs =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int position = 0; position < hop.getInput().size(); position++) {
+			Hop input = hop.getInput(position);
+			double ordinary = FederatedCostModel.getEffectiveOutputMemEstimate(input);
+			double estimate = ordinary;
+			CompiledHopKey producer = analysis.compiledInputEdge(owner, position)
+				.map(PlacementAnalysis.CompiledInputEdgeFact::producer).orElse(null);
+			if(input != null && producer != null && input.getDataType() != null
+				&& input.getDataType().isMatrix()
+				&& (!input.dimsKnown() || input.getDim1() <= 0 || input.getDim2() <= 0)) {
+				double exact = analysisAwareOutputBytes(analysis, sparseAssignments, producer, input);
+				if(Double.isFinite(exact) && exact > 0.0) {
+					estimate = exact;
+					replacedUnknownInput = true;
+				}
+			}
+			if(estimate > 1024 * 1024 && producer != null
+				&& !countedLargeInputs.add(producer))
+				estimate = 0.0;
+			total += Math.max(0.0, estimate);
+		}
+		return replacedUnknownInput && total > 0.0 ? total : Double.NaN;
+	}
+
+	private static double analysisAwareOutputBytes(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
+		if(hop.getDataType() == null || !hop.getDataType().isMatrix()
+			|| (hop.dimsKnown() && hop.getDim1() > 0 && hop.getDim2() > 0))
+			return Double.NaN;
+		double semanticSparse = FederatedCostModel.getSemanticSparseAssignmentMemEstimate(hop);
+		if(semanticSparse <= 0.0 && sparseAssignments != null)
+			semanticSparse = sparseAssignments.memEstimate(key);
+		if(semanticSparse > 0.0)
+			return semanticSparse;
+		AbstractShapeFact shape = analysis.abstractShapeFact(key).orElse(null);
+		if(shape == null || shape.dataType() == null || !shape.dataType().isMatrix()
+			|| shape.rows().knowledge() != DimensionKnowledge.EXACT
+			|| shape.cols().knowledge() != DimensionKnowledge.EXACT
+			|| shape.rows().value() <= 0 || shape.cols().value() <= 0)
+			return Double.NaN;
+		long rows = shape.rows().value();
+		long cols = shape.cols().value();
+		if(hop.getNnz() >= 0) {
+			double sparsity = Math.min(1.0, hop.getNnz() / (double)rows / (double)cols);
+			return OptimizerUtils.estimateSizeExactSparsity(rows, cols, sparsity,
+				org.apache.sysds.common.Types.DataType.MATRIX);
+		}
+		return denseMatrixBytes(rows, cols);
 	}
 
 	/**

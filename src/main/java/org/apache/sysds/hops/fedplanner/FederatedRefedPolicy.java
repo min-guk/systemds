@@ -998,11 +998,19 @@ public final class FederatedRefedPolicy {
 			FederatedPlannerUtils.getPlannerRecompileSignatureForHopId(plannerHopId);
 		if(selectedSignature != null) {
 			List<Hop> matches = index.bySignature().getOrDefault(selectedSignature, List.of());
-			if(matches.size() > 1)
+			if(matches.size() > 1) {
+				Hop sameId = index.byId().get(plannerHopId);
+				// A repeated source signature may represent distinct planner-owned roots.
+				// Preserve exact occurrence authority only when the unique same-id runtime
+				// object is itself a member of this signature group.  Object identity is
+				// intentional: Hop equality must not make colliding occurrences fungible.
+				if(sameId != null && matches.stream().anyMatch(match -> match == sameId))
+					return sameId;
 				throw invalidRuntimePlan(null,
 					"exact planner action has ambiguous recompile signature for originalHop="
 						+ plannerHopId + " signature=" + selectedSignature + " matches="
 						+ runtimeHopDescriptions(matches));
+			}
 			if(matches.size() == 1)
 				return matches.get(0);
 			Hop sameId = index.byId().get(plannerHopId);

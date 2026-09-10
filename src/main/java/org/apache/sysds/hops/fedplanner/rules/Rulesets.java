@@ -2880,7 +2880,9 @@ public final class Rulesets {
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
       List<FType> left = candidates(inFTypeCandidates, 0);
       List<FType> right = candidates(inFTypeCandidates, 1);
-      if (!hasFederated(left) && !hasFederated(right))
+      boolean localTimesBroadcast = !isTsmmType(attr(sig, ATTR_TSMM_TYPE))
+          && left.stream().anyMatch(t -> t == null) && right.contains(FType.BROADCAST);
+      if (!localTimesBroadcast && !hasFederated(left) && !hasFederated(right))
         return FTypeProfile.empty();
       if (isTsmmType(attr(sig, ATTR_TSMM_TYPE)))
         return FTypeProfile.ofOutput(List.of(FType.BROADCAST));
@@ -2891,6 +2893,8 @@ public final class Rulesets {
       boolean alignColT = isAlignColT(sig);
 
       Set<FType> outs = new LinkedHashSet<>();
+      if (localTimesBroadcast)
+        outs.add(FType.BROADCAST);
       if (leftHasRow && !(leftHasCol && rightHasRow && alignColT))
         outs.add(FType.ROW);
 
@@ -2905,6 +2909,8 @@ public final class Rulesets {
           return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
         return tsmmCaps(sig, normalize(typeAt(inFTypes, tsmmInputIndex(tsmmType))), tsmmType, hint);
       }
+      if (inFTypes == null || inFTypes.size() != 2)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
       FType left = normalize(typeAt(inFTypes, 0));
       FType right = normalize(typeAt(inFTypes, 1));
@@ -2938,6 +2944,12 @@ public final class Rulesets {
         FType outputType = left == FType.BROADCAST ? FType.BROADCAST : FType.FULL;
         return guardAwareFout(sig, outputType, ReasonCode.OK, guard);
       }
+
+      // The runtime broadcasts a local LHS to the RHS replica pool and can retain
+      // the identical products there. This is not ROW partial-result aggregation;
+      // do not generalize eligibility to other BROADCAST input combinations.
+      if (left == null && right == FType.BROADCAST)
+        return guardAwareFout(sig, FType.BROADCAST, ReasonCode.OK, Guard.eval(sig));
 
       if (!eligible(left, right))
         return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
@@ -4577,7 +4589,10 @@ public final class Rulesets {
 
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
-      return primaryLikeProfile(inFTypeCandidates);
+      Set<FType> outs = new LinkedHashSet<>(primaryLikeProfile(inFTypeCandidates).outputs());
+      if (candidates(inFTypeCandidates, 0).contains(FType.BROADCAST))
+        outs.add(FType.BROADCAST);
+      return profileOf(outs);
     }
 
     @Override
@@ -4585,7 +4600,7 @@ public final class Rulesets {
       FType in = typeAt(inFTypes, 0);
       if (isFederatedLike(in))
         return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
-      if (in == FType.FULL || in == FType.PART)
+      if (in == FType.FULL || in == FType.PART || in == FType.BROADCAST)
         return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
 
       if (attrBoolean(sig, ATTR_VAR_WRITE_FED))
@@ -4679,7 +4694,10 @@ public final class Rulesets {
 
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
-      return primaryLikeProfile(inFTypeCandidates);
+      Set<FType> outs = new LinkedHashSet<>(primaryLikeProfile(inFTypeCandidates).outputs());
+      if (candidates(inFTypeCandidates, 0).contains(FType.BROADCAST))
+        outs.add(FType.BROADCAST);
+      return profileOf(outs);
     }
 
     @Override
@@ -4688,7 +4706,7 @@ public final class Rulesets {
       if (attrType != null)
         return fedFoutCaps(sig, preserveOrAxis(attrType), ReasonCode.OK);
       FType in = typeAt(inFTypes, 0);
-      if (isFederatedLike(in) || in == FType.FULL || in == FType.PART)
+      if (isFederatedLike(in) || in == FType.FULL || in == FType.PART || in == FType.BROADCAST)
         return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
       if (attrBoolean(sig, ATTR_VAR_READ_FED))
         return fedFoutCaps(sig, FType.BROADCAST, ReasonCode.OK);

@@ -1187,6 +1187,12 @@ public final class FederatedCostModel {
 	public static double computeOpCost(Hop currentHop, double supplementalComputeTimeFloor) {
 		double inputMemEstimate = getEffectiveInputMemEstimate(currentHop);
 		double outputMemEstimate = getEffectiveOutputMemEstimate(currentHop);
+		return computeOpCost(currentHop, supplementalComputeTimeFloor,
+			inputMemEstimate, outputMemEstimate);
+	}
+
+	private static double computeOpCost(Hop currentHop, double supplementalComputeTimeFloor,
+			double inputMemEstimate, double outputMemEstimate) {
 		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
 		computeCost = Math.max(computeCost, estimateWdivmmRankAwareComputeFloor(currentHop));
 		if (isDmlFunctionOp(currentHop)) {
@@ -1360,24 +1366,43 @@ public final class FederatedCostModel {
 	/** See {@link #computeOpCost(Hop, double)}. */
 	public static double computeOpCostWithFallback(Hop hop,
 			double supplementalComputeTimeFloor) {
+		return computeOpCostWithFallback(hop, supplementalComputeTimeFloor,
+			Double.NaN, Double.NaN);
+	}
+
+	/**
+	 * Occurrence-aware ordinary HOP cost. Positive finite byte estimates replace
+	 * the memory-derived inputs to the existing formula; missing estimates retain
+	 * all existing HOP fallbacks and kernel compute floors.
+	 */
+	public static double computeOpCostWithFallback(Hop hop,
+			double supplementalComputeTimeFloor, double inputMemEstimate,
+			double outputMemEstimate) {
 		if (hop == null) {
 			return 0.0;
 		}
 
-		double opCost = computeOpCost(hop, supplementalComputeTimeFloor);
+		double effectiveInputMemEstimate = positiveFinite(inputMemEstimate)
+			? inputMemEstimate : getEffectiveInputMemEstimate(hop);
+		double effectiveOutputMemEstimate = positiveFinite(outputMemEstimate)
+			? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
+		double opCost = computeOpCost(hop, supplementalComputeTimeFloor,
+			effectiveInputMemEstimate, effectiveOutputMemEstimate);
 		if (opCost > 0.0) {
 			return opCost;
 		}
 
-		double inputMemEstimate = getEffectiveInputMemEstimate(hop);
-		double outputMemEstimate = getEffectiveOutputMemEstimate(hop);
-		if (inputMemEstimate <= 0.0 && outputMemEstimate <= 0.0) {
+		if (effectiveInputMemEstimate <= 0.0 && effectiveOutputMemEstimate <= 0.0) {
 			return 0.0;
 		}
 
-		double inputAccessCost = computeMemoryAccessCost(inputMemEstimate);
-		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
+		double inputAccessCost = computeMemoryAccessCost(effectiveInputMemEstimate);
+		double outputAccessCost = computeMemoryAccessCost(effectiveOutputMemEstimate);
 		return inputAccessCost + outputAccessCost;
+	}
+
+	private static boolean positiveFinite(double estimate) {
+		return Double.isFinite(estimate) && estimate > 0.0;
 	}
 
 	public static double computeMemoryAccessCost(double memSize) {
@@ -1496,7 +1521,7 @@ public final class FederatedCostModel {
 	 * one selected cell per row, with the runtime still free to materialize extra
 	 * tie cells when the data contains ties.</p>
 	 */
-	private static double getSemanticSparseAssignmentMemEstimate(Hop hop) {
+	public static double getSemanticSparseAssignmentMemEstimate(Hop hop) {
 		SparseAssignmentShape shape = getSemanticSparseAssignmentShape(hop);
 		if (shape == null)
 			return 0.0;

@@ -382,3 +382,28 @@
 - **증거**: `/home/mchoi/g014-p2-placement-repair-20260909/agglocal-publish/tests.log`, `TEST_RESULTS.json`, `test-results/`.
 
 - **게시 전 빌드**: `mvn -q package -Dmaven.test.skip=true` PASS, staged diff whitespace 검사 PASS.
+
+## Shared analysis shape → cost wiring — 2026-09-09 (진행 중)
+- **문제 정의**: GMM LAN/w1 logical function boundary의 exp(log_resp)→resp 크기가 raw HOP에서는 미상으로 남아 256MiB fallback을 사용함. 동일 canonical surface에서 FedFirst에 178259.15986394562ms download factor가 부과됨; N×K=50000×4 논리 크기는 1600000bytes. 별도로 16GiB raw input placeholder도 kernel memory cost로 전달됨.
+- **해결 계획/의사결정 근거**: 이미 frozen shared analysis가 입증한 occurrence shape를 우선 비용에 전달. serialized sparse evidence의 우선순위 보존; concrete HOP memory estimates 유지; 알려지지 않은 차원은 추측하지 않음. 정책/후보/개인정보/런타임 변경 없음.
+- **수정 범위**: logical function boundary byte accounting 및 analysis-aware kernel memory accounting, focused regression tests.
+- **검증 계획**: red→green focused tests; frozen backend와 수정 클래스 overlay의 network-none Docker compile-only 비교. 공통 analysis의 shape fact 자체가 미상인 경우 비용 연결만으로 해결되었다고 주장하지 않음.
+- **기존 실험 보호**: supervisor 신규 scheduling만 일시 중지하고 실행 중 planning child는 완료하도록 둠. 기존 JAR/결과 변경 없음; 진단 후 기존 supervisor 재개.
+- **잠재 회귀 위험**: sparse estimate를 dense로 덮기, 동일 HOP의 다른 occurrence shape 혼합, unproven formal dimension 추정, HOP mutation. 각각 회귀 테스트 및 immutable authority 검사로 검증.
+- **증거 위치**: /home/mchoi/g014-gmm-analysis-cost-shape-20260909/
+- **잔여 이슈**: 전체 compile/runtime ordering 개선은 아직 미검증.
+
+### Shared analysis → cost wiring 검증 완료 (2026-09-09 17:44 UTC)
+- GMM common abstract shape는 이미 50000x4이며 raw HOP unknown-size fallback의 비용 경로 소비 누락을 수정. DML/privacy/candidate builder 변경 없음.
+- ordinary input/output memory 및 logical function boundary 비용에 occurrence-exact shape 연결; semantic sparse/NNZ 우선, unknown fallback 유지. Sparse estimator는 기존 surface-local context 재사용, global cache 없음.
+- 동일 frozen backend planning-only: Global 예상587609.006→4736.271ms, Regional587998.873→4736.271ms. physical decisions Global50/381, Regional19/381 변경; FedFirst/AggLocal0. 실제 runtime 개선 주장 아님.
+- 8suite78tests PASS, Maven compile PASS, diff-check PASS. 상세 증거와 제한: `/home/mchoi/g014-gmm-analysis-cost-shape-20260909/REPORT.md`.
+- 17:43:52UTC scheduler PID3718988 재개, pca-lan-w5 runtime 확인. Frozen runtime backend 교체하지 않음.
+
+### Shared-analysis cost backend 배포 및 runtime 재개 (2026-09-09 18:09 UTC)
+- 사용자 요청에 따라 full Maven package 후 새 stage를 생성, so002–so007 배포 및 전수 manifest 검증. 이전 mounted stage 변경 없음.
+- 신규 JAR20c6a2e116c7f4cf77080b82319dcd35c47a9156b9c8256aba3fc513a5f69755. GMM-v2 대비3costclass families만 변경, 추가/삭제class 없음.
+- 기존 ALS/LAN/w5 block4/4 종료 후 old supervisor를 supersede. 새 PID4183405는 interleaved planning→comparison→runtime으로 ML10/4net/w1,3,5를 실행한다.
+- GMMplanning4/4, Global runtime5.469s 및 Regional5.329s 성공(network+output검증). 전체 성능 개선/정렬 증거 아님.
+- 기존 runtime에는 전체physicaltrace/receipt가 없어 계획 대응이 입증되지 않는다. 비용fingerprint만 보고 구결과를 신백엔드결과로 재사용하지 않고 보수적으로 재측정한다.
+- 잔여 작업: 신규 캠페인 나머지셀. 실패시durablestate/log 보존 후 원인분석 필요. 상세보고서 `/home/mchoi/g014-ml10-analysis-shape-backend-20260909/STATUS_REPORT.md`.
