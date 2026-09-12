@@ -193,6 +193,8 @@ public class Statistics
 	private static long compilePhaseRuntimeProgramTime = 0;
 	private static long compilePhaseFedPlannerTime = 0;
 	private static long compilePhaseFedPlannerCalls = 0;
+	private static final long[] compilePhaseFedPlannerSplitTimes = new long[6];
+	private static long compilePhaseFedPlannerSplitCalls = 0;
 	private static long compileObservedHops = -1;
 
 	public static void resetCompilePhaseTimes() {
@@ -204,6 +206,8 @@ public class Statistics
 		compilePhaseRuntimeProgramTime = 0;
 		compilePhaseFedPlannerTime = 0;
 		compilePhaseFedPlannerCalls = 0;
+		java.util.Arrays.fill(compilePhaseFedPlannerSplitTimes, 0);
+		compilePhaseFedPlannerSplitCalls = 0;
 		compileObservedHops = -1;
 	}
 
@@ -250,6 +254,17 @@ public class Statistics
 		if( DMLScript.STATISTICS ) {
 			compilePhaseFedPlannerTime += nanos;
 			compilePhaseFedPlannerCalls++;
+		}
+	}
+
+	public static void addCompilePhaseFedPlannerSplit(long commonPreparationNanos,
+		org.apache.sysds.hops.fedplanner.placement.PlannerPipelineTiming.Timing timing) {
+		if(DMLScript.STATISTICS) {
+			long[] values = {commonPreparationNanos, timing.planningNanos(), timing.diagnosticsNanos(),
+				timing.conversionNanos(), timing.applicationNanos(), timing.finalizationNanos()};
+			for(int i = 0; i < values.length; i++)
+				compilePhaseFedPlannerSplitTimes[i] += values[i];
+			compilePhaseFedPlannerSplitCalls++;
 		}
 	}
 
@@ -1146,6 +1161,12 @@ public class Statistics
 			sb.append("Compile Phase LopsRewrite:\t" + String.format("%.6f", getCompilePhaseLopsRewriteTime()*1e-9) + " sec.\n");
 			sb.append("Compile Phase RuntimeProgram:\t" + String.format("%.6f", getCompilePhaseRuntimeProgramTime()*1e-9) + " sec.\n");
 			sb.append("Compile Phase FedPlanner:\t" + String.format("%.6f", getCompilePhaseFedPlannerTime()*1e-9) + " sec.\n");
+			if(compilePhaseFedPlannerSplitCalls > 0) {
+				String[] names = {"CommonPreparation", "Decision", "Diagnostics", "Conversion", "Application", "Finalization"};
+				for(int i = 0; i < names.length; i++)
+					sb.append("Compile Phase FedPlanner " + names[i] + ":\t"
+						+ String.format("%.6f", compilePhaseFedPlannerSplitTimes[i] * 1e-9) + " sec.\n");
+			}
 			sb.append(FederatedCompilationTimer.getStringRepresentation());
 		}
 		sb.append("Total execution time:\t\t" + String.format("%.3f", getRunTime()*1e-9) + " sec.\n"); // nanoSec --> sec

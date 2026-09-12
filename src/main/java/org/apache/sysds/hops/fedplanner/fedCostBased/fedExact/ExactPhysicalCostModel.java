@@ -42,6 +42,7 @@ import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -205,6 +206,16 @@ public final class ExactPhysicalCostModel {
 	static void traceCanonicalContributions(String planner,
 		List<ExactCategoricalSolver.Variable> variables, List<PhysicalContribution> contributions,
 		List<Integer> assignment, long expectedObjectiveBits, BiConsumer<String,String> sink) {
+		traceCanonicalContributions(planner, variables, contributions, assignment,
+			expectedObjectiveBits, FederatedPlannerTrace.isDetailEnabled(), sink);
+	}
+
+	static void traceCanonicalContributions(String planner,
+		List<ExactCategoricalSolver.Variable> variables, List<PhysicalContribution> contributions,
+		List<Integer> assignment, long expectedObjectiveBits, boolean traceDetails,
+		BiConsumer<String,String> sink) {
+		long auditStartedNanos = System.nanoTime();
+		long detailFormattingOutputNanos = 0L;
 		if(assignment == null || assignment.size() != variables.size())
 			throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_ASSIGNMENT_SIZE_MISMATCH");
 		Objects.requireNonNull(sink, "sink");
@@ -219,34 +230,59 @@ public final class ExactPhysicalCostModel {
 		for(int ordinal = 0; ordinal < contributions.size(); ordinal++) {
 			PhysicalContribution contribution = contributions.get(ordinal);
 			int[] local = new int[contribution.factor().scope().size()];
-			StringBuilder scope = new StringBuilder();
 			for(int index = 0; index < local.length; index++) {
 				Integer global = positions.get(contribution.factor().scope().get(index));
 				if(global == null)
 					throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_FOREIGN_VARIABLE");
 				local[index] = assignment.get(global);
-				if(index > 0)
-					scope.append(',');
-				scope.append(global);
 			}
 			double value = contribution.factor().cost(local);
 			long valueBits = bits(value);
 			sum.addBits(valueBits, "EXACT_PHYSICAL_TRACE_COST_INVALID",
 				"EXACT_PHYSICAL_TRACE_SUM_INVALID");
-			String id = Base64.getUrlEncoder().withoutPadding()
-				.encodeToString(contribution.id().getBytes(StandardCharsets.UTF_8));
-			sink.accept("Physical-CostContribution", "planner=" + planner + " ordinal=" + ordinal
-				+ " unit=ms value=" + Double.toString(value)
-				+ " valueBits=" + Long.toUnsignedString(valueBits) + " idBase64=" + id
-				+ " scope=" + (scope.length() == 0 ? "-" : scope.toString()));
+			if(traceDetails) {
+				long detailStartedNanos = System.nanoTime();
+				StringBuilder scope = new StringBuilder();
+				for(int index = 0; index < contribution.factor().scope().size(); index++) {
+					if(index > 0)
+						scope.append(',');
+					scope.append(positions.get(contribution.factor().scope().get(index)));
+				}
+				String id = Base64.getUrlEncoder().withoutPadding()
+					.encodeToString(contribution.id().getBytes(StandardCharsets.UTF_8));
+				sink.accept("Physical-CostContribution", "planner=" + planner + " ordinal=" + ordinal
+					+ " unit=ms value=" + Double.toString(value)
+					+ " valueBits=" + Long.toUnsignedString(valueBits) + " idBase64=" + id
+					+ " scope=" + (scope.length() == 0 ? "-" : scope.toString()));
+				detailFormattingOutputNanos = saturatingAdd(detailFormattingOutputNanos,
+					nonNegativeElapsed(detailStartedNanos, System.nanoTime()));
+			}
 		}
 		long sumBits = sum.totalBits("EXACT_PHYSICAL_TRACE_SUM_INVALID");
 		if(sumBits != expectedObjectiveBits)
 			throw new IllegalArgumentException("EXACT_PHYSICAL_TRACE_OBJECTIVE_MISMATCH");
+		long auditElapsedNanos = nonNegativeElapsed(auditStartedNanos, System.nanoTime());
+		long evaluationValidationNanos = Math.max(0L,
+			auditElapsedNanos - detailFormattingOutputNanos);
+		sink.accept("Physical-CostContributionAuditTiming", "planner=" + planner
+			+ " contributions=" + contributions.size()
+			+ " evaluationValidationNanos=" + evaluationValidationNanos
+			+ " detailFormattingOutputNanos=" + detailFormattingOutputNanos
+			+ " details=" + traceDetails);
 		sink.accept("Physical-CostContributionComplete", "planner=" + planner
 			+ " contributions=" + contributions.size() + " unit=ms objective="
 			+ Double.toString(Double.longBitsToDouble(sumBits))
 			+ " objectiveBits=" + Long.toUnsignedString(sumBits));
+	}
+
+	private static long nonNegativeElapsed(long startedNanos, long completedNanos) {
+		return Math.max(0L, completedNanos - startedNanos);
+	}
+
+	private static long saturatingAdd(long left, long right) {
+		if(right > Long.MAX_VALUE - left)
+			return Long.MAX_VALUE;
+		return left + right;
 	}
 
 	static PhysicalCostSurface physicalCostSurface(PlacementAnalysis analysis,

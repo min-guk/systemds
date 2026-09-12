@@ -43,6 +43,108 @@ public class ExactCategoricalSolverTest {
 	}
 
 	@Test
+	public void regionalFastCompilationMatchesBruteForceWithHardDenseFactors() {
+		var a = variable("fast-a", 2);
+		var b = variable("fast-b", 3);
+		var c = variable("fast-c", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(a, b, c);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(a, b),
+				4d, 1d, Double.POSITIVE_INFINITY,
+				0d, 7d, 2d),
+			ExactCategoricalSolver.Factor.dense(List.of(b, c),
+				3d, 0d,
+				1d, Double.POSITIVE_INFINITY,
+				5d, 2d),
+			ExactCategoricalSolver.Factor.dense(List.of(c), 2d, 0d));
+
+		ExactCategoricalSolver.RegionalCompilation compilation =
+			ExactCategoricalSolver.compileRegionalFast(variables, factors, GENEROUS);
+		ExactCategoricalSolver.Result result = ExactCategoricalSolver.solve(compilation.compiled());
+		BruteForce expected = bruteForce(variables, factors);
+
+		Assert.assertTrue(compilation.fastOrderAccepted());
+		Assert.assertEquals(expected.objective, result.objective(), 0d);
+		Assert.assertEquals(expected.objective,
+			evaluate(variables, factors, result.assignmentInVariableOrder()), 0d);
+	}
+
+	@Test
+	public void regionalFastCompilationFallsBackAboveWorkGuard() {
+		List<ExactCategoricalSolver.Variable> variables = new ArrayList<>();
+		for(int index = 0; index < 18; index++)
+			variables.add(variable("guard-" + index, 2));
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+		for(int left = 0; left < variables.size(); left++)
+			for(int right = left + 1; right < variables.size(); right++)
+				factors.add(ExactCategoricalSolver.Factor.dense(
+					List.of(variables.get(left), variables.get(right)), 0d, 1d, 1d, 0d));
+
+		ExactCategoricalSolver.RegionalCompilation compilation =
+			ExactCategoricalSolver.compileRegionalFast(variables, factors,
+				new ExactCategoricalSolver.Limits(200_000, 1_000_000));
+		ExactCategoricalSolver.CompiledProblem portfolio = ExactCategoricalSolver.compile(
+			variables, factors, new ExactCategoricalSolver.Limits(200_000, 1_000_000));
+
+		Assert.assertFalse(compilation.fastOrderAccepted());
+		Assert.assertTrue(ExactCategoricalSolver.statistics(compilation.compiled())
+			.eliminationAssignments() > 100_000L);
+		Assert.assertEquals(ExactCategoricalSolver.statistics(portfolio),
+			ExactCategoricalSolver.statistics(compilation.compiled()));
+
+		ExactCategoricalSolver.RegionalCompilation raisedCap =
+			ExactCategoricalSolver.compileRegionalFast(variables, factors,
+				new ExactCategoricalSolver.Limits(200_000, 1_000_000), 1_000_000L);
+		Assert.assertTrue(raisedCap.fastOrderAccepted());
+		Assert.assertEquals(compilation.fastOrderAssignments(), raisedCap.fastOrderAssignments());
+	}
+
+	@Test
+	public void commonFastOrderPreservesCanonicalTieAssignment() {
+		var z = variable("common-z", 2);
+		var a = variable("common-a", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(z, a);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(z, a), 0d, 0d, 0d, 0d));
+		ExactCategoricalSolver.OrderCompilation fast =
+			ExactCategoricalSolver.compileWithFastOrder(variables, factors, GENEROUS,
+				true, 1_000_000L);
+		ExactCategoricalSolver.OrderCompilation portfolio =
+			ExactCategoricalSolver.compileWithFastOrder(variables, factors, GENEROUS,
+				false, 1_000_000L);
+
+		Assert.assertTrue(fast.fastOrderConfigured());
+		Assert.assertTrue(fast.fastOrderAccepted());
+		Assert.assertFalse(fast.fastOrderFallback());
+		Assert.assertEquals(List.of(0, 0),
+			ExactCategoricalSolver.solve(fast.compiled()).assignmentInVariableOrder());
+		ExactCategoricalSolver.Result portfolioResult =
+			ExactCategoricalSolver.solve(portfolio.compiled());
+		ExactCategoricalSolver.Result fastResult = ExactCategoricalSolver.solve(fast.compiled());
+		Assert.assertEquals(portfolioResult.objective(), fastResult.objective(), 0d);
+		Assert.assertEquals(portfolioResult.assignmentInVariableOrder(),
+			fastResult.assignmentInVariableOrder());
+	}
+
+	@Test
+	public void regionalFastCompilationRejectsNonPositiveWorkLimit() {
+		var value = variable("work-limit", 2);
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactCategoricalSolver.compileRegionalFast(List.of(value), List.of(
+				ExactCategoricalSolver.Factor.dense(List.of(value), 0d, 1d)), GENEROUS, 0L));
+		Assert.assertEquals("EXACT_VE_REGIONAL_FAST_ORDER_WORK_INVALID|value=0", error.getMessage());
+	}
+
+	@Test
+	public void regionalFastCompilationDoesNotHideMalformedInput() {
+		var value = variable("malformed", 2);
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactCategoricalSolver.compileRegionalFast(List.of(value), List.of(
+				ExactCategoricalSolver.Factor.dense(List.of(value), 0d, Double.NaN)), GENEROUS));
+		Assert.assertEquals("EXACT_VE_FACTOR_COST_INVALID|value=NaN", error.getMessage());
+	}
+
+	@Test
 	public void randomModelsMatchBruteForce() {
 		Random random = new Random(713947L);
 		for(int trial = 0; trial < 100; trial++) {

@@ -29,6 +29,47 @@ public class ExactPhysicalReducedSolverTest {
 		new ExactCategoricalSolver.Limits(1_000_000, 5_000_000);
 
 	@Test
+	public void commonFastOrderIsAppliedWithAndWithoutSingletonCompaction() {
+		var a = variable("fast-a", 2);
+		var b = variable("fast-b", 3);
+		var c = variable("fast-c", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(a, b, c);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(a, b), 4d, 1d, 8d, 0d, 7d, 2d),
+			ExactCategoricalSolver.Factor.dense(List.of(b, c), 3d, 0d, 1d, 9d, 5d, 2d),
+			ExactCategoricalSolver.Factor.dense(List.of(c), 2d, 0d));
+		ExactCategoricalSolver.Result oracle =
+			ExactCategoricalSolver.solve(variables, factors, GENEROUS);
+		String savedFast = System.getProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY);
+		String savedAssignments = System.getProperty(
+			ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY);
+		try {
+			System.setProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY, "true");
+			System.setProperty(ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY,
+				"1000000");
+			for(boolean compact : new boolean[] {false, true}) {
+				ExactPhysicalReducedSolver.Prepared prepared = compact
+					? ExactPhysicalReducedSolver.prepareCompacted(variables.size(), variables,
+						factors, GENEROUS)
+					: ExactPhysicalReducedSolver.prepare(variables.size(), variables,
+						factors, GENEROUS);
+				Assert.assertTrue(prepared.orderCompilation().fastOrderConfigured());
+				Assert.assertTrue(prepared.orderCompilation().fastOrderAccepted());
+				Assert.assertFalse(prepared.orderCompilation().fastOrderFallback());
+				ExactCategoricalSolver.Result actual = ExactPhysicalReducedSolver.solve(prepared);
+				Assert.assertEquals(oracle.objective(), actual.objective(), 0d);
+				Assert.assertEquals(oracle.assignmentInVariableOrder(),
+					actual.assignmentInVariableOrder());
+			}
+		}
+		finally {
+			restoreProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY, savedFast);
+			restoreProperty(ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY,
+				savedAssignments);
+		}
+	}
+
+	@Test
 	public void randomUnaryBinaryTernaryModelsMatchUnreducedExactSolve() {
 		Random random = new Random(709_2026L);
 		for(int trial = 0; trial < 80; trial++) {
@@ -710,5 +751,12 @@ public class ExactPhysicalReducedSolverTest {
 		for(int cell = 0; cell < cells; cell++)
 			values[cell] = random.nextInt(8) * 0.125d;
 		return ExactCategoricalSolver.Factor.dense(scope, values);
+	}
+
+	private static void restoreProperty(String property, String value) {
+		if(value == null)
+			System.clearProperty(property);
+		else
+			System.setProperty(property, value);
 	}
 }

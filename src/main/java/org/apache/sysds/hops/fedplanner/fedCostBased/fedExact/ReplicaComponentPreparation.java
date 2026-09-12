@@ -77,7 +77,8 @@ final class ReplicaComponentPreparation {
 		long started = System.nanoTime();
 		ExactCategoricalSolver.CompiledProblem compiled;
 		try {
-			compiled = ExactCategoricalSolver.compile(variables, factors, limits);
+			compiled = ExactCategoricalSolver.compile(variables, factors, limits,
+				"replica-component-fallback");
 		}
 		finally {
 			preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - started);

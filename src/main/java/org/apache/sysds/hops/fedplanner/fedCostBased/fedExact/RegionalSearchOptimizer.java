@@ -28,11 +28,22 @@ final class RegionalSearchOptimizer {
 	enum Algorithm { REMAINING_EXACT }
 	enum StopReason { TARGET_REACHED, GLOBAL_EXACT, TIME_BUDGET, RESOURCE_LIMIT }
 
-	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, long exactClosureAssignments) {
+	record Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, long exactClosureAssignments,
+		long costShiftMillis, int costShiftMaxSweeps, MiniBucketLowerBound.PlanningPolicy lbPlanning) {
+		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, long exactClosureAssignments) {
+			this(algorithm, common, exactClosureAssignments, 0L, 1000);
+		}
+		Options(Algorithm algorithm, CertifiedRegionalOptimizer.Options common, long exactClosureAssignments,
+			long costShiftMillis, int costShiftMaxSweeps) {
+			this(algorithm, common, exactClosureAssignments, costShiftMillis, costShiftMaxSweeps,
+				new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.INPUT,
+					MiniBucketLowerBound.PartitionStrategy.FIRST_FIT));
+		}
 		Options {
 			Objects.requireNonNull(algorithm, "algorithm");
 			Objects.requireNonNull(common, "common");
-			if(exactClosureAssignments < 0)
+			Objects.requireNonNull(lbPlanning, "lbPlanning");
+			if(exactClosureAssignments < 0 || costShiftMillis < 0 || costShiftMaxSweeps < 1)
 				throw new IllegalArgumentException("REGIONAL_SEARCH_OPTIONS_INVALID");
 		}
 		static Options configured(CertifiedRegionalOptimizer.Options common) {
@@ -47,7 +58,18 @@ final class RegionalSearchOptimizer {
 				throw new IllegalArgumentException("REGIONAL_SEARCH_REQUIRES_ENABLED_MODE");
 			return new Options(Algorithm.REMAINING_EXACT, common,
 				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
-					+ "exactClosureAssignments", "100000")));
+					+ "exactClosureAssignments", "100000")),
+				Long.parseLong(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
+					+ "costShiftMillis", "0")),
+				Integer.parseInt(System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX
+					+ "costShiftMaxSweeps", "1000")),
+				new MiniBucketLowerBound.PlanningPolicy(
+					MiniBucketLowerBound.EliminationOrder.valueOf(policyProperty("lbOrder", "input")),
+					MiniBucketLowerBound.PartitionStrategy.valueOf(policyProperty("lbPartition", "first-fit"))));
+		}
+		private static String policyProperty(String name, String fallback) {
+			return System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + name, fallback)
+				.toUpperCase(Locale.ROOT).replace('-', '_');
 		}
 	}
 
@@ -56,7 +78,8 @@ final class RegionalSearchOptimizer {
 		Statistics() {
 			for(String key : List.of("boundCalls", "exactCalls", "boundAssignments", "exactAssignments",
 				"boundMaterializedCells", "maxFactorCells", "boundNanos", "exactNanos", "resourceFailures",
-				"remainingClosureAttempts", "remainingClosureCompleted"))
+				"remainingClosureAttempts", "remainingClosureCompleted", "costShiftCalls", "costShiftNanos",
+				"costShiftUpdates", "costShiftSweeps", "costShiftScannedCells", "costShiftResourceLimited"))
 				counts.put(key, 0L);
 		}
 		void add(String key, long value) { counts.put(key, Math.addExact(get(key), value)); }

@@ -36,6 +36,7 @@ final class IncrementalReplicaBound {
 	private static final int MAXIMUM_BATCH_VARIABLES = 32;
 
 	private final MiniBucketLowerBound.ReplicaModel model;
+	private final long partitionPlanningNanos;
 	private final ExactCategoricalSolver.Limits limits;
 	private final long maximumWork;
 	private final boolean reusePreparation;
@@ -170,19 +171,31 @@ final class IncrementalReplicaBound {
 		List<ExactCategoricalSolver.Factor> factors, int width,
 		ExactCategoricalSolver.Limits limits, long maximumWork, boolean reusePreparation,
 		BooleanSupplier cancelled) {
+		return create(variables, factors, width, limits, maximumWork, reusePreparation,
+			new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.INPUT,
+				MiniBucketLowerBound.PartitionStrategy.FIRST_FIT), cancelled);
+	}
+
+	static IncrementalReplicaBound create(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors, int width,
+		ExactCategoricalSolver.Limits limits, long maximumWork, boolean reusePreparation,
+		MiniBucketLowerBound.PlanningPolicy policy, BooleanSupplier cancelled) {
 		Objects.requireNonNull(cancelled, "cancelled");
 		if(maximumWork <= 0)
 			throw new IllegalArgumentException("INCREMENTAL_REPLICA_WORK_LIMIT_INVALID");
 		checkCancelled(cancelled);
+		long started = System.nanoTime();
 		MiniBucketLowerBound.ReplicaModel replica = MiniBucketLowerBound.replicaModel(
-			variables, factors, width, limits, cancelled);
-		return new IncrementalReplicaBound(replica, limits, maximumWork, reusePreparation, cancelled);
+			variables, factors, width, limits, policy, cancelled);
+		return new IncrementalReplicaBound(replica, limits, maximumWork, reusePreparation,
+			System.nanoTime() - started, cancelled);
 	}
 
 	private IncrementalReplicaBound(MiniBucketLowerBound.ReplicaModel model,
 		ExactCategoricalSolver.Limits limits, long maximumWork, boolean reusePreparation,
-		BooleanSupplier cancelled) {
+		long partitionPlanningNanos, BooleanSupplier cancelled) {
 		this.model = model;
+		this.partitionPlanningNanos = partitionPlanningNanos;
 		this.limits = Objects.requireNonNull(limits, "limits");
 		this.maximumWork = maximumWork;
 		this.reusePreparation = reusePreparation;
@@ -212,6 +225,8 @@ final class IncrementalReplicaBound {
 
 	double lowerBound() { return lowerBound; }
 	String partitionIdentity() { return model.partitionIdentity(); }
+	List<Integer> eliminationOrder() { return model.eliminationOrder(); }
+	long partitionPlanningNanos() { return partitionPlanningNanos; }
 	int replicaVariables() { return model.variables().size(); }
 	int componentCount() { return components.size(); }
 	int restoredEqualities() { return restoredEqualities; }
@@ -589,7 +604,8 @@ final class IncrementalReplicaBound {
 					limits, maximumWork, projectedOrder(contracted.variables, touched, contractionParent))
 					.compiled();
 			else
-				compiled = ExactCategoricalSolver.compile(contracted.variables, contracted.factors, limits);
+				compiled = ExactCategoricalSolver.compile(contracted.variables, contracted.factors, limits,
+					"incremental-replica-contracted");
 		}
 		catch(MiniBucketLowerBound.ResourceLimitException failure) {
 			preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - prepared);
@@ -706,7 +722,8 @@ final class IncrementalReplicaBound {
 		ExactCategoricalSolver.CompiledProblem compiled;
 		long prepared = System.nanoTime();
 		try {
-			compiled = ExactCategoricalSolver.compile(variables, factors, limits);
+			compiled = ExactCategoricalSolver.compile(variables, factors, limits,
+				"incremental-replica-component");
 		}
 		catch(IllegalArgumentException failure) {
 			preparationNanos = saturatedAdd(preparationNanos, System.nanoTime() - prepared);

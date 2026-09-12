@@ -50,6 +50,29 @@ final class LocalPhysicalOptimizer {
 
 	private LocalPhysicalOptimizer() { }
 
+	static String incrementalCheckpointTrace(IncrementalRegionalOptimizer.Checkpoint cp,
+		long plannerElapsedNanos) {
+		return new StringBuilder(384)
+			.append("phase=").append(cp.phase())
+			.append(" merges=").append(cp.merges())
+			.append(" clusters=").append(cp.activeClusters())
+			.append(" lower=").append(cp.lower())
+			.append(" upper=").append(cp.upper())
+			.append(" relativeGap=").append(cp.relativeGap())
+			.append(" elapsedNanos=").append(cp.elapsedNanos())
+			.append(" dpNanos=").append(cp.dpNanos())
+			.append(" scoringNanos=").append(cp.scoringNanos())
+			.append(" validationNanos=").append(cp.validationNanos())
+			.append(" assignments=").append(cp.assignments())
+			.append(" retainedSlots=").append(cp.retainedSlots())
+			.append(" improvements=").append(cp.improvements())
+			.append(" resourceRejected=").append(cp.resourceRejected())
+			.append(" internalDecisions=").append(cp.internalDecisions())
+			.append(" plannerElapsedNanos=").append(plannerElapsedNanos)
+			.append(" separateGlobalCalls=0 scope=encoded-model")
+			.toString();
+	}
+
 	static int configuredSeedRevisitPasses() {
 		String raw = System.getProperty(SEED_REVISIT_PASSES_PROPERTY,
 			Integer.toString(DEFAULT_SEED_REVISIT_PASSES));
@@ -127,6 +150,9 @@ final class LocalPhysicalOptimizer {
 		ExactPhysicalCostModel.PhysicalCostSurface surface, RegionalSearchOptimizer.Options searchOptions,
 		java.util.function.Consumer<RegionalSearchOptimizer.Checkpoint> searchObserver) {
 		CertifiedRegionalOptimizer.Options options = searchOptions == null ? null : searchOptions.common();
+		boolean incremental = IncrementalRegionalOptimizer.configured();
+		if(incremental && searchOptions != null)
+			throw new IllegalArgumentException("INCREMENTAL_REGIONAL_LEGACY_SEARCH_CONFLICT");
 		Objects.requireNonNull(model, "model");
 		Objects.requireNonNull(surface, "surface");
 		validateSharedSurface(model, surface);
@@ -135,13 +161,13 @@ final class LocalPhysicalOptimizer {
 			: ExactPhysicalForcedStateAudit.prepare(model);
 		if(forced != null)
 			hardFactors.add(forced.factor());
-		RegionalSearchProblem sharedProblem = SharedRegionalPreparation.configured()
+		RegionalSearchProblem sharedProblem = (incremental || SharedRegionalPreparation.configured())
 			? RegionalSearchProblem.physical(model, surface, forced) : null;
 		SharedRegionalPreparation shared = sharedProblem == null ? null
 			: new SharedRegionalPreparation(sharedProblem,
 				options == null ? ExactPhysicalOptimizer.PRODUCTION_LIMITS : options.limits(),
 				LocalCategoricalOptimizer.configuredCompaction());
-		Seed seed = regionalSeed(model, surface, hardFactors, true, shared);
+		Seed seed = regionalSeed(model, surface, hardFactors, !incremental, shared);
 		LocalCategoricalOptimizer.Result local = seed.local();
 		List<Variable> localOrder = seed.order();
 
@@ -152,14 +178,30 @@ final class LocalPhysicalOptimizer {
 				+ local.objective() + "|canonical=" + canonicalObjective);
 		if(FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("Planner-Stage", String.format(java.util.Locale.ROOT,
-				"stage=REGIONAL_READY plannerElapsedNanos=%d objective=%.17g objectiveBits=%s "
+				"stage=%s plannerElapsedNanos=%d objective=%.17g objectiveBits=%s "
 					+ "costFingerprint=%s analysis=%s scope=encoded-model clock=compile-fedplanner",
+				incremental ? "REGIONAL_BOOTSTRAP_READY" : "REGIONAL_READY",
 				FederatedPlannerTrace.plannerElapsedNanos(), canonicalObjective,
 				Long.toUnsignedString(canonicalBits), surface.contributionFingerprint(),
 				model.analysis().analysisFingerprint()));
 		RegionalSearchOptimizer.Result search = null;
 		List<Integer> selectedAssignment = local.assignmentInVariableOrder();
-		if(searchOptions != null) {
+		if(incremental) {
+			ExactCategoricalSolver.Limits limits = ExactPhysicalOptimizer.PRODUCTION_LIMITS;
+			var root = sharedProblem.reducedRoot(limits);
+			var result = IncrementalRegionalOptimizer.optimize(sharedProblem,root,selectedAssignment,
+				limits,IncrementalRegionalOptimizer.Options.configured(), cp -> {
+					if(FederatedPlannerTrace.isEnabled()) {
+						long plannerElapsedNanos = FederatedPlannerTrace.plannerElapsedNanos();
+						FederatedPlannerTrace.logGlobal("DP-IncrementalRegional",
+							incrementalCheckpointTrace(cp, plannerElapsedNanos));
+					}
+				});
+			selectedAssignment = result.assignment();
+			canonicalObjective = result.upper();
+			canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
+		}
+		else if(searchOptions != null) {
 			if(sharedProblem != null)
 				search = RegionalSearchOptimizer.optimize(sharedProblem, selectedAssignment,
 					searchOptions, searchObserver);

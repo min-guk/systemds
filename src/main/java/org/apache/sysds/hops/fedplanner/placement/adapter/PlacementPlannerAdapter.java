@@ -45,6 +45,13 @@ public interface PlacementPlannerAdapter<R extends NormalizedPlannerResult> {
 		Objects.requireNonNull(result, "result");
 		if(result.analysis() != analysis)
 			throw new IllegalStateException("planner result analysis identity does not match supplied analysis");
+		analysis.assertProgramStructureUnchanged();
+		if(!analysis.analysisFingerprint().equals(result.analysisFingerprint()))
+			throw new IllegalStateException("planner result fingerprint does not match supplied analysis");
+		// This sealed implementation already owns immutable copies and validated receipts.
+		// Emission still revalidates the current program and all physical authorities.
+		if(result instanceof ImmutableNormalizedPlannerResult)
+			return result;
 		return ImmutableNormalizedPlannerResult.of(PlannerPlacementContext.of(analysis), result);
 	}
 }

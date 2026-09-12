@@ -2,7 +2,6 @@
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0.
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
@@ -40,13 +39,15 @@ public class ExactCanonicalCostTraceTest {
 			});
 		Assert.assertEquals(1, evaluations.get());
 		Assert.assertEquals(List.of("Physical-CostContribution", "Physical-CostContribution",
-			"Physical-CostContributionComplete"), stages);
+			"Physical-CostContributionAuditTiming", "Physical-CostContributionComplete"), stages);
 		Assert.assertTrue(messages.get(0).contains("ordinal=0 unit=ms value=2.1 "));
 		Assert.assertTrue(messages.get(0).endsWith("scope=0,1"));
 		String encodedId = messages.get(0).split("idBase64=")[1].split(" ")[0];
 		Assert.assertEquals(id, new String(Base64.getUrlDecoder().decode(encodedId), StandardCharsets.UTF_8));
 		Assert.assertTrue(messages.get(1).contains("ordinal=1 unit=ms value=0.0 valueBits=0 "));
-		Assert.assertTrue(messages.get(2).contains("contributions=2 unit=ms objective=2.1 "));
+		Assert.assertTrue(messages.get(2).contains("evaluationValidationNanos="));
+		Assert.assertTrue(messages.get(2).contains("detailFormattingOutputNanos="));
+		Assert.assertTrue(messages.get(3).contains("contributions=2 unit=ms objective=2.1 "));
 	}
 
 	@Test
@@ -59,8 +60,8 @@ public class ExactCanonicalCostTraceTest {
 		long expected = Double.doubleToRawLongBits(1e16 + 2.0);
 		ExactPhysicalCostModel.traceCanonicalContributions("Exact", List.of(), contributions,
 			List.of(), expected, (stage, message) -> messages.add(message));
-		Assert.assertEquals(4, messages.size());
-		Assert.assertTrue(messages.get(3).endsWith("objectiveBits=" + Long.toUnsignedString(expected)));
+		Assert.assertEquals(5, messages.size());
+		Assert.assertTrue(messages.get(4).endsWith("objectiveBits=" + Long.toUnsignedString(expected)));
 	}
 
 	@Test

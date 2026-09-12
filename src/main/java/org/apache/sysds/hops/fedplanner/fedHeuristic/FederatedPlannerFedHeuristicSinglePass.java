@@ -36,7 +36,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPol
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
-import org.apache.sysds.hops.fedplanner.placement.adapter.PlacementPlannerAdapter;
+import org.apache.sysds.hops.fedplanner.placement.PlacementPlanApplication;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -101,13 +101,13 @@ public final class FederatedPlannerFedHeuristicSinglePass extends AFederatedPlan
 			policyFacts.demotions().stream().map(fact -> fact.valueVersion()).toList()));
 		String fingerprintBefore = analysis.analysisFingerprint();
 		HeuristicPlacementAdapter.Result result = select(analysis, markers);
-		traceSelection(policyFacts, result);
-		NormalizedPlannerResult normalized = PlacementPlannerAdapter.normalize(analysis, result);
-		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
-			PlacementEmissionTransaction.FailureInjector.none());
-		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
-		return new HeuristicInvocationReceipt(analysis, policyFacts, markers, result, counters,
-			fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
+		return PlacementPlanApplication.complete(prog, analysis,
+			() -> traceSelection(policyFacts, result), () -> result, selected -> selected,
+			(selected, normalized, emission) -> {
+				InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
+				return new HeuristicInvocationReceipt(analysis, policyFacts, markers, result, counters,
+					fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
+			});
 	}
 
 	private static void traceSelection(HeuristicPolicyFacts policyFacts,

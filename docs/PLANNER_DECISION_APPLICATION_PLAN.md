@@ -1,0 +1,11 @@
+# Four-planner decision/application boundary
+
+2026-09-12, authorized by user's request to share conversion/application and compare decision time.
+
+1. Preserve build12 solver/model and same selected-plan receipts. Existing245 passing tests and frozen24-run objective/hash/trajectory data lock the previous Local/Global behavior. Add four-planner existing invocation/emission tests plus deterministic timing-state tests before accepting the refactor.
+2. Four roots use one PlacementPlanApplication boundary. Planner-owned selected results enter a shared normalization and PlacementEmissionTransaction; existing lossless DP physical-to-placement decoding and owner receipts remain necessary input adaptation. No greedy reselection, relaxed legality or fallback.
+3. Decision time: entry after common PlacementAnalysis preparation through validated planner-owned selection; includes own physical model/cost surface and all Local seed/LB/refinement work. Post-selection diagnostics, conversion, emission and final boundary verification are separate disjoint intervals. In-search trace overhead stays in decision time; both methods use same summary detail setting.
+4. Common DML pre-normalization/analysis preparation is reported separately, rather than being silently attributed to one planner. Legacy Compile Phase FedPlanner total retained. New schema has nanosecond decision/diagnostics/conversion/application/finalization/total fields; only successful complete invocations publish a result.
+5. Preserve immutable normalized objects at the same analysis authority rather than clone them again on common handoff. Keep program structure/identity checks and transaction prevalidation. Adversarial normalization/emission tests must still pass.
+6. Native JVM planning-only PCA+GLM, worker5/WAN-Mid,4 planners x3 repeats=24, summary trace. User's existing native-JVM authorization supersedes older Docker-only guideline. No runtime workloads or expanded campaign. New analyzer rejects missing split timing and never substitutes legacy total as decision time.
+7. Report decision and full total separately, all trials including failures; compare DP objective/plan with build12. Do not relabel old full-study data or regenerate old graphs from unavailable split timing.

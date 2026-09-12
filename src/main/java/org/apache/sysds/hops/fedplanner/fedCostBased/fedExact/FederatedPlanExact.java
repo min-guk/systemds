@@ -24,10 +24,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
-import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementPlanApplication;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
-import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -54,9 +53,14 @@ public class FederatedPlanExact extends AFederatedPlanner {
 		analysis.assertCanonicalProgramAuthority(prog);
 		analysis.assertProgramStructureUnchanged();
 
+		long phaseStarted = System.nanoTime();
+		long phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		FederatedPlannerTrace.logPhaseTiming("MODEL_SETUP", phaseStarted, phaseOutputStarted);
+		phaseStarted = System.nanoTime();
+		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalOptimizer.Result optimized = ExactPhysicalOptimizer.optimize(
 			model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 		if(FederatedPlannerTrace.isEnabled())
@@ -66,16 +70,19 @@ public class FederatedPlanExact extends AFederatedPlanner {
 				FederatedPlannerTrace.plannerElapsedNanos(), optimized.solverResult().objective(),
 				Long.toUnsignedString(optimized.canonicalObjectiveBits()),
 				optimized.contributionFingerprint(), model.analysis().analysisFingerprint()));
+		FederatedPlannerTrace.logPhaseTiming("OPTIMIZATION", phaseStarted, phaseOutputStarted);
+		phaseStarted = System.nanoTime();
+		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(model, optimized);
-		tracePhysicalSelection(model, surface, selection);
-		ExactPlacementInput input = ExactPhysicalPlacementProjector.project(selection);
-		adapter.select(analysis, input);
-		NormalizedPlannerResult normalized = Objects.requireNonNull(input.normalizedResult(),
-			"Exact projector normalized result");
-		input = input.withEmissionReceipt(PlacementEmissionTransaction.emit(prog, normalized,
-			PlacementEmissionTransaction.FailureInjector.none()));
-
-		return input;
+		FederatedPlannerTrace.logPhaseTiming("SELECTION", phaseStarted, phaseOutputStarted);
+		return PlacementPlanApplication.complete(prog, analysis,
+			() -> tracePhysicalSelection(model, surface, selection),
+			() -> {
+				ExactPlacementInput input = ExactPhysicalPlacementProjector.project(selection);
+				adapter.select(analysis, input);
+				return input;
+			}, ExactPlacementInput::normalizedResult,
+			(input, normalized, emission) -> input.withEmissionReceipt(emission));
 	}
 
 	/**
@@ -107,57 +114,60 @@ public class FederatedPlanExact extends AFederatedPlanner {
 			surface.contributions(), assignment, selection.objectiveBits(),
 			FederatedPlannerTrace::logGlobal);
 
-		List<Factor> factors = new ArrayList<>(model.hardFactors());
-		factors.addAll(surface.factors());
-		List<Variable> variables = model.variables();
-		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
-		for(int index = 0; index < variables.size(); index++)
-			positions.put(variables.get(index), index);
+		if(FederatedPlannerTrace.isDetailEnabled()) {
+			List<Factor> factors = new ArrayList<>(model.hardFactors());
+			factors.addAll(surface.factors());
+			List<Variable> variables = model.variables();
+			IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
+			for(int index = 0; index < variables.size(); index++)
+				positions.put(variables.get(index), index);
 
-		for(int index = 0; index < model.domains().size(); index++) {
-			DecisionDomain domain = model.domains().get(index);
-			Hop hop = selection.analysis().hop(domain.node().key()).orElse(null);
-			if(!FederatedPlannerTrace.shouldTrace(hop))
-				continue;
-			int selectedIndex = assignment.get(index);
-			Alternative selected = domain.alternatives().get(selectedIndex);
-			PlacementEmissionState emission = selection.selectedEmissionStates().get(selected.decision());
-			double selectedIncident = fixedOthersIncidentCost(
-				factors, domain.variable(), positions, assignment, selectedIndex);
-			FederatedPlannerTrace.log(hop, "Exact-PhysicalSelect", String.format(Locale.ROOT,
-				"variable=%d selectedIndex=%d domainSize=%d state=%s derivedFedFout=%s authority=%s "
-					+ "fixedOthersIncident=%.12f unit=ms expectedExecutions=%s inputs=%s signature=%s",
-				index, selectedIndex, domain.alternatives().size(), selected.state().normalizedSignature(),
-				emission != null && emission.derivedFedFout(), selected.authorityKind(), selectedIncident,
-				domain.node().kind() == NodeKind.FUNCTION_INPUT || domain.node().kind() == NodeKind.FUNCTION_OUTPUT
-					? "not_an_executable_occurrence"
-					: Double.toString(selection.analysis().executionFrequencyFacts()
-						.exactExecutionWeight(domain.node().key())),
-				selected.inputAuthorities().stream().map(authority -> authority.signature()).toList(),
-				selected.signature()));
+			for(int index = 0; index < model.domains().size(); index++) {
+				DecisionDomain domain = model.domains().get(index);
+				Hop hop = selection.analysis().hop(domain.node().key()).orElse(null);
+				if(!FederatedPlannerTrace.shouldTrace(hop))
+					continue;
+				int selectedIndex = assignment.get(index);
+				Alternative selected = domain.alternatives().get(selectedIndex);
+				PlacementEmissionState emission = selection.selectedEmissionStates().get(selected.decision());
+				double selectedIncident = fixedOthersIncidentCost(
+					factors, domain.variable(), positions, assignment, selectedIndex);
+				FederatedPlannerTrace.log(hop, "Exact-PhysicalSelect", String.format(Locale.ROOT,
+					"variable=%d selectedIndex=%d domainSize=%d state=%s derivedFedFout=%s authority=%s "
+						+ "fixedOthersIncident=%.12f unit=ms expectedExecutions=%s inputs=%s signature=%s",
+					index, selectedIndex, domain.alternatives().size(), selected.state().normalizedSignature(),
+					emission != null && emission.derivedFedFout(), selected.authorityKind(), selectedIncident,
+					domain.node().kind() == NodeKind.FUNCTION_INPUT || domain.node().kind() == NodeKind.FUNCTION_OUTPUT
+						? "not_an_executable_occurrence"
+						: Double.toString(selection.analysis().executionFrequencyFacts()
+							.exactExecutionWeight(domain.node().key())),
+					selected.inputAuthorities().stream().map(authority -> authority.signature()).toList(),
+					selected.signature()));
 
-			int detailBudget = FederatedPlannerTrace.getMaxEdgeLogsPerHop();
-			int logged = 0;
-			for(int alternativeIndex = 0; alternativeIndex < domain.alternatives().size(); alternativeIndex++) {
-				if(logged >= detailBudget)
-					break;
-				Alternative alternative = domain.alternatives().get(alternativeIndex);
-				double incident = fixedOthersIncidentCost(
-					factors, domain.variable(), positions, assignment, alternativeIndex);
-				double delta = Double.isInfinite(incident) ? Double.POSITIVE_INFINITY
-					: incident - selectedIncident;
-				FederatedPlannerTrace.log(hop, "Exact-PhysicalAlternative", String.format(Locale.ROOT,
-					"variable=%d alternativeIndex=%d selected=%s state=%s authority=%s "
-						+ "fixedOthersIncident=%.12f fixedOthersDelta=%.12f feasibleWithFixedOthers=%s signature=%s",
-					index, alternativeIndex, alternativeIndex == selectedIndex,
-					alternative.state().normalizedSignature(), alternative.authorityKind(), incident, delta,
-					Double.isFinite(incident), alternative.signature()));
-				logged++;
+				int detailBudget = FederatedPlannerTrace.getMaxEdgeLogsPerHop();
+				int logged = 0;
+				for(int alternativeIndex = 0; alternativeIndex < domain.alternatives().size(); alternativeIndex++) {
+					if(logged >= detailBudget)
+						break;
+					Alternative alternative = domain.alternatives().get(alternativeIndex);
+					double incident = fixedOthersIncidentCost(
+						factors, domain.variable(), positions, assignment, alternativeIndex);
+					double delta = Double.isInfinite(incident) ? Double.POSITIVE_INFINITY
+						: incident - selectedIncident;
+					FederatedPlannerTrace.log(hop, "Exact-PhysicalAlternative", String.format(Locale.ROOT,
+						"variable=%d alternativeIndex=%d selected=%s state=%s authority=%s "
+							+ "fixedOthersIncident=%.12f fixedOthersDelta=%.12f feasibleWithFixedOthers=%s signature=%s",
+						index, alternativeIndex, alternativeIndex == selectedIndex,
+						alternative.state().normalizedSignature(), alternative.authorityKind(), incident, delta,
+						Double.isFinite(incident), alternative.signature()));
+					logged++;
+				}
+				int omitted = domain.alternatives().size() - logged;
+				if(omitted > 0)
+					FederatedPlannerTrace.log(hop, "Exact-PhysicalAlternativeSummary",
+						"variable=" + index + " logged=" + logged + " omitted=" + omitted);
 			}
-			int omitted = domain.alternatives().size() - logged;
-			if(omitted > 0)
-				FederatedPlannerTrace.log(hop, "Exact-PhysicalAlternativeSummary",
-					"variable=" + index + " logged=" + logged + " omitted=" + omitted);
+
 		}
 
 		long selectedFed = selection.selectedStates().values().stream()

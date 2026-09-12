@@ -48,20 +48,24 @@ final class ExactPhysicalOptimizer {
 		ExactCategoricalSolver.Result solved;
 		try {
 			boolean compact = configuredCompaction();
+			ExactEliminationOrderPolicy.Configuration orderPolicy =
+				ExactEliminationOrderPolicy.globalConfigured();
 			long started = System.nanoTime();
 			// The off variant keeps the same exact domain reduction and quotient;
 			// only singleton substitution before elimination is disabled.
 			ExactPhysicalReducedSolver.Prepared prepared = compact
 				? ExactPhysicalReducedSolver.prepareCompacted(modelVariables.size(),
-					surface.exactSolverVariables(), factors, limits)
+					surface.exactSolverVariables(), factors, limits, orderPolicy, "global-compact")
 				: ExactPhysicalReducedSolver.prepare(modelVariables.size(),
-					surface.exactSolverVariables(), factors, limits);
+					surface.exactSolverVariables(), factors, limits, orderPolicy, "global");
 			if(FederatedPlannerTrace.isEnabled())
 				FederatedPlannerTrace.logGlobal("Exact-Preparation", "compact=" + compact
 					+ " exactReduction=true encodedVariables=" + surface.exactSolverVariables().size()
 					+ " compiledVariables=" + prepared.compiledVariableCount()
 					+ " factorLimit=" + limits.maximumFactorCells()
 					+ " totalCellLimit=" + limits.maximumMaterializedCells()
+					+ orderTrace(orderPolicy, prepared)
+					+ " compileNanos=" + prepared.preparationStatistics().compileNanos()
 					+ " preparationNanos=" + (System.nanoTime() - started));
 			LocalCategoricalOptimizer.tracePreparation("global", prepared.preparationStatistics());
 			solved = ExactPhysicalReducedSolver.solve(prepared);
@@ -80,6 +84,18 @@ final class ExactPhysicalOptimizer {
 				+ "|solver=" + decisionResult.objective() + "|canonical="
 				+ Double.longBitsToDouble(canonicalBits));
 		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint());
+	}
+
+	private static String orderTrace(ExactEliminationOrderPolicy.Configuration policy,
+		ExactPhysicalReducedSolver.Prepared prepared) {
+		ExactCategoricalSolver.OrderCompilation compilation = prepared.orderCompilation();
+		return " fastOrderConfigured=" + policy.fastOrder()
+			+ " fastOrderAccepted=" + (compilation != null && compilation.fastOrderAccepted())
+			+ " fastOrderFallback=" + (compilation != null && compilation.fastOrderFallback())
+			+ " fastOrderEstimatedAssignments="
+			+ (compilation == null ? 0L : compilation.fastOrderAssignments())
+			+ " fastOrderAssignmentsLimit=" + policy.maximumAssignments()
+			+ " fastOrderSource=" + policy.source();
 	}
 
 	private static boolean configuredCompaction() {

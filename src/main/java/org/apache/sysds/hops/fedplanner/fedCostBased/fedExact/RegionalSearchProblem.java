@@ -392,9 +392,11 @@ final class RegionalSearchProblem {
 	private ExactPhysicalReducedSolver.Prepared prepare(Conditional conditional, Limits limits) {
 		return compactPreparation
 			? ExactPhysicalReducedSolver.prepareCompacted(conditional.originalFreeCount(),
-				conditional.variables(), conditional.factors(), limits)
+				conditional.variables(), conditional.factors(), limits,
+				ExactEliminationOrderPolicy.globalConfigured(), "regional-search-compact")
 			: ExactPhysicalReducedSolver.prepare(conditional.originalFreeCount(),
-				conditional.variables(), conditional.factors(), limits);
+				conditional.variables(), conditional.factors(), limits,
+				ExactEliminationOrderPolicy.globalConfigured(), "regional-search");
 	}
 
 	private PendingPreparation takePreparation(PreparationKey key) {

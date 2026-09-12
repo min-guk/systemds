@@ -28,7 +28,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.P
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
-import org.apache.sysds.hops.fedplanner.placement.adapter.PlacementPlannerAdapter;
+import org.apache.sysds.hops.fedplanner.placement.PlacementPlanApplication;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -85,13 +85,13 @@ public final class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederated
 		analysis.assertCanonicalProgramAuthority(prog);
 		String fingerprintBefore = analysis.analysisFingerprint();
 		FedAllPlacementAdapter.Result result = select(analysis);
-		traceSelection(result);
-		NormalizedPlannerResult normalized = PlacementPlannerAdapter.normalize(analysis, result);
-		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
-			PlacementEmissionTransaction.FailureInjector.none());
-		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
-		return new FedAllInvocationReceipt(analysis, result, counters,
-			fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
+		return PlacementPlanApplication.complete(prog, analysis,
+			() -> traceSelection(result), () -> result, selected -> selected,
+			(selected, normalized, emission) -> {
+				InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
+				return new FedAllInvocationReceipt(analysis, result, counters,
+					fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
+			});
 	}
 
 	private static void traceSelection(FedAllPlacementAdapter.Result result) {

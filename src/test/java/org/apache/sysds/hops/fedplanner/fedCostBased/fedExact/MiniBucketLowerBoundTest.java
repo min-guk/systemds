@@ -2,6 +2,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.CancellationException;
@@ -13,6 +14,144 @@ import org.junit.Test;
 public class MiniBucketLowerBoundTest {
 	private static final ExactCategoricalSolver.Limits GENEROUS =
 		new ExactCategoricalSolver.Limits(1_000_000, 10_000_000);
+	private static final List<MiniBucketLowerBound.PlanningPolicy> POLICIES = List.of(
+		new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.INPUT,
+			MiniBucketLowerBound.PartitionStrategy.FIRST_FIT),
+		new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.INPUT,
+			MiniBucketLowerBound.PartitionStrategy.BEST_FIT),
+		new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.WEIGHTED_MIN_FILL,
+			MiniBucketLowerBound.PartitionStrategy.FIRST_FIT),
+		new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.WEIGHTED_MIN_FILL,
+			MiniBucketLowerBound.PartitionStrategy.BEST_FIT));
+
+	@Test
+	public void weightedMinFillImprovesAdversarialInputOrderAtSameWidth() {
+		var x = variable("x-order", 2);
+		var left = variable("left-order", 2);
+		var right = variable("right-order", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x, left, right);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			pairEquality(x, left, 10d), pairEquality(x, right, 10d),
+			ExactCategoricalSolver.Factor.dense(List.of(left), 0d, 4d),
+			ExactCategoricalSolver.Factor.dense(List.of(right), 4d, 0d));
+		var input = MiniBucketLowerBound.compute(variables, factors, 2, GENEROUS,
+			MiniBucketLowerBound.PlanningPolicy.INPUT_FIRST_FIT, () -> false);
+		var weighted = MiniBucketLowerBound.compute(variables, factors, 2, GENEROUS,
+			new MiniBucketLowerBound.PlanningPolicy(
+				MiniBucketLowerBound.EliminationOrder.WEIGHTED_MIN_FILL,
+				MiniBucketLowerBound.PartitionStrategy.FIRST_FIT), () -> false);
+		Assert.assertEquals(0d, input.lowerBound(), 0d);
+		Assert.assertEquals(4d, weighted.lowerBound(), Math.ulp(4d) * 8);
+	}
+
+	@Test
+	public void bestFitImprovesAdversarialFactorOrderAtSameWidth() {
+		var x = variable("x-partition", 2);
+		var a = variable("a-partition", 2);
+		var b = variable("b-partition", 2);
+		var c = variable("c-partition", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x, a, b, c);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			xPreference(List.of(x, a), false, 5d),
+			xPreference(List.of(x, b), false, 5d),
+			xPreference(List.of(x, a, c), true, 5d),
+			xPreference(List.of(x, b, c), true, 5d));
+		var firstFit = MiniBucketLowerBound.compute(variables, factors, 3, GENEROUS,
+			MiniBucketLowerBound.PlanningPolicy.INPUT_FIRST_FIT, () -> false);
+		var bestFit = MiniBucketLowerBound.compute(variables, factors, 3, GENEROUS,
+			new MiniBucketLowerBound.PlanningPolicy(MiniBucketLowerBound.EliminationOrder.INPUT,
+				MiniBucketLowerBound.PartitionStrategy.BEST_FIT), () -> false);
+		Assert.assertEquals(0d, firstFit.lowerBound(), 0d);
+		Assert.assertEquals(10d, bestFit.lowerBound(), Math.ulp(10d) * 8);
+	}
+
+	@Test
+	public void everyPolicyIsSoundForRandomHardModelsWithConstantsAndPermutedScopes() {
+		Random random = new Random(619004L);
+		for(int trial = 0; trial < 40; trial++) {
+			var a = variable("pa" + trial, 2);
+			var b = variable("pb" + trial, 2);
+			var c = variable("pc" + trial, 2);
+			List<ExactCategoricalSolver.Variable> variables = List.of(a, b, c);
+			List<ExactCategoricalSolver.Factor> factors = List.of(
+				randomHardFactor(random, List.of(b, a)),
+				randomHardFactor(random, List.of(c, a)),
+				randomHardFactor(random, List.of(c, b)),
+				ExactCategoricalSolver.Factor.dense(List.of(), random.nextInt(5)));
+			double optimum = bruteForce(variables, factors);
+			for(MiniBucketLowerBound.PlanningPolicy policy : POLICIES) {
+				double lower = MiniBucketLowerBound.compute(variables, factors, 1,
+					GENEROUS, policy, () -> false).lowerBound();
+				Assert.assertTrue("trial=" + trial + "|policy=" + policy
+					+ "|lower=" + lower + "|optimum=" + optimum, lower <= optimum);
+			}
+		}
+	}
+
+	@Test
+	public void policiesPreserveDiagonalCostsOwnershipAndLegacyIdentity() {
+		var a = variable("identity-a", 2);
+		var b = variable("identity-b", 2);
+		var c = variable("identity-c", 2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(a, b, c);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(b, a), 1d, 7d, 4d, 2d),
+			ExactCategoricalSolver.Factor.dense(List.of(a, c), 3d,
+				Double.POSITIVE_INFINITY, 5d, 0d),
+			ExactCategoricalSolver.Factor.dense(List.of(), 2d));
+		var legacy = MiniBucketLowerBound.replicaModel(variables, factors, 1, GENEROUS,
+			() -> false);
+		var explicitLegacy = MiniBucketLowerBound.replicaModel(variables, factors, 1,
+			GENEROUS, MiniBucketLowerBound.PlanningPolicy.INPUT_FIRST_FIT, () -> false);
+		Assert.assertEquals(legacy.partitionIdentity(), explicitLegacy.partitionIdentity());
+		Assert.assertEquals("mb-replica-v1-565d7b2dbba2acfc2959b3af043786912f6896cdfeb97b3344f56fbfe1721de2",
+			legacy.partitionIdentity());
+		Assert.assertEquals(List.of(0, 1, 2), legacy.eliminationOrder());
+
+		List<Integer> assignment = List.of(1, 1, 0);
+		double original = CertifiedRegionalOptimizer.evaluate(variables, factors, assignment);
+		for(MiniBucketLowerBound.PlanningPolicy policy : POLICIES) {
+			var replica = MiniBucketLowerBound.replicaModel(variables, factors, 1,
+				GENEROUS, policy, () -> false);
+			double diagonal = CertifiedRegionalOptimizer.evaluate(replica.variables(), replica.factors(),
+				replica.diagonalAssignment(assignment));
+			Assert.assertEquals(Double.doubleToRawLongBits(original),
+				Double.doubleToRawLongBits(diagonal));
+			var graph = MiniBucketLowerBound.joinGraphPlan(variables, factors, 1,
+				GENEROUS, policy, () -> false);
+			int[] ownership = new int[factors.size()];
+			for(MiniBucketLowerBound.JoinCluster cluster : graph.clusters())
+				for(int factor : cluster.originalFactors())
+					ownership[factor]++;
+			Assert.assertArrayEquals(new int[] {1, 1, 1}, ownership);
+		}
+		var alternative = MiniBucketLowerBound.replicaModel(variables, factors, 1,
+			GENEROUS, POLICIES.get(3), () -> false);
+		Assert.assertNotEquals(legacy.partitionIdentity(), alternative.partitionIdentity());
+		Assert.assertEquals(List.of(1, 0, 2), alternative.eliminationOrder());
+		Assert.assertThrows(UnsupportedOperationException.class,
+			() -> alternative.eliminationOrder().add(0));
+	}
+
+	@Test
+	public void weightedScoringChecksCancellationInsideStructuralLoops() {
+		List<ExactCategoricalSolver.Variable> variables = new ArrayList<>();
+		for(int index = 0; index < 12; index++)
+			variables.add(variable("cancel-policy-" + index, 2));
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+		for(int left = 0; left < variables.size(); left++)
+			for(int right = left + 1; right < variables.size(); right++)
+				factors.add(ExactCategoricalSolver.Factor.dense(
+					List.of(variables.get(left), variables.get(right)), 0d, 0d, 0d, 0d));
+		AtomicInteger polls = new AtomicInteger();
+		Assert.assertThrows(CancellationException.class, () -> MiniBucketLowerBound.compute(
+			variables, factors, 2, GENEROUS,
+			new MiniBucketLowerBound.PlanningPolicy(
+				MiniBucketLowerBound.EliminationOrder.WEIGHTED_MIN_FILL,
+				MiniBucketLowerBound.PartitionStrategy.BEST_FIT),
+			() -> polls.incrementAndGet() > 100));
+		Assert.assertTrue(polls.get() > 100);
+	}
 
 	@Test
 	public void randomBoundsNeverExceedIndependentBruteForceOracle() {
@@ -209,6 +348,27 @@ public class MiniBucketLowerBoundTest {
 		return ExactCategoricalSolver.Factor.dense(scope, values);
 	}
 
+	private static ExactCategoricalSolver.Factor randomHardFactor(Random random,
+		List<ExactCategoricalSolver.Variable> scope) {
+		double[] values = new double[4];
+		for(int cell = 0; cell < values.length; cell++)
+			values[cell] = random.nextInt(7) == 0 ? Double.POSITIVE_INFINITY : random.nextInt(20);
+		return ExactCategoricalSolver.Factor.dense(scope, values);
+	}
+
+	private static ExactCategoricalSolver.Factor xPreference(
+		List<ExactCategoricalSolver.Variable> scope, boolean preferOne, double penalty) {
+		int cells = scope.stream().mapToInt(ExactCategoricalSolver.Variable::domainSize)
+			.reduce(1, Math::multiplyExact);
+		double[] values = new double[cells];
+		int cellsPerX = cells / scope.get(0).domainSize();
+		for(int cell = 0; cell < cells; cell++) {
+			int x = cell / cellsPerX;
+			values[cell] = x == (preferOne ? 1 : 0) ? 0d : penalty;
+		}
+		return ExactCategoricalSolver.Factor.dense(scope, values);
+	}
+
 	private static double bruteForce(List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors) {
 		return enumerate(variables, factors, new int[variables.size()], 0);
@@ -217,14 +377,8 @@ public class MiniBucketLowerBoundTest {
 	private static double enumerate(List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors, int[] assignment, int index) {
 		if(index == variables.size()) {
-			double total = 0d;
-			for(ExactCategoricalSolver.Factor factor : factors) {
-				int[] local = new int[factor.scope().size()];
-				for(int position = 0; position < local.length; position++)
-					local[position] = assignment[identityIndex(variables, factor.scope().get(position))];
-				total += factor.cost(local);
-			}
-			return total;
+			return CertifiedRegionalOptimizer.evaluate(variables, factors,
+				Arrays.stream(assignment).boxed().toList());
 		}
 		double best = Double.POSITIVE_INFINITY;
 		for(int value = 0; value < variables.get(index).domainSize(); value++) {

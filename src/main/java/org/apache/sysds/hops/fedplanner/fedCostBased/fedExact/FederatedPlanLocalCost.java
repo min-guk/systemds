@@ -12,10 +12,9 @@ import java.util.Objects;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementPlanApplication;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
-import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -52,21 +51,41 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 		analysis.assertCanonicalProgramAuthority(prog);
 		analysis.assertProgramStructureUnchanged();
 
+		long phaseStarted = System.nanoTime();
+		long phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		CertifiedRegionalOptimizer.Options options = CertifiedRegionalOptimizer.Options.configured();
 		RegionalSearchOptimizer.Options searchOptions = RegionalSearchOptimizer.Options.configured(options);
+		ExactEliminationOrderPolicy.Configuration orderPolicy =
+			ExactEliminationOrderPolicy.localConfigured(LocalCategoricalOptimizer.configuredCompaction());
 		if(searchOptions != null && FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("DP-RegionalSearch", String.format(Locale.ROOT,
 				"phase=CONFIG algorithm=%s width=%d timeMillis=%d factorCells=%d totalCells=%d "
 					+ "absoluteTarget=%.17g relativeTarget=%.17g exactClosureAssignments=%d "
 					+ "seedRevisitPasses=%d budgetScope=after-seed softDeadline=true "
-					+ "remainingExactCompletion=true seedPolicy=regional sharedPreparation=%s",
+					+ "remainingExactCompletion=true seedPolicy=regional sharedPreparation=%s "
+					+ "costShiftMillis=%d costShiftMaxSweeps=%d lbOrder=%s lbPartition=%s "
+					+ "initialBound=%s regionDualMillis=%s regionDualCells=%s regionDualSweeps=%s regionDualMerge=%s "
+					+ "fastBlockOrder=%s fastBlockAssignments=%s "
+					+ "fastOrder=%s fastOrderAssignments=%s fastOrderSource=%s",
 				searchOptions.algorithm(), options.initialWidth(), options.timeBudgetMillis(),
 				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(),
 				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.exactClosureAssignments(),
-				LocalPhysicalOptimizer.configuredSeedRevisitPasses(), SharedRegionalPreparation.configured()));
+				LocalPhysicalOptimizer.configuredSeedRevisitPasses(), SharedRegionalPreparation.configured(),
+				searchOptions.costShiftMillis(), searchOptions.costShiftMaxSweeps(),
+				searchOptions.lbPlanning().eliminationOrder(), searchOptions.lbPlanning().partitionStrategy(),
+				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "initialBound", "replica"),
+				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualMillis", "100"),
+				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualCells", "1024"),
+				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualSweeps", "1000"),
+				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualMerge", "true"),
+				orderPolicy.fastOrder(), orderPolicy.maximumAssignments(),
+				orderPolicy.fastOrder(), orderPolicy.maximumAssignments(), orderPolicy.source()));
+		FederatedPlannerTrace.logPhaseTiming("MODEL_SETUP", phaseStarted, phaseOutputStarted);
+		phaseStarted = System.nanoTime();
+		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface, searchOptions,
 			checkpoint -> {
 				if(FederatedPlannerTrace.isEnabled())
@@ -75,27 +94,34 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 							(System.nanoTime() - searchEntryStart) / 1e6,
 							FederatedPlannerTrace.plannerElapsedNanos()));
 			});
+		FederatedPlannerTrace.logPhaseTiming("OPTIMIZATION", phaseStarted, phaseOutputStarted);
+		phaseStarted = System.nanoTime();
+		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(
 			model, optimized.physicalResult());
-		trace(selection, model, surface, optimized.localStatistics());
-		if(optimized.search() != null && FederatedPlannerTrace.isEnabled()) {
-			RegionalSearchOptimizer.Result search = optimized.search();
-			FederatedPlannerTrace.logGlobal("DP-RegionalSearch", String.format(Locale.ROOT,
-				"phase=FINAL algorithm=%s lower=%.17g upper=%.17g seedUpper=%.17g gap=%.17g relativeGap=%.17g "
-					+ "targetReached=%s stop=%s elapsedMs=%.6f scope=encoded-model costFingerprint=%s analysis=%s "
-					+ "orderFingerprint=%s methodElapsedMs=%.6f%s", search.algorithm(), search.lowerBound(), search.upperBound(),
-				search.seedUpperBound(), search.absoluteGap(), search.relativeGap(), search.targetReached(), search.stopReason(),
-				search.elapsedNanos() / 1e6, selection.costSurfaceFingerprint(), selection.analysisFingerprint(),
-				search.orderFingerprint(), (System.nanoTime() - searchEntryStart) / 1e6,
-				RegionalSearchOptimizer.statisticsTrace(search.statistics())));
-		}
-		ExactPlacementInput input = ExactPhysicalPlacementProjector.project(
-			selection, "DP-LocalConflict", "local-conflict");
-		adapter.select(analysis, input);
-		NormalizedPlannerResult normalized = Objects.requireNonNull(input.normalizedResult(),
-			"local physical projector normalized result");
-		return input.withEmissionReceipt(PlacementEmissionTransaction.emit(prog, normalized,
-			PlacementEmissionTransaction.FailureInjector.none()));
+		FederatedPlannerTrace.logPhaseTiming("SELECTION", phaseStarted, phaseOutputStarted);
+		return PlacementPlanApplication.complete(prog, analysis,
+			() -> {
+				trace(selection, model, surface, optimized.localStatistics());
+				if(optimized.search() != null && FederatedPlannerTrace.isEnabled()) {
+					RegionalSearchOptimizer.Result search = optimized.search();
+					FederatedPlannerTrace.logGlobal("DP-RegionalSearch", String.format(Locale.ROOT,
+						"phase=FINAL algorithm=%s lower=%.17g upper=%.17g seedUpper=%.17g gap=%.17g relativeGap=%.17g "
+							+ "targetReached=%s stop=%s elapsedMs=%.6f scope=encoded-model costFingerprint=%s analysis=%s "
+							+ "orderFingerprint=%s methodElapsedMs=%.6f%s", search.algorithm(), search.lowerBound(), search.upperBound(),
+						search.seedUpperBound(), search.absoluteGap(), search.relativeGap(), search.targetReached(), search.stopReason(),
+						search.elapsedNanos() / 1e6, selection.costSurfaceFingerprint(), selection.analysisFingerprint(),
+						search.orderFingerprint(), (System.nanoTime() - searchEntryStart) / 1e6,
+						RegionalSearchOptimizer.statisticsTrace(search.statistics())));
+				}
+			},
+			() -> {
+				ExactPlacementInput input = ExactPhysicalPlacementProjector.project(
+					selection, "DP-LocalConflict", "local-conflict");
+				adapter.select(analysis, input);
+				return input;
+			}, ExactPlacementInput::normalizedResult,
+			(input, normalized, emission) -> input.withEmissionReceipt(emission));
 	}
 
 	private static void trace(ExactPhysicalSelection selection, ExactPhysicalModel model,
@@ -108,7 +134,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 				+ "rawStates=%d retainedStates=%d prunedRepresentatives=%d "
 				+ "initialConflicts=%d conflictBlocks=%d blockExpansions=%d "
 				+ "localBlocks=%d localImprovements=%d localRevisits=%d "
-				+ "factorizedCompilations=%d factorizedSolves=%d factorwiseSkips=%d "
+				+ "factorizedCompilations=%d factorizedSolves=%d factorwiseSkips=%d factorwiseAssignments=%d "
 				+ "maxBlockVariables=%d "
 				+ "maxBlockAssignments=%d blockAssignments=%d costFingerprint=%s analysis=%s",
 			selection.solverObjective(), model.variables().size(), model.hardFactors().size(),
@@ -119,6 +145,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			statistics.localBlocks(), statistics.localBlockImprovements(),
 			statistics.localBlockRevisits(), statistics.factorizedBlockCompilations(),
 			statistics.factorizedBlockSolves(), statistics.factorwiseMinimumSkips(),
+			statistics.factorwiseMinimumAssignments(),
 			statistics.maximumBlockVariables(),
 			statistics.maximumBlockAssignments(),
 			statistics.blockAssignments(), selection.costSurfaceFingerprint(),

@@ -92,6 +92,120 @@ public class SharedRegionalPreparationTest {
 		Assert.assertEquals(0L, preparation.blocks());
 	}
 
+	@Test
+	public void fastBlockOrderIsOptInAndUsedForNonCompactBlock() {
+		String previous = System.getProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY);
+		String previousAssignments =
+			System.getProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY);
+		try {
+			System.clearProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY);
+			System.clearProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY);
+			Assert.assertFalse(SharedRegionalPreparation.configuredFastBlockOrder());
+			Assert.assertEquals(100_000L,
+				SharedRegionalPreparation.configuredFastBlockAssignments());
+			System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY, "true");
+			System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY, "1000000");
+
+			Variable block = variable("fast-block", 2);
+			Variable boundary = variable("fast-boundary", 2);
+			List<Variable> variables = List.of(block, boundary);
+			List<Factor> factors = List.of(Factor.dense(List.of(block, boundary),
+				3d, Double.POSITIVE_INFINITY,
+				1d, 4d));
+			SharedRegionalPreparation preparation = shared(variables, factors);
+
+			assertMatchesIndependentOracle(preparation, variables, factors, new int[] {0, 0}, 0);
+			Assert.assertEquals(1L, preparation.fastBlockOrderAccepted());
+			Assert.assertEquals(0L, preparation.fastBlockOrderFallbacks());
+			Assert.assertTrue(preparation.maximumFastBlockOrderAssignments() > 0L);
+			Assert.assertTrue(preparation.maximumFastBlockOrderAssignments() <= 1_000_000L);
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY);
+			else
+				System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY, previous);
+			if(previousAssignments == null)
+				System.clearProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY);
+			else
+				System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY,
+					previousAssignments);
+		}
+	}
+
+	@Test
+	public void commonFastOrderIsAppliedToCompactAndPlainSharedBlocks() {
+		String previous = System.getProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY);
+		String previousAssignments =
+			System.getProperty(ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY);
+		try {
+			System.setProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY, "true");
+			System.setProperty(ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY,
+				"1000000");
+			for(boolean compact : new boolean[] {false, true}) {
+				Variable block = variable("common-block-" + compact, 2);
+				Variable boundary = variable("common-boundary-" + compact, 2);
+				List<Variable> variables = List.of(block, boundary);
+				List<Factor> factors = List.of(Factor.dense(List.of(block, boundary),
+					3d, Double.POSITIVE_INFINITY, 1d, 4d));
+				SharedRegionalPreparation preparation = new SharedRegionalPreparation(
+					RegionalSearchProblem.generic(variables, factors), GENEROUS, compact);
+
+				assertMatchesIndependentOracle(preparation, variables, factors,
+					new int[] {0, 0}, 0);
+				Assert.assertEquals(1L, preparation.fastBlockOrderAccepted());
+				Assert.assertEquals(0L, preparation.fastBlockOrderFallbacks());
+			}
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY);
+			else
+				System.setProperty(ExactEliminationOrderPolicy.FAST_ORDER_PROPERTY, previous);
+			if(previousAssignments == null)
+				System.clearProperty(ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY);
+			else
+				System.setProperty(ExactEliminationOrderPolicy.FAST_ORDER_ASSIGNMENTS_PROPERTY,
+					previousAssignments);
+		}
+	}
+
+	@Test
+	public void malformedFastBlockOrderPropertyFailsClosed() {
+		String previous = System.getProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY);
+		try {
+			System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY, "yes");
+			IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+				SharedRegionalPreparation::configuredFastBlockOrder);
+			Assert.assertEquals("REGIONAL_FAST_BLOCK_ORDER_INVALID|value=yes", error.getMessage());
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY);
+			else
+				System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY, previous);
+		}
+	}
+
+	@Test
+	public void nonPositiveFastBlockAssignmentsPropertyFailsClosed() {
+		String previous =
+			System.getProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY);
+		try {
+			System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY, "0");
+			IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+				SharedRegionalPreparation::configuredFastBlockAssignments);
+			Assert.assertEquals("REGIONAL_FAST_BLOCK_ASSIGNMENTS_INVALID|value=0",
+				error.getMessage());
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY);
+			else
+				System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY, previous);
+		}
+	}
+
 	private static SharedRegionalPreparation shared(List<Variable> variables, List<Factor> factors) {
 		return new SharedRegionalPreparation(RegionalSearchProblem.generic(variables, factors), GENEROUS, false);
 	}

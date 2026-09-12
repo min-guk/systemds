@@ -19,6 +19,32 @@ public class RemainingExactOptimizerTest {
 	private static final String PREFIX = CertifiedRegionalOptimizer.PROPERTY_PREFIX;
 
 	@Test
+	public void regionDualInitialBoundIsSoundAndZeroBudgetFallsBackWithFullCoverage() {
+		String oldKind = System.getProperty(PREFIX + "initialBound");
+		String oldBudget = System.getProperty(PREFIX + "regionDualMillis");
+		try {
+			System.setProperty(PREFIX + "initialBound", "region-dual");
+			for(String budget : List.of("0", "1000")) {
+				System.setProperty(PREFIX + "regionDualMillis", budget);
+				Fixture fixture = conflictingFork("dual-" + budget, 2, 10d, 4d, 2.5d);
+				Result result = solve(fixture, 0d, 1_000_000);
+				assertCertificateContainsOracle(fixture, result);
+				Assert.assertEquals(fixture.optimum, result.upperBound(), 1e-10);
+				Assert.assertTrue(result.checkpoints().stream().anyMatch(row ->
+					row.phase().equals("INITIAL_BOUND") && row.details().contains("initialBound=region-dual")));
+				Assert.assertTrue(result.checkpoints().stream().anyMatch(row ->
+					row.phase().equals("FALLBACK_REPLICA_BOUND")));
+			}
+		}
+		finally {
+			if(oldKind == null) System.clearProperty(PREFIX + "initialBound");
+			else System.setProperty(PREFIX + "initialBound", oldKind);
+			if(oldBudget == null) System.clearProperty(PREFIX + "regionDualMillis");
+			else System.setProperty(PREFIX + "regionDualMillis", oldBudget);
+		}
+	}
+
+	@Test
 	public void reducedRootRetainsSingletonVariablesAndExpandsOriginalRepresentatives() {
 		Variable forced = variable("forced", 3);
 		Variable free = variable("free", 2);
@@ -143,6 +169,130 @@ public class RemainingExactOptimizerTest {
 			restore(PREFIX + "algorithm", oldAlgorithm);
 			restore(PREFIX + "relativeGap", oldRelativeGap);
 		}
+	}
+
+	@Test
+	public void structuralPoliciesPreserveEveryCheckpointAndExactAssignment() {
+		Fixture fixture = conflictingFork("policy-exact", 2, 10d, 4d, 2.5d);
+		for(MiniBucketLowerBound.EliminationOrder order : MiniBucketLowerBound.EliminationOrder.values())
+			for(MiniBucketLowerBound.PartitionStrategy grouping : MiniBucketLowerBound.PartitionStrategy.values()) {
+				MiniBucketLowerBound.PlanningPolicy policy = new MiniBucketLowerBound.PlanningPolicy(order, grouping);
+				CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+					2, 60_000L, 0d, 0d, GENEROUS);
+				Result result = RegionalSearchOptimizer.optimize(fixture.variables, fixture.factors, fixture.seed,
+					new Options(Algorithm.REMAINING_EXACT, common, 1_000_000L, 0L, 1000, policy));
+				Assert.assertEquals(StopReason.GLOBAL_EXACT, result.stopReason());
+				Assert.assertEquals(Double.doubleToRawLongBits(fixture.optimum),
+					Double.doubleToRawLongBits(ExactCategoricalSolver.evaluate(
+						fixture.variables, fixture.factors, GENEROUS, result.assignment())));
+				double lower = 0d, upper = Double.POSITIVE_INFINITY;
+				for(RegionalSearchOptimizer.Checkpoint point : result.checkpoints()) {
+					Assert.assertTrue(point.lowerBound() >= lower && point.lowerBound() <= fixture.optimum);
+					Assert.assertTrue(point.upperBound() <= upper && point.upperBound() >= fixture.optimum);
+					lower = point.lowerBound();
+					upper = point.upperBound();
+				}
+				String details = result.checkpoints().stream().filter(p -> p.phase().equals("INITIAL_BOUND"))
+					.findFirst().orElseThrow().details();
+				Assert.assertTrue(details.contains("lbOrder=" + order));
+				Assert.assertTrue(details.contains("lbPartition=" + grouping));
+			}
+	}
+
+	@Test
+	public void structuralPolicyOptionsDefaultToLegacyAndParseExplicitPolicies() {
+		String oldOrder = System.getProperty(PREFIX + "lbOrder");
+		String oldGrouping = System.getProperty(PREFIX + "lbPartition");
+		String oldAlgorithm = System.getProperty(PREFIX + "algorithm");
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+			2, 60_000L, 0d, 0.05d, GENEROUS);
+		try {
+			System.setProperty(PREFIX + "algorithm", "remaining-exact");
+			System.clearProperty(PREFIX + "lbOrder");
+			System.clearProperty(PREFIX + "lbPartition");
+			Assert.assertEquals(new Options(Algorithm.REMAINING_EXACT, common, 1000).lbPlanning(),
+				Options.configured(common).lbPlanning());
+			System.setProperty(PREFIX + "lbOrder", "weighted-min-fill");
+			System.setProperty(PREFIX + "lbPartition", "best-fit");
+			Assert.assertEquals(MiniBucketLowerBound.EliminationOrder.WEIGHTED_MIN_FILL,
+				Options.configured(common).lbPlanning().eliminationOrder());
+			Assert.assertEquals(MiniBucketLowerBound.PartitionStrategy.BEST_FIT,
+				Options.configured(common).lbPlanning().partitionStrategy());
+			System.setProperty(PREFIX + "lbOrder", "unknown");
+			try {
+				Options.configured(common);
+				Assert.fail("Unknown policy accepted");
+			}
+			catch(IllegalArgumentException expected) { /* Explicit invalid configuration. */ }
+		}
+		finally {
+			restore(PREFIX + "lbOrder", oldOrder);
+			restore(PREFIX + "lbPartition", oldGrouping);
+			restore(PREFIX + "algorithm", oldAlgorithm);
+		}
+	}
+
+	@Test
+	public void costShiftingCertifiesAnOptimalSeedWithoutExactClosure() {
+		Fixture fixture = conflictingFork("cost-shift-target", 2, 10d, 4d, 0d);
+		List<Integer> optimalSeed = List.of(0, 0, 0);
+		Assert.assertEquals(fixture.optimum, CertifiedRegionalOptimizer.evaluate(
+			fixture.variables, fixture.factors, optimalSeed), 0d);
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+			2, 60_000L, 0d, 0.05d, GENEROUS);
+		Options options = new Options(Algorithm.REMAINING_EXACT, common, 1_000_000L, 10_000L, 1000);
+		Result result = RegionalSearchOptimizer.optimize(
+			RegionalSearchProblem.generic(fixture.variables, fixture.factors), optimalSeed, options, ignored -> { });
+		Assert.assertEquals(StopReason.TARGET_REACHED, result.stopReason());
+		Assert.assertEquals(0L, result.statistics().get("remainingClosureAttempts").longValue());
+		Assert.assertTrue(result.statistics().get("costShiftUpdates") > 0);
+		Assert.assertTrue(result.checkpoints().stream().filter(x -> x.phase().equals("INITIAL_BOUND"))
+			.findFirst().orElseThrow().relativeGap() > 0.05d);
+		Assert.assertTrue(result.checkpoints().stream().filter(x -> x.phase().equals("COST_SHIFT"))
+			.findFirst().orElseThrow().relativeGap() <= 0.05d);
+		double lower = 0d;
+		for(RegionalSearchOptimizer.Checkpoint point : result.checkpoints()) {
+			Assert.assertTrue(point.lowerBound() >= lower);
+			Assert.assertTrue(point.lowerBound() <= fixture.optimum);
+			Assert.assertEquals(optimalSeed, point.assignment());
+			Assert.assertEquals(fixture.optimum, point.upperBound(), 0d);
+			lower = point.lowerBound();
+		}
+	}
+
+	@Test
+	public void costShiftingKeepsExactFallbackWhenSeedCannotMeetTarget() {
+		Fixture fixture = conflictingFork("cost-shift-fallback", 2, 10d, 4d, 0d);
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+			2, 60_000L, 0d, 0.05d, GENEROUS);
+		Options options = new Options(Algorithm.REMAINING_EXACT, common, 1_000_000L, 10_000L, 4);
+		Result result = RegionalSearchOptimizer.optimize(
+			RegionalSearchProblem.generic(fixture.variables, fixture.factors), fixture.seed, options, ignored -> { });
+		Assert.assertEquals(StopReason.GLOBAL_EXACT, result.stopReason());
+		Assert.assertEquals(1L, result.statistics().get("costShiftCalls").longValue());
+		Assert.assertEquals(1L, result.statistics().get("remainingClosureAttempts").longValue());
+		Assert.assertTrue(result.checkpoints().stream().anyMatch(x -> x.phase().equals("COST_SHIFT")));
+		Assert.assertEquals(fixture.optimum, result.upperBound(), 0d);
+		assertCertificateContainsOracle(fixture, result);
+	}
+
+	@Test
+	public void costShiftingOptionsAreDisabledByDefaultAndRejectInvalidLimits() {
+		CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(
+			2, 60_000L, 0d, 0.05d, GENEROUS);
+		Assert.assertEquals(0L, new Options(Algorithm.REMAINING_EXACT, common, 1000).costShiftMillis());
+		for(long budget : List.of(-1L, Long.MIN_VALUE)) {
+			try {
+				new Options(Algorithm.REMAINING_EXACT, common, 1000, budget, 2);
+				Assert.fail("Negative tightening budget accepted");
+			}
+			catch(IllegalArgumentException expected) { /* Invalid option is explicit. */ }
+		}
+		try {
+			new Options(Algorithm.REMAINING_EXACT, common, 1000, 1, 0);
+			Assert.fail("Zero sweep limit accepted");
+		}
+		catch(IllegalArgumentException expected) { /* Invalid option is explicit. */ }
 	}
 
 	@Test

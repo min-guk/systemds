@@ -81,6 +81,7 @@ import org.apache.sysds.hops.codegen.SpoofCompiler.PlanCachePolicy;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
+import org.apache.sysds.hops.fedplanner.placement.PlannerPipelineTiming;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
@@ -362,6 +363,7 @@ public class DMLTranslator
 			return;
 		}
 			synchronized(dmlp) {
+			long commonPreparationStarted = System.nanoTime();
 			// The generic dynamic rewrite pass runs before final memory estimates are
 			// available.  Normalize lowering-level physical choices only now, while
 			// placement is still unbound but dimensions and memory costs are final.
@@ -391,7 +393,9 @@ public class DMLTranslator
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
 			AFederatedPlanner implementation = Objects.requireNonNull(
 				FederatedPlannerFactory.create(fedPlanner), "compiled federated planner implementation");
+			long commonPreparationNanos = System.nanoTime() - commonPreparationStarted;
 			FederatedPlannerTrace.beginInvocation();
+			FederatedPlannerTrace.logGlobal("Planner-CommonPreparation", "elapsedNanos=" + commonPreparationNanos);
 			FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + fedPlanner
 				+ " impl=" + implementation.getClass().getName()
 				+ " boundary=final-hop"
@@ -400,11 +404,17 @@ public class DMLTranslator
 				? System.nanoTime() : 0;
 			if(FederatedPlannerTrace.isEnabled())
 				FederatedPlannerTrace.startPlannerTiming(tFedPlanner);
+			if(tFedPlanner != 0)
+				PlannerPipelineTiming.begin(tFedPlanner);
 			AFederatedPlanner.PlannerInvocationReceipt receipt;
 			try {
 				receipt = implementation.rewriteProgram(dmlp, fgraph, fcallSizes, analysis);
 				if(receipt.analysis() != analysis)
 					throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+			}
+			catch(RuntimeException | Error ex) {
+				PlannerPipelineTiming.clear();
+				throw ex;
 			}
 			finally {
 				FederatedPlannerTrace.completeInvocation();
@@ -414,9 +424,36 @@ public class DMLTranslator
 				+ " receipt=" + receipt.getClass().getName()
 				+ " boundary=final-hop"
 				+ " analysis=" + analysis.analysisFingerprint());
-			verifyFinalBoundaryEmission(dmlp, receipt);
+			long finalVerifyStarted = System.nanoTime();
+			long finalVerifyOutputStarted = FederatedPlannerTrace.traceOutputNanos();
+			try {
+				verifyFinalBoundaryEmission(dmlp, receipt);
+			}
+			catch(RuntimeException | Error ex) {
+				PlannerPipelineTiming.clear();
+				throw ex;
+			}
+			if(FederatedPlannerTrace.isEnabled()) {
+				long finalVerifyNanos = System.nanoTime() - finalVerifyStarted;
+				long finalVerifyOutput = FederatedPlannerTrace.traceOutputNanos() - finalVerifyOutputStarted;
+				FederatedPlannerTrace.logGlobal("Planner-PhaseTiming", "stage=FINAL_BOUNDARY_VERIFY"
+					+ " elapsedNanos=" + finalVerifyNanos + " traceOutputNanos=" + finalVerifyOutput
+					+ " remainderNanos=" + (finalVerifyNanos - finalVerifyOutput)
+					+ " plannerElapsedNanos=" + (System.nanoTime() - tFedPlanner));
+			}
+			long fedPlannerEnded = System.nanoTime();
+			try {
+				PlannerPipelineTiming.Timing splitTiming = PlannerPipelineTiming.finish(fedPlannerEnded);
+				if(splitTiming != null) {
+					FederatedPlannerTrace.logGlobal("Planner-Timing", splitTiming.traceFields());
+					Statistics.addCompilePhaseFedPlannerSplit(commonPreparationNanos, splitTiming);
+				}
+			}
+			finally {
+				PlannerPipelineTiming.clear();
+			}
 			if( DMLScript.STATISTICS )
-				Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
+				Statistics.addCompilePhaseFedPlannerTime(fedPlannerEnded - tFedPlanner);
 			registerFedInitVarsFromProgram(dmlp);
 			FederatedPlannerUtils.clearFedRmvarProtectedVars();
 			registerFedRmvarProtectedVarsFromProgram(dmlp);

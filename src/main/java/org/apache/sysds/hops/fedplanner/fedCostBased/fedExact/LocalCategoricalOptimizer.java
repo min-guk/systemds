@@ -9,6 +9,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -71,7 +72,7 @@ final class LocalCategoricalOptimizer {
 		int finalHardViolations, int conflictBlocksSolved, int conflictBlockExpansions,
 		int localBlocks, int localBlockImprovements, int localBlockRevisits,
 		int factorizedBlockCompilations, int factorizedBlockSolves,
-		int factorwiseMinimumSkips,
+		int factorwiseMinimumSkips, long factorwiseMinimumAssignments,
 		int maximumBlockVariables,
 		long maximumBlockAssignments, long blockAssignments,
 		long totalOptimizationNanos, long exactBlockPreparationNanos,
@@ -87,7 +88,7 @@ final class LocalCategoricalOptimizer {
 				initialHardViolations, finalHardViolations, conflictBlocksSolved,
 				conflictBlockExpansions, localBlocks, localBlockImprovements,
 				localBlockRevisits, factorizedBlockCompilations, factorizedBlockSolves,
-				factorwiseMinimumSkips, maximumBlockVariables, maximumBlockAssignments,
+				factorwiseMinimumSkips, 0L, maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments, 0L, 0L, 0L);
 		}
 	}
@@ -124,6 +125,7 @@ final class LocalCategoricalOptimizer {
 		int factorizedBlockCompilations;
 		int factorizedBlockSolves;
 		int factorwiseMinimumSkips;
+		long factorwiseMinimumAssignments;
 		int maximumBlockVariables;
 		long maximumBlockAssignments;
 		long blockAssignments;
@@ -137,7 +139,7 @@ final class LocalCategoricalOptimizer {
 				conflictBlocksSolved, conflictBlockExpansions, localBlocks,
 				localBlockImprovements, localBlockRevisits,
 				factorizedBlockCompilations, factorizedBlockSolves,
-				factorwiseMinimumSkips,
+				factorwiseMinimumSkips, factorwiseMinimumAssignments,
 				maximumBlockVariables, maximumBlockAssignments,
 				blockAssignments, totalOptimizationNanos,
 				exactBlockPreparationNanos, exactBlockSolveNanos);
@@ -151,8 +153,11 @@ final class LocalCategoricalOptimizer {
 		final List<List<IndexedFactor>> incidentHard;
 		final List<List<IndexedFactor>> incidentCost;
 		final IdentityHashMap<Variable,Integer> positions;
+		final Set<Factor> validatedDenseNonNegativeCostFactors;
+		final Set<Factor> nonDenseCostFactors;
 		final StateKeyProvider stateKeys;
 		final boolean compact;
+		final ExactEliminationOrderPolicy.Configuration orderPolicy;
 		final BlockPreparation sharedPreparation;
 
 		Context(List<Variable> variables, List<Factor> hardFactors,
@@ -161,6 +166,7 @@ final class LocalCategoricalOptimizer {
 			this.variables = List.copyOf(Objects.requireNonNull(variables, "variables"));
 			this.stateKeys = Objects.requireNonNull(stateKeys, "stateKeys");
 			this.compact = compact;
+			orderPolicy = ExactEliminationOrderPolicy.localConfigured(compact);
 			this.sharedPreparation = sharedPreparation;
 			positions = new IdentityHashMap<>();
 			Set<String> keys = new LinkedHashSet<>();
@@ -173,6 +179,9 @@ final class LocalCategoricalOptimizer {
 			incidentCost = emptyIncidence(this.variables.size());
 			this.hardFactors = indexFactors(hardFactors, incidentHard, "LOCAL_HARD_FACTOR");
 			this.costFactors = indexFactors(costFactors, incidentCost, "LOCAL_COST_FACTOR");
+			validatedDenseNonNegativeCostFactors =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			nonDenseCostFactors = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(Variable variable : this.variables)
 				for(int value = 0; value < variable.domainSize(); value++)
 					Objects.requireNonNull(stateKeys.stateKey(variable, value),
@@ -305,7 +314,7 @@ final class LocalCategoricalOptimizer {
 
 		private boolean optimizeBlock(int blockIndex, boolean requireFullObjectiveImprovement) {
 			PreparedBlock block = prepared.get(blockIndex);
-			if(isFactorwiseMinimum(context, assignment, block)) {
+			if(isFactorwiseMinimum(context, assignment, block, statistics)) {
 				statistics.factorwiseMinimumSkips++;
 				observe(blockIndex);
 				return false;
@@ -516,7 +525,8 @@ final class LocalCategoricalOptimizer {
 				if(context.compact) {
 					try {
 						reduced = ExactPhysicalReducedSolver.prepareCompacted(block.length,
-							variables, reducedFactors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+							variables, reducedFactors, ExactPhysicalOptimizer.PRODUCTION_LIMITS,
+							context.orderPolicy, "local-block-compact");
 						usedCompact = true;
 					}
 					catch(IllegalArgumentException failure) {
@@ -525,13 +535,15 @@ final class LocalCategoricalOptimizer {
 						fallback = failure.getMessage().split("\\|", 2)[0];
 						reduced = ExactPhysicalReducedSolver.prepare(block.length,
 							variables, reducedFactors,
-							ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+							ExactPhysicalOptimizer.PRODUCTION_LIMITS, context.orderPolicy,
+							"local-block-compact-fallback");
 					}
 				}
 				else
 					reduced = ExactPhysicalReducedSolver.prepare(block.length,
 						variables, reducedFactors,
-						ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+						ExactPhysicalOptimizer.PRODUCTION_LIMITS, context.orderPolicy,
+						"local-block");
 			}
 			finally {
 				if(FederatedPlannerTrace.isEnabled()) {
@@ -539,12 +551,20 @@ final class LocalCategoricalOptimizer {
 						tracePreparation("original-regional-block", reduced.preparationStatistics());
 					int compiledVariables = reduced == null
 						? variables.size() : reduced.compiledVariableCount();
+					ExactCategoricalSolver.OrderCompilation order = reduced == null
+						? null : reduced.orderCompilation();
 					FederatedPlannerTrace.logGlobal("DP-RegionalBlockPreparation",
 						String.format(Locale.ROOT,
 							"requestedCompact=%s compact=%s exactReduction=true inputVariables=%d "
 								+ "compiledVariables=%d "
+								+ "fastOrderConfigured=%s fastOrderAccepted=%s fastOrderFallback=%s "
+								+ "fastOrderEstimatedAssignments=%d fastOrderAssignmentsLimit=%d fastOrderSource=%s "
 								+ "preparationNanos=%d resourceFallback=%s fallbackReason=%s",
 							context.compact, usedCompact, variables.size(), compiledVariables,
+							context.orderPolicy.fastOrder(), order != null && order.fastOrderAccepted(),
+							order != null && order.fastOrderFallback(),
+							order == null ? 0L : order.fastOrderAssignments(),
+							context.orderPolicy.maximumAssignments(), context.orderPolicy.source(),
 							elapsedNanos(preparationStart), !"none".equals(fallback), fallback));
 				}
 			}
@@ -709,7 +729,7 @@ final class LocalCategoricalOptimizer {
 	 * assignment. This is a lower-bound proof, not a cardinality cutoff.
 	 */
 	private static boolean isFactorwiseMinimum(Context context, int[] assignment,
-		PreparedBlock block) {
+		PreparedBlock block, MutableStatistics statistics) {
 		boolean[] inBlock = new boolean[context.variables.size()];
 		for(int variable : block.variables())
 			inBlock[variable] = true;
@@ -718,6 +738,8 @@ final class LocalCategoricalOptimizer {
 			if(!Double.isFinite(current))
 				return false;
 			requireNonNegativeCost(current, "LOCAL_COST_FACTOR_INVALID");
+			if(current == 0d && hasValidatedZeroFloor(context, factor))
+				continue;
 			int count = 0;
 			for(int variable : factor.scope())
 				if(inBlock[variable])
@@ -732,7 +754,8 @@ final class LocalCategoricalOptimizer {
 			for(int index = 0; index < variables.length; index++)
 				saved[index] = assignment[variables[index]];
 			try {
-				if(hasLowerFactorValue(context, factor, assignment, variables, 0, current))
+				if(hasLowerFactorValue(context, factor, assignment, variables, 0, current,
+					statistics))
 					return false;
 			}
 			finally {
@@ -743,8 +766,10 @@ final class LocalCategoricalOptimizer {
 	}
 
 	private static boolean hasLowerFactorValue(Context context, IndexedFactor factor,
-		int[] assignment, int[] variables, int depth, double current) {
+		int[] assignment, int[] variables, int depth, double current,
+		MutableStatistics statistics) {
 		if(depth == variables.length) {
+			statistics.factorwiseMinimumAssignments++;
 			double candidate = evaluate(factor, assignment);
 			if(candidate == Double.POSITIVE_INFINITY)
 				return false;
@@ -754,10 +779,50 @@ final class LocalCategoricalOptimizer {
 		int variable = variables[depth];
 		for(int value = 0; value < context.variables.get(variable).domainSize(); value++) {
 			assignment[variable] = value;
-			if(hasLowerFactorValue(context, factor, assignment, variables, depth + 1, current))
+			if(hasLowerFactorValue(context, factor, assignment, variables, depth + 1, current,
+				statistics))
 				return true;
 		}
 		return false;
+	}
+
+	private static boolean hasValidatedZeroFloor(Context context, IndexedFactor factor) {
+		if(context.validatedDenseNonNegativeCostFactors.contains(factor.factor()))
+			return true;
+		if(context.nonDenseCostFactors.contains(factor.factor()))
+			return false;
+		if(validateDenseNonNegativeFactor(factor)) {
+			context.validatedDenseNonNegativeCostFactors.add(factor.factor());
+			return true;
+		}
+		context.nonDenseCostFactors.add(factor.factor());
+		return false;
+	}
+
+	private static boolean validateDenseNonNegativeFactor(IndexedFactor indexed) {
+		long cells = 1L;
+		try {
+			for(Variable variable : indexed.factor().scope())
+				cells = Math.multiplyExact(cells, variable.domainSize());
+		}
+		catch(ArithmeticException exception) {
+			return false;
+		}
+		if(cells > Integer.MAX_VALUE)
+			return false;
+		for(int cell = 0; cell < cells; cell++) {
+			double value;
+			try {
+				value = indexed.factor().denseCostAt(cell);
+			}
+			catch(IllegalStateException exception) {
+				return false;
+			}
+			if(value == Double.POSITIVE_INFINITY)
+				continue;
+			requireNonNegativeCost(value, "LOCAL_COST_FACTOR_INVALID");
+		}
+		return true;
 	}
 
 	private static void selectLocalState(Context context, int[] assignment, int variable,

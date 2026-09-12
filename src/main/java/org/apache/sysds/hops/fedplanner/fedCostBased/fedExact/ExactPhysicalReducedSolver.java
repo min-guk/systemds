@@ -130,11 +130,13 @@ final class ExactPhysicalReducedSolver {
 		private final ExactCategoricalSolver.CompiledProblem compiled;
 		private final ExactCategoricalSolver.Statistics statistics;
 		private final PreparationStatistics preparationStatistics;
+		private final ExactCategoricalSolver.OrderCompilation orderCompilation;
 
 		private Prepared(int variableCount, int[][] representatives, int[] reducedToCompiled,
 			ExactCategoricalSolver.CompiledProblem compiled,
 			ExactCategoricalSolver.Statistics statistics,
-			PreparationStatistics preparationStatistics) {
+			PreparationStatistics preparationStatistics,
+			ExactCategoricalSolver.OrderCompilation orderCompilation) {
 			this.variableCount = variableCount;
 			this.representatives = representatives;
 			this.reducedToCompiled = reducedToCompiled;
@@ -142,10 +144,12 @@ final class ExactPhysicalReducedSolver {
 			this.statistics = Objects.requireNonNull(statistics, "statistics");
 			this.preparationStatistics = Objects.requireNonNull(
 				preparationStatistics, "preparationStatistics");
+			this.orderCompilation = orderCompilation;
 		}
 
 		ExactCategoricalSolver.Statistics statistics() { return statistics; }
 		PreparationStatistics preparationStatistics() { return preparationStatistics; }
+		ExactCategoricalSolver.OrderCompilation orderCompilation() { return orderCompilation; }
 		boolean infeasible() { return compiled == null; }
 		int compiledVariableCount() {
 			if(reducedToCompiled == null)
@@ -191,29 +195,49 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
+		return prepare(originalVariableCount, variables, factors, limits,
+			ExactEliminationOrderPolicy.globalConfigured(), "exact-reduced");
+	}
+
+	static Prepared prepare(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy) {
+		return prepare(originalVariableCount, variables, factors, limits, orderPolicy,
+			"exact-reduced");
+	}
+
+	static Prepared prepare(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller) {
 		PreparationTimer timer = new PreparationTimer();
 		try {
 			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
 				(variable, value) -> 0L, false, timer);
 			long compileStarted = System.nanoTime();
-			ExactCategoricalSolver.CompiledProblem compiled;
+			ExactCategoricalSolver.OrderCompilation orderCompilation;
 			long compileNanos;
 			try {
-				compiled = ExactCategoricalSolver.compile(
-					reduction.variables(), reduction.factors(), limits);
+				orderCompilation = ExactEliminationOrderPolicy.compile(
+					reduction.variables(), reduction.factors(), limits, orderPolicy, caller);
 			}
 			finally {
 				compileNanos = elapsedNanos(compileStarted);
 			}
+			ExactCategoricalSolver.CompiledProblem compiled = orderCompilation.compiled();
 			return new Prepared(reduction.variableCount(), reduction.representatives(), null, compiled,
-				ExactCategoricalSolver.statistics(compiled), timer.freeze(compileNanos, 0L));
+				ExactCategoricalSolver.statistics(compiled), timer.freeze(compileNanos, 0L),
+				orderCompilation);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
 				throw failure;
 			return new Prepared(variables.size(), null, null, null,
 				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L),
-				timer.freeze(0L, 0L));
+				timer.freeze(0L, 0L), null);
 		}
 	}
 
@@ -226,6 +250,24 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits) {
+		return prepareCompacted(originalVariableCount, variables, factors, limits,
+			ExactEliminationOrderPolicy.globalConfigured(), "exact-reduced-compact");
+	}
+
+	static Prepared prepareCompacted(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy) {
+		return prepareCompacted(originalVariableCount, variables, factors, limits,
+			orderPolicy, "exact-reduced-compact");
+	}
+
+	static Prepared prepareCompacted(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller) {
 		PreparationTimer timer = new PreparationTimer();
 		try {
 			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
@@ -234,25 +276,26 @@ final class ExactPhysicalReducedSolver {
 			Compaction compact = compact(reduction);
 			long compactNanos = elapsedNanos(compactStarted);
 			long compileStarted = System.nanoTime();
-			ExactCategoricalSolver.CompiledProblem compiled;
+			ExactCategoricalSolver.OrderCompilation orderCompilation;
 			long compileNanos;
 			try {
-				compiled = ExactCategoricalSolver.compile(
-					compact.variables(), compact.factors(), limits);
+				orderCompilation = ExactEliminationOrderPolicy.compile(
+					compact.variables(), compact.factors(), limits, orderPolicy, caller);
 			}
 			finally {
 				compileNanos = elapsedNanos(compileStarted);
 			}
+			ExactCategoricalSolver.CompiledProblem compiled = orderCompilation.compiled();
 			return new Prepared(reduction.variableCount(), reduction.representatives(),
 				compact.reducedToCompiled(), compiled, ExactCategoricalSolver.statistics(compiled),
-				timer.freeze(compileNanos, compactNanos));
+				timer.freeze(compileNanos, compactNanos), orderCompilation);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
 				throw failure;
 			return new Prepared(variables.size(), null, null, null,
 				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L),
-				timer.freeze(0L, 0L));
+				timer.freeze(0L, 0L), null);
 		}
 	}
 

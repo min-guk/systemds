@@ -4,6 +4,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -125,6 +126,43 @@ public class LocalCategoricalOptimizerTest {
 		Assert.assertEquals(1, result.statistics().factorwiseMinimumSkips());
 		Assert.assertEquals(0, result.statistics().factorizedBlockCompilations());
 		Assert.assertEquals(0L, result.statistics().blockAssignments());
+	}
+
+	@Test
+	public void validatedDenseZeroMinimumAvoidsFactorAssignmentEnumeration() {
+		Variable x = new Variable("x", 5);
+		Variable y = new Variable("y", 5);
+		double[] costs = new double[25];
+		Arrays.fill(costs, 2d);
+		costs[0] = 0d;
+		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+			List.of(x, y), List.of(), List.of(Factor.dense(List.of(x, y), costs)),
+			List.of(x, y), List.of(List.of(x, y)), (v, value) -> value);
+
+		Assert.assertEquals(List.of(0, 0), result.assignmentInVariableOrder());
+		Assert.assertEquals(0d, result.objective(), 0d);
+		Assert.assertEquals(1, result.statistics().factorwiseMinimumSkips());
+		Assert.assertEquals("zero is a proven floor after validating the dense table",
+			0L, result.statistics().factorwiseMinimumAssignments());
+		Assert.assertEquals(0L, result.statistics().blockAssignments());
+	}
+
+	@Test
+	public void lazyZeroFactorStillEnumeratesAndRejectsHiddenNegativeCost() {
+		Variable x = new Variable("x", 2);
+		Variable y = new Variable("y", 2);
+		AtomicInteger evaluations = new AtomicInteger();
+		Factor untrusted = Factor.lazy(List.of(x, y), values -> {
+			evaluations.incrementAndGet();
+			return values[0] == 1 && values[1] == 1 ? -1d : 0d;
+		});
+
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> LocalCategoricalOptimizer.optimize(List.of(x, y), List.of(), List.of(untrusted),
+				List.of(x, y), List.of(List.of(x, y)), (v, value) -> value));
+		Assert.assertTrue(error.getMessage().startsWith("LOCAL_COST_FACTOR_INVALID|"));
+		Assert.assertTrue("the untrusted lazy alternative must still be evaluated",
+			evaluations.get() >= 4);
 	}
 
 	@Test

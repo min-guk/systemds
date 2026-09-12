@@ -19,9 +19,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 /** Run-owned encoded tables and root reduction, shared by Regional and its global certificate. */
 final class SharedRegionalPreparation implements LocalCategoricalOptimizer.BlockPreparation {
 	static final String PROPERTY = "sysds.fedplanner.regional.sharedPreparation";
+	static final String FAST_BLOCK_ORDER_PROPERTY = "sysds.fedplanner.regional.fastBlockOrder";
+	static final String FAST_BLOCK_ASSIGNMENTS_PROPERTY =
+		"sysds.fedplanner.regional.fastBlockAssignments";
 	private final RegionalSearchProblem problem;
 	private final Limits limits;
 	private final boolean compact;
+	private final ExactEliminationOrderPolicy.Configuration orderPolicy;
 	private ExactPhysicalReducedSolver.CompactModel root;
 	private final List<int[]> scopes = new ArrayList<>();
 	private final List<List<Integer>> incidence = new ArrayList<>();
@@ -33,6 +37,9 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	private long blockPreparationNanos;
 	private long blocks;
 	private long fallbacks;
+	private long fastBlockOrderAccepted;
+	private long fastBlockOrderFallbacks;
+	private long maximumFastBlockOrderAssignments;
 
 	/** One entry per source factor: cache cells can never exceed root input cells. */
 	private record Conditioned(int[] boundary, Factor factor) { }
@@ -41,6 +48,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		this.problem = problem;
 		this.limits = limits;
 		this.compact = compact;
+		orderPolicy = ExactEliminationOrderPolicy.localConfigured(compact);
 	}
 
 	static boolean configured() {
@@ -48,6 +56,27 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		if(!value.equals("true") && !value.equals("false"))
 			throw new IllegalArgumentException("REGIONAL_SHARED_PREPARATION_INVALID|value=" + value);
 		return Boolean.parseBoolean(value);
+	}
+
+	static boolean configuredFastBlockOrder() {
+		String value = System.getProperty(FAST_BLOCK_ORDER_PROPERTY, "false");
+		if(!value.equals("true") && !value.equals("false"))
+			throw new IllegalArgumentException("REGIONAL_FAST_BLOCK_ORDER_INVALID|value=" + value);
+		return Boolean.parseBoolean(value);
+	}
+
+	static long configuredFastBlockAssignments() {
+		String value = System.getProperty(FAST_BLOCK_ASSIGNMENTS_PROPERTY, "100000");
+		try {
+			long parsed = Long.parseLong(value);
+			if(parsed <= 0)
+				throw new NumberFormatException();
+			return parsed;
+		}
+		catch(NumberFormatException failure) {
+			throw new IllegalArgumentException("REGIONAL_FAST_BLOCK_ASSIGNMENTS_INVALID|value=" + value,
+				failure);
+		}
 	}
 
 	private void initialize() {
@@ -161,7 +190,8 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		LocalCategoricalOptimizer.PreparedBlockSolver solver;
 		if(compact) {
 			ExactPhysicalReducedSolver.Prepared prepared = ExactPhysicalReducedSolver.prepareCompacted(
-				block.length, variables, factors, limits);
+				block.length, variables, factors, limits, orderPolicy, "local-shared-compact");
+			recordOrder(prepared.orderCompilation());
 			LocalCategoricalOptimizer.tracePreparation("encoded-regional-block", prepared.preparationStatistics());
 			solver = () -> ExactPhysicalReducedSolver.solve(prepared);
 		}
@@ -169,7 +199,11 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			// Support/quotient preprocessing belongs to the shared root. The slice
 			// reuses those immutable domains and tables; only its elimination plan is new.
 			long compileStarted = System.nanoTime();
-			ExactCategoricalSolver.CompiledProblem compiled = ExactCategoricalSolver.compile(variables, factors, limits);
+			ExactCategoricalSolver.OrderCompilation compilation =
+				ExactEliminationOrderPolicy.compile(variables, factors, limits, orderPolicy,
+					"local-shared");
+			ExactCategoricalSolver.CompiledProblem compiled = compilation.compiled();
+			recordOrder(compilation);
 			long compileNanos = System.nanoTime() - compileStarted;
 			LocalCategoricalOptimizer.tracePreparation("encoded-regional-block",
 				new ExactPhysicalReducedSolver.PreparationStatistics(0, 0, 0, 0, compileNanos, compileNanos));
@@ -184,6 +218,17 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 				originalValues.add(root.sourceValue(originalBlock[i], solved.assignmentInVariableOrder().get(i)));
 			return new ExactCategoricalSolver.Result(solved.objective(), originalValues, solved.statistics());
 		};
+	}
+
+	private void recordOrder(ExactCategoricalSolver.OrderCompilation compilation) {
+		if(compilation == null || !compilation.fastOrderConfigured())
+			return;
+		maximumFastBlockOrderAssignments = Math.max(maximumFastBlockOrderAssignments,
+			compilation.fastOrderAssignments());
+		if(compilation.fastOrderAccepted())
+			fastBlockOrderAccepted++;
+		else if(compilation.fastOrderFallback())
+			fastBlockOrderFallbacks++;
 	}
 
 	private static Factor condition(Factor source, int[] boundary) {
@@ -219,6 +264,9 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	long tableBuilds() { return tableBuilds; }
 	long blocks() { return blocks; }
 	long fallbacks() { return fallbacks; }
+	long fastBlockOrderAccepted() { return fastBlockOrderAccepted; }
+	long fastBlockOrderFallbacks() { return fastBlockOrderFallbacks; }
+	long maximumFastBlockOrderAssignments() { return maximumFastBlockOrderAssignments; }
 
 	void trace() {
 		if(FederatedPlannerTrace.isEnabled())
@@ -229,6 +277,15 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 					+ " blocks=" + blocks + " unchangedTables=" + unchangedTables
 					+ " conditionedTableBuilds=" + tableBuilds + " conditionedTableHits=" + cacheHits
 					+ " resourceOrUnsupportedBoundaryFallbacks=" + fallbacks
+					+ " fastOrderConfigured=" + orderPolicy.fastOrder()
+					+ " fastOrderAssignmentsLimit=" + orderPolicy.maximumAssignments()
+					+ " fastOrderSource=" + orderPolicy.source()
+					+ " fastOrderAccepted=" + fastBlockOrderAccepted
+					+ " fastOrderFallbacks=" + fastBlockOrderFallbacks
+					+ " fastOrderMaximumEstimatedAssignments=" + maximumFastBlockOrderAssignments
+					+ " fastBlockOrderAccepted=" + fastBlockOrderAccepted
+					+ " fastBlockOrderFallbacks=" + fastBlockOrderFallbacks
+					+ " maximumFastBlockOrderAssignments=" + maximumFastBlockOrderAssignments
 					+ " cachePolicy=one-entry-per-root-factor");
 	}
 }

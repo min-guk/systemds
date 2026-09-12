@@ -42,6 +42,7 @@ import org.apache.sysds.hops.Hop;
  *
  * Matching system properties are also supported:
  *   - -Dsysds.fedplanner.trace=true
+ *   - -Dsysds.fedplanner.trace.details=false (optional; defaults to true)
  *   - -Dsysds.fedplanner.trace.hops=12,34
  *   - -Dsysds.fedplanner.trace.max.edges=8
  *   - -Dsysds.fedplanner.trace.max.records.per.stage=4096
@@ -54,18 +55,27 @@ public final class FederatedPlannerTrace {
 		"SYSDS_FED_PLANNER_TRACE_MAX_RECORDS_PER_STAGE";
 
 	private static final String PROP_TRACE = "sysds.fedplanner.trace";
+	private static final String PROP_TRACE_DETAILS = "sysds.fedplanner.trace.details";
 	private static final String PROP_TRACE_HOPS = "sysds.fedplanner.trace.hops";
 	private static final String PROP_TRACE_MAX_EDGES = "sysds.fedplanner.trace.max.edges";
 	private static final String PROP_TRACE_MAX_RECORDS_PER_STAGE =
 		"sysds.fedplanner.trace.max.records.per.stage";
 
 	private static final boolean ENABLED = parseBoolean(resolveConfig(PROP_TRACE, ENV_TRACE), false);
+	private static final boolean DETAIL_ENABLED = parseBoolean(System.getProperty(PROP_TRACE_DETAILS), true);
 	private static final Set<Long> TRACE_HOP_IDS = parseHopIds(resolveConfig(PROP_TRACE_HOPS, ENV_TRACE_HOPS));
 	private static final int TRACE_MAX_EDGES = parsePositiveInt(resolveConfig(PROP_TRACE_MAX_EDGES, ENV_TRACE_MAX_EDGES), 8);
 	private static final int TRACE_MAX_RECORDS_PER_STAGE = parsePositiveInt(
 		resolveConfig(PROP_TRACE_MAX_RECORDS_PER_STAGE, ENV_TRACE_MAX_RECORDS_PER_STAGE), 4096);
 	private static final Map<String, StageRecordBudget> STAGE_RECORD_BUDGETS = new ConcurrentHashMap<>();
 	private static final ThreadLocal<Long> PLANNER_STARTED_NANOS = new ThreadLocal<>();
+	private static final ThreadLocal<Long> TRACE_OUTPUT_NANOS = ThreadLocal.withInitial(() -> 0L);
+	private static final Set<String> REQUIRED_EMISSION_AUDIT_STAGES = Set.of(
+		"Emission-Select", "Emission-Candidate", "Emission-RegistryWrite");
+	private static final Set<String> OPTIONAL_GLOBAL_DETAIL_STAGES = Set.of(
+		"Physical-CostContribution", "Emission-RelocationSource",
+		"PlannerRecompileState-SkipAmbiguous", "PlannerRecompileState-Register",
+		"PlannerRecompileState-Repeat", "PlannerRecompileState-Ambiguous");
 
 	private FederatedPlannerTrace() {
 		// utility class
@@ -75,7 +85,18 @@ public final class FederatedPlannerTrace {
 		return ENABLED;
 	}
 
+	/** True when optional per-item diagnostic records are enabled. */
+	public static boolean isDetailEnabled() {
+		return DETAIL_ENABLED;
+	}
+
 	public static boolean shouldTrace(Hop hop) {
+		if (!DETAIL_ENABLED)
+			return false;
+		return matchesTraceHop(hop);
+	}
+
+	private static boolean matchesTraceHop(Hop hop) {
 		if (!ENABLED || hop == null)
 			return false;
 		return TRACE_HOP_IDS.isEmpty() || TRACE_HOP_IDS.contains(hop.getHopID());
@@ -93,6 +114,7 @@ public final class FederatedPlannerTrace {
 	/** Reset bounded detail counters before one top-level planner invocation. */
 	public static void beginInvocation() {
 		clearPlannerTiming();
+		resetTraceOutputTiming();
 		if (ENABLED)
 			STAGE_RECORD_BUDGETS.clear();
 	}
@@ -100,6 +122,7 @@ public final class FederatedPlannerTrace {
 	/** Starts the current thread's shared compile-to-planner-stage elapsed clock. */
 	public static void startPlannerTiming(long startedNanos) {
 		PLANNER_STARTED_NANOS.set(startedNanos);
+		resetTraceOutputTiming();
 	}
 
 	/** Returns {@code -1} when the current thread has no active planner clock. */
@@ -111,6 +134,29 @@ public final class FederatedPlannerTrace {
 	/** Clears the current thread's planner clock. */
 	public static void clearPlannerTiming() {
 		PLANNER_STARTED_NANOS.remove();
+	}
+
+	/** Cumulative time spent printing trace records on the current thread. */
+	public static long traceOutputNanos() {
+		return TRACE_OUTPUT_NANOS.get();
+	}
+
+	/**
+	 * Emit one phase timing receipt. The remainder includes formatting, validation,
+	 * and all other phase work outside measured trace printing; it is not a pure
+	 * compute measurement.
+	 */
+	public static void logPhaseTiming(String stage, long startNanos, long outputStartNanos) {
+		if (!ENABLED)
+			return;
+		long elapsedNanos = nonNegativeElapsed(startNanos, System.nanoTime());
+		long outputNanos = Math.max(0L, traceOutputNanos() - outputStartNanos);
+		long remainderNanos = Math.max(0L, elapsedNanos - outputNanos);
+		logGlobal("Planner-PhaseTiming", "stage=" + stage
+			+ " elapsedNanos=" + elapsedNanos
+			+ " traceOutputNanos=" + outputNanos
+			+ " remainderNanos=" + remainderNanos
+			+ " plannerElapsedNanos=" + plannerElapsedNanos());
 	}
 
 	/** Emit a deterministic receipt for every stage whose detail records were suppressed. */
@@ -136,7 +182,7 @@ public final class FederatedPlannerTrace {
 	}
 
 	public static void log(Hop hop, String stage, String message) {
-		if (!shouldTrace(hop) || !tryAcquireStageRecord(stage))
+		if (!shouldTraceRecord(hop, stage) || !tryAcquireStageRecord(stage))
 			return;
 		printHopRecord(hop, stage, message);
 	}
@@ -147,15 +193,21 @@ public final class FederatedPlannerTrace {
 	 * do not pay formatting/allocation costs inside planner hot loops.
 	 */
 	public static void logLazy(Hop hop, String stage, Supplier<String> messageSupplier) {
-		if (!shouldTrace(hop) || !tryAcquireStageRecord(stage))
+		if (!shouldTraceRecord(hop, stage) || !tryAcquireStageRecord(stage))
 			return;
 		printHopRecord(hop, stage, messageSupplier.get());
 	}
 
 	public static void logGlobal(String stage, String message) {
-		if (!ENABLED)
+		if (!ENABLED || (!DETAIL_ENABLED && stage != null && OPTIONAL_GLOBAL_DETAIL_STAGES.contains(stage)
+			&& !REQUIRED_EMISSION_AUDIT_STAGES.contains(stage)))
 			return;
-		System.out.println("[PlannerTrace][" + stage + "] " + message);
+		printRecord("[PlannerTrace][" + stage + "] " + message);
+	}
+
+	private static boolean shouldTraceRecord(Hop hop, String stage) {
+		return stage != null && REQUIRED_EMISSION_AUDIT_STAGES.contains(stage) ?
+			matchesTraceHop(hop) : shouldTrace(hop);
 	}
 
 	private static boolean tryAcquireStageRecord(String stage) {
@@ -165,8 +217,33 @@ public final class FederatedPlannerTrace {
 	}
 
 	private static void printHopRecord(Hop hop, String stage, String message) {
-		System.out.println("[PlannerTrace][" + stage + "] hop=" + hop.getHopID()
+		printRecord("[PlannerTrace][" + stage + "] hop=" + hop.getHopID()
 			+ " (" + hop.getOpString() + ") " + message);
+	}
+
+	private static void printRecord(String record) {
+		long startedNanos = System.nanoTime();
+		try {
+			System.out.println(record);
+		}
+		finally {
+			long outputNanos = nonNegativeElapsed(startedNanos, System.nanoTime());
+			TRACE_OUTPUT_NANOS.set(saturatingAdd(TRACE_OUTPUT_NANOS.get(), outputNanos));
+		}
+	}
+
+	private static void resetTraceOutputTiming() {
+		TRACE_OUTPUT_NANOS.set(0L);
+	}
+
+	private static long nonNegativeElapsed(long startedNanos, long completedNanos) {
+		return Math.max(0L, completedNanos - startedNanos);
+	}
+
+	private static long saturatingAdd(long left, long right) {
+		if (right > Long.MAX_VALUE - left)
+			return Long.MAX_VALUE;
+		return left + right;
 	}
 
 	static final class StageRecordBudget {
