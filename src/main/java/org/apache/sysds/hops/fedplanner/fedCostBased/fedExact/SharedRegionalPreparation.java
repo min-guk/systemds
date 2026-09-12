@@ -18,7 +18,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 
 /** Run-owned encoded tables and root reduction, shared by Regional and its global certificate. */
 final class SharedRegionalPreparation implements LocalCategoricalOptimizer.BlockPreparation {
-	static final String PROPERTY = "sysds.fedplanner.regional.sharedPreparation";
 	static final String FAST_BLOCK_ORDER_PROPERTY = "sysds.fedplanner.regional.fastBlockOrder";
 	static final String FAST_BLOCK_ASSIGNMENTS_PROPERTY =
 		"sysds.fedplanner.regional.fastBlockAssignments";
@@ -49,13 +48,6 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		this.limits = limits;
 		this.compact = compact;
 		orderPolicy = ExactEliminationOrderPolicy.localConfigured(compact);
-	}
-
-	static boolean configured() {
-		String value = System.getProperty(PROPERTY, "true");
-		if(!value.equals("true") && !value.equals("false"))
-			throw new IllegalArgumentException("REGIONAL_SHARED_PREPARATION_INVALID|value=" + value);
-		return Boolean.parseBoolean(value);
 	}
 
 	static boolean configuredFastBlockOrder() {

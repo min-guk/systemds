@@ -22,7 +22,24 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 /** Disjoint factor ownership and persistent exact boundary messages. No Global restart. */
 final class IncrementalRegionalOptimizer {
 	static final String PREFIX = "sysds.fedplanner.regional.incremental.";
-	static boolean configured() { return Boolean.parseBoolean(System.getProperty(PREFIX + "enabled", "false")); }
+	private static final String REGIONAL_PREFIX = "sysds.fedplanner.regional.";
+
+	static void validateConfiguration() {
+		String enabled = System.getProperty(PREFIX + "enabled");
+		if(enabled != null && !"true".equalsIgnoreCase(enabled))
+			throw new IllegalArgumentException("INCREMENTAL_REGIONAL_ENABLED_INVALID|value=" + enabled
+				+ "|supported=true");
+		String mode = System.getProperty(REGIONAL_PREFIX + "mode");
+		if(mode != null && !"off".equalsIgnoreCase(mode))
+			throw new IllegalArgumentException("REGIONAL_MODE_REMOVED|mode=" + mode + "|supported=off");
+		String algorithm = System.getProperty(REGIONAL_PREFIX + "algorithm");
+		if(algorithm != null && !"legacy".equalsIgnoreCase(algorithm))
+			throw new IllegalArgumentException("REGIONAL_ALGORITHM_REMOVED|algorithm=" + algorithm
+				+ "|supported=legacy");
+		String initialBound = System.getProperty(REGIONAL_PREFIX + "initialBound");
+		if(initialBound != null)
+			throw new IllegalArgumentException("REGIONAL_INITIAL_BOUND_REMOVED|value=" + initialBound);
+	}
 
 	record Options(double relativeGap, long maximumMergeAssignments, long maximumRetainedSlots,
 		long timeMillis, int scoredCandidates, boolean earlyStop) {
@@ -32,6 +49,7 @@ final class IncrementalRegionalOptimizer {
 				throw new IllegalArgumentException("INCREMENTAL_REGIONAL_OPTIONS_INVALID");
 		}
 		static Options configured() {
+			validateConfiguration();
 			return new Options(Double.parseDouble(System.getProperty(PREFIX + "relativeGap", "0.05")),
 				Long.parseLong(System.getProperty(PREFIX + "assignments", "1000000")),
 				Long.parseLong(System.getProperty(PREFIX + "retainedSlots", "8000000")),
@@ -323,8 +341,8 @@ final class IncrementalRegionalOptimizer {
 		try {
 			List<Integer> reduced = Arrays.stream(assignment).boxed().toList();
 			List<Integer> encoded = root.expandAssignment(reduced);
-			double frozen = CertifiedRegionalOptimizer.evaluate(variables,root.factors(),reduced);
-			double original = CertifiedRegionalOptimizer.evaluate(problem.variables(),problem.factors(),encoded);
+			double frozen = RegionalSearchProblem.evaluateFactors(variables,root.factors(),reduced);
+			double original = RegionalSearchProblem.evaluateFactors(problem.variables(),problem.factors(),encoded);
 			double canonical = problem.evaluate(encoded.subList(0,problem.decisionCount()));
 			if(!Double.isFinite(canonical) || Double.doubleToRawLongBits(frozen) != Double.doubleToRawLongBits(canonical)
 				|| Double.doubleToRawLongBits(original) != Double.doubleToRawLongBits(canonical))

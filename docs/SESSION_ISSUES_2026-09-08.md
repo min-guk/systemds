@@ -1,4 +1,6 @@
 # Session issues — 2026-09-08
+> Historical report: retired Regional source and report paths refer to [revision 8fa253ccfa](https://github.com/min-guk/systemds/tree/8fa253ccfa52d652555f7146f22390390562aad8). See [Incremental Regional](INCREMENTAL_REGIONAL.md) for the current implementation.
+
 
 ## Activation robustness and paired ablation audit — complete, limits recorded
 
@@ -338,7 +340,7 @@ Decision rationale: refine and verify the encoded cost objective while preservin
   package 19 classes / 136 tests, 실패·오류·skip 0. JAR SHA-256
   `0b896e12ebbdf0a061bece458e826ac02923eeadae0307fea143995e5909ed4a`.
   근거 `/home/mchoi/so007-sevenway-evidence-20260908/validation/implementation-provenance.json`.
-  [구현 보고서](ANYTIME_TARGET_IMPLEMENTATION_KO.md)에 설정·정리·테스트를 설명한다.
+  [구현 보고서](https://github.com/min-guk/systemds/blob/8fa253ccfa52d652555f7146f22390390562aad8/docs/ANYTIME_TARGET_IMPLEMENTATION_KO.md)에 설정·정리·테스트를 설명한다.
 - **실험 조건**: 기본 16 workloads × 4 profiles × 7 methods × 5 paired repetitions,
   상대 목표 1%, seed 이후 soft budget 20초, JVM watchdog 60초. 별도 KMeans/L2SVM
   LAN/WAN-heavy × 7 × 3회에서는 초기 whole exact gate를 0으로 설정한다.

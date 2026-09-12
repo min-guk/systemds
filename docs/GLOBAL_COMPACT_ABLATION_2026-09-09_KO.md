@@ -1,4 +1,6 @@
 # Global compact on/off와 Regional·Anytime 비교
+> Historical report: retired Regional source and report paths refer to [revision 8fa253ccfa](https://github.com/min-guk/systemds/tree/8fa253ccfa52d652555f7146f22390390562aad8). See [Incremental Regional](INCREMENTAL_REGIONAL.md) for the current implementation.
+
 
 작성일: 2026-09-09. 상태: **구현·검증 완료**. so007 native JVM, L2SVM planning-only 8회, 조건별 1회.
 

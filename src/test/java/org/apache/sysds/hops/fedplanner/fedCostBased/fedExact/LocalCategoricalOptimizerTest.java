@@ -388,32 +388,6 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
-	public void physicalSeedRevisitPropertyIsValidated() {
-		String key = LocalPhysicalOptimizer.SEED_REVISIT_PASSES_PROPERTY;
-		String previous = System.getProperty(key);
-		try {
-			System.clearProperty(key);
-			Assert.assertEquals(0, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
-			System.setProperty(key, "0");
-			Assert.assertEquals(0, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
-			System.setProperty(key, "16");
-			Assert.assertEquals(16, LocalPhysicalOptimizer.configuredSeedRevisitPasses());
-			System.setProperty(key, "17");
-			Assert.assertThrows(IllegalArgumentException.class,
-				LocalPhysicalOptimizer::configuredSeedRevisitPasses);
-			System.setProperty(key, "invalid");
-			Assert.assertThrows(IllegalArgumentException.class,
-				LocalPhysicalOptimizer::configuredSeedRevisitPasses);
-		}
-		finally {
-			if(previous == null)
-				System.clearProperty(key);
-			else
-				System.setProperty(key, previous);
-		}
-	}
-
-	@Test
 	public void deferredBlockDoesNotRestartCompletedLocalPass() {
 		Variable x = new Variable("x", 2);
 		Variable w = new Variable("w", 2);

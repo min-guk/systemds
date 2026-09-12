@@ -1,11 +1,9 @@
-# Four-planner decision/application boundary
+# Planner timing and common application
 
-2026-09-12, authorized by user's request to share conversion/application and compare decision time.
+FedFirst, AggLocal, DP-Local and DP-Global return their validated selection through `PlacementPlanApplication`. It runs post-selection diagnostics, adapts the selection, normalizes it through the shared placement adapter, and invokes `PlacementEmissionTransaction`. Analysis identity, selected-plan authority and transaction validation remain mandatory.
 
-1. Preserve build12 solver/model and same selected-plan receipts. Existing245 passing tests and frozen24-run objective/hash/trajectory data lock the previous Local/Global behavior. Add four-planner existing invocation/emission tests plus deterministic timing-state tests before accepting the refactor.
-2. Four roots use one PlacementPlanApplication boundary. Planner-owned selected results enter a shared normalization and PlacementEmissionTransaction; existing lossless DP physical-to-placement decoding and owner receipts remain necessary input adaptation. No greedy reselection, relaxed legality or fallback.
-3. Decision time: entry after common PlacementAnalysis preparation through validated planner-owned selection; includes own physical model/cost surface and all Local seed/LB/refinement work. Post-selection diagnostics, conversion, emission and final boundary verification are separate disjoint intervals. In-search trace overhead stays in decision time; both methods use same summary detail setting.
-4. Common DML pre-normalization/analysis preparation is reported separately, rather than being silently attributed to one planner. Legacy Compile Phase FedPlanner total retained. New schema has nanosecond decision/diagnostics/conversion/application/finalization/total fields; only successful complete invocations publish a result.
-5. Preserve immutable normalized objects at the same analysis authority rather than clone them again on common handoff. Keep program structure/identity checks and transaction prevalidation. Adversarial normalization/emission tests must still pass.
-6. Native JVM planning-only PCA+GLM, worker5/WAN-Mid,4 planners x3 repeats=24, summary trace. User's existing native-JVM authorization supersedes older Docker-only guideline. No runtime workloads or expanded campaign. New analyzer rejects missing split timing and never substitutes legacy total as decision time.
-7. Report decision and full total separately, all trials including failures; compare DP objective/plan with build12. Do not relabel old full-study data or regenerate old graphs from unavailable split timing.
+DML reports common preparation separately. `PlannerPipelineTiming` partitions each successful planner invocation into Decision, Diagnostics, Conversion, Application and Finalization. Their integer nanoseconds sum to Total. The existing FedPlanner total remains available. Failed/incomplete invocations do not publish a successful timing record.
+
+Decision includes physical model/cost construction, Local seed and bound refinement, exact search and validation of the selection. In-search trace work stays in Decision. Conversion contains the DP physical-to-placement projection; Application includes receipt validation. Finalization covers the compiler's final boundary verification.
+
+Compare the four methods using `Compile Phase FedPlanner Decision` under the same trace settings; also report common preparation and the retained total when discussing compiler latency. Older measurements without phase records cannot supply Decision time.

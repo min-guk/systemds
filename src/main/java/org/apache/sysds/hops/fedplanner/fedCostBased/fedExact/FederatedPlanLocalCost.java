@@ -24,13 +24,10 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 /**
  * Production local cost planner over the canonical privacy-filtered physical model.
  *
- * <p>Exact and this planner share domains, feasibility, and cost factors. They differ
- * only in search: Exact performs global variable elimination, while this planner uses
- * one producer-before-consumer pass followed by exact, cost-decreasing optimization
- * of factor/shared-producer blocks. If the resulting plan materializes a selected
- * FOUT for a local input, it derives only that FOUT component and its direct boundary
- * fringe as a deferred conflict block. This bounded local refinement can escape a
- * materialization cost barrier without turning the search into global enumeration.</p>
+ * <p>Exact and this planner share domains, feasibility, and cost factors. This planner
+ * obtains a feasible producer-before-consumer seed, then incrementally joins exact
+ * boundary messages until the requested certificate is reached or resources are
+ * exhausted.</p>
  */
 public final class FederatedPlanLocalCost extends AFederatedPlanner {
 	private final ExactPlacementAdapter adapter = new ExactPlacementAdapter();
@@ -45,7 +42,6 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 	@Override
 	public ExactPlacementInput rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
 		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
-		long searchEntryStart = System.nanoTime();
 		Objects.requireNonNull(prog, "prog");
 		Objects.requireNonNull(analysis, "analysis");
 		analysis.assertCanonicalProgramAuthority(prog);
@@ -56,44 +52,10 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
-		CertifiedRegionalOptimizer.Options options = CertifiedRegionalOptimizer.Options.configured();
-		RegionalSearchOptimizer.Options searchOptions = RegionalSearchOptimizer.Options.configured(options);
-		ExactEliminationOrderPolicy.Configuration orderPolicy =
-			ExactEliminationOrderPolicy.localConfigured(LocalCategoricalOptimizer.configuredCompaction());
-		if(searchOptions != null && FederatedPlannerTrace.isEnabled())
-			FederatedPlannerTrace.logGlobal("DP-RegionalSearch", String.format(Locale.ROOT,
-				"phase=CONFIG algorithm=%s width=%d timeMillis=%d factorCells=%d totalCells=%d "
-					+ "absoluteTarget=%.17g relativeTarget=%.17g exactClosureAssignments=%d "
-					+ "seedRevisitPasses=%d budgetScope=after-seed softDeadline=true "
-					+ "remainingExactCompletion=true seedPolicy=regional sharedPreparation=%s "
-					+ "costShiftMillis=%d costShiftMaxSweeps=%d lbOrder=%s lbPartition=%s "
-					+ "initialBound=%s regionDualMillis=%s regionDualCells=%s regionDualSweeps=%s regionDualMerge=%s "
-					+ "fastBlockOrder=%s fastBlockAssignments=%s "
-					+ "fastOrder=%s fastOrderAssignments=%s fastOrderSource=%s",
-				searchOptions.algorithm(), options.initialWidth(), options.timeBudgetMillis(),
-				options.limits().maximumFactorCells(), options.limits().maximumMaterializedCells(),
-				options.absoluteTolerance(), options.relativeTolerance(), searchOptions.exactClosureAssignments(),
-				LocalPhysicalOptimizer.configuredSeedRevisitPasses(), SharedRegionalPreparation.configured(),
-				searchOptions.costShiftMillis(), searchOptions.costShiftMaxSweeps(),
-				searchOptions.lbPlanning().eliminationOrder(), searchOptions.lbPlanning().partitionStrategy(),
-				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "initialBound", "replica"),
-				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualMillis", "100"),
-				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualCells", "1024"),
-				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualSweeps", "1000"),
-				System.getProperty(CertifiedRegionalOptimizer.PROPERTY_PREFIX + "regionDualMerge", "true"),
-				orderPolicy.fastOrder(), orderPolicy.maximumAssignments(),
-				orderPolicy.fastOrder(), orderPolicy.maximumAssignments(), orderPolicy.source()));
 		FederatedPlannerTrace.logPhaseTiming("MODEL_SETUP", phaseStarted, phaseOutputStarted);
 		phaseStarted = System.nanoTime();
 		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
-		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface, searchOptions,
-			checkpoint -> {
-				if(FederatedPlannerTrace.isEnabled())
-					FederatedPlannerTrace.logGlobal("DP-RegionalSearch", RegionalSearchOptimizer.checkpointTrace(checkpoint)
-						+ String.format(Locale.ROOT, " methodElapsedMs=%.6f plannerElapsedNanos=%d",
-							(System.nanoTime() - searchEntryStart) / 1e6,
-							FederatedPlannerTrace.plannerElapsedNanos()));
-			});
+		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface);
 		FederatedPlannerTrace.logPhaseTiming("OPTIMIZATION", phaseStarted, phaseOutputStarted);
 		phaseStarted = System.nanoTime();
 		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
@@ -101,20 +63,7 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 			model, optimized.physicalResult());
 		FederatedPlannerTrace.logPhaseTiming("SELECTION", phaseStarted, phaseOutputStarted);
 		return PlacementPlanApplication.complete(prog, analysis,
-			() -> {
-				trace(selection, model, surface, optimized.localStatistics());
-				if(optimized.search() != null && FederatedPlannerTrace.isEnabled()) {
-					RegionalSearchOptimizer.Result search = optimized.search();
-					FederatedPlannerTrace.logGlobal("DP-RegionalSearch", String.format(Locale.ROOT,
-						"phase=FINAL algorithm=%s lower=%.17g upper=%.17g seedUpper=%.17g gap=%.17g relativeGap=%.17g "
-							+ "targetReached=%s stop=%s elapsedMs=%.6f scope=encoded-model costFingerprint=%s analysis=%s "
-							+ "orderFingerprint=%s methodElapsedMs=%.6f%s", search.algorithm(), search.lowerBound(), search.upperBound(),
-						search.seedUpperBound(), search.absoluteGap(), search.relativeGap(), search.targetReached(), search.stopReason(),
-						search.elapsedNanos() / 1e6, selection.costSurfaceFingerprint(), selection.analysisFingerprint(),
-						search.orderFingerprint(), (System.nanoTime() - searchEntryStart) / 1e6,
-						RegionalSearchOptimizer.statisticsTrace(search.statistics())));
-				}
-			},
+			() -> trace(selection, model, surface, optimized.localStatistics()),
 			() -> {
 				ExactPlacementInput input = ExactPhysicalPlacementProjector.project(
 					selection, "DP-LocalConflict", "local-conflict");

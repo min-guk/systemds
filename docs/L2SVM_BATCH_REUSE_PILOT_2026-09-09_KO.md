@@ -1,4 +1,6 @@
 # L2SVM: 묶음 LB 강화와 component 준비 재사용 구현·검증 보고서
+> Historical report: retired Regional source and report paths refer to [revision 8fa253ccfa](https://github.com/min-guk/systemds/tree/8fa253ccfa52d652555f7146f22390390562aad8). See [Incremental Regional](INCREMENTAL_REGIONAL.md) for the current implementation.
+
 
 작성일: 2026-09-09. 서버: so007(`dams-so007`). 상태: **두 기능 구현 완료, targeted build/tests 및 9회 planning-only 검증 완료**.
 

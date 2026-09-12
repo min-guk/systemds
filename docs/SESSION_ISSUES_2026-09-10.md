@@ -1,19 +1,5 @@
 # Session Issues 2026-09-10
 
-## V5 regional/dual overlay integration on current main
-
-- **Status**: Resolved
-- **Environment/conditions**: Remote checkout `/home/mchoi/so007-glm-main-recheck-20260910`; upstream `28eb8072eeffc9810956e95bb7f633532d6d14d2`; overlay baseline `b51205f3ff625eed14ee01bbc247af22c71b647f`; source scope `src/`, `pom.xml`, `bin/`, and `scripts/`.
-- **Reproduction**: Compare the frozen V5 tree with the baseline commit, then compare the same baseline with current main. Integration receipt: `/home/mchoi/so007-regional-region-dual-evidence-20260909/validation/glm-main-20260910-source-integration.json`.
-- **Observed symptom**: The V5 experiment is an uncommitted source tree, so copying it wholesale onto main could silently discard newer REFED, placement-cost, BROADCAST, and recompile fixes.
-- **Cause**: V5 contains 13 modified and 5 new Regional/Dual source or test files relative to the baseline, while main contains 14 independently changed files relative to that baseline.
-- **Resolution**: Each existing V5 difference was merged with `git merge-file` using `(latest main, baseline, V5)`; new V5 files were copied. All merges were clean, no V5 files were deleted, and the upstream/overlay changed-path intersection was empty. Upstream files remain byte-for-byte at main because none overlap the overlay.
-- **Modified files**: The exact per-file hashes and outcomes are recorded in the integration receipt. This document is the only additional checkout file created by this session.
-- **Verification**: `git diff --check`; conflict-marker scan; Maven clean package with the 15 V5 Regional tests and the 6 directly affected upstream tests. Build evidence is under `/home/mchoi/so007-regional-region-dual-evidence-20260909/validation/build-glm-main-20260910-*`.
-- **Remaining issues**: None for source integration. GLM execution and result analysis are owned by the parent task.
-- **Potential regression risk**: Semantic interactions can exist despite zero path overlap. The focused upstream and V5 tests detect compilation, planner-policy, placement-cost, REFED, recompile-adjacent, and BROADCAST contract regressions.
-- **Decision basis**: Preserve planner/runtime policy and all upstream fixes; this task performs source integration and validation only and adds no planner gates or runtime fallback.
-
 ## Shared fast exact elimination order for Global and Local
 
 - **Status**: Resolved
@@ -27,10 +13,6 @@
 - **Remaining issues**: Full packaging and the matched native comparison are performed only after the source is frozen. The experiment must explicitly bind the common properties in its context, protocol, command receipt, and trace audit.
 - **Potential regression risk**: A workload above the assignment guard or materialization limits pays for the fast symbolic candidate before portfolio selection. Per-compilation `Exact-OrderSelection` events expose the caller, policy source and cap, accepted/fallback outcome, estimate, and compile timing; Global and Local aggregate preparation traces remain available for audit.
 - **Decision basis**: Change only exact elimination-order planning overhead. Variables, factors, legality, costs, exact arithmetic, canonical objective verification, deterministic tie handling, and runtime emission remain unchanged.
-
-## Incremental Regional boundary-message experiment
-
-User requested unified Regional U/L/exact computations and explicitly approved native JVM planning-only on worker5 WAN-mid, X PRIVATE_AGGREGATE/Y PUBLIC. Prior Docker/public-data restrictions do not apply to this authorized planning scope. Runtime/privacy/legality are not relaxed. No push.
 
 ## GitHub main integration (verified source build; existing test failures retained)
 - **Request:** merge published source fixes into min-guk/systemds main, preserving newer Global/Regional work.
@@ -52,25 +34,7 @@ User requested unified Regional U/L/exact computations and explicitly approved n
 - **Result:** old DP + exhaustive policy engines and exclusively dead support removed. Required function-boundary projection retained unchanged in SyntheticBoundaryProjection; shared tests migrated to current Regional. Fresh main build 1,605 sources PASS; final regression batch 238/238 PASS; removed-class/config rejection checked. Known FederatedRefedPolicyTest failures remain exactly the same 16/74 methods as baseline; additional isolated policy suites reproduce the same 8/14 failures before/after (privacy metadata and reentry expectations). No full Maven/package or benchmark rerun claim. Detailed report: docs/LEGACY_PLANNER_REMOVAL_2026-09-10.md.
 - **Remaining:** known baseline failures (16 refed-policy + 8 isolated policy) remain outside this cleanup; full Maven packaging and runtime deployment are not part of this source publication. Historic reports and generated historical API snapshots are not rewritten as current experiments.
 - **Regression risk:** removing parent receipt types or DP-boundary helpers can break emission integration. Detect using full main/test-source compilation, factory/receipt/emission/active Global+Regional tests and stale-reference census. Runtime performance is not inferred from this source-only cleanup.
-Separate detached worktree /home/mchoi/so007-incremental-regional-20260910 uses captured shared-fast-order baseline plus opt-in IncrementalRegionalOptimizer. Prior VE-greedy candidate implementation is excluded. Full legacy Regional remains a separate baseline; this candidate starts with the Regional bootstrap and exact hard-conflict repair, then uses persistent conditional-message DP for improvements.
 
-Build01: 218 tests, one raw-vs-reduced auxiliary-index test expectation corrected, plus final-header source mutation during build; this artifact was not benchmarked. Build02 and build03: 218/218 pass, sources stable. Build03 smoke: 9/9 planning receipt/oracle-prefix audits pass, but new method only meets5% for StepLM; L2SVM resource-stops with worse seed and P1 time-stops. All failures-to-target retained. Dense pair scheduler spends too much time repeatedly examining private/singleton projections; further bounded optimization batches these and validates leaf universe once.
+## Superseded Regional experiments
 
-Numeric-slot ceiling covers retained tables/backpointers/marginal arrays, not total JVM RSS or metadata. Sorted ordinal arrays keep active ownership linear. Assignment ceiling is per merge, total planning controlled by soft scheduling deadline. Reports include whole planning and peak JVM RSS.
-
-## Incremental Regional follow-on v7/v8 refinement
-
-- Problem: repeated checkpoint boundary scans and immutable-message minima scans add work; successful v6 timing cohorts do not establish uniform wins across future JVM observations.
-- Resolution to date: v6/build09 preserved; v7/build10 caches message minima in existing table construction and maintains the original-decision boundary count on atomic full-bucket replacement. The two new count tests first passed against frozen v6 (13 controller tests), then v7 passed234 targeted tests in24 classes with stable source.
-- Fresh experiment: native worker5 WAN-mid, compact=false, common fast-order/preprocessing, CPU8-15, three fresh JVM observations for each Global/v6/v7 on L2SVM/StepLM/P1. All27 audit valid; all18 incremental rows certify5%; objectives and full certificate/counter trajectories match. v7 medians .815616/.809178/1.864436 seconds; v6 .770971/.839532/1.935468; Global .726071/1.488438/2.949333.
-- Remaining issue: v7 fails the frozen performance gate on L2SVM. Prior v6 successful cohorts are preserved as historical observations; no claim that L2 is robustly faster. v8 will reduce incremental trace formatter allocation while retaining every event/field/time boundary, subject to the same gate and fresh confirmation.
-- Regression risks: cached summaries depend on immutable message tables, and the boundary counter depends on full pivot-bucket replacement. Independent source review and all-prefix oracle/trajectory audits cover those invariants. Timing noise is material and slower trials must remain in results. Build validation remains targeted:17 unchanged baseline failures in2 excluded classes, no full-suite/lint claim.
-
-## v8 trace follow-on completed without promotion
-
-- Problem: v7 reduced internal repeated work but failed the L2SVM whole-planning gate. Incremental checkpoint formatting remained synchronous work inside the planner.
-- Resolution: build11 preserves every18-field checkpoint and uses locale-independent primitive formatting;236 targeted tests/25classes pass with stable source. Same schema and parsed raw doubles, full bounds trajectories, modeled objectives and all paired emission plans match v6. No solver/model/privacy/Global changes.
-- Evidence: firstv8 cohort passes the full predefined gate. Independent samebuild11 confirmation still passes Global10% median criterion on allthree cases (L2 .660766/.800734; Step .944786/1.088292; P1 1.835317/3.716202 seconds), but Step is16.83%slower than preservedv6 and the three-ratio geometricmean is1.032212. The full follow-on gate therefore FAILS confirmation.
-- Remaining issue/decision: NO_PROMOTION;v6/build09 remains the preserved comparison reference. v8/build11 stays available as an opt-in experimental artifact. All81 follow-on observations retained and valid,54 incremental certificates<=5%; no pooling of timing cohorts. No additional source change or rerun to select a favorable cohort.
-- Regression risk: n=3 fresh JVM observations percase/cohort and substantial host/JIT variance limit causal speed claims. Original Global10%criterion passing does not prove v8 improves over v6. The suggested seed-evaluation reuse is not implemented: the two scans have different plain/compensated arithmetic and independent validation roles; benefit needs profiling first.
-- Artifact scope: this final documentation is appended after build11/runtime freeze; Java code and the measured JAR remain unchanged. Existing17 baseline failures in2classes remain excluded; no full-suite/lint success claim.
+V5–V8 pilot notes and implementations are preserved in [the pre-cleanup revision](https://github.com/min-guk/systemds/blob/8fa253ccfa52d652555f7146f22390390562aad8/docs/SESSION_ISSUES_2026-09-10.md). The current implementation and limits are described in [Incremental Regional](INCREMENTAL_REGIONAL.md). Historical timing cohorts are not evidence of a uniform performance improvement.

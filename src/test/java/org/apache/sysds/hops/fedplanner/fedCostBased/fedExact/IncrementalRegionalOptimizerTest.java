@@ -62,7 +62,7 @@ public class IncrementalRegionalOptimizerTest {
 			var result=run(variables,factors,List.of(0,0,0),100000,1000000,0,false);
 			audit(result,optimum); assertEquals("EXACT",result.stopReason());
 			assertEquals(optimum,result.upper(),0); assertEquals(optimum,result.lower(),0);
-			assertEquals(optimum,CertifiedRegionalOptimizer.evaluate(variables,factors,result.assignment()),0);
+			assertEquals(optimum,RegionalSearchProblem.evaluateFactors(variables,factors,result.assignment()),0);
 		}
 	}
 	@Test public void capKeepsFullCoverAndCertifiedIncumbent() {

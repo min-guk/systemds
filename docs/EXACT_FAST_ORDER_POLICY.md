@@ -18,12 +18,10 @@ If a valid fast candidate misses a bound, the unchanged deterministic portfolio 
 Every successful order selection emits `Exact-OrderSelection` with `caller`,
 `fastOrderSource`, `fastOrderConfigured`, `fastOrderAssignmentsLimit`,
 `fastOrderAccepted`, `fastOrderFallback`, `fastOrderEstimatedAssignments`, and
-`compileNanos`. This includes Global, Local seed blocks, Regional remaining-exact
-compilation, and incremental replica-bound exact compilation. A successfully reused
-preferred replica-component order does not select a new order and therefore does not
-emit this event; its ordinary fallback does. Global also emits `Exact-Preparation`.
-Local emits singular fields in `DP-RegionalBlockPreparation`; shared Local preparation
-emits effective configuration plus accepted/fallback counts in
-`DP-RegionalSharedPreparation`, including a zero-block run.
+`compileNanos`. This includes Global and Local seed-block exact compilation.
+Global also emits `Exact-Preparation`; shared Local preparation reports its effective
+configuration and counters in `DP-RegionalSharedPreparation`.
 
-For the matched comparison, bind `fastOrder=false` for the portfolio control and bind `fastOrder=true` with `fastOrderAssignments=1000000` for both Global and Dual500. Authenticate these properties in the native context, protocol, command receipt, and trace collector.
+For matched comparisons, bind the same common options for Global and DP-Local: either
+`fastOrder=false` for the portfolio control or `fastOrder=true` with
+`fastOrderAssignments=1000000`. Record these options with the input/model and JAR identity.

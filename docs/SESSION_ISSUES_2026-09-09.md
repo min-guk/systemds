@@ -1,4 +1,6 @@
 # 2026-09-09 세션: 입력 privacy별 incremental planning 검증
+> Historical report: retired Regional source and report paths refer to [revision 8fa253ccfa](https://github.com/min-guk/systemds/tree/8fa253ccfa52d652555f7146f22390390562aad8). See [Incremental Regional](INCREMENTAL_REGIONAL.md) for the current implementation.
+
 
 
 ## Regional / Global 최종 게시 준비 — 검증 완료
@@ -8,7 +10,7 @@
 - 최종 컨트롤러 정리 후 145 tests / 17 classes clean package PASS. so007 native planning-only 4 JVM 정상 종료 및 재검증 PASS. L2SVM exact closure 1회와 Global objective bits 일치, GLM 첫 인증 gap 1.694623%에서 exact 없이 반환.
 - 수집기의 옛 regionCalls 요구를 최종 controller counter로 교정하고 원본 기록을 보존한 채 재검증. 기존 raw summary에는 collection failure 2행이 남으며 JVM failure가 아님.
 - 게시 대상 관련: 사용자가 GitHub min-guk/systemds의 기존 main으로 확정했다. 로컬 github remote로 일반 push하며 so003의 origin은 변경하지 않는다. 원격 SHA 확인 결과는 별도 게시 기록에 남긴다.
-- 상세: [최종 게시 검증 보고서](REGIONAL_FINAL_PUBLICATION_REPORT_2026-09-09_KO.md), [사용법](REGIONAL_REMAINING_EXACT.md).
+- 상세: [최종 게시 검증 보고서](https://github.com/min-guk/systemds/blob/8fa253ccfa52d652555f7146f22390390562aad8/docs/REGIONAL_FINAL_PUBLICATION_REPORT_2026-09-09_KO.md), [사용법](https://github.com/min-guk/systemds/blob/8fa253ccfa52d652555f7146f22390390562aad8/docs/REGIONAL_REMAINING_EXACT.md).
 
 ## Regional 공통 준비 재사용 + 5% 즉시 exact — 구현·3회 검증 완료
 

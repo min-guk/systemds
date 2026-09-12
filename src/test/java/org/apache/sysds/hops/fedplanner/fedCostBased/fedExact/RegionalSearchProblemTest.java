@@ -6,11 +6,8 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
-import java.lang.reflect.Constructor;
+import java.math.BigDecimal;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.ToDoubleFunction;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
@@ -22,202 +19,80 @@ public class RegionalSearchProblemTest {
 	private static final Limits LIMITS = new Limits(10000, 100000);
 
 	@Test
-	public void conditionRetainsConstantsAndSnapshotsBranchValues() {
-		Variable x = new Variable("x", 2), y = new Variable("y", 2);
-		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x, y), List.of(
-			Factor.dense(List.of(), 7), Factor.dense(List.of(x), 2, 5), Factor.dense(List.of(y), 9, 3)));
-		int[] fixed = {1, -1};
-		RegionalSearchProblem.Conditional conditional = problem.condition(fixed);
-		fixed[0] = 0;
-		Assert.assertEquals(3, conditional.factors().size());
-		Assert.assertEquals(1, conditional.originalFreeCount());
-		Assert.assertEquals(1, conditional.fixed()[0]);
-		Assert.assertEquals(15, ExactCategoricalSolver.solve(conditional.variables(), conditional.factors(), LIMITS).objective(), 0);
-		Assert.assertEquals(15, problem.solveWhole(new int[] {1, -1}, LIMITS, () -> false).objective(), 0);
-		Assert.assertTrue(problem.bound(new int[] {1, -1}, 1, LIMITS, () -> false).lowerBound() <= 15);
-	}
-
-	@Test
-	public void regionalInfeasibilityDoesNotMeanConditionalGlobalInfeasibility() {
-		Variable x = new Variable("x", 2), y = new Variable("y", 2);
-		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x, y), List.of(
-			Factor.dense(List.of(x, y), 10, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, 5)));
-		int[] branch = {1, -1};
-		Assert.assertFalse(problem.solveRegion(branch, Set.of(0), List.of(0, 0), LIMITS, () -> false).feasible());
-		RegionalSearchProblem.Solution full = problem.solveWhole(branch, LIMITS, () -> false);
-		Assert.assertTrue(full.feasible());
-		Assert.assertEquals(List.of(1, 1), full.assignment());
-		Assert.assertEquals(5, full.objective(), 0);
-		Assert.assertThrows(IllegalArgumentException.class,
-			() -> problem.solveRegion(branch, Set.of(1), List.of(0, 0), LIMITS, () -> false));
-	}
-
-	@Test
-	public void numericalBoundaryCannotCertifyUsingRoundedThresholdProduct() {
-		double lower = 100, upper = 101;
-		Assert.assertTrue(RegionalSearchOptimizer.relative(lower, upper) > 0.01);
-		Assert.assertEquals(Double.POSITIVE_INFINITY, RegionalSearchOptimizer.relative(0, 1), 0);
-		Assert.assertEquals(0, RegionalSearchOptimizer.relative(0, 0), 0);
-		Assert.assertTrue(RegionalSearchOptimizer.relative(lower, Math.nextDown(upper)) <= 0.01);
-	}
-
-	@Test
-	public void workPreflightIncludesIntermediateTablesAndCancellationPrecedesSolve() {
-		Variable x = new Variable("x", 2), y = new Variable("y", 2), z = new Variable("z", 2);
-		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x, y, z), List.of(
-			Factor.dense(List.of(x, y, z), 1, 2, 3, 4, 5, 6, 7, 8)));
-		Assert.assertFalse(problem.canSolveWhole(problem.unconstrained(), new Limits(4, 100), 100));
-		Assert.assertFalse(problem.canSolveWhole(problem.unconstrained(), LIMITS, 1));
-		Assert.assertTrue(problem.canSolveWhole(problem.unconstrained(), LIMITS, 100));
-		Assert.assertThrows(java.util.concurrent.CancellationException.class,
-			() -> problem.solveWhole(problem.unconstrained(), LIMITS, () -> true));
-	}
-
-	@Test
-	public void reducedPreflightAdmitsCliqueRejectedByRawAnalysisAndSharesPreparedSolve() {
-		List<Variable> variables = List.of(new Variable("a", 8), new Variable("b", 8),
-			new Variable("c", 8), new Variable("d", 8));
-		AtomicInteger evaluations = new AtomicInteger();
-		List<Factor> factors = new java.util.ArrayList<>();
-		for(int left = 0; left < variables.size(); left++)
-			for(int right = left + 1; right < variables.size(); right++)
-				factors.add(Factor.lazy(List.of(variables.get(left), variables.get(right)), values -> {
-					evaluations.incrementAndGet();
-					return 0d;
-				}));
-		Limits small = new Limits(100, 2_000);
-		Assert.assertThrows(IllegalArgumentException.class,
-			() -> ExactCategoricalSolver.analyze(variables, factors, small));
-		RegionalSearchProblem problem = RegionalSearchProblem.generic(variables, factors);
-
-		RegionalSearchProblem.RegionalWork work = problem.preflightWhole(
-			problem.unconstrained(), small, 100, () -> false);
-		int afterPreflight = evaluations.get();
-		RegionalSearchProblem.Solution solution = problem.solveWhole(
-			problem.unconstrained(), small, () -> false);
-
-		Assert.assertTrue(work.admitted());
-		Assert.assertFalse(work.hardResourceLimited());
-		Assert.assertTrue(work.preparationNanos() > 0);
-		Assert.assertTrue(work.maximumFactorCells() <= 100);
-		Assert.assertEquals("solve should only perform the required final canonical evaluation",
-			afterPreflight + factors.size(), evaluations.get());
-		Assert.assertEquals(List.of(0, 0, 0, 0), solution.assignment());
-		Assert.assertEquals(Double.doubleToRawLongBits(0d),
-			Double.doubleToRawLongBits(solution.objective()));
-	}
-
-	@Test
-	public void unrelatedPreflightInvalidatesPendingPreparedCondition() {
+	public void evaluationRetainsConstantsAndCompensatedCost() {
 		Variable x = new Variable("x", 2);
-		AtomicInteger generation = new AtomicInteger();
-		AtomicInteger evaluations = new AtomicInteger();
-		Factor changing = Factor.lazy(List.of(x), values -> {
-			evaluations.incrementAndGet();
-			return values[0] == generation.get() ? 0d : 1d;
-		});
-		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x), List.of(changing));
-
-		Assert.assertTrue(problem.preflightWhole(new int[] {-1}, LIMITS, 100, () -> false).admitted());
-		generation.set(1);
-		Assert.assertTrue(problem.preflightWhole(new int[] {1}, LIMITS, 100, () -> false).admitted());
-		int beforeSolve = evaluations.get();
-		RegionalSearchProblem.Solution refreshed = problem.solveWhole(
-			new int[] {-1}, LIMITS, () -> false);
-
-		Assert.assertTrue(evaluations.get() > beforeSolve);
-		Assert.assertEquals(List.of(1), refreshed.assignment());
+		List<Factor> factors = List.of(Factor.dense(List.of(), 1e16),
+			Factor.dense(List.of(x), 1, 3), Factor.dense(List.of(), 1));
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x), factors);
+		double expected = new BigDecimal(1e16).add(BigDecimal.ONE).add(BigDecimal.ONE).doubleValue();
+		Assert.assertEquals(Double.doubleToRawLongBits(expected),
+			Double.doubleToRawLongBits(problem.evaluate(List.of(0))));
+		Assert.assertEquals(expected, RegionalSearchProblem.evaluateFactors(List.of(x), factors, List.of(0)), 0);
 	}
 
 	@Test
-	public void preparedInfeasibilityAndFreeAuxiliaryReconstructionRemainExact()
-		throws ReflectiveOperationException {
-		Variable decision = new Variable("decision", 2), auxiliary = new Variable("aux", 2);
-		RegionalSearchProblem infeasible = RegionalSearchProblem.generic(List.of(decision), List.of(
-			Factor.dense(List.of(decision), Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY)));
-		RegionalSearchProblem.RegionalWork empty = infeasible.preflightWhole(
-			infeasible.unconstrained(), LIMITS, 100, () -> false);
-		Assert.assertTrue(empty.admitted());
-		Assert.assertFalse(infeasible.solveWhole(
-			infeasible.unconstrained(), LIMITS, () -> false).feasible());
-
-		RegionalSearchProblem encoded = encodedProblem(List.of(decision, auxiliary), List.of(
-			Factor.dense(List.of(decision), 5d, 1d),
-			Factor.dense(List.of(decision, auxiliary),
-				Double.POSITIVE_INFINITY, 5d, 0d, Double.POSITIVE_INFINITY)), 1);
-		RegionalSearchProblem.RegionalWork work = encoded.preflightWhole(
-			encoded.unconstrained(), LIMITS, 100, () -> false);
-		RegionalSearchProblem.Solution solved = encoded.solveWhole(
-			encoded.unconstrained(), LIMITS, () -> false);
-		Assert.assertTrue(work.admitted());
-		Assert.assertTrue(solved.feasible());
-		Assert.assertEquals(List.of(1), solved.assignment());
-		Assert.assertEquals(Double.doubleToRawLongBits(1d),
-			Double.doubleToRawLongBits(solved.objective()));
+	public void hardInfeasibilityIsNotAFeasiblePlan() {
+		Variable x = new Variable("x", 2);
+		List<Factor> factors = List.of(Factor.dense(List.of(x), Double.POSITIVE_INFINITY, 7));
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x), factors);
+		Assert.assertEquals(Double.POSITIVE_INFINITY,
+			RegionalSearchProblem.evaluateFactors(List.of(x), factors, List.of(0)), 0);
+		Assert.assertThrows(IllegalArgumentException.class, () -> problem.evaluate(List.of(0)));
+		Assert.assertEquals(7, problem.evaluate(List.of(1)), 0);
 	}
 
 	@Test
-	public void regionalPreflightCountsFreeAuxiliaryWorkAndPreservesIncumbentOnSkip()
-		throws ReflectiveOperationException {
-		Variable decision = new Variable("decision", 2);
-		Variable auxA = new Variable("aux-a", 3), auxB = new Variable("aux-b", 3),
-			auxC = new Variable("aux-c", 3);
-		double[] zeros = new double[27];
-		RegionalSearchProblem problem = encodedProblem(List.of(decision, auxA, auxB, auxC), List.of(
-			Factor.dense(List.of(decision), 0d, 1d),
-			Factor.dense(List.of(auxA, auxB, auxC), zeros)), 1);
-
-		RegionalSearchProblem.RegionalWork limited = problem.preflightRegion(
-			problem.unconstrained(), Set.of(0), List.of(1), LIMITS, 1, () -> false);
-		Assert.assertFalse(limited.admitted());
-		Assert.assertTrue(limited.eliminationAssignments() > 1);
-		Assert.assertEquals(1d, problem.evaluate(List.of(1)), 0d);
-		Assert.assertTrue(problem.preflightRegion(problem.unconstrained(), Set.of(0),
-			List.of(1), LIMITS, 10_000, () -> false).admitted());
-		RegionalSearchProblem.Solution solution = problem.solveRegion(
-			problem.unconstrained(), Set.of(0), List.of(1), LIMITS, () -> false);
-		Assert.assertTrue(solution.feasible());
-		Assert.assertEquals(List.of(0), solution.assignment());
-		Assert.assertEquals(0d, solution.objective(), 0d);
+	public void modelAndAssignmentsRetainIdentityValidation() {
+		Variable x = new Variable("x", 2), foreign = new Variable("x", 2);
+		List<Factor> factors = List.of(Factor.dense(List.of(x), 1, 2));
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x), factors);
+		Assert.assertThrows(IllegalArgumentException.class, () -> problem.evaluate(List.of()));
+		Assert.assertThrows(IllegalArgumentException.class, () -> problem.evaluate(List.of(2)));
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> RegionalSearchProblem.generic(List.of(x, foreign), factors));
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> RegionalSearchProblem.generic(List.of(foreign), factors));
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> RegionalSearchProblem.evaluateFactors(List.of(foreign), factors, List.of(0)));
 	}
 
 	@Test
-	public void configurationRejectsMixedModesAndUnknownAlgorithms() {
-		String key = CertifiedRegionalOptimizer.PROPERTY_PREFIX + "algorithm";
-		String previous = System.getProperty(key);
-		try {
-			System.setProperty(key, "legacy");
-			Assert.assertNull(RegionalSearchOptimizer.Options.configured(null));
-			CertifiedRegionalOptimizer.Options common = new CertifiedRegionalOptimizer.Options(1, 1, 0d, 0d, LIMITS);
-			System.setProperty(key, "remaining-exact");
-			Assert.assertEquals(RegionalSearchOptimizer.Algorithm.REMAINING_EXACT,
-				RegionalSearchOptimizer.Options.configured(common).algorithm());
-			Assert.assertThrows(IllegalArgumentException.class, () -> RegionalSearchOptimizer.Options.configured(null));
-			for(String removed : List.of("legacy", "anytime-target", "anytime-incremental", "threshold", "target-gap", "reuse", "typo")) {
-				System.setProperty(key, removed);
-				Assert.assertThrows(IllegalArgumentException.class, () -> RegionalSearchOptimizer.Options.configured(common));
-			}
-			System.clearProperty(key);
-			Assert.assertNull(RegionalSearchOptimizer.Options.configured(null));
-			Assert.assertEquals(RegionalSearchOptimizer.Algorithm.REMAINING_EXACT,
-				RegionalSearchOptimizer.Options.configured(common).algorithm());
-		}
-		finally {
-			if(previous == null)
-				System.clearProperty(key);
-			else
-				System.setProperty(key, previous);
+	public void invalidLazyCostsRemainErrors() {
+		Variable x = new Variable("x", 2);
+		for(double cost : new double[] {Double.NaN, -1, Double.NEGATIVE_INFINITY}) {
+			List<Factor> factors = List.of(Factor.lazy(List.of(x), values -> cost));
+			Assert.assertThrows(IllegalArgumentException.class,
+				() -> RegionalSearchProblem.generic(List.of(x), factors).evaluate(List.of(0)));
 		}
 	}
 
-	@SuppressWarnings("unchecked")
-	private static RegionalSearchProblem encodedProblem(List<Variable> variables,
-		List<Factor> factors, int decisionCount) throws ReflectiveOperationException {
-		Constructor<RegionalSearchProblem> constructor = RegionalSearchProblem.class
-			.getDeclaredConstructor(List.class, List.class, int.class, ToDoubleFunction.class);
-		constructor.setAccessible(true);
-		ToDoubleFunction<List<Integer>> evaluator = assignment -> assignment.get(0);
-		return constructor.newInstance(variables, factors, decisionCount, evaluator);
+	@Test
+	public void sharedRootReusesTablesOnlyWithinTheSameLimits() {
+		Variable x = new Variable("x", 2);
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(List.of(x),
+			List.of(Factor.dense(List.of(x), 1, 2)));
+		var root = problem.reducedRoot(LIMITS);
+		Assert.assertSame(root, problem.reducedRoot(LIMITS));
+		Assert.assertEquals(2, problem.reducedRootRequests());
+		Assert.assertTrue(problem.reducedRootNanos() >= 0);
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> problem.reducedRoot(new Limits(20000, 100000)));
 	}
 
+	@Test
+	public void resourceClassificationDoesNotHideModelErrors() {
+		Assert.assertTrue(RegionalSearchProblem.isResourceLimit(
+			new IllegalArgumentException("EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells=100")));
+		Assert.assertFalse(RegionalSearchProblem.isResourceLimit(
+			new IllegalArgumentException("REGIONAL_SEARCH_FACTOR_SCOPE_INVALID")));
+		Assert.assertFalse(RegionalSearchProblem.isResourceLimit(new IllegalArgumentException()));
+	}
+
+	@Test
+	public void roundedThresholdProductCannotProduceFalseCertification() {
+		Assert.assertTrue(IncrementalRegionalOptimizer.relativeGap(100, 101) > 0.01);
+		Assert.assertTrue(IncrementalRegionalOptimizer.relativeGap(100, Math.nextDown(101d)) <= 0.01);
+		Assert.assertEquals(Double.POSITIVE_INFINITY, IncrementalRegionalOptimizer.relativeGap(0, 1), 0);
+		Assert.assertEquals(0, IncrementalRegionalOptimizer.relativeGap(0, 0), 0);
+	}
 }
