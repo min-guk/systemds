@@ -66,6 +66,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAncho
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
@@ -1664,12 +1665,12 @@ public final class ExactPhysicalCostModel {
 		return pathProfiles;
 	}
 
-	private static int workerCount(NeutralPlacementGraph graph) {
+	static int workerCount(NeutralPlacementGraph graph) {
 		Set<String> workers = new LinkedHashSet<>();
 		for(NeutralPlacementGraph.Node node : graph.nodes())
 			for(var anchor : node.anchors())
 				for(var partition : anchor.partitions())
-					workers.add(partition.workerId());
+					workers.add(FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()));
 		return workers.size();
 	}
 
