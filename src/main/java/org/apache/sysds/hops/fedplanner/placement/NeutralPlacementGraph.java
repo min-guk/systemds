@@ -297,11 +297,31 @@ public final class NeutralPlacementGraph {
 			}
 		if(!requiredByConsumer)
 			return false;
+		// A realization explicitly built from this relocation cannot subsequently
+		// treat its source's coarse FType as evidence that the movement vanished.
+		for(CandidateSelectionReceipt selected : selectedCandidates)
+			for(var binding : selected.supportClause().inputBindings())
+				if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION
+					&& binding.relocationAction().equals(action.key())
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == selected.rule().parentOccurrence()
+							&& obligation.inputPosition() == binding.inputPosition()
+							&& obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))))
+					return true;
 		for(Node source : nodesByValueVersion.getOrDefault(
 			action.key().sourceValueVersion(), List.of())) {
 			PlacementState sourceState = assignment.get(source.key());
-			if(sourceState != null && action.directSourcePlacements().contains(sourceState))
-				return false;
+			if(sourceState != null && action.directSourcePlacements().contains(sourceState)) {
+				CandidateSelectionReceipt selectedSource = selectedCandidates.stream()
+					.filter(selected -> selected.rule().parentOccurrence() == source.key())
+					.findFirst().orElse(null);
+				// Coarse residency was sufficient before one state could carry several
+				// maps. An exact selected map must agree with the action's target pool.
+				if(selectedSource == null || selectedSource.provenWorkerPool() != null
+					&& PlacementIdentity.samePhysicalWorkerPool(selectedSource.provenWorkerPool(),
+						action.key().durableAnchor()))
+					return false;
+			}
 			if(sourceState == null)
 				continue;
 			for(CandidateSelectionReceipt selected : selectedCandidates) {

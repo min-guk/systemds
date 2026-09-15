@@ -279,12 +279,15 @@ public final class RelocationSelections {
 	 * graph for every row-product leaf without removing any exact alternative.
 	 */
 	static final class CandidateProblemIndex {
+		private final PlacementAnalysis analysis;
+		private final NeutralPlacementGraph authorityGraph;
+		private final Map<CompiledHopKey,PlacementState> assignment;
 		private final Map<CandidateSelectionReceipt,List<IndexedDemand>> demandsByReceipt;
 		private final Set<CandidateSelectionReceipt> infeasibleReceipts;
 		private final Map<CandidateSelectionReceipt,Integer> receiptIds;
+		private final CandidateSelectionReceipt[] receiptsById;
 		private final Map<RelocationAction,Boolean> baseRequiresEmission;
-		private final Map<RelocationAction,Set<CandidateSelectionReceipt>> suppressors;
-		private final Map<RelocationAction,int[]> suppressorIds;
+		private final RelocationPrivacyIndex originBoundSources;
 		private final Map<CandidateSelectionReceipt,ScoredReceipt> scoredReceipts;
 		private final Map<CandidateSelectionReceipt,Object> exactScoringEffects;
 		private final Map<CandidateSelectionReceipt,long[]> exactInteractionTokens;
@@ -302,6 +305,9 @@ public final class RelocationSelections {
 			Objects.requireNonNull(authorityGraph, "authorityGraph");
 			List<RelocationAction> actions = List.copyOf(actionUniverse);
 			Objects.requireNonNull(assignment, "assignment");
+			this.analysis = analysis;
+			this.authorityGraph = authorityGraph;
+			this.assignment = Map.copyOf(assignment);
 			this.order = Objects.requireNonNull(order, "order");
 			Set<CandidateSelectionReceipt> seenReceipts =
 				Collections.newSetFromMap(new IdentityHashMap<>());
@@ -311,11 +317,13 @@ public final class RelocationSelections {
 			for(int id = 0; id < exactReceipts.size(); id++)
 				ids.put(exactReceipts.get(id), id);
 			this.receiptIds = Collections.unmodifiableMap(ids);
+			this.receiptsById = exactReceipts.toArray(CandidateSelectionReceipt[]::new);
 			Map<CandidateSelectionReceipt,List<IndexedDemand>> indexed = new IdentityHashMap<>();
 			Set<CandidateSelectionReceipt> infeasible =
 				Collections.newSetFromMap(new IdentityHashMap<>());
 			RelocationPrivacyIndex originBoundSources = relocationPrivacyIndex(
 				analysis, authorityGraph, actions);
+			this.originBoundSources = originBoundSources;
 			for(CandidateSelectionReceipt receipt : exactReceipts) {
 				Map<Integer,RelocationDemandKey> demandsByRank = new HashMap<>();
 				Map<Integer,List<IndexedOption>> optionsByRank = new HashMap<>();
@@ -329,15 +337,16 @@ public final class RelocationSelections {
 						|| position >= receipt.rule().orderedInputs().size())
 						continue;
 					var input = receipt.rule().orderedInputs().get(position);
-					if(!input.present() || input.fType() != action.key().materializationFType())
+					if(!input.present() || input.fType() != action.key().materializationFType()
+						|| !CandidateSelections.actionMatchesSelectedCandidate(
+							action, obligation, receipt))
 						continue;
 					int demandRank = order.demandRank(obligation);
 					demandsByRank.putIfAbsent(demandRank, order.demand(obligation));
 					List<IndexedOption> demandOptions = optionsByRank.computeIfAbsent(
 						demandRank, ignored -> new ArrayList<>());
-					boolean requiresEmission = authorityGraph.isRelocationActive(
-						action, assignment, List.of(receipt));
-					if(!originBoundSources.isPrivacySafe(action, requiresEmission))
+					if(!originBoundSources.isPrivacySafe(action, false)
+						&& !originBoundSources.isPrivacySafe(action, true))
 						continue;
 					demandOptions.add(
 						new IndexedOption(action, obligation, order.choiceRank(obligation)));
@@ -365,47 +374,16 @@ public final class RelocationSelections {
 			this.demandsByReceipt = Collections.unmodifiableMap(indexed);
 			this.infeasibleReceipts = Collections.unmodifiableSet(infeasible);
 			Map<RelocationAction,Boolean> base = new IdentityHashMap<>();
-			Map<RelocationAction,Set<CandidateSelectionReceipt>> suppressed = new IdentityHashMap<>();
-			Map<ValueVersionKey,List<CandidateSelectionReceipt>> derivedReceiptsByValue =
-				new HashMap<>();
-			for(CandidateSelectionReceipt receipt : exactReceipts) {
-				DerivedFoutMaterializationActionKey derived =
-					receipt.emission().derivedFoutAction();
-				if(derived != null)
-					derivedReceiptsByValue.computeIfAbsent(derived.producerValueVersion(),
-						ignored -> new ArrayList<>()).add(receipt);
-			}
 			for(RelocationAction action : actions) {
 				boolean required = authorityGraph.isRelocationActive(action, assignment, List.of());
 				base.put(action, required);
-				if(!required)
-					continue;
-				Set<CandidateSelectionReceipt> actionSuppressors =
-					Collections.newSetFromMap(new IdentityHashMap<>());
-				// A candidate can suppress an active relocation only by publishing the
-				// exact source value-version as a graph-owned derived FOUT. Retain the
-				// authoritative graph predicate, but do not test unrelated rows.
-				for(CandidateSelectionReceipt receipt : derivedReceiptsByValue.getOrDefault(
-					action.key().sourceValueVersion(), List.of()))
-					if(!authorityGraph.isRelocationActive(action, assignment, List.of(receipt)))
-						actionSuppressors.add(receipt);
-				if(!actionSuppressors.isEmpty())
-					suppressed.put(action, actionSuppressors);
 			}
 			this.baseRequiresEmission = Collections.unmodifiableMap(base);
-			this.suppressors = Collections.unmodifiableMap(suppressed);
-			Map<RelocationAction,int[]> indexedSuppressors = new IdentityHashMap<>();
-			for(Map.Entry<RelocationAction,Set<CandidateSelectionReceipt>> entry :
-				suppressed.entrySet())
-				indexedSuppressors.put(entry.getKey(), entry.getValue().stream()
-					.mapToInt(receipt -> ids.get(receipt)).toArray());
-			this.suppressorIds = Collections.unmodifiableMap(indexedSuppressors);
 			ScoredAction[] scoredActionArray = new ScoredAction[actions.size()];
 			for(RelocationAction action : actions) {
 				int actionId = order.actionRank(action.key());
 				scoredActionArray[actionId] = new ScoredAction(
-					order.physicalEmissionId(action.key()), base.get(action),
-					indexedSuppressors.getOrDefault(action, new int[0]));
+					order.physicalEmissionId(action.key()), action);
 			}
 			Map<CandidateSelectionReceipt,ScoredReceipt> scored = new IdentityHashMap<>();
 			int maximumDemands = 0;
@@ -417,10 +395,10 @@ public final class RelocationSelections {
 					for(int optionIndex = 0; optionIndex < demand.options().size(); optionIndex++) {
 						IndexedOption option = demand.options().get(optionIndex);
 						CompiledHopKey consumer = option.obligation().consumer();
-					int consumerId = order.consumerId(consumer);
-					int anchorId = order.anchorId(option.action().key().durableAnchor());
-					scoredOptions[optionIndex] = new ScoredOption(consumerId, anchorId,
-						order.actionRank(option.action().key()));
+						int consumerId = order.consumerId(consumer);
+						int anchorId = order.anchorId(option.action().key().durableAnchor());
+						scoredOptions[optionIndex] = new ScoredOption(consumerId, anchorId,
+							order.actionRank(option.action().key()), demand.demand());
 					}
 					int consumerId = scoredOptions[0].consumerId();
 					if(Arrays.stream(scoredOptions).anyMatch(option -> option.consumerId() != consumerId))
@@ -439,12 +417,6 @@ public final class RelocationSelections {
 			this.scoredConsumerCount = order.consumerCount();
 			this.scoredAnchorCount = order.anchorCount();
 			this.maximumScoredDemandCount = maximumDemands;
-			List<List<Integer>> suppressedActionsByReceipt = new ArrayList<>(exactReceipts.size());
-			for(int receiptId = 0; receiptId < exactReceipts.size(); receiptId++)
-				suppressedActionsByReceipt.add(new ArrayList<>());
-			for(int actionId = 0; actionId < scoredActionArray.length; actionId++)
-				for(int suppressorId : scoredActionArray[actionId].suppressorIds())
-					suppressedActionsByReceipt.get(suppressorId).add(actionId);
 			Map<CandidateSelectionReceipt,Object> effects = new IdentityHashMap<>();
 			Map<CandidateSelectionReceipt,long[]> interactions = new IdentityHashMap<>();
 			for(CandidateSelectionReceipt receipt : exactReceipts) {
@@ -459,15 +431,19 @@ public final class RelocationSelections {
 							scoredActionArray[option.actionId()].physicalId()));
 					}
 				}
-				List<Integer> suppressedActions =
-					List.copyOf(suppressedActionsByReceipt.get(ids.get(receipt)));
-				for(int actionId : suppressedActions) {
+				List<Integer> affectedActions = new ArrayList<>();
+				for(int actionId = 0; actionId < scoredActionArray.length; actionId++) {
+					RelocationAction action = scoredActionArray[actionId].action();
+					if(!receiptAffectsAction(receipt, action))
+						continue;
+					affectedActions.add(actionId);
 					interactionTokens.add(interactionToken(1, actionId));
 					interactionTokens.add(interactionToken(2,
 						scoredActionArray[actionId].physicalId()));
 				}
 				effects.put(receipt, new ExactReceiptScoringEffect(
-					List.copyOf(demandEffects), suppressedActions, infeasible.contains(receipt)));
+					List.copyOf(demandEffects), List.copyOf(affectedActions),
+					infeasible.contains(receipt), receipt.provenWorkerPool(), receipt.supportClause().inputBindings()));
 				interactions.put(receipt, interactionTokens.stream()
 					.mapToLong(Long::longValue).toArray());
 			}
@@ -475,10 +451,43 @@ public final class RelocationSelections {
 			this.exactInteractionTokens = Collections.unmodifiableMap(interactions);
 		}
 
+		private boolean receiptAffectsAction(CandidateSelectionReceipt receipt,
+			RelocationAction action) {
+			if(action.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == receipt.rule().parentOccurrence()))
+				return true;
+			if(authorityGraph.node(receipt.rule().parentOccurrence())
+				.map(node -> node.valueVersion().equals(action.key().sourceValueVersion()))
+				.orElse(false))
+				return true;
+			DerivedFoutMaterializationActionKey derived = receipt.emission().derivedFoutAction();
+			return derived != null && derived.producerValueVersion().equals(
+				action.key().sourceValueVersion());
+		}
+
+		private boolean requiresEmission(RelocationAction action,
+			Collection<CandidateSelectionReceipt> selected) {
+			return authorityGraph.isRelocationActive(action, assignment, selected);
+		}
+
+		private boolean optionAllowed(IndexedOption option,
+			Collection<CandidateSelectionReceipt> selected) {
+			boolean required = requiresEmission(option.action(), selected);
+			return originBoundSources.isPrivacySafe(option.action(), required)
+				&& CandidateSelections.realizationActionAllowed(analysis, assignment, selected,
+					RelocationDemandKey.from(option.obligation()), option.action().key());
+		}
+
+		private boolean optionAllowed(ScoredOption option,
+			Collection<CandidateSelectionReceipt> selected) {
+			RelocationAction action = scoredActions[option.actionId()].action();
+			boolean required = requiresEmission(action, selected);
+			return originBoundSources.isPrivacySafe(action, required)
+				&& CandidateSelections.realizationActionAllowed(analysis, assignment, selected,
+					option.demand(), action.key());
+		}
+
 		Selection select(Collection<CandidateSelectionReceipt> selectedReceipts) {
-			Set<CandidateSelectionReceipt> selected =
-				Collections.newSetFromMap(new IdentityHashMap<>());
-			selected.addAll(selectedReceipts);
 			if(selectedReceipts.stream().anyMatch(infeasibleReceipts::contains))
 				throw new InfeasibleRelocationSelectionException(
 					"Exact indexed relocation-choice search has an origin-bound active movement");
@@ -491,12 +500,16 @@ public final class RelocationSelections {
 				for(IndexedDemand demand : indexed) {
 					List<Option> options = new ArrayList<>(demand.options().size());
 					for(IndexedOption option : demand.options()) {
-						boolean requiresEmission = baseRequiresEmission.get(option.action())
-							&& suppressors.getOrDefault(option.action(), Set.of()).stream()
-								.noneMatch(selected::contains);
+						if(!optionAllowed(option, selectedReceipts))
+							continue;
+						boolean requiresEmission = requiresEmission(option.action(), selectedReceipts);
 						options.add(new Option(option.action(), option.obligation(),
 							requiresEmission, option.choiceRank()));
 					}
+					if(options.isEmpty())
+						throw new InfeasibleRelocationSelectionException(
+							"No selected materialization alternative for exact indexed demand: "
+								+ demand.demand().normalizedSignature());
 					rankedDemands.add(new RankedDemandOptions(
 						new DemandOptions(demand.demand(), options), demand.canonicalRank()));
 				}
@@ -558,15 +571,6 @@ public final class RelocationSelections {
 		int unavoidableCombinedPhysicalEmissionCount(
 			Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants,
 			Map<CompiledHopKey,CandidateSelectionReceipt> selectedByConsumer) {
-			Set<CandidateSelectionReceipt> possible =
-				Collections.newSetFromMap(new IdentityHashMap<>());
-			for(Map.Entry<CompiledHopKey,List<CandidateSelectionReceipt>> entry : variants.entrySet()) {
-				CandidateSelectionReceipt selected = selectedByConsumer.get(entry.getKey());
-				if(selected == null)
-					possible.addAll(entry.getValue());
-				else
-					possible.add(selected);
-			}
 			List<Set<LowerBoundEmission>> unavoidable = new ArrayList<>();
 			// A consumer whose every exact row publishes a planner-created FOUT must
 			// pay for one of those actions. Keep alternative action identities explicit
@@ -613,22 +617,19 @@ public final class RelocationSelections {
 							.stream().filter(candidate -> candidate.demand().equals(demand))
 							.findFirst().orElseThrow();
 						for(IndexedOption option : indexedDemand.options()) {
-							if(!baseRequiresEmission.get(option.action())) {
+							// Candidate realization selection can activate or suppress a
+							// relocation in either direction. Unless activity is invariant
+							// across the entire remaining row product, omitting it is the
+							// only admissible lower bound.
+							boolean selectionDependent = variants.values().stream()
+								.flatMap(Collection::stream)
+								.anyMatch(candidate -> receiptAffectsAction(candidate, option.action()));
+							if(!baseRequiresEmission.get(option.action()) || selectionDependent) {
 								avoidable = true;
 								break;
 							}
 							physical.add(LowerBoundEmission.relocation(
 								order.physicalEmissionId(option.action().key())));
-							for(CandidateSelectionReceipt suppressor :
-								suppressors.getOrDefault(option.action(), Set.of()))
-								if(possible.contains(suppressor)) {
-									DerivedFoutMaterializationActionKey action =
-										suppressor.emission().derivedFoutAction();
-									if(action == null)
-										throw new IllegalStateException(
-											"Relocation suppressor has no FOUT action authority");
-									physical.add(LowerBoundEmission.fout(action));
-								}
 						}
 						if(avoidable)
 							break;
@@ -651,22 +652,19 @@ public final class RelocationSelections {
 	}
 
 	/**
-	 * Allocation-free exact relocation score for the hot candidate-row product.
+	 * Exact relocation score for the hot candidate-row product.
 	 * Candidate selection needs only the minimum physical-emission count at every
 	 * leaf; canonical receipts are materialized later, and only for a new incumbent.
-	 * Selected singleton actions, alternative demands, and common-anchor feasibility
-	 * are maintained incrementally with candidate-row push/pop. A leaf therefore does
-	 * not rescan every fixed demand. This preserves the generic {@link Search} plan
-	 * space exactly and merely hoists invariant work out of the Cartesian row loop.
+	 * Selected demands and common-anchor feasibility are maintained incrementally
+	 * with candidate-row push/pop. Activity and typed realization bindings are
+	 * evaluated from the complete selected receipt set at each leaf. This preserves
+	 * the generic {@link Search} plan space while keeping exact map authority.
 	 */
 	static final class ExactEmissionScorer {
 		private final CandidateProblemIndex problem;
 		private final int[] physicalRefs;
 		private final boolean[] selectedReceipts;
 		private final int[] anchors;
-		private final int[] singletonActionRefs;
-		private final int[] activeSingletonActions;
-		private final int[] activeSingletonActionPositions;
 		private final ScoredDemand[] selectedAlternatives;
 		private final int[] selectedDemandCounts;
 		private final int[][] allowedAnchorDemandRefs;
@@ -675,12 +673,12 @@ public final class RelocationSelections {
 		private final int[] consumerComponentOwners;
 		private final int[] physicalComponentOwners;
 		private final int[] componentRoots;
-		private int activeSingletonActionCount;
 		private int alternativeCount;
 		private int anchorConflictCount;
 		private int infeasibleReceiptCount;
 		private int physicalEmissionCount;
 		private int best;
+		private List<CandidateSelectionReceipt> currentSelection = List.of();
 
 		private ExactEmissionScorer(CandidateProblemIndex problem) {
 			this.problem = Objects.requireNonNull(problem, "problem");
@@ -688,10 +686,6 @@ public final class RelocationSelections {
 			this.selectedReceipts = new boolean[problem.receiptIds.size()];
 			this.anchors = new int[problem.scoredConsumerCount];
 			Arrays.fill(anchors, -1);
-			this.singletonActionRefs = new int[problem.scoredActions.length];
-			this.activeSingletonActions = new int[problem.scoredActions.length];
-			this.activeSingletonActionPositions = new int[problem.scoredActions.length];
-			Arrays.fill(activeSingletonActionPositions, -1);
 			this.selectedAlternatives = new ScoredDemand[problem.maximumScoredDemandCount];
 			this.selectedDemandCounts = new int[problem.scoredConsumerCount];
 			this.allowedAnchorDemandRefs = new int[problem.scoredConsumerCount]
@@ -714,10 +708,7 @@ public final class RelocationSelections {
 				infeasibleReceiptCount++;
 			for(ScoredDemand demand : scoredReceipt.demands()) {
 				updateAnchorDemand(demand, 1);
-				if(demand.options().length == 1)
-					selectSingletonAction(demand.options()[0].actionId());
-				else
-					selectedAlternatives[alternativeCount++] = demand;
+				selectedAlternatives[alternativeCount++] = demand;
 			}
 		}
 
@@ -729,9 +720,7 @@ public final class RelocationSelections {
 			ScoredDemand[] demands = problem.scoredReceipts.get(receipt).demands();
 			for(int index = demands.length - 1; index >= 0; index--) {
 				ScoredDemand demand = demands[index];
-				if(demand.options().length == 1)
-					deselectSingletonAction(demand.options()[0].actionId());
-				else if(alternativeCount <= 0
+				if(alternativeCount <= 0
 					|| selectedAlternatives[--alternativeCount] != demand)
 					throw new IllegalStateException(
 						"Exact relocation scorer alternative-demand stack is inconsistent");
@@ -749,22 +738,22 @@ public final class RelocationSelections {
 		int minimumPhysicalEmissionCount() {
 			if(hasAnchorConflict())
 				return Integer.MAX_VALUE;
+			currentSelection = selectedReceiptList();
 			Arrays.fill(physicalRefs, 0);
 			physicalEmissionCount = 0;
 			best = Integer.MAX_VALUE;
-			for(int index = 0; index < activeSingletonActionCount; index++)
-				acquirePhysical(problem.scoredActions[activeSingletonActions[index]]);
-			int fixedEmissionCount = physicalEmissionCount;
 			if(alternativeCount == 0)
-				return fixedEmissionCount;
+				return 0;
 			int componentCount = prepareExactInteractionComponents();
-			int minimum = fixedEmissionCount;
+			int minimum = 0;
 			for(int component = 0; component < componentCount; component++) {
 				best = Integer.MAX_VALUE;
 				solveComponent(componentRoots[component], 0);
 				if(best == Integer.MAX_VALUE)
 					return Integer.MAX_VALUE;
-				minimum = Math.addExact(minimum, best - fixedEmissionCount);
+				minimum = Math.addExact(minimum, best);
+				physicalEmissionCount = 0;
+				Arrays.fill(physicalRefs, 0);
 			}
 			return minimum;
 		}
@@ -780,7 +769,7 @@ public final class RelocationSelections {
 					demand.consumerId(), demandIndex);
 				for(ScoredOption option : demand.options()) {
 					ScoredAction action = problem.scoredActions[option.actionId()];
-					if(requiresEmission(action))
+					if(optionAllowed(option) && requiresEmission(action))
 						unionComponentWithOwner(physicalComponentOwners,
 							action.physicalId(), demandIndex);
 				}
@@ -833,6 +822,8 @@ public final class RelocationSelections {
 				return;
 			}
 			for(ScoredOption option : selectedAlternatives[index].options()) {
+				if(!optionAllowed(option))
+					continue;
 				int previous = anchors[option.consumerId()];
 				if(previous >= 0 && previous != option.anchorId())
 					continue;
@@ -845,32 +836,6 @@ public final class RelocationSelections {
 				if(previous < 0)
 					anchors[option.consumerId()] = -1;
 			}
-		}
-
-		private void selectSingletonAction(int action) {
-			if(singletonActionRefs[action]++ != 0)
-				return;
-			if(activeSingletonActionPositions[action] >= 0)
-				throw new IllegalStateException(
-					"Exact relocation scorer singleton action is already active");
-			activeSingletonActionPositions[action] = activeSingletonActionCount;
-			activeSingletonActions[activeSingletonActionCount++] = action;
-		}
-
-		private void deselectSingletonAction(int action) {
-			if(singletonActionRefs[action] <= 0)
-				throw new IllegalStateException(
-					"Exact relocation scorer singleton action is missing");
-			if(--singletonActionRefs[action] != 0)
-				return;
-			int position = activeSingletonActionPositions[action];
-			if(position < 0 || activeSingletonActionCount <= 0)
-				throw new IllegalStateException(
-					"Exact relocation scorer active singleton action is missing");
-			int replacement = activeSingletonActions[--activeSingletonActionCount];
-			activeSingletonActions[position] = replacement;
-			activeSingletonActionPositions[replacement] = position;
-			activeSingletonActionPositions[action] = -1;
 		}
 
 		private void updateAnchorDemand(ScoredDemand demand, int delta) {
@@ -921,23 +886,33 @@ public final class RelocationSelections {
 		}
 
 		private boolean requiresEmission(ScoredAction action) {
-			if(!action.baseRequiresEmission())
-				return false;
-			for(int suppressor : action.suppressorIds())
-				if(selectedReceipts[suppressor])
-					return false;
-			return true;
+			return problem.requiresEmission(action.action(), currentSelection);
+		}
+
+		private boolean optionAllowed(ScoredOption option) {
+			return problem.optionAllowed(option, currentSelection);
+		}
+
+		private List<CandidateSelectionReceipt> selectedReceiptList() {
+			List<CandidateSelectionReceipt> selected = new ArrayList<>();
+			for(int id = 0; id < selectedReceipts.length; id++)
+				if(selectedReceipts[id])
+					selected.add(problem.receiptsById[id]);
+			return selected;
 		}
 	}
 
 	private record ScoredReceipt(ScoredDemand[] demands, boolean infeasible) { }
 	private record ScoredDemand(int consumerId, int[] anchorIds,
 		ScoredOption[] options) { }
-	private record ScoredOption(int consumerId, int anchorId, int actionId) { }
-	private record ScoredAction(int physicalId, boolean baseRequiresEmission,
-		int[] suppressorIds) { }
+	private record ScoredOption(int consumerId, int anchorId, int actionId,
+		RelocationDemandKey demand) { }
+	private record ScoredAction(int physicalId, RelocationAction action) { }
+	// The same coarse input row can be a direct native use or an action-backed
+	// realization. Those change activation/privacy and cannot share a score cache entry.
 	private record ExactReceiptScoringEffect(List<List<ScoredOption>> demands,
-		List<Integer> suppressedActionIds, boolean infeasible) { }
+		List<Integer> affectedActionIds, boolean infeasible, DurableAnchorKey nativePool,
+		List<PlacementIdentity.CandidateRealizationInputBinding> inputBindings) { }
 
 	private record LowerBoundEmission(Integer relocationId,
 		DerivedFoutMaterializationActionKey foutAction) {
@@ -1178,14 +1153,14 @@ public final class RelocationSelections {
 				.filter(option -> allowed.test(demand.demand(), option.action().key()))
 				.toList();
 			if(options.isEmpty())
-				throw new IllegalStateException("No selected materialization alternative for exact demand: "
+				throw new InfeasibleRelocationSelectionException("No selected materialization alternative for exact demand: "
 					+ demand.demand().normalizedSignature());
 			filtered.add(new DemandOptions(demand.demand(), options));
 		}
 		Search search = new Search(filtered, null, order);
 		search.solve(0);
 		if(search.best == null)
-			throw new IllegalStateException("Exact relocation-choice search has no solution");
+			throw new InfeasibleRelocationSelectionException("Exact relocation-choice search has no solution");
 		return search.best;
 	}
 
@@ -1226,7 +1201,7 @@ public final class RelocationSelections {
 		Search search = new Search(filtered, null, order);
 		search.solve(0);
 		if(search.best == null)
-			throw new IllegalStateException("Exact relocation-choice search has no solution");
+			throw new InfeasibleRelocationSelectionException("Exact relocation-choice search has no solution");
 		return new Selection(search.best, search.bestEmitted, search.bestEmissionCount);
 	}
 
@@ -1249,14 +1224,14 @@ public final class RelocationSelections {
 				.filter(option -> allowed.test(demand.demand(), option.action().key()))
 				.toList();
 			if(options.isEmpty())
-				throw new IllegalStateException("No selected materialization alternative for exact demand: "
+				throw new InfeasibleRelocationSelectionException("No selected materialization alternative for exact demand: "
 					+ demand.demand().normalizedSignature());
 			filtered.add(new DemandOptions(demand.demand(), options));
 		}
 		Search search = new Search(filtered, null, order);
 		search.solve(0);
 		if(search.best == null)
-			throw new IllegalStateException("Exact relocation-choice search has no solution");
+			throw new InfeasibleRelocationSelectionException("Exact relocation-choice search has no solution");
 		return search.best;
 	}
 
@@ -1531,7 +1506,8 @@ public final class RelocationSelections {
 				RelocationDemandKey demand = RelocationDemandKey.from(obligation);
 				List<Option> demandOptions = options.computeIfAbsent(demand,
 					ignored -> new ArrayList<>());
-				if(!unsafeEmission)
+				if(!unsafeEmission && CandidateSelections.realizationActionAllowed(
+					analysis, assignment, candidateSelections, demand, action.key()))
 					demandOptions.add(new Option(action, obligation, requiresEmission));
 			}
 		}
@@ -1639,7 +1615,7 @@ public final class RelocationSelections {
 				.filter(option -> allowed.test(demand.demand(), option.action().key()))
 				.toList();
 			if(options.isEmpty())
-				throw new IllegalStateException("No selected materialization alternative for exact demand: "
+				throw new InfeasibleRelocationSelectionException("No selected materialization alternative for exact demand: "
 					+ demand.demand().normalizedSignature());
 			filtered.add(new DemandOptions(demand.demand(), options));
 		}

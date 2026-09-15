@@ -58,6 +58,12 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.BoundaryName
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
@@ -74,6 +80,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCon
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
@@ -84,6 +92,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateSha
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransientCompatibilityProof;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransientPlacementCompatibility;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -428,7 +438,7 @@ public final class NeutralPlacementGraphBuilder {
 			candidateRuleDomainKeys, candidateRuleFacts);
 		CandidateReplay candidateReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 			factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
-			candidateRuleDomainKeys, candidateRuleFacts, List.of(), cfgReplayBaseline, origins);
+			candidateRuleDomainKeys, candidateRuleFacts, List.of(), cfgReplayBaseline, origins, List.of());
 		nodes = candidateReplay.nodes();
 		candidateRuleDomainKeys = candidateReplay.domainKeys();
 		candidateRuleFacts = candidateReplay.facts();
@@ -497,6 +507,7 @@ public final class NeutralPlacementGraphBuilder {
 			List<Node> passNodes = nodes;
 			List<CandidateRuleKey> passDomainKeys = candidateRuleDomainKeys;
 			List<CandidateRuleFact> passFacts = candidateRuleFacts;
+			List<LogicalTransientInputFact> passLogicalInputs = logicalTransientInputs;
 			FunctionInputCandidateClosure functionInputClosure = closeLogicalFunctionInputCandidates(
 				nodes, candidateRuleDomainKeys, candidateRuleFacts, functionExpansion.constraints(), origins,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, occurrences.size());
@@ -553,7 +564,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay cfgReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-				origins);
+				origins, constraints);
 			nodes = cfgReplay.nodes();
 			candidateRuleDomainKeys = cfgReplay.domainKeys();
 			candidateRuleFacts = cfgReplay.facts();
@@ -569,7 +580,8 @@ public final class NeutralPlacementGraphBuilder {
 				logicalTransientInputs = materializationReplay.logicalInputs();
 			}
 			if(nodes.equals(passNodes) && candidateRuleDomainKeys.equals(passDomainKeys)
-				&& candidateRuleFacts.equals(passFacts)) {
+				&& candidateRuleFacts.equals(passFacts)
+				&& logicalTransientInputs.equals(passLogicalInputs)) {
 				functionClosureConverged = true;
 				break;
 			}
@@ -589,10 +601,36 @@ public final class NeutralPlacementGraphBuilder {
 			constraints, origins, compiledInputEdges);
 		nodes = privacyClosure.nodes();
 		candidateRuleFacts = privacyClosure.candidateRuleFacts();
+		candidateRuleFacts = bindExactCandidateEmissionRealizations(candidateRuleFacts, nodes, origins, factsByHop);
+		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+		// Privacy can remove one realization without changing its coarse FType. Re-run
+		// the same shared CFG/physical closure over the proof-carrying relation so stale
+		// compatibility edges and downstream candidates cannot survive filtering.
+		CandidateReplay postPrivacyReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+			factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+			candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+		nodes = postPrivacyReplay.nodes();
+		candidateRuleDomainKeys = postPrivacyReplay.domainKeys();
+		candidateRuleFacts = postPrivacyReplay.facts();
+		logicalTransientInputs = postPrivacyReplay.logicalInputs();
+		if(!postPrivacyReplay.changedOrdinals().isEmpty()) {
+			CandidateReplay postPrivacyPhysical = closePostCfgPhysicalCandidateDependencies(occurrences,
+				postPrivacyReplay, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+				ordinalsByBlock, cfg);
+			nodes = postPrivacyPhysical.nodes();
+			candidateRuleDomainKeys = postPrivacyPhysical.domainKeys();
+			candidateRuleFacts = postPrivacyPhysical.facts();
+			logicalTransientInputs = postPrivacyPhysical.logicalInputs();
+		}
+		privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+			constraints, origins, compiledInputEdges, privacyClosure.privacyFacts());
+		nodes = privacyClosure.nodes();
+		candidateRuleFacts = privacyClosure.candidateRuleFacts();
 		PlacementPrivacyFacts privacyFacts = privacyClosure.privacyFacts();
-		candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
+		candidateRuleFacts = bindExactCandidateEmissionRealizations(candidateRuleFacts, nodes, origins, factsByHop);
 		candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes, origins);
-		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, nodes);
+		candidateRuleFacts = bindDerivedFoutRealizations(candidateRuleFacts, origins, factsByHop);
+		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
 		// TRead/TWrite is a planner-wide legality boundary, not an Exact-only factor:
 		// the runtime accepts only the exact CP/LOUT or FED/FOUT tuple carried by
 		// the unique logical source. Publishing it in the neutral graph prevents
@@ -601,9 +639,211 @@ public final class NeutralPlacementGraphBuilder {
 			constraints.add(new Constraint(ConstraintKind.SAME_PLACEMENT,
 				input.sourceWrite(), input.targetRead(), input.logicalPosition(),
 				"logical-transient-input"));
-		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
-			nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop, concreteShapes,
-			privacyFacts.asMap());
+		List<NeutralPlacementGraph.RelocationAction> relocations = List.of();
+		boolean semanticClosureConverged = false;
+		int semanticPassLimit = Math.max(2, candidateRuleFacts.size() + nodes.size() + 1);
+		for(int pass = 0; pass < semanticPassLimit; pass++) {
+			List<Node> priorNodes = nodes;
+			List<CandidateRuleKey> priorDomain = candidateRuleDomainKeys;
+			List<CandidateRuleFact> priorFacts = candidateRuleFacts;
+			List<LogicalTransientInputFact> priorLogical = logicalTransientInputs;
+			List<NeutralPlacementGraph.RelocationAction> priorActions = relocations;
+			candidateRuleFacts = bindExactCandidateEmissionRealizations(candidateRuleFacts, nodes, origins, factsByHop);
+			candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes, origins);
+			candidateRuleFacts = bindDerivedFoutRealizations(candidateRuleFacts, origins, factsByHop);
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+			relocations = canonicalRelocationActions(relocations(compiledInputEdges, candidateRuleFacts, nodes,
+				logicalTransientInputs, constraints, origins, scopes, factsByHop, concreteShapes,
+				privacyFacts.asMap()), priorActions);
+			candidateRuleFacts = bindRelocationCandidateRealizations(candidateRuleFacts, nodes,
+				compiledInputEdges, relocations, origins, factsByHop);
+			CandidateReplay semanticReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+			nodes = semanticReplay.nodes();
+			candidateRuleDomainKeys = semanticReplay.domainKeys();
+			candidateRuleFacts = semanticReplay.facts();
+			logicalTransientInputs = semanticReplay.logicalInputs();
+			privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+				constraints, origins, compiledInputEdges, privacyFacts);
+			nodes = privacyClosure.nodes();
+			candidateRuleFacts = privacyClosure.candidateRuleFacts();
+			candidateRuleFacts = bindExactCandidateEmissionRealizations(candidateRuleFacts, nodes, origins, factsByHop);
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+			List<NeutralPlacementGraph.RelocationAction> closedActions = canonicalRelocationActions(
+				relocations(compiledInputEdges,
+				candidateRuleFacts, nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop,
+				concreteShapes, privacyFacts.asMap()), relocations);
+			if(nodes.equals(priorNodes) && candidateRuleDomainKeys.equals(priorDomain)
+				&& candidateRuleFacts.equals(priorFacts) && logicalTransientInputs.equals(priorLogical)
+				&& closedActions.equals(priorActions)) {
+				relocations = closedActions;
+				semanticClosureConverged = true;
+				break;
+			}
+			relocations = closedActions;
+		}
+		if(!semanticClosureConverged)
+			throw new IllegalStateException("Placement proof/layout/action closure did not converge");
+		Set<CompiledHopKey> requiredEmittedNodes = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Node node : nodes)
+			if(node.emittedWork())
+				requiredEmittedNodes.add(node.key());
+		boolean publicationConverged = false;
+		for(int pass = 0; pass < semanticPassLimit; pass++) {
+			List<Node> priorNodes = nodes;
+			List<CandidateRuleKey> priorDomain = candidateRuleDomainKeys;
+			List<CandidateRuleFact> priorFacts = candidateRuleFacts;
+			List<LogicalTransientInputFact> priorLogical = logicalTransientInputs;
+			List<NeutralPlacementGraph.RelocationAction> priorActions = relocations;
+			// A prior physical rebuild intentionally restores oracle-owned base emissions,
+			// including staging native lineages. Re-run the exact CFG/direct-realization
+			// closure before pruning staging authority; otherwise a rebuilt TWrite or
+			// function result can be marked PROFILE_ERROR before its input witness is rebound.
+			CandidateReplay groundedPublication = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+			nodes = groundedPublication.nodes();
+			candidateRuleDomainKeys = groundedPublication.domainKeys();
+			candidateRuleFacts = groundedPublication.facts();
+			logicalTransientInputs = groundedPublication.logicalInputs();
+			candidateRuleFacts = removeUngroundedStagingRealizations(candidateRuleFacts);
+			ExecutableNodeProjection projected = projectCandidateNodesToExecutableStates(
+				nodes, candidateRuleFacts, occurrences.size());
+			nodes = projected.nodes();
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+			if(!projected.changedOrdinals().isEmpty()) {
+				CandidateReplay projectedReplay = closePostCfgPhysicalCandidateDependencies(occurrences,
+					new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+						projected.changedOrdinals()), factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+					ordinalsByBlock, cfg);
+				nodes = projectedReplay.nodes();
+				candidateRuleDomainKeys = projectedReplay.domainKeys();
+				candidateRuleFacts = projectedReplay.facts();
+				logicalTransientInputs = projectedReplay.logicalInputs();
+			}
+			CandidateReplay publicationReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+			nodes = publicationReplay.nodes();
+			candidateRuleDomainKeys = publicationReplay.domainKeys();
+			candidateRuleFacts = publicationReplay.facts();
+			logicalTransientInputs = publicationReplay.logicalInputs();
+			List<Node> prePublicationPrivacyNodes = nodes;
+			privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+				constraints, origins, compiledInputEdges, privacyFacts);
+			nodes = privacyClosure.nodes();
+			candidateRuleFacts = privacyClosure.candidateRuleFacts();
+			List<Integer> privacyChanged = changedCompiledNodeOrdinals(
+				prePublicationPrivacyNodes, nodes, occurrences.size());
+			if(!privacyChanged.isEmpty()) {
+				CandidateReplay privacyPhysical = closePostCfgPhysicalCandidateDependencies(occurrences,
+					new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+						privacyChanged), factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+					ordinalsByBlock, cfg);
+				nodes = privacyPhysical.nodes();
+				candidateRuleDomainKeys = privacyPhysical.domainKeys();
+				candidateRuleFacts = privacyPhysical.facts();
+				logicalTransientInputs = privacyPhysical.logicalInputs();
+
+				// Physical rebuilding restores oracle-owned base emissions. Ground those
+				// emissions against the exact CFG/native witnesses before publication
+				// pruning, then reapply the already-fixed privacy authority.
+				CandidateReplay privacyGrounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+				nodes = privacyGrounded.nodes();
+				candidateRuleDomainKeys = privacyGrounded.domainKeys();
+				candidateRuleFacts = privacyGrounded.facts();
+				logicalTransientInputs = privacyGrounded.logicalInputs();
+				privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+					constraints, origins, compiledInputEdges, privacyFacts);
+				nodes = privacyClosure.nodes();
+				candidateRuleFacts = privacyClosure.candidateRuleFacts();
+			}
+			candidateRuleFacts = bindExactCandidateEmissionRealizations(candidateRuleFacts, nodes, origins, factsByHop);
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+			relocations = canonicalRelocationActions(relocations(compiledInputEdges, candidateRuleFacts, nodes,
+				logicalTransientInputs, constraints, origins, scopes, factsByHop, concreteShapes,
+				privacyFacts.asMap()), priorActions);
+			candidateRuleFacts = bindRelocationCandidateRealizations(candidateRuleFacts, nodes,
+				compiledInputEdges, relocations, origins, factsByHop);
+			// Relocation binding can replace realization identities after the preceding
+			// transient relation was built. Reclose the same exact CFG/native authority
+			// before pruning so logical transient edges reference the realizations that
+			// are actually being published.
+			CandidateReplay relocationGrounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+			nodes = relocationGrounded.nodes();
+			candidateRuleDomainKeys = relocationGrounded.domainKeys();
+			candidateRuleFacts = relocationGrounded.facts();
+			logicalTransientInputs = relocationGrounded.logicalInputs();
+			privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+				constraints, origins, compiledInputEdges, privacyFacts);
+			nodes = privacyClosure.nodes();
+			candidateRuleFacts = privacyClosure.candidateRuleFacts();
+			candidateRuleFacts = removeUngroundedStagingRealizations(candidateRuleFacts);
+			ExecutableNodeProjection finalProjection = projectCandidateNodesToExecutableStates(
+				nodes, candidateRuleFacts, occurrences.size());
+			nodes = finalProjection.nodes();
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+			if(!finalProjection.changedOrdinals().isEmpty()) {
+				CandidateReplay finalPhysical = closePostCfgPhysicalCandidateDependencies(occurrences,
+					new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+						finalProjection.changedOrdinals()), factsByHop, preliminaryAbstractFacts.shapes(),
+					singlePartitions, ordinalsByBlock, cfg);
+				nodes = finalPhysical.nodes();
+				candidateRuleDomainKeys = finalPhysical.domainKeys();
+				candidateRuleFacts = finalPhysical.facts();
+				logicalTransientInputs = finalPhysical.logicalInputs();
+				// Do not compare publication convergence at the raw physical midpoint.
+				// Rebuild restores base emissions and can invalidate exact realization
+				// identities; complete the same grounding/privacy/publication transfer
+				// before the outer fixed point is allowed to converge.
+				CandidateReplay finalGrounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints);
+				nodes = finalGrounded.nodes();
+				candidateRuleDomainKeys = finalGrounded.domainKeys();
+				candidateRuleFacts = finalGrounded.facts();
+				logicalTransientInputs = finalGrounded.logicalInputs();
+				privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+					constraints, origins, compiledInputEdges, privacyFacts);
+				nodes = privacyClosure.nodes();
+				candidateRuleFacts = privacyClosure.candidateRuleFacts();
+				candidateRuleFacts = removeUngroundedStagingRealizations(candidateRuleFacts);
+				logicalTransientInputs = bindExactLogicalTransientSourceStates(
+					logicalTransientInputs, candidateRuleFacts);
+				ExecutableNodeProjection groundedProjection = projectCandidateNodesToExecutableStates(
+					nodes, candidateRuleFacts, occurrences.size());
+				nodes = groundedProjection.nodes();
+				logicalTransientInputs = bindExactLogicalTransientSourceStates(
+					logicalTransientInputs, candidateRuleFacts);
+			}
+			List<NeutralPlacementGraph.RelocationAction> reboundActions = canonicalRelocationActions(
+				relocations(compiledInputEdges,
+				candidateRuleFacts, nodes, logicalTransientInputs, constraints, origins, scopes, factsByHop,
+				concreteShapes, privacyFacts.asMap()), relocations);
+			if(nodes.equals(priorNodes) && candidateRuleDomainKeys.equals(priorDomain)
+				&& candidateRuleFacts.equals(priorFacts) && logicalTransientInputs.equals(priorLogical)
+				&& reboundActions.equals(priorActions)) {
+				relocations = reboundActions;
+				publicationConverged = true;
+				break;
+			}
+			relocations = reboundActions;
+		}
+		if(!publicationConverged)
+			throw new IllegalStateException("Executable realization/action publication did not converge");
+		// The fixed point compares values, while published receipts require the
+		// exact graph-owned state objects. Canonicalize only those equal states;
+		// do not regenerate layouts or alter the converged candidate domain here.
+		candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
+		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+		for(Node node : nodes)
+			if(requiredEmittedNodes.contains(node.key()) && (!node.emittedWork() || node.legalAlternatives().isEmpty()))
+				throw new IllegalStateException("NO_EXECUTABLE_REALIZATION: " + node.key().normalizedSignature());
 		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions = candidateRuleFacts.stream()
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.map(CandidateEmissionFact::derivedFoutAction).filter(Objects::nonNull).distinct()
@@ -667,6 +907,14 @@ public final class NeutralPlacementGraphBuilder {
 	private static PrivacyClosure closePrivacyDomains(List<Node> nodes,
 		List<CandidateRuleFact> candidateRuleFacts, Set<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges) {
+		return closePrivacyDomains(nodes, candidateRuleFacts, constraints, origins,
+			compiledInputEdges, null);
+	}
+
+	private static PrivacyClosure closePrivacyDomains(List<Node> nodes,
+		List<CandidateRuleFact> candidateRuleFacts, Set<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges,
+		PlacementPrivacyFacts fixedPrivacy) {
 		Map<CompiledHopKey,List<CompiledHopKey>> predecessors = new IdentityHashMap<>();
 		for(Node node : nodes) {
 			predecessors.put(node.key(), new ArrayList<>());
@@ -674,6 +922,8 @@ public final class NeutralPlacementGraphBuilder {
 		for(Constraint constraint : constraints)
 			if(carriesPrivacyValue(constraint))
 				addPrivacyPredecessor(predecessors, constraint.right(), constraint.left());
+		for(CompiledInputEdgeFact edge : compiledInputEdges)
+			addPrivacyPredecessor(predecessors, edge.consumer(), edge.producer());
 
 		Map<String,List<CompiledHopKey>> cfgSources = new java.util.HashMap<>();
 		for(Node node : nodes)
@@ -696,7 +946,9 @@ public final class NeutralPlacementGraphBuilder {
 		Map<DataOp,FederatedSourceMetadata> sourceMetadata = new IdentityHashMap<>();
 		List<Pair<FederatedRange,FederatedData>> allPartitions = new ArrayList<>();
 		Map<CompiledHopKey,Privacy> effective = new IdentityHashMap<>();
-		for(Node node : nodes) {
+		if(fixedPrivacy != null)
+			effective.putAll(fixedPrivacy.asMap());
+		else for(Node node : nodes) {
 			Hop hop = origins.get(node.key());
 			if(hop == null)
 				throw new IllegalStateException("Privacy occurrence has no compiled Hop origin");
@@ -715,15 +967,16 @@ public final class NeutralPlacementGraphBuilder {
 		}
 
 		// Authorization is output- and spec-specific, captured once for this snapshot.
-		Set<Hop> publicRecodeMetadata = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(Hop hop : origins.values())
-			if(isAuthorizedRecodeMetadataOutput(hop))
-				publicRecodeMetadata.add(hop);
+		if(fixedPrivacy == null) {
+			Set<Hop> publicRecodeMetadata = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(Hop hop : origins.values())
+				if(isAuthorizedRecodeMetadataOutput(hop))
+					publicRecodeMetadata.add(hop);
 
-		boolean changed;
-		int pass = 0;
-		int maxPasses = Math.max(1, nodes.size() * (Privacy.values().length + 1));
-		do {
+			boolean changed;
+			int pass = 0;
+			int maxPasses = Math.max(1, nodes.size() * (Privacy.values().length + 1));
+			do {
 			changed = false;
 			for(Node node : nodes) {
 				Hop hop = origins.get(node.key());
@@ -737,6 +990,11 @@ public final class NeutralPlacementGraphBuilder {
 						|| node.kind() == NodeKind.FUNCTION_OUTPUT
 						? strongestPrivacy(inputPrivacy)
 						: FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
+					// Released aggregate values are coordinator-readable, but the
+					// provenance remains part of the shared legality proof downstream.
+					if(derived == Privacy.PUBLIC
+						&& inputPrivacy.contains(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC))
+						derived = Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 				}
 				// A declared dictionary release is not a release of the primary encoded
 				// matrix. Strict PRIVATE inputs still dominate this limited authorization.
@@ -749,11 +1007,12 @@ public final class NeutralPlacementGraphBuilder {
 					changed = true;
 				}
 			}
-			pass++;
+				pass++;
+			}
+			while(changed && pass < maxPasses);
+			if(changed)
+				throw new IllegalStateException("Whole-program privacy propagation did not converge");
 		}
-		while(changed && pass < maxPasses);
-		if(changed)
-			throw new IllegalStateException("Whole-program privacy propagation did not converge");
 
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
@@ -832,8 +1091,13 @@ public final class NeutralPlacementGraphBuilder {
 				if(denied)
 					exclusions.putIfAbsent(state, new Exclusion(state, ReasonCode.PRIVACY,
 						"effectivePrivacy=" + privacy.name()));
-				else
+				else {
+					// A fresh allowed result supersedes only an old privacy diagnostic.
+					Exclusion stale = exclusions.get(state);
+					if(stale != null && stale.reasonCode() == ReasonCode.PRIVACY)
+						exclusions.remove(state);
 					legal.add(state);
+				}
 			}
 			Node filteredNode = new Node(node.key(), node.kind(), node.valueVersion(),
 				!legal.isEmpty(), legal, new ArrayList<>(exclusions.values()), node.anchors());
@@ -852,7 +1116,8 @@ public final class NeutralPlacementGraphBuilder {
 			privacyFacts.add(new PlacementPrivacyFacts.PrivacyFact(node.key(), node.valueVersion(),
 				effective.get(node.key()), predecessors.get(node.key())));
 		PlacementPrivacyFacts authority = new PlacementPrivacyFacts(filteredNodes, privacyFacts,
-			FederatedWorkerUtils.countDistinctWorkers(allPartitions));
+			fixedPrivacy == null ? FederatedWorkerUtils.countDistinctWorkers(allPartitions)
+				: fixedPrivacy.numWorkers());
 		return new PrivacyClosure(List.copyOf(filteredNodes), List.copyOf(filteredFacts), authority);
 	}
 
@@ -940,26 +1205,36 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static List<LogicalTransientInputFact> bindExactLogicalTransientSourceStates(
-		List<LogicalTransientInputFact> facts, List<Node> nodes) {
-		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
-		for(Node node : nodes)
-			nodesByKey.put(node.key(), node);
+		List<LogicalTransientInputFact> facts, List<CandidateRuleFact> candidateFacts) {
+		Map<String,CandidateRealizationReference> current = new java.util.TreeMap<>();
+		for(CandidateRuleFact candidate : candidateFacts) {
+			if(candidate.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(CandidateEmissionFact emission : candidate.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					CandidateRealizationReference reference = CandidateRealizationReference.of(
+						candidate.key(), realization);
+					if(current.put(reference.normalizedSignature(), reference) != null)
+						throw new IllegalStateException("Duplicate candidate realization authority");
+				}
+		}
 		List<LogicalTransientInputFact> rebound = new ArrayList<>(facts.size());
 		for(LogicalTransientInputFact fact : facts) {
-			Node source = nodesByKey.get(fact.sourceWrite());
-			if(source == null)
-				throw new IllegalStateException("Logical transient source disappeared before final binding");
-			PlacementState local = source.legalAlternatives().stream()
-				.filter(fact.localSourceState()::equals).findFirst().orElse(null);
-			PlacementState federated = source.legalAlternatives().stream()
-				.filter(fact.federatedSourceState()::equals).findFirst().orElseThrow(() ->
-					new IllegalStateException(
-						"Logical transient federated source state disappeared before final binding"));
-			rebound.add(new LogicalTransientInputFact(fact.sourceWrite(), fact.targetRead(),
-				fact.logicalPosition(), fact.sourceValueVersion(), fact.readValueVersion(), fact.anchor(),
-				fact.federatedFType(), local, federated, fact.localInput(), fact.federatedInput()));
+			List<TransientPlacementCompatibility> compatibility = new ArrayList<>();
+			for(TransientPlacementCompatibility edge : fact.compatibility()) {
+				CandidateRealizationReference source = current.get(
+					edge.sourceRealization().normalizedSignature());
+				CandidateRealizationReference reader = current.get(
+					edge.readerRealization().normalizedSignature());
+				if(source != null && reader != null)
+					compatibility.add(new TransientPlacementCompatibility(source, reader,
+						edge.sourceInput(), edge.readerInput(), edge.proof()));
+			}
+			if(!compatibility.isEmpty())
+				rebound.add(new LogicalTransientInputFact(fact.sourceWrite(), fact.targetRead(),
+					fact.logicalPosition(), fact.sourceValueVersion(), fact.readValueVersion(), compatibility));
 		}
-		return List.copyOf(rebound);
+		return rebound.stream().sorted().toList();
 	}
 
 
@@ -1207,9 +1482,23 @@ public final class NeutralPlacementGraphBuilder {
 				CompiledHopKey producerKey = pending.removeFirst();
 				for(HeuristicPathEdgeFact edge : outgoing.getOrDefault(producerKey, List.of())) {
 					if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT) {
-						// A legal local vector continuation takes precedence over a possible
-						// FED re-entry. Only this consumer joins the prefix: its public
-						// sibling remains independently placed and may share a local copy.
+						boolean nestedDemotion = demotionProducers.contains(edge.consumer());
+						// A downstream aggregate/vector demotion is an output-placement boundary,
+						// not proof that the operation itself should run in CP. If the exact runtime
+						// candidate can consume this local operand while keeping a federated sibling
+						// resident, prefer that FED/LOUT continuation before extending the CP prefix.
+						if(nestedDemotion) {
+							HeuristicNativeContinuationFact nativeContinuation =
+								exactHeuristicNativeContinuation(graph, compiledInputEdges,
+									candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition(),
+									FederatedOutput.LOUT);
+							if(nativeContinuation != null) {
+								nativeContinuations.add(nativeContinuation);
+								continue;
+							}
+						}
+						// A legal scalar/vector continuation remains local. Only this consumer joins
+						// the prefix; its sibling remains independently placed.
 						if(localContinuations.getOrDefault(edge.consumer(), Set.of()).contains(edge.inputPosition())) {
 							usedEdges.add(edge);
 							if(localPrefix.add(edge.consumer())
@@ -1223,17 +1512,11 @@ public final class NeutralPlacementGraphBuilder {
 							reentries.add(reentry);
 							continue;
 						}
-						boolean nestedDemotion = demotionProducers.contains(edge.consumer());
-						boolean remoteComputationRequired = nestedDemotion && graph.node(edge.consumer())
-							.orElseThrow().legalAlternatives().stream().noneMatch(state ->
-								state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT);
 						HeuristicNativeContinuationFact nativeContinuation =
 							exactHeuristicNativeContinuation(graph, compiledInputEdges,
 								candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition(),
-								remoteComputationRequired ? FederatedOutput.LOUT : FederatedOutput.FOUT);
-						// A downstream demotion may require FED computation while
-						// natively returning LOUT. Its own path governs the local result.
-						if(nativeContinuation != null && (!nestedDemotion || remoteComputationRequired)) {
+								FederatedOutput.FOUT);
+						if(nativeContinuation != null) {
 							nativeContinuations.add(nativeContinuation);
 							continue;
 						}
@@ -1275,7 +1558,8 @@ public final class NeutralPlacementGraphBuilder {
 			HopOccurrenceProjection readProjection = projectionsByHop.get(occurrences.get(readOrdinal).hop());
 			Node read = readProjection == null ? null : graph.node(readProjection.key()).orElse(null);
 			if(readProjection == null || read == null || !isTransientRead(readProjection.hop())
-				|| read.kind() != NodeKind.TRANSIENT_READ
+				|| !PlacementAnalysis.isCompiledAcyclicTransientForwardAccess(
+					readProjection.hop(), read, OpOpData.TRANSIENTREAD)
 				|| cfg.reachingFunctionInputs().get(readOrdinal)
 				|| cfg.reachingDefinitions().get(readOrdinal).isEmpty()
 				|| !supportedLocalCfgForwardNode(read))
@@ -1293,7 +1577,8 @@ public final class NeutralPlacementGraphBuilder {
 					projectionsByHop.get(occurrences.get(sourceOrdinal).hop());
 				Node source = sourceProjection == null ? null : graph.node(sourceProjection.key()).orElse(null);
 				if(sourceProjection == null || !isTransientWrite(sourceProjection.hop())
-					|| source == null || source.kind() != NodeKind.TRANSIENT_WRITE
+					|| source == null || !PlacementAnalysis.isCompiledAcyclicTransientForwardAccess(
+						sourceProjection.hop(), source, OpOpData.TRANSIENTWRITE)
 					|| !supportedLocalCfgForwardNode(source)
 					|| !sameTransientForwardContext(source, read)
 					|| !isVector(shapeFacts.abstractShapeFact(sourceProjection.key()).orElse(null))) {
@@ -1474,12 +1759,11 @@ public final class NeutralPlacementGraphBuilder {
 			return;
 		int siblingInputPosition = presentPositions.get(0);
 		FType layout = candidate.key().orderedInputs().get(siblingInputPosition).fType();
-		boolean nativeFout = candidate.capability().nativeOutput() == FederatedOutput.FOUT
-			&& candidate.capability().nativeFoutFType() == layout;
-		boolean nativeLout = output == FederatedOutput.LOUT
-			&& candidate.capability().nativeOutput() == FederatedOutput.LOUT
-			&& candidate.capability().nativeFoutFType() == null;
-		if(!nativeFout && !nativeLout)
+		boolean nativeOutputCompatible = output == FederatedOutput.FOUT
+			? candidate.capability().nativeOutput() == FederatedOutput.FOUT
+				&& candidate.capability().nativeFoutFType() == layout
+			: output == FederatedOutput.LOUT;
+		if(!nativeOutputCompatible)
 			return;
 		if(!candidate.key().orderedInputs().get(siblingInputPosition)
 			.equals(CandidateInputState.present(layout)))
@@ -2086,12 +2370,19 @@ public final class NeutralPlacementGraphBuilder {
 		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
 		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
 		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
-		Map<CompiledHopKey,Hop> origins) {
+		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints) {
+		List<CandidateRuleFact> boundFacts = bindExactCandidateEmissionRealizations(
+			facts, nodes, origins, factsByHop);
+		List<CandidateRuleFact> directTemplates = boundFacts;
 		CandidateReplay current = new CandidateReplay(List.copyOf(nodes), List.copyOf(domainKeys),
-			List.copyOf(facts), List.copyOf(logicalInputs), List.of());
+			boundFacts, List.copyOf(logicalInputs), List.of());
 		Set<CompiledHopKey> installedLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
-		int maxPasses = Math.max(1, occurrences.size());
+		int maxPasses = Math.max(1, occurrences.size() + domainKeys.size() + logicalInputs.size() + 1);
+		List<String> closureTrace = new ArrayList<>();
 		for(int pass = 0; pass < maxPasses; pass++) {
+			CandidateReplay passStart = current;
+			String beforeSignature = "n=" + current.nodes().hashCode() + ",f=" + current.facts().hashCode()
+				+ ",l=" + current.logicalInputs().hashCode();
 			List<Node> passNodes = current.nodes();
 			Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 			for(Node node : passNodes)
@@ -2101,18 +2392,341 @@ public final class NeutralPlacementGraphBuilder {
 				if(!cfg.reachingFunctionInputs().get(ordinal) && isTransientRead(occurrences.get(ordinal).hop()))
 					reachingSources.put(passNodes.get(ordinal).key(), cfg.reachingDefinitions().get(ordinal)
 						.stream().sorted().map(source -> passNodes.get(source).key()).toList());
+			List<CompiledInputEdgeFact> compiledEdges = deriveCompiledInputEdges(
+				occurrences, current.nodes(), ordinalsByBlock, factsByHop);
 			NativePlacementContinuity nativePools = new NativePlacementContinuity(nodesByKey, origins,
-				current.facts(), deriveCompiledInputEdges(occurrences, current.nodes(), ordinalsByBlock, factsByHop),
-				reachingSources);
+				current.facts(), compiledEdges, reachingSources);
+			boolean directConverged = false;
+			for(int directPass = 0; directPass <= current.facts().size(); directPass++) {
+			List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
+					directTemplates, current.facts(), current.nodes(), compiledEdges, origins, factsByHop, nativePools);
+				directFacts = LogicalBoundaryRealizations.close(current.nodes(), constraints, origins, directFacts);
+				if(directFacts.equals(current.facts())) {
+					directConverged = true;
+					break;
+				}
+				current = new CandidateReplay(current.nodes(), current.domainKeys(), directFacts,
+					current.logicalInputs(), current.changedOrdinals());
+				nativePools = new NativePlacementContinuity(nodesByKey, origins,
+					current.facts(), compiledEdges, reachingSources);
+			}
+			if(!directConverged)
+				throw new IllegalStateException("Candidate-specific direct realization closure did not converge");
 			CandidateReplay replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
 				factsByHop, current.domainKeys(), current.facts(), current.logicalInputs(), baseline, nativePools,
 				installedLoopSeeds);
-			if(replayed.changedOrdinals().isEmpty())
+			closureTrace.add(pass + ":" + beforeSignature + "->n=" + replayed.nodes().hashCode()
+				+ ",f=" + replayed.facts().hashCode() + ",l=" + replayed.logicalInputs().hashCode()
+				+ ",changed=" + replayed.changedOrdinals());
+			// The final relation replay of the preceding pass can change a reader
+			// after its consumers were rebuilt. That delta is still pending even if
+			// replay itself is now idempotent; consume it before declaring closure.
+			Set<Integer> pendingPhysical = new java.util.TreeSet<>(current.changedOrdinals());
+			pendingPhysical.addAll(replayed.changedOrdinals());
+			if(pendingPhysical.isEmpty())
 				return replayed;
-			current = closePostCfgPhysicalCandidateDependencies(occurrences, replayed,
+			replayed = new CandidateReplay(replayed.nodes(), replayed.domainKeys(), replayed.facts(),
+				replayed.logicalInputs(), List.copyOf(pendingPhysical));
+			CandidateReplay physicallyClosed = closePostCfgPhysicalCandidateDependencies(occurrences, replayed,
 				factsByHop, abstractFactsByHop, singlePartitions, ordinalsByBlock, cfg);
+			// Physical rebuilding deliberately restores oracle-owned base emissions and
+			// therefore drops candidate-specific native bindings. Re-ground those base
+			// rows before deciding whether the composed CFG transfer has converged.
+			// Otherwise each pass can prove a TWrite/function result, rebuild it back to
+			// staging authority, and incorrectly converge on the ungrounded midpoint.
+			List<Node> physicalNodes = physicallyClosed.nodes();
+			Map<CompiledHopKey,Node> physicalNodesByKey = new IdentityHashMap<>();
+			for(Node node : physicalNodes)
+				physicalNodesByKey.put(node.key(), node);
+			List<CompiledInputEdgeFact> physicalEdges = deriveCompiledInputEdges(
+				occurrences, physicalNodes, ordinalsByBlock, factsByHop);
+			Map<CompiledHopKey,List<CompiledHopKey>> physicalReachingSources = new IdentityHashMap<>();
+			for(int ordinal = 0; ordinal < occurrences.size(); ordinal++)
+				if(!cfg.reachingFunctionInputs().get(ordinal) && isTransientRead(occurrences.get(ordinal).hop()))
+					physicalReachingSources.put(physicalNodes.get(ordinal).key(),
+						cfg.reachingDefinitions().get(ordinal).stream().sorted()
+							.map(source -> physicalNodes.get(source).key()).toList());
+			NativePlacementContinuity physicalPools = new NativePlacementContinuity(physicalNodesByKey, origins,
+				physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+			boolean physicalDirectConverged = false;
+			for(int directPass = 0; directPass <= physicallyClosed.facts().size(); directPass++) {
+				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
+					directTemplates, physicallyClosed.facts(), physicallyClosed.nodes(), physicalEdges,
+					origins, factsByHop, physicalPools);
+				directFacts = LogicalBoundaryRealizations.close(physicallyClosed.nodes(), constraints, origins, directFacts);
+				if(directFacts.equals(physicallyClosed.facts())) {
+					physicalDirectConverged = true;
+					break;
+				}
+				physicallyClosed = new CandidateReplay(physicallyClosed.nodes(), physicallyClosed.domainKeys(),
+					directFacts, physicallyClosed.logicalInputs(), physicallyClosed.changedOrdinals());
+				physicalPools = new NativePlacementContinuity(physicalNodesByKey, origins,
+					physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+			}
+			if(!physicalDirectConverged)
+				throw new IllegalStateException("Post-physical direct realization closure did not converge");
+			// Direct grounding can replace normalized realization identities. Re-run the
+			// exact CFG replay authority so transient compatibility edges name the current
+			// source/reader realizations instead of merely filtering stale signatures.
+			CandidateReplay relationClosed = replayUniqueCfgTransientForwards(occurrences,
+				physicallyClosed.nodes(), cfg, factsByHop, physicallyClosed.domainKeys(),
+				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, physicalPools,
+				installedLoopSeeds);
+			// Replay, physical rebuilding, direct proof grounding, and exact relation
+			// regeneration are one composed transfer. Compare only that completed state.
+			if(relationClosed.nodes().equals(passStart.nodes())
+				&& relationClosed.domainKeys().equals(passStart.domainKeys())
+				&& relationClosed.facts().equals(passStart.facts())
+				&& relationClosed.logicalInputs().equals(passStart.logicalInputs()))
+				return relationClosed;
+			current = relationClosed;
 		}
-		throw new IllegalStateException("CFG transient candidate closure did not converge");
+		throw new IllegalStateException("CFG transient candidate closure did not converge: " + closureTrace);
+	}
+
+	/** Materializes candidate-specific direct native input authority before CFG replay. */
+	private static List<CandidateRuleFact> bindDirectNativeCandidateRealizations(
+		List<CandidateRuleFact> templates, List<CandidateRuleFact> facts, List<Node> nodes,
+		List<CompiledInputEdgeFact> compiledEdges,
+		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
+		NativePlacementContinuity continuity) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledEdges)
+			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
+				.put(edge.inputPosition(), edge.producer());
+		Map<CompiledHopKey,List<CandidateRealizationReference>> nativeByParent = new IdentityHashMap<>();
+		Map<CandidateRealizationReference,CandidateEmissionRealization> nativeRealizations = new LinkedHashMap<>();
+		Set<String> executableReferences = new LinkedHashSet<>();
+		for(CandidateRuleFact candidate : facts)
+			if(candidate.status() == CandidateEvaluationStatus.AVAILABLE)
+				for(CandidateEmissionFact candidateEmission : candidate.allowedEmissionFacts())
+					for(CandidateEmissionRealization candidateRealization : candidateEmission.realizations()) {
+						CandidateRealizationReference reference = CandidateRealizationReference.of(
+							candidate.key(), candidateRealization);
+						if(executableSourceRealization(candidate.key(), candidateRealization))
+							executableReferences.add(reference.normalizedSignature());
+						if(candidateRealization.key().emissionState().placementState().output() == FederatedOutput.FOUT) {
+							nativeByParent.computeIfAbsent(candidate.key().parentOccurrence(),
+								ignored -> new ArrayList<>()).add(reference);
+							nativeRealizations.put(reference, candidateRealization);
+						}
+					}
+		List<CandidateRuleFact> rebound = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			// A compiled TRead aliases the exact CFG relation, not a physical Hop
+			// input. Its native lineages and durable identities are owned by replay;
+			// grounding it as a computation invents a reader-local native-output map
+			// that the next replay replaces, leaving downstream bindings stale.
+			Hop factOwner = origins.get(fact.key().parentOccurrence());
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
+				|| factOwner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD
+				|| fact.key().orderedInputs().stream().noneMatch(CandidateInputState::present)) {
+				rebound.add(fact);
+				continue;
+			}
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				CandidateEmissionFact templateEmission = templates.stream()
+					.filter(template -> template.key().equals(fact.key()))
+					.flatMap(template -> template.allowedEmissionFacts().stream())
+					.filter(template -> template.emissionState().equals(emission.emissionState())
+						&& Objects.equals(template.derivedFoutAction(), emission.derivedFoutAction()))
+					.findFirst().orElse(emission);
+				Hop owner = origins.get(fact.key().parentOccurrence());
+				PlacementState outputState = emission.emissionState().placementState();
+				boolean recomputeNative = outputState.execType() == ExecType.FED
+					&& outputState.output() == FederatedOutput.FOUT && emission.derivedFoutAction() == null
+					&& !(owner instanceof DataOp data && (data.getOp() == OpOpData.FEDERATED
+						|| data.getOp() == OpOpData.TRANSIENTREAD));
+				List<CandidateEmissionRealization> templatesForEmission = recomputeNative
+					? List.of(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"direct-template:" + emission.emissionState().normalizedSignature(), List.of(), List.of()))
+					: templateEmission.realizations();
+				List<CandidateEmissionRealization> realizations = new ArrayList<>();
+				if(recomputeNative)
+					for(CandidateEmissionRealization candidate : emission.realizations()) {
+						List<CandidateRealizationSupportClause> relocationClauses = candidate.supportClauses().stream()
+							.filter(clause -> clause.inputBindings().stream()
+								.anyMatch(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION))
+							.toList();
+						if(!relocationClauses.isEmpty())
+							realizations.add(new CandidateEmissionRealization(candidate.key(), relocationClauses));
+					}
+				for(CandidateEmissionRealization realization : templatesForEmission) {
+					if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+						|| realization.supportClauses().stream().anyMatch(clause -> !clause.inputBindings().isEmpty())
+						|| emission.derivedFoutAction() != null) {
+						realizations.add(realization);
+						continue;
+					}
+					List<CandidateEmissionRealization> bound = new ArrayList<>();
+					if(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE
+						&& fact.key().orderedInputs().size() == 1 && fact.key().orderedInputs().get(0).present()) {
+						CompiledHopKey sourceKey = inputs.getOrDefault(fact.key().parentOccurrence(), Map.of()).get(0);
+						FType inputType = fact.key().orderedInputs().get(0).fType();
+						// A write aliases its selected input Data object. It does not create a
+						// new native-output map, nor copy the input's transitive proof clauses.
+						for(CandidateRealizationReference source : nativeByParent.getOrDefault(sourceKey, List.of())) {
+							CandidateEmissionRealization sourceRealization = nativeRealizations.get(source);
+							for(CandidateRealizationSupportClause sourceClause : sourceRealization.supportClauses()) {
+								DurableAnchorKey pool = sourceRealization.provenWorkerPool(sourceClause);
+								if(pool == null || pool.fType() != inputType || outputState.fType() != inputType)
+									continue;
+								DurableAnchorKey anchor = sourceRealization.anchor();
+								PlacementProofKey proof = new PlacementProofKey(anchor == null
+									? PlacementProofKind.NATIVE_CONTINUITY : PlacementProofKind.DURABLE_ANCHOR,
+									fact.key().parentOccurrence(), "transient-alias:" + pool.normalizedSignature());
+								List<CandidateRealizationInputBinding> binding = List.of(CandidateRealizationInputBinding.direct(0, source));
+								bound.add(anchor == null ? CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+									"transient-alias:" + fact.key().parentOccurrence().normalizedSignature()
+										+ "|pool=" + pool.normalizedSignature(), pool, List.of(proof), binding)
+									: CandidateEmissionRealization.durable(emission.emissionState(), anchor, List.of(proof), binding));
+							}
+						}
+						realizations.addAll(bound.isEmpty() ? List.of(realization) : bound);
+						continue;
+					}
+					List<DurableAnchorKey> seeds = new ArrayList<>();
+					Set<FType> presentTypes = fact.key().orderedInputs().stream()
+						.filter(CandidateInputState::present).map(CandidateInputState::fType)
+						.collect(java.util.stream.Collectors.toSet());
+					// The immediate producer of a TWrite or a map-changing native
+					// operation need not itself own a durable map. Try every exact
+					// analysis anchor of a compatible input type; candidate continuity
+					// proves (or rejects) the complete path back to that seed.
+					for(Node candidateSeed : nodes)
+						candidateSeed.anchors().stream().filter(anchor -> presentTypes.contains(anchor.fType()))
+							.forEach(seeds::add);
+					for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+						CandidateInputState input = fact.key().orderedInputs().get(position);
+						CompiledHopKey sourceKey = inputs.getOrDefault(fact.key().parentOccurrence(), Map.of())
+							.get(position);
+						Node source = sourceKey == null ? null : nodesByKey.get(sourceKey);
+						if(input.present() && source != null)
+							source.anchors().stream().filter(anchor -> anchor.fType() == input.fType())
+								.forEach(seeds::add);
+					}
+					for(DurableAnchorKey seed : seeds.stream().distinct().sorted().toList()) {
+						DurableAnchorKey outputAnchor = nativeOutputAnchor(seed, outputState.fType(),
+							shapes.get(owner), fact.key().parentOccurrence());
+						if(outputAnchor == null && seed.fType() != outputState.fType())
+							continue;
+						// Prove the identity that will actually be published. Pinning the
+						// staging template into a backedge invalidates its own proof as soon
+						// as the producer is grounded to the exact output map.
+						String nativeLineage = "direct-native:" + fact.key().parentOccurrence().normalizedSignature()
+							+ "|seed=" + seed.normalizedSignature();
+						CandidateRealizationReference output = new CandidateRealizationReference(fact.key(),
+							outputAnchor != null
+								? PlacementIdentity.PlacementRealizationKey.durable(emission.emissionState(), outputAnchor)
+								: PlacementIdentity.PlacementRealizationKey.nativeLineage(emission.emissionState(), nativeLineage));
+						for(NativePlacementContinuity.NativeContinuityProof proof :
+							continuity.proveCandidateAlternatives(output, seed)) {
+						List<CandidateRealizationInputBinding> bindings = new ArrayList<>(proof.immediateBindings());
+						boolean complete = true;
+						for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+							CandidateInputState input = fact.key().orderedInputs().get(position);
+							if(!input.present())
+								continue;
+							CompiledHopKey sourceKey = inputs.getOrDefault(fact.key().parentOccurrence(), Map.of())
+								.get(position);
+							Hop sourceHop = sourceKey == null ? null : origins.get(sourceKey);
+							if(sourceHop == null || !isPlacementDataShape(shapes, sourceHop))
+								continue;
+							int inputPosition = position;
+							CompiledHopKey sourceOccurrence = sourceKey;
+							CandidateRealizationInputBinding binding = bindings.stream()
+								.filter(candidate -> candidate.inputPosition() == inputPosition
+									&& candidate.source().rule().parentOccurrence() == sourceOccurrence
+									&& candidate.source().realization().emissionState().placementState().fType()
+										== input.fType()
+									&& executableReferences.contains(candidate.source().normalizedSignature()))
+								.findFirst().orElse(null);
+							if(binding == null) {
+								complete = false;
+								break;
+							}
+						}
+						if(complete) {
+							PlacementProofKey continuityProof = new PlacementProofKey(
+								PlacementProofKind.NATIVE_CONTINUITY, fact.key().parentOccurrence(),
+								proof.normalizedSignature());
+							if(outputAnchor != null)
+								for(CandidateRealizationSupportClause clause : realization.supportClauses())
+									bound.add(CandidateEmissionRealization.durable(emission.emissionState(), outputAnchor,
+										appendProof(clause.proofDependencies(), continuityProof), bindings));
+							else if(seed.fType() == outputState.fType())
+								// A proved native pool remains executable when output extents are dynamic.
+								// Keep typed lineage, never fabricate an exact output FederationMap.
+								bound.add(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+									nativeLineage, seed, List.of(continuityProof), bindings));
+						}
+						}
+					}
+					// Keep a generic lineage only as staging authority when no exact direct
+					// realization is currently provable. It is excluded from transient replay.
+					if(bound.isEmpty() && FederatedPlannerTrace.shouldTrace(owner))
+						FederatedPlannerTrace.log(owner, "Neutral-UnboundNative", "inputs=" + fact.key().orderedInputs()
+							+ "|state=" + outputState + "|shape=" + shapes.get(owner)
+							+ "|seeds=" + seeds.stream().distinct().toList());
+					if(bound.isEmpty())
+						realizations.add(realization);
+					else
+						realizations.addAll(bound);
+				}
+				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
+					emission.derivedFoutAction(), realizations.stream().distinct().sorted().toList()));
+			}
+			rebound.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(rebound);
+	}
+
+	private static DurableAnchorKey nativeOutputAnchor(DurableAnchorKey seed, FType outputType,
+		NodeShapeFact outputShape, CompiledHopKey owner) {
+		if(outputShape == null || !(outputShape.dataType().isMatrix() || outputShape.dataType().isFrame())
+			|| outputShape.rows() <= 0 || outputShape.cols() <= 0 || outputType == null
+			|| outputType == FType.PART || outputType == FType.OTHER)
+			return null;
+		List<AnchorPartition> partitions = new ArrayList<>();
+		for(AnchorPartition source : seed.partitions()) {
+			if(source.begin().size() != 2 || source.end().size() != 2)
+				return null;
+			long begin, end;
+			if(outputType == FType.ROW) {
+				int sourceAxis = seed.fType() == FType.COL ? 1 : 0;
+				begin = source.begin().get(sourceAxis);
+				end = source.end().get(sourceAxis);
+				if(end > outputShape.rows())
+					return null;
+				partitions.add(new AnchorPartition(source.workerId(), List.of(begin, 0L),
+					List.of(end, outputShape.cols())));
+			}
+			else if(outputType == FType.COL) {
+				int sourceAxis = seed.fType() == FType.ROW ? 0 : 1;
+				begin = source.begin().get(sourceAxis);
+				end = source.end().get(sourceAxis);
+				if(end > outputShape.cols())
+					return null;
+				partitions.add(new AnchorPartition(source.workerId(), List.of(0L, begin),
+					List.of(outputShape.rows(), end)));
+			}
+			else if(outputType == FType.BROADCAST) {
+				partitions.add(new AnchorPartition(source.workerId(), List.of(0L, 0L),
+					List.of(outputShape.rows(), outputShape.cols())));
+			}
+			else {
+				if(seed.partitions().size() != 1)
+					return null;
+				partitions.add(new AnchorPartition(source.workerId(), List.of(0L, 0L),
+					List.of(outputShape.rows(), outputShape.cols())));
+			}
+		}
+		return new DurableAnchorKey("native-output:" + owner.normalizedSignature(), outputType, partitions);
 	}
 
 	private CandidateReplay replayUniqueCfgTransientForwards(
@@ -2153,7 +2767,7 @@ public final class NeutralPlacementGraphBuilder {
 			List<LogicalTransientInputFact> replacementInputs = new ArrayList<>();
 			int replacementStart = replayedKeys.size();
 			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
-				factsByHop, replayedKeys, replayedFacts, replacementInputs,
+				factsByHop, facts, replayedKeys, replayedFacts, replacementInputs,
 				!hadPriorReplay && !installedLoopSeeds.contains(node.key()), nativePools, installedLoopSeeds);
 			boolean replayedParent = replayed != node;
 			if(hadPriorReplay && !replayedParent) {
@@ -2217,8 +2831,9 @@ public final class NeutralPlacementGraphBuilder {
 	private Node replayUniqueCfgTransientForward(int ordinal,
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
-		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> replayedKeys,
-		List<CandidateRuleFact> replayedFacts, List<LogicalTransientInputFact> logicalInputs,
+		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleFact> currentFacts,
+		List<CandidateRuleKey> replayedKeys, List<CandidateRuleFact> replayedFacts,
+		List<LogicalTransientInputFact> logicalInputs,
 		boolean allowLoopPlacementSeed, NativePlacementContinuity nativePools,
 		Set<CompiledHopKey> installedLoopSeeds) {
 		if(!PlacementAnalysis.isCompiledTransientAccess(readOccurrence.hop(), read, OpOpData.TRANSIENTREAD))
@@ -2226,15 +2841,15 @@ public final class NeutralPlacementGraphBuilder {
 		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
 		if(cfg.reachingFunctionInputs().get(ordinal)) {
 			traceTransientReplay(readOccurrence,
-				"non-replayable-function-input-plus-definitions=" + definitions);
+				"function-input-plus-definitions=" + definitions);
 			return read;
 		}
-		Integer loopPassThroughSource = definitions.size() > 1
+		Integer loopPassThroughSource = allowLoopPlacementSeed && definitions.size() > 1
 			? exactLoopPassThroughSource(ordinal, readOccurrence, read, definitions,
 				occurrences, nodes, factsByHop)
 			: null;
 		if(definitions.isEmpty()) {
-			traceTransientReplay(readOccurrence, "non-replayable-reaching-definitions=" + definitions
+			traceTransientReplay(readOccurrence, "missing-reaching-definitions=" + definitions
 				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
 			return read;
 		}
@@ -2246,112 +2861,283 @@ public final class NeutralPlacementGraphBuilder {
 			? List.of(loopPassThroughSource) : loopPlacementSeed != null
 				? List.of(loopPlacementSeed) : definitions.stream().sorted().toList();
 
-		ExactTransientReplay exact = exactTransientReplay(readOccurrence, read, exactDefinitions,
-			occurrences, nodes, factsByHop, nativePools, loopPlacementSeed == null);
-		if(exact == null) {
-			traceTransientReplay(readOccurrence, "non-replayable-common-source-domain=" + exactDefinitions
+		ExactTransientReplayResult result = exactTransientReplay(readOccurrence, read, exactDefinitions,
+			occurrences, nodes, factsByHop, currentFacts, nativePools, loopPlacementSeed == null);
+		if(result.replay() == null) {
+			traceTransientReplay(readOccurrence, result.rejection() + "|definitions=" + exactDefinitions
 				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
 			return read;
 		}
-		Node replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, exact.sources().get(0),
-			exact.anchor(), exact.federatedState().fType(), exact.localState(), exact.federatedState(),
-			replayedKeys, replayedFacts);
-		// Once physical closure has disproved an installed provisional seed, the
-		// identical seed is not new evidence. Ordinary all-source replay remains
-		// enabled; a later function-expanded closure gets its own fresh seed set.
-		if(loopPlacementSeed != null)
+		Node replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, result.replay(),
+			replayedKeys, replayedFacts, logicalInputs);
+		// A loop pass-through or placement seed is provisional authority for the
+		// first closure pass only. Physical closure must ground the carried writer;
+		// every later pass then replays all reaching definitions so the published
+		// compatibility relation cannot permanently omit the loop backedge.
+		if(loopPassThroughSource != null || loopPlacementSeed != null)
 			installedLoopSeeds.add(read.key());
-		for(Node source : exact.sources()) {
-			DurableAnchorKey sourceAnchor = exact.anchor() == null ? null : source.anchors().get(0);
-			logicalInputs.add(new LogicalTransientInputFact(source.key(), read.key(), 0,
-				source.valueVersion(), read.valueVersion(), sourceAnchor, exact.federatedState().fType(),
-				exact.localState(), exact.federatedState(), CandidateInputState.absentLocal(),
-				CandidateInputState.present(exact.federatedState().fType())));
-		}
 		return replayed;
 	}
 
-	private record ExactTransientReplay(List<Node> sources, DurableAnchorKey anchor,
-		PlacementState localState, PlacementState federatedState) { }
-
-	/**
-	 * Intersects the exact placement domains of every reaching TWrite. A branch/post-loop TRead is
-	 * one runtime variable binding, so a tuple is legal only when every possible definition can
-	 * provide that same tuple. Identity-loop backedges are collapsed to their proven external seed
-	 * by {@link #exactLoopPassThroughSource}; all other joins retain every source as a logical input.
-	 */
-	private static ExactTransientReplay exactTransientReplay(
-		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, List<Integer> definitions,
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
-		Map<Hop,NodeShapeFact> factsByHop, NativePlacementContinuity nativePools,
-		boolean mayRetainExactGeometry) {
-		if(definitions.isEmpty())
-			return null;
-		List<Node> sources = new ArrayList<>(definitions.size());
-		Set<PlacementState> commonLocal = null;
-		Set<PlacementState> commonFederated = null;
-		NodeShapeFact readShape = factsByHop.get(readOccurrence.hop());
-		if(readShape == null)
-			return null;
-		for(int definition : definitions) {
-			if(definition < 0 || definition >= occurrences.size())
-				return null;
-			PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
-			Node source = nodes.get(definition);
-			if(!isCompiledTransientWrite(sourceOccurrence.hop(), source)
-				|| !sameTransientForwardContext(source, read)
-				|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state))
-				|| !sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()), readShape)) {
-				return null;
-			}
-			if(source.anchors().size() > 1)
-				return null;
-			Set<PlacementState> local = source.legalAlternatives().stream().filter(state ->
-				state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
-					&& state.fType() == null && !state.shapeDependent())
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
-			Set<PlacementState> federated = source.legalAlternatives().stream().filter(state ->
-				state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
-					&& state.fType() != null && state.fType() != FType.PART && state.fType() != FType.OTHER)
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
-			if(commonLocal == null) {
-				commonLocal = local;
-				commonFederated = federated;
-			}
-			else {
-				commonLocal.retainAll(local);
-				commonFederated.retainAll(federated);
-			}
-			sources.add(source);
+	private record ExactTransientReplayResult(ExactTransientReplay replay, String rejection) {
+		private static ExactTransientReplayResult accepted(ExactTransientReplay replay) {
+			return new ExactTransientReplayResult(Objects.requireNonNull(replay), "");
 		}
-		List<DurableAnchorKey> exactAnchors = commonBoundaryAnchors(sources);
-		DurableAnchorKey commonAnchor = exactAnchors.isEmpty() ? null : exactAnchors.get(0);
-		DurableAnchorKey seed = sources.stream().flatMap(source -> source.anchors().stream())
-			.sorted().findFirst().orElse(null);
-		// A shared worker pool can justify native continuity, but must never become
-		// the evolving value's exact FederationMap. The separate proof checks every
-		// reaching definition and runtime-native map transfer; movement-target union
-		// resolution is deliberately not an authority for this join.
-		if(commonAnchor == null && seed != null
-			&& !nativePools.proves(sources.stream().map(Node::key).toList(), seed)) {
-			return null;
+		private static ExactTransientReplayResult rejected(String reason) {
+			return new ExactTransientReplayResult(null, reason);
 		}
-		if(commonAnchor != null) {
-			FType anchoredFType = commonAnchor.fType();
-			commonFederated.removeIf(state -> state.fType() != anchoredFType);
-		}
-		if(commonLocal.size() != 1 || commonFederated.size() != 1)
-			return null;
-		return new ExactTransientReplay(List.copyOf(sources), mayRetainExactGeometry ? commonAnchor : null,
-			commonLocal.iterator().next(), commonFederated.iterator().next());
 	}
 
+	private record ExactTransientReplay(List<Node> sources, List<ReplayPlacementAlternative> alternatives) { }
+
+	private record ReplayPlacementAlternative(PlacementState state, CandidateInputState input,
+		List<CandidateEmissionRealization> readerRealizations,
+		Map<CompiledHopKey,List<ReplayCompatibilitySupport>> supportBySource) { }
+
+	private record ReplayCompatibilitySupport(CandidateRealizationReference sourceRealization,
+		CandidateEmissionRealization readerRealization, TransientCompatibilityProof proof) { }
+	private record ReplayCompatibilityOption(Node source, CandidateRealizationReference sourceRealization,
+		TransientCompatibilityProof proof) { }
+
+	private static ReplayPlacementAlternative buildReplayAlternative(Node read, List<Node> sources,
+		PlacementState state, CandidateInputState input, PlacementLayoutKind layoutKind,
+		DurableAnchorKey durableAnchor, String nativeLineage,
+		Map<CompiledHopKey,List<ReplayCompatibilityOption>> optionsBySource,
+		List<PlacementProofKey> commonProofs) {
+		PlacementEmissionState emission = new PlacementEmissionState(state, false);
+		List<CandidateEmissionRealization> realizations = new ArrayList<>();
+		Map<CompiledHopKey,List<ReplayCompatibilitySupport>> supportBySource = new IdentityHashMap<>();
+		List<PlacementProofKey> readerProofs = layoutKind == PlacementLayoutKind.NATIVE_LINEAGE
+			? appendProof(commonProofs, new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+				read.key(), "transient-reader:" + durableAnchor.normalizedSignature())) : commonProofs;
+		CandidateEmissionRealization readerRealization = switch(layoutKind) {
+			case LOCAL -> CandidateEmissionRealization.local(emission, readerProofs, List.of());
+			case DURABLE_MAP -> CandidateEmissionRealization.durable(
+				emission, durableAnchor, readerProofs, List.of());
+			case NATIVE_LINEAGE -> CandidateEmissionRealization.nativeLineage(
+				emission, nativeLineage, durableAnchor, readerProofs, List.of());
+		};
+		realizations.add(readerRealization);
+		for(Node source : sources)
+			for(ReplayCompatibilityOption option : optionsBySource.getOrDefault(source.key(), List.of())) {
+				if(option.source() != source)
+					throw new IllegalStateException("Transient replay option belongs to a different source");
+				supportBySource.computeIfAbsent(source.key(), ignored -> new ArrayList<>())
+					.add(new ReplayCompatibilitySupport(option.sourceRealization(), readerRealization,
+						option.proof()));
+			}
+		if(realizations.isEmpty() || supportBySource.size() != sources.size())
+			throw new IllegalStateException("All-definition replay assignment unexpectedly disappeared");
+		supportBySource.replaceAll((ignored, support) -> support.stream().distinct().toList());
+		return new ReplayPlacementAlternative(state, input,
+			realizations.stream().distinct().sorted().toList(), supportBySource);
+	}
+
+
 	/**
-	 * Finds the one external placement seed of a compiler-generated loop carry. The remaining
-	 * reaching definitions must be exact {@code TWrite(v) <- TRead(v)} identity backedges in the
-	 * same statement block. This does not collapse a real loop update: any arithmetic, rename,
-	 * shape change, cross-context value, or second external definition keeps the phi unreplayed.
+	 * Builds the executable compatibility relation of every reaching TWrite. A
+	 * reader realization is retained only when every reaching definition has at
+	 * least one exact candidate realization that supports it. PlacementState/FType
+	 * is only the coarse projection; exact durable geometry or a candidate-specific
+	 * native-continuity proof owns every federated compatibility edge.
 	 */
+	private static ExactTransientReplayResult exactTransientReplay(
+		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, List<Integer> definitions,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleFact> candidateFacts,
+		NativePlacementContinuity nativePools, boolean mayRetainExactGeometry) {
+		if(definitions.isEmpty())
+			return ExactTransientReplayResult.rejected("missing-reaching-definitions");
+		List<Node> sources = new ArrayList<>(definitions.size());
+		NodeShapeFact readShape = factsByHop.get(readOccurrence.hop());
+		if(readShape == null)
+			return ExactTransientReplayResult.rejected("missing-reader-shape-proof");
+		for(int definition : definitions) {
+			if(definition < 0 || definition >= occurrences.size())
+				return ExactTransientReplayResult.rejected("invalid-reaching-definition=" + definition);
+			PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
+			Node source = nodes.get(definition);
+			if(!isCompiledTransientWrite(sourceOccurrence.hop(), source))
+				return ExactTransientReplayResult.rejected("source-not-compiled-transient-write=" + definition);
+			if(!sameTransientForwardContext(source, read))
+				return ExactTransientReplayResult.rejected("incompatible-source-context=" + definition);
+			if(source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state)))
+				return ExactTransientReplayResult.rejected("illegal-source-transient-state=" + definition);
+			if(!sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()), readShape))
+				return ExactTransientReplayResult.rejected("incompatible-source-shape=" + definition);
+			sources.add(source);
+		}
+
+		List<PlacementProofKey> commonProofs = transientCommonProofs(sources, read);
+		List<ReplayPlacementAlternative> alternatives = new ArrayList<>();
+		PlacementState localState = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		Map<CompiledHopKey,List<ReplayCompatibilityOption>> localOptions = new IdentityHashMap<>();
+		for(Node source : sources) {
+			List<ReplayCompatibilityOption> options = sourceRealizations(source.key(), localState, candidateFacts)
+				.stream().filter(reference -> reference.realization().layoutKind() == PlacementLayoutKind.LOCAL)
+				.map(reference -> new ReplayCompatibilityOption(source, reference,
+					new TransientCompatibilityProof(null, null,
+						edgeProofs(commonProofs, source, read)))).toList();
+			if(!options.isEmpty())
+				localOptions.put(source.key(), options);
+		}
+		if(localOptions.size() == sources.size())
+			alternatives.add(buildReplayAlternative(read, sources, localState,
+				CandidateInputState.absentLocal(), PlacementLayoutKind.LOCAL, null, null,
+				localOptions, commonProofs));
+
+		List<DurableAnchorKey> seedCandidates = sources.stream().flatMap(source -> java.util.stream.Stream.concat(
+			source.anchors().stream(), sourceFederatedRealizations(source.key(), candidateFacts).stream()
+				.flatMap(reference -> candidateRealization(candidateFacts, reference).stream()
+					.flatMap(realization -> realization.supportClauses().stream()
+						.map(realization::provenWorkerPool).filter(Objects::nonNull)))))
+			.sorted().toList();
+		// Placement ids identify the value that supplied a map, not a different exact
+		// geometry. Replaying every value-specific id creates duplicate reader layouts
+		// and a combinatorial number of downstream support clauses. Keep one canonical
+		// seed per exact physical layout; durable compatibility still checks full geometry.
+		List<DurableAnchorKey> seeds = new ArrayList<>();
+		for(DurableAnchorKey candidate : seedCandidates)
+			if(seeds.stream().noneMatch(seed -> PlacementIdentity.samePhysicalLayout(seed, candidate)))
+				seeds.add(candidate);
+		for(DurableAnchorKey seed : seeds) {
+			FType type = seed.fType();
+			if(type == FType.PART || type == FType.OTHER)
+				continue;
+			PlacementState fedState = new PlacementState(ExecType.FED, FederatedOutput.FOUT, type, false);
+
+			if(mayRetainExactGeometry) {
+				Map<CompiledHopKey,List<ReplayCompatibilityOption>> durableOptions = new IdentityHashMap<>();
+				for(Node source : sources) {
+					List<ReplayCompatibilityOption> options = sourceRealizations(source.key(), fedState, candidateFacts)
+						.stream().filter(reference -> reference.realization().layoutKind()
+							== PlacementLayoutKind.DURABLE_MAP)
+						.filter(reference -> PlacementIdentity.samePhysicalLayout(
+							reference.realization().durableAnchor(), seed))
+						.map(reference -> new ReplayCompatibilityOption(source, reference,
+							new TransientCompatibilityProof(reference.realization().durableAnchor(), seed,
+								appendProof(edgeProofs(commonProofs, source, read), new PlacementProofKey(
+									PlacementProofKind.DURABLE_ANCHOR, source.key(), seed.normalizedSignature())))))
+						.toList();
+					if(!options.isEmpty())
+						durableOptions.put(source.key(), options);
+				}
+				if(durableOptions.size() == sources.size())
+					alternatives.add(buildReplayAlternative(read, sources, fedState,
+						CandidateInputState.present(type), PlacementLayoutKind.DURABLE_MAP, seed, null,
+						durableOptions, commonProofs));
+			}
+
+			Map<CompiledHopKey,List<ReplayCompatibilityOption>> nativeOptions = new IdentityHashMap<>();
+			for(Node source : sources) {
+				List<ReplayCompatibilityOption> options = new ArrayList<>();
+				for(CandidateRealizationReference reference : sourceRealizations(
+					source.key(), fedState, candidateFacts)) {
+					NativePlacementContinuity.NativeContinuityProof continuity =
+						nativePools.proveCandidate(reference, seed);
+					if(continuity == null)
+						continue;
+					PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+						source.key(), continuity.normalizedSignature());
+					options.add(new ReplayCompatibilityOption(source, reference,
+						new TransientCompatibilityProof(null, null,
+							appendProof(edgeProofs(commonProofs, source, read), proof))));
+				}
+				if(!options.isEmpty())
+					nativeOptions.put(source.key(), List.copyOf(options));
+			}
+			if(nativeOptions.size() == sources.size())
+				alternatives.add(buildReplayAlternative(read, sources, fedState,
+					CandidateInputState.present(type), PlacementLayoutKind.NATIVE_LINEAGE, seed,
+					"cfg-transient:" + read.key().normalizedSignature() + "|seed=" + seed.normalizedSignature(),
+					nativeOptions, commonProofs));
+		}
+		if(alternatives.isEmpty())
+			return ExactTransientReplayResult.rejected("no-all-definition-compatible-realization");
+		return ExactTransientReplayResult.accepted(new ExactTransientReplay(List.copyOf(sources),
+			mergeReplayAlternatives(alternatives)));
+	}
+
+	private static List<ReplayPlacementAlternative> mergeReplayAlternatives(
+		List<ReplayPlacementAlternative> alternatives) {
+		Map<CandidateInputState,List<ReplayPlacementAlternative>> grouped = alternatives.stream()
+			.collect(java.util.stream.Collectors.groupingBy(ReplayPlacementAlternative::input,
+				() -> new java.util.TreeMap<>(java.util.Comparator.comparing(
+					CandidateInputState::normalizedSignature)), java.util.stream.Collectors.toList()));
+		List<ReplayPlacementAlternative> merged = new ArrayList<>();
+		for(var entry : grouped.entrySet()) {
+			List<ReplayPlacementAlternative> group = entry.getValue();
+			Map<CompiledHopKey,List<ReplayCompatibilitySupport>> support = new IdentityHashMap<>();
+			for(ReplayPlacementAlternative alternative : group)
+				alternative.supportBySource().forEach((source, values) -> support.computeIfAbsent(source,
+					ignored -> new ArrayList<>()).addAll(values));
+			List<CandidateEmissionRealization> realizations = group.stream()
+				.flatMap(alternative -> alternative.readerRealizations().stream()).distinct().sorted().toList();
+			support.replaceAll((ignored, values) -> values.stream().distinct().toList());
+			merged.add(new ReplayPlacementAlternative(group.get(0).state(), entry.getKey(), realizations, support));
+		}
+		return List.copyOf(merged);
+	}
+
+	private static List<CandidateRealizationReference> sourceFederatedRealizations(CompiledHopKey source,
+		List<CandidateRuleFact> candidateFacts) {
+		return candidateFacts.stream().filter(fact -> fact.key().parentOccurrence() == source
+			&& fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream().flatMap(emission -> emission.realizations().stream()
+				.filter(realization -> realization.placementState().output() == FederatedOutput.FOUT)
+				.filter(realization -> executableSourceRealization(fact.key(), realization))
+				.map(realization -> CandidateRealizationReference.of(fact.key(), realization))))
+			.distinct().sorted().toList();
+	}
+
+	private static Optional<CandidateEmissionRealization> candidateRealization(
+		List<CandidateRuleFact> candidateFacts, CandidateRealizationReference reference) {
+		return candidateFacts.stream().filter(fact -> fact.key().equals(reference.rule()))
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().equals(reference.realization())).findFirst();
+	}
+
+	private static List<CandidateRealizationReference> sourceRealizations(CompiledHopKey source,
+		PlacementState state, List<CandidateRuleFact> candidateFacts) {
+		return candidateFacts.stream().filter(fact -> fact.key().parentOccurrence() == source
+			&& fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream().filter(emission ->
+				emission.emissionState().placementState().equals(state)).flatMap(emission ->
+					emission.realizations().stream()
+						.filter(realization -> executableSourceRealization(fact.key(), realization))
+						.map(realization -> CandidateRealizationReference.of(fact.key(), realization))))
+			.distinct().sorted().toList();
+	}
+
+	private static boolean executableSourceRealization(CandidateRuleKey rule,
+		CandidateEmissionRealization realization) {
+		return realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+			|| realization.supportClauses().stream()
+				.allMatch(clause -> clause.nativeWorkerPoolWitness() != null);
+	}
+
+	private static List<PlacementProofKey> transientCommonProofs(List<Node> sources, Node read) {
+		List<PlacementProofKey> proofs = new ArrayList<>();
+		proofs.add(new PlacementProofKey(PlacementProofKind.SHAPE, read.key(),
+			"same-logical-value-shape"));
+		proofs.add(new PlacementProofKey(PlacementProofKind.CONTROL_FLOW, read.key(),
+			"reaching-definitions=" + sources.stream().map(source -> source.key().normalizedSignature()).sorted().toList()));
+		return proofs.stream().distinct().sorted().toList();
+	}
+
+	private static List<PlacementProofKey> edgeProofs(List<PlacementProofKey> common,
+		Node source, Node read) {
+		return appendProof(common, PlacementAnalysis.transientValueIdentityProof(source.key(),
+			source.valueVersion(), read.valueVersion()));
+	}
+
+	private static List<PlacementProofKey> appendProof(List<PlacementProofKey> proofs,
+		PlacementProofKey addition) {
+		return java.util.stream.Stream.concat(proofs.stream(), java.util.stream.Stream.of(addition))
+			.distinct().sorted().toList();
+	}
+
 	private static Integer exactLoopPassThroughSource(int readOrdinal,
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, Set<Integer> definitions,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
@@ -2369,14 +3155,7 @@ public final class NeutralPlacementGraphBuilder {
 				|| !sameTransientForwardContext(source, read)
 				|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state)))
 				return null;
-			List<PlacementState> local = source.legalAlternatives().stream().filter(state ->
-				state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
-					&& state.fType() == null && !state.shapeDependent()).toList();
-			List<PlacementState> federated = source.legalAlternatives().stream().filter(state ->
-				state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
-					&& state.fType() != null && state.fType() != FType.PART && state.fType() != FType.OTHER)
-				.toList();
-			if(local.size() != 1 || federated.size() != 1
+			if(source.legalAlternatives().isEmpty()
 				|| !sameLogicalValueShape(factsByHop.get(sourceOccurrence.hop()),
 					factsByHop.get(readOccurrence.hop())))
 				return null;
@@ -2411,15 +3190,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(dependsOnTransientVariable(sourceOccurrence.hop(), readOccurrence.hop().getName(),
 				Collections.newSetFromMap(new IdentityHashMap<>())))
 				continue;
-			List<PlacementState> local = source.legalAlternatives().stream()
-				.filter(state -> state.execType() == ExecType.CP
-					&& state.output() == FederatedOutput.LOUT && state.fType() == null
-					&& !state.shapeDependent()).toList();
-			List<PlacementState> federated = source.legalAlternatives().stream()
-				.filter(state -> state.execType() == ExecType.FED
-					&& state.output() == FederatedOutput.FOUT && state.fType() != null
-					&& state.fType() != FType.PART && state.fType() != FType.OTHER).toList();
-			if(local.size() != 1 || federated.size() != 1)
+			if(source.legalAlternatives().isEmpty())
 				return null;
 			seeds.add(definition);
 		}
@@ -2488,47 +3259,82 @@ public final class NeutralPlacementGraphBuilder {
 				+ "|namespace=" + readOccurrence.namespace() + "|topology=" + readOccurrence.topology());
 	}
 
-	private Node buildExactLogicalTransientRead(Hop readHop, Node read, Node source, DurableAnchorKey anchor,
-		FType federatedFType, PlacementState localState, PlacementState federatedState,
-		List<CandidateRuleKey> replayedKeys,
-		List<CandidateRuleFact> replayedFacts) {
-		List<CandidateInputState> localInput = List.of(CandidateInputState.absentLocal());
-		List<CandidateInputState> federatedInput = List.of(CandidateInputState.present(federatedFType));
-		CandidateRuleKey localKey = new CandidateRuleKey(read.key(), localInput);
-		CandidateRuleKey federatedKey = new CandidateRuleKey(read.key(), federatedInput);
-		replayedKeys.add(localKey);
-		replayedFacts.add(logicalTransientReplayFact(readHop, localKey, localState, source, read,
-			anchor, federatedFType));
-		replayedKeys.add(federatedKey);
-		replayedFacts.add(logicalTransientReplayFact(readHop, federatedKey, federatedState, source, read,
-			anchor, federatedFType));
-		return new Node(read.key(), read.kind(), read.valueVersion(), read.emittedWork(),
-			List.of(localState, federatedState), read.exclusions(),
-			anchor == null ? List.of() : List.of(anchor));
+	private Node buildExactLogicalTransientRead(Hop readHop, Node read, ExactTransientReplay replay,
+		List<CandidateRuleKey> replayedKeys, List<CandidateRuleFact> replayedFacts,
+		List<LogicalTransientInputFact> logicalInputs) {
+		List<PlacementState> states = new ArrayList<>();
+		List<DurableAnchorKey> anchors = new ArrayList<>();
+		Map<CompiledHopKey,List<TransientPlacementCompatibility>> compatibilityBySource =
+			new IdentityHashMap<>();
+		for(ReplayPlacementAlternative alternative : replay.alternatives()) {
+			// An exact writer proof cannot release a reader value that the shared
+			// privacy closure already denied. Do not publish its facts or edges either.
+			if(read.exclusions().stream().anyMatch(exclusion ->
+				exclusion.reasonCode() == ReasonCode.PRIVACY && exclusion.state().equals(alternative.state()))) {
+				continue;
+			}
+			CandidateRuleKey key = new CandidateRuleKey(read.key(), List.of(alternative.input()));
+			replayedKeys.add(key);
+			replayedFacts.add(logicalTransientReplayFact(readHop, key, alternative));
+			states.add(alternative.state());
+			alternative.readerRealizations().stream().map(CandidateEmissionRealization::anchor)
+				.filter(Objects::nonNull).forEach(anchors::add);
+			for(Node source : replay.sources())
+				for(ReplayCompatibilitySupport support : alternative.supportBySource()
+					.getOrDefault(source.key(), List.of())) {
+					CandidateRealizationReference readerReference = CandidateRealizationReference.of(
+						key, support.readerRealization());
+					PlacementState sourceState = support.sourceRealization().realization()
+						.emissionState().placementState();
+					CandidateInputState sourceInput = sourceState.output() == FederatedOutput.FOUT
+						? CandidateInputState.present(sourceState.fType())
+						: CandidateInputState.absentLocal();
+					compatibilityBySource.computeIfAbsent(source.key(), ignored -> new ArrayList<>())
+						.add(new TransientPlacementCompatibility(support.sourceRealization(), readerReference,
+							sourceInput, alternative.input(), support.proof()));
+				}
+		}
+		for(Node source : replay.sources()) {
+			List<TransientPlacementCompatibility> compatibility = compatibilityBySource
+				.getOrDefault(source.key(), List.of()).stream().distinct().sorted().toList();
+			if(!compatibility.isEmpty())
+				logicalInputs.add(new LogicalTransientInputFact(source.key(), read.key(), 0,
+					source.valueVersion(), read.valueVersion(), compatibility));
+		}
+		if(states.isEmpty() && read.emittedWork())
+			throw new DMLRuntimeException("No privacy-safe physical placement for transient replay "
+				+ read.key().normalizedSignature());
+		return new Node(read.key(), read.kind(), read.valueVersion(), !states.isEmpty(),
+			states.stream().distinct().sorted().toList(), read.exclusions().stream()
+				.filter(exclusion -> !states.contains(exclusion.state())).toList(),
+			anchors.stream().distinct().sorted().toList());
 	}
 
-	private CandidateRuleFact logicalTransientReplayFact(Hop readHop, CandidateRuleKey key, PlacementState state,
-		Node source, Node read, DurableAnchorKey anchor, FType federatedFType) {
-		String detail = "logical-transient-replay|source=" + source.key().normalizedSignature()
-			+ "|read=" + read.key().normalizedSignature() + "|authority="
-			+ (anchor == null ? "source-plan:" + federatedFType : anchor.normalizedSignature());
+	private CandidateRuleFact logicalTransientReplayFact(Hop readHop, CandidateRuleKey key,
+		ReplayPlacementAlternative alternative) {
+		PlacementState state = alternative.state();
+		String detail = "logical-transient-replay|read=" + key.parentOccurrence().normalizedSignature()
+			+ "|input=" + alternative.input().normalizedSignature() + "|realizations="
+			+ alternative.readerRealizations().stream().map(CandidateEmissionRealization::normalizedSignature).toList();
 		CandidateCapabilityFact capability = new CandidateCapabilityFact(
 			org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory.OTHER, readHop.getOpString(),
 			state.execType(), state.output(), state.fType(),
 			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK, detail,
 			List.of(new CandidateRuleNote(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.INFO,
-				"builder-local logical transient replay from exact source state")));
+				"builder-local logical transient replay from exact compatible realizations")));
 		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(
-			Map.of("logicalTransientReplay", "builder-local", "federatedFType", String.valueOf(federatedFType),
-				"sourceAuthority", anchor == null ? "plan-carried" : "durable-anchor",
-				"source", source.key().normalizedSignature(), "read", read.key().normalizedSignature()),
-			List.of("source-state", "read-anchor"), List.of());
+			Map.of("logicalTransientReplay", "builder-local",
+				"read", key.parentOccurrence().normalizedSignature(),
+				"realizationCount", String.valueOf(alternative.readerRealizations().size())),
+			List.of("source-realization", "reader-layout", "cfg-reaching-definitions"), List.of());
 		List<FType> outputs = state.output() == FederatedOutput.FOUT && state.fType() != null
 			? List.of(state.fType()) : List.of();
 		PlacementEmissionState emissionState = new PlacementEmissionState(state, false);
+		CandidateEmissionFact emission = new CandidateEmissionFact(emissionState,
+			state.execType() == ExecType.FED ? state.fType() : null, null,
+			alternative.readerRealizations());
 		return new CandidateRuleFact(key, CandidateEvaluationStatus.AVAILABLE, capability, shapeProof,
-			new CandidateProfileFact(outputs, ""), List.of(new CandidateEmissionFact(emissionState,
-				state.execType() == ExecType.FED ? state.fType() : null)), "");
+			new CandidateProfileFact(outputs, ""), List.of(emission), "");
 	}
 
 	private static boolean isCompiledTransientWrite(Hop hop, Node node) {
@@ -2659,6 +3465,10 @@ public final class NeutralPlacementGraphBuilder {
 							}).toList());
 				List<CandidateRuleKey> priorKeys = keysByOrdinal.get(consumerOrdinal);
 				List<CandidateRuleFact> priorFacts = factsByOrdinal.get(consumerOrdinal);
+				// Rebuild from the current input authority, not the prior publication
+				// projection. Intersecting with old emissions would permanently lose
+				// realizations whose input support is being regenerated. The enclosing
+				// closure reapplies the same privacy authority before publication.
 				boolean changed = !replacement.equals(current) || !replacementKeys.equals(priorKeys)
 					|| !replacementFacts.equals(priorFacts);
 				if(!changed)
@@ -2674,7 +3484,7 @@ public final class NeutralPlacementGraphBuilder {
 					// refined before.
 					boolean exactRefinement = isExactAffectedDescendantRefinement(
 						consumerOrdinal, current, replacement, priorKeys,
-							priorFacts, replacementKeys, replacementFacts, occurrences, ordinalsByBlock, nodes,
+							priorFacts, replacementKeys, replacementFacts, occurrences, ordinalsByBlock, exactInputDomains,
 							refinedOrdinals, factsByHop);
 					if(!exactRefinement)
 						throw new IllegalStateException("Post-CFG physical candidate closure is not monotone"
@@ -2711,7 +3521,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleKey> priorKeys, List<CandidateRuleFact> priorFacts,
 		List<CandidateRuleKey> replacementKeys, List<CandidateRuleFact> replacementFacts,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences,
-		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock, List<Node> currentNodes,
+		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock, List<List<FType>> exactInputDomains,
 		Set<Integer> refinedOrdinals, Map<Hop,NodeShapeFact> factsByHop) {
 		Map<CandidateRuleKey,CandidateRuleFact> priorByKey = factsByKey(priorKeys, priorFacts);
 		Map<CandidateRuleKey,CandidateRuleFact> replacementByKey = factsByKey(replacementKeys, replacementFacts);
@@ -2726,30 +3536,43 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
 		if(blockOrdinals == null)
 			return false;
-		boolean refinedPhysicalInput = occurrence.hop().getInput().stream()
-			.filter(input -> isPlacementDataShape(factsByHop, input))
-			.map(blockOrdinals::get).filter(Objects::nonNull).anyMatch(refinedOrdinals::contains);
+		Set<Integer> exactRefinedInputPositions = CandidateDomainRefinement.refinedInputPositions(
+			priorKeys.stream().map(CandidateRuleKey::orderedInputs).toList(), exactInputDomains);
 		List<CandidateEmissionFact> removedMaterializations = new ArrayList<>();
 		for(CandidateRuleKey key : priorKeys) {
 			CandidateRuleFact priorFact = priorByKey.get(key);
 			CandidateRuleFact replacementFact = replacementByKey.get(key);
 			if(replacementFact == null) {
-				if(!hasRefinedPredecessorInvalidation(key, occurrence, blockOrdinals, currentNodes,
-					refinedOrdinals, factsByHop))
+				// Privacy closure may retain an unavailable diagnostic row until an
+				// exact predecessor-domain refinement removes that input tuple. Such a
+				// row is not executable authority and its removal cannot shrink the
+				// candidate space.
+				if(priorFact.status() != CandidateEvaluationStatus.AVAILABLE)
+					continue;
+				if(!hasRefinedPredecessorInvalidation(key, occurrence, blockOrdinals, exactInputDomains,
+					exactRefinedInputPositions, refinedOrdinals, factsByHop)) {
 					return false;
+				}
 			}
 			else if(!replacementFact.equals(priorFact)) {
+				// A diagnostic-only row becoming executable (or changing diagnostics)
+				// cannot remove executable authority. Only a previously AVAILABLE row
+				// needs a monotonicity proof when its publication changes.
+				if(priorFact.status() != CandidateEvaluationStatus.AVAILABLE)
+					continue;
 				List<CandidateEmissionFact> removed = removedProvisionalMaterializations(priorFact, replacementFact);
-				if(!refinedPhysicalInput || removed == null)
+				if(removed == null) {
 					return false;
+				}
 				removedMaterializations.addAll(removed);
 			}
 		}
 		for(PlacementState state : removedLegal)
 			if(removedKeys.stream().map(priorByKey::get).noneMatch(fact -> exactFactPublishesState(fact, state))
 				&& removedMaterializations.stream().noneMatch(emission ->
-					emission.emissionState().placementState().equals(state)))
+					emission.emissionState().placementState().equals(state))) {
 				return false;
+			}
 		return true;
 	}
 
@@ -2772,11 +3595,30 @@ public final class NeutralPlacementGraphBuilder {
 			.filter(emission -> emission.derivedFoutAction() == null).toList();
 		List<CandidateEmissionFact> replacementNative = replacement.allowedEmissionFacts().stream()
 			.filter(emission -> emission.derivedFoutAction() == null).toList();
-		if(!priorNative.equals(replacementNative))
+		// Candidate-specific realizations are closure evidence derived from the
+		// exact input layouts. A refined predecessor may legitimately invalidate
+		// and later regenerate those proofs without changing the oracle-owned
+		// native emission domain. Compare that stable domain here rather than
+		// treating proof/binding refresh as a non-monotone policy change.
+		if(!containsCoarseEmissionDomain(replacementNative, priorNative))
 			return null;
 		return prior.allowedEmissionFacts().stream()
 			.filter(emission -> emission.derivedFoutAction() != null)
 			.filter(emission -> !replacement.allowedEmissionFacts().contains(emission)).toList();
+	}
+
+	private static boolean containsCoarseEmissionDomain(List<CandidateEmissionFact> domain,
+		List<CandidateEmissionFact> required) {
+		// A freshly rebuilt emission may later be removed by the same privacy
+		// authority. Its provisional addition is monotone; prior native
+		// emissions must still be retained.
+		return domain.stream().map(NeutralPlacementGraphBuilder::coarseEmissionIdentity).toList()
+			.containsAll(required.stream().map(NeutralPlacementGraphBuilder::coarseEmissionIdentity).toList());
+	}
+
+	private static String coarseEmissionIdentity(CandidateEmissionFact emission) {
+		return emission.emissionState().normalizedSignature() + '|' + emission.executionFType()
+			+ '|' + (emission.derivedFoutAction() == null ? "native" : "derived");
 	}
 
 	private static Map<CandidateRuleKey,CandidateRuleFact> factsByKey(List<CandidateRuleKey> keys,
@@ -2797,32 +3639,24 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static boolean hasRefinedPredecessorInvalidation(CandidateRuleKey key,
-		PlacementGraphFingerprint.HopOccurrence occurrence, Map<Hop,Integer> blockOrdinals, List<Node> currentNodes,
+		PlacementGraphFingerprint.HopOccurrence occurrence, Map<Hop,Integer> blockOrdinals,
+		List<List<FType>> exactInputDomains, Set<Integer> exactRefinedInputPositions,
 		Set<Integer> refinedOrdinals, Map<Hop,NodeShapeFact> factsByHop) {
-		List<CandidateInputState> inputs = key.orderedInputs();
-		for(int inputPosition = 0; inputPosition < inputs.size() && inputPosition < occurrence.hop().getInput().size();
-			inputPosition++) {
+		if(key.orderedInputs().size() != occurrence.hop().getInput().size())
+			return false;
+		Set<Integer> refinedInputPositions = new HashSet<>(exactRefinedInputPositions);
+		for(int inputPosition = 0; inputPosition < occurrence.hop().getInput().size(); inputPosition++) {
 			Hop input = occurrence.hop().getInput(inputPosition);
 			if(!isPlacementDataShape(factsByHop, input))
 				continue;
 			Integer predecessorOrdinal = blockOrdinals.get(input);
-			if(predecessorOrdinal == null || !refinedOrdinals.contains(predecessorOrdinal))
-				continue;
-			if(!candidateInputDomain(currentNodes.get(predecessorOrdinal)).contains(inputs.get(inputPosition)))
-				return true;
+			if(predecessorOrdinal != null && refinedOrdinals.contains(predecessorOrdinal))
+				refinedInputPositions.add(inputPosition);
 		}
-		return false;
-	}
-
-	private static Set<CandidateInputState> candidateInputDomain(Node predecessor) {
-		Set<CandidateInputState> domain = new LinkedHashSet<>();
-		for(PlacementState state : predecessor.legalAlternatives()) {
-			if(state.output() != FederatedOutput.FOUT || state.fType() == null)
-				domain.add(CandidateInputState.absentLocal());
-			else
-				domain.add(CandidateInputState.present(state.fType()));
-		}
-		return domain;
+		// This is the domain passed to buildNode in this exact rebuild, not a
+		// second projection of predecessor states. Only refined inputs can prove removal.
+		return CandidateDomainRefinement.removedByRefinedInputDomain(
+			key.orderedInputs(), exactInputDomains, refinedInputPositions);
 	}
 
 	private static boolean exactFactPublishesState(CandidateRuleFact fact, PlacementState state) {
@@ -4366,12 +5200,336 @@ public final class NeutralPlacementGraphBuilder {
 					provisional.durableAnchor(), anchorOwner.owner(),
 					anchorOwner.ownerFType(),
 					provisional.materializationFType(), exactScope);
-				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), exact));
+				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), exact,
+					emission.realizations()));
 			}
 			bound.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
 				fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(bound);
+	}
+
+	/** Gives every explicit output materialization an exact current-value layout. */
+	private static List<CandidateRuleFact> bindDerivedFoutRealizations(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) {
+		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts().size());
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				DerivedFoutMaterializationActionKey action = emission.derivedFoutAction();
+				if(action == null) {
+					emissions.add(emission);
+					continue;
+				}
+				DurableAnchorKey outputAnchor = nativeOutputAnchor(action.durableAnchor(),
+					emission.emissionState().placementState().fType(),
+					shapes.get(origins.get(fact.key().parentOccurrence())), fact.key().parentOccurrence());
+				if(outputAnchor == null) {
+					emissions.add(emission);
+					continue;
+				}
+				PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
+					fact.key().parentOccurrence(), "derived-fout:" + action.normalizedSignature());
+				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), action,
+					List.of(CandidateEmissionRealization.durable(emission.emissionState(), outputAnchor,
+						List.of(proof), List.of()))));
+			}
+			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(result);
+	}
+
+	private record ExactRealizationOption(CandidateRealizationReference reference,
+		CandidateRealizationSupportClause clause, ValueVersionKey valueVersion) { }
+
+	/** Reuses equal graph action objects so realization bindings retain exact action identity authority. */
+	private static List<NeutralPlacementGraph.RelocationAction> canonicalRelocationActions(
+		List<NeutralPlacementGraph.RelocationAction> derived,
+		List<NeutralPlacementGraph.RelocationAction> canonical) {
+		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>(derived.size());
+		for(NeutralPlacementGraph.RelocationAction action : derived)
+			result.add(canonical.stream().filter(action::equals).findFirst().orElse(action));
+		return List.copyOf(result);
+	}
+
+	/** Adds exact action-backed native clauses without expanding ancestor support choices. */
+	private static List<CandidateRuleFact> bindRelocationCandidateRealizations(List<CandidateRuleFact> facts,
+		List<Node> nodes, List<CompiledInputEdgeFact> compiledEdges,
+		List<NeutralPlacementGraph.RelocationAction> relocations, Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> shapes) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledEdges)
+			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
+				.put(edge.inputPosition(), edge.producer());
+		Map<ValueVersionKey,List<ExactRealizationOption>> optionsByValue = new LinkedHashMap<>();
+		for(CandidateRuleFact fact : facts) {
+			Node node = nodesByKey.get(fact.key().parentOccurrence());
+			if(node == null || fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations())
+					if(executableSourceRealization(fact.key(), realization))
+						for(CandidateRealizationSupportClause clause : realization.supportClauses())
+							optionsByValue.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>())
+								.add(new ExactRealizationOption(CandidateRealizationReference.of(fact.key(), realization),
+									clause, node.valueVersion()));
+		}
+		Map<CompiledHopKey,List<NeutralPlacementGraph.RelocationAction>> actionsByConsumer = new IdentityHashMap<>();
+		for(NeutralPlacementGraph.RelocationAction action : relocations)
+			for(ObligationKey obligation : action.obligations())
+				if(!actionsByConsumer.computeIfAbsent(obligation.consumer(), ignored -> new ArrayList<>()).contains(action))
+					actionsByConsumer.get(obligation.consumer()).add(action);
+		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				List<CandidateEmissionRealization> exact = new ArrayList<>();
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					List<CandidateRealizationSupportClause> nonActionClauses = realization.supportClauses().stream()
+						.filter(clause -> clause.inputBindings().stream().noneMatch(binding ->
+							binding.kind() == CandidateInputBindingKind.RELOCATION))
+						.toList();
+					if(!nonActionClauses.isEmpty() && (realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+						|| nonActionClauses.stream().anyMatch(clause -> clause.nativeWorkerPoolWitness() != null
+							|| !clause.inputBindings().isEmpty())
+						|| fact.key().orderedInputs().stream().noneMatch(CandidateInputState::present)))
+						exact.add(new CandidateEmissionRealization(realization.key(), nonActionClauses));
+				}
+				List<NeutralPlacementGraph.RelocationAction> consumerActions = actionsByConsumer
+					.getOrDefault(fact.key().parentOccurrence(), List.of()).stream()
+					.filter(action -> action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == fact.key().parentOccurrence()
+							&& obligation.requiredPlacement().equals(emission.emissionState().placementState())))
+					.sorted().toList();
+				List<DurableAnchorKey> targetPools = consumerActions.stream().map(action -> action.key().durableAnchor())
+					.distinct().sorted().toList();
+				for(DurableAnchorKey targetPool : targetPools) {
+					List<List<CandidateRealizationInputBinding>> choices = new ArrayList<>();
+					boolean complete = true;
+					for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
+						CandidateInputState input = fact.key().orderedInputs().get(position);
+						if(!input.present())
+							continue;
+						CompiledHopKey producer = inputs.getOrDefault(fact.key().parentOccurrence(), Map.of()).get(position);
+						Hop producerHop = producer == null ? null : origins.get(producer);
+						if(producerHop == null || !isMatrixShape(shapes, producerHop))
+							continue;
+						Node producerNode = nodesByKey.get(producer);
+						if(producerNode == null) {
+							complete = false;
+							break;
+						}
+						List<ExactRealizationOption> sourceOptions = optionsByValue
+							.getOrDefault(producerNode.valueVersion(), List.of()).stream()
+								.filter(option -> option.reference().rule().parentOccurrence() == producer)
+								.toList();
+						int inputPosition = position;
+						List<CandidateRealizationInputBinding> bindings = new ArrayList<>();
+						bindings.addAll(sourceOptions.stream().filter(option -> {
+								DurableAnchorKey pool = candidatePool(option);
+								return option.reference().realization().emissionState().placementState().fType()
+									== input.fType() && pool != null
+									&& PlacementIdentity.samePhysicalWorkerPool(pool, targetPool);
+							}).map(option -> CandidateRealizationInputBinding.direct(inputPosition, option.reference()))
+							.distinct().toList());
+						for(NeutralPlacementGraph.RelocationAction action : consumerActions) {
+							// The action output, not the consumer output, must satisfy this exact oracle input row.
+							if(action.key().materializationFType() != input.fType()
+								|| !PlacementIdentity.samePhysicalWorkerPool(action.key().durableAnchor(), targetPool)
+								|| !action.key().sourceValueVersion().equals(producerNode.valueVersion())
+								|| action.obligations().stream().noneMatch(obligation ->
+									obligation.consumer() == fact.key().parentOccurrence()
+										&& obligation.inputPosition() == inputPosition
+										&& obligation.requiredPlacement().equals(
+											emission.emissionState().placementState())))
+								continue;
+							bindings.addAll(sourceOptions.stream().filter(option -> {
+								DurableAnchorKey pool = candidatePool(option);
+								return pool == null || !PlacementIdentity.samePhysicalLayout(
+									pool, action.key().durableAnchor());
+							}).map(option -> CandidateRealizationInputBinding.relocation(
+								inputPosition, option.reference(), action.key())).toList());
+						}
+						bindings = bindings.stream().distinct().sorted().toList();
+						if(bindings.isEmpty()) {
+							complete = false;
+							break;
+						}
+						choices.add(bindings);
+					}
+					if(!complete)
+						continue;
+					List<List<CandidateRealizationInputBinding>> assignments = new ArrayList<>();
+					enumerateBindingAssignments(choices, 0, new ArrayList<>(), assignments);
+					DurableAnchorKey outputAnchor = nativeOutputAnchor(targetPool,
+						emission.emissionState().placementState().fType(),
+						shapes.get(origins.get(fact.key().parentOccurrence())), fact.key().parentOccurrence());
+					for(List<CandidateRealizationInputBinding> assignment : assignments) {
+						List<PlacementProofKey> proofs = assignment.stream()
+							.filter(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION)
+							.map(CandidateRealizationInputBinding::relocationAction).distinct().sorted()
+							.map(action -> new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+								fact.key().parentOccurrence(), "relocation:" + action.normalizedSignature()))
+							.toList();
+						// A native FED/LOUT aggregate still depends on the exact selected
+						// input realization. Retain direct-only alternatives as well as uploads.
+						if(!proofs.isEmpty() || emission.emissionState().placementState().execType() == ExecType.FED
+							&& emission.emissionState().placementState().output() == FederatedOutput.LOUT
+							&& !assignment.isEmpty()) {
+							if(emission.emissionState().placementState().output() == FederatedOutput.LOUT)
+								exact.add(CandidateEmissionRealization.local(emission.emissionState(), proofs, assignment));
+							else if(outputAnchor != null)
+								exact.add(CandidateEmissionRealization.durable(emission.emissionState(), outputAnchor,
+									proofs, assignment));
+						}
+					}
+				}
+				if(!exact.isEmpty())
+					emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
+						emission.derivedFoutAction(), exact));
+				else
+					emissions.add(emission);
+			}
+			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(result);
+	}
+
+	private static DurableAnchorKey candidatePool(ExactRealizationOption option) {
+		return option.reference().realization().durableAnchor() != null
+			? option.reference().realization().durableAnchor()
+			: option.clause().nativeWorkerPoolWitness();
+	}
+
+	private static void enumerateBindingAssignments(List<List<CandidateRealizationInputBinding>> choices,
+		int ordinal, List<CandidateRealizationInputBinding> current,
+		List<List<CandidateRealizationInputBinding>> result) {
+		if(ordinal == choices.size()) {
+			result.add(List.copyOf(current));
+			return;
+		}
+		for(CandidateRealizationInputBinding binding : choices.get(ordinal)) {
+			current.add(binding);
+			enumerateBindingAssignments(choices, ordinal + 1, current, result);
+			current.remove(current.size() - 1);
+		}
+	}
+
+	private static List<CandidateRuleFact> removeUngroundedStagingRealizations(List<CandidateRuleFact> facts) {
+		Set<CandidateRealizationReference> currentReferences = new HashSet<>();
+		for(CandidateRuleFact fact : facts)
+			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations())
+						if(executableSourceRealization(fact.key(), realization))
+							currentReferences.add(CandidateRealizationReference.of(fact.key(), realization));
+		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
+				result.add(fact);
+				continue;
+			}
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				List<CandidateEmissionRealization> realizations = new ArrayList<>();
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					if(!executableSourceRealization(fact.key(), realization))
+						continue;
+					// CFG/direct rebuilding can replace exact source identities while an
+					// old OR clause remains merged into the same output layout. That clause
+					// has no authority in the current domain; keep every supported alternative
+					// and let the surrounding fixed point regenerate bindings, never remap
+					// an expired reference merely because another map has equal geometry.
+					List<CandidateRealizationSupportClause> clauses = realization.supportClauses().stream()
+						.filter(clause -> clause.inputBindings().stream()
+							.allMatch(binding -> currentReferences.contains(binding.source())))
+						.toList();
+					if(!clauses.isEmpty())
+						realizations.add(new CandidateEmissionRealization(realization.key(), clauses));
+				}
+				if(!realizations.isEmpty())
+					emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
+						emission.derivedFoutAction(), realizations));
+			}
+			if(emissions.isEmpty())
+				result.add(new CandidateRuleFact(fact.key(), CandidateEvaluationStatus.PROFILE_ERROR,
+					fact.capability(), fact.shapeProof(),
+					new CandidateProfileFact(List.of(), "NO_EXECUTABLE_REALIZATION"),
+					List.of(), "NO_EXECUTABLE_REALIZATION"));
+			else
+				result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+					fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(result);
+	}
+
+	private record ExecutableNodeProjection(List<Node> nodes, List<Integer> changedOrdinals) { }
+
+	/** Removes selectable FOUT states that have no final executable candidate realization authority. */
+	private static ExecutableNodeProjection projectCandidateNodesToExecutableStates(List<Node> nodes,
+		List<CandidateRuleFact> facts, int compiledOccurrenceCount) {
+		Map<CompiledHopKey,Set<PlacementState>> executableByParent = new IdentityHashMap<>();
+		Map<CompiledHopKey,Boolean> hasInputlessCandidate = new IdentityHashMap<>();
+		Set<CompiledHopKey> candidateParents = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CandidateRuleFact fact : facts) {
+			candidateParents.add(fact.key().parentOccurrence());
+			hasInputlessCandidate.merge(fact.key().parentOccurrence(),
+				fact.key().orderedInputs().stream().noneMatch(CandidateInputState::present), Boolean::logicalOr);
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				if(!emission.realizations().isEmpty())
+					executableByParent.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new LinkedHashSet<>())
+						.add(emission.emissionState().placementState());
+		}
+		List<Node> projected = new ArrayList<>(nodes.size());
+		List<Integer> changed = new ArrayList<>();
+		for(int ordinal = 0; ordinal < nodes.size(); ordinal++) {
+			Node node = nodes.get(ordinal);
+			if(!candidateParents.contains(node.key())) {
+				projected.add(node);
+				continue;
+			}
+			Set<PlacementState> executable = executableByParent.getOrDefault(node.key(), Set.of());
+			List<PlacementState> legal = node.legalAlternatives().stream()
+				.filter(state -> executable.contains(state)
+					|| state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+					|| state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT
+						&& hasInputlessCandidate.getOrDefault(node.key(), false))
+				.toList();
+			Map<PlacementState,Exclusion> exclusions = new LinkedHashMap<>();
+			for(Exclusion exclusion : node.exclusions())
+				if(!legal.contains(exclusion.state()))
+					exclusions.put(exclusion.state(), exclusion);
+			for(PlacementState removed : node.legalAlternatives())
+				if(!legal.contains(removed))
+					exclusions.putIfAbsent(removed, new Exclusion(removed, ReasonCode.MISSING_ANCHOR,
+						"no-executable-candidate-realization"));
+			List<Exclusion> exactExclusions = new ArrayList<>(exclusions.values());
+			Node replacement = legal.equals(node.legalAlternatives()) && exactExclusions.equals(node.exclusions())
+				? node : new Node(node.key(), node.kind(), node.valueVersion(), !legal.isEmpty(), legal,
+					exactExclusions, node.anchors());
+			projected.add(replacement);
+			if(replacement != node && ordinal < compiledOccurrenceCount)
+				changed.add(ordinal);
+		}
+		return new ExecutableNodeProjection(List.copyOf(projected), List.copyOf(changed));
+	}
+
+	private static List<Integer> changedCompiledNodeOrdinals(List<Node> before, List<Node> after,
+		int compiledOccurrenceCount) {
+		if(before.size() != after.size())
+			throw new IllegalStateException("Placement closure changed node cardinality");
+		List<Integer> changed = new ArrayList<>();
+		for(int ordinal = 0; ordinal < Math.min(compiledOccurrenceCount, before.size()); ordinal++)
+			if(!before.get(ordinal).equals(after.get(ordinal)))
+				changed.add(ordinal);
+		return List.copyOf(changed);
 	}
 
 	/** Rebind value-equal replay states to the final graph-owned state identities. */
@@ -4407,9 +5565,13 @@ public final class NeutralPlacementGraphBuilder {
 								+ node.legalAlternatives().stream()
 									.map(PlacementState::normalizedSignature).toList()));
 				DerivedFoutMaterializationActionKey priorAction = emission.derivedFoutAction();
+				PlacementEmissionState reboundEmission = new PlacementEmissionState(target,
+					emission.emissionState().derivedFedFout());
+				List<CandidateEmissionRealization> reboundRealizations = emission.realizations().stream()
+					.map(realization -> rebindRealization(realization, reboundEmission)).toList();
 				if(priorAction == null) {
-					emissions.add(candidateEmissionFact(target,
-						emission.emissionState().derivedFedFout(), emission.executionFType()));
+					emissions.add(new CandidateEmissionFact(reboundEmission,
+						emission.executionFType(), null, reboundRealizations));
 					continue;
 				}
 				PlacementState source = node.legalAlternatives().stream()
@@ -4420,13 +5582,73 @@ public final class NeutralPlacementGraphBuilder {
 					source, target, priorAction.durableAnchor(), priorAction.durableAnchorOwner(),
 					priorAction.durableAnchorOwnerFType(), priorAction.materializationFType(),
 					priorAction.statementBlockScope());
-				emissions.add(candidateEmissionFact(target,
-					emission.emissionState().derivedFedFout(), emission.executionFType(), action));
+				emissions.add(new CandidateEmissionFact(reboundEmission,
+					emission.executionFType(), action, reboundRealizations));
 			}
 			bound.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
 				fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(bound);
+	}
+
+	private static CandidateEmissionRealization rebindRealization(CandidateEmissionRealization realization,
+		PlacementEmissionState emission) {
+		var key = switch(realization.key().layoutKind()) {
+			case LOCAL -> PlacementIdentity.PlacementRealizationKey.local(emission);
+			case DURABLE_MAP -> PlacementIdentity.PlacementRealizationKey.durable(emission, realization.anchor());
+			case NATIVE_LINEAGE -> PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				emission, realization.key().nativeLineage());
+		};
+		return new CandidateEmissionRealization(key, realization.supportClauses());
+	}
+
+	private static List<CandidateRuleFact> bindExactCandidateEmissionRealizations(
+		List<CandidateRuleFact> facts, List<Node> nodes, Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> shapes) {
+		List<CandidateRuleFact> rebound = bindExactCandidateEmissionStates(facts, nodes);
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		List<CandidateRuleFact> result = new ArrayList<>(rebound.size());
+		for(CandidateRuleFact fact : rebound) {
+			Node node = nodesByKey.get(fact.key().parentOccurrence());
+			Hop origin = origins.get(fact.key().parentOccurrence());
+			NodeShapeFact shape = origin == null ? null : shapes.get(origin);
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE || node == null || shape == null) {
+				result.add(fact);
+				continue;
+			}
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				List<CandidateEmissionRealization> realizations = new ArrayList<>(emission.realizations());
+				PlacementState state = emission.emissionState().placementState();
+				boolean literalFederatedSource = origin instanceof DataOp data
+					&& data.getOp() == OpOpData.FEDERATED;
+				if(literalFederatedSource && state.output() == FederatedOutput.FOUT && state.fType() != null) {
+					boolean boundLiteralAnchor = false;
+					for(DurableAnchorKey anchor : node.anchors()) {
+						if(anchor.fType() != state.fType() || !outputGeometryCompatible(shape, anchor))
+							continue;
+						boundLiteralAnchor = true;
+						PlacementProofKey anchorProof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
+							node.key(), anchor.normalizedSignature());
+						for(CandidateEmissionRealization prior : emission.realizations())
+							for(CandidateRealizationSupportClause clause : prior.supportClauses())
+								realizations.add(CandidateEmissionRealization.durable(emission.emissionState(), anchor,
+									appendProof(clause.proofDependencies(), anchorProof), clause.inputBindings()));
+					}
+					if(boundLiteralAnchor)
+					realizations.removeIf(realization -> realization.key().layoutKind()
+							== PlacementLayoutKind.NATIVE_LINEAGE && realization.supportClauses().stream()
+								.allMatch(clause -> clause.inputBindings().isEmpty()));
+				}
+				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
+					emission.derivedFoutAction(), realizations.stream().distinct().sorted().toList()));
+			}
+			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(result);
 	}
 
 	/**
@@ -5611,6 +6833,7 @@ public final class NeutralPlacementGraphBuilder {
 		private final Map<CompiledHopKey,Node> nodesByKey;
 		private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer;
 		private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByProducer = new IdentityHashMap<>();
+		private final Map<String,CandidateEmissionRealization> realizationsByReference = new java.util.TreeMap<>();
 		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead =
 			new IdentityHashMap<>();
 		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead = new IdentityHashMap<>();
@@ -5650,13 +6873,24 @@ public final class NeutralPlacementGraphBuilder {
 				cfgDefinitionSourcesByReference.computeIfAbsent(
 					node.valueVersion().cfgReferenceSignature(), ignored -> new ArrayList<>()).add(node.key());
 			cfgDefinitionSourcesByReference.values().forEach(keys -> keys.sort(null));
-			for(CandidateRuleFact fact : candidateRuleFacts)
+			for(CandidateRuleFact fact : candidateRuleFacts) {
 				candidateFactsByProducer.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
 					.add(fact);
+				if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+					for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+						for(CandidateEmissionRealization realization : emission.realizations()) {
+							CandidateRealizationReference reference = CandidateRealizationReference.of(
+								fact.key(), realization);
+							realizationsByReference.put(reference.normalizedSignature(), realization);
+						}
+			}
 			for(LogicalTransientInputFact fact : logicalTransientInputs)
-				logicalTransientInputsByRead.computeIfAbsent(fact.targetRead(),
-					ignored -> new java.util.EnumMap<>(FType.class))
-					.computeIfAbsent(fact.federatedFType(), ignored -> new ArrayList<>()).add(fact);
+				for(FType type : fact.compatibility().stream()
+					.map(TransientPlacementCompatibility::readerInput).filter(CandidateInputState::present)
+					.map(CandidateInputState::fType).distinct().toList())
+					logicalTransientInputsByRead.computeIfAbsent(fact.targetRead(),
+						ignored -> new java.util.EnumMap<>(FType.class))
+						.computeIfAbsent(type, ignored -> new ArrayList<>()).add(fact);
 			logicalTransientInputsByRead.values().forEach(byType ->
 				byType.values().forEach(facts -> facts.sort(null)));
 			Map<CompiledHopKey,List<CompiledHopKey>> argumentsByBoundary = new IdentityHashMap<>();
@@ -5907,11 +7141,41 @@ public final class NeutralPlacementGraphBuilder {
 		private Set<DurableAnchorKey> resolveLogicalTransientInput(CompiledHopKey producer,
 			FType fType) {
 			Set<DurableAnchorKey> result = new java.util.TreeSet<>();
+			Set<String> visitedReferences = new java.util.HashSet<>();
 			for(LogicalTransientInputFact fact : logicalTransientInputsByRead.getOrDefault(producer, Map.of())
-				.getOrDefault(fType, List.of())) {
-				if(fact.anchor() != null)
-					result.add(fact.anchor());
-				result.addAll(resolve(fact.sourceWrite(), fType));
+				.getOrDefault(fType, List.of()))
+				for(TransientPlacementCompatibility edge : fact.compatibility()) {
+					if(!edge.readerInput().present() || edge.readerInput().fType() != fType)
+						continue;
+					if(edge.proof().readerAnchor() != null)
+						result.add(edge.proof().readerAnchor());
+					DurableAnchorKey readerAnchor = edge.readerRealization().realization().durableAnchor();
+					if(readerAnchor != null)
+						result.add(readerAnchor);
+					result.addAll(resolveCandidateRealization(edge.sourceRealization(), fType,
+						visitedReferences));
+				}
+			return result;
+		}
+
+		private Set<DurableAnchorKey> resolveCandidateRealization(CandidateRealizationReference reference,
+			FType fType, Set<String> visitedReferences) {
+			// This query collects a union over reachable references, not path-specific
+			// proofs. Keep visited nodes for the whole query so shared DAGs and cycles
+			// are traversed once; do not cache a partial result across separate roots.
+			String signature = reference.normalizedSignature();
+			if(!visitedReferences.add(signature))
+				return Set.of();
+			Set<DurableAnchorKey> result = new java.util.TreeSet<>();
+			CandidateEmissionRealization realization = realizationsByReference.get(signature);
+			if(realization == null)
+				return Set.of();
+			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+				DurableAnchorKey provenPool = realization.provenWorkerPool(clause);
+				if(provenPool != null && provenPool.fType() == fType)
+					result.add(provenPool);
+				for(var binding : clause.inputBindings())
+					result.addAll(resolveCandidateRealization(binding.source(), fType, visitedReferences));
 			}
 			return result;
 		}

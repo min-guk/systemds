@@ -5,7 +5,6 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -14,7 +13,6 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.InputAuthorityKind;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -124,12 +122,8 @@ final class ExactPhysicalSelection {
 
 		List<CandidateSelectionReceipt> candidates = exactCandidateReceipts(
 			analysis, physical, selected);
-		// An uncaptured decision can become an exact candidate only after the complete
-		// assignment is known.  In that case exactCandidateReceipts supplies the unique
-		// graph-owned emission object, while the preliminary alternative above carries a
-		// value-equivalent synthetic emission.  Promote the exact object into the physical
-		// certificate so the projector consumes one authority rather than observing two
-		// independently constructed representations of the same placement.
+		// Keep the exact graph-owned emission identity chosen by the physical solver.
+		// This canonicalization does not choose a missing realization after optimization.
 		for(CandidateSelectionReceipt candidate : candidates) {
 			CompiledHopKey decision = candidate.rule().parentOccurrence();
 			PlacementEmissionState exactEmission = candidate.emission().emissionState();
@@ -164,26 +158,16 @@ final class ExactPhysicalSelection {
 					"EXACT_PHYSICAL_CANDIDATE_EMISSION_PLACEMENT_MISMATCH|key="
 						+ candidate.decision().normalizedSignature());
 			CandidateSelectionReceipt receipt = analysis.canonicalCandidateReceipt(
-				candidate.rule().key(), candidate.emission());
+				candidate.rule().key(), candidate.emission(), candidate.realization(), candidate.supportClause());
 			if(exact.put(candidate.decision(), receipt) != null)
 				throw new IllegalArgumentException("EXACT_PHYSICAL_CANDIDATE_DUPLICATE|key="
 					+ candidate.decision().normalizedSignature());
 		}
 
-		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible =
-			CandidateSelections.feasibleVariants(analysis, analysis.graph().relocationActions(), selected);
-		for(Map.Entry<CompiledHopKey,List<CandidateSelectionReceipt>> entry : feasible.entrySet()) {
-			if(exact.containsKey(entry.getKey()))
-				continue;
-			if(entry.getValue().size() != 1)
-				throw new IllegalArgumentException("EXACT_PHYSICAL_UNCAPTURED_CANDIDATE_"
-					+ (entry.getValue().isEmpty() ? "MISSING" : "AMBIGUOUS") + "|key="
-					+ entry.getKey().normalizedSignature());
-			exact.put(entry.getKey(), entry.getValue().get(0));
-		}
+		// No new placement/map decision is permitted after the objective was solved.
+		// Every active candidate owner must have supplied its exact selected receipt.
 		return CandidateSelections.resolveAndValidate(analysis,
-			analysis.graph().relocationActions(), selected,
-			analysis.canonicalCandidateReceipts(exact.values()));
+			analysis.graph().relocationActions(), selected, exact.values());
 	}
 
 	private static List<RelocationChoiceReceipt> exactRelocationChoices(
@@ -214,7 +198,7 @@ final class ExactPhysicalSelection {
 				if(required != null)
 					return required.equals(actionKey);
 				RelocationAction action = actions.get(actionKey);
-				return action != null && !analysis.graph().isRelocationActive(action, selected);
+				return action != null && !analysis.graph().isRelocationActive(action, selected, candidates);
 			});
 		Map<RelocationDemandKey,RelocationChoiceReceipt> byDemand = new LinkedHashMap<>();
 		for(RelocationChoiceReceipt choice : choices)

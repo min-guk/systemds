@@ -145,17 +145,17 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 			action.materializationFType(),
 			action.statementBlockScope());
 		CandidateEmissionFact foreignEmission = new CandidateEmissionFact(
-			owned.emission().emissionState(), owned.emission().executionFType(), foreignAction);
+			owned.emission().emissionState(), owned.emission().executionFType(), foreignAction,
+			owned.emission().realizations());
 		CandidateSelectionReceipt foreignCandidate = new CandidateSelectionReceipt(
 			owned.rule(), foreignEmission, List.of());
 		ExactActionResult draft = new ExactActionResult(exact.analysis(), exact.plan().selectedStates(),
 			exact.plan().selectedEmissionStates(), List.of(foreignCandidate), "unused");
-		NormalizedPlannerResult foreign = new ExactActionResult(exact.analysis(), exact.plan().selectedStates(),
-			exact.plan().selectedEmissionStates(), List.of(foreignCandidate),
-			PlacementEmissionTransaction.canonicalPlanHash(draft));
 		StateExact before = snapshotExact(exact);
-		Assert.assertThrows(IllegalStateException.class,
-			() -> PlacementEmissionTransaction.emit(exact.program(), foreign, FailureInjector.none()));
+		// Canonical receipt validation rejects the foreign action before a plan
+		// certificate can be minted; it must not be bypassed to reach emit().
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> PlacementEmissionTransaction.canonicalPlanHash(draft));
 		Assert.assertEquals("foreign derived action must fail before Hop or registry mutation",
 			before, snapshotExact(exact));
 	}
@@ -418,8 +418,12 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 			region.normalizedSignature());
 		CandidateEmissionFact nativeEmission = new CandidateEmissionFact(
 			new PlacementEmissionState(FED_LOUT, false), FType.ROW);
-		CandidateEmissionFact emission = new CandidateEmissionFact(
-			new PlacementEmissionState(FED_FOUT, true), FType.ROW, action);
+		PlacementEmissionState derivedState = new PlacementEmissionState(FED_FOUT, true);
+		// Publish the exact action-owned target layout, not an ungrounded staging row.
+		CandidateEmissionFact emission = new CandidateEmissionFact(derivedState, FType.ROW, action,
+			List.of(PlacementAnalysis.CandidateEmissionRealization.durable(derivedState, anchor,
+				List.of(new PlacementIdentity.PlacementProofKey(PlacementIdentity.PlacementProofKind.DURABLE_ANCHOR,
+					key, action.normalizedSignature())), List.of())));
 		CandidateRuleFact fact = new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
 			new CandidateCapabilityFact(
 				org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory.OTHER, "derived-fixture",

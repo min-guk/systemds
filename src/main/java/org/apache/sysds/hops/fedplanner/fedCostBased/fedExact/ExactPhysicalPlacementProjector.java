@@ -49,6 +49,8 @@ final class ExactPhysicalPlacementProjector {
 			states, selection.candidateReceipts());
 		RelocationSelections.resolveAndValidate(analysis, analysis.graph().relocationActions(),
 			states, selection.candidateReceipts(), selection.relocationChoices());
+		CandidateSelections.validateRealizationSelections(analysis, states,
+			selection.candidateReceipts(), selection.relocationChoices());
 		List<RelocationActionKey> emitted = RelocationSelections.emittedActions(analysis,
 			analysis.graph().relocationActions(), states, selection.candidateReceipts(),
 			selection.relocationChoices());

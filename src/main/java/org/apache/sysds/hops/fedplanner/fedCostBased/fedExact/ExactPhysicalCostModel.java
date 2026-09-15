@@ -600,11 +600,11 @@ public final class ExactPhysicalCostModel {
 				if(consumer == null)
 					continue;
 				if(!analysis.isCoordinatorMetadataOnlyInput(edge))
-					for(FType type : producer.alternatives().stream().map(a -> a.state().fType())
-						.filter(Objects::nonNull).distinct().toList())
-						grouped.computeIfAbsent(new Key(Direction.DOWNLOAD, type,
-							BoundaryMode.ANCHOR_TRANSFER, "-"), ignored -> new ArrayList<>())
-							.add(new Demand(edge, consumer));
+					for(Key download : producer.alternatives().stream()
+						.filter(alternative -> alternative.state().output() == FederatedOutput.FOUT)
+						.map(alternative -> new Key(Direction.DOWNLOAD, alternative.state().fType(),
+							BoundaryMode.ANCHOR_TRANSFER, outputLayoutIdentity(alternative))).distinct().toList())
+						grouped.computeIfAbsent(download, ignored -> new ArrayList<>()).add(new Demand(edge, consumer));
 				for(RelocationAction action : consumer.alternatives().stream()
 					.flatMap(a -> a.inputAuthorities().stream())
 					.filter(a -> a.inputPosition() == edge.inputPosition()
@@ -633,17 +633,20 @@ public final class ExactPhysicalCostModel {
 				boolean[] activeSource = new boolean[producer.alternatives().size()];
 				double[] unitPrices = new double[activeSource.length];
 				for(int value = 0; value < activeSource.length; value++) {
-					PlacementState state = producer.alternatives().get(value).state();
+					var alternative = producer.alternatives().get(value);
+					PlacementState state = alternative.state();
+					int sourceWorkers = realizationWorkerCount(analysis, alternative, workers);
 					activeSource[value] = key.direction() == Direction.UPLOAD
-						|| state.output() == FederatedOutput.FOUT && state.fType() == key.type();
+						|| state.output() == FederatedOutput.FOUT && state.fType() == key.type()
+							&& outputLayoutIdentity(alternative).equals(key.physicalEmissionIdentity());
 					double unit = key.direction() == Direction.DOWNLOAD
-						? FederatedCostModel.computeReusableMaterializationDownloadCost(bytes, key.type(), workers)
+						? FederatedCostModel.computeReusableMaterializationDownloadCost(bytes, key.type(), sourceWorkers)
 						: FederatedCostModel.computeUploadNetworkCost(bytes, key.type(), workers)
 							+ FederatedCostModel.computeLocalToFedForwardingPenalty(key.type(), workers);
 					if(key.direction() == Direction.UPLOAD && state.output() == FederatedOutput.FOUT)
 						unit += forwarded ? FederatedCostModel.computeDownloadNetworkCost(bytes)
 							: FederatedCostModel.computeReusableMaterializationDownloadCost(bytes,
-								Objects.requireNonNull(state.fType(), "FOUT source layout"), workers);
+								Objects.requireNonNull(state.fType(), "FOUT source layout"), sourceWorkers);
 					unitPrices[value] = requireCost(unit, "EXACT_PHYSICAL_MATERIALIZATION_UNIT_UNPROVEN");
 				}
 				String groupKey = "exact-materialization|" + producer.node().key().normalizedSignature()
@@ -1119,8 +1122,16 @@ public final class ExactPhysicalCostModel {
 			for(CompiledHopKey source : direct.stream().distinct().sorted().toList()) {
 				List<RuntimeMaterializationSource> authorities = runtimeMaterializationSources(
 					analysis, source, transientByRead, functionByRead, visiting);
-				if(authorities.isEmpty())
+				if(authorities.isEmpty()) {
+					CompiledHopKey passThrough = runtimeMaterializationPassThroughRead(analysis, source);
+					// A compiler-inserted W=W loop carrier may point back to the very
+					// phi/read currently being resolved. It introduces no new payload;
+					// ignore only this exact cyclic carrier and retain independently
+					// resolved entry authorities. A pure cycle still resolves to empty.
+					if(passThrough != null && visiting.contains(passThrough))
+						continue;
 					return List.of();
+				}
 				for(RuntimeMaterializationSource authority : authorities)
 					resolved.putIfAbsent(authority.occurrence().normalizedSignature() + '|'
 						+ authority.valueVersion().normalizedSignature(), authority);
@@ -1256,6 +1267,55 @@ public final class ExactPhysicalCostModel {
 		}
 	}
 
+	private static String outputLayoutIdentity(ExactPhysicalModel.Alternative alternative) {
+		// A relocation-backed alternative carries its execution realization as well
+		// as a different emitted map. Boundary costs follow the emitted map.
+		if(alternative.durableAnchor() != null)
+			return alternative.durableAnchor().normalizedSignature();
+		return alternative.realization() == null ? "-" : alternative.realization().key().normalizedSignature();
+	}
+
+	static int realizationWorkerCount(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative alternative, int fallbackWorkers) {
+		if(alternative.durableAnchor() != null)
+			return physicalWorkerCount(alternative.durableAnchor());
+		if(alternative.realization() != null) {
+			int exact = realizationWorkerCount(analysis, alternative.realization(), alternative.supportClause(), new LinkedHashSet<>());
+			if(exact > 0)
+				return exact;
+		}
+		return Math.max(1, fallbackWorkers);
+	}
+
+	private static int realizationWorkerCount(PlacementAnalysis analysis,
+		PlacementAnalysis.CandidateEmissionRealization realization,
+		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting) {
+		if(realization.anchor() != null)
+			return physicalWorkerCount(realization.anchor());
+		if(selectedClause.nativeWorkerPoolWitness() != null)
+			return physicalWorkerCount(selectedClause.nativeWorkerPoolWitness());
+		Set<Integer> counts = new LinkedHashSet<>();
+		for(var binding : selectedClause.inputBindings()) {
+			if(binding.relocationAction() != null) {
+				counts.add(physicalWorkerCount(binding.relocationAction().durableAnchor()));
+				continue;
+			}
+			if(binding.source().realization().emissionState().placementState().output() != FederatedOutput.FOUT
+				|| !visiting.add(binding.source()))
+				continue;
+			var source = analysis.requireExactCandidateRealization(binding.source());
+			Set<Integer> sourceCounts = new LinkedHashSet<>();
+			for(var clause : source.supportClauses())
+				sourceCounts.add(realizationWorkerCount(analysis, source, clause, visiting));
+			int count = sourceCounts.size() == 1 ? sourceCounts.iterator().next() : 0;
+			visiting.remove(binding.source());
+			if(count > 0)
+				counts.add(count);
+		}
+		return counts.size() == 1 ? counts.iterator().next() : 0;
+	}
+
 	static int nativeLocalInputWorkerCount(List<ExactPhysicalModel.InputAuthority> authorities,
 		int fallbackWorkers) {
 		DurableAnchorKey anchor = null;
@@ -1263,7 +1323,8 @@ public final class ExactPhysicalCostModel {
 			if(authority.relocationAction() == null)
 				continue;
 			DurableAnchorKey current = authority.relocationAction().key().durableAnchor();
-			if(anchor != null && !anchor.equals(current))
+			if(anchor != null && !org.apache.sysds.hops.fedplanner.placement.PlacementIdentity
+				.samePhysicalWorkerPool(anchor, current))
 				throw new IllegalArgumentException("EXACT_NATIVE_LOCAL_CONSUMER_ANCHOR_CONFLICT");
 			anchor = current;
 		}
@@ -1271,7 +1332,14 @@ public final class ExactPhysicalCostModel {
 		// A graph-wide worker union overcharges FULL uploads and smaller worker pools.
 		// Without such authority retain the prior conservative estimate; neither a
 		// worker count nor an output FType invents an input FederationMap.
-		return anchor == null ? Math.max(1, fallbackWorkers) : anchor.partitions().size();
+		return anchor == null ? Math.max(1, fallbackWorkers) : physicalWorkerCount(anchor);
+	}
+
+	private static int physicalWorkerCount(DurableAnchorKey anchor) {
+		Set<String> workers = new LinkedHashSet<>();
+		for(var partition : anchor.partitions())
+			workers.add(FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()));
+		return workers.size();
 	}
 
 	private static double nativeLocalInputUploadCost(Hop consumer, Hop input, double bytes,
@@ -1327,16 +1395,19 @@ public final class ExactPhysicalCostModel {
 			List<FType> sourceTypes = source.alternatives().stream().map(a -> a.state().fType())
 				.filter(Objects::nonNull).distinct().toList();
 			for(FType type : sourceTypes) {
-				double cost = requireCost(callWeight
-					* FederatedCostModel.computeReusableMaterializationDownloadCost(
-						bytes, type, workers),
-					"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
+				double[] costs = new double[source.alternatives().size()];
+				for(int index = 0; index < costs.length; index++) {
+					var alternative = source.alternatives().get(index);
+					if(alternative.state().output() == FederatedOutput.FOUT && alternative.state().fType() == type)
+						costs[index] = requireCost(callWeight
+							* FederatedCostModel.computeReusableMaterializationDownloadCost(bytes, type,
+								realizationWorkerCount(analysis, alternative, workers)),
+							"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
+				}
 				factors.add(ExactCategoricalSolver.Factor.lazy(
-					List.of(source.variable(), formal.variable()), values -> {
-						PlacementState sourceState = source.alternatives().get(values[0]).state();
-						return sourceState.output() == FederatedOutput.FOUT && sourceState.fType() == type
-							&& formal.alternatives().get(values[1]).state().execType() == ExecType.CP ? cost : 0.0;
-					}));
+					List.of(source.variable(), formal.variable()), values ->
+						formal.alternatives().get(values[1]).state().execType() == ExecType.CP
+							? costs[values[0]] : 0.0));
 				transferKeys.add(new PhysicalTransferKey(source.node().valueVersion(),
 					List.of(new PhysicalTransferEndpoint(source.node().key(), formal.node().key(),
 						input.logicalPosition())), Direction.DOWNLOAD, type, BoundaryMode.ANCHOR_TRANSFER));
@@ -1540,35 +1611,14 @@ public final class ExactPhysicalCostModel {
 					+ transientFact.sourceWrite().normalizedSignature() + "|read="
 					+ transientFact.targetRead().normalizedSignature());
 			for(LogicalFunctionInputFact authority : authorities) {
-				FType sourceType = exactInputAuthorityType(analysis, authority.sourceArgument());
-				List<FType> sourcePlanTypes = analysis.graph().node(authority.sourceArgument()).orElseThrow()
-					.legalAlternatives().stream()
-					.filter(state -> state.execType() == ExecType.FED
-						&& state.output() == FederatedOutput.FOUT && state.fType() != null)
-					.map(PlacementState::fType).distinct().toList();
-				// A nested function actual can itself be a formal TRead. Such an alias has no
-				// durable anchor on the Hop, but its exact FOUT authority is carried by the
-				// selected function-boundary state. Requiring a static anchor here rejected the
-				// valid m_lm(X)->m_lmCG(X) forwarding chain. A durable source must still match
-				// exactly; a parametric source must publish the forwarded layout in its plan domain.
-				boolean compatible = sourceType == null
-					? sourcePlanTypes.contains(transientFact.federatedFType())
-					: sourceType == transientFact.federatedFType();
-				if(!compatible)
-					throw new IllegalArgumentException("EXACT_FUNCTION_INPUT_FORWARD_LAYOUT_MISMATCH|source="
-						+ authority.sourceArgument().normalizedSignature() + "|read="
-						+ transientFact.targetRead().normalizedSignature() + "|sourceType=" + sourceType
-						+ "|sourcePlanTypes=" + sourcePlanTypes + "|forwardedType="
-						+ transientFact.federatedFType() + "|binding="
-						+ binding.normalizedSignature() + "|sourceStates="
-						+ analysis.graph().node(authority.sourceArgument()).orElseThrow()
-							.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList()
-						+ "|forwardedWriteStates="
-						+ analysis.graph().node(transientFact.sourceWrite()).orElseThrow()
-							.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList()
-						+ "|targetReadStates="
-						+ analysis.graph().node(transientFact.targetRead()).orElseThrow()
-							.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
+				// Shared analysis owns the complete writer/read realization relation. Do not
+				// collapse it to one FType (or reject legal LOCAL-only forwarding) while
+				// constructing the cost topology. Physical compatibility factors bind the
+				// selected realization; this edge is a single logical payload, not one
+				// payload per candidate alternative.
+				if(analysis.requireExactLogicalTransientInput(transientFact.sourceWrite(),
+					transientFact.targetRead(), transientFact.logicalPosition()) != transientFact)
+					throw new IllegalArgumentException("EXACT_LOGICAL_TRANSIENT_INPUT_FOREIGN");
 				result.add(new EffectiveLogicalFunctionInput(authority, transientFact,
 					transientFact.targetRead()));
 			}

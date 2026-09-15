@@ -73,8 +73,35 @@ public class CampaignBG014AbsentLocalMaterializationLoweringRedTest {
 			expected.isEmpty());
 
 		List<LocalMaterializationActionKey> locals = plan.selectedLocalMaterializations();
-		Assert.assertTrue("No optional local materialization may remain in the selected lowering",
-			locals.isEmpty());
+		for(LocalMaterializationActionKey local : locals) {
+			System.err.println("LOCAL-DIAG source=" + local.sourceOccurrence().emittedHopInstance()
+				+ " " + analysis.hop(local.sourceOccurrence()).orElseThrow().getOpString()
+				+ " selected=" + plan.selectedStates().get(local.sourceOccurrence()));
+			for(var obligation : local.obligations()) {
+				var consumer = obligation.consumerOccurrence();
+				System.err.println("LOCAL-DIAG consumer=" + consumer.emittedHopInstance()
+					+ " " + analysis.hop(consumer).orElseThrow().getOpString()
+					+ " selected=" + plan.selectedStates().get(consumer)
+					+ " legal=" + analysis.graph().node(consumer).orElseThrow().legalAlternatives());
+				for(var fact : analysis.candidateRuleFacts().orderedFactsForParent(consumer))
+					System.err.println("LOCAL-DIAG row=" + fact.key().orderedInputs()
+						+ " status=" + fact.status() + " failure=" + fact.failureCode()
+						+ " outputs=" + fact.allowedEmissionFacts().stream()
+							.map(e -> e.emissionState().normalizedSignature() + " realizations="
+								+ e.realizations().size()).toList());
+				for(var constraint : analysis.graph().constraints())
+					if(constraint.left() == consumer || constraint.right() == consumer)
+						System.err.println("LOCAL-DIAG constraint=" + constraint.kind() + " "
+							+ constraint.evidence() + " " + constraint.left().emittedHopInstance()
+							+ " " + plan.selectedStates().get(constraint.left()) + " -> "
+							+ constraint.right().emittedHopInstance() + " "
+							+ plan.selectedStates().get(constraint.right()));
+			}
+		}
+		Assert.assertTrue("No optional local materialization may remain in the selected lowering: "
+			+ locals.stream().map(action -> action.sourceValueVersion().lexicalVariable() + "|" + action.obligations().stream()
+				.map(obligation -> analysis.hop(obligation.consumerOccurrence()).map(hop -> hop.getOpString()
+					+ ":" + hop.getName()).orElse("synthetic")).toList()).toList(), locals.isEmpty());
 		int foutMaterializations = CandidateSelections.foutMaterializationPhysicalEmissionCount(
 			plan.selectedCandidateSelections());
 		Assert.assertTrue("fixture must exercise an exact planner-created FOUT transfer",

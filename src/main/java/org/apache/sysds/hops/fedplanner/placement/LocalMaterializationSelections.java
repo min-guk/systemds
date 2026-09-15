@@ -381,7 +381,7 @@ public final class LocalMaterializationSelections {
 				.filter(candidate -> candidate.key() == node.key()).findFirst().orElseThrow();
 			result.add(new LocalMaterializationActionKey(node.key(), node.valueVersion(), producer,
 				obligations, occurrence.scopeId() + ":" + node.key().functionNamespace(),
-				durableLocalProvenance(node, producer)));
+				durableLocalProvenance(node, producer, candidatesByConsumer.get(node.key()))));
 		}
 		return result.stream().sorted().toList();
 	}
@@ -432,6 +432,25 @@ public final class LocalMaterializationSelections {
 		return analysis.graph().node(key).map(node ->
 			node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_CALL).orElse(false)
 			&& analysis.isDmlFunctionCallBoundary(key);
+	}
+
+	/** A node domain can contain several maps; only the selected receipt chooses one. */
+	public static String durableLocalProvenance(NeutralPlacementGraph.Node node,
+		PlacementState producer, CandidateSelectionReceipt selected) {
+		if(selected != null && (selected.rule().parentOccurrence() != node.key()
+			|| !selected.emission().emissionState().placementState().equals(producer)))
+			throw new IllegalArgumentException("LOCAL provenance receipt belongs to a different producer");
+		long compatible = node.anchors().stream().filter(anchor -> anchor.fType() == producer.fType()).count();
+		if(compatible <= 1 || selected == null)
+			return durableLocalProvenance(node, producer);
+		if(selected.realization().anchor() != null)
+			return selected.realization().anchor().placementId();
+		if(selected.provenWorkerPool() == null)
+			throw new IllegalStateException("LOCAL source selected realization has no native pool proof");
+		// Native lineage names the selected runtime Data object, not an invented durable map.
+		return "selected-source:" + node.valueVersion().normalizedSignature()
+			+ ":occurrence:" + node.key().normalizedSignature()
+			+ ":realization:" + selected.realization().key().normalizedSignature();
 	}
 
 	/** Exact analysis-owned provenance for one selected FED/FOUT source. */

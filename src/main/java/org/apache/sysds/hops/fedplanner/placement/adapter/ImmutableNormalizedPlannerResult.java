@@ -86,6 +86,8 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 		choices.sort(Comparator.naturalOrder());
 		RelocationSelections.resolveAndValidate(analysis, selectedStates,
 			selectedCandidateSelections, choices);
+		CandidateSelections.validateRealizationSelections(analysis, selectedStates,
+			selectedCandidateSelections, choices);
 		selectedRelocationChoices = Collections.unmodifiableList(choices);
 		List<RelocationActionKey> relocations = new ArrayList<>(RelocationSelections.emittedActions(
 			analysis, selectedStates, selectedCandidateSelections, selectedRelocationChoices));

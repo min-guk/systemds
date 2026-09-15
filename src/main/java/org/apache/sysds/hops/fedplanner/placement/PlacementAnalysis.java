@@ -43,11 +43,16 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.parser.DMLProgram;
@@ -57,6 +62,19 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
+	private static <T extends Comparable<? super T>> List<T> canonicalComparableList(
+		java.util.Collection<T> values, String label) {
+		Objects.requireNonNull(values, label + "s");
+		List<T> canonical = new ArrayList<>(values.size());
+		for(T value : values)
+			canonical.add(Objects.requireNonNull(value, label));
+		canonical.sort(null);
+		for(int i = 1; i < canonical.size(); i++)
+			if(canonical.get(i - 1).equals(canonical.get(i)))
+				throw new IllegalArgumentException("Duplicate " + label);
+		return List.copyOf(canonical);
+	}
+
 	public enum InputPresence { ABSENT_LOCAL, PRESENT }
 	public enum CoordinatorInputAccess { PAYLOAD, FEDERATION_MAP_METADATA }
 
@@ -278,11 +296,143 @@ public final class PlacementAnalysis {
 		}
 	}
 
-	/** One exact immutable rule/profile fact captured by the canonical builder pass. */
+	/** One conjunctive proof/input-support route for an exact physical realization. */
+	public record CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
+		List<CandidateRealizationInputBinding> inputBindings,
+		DurableAnchorKey nativeWorkerPoolWitness)
+		implements Comparable<CandidateRealizationSupportClause> {
+		public CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
+			List<CandidateRealizationInputBinding> inputBindings) {
+			this(proofDependencies, inputBindings, null);
+		}
+		public CandidateRealizationSupportClause {
+			proofDependencies = canonicalComparableList(proofDependencies, "realization proof dependency");
+			inputBindings = canonicalComparableList(inputBindings, "realization input binding");
+			if(nativeWorkerPoolWitness != null && proofDependencies.stream().noneMatch(proof ->
+				proof.kind() == PlacementIdentity.PlacementProofKind.NATIVE_CONTINUITY
+					&& proof.owner() != null))
+				throw new IllegalArgumentException(
+					"Native worker-pool witness requires owned native-continuity proof");
+		}
+		public List<CandidateRealizationReference> requiredInputSupport() {
+			return inputBindings.stream().map(CandidateRealizationInputBinding::source)
+				.distinct().sorted().toList();
+		}
+		public String normalizedSignature() {
+			return "proofs=" + proofDependencies.stream().map(PlacementProofKey::normalizedSignature).toList()
+				+ "|inputs=" + inputBindings.stream()
+					.map(CandidateRealizationInputBinding::normalizedSignature).toList()
+				+ "|nativePool=" + (nativeWorkerPoolWitness == null ? "-"
+					: nativeWorkerPoolWitness.normalizedSignature());
+		}
+		@Override public int compareTo(CandidateRealizationSupportClause that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** One exact physical layout with alternative executable support clauses. */
+	public record CandidateEmissionRealization(PlacementRealizationKey key,
+		List<CandidateRealizationSupportClause> supportClauses)
+		implements Comparable<CandidateEmissionRealization> {
+		public CandidateEmissionRealization(PlacementRealizationKey key,
+			List<PlacementProofKey> proofs, List<CandidateRealizationInputBinding> inputBindings) {
+			this(key, List.of(new CandidateRealizationSupportClause(proofs, inputBindings)));
+		}
+		public CandidateEmissionRealization {
+			Objects.requireNonNull(key, "key");
+			supportClauses = canonicalComparableList(supportClauses, "realization support clause");
+			if(supportClauses.isEmpty())
+				throw new IllegalArgumentException("Candidate realization requires support authority");
+			for(CandidateRealizationSupportClause clause : supportClauses)
+				if(clause.nativeWorkerPoolWitness() != null
+					&& (key.layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+						|| key.emissionState().placementState().fType()
+							!= clause.nativeWorkerPoolWitness().fType()))
+					throw new IllegalArgumentException(
+						"Native worker-pool witness and realization layout differ");
+			DurableAnchorKey nativeWitness = supportClauses.get(0).nativeWorkerPoolWitness();
+			for(CandidateRealizationSupportClause clause : supportClauses) {
+				DurableAnchorKey candidate = clause.nativeWorkerPoolWitness();
+				if((nativeWitness == null) != (candidate == null)
+					|| nativeWitness != null && !PlacementIdentity.samePhysicalLayout(nativeWitness, candidate))
+					throw new IllegalArgumentException(
+						"One realization cannot mix unproven or physically distinct native worker pools");
+			}
+		}
+
+		public static CandidateEmissionRealization local(PlacementEmissionState emission) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.local(emission), List.of(), List.of());
+		}
+		public static CandidateEmissionRealization local(PlacementEmissionState emission,
+			List<PlacementProofKey> proofs, List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.local(emission), proofs, inputBindings);
+		}
+
+		public static CandidateEmissionRealization durable(PlacementEmissionState emission,
+			DurableAnchorKey anchor, List<PlacementProofKey> proofs,
+			List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.durable(emission, anchor),
+				proofs, inputBindings);
+		}
+
+		public static CandidateEmissionRealization nativeLineage(PlacementEmissionState emission,
+			String lineage, List<PlacementProofKey> proofs,
+			List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
+				proofs, inputBindings);
+		}
+		public static CandidateEmissionRealization nativeLineage(PlacementEmissionState emission,
+			String lineage, DurableAnchorKey nativeWorkerPoolWitness, List<PlacementProofKey> proofs,
+			List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
+				List.of(new CandidateRealizationSupportClause(
+					proofs, inputBindings, nativeWorkerPoolWitness)));
+		}
+
+		public CandidateRealizationSupportClause requireSingletonSupportClause() {
+			if(supportClauses.size() != 1)
+				throw new IllegalArgumentException("Candidate realization support clause is ambiguous");
+			return supportClauses.get(0);
+		}
+		/** Compatibility fast path; callers handling alternatives must iterate supportClauses(). */
+		public List<PlacementProofKey> proofDependencies() {
+			return requireSingletonSupportClause().proofDependencies();
+		}
+		/** Compatibility fast path; callers handling alternatives must iterate supportClauses(). */
+		public List<CandidateRealizationInputBinding> inputBindings() {
+			return requireSingletonSupportClause().inputBindings();
+		}
+		/** Compatibility fast path retained only for singleton support authority. */
+		public List<CandidateRealizationReference> requiredInputSupport() {
+			return requireSingletonSupportClause().requiredInputSupport();
+		}
+
+		public PlacementState placementState() { return key.emissionState().placementState(); }
+		public DurableAnchorKey anchor() { return key.durableAnchor(); }
+		public DurableAnchorKey provenWorkerPool(CandidateRealizationSupportClause clause) {
+			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
+				throw new IllegalArgumentException("Support clause is not owned by realization");
+			return key.durableAnchor() != null ? key.durableAnchor() : clause.nativeWorkerPoolWitness();
+		}
+		public String normalizedSignature() {
+			return key.normalizedSignature() + "|support=" + supportClauses.stream()
+				.map(CandidateRealizationSupportClause::normalizedSignature).toList();
+		}
+		@Override public int compareTo(CandidateEmissionRealization that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** One exact immutable rule/profile emission with its executable physical realizations. */
 	public record CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType,
-		DerivedFoutMaterializationActionKey derivedFoutAction) {
+		DerivedFoutMaterializationActionKey derivedFoutAction,
+		List<CandidateEmissionRealization> realizations) {
 		public CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType) {
-			this(emissionState, executionFType, null);
+			this(emissionState, executionFType, null, defaultRealizations(emissionState));
+		}
+		public CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType,
+			DerivedFoutMaterializationActionKey derivedFoutAction) {
+			this(emissionState, executionFType, derivedFoutAction, defaultRealizations(emissionState));
 		}
 		public CandidateEmissionFact {
 			Objects.requireNonNull(emissionState, "emissionState");
@@ -305,9 +455,54 @@ public final class PlacementAnalysis {
 			if(derivedFoutAction != null && (derivedFoutAction.targetPlacement() != state
 				|| derivedFoutAction.materializationFType() != state.fType()))
 				throw new IllegalArgumentException("FOUT materialization action and emission identities differ");
+			realizations = mergeRealizations(realizations);
+			if(realizations.isEmpty())
+				throw new IllegalArgumentException("Candidate emission requires at least one physical realization");
+			for(CandidateEmissionRealization realization : realizations)
+				if(!realization.key().emissionState().equals(emissionState))
+					throw new IllegalArgumentException("Candidate realization belongs to a different emission");
+		}
+
+		private static List<CandidateEmissionRealization> mergeRealizations(
+			java.util.Collection<CandidateEmissionRealization> alternatives) {
+			Objects.requireNonNull(alternatives, "candidate emission realizations");
+			Map<PlacementRealizationKey,Set<CandidateRealizationSupportClause>> clausesByKey =
+				new java.util.TreeMap<>();
+			Map<PlacementRealizationKey,CandidateEmissionRealization> firstByKey =
+				new java.util.TreeMap<>();
+			Set<PlacementRealizationKey> repeated = new java.util.HashSet<>();
+			for(CandidateEmissionRealization realization : alternatives) {
+				Objects.requireNonNull(realization, "candidate emission realization");
+				if(firstByKey.putIfAbsent(realization.key(), realization) != null)
+					repeated.add(realization.key());
+				clausesByKey.computeIfAbsent(realization.key(), ignored -> new java.util.TreeSet<>())
+					.addAll(realization.supportClauses());
+			}
+			List<CandidateEmissionRealization> merged = new ArrayList<>(clausesByKey.size());
+			for(Map.Entry<PlacementRealizationKey,Set<CandidateRealizationSupportClause>> entry :
+				clausesByKey.entrySet())
+				merged.add(repeated.contains(entry.getKey())
+					? new CandidateEmissionRealization(entry.getKey(), List.copyOf(entry.getValue()))
+					: firstByKey.get(entry.getKey()));
+			return List.copyOf(merged);
+		}
+
+		private static List<CandidateEmissionRealization> defaultRealizations(PlacementEmissionState emission) {
+			Objects.requireNonNull(emission, "emissionState");
+			return emission.placementState().output() == FederatedOutput.LOUT
+				? List.of(CandidateEmissionRealization.local(emission))
+				: List.of(CandidateEmissionRealization.nativeLineage(emission,
+					"candidate-emission:" + emission.normalizedSignature(), List.of(), List.of()));
 		}
 
 		public String normalizedSignature() {
+			return selectionSignature()
+				+ "|realizations=" + realizations.stream().map(CandidateEmissionRealization::normalizedSignature)
+					.toList();
+		}
+
+		/** Shallow emission identity used by one selected support-clause receipt. */
+		public String selectionSignature() {
 			return emissionState.normalizedSignature() + "|executionFType="
 				+ (executionFType == null ? "-" : executionFType.name()) + "|derivedAction="
 				+ (derivedFoutAction == null ? "-" : derivedFoutAction.normalizedSignature());
@@ -455,21 +650,36 @@ public final class PlacementAnalysis {
 	private static final class CandidateReceiptDomain {
 		private record RankedReceipt(CandidateSelectionReceipt receipt, String signature) { }
 
-		private final Map<CandidateRuleKey,Map<CandidateEmissionFact,CandidateSelectionReceipt>>
+		private final Map<CandidateRuleKey,Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
+			Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>>>
 			receiptsByIdentity;
 		private final Map<CandidateSelectionReceipt,Integer> ranksByIdentity;
 
 		private CandidateReceiptDomain(CandidateRuleFacts facts) {
-			Map<CandidateRuleKey,Map<CandidateEmissionFact,CandidateSelectionReceipt>> indexed =
+			Map<CandidateRuleKey,Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
+				Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>>> indexed =
 				new IdentityHashMap<>();
 			List<RankedReceipt> ranked = new ArrayList<>();
 			for(CandidateRuleFact fact : facts.orderedFacts()) {
-				Map<CandidateEmissionFact,CandidateSelectionReceipt> byEmission = new IdentityHashMap<>();
+				Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
+					Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>> byEmission =
+					new IdentityHashMap<>();
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-					CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
-						fact.key(), emission, List.of());
-					byEmission.put(emission, receipt);
-					ranked.add(new RankedReceipt(receipt, receipt.normalizedSignature()));
+					Map<CandidateEmissionRealization,Map<CandidateRealizationSupportClause,
+						CandidateSelectionReceipt>> byRealization =
+						new IdentityHashMap<>();
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> byClause =
+							new IdentityHashMap<>();
+						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+							CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
+								fact.key(), emission, realization, clause, List.of());
+							byClause.put(clause, receipt);
+							ranked.add(new RankedReceipt(receipt, receipt.normalizedSignature()));
+						}
+						byRealization.put(realization, Collections.unmodifiableMap(byClause));
+					}
+					byEmission.put(emission, Collections.unmodifiableMap(byRealization));
 				}
 				indexed.put(fact.key(), Collections.unmodifiableMap(byEmission));
 			}
@@ -482,17 +692,45 @@ public final class PlacementAnalysis {
 		}
 
 		private CandidateSelectionReceipt require(CandidateRuleKey rule,
-			CandidateEmissionFact emission) {
-			Map<CandidateEmissionFact,CandidateSelectionReceipt> byEmission = receiptsByIdentity.get(rule);
-			CandidateSelectionReceipt receipt = byEmission == null ? null : byEmission.get(emission);
+			CandidateEmissionFact emission, CandidateEmissionRealization realization,
+			CandidateRealizationSupportClause clause) {
+			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
+				Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>> byEmission =
+				receiptsByIdentity.get(rule);
+			Map<CandidateEmissionRealization,Map<CandidateRealizationSupportClause,
+				CandidateSelectionReceipt>> byRealization =
+				byEmission == null ? null : byEmission.get(emission);
+			Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> byClause =
+				byRealization == null ? null : byRealization.get(realization);
+			CandidateSelectionReceipt receipt = byClause == null ? null : byClause.get(clause);
 			if(receipt == null)
 				throw new IllegalArgumentException(
-					"Candidate rule/emission is outside the analysis-owned receipt domain");
+					"Candidate rule/emission/realization/support clause is outside the analysis-owned receipt domain");
 			return receipt;
 		}
 
+		private CandidateSelectionReceipt requireSingleton(CandidateRuleKey rule,
+			CandidateEmissionFact emission) {
+			if(emission.realizations().size() != 1)
+				throw new IllegalArgumentException("Candidate emission realization is ambiguous");
+			CandidateEmissionRealization realization = emission.realizations().get(0);
+			return require(rule, emission, realization, realization.requireSingletonSupportClause());
+		}
+
+		private CandidateSelectionReceipt require(CandidateRuleKey rule,
+			CandidateEmissionFact emission, CandidateEmissionRealization realization) {
+			return require(rule, emission, realization, realization.requireSingletonSupportClause());
+		}
+
+		private List<CandidateSelectionReceipt> requireAll(CandidateRuleKey rule,
+			CandidateEmissionFact emission) {
+			return emission.realizations().stream().flatMap(realization -> realization.supportClauses().stream()
+				.map(clause -> require(rule, emission, realization, clause))).toList();
+		}
+
 		private int rank(CandidateSelectionReceipt receipt) {
-			CandidateSelectionReceipt canonical = require(receipt.rule(), receipt.emission());
+			CandidateSelectionReceipt canonical = require(receipt.rule(), receipt.emission(),
+				receipt.realization(), receipt.supportClause());
 			Integer rank = ranksByIdentity.get(canonical);
 			if(rank == null)
 				throw new IllegalStateException("Canonical candidate receipt has no structural rank");
@@ -505,7 +743,8 @@ public final class PlacementAnalysis {
 			Map<CandidateSelectionReceipt,Boolean> seen = new IdentityHashMap<>();
 			for(CandidateSelectionReceipt receipt : receipts) {
 				Objects.requireNonNull(receipt, "candidate receipt");
-				CandidateSelectionReceipt exact = require(receipt.rule(), receipt.emission());
+				CandidateSelectionReceipt exact = require(receipt.rule(), receipt.emission(),
+					receipt.realization(), receipt.supportClause());
 				if(seen.put(exact, Boolean.TRUE) == null)
 					canonical.add(exact);
 			}
@@ -928,26 +1167,142 @@ public final class PlacementAnalysis {
 		int logicalPosition();
 	}
 
-	/** One analysis-owned logical input carried across an exact CFG transient forward. */
+	/** Exact typed evidence for one compatible writer-reader physical realization pair. */
+	public record TransientCompatibilityProof(DurableAnchorKey sourceAnchor,
+		DurableAnchorKey readerAnchor, List<PlacementProofKey> dependencies)
+		implements Comparable<TransientCompatibilityProof> {
+		public TransientCompatibilityProof {
+			dependencies = canonicalComparableList(dependencies, "transient compatibility proof dependency");
+			if((sourceAnchor == null) != (readerAnchor == null))
+				throw new IllegalArgumentException("Transient compatibility anchor proof must name both layouts");
+			if(sourceAnchor != null && !PlacementIdentity.samePhysicalLayout(sourceAnchor, readerAnchor))
+				throw new IllegalArgumentException("Transient compatibility anchors have different physical layouts");
+		}
+		public boolean provesNativeContinuity(CompiledHopKey source, CompiledHopKey reader) {
+			return dependencies.stream().anyMatch(proof -> proof.kind()
+				== PlacementIdentity.PlacementProofKind.NATIVE_CONTINUITY
+				&& (proof.owner() == source || proof.owner() == reader));
+		}
+		public String normalizedSignature() {
+			return (sourceAnchor == null ? "-" : sourceAnchor.normalizedSignature()) + "|reader="
+				+ (readerAnchor == null ? "-" : readerAnchor.normalizedSignature()) + "|proofs="
+				+ dependencies.stream().map(PlacementProofKey::normalizedSignature).toList();
+		}
+		@Override public int compareTo(TransientCompatibilityProof that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public static PlacementProofKey transientValueIdentityProof(CompiledHopKey sourceWrite,
+		ValueVersionKey sourceVersion, ValueVersionKey readVersion) {
+		Objects.requireNonNull(sourceVersion, "sourceVersion");
+		Objects.requireNonNull(readVersion, "readVersion");
+		return new PlacementProofKey(PlacementIdentity.PlacementProofKind.VALUE_IDENTITY,
+			Objects.requireNonNull(sourceWrite, "sourceWrite"),
+			sourceVersion.normalizedSignature() + "->" + readVersion.normalizedSignature());
+	}
+
+	/** One executable source-realization to reader-realization compatibility edge. */
+	public record TransientPlacementCompatibility(CandidateRealizationReference sourceRealization,
+		CandidateRealizationReference readerRealization, CandidateInputState sourceInput,
+		CandidateInputState readerInput, TransientCompatibilityProof proof)
+		implements Comparable<TransientPlacementCompatibility> {
+		public TransientPlacementCompatibility {
+			Objects.requireNonNull(sourceRealization, "sourceRealization");
+			Objects.requireNonNull(readerRealization, "readerRealization");
+			Objects.requireNonNull(sourceInput, "sourceInput");
+			Objects.requireNonNull(readerInput, "readerInput");
+			Objects.requireNonNull(proof, "proof");
+			PlacementRealizationKey source = sourceRealization.realization();
+			PlacementRealizationKey reader = readerRealization.realization();
+			if(source.layoutKind() == PlacementLayoutKind.LOCAL
+				|| reader.layoutKind() == PlacementLayoutKind.LOCAL) {
+				if(source.layoutKind() != PlacementLayoutKind.LOCAL
+					|| reader.layoutKind() != PlacementLayoutKind.LOCAL
+					|| sourceInput.present() || readerInput.present()
+					|| proof.sourceAnchor() != null)
+					throw new IllegalArgumentException("LOCAL transient compatibility semantics differ");
+			}
+			else {
+				FType sourceType = source.emissionState().placementState().fType();
+				FType readerType = reader.emissionState().placementState().fType();
+				if(sourceType == null || sourceType != readerType
+					|| !sourceInput.equals(CandidateInputState.present(sourceType))
+					|| !readerInput.equals(CandidateInputState.present(readerType)))
+					throw new IllegalArgumentException("Federated transient compatibility projection differs");
+			}
+		}
+		public String normalizedSignature() {
+			return sourceRealization.normalizedSignature() + "|reader=" + readerRealization.normalizedSignature()
+				+ "|sourceInput=" + sourceInput.normalizedSignature() + "|readerInput="
+				+ readerInput.normalizedSignature() + "|proof=" + proof.normalizedSignature();
+		}
+		@Override public int compareTo(TransientPlacementCompatibility that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** One analysis-owned logical compatibility relation across an exact CFG transient forward. */
 	public record LogicalTransientInputFact(CompiledHopKey sourceWrite, CompiledHopKey targetRead,
 		int logicalPosition, ValueVersionKey sourceValueVersion, ValueVersionKey readValueVersion,
-		DurableAnchorKey anchor, FType federatedFType,
-		PlacementState localSourceState, PlacementState federatedSourceState,
-		CandidateInputState localInput, CandidateInputState federatedInput)
+		List<TransientPlacementCompatibility> compatibility)
 		implements LogicalCandidateInputFact, Comparable<LogicalTransientInputFact> {
 		public LogicalTransientInputFact {
 			Objects.requireNonNull(sourceWrite, "sourceWrite");
 			Objects.requireNonNull(targetRead, "targetRead");
 			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
 			Objects.requireNonNull(readValueVersion, "readValueVersion");
-			Objects.requireNonNull(federatedFType, "federatedFType");
-			Objects.requireNonNull(federatedSourceState, "federatedSourceState");
-			Objects.requireNonNull(localInput, "localInput");
-			Objects.requireNonNull(federatedInput, "federatedInput");
 			if(logicalPosition != 0)
 				throw new IllegalArgumentException("Transient logical input position must be zero");
-			if(anchor != null && anchor.fType() != federatedFType)
-				throw new IllegalArgumentException("Transient logical input anchor layout differs");
+			compatibility = canonicalComparableList(compatibility, "transient placement compatibility");
+			if(compatibility.isEmpty())
+				throw new IllegalArgumentException("Logical transient input requires compatible realizations");
+		}
+
+		public List<CandidateInputState> supportedReaderInputs() {
+			return compatibility.stream().map(TransientPlacementCompatibility::readerInput).distinct().sorted(
+				java.util.Comparator.comparing(CandidateInputState::normalizedSignature)).toList();
+		}
+
+		public List<TransientPlacementCompatibility> compatibilityForReader(
+			CandidateRealizationReference reader) {
+			return compatibility.stream().filter(edge -> edge.readerRealization().equals(reader)).toList();
+		}
+
+		/** Legacy singleton views; generalized callers must consume {@link #compatibility()}. */
+		public PlacementState federatedSourceState() {
+			return requireUniqueLegacy(compatibility.stream().map(TransientPlacementCompatibility::sourceRealization)
+				.map(CandidateRealizationReference::realization).map(PlacementRealizationKey::emissionState)
+				.map(PlacementEmissionState::placementState).filter(state -> state.output() == FederatedOutput.FOUT)
+				.distinct().toList(), "federated source state");
+		}
+		public PlacementState localSourceState() {
+			List<PlacementState> values = compatibility.stream().map(TransientPlacementCompatibility::sourceRealization)
+				.map(CandidateRealizationReference::realization).map(PlacementRealizationKey::emissionState)
+				.map(PlacementEmissionState::placementState).filter(state -> state.output() == FederatedOutput.LOUT)
+				.distinct().toList();
+			return values.isEmpty() ? null : requireUniqueLegacy(values, "local source state");
+		}
+		public DurableAnchorKey anchor() {
+			List<DurableAnchorKey> values = compatibility.stream().flatMap(edge -> java.util.stream.Stream.of(
+				edge.proof().readerAnchor(), edge.readerRealization().realization().durableAnchor()))
+				.filter(Objects::nonNull).distinct().toList();
+			return values.isEmpty() ? null : requireUniqueLegacy(values, "transient anchor");
+		}
+		public FType federatedFType() { return federatedSourceState().fType(); }
+		public CandidateInputState localInput() {
+			List<CandidateInputState> values = compatibility.stream().map(TransientPlacementCompatibility::readerInput)
+				.filter(input -> !input.present()).distinct().toList();
+			return values.isEmpty() ? null : requireUniqueLegacy(values, "local input");
+		}
+		public CandidateInputState federatedInput() {
+			return requireUniqueLegacy(compatibility.stream().map(TransientPlacementCompatibility::readerInput)
+				.filter(CandidateInputState::present).distinct().toList(), "federated input");
+		}
+		private static <T> T requireUniqueLegacy(List<T> values, String label) {
+			if(values.size() != 1)
+				throw new IllegalStateException("Legacy " + label + " view is missing or ambiguous");
+			return values.get(0);
 		}
 
 		@Override
@@ -1034,8 +1389,10 @@ public final class PlacementAnalysis {
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> inputEdgesByConsumerIdentity;
 	private final Map<CompiledInputEdgeFact,CoordinatorInputAccess> coordinatorInputAccessByIdentity;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> cfgDefinitionSourcesByIdentity;
+	private final LogicalBoundaryRealizations logicalBoundaryRealizations;
 	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>> logicalInputsByIdentity;
+	private final Map<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> logicalInputsByReaderSlot;
 	private final List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>>>
 		logicalFunctionInputsByIdentity;
@@ -1176,12 +1533,18 @@ public final class PlacementAnalysis {
 		this.inputEdgesByIdentity = indexCompiledInputEdges(this.compiledInputEdgesInCanonicalOrder);
 		this.inputEdgesByConsumerIdentity = indexCompiledInputEdgesByConsumer(
 			this.compiledInputEdgesInCanonicalOrder);
+		this.logicalBoundaryRealizations = new LogicalBoundaryRealizations(graph.nodes(), graph.constraints(),
+			hopsByKey, this.candidateRuleFacts.orderedFacts());
+		this.logicalBoundaryRealizations.validate(this.candidateRuleFacts.orderedFacts());
+		validateCandidateRealizationSupport();
 		this.coordinatorInputAccessByIdentity = deriveCoordinatorInputAccess(
 			this.compiledInputEdgesInCanonicalOrder);
-		this.cfgDefinitionSourcesByIdentity = indexCfgDefinitionSources(graph);
+		this.cfgDefinitionSourcesByIdentity = indexCfgDefinitionSources(graph, hopsByKey);
 		this.logicalTransientInputsInCanonicalOrder = validateLogicalTransientInputs(logicalTransientInputs,
 			analysisKeysByIdentity);
 		this.logicalInputsByIdentity = indexLogicalTransientInputs(this.logicalTransientInputsInCanonicalOrder);
+		this.logicalInputsByReaderSlot = indexLogicalTransientInputsByReader(
+			this.logicalTransientInputsInCanonicalOrder);
 		this.logicalFunctionInputsInCanonicalOrder = validateLogicalFunctionInputs(
 			deriveLogicalFunctionInputs(), analysisKeysByIdentity);
 		this.logicalFunctionInputsByIdentity = indexLogicalFunctionInputs(
@@ -1212,8 +1575,10 @@ public final class PlacementAnalysis {
 					throw new IllegalArgumentException("Heuristic path edge value identity differs");
 				if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT)
 					requireExactCompiledInputEdge(edge.producer(), edge.consumer(), edge.inputPosition());
-				else if(producer.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE
-					|| consumer.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_READ
+				else if(!isCompiledAcyclicTransientForwardAccess(
+					hopsByKey.get(edge.producer()), producer, OpOpData.TRANSIENTWRITE)
+					|| !isCompiledAcyclicTransientForwardAccess(
+						hopsByKey.get(edge.consumer()), consumer, OpOpData.TRANSIENTREAD)
 					|| edge.inputPosition() != 0)
 					throw new IllegalArgumentException("Heuristic CFG edge is not an exact transient forward: "
 						+ edge + ", producerKind=" + producer.kind() + ", consumerKind=" + consumer.kind());
@@ -1317,11 +1682,10 @@ public final class PlacementAnalysis {
 			|| exactCandidate.status() != CandidateEvaluationStatus.AVAILABLE
 			|| exactCandidate.capability() == null
 			|| exactCandidate.capability().nativeExec() != fact.consumerState().execType()
-			|| !(exactCandidate.capability().nativeOutput() == FederatedOutput.FOUT
+			|| !(fact.consumerState().output() == FederatedOutput.FOUT
+				&& exactCandidate.capability().nativeOutput() == FederatedOutput.FOUT
 				&& exactCandidate.capability().nativeFoutFType() == fact.consumerState().fType()
-				|| fact.consumerState().output() == FederatedOutput.LOUT
-					&& exactCandidate.capability().nativeOutput() == FederatedOutput.LOUT
-					&& exactCandidate.capability().nativeFoutFType() == null)
+				|| fact.consumerState().output() == FederatedOutput.LOUT)
 			|| fact.localInputPosition() >= inputs.size()
 			|| !inputs.get(fact.localInputPosition()).equals(CandidateInputState.absentLocal())
 			|| fact.siblingInputPosition() >= inputs.size()
@@ -1349,6 +1713,7 @@ public final class PlacementAnalysis {
 		if(!sorted.equals(supplied))
 			throw new IllegalArgumentException("Logical transient input facts are not in canonical order");
 		Map<CompiledHopKey,Map<CompiledHopKey,Set<Integer>>> slots = new IdentityHashMap<>();
+		Map<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> byReaderSlot = new IdentityHashMap<>();
 		for(LogicalTransientInputFact fact : sorted) {
 			if(!analysisKeysByIdentity.containsKey(fact.sourceWrite())
 				|| !analysisKeysByIdentity.containsKey(fact.targetRead()))
@@ -1360,67 +1725,241 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Logical transient input endpoints have wrong node kinds");
 			if(source.valueVersion() != fact.sourceValueVersion() || read.valueVersion() != fact.readValueVersion())
 				throw new IllegalArgumentException("Logical transient input value identity differs");
-			if(fact.anchor() == null) {
-				// A seed write may retain its own exact map while a loop read denotes
-				// multiple shapes. Null certifies no common/read value-range identity;
-				// it does not erase the independent source's exact geometry.
-				if(!read.anchors().isEmpty())
-					throw new IllegalArgumentException("Plan-carried logical transient read owns a durable anchor");
-			}
-			else if(source.anchors().size() != 1 || read.anchors().size() != 1
-				|| source.anchors().get(0) != fact.anchor()
-				|| read.anchors().get(0).fType() != fact.anchor().fType()
-				|| !read.anchors().get(0).partitions().equals(fact.anchor().partitions()))
-				throw new IllegalArgumentException("Logical transient input anchor differs");
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
 				throw new IllegalArgumentException("Logical transient read has physical inputs");
-			if(fact.localSourceState() != null
-					&& source.legalAlternatives().stream().noneMatch(state -> state == fact.localSourceState())
-				|| source.legalAlternatives().stream().noneMatch(state -> state == fact.federatedSourceState()))
-				throw new IllegalArgumentException("Logical transient input source state is not analysis-owned");
-			if(fact.localSourceState() != null && (fact.localSourceState().execType() != ExecType.CP
-				|| fact.localSourceState().output() != FederatedOutput.LOUT
-				|| fact.localSourceState().fType() != null || fact.localSourceState().shapeDependent())
-				|| fact.federatedSourceState().execType() != ExecType.FED
-				|| fact.federatedSourceState().output() != FederatedOutput.FOUT
-				|| fact.federatedSourceState().fType() != fact.federatedFType()
-				|| !fact.localInput().equals(CandidateInputState.absentLocal())
-				|| !fact.federatedInput().equals(CandidateInputState.present(fact.federatedFType())))
-				throw new IllegalArgumentException("Logical transient input state semantics differ");
-			List<List<CandidateInputState>> expected = List.of(List.of(fact.localInput()), List.of(fact.federatedInput()));
-			List<List<CandidateInputState>> actual = candidateRuleDomain.orderedRuleKeys().stream()
-				.filter(key -> key.parentOccurrence() == fact.targetRead()).map(CandidateRuleKey::orderedInputs).toList();
-			if(!actual.equals(expected))
-				throw new IllegalArgumentException("Logical transient candidate domain differs");
-			CandidateRuleFact localFact = candidateRuleFacts.requireExact(fact.targetRead(), expected.get(0));
-			CandidateRuleFact federatedFact = candidateRuleFacts.requireExact(fact.targetRead(), expected.get(1));
-			if((fact.localSourceState() != null
-					&& (localFact.status() != CandidateEvaluationStatus.AVAILABLE
-						|| localFact.capability().nativeExec() != ExecType.CP
-						|| localFact.capability().nativeOutput() != FederatedOutput.LOUT
-						|| localFact.capability().nativeFoutFType() != null)
-				|| fact.localSourceState() == null
-					&& localFact.status() != CandidateEvaluationStatus.PRIVACY_EXCLUDED)
-				|| federatedFact.status() != CandidateEvaluationStatus.AVAILABLE
-				|| federatedFact.capability().nativeExec() != ExecType.FED
-				|| federatedFact.capability().nativeOutput() != FederatedOutput.FOUT
-				|| federatedFact.capability().nativeFoutFType() != fact.federatedFType())
-				throw new IllegalArgumentException("Logical transient candidate capability differs");
-			if(fact.localSourceState() != null
-					&& read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.CP
-						&& state.output() == FederatedOutput.LOUT && state.fType() == null)
-				|| read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
-					&& state.output() == FederatedOutput.FOUT && state.fType() == fact.federatedFType()))
-				throw new IllegalArgumentException("Logical transient read legal tuples differ");
 			if(compiledInputEdgesInCanonicalOrder.stream().anyMatch(edge -> edge.producer() == fact.sourceWrite()
 				&& edge.consumer() == fact.targetRead() && edge.inputPosition() == fact.logicalPosition()))
 				throw new IllegalArgumentException("Logical transient input fabricated a physical edge");
+
+			Set<CandidateRealizationReference> supportedReaderRealizations = new java.util.HashSet<>();
+			for(TransientPlacementCompatibility edge : fact.compatibility()) {
+				if(edge.sourceRealization().rule().parentOccurrence() != fact.sourceWrite()
+					|| edge.readerRealization().rule().parentOccurrence() != fact.targetRead())
+					throw new IllegalArgumentException("Transient compatibility realization owner differs");
+				CandidateEmissionRealization sourceRealization = requireReferencedRealization(edge.sourceRealization());
+				CandidateEmissionRealization readerRealization = requireReferencedRealization(edge.readerRealization());
+				validateTransientRealizationTuple(source, sourceRealization, "source");
+				validateTransientRealizationTuple(read, readerRealization, "reader");
+		List<CandidateInputState> readerInputs = edge.readerRealization().rule().orderedInputs();
+				if(readerInputs.size() != 1 || !readerInputs.get(0).equals(edge.readerInput()))
+					throw new IllegalArgumentException("Transient reader realization candidate input differs");
+				validateTransientCompatibilityProof(fact, edge, sourceRealization, readerRealization,
+					analysisKeysByIdentity);
+				supportedReaderRealizations.add(edge.readerRealization());
+			}
+			Set<CandidateRealizationReference> actualReaderRealizations = candidateRuleFacts.orderedFacts().stream()
+				.filter(candidate -> candidate.key().parentOccurrence() == fact.targetRead()
+					&& candidate.status() == CandidateEvaluationStatus.AVAILABLE)
+				.flatMap(candidate -> candidate.allowedEmissionFacts().stream()
+					.flatMap(emission -> emission.realizations().stream()
+						.map(realization -> CandidateRealizationReference.of(candidate.key(), realization))))
+				.collect(java.util.stream.Collectors.toSet());
+			if(!actualReaderRealizations.equals(supportedReaderRealizations)) {
+				Set<CandidateRealizationReference> missing = new java.util.HashSet<>(actualReaderRealizations);
+				missing.removeAll(supportedReaderRealizations);
+				Set<CandidateRealizationReference> extra = new java.util.HashSet<>(supportedReaderRealizations);
+				extra.removeAll(actualReaderRealizations);
+				throw new IllegalArgumentException(
+					"Logical transient candidate domain differs from realizable relation: reader="
+						+ fact.targetRead().normalizedSignature() + ", source="
+						+ fact.sourceWrite().normalizedSignature() + ", missing=" + missing.stream()
+							.map(CandidateRealizationReference::normalizedSignature).sorted().toList()
+						+ ", extra=" + extra.stream().map(CandidateRealizationReference::normalizedSignature)
+							.sorted().toList());
+			}
 			if(!slots.computeIfAbsent(fact.sourceWrite(), ignored -> new IdentityHashMap<>())
 				.computeIfAbsent(fact.targetRead(), ignored -> new java.util.HashSet<>())
 				.add(fact.logicalPosition()))
 				throw new IllegalArgumentException("Duplicate logical transient input slot");
+			byReaderSlot.computeIfAbsent(fact.targetRead(), ignored -> new LinkedHashMap<>())
+				.computeIfAbsent(fact.logicalPosition(), ignored -> new ArrayList<>()).add(fact);
 		}
+		validateReachingDefinitionSupport(byReaderSlot);
 		return List.copyOf(sorted);
+	}
+
+	private CandidateEmissionRealization requireReferencedRealization(CandidateRealizationReference reference) {
+		CandidateRuleFact rule = candidateRuleFacts.requireExact(reference.rule().parentOccurrence(),
+			reference.rule().orderedInputs());
+		if(rule.status() != CandidateEvaluationStatus.AVAILABLE)
+			throw new IllegalArgumentException("Transient compatibility references an unavailable candidate row");
+		List<CandidateEmissionRealization> matching = rule.allowedEmissionFacts().stream()
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().equals(reference.realization())).toList();
+		if(matching.size() != 1)
+			throw new IllegalArgumentException(
+				"Transient compatibility realization is missing or ambiguous: reference="
+					+ reference.normalizedSignature() + ", matching=" + matching.size()
+					+ ", available=" + rule.allowedEmissionFacts().stream()
+						.flatMap(emission -> emission.realizations().stream())
+						.map(CandidateEmissionRealization::normalizedSignature).toList());
+		return matching.get(0);
+	}
+
+	private void validateCandidateRealizationSupport() {
+		for(CandidateRuleFact fact : candidateRuleFacts.orderedFacts())
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+							&& clause.nativeWorkerPoolWitness() == null)
+							throw new IllegalArgumentException(
+								"Published native lineage lacks exact worker-pool authority");
+						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+							CandidateEmissionRealization source = requireReferencedRealization(binding.source());
+							if(binding.inputPosition() >= fact.key().orderedInputs().size())
+								throw new IllegalArgumentException("Candidate realization input binding position differs");
+							CandidateInputState rowInput = fact.key().orderedInputs().get(binding.inputPosition());
+							FType effectiveType = binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION
+								? binding.relocationAction().materializationFType()
+								: source.placementState().output() == FederatedOutput.FOUT
+									? source.placementState().fType() : null;
+							CandidateInputState expectedInput = effectiveType == null
+								? CandidateInputState.absentLocal() : CandidateInputState.present(effectiveType);
+							if(!rowInput.equals(expectedInput))
+								throw new IllegalArgumentException("Candidate realization binding and oracle input row differs: rule="
+									+ fact.key().normalizedSignature() + ", position=" + binding.inputPosition()
+									+ ", expected=" + expectedInput + ", binding=" + binding);
+							if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT) {
+								CompiledInputEdgeFact physical = inputEdgesByConsumerIdentity
+									.getOrDefault(fact.key().parentOccurrence(), Map.of()).get(binding.inputPosition());
+								if(physical == null || physical.producer() != binding.source().rule().parentOccurrence())
+									throw new IllegalArgumentException("DIRECT realization binding lacks its exact physical edge");
+							}
+							if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION) {
+								RelocationActionKey action = binding.relocationAction();
+								boolean graphOwned = graph.relocationActions().stream()
+									.anyMatch(candidate -> candidate.key() == action);
+								boolean consumerCompatible = action.compatibleConsumers()
+									.contains(fact.key().parentOccurrence());
+								ValueVersionKey actualSource = graph.node(
+									binding.source().rule().parentOccurrence()).orElseThrow().valueVersion();
+								boolean sourceCompatible = action.sourceValueVersion().equals(actualSource);
+								if(!graphOwned || !consumerCompatible || !sourceCompatible)
+									throw new IllegalArgumentException(
+										"Candidate realization relocation binding lacks exact graph authority: graphOwned="
+											+ graphOwned + ", consumerCompatible=" + consumerCompatible
+											+ ", sourceCompatible=" + sourceCompatible + ", action="
+											+ action.normalizedSignature() + ", consumer="
+											+ fact.key().parentOccurrence().normalizedSignature() + ", source="
+											+ binding.source().normalizedSignature() + ", actualSourceValue="
+											+ actualSource.normalizedSignature());
+							}
+						}
+					}
+				}
+	}
+
+	private static void validateTransientRealizationTuple(NeutralPlacementGraph.Node owner,
+		CandidateEmissionRealization realization, String endpoint) {
+		PlacementState state = realization.placementState();
+		boolean local = state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+			&& state.fType() == null && !state.shapeDependent()
+			&& realization.key().layoutKind() == PlacementLayoutKind.LOCAL;
+		boolean federated = state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+			&& state.fType() != null && state.fType() != FType.PART && state.fType() != FType.OTHER
+			&& realization.key().layoutKind() != PlacementLayoutKind.LOCAL;
+		if(!local && !federated)
+			throw new IllegalArgumentException("Illegal transient " + endpoint + " realization tuple");
+		if(owner.legalAlternatives().stream().noneMatch(candidate -> candidate == state))
+			throw new IllegalArgumentException("Transient " + endpoint
+				+ " realization state is not analysis-owned: owner=" + owner.key().normalizedSignature()
+				+ ", realization=" + realization.key().normalizedSignature() + ", state="
+				+ state.normalizedSignature() + '@' + System.identityHashCode(state) + ", legal="
+				+ owner.legalAlternatives().stream().map(candidate -> candidate.normalizedSignature()
+					+ '@' + System.identityHashCode(candidate)).toList());
+	}
+
+	private static void validateTransientCompatibilityProof(LogicalTransientInputFact fact,
+		TransientPlacementCompatibility edge, CandidateEmissionRealization source,
+		CandidateEmissionRealization reader, Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		for(PlacementProofKey proof : edge.proof().dependencies())
+			if(proof.owner() != null && !analysisKeysByIdentity.containsKey(proof.owner()))
+				throw new IllegalArgumentException("Transient compatibility proof has a foreign owner");
+		boolean valueProof = edge.proof().dependencies().stream().anyMatch(proof ->
+			proof.kind() == PlacementIdentity.PlacementProofKind.VALUE_IDENTITY
+				&& proof.owner() == fact.sourceWrite()
+				&& proof.authoritySignature().equals(fact.sourceValueVersion().normalizedSignature()
+					+ "->" + fact.readValueVersion().normalizedSignature()));
+		if(!valueProof)
+			throw new IllegalArgumentException("Transient compatibility lacks exact value-identity proof");
+		PlacementLayoutKind sourceKind = source.key().layoutKind();
+		PlacementLayoutKind readerKind = reader.key().layoutKind();
+		if(sourceKind == PlacementLayoutKind.LOCAL)
+			return;
+		if(sourceKind == PlacementLayoutKind.DURABLE_MAP && readerKind == PlacementLayoutKind.DURABLE_MAP) {
+			if(edge.proof().sourceAnchor() == null
+				|| !PlacementIdentity.samePhysicalLayout(source.key().durableAnchor(), edge.proof().sourceAnchor())
+				|| !PlacementIdentity.samePhysicalLayout(reader.key().durableAnchor(), edge.proof().readerAnchor()))
+				throw new IllegalArgumentException("Transient compatibility durable-map proof differs");
+		}
+		else if(!edge.proof().provesNativeContinuity(fact.sourceWrite(), fact.targetRead()))
+			throw new IllegalArgumentException("Transient native-lineage compatibility lacks owned continuity proof");
+	}
+
+	private void validateReachingDefinitionSupport(
+		Map<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> byReaderSlot) {
+		for(Map.Entry<CompiledHopKey,List<CompiledHopKey>> entry : cfgDefinitionSourcesByIdentity.entrySet()) {
+			if(entry.getValue().isEmpty())
+				continue;
+			NeutralPlacementGraph.Node reader = graph.node(entry.getKey()).orElseThrow();
+			Hop readerHop = hopsByKey.get(reader.key());
+			if(reader.kind() == NodeKind.FUNCTION_INPUT
+				|| readerHop == null || !(readerHop.getDataType().isMatrix() || readerHop.getDataType().isFrame())
+				|| !isCompiledTransientAccess(readerHop, reader, OpOpData.TRANSIENTREAD))
+				continue;
+			if(logicalBoundaryRealizations.hasCompleteBoundary(reader.key())) {
+				// Mixed formal/result reads use the compiler-declared boundary relation,
+				// including every ordinary writer. Exact selection checks its pool per source.
+				if(!logicalBoundaryRealizations.sources(reader.key()).containsAll(entry.getValue()))
+					throw new IllegalArgumentException("Function boundary omits an ordinary reaching writer");
+				continue;
+			}
+			boolean executable = candidateRuleFacts.orderedFacts().stream().anyMatch(candidate ->
+				candidate.key().parentOccurrence() == reader.key()
+					&& candidate.status() == CandidateEvaluationStatus.AVAILABLE
+					&& !candidate.allowedEmissionFacts().isEmpty());
+			if(executable && (byReaderSlot.get(reader.key()) == null
+				|| byReaderSlot.get(reader.key()).getOrDefault(0, List.of()).isEmpty()))
+				throw new IllegalArgumentException(
+					"Executable transient reader lacks reaching-definition compatibility relations: reader="
+						+ reader.key().normalizedSignature() + ", sources=" + entry.getValue().stream()
+							.map(CompiledHopKey::normalizedSignature).toList());
+		}
+		for(Map.Entry<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> readEntry : byReaderSlot.entrySet())
+			for(List<LogicalTransientInputFact> facts : readEntry.getValue().values())
+				validateReachingDefinitionSupportForSlot(
+					cfgDefinitionSourcesByIdentity.getOrDefault(readEntry.getKey(), List.of()), facts);
+	}
+
+	/** Package-private pure validator used by focused authority tests. */
+	static void validateReachingDefinitionSupportForSlot(List<CompiledHopKey> reaching,
+		List<LogicalTransientInputFact> facts) {
+		Objects.requireNonNull(reaching, "reaching");
+		Objects.requireNonNull(facts, "facts");
+		Set<CompiledHopKey> suppliedSources = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		facts.forEach(fact -> suppliedSources.add(fact.sourceWrite()));
+		if(suppliedSources.size() != reaching.size()
+			|| reaching.stream().anyMatch(source -> !suppliedSources.contains(source)))
+			throw new IllegalArgumentException("Logical transient relation does not cover every reaching definition"
+				+ "|reaching=" + reaching.stream().map(CompiledHopKey::normalizedSignature).toList()
+				+ "|supplied=" + suppliedSources.stream().map(CompiledHopKey::normalizedSignature).toList()
+				+ "|readers=" + facts.stream().map(fact -> fact.targetRead().normalizedSignature()).distinct().toList());
+		Set<CandidateRealizationReference> commonReaders = null;
+		for(LogicalTransientInputFact fact : facts) {
+			Set<CandidateRealizationReference> readers = fact.compatibility().stream()
+				.map(TransientPlacementCompatibility::readerRealization)
+				.collect(java.util.stream.Collectors.toSet());
+			if(commonReaders == null) commonReaders = new java.util.HashSet<>(readers);
+			else commonReaders.retainAll(readers);
+		}
+		if(commonReaders == null || commonReaders.isEmpty())
+			throw new IllegalArgumentException("No reader realization is supported by every reaching definition");
+		for(LogicalTransientInputFact fact : facts)
+			for(TransientPlacementCompatibility edge : fact.compatibility())
+				if(!commonReaders.contains(edge.readerRealization()))
+					throw new IllegalArgumentException(
+						"Logical transient relation retains a partially supported join realization");
 	}
 
 	private static Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>>
@@ -1435,6 +1974,22 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Duplicate logical transient input fact");
 		}
 		return Collections.unmodifiableMap(indexed);
+	}
+
+	private static Map<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>>
+		indexLogicalTransientInputsByReader(List<LogicalTransientInputFact> facts) {
+		Map<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> mutable = new IdentityHashMap<>();
+		for(LogicalTransientInputFact fact : facts)
+			mutable.computeIfAbsent(fact.targetRead(), ignored -> new LinkedHashMap<>())
+				.computeIfAbsent(fact.logicalPosition(), ignored -> new ArrayList<>()).add(fact);
+		Map<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> result = new IdentityHashMap<>();
+		for(Map.Entry<CompiledHopKey,Map<Integer,List<LogicalTransientInputFact>>> read : mutable.entrySet()) {
+			Map<Integer,List<LogicalTransientInputFact>> slots = new LinkedHashMap<>();
+			for(Map.Entry<Integer,List<LogicalTransientInputFact>> slot : read.getValue().entrySet())
+				slots.put(slot.getKey(), List.copyOf(slot.getValue()));
+			result.put(read.getKey(), Collections.unmodifiableMap(slots));
+		}
+		return Collections.unmodifiableMap(result);
 	}
 
 	private List<LogicalFunctionInputFact> deriveLogicalFunctionInputs() {
@@ -1528,6 +2083,18 @@ public final class PlacementAnalysis {
 		// remain outside this exact CFG forwarding authority.
 		return node.kind() == physicalKind || node.kind() == NodeKind.LOOP_PHI
 			|| node.kind() == NodeKind.BRANCH_JOIN;
+	}
+
+	static boolean isCompiledAcyclicTransientForwardAccess(Hop hop,
+		NeutralPlacementGraph.Node node, OpOpData operation) {
+		// A branch join is an acyclic merge whose complete reaching-definition set can
+		// prove one local value. A LOOP_PHI is cyclic: admitting its back edge can make
+		// a later demotion marker appear downstream of itself and replace its native
+		// FED/LOUT execution with CP/LOUT. Loop-carried locality remains governed by the
+		// existing concrete TRead/TWrite paths until an iteration-aware marker contract
+		// can distinguish entry and back-edge states.
+		return node.kind() != NodeKind.LOOP_PHI
+			&& isCompiledTransientAccess(hop, node, operation);
 	}
 
 	private static boolean isLogicalFunctionRead(NeutralPlacementGraph.Node read) {
@@ -1854,7 +2421,26 @@ public final class PlacementAnalysis {
 	/** Exact immutable candidate receipt owned by this analysis. */
 	public CandidateSelectionReceipt canonicalCandidateReceipt(CandidateRuleKey rule,
 		CandidateEmissionFact emission) {
-		return candidateReceiptDomain.require(rule, emission);
+		return candidateReceiptDomain.requireSingleton(rule, emission);
+	}
+
+	/** Exact immutable receipt for one physical realization of an emission. */
+	public CandidateSelectionReceipt canonicalCandidateReceipt(CandidateRuleKey rule,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization) {
+		return candidateReceiptDomain.require(rule, emission, realization);
+	}
+
+	/** Exact immutable receipt for one conjunctive support clause of a realization. */
+	public CandidateSelectionReceipt canonicalCandidateReceipt(CandidateRuleKey rule,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization,
+		CandidateRealizationSupportClause supportClause) {
+		return candidateReceiptDomain.require(rule, emission, realization, supportClause);
+	}
+
+	/** All canonical receipts for one emission, in realization order. */
+	public List<CandidateSelectionReceipt> canonicalCandidateReceipts(CandidateRuleKey rule,
+		CandidateEmissionFact emission) {
+		return candidateReceiptDomain.requireAll(rule, emission);
 	}
 
 	/** Canonicalizes without reconstructing nested candidate identity strings. */
@@ -2001,11 +2587,20 @@ public final class PlacementAnalysis {
 	}
 
 	private static Map<CompiledHopKey,List<CompiledHopKey>> indexCfgDefinitionSources(
-		NeutralPlacementGraph graph) {
+		NeutralPlacementGraph graph, Map<CompiledHopKey,Hop> hopsByKey) {
 		Map<String,List<CompiledHopKey>> sourcesByReference = new java.util.HashMap<>();
-		for(NeutralPlacementGraph.Node node : graph.nodes())
+		for(NeutralPlacementGraph.Node node : graph.nodes()) {
+			Hop owner = hopsByKey.get(node.key());
+			// cfg-definition references are minted only by real definition operations.
+			// A TRead can legitimately share the same ValueVersionKey/reference with a
+			// later TWrite (for example old_norm_R2 = norm_R2), but it is not another
+			// reaching writer and must not inflate the compatibility relation's source set.
+			if(!isCompiledHopOccurrenceKey(node.key(), node.kind()) || !(owner instanceof DataOp data)
+				|| data.getOp() != OpOpData.TRANSIENTWRITE && data.getOp() != OpOpData.FUNCTIONOUTPUT)
+				continue;
 			sourcesByReference.computeIfAbsent(node.valueVersion().cfgReferenceSignature(),
 				ignored -> new java.util.ArrayList<>()).add(node.key());
+		}
 		for(List<CompiledHopKey> sources : sourcesByReference.values())
 			sources.sort(null);
 
@@ -2052,6 +2647,44 @@ public final class PlacementAnalysis {
 		return logicalTransientInputsInCanonicalOrder;
 	}
 
+	/** All reaching-writer relations for one exact reader slot. */
+	public List<LogicalTransientInputFact> logicalTransientInputsForReader(CompiledHopKey targetRead,
+		int logicalPosition) {
+		Map<Integer,List<LogicalTransientInputFact>> bySlot = logicalInputsByReaderSlot.get(
+			Objects.requireNonNull(targetRead, "targetRead"));
+		return bySlot == null ? List.of() : bySlot.getOrDefault(logicalPosition, List.of());
+	}
+
+	/** Resolves a stable reference back to the one analysis-owned realization it names. */
+	public CandidateEmissionRealization requireExactCandidateRealization(
+		CandidateRealizationReference reference) {
+		return requireReferencedRealization(Objects.requireNonNull(reference, "reference"));
+	}
+
+	/** Exact compatibility edges for one chosen reader realization across all reaching writers. */
+	public List<TransientPlacementCompatibility> transientCompatibilityForReader(
+		CandidateRealizationReference reader) {
+		Objects.requireNonNull(reader, "reader");
+		return logicalTransientInputsForReader(reader.rule().parentOccurrence(), 0).stream()
+			.flatMap(fact -> fact.compatibilityForReader(reader).stream()).sorted().toList();
+	}
+
+	/** Exact relation query used after a planner has selected both endpoint receipts. */
+	public boolean isTransientPlacementCompatible(LogicalTransientInputFact fact,
+		CandidateSelectionReceipt source, CandidateSelectionReceipt reader) {
+		Objects.requireNonNull(fact, "fact");
+		CandidateSelectionReceipt exactSource = candidateReceiptDomain.require(source.rule(), source.emission(),
+			source.realization());
+		CandidateSelectionReceipt exactReader = candidateReceiptDomain.require(reader.rule(), reader.emission(),
+			reader.realization());
+		CandidateRealizationReference sourceRef = CandidateRealizationReference.of(
+			exactSource.rule(), exactSource.realization());
+		CandidateRealizationReference readerRef = CandidateRealizationReference.of(
+			exactReader.rule(), exactReader.realization());
+		return fact.compatibility().stream().anyMatch(edge -> edge.sourceRealization().equals(sourceRef)
+			&& edge.readerRealization().equals(readerRef));
+	}
+
 	public LogicalTransientInputFact requireExactLogicalTransientInput(CompiledHopKey sourceWrite,
 		CompiledHopKey targetRead, int logicalPosition) {
 		Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>> byRead = logicalInputsByIdentity.get(
@@ -2062,6 +2695,10 @@ public final class PlacementAnalysis {
 		if(fact == null)
 			throw new IllegalArgumentException("Exact logical transient input fact is missing");
 		return fact;
+	}
+
+	public LogicalBoundaryRealizations logicalBoundaryRealizations() {
+		return logicalBoundaryRealizations;
 	}
 
 	public List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder() {

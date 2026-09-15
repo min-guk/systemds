@@ -31,6 +31,8 @@ import java.util.WeakHashMap;
 
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 
@@ -245,6 +247,164 @@ public final class PlacementIdentity {
 		public int compareTo(DurableAnchorKey that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
 		}
+	}
+
+	/** Exact layout category retained below a coarse candidate emission. */
+	public enum PlacementLayoutKind {
+		LOCAL,
+		DURABLE_MAP,
+		NATIVE_LINEAGE
+	}
+
+	/** Typed proof dependency carried by a realization or transient compatibility edge. */
+	public enum PlacementProofKind {
+		VALUE_IDENTITY,
+		SHAPE,
+		PRIVACY,
+		DURABLE_ANCHOR,
+		NATIVE_CONTINUITY,
+		CONTROL_FLOW
+	}
+
+	public record PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
+		String authoritySignature) implements Comparable<PlacementProofKey> {
+		public PlacementProofKey {
+			Objects.requireNonNull(kind, "kind");
+			authoritySignature = requireText(authoritySignature, "authoritySignature");
+		}
+
+		public String normalizedSignature() {
+			return fields(kind.name(), owner == null ? "-" : owner.normalizedSignature(),
+				authoritySignature);
+		}
+
+		@Override public int compareTo(PlacementProofKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Stable physical realization identity. The containing rule scopes native lineage;
+	 * durable maps additionally retain exact endpoints and both range axes.
+	 */
+	public record PlacementRealizationKey(PlacementEmissionState emissionState,
+		PlacementLayoutKind layoutKind, DurableAnchorKey durableAnchor, String nativeLineage)
+		implements Comparable<PlacementRealizationKey> {
+		public PlacementRealizationKey {
+			Objects.requireNonNull(emissionState, "emissionState");
+			Objects.requireNonNull(layoutKind, "layoutKind");
+			if(layoutKind == PlacementLayoutKind.LOCAL
+				&& (durableAnchor != null || nativeLineage != null
+					|| emissionState.placementState().output()
+						!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT))
+				throw new IllegalArgumentException("LOCAL realization must be an unanchored LOUT emission");
+			if(layoutKind == PlacementLayoutKind.DURABLE_MAP
+				&& (durableAnchor == null || nativeLineage != null
+					|| emissionState.placementState().output()
+						!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					|| emissionState.placementState().fType() != durableAnchor.fType()))
+				throw new IllegalArgumentException("DURABLE_MAP realization requires one matching FOUT anchor");
+			if(layoutKind == PlacementLayoutKind.NATIVE_LINEAGE) {
+				if(durableAnchor != null || emissionState.placementState().output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT)
+					throw new IllegalArgumentException("NATIVE_LINEAGE realization must be an unanchored FOUT emission");
+				nativeLineage = requireText(nativeLineage, "nativeLineage");
+			}
+		}
+
+		public static PlacementRealizationKey local(PlacementEmissionState emission) {
+			return new PlacementRealizationKey(emission, PlacementLayoutKind.LOCAL, null, null);
+		}
+
+		public static PlacementRealizationKey durable(PlacementEmissionState emission,
+			DurableAnchorKey anchor) {
+			return new PlacementRealizationKey(emission, PlacementLayoutKind.DURABLE_MAP, anchor, null);
+		}
+
+		public static PlacementRealizationKey nativeLineage(PlacementEmissionState emission,
+			String lineage) {
+			return new PlacementRealizationKey(emission, PlacementLayoutKind.NATIVE_LINEAGE, null, lineage);
+		}
+
+		public String normalizedSignature() {
+			return fields(emissionState.normalizedSignature(), layoutKind.name(),
+				durableAnchor == null ? "-" : durableAnchor.normalizedSignature(),
+				nativeLineage == null ? "-" : nativeLineage);
+		}
+
+		@Override public int compareTo(PlacementRealizationKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Stable reference to an upstream candidate realization without embedding object graphs. */
+	public record CandidateRealizationReference(CandidateRuleKey rule,
+		PlacementRealizationKey realization)
+		implements Comparable<CandidateRealizationReference> {
+		public CandidateRealizationReference {
+			Objects.requireNonNull(rule, "rule");
+			Objects.requireNonNull(realization, "realization");
+		}
+		public static CandidateRealizationReference of(CandidateRuleKey rule,
+			CandidateEmissionRealization realization) {
+			Objects.requireNonNull(realization, "realization");
+			return new CandidateRealizationReference(rule, realization.key());
+		}
+		public String normalizedSignature() {
+			return fields(rule.normalizedSignature(), realization.normalizedSignature());
+		}
+		@Override public int compareTo(CandidateRealizationReference that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public enum CandidateInputBindingKind {
+		DIRECT,
+		RELOCATION,
+		LOGICAL_TRANSIENT
+	}
+
+	/** Exact physical input condition required by one output realization. */
+	public record CandidateRealizationInputBinding(int inputPosition,
+		CandidateRealizationReference source, CandidateInputBindingKind kind,
+		RelocationActionKey relocationAction) implements Comparable<CandidateRealizationInputBinding> {
+		public CandidateRealizationInputBinding {
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Realization input position must be non-negative");
+			Objects.requireNonNull(source, "source");
+			Objects.requireNonNull(kind, "kind");
+			if((kind == CandidateInputBindingKind.RELOCATION) != (relocationAction != null))
+				throw new IllegalArgumentException("Only RELOCATION input bindings carry an exact relocation action");
+		}
+		public static CandidateRealizationInputBinding direct(int inputPosition,
+			CandidateRealizationReference source) {
+			return new CandidateRealizationInputBinding(inputPosition, source,
+				CandidateInputBindingKind.DIRECT, null);
+		}
+		public static CandidateRealizationInputBinding relocation(int inputPosition,
+			CandidateRealizationReference source, RelocationActionKey action) {
+			return new CandidateRealizationInputBinding(inputPosition, source,
+				CandidateInputBindingKind.RELOCATION, action);
+		}
+		public static CandidateRealizationInputBinding logicalTransient(int inputPosition,
+			CandidateRealizationReference source) {
+			return new CandidateRealizationInputBinding(inputPosition, source,
+				CandidateInputBindingKind.LOGICAL_TRANSIENT, null);
+		}
+		public String normalizedSignature() {
+			return fields(Integer.toString(inputPosition), source.normalizedSignature(), kind.name(),
+				relocationAction == null ? "-" : relocationAction.normalizedSignature());
+		}
+		@Override public int compareTo(CandidateRealizationInputBinding that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Exact geometry equality; unlike worker-pool compatibility, no partition extent is ignored. */
+	public static boolean samePhysicalLayout(DurableAnchorKey left, DurableAnchorKey right) {
+		Objects.requireNonNull(left, "left anchor");
+		Objects.requireNonNull(right, "right anchor");
+		return left.fType() == right.fType() && left.partitions().equals(right.partitions());
 	}
 
 	/**
@@ -503,11 +663,31 @@ public final class PlacementIdentity {
 	 * list is retained in the record shape for compatibility but must always be empty.
 	 */
 	public record CandidateSelectionReceipt(CandidateRuleKey rule,
-		CandidateEmissionFact emission, List<CandidateFallbackMaterialization> fallbackMaterializations)
+		CandidateEmissionFact emission, CandidateEmissionRealization realization,
+		CandidateRealizationSupportClause supportClause,
+		List<CandidateFallbackMaterialization> fallbackMaterializations)
 		implements Comparable<CandidateSelectionReceipt> {
+		public CandidateSelectionReceipt(CandidateRuleKey rule, CandidateEmissionFact emission,
+			List<CandidateFallbackMaterialization> fallbackMaterializations) {
+			this(rule, emission, requireSingletonRealization(emission),
+				requireSingletonRealization(emission).requireSingletonSupportClause(), fallbackMaterializations);
+		}
+		public CandidateSelectionReceipt(CandidateRuleKey rule, CandidateEmissionFact emission,
+			CandidateEmissionRealization realization,
+			List<CandidateFallbackMaterialization> fallbackMaterializations) {
+			this(rule, emission, realization, realization.requireSingletonSupportClause(),
+				fallbackMaterializations);
+		}
+
 		public CandidateSelectionReceipt {
 			Objects.requireNonNull(rule, "rule");
 			Objects.requireNonNull(emission, "emission");
+			Objects.requireNonNull(realization, "realization");
+			Objects.requireNonNull(supportClause, "supportClause");
+			if(emission.realizations().stream().noneMatch(candidate -> candidate == realization))
+				throw new IllegalArgumentException("Candidate receipt realization is not owned by its emission");
+			if(realization.supportClauses().stream().noneMatch(candidate -> candidate == supportClause))
+				throw new IllegalArgumentException("Candidate receipt support clause is not owned by its realization");
 			fallbackMaterializations = sorted(fallbackMaterializations, "fallbackMaterializations");
 			if(!fallbackMaterializations.isEmpty())
 				throw new IllegalArgumentException(
@@ -517,9 +697,24 @@ public final class PlacementIdentity {
 		public String normalizedSignature() {
 			String cached = cachedSignature(this);
 			return cached != null ? cached : rememberSignature(this,
-				fields(rule.normalizedSignature(), emission.normalizedSignature(),
+				fields(rule.normalizedSignature(), emission.selectionSignature(),
+					realization.key().normalizedSignature(),
+					supportClause.normalizedSignature(),
 					fallbackMaterializations.stream().map(CandidateFallbackMaterialization::normalizedSignature)
 						.reduce((left, right) -> left + ',' + right).orElse("")));
+		}
+
+		private static CandidateEmissionRealization requireSingletonRealization(CandidateEmissionFact emission) {
+			Objects.requireNonNull(emission, "emission");
+			if(emission.realizations().size() != 1)
+				throw new IllegalArgumentException(
+					"Legacy candidate receipt construction requires exactly one emission realization");
+			return emission.realizations().get(0);
+		}
+
+		/** Exact selected worker-pool proof, if this clause owns one. */
+		public DurableAnchorKey provenWorkerPool() {
+			return realization.provenWorkerPool(supportClause);
 		}
 
 		@Override

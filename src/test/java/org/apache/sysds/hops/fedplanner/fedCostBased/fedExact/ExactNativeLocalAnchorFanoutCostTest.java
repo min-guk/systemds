@@ -54,14 +54,103 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 			() -> ExactPhysicalCostModel.nativeLocalInputWorkerCount(List.of(full, broadcast), 9));
 	}
 
+	@Test
+	public void sameWorkerPoolWithDistinctMetadataIdentitiesRetainsPhysicalProduct() {
+		var first = authority(FType.BROADCAST, 3);
+		var action = first.relocationAction();
+		var old = action.key();
+		DurableAnchorKey alias = new DurableAnchorKey("different-metadata-owner", old.durableAnchor().fType(),
+			old.durableAnchor().partitions());
+		RelocationActionKey key = new RelocationActionKey(old.sourceValueVersion(), old.targetPlacement(),
+			alias, old.statementBlockScope(), old.compatibleConsumers());
+		var previous = action.obligations().get(0);
+		ObligationKey obligation = new ObligationKey(previous.consumer(), previous.inputPosition(),
+			previous.sourceValueVersion(), previous.requiredPlacement(), key, previous.callRecompileContext());
+		var second = new ExactPhysicalModel.InputAuthority(first.inputPosition(), first.kind(),
+			first.expectedFType(), first.sourceDecision(), new RelocationAction(key, List.of(obligation)));
+		Assert.assertTrue(ExactPhysicalModel.hasOneExactConsumerAnchor(List.of(first, second)));
+		Assert.assertEquals(3, ExactPhysicalCostModel.nativeLocalInputWorkerCount(List.of(first, second), 9));
+		Assert.assertFalse(ExactPhysicalModel.hasOneExactConsumerAnchor(List.of(first, authority(FType.FULL, 1))));
+	}
+
+	@Test
+	public void sourceRealizationNotGraphWorkerUnionDeterminesDownloadFanIn() {
+		var two = sourceAlternative(2);
+		var four = sourceAlternative(4);
+		Assert.assertEquals(2, ExactPhysicalCostModel.realizationWorkerCount(null, two, 9));
+		Assert.assertEquals(4, ExactPhysicalCostModel.realizationWorkerCount(null, four, 9));
+		double bytes = 16 * 1024 * 1024;
+		double twoCost = org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel
+			.computeReusableMaterializationDownloadCost(bytes, FType.ROW,
+				ExactPhysicalCostModel.realizationWorkerCount(null, two, 9));
+		double fourCost = org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel
+			.computeReusableMaterializationDownloadCost(bytes, FType.ROW,
+				ExactPhysicalCostModel.realizationWorkerCount(null, four, 9));
+		Assert.assertNotEquals(twoCost, fourCost, 1e-12);
+	}
+
+	@Test
+	public void emittedRelocationPoolOverridesExecutionRealizationFanIn() {
+		var execution = sourceAlternative(2);
+		var outputAction = authority(FType.ROW, 4).relocationAction();
+		var relocated = new ExactPhysicalModel.Alternative(execution.decision(),
+			outputAction.key().targetPlacement(), ExactPhysicalModel.AuthorityKind.RELOCATION_SOURCE,
+			null, null, null, null, outputAction.key().durableAnchor(), outputAction,
+			null, List.of(), List.of(), execution.realization(), execution.supportClause(), "relocated-output");
+		Assert.assertEquals("The download reads the emitted target map, not the pre-relocation pool",
+			4, ExactPhysicalCostModel.realizationWorkerCount(null, relocated, 9));
+	}
+
+	@Test
+	public void workerCardinalityCountsCanonicalDistinctEndpointsNotPartitions() {
+		List<String> twoEndpoints = List.of(
+			"worker0:1234/data/features", "worker0:1234/data/labels", "worker1:1234/data/features");
+		List<String> threeEndpoints = List.of(
+			"worker0:1234/data/features", "worker0:1235/data/labels", "worker1:1234/data/features");
+		var twoEndpointAuthority = authority(FType.ROW, twoEndpoints);
+		var threeEndpointAuthority = authority(FType.ROW, threeEndpoints);
+
+		Assert.assertEquals("Two paths on one host:port are one physical worker", 2,
+			ExactPhysicalCostModel.nativeLocalInputWorkerCount(List.of(twoEndpointAuthority), 9));
+		Assert.assertEquals("A different port is a distinct physical worker", 3,
+			ExactPhysicalCostModel.nativeLocalInputWorkerCount(List.of(threeEndpointAuthority), 9));
+		Assert.assertEquals(2, ExactPhysicalCostModel.realizationWorkerCount(null,
+			sourceAlternative(twoEndpointAuthority), 9));
+		Assert.assertEquals(3, ExactPhysicalCostModel.realizationWorkerCount(null,
+			sourceAlternative(threeEndpointAuthority), 9));
+	}
+
+	private static ExactPhysicalModel.Alternative sourceAlternative(int workers) {
+		return sourceAlternative(authority(FType.ROW, workers));
+	}
+
+	private static ExactPhysicalModel.Alternative sourceAlternative(ExactPhysicalModel.InputAuthority input) {
+		var state = input.relocationAction().key().targetPlacement();
+		var emission = new org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState(state, false);
+		var realization = PlacementAnalysis.CandidateEmissionRealization.durable(emission,
+			input.relocationAction().key().durableAnchor(), List.of(), List.of());
+		return new ExactPhysicalModel.Alternative(input.sourceDecision(), state,
+			ExactPhysicalModel.AuthorityKind.DURABLE_ANCHOR, null, null, null, null,
+			realization.anchor(), null, null, List.of(), List.of(), realization, realization.supportClauses().get(0), "test-map");
+	}
+
 	private static ExactPhysicalModel.InputAuthority authority(FType type, int partitions) {
+		var workers = new ArrayList<String>();
+		for(int index = 0; index < partitions; index++)
+			workers.add("worker" + index + ":1234");
+		return authority(type, workers);
+	}
+
+	private static ExactPhysicalModel.InputAuthority authority(FType type, List<String> workers) {
 		ControlRegionKey region = new ControlRegionKey("fanout", "main", List.of("main/0"), "main", "compiled");
 		CompiledHopKey key = new CompiledHopKey("fanout", "main", "main", "compiled", region, "input", "input");
 		ValueVersionKey value = new ValueVersionKey("fanout", "input", region, 0, VersionKind.ORDINARY, List.of());
 		var ranges = new ArrayList<AnchorPartition>();
-		for(int index = 0; index < partitions; index++)
-			ranges.add(new AnchorPartition("worker" + index + ":1234", List.of(0L, 0L), List.of(4L, 2L)));
-		DurableAnchorKey anchor = new DurableAnchorKey("anchor-" + partitions, type, ranges);
+		for(int index = 0; index < workers.size(); index++)
+			ranges.add(new AnchorPartition(workers.get(index),
+				type == FType.ROW ? List.of(index * 8L / workers.size(), 0L) : List.of(0L, 0L),
+				type == FType.ROW ? List.of((index + 1) * 8L / workers.size(), 2L) : List.of(4L, 2L)));
+		DurableAnchorKey anchor = new DurableAnchorKey("anchor-" + workers.size(), type, ranges);
 		PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, type, false);
 		RelocationActionKey actionKey = new RelocationActionKey(value, state, anchor, "main", List.of(key));
 		ObligationKey obligation = new ObligationKey(key, 1, value, state, actionKey, "main");

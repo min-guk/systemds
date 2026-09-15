@@ -737,8 +737,10 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException("LOCAL statement-block scope differs");
 			String expectedProvenance;
 			try {
-				expectedProvenance = NormalizedPlannerResults.durableLocalProvenance(
-					sourceNode, action.producerPlacement());
+				expectedProvenance = LocalMaterializationSelections.durableLocalProvenance(
+					sourceNode, action.producerPlacement(), selectedCandidates.stream()
+						.filter(candidate -> candidate.rule().parentOccurrence() == sourceNode.key())
+						.findFirst().orElse(null));
 			}
 			catch(IllegalStateException ex) {
 				throw new PlacementEmissionException(ex.getMessage(), ex);
@@ -784,6 +786,7 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, PlacementState> selected,
 		List<CandidateSelectionReceipt> candidates,
 		List<RelocationChoiceReceipt> choices, List<RelocationActionKey> emittedActions) {
+		CandidateSelections.validateRealizationSelections(analysis, selected, candidates, choices);
 		if(analysis.graph().relocationActions().isEmpty() && choices.isEmpty() && emittedActions.isEmpty())
 			return List.of();
 		List<RelocationSelections.ResolvedChoice> resolved;

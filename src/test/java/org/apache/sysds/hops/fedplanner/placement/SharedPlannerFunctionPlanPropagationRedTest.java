@@ -164,8 +164,24 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 					.filter(entry -> entry.getValue().placementState().execType() == ExecType.FED)
 					.anyMatch(entry -> !"main".equals(entry.getKey().functionNamespace())
 						&& result.analysis().isCompiledHopOccurrence(entry.getKey())));
-			Assert.assertFalse("Selected compiled function-body states must be published for recompile",
-				FederatedPlannerUtils.snapshotPlannerRecompileStates().isEmpty());
+			// The compiler seals this program's authority and restores the previous
+			// owner scope. Reading the unscoped legacy registry here tests the wrong program.
+			try(var owner = FederatedPlannerUtils.activatePlannerRecompileOwner(program)) {
+				var published = FederatedPlannerUtils.snapshotPlannerRecompileStates();
+				Assert.assertFalse("Selected compiled function-body states must be published for recompile",
+					published.isEmpty());
+				Assert.assertTrue("A selected FED function-body state must retain its exact source signature",
+					selected.entrySet().stream().filter(entry -> !"main".equals(entry.getKey().functionNamespace())
+						&& entry.getValue().placementState().execType() == ExecType.FED
+						&& result.analysis().isCompiledHopOccurrence(entry.getKey()))
+						.anyMatch(entry -> {
+							var state = published.get(FederatedPlannerUtils.plannerRecompileSignature(
+								result.analysis().hop(entry.getKey()).orElseThrow()));
+							return state != null && state.execType() == entry.getValue().placementState().execType()
+								&& state.federatedOutput() == entry.getValue().placementState().output()
+								&& state.federatedOutputDerived() == entry.getValue().derivedFedFout();
+						}));
+			}
 		}
 		finally {
 			ConfigurationManager.setGlobalConfig(oldConfig);
@@ -251,6 +267,10 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		// These compiler-only fixtures use synthetic localhost URIs, not live worker files.
+		// Pin their intended public source metadata through the existing test authority.
+		org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory
+			.registerHermeticSourcePrivacy(program);
 		return program;
 	}
 }

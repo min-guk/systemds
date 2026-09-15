@@ -58,6 +58,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
@@ -275,6 +276,81 @@ public class NativePlacementContinuityTest {
 		full.reaching.put(loopRead.key, List.of(seed.key, write.key));
 
 		Assert.assertFalse(full.resolver().proves(List.of(loopRead.key), seed.anchor));
+	}
+
+	@Test
+	public void candidateSpecificProofKeepsGoodSiblingAndRejectsBadSibling() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref other = full.source("other", anchor(FType.FULL, "worker2:8002", 0, 50));
+		Ref loopRead = full.logicalRead("loopRead");
+		Ref append = full.binaryWithoutCandidate("append", OpOp2.CBIND, loopRead, other);
+		List<CandidateInputState> good = List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.absentLocal());
+		List<CandidateInputState> bad = List.of(CandidateInputState.absentLocal(),
+			CandidateInputState.present(FType.FULL));
+		full.additionalCandidate(append, good);
+		full.additionalCandidate(append, bad);
+		Ref write = full.write("loopWrite", append, NodeKind.LOOP_PHI, false);
+		full.reaching.put(loopRead.key, List.of(seed.key, write.key));
+
+		NativePlacementContinuity resolver = full.resolver();
+		Assert.assertNotNull("A candidate grounded on the seed pool remains executable",
+			resolver.proveCandidate(full.reference(append, good), seed.anchor));
+		Assert.assertNull("An incompatible sibling candidate cannot borrow the seed proof",
+			resolver.proveCandidate(full.reference(append, bad), seed.anchor));
+	}
+
+	@Test
+	public void candidateSpecificProofRequiresEveryAndDependencyToBeGrounded() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref cycleA = full.logicalRead("cycleA");
+		Ref cycleB = full.logicalRead("cycleB");
+		full.reaching.put(cycleA.key, List.of(cycleB.key));
+		full.reaching.put(cycleB.key, List.of(cycleA.key));
+		Ref product = full.binaryWithoutCandidate("product", OpOp2.PLUS, seed, cycleA);
+		List<CandidateInputState> selected = List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.FULL));
+		full.additionalCandidate(product, selected);
+
+		Assert.assertNull("one grounded sibling cannot discharge an independent ungrounded SCC",
+			full.resolver().proveCandidate(full.reference(product, selected), seed.anchor));
+	}
+
+	@Test
+	public void candidateSccGroundingCannotBorrowGroundFromIncompleteAlternative() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref ungrounded = full.logicalRead("ungrounded");
+		full.reaching.put(ungrounded.key, List.of(ungrounded.key));
+		Ref alternative = full.naryWithoutCandidate("alternative", OpOpN.MULT,
+			ground, ungrounded, ground);
+		full.edges.add(new CompiledInputEdgeFact(alternative.key, alternative.key, 0));
+		full.edges.add(new CompiledInputEdgeFact(ground.key, alternative.key, 1));
+		full.edges.add(new CompiledInputEdgeFact(ungrounded.key, alternative.key, 2));
+		full.additionalCandidate(alternative, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.absentLocal(), CandidateInputState.absentLocal()));
+		full.additionalCandidate(alternative, List.of(CandidateInputState.absentLocal(),
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)));
+		Ref root = full.unary("root", OpOp1.ABS, alternative, false);
+
+		Assert.assertNull("A self-supported OR branch cannot borrow ground from another incomplete AND branch",
+			full.resolver().proveCandidate(full.reference(root,
+				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
+	}
+
+	@Test
+	public void candidateSccGroundingPreservesExternallyGroundedLoop() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref loop = full.logicalRead("loop");
+		full.reaching.put(loop.key, List.of(loop.key, ground.key));
+		Ref root = full.unary("root", OpOp1.ABS, loop, false);
+
+		Assert.assertNotNull("A cycle remains grounded when one complete AND alternative reaches direct ground",
+			full.resolver().proveCandidate(full.reference(root,
+				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
 	}
 
 	@Test
@@ -747,6 +823,14 @@ public class NativePlacementContinuityTest {
 					FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
 				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
 				new CandidateProfileFact(List.of(fType), ""), List.of(emission), ""));
+		}
+
+		private CandidateRealizationReference reference(Ref owner, List<CandidateInputState> inputs) {
+			CandidateRuleFact fact = candidates.stream().filter(candidate ->
+				candidate.key().parentOccurrence() == owner.key
+					&& candidate.key().orderedInputs().equals(inputs)).findFirst().orElseThrow();
+			return CandidateRealizationReference.of(fact.key(),
+				fact.allowedEmissionFacts().get(0).realizations().get(0));
 		}
 
 		private void candidateLogicalRead(Ref owner) {

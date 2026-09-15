@@ -142,6 +142,7 @@ public final class NormalizedPlannerResults {
 		CandidateSelections.resolveAndValidate(analysis, selectedStates, candidates);
 		List<RelocationChoiceReceipt> choices = List.copyOf(Objects.requireNonNull(
 			selectedRelocationChoices, "selectedRelocationChoices"));
+		CandidateSelections.validateRealizationSelections(analysis, selectedStates, candidates, choices);
 		List<RelocationActionKey> relocations = RelocationSelections.emittedActions(
 			analysis, selectedStates, candidates, choices);
 		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(

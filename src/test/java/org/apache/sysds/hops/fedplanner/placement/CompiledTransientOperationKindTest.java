@@ -42,6 +42,19 @@ public class CompiledTransientOperationKindTest {
 	}
 
 	@Test
+	public void acyclicForwardingAcceptsBranchJoinButRejectsLoopPhi() {
+		DataOp read = transientRead("X");
+		DataOp write = transientWrite("X");
+
+		Assert.assertTrue(PlacementAnalysis.isCompiledAcyclicTransientForwardAccess(read,
+			node(NodeKind.BRANCH_JOIN, VersionKind.BRANCH_JOIN_PHI, "main/3/branch-join/0"),
+			OpOpData.TRANSIENTREAD));
+		Assert.assertFalse(PlacementAnalysis.isCompiledAcyclicTransientForwardAccess(write,
+			node(NodeKind.LOOP_PHI, VersionKind.LOOP_BACKEDGE, "main/2/loop-backedge/0"),
+			OpOpData.TRANSIENTWRITE));
+	}
+
+	@Test
 	public void rejectsOperationAndDirectionMismatches() {
 		DataOp read = transientRead("X");
 		DataOp write = transientWrite("X");
