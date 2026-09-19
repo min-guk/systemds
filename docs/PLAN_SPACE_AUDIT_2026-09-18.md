@@ -377,11 +377,41 @@ rows, and unfiltered missing/extra comparison remain OPEN.
 ### 2026-09-19 pre-push replay repair
 
 Two final bounded regressions were repaired after the 133-test snapshot. Dynamic ROW REV authority now
-survives TWrite/TRead replay with a typed endpoint witness and a DIRECT downstream consumer. Post-CFG
-exact replay/materialization closure also preserves the legal U/V receipt rows required by the decoded
-physical Cartesian cardinality of 1,344 instead of shrinking it to 525.
+survives TWrite/TRead replay with a typed endpoint witness and a DIRECT downstream consumer. The second
+regression restored the legal receipt rows required by the decoded physical Cartesian cardinality of
+1,344 instead of 525. The following post-index section records the corrected root cause: exact replay
+had exposed lossy `NativePoolWitness` geometry as exact.
 
-The regenerated current inventory is **5,469 sites / 507 methods / 5,203 CONDITIONAL / 266 BOUNDED**.
-The latest 23-class gate recorded **134 discovered / 130 executed-pass / 4 PUBLIC-only skips /
+The pre-index inventory at this stage was **5,469 sites / 507 methods / 5,203 CONDITIONAL / 266 BOUNDED**.
+The corresponding 23-class gate recorded **134 discovered / 130 executed-pass / 4 PUBLIC-only skips /
 0 failures / 0 errors**, with Maven exit `0` and stable source/branch-manifest hashes. Universal G009
 claims remain OPEN.
+
+### 2026-09-19 post-index current-source update
+
+The 1,344-to-525 decoder regression came from replay exposing the lossy
+`NativePoolWitness.asAnchor()` reconstruction as exact geometry. That reconstruction canonicalized
+worker endpoints, dropped path components, and rebuilt the orthogonal extent as one. Exact proofs now
+retain the original exact seed geometry; only dynamic proofs carry endpoint-only residency witnesses.
+The restored bounded factorization is **X=2, Y=2, U=4, V=4, D=21**, yielding 1,344 assignments.
+
+`bindDirectNativeCandidateRealizations` now builds one immutable FType-to-durable-anchor index per
+invocation and reuses the complete indexed seed lists. The immediate-source loop and final
+`distinct().sorted()` relation remain unchanged; no cap, sampling, representative selection, fallback,
+or proof filtering was added. This is a semantics-preserving bounded optimization. The isolated target
+method nevertheless timed out with exit `124` after **180,770 ms** and produced no Surefire XML, so it
+has no assertion result and remains an OPEN performance blocker. Evidence is in
+`build/plan-space-audit-20260919/g009-upload-performance/REPORT.md`.
+
+The current five-file structural inventory is **5,473 sites / 507 methods / 5,207 CONDITIONAL /
+266 BOUNDED**. Current source hashes include `NativePlacementContinuity.java` = `220712b8...` and
+`NeutralPlacementGraphBuilder.java` = `4e74a6ca...`. The serialized post-index 23-class gate recorded
+**134 discovered / 130 active passes / 4 PUBLIC-only skips / 0 failures / 0 errors**, Maven exit `0`,
+and stable source and branch-manifest hashes. PUBLIC skips are excluded from passes. Evidence is in
+`build/plan-space-audit-20260919/g009-branch-proof-post-index/` and
+`build/plan-space-audit-20260919/g009-final-integration-post-index/`.
+
+The current architecture verdict is **APPROVE_FOR_BOUNDED_SCOPE**. The current code-review verdict is
+**REQUEST CHANGES** because the upload fixture still times out, the branch inventory covers only five
+core files, and Tarjan traversal remains recursive. Therefore no final approval or G009 completion is
+claimed; universal plan preservation remains **OPEN / additional audit required**.

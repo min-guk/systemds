@@ -2542,6 +2542,14 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
+		Map<FType,List<DurableAnchorKey>> mutableDurableAnchorsByType = new java.util.EnumMap<>(FType.class);
+		for(Node node : nodes)
+			for(DurableAnchorKey anchor : node.anchors())
+				mutableDurableAnchorsByType.computeIfAbsent(anchor.fType(), ignored -> new ArrayList<>()).add(anchor);
+		Map<FType,List<DurableAnchorKey>> durableAnchorsByType = new java.util.EnumMap<>(FType.class);
+		for(Map.Entry<FType,List<DurableAnchorKey>> entry : mutableDurableAnchorsByType.entrySet())
+			durableAnchorsByType.put(entry.getKey(), List.copyOf(entry.getValue()));
+		durableAnchorsByType = Collections.unmodifiableMap(durableAnchorsByType);
 		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : compiledEdges)
 			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
@@ -2673,9 +2681,8 @@ public final class NeutralPlacementGraphBuilder {
 					// operation need not itself own a durable map. Try every exact
 					// analysis anchor of a compatible input type; candidate continuity
 					// proves (or rejects) the complete path back to that seed.
-					for(Node candidateSeed : nodes)
-						candidateSeed.anchors().stream().filter(anchor -> presentTypes.contains(anchor.fType()))
-							.forEach(seeds::add);
+					for(FType presentType : presentTypes)
+						seeds.addAll(durableAnchorsByType.getOrDefault(presentType, List.of()));
 					for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
 						CandidateInputState input = fact.key().orderedInputs().get(position);
 						CompiledHopKey sourceKey = inputs.getOrDefault(fact.key().parentOccurrence(), Map.of())

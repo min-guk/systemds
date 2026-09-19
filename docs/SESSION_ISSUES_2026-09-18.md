@@ -647,9 +647,10 @@ ROLL runtime map 회귀도 다음과 같이 보강했다.
 manifest는 byte-identical이며 `NativePlacementContinuity.java` SHA-256은
 `26d782dcf07a05733eba008d1b71a3276056dbfae89b338586b28adeef225aac`다. 최신 branch inventory는
 **5,437 sites / 503 methods / 5,173 CONDITIONAL / 264 BOUNDED**이며 direct 및 Maven checker가
-통과했다. Architecture 재검토는 이 bounded 구현 범위에 `CLEAR`, code review는 `APPROVE`를
-부여했다. Code review의 별도 current-tree focused gate도 43 discovered / 42 executed-pass /
-1 PUBLIC-only skip / 0 failures / 0 errors로 통과했다.
+통과했다. 당시 Architecture 재검토는 이 bounded 구현 범위에 `CLEAR`를 부여했고 별도 focused
+gate도 43 discovered / 42 executed-pass / 1 PUBLIC-only skip / 0 failures / 0 errors로 통과했다.
+이 판정은 후속 timeout·inventory·Tarjan 지적 전의 역사적 snapshot이며 현재 code-review 판정으로
+사용하지 않는다.
 
 그 뒤 `DynamicNativeLayoutCompositionTest.java`의 현재 버전을 포함한 23개 class current-source
 integration gate를 다시 실행했다. 결과는 **132 discovered / 128 executed-pass /
@@ -678,11 +679,38 @@ unfiltered expected universe, 기존 GLM builder timeout과 Docker runtime quali
 ## 14. 2026-09-19 pre-push current-source 재인증
 
 최종 정리 중 두 후속 반례를 추가로 닫았다. dynamic ROW REV authority는 TWrite/TRead replay를
-거쳐도 typed endpoint witness와 DIRECT downstream binding을 유지한다. 또한 post-CFG exact replay와
-materialization closure가 합법 receipt row를 덮어써 ProductionDecoded의 U/V domain을 각각 8에서
-5로 줄이던 문제를 수정해 물리 Cartesian cardinality 1,344를 복구했다.
+거쳐도 typed endpoint witness와 DIRECT downstream binding을 유지한다. 또한 transient replay가
+`NativePoolWitness.asAnchor()`의 lossy endpoint/extent 표현을 exact geometry로 노출해 합법 receipt
+조합을 제거하던 문제를 수정했다. exact proof는 원래 seed geometry를 유지하고 dynamic proof만
+endpoint-only witness를 전달한다. 복구된 factorization은 **X=2, Y=2, U=4, V=4, D=21**이며 물리
+Cartesian cardinality는 1,344다.
 
-현재 branch manifest는 **5,469 sites / 507 methods / 5,203 CONDITIONAL / 266 BOUNDED**이며 checker가
-통과했다. 최신 23-class gate는 **134 discovered / 130 executed-pass / 4 PUBLIC-only skips /
+이 pre-index 단계의 branch manifest는 **5,469 sites / 507 methods / 5,203 CONDITIONAL / 266 BOUNDED**이며 checker가
+통과했다. 해당 23-class gate는 **134 discovered / 130 executed-pass / 4 PUBLIC-only skips /
 0 failures / 0 errors**다. Maven exit `0`, 실행 전후 source/manifest hash 동일이며 PUBLIC skip은
 pass에 포함하지 않는다. G009 universal theorem과 timeout/Docker 경계는 계속 OPEN이다.
+
+## 15. 2026-09-19 post-index current-source 재인증
+
+`bindDirectNativeCandidateRealizations`의 반복 full-node durable-anchor scan을 FType별 immutable seed
+index로 교체했다. 모든 anchor와 각 PRESENT input type의 전체 seed 목록, immediate-source loop,
+최종 `distinct().sorted()` relation을 유지했다. cap, sampling, 대표값 선택, fallback 또는 proof
+filtering을 추가하지 않은 bounded 의미 보존 최적화다. 근거는
+`build/plan-space-audit-20260919/g009-upload-performance/REPORT.md`다.
+
+최적화 뒤 target method
+`NeutralPlacementGraphUploadRelocationRedTest#rewrittenInlinedOutputRetainsItsCompilerDeclaredTargetAuthority`
+는 exclusive 실행에서 **180,770 ms 뒤 exit 124**였고 Surefire XML을 생성하지 못했다. assertion
+실패는 관찰되지 않았지만 assertion 결과도 없으므로 pass가 아니며 성능 blocker는 OPEN이다.
+
+현재 source hash는 `NativePlacementContinuity.java` = `220712b8...`,
+`NeutralPlacementGraphBuilder.java` = `4e74a6ca...`다. branch inventory는 **5,473 sites /
+507 methods / 5,207 CONDITIONAL / 266 BOUNDED**이며 5개 core 파일 범위에 한정된다. 최신 직렬
+23-class gate는 **134 discovered / 130 active passes / 4 PUBLIC-only skips / 0 failures / 0 errors**,
+Maven exit `0`이고 실행 전후 source와 manifest hash가 동일했다. PUBLIC skip은 pass에서 제외했다.
+증거는 `build/plan-space-audit-20260919/g009-branch-proof-post-index/`와
+`build/plan-space-audit-20260919/g009-final-integration-post-index/`에 있다.
+
+최신 독립 판정은 architecture **APPROVE_FOR_BOUNDED_SCOPE**, code review **REQUEST CHANGES**다.
+Code review blocker는 upload fixture timeout, 5개 파일 inventory 범위, recursive Tarjan 깊이 위험이다.
+따라서 final APPROVE 또는 G009 완료를 선언하지 않으며 상태는 **OPEN / additional audit required**다.

@@ -10,13 +10,15 @@ Transient/FED placement 독립 리뷰에서 재현된 세 결함은 현재 작�
 독립 재검토에서 추가로 발견한 FULL ROLL suppression과 `REV -> ROLL -> EXP` 연속 동적 layout
 누락도 수정했다. transient replay의 복수 native continuity proof 중 첫 대안만 남기던 후속
 결함과 dynamic native authority의 TWrite/TRead replay 손실, exact replay 이후 receipt-domain 축소도
-수정했다. 최신 current-source integration gate는 23개 class에서
+수정했다. 최신 post-index current-source integration gate는 23개 class에서
 134 discovered / 130 executed-pass / 4 PUBLIC-only skips / 0 failures / 0 errors로 통과했고,
 실행 전후 전체 production/test source hash와 branch-manifest 관련 hash가 동일했다.
 
-최종 독립 재검토 판정은 architecture **CLEAR**, code review **APPROVE**다. Code review가 별도로
-실행한 focused gate도 43 discovered / 42 executed-pass / 1 PUBLIC-only skip / 0 failures /
-0 errors였고 source hash가 유지됐다. 이 승인은 아래 bounded 구현·회귀 범위에 한정된다.
+최신 독립 재검토 판정은 architecture **APPROVE_FOR_BOUNDED_SCOPE**, code review
+**REQUEST CHANGES**다. Architecture 판정은 아래 exact/dynamic authority와 SCC/replay 회귀 범위에
+한정된다. Code review는 upload-relocation fixture timeout, 5개 core 파일에 한정된 branch inventory,
+recursive Tarjan 깊이 위험 때문에 최종 승인을 보류했다. 근거는
+[CODE_REVIEW.md](../build/plan-space-audit-20260919/g009-final-review/CODE_REVIEW.md)다.
 
 전역 `Decode(S(P)) = LegalPhysicalPlans(P)` 증명은 완료되지 않았다. G009의 21 proof obligation,
 48 rule-family runtime-parity row, unfiltered universe, closure/order/idempotence, action/anchor,
@@ -83,6 +85,7 @@ PUBLIC-only skip은 pass로 계산하지 않도록 과거 결과를 다음처럼
 | pre-multiproof current-source integration gate | 132 | 128 | 4 |
 | final post-multiproof current-source integration gate | 133 | 129 | 4 |
 | final repaired current-source integration gate | 134 | 130 | 4 |
+| post-index current-source integration gate | 134 | 130 | 4 |
 
 정정 내용과 증거 경계는 `SESSION_ISSUES_2026-09-18.md` 12절 및
 `PLAN_SPACE_AUDIT_2026-09-18.md`의 2026-09-19 절에 반영했다.
@@ -95,13 +98,15 @@ PUBLIC-only skip은 pass로 계산하지 않도록 과거 결과를 다음처럼
 geometry의 서로 다른 durable producer identity 두 개가 모두 replay 경계를 통과하고 raw candidate
 universe cardinality는 바뀌지 않는 회귀를 추가했다. 후보 cap, suppression, fallback은 추가하지 않았다.
 
-### 7. dynamic transient replay 및 exact receipt-domain 복구
+### 7. dynamic transient replay 및 exact geometry 복구
 
 - dynamic ROW REV 결과를 TWrite/TRead로 replay한 뒤 EXP가 DIRECT로 소비하는 경로에서 endpoint
   witness를 유지하도록 수정했다.
-- post-CFG exact replay와 materialization closure가 이미 합법인 receipt row를 덮어써 U/V domain을
-  각각 8에서 5로 줄이던 문제를 수정했다. `ProductionDecodedPlanSpaceCompletenessTest`의 물리
-  Cartesian cardinality 1,344가 현재 gate에서 다시 통과한다.
+- transient replay가 `NativePoolWitness.asAnchor()`의 lossy endpoint/extent 표현을 exact geometry로
+  노출해 receipt domain을 축소하던 문제를 수정했다. exact proof는 원래 exact seed geometry를
+  유지하고 dynamic proof만 endpoint-only witness를 전달한다. 복구된 factorization은
+  **X=2, Y=2, U=4, V=4, D=21**이며 `ProductionDecodedPlanSpaceCompletenessTest`의 물리 Cartesian
+  cardinality 1,344가 현재 gate에서 다시 통과한다.
 - replay는 candidate suppression이나 runtime fallback 없이 source-state identity와 dynamic/exact
   layout authority를 구분해 fixed point까지 반복한다.
 
@@ -117,9 +122,9 @@ universe cardinality는 바뀌지 않는 회귀를 추가했다. 후보 cap, sup
   fixed-point/action/policy isolation 9-class gate: 33 discovered / 30 executed-pass /
   3 PUBLIC-only skips / 0 failures / 0 errors. 이 안에서
   `GlobalReceiptPlanSpaceCompletenessTest`는 10/10 executed-pass다.
-- candidate-affecting branch inventory: 5,469 sites / 507 methods. 분류는
-  5,203 CONDITIONAL / 266 BOUNDED이며 universally proved site는 0이다. manifest checker는
-  direct JUnit 1/1 및 위 Maven gate 1/1로 통과했다.
+- candidate-affecting branch inventory: 5,473 sites / 507 methods. 분류는
+  5,207 CONDITIONAL / 266 BOUNDED이며 universally proved site는 0이다. 5개 core 파일로 제한된
+  구조 inventory이며 manifest checker는 post-index Maven gate에서 1/1로 통과했다.
 - G009 action selection oracle: 27 discovered / 27 executed-pass / 0 skips. 이는 선언된
   2-row/2-anchor/2-demand selection 범위의 bounded 증거다.
 - 최종 current-source integration: 23개 class, 134 discovered / 130 executed-pass /
@@ -132,6 +137,9 @@ universe cardinality는 바뀌지 않는 회귀를 추가했다. 후보 cap, sup
 `build/plan-space-audit-20260919/g009-transient-multiproof-fix/`,
 `build/plan-space-audit-20260919/g009-final-integration-post-multiproof/`,
 `build/plan-space-audit-20260919/g009-final-integration-current-repaired/`,
+`build/plan-space-audit-20260919/g009-final-integration-post-index/`,
+`build/plan-space-audit-20260919/g009-branch-proof-post-index/`,
+`build/plan-space-audit-20260919/g009-upload-performance/`,
 `build/plan-space-audit-20260918/g009-actions/`에 있다.
 
 ### 제외한 실행
@@ -143,25 +151,33 @@ compile/source 변경과 겹쳤다. source hash가 실행 중 바뀌었고 share
 
 `NeutralPlacementGraphUploadRelocationRedTest#rewrittenInlinedOutputRetainsItsCompilerDeclaredTargetAuthority`
 는 여러 번의 격리 실행과 proof-state 최적화 뒤에도 120초 또는 180초 제한을 넘었다. 마지막
-확정 결과는 exit 124이며 제품 assertion 실패는 관찰되지 않았다. 이 timeout 때문에 builder
-action-generation completeness는 닫히지 않았다.
+post-index exclusive 실행은 **180,770 ms 뒤 exit 124**였고 Surefire XML을 생성하지 못했다.
+제품 assertion 실패는 관찰되지 않았지만 assertion 결과 자체도 없으므로 pass가 아니다. 이
+timeout 때문에 builder action-generation completeness는 닫히지 않았다.
 
 ## 현재 동시 작업 상태
 
 `NativePlacementContinuity`의 proof graph 상태 identity, SCC grounding, canonical reference,
-signature 계산과 후속 FULL/chained-dynamic 수정은 현재 안정된 상태다. 해당 소스의 기준
-SHA-256은 `26d782dcf07a05733eba008d1b71a3276056dbfae89b338586b28adeef225aac`다.
+signature 계산과 후속 FULL/chained-dynamic 수정은 현재 안정된 상태다. 이전 선행 snapshot의
+SHA-256은 `26d782dc...`였고 현재 post-index 기준은 아래와 같다.
 이 기준에서 branch manifest를 다시 생성했고 focused/current-source gate 전후 해시 일치를
 확인했다. 최종 74-test gate 뒤 `DynamicNativeLayoutCompositionTest.java`만 정리돼 test source
 SHA-256이 `3b5ee1742cbdd4536b3b4337af4aa145d6b1bcc7ceef7e705cfa40a886038e15`로 바뀌었으며,
 위 132-test integration gate가 이 현재 버전을 다시 인증했다. production 소스와 branch inventory는
 그 시점에는 변하지 않았다. 이후 multiproof 수정으로 `NeutralPlacementGraphBuilder.java` SHA-256은
 `03dcb0ae58ea41cba7526408179171ea9d33e8f7f80b24562e2263d6f4fd53b8`가 됐고 branch inventory는
-5,438-row로 재생성됐다. 후속 exact/dynamic replay 수정 뒤 현재 SHA-256은
+5,438-row로 재생성됐다. 후속 exact/dynamic replay 수정 뒤
 `NativePlacementContinuity.java` = `220712b88c1e3907d355868a128e8cbfcfbd4260f7f28f50fad896dad3a4d34b`,
-`NeutralPlacementGraphBuilder.java` = `36c6fcd30914dc9ee6d47b919b1ed845e0434b094c8ba7bbb2278c73f3592ea1`이며,
-branch inventory는 5,469-row로 다시 생성됐다. 134-test gate가 이 현재 소스를 인증한다. 이후
+seed index 적용 뒤 `NeutralPlacementGraphBuilder.java` =
+`4e74a6ca7a658602b20f2f65913a7934ff28fb2d0ac699b98c8b88adcd195595`이며,
+branch inventory는 5,473-row로 다시 생성됐다. post-index 134-test gate가 이 현재 소스를 인증한다. 이후
 소스가 다시 바뀌면 이 증거는 새 기준으로 재생성해야 한다.
+
+seed index는 `bindDirectNativeCandidateRealizations` 진입 시 모든 durable anchor를 FType별 immutable
+목록으로 한 번 구성해 반복 full-node scan을 제거한다. 각 realization은 기존과 동일한 전체 seed
+목록을 받고 마지막 `distinct().sorted()`도 유지하므로 bounded 의미 보존 최적화다. 후보 cap,
+sampling, 대표값 선택, fallback 또는 proof filtering은 없다. 다만 위 exclusive timeout이 남아
+성능 blocker는 OPEN이다.
 
 ## 이어서 수행할 작업
 

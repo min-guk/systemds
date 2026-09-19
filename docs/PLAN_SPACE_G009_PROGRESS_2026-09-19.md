@@ -35,12 +35,13 @@ Decode(S(P)) = LegalPhysicalPlans(P)
 | program relations PO-01/07/08/18/20 | **PARTIAL** | bounded protected 관계는 통과; 일반 문맥과 PUBLIC privacy 축은 미완료 |
 | rule parity RF01–RF24 | **0 CLOSED / 24 partial-open** | family별 공통 open 축이 남음 |
 | rule parity RF25–RF48 | **0 CLOSED / 20 PARTIAL / 4 OPEN** | runtime binding 또는 축별 direct evidence 부족 |
-| candidate-affecting branch inventory | **current-source 구조 inventory CLOSED / universal proof OPEN** | 5개 파일 5,469 site / 507 method를 재생성했고 direct 및 Maven checker 통과; 5,203 CONDITIONAL / 266 BOUNDED / 0 universally proved |
+| candidate-affecting branch inventory | **current-source 구조 inventory CLOSED / universal proof OPEN** | 5개 파일 5,473 site / 507 method를 재생성했고 Maven checker 통과; 5,207 CONDITIONAL / 266 BOUNDED / 0 universally proved |
 | native/privacy PO-05/06/17/18 후속 | **진행 중 / PARTIAL** | OTHER source-route 반례와 dynamic-layout 결함은 수정됐으나 PART·all-opcode·전체 privacy/recompile cross-product 재인증 미완료 |
 
-[summary.json](../build/plan-space-audit-20260918/g009-branch-proof/summary.json)은 현재 안정 소스의
-**5,469 site / 507 method / 5,203 CONDITIONAL / 266 BOUNDED**를 기록한다.
-`NativePlacementContinuity.java` SHA-256은 `26d782dc...`이며 manifest와 checker gate 전후 전체
+[summary.json](../build/plan-space-audit-20260919/g009-branch-proof-post-index/summary.json)은 현재 안정 소스의
+**5,473 site / 507 method / 5,207 CONDITIONAL / 266 BOUNDED**를 기록한다.
+`NativePlacementContinuity.java` SHA-256은 `220712b8...`, `NeutralPlacementGraphBuilder.java`는
+`4e74a6ca...`이며 manifest와 checker gate 전후 전체
 production/test source hash가 동일했다. 이 결과는 선언된 파일과 AST kind의 구조 열거를 닫지만,
 각 조건의 필요충분성이나 PO-21의 universal compositional proof를 닫지 않는다.
 
@@ -64,13 +65,15 @@ production/test source hash가 동일했다. 이 결과는 선언된 파일과 A
 | Final combined stable gate | 74 discovered, 70 active pass, 4 PUBLIC-only skips, 0 fail/error | [final-combined-stable.log](../build/plan-space-audit-20260919/final-dynamic-layout/final-combined-stable.log) |
 | Pre-multiproof current-source integration gate | 132 discovered, 128 active pass, 4 PUBLIC-only skips, 0 fail/error | [g009-final-integration-current](../build/plan-space-audit-20260919/g009-final-integration-current/) |
 | Final post-multiproof current-source integration gate | 133 discovered, 129 active pass, 4 PUBLIC-only skips, 0 fail/error | [g009-final-integration-post-multiproof](../build/plan-space-audit-20260919/g009-final-integration-post-multiproof/) |
-| Final repaired current-source integration gate | 134 discovered, 130 active pass, 4 PUBLIC-only skips, 0 fail/error | `build/plan-space-audit-20260919/g009-final-integration-current-repaired/` |
+| Final repaired current-source integration gate | 134 discovered, 130 active pass, 4 PUBLIC-only skips, 0 fail/error | [g009-final-integration-current-repaired](../build/plan-space-audit-20260919/g009-final-integration-current-repaired/) |
+| Post-index current-source integration gate | 134 discovered, 130 active pass, 4 PUBLIC-only skips, 0 fail/error | [REPORT.md](../build/plan-space-audit-20260919/g009-final-integration-post-index/REPORT.md), [evidence.json](../build/plan-space-audit-20260919/g009-final-integration-post-index/evidence.json) |
 
 최신 current-source integration gate는 실행 전후 전체 production/test source hash와 branch
 hash가 같았다. 134 discovered / 130 active pass / 4 PUBLIC-only skips / 0 fail/error는 실행한
 23개 class의 bounded 증거이며 G009의 전체 21 obligation이나 48 family row 완료 수치가 아니다.
-선행 74-test gate 뒤 test-only 변경과 transient multiproof production 수정이 있었고, 현재
-5,469-row branch inventory는 모든 후속 replay 수정 뒤 다시 생성한 것이다.
+선행 74-test gate 뒤 test-only 변경과 transient multiproof production 수정이 있었다. 이후
+durable-anchor seed index 변경까지 포함해 5,473-row branch inventory를 재생성했으며, post-index
+gate에서 source와 manifest hash가 모두 유지됐다.
 
 ## 4. 확인되어 수정된 실제 결함
 
@@ -85,7 +88,7 @@ hash가 같았다. 134 discovered / 130 active pass / 4 PUBLIC-only skips / 0 fa
 7. **FULL/COL ROLL과 동적 합성 누락**: FULL·COL ROLL의 runtime range split을 dynamic native authority로 표현하고 `REV -> ROLL -> EXP`, `FULL ROLL -> EXP`, `COL ROLL -> EXP` production/FedAll 회귀를 추가했다. dynamic FULL은 map-preserving 소비에만 전달하고 exact single-partition FULL 전제 연산에는 전달하지 않는다.
 8. **Transient replay 복수 proof 손실**: 같은 source realization/seed에 여러 grounded `NativeContinuityProof`가 있어도 replay가 첫 대안만 보존했다. `proveCandidateAlternatives()` 전체를 정렬·중복 제거해 전달하도록 수정했고, 동일 worker geometry의 서로 다른 durable producer identity 두 개가 모두 남는 회귀를 추가했다.
 9. **Dynamic native authority의 transient replay 손실**: dynamic ROW REV 결과가 TWrite/TRead를 통과하면 endpoint witness가 사라져 downstream EXP의 exact assignment가 없어질 수 있었다. dynamic replay seed와 typed endpoint witness를 보존하는 production 회귀로 잠갔다.
-10. **Exact replay receipt-domain 축소**: post-CFG replay/materialization closure가 이미 합법인 U/V receipt row를 덮어써 ProductionDecoded cardinality를 1,344에서 525로 줄였다. replay source identity와 materialization layout 변경을 fixed point에서 보존해 1,344를 복구했다.
+10. **Exact replay receipt-domain 축소**: transient replay가 `NativePoolWitness.asAnchor()`의 lossy worker-pool 표현을 exact geometry로 노출했다. 이 표현은 endpoint를 canonicalize하면서 경로를 잃고 orthogonal extent를 1로 재구성해, 합법 receipt 조합을 제거하고 ProductionDecoded cardinality를 1,344에서 525로 줄였다. exact proof는 원래 exact seed geometry를 유지하고 dynamic proof만 endpoint-only witness를 전달하도록 경계를 수정했다. 복구된 factorization은 **X=2, Y=2, U=4, V=4, D=21**이며 곱은 1,344다. 근거는 [g009-decoded-525-fix/REPORT.md](../build/plan-space-audit-20260919/g009-decoded-525-fix/REPORT.md), [g009-dynamic-transient-exactness/REPORT.md](../build/plan-space-audit-20260919/g009-dynamic-transient-exactness/REPORT.md), [post-index gate](../build/plan-space-audit-20260919/g009-final-integration-post-index/REPORT.md)다.
 
 마지막 항목의 현재 판정은 “반례 원인과 수정 확인”이며 PO-05 전체 CLOSED가 아니다. OTHER bounded subcase와 PART 일반성은 구분해야 한다.
 
@@ -127,14 +130,23 @@ PUBLIC-only 테스트는 저장소 정책상 의도적으로 실행 제외한다
   proof graph 이전의 반복 seed scan도 비용에 기여한다는 진단 증거다. 이 실행은 진단 전용이며
   pass로 계산하지 않는다. artifact는
   [timeout-diagnostic-0045](../build/plan-space-audit-20260919/final-dynamic-layout/timeout-diagnostic-0045/)에 있다.
+- 후속 bounded 최적화는 `bindDirectNativeCandidateRealizations` 진입 시 모든 durable anchor를
+  FType별 immutable index로 한 번 구성하고, 각 native realization이 기존과 같은 전체 indexed
+  seed 목록을 사용하도록 바꿨다. immediate-source loop와 마지막
+  `distinct().sorted()` canonicalization은 유지했으며 cap, sampling, 대표값 선택, fallback,
+  proof filtering을 추가하지 않았다. 이 변경은 후보 의미를 보존하는 반복 scan 제거다.
+  그러나 대상 method는 exclusive 180초 실행에서도 **180,770 ms 뒤 exit 124**였고 Surefire XML을
+  생성하지 못했다. 따라서 assertion 결과와 완료 여부는 알 수 없으며 pass로 계산하지 않는다.
+  근거는 [g009-upload-performance/REPORT.md](../build/plan-space-audit-20260919/g009-upload-performance/REPORT.md)다.
 
 ### 추론
 
 v12의 exclusive timeout과 표본은 proof-state 탐색량 및 per-query reverse-dependency indexing이
-병목이라는 강한 진단 증거다. 새 표본은 그 앞단의 전체-node seed 재수집도 별도 반복 비용임을
-보인다. 가장 작은 의미 보존 후보는 FType별 durable seed anchor를 bind invocation당 한 번
-indexing하는 것이다. 그 뒤에도 timeout이 남으면 proof query key별 immutable graph/index 공유를
-검토해야 한다. 어느 변경도 후보 집합을 줄이거나 runtime fallback을 추가해서는 안 된다.
+병목이라는 강한 진단 증거다. 전체-node seed 재수집 비용은 의미 보존 FType index로 제거했지만
+target method timeout은 남았다. 다음 조사 대상은 root realization, seed witness, fixed identities,
+layout exactness를 모두 포함한 정확한 query key 아래에서 proof graph/reverse-dependency 계산을
+공유하는 것이다. 적용 전후 proof-set equality를 확인해야 하며 후보 집합 축소나 runtime fallback은
+허용하지 않는다.
 
 ## 8. 남은 OPEN/PARTIAL 의무
 
@@ -155,10 +167,10 @@ indexing하는 것이다. 그 뒤에도 timeout이 남으면 proof query key별 
 
 ## 9. 직렬 다음 단계와 중단 조건
 
-1. v12 timeout에서 확인한 per-query reverse-dependency indexing과 proof-state 폭증을 plan suppression 없이 줄이고, global production-builder method가 제한 시간 안에 완료되는지 exclusive 실행으로 확인한다. 같은 `target/`에 Maven을 병렬 실행하지 않는다.
+1. seed index 뒤에도 남은 per-query proof graph/reverse-dependency 반복과 proof-state 폭증을 plan suppression 없이 줄이고, global production-builder method가 제한 시간 안에 완료되는지 exclusive 실행으로 확인한다. 같은 `target/`에 Maven을 병렬 실행하지 않는다.
 2. 성능 변경이 생기면 소스를 다시 동결하고 production/test source hash manifest를 갱신한다. 현재
-   현재 5,469-row branch snapshot은 `NativePlacementContinuity`의 `220712b8...`와
-   `NeutralPlacementGraphBuilder`의 `36c6fcd3...` 소스 조합에만 유효하다.
+   현재 5,473-row branch snapshot은 `NativePlacementContinuity`의 `220712b8...`와
+   `NeutralPlacementGraphBuilder`의 `4e74a6ca...` 소스 조합에만 유효하다.
 3. native/privacy owned tests의 최신 current-source 통합 실행은 완료했다. 향후 production 변경이
    생기면 B13 OTHER source lineage, dynamic native layout, native lineage completeness, native
    continuity, transform/encode, runtime reorg를 다시 실행한다.
@@ -172,7 +184,17 @@ indexing하는 것이다. 그 뒤에도 timeout이 남으면 proof query key별 
 
 작업 중단 조건은 두 가지뿐이다. 전역 완료를 선언하려면 21개 obligation과 48개 family row가 엄격한 축별 기준을 모두 충족하고 안정 소스 직렬 gate가 통과해야 한다. 그렇지 않으면 문서 상태를 **OPEN / additional audit required**로 유지하고, 정확한 bounded blocker를 남긴다.
 
-## 10. working tree와 commit 주의
+## 10. 독립 검토 판정
+
+- Architecture: **APPROVE_FOR_BOUNDED_SCOPE**. exact seed와 dynamic endpoint witness 경계, SCC
+  grounding 및 현재 regression 범위에 대한 승인이다. 전역 정리나 timeout 경로 승인이 아니다.
+- Code review: **REQUEST CHANGES**. upload-relocation fixture timeout, 5개 core 파일에 한정된 branch
+  inventory, recursive Tarjan 깊이 위험이 남아 있다. 근거는
+  [CODE_REVIEW.md](../build/plan-space-audit-20260919/g009-final-review/CODE_REVIEW.md)다.
+
+따라서 최종 APPROVE나 G009 완료를 선언하지 않는다.
+
+## 11. working tree와 commit 주의
 
 현재 working tree에는 여러 agent의 production, test, docs 및 untracked evidence 변경이 함께 존재하며 의도적으로 미커밋 상태다. 주요 baseline 커밋은 `d8fbd30b54`이지만 이 문서의 G009 결과 상당수는 그 이후 변경을 대상으로 한다. reset/stash/revert로 다른 lane의 변경을 제거하지 않았고, 이 문서도 커밋 완료나 clean tree를 주장하지 않는다.
 
