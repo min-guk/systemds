@@ -16,6 +16,8 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -374,6 +376,58 @@ public class NativePlacementContinuityTest {
 		Assert.assertEquals("an oversized completed result is recomputed, never truncated", 0,
 			byteMetrics.snapshot().memoHits());
 		Assert.assertEquals(0, byteMetrics.snapshot().memoEntries());
+	}
+
+	@Test
+	public void completedProofMemoRejectsDisabledAndCountExceededBeforeSignatures() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		NativePlacementContinuity.NativeContinuityProof first = bareProof("first");
+		NativePlacementContinuity.NativeContinuityProof second = bareProof("second");
+
+		invokeCacheCompletedProofs(full.resolver(new SearchSpaceMetrics(), 0, 16), List.of(first));
+		Assert.assertNull("a disabled memo must not normalize rejected proofs", cachedSignature(first));
+
+		invokeCacheCompletedProofs(full.resolver(new SearchSpaceMetrics(), 2, 1), List.of(first, second));
+		Assert.assertNull("a count-exceeded result must not normalize its first proof",
+			cachedSignature(first));
+		Assert.assertNull("a count-exceeded result must not normalize trailing proofs",
+			cachedSignature(second));
+	}
+
+	@Test
+	public void completedProofMemoStopsByteEstimationAfterBudgetRejection() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		NativePlacementContinuity.NativeContinuityProof first = bareProof("first");
+		NativePlacementContinuity.NativeContinuityProof trailing = bareProof("trailing");
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+
+		invokeCacheCompletedProofs(full.resolver(metrics, 2, 16, 1), List.of(first, trailing));
+
+		Assert.assertNotNull("the proof that crosses the byte limit is measured", cachedSignature(first));
+		Assert.assertNull("proofs after a byte-limit rejection must not be visited",
+			cachedSignature(trailing));
+		Assert.assertEquals(0, metrics.snapshot().memoEntries());
+	}
+
+	@Test
+	public void completedProofMemoAcceptsAnEstimateEqualToItsByteLimit() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		NativePlacementContinuity.NativeContinuityProof proof = bareProof("exact-limit");
+		long exactBytes = 96L + 2L * proof.normalizedSignature().length();
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+
+		invokeCacheCompletedProofs(full.resolver(metrics, 2, 16, exactBytes), List.of(proof));
+
+		Assert.assertEquals(1, metrics.snapshot().memoEntries());
+		Assert.assertEquals(exactBytes, metrics.snapshot().memoRetainedEstimatedBytes());
+	}
+
+	@Test
+	public void completedProofMemoBudgetAdditionIsBoundaryAndOverflowSafe() throws Exception {
+		Assert.assertFalse("retained plus additional equal to the budget must be allowed",
+			invokeExceedsBudget(7, 3, 10));
+		Assert.assertTrue("an overflowing retained plus additional sum must be rejected",
+			invokeExceedsBudget(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
 	}
 
 	@Test
@@ -1454,6 +1508,41 @@ public class NativePlacementContinuityTest {
 	}
 
 	private record Ref(CompiledHopKey key, Hop hop, DurableAnchorKey anchor) { }
+
+	private static NativePlacementContinuity.NativeContinuityProof bareProof(String id) {
+		DurableAnchorKey seed = new DurableAnchorKey("seed-" + id, FType.FULL,
+			List.of(partition("worker1:8001", 0, 50)));
+		return new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, List.of());
+	}
+
+	private static void invokeCacheCompletedProofs(NativePlacementContinuity resolver,
+		List<NativePlacementContinuity.NativeContinuityProof> proofs) throws Exception {
+		Method cache = null;
+		for(Method method : NativePlacementContinuity.class.getDeclaredMethods())
+			if(method.getName().equals("cacheCompletedProofs")) {
+				cache = method;
+				break;
+			}
+		Assert.assertNotNull(cache);
+		cache.setAccessible(true);
+		cache.invoke(resolver, null, proofs);
+	}
+
+	private static String cachedSignature(
+		NativePlacementContinuity.NativeContinuityProof proof) throws Exception {
+		Field signature = NativePlacementContinuity.NativeContinuityProof.class
+			.getDeclaredField("normalizedSignature");
+		signature.setAccessible(true);
+		return (String) signature.get(proof);
+	}
+
+	private static boolean invokeExceedsBudget(long retained, long additional, long budget)
+		throws Exception {
+		Method exceedsBudget = NativePlacementContinuity.class.getDeclaredMethod(
+			"exceedsBudget", long.class, long.class, long.class);
+		exceedsBudget.setAccessible(true);
+		return (boolean) exceedsBudget.invoke(null, retained, additional, budget);
+	}
 
 	private static PlacementState state(FType fType) {
 		return new PlacementState(ExecType.FED, FederatedOutput.FOUT, fType, false);

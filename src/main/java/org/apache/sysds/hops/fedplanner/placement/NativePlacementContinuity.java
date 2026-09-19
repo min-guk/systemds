@@ -354,14 +354,17 @@ final class NativePlacementContinuity {
 
 	private void cacheCompletedProofs(PublicCandidateQueryKey query,
 		List<NativeContinuityProof> proofs) {
-		long estimatedBytes = estimatedProofBytes(proofs);
 		if(memoMaxEntries == 0 || memoMaxProofs == 0 || memoMaxEstimatedBytes == 0
-			|| proofs.size() > memoMaxProofs || estimatedBytes > memoMaxEstimatedBytes)
+			|| proofs.size() > memoMaxProofs)
+			return;
+		long estimatedBytes = estimatedProofBytes(proofs, memoMaxEstimatedBytes);
+		if(estimatedBytes > memoMaxEstimatedBytes)
 			return;
 		while(!completedProofMemo.isEmpty()
 			&& (completedProofMemo.size() >= memoMaxEntries
-				|| memoRetainedProofs + proofs.size() > memoMaxProofs
-				|| memoRetainedEstimatedBytes + estimatedBytes > memoMaxEstimatedBytes)) {
+				|| exceedsBudget(memoRetainedProofs, proofs.size(), memoMaxProofs)
+				|| exceedsBudget(memoRetainedEstimatedBytes, estimatedBytes,
+					memoMaxEstimatedBytes))) {
 			var oldest = completedProofMemo.entrySet().iterator().next();
 			memoRetainedProofs -= oldest.getValue().proofs().size();
 			memoRetainedEstimatedBytes -= oldest.getValue().estimatedBytes();
@@ -377,14 +380,20 @@ final class NativePlacementContinuity {
 				memoRetainedEstimatedBytes);
 	}
 
-	private static long estimatedProofBytes(List<NativeContinuityProof> proofs) {
+	private static long estimatedProofBytes(List<NativeContinuityProof> proofs, long byteBudget) {
 		long bytes = 0;
 		for(NativeContinuityProof proof : proofs) {
 			long proofBytes = 96L + 2L * proof.normalizedSignature().length()
 				+ 32L * proof.immediateBindings().size();
 			bytes = Long.MAX_VALUE - bytes < proofBytes ? Long.MAX_VALUE : bytes + proofBytes;
+			if(bytes > byteBudget)
+				return bytes;
 		}
 		return bytes;
+	}
+
+	private static boolean exceedsBudget(long retained, long additional, long budget) {
+		return retained > budget || additional > budget - retained;
 	}
 
 	private CandidateSupportQueryKey candidateSupportQueryKey(
