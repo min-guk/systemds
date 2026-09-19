@@ -30,6 +30,9 @@ final class SearchSpaceMetrics {
 	private long proofStatesBuilt;
 	private long proofAlternativesBuilt;
 	private long proofDependencyEdgesBuilt;
+	private long acyclicProofGraphs;
+	private long cyclicProofGraphs;
+	private long acyclicAlternativesRemoved;
 	private long proofRowsExamined;
 	private long deadStatesQueued;
 	private long dependencyNotifications;
@@ -113,7 +116,8 @@ final class SearchSpaceMetrics {
 		directClosurePasses = directClosureStablePasses = directClosureFullPasses = 0;
 		exactContextOverflowQueries = 0;
 		proofGraphsBuilt = proofStatesBuilt = 0;
-		proofAlternativesBuilt = proofDependencyEdgesBuilt = proofRowsExamined = 0;
+		proofAlternativesBuilt = proofDependencyEdgesBuilt = 0;
+		acyclicProofGraphs = cyclicProofGraphs = acyclicAlternativesRemoved = proofRowsExamined = 0;
 		deadStatesQueued = dependencyNotifications = alternativesRemoved = 0;
 		ownerCompactionElementsScanned = sccInvocations = sccStatesScanned = 0;
 		sccAlternativesScanned = sccEdgesScanned = sccMaxRefinementDepth = 0;
@@ -177,6 +181,14 @@ final class SearchSpaceMetrics {
 		proofStatesBuilt += states;
 		proofAlternativesBuilt += alternatives;
 		proofDependencyEdgesBuilt += dependencyEdges;
+	}
+	void recordProofGraphPath(boolean cyclic, long acyclicRemoved) {
+		if(cyclic)
+			cyclicProofGraphs++;
+		else {
+			acyclicProofGraphs++;
+			acyclicAlternativesRemoved += acyclicRemoved;
+		}
 	}
 
 	void recordProofRowExamined() { proofRowsExamined++; }
@@ -314,7 +326,8 @@ final class SearchSpaceMetrics {
 			semanticPasses, publicationPasses, directClosurePasses, directClosureStablePasses,
 			directClosureFullPasses, proofQueries, exactContextUniqueQueries,
 			exactContextRepeatedQueries, exactContextOverflowQueries, proofGraphsBuilt, proofStatesBuilt,
-			proofAlternativesBuilt, proofDependencyEdgesBuilt, proofRowsExamined, deadStatesQueued,
+			proofAlternativesBuilt, proofDependencyEdgesBuilt, acyclicProofGraphs,
+			cyclicProofGraphs, acyclicAlternativesRemoved, proofRowsExamined, deadStatesQueued,
 			dependencyNotifications, alternativesRemoved, ownerCompactionElementsScanned,
 			sccInvocations, sccStatesScanned, sccAlternativesScanned, sccEdgesScanned,
 			sccMaxRefinementDepth, supportPrefixes, supportLeaves, uniqueProofs, duplicateProofs,
@@ -349,7 +362,8 @@ final class SearchSpaceMetrics {
 		long proofQueries, long exactContextUniqueQueries, long exactContextRepeatedQueries,
 		long exactContextOverflowQueries,
 		long proofGraphsBuilt, long proofStatesBuilt,
-		long proofAlternativesBuilt, long proofDependencyEdgesBuilt, long proofRowsExamined,
+		long proofAlternativesBuilt, long proofDependencyEdgesBuilt, long acyclicProofGraphs,
+		long cyclicProofGraphs, long acyclicAlternativesRemoved, long proofRowsExamined,
 		long deadStatesQueued, long dependencyNotifications, long alternativesRemoved,
 		long ownerCompactionElementsScanned, long sccInvocations, long sccStatesScanned,
 		long sccAlternativesScanned, long sccEdgesScanned, long sccMaxRefinementDepth,

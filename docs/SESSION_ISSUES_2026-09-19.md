@@ -186,3 +186,48 @@
   관련 테스트를 실험과 함께 revert했으며 향후 DAG 구현에서는 같은 반례를 다시 포함한다.
 - **의사결정 근거**: 의미상 안전한 국소 fast path도 목표 workload에서 안정적인 시간·메모리
   개선이 없으면 누적하지 않는다.
+
+## 통합 구조의 acyclic pruning·grounding fast path 채택
+
+- **상태**: 구조 개선 단위 채택. timeout 없는 small/LM/GLM 동일성 및 paired 성능 gate를
+  통과했다. 전체 `buildAnalysis <= 180,000 ms` 목표와 Docker 3회 gate는 OPEN이다.
+- **구조 변경**: proof graph를 만드는 query-local traversal이 equality 기반 active set으로 cycle을
+  감지하고 dependency-first completion order를 기록한다. cycle이 하나라도 있으면 기존 dead-prune
+  cascade와 SCC fixed point를 그대로 사용한다. DAG이면 reverse-dependency index, dead queue,
+  반복 identity removal과 두 차례 SCC 수집을 생략하고 completion order에서 stable pruning과 grounding을
+  수행한다.
+- **보존 경계**: 기존 graph key와 dead state key를 남겨 occurrence revision invalidation footprint를
+  유지한다. 생존 alternative의 객체 identity, 중복과 순서를 유지하고 missing dependency는 기존처럼
+  fail-closed다. 새 회귀는 실제로 pruning된 dead sibling의 occurrence만 revision invalidation한 뒤 proof
+  값은 같지만 graph가 재생성되는지 확인한다. 독립 최종 review는 이전 footprint 우려가 해소됐다고
+  판단했고 CRITICAL/HIGH/MEDIUM/LOW 지적 0건으로 승인했다.
+- **small/LM 동일성**: ACTIONS 52개 proof graph는 모두 acyclic이었고 snapshot이 byte 동일했다. LM은
+  13,854개 graph 중 acyclic 13,371, cyclic 483이었고 351,893개 alternative를 DAG 경로에서 제거했다.
+  control/current 12쌍의 snapshot은 모두 accepted SHA-256
+  `9000bff430f7fde79b901e5af6414eb4e537c1806af73056234f05830d63551a`와 같았다.
+- **LM 성능**: timeout 없는 fresh JVM 12쌍에서 control 중앙 `10,304.5 ms`, current 중앙
+  `9,733 ms`로 `571.5 ms`(5.55%) 감소했고 current가 12쌍 중 7쌍 빨랐다. peak RSS 중앙은
+  `1,341,330 -> 1,338,568 KiB`(-0.21%)로 사실상 같다. 원자료는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-acyclic-fastpath-screen-r1-20260919/`에 있다.
+- **GLM 동일성/구조 계측**: 같은 JVM heap/config, 외부 timeout과 planning budget 없이 control과
+  current를 각각 정상 완료했다. 둘 다 fingerprint `98b41db8...7109`, node/fact/action
+  `1,992/2,160/293`이다. current의 proof graph 154,362개는 전부 acyclic이었고 41,415,373개
+  alternative를 제거했다. control의 SCC edge scan 872,529,353회는 current에서 0회가 됐다.
+- **GLM 성능**: contemporaneous control evaluator `794.699 s`, wall `13:21.06`, peak RSS
+  `30,471,044 KiB`; current evaluator `716.592 s`, wall `12:02.81`, peak RSS `30,468,196 KiB`다.
+  planning은 `78.107 s`(9.83%), wall은 9.77% 감소했고 RSS는 사실상 같다. accepted historical
+  `837.223 s`와의 감소율 14.4%는 참고값이며 최종 판정에는 contemporaneous pair를 사용한다.
+  원자료는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-acyclic-fastpath-glm-pair-r1-20260919/`에 있다.
+- **회귀/inventory**: 현재 source에 존재하는 12개 보호 클래스는 98 discovered/95 active pass/
+  3 intended PUBLIC skip/0 failure/error다. 이전 performance branch의
+  `G009RelocationEnumerationTest`는 correctness 통합 source에 존재하지 않아 발견 수에 포함하지 않았다.
+  fresh branch manifest 5,833행은 tracked resource와 byte 동일하고, 935개 branch-ID addition/removal을
+  `G009_SEARCH_SPACE_BRANCH_INVENTORY_REVIEW_2026-09-19.tsv`에 분류했다. `git diff --check`도 통과했다.
+- **판정/다음 병목**: 반복 가능한 LM 개선, 정상 GLM 9.83% 개선, exact snapshot과 독립 review를 모두
+  충족했으므로 이 단위는 유지한다. 그러나 716.592초는 180초보다 536.592초 길다. 다음 단위는
+  남은 284,280,699개 proof alternative와 513,715,666개 dependency edge의 생성 원인을 계측하고,
+  합법적 완성이 불가능한 alternative를 dependency 객체 생성 전에 보수적으로 거절하거나 topology를
+  공유해 중복 생성을 줄이는 방향으로 제한한다.
+- **잔여 이슈**: 동일 Docker fresh JVM 3회 180초, allocation/live-heap, DP/runtime/final-plan oracle,
+  G009 전역 legality/completeness 증명은 계속 OPEN이다.

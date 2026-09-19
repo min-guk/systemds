@@ -436,6 +436,36 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void acyclicPruningRetainsDeadBranchInRevisionInvalidationFootprint() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref dead = full.read("dead");
+		Ref choice = full.logicalRead("choice");
+		full.inheritAnchor(choice, ground.anchor);
+		full.reaching.put(choice.key, List.of(dead.key));
+		Ref root = full.unary("root", OpOp1.ABS, choice, false);
+		CandidateRealizationReference reference = full.reference(root,
+			List.of(CandidateInputState.present(FType.FULL)));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity firstRevision = full.resolver(metrics, 8, 128);
+
+		List<NativePlacementContinuity.NativeContinuityProof> expected =
+			firstRevision.proveCandidateAlternatives(reference, ground.anchor);
+		Assert.assertFalse("the grounded sibling keeps the root viable: " + metrics.snapshot(),
+			expected.isEmpty());
+		Assert.assertTrue("the dead sibling must be removed by the acyclic pass",
+			metrics.snapshot().acyclicAlternativesRemoved() > 0);
+		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
+
+		NativePlacementContinuity invalidated = firstRevision.nextRevision(
+			List.copyOf(full.candidates), Set.of(dead.key));
+		Assert.assertEquals("dead side-branch invalidation cannot change the surviving proof",
+			expected, invalidated.proveCandidateAlternatives(reference, ground.anchor));
+		Assert.assertTrue("pruning must retain the dead occurrence in the memo footprint",
+			metrics.snapshot().proofGraphsBuilt() > graphBuilds);
+	}
+
+	@Test
 	public void zeroTopologyBudgetRecomputesWithoutChangingProofs() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -610,10 +640,51 @@ public class NativePlacementContinuityTest {
 		Ref loop = full.logicalRead("loop");
 		full.reaching.put(loop.key, List.of(loop.key, ground.key));
 		Ref root = full.unary("root", OpOp1.ABS, loop, false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 
 		Assert.assertNotNull("A cycle remains grounded when one complete AND alternative reaches direct ground",
-			full.resolver().proveCandidate(full.reference(root,
+			full.resolver(metrics, 0, 0).proveCandidate(full.reference(root,
 				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
+		Assert.assertTrue("a self-loop must keep the cyclic SCC fallback",
+			metrics.snapshot().cyclicProofGraphs() > 0);
+	}
+
+	@Test
+	public void candidateAcyclicChainGroundsDependenciesBeforeTheirOwners() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref dependency = full.logicalRead("dependency");
+		Ref owner = full.logicalRead("owner");
+		full.reaching.put(dependency.key, List.of(ground.key));
+		full.reaching.put(owner.key, List.of(dependency.key));
+		Ref root = full.unary("root", OpOp1.ABS, owner, false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+
+		Assert.assertNotNull("an acyclic chain must ground every dependency before its owner",
+			full.resolver(metrics, 0, 0).proveCandidate(full.reference(root,
+				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
+		Assert.assertTrue("the chain must use at least one acyclic proof graph",
+			metrics.snapshot().acyclicProofGraphs() > 0);
+		Assert.assertEquals("the acyclic chain must not invoke the SCC fallback", 0,
+			metrics.snapshot().cyclicProofGraphs());
+	}
+
+	@Test
+	public void candidateAcyclicDeadDependencyIsPrunedWithoutCyclicFallback() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref unknown = full.read("unknown");
+		Ref product = full.binary("product", OpOp2.PLUS, ground, unknown, false);
+		List<CandidateInputState> inputs = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+
+		Assert.assertNull("an empty dependency state must remove its acyclic owner alternative",
+			full.resolver(metrics, 0, 0).proveCandidate(full.reference(product, inputs), ground.anchor));
+		Assert.assertEquals("the dead acyclic dependency must not invoke the SCC fallback", 0,
+			metrics.snapshot().cyclicProofGraphs());
+		Assert.assertTrue("the acyclic pruning pass must remove the dependent alternative",
+			metrics.snapshot().acyclicAlternativesRemoved() > 0);
 	}
 
 	@Test

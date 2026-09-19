@@ -517,11 +517,24 @@ final class NativePlacementContinuity {
 		fixed.put(source.rule().parentOccurrence(), source);
 		fixedHandles.put(source.rule().parentOccurrence(), sourceHandle);
 		long[] graphWork = metrics == null ? null : new long[2];
-		buildCandidateProofGraph(root, graph, new java.util.HashSet<>(), fixed, fixedHandles, graphWork);
+		CandidateProofTraversal traversal = new CandidateProofTraversal();
+		buildCandidateProofGraph(root, graph, traversal, fixed, fixedHandles, graphWork);
 		if(metrics != null)
 			metrics.recordProofGraph(graph.size(), graphWork[0], graphWork[1]);
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable = pruneDeadAlternatives(graph);
-		Set<CandidateProofState> grounded = groundedCandidateStates(viable);
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable;
+		Set<CandidateProofState> grounded;
+		long acyclicRemoved = 0;
+		if(traversal.cycleDetected) {
+			viable = pruneDeadAlternatives(graph);
+			grounded = groundedCandidateStates(viable);
+		}
+		else {
+			acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder);
+			viable = graph;
+			grounded = groundedAcyclicCandidateStates(viable, traversal.completionOrder);
+		}
+		if(metrics != null)
+			metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
 		Map<CandidateProofState,List<CandidateRealizationReference>> groundedReferences =
 			new java.util.HashMap<>();
 		Map<CandidateProofState,Boolean> directlyGrounded = new java.util.HashMap<>();
@@ -648,6 +661,68 @@ final class NativePlacementContinuity {
 			return alternatives.stream().filter(alternative -> !removed.contains(alternative)).toList();
 		});
 		return viable;
+	}
+
+	private long pruneDeadAcyclicAlternatives(
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		List<CandidateProofState> completionOrder) {
+		long removed = 0;
+		// Dependencies are complete before their owners in DFS completion order.
+		// Only replace values so graph key order and revision-invalidation footprint stay intact.
+		for(CandidateProofState state : completionOrder) {
+			List<SelectedCandidateProof> alternatives = graph.getOrDefault(state, List.of());
+			if(metrics != null)
+				metrics.recordOwnerElementsScanned(alternatives.size());
+			List<SelectedCandidateProof> survivors = null;
+			for(int index = 0; index < alternatives.size(); index++) {
+				SelectedCandidateProof alternative = alternatives.get(index);
+				boolean dead = false;
+				for(CandidateProofDependency dependency : alternative.dependencies) {
+					List<SelectedCandidateProof> dependencyAlternatives = graph.get(dependency.state());
+					if(dependencyAlternatives == null || dependencyAlternatives.isEmpty()) {
+						dead = true;
+						break;
+					}
+				}
+				if(dead) {
+					removed++;
+					if(metrics != null)
+						metrics.recordAlternativeRemoved();
+					if(survivors == null) {
+						survivors = new ArrayList<>(alternatives.size() - 1);
+						survivors.addAll(alternatives.subList(0, index));
+					}
+				}
+				else if(survivors != null)
+					survivors.add(alternative);
+			}
+			if(survivors != null)
+				graph.put(state, List.copyOf(survivors));
+		}
+		return removed;
+	}
+
+	private static Set<CandidateProofState> groundedAcyclicCandidateStates(
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		List<CandidateProofState> completionOrder) {
+		Set<CandidateProofState> grounded = new java.util.HashSet<>();
+		for(CandidateProofState state : completionOrder)
+			for(SelectedCandidateProof alternative : viable.getOrDefault(state, List.of())) {
+				boolean supported = true;
+				boolean hasGroundPath = alternative.directGround;
+				for(CandidateProofDependency dependency : alternative.dependencies) {
+					if(!grounded.contains(dependency.state())) {
+						supported = false;
+						break;
+					}
+					hasGroundPath = true;
+				}
+				if(supported && hasGroundPath) {
+					grounded.add(state);
+					break;
+				}
+			}
+		return grounded;
 	}
 
 	private void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
@@ -791,24 +866,35 @@ final class NativePlacementContinuity {
 	}
 
 	private void buildCandidateProofGraph(CandidateProofState state,
-		Map<CandidateProofState,List<SelectedCandidateProof>> graph, Set<CandidateProofState> active,
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph, CandidateProofTraversal traversal,
 		Map<CompiledHopKey,CandidateRealizationReference> fixed,
 		Map<CompiledHopKey,Integer> fixedHandles, long[] graphWork) {
-		if(graph.containsKey(state) || !active.add(state))
+		if(traversal.active.contains(state)) {
+			traversal.cycleDetected = true;
 			return;
-		List<SelectedCandidateProof> alternatives = candidateProofAlternatives(
-			state.key(), state.realization(), state.realizationHandle(), state.witness(),
-			state.templateRoot(), fixed, fixedHandles);
-		graph.put(state, alternatives);
-		if(graphWork != null) {
-			graphWork[0] += alternatives.size();
-			for(SelectedCandidateProof alternative : alternatives)
-				graphWork[1] += alternative.dependencies.size();
 		}
-		for(SelectedCandidateProof alternative : alternatives)
-			for(CandidateProofDependency dependency : alternative.dependencies)
-				buildCandidateProofGraph(dependency.state(), graph, active, fixed, fixedHandles, graphWork);
-		active.remove(state);
+		if(graph.containsKey(state))
+			return;
+		traversal.active.add(state);
+		try {
+			List<SelectedCandidateProof> alternatives = candidateProofAlternatives(
+				state.key(), state.realization(), state.realizationHandle(), state.witness(),
+				state.templateRoot(), fixed, fixedHandles);
+			graph.put(state, alternatives);
+			if(graphWork != null) {
+				graphWork[0] += alternatives.size();
+				for(SelectedCandidateProof alternative : alternatives)
+					graphWork[1] += alternative.dependencies.size();
+			}
+			for(SelectedCandidateProof alternative : alternatives)
+				for(CandidateProofDependency dependency : alternative.dependencies)
+					buildCandidateProofGraph(dependency.state(), graph, traversal,
+						fixed, fixedHandles, graphWork);
+			traversal.completionOrder.add(state);
+		}
+		finally {
+			traversal.active.remove(state);
+		}
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
@@ -1381,6 +1467,11 @@ final class NativePlacementContinuity {
 			templates = List.copyOf(templates);
 			occurrences = Collections.unmodifiableSet(occurrences);
 		}
+	}
+	private static final class CandidateProofTraversal {
+		private final Set<CandidateProofState> active = new java.util.HashSet<>();
+		private final List<CandidateProofState> completionOrder = new ArrayList<>();
+		private boolean cycleDetected;
 	}
 
 	private static final class CandidateProofState {

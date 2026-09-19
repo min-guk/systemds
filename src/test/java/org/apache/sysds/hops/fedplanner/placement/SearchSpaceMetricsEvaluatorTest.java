@@ -25,11 +25,18 @@ public class SearchSpaceMetricsEvaluatorTest {
 			Files.createDirectories(parent);
 		PlacementAnalysis analysis = null;
 		try {
+			var program = switch(fixture) {
+				case "actions" -> NeutralPlacementFixedPointCompositionTest.compileProtected(
+					NeutralPlacementFixedPointCompositionTest.ACTIONS);
+				case "lm" -> NeutralPlacementGraphUploadRelocationRedTest.compileFunctionFixture();
+				case "glm" -> NeutralPlacementGraphUploadRelocationRedTest.compileBuiltinGlmFixture();
+				default -> throw new IllegalArgumentException("unknown G009 metrics fixture: " + fixture);
+			};
+			if("lm".equals(fixture))
+				org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory
+					.registerHermeticSourcePrivacy(program);
 			analysis = new NeutralPlacementGraphBuilder(null, metrics)
-				.buildAnalysis("actions".equals(fixture)
-					? NeutralPlacementFixedPointCompositionTest.compileProtected(
-						NeutralPlacementFixedPointCompositionTest.ACTIONS)
-					: NeutralPlacementGraphUploadRelocationRedTest.compileBuiltinGlmFixture());
+				.buildAnalysis(program);
 			if("glm".equals(fixture))
 				Assert.assertTrue(analysis.graph().constraints().stream().anyMatch(constraint ->
 					constraint.evidence().equals("inlined-function-result:new_z")));
