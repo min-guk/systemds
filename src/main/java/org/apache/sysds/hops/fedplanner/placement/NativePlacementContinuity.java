@@ -119,6 +119,14 @@ final class NativePlacementContinuity {
 	private final Map<CandidateSupportQueryKey,SupportMemoEntry> completedSupportMemo;
 	private long supportMemoRetainedTemplates;
 	private long supportMemoRetainedEstimatedBytes;
+	private static final int DIRECT_SUMMARY_MAX_FOOTPRINT = 64;
+	private final int directSummaryMaxEntries;
+	private final long directSummaryMaxFootprint;
+	private final long directSummaryMaxEstimatedBytes;
+	private final boolean directSummaryCachingEnabled;
+	private final Map<CandidateProofState,DirectCandidateSummary> completedDirectSummaries;
+	private long directSummaryRetainedFootprint;
+	private long directSummaryRetainedEstimatedBytes;
 	private boolean directDagEnabled = true;
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
@@ -208,12 +216,20 @@ final class NativePlacementContinuity {
 			Long.getLong("sysds.fedplanner.continuitySupportMemo.maxTemplates", 131072L)) : 0;
 		supportMemoMaxEstimatedBytes = resultCachingEnabled ? Math.max(0,
 			Long.getLong("sysds.fedplanner.continuitySupportMemo.maxEstimatedBytes", 16L * 1024 * 1024)) : 0;
+		directSummaryMaxEntries = Math.min(this.memoMaxEntries, supportMemoMaxEntries);
+		directSummaryMaxFootprint = Math.min(this.memoMaxProofs, supportMemoMaxTemplates);
+		directSummaryMaxEstimatedBytes = Math.min(this.memoMaxEstimatedBytes,
+			supportMemoMaxEstimatedBytes);
+		directSummaryCachingEnabled = directSummaryMaxEntries > 0
+			&& directSummaryMaxFootprint > 0 && directSummaryMaxEstimatedBytes > 0;
 		topologyMaxEntries = Math.max(0,
 			Integer.getInteger("sysds.fedplanner.continuityTopology.maxEntries", 2048));
 		topologyMaxRows = Math.max(0,
 			Long.getLong("sysds.fedplanner.continuityTopology.maxRows", 131072L));
 		completedProofMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		completedSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
+		completedDirectSummaries = directSummaryCachingEnabled
+			? new java.util.LinkedHashMap<>(16, 0.75f, true) : Map.of();
 		candidateFactsByKey = new IdentityHashMap<>();
 		for(CandidateRuleFact fact : List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts")))
 			candidateFactsByKey.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
@@ -667,7 +683,7 @@ final class NativePlacementContinuity {
 		if(!rootTopology.rowsByHandle.containsKey(sourceHandle))
 			return null;
 		DirectDagTraversal traversal = new DirectDagTraversal(source.rule().parentOccurrence(),
-			source, sourceHandle);
+			source, sourceHandle, directSummaryCachingEnabled);
 		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source,
 			sourceHandle, witness, true);
 		SearchSpaceMetrics.PhaseToken groundingStarted = metrics == null ? null
@@ -682,8 +698,9 @@ final class NativePlacementContinuity {
 		}
 		if(traversal.fallbackRequired)
 			return null;
+		publishDirectSummaries(traversal);
 		if(metrics != null) {
-			metrics.recordProofGraph(traversal.completed.size(), traversal.alternatives,
+			metrics.recordProofGraph(traversal.evaluatedStates, traversal.alternatives,
 				traversal.dependencies);
 			metrics.recordProofGraphPath(false, traversal.removedAlternatives);
 		}
@@ -746,10 +763,21 @@ final class NativePlacementContinuity {
 		DirectCandidateResult completed = traversal.completed.get(state);
 		if(completed != null)
 			return completed;
+		if(traversal.captureSummaries && !root) {
+			DirectCandidateSummary cached = completedDirectSummaries.get(state);
+			if(cached != null && !cached.footprint.occurrences.contains(traversal.rootOccurrence)) {
+				traversal.completed.put(state, cached.result);
+				traversal.footprints.put(state, cached.footprint);
+				traversal.occurrences.addAll(cached.footprint.occurrences);
+				return cached.result;
+			}
+		}
 		if(!traversal.active.add(state)) {
 			traversal.fallbackRequired = true;
 			return DirectCandidateResult.DEAD;
 		}
+		if(metrics != null)
+			traversal.evaluatedStates++;
 		traversal.occurrences.add(state.key());
 		if(metrics != null)
 			metrics.recordTopologyOverlayEvaluation();
@@ -760,6 +788,11 @@ final class NativePlacementContinuity {
 		boolean hasViable = syntheticDirect;
 		boolean grounded = syntheticDirect;
 		boolean directlyGrounded = syntheticDirect;
+		Set<CompiledHopKey> footprint = traversal.captureSummaries
+			? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
+		if(footprint != null)
+			footprint.add(state.key());
+		boolean footprintOverflow = false;
 		List<CandidateRealizationReference> groundedReferences = new ArrayList<>();
 		if(syntheticDirect) {
 			traversal.alternatives++;
@@ -787,6 +820,18 @@ final class NativePlacementContinuity {
 				traversal.dependencies++;
 				DirectCandidateResult dependencyResult = evaluateDirectCandidateState(
 					dependencyState, false, traversal);
+				if(traversal.captureSummaries) {
+					DirectFootprint dependencyFootprint = traversal.footprints.get(dependencyState);
+					if(dependencyFootprint == null || dependencyFootprint.overflow)
+						footprintOverflow = true;
+					else if(!footprintOverflow)
+						for(CompiledHopKey occurrence : dependencyFootprint.occurrences)
+							if(footprint.add(occurrence)
+								&& footprint.size() > DIRECT_SUMMARY_MAX_FOOTPRINT) {
+								footprintOverflow = true;
+								break;
+							}
+				}
 				// Deliberately do not short-circuit: dead siblings remain in the
 				// revision-invalidation footprint.
 				viable &= dependencyResult.viable;
@@ -812,7 +857,59 @@ final class NativePlacementContinuity {
 		DirectCandidateResult result = new DirectCandidateResult(hasViable, grounded,
 			directlyGrounded, canonicalReferences(groundedReferences));
 		traversal.completed.put(state, result);
+		if(traversal.captureSummaries) {
+			DirectFootprint stateFootprint = new DirectFootprint(identitySetCopy(footprint),
+				footprintOverflow);
+			traversal.footprints.put(state, stateFootprint);
+			if(!root && !footprintOverflow)
+				traversal.tentativeSummaries.put(state,
+					new DirectCandidateSummary(result, stateFootprint,
+						estimatedDirectSummaryBytes(result, stateFootprint)));
+		}
 		return result;
+	}
+
+	private void publishDirectSummaries(DirectDagTraversal traversal) {
+		if(!directSummaryCachingEnabled)
+			return;
+		for(var candidate : traversal.tentativeSummaries.entrySet()) {
+			DirectCandidateSummary summary = candidate.getValue();
+			long footprintSize = summary.footprint.occurrences.size();
+			if(footprintSize > directSummaryMaxFootprint
+				|| summary.estimatedBytes > directSummaryMaxEstimatedBytes)
+				continue;
+			DirectCandidateSummary prior = completedDirectSummaries.remove(candidate.getKey());
+			if(prior != null) {
+				directSummaryRetainedFootprint -= prior.footprint.occurrences.size();
+				directSummaryRetainedEstimatedBytes -= prior.estimatedBytes;
+			}
+			while(!completedDirectSummaries.isEmpty()
+				&& (completedDirectSummaries.size() >= directSummaryMaxEntries
+					|| exceedsBudget(directSummaryRetainedFootprint, footprintSize,
+						directSummaryMaxFootprint)
+					|| exceedsBudget(directSummaryRetainedEstimatedBytes, summary.estimatedBytes,
+						directSummaryMaxEstimatedBytes))) {
+				var oldest = completedDirectSummaries.entrySet().iterator().next();
+				directSummaryRetainedFootprint -= oldest.getValue().footprint.occurrences.size();
+				directSummaryRetainedEstimatedBytes -= oldest.getValue().estimatedBytes;
+				completedDirectSummaries.remove(oldest.getKey());
+			}
+			completedDirectSummaries.put(candidate.getKey(), summary);
+			directSummaryRetainedFootprint += footprintSize;
+			directSummaryRetainedEstimatedBytes += summary.estimatedBytes;
+		}
+	}
+
+	private static long estimatedDirectSummaryBytes(DirectCandidateResult result,
+		DirectFootprint footprint) {
+		return 96L + 16L * footprint.occurrences.size()
+			+ 16L * result.groundedReferences.size();
+	}
+
+	private static Set<CompiledHopKey> identitySetCopy(Set<CompiledHopKey> source) {
+		Set<CompiledHopKey> copy = Collections.newSetFromMap(new IdentityHashMap<>());
+		copy.addAll(source);
+		return Collections.unmodifiableSet(copy);
 	}
 
 	void disableDirectDagForTesting() { directDagEnabled = false; }
@@ -1713,6 +1810,9 @@ final class NativePlacementContinuity {
 		private final int rootHandle;
 		private final Map<CandidateProofState,DirectCandidateResult> completed =
 			new java.util.HashMap<>();
+		private final boolean captureSummaries;
+		private final Map<CandidateProofState,DirectFootprint> footprints;
+		private final Map<CandidateProofState,DirectCandidateSummary> tentativeSummaries;
 		private final Set<CandidateProofState> active = new java.util.HashSet<>();
 		private final Set<CompiledHopKey> occurrences =
 			Collections.newSetFromMap(new IdentityHashMap<>());
@@ -1721,12 +1821,17 @@ final class NativePlacementContinuity {
 		private long alternatives;
 		private long dependencies;
 		private long removedAlternatives;
+		private long evaluatedStates;
 
 		private DirectDagTraversal(CompiledHopKey rootOccurrence,
-			CandidateRealizationReference rootReference, int rootHandle) {
+			CandidateRealizationReference rootReference, int rootHandle,
+			boolean captureSummaries) {
 			this.rootOccurrence = rootOccurrence;
 			this.rootReference = rootReference;
 			this.rootHandle = rootHandle;
+			this.captureSummaries = captureSummaries;
+			footprints = captureSummaries ? new java.util.HashMap<>() : null;
+			tentativeSummaries = captureSummaries ? new java.util.LinkedHashMap<>() : null;
 		}
 	}
 	private record DirectRootDependency(CandidateProofState state, int inputPosition) { }
@@ -1736,6 +1841,9 @@ final class NativePlacementContinuity {
 		private static final DirectCandidateResult DEAD =
 			new DirectCandidateResult(false, false, false, List.of());
 	}
+	private record DirectFootprint(Set<CompiledHopKey> occurrences, boolean overflow) { }
+	private record DirectCandidateSummary(DirectCandidateResult result,
+		DirectFootprint footprint, long estimatedBytes) { }
 
 	private static final class CandidateProofState {
 		private final CompiledHopKey key;
