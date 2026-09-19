@@ -261,3 +261,30 @@
   `CandidateProofState`만 canonicalize하는 기존 검증 패턴을 unified 구조에 적용한다. 이는 dependency
   객체와 logical edge 순서는 유지하면서 nested state 중복만 query 종료와 함께 폐기한다. small/LM에서
   실제 hit 비율과 wall/RSS가 함께 개선되지 않으면 즉시 되돌린다.
+
+## Query-local proof state interning 재검증
+
+- **상태**: unified 구조에서는 NO-GO. production/metrics/test 변경을 전부 revert했다.
+- **변경/보존**: private proof query마다 occurrence identity bucket을 만들고
+  `(realizationHandle, full witness)`가 같은 dependency state만 canonicalize했다. root
+  `templateRoot=true`는 index 밖에 두고 dependency input position, alternative/dependency 순서,
+  graph key, cyclic fallback과 revision footprint는 유지했다. dependency는 기존 canonical row 순서에서
+  DFS 직전에 bind해 첫 방문 representative도 보존했다.
+- **구조 계측**: LM 1,750,172 dependency state 요청 중 194,872개만 생성하고
+  1,555,300개(88.87%)를 재사용했다. equality comparison 5,318,848회, occurrence bucket 최대 27이다.
+  logical graph/state/alternative/edge와 acyclic/cyclic/removal 계측, analysis fingerprint는 control과
+  같았다.
+- **동일성/회귀**: two-source/local-mix/LM snapshot은 accepted 결과와 byte 동일했다. 같은 producer를
+  input position 0/1에서 반복 참조하는 회귀는 state를 공유하면서도 두 ordered binding을 모두 유지했다.
+  LM 12쌍 snapshot SHA도 전부 accepted 값과 같았다.
+- **성능 결과**: timeout 없는 fresh JVM 12쌍에서 control 중앙 `10,538 ms`, current 중앙
+  `10,394.5 ms`로 `143.5 ms`(1.36%) 감소했으나 current 승리는 5/12뿐이었다. peak RSS 중앙은
+  `1,366,642 -> 1,369,936 KiB`(+0.24%)로 개선되지 않았다.
+- **판정/근거**: 과거 performance 구조에서는 6쌍 5.18% 개선됐지만 현재 shared-topology unified
+  구조에서는 반복 가능한 wall/RSS 개선을 재현하지 못했다. 중복 객체 수만으로 채택하지 않고 GLM 확대
+  없이 폐기한다. 원자료는 구조 계측 `build/g009-unified/state-intern-lm/`, paired screen
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-state-intern-screen-r1-20260919/`에 있다.
+- **다음 단위**: object sharing보다 앞 단계에서 초기 alternative가 전혀 없는 dependency 때문에
+  반드시 제거될 owner alternative와 dependency slot 수를 observer-only로 분류한다. 그 비중이 충분할
+  때만 empty dependency occurrence를 invalidation footprint에 남긴 채 owner alternative 객체 생성 전
+  거절하는 설계를 구현한다.
