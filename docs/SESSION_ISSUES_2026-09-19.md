@@ -231,3 +231,33 @@
   공유해 중복 생성을 줄이는 방향으로 제한한다.
 - **잔여 이슈**: 동일 Docker fresh JVM 3회 180초, allocation/live-heap, DP/runtime/final-plan oracle,
   G009 전역 legality/completeness 증명은 계속 OPEN이다.
+
+## Topology dependency 목록 공유 실험
+
+- **상태**: NO-GO. production/metrics/test 변경을 전부 revert했고 accepted DAG fast path
+  `024dafb89c`로 돌아왔다.
+- **가설/변경**: topology row의 dependency skeleton이 root pin의 영향을 받지 않을 때 immutable
+  `CandidateProofDependency` 목록과 nested state를 resolver-local cache에서 재사용했다. root back-edge,
+  template fallback과 topology cache 밖 row는 기존 query overlay를 그대로 materialize했고,
+  topology eviction 시 prepared 목록도 함께 제거했다. DFS, graph key, logical edge와 revision footprint는
+  바꾸지 않았다.
+- **구조 계측**: LM logical dependency slot 1,750,172개 중 실제 dependency/state 생성은
+  252,820개로 줄어 85.55%를 재사용했다. prepared hit/miss는 1,023,915/138,866,
+  root override 20,126, uncached 1,791이었다. peak prepared cache는 5,552 lists/9,960 slots다.
+  proof graph/state/alternative/edge, acyclic/cyclic graph, removal count와 analysis fingerprint는 control과
+  같았다.
+- **동일성**: two-source, local-mix, LM snapshot은 모두 accepted 결과와 byte 동일했다. LM 12쌍의
+  SHA-256은 모두 `9000bff430f7fde79b901e5af6414eb4e537c1806af73056234f05830d63551a`다.
+  root-pinned self back-edge가 반드시 query overlay를 다시 만들고 cyclic fallback을 유지하는 회귀도
+  통과했다.
+- **성능 결과**: timeout 없는 fresh JVM 12쌍에서 control 중앙 `10,273.5 ms`, current 중앙
+  `10,239.5 ms`로 차이는 `-34 ms`(-0.33%)뿐이고 current가 빨랐던 pair는 4/12였다. peak RSS
+  중앙은 `1,347,214 -> 1,380,700 KiB`(+2.49%)로 악화됐다.
+- **판정/근거**: 객체 생성량은 크게 줄었지만 row lookup·prepared retention 비용을 상쇄할 반복 가능한
+  wall-clock 개선이 없고 RSS도 증가했다. GLM으로 확대하거나 이 cache를 채택하지 않는다. 원자료는
+  구조 계측 `build/g009-unified/dependency-share-lm/`, paired screen
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-dependency-share-screen-r1-20260919/`에 있다.
+- **다음 단위**: dependency 목록을 장기 보유하지 않고 query 안에서 equality로 합쳐질
+  `CandidateProofState`만 canonicalize하는 기존 검증 패턴을 unified 구조에 적용한다. 이는 dependency
+  객체와 logical edge 순서는 유지하면서 nested state 중복만 query 종료와 함께 폐기한다. small/LM에서
+  실제 hit 비율과 wall/RSS가 함께 개선되지 않으면 즉시 되돌린다.
