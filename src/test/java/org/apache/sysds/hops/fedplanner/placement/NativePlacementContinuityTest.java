@@ -307,6 +307,164 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void completedProofMemoIsContextExactBoundedAndSemanticallyTransparent() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		CandidateRealizationReference reference = full.reference(source,
+			List.of(CandidateInputState.present(FType.FULL)));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 2, 16);
+
+		List<NativePlacementContinuity.NativeContinuityProof> first =
+			resolver.proveCandidateAlternatives(reference, seed.anchor);
+		long builtAfterFirst = metrics.snapshot().proofGraphsBuilt();
+		long topologyBuiltAfterFirst = metrics.snapshot().topologyExpansionBuilds();
+		List<NativePlacementContinuity.NativeContinuityProof> second =
+			resolver.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertSame("an immutable completed result may be reused in one snapshot", first, second);
+		Assert.assertEquals(builtAfterFirst, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertEquals(1, metrics.snapshot().memoHits());
+		Assert.assertEquals(1, metrics.snapshot().memoMisses());
+
+		DurableAnchorKey differentProvenance = new DurableAnchorKey("different-provenance", FType.FULL,
+			seed.anchor.partitions());
+		List<NativePlacementContinuity.NativeContinuityProof> distinctSeed =
+			resolver.proveCandidateAlternatives(reference, differentProvenance);
+		Assert.assertEquals(2, metrics.snapshot().memoMisses());
+		Assert.assertEquals("physical support is independent of seed provenance",
+			builtAfterFirst, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertTrue("the support solution is reused before attaching provenance",
+			metrics.snapshot().supportMemoHits() > 0);
+		Assert.assertEquals("seed provenance stays in the query overlay, not shared topology",
+			topologyBuiltAfterFirst, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertTrue("the second seed reuses root-independent occurrence expansion",
+			metrics.snapshot().topologyExpansionHits() > 0);
+		Assert.assertTrue(distinctSeed.stream().allMatch(proof ->
+			proof.externalSeed().equals(differentProvenance)));
+
+		SearchSpaceMetrics zeroMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity zeroBudget = full.resolver(zeroMetrics, 0, 0);
+		Assert.assertEquals(first, zeroBudget.proveCandidateAlternatives(reference, seed.anchor));
+		long zeroTopologyBuilds = zeroMetrics.snapshot().topologyExpansionBuilds();
+		Assert.assertEquals(first, zeroBudget.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals(0, zeroMetrics.snapshot().memoHits());
+		Assert.assertEquals(2, zeroMetrics.snapshot().memoMisses());
+		Assert.assertTrue(zeroMetrics.snapshot().proofGraphsBuilt() > builtAfterFirst);
+		Assert.assertEquals("result-cache eviction may rebuild overlays, never unchanged topology",
+			zeroTopologyBuilds, zeroMetrics.snapshot().topologyExpansionBuilds());
+
+		SearchSpaceMetrics evictionMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity oneEntry = full.resolver(evictionMetrics, 1, 16);
+		Assert.assertEquals(first, oneEntry.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals(distinctSeed,
+			oneEntry.proveCandidateAlternatives(reference, differentProvenance));
+		Assert.assertEquals(first, oneEntry.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals("eviction must only cause exact recomputation", 2,
+			evictionMetrics.snapshot().memoEvictions());
+		Assert.assertEquals(0, evictionMetrics.snapshot().memoHits());
+		Assert.assertEquals(3, evictionMetrics.snapshot().memoMisses());
+		Assert.assertEquals(1, evictionMetrics.snapshot().memoEntries());
+		Assert.assertTrue(evictionMetrics.snapshot().memoRetainedEstimatedBytes() > 0);
+
+		SearchSpaceMetrics byteMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity byteBudget = full.resolver(byteMetrics, 2, 16, 1);
+		Assert.assertEquals(first, byteBudget.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals(first, byteBudget.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals("an oversized completed result is recomputed, never truncated", 0,
+			byteMetrics.snapshot().memoHits());
+		Assert.assertEquals(0, byteMetrics.snapshot().memoEntries());
+	}
+
+	@Test
+	public void templateSupportMemoRebindsFallbackRootsWithoutChangingProofs() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		CandidateRealizationReference staged = full.reference(source,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CandidateRealizationReference firstRoot = new CandidateRealizationReference(staged.rule(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				staged.realization().emissionState(), "template-root:first"));
+		CandidateRealizationReference secondRoot = new CandidateRealizationReference(staged.rule(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				staged.realization().emissionState(), "template-root:second"));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 8, 128);
+		Assert.assertFalse(resolver.proveCandidateAlternatives(firstRoot, seed.anchor).isEmpty());
+		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
+
+		List<NativePlacementContinuity.NativeContinuityProof> actual =
+			resolver.proveCandidateAlternatives(secondRoot, seed.anchor);
+		NativePlacementContinuity uncached = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Assert.assertEquals(uncached.proveCandidateAlternatives(secondRoot, seed.anchor), actual);
+		Assert.assertEquals("fallback roots with the same rule/emission share one graph solution",
+			graphBuilds, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertTrue(metrics.snapshot().supportMemoHits() > 0);
+	}
+
+	@Test
+	public void unchangedFactRevisionReusesTopologyAndCompletedSupportSolution() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		CandidateRealizationReference reference = full.reference(source,
+			List.of(CandidateInputState.present(FType.FULL)));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity firstRevision = full.resolver(metrics, 8, 128);
+		List<NativePlacementContinuity.NativeContinuityProof> expected =
+			firstRevision.proveCandidateAlternatives(reference, seed.anchor);
+		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
+		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
+
+		NativePlacementContinuity nextRevision = firstRevision.nextRevision(
+			List.copyOf(full.candidates), Set.of());
+		Assert.assertEquals(expected,
+			nextRevision.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals("the public provenance-bearing result is rebuilt from reused support",
+			graphBuilds, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertEquals("unchanged occurrence expansion crosses the revision",
+			topologyBuilds, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertTrue(metrics.snapshot().topologyRevisionEntriesReused() > 0);
+		Assert.assertTrue(metrics.snapshot().supportMemoRevisionEntriesReused() > 0);
+
+		NativePlacementContinuity invalidated = firstRevision.nextRevision(
+			List.copyOf(full.candidates), Set.of(source.key));
+		invalidated.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertTrue("an explicitly invalidated footprint must be solved again",
+			metrics.snapshot().proofGraphsBuilt() > graphBuilds);
+	}
+
+	@Test
+	public void zeroTopologyBudgetRecomputesWithoutChangingProofs() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		CandidateRealizationReference reference = full.reference(source,
+			List.of(CandidateInputState.present(FType.FULL)));
+		List<NativePlacementContinuity.NativeContinuityProof> expected =
+			full.resolver().proveCandidateAlternatives(reference, seed.anchor);
+		String entriesProperty = "sysds.fedplanner.continuityTopology.maxEntries";
+		String priorEntries = System.getProperty(entriesProperty);
+		try {
+			System.setProperty(entriesProperty, "0");
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
+			Assert.assertEquals(expected, resolver.proveCandidateAlternatives(reference, seed.anchor));
+			Assert.assertEquals(expected, resolver.proveCandidateAlternatives(reference, seed.anchor));
+			Assert.assertTrue(metrics.snapshot().topologyCacheBypasses() > 0);
+			Assert.assertEquals(0, metrics.snapshot().topologyCacheEntries());
+			Assert.assertEquals(0, metrics.snapshot().topologyExpansionHits());
+		}
+		finally {
+			if(priorEntries == null)
+				System.clearProperty(entriesProperty);
+			else
+				System.setProperty(entriesProperty, priorEntries);
+		}
+	}
+
+	@Test
 	public void candidateSpecificProofRequiresEveryAndDependencyToBeGrounded() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -1209,6 +1367,18 @@ public class NativePlacementContinuityTest {
 		private NativePlacementContinuity resolver() {
 			return new NativePlacementContinuity(nodes, origins, candidates, edges, reaching,
 				Set.of(), privacy);
+		}
+
+		private NativePlacementContinuity resolver(SearchSpaceMetrics metrics,
+			int memoMaxEntries, long memoMaxProofs) {
+			return new NativePlacementContinuity(nodes, origins, candidates, edges, reaching,
+				Set.of(), privacy, metrics, memoMaxEntries, memoMaxProofs);
+		}
+
+		private NativePlacementContinuity resolver(SearchSpaceMetrics metrics,
+			int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes) {
+			return new NativePlacementContinuity(nodes, origins, candidates, edges, reaching,
+				Set.of(), privacy, metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
 		}
 	}
 

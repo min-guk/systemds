@@ -62,17 +62,380 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
+	private static final class SharedCanonicalList<T> extends java.util.AbstractList<T>
+		implements java.util.RandomAccess {
+		private final List<T> values;
+		private SharedCanonicalList(List<T> values) { this.values = values; }
+		@Override public T get(int index) { return values.get(index); }
+		@Override public int size() { return values.size(); }
+	}
+
+	@SuppressWarnings("unchecked")
 	private static <T extends Comparable<? super T>> List<T> canonicalComparableList(
 		java.util.Collection<T> values, String label) {
 		Objects.requireNonNull(values, label + "s");
-		List<T> canonical = new ArrayList<>(values.size());
-		for(T value : values)
-			canonical.add(Objects.requireNonNull(value, label));
-		canonical.sort(null);
+		if(values instanceof SharedCanonicalList<?>)
+			return (List<T>) values;
+		if(values.isEmpty())
+			return List.of();
+		if(values.size() == 1)
+			return List.of(Objects.requireNonNull(values.iterator().next(), label));
+		SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+		if(metrics != null)
+			metrics.recordCanonicalSort(values.size());
+		List<CanonicalEntry<T>> decorated = new ArrayList<>(values.size());
+		CanonicalTextContext textContext = new CanonicalTextContext();
+		for(T value : values) {
+			if(metrics != null)
+				metrics.recordCanonicalOrderingKey();
+			decorated.add(new CanonicalEntry<>(Objects.requireNonNull(value, label),
+				canonicalOrderingKey(value, textContext)));
+		}
+		// Do not ask Comparable for the same recursively serialized signature O(log n)
+		// times.  The legacy lexical bytes remain the ordering contract, but each
+		// value materializes them at most once for this canonicalization boundary.
+		decorated.sort((left, right) -> {
+			if(metrics != null)
+				metrics.recordCanonicalComparison();
+			return left.orderingKey().compareTo(right.orderingKey());
+		});
+		List<T> canonical = decorated.stream().map(CanonicalEntry<T>::value)
+			.collect(java.util.stream.Collectors.toCollection(
+				() -> new ArrayList<>(decorated.size())));
 		for(int i = 1; i < canonical.size(); i++)
 			if(canonical.get(i - 1).equals(canonical.get(i)))
 				throw new IllegalArgumentException("Duplicate " + label);
 		return List.copyOf(canonical);
+	}
+
+	private record CanonicalEntry<T>(T value, CanonicalText orderingKey) { }
+
+	/**
+	 * Immutable segmented UTF-16 text used only for canonical comparison. It keeps
+	 * shared child signatures as segments and therefore does not allocate the full
+	 * recursively concatenated clause/realization string on an intermediate sort.
+	 */
+	private static final class CanonicalText implements Comparable<CanonicalText> {
+		private final List<Object> pieces;
+		private final int length;
+
+		private CanonicalText(List<Object> pieces) {
+			this.pieces = List.copyOf(pieces);
+			long total = 0;
+			for(Object piece : pieces)
+				total += piece instanceof String text ? text.length() : ((CanonicalText) piece).length;
+			if(total > Integer.MAX_VALUE)
+				throw new IllegalArgumentException("Canonical ordering text exceeds JVM string length");
+			length = (int) total;
+		}
+
+		private static CanonicalText literal(String value) {
+			return new CanonicalText(value.isEmpty() ? List.of() : List.of(value));
+		}
+
+		@Override public int compareTo(CanonicalText that) {
+			CanonicalTextCursor leftCursor = new CanonicalTextCursor(this);
+			CanonicalTextCursor rightCursor = new CanonicalTextCursor(that);
+			int compared = 0;
+			while(compared < length && compared < that.length) {
+				String leftText = leftCursor.text();
+				String rightText = rightCursor.text();
+				// Structural caches deliberately share immutable child signatures. When
+				// two texts reach the same whole segment, its complete UTF-16 contents
+				// are equal by identity and need not be rescanned character by character.
+				if(leftCursor.offset() == 0 && rightCursor.offset() == 0 && leftText == rightText) {
+					compared += leftText.length();
+					leftCursor.skipText();
+					rightCursor.skipText();
+					continue;
+				}
+				char left = leftCursor.nextCharacter();
+				char right = rightCursor.nextCharacter();
+				if(left != right)
+					return Character.compare(left, right);
+				compared++;
+			}
+			return Integer.compare(length, that.length);
+		}
+	}
+
+	/** Depth-first cursor over a shared CanonicalText rope; no flattened segment list is created. */
+	private static final class CanonicalTextCursor {
+		private final java.util.ArrayDeque<CanonicalTextFrame> stack = new java.util.ArrayDeque<>();
+		private String text;
+		private int offset;
+
+		private CanonicalTextCursor(CanonicalText root) {
+			stack.addLast(new CanonicalTextFrame(root));
+			advanceText();
+		}
+
+		private String text() { return text; }
+		private int offset() { return offset; }
+
+		private char nextCharacter() {
+			char value = text.charAt(offset++);
+			if(offset == text.length())
+				advanceText();
+			return value;
+		}
+
+		private void skipText() { advanceText(); }
+
+		private void advanceText() {
+			text = null;
+			offset = 0;
+			while(!stack.isEmpty()) {
+				CanonicalTextFrame frame = stack.peekLast();
+				if(frame.index == frame.value.pieces.size()) {
+					stack.removeLast();
+					continue;
+				}
+				Object piece = frame.value.pieces.get(frame.index++);
+				if(piece instanceof String literal) {
+					text = literal;
+					return;
+				}
+				stack.addLast(new CanonicalTextFrame((CanonicalText) piece));
+			}
+		}
+	}
+
+	private static final class CanonicalTextFrame {
+		private final CanonicalText value;
+		private int index;
+		private CanonicalTextFrame(CanonicalText value) { this.value = value; }
+	}
+
+	private static final class CanonicalTextBuilder {
+		private final List<Object> pieces = new ArrayList<>();
+
+		private CanonicalTextBuilder append(String value) {
+			if(!value.isEmpty())
+				pieces.add(value);
+			return this;
+		}
+
+		private CanonicalTextBuilder append(CanonicalText value) {
+			if(value.length != 0)
+				pieces.add(value);
+			return this;
+		}
+
+		private CanonicalTextBuilder appendFields(CanonicalText... values) {
+			for(int index = 0; index < values.length; index++) {
+				if(index > 0)
+					append("|");
+				CanonicalText value = values[index];
+				append(Integer.toString(value.length)).append(":").append(value);
+			}
+			return this;
+		}
+
+		private CanonicalText build() { return new CanonicalText(pieces); }
+	}
+
+	private static final class CanonicalTextContext {
+		private final IdentityHashMap<Object,CanonicalText> values = new IdentityHashMap<>();
+		private CanonicalText get(Object key) { return values.get(key); }
+		private CanonicalText put(Object key, CanonicalText value) {
+			values.put(key, value);
+			return value;
+		}
+	}
+
+	/** Compares the exact UTF-16 lexical bytes produced by PlacementIdentity.fields without concatenation. */
+	static int compareLengthPrefixedFieldSequences(List<String> left, List<String> right) {
+		int common = Math.min(left.size(), right.size());
+		for(int index = 0; index < common; index++) {
+			String leftValue = Objects.requireNonNull(left.get(index), "left field");
+			String rightValue = Objects.requireNonNull(right.get(index), "right field");
+			int order = (Integer.toString(leftValue.length()) + ':').compareTo(
+				Integer.toString(rightValue.length()) + ':');
+			if(order != 0)
+				return order;
+			order = leftValue.compareTo(rightValue);
+			if(order != 0)
+				return order;
+		}
+		return Integer.compare(left.size(), right.size());
+	}
+
+	private static CanonicalText canonicalOrderingKey(Object value, CanonicalTextContext context) {
+		CanonicalText cached = context.get(value);
+		if(cached != null)
+			return cached;
+		CanonicalText computed;
+		if(value instanceof PlacementProofKey proof)
+			computed = canonicalProofOrderingText(proof, context);
+		else if(value instanceof CandidateRealizationReference reference)
+			computed = canonicalReferenceOrderingText(reference, context);
+		else if(value instanceof CandidateRealizationInputBinding binding)
+			computed = canonicalBindingOrderingText(binding, context);
+		else if(value instanceof PlacementRealizationKey realizationKey)
+			computed = canonicalRealizationKeyOrderingText(realizationKey, context);
+		else if(value instanceof CandidateRealizationSupportClause clause)
+			computed = canonicalClauseOrderingText(clause, context);
+		else if(value instanceof CandidateEmissionRealization realization)
+			computed = canonicalRealizationOrderingText(realization, context);
+		else if(value instanceof TransientCompatibilityProof proof)
+			computed = CanonicalText.literal(proof.normalizedSignature());
+		else if(value instanceof TransientPlacementCompatibility compatibility)
+			computed = CanonicalText.literal(compatibility.normalizedSignature());
+		else
+			throw new IllegalArgumentException("Unsupported canonical comparable type "
+				+ value.getClass().getName());
+		return context.put(value, computed);
+	}
+
+	/** Package-visible differential-test seam for the exact segmented sort contract. */
+	static int compareCanonicalOrdering(Object left, Object right) {
+		CanonicalTextContext context = new CanonicalTextContext();
+		return canonicalOrderingKey(Objects.requireNonNull(left, "left canonical value"), context)
+			.compareTo(canonicalOrderingKey(Objects.requireNonNull(right, "right canonical value"), context));
+	}
+
+	/** One sort-scoped rope cache; avoids rebuilding structural text on every comparator call. */
+	static <T> java.util.Comparator<T> canonicalComparator() {
+		CanonicalTextContext context = new CanonicalTextContext();
+		return (left, right) -> canonicalOrderingKey(
+			Objects.requireNonNull(left, "left canonical value"), context).compareTo(canonicalOrderingKey(
+				Objects.requireNonNull(right, "right canonical value"), context));
+	}
+
+	private static int canonicalOrderingLength(Object value) {
+		return canonicalOrderingKey(Objects.requireNonNull(value, "canonical value"),
+			new CanonicalTextContext()).length;
+	}
+
+	private static CanonicalText canonicalClauseOrderingText(
+		CandidateRealizationSupportClause clause, CanonicalTextContext context) {
+		CanonicalTextBuilder text = new CanonicalTextBuilder().append("proofs=[");
+		for(int index = 0; index < clause.proofDependencies().size(); index++) {
+			if(index > 0) text.append(", ");
+			text.append(canonicalOrderingKey(clause.proofDependencies().get(index), context));
+		}
+		text.append("]|inputs=[");
+		for(int index = 0; index < clause.inputBindings().size(); index++) {
+			if(index > 0) text.append(", ");
+			text.append(canonicalOrderingKey(clause.inputBindings().get(index), context));
+		}
+		text.append("]|nativePool=");
+		if(clause.nativeWorkerPoolWitness() == null)
+			text.append("-");
+		else {
+			text.append(clause.nativeWorkerPoolWitness().normalizedSignature());
+			if(!clause.nativeWorkerPoolLayoutExact())
+				text.append("|nativePoolLayout=dynamic");
+		}
+		return text.build();
+	}
+
+	private static CanonicalText canonicalRealizationOrderingText(
+		CandidateEmissionRealization realization, CanonicalTextContext context) {
+		CanonicalTextBuilder text = new CanonicalTextBuilder()
+			.append(canonicalOrderingKey(realization.key(), context)).append("|support=[");
+		for(int index = 0; index < realization.supportClauses().size(); index++) {
+			if(index > 0) text.append(", ");
+			text.append(canonicalOrderingKey(realization.supportClauses().get(index), context));
+		}
+		return text.append("]").build();
+	}
+
+	private static CanonicalText canonicalProofOrderingText(PlacementProofKey proof,
+		CanonicalTextContext context) {
+		return new CanonicalTextBuilder().appendFields(
+			CanonicalText.literal(proof.kind().name()),
+			CanonicalText.literal(proof.owner() == null ? "-" : proof.owner().normalizedSignature()),
+			CanonicalText.literal(proof.authoritySignature())).build();
+	}
+
+	private static CanonicalText canonicalReferenceOrderingText(
+		CandidateRealizationReference reference, CanonicalTextContext context) {
+		return new CanonicalTextBuilder().appendFields(
+			canonicalRuleOrderingText(reference.rule(), context),
+			canonicalOrderingKey(reference.realization(), context)).build();
+	}
+
+	private static CanonicalText canonicalRuleOrderingText(CandidateRuleKey rule,
+		CanonicalTextContext context) {
+		CanonicalText cached = context.get(rule);
+		if(cached != null)
+			return cached;
+		CanonicalTextBuilder text = new CanonicalTextBuilder()
+			.append(rule.parentOccurrence().normalizedSignature()).append("|inputs=[");
+		for(int index = 0; index < rule.orderedInputs().size(); index++) {
+			if(index > 0) text.append(", ");
+			text.append(rule.orderedInputs().get(index).normalizedSignature());
+		}
+		return context.put(rule, text.append("]").build());
+	}
+
+	private static CanonicalText canonicalRealizationKeyOrderingText(PlacementRealizationKey key,
+		CanonicalTextContext context) {
+		return new CanonicalTextBuilder().appendFields(
+			canonicalEmissionOrderingText(key.emissionState(), context),
+			CanonicalText.literal(key.layoutKind().name()),
+			CanonicalText.literal(key.durableAnchor() == null ? "-"
+				: key.durableAnchor().normalizedSignature()),
+			CanonicalText.literal(key.nativeLineage() == null ? "-" : key.nativeLineage())).build();
+	}
+
+	private static CanonicalText canonicalEmissionOrderingText(PlacementEmissionState emission,
+		CanonicalTextContext context) {
+		CanonicalText cached = context.get(emission);
+		if(cached != null)
+			return cached;
+		return context.put(emission, new CanonicalTextBuilder()
+			.append(emission.placementState().normalizedSignature())
+			.append("|derivedFedFout=").append(Boolean.toString(emission.derivedFedFout())).build());
+	}
+
+	private static CanonicalText canonicalBindingOrderingText(
+		CandidateRealizationInputBinding binding, CanonicalTextContext context) {
+		CanonicalText action = binding.relocationAction() == null ? CanonicalText.literal("-")
+			: canonicalRelocationActionOrderingText(binding.relocationAction(), context);
+		return new CanonicalTextBuilder().appendFields(
+			CanonicalText.literal(Integer.toString(binding.inputPosition())),
+			canonicalOrderingKey(binding.source(), context),
+			CanonicalText.literal(binding.kind().name()), action).build();
+	}
+
+	private static CanonicalText canonicalRelocationActionOrderingText(RelocationActionKey action,
+		CanonicalTextContext context) {
+		CanonicalText cached = context.get(action);
+		if(cached != null)
+			return cached;
+		CanonicalTextBuilder consumers = new CanonicalTextBuilder();
+		for(int index = 0; index < action.compatibleConsumers().size(); index++) {
+			if(index > 0) consumers.append(",");
+			CanonicalText consumer = CanonicalText.literal(
+				action.compatibleConsumers().get(index).normalizedSignature());
+			consumers.append(Integer.toString(consumer.length)).append(":").append(consumer);
+		}
+		return context.put(action, new CanonicalTextBuilder().appendFields(
+			CanonicalText.literal(action.sourceValueVersion().normalizedSignature()),
+			CanonicalText.literal(action.targetPlacement().normalizedSignature()),
+			CanonicalText.literal(action.materializationFType().name()),
+			CanonicalText.literal(action.durableAnchor().normalizedSignature()),
+			CanonicalText.literal(action.statementBlockScope()), consumers.build()).build());
+	}
+
+	static <T extends Comparable<? super T>> List<T> sharedCanonicalComparableList(
+		java.util.Collection<T> values, String label) {
+		return new SharedCanonicalList<>(canonicalComparableList(values, label));
+	}
+
+	static <T extends Comparable<? super T>> List<T> sharedAlreadyCanonicalComparableList(
+		List<T> values, String label) {
+		Objects.requireNonNull(values, label + "s");
+		List<T> copy = new ArrayList<>(values.size());
+		for(T value : values)
+			copy.add(Objects.requireNonNull(value, label));
+		for(int index = 1; index < copy.size(); index++)
+			if(copy.get(index - 1).equals(copy.get(index)))
+				throw new IllegalArgumentException("Duplicate " + label);
+		return new SharedCanonicalList<>(List.copyOf(copy));
 	}
 
 	public enum InputPresence { ABSENT_LOCAL, PRESENT }
@@ -109,8 +472,10 @@ public final class PlacementAnalysis {
 			orderedInputs = List.copyOf(orderedInputs);
 		}
 		public String normalizedSignature() {
-			return parentOccurrence.normalizedSignature() + "|inputs=" + orderedInputs.stream()
-				.map(CandidateInputState::normalizedSignature).toList();
+			String cached = PlacementIdentity.cachedSignature(this);
+			return cached != null ? cached : PlacementIdentity.rememberSignature(this,
+				parentOccurrence.normalizedSignature() + "|inputs=" + orderedInputs.stream()
+					.map(CandidateInputState::normalizedSignature).toList());
 		}
 	}
 
@@ -337,7 +702,7 @@ public final class PlacementAnalysis {
 					? "|nativePoolLayout=dynamic" : ""));
 		}
 		@Override public int compareTo(CandidateRealizationSupportClause that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+			return compareCanonicalOrdering(this, that);
 		}
 	}
 
@@ -373,6 +738,16 @@ public final class PlacementAnalysis {
 					throw new IllegalArgumentException(
 						"One realization cannot mix unproven or physically distinct native worker pools");
 			}
+		}
+
+		/**
+		 * Reuses a stable-order subset or equality-preserving map of an already
+		 * canonical support list. Callers must not use this for newly unordered rows.
+		 */
+		static CandidateEmissionRealization fromAlreadyCanonicalSupportClauses(
+			PlacementRealizationKey key, List<CandidateRealizationSupportClause> supportClauses) {
+			return new CandidateEmissionRealization(key, sharedAlreadyCanonicalComparableList(
+				supportClauses, "realization support clause"));
 		}
 
 		public static CandidateEmissionRealization local(PlacementEmissionState emission) {
@@ -460,6 +835,24 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Support clause is not owned by realization");
 			return key.durableAnchor() != null || clause.nativeWorkerPoolLayoutExact();
 		}
+		/** Linear bulk query used instead of repeating the public identity guard for every owned clause. */
+		boolean allOwnedSupportClausesHaveExactNativeLayout() {
+			return key.durableAnchor() != null
+				|| supportClauses.stream().allMatch(CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact);
+		}
+		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
+		DurableAnchorKey provenWorkerPoolForOwnedClause(CandidateRealizationSupportClause clause) {
+			return key.durableAnchor() != null ? key.durableAnchor()
+				: clause.nativeWorkerPoolLayoutExact() ? clause.nativeWorkerPoolWitness() : null;
+		}
+		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
+		DurableAnchorKey nativeWorkerPoolResidencyForOwnedClause(CandidateRealizationSupportClause clause) {
+			return key.durableAnchor() != null ? key.durableAnchor() : clause.nativeWorkerPoolWitness();
+		}
+		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
+		boolean nativeWorkerPoolLayoutExactForOwnedClause(CandidateRealizationSupportClause clause) {
+			return key.durableAnchor() != null || clause.nativeWorkerPoolLayoutExact();
+		}
 		public String normalizedSignature() {
 			String cached = PlacementIdentity.cachedSignature(this);
 			return cached != null ? cached : PlacementIdentity.rememberSignature(this,
@@ -467,7 +860,7 @@ public final class PlacementAnalysis {
 					.map(CandidateRealizationSupportClause::normalizedSignature).toList());
 		}
 		@Override public int compareTo(CandidateEmissionRealization that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+			return compareCanonicalOrdering(this, that);
 		}
 	}
 
@@ -519,25 +912,41 @@ public final class PlacementAnalysis {
 			if(alternatives.size() == 1)
 				return List.of(Objects.requireNonNull(alternatives.iterator().next(),
 					"candidate emission realization"));
-			Map<PlacementRealizationKey,Set<CandidateRealizationSupportClause>> clausesByKey =
-				new java.util.TreeMap<>();
+			SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+			Map<PlacementRealizationKey,Map<Object,CandidateRealizationSupportClause>> clausesByKey =
+				new java.util.LinkedHashMap<>();
 			Map<PlacementRealizationKey,CandidateEmissionRealization> firstByKey =
-				new java.util.TreeMap<>();
+				new java.util.LinkedHashMap<>();
 			Set<PlacementRealizationKey> repeated = new java.util.HashSet<>();
 			for(CandidateEmissionRealization realization : alternatives) {
 				Objects.requireNonNull(realization, "candidate emission realization");
+				if(metrics != null)
+					metrics.recordRealizationMergeInput();
 				if(firstByKey.putIfAbsent(realization.key(), realization) != null)
 					repeated.add(realization.key());
-				clausesByKey.computeIfAbsent(realization.key(), ignored -> new java.util.TreeSet<>())
-					.addAll(realization.supportClauses());
+				Map<Object,CandidateRealizationSupportClause> clauses = clausesByKey.computeIfAbsent(
+					realization.key(), ignored -> new java.util.LinkedHashMap<>());
+				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					Integer structuralHandle = PlacementIdentity.structuralHandle(clause);
+					Object key = structuralHandle == null ? clause : structuralHandle;
+					boolean unique = clauses.putIfAbsent(key, clause) == null;
+					if(metrics != null)
+						metrics.recordRealizationMergeClause(unique);
+				}
 			}
 			List<CandidateEmissionRealization> merged = new ArrayList<>(clausesByKey.size());
-			for(Map.Entry<PlacementRealizationKey,Set<CandidateRealizationSupportClause>> entry :
+			for(Map.Entry<PlacementRealizationKey,Map<Object,CandidateRealizationSupportClause>> entry :
 				clausesByKey.entrySet())
-				merged.add(repeated.contains(entry.getKey())
-					? new CandidateEmissionRealization(entry.getKey(), List.copyOf(entry.getValue()))
-					: firstByKey.get(entry.getKey()));
-			return List.copyOf(merged);
+				if(!repeated.contains(entry.getKey())
+					|| entry.getValue().size() == firstByKey.get(entry.getKey()).supportClauses().size()) {
+					merged.add(firstByKey.get(entry.getKey()));
+					if(metrics != null)
+						metrics.recordRealizationMergeReuse();
+				}
+				else
+					merged.add(new CandidateEmissionRealization(entry.getKey(),
+						List.copyOf(entry.getValue().values())));
+			return canonicalComparableList(merged, "candidate emission realization");
 		}
 
 		private static List<CandidateEmissionRealization> defaultRealizations(PlacementEmissionState emission) {
@@ -701,65 +1110,256 @@ public final class PlacementAnalysis {
 	 * every assignment, closure pass, and validation call.
 	 */
 	private static final class CandidateReceiptDomain {
-		private record RankedReceipt(CandidateSelectionReceipt receipt, String signature) { }
+		private record ReceiptGroupOrderKey(String rule, String emission, String realization)
+			implements Comparable<ReceiptGroupOrderKey> {
+			@Override public int compareTo(ReceiptGroupOrderKey that) {
+				return compareLengthPrefixedFieldSequences(
+					List.of(rule, emission, realization),
+					List.of(that.rule, that.emission, that.realization));
+			}
 
-		private final Map<CandidateRuleKey,Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
-			Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>>>
-			receiptsByIdentity;
-		private final Map<CandidateSelectionReceipt,Integer> ranksByIdentity;
+			private long retainedCharacters() {
+				return (long) rule.length() + emission.length() + realization.length();
+			}
+		}
+
+		private static final class ReceiptGroup {
+			private final CandidateRuleKey rule;
+			private final CandidateEmissionFact emission;
+			private final CandidateEmissionRealization realization;
+			private final List<CandidateRealizationSupportClause> clauses;
+			private final SearchSpaceMetrics metrics;
+			private Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> receipts;
+			private int rankBase = -1;
+			private int[] clauseRanks;
+
+			private ReceiptGroup(CandidateRuleKey rule, CandidateEmissionFact emission,
+				CandidateEmissionRealization realization, SearchSpaceMetrics metrics) {
+				this.rule = rule;
+				this.emission = emission;
+				this.realization = realization;
+				this.clauses = realization.supportClauses();
+				this.metrics = metrics;
+			}
+
+			private int ownedClauseIndex(CandidateRealizationSupportClause clause) {
+				for(int index = 0; index < clauses.size(); index++)
+					if(clauses.get(index) == clause)
+						return index;
+				throw new IllegalArgumentException(
+					"Candidate support clause is outside the analysis-owned receipt domain");
+			}
+
+			private synchronized CandidateSelectionReceipt receipt(
+				CandidateRealizationSupportClause clause) {
+				ownedClauseIndex(clause);
+				if(receipts == null)
+					receipts = new IdentityHashMap<>();
+				CandidateSelectionReceipt current = receipts.get(clause);
+				if(current == null) {
+					current = new CandidateSelectionReceipt(
+						rule, emission, realization, clause, List.of());
+					receipts.put(clause, current);
+					if(metrics != null)
+						metrics.recordCandidateReceiptCreated();
+				}
+				return current;
+			}
+
+			private int rank(CandidateRealizationSupportClause clause) {
+				int index = ownedClauseIndex(clause);
+				if(clauseRanks != null)
+					return clauseRanks[index];
+				if(rankBase < 0)
+					throw new IllegalStateException("Canonical candidate receipt group has no structural rank");
+				return Math.addExact(rankBase, index);
+			}
+
+			private int assignCanonicalRanks(int firstRank) {
+				int size = clauses.size();
+				if(size == 1) {
+					rankBase = firstRank;
+					return Math.incrementExact(firstRank);
+				}
+				int[] order = new int[size];
+				int[] work = new int[size];
+				int[] lengths = new int[size];
+				for(int index = 0; index < size; index++) {
+					order[index] = index;
+					lengths[index] = canonicalOrderingLength(clauses.get(index));
+				}
+				stableSortByLengthPrefix(order, work, lengths, 0, size);
+				boolean alreadyCanonical = true;
+				for(int index = 0; index < size; index++)
+					alreadyCanonical &= order[index] == index;
+				if(alreadyCanonical)
+					rankBase = firstRank;
+				else {
+					clauseRanks = new int[size];
+					for(int index = 0; index < size; index++)
+						clauseRanks[order[index]] = Math.addExact(firstRank, index);
+				}
+				return Math.addExact(firstRank, size);
+			}
+		}
+
+		private record RankedReceiptGroup(ReceiptGroup group, ReceiptGroupOrderKey orderKey) { }
+		private record RankedClause(ReceiptGroup group, CandidateRealizationSupportClause clause,
+			int clauseIndex) { }
+
+		private final Map<CandidateRuleKey,
+			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,ReceiptGroup>>> groupsByIdentity;
+		private final List<ReceiptGroup> groups;
+		private final SearchSpaceMetrics metrics;
+		private volatile boolean ranksInitialized;
 
 		private CandidateReceiptDomain(CandidateRuleFacts facts) {
-			Map<CandidateRuleKey,Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
-				Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>>> indexed =
-				new IdentityHashMap<>();
-			List<RankedReceipt> ranked = new ArrayList<>();
+			Map<CandidateRuleKey,Map<CandidateEmissionFact,
+				Map<CandidateEmissionRealization,ReceiptGroup>>> indexed = new IdentityHashMap<>();
+			List<ReceiptGroup> allGroups = new ArrayList<>();
+			metrics = PlacementIdentity.activeMetrics();
 			for(CandidateRuleFact fact : facts.orderedFacts()) {
-				Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
-					Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>> byEmission =
+				Map<CandidateEmissionFact,Map<CandidateEmissionRealization,ReceiptGroup>> byEmission =
 					new IdentityHashMap<>();
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-					Map<CandidateEmissionRealization,Map<CandidateRealizationSupportClause,
-						CandidateSelectionReceipt>> byRealization =
-						new IdentityHashMap<>();
+					Map<CandidateEmissionRealization,ReceiptGroup> byRealization = new IdentityHashMap<>();
 					for(CandidateEmissionRealization realization : emission.realizations()) {
-						Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> byClause =
-							new IdentityHashMap<>();
-						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-							CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
-								fact.key(), emission, realization, clause, List.of());
-							byClause.put(clause, receipt);
-							ranked.add(new RankedReceipt(receipt, receipt.normalizedSignature()));
-						}
-						byRealization.put(realization, Collections.unmodifiableMap(byClause));
+						ReceiptGroup group = new ReceiptGroup(fact.key(), emission, realization, metrics);
+						byRealization.put(realization, group);
+						allGroups.add(group);
+						if(metrics != null)
+							metrics.recordReceiptRelationSlots(realization.supportClauses().size());
 					}
 					byEmission.put(emission, Collections.unmodifiableMap(byRealization));
 				}
 				indexed.put(fact.key(), Collections.unmodifiableMap(byEmission));
 			}
-			ranked.sort(java.util.Comparator.comparing(RankedReceipt::signature));
-			Map<CandidateSelectionReceipt,Integer> ranks = new IdentityHashMap<>();
-			for(int rank = 0; rank < ranked.size(); rank++)
-				ranks.put(ranked.get(rank).receipt(), rank);
-			receiptsByIdentity = Collections.unmodifiableMap(indexed);
-			ranksByIdentity = Collections.unmodifiableMap(ranks);
+			groups = List.copyOf(allGroups);
+			groupsByIdentity = Collections.unmodifiableMap(indexed);
+		}
+
+		private synchronized void ensureRanks() {
+			if(ranksInitialized)
+				return;
+			List<RankedReceiptGroup> ranked = new ArrayList<>(groups.size());
+			for(ReceiptGroup group : groups) {
+				ReceiptGroupOrderKey orderKey = new ReceiptGroupOrderKey(
+					group.rule.normalizedSignature(), group.emission.selectionSignature(),
+					group.realization.key().normalizedSignature());
+				ranked.add(new RankedReceiptGroup(group, orderKey));
+				if(metrics != null)
+					metrics.recordReceiptRankKeyCharacters(orderKey.retainedCharacters());
+			}
+			ranked.sort(java.util.Comparator.comparing(RankedReceiptGroup::orderKey));
+			int rank = 0;
+			for(int start = 0; start < ranked.size();) {
+				int end = start + 1;
+				while(end < ranked.size() && ranked.get(start).orderKey().equals(ranked.get(end).orderKey()))
+					end++;
+				if(end == start + 1) {
+					ReceiptGroup group = ranked.get(start).group();
+					rank = group.assignCanonicalRanks(rank);
+				}
+				else {
+					List<RankedClause> clauses = new ArrayList<>();
+					java.util.Comparator<CandidateRealizationSupportClause> clauseComparator =
+						receiptClauseComparator();
+					for(int groupIndex = start; groupIndex < end; groupIndex++) {
+						ReceiptGroup group = ranked.get(groupIndex).group();
+						group.clauseRanks = new int[group.clauses.size()];
+						for(int clauseIndex = 0; clauseIndex < group.clauses.size(); clauseIndex++)
+							clauses.add(new RankedClause(group, group.clauses.get(clauseIndex), clauseIndex));
+					}
+					clauses.sort(java.util.Comparator.comparing(RankedClause::clause, clauseComparator));
+					for(RankedClause clause : clauses) {
+						clause.group().clauseRanks[clause.clauseIndex()] = rank;
+						rank = Math.incrementExact(rank);
+					}
+				}
+				start = end;
+			}
+			ranksInitialized = true;
+		}
+
+		private static java.util.Comparator<CandidateRealizationSupportClause> receiptClauseComparator() {
+			CanonicalTextContext context = new CanonicalTextContext();
+			return (left, right) -> {
+				CanonicalText leftText = canonicalOrderingKey(left, context);
+				CanonicalText rightText = canonicalOrderingKey(right, context);
+				int order = compareLengthPrefixes(leftText.length, rightText.length);
+				return order != 0 ? order : leftText.compareTo(rightText);
+			};
+		}
+
+		private static void stableSortByLengthPrefix(int[] order, int[] work, int[] lengths,
+			int start, int end) {
+			if(end - start < 2)
+				return;
+			int middle = (start + end) >>> 1;
+			stableSortByLengthPrefix(order, work, lengths, start, middle);
+			stableSortByLengthPrefix(order, work, lengths, middle, end);
+			int left = start;
+			int right = middle;
+			int output = start;
+			while(left < middle && right < end) {
+				int comparison = compareLengthPrefixes(lengths[order[left]], lengths[order[right]]);
+				work[output++] = comparison <= 0 ? order[left++] : order[right++];
+			}
+			while(left < middle)
+				work[output++] = order[left++];
+			while(right < end)
+				work[output++] = order[right++];
+			System.arraycopy(work, start, order, start, end - start);
+		}
+
+		private static int compareLengthPrefixes(int left, int right) {
+			int leftDigits = decimalDigits(left);
+			int rightDigits = decimalDigits(right);
+			int positions = Math.max(leftDigits, rightDigits) + 1;
+			for(int position = 0; position < positions; position++) {
+				char leftCharacter = position < leftDigits
+					? decimalDigit(left, leftDigits, position) : ':';
+				char rightCharacter = position < rightDigits
+					? decimalDigit(right, rightDigits, position) : ':';
+				if(leftCharacter != rightCharacter)
+					return Character.compare(leftCharacter, rightCharacter);
+			}
+			return 0;
+		}
+
+		private static int decimalDigits(int value) {
+			if(value < 0)
+				throw new IllegalArgumentException("Canonical text length must be non-negative");
+			int digits = 1;
+			for(int remaining = value; remaining >= 10; remaining /= 10)
+				digits++;
+			return digits;
+		}
+
+		private static char decimalDigit(int value, int digits, int position) {
+			int divisor = 1;
+			for(int index = position + 1; index < digits; index++)
+				divisor *= 10;
+			return (char) ('0' + value / divisor % 10);
+		}
+
+		private ReceiptGroup requireGroup(CandidateRuleKey rule,
+			CandidateEmissionFact emission, CandidateEmissionRealization realization) {
+			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,ReceiptGroup>> byEmission =
+				groupsByIdentity.get(rule);
+			Map<CandidateEmissionRealization,ReceiptGroup> byRealization =
+				byEmission == null ? null : byEmission.get(emission);
+			ReceiptGroup group = byRealization == null ? null : byRealization.get(realization);
+			if(group == null)
+				throw new IllegalArgumentException(
+					"Candidate rule/emission/realization is outside the analysis-owned receipt domain");
+			return group;
 		}
 
 		private CandidateSelectionReceipt require(CandidateRuleKey rule,
 			CandidateEmissionFact emission, CandidateEmissionRealization realization,
 			CandidateRealizationSupportClause clause) {
-			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,
-				Map<CandidateRealizationSupportClause,CandidateSelectionReceipt>>> byEmission =
-				receiptsByIdentity.get(rule);
-			Map<CandidateEmissionRealization,Map<CandidateRealizationSupportClause,
-				CandidateSelectionReceipt>> byRealization =
-				byEmission == null ? null : byEmission.get(emission);
-			Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> byClause =
-				byRealization == null ? null : byRealization.get(realization);
-			CandidateSelectionReceipt receipt = byClause == null ? null : byClause.get(clause);
-			if(receipt == null)
-				throw new IllegalArgumentException(
-					"Candidate rule/emission/realization/support clause is outside the analysis-owned receipt domain");
-			return receipt;
+			return requireGroup(rule, emission, realization).receipt(clause);
 		}
 
 		private CandidateSelectionReceipt requireSingleton(CandidateRuleKey rule,
@@ -782,12 +1382,9 @@ public final class PlacementAnalysis {
 		}
 
 		private int rank(CandidateSelectionReceipt receipt) {
-			CandidateSelectionReceipt canonical = require(receipt.rule(), receipt.emission(),
-				receipt.realization(), receipt.supportClause());
-			Integer rank = ranksByIdentity.get(canonical);
-			if(rank == null)
-				throw new IllegalStateException("Canonical candidate receipt has no structural rank");
-			return rank;
+			ensureRanks();
+			return requireGroup(receipt.rule(), receipt.emission(), receipt.realization())
+				.rank(receipt.supportClause());
 		}
 
 		private List<CandidateSelectionReceipt> canonicalize(
@@ -801,7 +1398,10 @@ public final class PlacementAnalysis {
 				if(seen.put(exact, Boolean.TRUE) == null)
 					canonical.add(exact);
 			}
-			canonical.sort(java.util.Comparator.comparingInt(this::rank));
+			if(canonical.size() > 1) {
+				ensureRanks();
+				canonical.sort(java.util.Comparator.comparingInt(this::rank));
+			}
 			return List.copyOf(canonical);
 		}
 	}
@@ -2139,16 +2739,22 @@ public final class PlacementAnalysis {
 					&& "function-formal-input".equals(constraint.evidence())).count();
 			if(argumentEdges != 1 || formalEdges != 1)
 				throw new IllegalArgumentException("Logical function input constraint authority differs");
-			for(PlacementState state : source.legalAlternatives()) {
-				CandidateInputState input;
-				if(state.output() == FederatedOutput.LOUT)
-					input = CandidateInputState.absentLocal();
-				else if(state.output() == FederatedOutput.FOUT && state.fType() != null)
-					input = CandidateInputState.present(state.fType());
-				else
-					continue;
-				candidateRuleFacts.requireExact(fact.targetRead(), List.of(input));
-			}
+			// The function-input replay owns the exact caller-input rows. A later
+			// fixed-point pass may add another caller output (for example BROADCAST)
+			// without adding it to this formal read's closed input domain. This constructor
+			// therefore validates boundary authority and row shape only; candidate legality,
+			// physical input compatibility, and selectors validate the stored rows themselves.
+			List<CandidateInputState> inputs = candidateRuleFacts.orderedFacts().stream()
+				.filter(candidate -> candidate.key().parentOccurrence() == fact.targetRead()
+					&& candidate.status() == CandidateEvaluationStatus.AVAILABLE)
+				.map(candidate -> {
+					if(candidate.key().orderedInputs().size() != 1)
+						throw new IllegalArgumentException(
+							"Logical function read candidate must have one caller input");
+					return candidate.key().orderedInputs().get(0);
+				}).distinct().toList();
+			if(inputs.isEmpty())
+				throw new IllegalArgumentException("Logical function read has no available caller-input row");
 			String identity = System.identityHashCode(fact.sourceArgument()) + ":"
 				+ System.identityHashCode(fact.boundary()) + ":" + System.identityHashCode(fact.targetRead())
 				+ ':' + fact.callInputPosition();

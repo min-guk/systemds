@@ -19,6 +19,8 @@
 
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -47,6 +49,100 @@ public final class PlacementIdentity {
 	 */
 	private static final ThreadLocal<Map<Object,String>> NORMALIZED_SIGNATURES =
 		ThreadLocal.withInitial(WeakHashMap::new);
+	private static final ThreadLocal<WeakIdentitySignatureCache> NORMALIZED_SIGNATURES_BY_IDENTITY =
+		ThreadLocal.withInitial(WeakIdentitySignatureCache::new);
+	private static final long NORMALIZED_SIGNATURE_CACHE_MAX_CHARS = Math.max(0,
+		Long.getLong("sysds.fedplanner.signatureCache.maxChars", 64L * 1024 * 1024));
+	private static final ThreadLocal<long[]> NORMALIZED_SIGNATURE_CHARS =
+		ThreadLocal.withInitial(() -> new long[1]);
+	private static final ThreadLocal<Long> NORMALIZED_SIGNATURE_TEST_MAX_CHARS = new ThreadLocal<>();
+	private static final ThreadLocal<SearchSpaceMetrics> ACTIVE_METRICS = new ThreadLocal<>();
+	private static final ThreadLocal<Map<Object,String>> ACTIVE_STRUCTURAL_SIGNATURES = new ThreadLocal<>();
+	private static final ThreadLocal<Map<Object,String>> ACTIVE_IDENTITY_SIGNATURES = new ThreadLocal<>();
+	private static final ThreadLocal<StructuralArena> ACTIVE_STRUCTURAL_ARENA = new ThreadLocal<>();
+
+	private static final class StructuralArena {
+		private final Map<Object,Integer> byIdentity = new java.util.IdentityHashMap<>();
+		private final Map<Object,Integer> byStructure = new java.util.HashMap<>();
+		private final SearchSpaceMetrics metrics;
+		private final int maxEntries = Math.max(0,
+			Integer.getInteger("sysds.fedplanner.structuralArena.maxEntries", 65536));
+		private int nextHandle = 1;
+
+		private StructuralArena(SearchSpaceMetrics metrics) {
+			this.metrics = metrics;
+		}
+
+		private Integer handle(Object value) {
+			Integer handle = byIdentity.get(value);
+			if(handle != null) {
+				if(metrics != null)
+					metrics.recordStructuralHandle(false, true);
+				return handle;
+			}
+			handle = byStructure.get(value);
+			boolean created = handle == null;
+			if(created) {
+				if(byStructure.size() >= maxEntries) {
+					if(metrics != null)
+						metrics.recordStructuralArenaOverflow();
+					return null;
+				}
+				handle = nextHandle++;
+				byStructure.put(value, handle);
+			}
+			byIdentity.put(value, handle);
+			if(metrics != null)
+				metrics.recordStructuralHandle(created, false);
+			return handle;
+		}
+	}
+
+	/**
+	 * Weak identity lookup avoids invoking a recursively nested record hash on every
+	 * hot signature-cache probe. The structural weak map remains the cold fallback so
+	 * equal immutable copies retain the legacy shared-string behavior.
+	 */
+	private static final class WeakIdentitySignatureCache {
+		private final ReferenceQueue<Object> queue = new ReferenceQueue<>();
+		private final Map<IdentityWeakReference,String> values = new java.util.HashMap<>();
+
+		private String get(Object identity) {
+			expunge();
+			return values.get(new IdentityWeakReference(identity, null));
+		}
+
+		private void put(Object identity, String signature) {
+			expunge();
+			values.put(new IdentityWeakReference(identity, queue), signature);
+		}
+
+		private void expunge() {
+			IdentityWeakReference cleared;
+			while((cleared = (IdentityWeakReference) queue.poll()) != null)
+				values.remove(cleared);
+		}
+	}
+
+	private static final class IdentityWeakReference extends WeakReference<Object> {
+		private final int hashCode;
+
+		private IdentityWeakReference(Object referent, ReferenceQueue<Object> queue) {
+			super(Objects.requireNonNull(referent, "signature identity"), queue);
+			hashCode = System.identityHashCode(referent);
+		}
+
+		@Override public int hashCode() { return hashCode; }
+
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof IdentityWeakReference that))
+				return false;
+			Object left = get();
+			return left != null && left == that.get();
+		}
+	}
 
 	public enum VersionKind {
 		ORDINARY,
@@ -275,12 +371,14 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(kind.name(), owner == null ? "-" : owner.normalizedSignature(),
-				authoritySignature);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(kind.name(), owner == null ? "-" : owner.normalizedSignature(),
+					authoritySignature));
 		}
 
 		@Override public int compareTo(PlacementProofKey that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+			return PlacementAnalysis.compareCanonicalOrdering(this, that);
 		}
 	}
 
@@ -339,13 +437,15 @@ public final class PlacementIdentity {
 		}
 
 		public String normalizedSignature() {
-			return fields(emissionState.normalizedSignature(), layoutKind.name(),
-				durableAnchor == null ? "-" : durableAnchor.normalizedSignature(),
-				nativeLineage == null ? "-" : nativeLineage);
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(emissionState.normalizedSignature(), layoutKind.name(),
+					durableAnchor == null ? "-" : durableAnchor.normalizedSignature(),
+					nativeLineage == null ? "-" : nativeLineage));
 		}
 
 		@Override public int compareTo(PlacementRealizationKey that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+			return PlacementAnalysis.compareCanonicalOrdering(this, that);
 		}
 	}
 
@@ -363,10 +463,12 @@ public final class PlacementIdentity {
 			return new CandidateRealizationReference(rule, realization.key());
 		}
 		public String normalizedSignature() {
-			return fields(rule.normalizedSignature(), realization.normalizedSignature());
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(rule.normalizedSignature(), realization.normalizedSignature()));
 		}
 		@Override public int compareTo(CandidateRealizationReference that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+			return PlacementAnalysis.compareCanonicalOrdering(this, that);
 		}
 	}
 
@@ -404,11 +506,13 @@ public final class PlacementIdentity {
 				CandidateInputBindingKind.LOGICAL_TRANSIENT, null);
 		}
 		public String normalizedSignature() {
-			return fields(Integer.toString(inputPosition), source.normalizedSignature(), kind.name(),
-				relocationAction == null ? "-" : relocationAction.normalizedSignature());
+			String cached = cachedSignature(this);
+			return cached != null ? cached : rememberSignature(this,
+				fields(Integer.toString(inputPosition), source.normalizedSignature(), kind.name(),
+					relocationAction == null ? "-" : relocationAction.normalizedSignature()));
 		}
 		@Override public int compareTo(CandidateRealizationInputBinding that) {
-			return normalizedSignature().compareTo(that.normalizedSignature());
+			return PlacementAnalysis.compareCanonicalOrdering(this, that);
 		}
 	}
 
@@ -814,12 +918,104 @@ public final class PlacementIdentity {
 
 	/** Package peers may reuse this cache only for one immutable structural serialization. */
 	static String cachedSignature(Object identity) {
-		return NORMALIZED_SIGNATURES.get().get(identity);
+		SearchSpaceMetrics metrics = ACTIVE_METRICS.get();
+		String signature = metrics == null
+			? NORMALIZED_SIGNATURES_BY_IDENTITY.get().get(identity)
+			: ACTIVE_IDENTITY_SIGNATURES.get().get(identity);
+		if(signature != null) {
+			if(metrics != null)
+				metrics.recordSignatureIdentityCacheHit();
+			return signature;
+		}
+		signature = metrics == null ? NORMALIZED_SIGNATURES.get().get(identity)
+			: ACTIVE_STRUCTURAL_SIGNATURES.get().get(identity);
+		if(signature != null) {
+			if(metrics == null)
+				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
+			else
+				ACTIVE_IDENTITY_SIGNATURES.get().put(identity, signature);
+			if(metrics != null)
+				metrics.recordSignatureStructuralCacheHit();
+			return signature;
+		}
+		if(metrics != null)
+			metrics.recordSignatureCacheMiss();
+		return null;
 	}
 
 	static String rememberSignature(Object identity, String signature) {
-		NORMALIZED_SIGNATURES.get().put(identity, signature);
+		SearchSpaceMetrics metrics = ACTIVE_METRICS.get();
+		if(metrics != null)
+			metrics.recordSignatureSerialization(signature.length());
+		long[] retained = NORMALIZED_SIGNATURE_CHARS.get();
+		long limit = NORMALIZED_SIGNATURE_TEST_MAX_CHARS.get() == null
+			? NORMALIZED_SIGNATURE_CACHE_MAX_CHARS : NORMALIZED_SIGNATURE_TEST_MAX_CHARS.get();
+		if(signature.length() <= limit - retained[0]) {
+			if(metrics == null) {
+				NORMALIZED_SIGNATURES.get().put(identity, signature);
+				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
+			}
+			else {
+				ACTIVE_STRUCTURAL_SIGNATURES.get().put(identity, signature);
+				ACTIVE_IDENTITY_SIGNATURES.get().put(identity, signature);
+			}
+			retained[0] += signature.length();
+		}
 		return signature;
+	}
+
+	/** Starts a new compiler analysis with an empty, bounded serialization cache. */
+	static void resetNormalizedSignatureCache() {
+		NORMALIZED_SIGNATURES.remove();
+		NORMALIZED_SIGNATURES_BY_IDENTITY.remove();
+		NORMALIZED_SIGNATURE_CHARS.remove();
+	}
+
+	static void setActiveMetrics(SearchSpaceMetrics metrics) {
+		if(metrics == null) {
+			ACTIVE_METRICS.remove();
+			ACTIVE_STRUCTURAL_SIGNATURES.remove();
+			ACTIVE_IDENTITY_SIGNATURES.remove();
+		}
+		else {
+			ACTIVE_METRICS.set(metrics);
+			ACTIVE_STRUCTURAL_SIGNATURES.set(new java.util.HashMap<>());
+			ACTIVE_IDENTITY_SIGNATURES.set(new java.util.IdentityHashMap<>());
+		}
+	}
+
+	static SearchSpaceMetrics activeMetrics() {
+		return ACTIVE_METRICS.get();
+	}
+
+	static void beginAnalysisScope(SearchSpaceMetrics metrics) {
+		setActiveMetrics(metrics);
+		ACTIVE_STRUCTURAL_ARENA.set(new StructuralArena(metrics));
+	}
+
+	static void endAnalysisScope() {
+		ACTIVE_STRUCTURAL_ARENA.remove();
+		setActiveMetrics(null);
+	}
+
+	/** Analysis-local structural ID; null outside the explicitly bounded build scope. */
+	static Integer structuralHandle(Object value) {
+		StructuralArena arena = ACTIVE_STRUCTURAL_ARENA.get();
+		return arena == null ? null : arena.handle(Objects.requireNonNull(value, "structural value"));
+	}
+
+	static long normalizedSignatureCacheRetainedChars() {
+		return NORMALIZED_SIGNATURE_CHARS.get()[0];
+	}
+
+	static void setNormalizedSignatureCacheMaxCharsForTest(Long maxChars) {
+		if(maxChars == null)
+			NORMALIZED_SIGNATURE_TEST_MAX_CHARS.remove();
+		else if(maxChars < 0)
+			throw new IllegalArgumentException("Signature cache budget must be non-negative");
+		else
+			NORMALIZED_SIGNATURE_TEST_MAX_CHARS.set(maxChars);
+		resetNormalizedSignatureCache();
 	}
 
 	private static String requireText(String value, String name) {

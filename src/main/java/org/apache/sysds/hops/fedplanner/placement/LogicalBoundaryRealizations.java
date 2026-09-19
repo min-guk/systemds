@@ -109,7 +109,7 @@ public final class LogicalBoundaryRealizations {
 					for(CandidateEmissionRealization realization : emission.realizations())
 						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 							PlacementState state = realization.key().emissionState().placementState();
-							DurableAnchorKey pool = realization.provenWorkerPool(clause);
+							DurableAnchorKey pool = realization.provenWorkerPoolForOwnedClause(clause);
 							if(state.output() == FederatedOutput.FOUT && pool == null)
 								continue; // Staging lineage is not native execution authority.
 							options.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
@@ -226,7 +226,7 @@ public final class LogicalBoundaryRealizations {
 					if(requiresNativeBoundaryProof(emission.emissionState()) && emission.derivedFoutAction() == null)
 						for(CandidateEmissionRealization realization : emission.realizations())
 							for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-								DurableAnchorKey pool = realization.provenWorkerPool(clause);
+								DurableAnchorKey pool = realization.provenWorkerPoolForOwnedClause(clause);
 								if(pool == null || !hasCompleteBoundary(fact.key().parentOccurrence())
 									|| supportedPools(fact.key().parentOccurrence(), pool.fType()).stream()
 										.noneMatch(candidate -> PlacementIdentity.samePhysicalWorkerPool(candidate, pool)))

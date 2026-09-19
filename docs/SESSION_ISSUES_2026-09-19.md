@@ -1,0 +1,92 @@
+# Session issues — 2026-09-19
+
+## G009 search-space 계산량·중복·메모리 개선 구현
+
+- **상태**: P0–P4 제한 구현 완료. 유한 oracle·전체 selected suite·package PASS. 최종 GLM 계측 실행은
+  `build/g009-complexity/final-glm-metrics-tmux-20260919T072534+0200/`에서 진행 중이다.
+- **환경/조건**: correctness workspace, `audit/g009-completeness`, baseline
+  `35d1f49507a9cf3566674e68c6b97ccc1354d079`. 실제 GLM 실행 증거는
+  `build/plan-space-audit-20260919/g009-correctness-unbounded-fork-v6/`에 보존돼 있다.
+- **증상/재현**: `NeutralPlacementGraphUploadRelocationRedTest`
+  `#rewrittenInlinedOutputRetainsItsCompilerDeclaredTargetAuthority`의 `buildAnalysis`가
+  약 113분 실행 후 사용자 요청으로 중단됐다. `run.meta`의 결과는 `INCOMPLETE_NOT_PASS`다.
+- **메모리 관측과 추론**: 중단된 진단 GLM에서 `byte[]` 합계가 약 15분 시점
+  `2,109,075,104 bytes`(약 1.96 GiB)였다. signature 보유가 기여했을 가능성은 있으나
+  histogram만으로 모든 배열의 owner나 원인을 확정할 수 없다.
+- **변경 요약**: product streaming, 중복 descriptor suppression, 선형 dead pruning, first-match template
+  index, 64Mi-char bounded signature cache, resolver-local completed-result memo(entry/proof/estimated-byte budget),
+  conservative dirty cone, owner-safe support substructure factorization을 구현했다.
+- **도구 이슈**: 첫 계측 GLM은 약 25:55 뒤 unified exec가 signal/exit `131`로 종료했다. 이는
+  algorithm PASS/FAIL가 아니며 이후 장시간 실행은 `nohup` supervisor+status file로 분리했다.
+  baseline surefire report-directory property도 적용되지 않아 실제 `target/surefire-reports`를 증거
+  디렉터리로 복사하는 방식으로 고정했다.
+- **검증 결과**: ACTIONS 계측에서 duplicate descriptor `16`, pending relocation assignment peak `1`,
+  dead compaction `144/144`, dirty fact reuse `36`, factorized list reuse를 확인했다. 최종 bounded run은
+  161 tests, failures/errors `0/0`, finite missing/illegal-extra `0/0`; package exit `0`.
+- **inventory**: production candidate-affecting manifest `5,473→5,637`, added/removed IDs `196/32`를
+  memo/streaming/pruning/dirty/factorization/signature-cache 분기로 분류하고 재생성 후 PASS.
+- **잔여 이슈**: 최종 GLM 정상 완료와 원래 long assertion, 3-run timing 분산, Docker workload
+  qualification, G009 전역 보존/종료 증명은 아직 분리된 의무다.
+- **잠재 회귀/감지**: root pin 누락 cache, revision 경계 오류, negative dependency 누락,
+  SCC merge/split 처리 누락, OR correlation 소실, cache 메모리 증가를 변형 oracle와
+  full-recompute 비교 및 전체 pipeline peak memory로 검출하도록 계획했다.
+- **의사결정 근거**: runtime·privacy·TR/TW·recompile 규칙, candidate cardinality, OR correlation은
+  바꾸지 않고 동일 합법 의미의 계산과 표현만 개선한다. 유한 oracle 통과를 전역 증명이나 workload
+  인증으로 확대하지 않는다.
+
+## G009 10배 목표 알고리즘 재설계 계획
+
+- **상태**: 계획 작성 완료; 새 R1–R3 구현 및 10배 성능 검증 미실행.
+- **증상/환경**: 07:50 CEST 관측에서 최적화 GLM이 약 25분째 미완료.
+  fork PID 3775111의 thread dump 4회가 direct closure → clause 병합/정렬 →
+  normalized signature 또는 구조 hash 경로에 있었다. 당시 RSS 약 3.26GB.
+- **원인 추론**: 문자열 중심 identity와 반복 canonicalization이 유력한 병목이다.
+  cache 예산 소진 후 재직렬화 가능성이 있으나 saturation 및 전체 시간 비율은 미확정이다.
+- **해결 계획**: R0 짧은 scale fixture → R1 구조 ID/중간 정렬 제거 →
+  R2 공유 proof topology+query overlay/delta → 조건부 R3 selector-aware 압축 관계와 lazy receipt.
+- **수정 파일**: `docs/G009_SEARCH_SPACE_ALGORITHMIC_REDESIGN_PLAN_2026-09-19.md`,
+  기존 최적화 문서의 후속 문서 링크, 이 이슈 기록. production 코드는 이번 요청에서 변경하지 않는다.
+- **주장 정정**: 앞선 답변의 처리량 4–5배, 메모리 16–33배 감소는 미검증이므로 철회한다.
+  객체 수 도달 시점과 cache 예산은 각각 실제 처리량과 전체 메모리 절감의 증거가 아니다.
+  기존 P4는 제한적 객체 공유이지 새 계획 R3의 완전한 factorized pipeline이 아니다.
+- **검증**: 문서 코드/테스트 경로 존재, Markdown local link, whitespace/diff 검사.
+  새 실험은 실행하지 않으며 실행 중인 GLM은 이번 문서 요청으로 중단·재시작하지 않는다.
+- **잔여 이슈**: 정량 profiler, 재설계 구현, 동일 Docker 완료 baseline 및 3회 반복 비교,
+  ML/P1/P2/SliceLine 개별 qualification, 전역 correctness/termination 증명.
+- **잠재 회귀/감지**: ID 소유권 혼동·lexical 순서 변화·pin 누락·negative invalidation 누락·
+  OR correlation 소실·shared 비용 중복을 poison matrix, full-recompute shadow,
+  작은 전수 decoder oracle 및 DP/Exact 비용 parity로 검출한다.
+- **의사결정**: runtime/oracle 규칙과 합법 후보를 줄이지 않고 표현 및 평가 알고리즘만 재설계한다.
+
+## G009 알고리즘 재설계 구현·최종 GLM
+
+- **채택 상태**: R0/R1 구현, R2 부분 구현, R3 lazy receipt/final sharing까지만 구현 후 조건부 보류.
+  full global delta-SCC와 selector-native `Choice/Conjunction` relation은 미완료다.
+- **핵심 원인**: 첫 정상 GLM은 query마다 proof graph/prune/SCC를 반복해 proof query
+  `1,564,819`, alternative `1,055,953,130`, SCC edge scan `2,638,082,016`을 수행했다.
+  final receipt는 `99,632` slot이며 실제 receipt/rank 생성은 0이어서 주 병목이 아니었다.
+- **채택 변경**: bounded structural handle/legacy-exact rope ordering, shared topology+query overlay,
+  dependency handle precompute, 계측 scan fusion, provenance-neutral support solution memo,
+  occurrence-footprint 기반 revision invalidation/reuse, lazy owner-bound receipt/rank, no-op final
+  factorization object reuse. 후보 cap/sampling/runtime fallback은 추가하지 않았다.
+- **correctness**: `build/g009-redesign/final-broad-20260919T144851+0200/`에서 173 tests,
+  failure/error `0/0`, skip `4`. ACTIONS와 GLM fingerprint는 각각
+  `48f343...d0e7`, `98b41d...7109`로 유지됐다. 이는 유한 corpus 결과이며 전역 증명은 아니다.
+- **최종 GLM**: `build/g009-redesign/final-glm-revision-support-20260919T145212+0200/`.
+  evaluator `837.223 s`, wall `14:07.82`, max RSS `30,550,684 KB`, node/fact/action
+  `1,992/2,160/293`. 첫 정상 완료 대비 wall 1.175x(14.92%), RSS 6.51% 감소다.
+  proof query 10.14x, alternative 3.71x, dependency edge 3.53x, SCC edge 3.02x 감소했다.
+- **기각 실험**: public-result memo revision 이전은 138,018 entries를 복사했지만 lookup hit를
+  늘리지 못하고 `15:50.40`, RSS `31,670,436 KB`로 악화되어 revert했다. 실패 artifact는
+  `build/g009-redesign/final-glm-public-memo-20260919T151513+0200/`에 보존한다.
+- **추가 기각 실험**: occurrence별 realization structural index는 2,219만 membership lookup을
+  만들어 `17:27.72`, handle-key 변형도 같은 수의 lookup으로 `15:47.38`이 걸렸다. 둘 다 채택본
+  `14:07.82`보다 느려 revert했고 artifact는 `final-glm-realization-index-*`,
+  `final-glm-handle-realization-index-*`에 보존했다.
+- **판정**: 10배 공식 목표는 미달/OPEN. 113분 중단 run과 조건이 같다고 가정한 하한도 약
+  `>8.0x`일 뿐이고 censored baseline이므로 PASS가 아니다. Docker 3회와 allocation/live-heap
+  검증도 미실행이다.
+- **inventory**: current `5,805`, HEAD `5,473`, added `618`, removed `286`; 904개 변경 ID를
+  `G009_SEARCH_SPACE_BRANCH_INVENTORY_REVIEW_2026-09-19.tsv`에 모두 분류했다.
+- **workload 상태**: GLM 외 ML training, P1, P2, SliceLine은 이번 작업에서 검증하지 않았으며
+  모두 UNQUALIFIED다.

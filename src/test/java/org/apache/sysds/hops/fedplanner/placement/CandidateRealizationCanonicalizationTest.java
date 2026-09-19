@@ -1,7 +1,6 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.placement;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -84,6 +83,165 @@ public class CandidateRealizationCanonicalizationTest {
 		Assert.assertEquals(expected, first);
 		Assert.assertSame("immutable realization serialization must be reused",
 			first, realization.normalizedSignature());
+	}
+
+	@Test
+	public void hotIdentityCacheSkipsRepeatedStructuralHashAndSerialization() {
+		CandidateRealizationSupportClause clause = fixture().get(0).supportClauses().get(0);
+		CandidateRealizationSupportClause equalCopy = copy(clause);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.resetNormalizedSignatureCache();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			String signature = clause.normalizedSignature();
+			SearchSpaceMetrics.Snapshot cold = metrics.snapshot();
+			for(int iteration = 0; iteration < 64; iteration++)
+				Assert.assertSame(signature, clause.normalizedSignature());
+			SearchSpaceMetrics.Snapshot hot = metrics.snapshot();
+			Assert.assertEquals("hot probes must not serialize again",
+				cold.signatureSerializations(), hot.signatureSerializations());
+			Assert.assertTrue("same-object probes use identity hashing only",
+				hot.signatureIdentityCacheHits() - cold.signatureIdentityCacheHits() >= 64);
+
+			Assert.assertSame("the cold structural fallback preserves equal-copy sharing",
+				signature, equalCopy.normalizedSignature());
+			Assert.assertTrue(metrics.snapshot().signatureStructuralCacheHits() > 0);
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+			PlacementIdentity.resetNormalizedSignatureCache();
+		}
+	}
+
+	@Test
+	public void duplicateLayoutMergeDoesNotResortEveryClause() {
+		CandidateEmissionRealization realization = fixture().get(0);
+		List<CandidateEmissionRealization> duplicates = new ArrayList<>();
+		for(int index = 0; index < 64; index++)
+			duplicates.add(realization);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.resetNormalizedSignatureCache();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionFact emission = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null, duplicates);
+			Assert.assertSame(realization, emission.realizations().get(0));
+			SearchSpaceMetrics.Snapshot work = metrics.snapshot();
+			Assert.assertEquals(64, work.realizationMergeInputs());
+			Assert.assertEquals(1, work.realizationMergeUniqueClauses());
+			Assert.assertEquals(63, work.realizationMergeDuplicateClauses());
+			Assert.assertEquals(1, work.realizationMergeReusedRealizations());
+			Assert.assertEquals("a one-element publication boundary needs no sort",
+				0, work.canonicalSortCalls());
+			Assert.assertEquals(0, work.canonicalOrderingKeys());
+			Assert.assertEquals(0, work.canonicalComparisons());
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+			PlacementIdentity.resetNormalizedSignatureCache();
+		}
+	}
+
+	@Test
+	public void canonicalSupportSubsetDoesNotResortUnchangedOrder() {
+		CandidateEmissionRealization source = new CandidateEmissionRealization(fixture().get(0).key(), List.of(
+			new CandidateRealizationSupportClause(List.of(proof("subset-a")), List.of()),
+			new CandidateRealizationSupportClause(List.of(proof("subset-b")), List.of()),
+			new CandidateRealizationSupportClause(List.of(proof("subset-c")), List.of())));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionRealization subset = CandidateEmissionRealization
+				.fromAlreadyCanonicalSupportClauses(source.key(), source.supportClauses().subList(1, 3));
+			Assert.assertEquals(source.supportClauses().subList(1, 3), subset.supportClauses());
+			Assert.assertEquals(0, metrics.snapshot().canonicalSortCalls());
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+	}
+
+	@Test
+	public void boundaryComparatorExactlyMatchesLegacyLengthPrefixedUtf16Bytes() {
+		List<String> values = List.of("", "a", "|", ":", "[x, y]", "123456789",
+			"1234567890", "x".repeat(99), "x".repeat(100), "é", "😀", "a😀z");
+		List<List<String>> fields = new ArrayList<>();
+		for(String first : values)
+			for(String second : values)
+				fields.add(List.of(first, second, "tail"));
+		for(List<String> left : fields)
+			for(List<String> right : fields)
+				Assert.assertEquals(left + " vs " + right,
+					Integer.signum(legacyFields(left).compareTo(legacyFields(right))),
+					Integer.signum(PlacementAnalysis.compareLengthPrefixedFieldSequences(left, right)));
+	}
+
+	@Test
+	public void segmentedClauseAndRealizationOrderingExactlyMatchesMaterializedUtf16Text() {
+		DurableAnchorKey pool = pool("segmented-😀|[, ]", 1240);
+		CandidateEmissionRealization dynamic = CandidateEmissionRealization.nativeLineageDynamicLayout(
+			EMISSION, "dynamic-|[, ]-😀", pool,
+			List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+				OWNER, "dynamic-proof-|[, ]-😀")),
+			List.of(CandidateRealizationInputBinding.direct(0, source("segmented", "😀"))));
+		List<CandidateRealizationSupportClause> clauses = new ArrayList<>(fixture().stream()
+			.flatMap(realization -> realization.supportClauses().stream()).toList());
+		clauses.add(dynamic.supportClauses().get(0));
+		for(CandidateRealizationSupportClause left : clauses)
+			for(CandidateRealizationSupportClause right : clauses)
+				Assert.assertEquals(Integer.signum(left.normalizedSignature().compareTo(right.normalizedSignature())),
+					Integer.signum(PlacementAnalysis.compareCanonicalOrdering(left, right)));
+
+		List<CandidateEmissionRealization> realizations = new ArrayList<>(fixture());
+		realizations.add(dynamic);
+		CandidateEmissionRealization first = fixture().get(0);
+		realizations.add(new CandidateEmissionRealization(first.key(), List.of(
+			new CandidateRealizationSupportClause(List.of(proof("multi-9")), List.of()),
+			new CandidateRealizationSupportClause(List.of(proof("multi-10")), List.of()))));
+		for(CandidateEmissionRealization left : realizations)
+			for(CandidateEmissionRealization right : realizations)
+				Assert.assertEquals(Integer.signum(left.normalizedSignature().compareTo(right.normalizedSignature())),
+					Integer.signum(PlacementAnalysis.compareCanonicalOrdering(left, right)));
+
+		List<CandidateRealizationReference> references = realizations.stream()
+			.map(realization -> CandidateRealizationReference.of(RULE, realization)).toList();
+		for(CandidateRealizationReference left : references)
+			for(CandidateRealizationReference right : references)
+				Assert.assertEquals(Integer.signum(left.normalizedSignature().compareTo(right.normalizedSignature())),
+					Integer.signum(left.compareTo(right)));
+		for(CandidateEmissionRealization left : realizations)
+			for(CandidateEmissionRealization right : realizations)
+				Assert.assertEquals(Integer.signum(left.key().normalizedSignature()
+					.compareTo(right.key().normalizedSignature())), Integer.signum(left.key().compareTo(right.key())));
+		List<PlacementProofKey> proofs = clauses.stream()
+			.flatMap(clause -> clause.proofDependencies().stream()).toList();
+		for(PlacementProofKey left : proofs)
+			for(PlacementProofKey right : proofs)
+				Assert.assertEquals(Integer.signum(left.normalizedSignature().compareTo(right.normalizedSignature())),
+					Integer.signum(left.compareTo(right)));
+		List<CandidateRealizationInputBinding> bindings = clauses.stream()
+			.flatMap(clause -> clause.inputBindings().stream()).toList();
+		for(CandidateRealizationInputBinding left : bindings)
+			for(CandidateRealizationInputBinding right : bindings)
+				Assert.assertEquals(Integer.signum(left.normalizedSignature().compareTo(right.normalizedSignature())),
+					Integer.signum(left.compareTo(right)));
+	}
+
+	@Test
+	public void normalizedSignatureCacheBudgetNeverChangesCanonicalBytes() {
+		CandidateRealizationSupportClause clause = fixture().get(0).supportClauses().get(0);
+		PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(0L);
+		try {
+			String first = clause.normalizedSignature();
+			String second = clause.normalizedSignature();
+			Assert.assertEquals(legacySignature(clause), first);
+			Assert.assertEquals(first, second);
+			Assert.assertNotSame("budget exhaustion skips cache retention, not serialization", first, second);
+			Assert.assertEquals(0, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+		}
+		finally {
+			PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(null);
+		}
 	}
 
 	@Test
@@ -262,7 +420,18 @@ public class CandidateRealizationCanonicalizationTest {
 
 	private static CandidateRealizationSupportClause copy(CandidateRealizationSupportClause clause) {
 		return new CandidateRealizationSupportClause(clause.proofDependencies(), clause.inputBindings(),
-			clause.nativeWorkerPoolWitness());
+			clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact());
+	}
+
+	private static String legacyFields(List<String> values) {
+		StringBuilder encoded = new StringBuilder();
+		for(int index = 0; index < values.size(); index++) {
+			if(index > 0)
+				encoded.append('|');
+			String value = values.get(index);
+			encoded.append(value.length()).append(':').append(value);
+		}
+		return encoded.toString();
 	}
 
 	private static PlacementProofKey proof(String text) {
@@ -286,8 +455,6 @@ public class CandidateRealizationCanonicalizationTest {
 	}
 
 	private static void clearSignatures() throws Exception {
-		Field field = PlacementIdentity.class.getDeclaredField("NORMALIZED_SIGNATURES");
-		field.setAccessible(true);
-		((ThreadLocal<?>) field.get(null)).remove();
+		PlacementIdentity.resetNormalizedSignatureCache();
 	}
 }

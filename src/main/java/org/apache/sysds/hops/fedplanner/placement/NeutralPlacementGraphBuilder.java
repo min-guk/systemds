@@ -133,6 +133,8 @@ public final class NeutralPlacementGraphBuilder {
 	private final FunctionCallGraph suppliedFunctionCallGraph;
 	private final FunctionCallSizeInfo suppliedFunctionCallSizes;
 	private final FixedPointObserver fixedPointObserver;
+	private final SearchSpaceMetrics complexityMetrics;
+	private final boolean incrementalDirectClosure;
 
 	interface FixedPointObserver {
 		void accept(FixedPointPass pass);
@@ -142,24 +144,37 @@ public final class NeutralPlacementGraphBuilder {
 		int nodeCount, int candidateCount, int logicalInputCount, int actionCount) { }
 
 	public NeutralPlacementGraphBuilder() {
-		this(null, null, null);
+		this(null, null, null, null, true);
 	}
 
 	public NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
-		this(fgraph, fcallSizes, null);
+		this(fgraph, fcallSizes, null, null, true);
 	}
 
 	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver) {
-		this(null, null, fixedPointObserver);
+		this(null, null, fixedPointObserver, null, true);
+	}
+
+	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver,
+		SearchSpaceMetrics complexityMetrics) {
+		this(null, null, fixedPointObserver, complexityMetrics, true);
+	}
+
+	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver,
+		SearchSpaceMetrics complexityMetrics, boolean incrementalDirectClosure) {
+		this(null, null, fixedPointObserver, complexityMetrics, incrementalDirectClosure);
 	}
 
 	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
-		FixedPointObserver fixedPointObserver) {
+		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
+		boolean incrementalDirectClosure) {
 		if((fgraph == null) != (fcallSizes == null))
 			throw new IllegalArgumentException("Function graph and call-size summary must be supplied together");
 		suppliedFunctionCallGraph = fgraph;
 		suppliedFunctionCallSizes = fcallSizes;
 		this.fixedPointObserver = fixedPointObserver;
+		this.complexityMetrics = complexityMetrics;
+		this.incrementalDirectClosure = incrementalDirectClosure;
 	}
 
 	private void recordFixedPointPass(String phase, int pass, int passLimit, boolean stable,
@@ -168,6 +183,8 @@ public final class NeutralPlacementGraphBuilder {
 		if(fixedPointObserver != null)
 			fixedPointObserver.accept(new FixedPointPass(phase, pass, passLimit, stable,
 				nodes.size(), facts.size(), logicalInputs.size(), actions.size()));
+		if(complexityMetrics != null)
+			complexityMetrics.recordFixedPointPass(phase);
 	}
 
 	/**
@@ -301,6 +318,19 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	public PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {
+		PlacementIdentity.resetNormalizedSignatureCache();
+		if(complexityMetrics != null)
+			complexityMetrics.reset();
+		PlacementIdentity.beginAnalysisScope(complexityMetrics);
+		try {
+			return buildDetachedAnalysisScoped(program);
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	private PlacementAnalysis buildDetachedAnalysisScoped(DMLProgram program) {
 		FunctionCallGraph fgraph = suppliedFunctionCallGraph != null
 			? suppliedFunctionCallGraph : new FunctionCallGraph(program);
 		FunctionCallSizeInfo fcallSizes = suppliedFunctionCallSizes != null
@@ -329,6 +359,8 @@ public final class NeutralPlacementGraphBuilder {
 			if(fixedPointObserver != null)
 				fixedPointObserver.accept(new FixedPointPass("cfg-refinement", pass, maxCfgRefinementPasses,
 					stable, occurrences.size(), 0, 0, 0));
+			if(complexityMetrics != null)
+				complexityMetrics.recordFixedPointPass("cfg-refinement");
 			if(stable) {
 				cfgRefinementConverged = true;
 				break;
@@ -879,8 +911,9 @@ public final class NeutralPlacementGraphBuilder {
 		// The fixed point compares values, while published receipts require the
 		// exact graph-owned state objects. Canonicalize only those equal states;
 		// do not regenerate layouts or alter the converged candidate domain here.
-		candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
-		logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
+			candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
+			candidateRuleFacts = factorizeCandidateSupportRelations(candidateRuleFacts);
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
 		for(Node node : nodes)
 			if(requiredEmittedNodes.contains(node.key()) && (!node.emittedWork() || node.legalAlternatives().isEmpty())) {
 				Privacy privacy = privacyFacts.requirePrivacy(node.key());
@@ -2444,20 +2477,27 @@ public final class NeutralPlacementGraphBuilder {
 			List<CompiledInputEdgeFact> compiledEdges = deriveCompiledInputEdges(
 				occurrences, current.nodes(), ordinalsByBlock, factsByHop);
 			NativePlacementContinuity nativePools = new NativePlacementContinuity(nodesByKey, origins,
-				current.facts(), compiledEdges, reachingSources);
+				current.facts(), compiledEdges, reachingSources, complexityMetrics);
 			boolean directConverged = false;
+			Set<CompiledHopKey> directDirty = null;
 			for(int directPass = 0; directPass <= current.facts().size(); directPass++) {
-			List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
-					directTemplates, current.facts(), current.nodes(), compiledEdges, origins, factsByHop, nativePools);
+				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
+						directTemplates, current.facts(), current.nodes(), compiledEdges, origins, factsByHop,
+						nativePools, incrementalDirectClosure ? directDirty : null);
 				directFacts = LogicalBoundaryRealizations.close(current.nodes(), constraints, origins, directFacts);
-				if(directFacts.equals(current.facts())) {
+				boolean directStable = directFacts.equals(current.facts());
+				if(complexityMetrics != null)
+					complexityMetrics.recordDirectClosurePass(directStable, directDirty == null);
+				if(directStable) {
 					directConverged = true;
 					break;
 				}
+				directDirty = affectedDirectClosureOccurrences(
+					changedCandidateOccurrences(current.facts(), directFacts), current.nodes(), compiledEdges,
+					reachingSources, directFacts);
 				current = new CandidateReplay(current.nodes(), current.domainKeys(), directFacts,
 					current.logicalInputs(), current.changedOrdinals());
-				nativePools = new NativePlacementContinuity(nodesByKey, origins,
-					current.facts(), compiledEdges, reachingSources);
+				nativePools = nativePools.nextRevision(current.facts(), directDirty);
 			}
 			if(!directConverged)
 				throw new IllegalStateException("Candidate-specific direct realization closure did not converge");
@@ -2496,21 +2536,28 @@ public final class NeutralPlacementGraphBuilder {
 						cfg.reachingDefinitions().get(ordinal).stream().sorted()
 							.map(source -> physicalNodes.get(source).key()).toList());
 			NativePlacementContinuity physicalPools = new NativePlacementContinuity(physicalNodesByKey, origins,
-				physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+				physicallyClosed.facts(), physicalEdges, physicalReachingSources, complexityMetrics);
 			boolean physicalDirectConverged = false;
+			Set<CompiledHopKey> physicalDirectDirty = null;
 			for(int directPass = 0; directPass <= physicallyClosed.facts().size(); directPass++) {
 				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
 					directTemplates, physicallyClosed.facts(), physicallyClosed.nodes(), physicalEdges,
-					origins, factsByHop, physicalPools);
+					origins, factsByHop, physicalPools,
+					incrementalDirectClosure ? physicalDirectDirty : null);
 				directFacts = LogicalBoundaryRealizations.close(physicallyClosed.nodes(), constraints, origins, directFacts);
-				if(directFacts.equals(physicallyClosed.facts())) {
+				boolean directStable = directFacts.equals(physicallyClosed.facts());
+				if(complexityMetrics != null)
+					complexityMetrics.recordDirectClosurePass(directStable, physicalDirectDirty == null);
+				if(directStable) {
 					physicalDirectConverged = true;
 					break;
 				}
+				physicalDirectDirty = affectedDirectClosureOccurrences(
+					changedCandidateOccurrences(physicallyClosed.facts(), directFacts),
+					physicallyClosed.nodes(), physicalEdges, physicalReachingSources, directFacts);
 				physicallyClosed = new CandidateReplay(physicallyClosed.nodes(), physicallyClosed.domainKeys(),
 					directFacts, physicallyClosed.logicalInputs(), physicallyClosed.changedOrdinals());
-				physicalPools = new NativePlacementContinuity(physicalNodesByKey, origins,
-					physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+				physicalPools = physicalPools.nextRevision(physicallyClosed.facts(), physicalDirectDirty);
 			}
 			if(!physicalDirectConverged)
 				throw new IllegalStateException("Post-physical direct realization closure did not converge");
@@ -2534,11 +2581,11 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	/** Materializes candidate-specific direct native input authority before CFG replay. */
-	private static List<CandidateRuleFact> bindDirectNativeCandidateRealizations(
+	private List<CandidateRuleFact> bindDirectNativeCandidateRealizations(
 		List<CandidateRuleFact> templates, List<CandidateRuleFact> facts, List<Node> nodes,
 		List<CompiledInputEdgeFact> compiledEdges,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
-		NativePlacementContinuity continuity) {
+		NativePlacementContinuity continuity, Set<CompiledHopKey> dirtyOccurrences) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
@@ -2554,6 +2601,11 @@ public final class NeutralPlacementGraphBuilder {
 		for(CompiledInputEdgeFact edge : compiledEdges)
 			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
 				.put(edge.inputPosition(), edge.producer());
+		Map<DirectTemplateKey,CandidateEmissionFact> templateByKey = new LinkedHashMap<>();
+		for(CandidateRuleFact template : templates)
+			for(CandidateEmissionFact templateEmission : template.allowedEmissionFacts())
+				templateByKey.putIfAbsent(new DirectTemplateKey(template.key(),
+					templateEmission.emissionState(), templateEmission.derivedFoutAction()), templateEmission);
 		Map<CompiledHopKey,List<CandidateRealizationReference>> nativeByParent = new IdentityHashMap<>();
 		Map<CandidateRealizationReference,CandidateEmissionRealization> nativeRealizations = new LinkedHashMap<>();
 		Set<String> executableReferences = new LinkedHashSet<>();
@@ -2572,7 +2624,17 @@ public final class NeutralPlacementGraphBuilder {
 						}
 					}
 		List<CandidateRuleFact> rebound = new ArrayList<>(facts.size());
+		if(dirtyOccurrences != null && complexityMetrics != null)
+			complexityMetrics.recordIncrementalPass();
 		for(CandidateRuleFact fact : facts) {
+			if(dirtyOccurrences != null && !dirtyOccurrences.contains(fact.key().parentOccurrence())) {
+				if(complexityMetrics != null)
+					complexityMetrics.recordIncrementalFact(false);
+				rebound.add(fact);
+				continue;
+			}
+			if(dirtyOccurrences != null && complexityMetrics != null)
+				complexityMetrics.recordIncrementalFact(true);
 			// A compiled TRead aliases the exact CFG relation, not a physical Hop
 			// input. Its native lineages and durable identities are owned by replay;
 			// grounding it as a computation invents a reader-local native-output map
@@ -2586,12 +2648,12 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-				CandidateEmissionFact templateEmission = templates.stream()
-					.filter(template -> template.key().equals(fact.key()))
-					.flatMap(template -> template.allowedEmissionFacts().stream())
-					.filter(template -> template.emissionState().equals(emission.emissionState())
-						&& Objects.equals(template.derivedFoutAction(), emission.derivedFoutAction()))
-					.findFirst().orElse(emission);
+				CandidateEmissionFact templateEmission = templateByKey.get(new DirectTemplateKey(
+					fact.key(), emission.emissionState(), emission.derivedFoutAction()));
+				if(complexityMetrics != null)
+					complexityMetrics.recordTemplateLookup(templateEmission == null ? 0 : 1);
+				if(templateEmission == null)
+					templateEmission = emission;
 				Hop owner = origins.get(fact.key().parentOccurrence());
 				PlacementState outputState = emission.emissionState().placementState();
 				boolean recomputeNative = outputState.execType() == ExecType.FED
@@ -2610,7 +2672,8 @@ public final class NeutralPlacementGraphBuilder {
 								.anyMatch(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION))
 							.toList();
 						if(!relocationClauses.isEmpty())
-							realizations.add(new CandidateEmissionRealization(candidate.key(), relocationClauses));
+							realizations.add(CandidateEmissionRealization
+								.fromAlreadyCanonicalSupportClauses(candidate.key(), relocationClauses));
 					}
 				for(CandidateEmissionRealization realization : templatesForEmission) {
 					if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
@@ -2629,7 +2692,8 @@ public final class NeutralPlacementGraphBuilder {
 						for(CandidateRealizationReference source : nativeByParent.getOrDefault(sourceKey, List.of())) {
 							CandidateEmissionRealization sourceRealization = nativeRealizations.get(source);
 							for(CandidateRealizationSupportClause sourceClause : sourceRealization.supportClauses()) {
-								DurableAnchorKey pool = sourceRealization.nativeWorkerPoolResidencyWitness(sourceClause);
+								DurableAnchorKey pool = sourceRealization
+									.nativeWorkerPoolResidencyForOwnedClause(sourceClause);
 								if(pool == null || pool.fType() != inputType || outputState.fType() != inputType)
 									continue;
 								DurableAnchorKey anchor = sourceRealization.anchor();
@@ -2640,7 +2704,7 @@ public final class NeutralPlacementGraphBuilder {
 								if(anchor != null)
 									bound.add(CandidateEmissionRealization.durable(emission.emissionState(), anchor,
 										List.of(proof), binding));
-								else if(sourceRealization.nativeWorkerPoolLayoutExact(sourceClause))
+								else if(sourceRealization.nativeWorkerPoolLayoutExactForOwnedClause(sourceClause))
 									bound.add(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
 										"transient-alias:" + fact.key().parentOccurrence().normalizedSignature()
 											+ "|pool=" + pool.normalizedSignature(), pool, List.of(proof), binding));
@@ -2744,8 +2808,8 @@ public final class NeutralPlacementGraphBuilder {
 									if(binding.kind() != CandidateInputBindingKind.DIRECT)
 										return true;
 									CandidateEmissionRealization source = nativeRealizations.get(binding.source());
-									return source != null && source.supportClauses().stream()
-										.allMatch(source::nativeWorkerPoolLayoutExact);
+									return source != null
+										&& source.allOwnedSupportClausesHaveExactNativeLayout();
 								});
 								if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
 									for(CandidateRealizationSupportClause clause : realization.supportClauses())
@@ -2776,12 +2840,239 @@ public final class NeutralPlacementGraphBuilder {
 						realizations.addAll(bound);
 				}
 				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
-					emission.derivedFoutAction(), realizations.stream().distinct().sorted().toList()));
+					emission.derivedFoutAction(), realizations));
 			}
 			rebound.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
 				fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(rebound);
+	}
+
+	private static Set<CompiledHopKey> changedCandidateOccurrences(List<CandidateRuleFact> before,
+		List<CandidateRuleFact> after) {
+		Map<CompiledHopKey,List<CandidateRuleFact>> beforeByOwner = new IdentityHashMap<>();
+		Map<CompiledHopKey,List<CandidateRuleFact>> afterByOwner = new IdentityHashMap<>();
+		for(CandidateRuleFact fact : before)
+			beforeByOwner.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+		for(CandidateRuleFact fact : after)
+			afterByOwner.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+		Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+		owners.addAll(beforeByOwner.keySet());
+		owners.addAll(afterByOwner.keySet());
+		Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CompiledHopKey owner : owners)
+			if(!beforeByOwner.getOrDefault(owner, List.of()).equals(
+				afterByOwner.getOrDefault(owner, List.of())))
+				changed.add(owner);
+		return changed;
+	}
+
+	/**
+	 * Conservative revision-local dirty cone. Undirected connectivity deliberately widens
+	 * invalidation across SCC merge/split boundaries, support pins, CFG definitions, and
+	 * value-version aliases. It can only cause extra recomputation, never candidate pruning.
+	 */
+	private static Set<CompiledHopKey> affectedDirectClosureOccurrences(Set<CompiledHopKey> changed,
+		List<Node> nodes, List<CompiledInputEdgeFact> compiledEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> reachingSources, List<CandidateRuleFact> facts) {
+		if(changed.isEmpty())
+			return Set.of();
+		Map<CompiledHopKey,Set<CompiledHopKey>> adjacent = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledEdges)
+			addIdentityAdjacency(adjacent, edge.consumer(), edge.producer());
+		for(var entry : reachingSources.entrySet())
+			for(CompiledHopKey source : entry.getValue())
+				addIdentityAdjacency(adjacent, entry.getKey(), source);
+		for(CandidateRuleFact fact : facts)
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations())
+					for(CandidateRealizationSupportClause clause : realization.supportClauses())
+						for(CandidateRealizationInputBinding binding : clause.inputBindings())
+							addIdentityAdjacency(adjacent, fact.key().parentOccurrence(),
+								binding.source().rule().parentOccurrence());
+		Map<ValueVersionKey,List<CompiledHopKey>> aliases = new LinkedHashMap<>();
+		for(Node node : nodes)
+			aliases.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>()).add(node.key());
+		Map<CompiledHopKey,List<CompiledHopKey>> aliasMembers = new IdentityHashMap<>();
+		for(List<CompiledHopKey> members : aliases.values())
+			for(CompiledHopKey member : members)
+				aliasMembers.put(member, members);
+
+		Set<CompiledHopKey> affected = Collections.newSetFromMap(new IdentityHashMap<>());
+		java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>();
+		for(CompiledHopKey occurrence : changed)
+			if(affected.add(occurrence))
+				pending.addLast(occurrence);
+		while(!pending.isEmpty()) {
+			CompiledHopKey occurrence = pending.removeFirst();
+			for(CompiledHopKey neighbor : adjacent.getOrDefault(occurrence, Set.of()))
+				if(affected.add(neighbor))
+					pending.addLast(neighbor);
+			for(CompiledHopKey alias : aliasMembers.getOrDefault(occurrence, List.of()))
+				if(affected.add(alias))
+					pending.addLast(alias);
+		}
+		return affected;
+	}
+
+	private static void addIdentityAdjacency(Map<CompiledHopKey,Set<CompiledHopKey>> adjacent,
+		CompiledHopKey left, CompiledHopKey right) {
+		adjacent.computeIfAbsent(left, ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(right);
+		adjacent.computeIfAbsent(right, ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(left);
+	}
+
+	/**
+	 * Final analysis-scoped factorization of immutable AND support rows. Clause objects remain
+	 * owner-unique because receipts validate them by identity; only identity-compatible proof,
+	 * binding, and whole-list substructures are shared.
+	 */
+	private List<CandidateRuleFact> factorizeCandidateSupportRelations(List<CandidateRuleFact> facts) {
+		Map<FactorizedProofKey,PlacementProofKey> proofPool = new java.util.HashMap<>();
+		Map<FactorizedBindingKey,CandidateRealizationInputBinding> bindingPool = new java.util.HashMap<>();
+		Map<IdentityListKey<PlacementProofKey>,List<PlacementProofKey>> proofListPool = new java.util.HashMap<>();
+		Map<IdentityListKey<CandidateRealizationInputBinding>,List<CandidateRealizationInputBinding>>
+			bindingListPool = new java.util.HashMap<>();
+		List<CandidateRuleFact> factorized = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				List<CandidateEmissionRealization> realizations = new ArrayList<>();
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						List<PlacementProofKey> proofs = new ArrayList<>(clause.proofDependencies().size());
+						boolean proofsChanged = false;
+						for(PlacementProofKey proof : clause.proofDependencies()) {
+							FactorizedProofKey key = new FactorizedProofKey(proof);
+							PlacementProofKey shared = proofPool.putIfAbsent(key, proof);
+							if(shared == null)
+								shared = proof;
+							else {
+								proofsChanged |= shared != proof;
+								if(complexityMetrics != null)
+									complexityMetrics.recordFactorizedProofObjectReuse();
+							}
+							proofs.add(shared);
+						}
+						List<CandidateRealizationInputBinding> bindings =
+							new ArrayList<>(clause.inputBindings().size());
+						boolean bindingsChanged = false;
+						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+							FactorizedBindingKey key = new FactorizedBindingKey(binding);
+							CandidateRealizationInputBinding shared = bindingPool.putIfAbsent(key, binding);
+							if(shared == null)
+								shared = binding;
+							else {
+								bindingsChanged |= shared != binding;
+								if(complexityMetrics != null)
+									complexityMetrics.recordFactorizedBindingObjectReuse();
+							}
+							bindings.add(shared);
+						}
+						List<PlacementProofKey> sharedProofs = proofsChanged
+							? PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+								proofs, "realization proof dependency") : clause.proofDependencies();
+						IdentityListKey<PlacementProofKey> proofListKey = new IdentityListKey<>(sharedProofs);
+						List<PlacementProofKey> existingProofs = proofListPool.putIfAbsent(proofListKey, sharedProofs);
+						if(existingProofs != null) {
+							sharedProofs = existingProofs;
+							if(complexityMetrics != null)
+								complexityMetrics.recordFactorizedProofListReuse();
+						}
+						List<CandidateRealizationInputBinding> sharedBindings = bindingsChanged
+							? PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+								bindings, "realization input binding") : clause.inputBindings();
+						IdentityListKey<CandidateRealizationInputBinding> bindingListKey =
+							new IdentityListKey<>(sharedBindings);
+						List<CandidateRealizationInputBinding> existingBindings =
+							bindingListPool.putIfAbsent(bindingListKey, sharedBindings);
+						if(existingBindings != null) {
+							sharedBindings = existingBindings;
+							if(complexityMetrics != null)
+								complexityMetrics.recordFactorizedBindingListReuse();
+						}
+						clauses.add(sharedProofs == clause.proofDependencies()
+								&& sharedBindings == clause.inputBindings() ? clause
+							: new CandidateRealizationSupportClause(sharedProofs, sharedBindings,
+								clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
+						if(complexityMetrics != null)
+							complexityMetrics.recordFactorizedClause();
+					}
+					boolean unchanged = clauses.size() == realization.supportClauses().size();
+					for(int index = 0; unchanged && index < clauses.size(); index++)
+						unchanged = clauses.get(index) == realization.supportClauses().get(index);
+					realizations.add(unchanged ? realization : CandidateEmissionRealization
+						.fromAlreadyCanonicalSupportClauses(realization.key(), clauses));
+				}
+				boolean unchanged = realizations.size() == emission.realizations().size();
+				for(int index = 0; unchanged && index < realizations.size(); index++)
+					unchanged = realizations.get(index) == emission.realizations().get(index);
+				emissions.add(unchanged ? emission : new CandidateEmissionFact(
+					emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(), realizations));
+			}
+			boolean unchanged = emissions.size() == fact.allowedEmissionFacts().size();
+			for(int index = 0; unchanged && index < emissions.size(); index++)
+				unchanged = emissions.get(index) == fact.allowedEmissionFacts().get(index);
+			factorized.add(unchanged ? fact : new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+				fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(factorized);
+	}
+
+	private static final class FactorizedProofKey {
+		private final PlacementProofKey proof;
+		private final int hashCode;
+		private FactorizedProofKey(PlacementProofKey proof) {
+			this.proof = proof;
+			hashCode = 31 * proof.hashCode() + System.identityHashCode(proof.owner());
+		}
+		@Override public int hashCode() { return hashCode; }
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof FactorizedProofKey that
+				&& proof.owner() == that.proof.owner() && proof.equals(that.proof);
+		}
+	}
+
+	private static final class FactorizedBindingKey {
+		private final CandidateRealizationInputBinding binding;
+		private final int hashCode;
+		private FactorizedBindingKey(CandidateRealizationInputBinding binding) {
+			this.binding = binding;
+			hashCode = Objects.hash(binding, System.identityHashCode(
+				binding.source().rule().parentOccurrence()),
+				System.identityHashCode(binding.relocationAction()));
+		}
+		@Override public int hashCode() { return hashCode; }
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof FactorizedBindingKey that
+				&& binding.source().rule().parentOccurrence()
+					== that.binding.source().rule().parentOccurrence()
+				&& binding.relocationAction() == that.binding.relocationAction()
+				&& binding.equals(that.binding);
+		}
+	}
+
+	private static final class IdentityListKey<T> {
+		private final List<T> values;
+		private final int hashCode;
+		private IdentityListKey(List<T> values) {
+			this.values = values;
+			int hash = 1;
+			for(T value : values)
+				hash = 31 * hash + System.identityHashCode(value);
+			hashCode = hash;
+		}
+		@Override public int hashCode() { return hashCode; }
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof IdentityListKey<?> that) || values.size() != that.values.size())
+				return false;
+			for(int index = 0; index < values.size(); index++)
+				if(values.get(index) != that.values.get(index))
+					return false;
+			return true;
+		}
 	}
 
 	private static DurableAnchorKey nativeOutputAnchor(DurableAnchorKey seed, FType outputType,
@@ -3042,7 +3333,8 @@ public final class NeutralPlacementGraphBuilder {
 			throw new IllegalStateException("All-definition replay assignment unexpectedly disappeared");
 		supportBySource.replaceAll((ignored, support) -> support.stream().distinct().toList());
 		return new ReplayPlacementAlternative(state, input,
-			realizations.stream().distinct().sorted().toList(), supportBySource);
+			realizations.stream().distinct()
+				.sorted(PlacementAnalysis.<CandidateEmissionRealization>canonicalComparator()).toList(), supportBySource);
 	}
 
 
@@ -3195,7 +3487,7 @@ public final class NeutralPlacementGraphBuilder {
 				continuity.exactPartitionRanges(),
 				appendProof(commonProofs, new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
 					source, continuity.normalizedSignature()))))
-			.distinct().sorted().toList();
+			.distinct().sorted(PlacementAnalysis.<TransientCompatibilityProof>canonicalComparator()).toList();
 	}
 
 	private static DurableAnchorKey replayNativeWitness(
@@ -3230,7 +3522,8 @@ public final class NeutralPlacementGraphBuilder {
 				alternative.supportBySource().forEach((source, values) -> support.computeIfAbsent(source,
 					ignored -> new ArrayList<>()).addAll(values));
 			List<CandidateEmissionRealization> realizations = group.stream()
-				.flatMap(alternative -> alternative.readerRealizations().stream()).distinct().sorted().toList();
+				.flatMap(alternative -> alternative.readerRealizations().stream()).distinct()
+				.sorted(PlacementAnalysis.<CandidateEmissionRealization>canonicalComparator()).toList();
 			support.replaceAll((ignored, values) -> values.stream().distinct().toList());
 			merged.add(new ReplayPlacementAlternative(group.get(0).state(), entry.getKey(), realizations, support));
 		}
@@ -3245,7 +3538,7 @@ public final class NeutralPlacementGraphBuilder {
 				.filter(realization -> realization.placementState().output() == FederatedOutput.FOUT)
 				.filter(realization -> executableSourceRealization(fact.key(), realization))
 				.map(realization -> CandidateRealizationReference.of(fact.key(), realization))))
-			.distinct().sorted().toList();
+			.distinct().sorted(PlacementAnalysis.<CandidateRealizationReference>canonicalComparator()).toList();
 	}
 
 	private static Optional<CandidateEmissionRealization> candidateRealization(
@@ -3265,7 +3558,7 @@ public final class NeutralPlacementGraphBuilder {
 					emission.realizations().stream()
 						.filter(realization -> executableSourceRealization(fact.key(), realization))
 						.map(realization -> CandidateRealizationReference.of(fact.key(), realization))))
-			.distinct().sorted().toList();
+			.distinct().sorted(PlacementAnalysis.<CandidateRealizationReference>canonicalComparator()).toList();
 	}
 
 	private static boolean executableSourceRealization(CandidateRuleKey rule,
@@ -3281,7 +3574,8 @@ public final class NeutralPlacementGraphBuilder {
 			"same-logical-value-shape"));
 		proofs.add(new PlacementProofKey(PlacementProofKind.CONTROL_FLOW, read.key(),
 			"reaching-definitions=" + sources.stream().map(source -> source.key().normalizedSignature()).sorted().toList()));
-		return proofs.stream().distinct().sorted().toList();
+		return proofs.stream().distinct()
+			.sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList();
 	}
 
 	private static List<PlacementProofKey> edgeProofs(List<PlacementProofKey> common,
@@ -3293,7 +3587,7 @@ public final class NeutralPlacementGraphBuilder {
 	private static List<PlacementProofKey> appendProof(List<PlacementProofKey> proofs,
 		PlacementProofKey addition) {
 		return java.util.stream.Stream.concat(proofs.stream(), java.util.stream.Stream.of(addition))
-			.distinct().sorted().toList();
+			.distinct().sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList();
 	}
 
 	private static Integer exactLoopPassThroughSource(int readOrdinal,
@@ -3454,7 +3748,8 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		for(Node source : replay.sources()) {
 			List<TransientPlacementCompatibility> compatibility = compatibilityBySource
-				.getOrDefault(source.key(), List.of()).stream().distinct().sorted().toList();
+				.getOrDefault(source.key(), List.of()).stream().distinct()
+					.sorted(PlacementAnalysis.<TransientPlacementCompatibility>canonicalComparator()).toList();
 			if(!compatibility.isEmpty())
 				logicalInputs.add(new LogicalTransientInputFact(source.key(), read.key(), 0,
 					source.valueVersion(), read.valueVersion(), compatibility));
@@ -3702,7 +3997,7 @@ public final class NeutralPlacementGraphBuilder {
 						continue;
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						foundExecutableFout = true;
-						DurableAnchorKey exact = realization.provenWorkerPool(clause);
+						DurableAnchorKey exact = realization.provenWorkerPoolForOwnedClause(clause);
 						if(exact == null || !PlacementIdentity.samePhysicalLayout(anchor, exact))
 							return null;
 						if(transientIdentity && !exactTransientIdentitySupport(anchor, clause))
@@ -5169,7 +5464,7 @@ public final class NeutralPlacementGraphBuilder {
 			excluded.putIfAbsent(forbidden, new Exclusion(forbidden, ReasonCode.RECOMPILE_CP_FOUT, "recompile-context forbids CP/FOUT"));
 		}
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
-		for(List<FType> inputs : inputCombinations(inputDomains)) {
+		forEachInputCombination(inputDomains, inputs -> {
 			CandidateRuleKey candidateKey = new CandidateRuleKey(key, candidateInputStates(inputs));
 			candidateRuleDomainKeys.add(candidateKey);
 			Set<CandidateEmissionFact> exactEmissionFacts = new LinkedHashSet<>();
@@ -5262,7 +5557,7 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			candidateRuleFacts.add(candidateRuleFact(hop, candidateKey, inputShapeFacts, inputs, caps,
 				evidence, exactRightIndex, exactEmissionFacts));
-		}
+		}, complexityMetrics);
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
 		FType exactFederatedSourceType = exactFederatedSourceFType(hop, anchors);
@@ -5478,6 +5773,8 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record ExactRealizationOption(CandidateRealizationReference reference,
 		CandidateRealizationSupportClause clause, ValueVersionKey valueVersion) { }
+	private record DirectTemplateKey(CandidateRuleKey rule, PlacementEmissionState emission,
+		DerivedFoutMaterializationActionKey action) { }
 
 	/** Reuses equal graph action objects so realization bindings retain exact action identity authority. */
 	private static List<NeutralPlacementGraph.RelocationAction> canonicalRelocationActions(
@@ -5490,7 +5787,7 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	/** Adds exact action-backed native clauses without expanding ancestor support choices. */
-	private static List<CandidateRuleFact> bindRelocationCandidateRealizations(List<CandidateRuleFact> facts,
+	private List<CandidateRuleFact> bindRelocationCandidateRealizations(List<CandidateRuleFact> facts,
 		List<Node> nodes, List<CompiledInputEdgeFact> compiledEdges,
 		List<NeutralPlacementGraph.RelocationAction> relocations, Map<CompiledHopKey,Hop> origins,
 		Map<Hop,NodeShapeFact> shapes) {
@@ -5534,7 +5831,8 @@ public final class NeutralPlacementGraphBuilder {
 						|| nonActionClauses.stream().anyMatch(clause -> clause.nativeWorkerPoolWitness() != null
 							|| !clause.inputBindings().isEmpty())
 						|| fact.key().orderedInputs().stream().noneMatch(CandidateInputState::present)))
-						exact.add(new CandidateEmissionRealization(realization.key(), nonActionClauses));
+						exact.add(CandidateEmissionRealization
+							.fromAlreadyCanonicalSupportClauses(realization.key(), nonActionClauses));
 				}
 				List<NeutralPlacementGraph.RelocationAction> consumerActions = actionsByConsumer
 					.getOrDefault(fact.key().parentOccurrence(), List.of()).stream()
@@ -5598,7 +5896,8 @@ public final class NeutralPlacementGraphBuilder {
 							}).map(option -> CandidateRealizationInputBinding.relocation(
 								inputPosition, option.reference(), action.key())).toList());
 						}
-						bindings = bindings.stream().distinct().sorted().toList();
+						bindings = bindings.stream().distinct()
+							.sorted(PlacementAnalysis.<CandidateRealizationInputBinding>canonicalComparator()).toList();
 						if(bindings.isEmpty()) {
 							complete = false;
 							break;
@@ -5607,14 +5906,12 @@ public final class NeutralPlacementGraphBuilder {
 					}
 					if(!complete)
 						continue;
-					List<List<CandidateRealizationInputBinding>> assignments = new ArrayList<>();
-					enumerateBindingAssignments(choices, 0, new ArrayList<>(), assignments);
 					DurableAnchorKey outputAnchor = NativePlacementContinuity.recomputesNativePartitionRanges(
 						owner, emission.emissionState().placementState().fType())
 						? null : nativeOutputAnchor(targetPool,
 						emission.emissionState().placementState().fType(),
 						shapes.get(owner), fact.key().parentOccurrence());
-					for(List<CandidateRealizationInputBinding> assignment : assignments) {
+					enumerateBindingAssignments(choices, 0, new ArrayList<>(), assignment -> {
 						List<PlacementProofKey> proofs = assignment.stream()
 							.filter(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION)
 							.map(CandidateRealizationInputBinding::relocationAction).distinct().sorted()
@@ -5644,7 +5941,7 @@ public final class NeutralPlacementGraphBuilder {
 										outputPool, proofs, assignment));
 							}
 						}
-					}
+					}, complexityMetrics);
 				}
 				if(!exact.isEmpty())
 					emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
@@ -5664,17 +5961,26 @@ public final class NeutralPlacementGraphBuilder {
 			: option.clause().nativeWorkerPoolLayoutExact() ? option.clause().nativeWorkerPoolWitness() : null;
 	}
 
-	private static void enumerateBindingAssignments(List<List<CandidateRealizationInputBinding>> choices,
+	static void enumerateBindingAssignments(List<List<CandidateRealizationInputBinding>> choices,
 		int ordinal, List<CandidateRealizationInputBinding> current,
-		List<List<CandidateRealizationInputBinding>> result) {
+		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer,
+		SearchSpaceMetrics metrics) {
+		if(metrics != null)
+			metrics.recordRelocationPrefix(ordinal);
 		if(ordinal == choices.size()) {
-			result.add(List.copyOf(current));
+			if(metrics != null)
+				metrics.recordRelocationLeaf();
+			consumer.accept(List.copyOf(current));
 			return;
 		}
 		for(CandidateRealizationInputBinding binding : choices.get(ordinal)) {
 			current.add(binding);
-			enumerateBindingAssignments(choices, ordinal + 1, current, result);
-			current.remove(current.size() - 1);
+			try {
+				enumerateBindingAssignments(choices, ordinal + 1, current, consumer, metrics);
+			}
+			finally {
+				current.remove(current.size() - 1);
+			}
 		}
 	}
 
@@ -5708,7 +6014,8 @@ public final class NeutralPlacementGraphBuilder {
 							.allMatch(binding -> currentReferences.contains(binding.source())))
 						.toList();
 					if(!clauses.isEmpty())
-						realizations.add(new CandidateEmissionRealization(realization.key(), clauses));
+						realizations.add(CandidateEmissionRealization
+							.fromAlreadyCanonicalSupportClauses(realization.key(), clauses));
 				}
 				if(!realizations.isEmpty())
 					emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
@@ -5814,14 +6121,14 @@ public final class NeutralPlacementGraphBuilder {
 			List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts().size());
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				PlacementState priorTarget = emission.emissionState().placementState();
-					PlacementState target = node.legalAlternatives().stream()
-						.filter(priorTarget::equals).findFirst().orElseThrow(() ->
-							new IllegalStateException("Candidate emission is absent from final graph node|key="
-								+ fact.key().normalizedSignature() + "|state="
-								+ priorTarget.normalizedSignature() + "|nodeKind=" + node.kind()
-								+ "|nodeAlternatives="
-								+ node.legalAlternatives().stream()
-									.map(PlacementState::normalizedSignature).toList()));
+				PlacementState target = node.legalAlternatives().stream()
+					.filter(priorTarget::equals).findFirst().orElseThrow(() ->
+						new IllegalStateException("Candidate emission is absent from final graph node|key="
+							+ fact.key().normalizedSignature() + "|state="
+							+ priorTarget.normalizedSignature() + "|nodeKind=" + node.kind()
+							+ "|nodeAlternatives="
+							+ node.legalAlternatives().stream()
+								.map(PlacementState::normalizedSignature).toList()));
 				DerivedFoutMaterializationActionKey priorAction = emission.derivedFoutAction();
 				PlacementEmissionState reboundEmission = new PlacementEmissionState(target,
 					emission.emissionState().derivedFedFout());
@@ -5859,7 +6166,8 @@ public final class NeutralPlacementGraphBuilder {
 			case NATIVE_LINEAGE -> PlacementIdentity.PlacementRealizationKey.nativeLineage(
 				emission, realization.key().nativeLineage());
 		};
-		return new CandidateEmissionRealization(key, realization.supportClauses());
+		return CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+			key, realization.supportClauses());
 	}
 
 	private static List<CandidateRuleFact> bindExactCandidateEmissionRealizations(
@@ -5903,7 +6211,7 @@ public final class NeutralPlacementGraphBuilder {
 								.allMatch(clause -> clause.inputBindings().isEmpty()));
 				}
 				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
-					emission.derivedFoutAction(), realizations.stream().distinct().sorted().toList()));
+					emission.derivedFoutAction(), realizations));
 			}
 			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
 				fact.profile(), emissions, fact.failureCode()));
@@ -7431,7 +7739,7 @@ public final class NeutralPlacementGraphBuilder {
 			if(realization == null)
 				return Set.of();
 			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-				DurableAnchorKey provenPool = realization.provenWorkerPool(clause);
+				DurableAnchorKey provenPool = realization.provenWorkerPoolForOwnedClause(clause);
 				if(provenPool != null && provenPool.fType() == fType)
 					result.add(provenPool);
 				for(var binding : clause.inputBindings())
@@ -7847,22 +8155,30 @@ public final class NeutralPlacementGraphBuilder {
 				cfg, visitedHops, visitedOccurrences, anchors);
 	}
 
-	private static List<List<FType>> inputCombinations(List<List<FType>> domains) {
-		if(domains.isEmpty()) return List.of(List.of());
-		List<List<FType>> result = new ArrayList<>();
-		enumerateInputCombinations(domains, new ArrayList<>(), result);
-		return result;
+	static void forEachInputCombination(List<List<FType>> domains,
+		java.util.function.Consumer<List<FType>> consumer, SearchSpaceMetrics metrics) {
+		enumerateInputCombinations(domains, new ArrayList<>(), consumer, metrics);
 	}
+
 	private static void enumerateInputCombinations(List<List<FType>> domains, List<FType> prefix,
-		List<List<FType>> result) {
+		java.util.function.Consumer<List<FType>> consumer, SearchSpaceMetrics metrics) {
+		if(metrics != null)
+			metrics.recordInputPrefix(prefix.size());
 		if(prefix.size() == domains.size()) {
-			result.add(Collections.unmodifiableList(new ArrayList<>(prefix)));
+			if(metrics != null)
+				metrics.recordInputLeaf();
+			// ABSENT_LOCAL is represented by null, so List.copyOf is intentionally invalid here.
+			consumer.accept(Collections.unmodifiableList(new ArrayList<>(prefix)));
 			return;
 		}
 		for(FType type : domains.get(prefix.size())) {
 			prefix.add(type);
-			enumerateInputCombinations(domains, prefix, result);
-			prefix.remove(prefix.size() - 1);
+			try {
+				enumerateInputCombinations(domains, prefix, consumer, metrics);
+			}
+			finally {
+				prefix.remove(prefix.size() - 1);
+			}
 		}
 	}
 	private static String inputEvidence(List<FType> inputs) {

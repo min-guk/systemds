@@ -509,7 +509,7 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		return program;
 	}
 
-	private static DMLProgram compileBuiltinGlmFixture() throws Exception {
+	static DMLProgram compileBuiltinGlmFixture() throws Exception {
 		String script = "X=federated(addresses=list(\"localhost:1234/X1\"),"
 			+ "ranges=list(list(0,0),list(8,4)));\n"
 			+ "Y=federated(addresses=list(\"localhost:1234/Y1\"),"

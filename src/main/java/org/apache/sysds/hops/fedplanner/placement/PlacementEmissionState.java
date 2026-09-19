@@ -15,6 +15,8 @@ public record PlacementEmissionState(PlacementState placementState, boolean deri
 	}
 
 	public String normalizedSignature() {
-		return placementState.normalizedSignature() + "|derivedFedFout=" + derivedFedFout;
+		String cached = PlacementIdentity.cachedSignature(this);
+		return cached != null ? cached : PlacementIdentity.rememberSignature(this,
+			placementState.normalizedSignature() + "|derivedFedFout=" + derivedFedFout);
 	}
 }

@@ -6,11 +6,15 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -28,7 +32,7 @@ public class NeutralPlacementFixedPointCompositionTest {
 	private static final String FUNCTION = "f=function(matrix[double] A) return (matrix[double] B) {\n"
 		+ " B=t(A)%*%A;\n}\n"
 		+ SOURCE + "Y=f(X); print(sum(Y));\n";
-	private static final String ACTIONS = SOURCE
+	static final String ACTIONS = SOURCE
 		+ "p=matrix(1,rows=2,cols=1); pred=X%*%p; grad=t(X)%*%pred; print(sum(grad));\n";
 
 	@Test
@@ -80,6 +84,178 @@ public class NeutralPlacementFixedPointCompositionTest {
 		assertAllPhasesConverged(reverseTrace);
 	}
 
+	@Test
+	public void aggregateComplexityMetricsAreAnalysisScopedAndSemanticallyInert() throws Exception {
+		PlacementAnalysis uninstrumented = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileProtected(ACTIONS));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NeutralPlacementGraphBuilder instrumentedBuilder = new NeutralPlacementGraphBuilder(null, metrics);
+		PlacementAnalysis instrumented = instrumentedBuilder.buildAnalysis(compileProtected(ACTIONS));
+
+		Assert.assertEquals(uninstrumented.analysisFingerprint(), instrumented.analysisFingerprint());
+		Assert.assertEquals(uninstrumented.graph().normalizedSignatureWithLegalAssignments(),
+			instrumented.graph().normalizedSignatureWithLegalAssignments());
+		Assert.assertEquals(uninstrumented.candidateRuleFacts().orderedFacts(),
+			instrumented.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(uninstrumented.logicalTransientInputsInCanonicalOrder(),
+			instrumented.logicalTransientInputsInCanonicalOrder());
+
+		SearchSpaceMetrics.Snapshot first = metrics.snapshot();
+		Assert.assertTrue(first.fixedPointPasses() > 0);
+		Assert.assertTrue(first.cfgRefinementPasses() > 0);
+		Assert.assertTrue(first.semanticPasses() > 0);
+		Assert.assertTrue(first.publicationPasses() > 0);
+		Assert.assertTrue(first.directClosurePasses() > 0);
+		Assert.assertTrue(first.directClosureStablePasses() > 0);
+		Assert.assertTrue(first.directClosureFullPasses() > 0);
+		Assert.assertTrue(first.proofQueries() > 0);
+		Assert.assertEquals(first.proofQueries(),
+			first.exactContextUniqueQueries() + first.exactContextRepeatedQueries()
+				+ first.exactContextOverflowQueries());
+		Assert.assertEquals(first.proofQueries(), first.proofGraphsBuilt());
+		Assert.assertTrue(first.proofStatesBuilt() > 0);
+		Assert.assertTrue(first.proofAlternativesBuilt() >= 0);
+		Assert.assertTrue(first.proofDependencyEdgesBuilt() >= 0);
+		Assert.assertTrue(first.proofRowsExamined() >= first.proofAlternativesBuilt());
+		Assert.assertEquals("dead pruning must compact each built alternative exactly once",
+			first.proofAlternativesBuilt(), first.ownerCompactionElementsScanned());
+		Assert.assertTrue(first.alternativesRemoved() <= first.proofAlternativesBuilt());
+		Assert.assertTrue(first.supportLeaves() >= first.uniqueProofs());
+		Assert.assertEquals(first.supportLeaves(), first.uniqueProofs() + first.duplicateProofs());
+		Assert.assertTrue(first.factorizedClauses() > 0);
+		Assert.assertEquals("receipt slots preserve every clause without eager receipt objects",
+			first.factorizedClauses(), first.receiptRelationSlots());
+		Assert.assertEquals(0, first.candidateReceiptsCreated());
+		Assert.assertTrue(first.factorizedProofListsReused() > 0);
+		Assert.assertTrue(first.factorizedBindingListsReused() > 0);
+		assertSupportFactorizationPreservesClauseOwnership(instrumented);
+
+		PlacementAnalysis repeated = instrumentedBuilder.buildAnalysis(compileProtected(ACTIONS));
+		SearchSpaceMetrics.Snapshot second = metrics.snapshot();
+		Assert.assertEquals(instrumented.analysisFingerprint(), repeated.analysisFingerprint());
+		Assert.assertEquals("a reused builder must reset rather than accumulate analysis counters",
+			first, second);
+	}
+
+	@Test
+	public void lazyReceiptRelationRetainsExactLegacyLexicalRank() throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder(null, metrics)
+			.buildAnalysis(compileProtected(ACTIONS));
+		SearchSpaceMetrics.Snapshot built = metrics.snapshot();
+		Assert.assertTrue(built.receiptRelationSlots() > 0);
+		Assert.assertEquals("analysis construction must not allocate selector receipts",
+			0, built.candidateReceiptsCreated());
+
+		List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt> receipts =
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.flatMap(fact -> fact.allowedEmissionFacts().stream()
+					.flatMap(emission -> analysis.canonicalCandidateReceipts(fact.key(), emission).stream()))
+				.toList();
+		Assert.assertEquals(built.receiptRelationSlots(), receipts.size());
+		Assert.assertEquals(receipts.size(), metrics.snapshot().candidateReceiptsCreated());
+		List<?> lexical = receipts.stream().sorted().toList();
+		List<?> ranked = receipts.stream()
+			.sorted(java.util.Comparator.comparingInt(analysis::candidateReceiptRank)).toList();
+		for(int index = 0; index < lexical.size(); index++)
+			Assert.assertEquals("compressed relation rank differs at " + index,
+				((org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt)
+					lexical.get(index)).normalizedSignature(),
+				((org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt)
+					ranked.get(index)).normalizedSignature());
+		Assert.assertEquals("compressed relation rank must equal legacy receipt bytes", lexical, ranked);
+	}
+
+	@Test
+	public void exactContextDiagnosticsRemainBoundedWhenTrackingIsDisabled() throws Exception {
+		String property = "sysds.fedplanner.metrics.maxExactContexts";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, "0");
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			new NeutralPlacementGraphBuilder(null, metrics).buildAnalysis(compileProtected(ACTIONS));
+			SearchSpaceMetrics.Snapshot snapshot = metrics.snapshot();
+			Assert.assertTrue(snapshot.proofQueries() > 0);
+			Assert.assertEquals(0, snapshot.exactContextUniqueQueries());
+			Assert.assertEquals(0, snapshot.exactContextRepeatedQueries());
+			Assert.assertEquals(snapshot.proofQueries(), snapshot.exactContextOverflowQueries());
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
+	public void zeroStructuralArenaBudgetChangesWorkOnlyNeverCandidateSemantics() throws Exception {
+		String property = "sysds.fedplanner.structuralArena.maxEntries";
+		String prior = System.getProperty(property);
+		try {
+			PlacementAnalysis baseline = new NeutralPlacementGraphBuilder()
+				.buildAnalysis(compileProtected(ACTIONS));
+			System.setProperty(property, "0");
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			PlacementAnalysis zeroBudget = new NeutralPlacementGraphBuilder(null, metrics)
+				.buildAnalysis(compileProtected(ACTIONS));
+			Assert.assertEquals(baseline.analysisFingerprint(), zeroBudget.analysisFingerprint());
+			Assert.assertEquals(baseline.candidateRuleFacts().orderedFacts(),
+				zeroBudget.candidateRuleFacts().orderedFacts());
+			Assert.assertTrue("arena exhaustion must fall back to exact structural work",
+				metrics.snapshot().structuralArenaOverflows() > 0);
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
+	public void dirtyDirectClosureMatchesFullRecomputeAtTheComposedTransferBoundary() throws Exception {
+		SearchSpaceMetrics incrementalMetrics = new SearchSpaceMetrics();
+		PlacementAnalysis incremental = new NeutralPlacementGraphBuilder(
+			null, incrementalMetrics, true).buildAnalysis(compileProtected(ACTIONS));
+		PlacementAnalysis full = new NeutralPlacementGraphBuilder(
+			null, new SearchSpaceMetrics(), false).buildAnalysis(compileProtected(ACTIONS));
+
+		Assert.assertEquals(full.analysisFingerprint(), incremental.analysisFingerprint());
+		Assert.assertEquals(full.graph().normalizedSignatureWithLegalAssignments(),
+			incremental.graph().normalizedSignatureWithLegalAssignments());
+		Assert.assertEquals(full.candidateRuleFacts().orderedFacts(),
+			incremental.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
+			incremental.logicalTransientInputsInCanonicalOrder());
+		Assert.assertTrue("fixture must execute at least one revision-local dirty pass",
+			incrementalMetrics.snapshot().incrementalPasses() > 0);
+		Assert.assertTrue("an independent component must be reused rather than rebuilt",
+			incrementalMetrics.snapshot().incrementalFactsReused() > 0);
+	}
+
+	private static void assertSupportFactorizationPreservesClauseOwnership(PlacementAnalysis analysis) {
+		List<CandidateRealizationSupportClause> clauses = analysis.candidateRuleFacts().orderedFacts().stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.flatMap(realization -> realization.supportClauses().stream()).toList();
+		Set<CandidateRealizationSupportClause> ownerIdentities =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CandidateRealizationSupportClause clause : clauses)
+			Assert.assertTrue("support-clause owners must never be structurally interned",
+				ownerIdentities.add(clause));
+		boolean sharedSubstructure = false;
+		for(int left = 0; left < clauses.size() && !sharedSubstructure; left++)
+			for(int right = left + 1; right < clauses.size(); right++)
+				if(clauses.get(left).proofDependencies() == clauses.get(right).proofDependencies()
+					|| clauses.get(left).inputBindings() == clauses.get(right).inputBindings()) {
+					sharedSubstructure = true;
+					break;
+				}
+		Assert.assertTrue("fixture must retain analysis-scoped factorized support substructure",
+			sharedSubstructure);
+	}
+
 	private static void assertAllPhasesConverged(List<NeutralPlacementGraphBuilder.FixedPointPass> trace) {
 		for(String phase : List.of("cfg-refinement", "function-boundary", "semantic", "publication")) {
 			List<NeutralPlacementGraphBuilder.FixedPointPass> passes = trace.stream()
@@ -107,7 +283,7 @@ public class NeutralPlacementFixedPointCompositionTest {
 		return rows.stream().sorted().toList();
 	}
 
-	private static DMLProgram compileProtected(String script) throws Exception {
+	static DMLProgram compileProtected(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

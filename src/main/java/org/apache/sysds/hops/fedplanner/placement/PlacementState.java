@@ -40,9 +40,11 @@ public record PlacementState(ExecType execType, FederatedOutput output, FType fT
 	}
 
 	public String normalizedSignature() {
-		return execType.name() + "/" + output.name() + "/"
-			+ (fType == null ? "-" : fType.name()) + "/"
-			+ (shapeDependent ? "SHAPE_DEPENDENT" : "SHAPE_INDEPENDENT");
+		String cached = PlacementIdentity.cachedSignature(this);
+		return cached != null ? cached : PlacementIdentity.rememberSignature(this,
+			execType.name() + "/" + output.name() + "/"
+				+ (fType == null ? "-" : fType.name()) + "/"
+				+ (shapeDependent ? "SHAPE_DEPENDENT" : "SHAPE_INDEPENDENT"));
 	}
 
 	@Override
