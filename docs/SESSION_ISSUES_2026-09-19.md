@@ -163,3 +163,26 @@
   assertion을 되돌렸다. 다음 변경 전 working tree clean을 확인했다.
 - **의사결정 근거**: 계산량 감소가 코드상 가능해도 실제 workload 시간·RSS에서 재현되지 않으면
   최종 성능 개선으로 채택하지 않는다.
+
+## 통합 구조의 singleton SCC grounding fast path 실험
+
+- **상태**: NO-GO, production/test 변경 revert.
+- **증상/원인 가설**: 크기 1 SCC도 eligible map과 Tarjan refinement를 다시 만든다. 단일 상태의
+  모든 외부 dependency grounded 여부와 direct/external ground path를 직접 검사하면 같은 조건을
+  더 적은 객체로 판정할 수 있다.
+- **검증**: self-loop 무ground, direct ground+미grounded AND dependency, dependency 없는 direct
+  ground 테스트를 추가했고 기존 continuity/fixed-point/독립 plan-space suite가 통과했다.
+  two-source/local-mix와 LM 12회 snapshot은 모두 accepted 결과와 byte 동일했다.
+- **성능 결과**: 6-pair LM control `8,650/9,793/10,696/11,475/12,481/10,285 ms`, current
+  `9,841/11,547/8,677/9,745/12,605/10,349 ms`; 중앙값 `10,490.5→10,095 ms`(-3.77%)였지만
+  current 승리는 2/6이었다. RSS 중앙값은 `1,334,786→1,347,958 KiB`(+0.99%)로 악화됐다.
+- **판정/근거**: 중앙값만 작게 좋아졌고 paired 승률과 RSS가 지지하지 않아 반복 가능한
+  개선으로 채택하지 않았다. artifact는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-singleton-scc-screen-r1-20260919/`에 보존한다.
+- **잔여 이슈**: 다음 후보는 acyclic graph에서 dead-prune cascade와 SCC 전체를 함께 생략하는
+  DAG fast path다. 기존 performance 구현의 object-local visiting은 unified structural state와
+  맞지 않으므로 active-set 기반으로 별도 적응해야 한다.
+- **잠재 회귀/감지**: single-state self dependency와 외부 AND dependency를 혼동할 수 있다.
+  관련 테스트를 실험과 함께 revert했으며 향후 DAG 구현에서는 같은 반례를 다시 포함한다.
+- **의사결정 근거**: 의미상 안전한 국소 fast path도 목표 workload에서 안정적인 시간·메모리
+  개선이 없으면 누적하지 않는다.
