@@ -332,3 +332,32 @@
   alternative·edge 분포와 query별 overlay 차이를 observer-only로 계측한다. 충분한 중복이 확인될
   때만 topology DAG를 factorize하고 root overlay와 occurrence revision footprint를 분리하는 설계를
   시도한다. 180초 3회, Docker와 전역 plan 보존 증명은 계속 OPEN이다.
+
+## Proof graph·query overlay 반복 observer
+
+- **상태**: observer-only 계측 완료. observer production/metrics/test 변경은 결과와 patch를 보존한 뒤
+  revert했고 accepted runtime에는 포함하지 않았다.
+- **관측 경계**: support memo miss 뒤 실제로 다시 계산된 graph만 셌다. state별 overlay signature는
+  occurrence identity, pinned structural handle, full witness, template-root 여부, ordered alternative와
+  ordered dependency/input position을 포함했다. graph signature는 DFS insertion order의 모든 overlay를,
+  footprint signature는 pre-pruning graph의 occurrence set을 포함했다. analysis-scoped bounded double-hash
+  observer이며 hash equality는 재사용 설계의 증명이 아니라 반복 작업의 보수적 실험 상한이다.
+- **회귀/동일성**: memo를 끈 동일 query의 exact/dynamic graph를 두 번 계산하는 회귀에서 graph 4회 중
+  unique/repeated 2/2, overlay 반복 절반, footprint unique/repeated 1/3을 검출했다.
+  `NativePlacementContinuityTest`는 observer 추가 상태에서 39 tests/38 pass/1 intended skip이었다.
+  LM analysis fingerprint는 기존과 같은 `7fdcb7a8...3b22`, observer overflow는 모두 0이다.
+- **LM overlay 반복**: 208,726 overlay evaluation 중 unique 1,174, repeated 207,552(99.44%)다.
+  반복 overlay가 차지한 alternative는 1,153,794/1,185,743(97.31%), dependency edge는
+  1,694,678/1,750,172(96.83%)다. 기존 local topology cache도 build/hit 6,814/260,254였으므로,
+  병목은 topology row 발견보다 동일 query overlay list의 반복 materialization 쪽에 있다.
+- **LM 전체 graph 반복**: 13,854 graph 중 unique 1,129, repeated 12,725(91.85%)다. 동일 graph 반복분은
+  전체 alternative의 73.37%, edge의 72.56%를 차지한다. footprint는 unique 154/repeated 13,700
+  (98.89%)이다. 이는 unlimited exact reuse의 작업량 상한이며 pruning/grounding/support product 비용은
+  포함하지 않는다.
+- **artifact**: metrics, summary, time과 observer patch는
+  `build/g009-unified/proof-graph-reuse-observer-lm/`에 있다.
+- **다음 단위**: whole-graph 공유보다 범위가 작은 resolver-local bounded overlay cache를 먼저 실험한다.
+  key는 state occurrence/pin/witness/template-root와 단 하나의 query-fixed root occurrence/handle을 모두
+  포함하고, future multi-fixed context는 cache를 우회한다. immutable ordered alternative/dependency list만
+  재사용하며 revision 간에는 cache를 넘기지 않는다. small/LM exact snapshot과 hit/retained-size를 확인한
+  뒤 반복 wall/RSS가 함께 개선될 때만 GLM으로 확대한다.
