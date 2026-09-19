@@ -1,5 +1,25 @@
 # Session issues — 2026-09-19
 
+## 후보 형성 E2E 1/10 목표의 수학적 후속 계획
+
+- **상태**: 계획 작성 및 독립 검토 지적 반영 완료. production 구현·새 benchmark 없음.
+- **문제 정의/증상**: 현재 accepted GLM 진단은 약 716.592초이며, SCC 제거 및 높은 memo hit에도
+  큰 폭의 wall 개선이 확인되지 않았다. 기존 build-only 타이머 밖에서 receipt/rank 소비가 발생한다.
+- **원인/근거**: query별 graph materialization, nested closure의 exact relation 재구성, product 전개와
+  downstream requireAll 경로가 남아 있다. 현재 aggregate count만으로 phase 시간 비중을 확정할 수 없다.
+- **해결 계획**: E2E 측정 경계를 먼저 확정하고 Amdahl·출력 하한을 평가한다. context-preserving 공유
+  평가와 typed delta closure를 적용하고, 출력·소비 비용이 막으면 factorized relation과 DP를 함께 바꾼다.
+- **수정 파일**: `docs/G009_CANDIDATE_E2E_TENTH_PLAN_2026-09-19.md`,
+  `.omx/plans/g009-candidate-e2e-tenth-20260919.md`, 이 세션 기록.
+- **검증**: 코드/원본 GLM metrics/observer 대조, Amdahl·캐시 손익분기·binomial order-statistic
+  계산 확인, 문서 링크·참조 소스/행 범위·diff 검사 통과. 독립 검토에 따라 공식 E2E wall 경계,
+  cyclic 의미 조건과 통계적 검정력의 모순을 수정했다.
+- **잔여 이슈**: Docker E2E 기준선·phase별 profiling·실제 10배 개선은 미실행.
+- **잠재 회귀/감지**: 일반 Boolean LFP로 cyclic semantics를 바꾸거나 correlated OR를 독립 곱으로
+  바꾸면 후보를 잃거나 추가할 수 있다. 기존 SCC oracle·양방향 decoder·DP/Exact parity를 gate로 둔다.
+- **의사결정 근거/원칙**: 합법 후보 축소·runtime fallback 없이 계산 재사용과 표현 개선만 설계한다.
+  build에서 consumer로 비용을 미루는 것은 E2E 성공으로 인정하지 않는다.
+
 ## 두 워크스페이스 선택 병합 및 보고서 비판 검토
 
 - **상태**: 채택 코드 fast-forward 및 fresh 통합 검증 완료.
