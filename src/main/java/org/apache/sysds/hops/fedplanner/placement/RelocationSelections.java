@@ -289,7 +289,6 @@ public final class RelocationSelections {
 		private final Map<RelocationAction,Boolean> baseRequiresEmission;
 		private final RelocationPrivacyIndex originBoundSources;
 		private final Map<CandidateSelectionReceipt,ScoredReceipt> scoredReceipts;
-		private final Map<CandidateSelectionReceipt,Object> exactScoringEffects;
 		private final Map<CandidateSelectionReceipt,long[]> exactInteractionTokens;
 		private final ScoredAction[] scoredActions;
 		private final int scoredConsumerCount;
@@ -417,13 +416,10 @@ public final class RelocationSelections {
 			this.scoredConsumerCount = order.consumerCount();
 			this.scoredAnchorCount = order.anchorCount();
 			this.maximumScoredDemandCount = maximumDemands;
-			Map<CandidateSelectionReceipt,Object> effects = new IdentityHashMap<>();
 			Map<CandidateSelectionReceipt,long[]> interactions = new IdentityHashMap<>();
 			for(CandidateSelectionReceipt receipt : exactReceipts) {
-				List<List<ScoredOption>> demandEffects = new ArrayList<>();
 				Set<Long> interactionTokens = new LinkedHashSet<>();
 				for(ScoredDemand demand : scored.get(receipt).demands()) {
-					demandEffects.add(List.copyOf(Arrays.asList(demand.options())));
 					interactionTokens.add(interactionToken(0, demand.consumerId()));
 					for(ScoredOption option : demand.options()) {
 						interactionTokens.add(interactionToken(1, option.actionId()));
@@ -431,23 +427,17 @@ public final class RelocationSelections {
 							scoredActionArray[option.actionId()].physicalId()));
 					}
 				}
-				List<Integer> affectedActions = new ArrayList<>();
 				for(int actionId = 0; actionId < scoredActionArray.length; actionId++) {
 					RelocationAction action = scoredActionArray[actionId].action();
 					if(!receiptAffectsAction(receipt, action))
 						continue;
-					affectedActions.add(actionId);
 					interactionTokens.add(interactionToken(1, actionId));
 					interactionTokens.add(interactionToken(2,
 						scoredActionArray[actionId].physicalId()));
 				}
-				effects.put(receipt, new ExactReceiptScoringEffect(
-					List.copyOf(demandEffects), List.copyOf(affectedActions),
-					infeasible.contains(receipt), receipt.provenWorkerPool(), receipt.supportClause().inputBindings()));
 				interactions.put(receipt, interactionTokens.stream()
 					.mapToLong(Long::longValue).toArray());
 			}
-			this.exactScoringEffects = Collections.unmodifiableMap(effects);
 			this.exactInteractionTokens = Collections.unmodifiableMap(interactions);
 		}
 
@@ -529,14 +519,6 @@ public final class RelocationSelections {
 
 		ExactEmissionScorer newExactEmissionScorer() {
 			return new ExactEmissionScorer(this);
-		}
-
-		Object exactScoringEffect(CandidateSelectionReceipt receipt) {
-			Object effect = exactScoringEffects.get(receipt);
-			if(effect == null)
-				throw new IllegalArgumentException(
-					"Candidate receipt is outside its exact relocation index");
-			return effect;
 		}
 
 		/**
@@ -908,12 +890,6 @@ public final class RelocationSelections {
 	private record ScoredOption(int consumerId, int anchorId, int actionId,
 		RelocationDemandKey demand) { }
 	private record ScoredAction(int physicalId, RelocationAction action) { }
-	// The same coarse input row can be a direct native use or an action-backed
-	// realization. Those change activation/privacy and cannot share a score cache entry.
-	private record ExactReceiptScoringEffect(List<List<ScoredOption>> demands,
-		List<Integer> affectedActionIds, boolean infeasible, DurableAnchorKey nativePool,
-		List<PlacementIdentity.CandidateRealizationInputBinding> inputBindings) { }
-
 	private record LowerBoundEmission(Integer relocationId,
 		DerivedFoutMaterializationActionKey foutAction) {
 		private LowerBoundEmission {

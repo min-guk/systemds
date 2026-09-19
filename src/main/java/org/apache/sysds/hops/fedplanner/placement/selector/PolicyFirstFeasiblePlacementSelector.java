@@ -99,6 +99,9 @@ public final class PolicyFirstFeasiblePlacementSelector
 		RelocationSelections.CanonicalOrderIndex relocationOrder = candidateAnalysis == null
 			? RelocationSelections.canonicalOrderIndex(graph.relocationActions())
 			: candidateAnalysis.relocationOrderFor(graph.relocationActions());
+		PolicyCandidateSelectionView candidatePolicy = candidateAnalysis == null ? null
+			: new PolicyCandidateSelectionView(candidateAnalysis, graph, graph.relocationActions(),
+				relocationOrder, reachability);
 		Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies =
 			stateOrdering == StateOrdering.FEDERATED_FIRST
 				? producerDependencies(graph, reachability) : Map.of();
@@ -117,8 +120,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 			pruned = Math.addExact(pruned, solver.pruned);
 			maxDepth = Math.max(maxDepth, solver.maxDepth);
 		}
-		ScoredPlan plan = scoreComplete(candidateAnalysis, graph, assignment,
-			relocationOrder, reachability);
+		ScoredPlan plan = scoreComplete(candidateAnalysis, candidatePolicy, graph, assignment);
 		PlacementScore score = new PlacementScore(plan.fedCount(), plan.foutCount(),
 			plan.physicalMovementCount(), normalizedSignature(plan));
 		List<ComponentBound> bounds = policyBounds(graph, score);
@@ -161,9 +163,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 	}
 
 	private static ScoredPlan scoreComplete(PlacementAnalysis analysis,
-		NeutralPlacementGraph graph, Map<CompiledHopKey,PlacementState> assignment,
-		RelocationSelections.CanonicalOrderIndex relocationOrder,
-		CandidateSelections.PartialReachabilityIndex reachability) {
+		PolicyCandidateSelectionView candidatePolicy, NeutralPlacementGraph graph,
+		Map<CompiledHopKey,PlacementState> assignment) {
 		if(assignment.size() != graph.decisionNodes().size())
 			throw new IllegalStateException("policy component merge produced an incomplete assignment");
 		for(Constraint constraint : graph.constraints()) {
@@ -186,8 +187,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 			movement = RelocationSelections.physicalEmissionCount(relocations);
 		}
 		else {
-			CandidateSelections.Selection selected = CandidateSelections.selectMaterializationMaximal(
-				analysis, graph, graph.relocationActions(), assignment, relocationOrder, reachability);
+			CandidateSelections.Selection selected = Objects.requireNonNull(candidatePolicy,
+				"candidatePolicy").select(assignment);
 			candidates = selected.candidates();
 			choices = selected.relocationChoices();
 			relocations = selected.emittedActions();

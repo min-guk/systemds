@@ -2571,7 +2571,7 @@ public final class Rulesets {
       final boolean hintMatch = hasCentralMomentHint(sig);
       if (!opcodeMatch && !hintMatch)
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
-      if (inFTypes == null || inFTypes.isEmpty() || typeAt(inFTypes, 0) == null)
+      if (inFTypes == null || inFTypes.isEmpty())
         return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
 
       final FType x = typeAt(inFTypes, 0);
@@ -4252,15 +4252,13 @@ public final class Rulesets {
 
       FType left = typeAt(inFTypes, 0);
       FType right = typeAt(inFTypes, 1);
-      if (left == null || right == null)
-        return cpLocal(sig, ReasonCode.MISSING_IN_FTYPE).build();
-
+      boolean hasWeights = inFTypes.size() >= 3;
       FType weights = (inFTypes.size() >= 3) ? typeAt(inFTypes, 2) : null;
       boolean leftFed = isFederatedLike(left);
       boolean rightFed = isFederatedLike(right);
 
       if (!leftFed && !rightFed)
-        return addWeightNote(cpLocal(sig, ReasonCode.NO_FED_INPUT), weights).build();
+        return addWeightNote(cpLocal(sig, ReasonCode.NO_FED_INPUT), weights, hasWeights).build();
 
       if (leftFed && rightFed) {
         boolean sameRow = matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW);
@@ -4273,15 +4271,15 @@ public final class Rulesets {
           OpCaps.Builder ok = fedLocal(sig, ReasonCode.OK);
           if (hintAligned)
             ok.note(ReasonCode.ALIGNED_HINT, alignNote(hintAxis));
-          return addWeightNote(ok, weights).build();
+          return addWeightNote(ok, weights, hasWeights).build();
         }
 
         return addWeightNote(
             cpLocal(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY),
-            weights).build();
+            weights, hasWeights).build();
       }
 
-      return addWeightNote(fedLocal(sig, ReasonCode.OK), weights).build();
+      return addWeightNote(fedLocal(sig, ReasonCode.OK), weights, hasWeights).build();
     }
 
     private static OpCaps.Builder cpLocal(OpSig sig, ReasonCode reason) {
@@ -4301,8 +4299,8 @@ public final class Rulesets {
           .reason(reason);
     }
 
-    private static OpCaps.Builder addWeightNote(OpCaps.Builder builder, FType weights) {
-      if (builder == null || weights == null)
+    private static OpCaps.Builder addWeightNote(OpCaps.Builder builder, FType weights, boolean hasWeights) {
+      if (builder == null || !hasWeights)
         return builder;
       if (isFederatedLike(weights))
         return builder.note(ReasonCode.INFO, "weights=broadcast-sliced");

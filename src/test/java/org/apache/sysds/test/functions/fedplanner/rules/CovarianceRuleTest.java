@@ -41,7 +41,7 @@ public class CovarianceRuleTest {
   private static final OpSig COV_SIG =
       OpSig.of("cov", OpCategory.BINARY_EWISE, Map.of());
   private static final OpSig COV_SIG_ALIGN_ROW =
-      OpSig.of("covariance", OpCategory.BINARY_EWISE, Map.of("align_hint", "ROW"));
+      OpSig.of("cov", OpCategory.BINARY_EWISE, Map.of("align_hint", "ROW"));
 
   private final Rulesets.CovarianceRule rule = new Rulesets.CovarianceRule();
 

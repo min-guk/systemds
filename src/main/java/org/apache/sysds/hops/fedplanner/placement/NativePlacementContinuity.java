@@ -29,6 +29,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
@@ -47,6 +48,7 @@ import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
@@ -72,6 +74,8 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 final class NativePlacementContinuity {
 	private static final Set<String> NATIVE_UNARY_ELEMWISE_OPCODES =
 		Set.copyOf(new Rulesets.UnaryElemwiseRule().opcodes());
+	private static final Set<String> NATIVE_UNARY_CUMULATIVE_OPCODES =
+		Set.copyOf(new Rulesets.UnaryCumulativeRule().opcodes());
 	private static final Set<String> NATIVE_BINARY_ELEMWISE_OPCODES =
 		Set.copyOf(new Rulesets.BinaryElemwiseRule().opcodes());
 	private final Map<CompiledHopKey,Node> nodesByKey;
@@ -81,6 +85,12 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
 	private final Set<CompiledHopKey> incompleteSources;
 	private final Map<CompiledHopKey,Privacy> privacyByKey;
+	private final Map<CandidateRealizationSupportClause,List<CandidateRealizationReference>>
+		requiredInputSupportByClause = new IdentityHashMap<>();
+	private final Map<DurableAnchorKey,NativePoolWitness> nativeWitnessByAnchor = new IdentityHashMap<>();
+	private final Map<String,String> canonicalEndpointByWorker = new java.util.HashMap<>();
+	private final Map<CandidateRealizationReference,String> candidateIdentityByReference =
+		new IdentityHashMap<>();
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
 		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
@@ -125,7 +135,7 @@ final class NativePlacementContinuity {
 
 	boolean proves(List<CompiledHopKey> sources, DurableAnchorKey externalSeed) {
 		Objects.requireNonNull(sources, "sources");
-		NativePoolWitness witness = NativePoolWitness.from(
+		NativePoolWitness witness = nativeWitness(
 			Objects.requireNonNull(externalSeed, "externalSeed"));
 		if(sources.isEmpty() || witness == null)
 			return false;
@@ -162,36 +172,55 @@ final class NativePlacementContinuity {
 	List<NativeContinuityProof> proveCandidateAlternatives(CandidateRealizationReference source,
 		DurableAnchorKey externalSeed) {
 		Objects.requireNonNull(source, "source");
-		NativePoolWitness seedWitness = NativePoolWitness.from(
+		NativePoolWitness seedWitness = nativeWitness(
 			Objects.requireNonNull(externalSeed, "externalSeed"));
 		if(seedWitness == null)
 			return List.of();
 		FType outputType = source.realization().emissionState().placementState().fType();
 		NativePoolWitness witness = seedWitness.retyped(outputType);
+		Hop owner = originsByKey.get(source.rule().parentOccurrence());
+		if(witness == null && recomputesNativePartitionRanges(owner, outputType))
+			witness = seedWitness.retypedForResidency(outputType);
 		if(witness == null)
 			return List.of();
-		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source, witness, true);
+		List<NativeContinuityProof> exact = proveCandidateAlternatives(source, externalSeed, witness);
+		if(witness.fType != FType.ROW && witness.fType != FType.COL && witness.fType != FType.FULL)
+			return exact;
+		FType witnessType = witness.fType;
+		List<NativeContinuityProof> dynamic = proveCandidateAlternatives(
+			source, externalSeed, witness.withDynamicPartitionRanges()).stream()
+			.filter(proof -> recomputesNativePartitionRanges(owner, witnessType)
+				|| proof.immediateBindings().stream().anyMatch(binding ->
+					hasDynamicNativeLayout(binding.source())))
+			.toList();
+		return java.util.stream.Stream.concat(exact.stream(), dynamic.stream())
+			.distinct().sorted(java.util.Comparator.comparing(NativeContinuityProof::normalizedSignature)).toList();
+	}
+
+	private boolean hasDynamicNativeLayout(CandidateRealizationReference reference) {
+		return candidateFactsByKey.getOrDefault(reference.rule().parentOccurrence(), List.of()).stream()
+			.filter(fact -> fact.key().equals(reference.rule()))
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().equals(reference.realization()))
+			.flatMap(realization -> realization.supportClauses().stream())
+			.anyMatch(clause -> clause.nativeWorkerPoolWitness() != null
+				&& !clause.nativeWorkerPoolLayoutExact());
+	}
+
+	private List<NativeContinuityProof> proveCandidateAlternatives(CandidateRealizationReference source,
+		DurableAnchorKey externalSeed, NativePoolWitness witness) {
+		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source,
+			candidateIdentity(source), witness, true);
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph = new java.util.LinkedHashMap<>();
 		Map<CompiledHopKey,CandidateRealizationReference> fixed = new IdentityHashMap<>();
 		fixed.put(source.rule().parentOccurrence(), source);
 		buildCandidateProofGraph(root, graph, new java.util.HashSet<>(), fixed);
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable = new java.util.LinkedHashMap<>(graph);
-		boolean changed;
-		do {
-			changed = false;
-			for(var entry : new ArrayList<>(viable.entrySet())) {
-				List<SelectedCandidateProof> retained = entry.getValue().stream()
-					.filter(alternative -> alternative.dependencies.stream().allMatch(dependency ->
-						!viable.getOrDefault(dependency.state(), List.of()).isEmpty()))
-					.toList();
-				if(!retained.equals(entry.getValue())) {
-					viable.put(entry.getKey(), retained);
-					changed = true;
-				}
-			}
-		}
-		while(changed);
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable = pruneDeadAlternatives(graph);
 		Set<CandidateProofState> grounded = groundedCandidateStates(viable);
+		Map<CandidateProofState,List<CandidateRealizationReference>> groundedReferences =
+			new java.util.HashMap<>();
+		Map<CandidateProofState,Boolean> directlyGrounded = new java.util.HashMap<>();
 		List<NativeContinuityProof> proofs = new ArrayList<>();
 		if(grounded.contains(root))
 			for(SelectedCandidateProof alternative : viable.getOrDefault(root, List.of())) {
@@ -203,29 +232,82 @@ final class NativePlacementContinuity {
 				for(CandidateProofDependency dependency : alternative.dependencies) {
 					if(dependency.inputPosition() < 0)
 						continue;
-					List<CandidateRealizationReference> options = viable.getOrDefault(dependency.state(), List.of())
-						.stream().filter(option -> option.realization != null)
-						.filter(option -> (option.directGround || !option.dependencies.isEmpty())
-							&& option.dependencies.stream().allMatch(child -> grounded.contains(child.state())))
-						.map(SelectedCandidateProof::realization).distinct().sorted().toList();
+					List<CandidateRealizationReference> options = groundedReferences.computeIfAbsent(
+						dependency.state(), state -> canonicalReferences(viable.getOrDefault(state, List.of()).stream()
+							.filter(option -> option.realization != null)
+							.filter(option -> (option.directGround || !option.dependencies.isEmpty())
+								&& option.dependencies.stream().allMatch(child -> grounded.contains(child.state())))
+							.map(SelectedCandidateProof::realization).toList()));
 					if(options.isEmpty()) {
-						if(viable.getOrDefault(dependency.state(), List.of()).stream()
-							.noneMatch(option -> option.directGround)) {
+						if(!directlyGrounded.computeIfAbsent(dependency.state(), state -> viable
+							.getOrDefault(state, List.of()).stream().anyMatch(option -> option.directGround))) {
 							complete = false;
 							break;
 						}
 						continue;
 					}
-					immediateOptions.add(options.stream().map(reference ->
-						CandidateRealizationInputBinding.direct(dependency.inputPosition(), reference)).toList());
+					immediateOptions.add(options.stream()
+						.map(reference -> CandidateRealizationInputBinding.direct(
+							dependency.inputPosition(), reference)).toList());
 				}
-					if(complete)
-						enumerateImmediateSupports(immediateOptions, 0, new ArrayList<>(), support ->
-							proofs.add(new NativeContinuityProof(externalSeed,
-								support.stream().distinct().sorted().toList())));
-				}
+				if(complete)
+					enumerateImmediateSupports(immediateOptions, 0, new ArrayList<>(), support ->
+						proofs.add(new NativeContinuityProof(externalSeed,
+							witness.asAnchor("native-proof-output:" + source.rule().parentOccurrence().normalizedSignature()),
+							witness.exactPartitionRanges,
+							support.stream().distinct().sorted().toList())));
+			}
 		return proofs.stream().distinct().sorted(java.util.Comparator.comparing(
 			NativeContinuityProof::normalizedSignature)).toList();
+	}
+
+	private static List<CandidateRealizationReference> canonicalReferences(
+		List<CandidateRealizationReference> references) {
+		Map<String,List<CandidateRealizationReference>> bySignature = new java.util.TreeMap<>();
+		for(CandidateRealizationReference reference : references) {
+			List<CandidateRealizationReference> bucket = bySignature.computeIfAbsent(
+				reference.normalizedSignature(), ignored -> new ArrayList<>());
+			if(bucket.stream().noneMatch(reference::equals))
+				bucket.add(reference);
+		}
+		return bySignature.values().stream().flatMap(List::stream).toList();
+	}
+
+	private static Map<CandidateProofState,List<SelectedCandidateProof>> pruneDeadAlternatives(
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph) {
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable = new java.util.LinkedHashMap<>();
+		Map<CandidateProofState,List<DependentAlternative>> reverseDependencies = new java.util.HashMap<>();
+		for(var entry : graph.entrySet()) {
+			viable.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+			for(SelectedCandidateProof alternative : entry.getValue()) {
+				Set<CandidateProofState> dependencies = new java.util.HashSet<>();
+				for(CandidateProofDependency dependency : alternative.dependencies)
+					dependencies.add(dependency.state());
+				for(CandidateProofState dependency : dependencies)
+					reverseDependencies.computeIfAbsent(dependency, ignored -> new ArrayList<>())
+						.add(new DependentAlternative(entry.getKey(), alternative));
+			}
+		}
+		java.util.ArrayDeque<CandidateProofState> dead = new java.util.ArrayDeque<>();
+		Set<CandidateProofState> knownDead = new java.util.HashSet<>();
+		for(var entry : viable.entrySet())
+			if(entry.getValue().isEmpty() && knownDead.add(entry.getKey()))
+				dead.addLast(entry.getKey());
+		for(CandidateProofState dependency : reverseDependencies.keySet())
+			if(!viable.containsKey(dependency) && knownDead.add(dependency))
+				dead.addLast(dependency);
+		Set<SelectedCandidateProof> removed = Collections.newSetFromMap(new IdentityHashMap<>());
+		while(!dead.isEmpty())
+			for(DependentAlternative dependent : reverseDependencies.getOrDefault(dead.removeFirst(), List.of())) {
+				if(!removed.add(dependent.alternative()))
+					continue;
+				List<SelectedCandidateProof> ownerAlternatives = viable.get(dependent.owner());
+				ownerAlternatives.removeIf(alternative -> alternative == dependent.alternative());
+				if(ownerAlternatives.isEmpty() && knownDead.add(dependent.owner()))
+					dead.addLast(dependent.owner());
+			}
+		viable.replaceAll((ignored, alternatives) -> List.copyOf(alternatives));
+		return viable;
 	}
 
 	private static void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
@@ -244,58 +326,103 @@ final class NativePlacementContinuity {
 
 	private static Set<CandidateProofState> groundedCandidateStates(
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable) {
-		Map<CandidateProofState,Set<CandidateProofState>> reachability = new java.util.LinkedHashMap<>();
-		for(CandidateProofState state : viable.keySet()) {
-			Set<CandidateProofState> reached = new java.util.HashSet<>();
-			java.util.ArrayDeque<CandidateProofState> pending = new java.util.ArrayDeque<>();
-			pending.add(state);
-			while(!pending.isEmpty()) {
-				CandidateProofState next = pending.removeFirst();
-				if(!reached.add(next))
-					continue;
-				for(SelectedCandidateProof alternative : viable.getOrDefault(next, List.of()))
-					for(CandidateProofDependency dependency : alternative.dependencies)
-						if(viable.containsKey(dependency.state()))
-							pending.addLast(dependency.state());
-			}
-			reachability.put(state, reached);
-		}
-		List<Set<CandidateProofState>> components = new ArrayList<>();
-		Set<CandidateProofState> assigned = new java.util.HashSet<>();
-		for(CandidateProofState state : viable.keySet()) {
-			if(assigned.contains(state))
-				continue;
-			Set<CandidateProofState> component = new java.util.HashSet<>();
-			for(CandidateProofState candidate : viable.keySet())
-				if(reachability.get(state).contains(candidate) && reachability.get(candidate).contains(state))
-					component.add(candidate);
-			assigned.addAll(component);
-			components.add(component);
-		}
+		List<Set<CandidateProofState>> maximalComponents = new ArrayList<>();
+		Map<CandidateProofState,Integer> indices = new java.util.HashMap<>();
+		Map<CandidateProofState,Integer> lowLinks = new java.util.HashMap<>();
+		java.util.ArrayDeque<CandidateProofState> stack = new java.util.ArrayDeque<>();
+		Set<CandidateProofState> onStack = new java.util.HashSet<>();
+		int[] nextIndex = {0};
+		for(CandidateProofState state : viable.keySet())
+			if(!indices.containsKey(state))
+				collectStronglyConnectedComponents(state, viable, indices, lowLinks,
+					stack, onStack, nextIndex, maximalComponents);
 		Set<CandidateProofState> grounded = new java.util.HashSet<>();
 		boolean changed;
 		do {
 			changed = false;
-			for(Set<CandidateProofState> component : components) {
-				if(grounded.containsAll(component))
-					continue;
-				boolean everyStateSupported = component.stream().allMatch(state ->
-					viable.getOrDefault(state, List.of()).stream().anyMatch(alternative ->
-						isGroundableAlternative(alternative, component, grounded)));
-				boolean hasGroundPath = component.stream().flatMap(state ->
-					viable.getOrDefault(state, List.of()).stream())
-					.filter(alternative -> isGroundableAlternative(alternative, component, grounded))
-					.anyMatch(alternative ->
-					alternative.directGround || alternative.dependencies.stream().anyMatch(dependency ->
-						!component.contains(dependency.state()) && grounded.contains(dependency.state())));
-				if(everyStateSupported && hasGroundPath) {
-					grounded.addAll(component);
-					changed = true;
-				}
-			}
+			for(Set<CandidateProofState> component : maximalComponents)
+				changed |= groundEligibleComponents(component, viable, grounded);
 		}
 		while(changed);
 		return grounded;
+	}
+
+	private static boolean groundEligibleComponents(Set<CandidateProofState> component,
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		Set<CandidateProofState> grounded) {
+		if(component.isEmpty() || grounded.containsAll(component))
+			return false;
+		Map<CandidateProofState,List<SelectedCandidateProof>> eligible = new java.util.LinkedHashMap<>();
+		for(CandidateProofState state : component)
+			eligible.put(state, viable.getOrDefault(state, List.of()).stream()
+				.filter(alternative -> isGroundableAlternative(alternative, component, grounded))
+				.toList());
+		List<Set<CandidateProofState>> refined = stronglyConnectedComponents(eligible);
+		if(refined.size() == 1 && refined.get(0).size() == component.size()) {
+			boolean everyStateSupported = eligible.values().stream().noneMatch(List::isEmpty);
+			boolean hasGroundPath = eligible.values().stream().flatMap(List::stream)
+				.anyMatch(alternative -> alternative.directGround
+					|| alternative.dependencies.stream().anyMatch(dependency ->
+						!component.contains(dependency.state()) && grounded.contains(dependency.state())));
+			if(everyStateSupported && hasGroundPath)
+				return grounded.addAll(component);
+			return false;
+		}
+		boolean changed = false;
+		for(Set<CandidateProofState> subcomponent : refined)
+			changed |= groundEligibleComponents(subcomponent, viable, grounded);
+		return changed;
+	}
+
+	private static List<Set<CandidateProofState>> stronglyConnectedComponents(
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph) {
+		List<Set<CandidateProofState>> components = new ArrayList<>();
+		Map<CandidateProofState,Integer> indices = new java.util.HashMap<>();
+		Map<CandidateProofState,Integer> lowLinks = new java.util.HashMap<>();
+		java.util.ArrayDeque<CandidateProofState> stack = new java.util.ArrayDeque<>();
+		Set<CandidateProofState> onStack = new java.util.HashSet<>();
+		int[] nextIndex = {0};
+		for(CandidateProofState state : graph.keySet())
+			if(!indices.containsKey(state))
+				collectStronglyConnectedComponents(state, graph, indices, lowLinks,
+					stack, onStack, nextIndex, components);
+		return components;
+	}
+
+	private static void collectStronglyConnectedComponents(CandidateProofState state,
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		Map<CandidateProofState,Integer> indices, Map<CandidateProofState,Integer> lowLinks,
+		java.util.ArrayDeque<CandidateProofState> stack, Set<CandidateProofState> onStack,
+		int[] nextIndex, List<Set<CandidateProofState>> components) {
+		int index = nextIndex[0]++;
+		indices.put(state, index);
+		lowLinks.put(state, index);
+		stack.push(state);
+		onStack.add(state);
+		for(SelectedCandidateProof alternative : viable.getOrDefault(state, List.of()))
+			for(CandidateProofDependency dependency : alternative.dependencies) {
+				CandidateProofState successor = dependency.state();
+				if(!viable.containsKey(successor))
+					continue;
+				if(!indices.containsKey(successor)) {
+					collectStronglyConnectedComponents(successor, viable, indices, lowLinks,
+						stack, onStack, nextIndex, components);
+					lowLinks.put(state, Math.min(lowLinks.get(state), lowLinks.get(successor)));
+				}
+				else if(onStack.contains(successor))
+					lowLinks.put(state, Math.min(lowLinks.get(state), indices.get(successor)));
+			}
+		if(!lowLinks.get(state).equals(indices.get(state)))
+			return;
+		Set<CandidateProofState> component = new java.util.LinkedHashSet<>();
+		CandidateProofState member;
+		do {
+			member = stack.pop();
+			onStack.remove(member);
+			component.add(member);
+		}
+		while(!member.equals(state));
+		components.add(component);
 	}
 
 	private static boolean isGroundableAlternative(SelectedCandidateProof alternative,
@@ -328,8 +455,8 @@ final class NativePlacementContinuity {
 			|| node.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
 				&& state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
 			return List.of();
-		boolean nodeDirectGround = node.anchors().stream().map(NativePoolWitness::from)
-			.filter(Objects::nonNull).anyMatch(witness::equals);
+		boolean nodeDirectGround = node.anchors().stream()
+			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
 		List<SelectedCandidateProof> alternatives = new ArrayList<>();
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
@@ -361,9 +488,10 @@ final class NativePlacementContinuity {
 						if(dependencies != null) {
 							boolean realizationGround = realization.key().layoutKind()
 								== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
-								&& witness.equals(NativePoolWitness.from(realization.anchor()))
-								|| clause.nativeWorkerPoolWitness() != null
-									&& witness.equals(NativePoolWitness.from(clause.nativeWorkerPoolWitness()));
+								&& witness.matches(nativeWitness(realization.anchor()), true)
+							|| clause.nativeWorkerPoolWitness() != null
+									&& witness.matches(nativeWitness(clause.nativeWorkerPoolWitness()),
+										clause.nativeWorkerPoolLayoutExact());
 							alternatives.add(new SelectedCandidateProof(reference, clause, dependencies,
 								realizationGround, witness));
 						}
@@ -391,10 +519,14 @@ final class NativePlacementContinuity {
 			}
 		if(pinned == null && nodeDirectGround)
 			alternatives.add(new SelectedCandidateProof(null, null, List.of(), true, witness));
+		Map<CandidateRealizationReference,String> signatures = new IdentityHashMap<>();
 		return alternatives.stream().sorted((left, right) -> {
 			if(left.realization == null) return right.realization == null ? 0 : -1;
 			if(right.realization == null) return 1;
-			return left.realization.compareTo(right.realization);
+			return signatures.computeIfAbsent(left.realization,
+				CandidateRealizationReference::normalizedSignature).compareTo(
+					signatures.computeIfAbsent(right.realization,
+						CandidateRealizationReference::normalizedSignature));
 		}).toList();
 	}
 
@@ -402,18 +534,20 @@ final class NativePlacementContinuity {
 		CandidateRealizationSupportClause clause, Hop owner, NativePoolWitness witness,
 		Map<CompiledHopKey,CandidateRealizationReference> fixed) {
 		Map<CompiledHopKey,CandidateRealizationReference> pinned = new IdentityHashMap<>();
-		for(CandidateRealizationReference support : clause.requiredInputSupport())
+		for(CandidateRealizationReference support : requiredInputSupport(clause))
 			pinned.put(support.rule().parentOccurrence(), support);
 		fixed.forEach(pinned::put);
 		List<CandidateProofDependency> dependencies = new ArrayList<>();
 		for(CompiledHopKey source : reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of()))
-			dependencies.add(new CandidateProofDependency(source, pinned.get(source), witness, -1));
+			dependencies.add(new CandidateProofDependency(source, pinned.get(source),
+				candidateIdentity(pinned.get(source)), witness, -1));
 		if(owner instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
 			return dependencies.isEmpty() ? dependencies : null;
 		if(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD)
 			return (fact.key().orderedInputs().stream().anyMatch(input -> input.present())
 				|| fact.key().orderedInputs().isEmpty() && clause.nativeWorkerPoolWitness() != null
-					&& witness.equals(NativePoolWitness.from(clause.nativeWorkerPoolWitness())))
+					&& witness.matches(nativeWitness(clause.nativeWorkerPoolWitness()),
+						clause.nativeWorkerPoolLayoutExact()))
 				&& fact.key().orderedInputs().stream().noneMatch(input -> input.present()
 					&& input.fType() != witness.fType) ? dependencies : null;
 		Map<Integer,CompiledInputEdgeFact> edges = edgesByConsumer.getOrDefault(
@@ -430,18 +564,11 @@ final class NativePlacementContinuity {
 			if(!placementData)
 				continue;
 			presentPlacementData = true;
-			NativePoolWitness dependencyWitness = owner instanceof ReorgOp reorg
-				&& reorg.getOp() == ReOrgOp.TRANS ? witness.transposed() : witness;
-			// ROW matmul preserves the LHS partition axis, while its replicated RHS
-			// must be present on precisely the same canonical host:port pool. Do not
-			// reinterpret the RHS as ROW or discard the LHS interval witness.
-			if(owner instanceof AggBinaryOp && witness.fType == FType.ROW
-				&& position == 1 && input.fType() == FType.BROADCAST)
-				dependencyWitness = new NativePoolWitness(FType.BROADCAST, witness.endpoints, List.of());
+			NativePoolWitness dependencyWitness = dependencyWitness(owner, witness, input.fType(), position);
 			if(dependencyWitness == null || input.fType() != dependencyWitness.fType || edge == null)
 				return null;
 			dependencies.add(new CandidateProofDependency(edge.producer(), pinned.get(edge.producer()),
-				dependencyWitness, position));
+				candidateIdentity(pinned.get(edge.producer())), dependencyWitness, position));
 		}
 		if(!presentPlacementData && !(transformEncodePreservesPool(owner, witness.fType)
 			&& !reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of()).isEmpty()))
@@ -449,24 +576,189 @@ final class NativePlacementContinuity {
 		return dependencies.stream().distinct().toList();
 	}
 
-	record NativeContinuityProof(DurableAnchorKey externalSeed,
-		List<CandidateRealizationInputBinding> immediateBindings) {
-		NativeContinuityProof {
-			Objects.requireNonNull(externalSeed, "externalSeed");
-			immediateBindings = immediateBindings.stream().distinct().sorted().toList();
+	private List<CandidateRealizationReference> requiredInputSupport(
+		CandidateRealizationSupportClause clause) {
+		return requiredInputSupportByClause.computeIfAbsent(clause, ignored ->
+			clause.inputBindings().stream().map(CandidateRealizationInputBinding::source)
+				.distinct().sorted().toList());
+	}
+
+	private String candidateIdentity(CandidateRealizationReference reference) {
+		return reference == null ? "-" : candidateIdentityByReference.computeIfAbsent(
+			reference, CandidateRealizationReference::normalizedSignature);
+	}
+
+	private static NativePoolWitness dependencyWitness(Hop owner, NativePoolWitness outputWitness,
+		FType inputType, int position) {
+		// ROW matmul is the one existing candidate family whose selected
+		// BROADCAST RHS is a native same-pool input. Other families remain
+		// fail-closed until their rule/runtime contract proves the same property.
+		if(owner instanceof AggBinaryOp && outputWitness.fType == FType.ROW
+			&& position == 1 && inputType == FType.BROADCAST)
+			return new NativePoolWitness(FType.BROADCAST, outputWitness.endpoints, List.of(), true);
+
+		if(owner instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS)
+			return outputWitness.transposed();
+
+		if(owner instanceof QuaternaryOp quaternary && quaternary.getOp() == OpOp4.WDIVMM
+			&& position == 0 && isLeftWDivMM(quaternary) && outputWitness.fType == FType.ROW)
+			return outputWitness.retyped(FType.COL);
+
+		if(owner instanceof ParameterizedBuiltinOp parameterized
+			&& parameterized.getOp() == ParamBuiltinOp.REXPAND
+			&& position < owner.getInput().size() && owner.getInput(position) == parameterized.getTargetHop()) {
+			if(outputWitness.fType == FType.FULL)
+				return outputWitness;
+			Boolean rows = rexpandRows(parameterized);
+			if(rows == null)
+				return null;
+			if(rows && outputWitness.fType == FType.COL)
+				return outputWitness.retyped(FType.ROW);
+			if(!rows && outputWitness.fType == FType.ROW)
+				return outputWitness;
+			return null;
 		}
+
+		if(recomputesNativePartitionRanges(owner, outputWitness.fType)) {
+			NativePoolWitness inputWitness = outputWitness.retypedForResidency(inputType);
+			// Range-recomputing operations consume endpoint residency. Requiring exact
+			// predecessor ranges here breaks valid chains such as REV -> ROLL, where
+			// both runtime operations rebuild their output ranges on the same workers.
+			if(inputWitness == null)
+				return null;
+			long placementInputs = owner == null ? 0 : owner.getInput().stream()
+				.filter(NativePlacementContinuity::isPlacementData).count();
+			return placementInputs == 1 ? inputWitness : inputWitness.withExactPartitionRanges();
+		}
+		return outputWitness;
+	}
+
+	static final class NativeContinuityProof {
+		private final DurableAnchorKey externalSeed;
+		private final DurableAnchorKey outputWorkerPoolWitness;
+		private final boolean exactPartitionRanges;
+		private final List<CandidateRealizationInputBinding> immediateBindings;
+		private String normalizedSignature;
+		private final int hashCode;
+
+		NativeContinuityProof(DurableAnchorKey externalSeed, DurableAnchorKey outputWorkerPoolWitness,
+			boolean exactPartitionRanges, List<CandidateRealizationInputBinding> immediateBindings) {
+			this.externalSeed = Objects.requireNonNull(externalSeed, "externalSeed");
+			this.outputWorkerPoolWitness = Objects.requireNonNull(
+				outputWorkerPoolWitness, "outputWorkerPoolWitness");
+			this.exactPartitionRanges = exactPartitionRanges;
+			// The sole construction path canonicalizes this list before constructing the proof.
+			this.immediateBindings = List.copyOf(immediateBindings);
+			hashCode = Objects.hash(externalSeed, outputWorkerPoolWitness,
+				exactPartitionRanges, this.immediateBindings);
+		}
+
+		DurableAnchorKey externalSeed() { return externalSeed; }
+		DurableAnchorKey outputWorkerPoolWitness() { return outputWorkerPoolWitness; }
+		boolean exactPartitionRanges() { return exactPartitionRanges; }
+		List<CandidateRealizationInputBinding> immediateBindings() { return immediateBindings; }
 		String normalizedSignature() {
-			return externalSeed.normalizedSignature() + "|bindings=" + immediateBindings.stream()
-				.map(CandidateRealizationInputBinding::normalizedSignature).toList();
+			if(normalizedSignature == null)
+				normalizedSignature = externalSeed.normalizedSignature() + "|outputPool="
+					+ outputWorkerPoolWitness.normalizedSignature() + "|partitionRanges="
+					+ (exactPartitionRanges ? "exact" : "dynamic") + "|bindings=" + immediateBindings.stream()
+						.map(CandidateRealizationInputBinding::normalizedSignature).toList();
+			return normalizedSignature;
+		}
+
+		@Override
+		public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof NativeContinuityProof that))
+				return false;
+			return exactPartitionRanges == that.exactPartitionRanges
+				&& externalSeed.equals(that.externalSeed)
+				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness)
+				&& immediateBindings.equals(that.immediateBindings);
 		}
 	}
 
-	private record CandidateProofDependency(CompiledHopKey key,
-		CandidateRealizationReference realization, NativePoolWitness witness, int inputPosition) {
-		private CandidateProofState state() { return new CandidateProofState(key, realization, witness, false); }
+	private static final class CandidateProofDependency {
+		private final CompiledHopKey key;
+		private final CandidateRealizationReference realization;
+		private final String realizationIdentity;
+		private final NativePoolWitness witness;
+		private final int inputPosition;
+		private final CandidateProofState state;
+		private final int hashCode;
+
+		private CandidateProofDependency(CompiledHopKey key,
+			CandidateRealizationReference realization, String realizationIdentity,
+			NativePoolWitness witness, int inputPosition) {
+			this.key = key;
+			this.realization = realization;
+			this.realizationIdentity = realizationIdentity;
+			this.witness = witness;
+			this.inputPosition = inputPosition;
+			state = new CandidateProofState(key, realization, realizationIdentity, witness, false);
+			hashCode = Objects.hash(System.identityHashCode(key), realizationIdentity, witness, inputPosition);
+		}
+
+		private int inputPosition() { return inputPosition; }
+		private CandidateProofState state() { return state; }
+
+		@Override
+		public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof CandidateProofDependency that))
+				return false;
+			return inputPosition == that.inputPosition && key == that.key
+				&& realizationIdentity.equals(that.realizationIdentity) && witness.equals(that.witness);
+		}
 	}
-	private record CandidateProofState(CompiledHopKey key,
-		CandidateRealizationReference realization, NativePoolWitness witness, boolean templateRoot) { }
+
+	private static final class CandidateProofState {
+		private final CompiledHopKey key;
+		private final CandidateRealizationReference realization;
+		private final String realizationIdentity;
+		private final NativePoolWitness witness;
+		private final boolean templateRoot;
+		private final int hashCode;
+
+		private CandidateProofState(CompiledHopKey key,
+			CandidateRealizationReference realization, String realizationIdentity,
+			NativePoolWitness witness, boolean templateRoot) {
+			this.key = key;
+			this.realization = realization;
+			this.realizationIdentity = realizationIdentity;
+			this.witness = witness;
+			this.templateRoot = templateRoot;
+			hashCode = Objects.hash(System.identityHashCode(key), realizationIdentity, witness, templateRoot);
+		}
+
+		private CompiledHopKey key() { return key; }
+		private CandidateRealizationReference realization() { return realization; }
+		private NativePoolWitness witness() { return witness; }
+		private boolean templateRoot() { return templateRoot; }
+
+		@Override
+		public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof CandidateProofState that))
+				return false;
+			return templateRoot == that.templateRoot && key == that.key
+				&& realizationIdentity.equals(that.realizationIdentity) && witness.equals(that.witness);
+		}
+	}
+	private record DependentAlternative(CandidateProofState owner,
+		SelectedCandidateProof alternative) { }
 	private record SelectedCandidateProof(CandidateRealizationReference realization,
 		CandidateRealizationSupportClause clause, List<CandidateProofDependency> dependencies,
 		boolean directGround, NativePoolWitness witness) { }
@@ -487,7 +779,7 @@ final class NativePlacementContinuity {
 			&& state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
 			current.valid = false;
 		current.directGround = node.anchors().stream()
-			.map(NativePoolWitness::from).filter(Objects::nonNull).anyMatch(witness::equals);
+			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
 
 		if(incompleteSources.contains(key))
 			current.valid = false;
@@ -521,7 +813,7 @@ final class NativePlacementContinuity {
 		boolean transientWrite = hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE;
 		boolean computedValue = hop instanceof AggUnaryOp || hop instanceof UnaryOp || hop instanceof BinaryOp
 			|| hop instanceof ReorgOp || hop instanceof TernaryOp || hop instanceof NaryOp
-			|| hop instanceof ParameterizedBuiltinOp || hop instanceof LeftIndexingOp;
+			|| hop instanceof ParameterizedBuiltinOp || hop instanceof LeftIndexingOp || hop instanceof QuaternaryOp;
 		if(!matchedNativeRow && (transientWrite || requiresExactNativeRow(hop)
 			|| computedValue && !current.directGround))
 			current.valid = false;
@@ -580,7 +872,8 @@ final class NativePlacementContinuity {
 			if(!placementData)
 				continue;
 			presentPlacementData = true;
-			if(input.fType() != witness.fType || edge == null) {
+			NativePoolWitness dependencyWitness = dependencyWitness(owner, witness, input.fType(), position);
+			if(dependencyWitness == null || input.fType() != dependencyWitness.fType || edge == null) {
 				proof.valid = false;
 				continue;
 			}
@@ -608,6 +901,12 @@ final class NativePlacementContinuity {
 	}
 
 	private static boolean operationPreservesWitness(Hop hop, NativePoolWitness witness, CandidateRuleFact fact) {
+		if(witness.fType == FType.FULL && !witness.exactPartitionRanges
+			&& !preservesDynamicFullResidency(hop))
+			return false;
+		if(!witness.exactPartitionRanges && !recomputesNativePartitionRanges(hop, witness.fType)
+			&& requiresExactPartitionAlignment(hop, witness, fact))
+			return false;
 		if(transformEncodePreservesPool(hop, witness.fType)
 			|| hop instanceof FunctionOp call && call.getOutputs() != null && !call.getOutputs().isEmpty()
 				&& FederatedPlannerUtils.getMultiReturnFunctionOutputParent(call.getOutputs().get(0)) == call
@@ -660,17 +959,43 @@ final class NativePlacementContinuity {
 		if(hop instanceof DataOp data)
 			return data.getOp() == OpOpData.FEDERATED || data.getOp() == OpOpData.TRANSIENTREAD
 				|| data.getOp() == OpOpData.TRANSIENTWRITE;
-		if(hop instanceof UnaryOp unary && unary.getOp() == OpOp1.CAST_AS_FRAME
-			&& unary.getDataType().isFrame() && unary.getInput().size() == 1
-			&& unary.getInput(0).getDataType().isMatrix())
-			return true;
+		if(hop instanceof UnaryOp unary && unary.getInput().size() == 1) {
+			if(unary.getOp() == OpOp1.CAST_AS_FRAME && unary.getDataType().isFrame()
+				&& unary.getInput(0).getDataType().isMatrix())
+				return true;
+			if(unary.getOp() == OpOp1.CAST_AS_MATRIX && unary.getDataType().isMatrix()
+				&& unary.getInput(0).getDataType().isFrame())
+				return true;
+		}
 		if(hop instanceof UnaryOp unary) {
 			var inputs = fact.key().orderedInputs();
 			return unary.getDataType().isMatrix() && unary.getInput().size() == 1
 				&& unary.getInput(0).getDataType().isMatrix()
-				&& NATIVE_UNARY_ELEMWISE_OPCODES.contains(unary.getOp().toString())
+				&& (NATIVE_UNARY_ELEMWISE_OPCODES.contains(unary.getOp().toString())
+					|| NATIVE_UNARY_CUMULATIVE_OPCODES.contains(unary.getOp().toString()))
 				&& inputs.size() == 1 && inputs.get(0).present()
-				&& inputs.get(0).fType() == witness.fType;
+				&& inputs.get(0).fType() == witness.fType
+				&& (!NATIVE_UNARY_CUMULATIVE_OPCODES.contains(unary.getOp().toString())
+					|| witness.fType == FType.ROW || witness.fType == FType.COL);
+		}
+		if(hop instanceof QuaternaryOp quaternary) {
+			var inputs = fact.key().orderedInputs();
+			if(inputs.isEmpty() || !inputs.get(0).present())
+				return false;
+			FType primary = inputs.get(0).fType();
+			if(quaternary.getOp() == OpOp4.WSIGMOID || quaternary.getOp() == OpOp4.WUMM)
+				return (witness.fType == FType.ROW || witness.fType == FType.COL)
+					&& primary == witness.fType;
+			if(quaternary.getOp() != OpOp4.WDIVMM)
+				return false;
+			if(witness.fType == FType.FULL)
+				return witness.singleEndpoint() && primary == FType.FULL;
+			if(isBasicWDivMM(quaternary))
+				return (witness.fType == FType.ROW || witness.fType == FType.COL)
+					&& primary == witness.fType;
+			if(isLeftWDivMM(quaternary))
+				return witness.fType == FType.ROW && primary == FType.COL;
+			return isRightWDivMM(quaternary) && witness.fType == FType.ROW && primary == FType.ROW;
 		}
 		if(hop instanceof BinaryOp binary && (binary.getOp() == OpOp2.CBIND || binary.getOp() == OpOp2.RBIND)) {
 			if(witness.fType == FType.ROW)
@@ -685,35 +1010,164 @@ final class NativePlacementContinuity {
 			if(leftMatrix != rightMatrix)
 				return true;
 			var inputs = fact.key().orderedInputs();
-			if(leftMatrix && rightMatrix)
-				return witness.fType == FType.FULL && witness.singleEndpoint()
-					&& NATIVE_BINARY_ELEMWISE_OPCODES.contains(binary.getOp().toString())
-					&& inputs.size() == 2
-					&& inputs.stream().anyMatch(input -> input.present() && input.fType() == FType.FULL)
-					&& inputs.stream().allMatch(input -> !input.present() || input.fType() == FType.FULL);
+			if(leftMatrix && rightMatrix && NATIVE_BINARY_ELEMWISE_OPCODES.contains(binary.getOp().toString())
+				&& inputs.size() == 2) {
+				long residentInputs = inputs.stream()
+					.filter(input -> input.present() && input.fType() == witness.fType).count();
+				if(witness.fType == FType.FULL)
+					return witness.singleEndpoint() && residentInputs > 0
+						&& inputs.stream().allMatch(input -> !input.present() || input.fType() == FType.FULL);
+				return (witness.fType == FType.ROW || witness.fType == FType.COL
+					|| witness.fType == FType.BROADCAST)
+					&& residentInputs > 0
+					&& inputs.stream().allMatch(input -> !input.present() || input.fType() == witness.fType);
+			}
 		}
 		if(hop instanceof NaryOp nary)
 			return nary.getOp() == OpOpN.PLUS || nary.getOp() == OpOpN.MULT
 				|| nary.getOp() == OpOpN.MIN || nary.getOp() == OpOpN.MAX;
-		if(hop instanceof TernaryOp ternary)
+		if(hop instanceof TernaryOp ternary) {
+			if(ternary.getOp() == OpOp3.MAP) {
+				var inputs = fact.key().orderedInputs();
+				for(int i = 0; i < inputs.size() && i < ternary.getInput().size(); i++)
+					if(ternary.getInput(i).getDataType().isFrame())
+						return inputs.get(i).present() && inputs.get(i).fType() == witness.fType;
+				return false;
+			}
 			return ternary.getOp() == OpOp3.PLUS_MULT || ternary.getOp() == OpOp3.MINUS_MULT
-				|| ternary.getOp() == OpOp3.IFELSE;
-		if(hop instanceof ParameterizedBuiltinOp parameterized)
-			return parameterized.getOp() == ParamBuiltinOp.REPLACE;
-		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS) {
-			if(witness.fType == FType.FULL)
-				return witness.singleEndpoint();
-			if(witness.fType == FType.BROADCAST)
+				|| ternary.getOp() == OpOp3.IFELSE
+				|| ternary.getOp() == OpOp3.CTABLE && !witness.exactPartitionRanges;
+		}
+		if(hop instanceof ParameterizedBuiltinOp parameterized) {
+			if(parameterized.getOp() == ParamBuiltinOp.REPLACE)
 				return true;
-			NativePoolWitness inputWitness = witness.transposed();
-			return inputWitness != null && fact.key().orderedInputs().size() == 1
-				&& fact.key().orderedInputs().get(0).present()
-				&& fact.key().orderedInputs().get(0).fType() == inputWitness.fType;
+			var inputs = fact.key().orderedInputs();
+			Integer targetPosition = parameterized.getParamIndexMap().get("target");
+			if(targetPosition == null || targetPosition >= inputs.size() || !inputs.get(targetPosition).present())
+				return false;
+			FType targetType = inputs.get(targetPosition).fType();
+			if(parameterized.getOp() == ParamBuiltinOp.RMEMPTY)
+				return targetType == witness.fType
+					&& (witness.fType != FType.ROW && witness.fType != FType.COL
+						|| !witness.exactPartitionRanges);
+			if(parameterized.getOp() == ParamBuiltinOp.REXPAND) {
+				if(witness.fType == FType.FULL)
+					return witness.singleEndpoint() && targetType == FType.FULL;
+				Boolean rows = rexpandRows(parameterized);
+				return rows != null && targetType == FType.ROW
+					&& (rows ? witness.fType == FType.COL : witness.fType == FType.ROW);
+			}
+			return false;
+		}
+		if(hop instanceof ReorgOp reorg) {
+			if(reorg.getOp() == ReOrgOp.TRANS) {
+				if(witness.fType == FType.FULL)
+					return witness.singleEndpoint();
+				if(witness.fType == FType.BROADCAST)
+					return true;
+				NativePoolWitness inputWitness = witness.transposed();
+				return inputWitness != null && fact.key().orderedInputs().size() == 1
+					&& fact.key().orderedInputs().get(0).present()
+					&& fact.key().orderedInputs().get(0).fType() == inputWitness.fType;
+			}
+			if(reorg.getOp() == ReOrgOp.ROLL)
+				return !witness.exactPartitionRanges && (witness.fType == FType.ROW
+					|| witness.fType == FType.COL
+					|| witness.fType == FType.FULL && witness.singleEndpoint());
+			if(reorg.getOp() == ReOrgOp.RESHAPE)
+				return (witness.fType == FType.ROW || witness.fType == FType.COL)
+					&& !witness.exactPartitionRanges;
+			if(reorg.getOp() == ReOrgOp.REV) {
+				if(witness.fType == FType.ROW)
+					return !witness.exactPartitionRanges;
+				return witness.fType == FType.COL || witness.fType == FType.BROADCAST
+					|| witness.fType == FType.FULL && witness.singleEndpoint();
+			}
+			if(reorg.getOp() == ReOrgOp.DIAG) {
+				if(witness.fType == FType.ROW)
+					return !witness.exactPartitionRanges;
+				return witness.fType == FType.BROADCAST
+					|| witness.fType == FType.FULL && witness.singleEndpoint();
+			}
 		}
 		if(hop instanceof IndexingOp && hop.getDataType().isMatrix()
 			&& !hop.getInput().isEmpty() && hop.getInput(0).getDataType().isMatrix())
 			return witness.fType == FType.FULL && witness.singleEndpoint();
 		return false;
+	}
+
+	private static boolean requiresExactPartitionAlignment(Hop hop, NativePoolWitness witness,
+		CandidateRuleFact fact) {
+		if(witness.fType != FType.ROW && witness.fType != FType.COL)
+			return false;
+		int alignedInputs = 0;
+		for(int i = 0; i < fact.key().orderedInputs().size() && i < hop.getInput().size(); i++)
+			if(fact.key().orderedInputs().get(i).present()
+				&& fact.key().orderedInputs().get(i).fType() == witness.fType
+				&& isPlacementData(hop.getInput(i)))
+				alignedInputs++;
+		return alignedInputs > 1;
+	}
+
+	static boolean recomputesNativePartitionRanges(Hop hop) {
+		return recomputesNativePartitionRanges(hop, null);
+	}
+
+	static boolean recomputesNativePartitionRanges(Hop hop, FType outputType) {
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.REV)
+			return outputType == null || outputType == FType.ROW;
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.ROLL)
+			return outputType == null || outputType == FType.ROW || outputType == FType.COL
+				|| outputType == FType.FULL;
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.DIAG)
+			return outputType == null || outputType == FType.ROW;
+		return hop instanceof ParameterizedBuiltinOp parameterized
+			&& parameterized.getOp() == ParamBuiltinOp.RMEMPTY
+			|| hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.CTABLE
+				|| hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.RESHAPE;
+	}
+
+	private static boolean preservesDynamicFullResidency(Hop hop) {
+		if(hop instanceof ReorgOp reorg)
+			return reorg.getOp() == ReOrgOp.ROLL || reorg.getOp() == ReOrgOp.REV;
+		if(hop instanceof AggUnaryOp aggregate)
+			return aggregate.getInput().size() == 1;
+		if(hop instanceof UnaryOp unary)
+			return unary.getInput().size() == 1 && unary.getInput(0).getDataType().isMatrix()
+				&& NATIVE_UNARY_ELEMWISE_OPCODES.contains(unary.getOp().toString());
+		if(hop instanceof BinaryOp binary)
+			return binary.getInput().stream().filter(NativePlacementContinuity::isPlacementData).count() == 1;
+		if(hop instanceof DataOp data)
+			return data.getOp() == OpOpData.FEDERATED || data.getOp() == OpOpData.TRANSIENTREAD
+				|| data.getOp() == OpOpData.TRANSIENTWRITE;
+		return hop instanceof ParameterizedBuiltinOp parameterized
+			&& parameterized.getOp() == ParamBuiltinOp.REPLACE;
+	}
+
+	private static Boolean rexpandRows(ParameterizedBuiltinOp parameterized) {
+		Hop dir = parameterized.getParameterHop("dir");
+		if(!(dir instanceof LiteralOp literal))
+			return null;
+		String value = literal.getStringValue();
+		if(value == null)
+			return null;
+		if(value.equalsIgnoreCase("rows"))
+			return true;
+		if(value.equalsIgnoreCase("cols"))
+			return false;
+		return null;
+	}
+
+	private static boolean isBasicWDivMM(QuaternaryOp hop) {
+		return hop.getBaseType() == 0;
+	}
+
+	private static boolean isLeftWDivMM(QuaternaryOp hop) {
+		return hop.getBaseType() == 1 || hop.getBaseType() == 3;
+	}
+
+	private static boolean isRightWDivMM(QuaternaryOp hop) {
+		return hop.getBaseType() == 2 || hop.getBaseType() == 4;
 	}
 
 	static boolean transformEncodePreservesPool(Hop hop, FType type) {
@@ -754,6 +1208,22 @@ final class NativePlacementContinuity {
 		private boolean directGround;
 	}
 
+	private NativePoolWitness nativeWitness(DurableAnchorKey anchor) {
+		if(nativeWitnessByAnchor.containsKey(anchor))
+			return nativeWitnessByAnchor.get(anchor);
+		NativePoolWitness witness = NativePoolWitness.from(anchor, this::canonicalEndpoint);
+		nativeWitnessByAnchor.put(anchor, witness);
+		return witness;
+	}
+
+	private String canonicalEndpoint(String workerId) {
+		if(canonicalEndpointByWorker.containsKey(workerId))
+			return canonicalEndpointByWorker.get(workerId);
+		String endpoint = FederationUtils.canonicalFederatedWorkerAddress(workerId);
+		canonicalEndpointByWorker.put(workerId, endpoint);
+		return endpoint;
+	}
+
 	private record AxisInterval(String endpoint, long begin, long end)
 		implements Comparable<AxisInterval> {
 		@Override public int compareTo(AxisInterval that) {
@@ -766,13 +1236,14 @@ final class NativePlacementContinuity {
 	}
 
 	private record NativePoolWitness(FType fType, List<String> endpoints,
-		List<AxisInterval> partitionAxisIntervals) {
+		List<AxisInterval> partitionAxisIntervals, boolean exactPartitionRanges) {
 		private NativePoolWitness {
 			endpoints = List.copyOf(endpoints);
 			partitionAxisIntervals = List.copyOf(partitionAxisIntervals);
 		}
 
-		private static NativePoolWitness from(DurableAnchorKey anchor) {
+		private static NativePoolWitness from(DurableAnchorKey anchor,
+			java.util.function.Function<String,String> canonicalEndpoint) {
 			if(anchor == null || anchor.fType() == FType.PART || anchor.fType() == FType.OTHER
 				|| anchor.partitions().isEmpty())
 				return null;
@@ -782,7 +1253,7 @@ final class NativePlacementContinuity {
 			List<AxisInterval> intervals = new ArrayList<>();
 			int axis = anchor.fType() == FType.ROW ? 0 : anchor.fType() == FType.COL ? 1 : -1;
 			for(AnchorPartition partition : anchor.partitions()) {
-				String endpoint = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+				String endpoint = canonicalEndpoint.apply(partition.workerId());
 				if(endpoint == null || endpoint.isBlank())
 					return null;
 				endpoints.add(endpoint);
@@ -792,9 +1263,29 @@ final class NativePlacementContinuity {
 					intervals.add(new AxisInterval(endpoint, partition.begin().get(axis), partition.end().get(axis)));
 				}
 			}
-			Collections.sort(endpoints);
 			Collections.sort(intervals);
-			return new NativePoolWitness(anchor.fType(), endpoints, intervals);
+			return new NativePoolWitness(anchor.fType(), endpoints.stream().distinct().sorted().toList(),
+				intervals, true);
+		}
+
+		private NativePoolWitness withDynamicPartitionRanges() {
+			if(fType != FType.ROW && fType != FType.COL && fType != FType.FULL)
+				return this;
+			return new NativePoolWitness(fType, endpoints, partitionAxisIntervals, false);
+		}
+
+		private NativePoolWitness withExactPartitionRanges() {
+			if(exactPartitionRanges)
+				return this;
+			return new NativePoolWitness(fType, endpoints, partitionAxisIntervals, true);
+		}
+
+		private boolean matches(NativePoolWitness candidate, boolean anchorLayoutExact) {
+			if(candidate == null || candidate.fType != fType || !candidate.endpoints.equals(endpoints))
+				return false;
+			if(!exactPartitionRanges)
+				return true;
+			return anchorLayoutExact && candidate.partitionAxisIntervals.equals(partitionAxisIntervals);
 		}
 
 		private boolean singleEndpoint() {
@@ -810,8 +1301,39 @@ final class NativePlacementContinuity {
 				return null;
 			if((fType == FType.ROW && target == FType.COL)
 				|| (fType == FType.COL && target == FType.ROW))
-				return new NativePoolWitness(target, endpoints, partitionAxisIntervals);
+				return new NativePoolWitness(target, endpoints, partitionAxisIntervals, exactPartitionRanges);
 			return null;
+		}
+
+		private NativePoolWitness retypedForResidency(FType target) {
+			NativePoolWitness exact = retyped(target);
+			if(exact != null)
+				return exact;
+			if(target == null || target == FType.PART || target == FType.OTHER
+				|| target == FType.BROADCAST || fType == FType.BROADCAST || !singleEndpoint())
+				return null;
+			if(fType == FType.FULL && (target == FType.ROW || target == FType.COL))
+				return new NativePoolWitness(target, endpoints, List.of(), false);
+			if(target == FType.FULL && (fType == FType.ROW || fType == FType.COL))
+				return new NativePoolWitness(FType.FULL, endpoints, List.of(), true);
+			return null;
+		}
+
+		private DurableAnchorKey asAnchor(String placementId) {
+			List<AnchorPartition> partitions = new ArrayList<>();
+			if((fType == FType.ROW || fType == FType.COL) && !partitionAxisIntervals.isEmpty()) {
+				for(AxisInterval interval : partitionAxisIntervals)
+					partitions.add(fType == FType.ROW
+						? new AnchorPartition(interval.endpoint(), List.of(interval.begin(), 0L),
+							List.of(interval.end(), 1L))
+						: new AnchorPartition(interval.endpoint(), List.of(0L, interval.begin()),
+							List.of(1L, interval.end())));
+			}
+			else {
+				for(String endpoint : endpoints)
+					partitions.add(new AnchorPartition(endpoint, List.of(0L, 0L), List.of(1L, 1L)));
+			}
+			return new DurableAnchorKey(placementId, fType, partitions);
 		}
 
 		private NativePoolWitness transposed() {

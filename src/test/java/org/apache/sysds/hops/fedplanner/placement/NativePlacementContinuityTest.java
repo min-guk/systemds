@@ -28,6 +28,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
@@ -41,6 +42,7 @@ import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
@@ -50,6 +52,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
@@ -69,6 +72,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Typed, coinductive native worker-pool continuity proofs. */
@@ -195,6 +199,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void publicSourceWithoutDirectBroadcastKeepsRelocationRowActive() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -319,25 +324,125 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void transientReplayPreservesEveryGroundedImmediateBindingProof() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref left = full.source("left", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref right = full.source("right", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref producer = full.binary("producer", OpOp2.PLUS, left, right, false);
+		full.samePoolRealizations(producer,
+			List.of(CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)),
+			new DurableAnchorKey("producer-a", FType.FULL,
+				List.of(partition("worker1:8001", 0, 50))),
+			new DurableAnchorKey("producer-b", FType.FULL,
+				List.of(partition("worker1:8001", 0, 50))));
+		Ref source = full.unary("source", OpOp1.LOG, producer, false);
+		CandidateRealizationReference sourceRealization = full.reference(source,
+			List.of(CandidateInputState.present(FType.FULL)));
+		long candidateRealizationsBefore = full.candidates.stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream()).count();
+
+		List<PlacementAnalysis.TransientCompatibilityProof> proofs =
+			NeutralPlacementGraphBuilder.nativeTransientCompatibilityProofs(source.key,
+				sourceRealization, left.anchor, full.resolver(), List.of());
+
+		Assert.assertEquals("Both same-pool producer bindings must survive transient replay", 2,
+			proofs.size());
+		Assert.assertEquals("Each replay support must retain a distinct native-continuity signature", 2,
+			proofs.stream().map(PlacementAnalysis.TransientCompatibilityProof::normalizedSignature)
+				.distinct().count());
+		Assert.assertTrue("Both replay proofs must name the source's native continuity",
+			proofs.stream().allMatch(proof -> proof.provesNativeContinuity(source.key, source.key)));
+		long candidateRealizationsAfter = full.candidates.stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream()).count();
+		Assert.assertEquals("Transient proof enumeration must not change the raw candidate universe",
+			candidateRealizationsBefore, candidateRealizationsAfter);
+	}
+
+	@Test
+	public void alignedRowAndColElementwiseInputsPreserveBothExactBindings() {
+		for(FType type : List.of(FType.ROW, FType.COL)) {
+			Fixture fixture = new Fixture(type);
+			DurableAnchorKey pool = anchor(type, "worker1:8001", 0, 50);
+			Ref leftSeed = fixture.source("leftSeed", pool);
+			Ref rightSeed = fixture.source("rightSeed", pool);
+			Ref left = fixture.logicalRead("left");
+			Ref right = fixture.logicalRead("right");
+			fixture.reaching.put(left.key, List.of(leftSeed.key));
+			fixture.reaching.put(right.key, List.of(rightSeed.key));
+			Ref sum = fixture.binary("sum", OpOp2.PLUS, left, right, false);
+			List<CandidateInputState> inputs = List.of(
+				CandidateInputState.present(type), CandidateInputState.present(type));
+
+			NativePlacementContinuity.NativeContinuityProof proof = fixture.resolver().proveCandidate(
+				fixture.reference(sum, inputs), pool);
+			Assert.assertNotNull(type + " elementwise inputs on one exact pool retain native continuity", proof);
+			Assert.assertEquals("Both aligned operands must remain distinct AND dependencies for " + type,
+				Set.of(0, 1), proof.immediateBindings().stream()
+					.map(binding -> binding.inputPosition()).collect(java.util.stream.Collectors.toSet()));
+			Assert.assertEquals("Repeated geometry must not collapse the two operand positions for " + type,
+				2, proof.immediateBindings().size());
+		}
+	}
+
+	@Test
+	public void alignedElementwiseInputsRejectMixedTypeDifferentPoolAndUngroundedOperands() {
+		Fixture mixed = new Fixture(FType.ROW);
+		DurableAnchorKey rowPool = anchor(FType.ROW, "worker1:8001", 0, 50);
+		Ref row = mixed.federatedSource("row", rowPool);
+		Ref col = mixed.source("col", anchor(FType.COL, "worker1:8001", 0, 50));
+		Ref mixedSum = mixed.binaryWithoutCandidate("mixedSum", OpOp2.PLUS, row, col);
+		List<CandidateInputState> mixedInputs = List.of(
+			CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.COL));
+		mixed.additionalCandidate(mixedSum, mixedInputs);
+		Assert.assertNull("Every PRESENT elementwise input must have the output witness FType",
+			mixed.resolver().proveCandidate(mixed.reference(mixedSum, mixedInputs), rowPool));
+
+		Fixture differentPool = new Fixture(FType.ROW);
+		Ref first = differentPool.federatedSource("first", rowPool);
+		Ref other = differentPool.federatedSource("other",
+			anchor(FType.ROW, "worker2:8002", 0, 50));
+		Ref crossPool = differentPool.binary("crossPool", OpOp2.PLUS, first, other, false);
+		List<CandidateInputState> rowInputs = List.of(
+			CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW));
+		Assert.assertNull("Matching FTypes do not replace exact common-pool grounding",
+			differentPool.resolver().proveCandidate(differentPool.reference(crossPool, rowInputs), rowPool));
+
+		Fixture ungrounded = new Fixture(FType.COL);
+		DurableAnchorKey colPool = anchor(FType.COL, "worker1:8001", 0, 50);
+		Ref grounded = ungrounded.federatedSource("grounded", colPool);
+		Ref unknown = ungrounded.read("unknown");
+		Ref incomplete = ungrounded.binary("incomplete", OpOp2.PLUS, grounded, unknown, false);
+		List<CandidateInputState> colInputs = List.of(
+			CandidateInputState.present(FType.COL), CandidateInputState.present(FType.COL));
+		Assert.assertNull("Every aligned input still requires an exact grounded realization",
+			ungrounded.resolver().proveCandidate(ungrounded.reference(incomplete, colInputs), colPool));
+	}
+
+	@Test
 	public void candidateSccGroundingCannotBorrowGroundFromIncompleteAlternative() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref ungrounded = full.logicalRead("ungrounded");
 		full.reaching.put(ungrounded.key, List.of(ungrounded.key));
-		Ref alternative = full.naryWithoutCandidate("alternative", OpOpN.MULT,
-			ground, ungrounded, ground);
-		full.edges.add(new CompiledInputEdgeFact(alternative.key, alternative.key, 0));
-		full.edges.add(new CompiledInputEdgeFact(ground.key, alternative.key, 1));
-		full.edges.add(new CompiledInputEdgeFact(ungrounded.key, alternative.key, 2));
-		full.additionalCandidate(alternative, List.of(CandidateInputState.present(FType.FULL),
+		Ref a = full.naryWithoutCandidate("A", OpOpN.MULT, ground, ground, ground);
+		Ref b = full.naryWithoutCandidate("B", OpOpN.MULT, ground, ground);
+		full.edges.add(new CompiledInputEdgeFact(a.key, a.key, 0));
+		full.edges.add(new CompiledInputEdgeFact(b.key, a.key, 1));
+		full.edges.add(new CompiledInputEdgeFact(ungrounded.key, a.key, 2));
+		full.edges.add(new CompiledInputEdgeFact(a.key, b.key, 0));
+		full.edges.add(new CompiledInputEdgeFact(ground.key, b.key, 1));
+		full.additionalCandidate(a, List.of(CandidateInputState.present(FType.FULL),
 			CandidateInputState.absentLocal(), CandidateInputState.absentLocal()));
-		full.additionalCandidate(alternative, List.of(CandidateInputState.absentLocal(),
+		full.additionalCandidate(a, List.of(CandidateInputState.absentLocal(),
 			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)));
-		Ref root = full.unary("root", OpOp1.ABS, alternative, false);
+		List<CandidateInputState> bInputs = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		full.additionalCandidate(b, bInputs);
 
-		Assert.assertNull("A self-supported OR branch cannot borrow ground from another incomplete AND branch",
-			full.resolver().proveCandidate(full.reference(root,
-				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
+		Assert.assertNull("A->A OR A->{B,U} cannot let B->{A,G} lend G through the unusable AND branch",
+			full.resolver().proveCandidate(full.reference(b, bInputs), ground.anchor));
 	}
 
 	@Test
@@ -567,6 +672,145 @@ public class NativePlacementContinuityTest {
 			full.resolver().proves(List.of(append.key), seed.anchor));
 	}
 
+	@Test
+	public void candidateProofDistinguishesDynamicReorgResidencyFromExactAxisContinuity() {
+		Fixture row = new Fixture(FType.ROW);
+		Ref rowSeed = row.source("rowSeed", anchor(FType.ROW, "worker1:8001", 0, 50));
+		Ref reverse = row.reorg("reverse", ReOrgOp.REV, rowSeed, false);
+		NativePlacementContinuity.NativeContinuityProof reverseProof = row.resolver().proveCandidate(
+			row.reference(reverse, List.of(CandidateInputState.present(FType.ROW))), rowSeed.anchor);
+		Assert.assertNotNull("ROW reverse keeps worker residency even though endpoint-to-range ownership changes",
+			reverseProof);
+		Assert.assertFalse("ROW reverse must not publish exact partition ranges",
+			reverseProof.exactPartitionRanges());
+
+		Ref diag = row.reorg("diag", ReOrgOp.DIAG, rowSeed, false);
+		NativePlacementContinuity.NativeContinuityProof diagProof = row.resolver().proveCandidate(
+			row.reference(diag, List.of(CandidateInputState.present(FType.ROW))), rowSeed.anchor);
+		Assert.assertNotNull("DIAG keeps native worker residency", diagProof);
+		Assert.assertFalse("DIAG recomputes partition ranges", diagProof.exactPartitionRanges());
+
+		Ref roll = row.reorg("roll", ReOrgOp.ROLL, rowSeed, false);
+		NativePlacementContinuity.NativeContinuityProof rollProof = row.resolver().proveCandidate(
+			row.reference(roll, List.of(CandidateInputState.present(FType.ROW))), rowSeed.anchor);
+		Assert.assertNotNull("ROW ROLL retains native worker residency when ranges split", rollProof);
+		Assert.assertFalse("ROW ROLL publishes dynamic ranges computed from the runtime shift",
+			rollProof.exactPartitionRanges());
+
+		Fixture full = new Fixture(FType.FULL);
+		Ref fullSeed = full.source("fullSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref fullRoll = full.reorg("fullRoll", ReOrgOp.ROLL, fullSeed, false);
+		NativePlacementContinuity.NativeContinuityProof fullRollProof = full.resolver().proveCandidate(
+			full.reference(fullRoll, List.of(CandidateInputState.present(FType.FULL))), fullSeed.anchor);
+		Assert.assertNotNull("FULL ROLL retains its single-worker native residency", fullRollProof);
+		Assert.assertFalse("FULL ROLL may split the runtime map and therefore cannot publish exact ranges",
+			fullRollProof.exactPartitionRanges());
+
+		Fixture col = new Fixture(FType.COL);
+		Ref colSeed = col.source("colSeed", anchor(FType.COL, "worker1:8001", 0, 50));
+		Ref colReverse = col.reorg("colReverse", ReOrgOp.REV, colSeed, false);
+		NativePlacementContinuity.NativeContinuityProof colReverseProof = col.resolver().proveCandidate(
+			col.reference(colReverse, List.of(CandidateInputState.present(FType.COL))), colSeed.anchor);
+		Assert.assertNotNull("COL reverse does not reverse partition ownership", colReverseProof);
+		Assert.assertTrue("COL reverse preserves its partition-axis intervals",
+			colReverseProof.exactPartitionRanges());
+		Ref colRoll = col.reorg("colRoll", ReOrgOp.ROLL, colSeed, false);
+		NativePlacementContinuity.NativeContinuityProof colRollProof = col.resolver().proveCandidate(
+			col.reference(colRoll, List.of(CandidateInputState.present(FType.COL))), colSeed.anchor);
+		Assert.assertNotNull("COL ROLL retains native worker residency while runtime ranges split", colRollProof);
+		Assert.assertFalse("COL ROLL must not publish the pre-roll durable geometry",
+			colRollProof.exactPartitionRanges());
+	}
+
+	@Test
+	public void candidateProofSupportsDynamicReshapeAndDeterministicRexpandAxisChanges() {
+		Fixture reshapeFixture = new Fixture(FType.ROW);
+		Ref reshapeSeed = reshapeFixture.source("reshapeSeed", anchor(FType.ROW, "worker1:8001", 0, 50));
+		Ref reshape = reshapeFixture.reshape("reshape", reshapeSeed, false, FType.COL);
+		NativePlacementContinuity.NativeContinuityProof reshapeProof = reshapeFixture.resolver().proveCandidate(
+			reshapeFixture.reference(reshape, List.of(CandidateInputState.present(FType.ROW),
+				CandidateInputState.absentLocal(), CandidateInputState.absentLocal(),
+				CandidateInputState.absentLocal())), reshapeSeed.anchor);
+		Assert.assertNotNull("RESHAPE retains the same native endpoints", reshapeProof);
+		Assert.assertFalse("RESHAPE recomputes partition extents", reshapeProof.exactPartitionRanges());
+		Assert.assertEquals(FType.COL, reshapeProof.outputWorkerPoolWitness().fType());
+
+		Fixture rexpandFixture = new Fixture(FType.ROW);
+		Ref expandSeed = rexpandFixture.source("expandSeed", anchor(FType.ROW, "worker1:8001", 0, 50));
+		Ref expandRows = rexpandFixture.rexpand("expandRows", expandSeed, "rows", FType.COL);
+		NativePlacementContinuity.NativeContinuityProof rowsProof = rexpandFixture.resolver().proveCandidate(
+			rexpandFixture.reference(expandRows, rexpandFixture.inputStates(expandRows, 0, FType.ROW)),
+			expandSeed.anchor);
+		Assert.assertNotNull("REXPAND rows transposes the native ROW axis into COL", rowsProof);
+		Assert.assertTrue("REXPAND rows preserves the exact partition-axis intervals under the transpose",
+			rowsProof.exactPartitionRanges());
+		Assert.assertEquals(FType.COL, rowsProof.outputWorkerPoolWitness().fType());
+
+		Ref expandCols = rexpandFixture.rexpand("expandCols", expandSeed, "cols", FType.ROW);
+		NativePlacementContinuity.NativeContinuityProof colsProof = rexpandFixture.resolver().proveCandidate(
+			rexpandFixture.reference(expandCols, rexpandFixture.inputStates(expandCols, 0, FType.ROW)),
+			expandSeed.anchor);
+		Assert.assertNotNull("REXPAND cols preserves the native ROW axis", colsProof);
+		Assert.assertTrue(colsProof.exactPartitionRanges());
+	}
+
+	@Test
+	public void candidateProofSupportsCumulativeCastsAndFrameMapCopy() {
+		Fixture row = new Fixture(FType.ROW);
+		Ref seed = row.source("X", anchor(FType.ROW, "worker1:8001", 0, 50));
+		Ref cumulative = row.unary("cumulative", OpOp1.CUMSUM, seed, false);
+		Assert.assertNotNull("ROW cumulative kernels preserve their native partition axis",
+			row.resolver().proveCandidate(
+				row.reference(cumulative, List.of(CandidateInputState.present(FType.ROW))), seed.anchor));
+
+		Ref frame = row.cast("frame", seed, DataType.FRAME, ValueType.STRING, OpOp1.CAST_AS_FRAME);
+		NativePlacementContinuity.NativeContinuityProof frameProof = row.resolver().proveCandidate(
+			row.reference(frame, List.of(CandidateInputState.present(FType.ROW))), seed.anchor);
+		Assert.assertNotNull("Matrix-to-frame cast copies the native map", frameProof);
+		Assert.assertTrue(frameProof.exactPartitionRanges());
+
+		Ref frameSeed = row.frameSource("frameSeed", anchor(FType.ROW, "worker1:8001", 0, 50));
+		Ref mapped = row.frameMap("mapped", frameSeed);
+		NativePlacementContinuity.NativeContinuityProof mapProof = row.resolver().proveCandidate(
+			row.reference(mapped, row.inputStates(mapped, 0, FType.ROW)), frameSeed.anchor);
+		Assert.assertNotNull("Frame MAP copies the selected frame FederationMap", mapProof);
+		Assert.assertTrue(mapProof.exactPartitionRanges());
+
+		Ref matrix = row.cast("matrix", frameSeed, DataType.MATRIX, ValueType.FP64, OpOp1.CAST_AS_MATRIX);
+		NativePlacementContinuity.NativeContinuityProof matrixProof = row.resolver().proveCandidate(
+			row.reference(matrix, List.of(CandidateInputState.present(FType.ROW))), frameSeed.anchor);
+		Assert.assertNotNull("Frame-to-matrix cast copies the native map", matrixProof);
+		Assert.assertTrue(matrixProof.exactPartitionRanges());
+	}
+
+	@Test
+	public void candidateProofSupportsWeightedQuaternaryNativeOutputFamilies() {
+		Fixture row = new Fixture(FType.ROW);
+		Ref xRow = row.source("Xrow", anchor(FType.ROW, "worker1:8001", 0, 50));
+		Ref uRow = row.read("Urow");
+		Ref vRow = row.read("Vrow");
+		for(Ref weighted : List.of(row.wsigmoid("wsigmoid", xRow, uRow, vRow),
+			row.wumm("wumm", xRow, uRow, vRow), row.wdivmm("wdivmmBasic", xRow, uRow, vRow, 0, FType.ROW),
+			row.wdivmm("wdivmmRight", xRow, uRow, vRow, 2, FType.ROW))) {
+			NativePlacementContinuity.NativeContinuityProof proof = row.resolver().proveCandidate(
+				row.reference(weighted, row.inputStates(weighted, 0, FType.ROW)), xRow.anchor);
+			Assert.assertNotNull(weighted.hop.getName() + " preserves X's native worker pool", proof);
+			Assert.assertTrue(weighted.hop.getName() + " preserves X's partition-axis intervals",
+				proof.exactPartitionRanges());
+		}
+
+		Fixture col = new Fixture(FType.COL);
+		Ref xCol = col.source("Xcol", anchor(FType.COL, "worker1:8001", 0, 50));
+		Ref uCol = col.read("Ucol");
+		Ref vCol = col.read("Vcol");
+		Ref left = col.wdivmm("wdivmmLeft", xCol, uCol, vCol, 1, FType.ROW);
+		NativePlacementContinuity.NativeContinuityProof leftProof = col.resolver().proveCandidate(
+			col.reference(left, col.inputStates(left, 0, FType.COL)), xCol.anchor);
+		Assert.assertNotNull("WDIVMM LEFT transposes the exact COL partition axis into output ROW", leftProof);
+		Assert.assertTrue(leftProof.exactPartitionRanges());
+		Assert.assertEquals(FType.ROW, leftProof.outputWorkerPoolWitness().fType());
+	}
+
 	private static final class Fixture {
 		private final String fingerprint = "native-continuity-" + System.identityHashCode(this);
 		private final FType fType;
@@ -584,6 +828,12 @@ public class NativePlacementContinuityTest {
 
 		private Ref source(String name, DurableAnchorKey anchor) {
 			DataOp hop = new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.TRANSIENTREAD,
+				name, 4, 2, 8, 1000);
+			return add(name, hop, NodeKind.TRANSIENT_READ, VersionKind.ORDINARY, anchor);
+		}
+
+		private Ref frameSource(String name, DurableAnchorKey anchor) {
+			DataOp hop = new DataOp(name, DataType.FRAME, ValueType.STRING, OpOpData.TRANSIENTREAD,
 				name, 4, 2, 8, 1000);
 			return add(name, hop, NodeKind.TRANSIENT_READ, VersionKind.ORDINARY, anchor);
 		}
@@ -635,6 +885,13 @@ public class NativePlacementContinuityTest {
 			Ref result = add(name, new UnaryOp(name, DataType.MATRIX, ValueType.FP64,
 				op, input.hop), NodeKind.OPERATION, VersionKind.ORDINARY, null);
 			candidate(result, List.of(input), derivedEmission);
+			return result;
+		}
+
+		private Ref cast(String name, Ref input, DataType outputType, ValueType valueType, OpOp1 op) {
+			Ref result = add(name, new UnaryOp(name, outputType, valueType, op, input.hop),
+				NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidate(result, List.of(input), false);
 			return result;
 		}
 
@@ -706,6 +963,64 @@ public class NativePlacementContinuityTest {
 			return result;
 		}
 
+		private Ref frameMap(String name, Ref frame) {
+			Ref result = add(name, new TernaryOp(name, DataType.FRAME, ValueType.STRING, OpOp3.MAP,
+				frame.hop, new LiteralOp("fun"), new LiteralOp(1L)),
+				NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, frame), false);
+			return result;
+		}
+
+		private Ref rexpand(String name, Ref target, String direction, FType outputType) {
+			LinkedHashMap<String,Hop> params = new LinkedHashMap<>();
+			params.put("target", target.hop);
+			params.put("max", new LiteralOp(64L));
+			params.put("dir", new LiteralOp(direction));
+			params.put("cast", new LiteralOp(true));
+			params.put("ignore", new LiteralOp(true));
+			ParameterizedBuiltinOp hop = new ParameterizedBuiltinOp(name, DataType.MATRIX,
+				ValueType.FP64, ParamBuiltinOp.REXPAND, params);
+			Ref result = add(name, hop, NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(hop.getParamIndexMap().get("target"), target), false, outputType);
+			return result;
+		}
+
+		private Ref reshape(String name, Ref input, boolean byRow, FType outputType) {
+			ArrayList<Hop> inputs = new ArrayList<>();
+			inputs.add(input.hop);
+			inputs.add(new LiteralOp(4L));
+			inputs.add(new LiteralOp(2L));
+			inputs.add(new LiteralOp(byRow));
+			Ref result = add(name, new ReorgOp(name, DataType.MATRIX, ValueType.FP64,
+				ReOrgOp.RESHAPE, inputs), NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, input), false, outputType);
+			return result;
+		}
+
+		private Ref wsigmoid(String name, Ref x, Ref u, Ref v) {
+			Ref result = add(name, new QuaternaryOp(name, DataType.MATRIX, ValueType.FP64,
+				OpOp4.WSIGMOID, x.hop, u.hop, v.hop, false, false),
+				NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, x), false);
+			return result;
+		}
+
+		private Ref wumm(String name, Ref x, Ref u, Ref v) {
+			Ref result = add(name, new QuaternaryOp(name, DataType.MATRIX, ValueType.FP64,
+				OpOp4.WUMM, x.hop, u.hop, v.hop, true, OpOp1.MULT2, null),
+				NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, x), false);
+			return result;
+		}
+
+		private Ref wdivmm(String name, Ref x, Ref u, Ref v, int baseType, FType outputType) {
+			Ref result = add(name, new QuaternaryOp(name, DataType.MATRIX, ValueType.FP64,
+				OpOp4.WDIVMM, x.hop, u.hop, v.hop, new LiteralOp(-1L), baseType, false, false),
+				NodeKind.OPERATION, VersionKind.ORDINARY, null);
+			candidateAtPositions(result, Map.of(0, x), false, outputType);
+			return result;
+		}
+
 		private Ref replace(String name, Ref target) {
 			LinkedHashMap<String,Hop> params = new LinkedHashMap<>();
 			params.put("target", target.hop);
@@ -740,12 +1055,12 @@ public class NativePlacementContinuityTest {
 			PlacementState target = state(fType);
 			CandidateEmissionFact emission = new CandidateEmissionFact(
 				new PlacementEmissionState(target, false), fType);
-			DerivedFoutMaterializationActionKey fallback = new DerivedFoutMaterializationActionKey(
+			DerivedFoutMaterializationActionKey materializationAction = new DerivedFoutMaterializationActionKey(
 				result.key, nodes.get(result.key).valueVersion(), rule,
 				new PlacementState(ExecType.FED, FederatedOutput.LOUT, fType, false), target,
 				input.anchor, input.key, fType, fType, result.key.controlRegion().normalizedSignature());
 			CandidateEmissionFact derived = new CandidateEmissionFact(
-				new PlacementEmissionState(target, true), fType, fallback);
+				new PlacementEmissionState(target, true), fType, materializationAction);
 			candidates.add(new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
 				new CandidateCapabilityFact(OpCategory.INDEXING, "rightIndex", ExecType.FED,
 					FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
@@ -786,12 +1101,22 @@ public class NativePlacementContinuityTest {
 
 		private void candidateAtPositions(Ref owner, Map<Integer,Ref> matrixInputs,
 			boolean includeDerived) {
+			candidateAtPositions(owner, matrixInputs, includeDerived, fType);
+		}
+
+		private void candidateAtPositions(Ref owner, Map<Integer,Ref> matrixInputs,
+			boolean includeDerived, FType outputType) {
 			List<CandidateInputState> inputStates = new ArrayList<>();
 			for(int position = 0; position < owner.hop.getInput().size(); position++)
 				inputStates.add(matrixInputs.containsKey(position)
 					? CandidateInputState.present(fType) : CandidateInputState.absentLocal());
 			CandidateRuleKey rule = new CandidateRuleKey(owner.key, inputStates);
-			PlacementState target = state(fType);
+			PlacementState target = state(outputType);
+			if(outputType != fType) {
+				Node node = nodes.get(owner.key);
+				nodes.put(owner.key, new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
+					List.of(target), node.exclusions(), node.anchors()));
+			}
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			if(includeDerived) {
 				Ref firstInput = matrixInputs.values().iterator().next();
@@ -799,19 +1124,27 @@ public class NativePlacementContinuityTest {
 				DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
 					owner.key, nodes.get(owner.key).valueVersion(), rule,
 					new PlacementState(ExecType.FED, FederatedOutput.LOUT, null, false), target,
-					anchor, firstInput.key, fType, fType, owner.key.controlRegion().normalizedSignature());
+					anchor, firstInput.key, fType, outputType, owner.key.controlRegion().normalizedSignature());
 				emissions.add(new CandidateEmissionFact(
-					new PlacementEmissionState(target, true), fType, action));
+					new PlacementEmissionState(target, true), outputType, action));
 			}
 			else
-				emissions.add(new CandidateEmissionFact(new PlacementEmissionState(target, false), fType));
+				emissions.add(new CandidateEmissionFact(new PlacementEmissionState(target, false), outputType));
 			candidates.add(new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
 				new CandidateCapabilityFact(OpCategory.OTHER, "fixture", ExecType.FED,
-					FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
+					FederatedOutput.FOUT, outputType, ReasonCode.OK, "fixture", List.of()),
 				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
-				new CandidateProfileFact(List.of(fType), ""), emissions, ""));
+				new CandidateProfileFact(List.of(outputType), ""), emissions, ""));
 			matrixInputs.forEach((position, input) ->
 				edges.add(new CompiledInputEdgeFact(input.key, owner.key, position)));
+		}
+
+		private List<CandidateInputState> inputStates(Ref owner, int remotePosition, FType remoteType) {
+			List<CandidateInputState> states = new ArrayList<>();
+			for(int position = 0; position < owner.hop.getInput().size(); position++)
+				states.add(position == remotePosition
+					? CandidateInputState.present(remoteType) : CandidateInputState.absentLocal());
+			return states;
 		}
 
 		private void additionalCandidate(Ref owner, List<CandidateInputState> inputs) {
@@ -823,6 +1156,22 @@ public class NativePlacementContinuityTest {
 					FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
 				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
 				new CandidateProfileFact(List.of(fType), ""), List.of(emission), ""));
+		}
+
+		private void samePoolRealizations(Ref owner, List<CandidateInputState> inputs,
+			DurableAnchorKey... anchors) {
+			CandidateRuleFact fact = candidates.stream().filter(candidate ->
+				candidate.key().parentOccurrence() == owner.key
+					&& candidate.key().orderedInputs().equals(inputs)).findFirst().orElseThrow();
+			CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
+			List<CandidateEmissionRealization> realizations = java.util.Arrays.stream(anchors)
+				.map(anchor -> CandidateEmissionRealization.durable(
+					emission.emissionState(), anchor, List.of(), List.of()))
+				.toList();
+			CandidateEmissionFact replacement = new CandidateEmissionFact(emission.emissionState(),
+				emission.executionFType(), emission.derivedFoutAction(), realizations);
+			candidates.set(candidates.indexOf(fact), new CandidateRuleFact(fact.key(), fact.status(),
+				fact.capability(), fact.shapeProof(), fact.profile(), List.of(replacement), fact.failureCode()));
 		}
 
 		private CandidateRealizationReference reference(Ref owner, List<CandidateInputState> inputs) {

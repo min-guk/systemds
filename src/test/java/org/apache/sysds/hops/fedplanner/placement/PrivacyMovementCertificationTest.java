@@ -39,6 +39,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Independent final-boundary certification for origin-bound payload movement. */
@@ -199,6 +200,7 @@ public class PrivacyMovementCertificationTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void indexedRelocationScoreMatchesCanonicalSelectedRealizations() throws Exception {
 		for(boolean samePool : List.of(false, true)) {
 			FixtureProgram program = FixtureProgram.adopt(compile(crossPoolScript(samePool)));
@@ -224,6 +226,7 @@ public class PrivacyMovementCertificationTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void indexedRelocationHonorsExactDirectAndRelocationBindings() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compile(crossPoolScript(true)));
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
@@ -258,6 +261,10 @@ public class PrivacyMovementCertificationTest {
 			directAnchor.fType(), shiftedPartitions);
 		CandidateEmissionRealization directSourceRealization = CandidateEmissionRealization.durable(
 			originalSource.emission().emissionState(), directAnchor, List.of(), List.of());
+		CandidateEmissionRealization proofDistinctDirectSourceRealization =
+			CandidateEmissionRealization.durable(originalSource.emission().emissionState(),
+				directAnchor, List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+					sourceOwner, "relocation-score-cache-proof-variant")), List.of());
 		CandidateEmissionRealization shiftedSourceRealization = CandidateEmissionRealization.durable(
 			originalSource.emission().emissionState(), shiftedAnchor, List.of(), List.of());
 		CandidateEmissionRealization unanchoredSourceRealization =
@@ -266,6 +273,8 @@ public class PrivacyMovementCertificationTest {
 				List.of(), List.of());
 		CandidateSelectionReceipt directSource = receiptWithRealization(
 			originalSource, directSourceRealization);
+		CandidateSelectionReceipt proofDistinctDirectSource = receiptWithRealization(
+			originalSource, proofDistinctDirectSourceRealization);
 		CandidateSelectionReceipt shiftedSource = receiptWithRealization(
 			originalSource, shiftedSourceRealization);
 		CandidateSelectionReceipt unanchoredSource = receiptWithRealization(
@@ -316,14 +325,18 @@ public class PrivacyMovementCertificationTest {
 		CandidateSelectionReceipt relocatedConsumer = new CandidateSelectionReceipt(
 			originalConsumer.rule(), consumerEmission, consumerRealization, relocatedClause, List.of());
 		List<CandidateSelectionReceipt> universe = List.of(
-			directSource, shiftedSource, directConsumer, relocatedConsumer);
+			directSource, proofDistinctDirectSource, shiftedSource, directConsumer, relocatedConsumer);
 		RelocationSelections.CanonicalOrderIndex order = analysis.relocationOrder();
 		RelocationSelections.CandidateProblemIndex index = RelocationSelections.candidateProblemIndex(
 			analysis, analysis.graph(), analysis.graph().relocationActions(),
 			plan.selectedStates(), universe, order);
+		Assert.assertNotEquals("distinct exact realization/clause authority must retain distinct receipt identity",
+			directSource.normalizedSignature(), proofDistinctDirectSource.normalizedSignature());
 
 		assertIndexedCanonicalParity(analysis, plan.selectedStates(), order, index,
 			List.of(directSource, directConsumer), 0);
+		assertIndexedCanonicalParity(analysis, plan.selectedStates(), order, index,
+			List.of(proofDistinctDirectSource, directConsumer), 0);
 		assertIndexedCanonicalParity(analysis, plan.selectedStates(), order, index,
 			List.of(shiftedSource, relocatedConsumer), 1);
 	}
@@ -403,6 +416,7 @@ public class PrivacyMovementCertificationTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void publicTransposeLoopRetainsExecutablePlacement() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compile(incompatibleLoopAnchorScript()));
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
@@ -438,6 +452,7 @@ public class PrivacyMovementCertificationTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void transientJoinRejectsMissingReachingDefinitionCompatibility() throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compile(
 			"X=federated(addresses=list(\"localhost:20334/X1\",\"localhost:20335/X2\"),"

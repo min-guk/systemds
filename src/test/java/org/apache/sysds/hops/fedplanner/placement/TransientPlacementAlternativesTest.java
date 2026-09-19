@@ -19,8 +19,10 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
@@ -34,6 +36,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.parser.DMLProgram;
@@ -42,6 +45,7 @@ import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Regressions for complete cross-block transient placement forwarding. */
@@ -69,6 +73,7 @@ public class TransientPlacementAlternativesTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void rowPredictionSurvivesBranchIntoDownstreamAggregate() throws Exception {
 		DMLProgram program = compile(LM_DIAGNOSTIC_SCRIPT);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
@@ -144,6 +149,7 @@ public class TransientPlacementAlternativesTest {
 	}
 
 	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
 	public void compatibleAndIncompatibleBranchJoinsUseExactPhysicalMaps() throws Exception {
 		PlacementAnalysis compatible = build(branchJoinScript(19534, true), Privacy.PUBLIC);
 		CompiledHopKey compatibleRead = joinedRead(compatible, "z");
@@ -208,6 +214,185 @@ public class TransientPlacementAlternativesTest {
 				&& state.fType() == FType.ROW));
 		Assert.assertEquals(candidateSignatures(first), candidateSignatures(second));
 		Assert.assertEquals(logicalRelationSignatures(first), logicalRelationSignatures(second));
+	}
+
+	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
+	public void identityLoopBackedgeRestoresAllReachingTransientRelations() throws Exception {
+		String script = "A=federated(addresses=list(\"localhost:19934/X1\",\"localhost:19935/X2\"),"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));\n"
+			+ "B=A;i=1;while(i<=2){B=B;i=i+1;}print(sum(B));\n";
+		DMLProgram program = compileWithoutRewrite(script);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
+		PlacementAnalysis first = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis second = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		assertCandidateBackedFedStatesArePublished(first);
+		assertCandidateBackedFedStatesArePublished(second);
+
+		var identityRead = first.occurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTREAD && "B".equals(data.getName()))
+			.filter(occurrence -> first.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).size() > 1)
+			.filter(occurrence -> first.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).stream()
+				.map(first::hop).flatMap(java.util.Optional::stream)
+				.anyMatch(source -> source instanceof DataOp data
+					&& data.getOp() == OpOpData.TRANSIENTWRITE
+					&& data.getInput().size() == 1 && data.getInput(0) == occurrence.hop()
+					&& "B".equals(data.getName())))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"fixture must retain an exact TWrite(B <- TRead(B)) identity loop backedge"));
+
+		List<CompiledHopKey> reaching = first.cfgDefinitionSourcesInCanonicalOrder(identityRead.key());
+		Assert.assertTrue("identity loop read must retain external seed plus loop backedge", reaching.size() >= 2);
+		assertAllExecutableTransientAlternativesAreProved(first, identityRead.key());
+		Set<CompiledHopKey> related = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		first.logicalTransientInputsForReader(identityRead.key(), 0)
+			.forEach(fact -> related.add(fact.sourceWrite()));
+		Assert.assertEquals("final publication must restore every reaching writer after provisional loop seeding",
+			reaching.size(), related.size());
+		Assert.assertTrue("final publication must include every reaching writer identity",
+			reaching.stream().allMatch(source -> related.stream().anyMatch(candidate -> candidate == source)));
+
+		Assert.assertEquals("identity-loop candidate publication must be rebuild-stable",
+			candidateSignatures(first), candidateSignatures(second));
+		Assert.assertEquals("identity-loop transient relations must be rebuild-stable",
+			logicalRelationSignatures(first), logicalRelationSignatures(second));
+	}
+
+	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
+	public void allReachingDurableAndLocalAssignmentSetMatchesIndependentPhysicalOracle() throws Exception {
+		PlacementAnalysis analysis = build(branchJoinScript(20034, true), Privacy.PUBLIC);
+		CompiledHopKey read = joinedRead(analysis, "z");
+		assertDurableAndLocalFullSet(analysis, read, 2);
+	}
+
+	@Test
+	@Ignore("PUBLIC-only privacy fixture is excluded by the repository test policy")
+	public void identityLoopDurableAndLocalAssignmentSetMatchesIndependentPhysicalOracle() throws Exception {
+		String script = "A=federated(addresses=list(\"localhost:20134/X1\",\"localhost:20135/X2\"),"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));\n"
+			+ "B=A;i=1;while(i<=2){B=B;i=i+1;}print(sum(B));\n";
+		DMLProgram program = compileWithoutRewrite(script);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		CompiledHopKey read = analysis.occurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTREAD && "B".equals(data.getName()))
+			.filter(occurrence -> analysis.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).size() > 1)
+			.filter(occurrence -> analysis.cfgDefinitionSourcesInCanonicalOrder(occurrence.key()).stream()
+				.map(analysis::hop).flatMap(java.util.Optional::stream)
+				.anyMatch(source -> source instanceof DataOp data
+					&& data.getOp() == OpOpData.TRANSIENTWRITE
+					&& data.getInput().size() == 1 && data.getInput(0) == occurrence.hop()))
+			.map(PlacementAnalysis.HopOccurrenceProjection::key).findFirst().orElseThrow(AssertionError::new);
+		assertDurableAndLocalFullSet(analysis, read,
+			analysis.cfgDefinitionSourcesInCanonicalOrder(read).size());
+	}
+
+	private static void assertDurableAndLocalFullSet(PlacementAnalysis analysis,
+		CompiledHopKey read, int expectedWriterCount) {
+		List<LogicalTransientInputFact> relations = analysis.logicalTransientInputsForReader(read, 0);
+		Assert.assertEquals("fixture must retain every intended reaching definition",
+			expectedWriterCount, relations.size());
+
+		List<CompiledHopKey> owners = new java.util.ArrayList<>();
+		relations.stream().map(LogicalTransientInputFact::sourceWrite).sorted().forEach(owners::add);
+		owners.add(read);
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> domains = rawReceiptDomains(analysis, owners);
+		domains.put(read, domains.get(read).stream().filter(receipt ->
+			receipt.realization().key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE).toList());
+		Assert.assertFalse("bounded independent oracle requires a non-native reader subset",
+			domains.get(read).isEmpty());
+		Set<String> expected = enumerateAssignments(owners, domains,
+			selected -> independentlyCompatibleTransient(relations, selected));
+		Set<String> actual = enumerateAssignments(owners, domains, selected -> {
+			Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
+			selected.forEach((owner, receipt) -> assignment.put(owner,
+				receipt.emission().emissionState().placementState()));
+			return CandidateSelections.realizationsCanStillBeCompatible(
+				analysis, assignment, selected.values());
+		});
+
+		Assert.assertFalse("fixture must retain at least one exact legal transient assignment",
+			expected.isEmpty());
+		Assert.assertEquals("all-reaching durable/local compatibility changed the complete legal assignment set",
+			expected, actual);
+	}
+
+	private static Map<CompiledHopKey,List<CandidateSelectionReceipt>> rawReceiptDomains(
+		PlacementAnalysis analysis, List<CompiledHopKey> owners) {
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> result = new LinkedHashMap<>();
+		for(CompiledHopKey owner : owners) {
+			List<CandidateSelectionReceipt> receipts = analysis.candidateRuleFacts().orderedFactsForParent(owner).stream()
+				.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				.flatMap(fact -> fact.allowedEmissionFacts().stream().flatMap(emission ->
+					analysis.canonicalCandidateReceipts(fact.key(), emission).stream()))
+				.distinct().sorted().toList();
+			Assert.assertFalse("full-set fixture owner has no raw candidate receipts: "
+				+ owner.normalizedSignature(), receipts.isEmpty());
+			result.put(owner, receipts);
+		}
+		return result;
+	}
+
+	private static Set<String> enumerateAssignments(List<CompiledHopKey> owners,
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> domains,
+		java.util.function.Predicate<Map<CompiledHopKey,CandidateSelectionReceipt>> legal) {
+		Set<String> result = new LinkedHashSet<>();
+		enumerateAssignments(owners, domains, 0, new IdentityHashMap<>(), legal, result);
+		return result;
+	}
+
+	private static void enumerateAssignments(List<CompiledHopKey> owners,
+		Map<CompiledHopKey,List<CandidateSelectionReceipt>> domains, int position,
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected,
+		java.util.function.Predicate<Map<CompiledHopKey,CandidateSelectionReceipt>> legal,
+		Set<String> result) {
+		if(position == owners.size()) {
+			if(legal.test(selected))
+				result.add(java.util.stream.IntStream.range(0, owners.size()).mapToObj(index -> {
+					CompiledHopKey owner = owners.get(index);
+					return Integer.toString(domains.get(owner).indexOf(selected.get(owner)));
+				}).reduce((left, right) -> left + "/" + right).orElse(""));
+			return;
+		}
+		CompiledHopKey owner = owners.get(position);
+		for(CandidateSelectionReceipt receipt : domains.get(owner)) {
+			selected.put(owner, receipt);
+			enumerateAssignments(owners, domains, position + 1, selected, legal, result);
+			selected.remove(owner);
+		}
+	}
+
+	private static boolean independentlyCompatibleTransient(List<LogicalTransientInputFact> relations,
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected) {
+		for(LogicalTransientInputFact relation : relations) {
+			CandidateSelectionReceipt source = selected.get(relation.sourceWrite());
+			CandidateSelectionReceipt reader = selected.get(relation.targetRead());
+			if(source == null || reader == null)
+				return false;
+			PlacementState sourceState = source.emission().emissionState().placementState();
+			PlacementState readerState = reader.emission().emissionState().placementState();
+			PlacementLayoutKind sourceLayout = source.realization().key().layoutKind();
+			PlacementLayoutKind readerLayout = reader.realization().key().layoutKind();
+			boolean sourceLocal = sourceLayout == PlacementLayoutKind.LOCAL;
+			boolean readerLocal = readerLayout == PlacementLayoutKind.LOCAL;
+			if(sourceLocal || readerLocal) {
+				if(!sourceLocal || !readerLocal || sourceState.output() != FederatedOutput.LOUT
+					|| readerState.output() != FederatedOutput.LOUT)
+					return false;
+				continue;
+			}
+			if(sourceLayout != PlacementLayoutKind.DURABLE_MAP
+				|| readerLayout != PlacementLayoutKind.DURABLE_MAP
+				|| sourceState.output() != FederatedOutput.FOUT || readerState.output() != FederatedOutput.FOUT
+				|| sourceState.fType() == null || sourceState.fType() != readerState.fType()
+				|| source.provenWorkerPool() == null || reader.provenWorkerPool() == null
+				|| !PlacementIdentity.samePhysicalLayout(source.provenWorkerPool(), reader.provenWorkerPool()))
+				return false;
+		}
+		return true;
 	}
 
 	private static void assertAllExecutableTransientAlternativesAreProved(
@@ -358,6 +543,16 @@ public class TransientPlacementAlternativesTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileWithoutRewrite(String script) throws Exception {
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
 		return program;
 	}
 }

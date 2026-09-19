@@ -8,6 +8,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransientCompatibilityProof;
@@ -105,6 +106,31 @@ public class PlacementRealizationAuthorityTest {
 		CandidateSelectionReceipt selected = new CandidateSelectionReceipt(
 			RULE, emission, merged, merged.supportClauses().get(0), List.of());
 		Assert.assertSame(merged.supportClauses().get(0), selected.supportClause());
+	}
+
+	@Test
+	public void transientIdentityExactLayoutRequiresEveryDirectReceiptToMatch() {
+		DurableAnchorKey reader = anchor("reader", 4);
+		CandidateEmissionRealization sameLayout = CandidateEmissionRealization.durable(
+			FED_EMISSION, anchor("same-layout", 4), List.of(anchorProof(reader)), List.of());
+		CandidateEmissionRealization differentLayout = CandidateEmissionRealization.durable(
+			FED_EMISSION, anchor("different-layout", 3), List.of(anchorProof(reader)), List.of());
+		CandidateRealizationReference same = CandidateRealizationReference.of(
+			new CandidateRuleKey(key("same-source"), List.of()), sameLayout);
+		CandidateRealizationReference different = CandidateRealizationReference.of(
+			new CandidateRuleKey(key("different-source"), List.of()), differentLayout);
+
+		Assert.assertTrue("metadata aliases with one exact geometry may certify the transient value",
+			NeutralPlacementGraphBuilder.exactTransientIdentitySupport(reader,
+				new CandidateRealizationSupportClause(List.of(),
+					List.of(CandidateRealizationInputBinding.direct(0, same)))));
+		Assert.assertFalse("a different DIRECT receipt must keep the transient value layout ambiguous",
+			NeutralPlacementGraphBuilder.exactTransientIdentitySupport(reader,
+				new CandidateRealizationSupportClause(List.of(),
+					List.of(CandidateRealizationInputBinding.direct(0, different)))));
+		Assert.assertFalse("an unbound transient realization is not exact runtime-map authority",
+			NeutralPlacementGraphBuilder.exactTransientIdentitySupport(reader,
+				new CandidateRealizationSupportClause(List.of(), List.of())));
 	}
 
 	@Test

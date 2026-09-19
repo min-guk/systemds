@@ -299,15 +299,22 @@ public final class PlacementAnalysis {
 	/** One conjunctive proof/input-support route for an exact physical realization. */
 	public record CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
 		List<CandidateRealizationInputBinding> inputBindings,
-		DurableAnchorKey nativeWorkerPoolWitness)
+		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact)
 		implements Comparable<CandidateRealizationSupportClause> {
 		public CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
 			List<CandidateRealizationInputBinding> inputBindings) {
-			this(proofDependencies, inputBindings, null);
+			this(proofDependencies, inputBindings, null, true);
+		}
+		public CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
+			List<CandidateRealizationInputBinding> inputBindings,
+			DurableAnchorKey nativeWorkerPoolWitness) {
+			this(proofDependencies, inputBindings, nativeWorkerPoolWitness, true);
 		}
 		public CandidateRealizationSupportClause {
 			proofDependencies = canonicalComparableList(proofDependencies, "realization proof dependency");
 			inputBindings = canonicalComparableList(inputBindings, "realization input binding");
+			if(nativeWorkerPoolWitness == null && !nativeWorkerPoolLayoutExact)
+				throw new IllegalArgumentException("Dynamic native layout requires a worker-pool witness");
 			if(nativeWorkerPoolWitness != null && proofDependencies.stream().noneMatch(proof ->
 				proof.kind() == PlacementIdentity.PlacementProofKind.NATIVE_CONTINUITY
 					&& proof.owner() != null))
@@ -319,11 +326,15 @@ public final class PlacementAnalysis {
 				.distinct().sorted().toList();
 		}
 		public String normalizedSignature() {
-			return "proofs=" + proofDependencies.stream().map(PlacementProofKey::normalizedSignature).toList()
+			String cached = PlacementIdentity.cachedSignature(this);
+			return cached != null ? cached : PlacementIdentity.rememberSignature(this,
+				"proofs=" + proofDependencies.stream().map(PlacementProofKey::normalizedSignature).toList()
 				+ "|inputs=" + inputBindings.stream()
 					.map(CandidateRealizationInputBinding::normalizedSignature).toList()
 				+ "|nativePool=" + (nativeWorkerPoolWitness == null ? "-"
-					: nativeWorkerPoolWitness.normalizedSignature());
+					: nativeWorkerPoolWitness.normalizedSignature())
+				+ (nativeWorkerPoolWitness != null && !nativeWorkerPoolLayoutExact
+					? "|nativePoolLayout=dynamic" : ""));
 		}
 		@Override public int compareTo(CandidateRealizationSupportClause that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
@@ -351,10 +362,14 @@ public final class PlacementAnalysis {
 					throw new IllegalArgumentException(
 						"Native worker-pool witness and realization layout differ");
 			DurableAnchorKey nativeWitness = supportClauses.get(0).nativeWorkerPoolWitness();
+			boolean nativeLayoutExact = supportClauses.get(0).nativeWorkerPoolLayoutExact();
 			for(CandidateRealizationSupportClause clause : supportClauses) {
 				DurableAnchorKey candidate = clause.nativeWorkerPoolWitness();
 				if((nativeWitness == null) != (candidate == null)
-					|| nativeWitness != null && !PlacementIdentity.samePhysicalLayout(nativeWitness, candidate))
+					|| nativeWitness != null && (nativeLayoutExact != clause.nativeWorkerPoolLayoutExact()
+						|| !(nativeLayoutExact
+							? PlacementIdentity.samePhysicalLayout(nativeWitness, candidate)
+							: PlacementIdentity.samePhysicalWorkerEndpoints(nativeWitness, candidate))))
 					throw new IllegalArgumentException(
 						"One realization cannot mix unproven or physically distinct native worker pools");
 			}
@@ -375,6 +390,17 @@ public final class PlacementAnalysis {
 				proofs, inputBindings);
 		}
 
+		public static CandidateEmissionRealization sourceLineage(PlacementEmissionState emission,
+			String sourceIdentity) {
+			return new CandidateEmissionRealization(
+				PlacementRealizationKey.sourceLineage(emission, sourceIdentity), List.of(), List.of());
+		}
+		public static CandidateEmissionRealization sourceLineage(PlacementEmissionState emission,
+			String sourceIdentity, List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(
+				PlacementRealizationKey.sourceLineage(emission, sourceIdentity), List.of(), inputBindings);
+		}
+
 		public static CandidateEmissionRealization nativeLineage(PlacementEmissionState emission,
 			String lineage, List<PlacementProofKey> proofs,
 			List<CandidateRealizationInputBinding> inputBindings) {
@@ -387,6 +413,13 @@ public final class PlacementAnalysis {
 			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
 				List.of(new CandidateRealizationSupportClause(
 					proofs, inputBindings, nativeWorkerPoolWitness)));
+		}
+		public static CandidateEmissionRealization nativeLineageDynamicLayout(PlacementEmissionState emission,
+			String lineage, DurableAnchorKey nativeWorkerPoolWitness, List<PlacementProofKey> proofs,
+			List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
+				List.of(new CandidateRealizationSupportClause(
+					proofs, inputBindings, nativeWorkerPoolWitness, false)));
 		}
 
 		public CandidateRealizationSupportClause requireSingletonSupportClause() {
@@ -409,14 +442,29 @@ public final class PlacementAnalysis {
 
 		public PlacementState placementState() { return key.emissionState().placementState(); }
 		public DurableAnchorKey anchor() { return key.durableAnchor(); }
+		/** Exact runtime worker-pool layout, including ROW/COL partition-axis ranges. */
 		public DurableAnchorKey provenWorkerPool(CandidateRealizationSupportClause clause) {
+			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
+				throw new IllegalArgumentException("Support clause is not owned by realization");
+			return key.durableAnchor() != null ? key.durableAnchor()
+				: clause.nativeWorkerPoolLayoutExact() ? clause.nativeWorkerPoolWitness() : null;
+		}
+		/** Native worker residency proof. Dynamic-layout witnesses prove endpoints/FType only. */
+		public DurableAnchorKey nativeWorkerPoolResidencyWitness(CandidateRealizationSupportClause clause) {
 			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
 				throw new IllegalArgumentException("Support clause is not owned by realization");
 			return key.durableAnchor() != null ? key.durableAnchor() : clause.nativeWorkerPoolWitness();
 		}
+		public boolean nativeWorkerPoolLayoutExact(CandidateRealizationSupportClause clause) {
+			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
+				throw new IllegalArgumentException("Support clause is not owned by realization");
+			return key.durableAnchor() != null || clause.nativeWorkerPoolLayoutExact();
+		}
 		public String normalizedSignature() {
-			return key.normalizedSignature() + "|support=" + supportClauses.stream()
-				.map(CandidateRealizationSupportClause::normalizedSignature).toList();
+			String cached = PlacementIdentity.cachedSignature(this);
+			return cached != null ? cached : PlacementIdentity.rememberSignature(this,
+				key.normalizedSignature() + "|support=" + supportClauses.stream()
+					.map(CandidateRealizationSupportClause::normalizedSignature).toList());
 		}
 		@Override public int compareTo(CandidateEmissionRealization that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
@@ -466,6 +514,11 @@ public final class PlacementAnalysis {
 		private static List<CandidateEmissionRealization> mergeRealizations(
 			java.util.Collection<CandidateEmissionRealization> alternatives) {
 			Objects.requireNonNull(alternatives, "candidate emission realizations");
+			// A realization already owns a canonical clause list. Keep that complete
+			// authority (including every OR clause) without rebuilding sorted sets.
+			if(alternatives.size() == 1)
+				return List.of(Objects.requireNonNull(alternatives.iterator().next(),
+					"candidate emission realization"));
 			Map<PlacementRealizationKey,Set<CandidateRealizationSupportClause>> clausesByKey =
 				new java.util.TreeMap<>();
 			Map<PlacementRealizationKey,CandidateEmissionRealization> firstByKey =
@@ -1169,14 +1222,23 @@ public final class PlacementAnalysis {
 
 	/** Exact typed evidence for one compatible writer-reader physical realization pair. */
 	public record TransientCompatibilityProof(DurableAnchorKey sourceAnchor,
-		DurableAnchorKey readerAnchor, List<PlacementProofKey> dependencies)
+		DurableAnchorKey readerAnchor, DurableAnchorKey nativeWorkerPoolWitness,
+		boolean nativeWorkerPoolLayoutExact, List<PlacementProofKey> dependencies)
 		implements Comparable<TransientCompatibilityProof> {
+		public TransientCompatibilityProof(DurableAnchorKey sourceAnchor,
+			DurableAnchorKey readerAnchor, List<PlacementProofKey> dependencies) {
+			this(sourceAnchor, readerAnchor, null, true, dependencies);
+		}
 		public TransientCompatibilityProof {
 			dependencies = canonicalComparableList(dependencies, "transient compatibility proof dependency");
 			if((sourceAnchor == null) != (readerAnchor == null))
 				throw new IllegalArgumentException("Transient compatibility anchor proof must name both layouts");
 			if(sourceAnchor != null && !PlacementIdentity.samePhysicalLayout(sourceAnchor, readerAnchor))
 				throw new IllegalArgumentException("Transient compatibility anchors have different physical layouts");
+			if(sourceAnchor != null && nativeWorkerPoolWitness != null)
+				throw new IllegalArgumentException("Transient compatibility cannot mix durable and native authority");
+			if(nativeWorkerPoolWitness == null && !nativeWorkerPoolLayoutExact)
+				throw new IllegalArgumentException("Dynamic transient compatibility requires a worker-pool witness");
 		}
 		public boolean provesNativeContinuity(CompiledHopKey source, CompiledHopKey reader) {
 			return dependencies.stream().anyMatch(proof -> proof.kind()
@@ -1185,7 +1247,10 @@ public final class PlacementAnalysis {
 		}
 		public String normalizedSignature() {
 			return (sourceAnchor == null ? "-" : sourceAnchor.normalizedSignature()) + "|reader="
-				+ (readerAnchor == null ? "-" : readerAnchor.normalizedSignature()) + "|proofs="
+				+ (readerAnchor == null ? "-" : readerAnchor.normalizedSignature()) + "|nativePool="
+				+ (nativeWorkerPoolWitness == null ? "-" : nativeWorkerPoolWitness.normalizedSignature())
+				+ (nativeWorkerPoolWitness != null && !nativeWorkerPoolLayoutExact
+					? "|nativePoolLayout=dynamic" : "") + "|proofs="
 				+ dependencies.stream().map(PlacementProofKey::normalizedSignature).toList();
 		}
 		@Override public int compareTo(TransientCompatibilityProof that) {
@@ -1893,8 +1958,30 @@ public final class PlacementAnalysis {
 				|| !PlacementIdentity.samePhysicalLayout(reader.key().durableAnchor(), edge.proof().readerAnchor()))
 				throw new IllegalArgumentException("Transient compatibility durable-map proof differs");
 		}
-		else if(!edge.proof().provesNativeContinuity(fact.sourceWrite(), fact.targetRead()))
-			throw new IllegalArgumentException("Transient native-lineage compatibility lacks owned continuity proof");
+		else {
+			if(!edge.proof().provesNativeContinuity(fact.sourceWrite(), fact.targetRead()))
+				throw new IllegalArgumentException(
+					"Transient native-lineage compatibility lacks owned continuity proof");
+			DurableAnchorKey proofWitness = edge.proof().nativeWorkerPoolWitness();
+			if(proofWitness == null || readerKind != PlacementLayoutKind.NATIVE_LINEAGE)
+				throw new IllegalArgumentException(
+					"Transient native-lineage compatibility lacks typed reader worker-pool authority");
+			CandidateRealizationSupportClause readerClause = reader.supportClauses().get(0);
+			DurableAnchorKey readerWitness = reader.nativeWorkerPoolResidencyWitness(readerClause);
+			boolean readerExact = reader.nativeWorkerPoolLayoutExact(readerClause);
+			if(readerWitness == null)
+				throw new IllegalArgumentException(
+					"Transient native-lineage reader lacks a worker-pool witness");
+			if(!edge.proof().nativeWorkerPoolLayoutExact() && readerExact)
+				throw new IllegalArgumentException(
+					"Dynamic transient compatibility cannot publish exact reader geometry");
+			boolean sameReaderPool = readerExact && edge.proof().nativeWorkerPoolLayoutExact()
+				? PlacementIdentity.samePhysicalLayout(readerWitness, proofWitness)
+				: PlacementIdentity.samePhysicalWorkerEndpoints(readerWitness, proofWitness);
+			if(!sameReaderPool)
+				throw new IllegalArgumentException(
+					"Transient native-lineage reader worker-pool authority differs");
+		}
 	}
 
 	private void validateReachingDefinitionSupport(

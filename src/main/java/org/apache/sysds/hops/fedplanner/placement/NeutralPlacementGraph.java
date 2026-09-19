@@ -321,6 +321,22 @@ public final class NeutralPlacementGraph {
 					&& PlacementIdentity.samePhysicalWorkerPool(selectedSource.provenWorkerPool(),
 						action.key().durableAnchor()))
 					return false;
+				if(selectedSource != null) {
+					DurableAnchorKey residency = selectedSource.realization()
+						.nativeWorkerPoolResidencyWitness(selectedSource.supportClause());
+					boolean selectedDirectConsumer = selectedCandidates.stream().anyMatch(selected ->
+						action.obligations().stream().anyMatch(obligation ->
+							obligation.consumer() == selected.rule().parentOccurrence()
+								&& obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))
+								&& selected.supportClause().inputBindings().stream().anyMatch(binding ->
+									binding.inputPosition() == obligation.inputPosition()
+										&& binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT
+										&& CandidateSelections.matchesRealization(binding.source(), selectedSource))));
+					if(residency != null && selectedDirectConsumer
+						&& PlacementIdentity.samePhysicalWorkerEndpoints(
+							residency, action.key().durableAnchor()))
+						return false;
+				}
 			}
 			if(sourceState == null)
 				continue;

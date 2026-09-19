@@ -23,6 +23,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -37,6 +38,7 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedLocalData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
@@ -94,6 +96,80 @@ public class ReorgFEDInstructionFullTest {
 		assertEquals(2, output.getNumColumns());
 		assertArrayEquals(new long[] {0, 0}, output.getFedMapping().getFederatedRanges()[0].getBeginDims());
 		assertArrayEquals(new long[] {3, 2}, output.getFedMapping().getFederatedRanges()[0].getEndDims());
+	}
+
+	@Test
+	public void rowReverseDoesNotMutateTheInputFederationMap() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setAutoCreateVars(true);
+		MatrixObject firstBlock = ExecutionContext.createMatrixObject(new MatrixBlock(2, 2, false));
+		MatrixObject secondBlock = ExecutionContext.createMatrixObject(new MatrixBlock(2, 2, false));
+		long inputId = FederationUtils.getNextFedDataID();
+		FederatedLocalData first = new FederatedLocalData(inputId, firstBlock);
+		FederatedLocalData second = new FederatedLocalData(inputId, secondBlock);
+		MatrixObject input = ExecutionContext.createMatrixObject(new MatrixBlock(4, 2, false));
+		input.setFedMapping(new FederationMap(inputId, List.of(
+			Pair.of(new FederatedRange(new long[] {0, 0}, new long[] {2, 2}), first),
+			Pair.of(new FederatedRange(new long[] {2, 0}, new long[] {4, 2}), second)), FType.ROW));
+		ec.setVariable("X", input);
+		ec.setVariable("Y", ExecutionContext.createMatrixObject(new MatrixBlock()));
+
+		String instruction = InstructionUtils.concatOperands("FED", "rev",
+			InstructionUtils.concatOperandParts("X", DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts("Y", DataType.MATRIX.name(), ValueType.FP64.name()),
+			"FOUT");
+		ReorgFEDInstruction.parseInstruction(instruction).processInstruction(ec);
+
+		assertEquals("The first input range must retain its original worker data", first,
+			input.getFedMapping().getMap().get(0).getValue());
+		assertEquals("The second input range must retain its original worker data", second,
+			input.getFedMapping().getMap().get(1).getValue());
+		assertTrue("The reverse result must own a distinct FederationMap",
+			ec.getMatrixObject("Y").getFedMapping() != input.getFedMapping());
+	}
+
+	@Test
+	public void rollMapRetainsResidencyForSplitAndNonSplitRanges() {
+		FederatedData first = new FederatedData(DataType.MATRIX,
+			new InetSocketAddress("localhost", 18001), "first", 71);
+		FederatedData second = new FederatedData(DataType.MATRIX,
+			new InetSocketAddress("localhost", 18002), "second", 71);
+		List<Pair<FederatedRange, FederatedData>> input = List.of(
+			Pair.of(new FederatedRange(new long[] {0, 0}, new long[] {4, 2}), first),
+			Pair.of(new FederatedRange(new long[] {4, 0}, new long[] {8, 2}), second));
+		String rev = InstructionUtils.concatOperands("FED", "rev",
+			InstructionUtils.concatOperandParts("X", DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts("Y", DataType.MATRIX.name(), ValueType.FP64.name()), "FOUT");
+		ReorgFEDInstruction instruction = ReorgFEDInstruction.parseInstruction(rev);
+
+		Pair<FederationMap, Long> unchanged = instruction.rollFedMap(input, 71, 72, 73, 0, 8, FType.ROW);
+		assertEquals(2, unchanged.getLeft().getSize());
+		assertEquals(0L, unchanged.getRight().longValue());
+
+		Pair<FederationMap, Long> split = instruction.rollFedMap(input, 71, 72, 73, 1, 8, FType.ROW);
+		assertEquals("One wrapped partition is represented by two entries", 3, split.getLeft().getSize());
+		assertEquals(3L, split.getRight().longValue());
+		assertArrayEquals(new long[] {0, 0}, split.getLeft().getFederatedRanges()[2].getBeginDims());
+		assertArrayEquals(new long[] {1, 2}, split.getLeft().getFederatedRanges()[2].getEndDims());
+		assertArrayEquals("The source range objects remain unchanged", new long[] {0, 0},
+			input.get(0).getLeft().getBeginDims());
+		assertArrayEquals(new long[] {4, 0}, input.get(1).getLeft().getBeginDims());
+
+		List<Pair<FederatedRange, FederatedData>> fullInput = List.of(
+			Pair.of(new FederatedRange(new long[] {0, 0}, new long[] {8, 2}), first));
+		Pair<FederationMap, Long> fullUnchanged = instruction.rollFedMap(fullInput, 71, 72, 73, 0, 8, FType.FULL);
+		assertEquals(FType.FULL, fullUnchanged.getLeft().getType());
+		assertEquals(1, fullUnchanged.getLeft().getSize());
+		Pair<FederationMap, Long> fullSplit = instruction.rollFedMap(fullInput, 71, 72, 73, 1, 8, FType.FULL);
+		assertEquals(FType.FULL, fullSplit.getLeft().getType());
+		assertEquals(2, fullSplit.getLeft().getSize());
+
+		List<Pair<FederatedRange, FederatedData>> colInput = List.of(
+			Pair.of(new FederatedRange(new long[] {0, 0}, new long[] {8, 1}), first),
+			Pair.of(new FederatedRange(new long[] {0, 1}, new long[] {8, 2}), second));
+		Pair<FederationMap, Long> colSplit = instruction.rollFedMap(colInput, 71, 72, 73, 1, 8, FType.COL);
+		assertEquals(FType.COL, colSplit.getLeft().getType());
+		assertEquals(4, colSplit.getLeft().getSize());
 	}
 
 	@Test

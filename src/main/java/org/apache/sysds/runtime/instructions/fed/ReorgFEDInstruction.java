@@ -227,15 +227,16 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 					true);
 			Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
 
+			FederationMap outputMap = mo1.getFedMapping().copyWithNewID(fr1.getID());
 			if (mo1.isFederated(FType.ROW))
-				mo1.getFedMapping().reverseFedMap();
+				outputMap.reverseFedMap();
 
 			// derive output federated mapping
 			MatrixObject out = ec.getMatrixObject(output);
 			long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
 			out.getDataCharacteristics().setDimension(mo1.getNumRows(), mo1.getNumColumns())
 					.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
-			out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()));
+			out.setFedMapping(outputMap);
 
 			optionalForceLocal(out);
 		} else if (instOpcode.equalsIgnoreCase(Opcodes.ROLL.toString())) {

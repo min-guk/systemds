@@ -252,6 +252,7 @@ public final class PlacementIdentity {
 	/** Exact layout category retained below a coarse candidate emission. */
 	public enum PlacementLayoutKind {
 		LOCAL,
+		SOURCE_LINEAGE,
 		DURABLE_MAP,
 		NATIVE_LINEAGE
 	}
@@ -298,6 +299,11 @@ public final class PlacementIdentity {
 					|| emissionState.placementState().output()
 						!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT))
 				throw new IllegalArgumentException("LOCAL realization must be an unanchored LOUT emission");
+			if(layoutKind == PlacementLayoutKind.SOURCE_LINEAGE
+				&& (durableAnchor != null || nativeLineage == null
+					|| emissionState.placementState().output()
+						!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT))
+				throw new IllegalArgumentException("SOURCE_LINEAGE realization must be an unanchored FOUT route");
 			if(layoutKind == PlacementLayoutKind.DURABLE_MAP
 				&& (durableAnchor == null || nativeLineage != null
 					|| emissionState.placementState().output()
@@ -319,6 +325,12 @@ public final class PlacementIdentity {
 		public static PlacementRealizationKey durable(PlacementEmissionState emission,
 			DurableAnchorKey anchor) {
 			return new PlacementRealizationKey(emission, PlacementLayoutKind.DURABLE_MAP, anchor, null);
+		}
+
+		public static PlacementRealizationKey sourceLineage(PlacementEmissionState emission,
+			String sourceIdentity) {
+			return new PlacementRealizationKey(emission, PlacementLayoutKind.SOURCE_LINEAGE, null,
+				requireText(sourceIdentity, "sourceIdentity"));
 		}
 
 		public static PlacementRealizationKey nativeLineage(PlacementEmissionState emission,
@@ -422,6 +434,31 @@ public final class PlacementIdentity {
 			return false;
 		List<String> leftLayout = physicalWorkerPoolLayout(left);
 		return !leftLayout.isEmpty() && leftLayout.equals(physicalWorkerPoolLayout(right));
+	}
+
+	/**
+	 * Same native worker residency without claiming ROW/COL partition extents are unchanged.
+	 * This is intentionally weaker than {@link #samePhysicalWorkerPool(DurableAnchorKey, DurableAnchorKey)}
+	 * and is used only when a runtime FED instruction keeps the worker endpoints but recomputes ranges.
+	 */
+	public static boolean samePhysicalWorkerEndpoints(DurableAnchorKey left, DurableAnchorKey right) {
+		Objects.requireNonNull(left, "left anchor");
+		Objects.requireNonNull(right, "right anchor");
+		if(left.fType() != right.fType() || left.fType() == FType.PART || left.fType() == FType.OTHER)
+			return false;
+		List<String> leftEndpoints = physicalWorkerEndpoints(left);
+		return !leftEndpoints.isEmpty() && leftEndpoints.equals(physicalWorkerEndpoints(right));
+	}
+
+	private static List<String> physicalWorkerEndpoints(DurableAnchorKey anchor) {
+		List<String> endpoints = new ArrayList<>(anchor.partitions().size());
+		for(AnchorPartition partition : anchor.partitions()) {
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			if(worker == null || worker.isBlank())
+				return List.of();
+			endpoints.add(worker);
+		}
+		return endpoints.stream().distinct().sorted().toList();
 	}
 
 	private static List<String> physicalWorkerPoolLayout(DurableAnchorKey anchor) {
@@ -775,11 +812,12 @@ public final class PlacementIdentity {
 		// utility class
 	}
 
-	private static String cachedSignature(Object identity) {
+	/** Package peers may reuse this cache only for one immutable structural serialization. */
+	static String cachedSignature(Object identity) {
 		return NORMALIZED_SIGNATURES.get().get(identity);
 	}
 
-	private static String rememberSignature(Object identity, String signature) {
+	static String rememberSignature(Object identity, String signature) {
 		NORMALIZED_SIGNATURES.get().put(identity, signature);
 		return signature;
 	}

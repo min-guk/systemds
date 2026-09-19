@@ -103,7 +103,7 @@ public class RuleBasicsTest {
 
     OpCaps caps = rule.caps(sig, Arrays.asList((FType) null), UNKNOWN_SHAPE);
     assertEquals(ExecType.CP, caps.exec());
-    assertEquals(ReasonCode.NOT_FEDERATED_INPUTS, caps.reason());
+    assertEquals(ReasonCode.MISSING_IN_FTYPE, caps.reason());
   }
 
   @Test

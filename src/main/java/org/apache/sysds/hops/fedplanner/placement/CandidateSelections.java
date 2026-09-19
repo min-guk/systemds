@@ -247,12 +247,7 @@ public final class CandidateSelections {
 			}
 			this.consumers = List.copyOf(indexedConsumers);
 			this.physicalEffectsByReceipt = Collections.unmodifiableMap(physicalEffects);
-			Set<CompiledHopKey> realizationDependent =
-				Collections.newSetFromMap(new IdentityHashMap<>());
-			for(IndexedConsumer consumer : this.consumers)
-				if(consumerHasRealizationDependencies(analysis, consumer.key()))
-					realizationDependent.add(consumer.key());
-			this.realizationDependentConsumers = Collections.unmodifiableSet(realizationDependent);
+			this.realizationDependentConsumers = realizationDependentConsumers(analysis);
 			Map<CompiledHopKey,List<IndexedConsumer>> dependencies = new IdentityHashMap<>();
 			Set<ComponentDependency> componentDependencies = new TreeSet<>();
 			for(IndexedConsumer consumer : this.consumers) {
@@ -1158,8 +1153,9 @@ public final class CandidateSelections {
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible =
 			feasibleVariants(analysis, authorityGraph, actionUniverse, assignment, false, false);
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> result = new IdentityHashMap<>();
+		Set<CompiledHopKey> realizationDependent = realizationDependentConsumers(analysis);
 		for(Map.Entry<CompiledHopKey,List<CandidateSelectionReceipt>> entry : feasible.entrySet()) {
-			if(consumerHasRealizationDependencies(analysis, entry.getKey())) {
+			if(realizationDependent.contains(entry.getKey())) {
 				result.put(entry.getKey(), entry.getValue());
 				continue;
 			}
@@ -1177,28 +1173,35 @@ public final class CandidateSelections {
 	}
 
 	private static boolean hasRealizationDependencies(PlacementAnalysis analysis) {
-		return !analysis.logicalTransientInputsInCanonicalOrder().isEmpty()
-			|| !analysis.logicalBoundaryRealizations().relations().isEmpty()
-			|| analysis.candidateRuleFacts().orderedFacts().stream()
-				.flatMap(fact -> fact.allowedEmissionFacts().stream())
-				.flatMap(emission -> emission.realizations().stream())
-				.flatMap(realization -> realization.supportClauses().stream())
-				.anyMatch(clause -> !clause.inputBindings().isEmpty());
+		return !realizationDependentConsumers(analysis).isEmpty();
 	}
 
 	private static boolean consumerHasRealizationDependencies(PlacementAnalysis analysis,
 		CompiledHopKey consumer) {
-		if(analysis.logicalTransientInputsInCanonicalOrder().stream().anyMatch(fact ->
-			fact.sourceWrite() == consumer || fact.targetRead() == consumer))
-			return true;
-		if(analysis.logicalBoundaryRealizations().relations().stream().anyMatch(relation ->
-			relation.source() == consumer || relation.target() == consumer))
-			return true;
-		return analysis.candidateRuleFacts().orderedFactsForParent(consumer).stream()
-			.flatMap(fact -> fact.allowedEmissionFacts().stream())
-			.flatMap(emission -> emission.realizations().stream())
-			.flatMap(realization -> realization.supportClauses().stream())
-			.anyMatch(clause -> !clause.inputBindings().isEmpty());
+		return realizationDependentConsumers(analysis).contains(consumer);
+	}
+
+	private static Set<CompiledHopKey> realizationDependentConsumers(PlacementAnalysis analysis) {
+		Set<CompiledHopKey> dependent = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(var fact : analysis.logicalTransientInputsInCanonicalOrder()) {
+			dependent.add(fact.sourceWrite());
+			dependent.add(fact.targetRead());
+		}
+		for(var relation : analysis.logicalBoundaryRealizations().relations()) {
+			dependent.add(relation.source());
+			dependent.add(relation.target());
+		}
+		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(var realization : emission.realizations())
+					for(var clause : realization.supportClauses()) {
+						if(clause.inputBindings().isEmpty())
+							continue;
+						dependent.add(fact.key().parentOccurrence());
+						for(CandidateRealizationReference support : clause.requiredInputSupport())
+							dependent.add(support.rule().parentOccurrence());
+					}
+		return Collections.unmodifiableSet(dependent);
 	}
 
 	/**
@@ -1226,11 +1229,10 @@ public final class CandidateSelections {
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible,
 		PartialReachabilityIndex reachabilityIndex) {
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> maximal = new LinkedHashMap<>();
+		Set<CompiledHopKey> realizationDependent = reachabilityIndex == null
+			? realizationDependentConsumers(analysis) : reachabilityIndex.realizationDependentConsumers;
 		for(Map.Entry<CompiledHopKey,List<CandidateSelectionReceipt>> entry : feasible.entrySet()) {
-			boolean realizationDependent = reachabilityIndex == null
-				? consumerHasRealizationDependencies(analysis, entry.getKey())
-				: reachabilityIndex.realizationDependentConsumers.contains(entry.getKey());
-			if(realizationDependent) {
+			if(realizationDependent.contains(entry.getKey())) {
 				maximal.put(entry.getKey(), entry.getValue());
 				continue;
 			}
@@ -1968,13 +1970,6 @@ public final class CandidateSelections {
 		private final Map<CandidateSelectionReceipt,Integer> candidateRanks = new IdentityHashMap<>();
 		private final Map<CandidateSelectionReceipt,Integer> presentInputCounts =
 			new IdentityHashMap<>();
-		private final Map<CandidateSelectionReceipt,Integer> relocationEffectRanks =
-			new IdentityHashMap<>();
-		private final Map<CompiledHopKey,Long> relocationEffectMultipliers =
-			new IdentityHashMap<>();
-		private final Map<Long,Integer> relocationScoreCache;
-		private long currentRelocationEffectKey;
-		private long relocationScoreCacheHits;
 		private Selection best;
 		private boolean bestCanonicalized;
 		private int bestPhysicalEmissionCount = Integer.MAX_VALUE;
@@ -2033,28 +2028,6 @@ public final class CandidateSelections {
 			}
 			this.fixedConsumers = List.copyOf(fixed);
 			this.variableConsumers = List.copyOf(variable);
-			long rawProduct = 1;
-			long effectProduct = 1;
-			long multiplier = 1;
-			boolean encodable = true;
-			for(CompiledHopKey consumer : variableConsumers) {
-				List<CandidateSelectionReceipt> rows = variants.get(consumer);
-				rawProduct = saturatedProduct(rawProduct, rows.size());
-				Map<Object,Integer> effects = new LinkedHashMap<>();
-				for(CandidateSelectionReceipt receipt : rows)
-					relocationEffectRanks.put(receipt, effects.computeIfAbsent(
-						relocationProblems.exactScoringEffect(receipt), ignored -> effects.size()));
-				effectProduct = saturatedProduct(effectProduct, effects.size());
-				if(encodable) {
-					relocationEffectMultipliers.put(consumer, multiplier);
-					if(multiplier > Long.MAX_VALUE / effects.size())
-						encodable = false;
-					else
-						multiplier *= effects.size();
-				}
-			}
-			this.relocationScoreCache = encodable && effectProduct < rawProduct
-				? new HashMap<>() : null;
 			this.interactionComponents = exactInteractionComponents();
 			if(FederatedPlannerTrace.isEnabled()
 				&& (searchId <= 4 || (searchId & (searchId - 1L)) == 0L)) {
@@ -2086,8 +2059,6 @@ public final class CandidateSelections {
 			List<CompiledHopKey> selectedVariables = new ArrayList<>(variableConsumers.size());
 			try {
 				for(List<CompiledHopKey> component : interactionComponents) {
-					if(relocationScoreCache != null)
-						relocationScoreCache.clear();
 					ComponentSearch componentSearch = new ComponentSearch(component);
 					componentSearch.solve(0);
 					List<CandidateSelectionReceipt> winner = componentSearch.requireBest();
@@ -2163,19 +2134,7 @@ public final class CandidateSelections {
 					return;
 				}
 				evaluatedLeaves++;
-				Integer cachedRelocation = relocationScoreCache == null ? null
-					: relocationScoreCache.get(currentRelocationEffectKey);
-				int relocationMaterializations;
-				if(cachedRelocation == null) {
-					relocationMaterializations = relocationScorer.minimumPhysicalEmissionCount();
-					if(relocationScoreCache != null)
-						relocationScoreCache.put(currentRelocationEffectKey,
-							relocationMaterializations);
-				}
-				else {
-					relocationScoreCacheHits++;
-					relocationMaterializations = cachedRelocation;
-				}
+				int relocationMaterializations = relocationScorer.minimumPhysicalEmissionCount();
 				if(relocationMaterializations == Integer.MAX_VALUE) {
 					rejected[2]++;
 					if(FederatedPlannerTrace.isEnabled() && rejected[2] == 1)
@@ -2341,17 +2300,9 @@ public final class CandidateSelections {
 			Integer action = foutEmissionIds.get(receipt);
 			if(action != null && foutEmissionRefs[action]++ == 0)
 				foutEmissionCount++;
-			Long effectMultiplier = relocationEffectMultipliers.get(consumer);
-			if(effectMultiplier != null)
-				currentRelocationEffectKey = Math.addExact(currentRelocationEffectKey,
-					Math.multiplyExact(effectMultiplier, relocationEffectRanks.get(receipt)));
 		}
 
 		private void pop(CompiledHopKey consumer, CandidateSelectionReceipt receipt) {
-			Long effectMultiplier = relocationEffectMultipliers.get(consumer);
-			if(effectMultiplier != null)
-				currentRelocationEffectKey = Math.subtractExact(currentRelocationEffectKey,
-					Math.multiplyExact(effectMultiplier, relocationEffectRanks.get(receipt)));
 			relocationScorer.deselectReceipt(receipt);
 			localMaterializationScorer.deselectReceipt(receipt);
 			CandidateSelectionReceipt removed = selectedByConsumer.remove(consumer);
@@ -2421,8 +2372,6 @@ public final class CandidateSelections {
 					"id=" + searchId + " leaves=" + evaluatedLeaves
 						+ " physical=" + bestPhysicalEmissionCount
 						+ " lowerBound=" + physicalEmissionLowerBound
-						+ " relocationCache=" + (relocationScoreCache == null ? "disabled"
-							: relocationScoreCache.size() + "/" + relocationScoreCacheHits)
 						+ " incumbents=" + incumbentMaterializations);
 			return best;
 		}

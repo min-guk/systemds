@@ -26,6 +26,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
+import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -38,7 +40,7 @@ public class CampaignBG014B13OtherMatrixScalarRuleFactRedTest {
 	@Test
 	public void b13OtherMatrixScalarPublishesFedFoutOtherRuleFactAndLegalState() throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile("B-13");
-		String before = PlacementGraphFingerprint.capture(program);
+		String before = PlacementGraphFingerprint.captureProgramAuthority(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		HopOccurrenceProjection y = soleBinaryPlusOccurrence(analysis);
 		Node yNode = analysis.graph().node(y.key()).orElseThrow(AssertionError::new);
@@ -56,13 +58,31 @@ public class CampaignBG014B13OtherMatrixScalarRuleFactRedTest {
 		Assert.assertEquals(FType.OTHER, fact.capability().nativeFoutFType());
 		Assert.assertEquals(ReasonCode.OK, fact.capability().reasonCode());
 		Assert.assertEquals(List.of(FType.OTHER), fact.profile().producerOutputs());
+		List<CandidateRuleFact> sourceFacts = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(candidate -> "literal-federated-source".equals(candidate.capability().detail()))
+			.filter(candidate -> candidate.profile().producerOutputs().equals(List.of(FType.OTHER)))
+			.toList();
+		Assert.assertFalse("B13 must retain its literal OTHER source route", sourceFacts.isEmpty());
+		Assert.assertTrue("A literal OTHER source is executable without being promoted to a durable/native seed",
+			sourceFacts.stream().flatMap(candidate -> candidate.allowedEmissionFacts().stream())
+				.flatMap(emission -> emission.realizations().stream())
+				.anyMatch(realization -> realization.key().layoutKind() == PlacementLayoutKind.SOURCE_LINEAGE
+					&& realization.key().durableAnchor() == null
+					&& realization.supportClauses().stream()
+						.allMatch(clause -> clause.nativeWorkerPoolWitness() == null)));
+		var selected = new FedAllPlacementAdapter().select(analysis);
+		var receipt = selected.selectedCandidateSelections().stream()
+			.filter(candidate -> candidate.rule().parentOccurrence() == y.key())
+			.findFirst().orElseThrow(AssertionError::new);
+		Assert.assertEquals("FedAll must execute B13 through its source-rooted route",
+			PlacementLayoutKind.SOURCE_LINEAGE, receipt.realization().key().layoutKind());
 		Assert.assertTrue("B13 Y OTHER repair must not create durable relocations",
 			analysis.graph().relocationActions().stream().noneMatch(action ->
 				action.key().sourceValueVersion().equals(yNode.valueVersion())
 					|| action.obligations().stream().anyMatch(obligation ->
 						obligation.consumer().equals(y.key()))));
 		Assert.assertEquals("B13 inspection mutated the compiled graph", before,
-			PlacementGraphFingerprint.capture(program));
+			PlacementGraphFingerprint.captureProgramAuthority(program));
 	}
 
 	private static HopOccurrenceProjection soleBinaryPlusOccurrence(PlacementAnalysis analysis) {

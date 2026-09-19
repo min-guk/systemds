@@ -115,6 +115,36 @@ public class LogicalBoundaryRealizationsTest {
 	}
 
 	@Test
+	public void completeBoundaryAssignmentSetMatchesIndependentConjunctiveOracle() {
+		Fixture f = new Fixture();
+		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
+		var relation = new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, closed);
+		List<DurableAnchorKey> pools = List.of(POOL_A, POOL_B);
+		List<String> expected = new ArrayList<>();
+		List<String> actual = new ArrayList<>();
+		for(int argumentPool = 0; argumentPool < pools.size(); argumentPool++)
+			for(int writerPool = 0; writerPool < pools.size(); writerPool++)
+				for(int readerPool = 0; readerPool < pools.size(); readerPool++) {
+					Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
+					selected.put(f.argument, receipt(closed, f.argument, pools.get(argumentPool)));
+					selected.put(f.writer, receipt(closed, f.writer, pools.get(writerPool)));
+					selected.put(f.reader, receipt(closed, f.reader, pools.get(readerPool)));
+					String signature = argumentPool + "/" + writerPool + "/" + readerPool;
+					boolean independentlyLegal = readerPool == argumentPool && readerPool == writerPool;
+					if(independentlyLegal)
+						expected.add(signature);
+					if(relation.canStillBeCompatible(Map.of(), selected, Map.of()))
+						actual.add(signature);
+				}
+
+		Assert.assertEquals("fixture must enumerate all 2^3 exact source/reader pool assignments", 8,
+			pools.size() * pools.size() * pools.size());
+		Assert.assertEquals("argument + ordinary writer are conjunctive; only one common pool is legal",
+			List.of("0/0/0", "1/1/1"), expected);
+		Assert.assertEquals("boundary relation changed the complete legal assignment set", expected, actual);
+	}
+
+	@Test
 	public void missingOneSourceDoesNotAuthorizePublishedNativeReader() {
 		Fixture f = new Fixture();
 		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
