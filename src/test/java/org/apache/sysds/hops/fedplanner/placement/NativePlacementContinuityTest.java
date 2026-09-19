@@ -696,11 +696,61 @@ public class NativePlacementContinuityTest {
 		Ref root = full.unary("root", OpOp1.ABS, loop, false);
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 
+		NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
 		Assert.assertNotNull("A cycle remains grounded when one complete AND alternative reaches direct ground",
-			full.resolver(metrics, 0, 0).proveCandidate(full.reference(root,
+			resolver.proveCandidate(full.reference(root,
 				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
 		Assert.assertTrue("a self-loop must keep the cyclic SCC fallback",
 			metrics.snapshot().cyclicProofGraphs() > 0);
+	}
+
+	@Test
+	public void exactAcyclicDirectDagMatchesLegacyProofLists() {
+		List<DirectDagDifferentialCase> cases = new ArrayList<>();
+
+		Fixture diamond = new Fixture(FType.BROADCAST);
+		Ref diamondSeed = diamond.source("seed", anchor(FType.BROADCAST, "worker1:8001", 0, 50));
+		Ref left = diamond.logicalRead("left");
+		Ref right = diamond.logicalRead("right");
+		diamond.reaching.put(left.key, List.of(diamondSeed.key));
+		diamond.reaching.put(right.key, List.of(diamondSeed.key));
+		Ref diamondRoot = diamond.binary("root", OpOp2.PLUS, left, right, false);
+		DurableAnchorKey distinctSeed = new DurableAnchorKey("alternate-seed", FType.BROADCAST,
+			diamondSeed.anchor.partitions());
+		cases.add(new DirectDagDifferentialCase("diamond-distinct-seed", diamond,
+			diamond.reference(diamondRoot, twoBroadcastInputs()), distinctSeed, true));
+
+		Fixture deadSibling = new Fixture(FType.BROADCAST);
+		Ref deadGround = deadSibling.source("ground",
+			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
+		Ref dead = deadSibling.read("dead");
+		Ref choice = deadSibling.logicalRead("choice");
+		deadSibling.inheritAnchor(choice, deadGround.anchor);
+		deadSibling.reaching.put(choice.key, List.of(dead.key));
+		Ref deadRoot = deadSibling.unary("root", OpOp1.ABS, choice, false);
+		cases.add(new DirectDagDifferentialCase("dead-sibling", deadSibling,
+			deadSibling.reference(deadRoot, List.of(CandidateInputState.present(FType.BROADCAST))),
+			deadGround.anchor, true));
+
+		Fixture repeated = new Fixture(FType.BROADCAST);
+		Ref repeatedSeed = repeated.source("seed",
+			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
+		Ref repeatedRoot = repeated.binary("root", OpOp2.PLUS, repeatedSeed, repeatedSeed, false);
+		cases.add(new DirectDagDifferentialCase("repeated-operand-positions", repeated,
+			repeated.reference(repeatedRoot, twoBroadcastInputs()), repeatedSeed.anchor, true));
+
+		Fixture poolMismatch = new Fixture(FType.BROADCAST);
+		Ref expectedPool = poolMismatch.source("expected",
+			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
+		Ref foreignPool = poolMismatch.source("foreign",
+			anchor(FType.BROADCAST, "worker2:8002", 0, 50));
+		Ref mismatchedRoot = poolMismatch.binary("root", OpOp2.PLUS,
+			expectedPool, foreignPool, false);
+		cases.add(new DirectDagDifferentialCase("ground-loss-pool-mismatch", poolMismatch,
+			poolMismatch.reference(mismatchedRoot, twoBroadcastInputs()), expectedPool.anchor, false));
+
+		for(DirectDagDifferentialCase testCase : cases)
+			assertDirectDagMatchesLegacy(testCase);
 	}
 
 	@Test
@@ -1508,6 +1558,35 @@ public class NativePlacementContinuityTest {
 	}
 
 	private record Ref(CompiledHopKey key, Hop hop, DurableAnchorKey anchor) { }
+	private record DirectDagDifferentialCase(String name, Fixture fixture,
+		CandidateRealizationReference root, DurableAnchorKey externalSeed,
+		boolean expectsProof) { }
+
+	private static List<CandidateInputState> twoBroadcastInputs() {
+		return List.of(CandidateInputState.present(FType.BROADCAST),
+			CandidateInputState.present(FType.BROADCAST));
+	}
+
+	private static void assertDirectDagMatchesLegacy(DirectDagDifferentialCase testCase) {
+		SearchSpaceMetrics directMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity direct = testCase.fixture.resolver(directMetrics, 0, 0);
+		List<NativePlacementContinuity.NativeContinuityProof> actual =
+			direct.proveCandidateAlternatives(testCase.root, testCase.externalSeed);
+		NativePlacementContinuity legacy = testCase.fixture.resolver(new SearchSpaceMetrics(), 0, 0);
+		legacy.disableDirectDagForTesting();
+		List<NativePlacementContinuity.NativeContinuityProof> oracle =
+			legacy.proveCandidateAlternatives(testCase.root, testCase.externalSeed);
+		Assert.assertEquals(testCase.name + " ordered proof list", oracle, actual);
+		Assert.assertEquals(testCase.name + " proof presence",
+			testCase.expectsProof, !actual.isEmpty());
+		Assert.assertTrue(testCase.name + " external seed attachment", actual.stream()
+			.allMatch(proof -> proof.externalSeed().equals(testCase.externalSeed)));
+		SearchSpaceMetrics.AttributionSnapshot attribution = directMetrics.attributionSnapshot();
+		Assert.assertTrue(testCase.name + " direct evaluation is grounding work",
+			attribution.phase(SearchSpaceMetrics.Phase.PROOF_GROUNDING).calls() > 0);
+		Assert.assertEquals(testCase.name + " direct evaluation constructs no overlay graph", 0,
+			attribution.phase(SearchSpaceMetrics.Phase.PROOF_OVERLAY).calls());
+	}
 
 	private static NativePlacementContinuity.NativeContinuityProof bareProof(String id) {
 		DurableAnchorKey seed = new DurableAnchorKey("seed-" + id, FType.FULL,

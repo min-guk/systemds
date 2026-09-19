@@ -119,6 +119,7 @@ final class NativePlacementContinuity {
 	private final Map<CandidateSupportQueryKey,SupportMemoEntry> completedSupportMemo;
 	private long supportMemoRetainedTemplates;
 	private long supportMemoRetainedEstimatedBytes;
+	private boolean directDagEnabled = true;
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
 		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
@@ -533,6 +534,11 @@ final class NativePlacementContinuity {
 				metrics.finishPhase(SearchSpaceMetrics.Phase.CONTEXT_OBSERVER, observerStarted);
 			}
 		}
+		if(directDagEnabled) {
+			ComputedCandidateSupport direct = computeDirectAcyclicSupport(source, witness);
+			if(direct != null)
+				return direct;
+		}
 		int sourceHandle = candidateHandle(source);
 		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source,
 			sourceHandle, witness, true);
@@ -646,6 +652,170 @@ final class NativePlacementContinuity {
 					supportStarted);
 		}
 	}
+
+	/**
+	 * Solves the exact-topology acyclic case without projecting every topology row
+	 * into a {@link SelectedCandidateProof}. A completed state contains only the
+	 * facts its owners need, so a shared diamond dependency is evaluated once per
+	 * query. Returning {@code null} is a fail-closed request for the legacy solver:
+	 * it is used for template roots and for every detected back-edge.
+	 */
+	private ComputedCandidateSupport computeDirectAcyclicSupport(
+		CandidateRealizationReference source, NativePoolWitness witness) {
+		int sourceHandle = candidateHandle(source);
+		CandidateTopology rootTopology = candidateTopology(source.rule().parentOccurrence(), witness);
+		if(!rootTopology.rowsByHandle.containsKey(sourceHandle))
+			return null;
+		DirectDagTraversal traversal = new DirectDagTraversal(source.rule().parentOccurrence(),
+			source, sourceHandle);
+		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source,
+			sourceHandle, witness, true);
+		SearchSpaceMetrics.PhaseToken groundingStarted = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_GROUNDING);
+		DirectCandidateResult rootResult;
+		try {
+			rootResult = evaluateDirectCandidateState(root, true, traversal);
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_GROUNDING, groundingStarted);
+		}
+		if(traversal.fallbackRequired)
+			return null;
+		if(metrics != null) {
+			metrics.recordProofGraph(traversal.completed.size(), traversal.alternatives,
+				traversal.dependencies);
+			metrics.recordProofGraphPath(false, traversal.removedAlternatives);
+		}
+
+		SearchSpaceMetrics.PhaseToken supportStarted = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.SUPPORT_PRODUCT_RELATION_MATERIALIZATION);
+		try {
+			Set<CandidateSupportTemplate> proofs = new LinkedHashSet<>();
+			Set<List<List<CandidateRealizationInputBinding>>> expandedSupportProducts =
+				new java.util.HashSet<>();
+			long[] rawProofs = {0};
+			DurableAnchorKey outputWitness = witness.asAnchor(
+				"native-proof-output:" + source.rule().parentOccurrence().normalizedSignature());
+			if(rootResult.grounded)
+				for(DirectRootAlternative alternative : traversal.rootAlternatives) {
+					List<List<CandidateRealizationInputBinding>> immediateOptions = new ArrayList<>();
+					boolean complete = true;
+					for(DirectRootDependency dependency : alternative.dependencies) {
+						if(dependency.inputPosition < 0)
+							continue;
+						DirectCandidateResult dependencyResult = traversal.completed.get(dependency.state);
+						if(!dependencyResult.groundedReferences.isEmpty())
+							immediateOptions.add(dependencyResult.groundedReferences.stream()
+								.map(reference -> CandidateRealizationInputBinding.direct(
+									dependency.inputPosition, reference)).toList());
+						else if(!dependencyResult.directlyGrounded)
+							complete = false;
+					}
+					if(!complete)
+						continue;
+					List<List<CandidateRealizationInputBinding>> descriptor = immediateOptions.stream()
+						.map(List::copyOf).toList();
+					boolean expand = expandedSupportProducts.add(descriptor);
+					if(metrics != null)
+						metrics.recordSupportProductDescriptor(expand);
+					if(!expand)
+						continue;
+					enumerateImmediateSupports(immediateOptions, 0, new ArrayList<>(), support -> {
+						rawProofs[0]++;
+						proofs.add(new CandidateSupportTemplate(outputWitness,
+							witness.exactPartitionRanges, support));
+					});
+				}
+			List<CandidateSupportTemplate> distinct = List.copyOf(proofs);
+			if(metrics != null)
+				metrics.recordProofResult(rawProofs[0], distinct.size());
+			return new ComputedCandidateSupport(distinct,
+				Collections.unmodifiableSet(traversal.occurrences));
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(
+					SearchSpaceMetrics.Phase.SUPPORT_PRODUCT_RELATION_MATERIALIZATION,
+					supportStarted);
+		}
+	}
+
+	private DirectCandidateResult evaluateDirectCandidateState(CandidateProofState state,
+		boolean root, DirectDagTraversal traversal) {
+		DirectCandidateResult completed = traversal.completed.get(state);
+		if(completed != null)
+			return completed;
+		if(!traversal.active.add(state)) {
+			traversal.fallbackRequired = true;
+			return DirectCandidateResult.DEAD;
+		}
+		traversal.occurrences.add(state.key());
+		if(metrics != null)
+			metrics.recordTopologyOverlayEvaluation();
+		CandidateTopology topology = candidateTopology(state.key(), state.witness());
+		List<CandidateTopologyRow> rows = state.realization() == null ? topology.rows
+			: topology.rowsByHandle.getOrDefault(state.realizationHandle(), List.of());
+		boolean syntheticDirect = state.realization() == null && topology.nodeDirectGround;
+		boolean hasViable = syntheticDirect;
+		boolean grounded = syntheticDirect;
+		boolean directlyGrounded = syntheticDirect;
+		List<CandidateRealizationReference> groundedReferences = new ArrayList<>();
+		if(syntheticDirect) {
+			traversal.alternatives++;
+			if(root)
+				traversal.rootAlternatives.add(new DirectRootAlternative(List.of()));
+		}
+		for(CandidateTopologyRow row : rows) {
+			if(state.realization() == null && row.requiresPinned)
+				continue;
+			traversal.alternatives++;
+			List<DirectRootDependency> rootDependencies = root
+				? new ArrayList<>(row.dependencies.size()) : null;
+			boolean viable = true;
+			boolean alternativeGrounded = true;
+			for(CandidateDependencySkeleton skeleton : row.dependencies) {
+				CandidateRealizationReference pinned = skeleton.key == traversal.rootOccurrence
+					? traversal.rootReference : skeleton.clausePinned;
+				int pinnedHandle = skeleton.key == traversal.rootOccurrence
+					? traversal.rootHandle : skeleton.clausePinnedHandle;
+				CandidateProofState dependencyState = new CandidateProofState(skeleton.key, pinned,
+					pinnedHandle, skeleton.witness, false);
+				if(root)
+					rootDependencies.add(new DirectRootDependency(dependencyState,
+						skeleton.inputPosition));
+				traversal.dependencies++;
+				DirectCandidateResult dependencyResult = evaluateDirectCandidateState(
+					dependencyState, false, traversal);
+				// Deliberately do not short-circuit: dead siblings remain in the
+				// revision-invalidation footprint.
+				viable &= dependencyResult.viable;
+				alternativeGrounded &= dependencyResult.grounded;
+			}
+			boolean hasGroundPath = row.directGround || !row.dependencies.isEmpty();
+			alternativeGrounded &= hasGroundPath;
+			if(!viable) {
+				traversal.removedAlternatives++;
+				continue;
+			}
+			hasViable = true;
+			directlyGrounded |= row.directGround;
+			if(alternativeGrounded) {
+				grounded = true;
+				groundedReferences.add(row.reference);
+				if(root)
+					traversal.rootAlternatives.add(new DirectRootAlternative(
+						List.copyOf(rootDependencies)));
+			}
+		}
+		traversal.active.remove(state);
+		DirectCandidateResult result = new DirectCandidateResult(hasViable, grounded,
+			directlyGrounded, canonicalReferences(groundedReferences));
+		traversal.completed.put(state, result);
+		return result;
+	}
+
+	void disableDirectDagForTesting() { directDagEnabled = false; }
 
 	private static List<CandidateRealizationReference> canonicalReferences(
 		List<CandidateRealizationReference> references) {
@@ -1536,6 +1706,35 @@ final class NativePlacementContinuity {
 		private final Set<CandidateProofState> active = new java.util.HashSet<>();
 		private final List<CandidateProofState> completionOrder = new ArrayList<>();
 		private boolean cycleDetected;
+	}
+	private static final class DirectDagTraversal {
+		private final CompiledHopKey rootOccurrence;
+		private final CandidateRealizationReference rootReference;
+		private final int rootHandle;
+		private final Map<CandidateProofState,DirectCandidateResult> completed =
+			new java.util.HashMap<>();
+		private final Set<CandidateProofState> active = new java.util.HashSet<>();
+		private final Set<CompiledHopKey> occurrences =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		private final List<DirectRootAlternative> rootAlternatives = new ArrayList<>();
+		private boolean fallbackRequired;
+		private long alternatives;
+		private long dependencies;
+		private long removedAlternatives;
+
+		private DirectDagTraversal(CompiledHopKey rootOccurrence,
+			CandidateRealizationReference rootReference, int rootHandle) {
+			this.rootOccurrence = rootOccurrence;
+			this.rootReference = rootReference;
+			this.rootHandle = rootHandle;
+		}
+	}
+	private record DirectRootDependency(CandidateProofState state, int inputPosition) { }
+	private record DirectRootAlternative(List<DirectRootDependency> dependencies) { }
+	private record DirectCandidateResult(boolean viable, boolean grounded,
+		boolean directlyGrounded, List<CandidateRealizationReference> groundedReferences) {
+		private static final DirectCandidateResult DEAD =
+			new DirectCandidateResult(false, false, false, List.of());
 	}
 
 	private static final class CandidateProofState {

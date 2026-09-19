@@ -117,8 +117,12 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue(first.proofAlternativesBuilt() >= 0);
 		Assert.assertTrue(first.proofDependencyEdgesBuilt() >= 0);
 		Assert.assertTrue(first.proofRowsExamined() >= first.proofAlternativesBuilt());
-		Assert.assertEquals("dead pruning must compact each built alternative exactly once",
-			first.proofAlternativesBuilt(), first.ownerCompactionElementsScanned());
+		Assert.assertTrue("owner compaction scans cannot be negative",
+			first.ownerCompactionElementsScanned() >= 0);
+		Assert.assertTrue("only legacy-pruned alternatives may require an owner compaction scan",
+			first.ownerCompactionElementsScanned() <= first.proofAlternativesBuilt());
+		Assert.assertTrue("the direct acyclic evaluator must eliminate compaction for this fixture",
+			first.ownerCompactionElementsScanned() < first.proofAlternativesBuilt());
 		Assert.assertTrue(first.alternativesRemoved() <= first.proofAlternativesBuilt());
 		Assert.assertTrue(first.supportLeaves() >= first.uniqueProofs());
 		Assert.assertEquals(first.supportLeaves(), first.uniqueProofs() + first.duplicateProofs());
