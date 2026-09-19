@@ -1,5 +1,13 @@
 # G009 공통 기준 및 작업 분리
 
+## 2026-09-19 후속 통합 상태
+
+아래 본문은 최초 분리 당시 기록이다. 이후 correctness 채택 재설계와 unified의 DAG fast path를
+이 문서의 integration 워크스페이스에 통합했다. 현재 코드 기준은 `71c598b398`이며,
+당시 미검증 memo에 관한 문장을 이후 검증된 support memo 전체에 적용하지 않는다.
+미채택 overlay cache는 원본 unified 작업 트리에 보존하고 통합에서 제외했다.
+현재 선택 근거와 검증 범위는 [두 워크스페이스 병합 평가](G009_MERGE_REVIEW_2026-09-19.md)를 따른다.
+
 ## 문제와 확인 결과
 
 두 사용자 세션이 같은 `/home/mchoi/systemds-lm-worker-count-fix` 디렉터리를 사용했다.

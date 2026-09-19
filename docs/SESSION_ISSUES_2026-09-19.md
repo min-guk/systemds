@@ -1,5 +1,29 @@
 # Session issues — 2026-09-19
 
+## 두 워크스페이스 선택 병합 및 보고서 비판 검토
+
+- **상태**: 채택 코드 fast-forward 및 fresh 통합 검증 완료.
+- **환경/조건**: `systemds-g009-integration`, `integration/g009-baseline-20260919`.
+- **증상/문제 정의**: correctness는 채택 재설계가 미커밋이고 unified는 이를 이미 통합했지만
+  미채택 overlay cache 실험이 작업 트리에 남아 있어 단순 브랜치 merge/전체 복사로는 채택 경계를
+  정확히 표현할 수 없다. 보고서 간 내부 작업량 개선 baseline 표현도 일부 다르다.
+- **원인**: 커밋 HEAD와 작업 트리의 의미 차이, 상속한 구현을 별개 구현처럼 볼 위험,
+  최초 완료 baseline과 immediate predecessor 혼용.
+- **해결 요약**: 실제 blob/patch를 비교하고 integration을 `35d1f49507`에서 채택본
+  `71c598b398`까지 fast-forward. 두 종합 보고서와 비판적 선택표를 보존한다.
+  원본 워크스페이스 및 미커밋 cache는 수정하지 않는다.
+- **수정 파일**: 채택된 production/test/script/resource와 두 원본 보고서,
+  `docs/G009_MERGE_REVIEW_2026-09-19.md`, 이 세션 기록.
+- **의사결정 근거/원칙**: correctness를 공통 기준으로 유지하고 DAG 계산 생략만 추가 채택.
+  runtime fallback, privacy 완화, 후보 cap을 도입하지 않는다. 고 hit cache라도 시간 개선이
+  입증되지 않으면 제외한다.
+- **검증**: 26-class bounded suite 168 discovered/164 active pass/4 skip/0 failure/0 error,
+  Maven exit 0. package exit 0. two-source/local-mix/LM snapshot 모두 expected와 byte 동일.
+  diff hygiene와 shell syntax 통과. 원본 두 patch hash 및 보고서 원본 보존 확인.
+- **잔여 이슈**: 공식 Docker 반복 성능, 180초/10배 목표, 전역 completeness/termination은 OPEN.
+- **잠재 회귀 위험/감지**: DAG grounding 및 negative footprint/revision memo 회귀를 기존
+  continuity·fixed-point·독립 oracle·branch inventory 테스트로 확인한다.
+
 ## G009 search-space 계산량·중복·메모리 개선 구현
 
 - **상태**: P0–P4 제한 구현 완료. 유한 oracle·전체 selected suite·package PASS. 최종 GLM 계측 실행은
