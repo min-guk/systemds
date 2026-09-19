@@ -90,3 +90,33 @@
   `G009_SEARCH_SPACE_BRANCH_INVENTORY_REVIEW_2026-09-19.tsv`에 모두 분류했다.
 - **workload 상태**: GLM 외 ML training, P1, P2, SliceLine은 이번 작업에서 검증하지 않았으며
   모두 UNQUALIFIED다.
+
+## G009 correctness·performance 통합 기준점과 LM 동일성
+
+- **상태**: correctness의 accepted GLM 소스를 공통 base `35d1f49507` 위에 복원하고
+  `integration/g009-unified-20260919`의 `6392a7ebe7`로 고정했다. performance 전체 history는
+  겹치는 구현을 덮어쓰지 않고 기능 단위로 대조한다.
+- **환경/조건**: workspace `/home/mchoi/systemds-g009-unified`. accepted artifact
+  `/home/mchoi/systemds-g009-correctness/build/g009-redesign/final-glm-revision-support-20260919T145212+0200/`
+  의 tracked production diff SHA-256 `9009de2e...7bdc`와 통합 전 production diff가 일치했다.
+- **변경 요약**: accepted `source.patch`와 필요한 untracked metrics/test/script/docs만 복원했다.
+  `build/`, `.omx*`, 임시 POM은 포함하지 않았다. 별도 evaluator는 timeout을 강제하지 않고
+  candidate/support/proof/receipt snapshot 전체를 byte 비교하도록 추가했다.
+- **검증**: 초기 통합 gate는 96 tests, failure/error `0/0`, skip `5`; branch inventory도 PASS했다.
+  two-source snapshot SHA-256은 `4053fcd5...5c0`, LM은
+  `/home/mchoi/systemds-g009-unified/build/g009-unified/lm-baseline-6392a7e-20260919/`에서
+  `10,924 ms`, max RSS `1,354,132 KiB`, snapshot SHA-256
+  `9000bff4...51a`로 performance branch accepted LM과 byte 동일했다.
+- **성능 해석**: correctness 통합 LM 1회는 performance branch 최종 6회 중앙값
+  `18,868.5 ms`보다 42.1% 짧다. 단일 run과 다른 source 구조의 비교이므로 최종 채택 성능
+  판정은 반복 paired gate로 다시 수행한다. GLM accepted 기준은 여전히 `837.223 s`이며
+  180초 목표는 OPEN이다.
+- **잔여 이슈**: direct broadcast source index, no-op dead pruning, singleton SCC와 DAG fast path를
+  현재 structural-handle/memo 구조에 맞춰 각각 적용하고 small/LM equality 뒤 timeout-free GLM을
+  측정한다. 동일 Docker fresh JVM 3회, DP/runtime/final-plan oracle와 전역 보존 증명도 OPEN이다.
+- **잠재 회귀/감지**: memo revision footprint, root pin, occurrence identity, support OR 순서가
+  달라질 수 있다. 독립 plan-space oracle, 전체 snapshot byte 비교, revision/memo/cycle 테스트,
+  fresh manifest로 감지한다.
+- **의사결정 근거**: 합법 후보를 제거하지 않고 이미 동일 의미로 계산되는 lookup, no-op scan,
+  acyclic/SCC 작업만 줄인다. correctness의 shared topology·structural cache가 대체한 과거
+  performance 변경은 중복 이식하지 않는다.

@@ -475,7 +475,7 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 			.toList();
 	}
 
-	private static DMLProgram compileFixture() throws Exception {
+	static DMLProgram compileFixture() throws Exception {
 		String script = "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
 			+ "S=rand(rows=4,cols=2,seed=7);\n"
@@ -492,7 +492,7 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		return program;
 	}
 
-	private static DMLProgram compileFunctionFixture() throws Exception {
+	static DMLProgram compileFunctionFixture() throws Exception {
 		String script = "X=federated(addresses=list(\"worker1:8001/data/P2P2D_features.data\"),"
 			+ "ranges=list(list(0,0),list(50000,2100)));\n"
 			+ "Y=federated(addresses=list(\"worker1:8001/data/P2P2D_labels.data\"),"
@@ -529,7 +529,7 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		return program;
 	}
 
-	private static DMLProgram compileTwoFederatedSourceFixture(boolean samePhysicalPool) throws Exception {
+	static DMLProgram compileTwoFederatedSourceFixture(boolean samePhysicalPool) throws Exception {
 		String leftAddresses = "list(\"localhost:1234/A1\",\"localhost:1235/A2\")";
 		String rightAddresses = samePhysicalPool
 			? "list(\"localhost:1234/B1\",\"localhost:1235/B2\")"
