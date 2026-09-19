@@ -141,3 +141,25 @@
 - **잠재 회귀/감지**: revert 후 통합 HEAD가 clean인지 확인하고 다음 변경은 새 diff로 시작한다.
 - **의사결정 근거**: 후보 합법성은 바꾸지 않았으나, 성능 채택에는 의미 보존 외에 측정 가능한
   반복 개선도 요구한다.
+
+## 통합 구조의 no-op dead-pruning fast path 실험
+
+- **상태**: NO-GO, production/test 변경 revert.
+- **증상/원인 가설**: dead state나 graph 밖 dependency가 없는 proof graph에서도 reverse
+  dependency index, viable list 복사와 compaction을 수행한다. 제거 시작점이 없음을 먼저 scan해
+  확인하면 동일 graph를 그대로 반환할 수 있다.
+- **검증**: 기존 고비용 fallback은 유지했다. continuity, fixed-point, GlobalReceipt,
+  ProductionDecoded, IndependentPlanSpaceGeneration suite와 two-source/local-mix/LM snapshot이
+  모두 통과·byte 동일했다.
+- **성능 결과**: 4-pair LM control `10,999/11,129/11,437/11,808 ms`, current
+  `13,063/10,405/11,950/9,731 ms`; 중앙값 `11,283→11,177.5 ms`(-0.94%)이고 current가
+  빨랐던 pair는 2/4였다. RSS 중앙값은 `1,315,856→1,348,798 KiB`(+2.50%)로 악화됐다.
+- **판정/근거**: 추가 선행 scan의 비용을 상쇄하는 반복 가능한 LM 개선이 없고 메모리도
+  나빠져 채택하지 않았다. artifact는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-dead-prune-screen-r1-20260919/`에 보존한다.
+- **잔여 이슈**: singleton SCC와 DAG fast path는 dead-pruning 전체 경로보다 더 큰 SCC work를
+  직접 생략하므로 별도 평가한다.
+- **잠재 회귀/감지**: fast return은 관측 counter 계약도 바꾸므로 production과 함께 counter
+  assertion을 되돌렸다. 다음 변경 전 working tree clean을 확인했다.
+- **의사결정 근거**: 계산량 감소가 코드상 가능해도 실제 workload 시간·RSS에서 재현되지 않으면
+  최종 성능 개선으로 채택하지 않는다.
