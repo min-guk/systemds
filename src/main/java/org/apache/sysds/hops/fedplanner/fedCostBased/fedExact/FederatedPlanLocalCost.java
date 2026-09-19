@@ -12,6 +12,7 @@ import java.util.Objects;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.CandidateFormationTiming;
 import org.apache.sysds.hops.fedplanner.placement.PlacementPlanApplication;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
@@ -50,17 +51,21 @@ public final class FederatedPlanLocalCost extends AFederatedPlanner {
 		long phaseStarted = System.nanoTime();
 		long phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		CandidateFormationTiming.modelComplete();
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		CandidateFormationTiming.costSurfaceComplete();
 		FederatedPlannerTrace.logPhaseTiming("MODEL_SETUP", phaseStarted, phaseOutputStarted);
 		phaseStarted = System.nanoTime();
 		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		LocalPhysicalOptimizer.Result optimized = LocalPhysicalOptimizer.optimize(model, surface);
+		CandidateFormationTiming.optimizerComplete();
 		FederatedPlannerTrace.logPhaseTiming("OPTIMIZATION", phaseStarted, phaseOutputStarted);
 		phaseStarted = System.nanoTime();
 		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(
 			model, optimized.physicalResult());
+		CandidateFormationTiming.selectionComplete();
 		FederatedPlannerTrace.logPhaseTiming("SELECTION", phaseStarted, phaseOutputStarted);
 		return PlacementPlanApplication.complete(prog, analysis,
 			() -> trace(selection, model, surface, optimized.localStatistics()),

@@ -10,6 +10,7 @@ import java.io.BufferedWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.lang.reflect.RecordComponent;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -26,18 +27,31 @@ public class G009PlanningPerformanceEvaluatorTest {
 	private static final String BUDGET_PROPERTY = "g009.maxPlanningMillis";
 	private static final String GENERATE_PROPERTY = "g009.generateBaseline";
 	private static final String WORKLOAD_PROPERTY = "g009.workload";
+	private static final String ATTRIBUTION_PROPERTY = "g009.attributionOutput";
 
 	@Test
 	public void planningOutputMatchesExpectedSnapshotWithinBudget() throws Exception {
 		String workload = System.getProperty(WORKLOAD_PROPERTY, "glm").trim();
 		DMLProgram program = compileWorkload(workload);
+		String attribution = System.getProperty(ATTRIBUTION_PROPERTY, "").trim();
+		SearchSpaceMetrics metrics = attribution.isEmpty() ? null : new SearchSpaceMetrics();
 		long started = System.nanoTime();
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		long planningMillis = (System.nanoTime() - started) / 1_000_000L;
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder(null, metrics).buildAnalysis(program);
+		long elapsedNanos = System.nanoTime() - started;
+		long planningMillis = elapsedNanos / 1_000_000L;
 
 		Path output = requiredPath(OUTPUT_PROPERTY);
 		createParent(output);
+		long exportStarted = System.nanoTime();
 		writeSnapshot(analysis, output);
+		long exportNanos = System.nanoTime() - exportStarted;
+		if(metrics != null) {
+			Path attributionOutput = Path.of(attribution);
+			createParent(attributionOutput);
+			Files.writeString(attributionOutput, attributionJson(metrics.snapshot(),
+				metrics.attributionSnapshot(), elapsedNanos, exportNanos),
+				StandardCharsets.UTF_8);
+		}
 		String timing = System.getProperty(TIMING_PROPERTY, "").trim();
 		if(!timing.isEmpty()) {
 			Path timingOutput = Path.of(timing);
@@ -66,6 +80,33 @@ public class G009PlanningPerformanceEvaluatorTest {
 		}
 		System.out.println("G009_WORKLOAD=" + workload);
 		System.out.println("G009_PLANNING_MILLIS=" + planningMillis);
+	}
+
+	private static String attributionJson(SearchSpaceMetrics.Snapshot snapshot,
+		SearchSpaceMetrics.AttributionSnapshot attribution, long elapsedNanos,
+		long exportNanos)
+		throws ReflectiveOperationException {
+		StringBuilder json = new StringBuilder("{\n  \"schema\": \"g009-search-attribution-v2\",\n");
+		json.append("  \"partitionSemantics\": \"exclusive-adds-to-analysis-inclusive\",\n");
+		json.append("  \"cpuSemantics\": \"current-thread-minus-one-unknown\",\n");
+		json.append("  \"allocationSemantics\": \"current-thread-coarse-minus-one-unknown\",\n");
+		json.append("  \"elapsedNanos\": ").append(elapsedNanos).append(",\n");
+		json.append("  \"observerOverheadFraction\": ")
+			.append(elapsedNanos == 0 ? 0.0
+				: (double) attribution.phase(SearchSpaceMetrics.Phase.CONTEXT_OBSERVER)
+					.inclusiveWallNanos() / elapsedNanos).append(",\n");
+		json.append("  \"exportNanos\": ").append(exportNanos).append(",\n");
+		json.append("  \"metrics\": {\n");
+		RecordComponent[] fields = SearchSpaceMetrics.Snapshot.class.getRecordComponents();
+		for(int index = 0; index < fields.length; index++) {
+			RecordComponent field = fields[index];
+			json.append("    \"").append(field.getName()).append("\": ")
+				.append(field.getAccessor().invoke(snapshot))
+				.append(index + 1 == fields.length ? "\n" : ",\n");
+		}
+		json.append("  },\n");
+		SearchSpaceMetricsEvaluatorTest.appendAttribution(json, attribution);
+		return json.append("}\n").toString();
 	}
 
 	private static DMLProgram compileWorkload(String workload) throws Exception {

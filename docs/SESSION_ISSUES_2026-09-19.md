@@ -405,3 +405,20 @@
   포함하고, future multi-fixed context는 cache를 우회한다. immutable ordered alternative/dependency list만
   재사용하며 revision 간에는 cache를 넘기지 않는다. small/LM exact snapshot과 hit/retained-size를 확인한
   뒤 반복 wall/RSS가 함께 개선될 때만 GLM으로 확대한다.
+
+## G009 P0 고정 candidate-E2E baseline 및 attribution
+
+- **상태**: 구현·로컬 검증 완료. Docker GLM 실행은 대기 중이며 성능 개선 주장은 하지 않는다.
+- **문제 정의**: 기존 planner 계측은 physical normalization 이전부터 final verification, registry 갱신,
+  receipt handoff까지의 고정 production 경계를 포함하지 않았고 단계별 비용도 배타적으로 설명하지 못했다.
+- **해결 요약**: `CandidateFormationTiming`으로 고정 E2E 경계와 additive/exclusive P0 phase attribution을
+  추가했다. token 기반 same-thread LIFO scope로 callback 중 재진입 compile의 성공·실패 cleanup을 보존한다.
+  baseline harness는 전체 관련 class tree와 JAR coherence를 확인하며, 공식 경로는 stage-owned GLM runner와
+  validator proof가 clean HEAD/tree, 실행 JAR, descriptor 및 모든 receipt/log digest에 결속될 때만 승인한다.
+- **검증**: root 최종 검증에서 selected tests 74개 통과, 기존 intended skip 1개, package, `bash -n`,
+  `git diff --check`, prepare artifact 검증이 모두 통과했다.
+- **잔여 이슈**: 공식 Docker GLM은 아직 실행하지 않았다. 따라서 baseline wall time과 1/10 달성 여부는
+  미확정이며 현재 변경은 측정·귀속 기반만 제공한다.
+- **잠재 회귀 위험**: nested compile의 scope 순서 위반 또는 stage/runtime identity drift는 fail-closed로
+  중단된다. timing partition/order tests와 strict runner/validator contract로 감지한다.
+- **의사결정 근거**: planner/correctness 계약을 변경하지 않고 관측 경계와 검증 harness만 강화했다.

@@ -81,6 +81,7 @@ import org.apache.sysds.hops.codegen.SpoofCompiler.PlanCachePolicy;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
+import org.apache.sysds.hops.fedplanner.placement.CandidateFormationTiming;
 import org.apache.sysds.hops.fedplanner.placement.PlannerPipelineTiming;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
@@ -363,7 +364,11 @@ public class DMLTranslator
 			return;
 		}
 			synchronized(dmlp) {
-			long commonPreparationStarted = System.nanoTime();
+			boolean collectCandidateTiming = DMLScript.STATISTICS || FederatedPlannerTrace.isEnabled();
+			long commonPreparationStarted = collectCandidateTiming ? System.nanoTime() : 0L;
+			CandidateFormationTiming.Scope candidateTimingScope = collectCandidateTiming ?
+				CandidateFormationTiming.begin(commonPreparationStarted) : null;
+			try {
 			// The generic dynamic rewrite pass runs before final memory estimates are
 			// available.  Normalize lowering-level physical choices only now, while
 			// placement is still unbound but dimensions and memory costs are final.
@@ -379,7 +384,11 @@ public class DMLTranslator
 			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 			org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes =
 				new org.apache.sysds.hops.ipa.FunctionCallSizeInfo(fgraph);
+			if(collectCandidateTiming)
+				CandidateFormationTiming.commonPreparationComplete();
 			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
+			if(collectCandidateTiming)
+				CandidateFormationTiming.analysisComplete();
 
 			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
 			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
@@ -393,7 +402,10 @@ public class DMLTranslator
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
 			AFederatedPlanner implementation = Objects.requireNonNull(
 				FederatedPlannerFactory.create(fedPlanner), "compiled federated planner implementation");
-			long commonPreparationNanos = System.nanoTime() - commonPreparationStarted;
+			if(collectCandidateTiming)
+				CandidateFormationTiming.plannerSetupComplete();
+			long commonPreparationNanos = collectCandidateTiming ?
+				System.nanoTime() - commonPreparationStarted : 0L;
 			FederatedPlannerTrace.beginInvocation();
 			FederatedPlannerTrace.logGlobal("Planner-CommonPreparation", "elapsedNanos=" + commonPreparationNanos);
 			FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + fedPlanner
@@ -428,6 +440,8 @@ public class DMLTranslator
 			long finalVerifyOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 			try {
 				verifyFinalBoundaryEmission(dmlp, receipt);
+				if(collectCandidateTiming)
+					CandidateFormationTiming.finalVerificationComplete();
 			}
 			catch(RuntimeException | Error ex) {
 				PlannerPipelineTiming.clear();
@@ -457,8 +471,27 @@ public class DMLTranslator
 			registerFedInitVarsFromProgram(dmlp);
 			FederatedPlannerUtils.clearFedRmvarProtectedVars();
 			registerFedRmvarProtectedVarsFromProgram(dmlp);
-			receiptConsumer.accept(receipt);
+			if(collectCandidateTiming)
+				CandidateFormationTiming.registrationComplete();
+			CandidateFormationTiming.Timing candidateTiming = completeCandidateReceiptHandoff(
+				() -> receiptConsumer.accept(receipt), candidateTimingScope);
+			if(candidateTiming != null) {
+				FederatedPlannerTrace.logGlobal("Planner-CandidateE2ETiming", candidateTiming.traceFields());
+				Statistics.addCompilePhaseFedPlannerCandidateE2E(candidateTiming);
+			}
+			}
+			finally {
+				if(candidateTimingScope != null)
+					CandidateFormationTiming.clear(candidateTimingScope);
+			}
 		}
+	}
+
+	static CandidateFormationTiming.Timing completeCandidateReceiptHandoff(
+		Runnable receiptHandoff, CandidateFormationTiming.Scope timingScope) {
+		Objects.requireNonNull(receiptHandoff, "receiptHandoff");
+		receiptHandoff.run();
+		return timingScope != null ? CandidateFormationTiming.finish(timingScope, System.nanoTime()) : null;
 	}
 
 	private static boolean isCompiledFederatedPlannerConfigured() {

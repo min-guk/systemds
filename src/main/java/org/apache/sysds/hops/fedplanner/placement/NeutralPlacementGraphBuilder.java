@@ -318,15 +318,23 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	public PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {
-		PlacementIdentity.resetNormalizedSignatureCache();
 		if(complexityMetrics != null)
 			complexityMetrics.reset();
+		SearchSpaceMetrics.PhaseToken analysisStarted = complexityMetrics == null ? null
+			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.ANALYSIS);
+		PlacementIdentity.resetNormalizedSignatureCache();
 		PlacementIdentity.beginAnalysisScope(complexityMetrics);
 		try {
 			return buildDetachedAnalysisScoped(program);
 		}
 		finally {
-			PlacementIdentity.endAnalysisScope();
+			try {
+				PlacementIdentity.endAnalysisScope();
+			}
+			finally {
+				if(complexityMetrics != null)
+					complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.ANALYSIS, analysisStarted);
+			}
 		}
 	}
 
@@ -914,18 +922,35 @@ public final class NeutralPlacementGraphBuilder {
 			candidateRuleFacts = bindExactCandidateEmissionStates(candidateRuleFacts, nodes);
 			candidateRuleFacts = factorizeCandidateSupportRelations(candidateRuleFacts);
 			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, candidateRuleFacts);
-		for(Node node : nodes)
-			if(requiredEmittedNodes.contains(node.key()) && (!node.emittedWork() || node.legalAlternatives().isEmpty())) {
-				Privacy privacy = privacyFacts.requirePrivacy(node.key());
-				// Exact bottom propagation can expose a privacy-induced loss only after
-				// downstream publication has consumed the protected predecessor. Preserve
-				// the original fail-closed privacy contract instead of reclassifying that
-				// terminal state as an internal executable-realization error.
-				if(ExecPlacementPolicy.requiresOriginResidency(privacy))
-					throw new DMLRuntimeException("No privacy-safe physical placement for occurrence "
-						+ node.key().normalizedSignature() + " (privacy=" + privacy + ")");
-				throw new IllegalStateException("NO_EXECUTABLE_REALIZATION: " + node.key().normalizedSignature());
-			}
+		SearchSpaceMetrics.PhaseToken publicationValidationStarted =
+			complexityMetrics == null ? null : complexityMetrics.startPhase(
+				SearchSpaceMetrics.Phase.PUBLICATION_VALIDATION);
+		try {
+			for(Node node : nodes)
+				if(requiredEmittedNodes.contains(node.key())
+					&& (!node.emittedWork() || node.legalAlternatives().isEmpty())) {
+					Privacy privacy = privacyFacts.requirePrivacy(node.key());
+					// Exact bottom propagation can expose a privacy-induced loss only after
+					// downstream publication has consumed the protected predecessor. Preserve
+					// the original fail-closed privacy contract instead of reclassifying that
+					// terminal state as an internal executable-realization error.
+					if(ExecPlacementPolicy.requiresOriginResidency(privacy))
+						throw new DMLRuntimeException("No privacy-safe physical placement for occurrence "
+							+ node.key().normalizedSignature() + " (privacy=" + privacy + ")");
+					throw new IllegalStateException("NO_EXECUTABLE_REALIZATION: "
+						+ node.key().normalizedSignature());
+				}
+		}
+		finally {
+			if(complexityMetrics != null)
+				complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.PUBLICATION_VALIDATION,
+					publicationValidationStarted);
+		}
+		PlacementAnalysis analysis;
+		SearchSpaceMetrics.PhaseToken receiptPreparationStarted =
+			complexityMetrics == null ? null : complexityMetrics.startPhase(
+				SearchSpaceMetrics.Phase.RECEIPT_RANK_CONSUMER_PREPARATION);
+		try {
 		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions = candidateRuleFacts.stream()
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.map(CandidateEmissionFact::derivedFoutAction).filter(Objects::nonNull).distinct()
@@ -966,11 +991,18 @@ public final class NeutralPlacementGraphBuilder {
 		ProgramStructureGuard programStructureGuard =
 			new ProgramStructureGuard(program,
 				PlacementGraphFingerprint.captureProgramAuthority(program));
-		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
+		analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
 			compiledInputEdges, logicalTransientInputs, privacyFacts, programStructureGuard);
 		PlannerCandidateSpaceAudit.record(analysis, prePrivacyNodes, prePrivacyCandidateRuleFacts);
+		}
+		finally {
+			if(complexityMetrics != null)
+				complexityMetrics.finishPhase(
+					SearchSpaceMetrics.Phase.RECEIPT_RANK_CONSUMER_PREPARATION,
+					receiptPreparationStarted);
+		}
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
@@ -2453,6 +2485,28 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
 		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
 		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints) {
+		SearchSpaceMetrics.PhaseToken phaseStarted =
+			complexityMetrics == null ? null : complexityMetrics.startPhase(
+				SearchSpaceMetrics.Phase.CLOSURE_REPLAY);
+		try {
+			return closeCfgTransientCandidateDependenciesMeasured(occurrences, nodes, cfg,
+				factsByHop, abstractFactsByHop, singlePartitions, ordinalsByBlock, domainKeys,
+				facts, logicalInputs, baseline, origins, constraints);
+		}
+		finally {
+			if(complexityMetrics != null)
+				complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.CLOSURE_REPLAY, phaseStarted);
+		}
+	}
+
+	private CandidateReplay closeCfgTransientCandidateDependenciesMeasured(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop,
+		SinglePartitionFacts singlePartitions,
+		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
+		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
+		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints) {
 		List<CandidateRuleFact> boundFacts = bindExactCandidateEmissionRealizations(
 			facts, nodes, origins, factsByHop);
 		List<CandidateRuleFact> directTemplates = boundFacts;
@@ -2927,6 +2981,21 @@ public final class NeutralPlacementGraphBuilder {
 	 * binding, and whole-list substructures are shared.
 	 */
 	private List<CandidateRuleFact> factorizeCandidateSupportRelations(List<CandidateRuleFact> facts) {
+		SearchSpaceMetrics.PhaseToken phaseStarted =
+			complexityMetrics == null ? null : complexityMetrics.startPhase(
+				SearchSpaceMetrics.Phase.CLAUSE_MERGE_CANONICALIZATION);
+		try {
+			return factorizeCandidateSupportRelationsMeasured(facts);
+		}
+		finally {
+			if(complexityMetrics != null)
+				complexityMetrics.finishPhase(
+					SearchSpaceMetrics.Phase.CLAUSE_MERGE_CANONICALIZATION, phaseStarted);
+		}
+	}
+
+	private List<CandidateRuleFact> factorizeCandidateSupportRelationsMeasured(
+		List<CandidateRuleFact> facts) {
 		Map<FactorizedProofKey,PlacementProofKey> proofPool = new java.util.HashMap<>();
 		Map<FactorizedBindingKey,CandidateRealizationInputBinding> bindingPool = new java.util.HashMap<>();
 		Map<IdentityListKey<PlacementProofKey>,List<PlacementProofKey>> proofListPool = new java.util.HashMap<>();

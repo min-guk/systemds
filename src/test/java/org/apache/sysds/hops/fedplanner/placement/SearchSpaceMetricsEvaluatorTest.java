@@ -42,18 +42,32 @@ public class SearchSpaceMetricsEvaluatorTest {
 					constraint.evidence().equals("inlined-function-result:new_z")));
 		}
 		catch(RuntimeException | Error failure) {
-			Files.writeString(path, toJson(metrics.snapshot(), System.nanoTime() - started, analysis),
+			Files.writeString(path, toJson(metrics.snapshot(), metrics.attributionSnapshot(),
+				System.nanoTime() - started, analysis),
 				StandardCharsets.UTF_8);
 			throw failure;
 		}
-		Files.writeString(path, toJson(metrics.snapshot(), System.nanoTime() - started, analysis),
+		Files.writeString(path, toJson(metrics.snapshot(), metrics.attributionSnapshot(),
+			System.nanoTime() - started, analysis),
 			StandardCharsets.UTF_8);
 	}
 
-	private static String toJson(SearchSpaceMetrics.Snapshot snapshot, long elapsedNanos,
+	private static String toJson(SearchSpaceMetrics.Snapshot snapshot,
+		SearchSpaceMetrics.AttributionSnapshot attribution, long elapsedNanos,
 		PlacementAnalysis analysis) throws ReflectiveOperationException {
+		Assert.assertEquals("every proof query must have one bounded context observation",
+			snapshot.proofQueries(), snapshot.exactContextUniqueQueries()
+				+ snapshot.exactContextRepeatedQueries() + snapshot.exactContextOverflowQueries());
 		StringBuilder json = new StringBuilder("{\n");
+		json.append("  \"schema\": \"g009-search-attribution-v2\",\n");
+		json.append("  \"partitionSemantics\": \"exclusive-adds-to-analysis-inclusive\",\n");
+		json.append("  \"cpuSemantics\": \"current-thread-minus-one-unknown\",\n");
+		json.append("  \"allocationSemantics\": \"current-thread-coarse-minus-one-unknown\",\n");
 		json.append("  \"elapsedNanos\": ").append(elapsedNanos).append(",\n");
+		json.append("  \"observerOverheadFraction\": ")
+			.append(elapsedNanos == 0 ? 0.0
+				: (double) attribution.phase(SearchSpaceMetrics.Phase.CONTEXT_OBSERVER)
+					.inclusiveWallNanos() / elapsedNanos).append(",\n");
 		json.append("  \"analysisFingerprint\": \"")
 			.append(analysis == null ? "INCOMPLETE" : escape(analysis.analysisFingerprint())).append("\",\n");
 		json.append("  \"nodeCount\": ").append(analysis == null ? -1 : analysis.graph().nodes().size())
@@ -70,7 +84,35 @@ public class SearchSpaceMetricsEvaluatorTest {
 				.append(field.getAccessor().invoke(snapshot));
 			json.append(index + 1 == fields.length ? "\n" : ",\n");
 		}
-		return json.append("  }\n}\n").toString();
+		json.append("  },\n");
+		appendAttribution(json, attribution);
+		return json.append("}\n").toString();
+	}
+
+	static void appendAttribution(StringBuilder json,
+		SearchSpaceMetrics.AttributionSnapshot attribution) {
+		SearchSpaceMetrics.ContextDistribution distribution = attribution.contextDistribution();
+		json.append("  \"contextDistribution\": {\"unique\": ").append(distribution.unique())
+			.append(", \"repeated\": ").append(distribution.repeated())
+			.append(", \"overflow\": ").append(distribution.overflow())
+			.append(", \"total\": ").append(distribution.total())
+			.append(", \"uniqueWeight\": ").append(distribution.uniqueWeight())
+			.append(", \"repeatedWeight\": ").append(distribution.repeatedWeight())
+			.append(", \"overflowWeight\": ").append(distribution.overflowWeight())
+			.append("},\n  \"phasePartition\": {\n");
+		for(int index = 0; index < attribution.phases().size(); index++) {
+			SearchSpaceMetrics.PhaseMeasurement phase = attribution.phases().get(index);
+			json.append("    \"").append(phase.phase()).append("\": {\"calls\": ")
+				.append(phase.calls()).append(", \"inclusiveWallNanos\": ")
+				.append(phase.inclusiveWallNanos()).append(", \"exclusiveWallNanos\": ")
+				.append(phase.exclusiveWallNanos()).append(", \"inclusiveCpuNanos\": ")
+				.append(phase.inclusiveCpuNanos()).append(", \"exclusiveCpuNanos\": ")
+				.append(phase.exclusiveCpuNanos()).append(", \"inclusiveAllocatedBytes\": ")
+				.append(phase.inclusiveAllocatedBytes()).append(", \"exclusiveAllocatedBytes\": ")
+				.append(phase.exclusiveAllocatedBytes()).append('}')
+				.append(index + 1 == attribution.phases().size() ? "\n" : ",\n");
+		}
+		json.append("  }\n");
 	}
 
 	private static String escape(String value) {

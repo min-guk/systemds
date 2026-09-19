@@ -104,8 +104,9 @@ final class NativePlacementContinuity {
 	private final long topologyMaxRows;
 	private long topologyRetainedRows;
 	private final SearchSpaceMetrics metrics;
-	private final Set<CandidateQueryKey> observedQueries;
-	private final int observedQueryLimit;
+	// The observer is revision-local. CandidateQueryKey additionally retains the
+	// complete rule/emission/product reference and exact worker/layout witness.
+	private final SearchSpaceMetrics.BoundedContextObserver<CandidateQueryKey> observedQueries;
 	private final int memoMaxEntries;
 	private final long memoMaxProofs;
 	private final long memoMaxEstimatedBytes;
@@ -191,9 +192,10 @@ final class NativePlacementContinuity {
 		incomplete.addAll(Objects.requireNonNull(incompleteSources, "incompleteSources"));
 		this.incompleteSources = Collections.unmodifiableSet(incomplete);
 		this.metrics = metrics;
-		observedQueries = metrics == null ? null : new java.util.HashSet<>();
-		observedQueryLimit = Math.max(0,
+		int observedQueryLimit = Math.max(0,
 			Integer.getInteger("sysds.fedplanner.metrics.maxExactContexts", 4096));
+		observedQueries = metrics == null ? null
+			: new SearchSpaceMetrics.BoundedContextObserver<>(observedQueryLimit);
 		this.memoMaxEntries = Math.max(0, memoMaxEntries);
 		this.memoMaxProofs = Math.max(0, memoMaxProofs);
 		this.memoMaxEstimatedBytes = Math.max(0, memoMaxEstimatedBytes);
@@ -395,16 +397,24 @@ final class NativePlacementContinuity {
 
 	private List<NativeContinuityProof> instantiateSupportTemplates(SupportMemoEntry entry,
 		CandidateRealizationReference source, DurableAnchorKey externalSeed) {
-		List<NativeContinuityProof> proofs = new ArrayList<>(entry.templates.size());
-		for(CandidateSupportTemplate template : entry.templates) {
-			List<CandidateRealizationInputBinding> bindings = entry.root.equals(source)
-				? template.immediateBindings : rebindTemplateRoot(
-					template.immediateBindings, entry.root, source);
-			proofs.add(new NativeContinuityProof(externalSeed, template.outputWorkerPoolWitness,
-				template.exactPartitionRanges, bindings));
+		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PUBLIC_PROOF_MATERIALIZATION);
+		try {
+			List<NativeContinuityProof> proofs = new ArrayList<>(entry.templates.size());
+			for(CandidateSupportTemplate template : entry.templates) {
+				List<CandidateRealizationInputBinding> bindings = entry.root.equals(source)
+					? template.immediateBindings : rebindTemplateRoot(
+						template.immediateBindings, entry.root, source);
+				proofs.add(new NativeContinuityProof(externalSeed, template.outputWorkerPoolWitness,
+					template.exactPartitionRanges, bindings));
+			}
+			proofs.sort(java.util.Comparator.comparing(NativeContinuityProof::normalizedSignature));
+			return List.copyOf(proofs);
 		}
-		proofs.sort(java.util.Comparator.comparing(NativeContinuityProof::normalizedSignature));
-		return List.copyOf(proofs);
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PUBLIC_PROOF_MATERIALIZATION, started);
+		}
 	}
 
 	private static List<CandidateRealizationInputBinding> rebindTemplateRoot(
@@ -498,15 +508,21 @@ final class NativePlacementContinuity {
 		CandidateRealizationReference source, NativePoolWitness witness) {
 		if(metrics != null) {
 			metrics.recordProofQuery();
-			CandidateQueryKey observed = new CandidateQueryKey(source, witness);
-			if(observedQueries.contains(observed))
-				metrics.recordExactContext(false);
-			else if(observedQueries.size() < observedQueryLimit) {
-				observedQueries.add(observed);
-				metrics.recordExactContext(true);
+			SearchSpaceMetrics.PhaseToken observerStarted =
+				metrics.startPhase(SearchSpaceMetrics.Phase.CONTEXT_OBSERVER);
+			try {
+				CandidateQueryKey observed = new CandidateQueryKey(source, witness);
+				SearchSpaceMetrics.ContextObservation observation = observedQueries.observe(observed);
+				metrics.recordContextObserver(observation.verifiedHashCollisions());
+				switch(observation.result()) {
+					case FIRST -> metrics.recordExactContext(true);
+					case REPEATED -> metrics.recordExactContext(false);
+					case OVERFLOW -> metrics.recordExactContextOverflow();
+				}
 			}
-			else
-				metrics.recordExactContextOverflow();
+			finally {
+				metrics.finishPhase(SearchSpaceMetrics.Phase.CONTEXT_OBSERVER, observerStarted);
+			}
 		}
 		int sourceHandle = candidateHandle(source);
 		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source,
@@ -516,25 +532,44 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Integer> fixedHandles = new IdentityHashMap<>();
 		fixed.put(source.rule().parentOccurrence(), source);
 		fixedHandles.put(source.rule().parentOccurrence(), sourceHandle);
+		SearchSpaceMetrics.PhaseToken overlayStarted = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_OVERLAY);
 		long[] graphWork = metrics == null ? null : new long[2];
 		CandidateProofTraversal traversal = new CandidateProofTraversal();
-		buildCandidateProofGraph(root, graph, traversal, fixed, fixedHandles, graphWork);
-		if(metrics != null)
-			metrics.recordProofGraph(graph.size(), graphWork[0], graphWork[1]);
+		try {
+			buildCandidateProofGraph(root, graph, traversal, fixed, fixedHandles, graphWork);
+			if(metrics != null)
+				metrics.recordProofGraph(graph.size(), graphWork[0], graphWork[1]);
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_OVERLAY, overlayStarted);
+		}
+		SearchSpaceMetrics.PhaseToken groundingStarted = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_GROUNDING);
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable;
 		Set<CandidateProofState> grounded;
 		long acyclicRemoved = 0;
-		if(traversal.cycleDetected) {
-			viable = pruneDeadAlternatives(graph);
-			grounded = groundedCandidateStates(viable);
+		try {
+			if(traversal.cycleDetected) {
+				viable = pruneDeadAlternatives(graph);
+				grounded = groundedCandidateStates(viable);
+			}
+			else {
+				acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder);
+				viable = graph;
+				grounded = groundedAcyclicCandidateStates(viable, traversal.completionOrder);
+			}
+			if(metrics != null)
+				metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
 		}
-		else {
-			acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder);
-			viable = graph;
-			grounded = groundedAcyclicCandidateStates(viable, traversal.completionOrder);
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_GROUNDING, groundingStarted);
 		}
-		if(metrics != null)
-			metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
+		SearchSpaceMetrics.PhaseToken supportStarted = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.SUPPORT_PRODUCT_RELATION_MATERIALIZATION);
+		try {
 		Map<CandidateProofState,List<CandidateRealizationReference>> groundedReferences =
 			new java.util.HashMap<>();
 		Map<CandidateProofState,Boolean> directlyGrounded = new java.util.HashMap<>();
@@ -594,6 +629,13 @@ final class NativePlacementContinuity {
 		for(CandidateProofState state : graph.keySet())
 			occurrences.add(state.key());
 		return new ComputedCandidateSupport(distinct, Collections.unmodifiableSet(occurrences));
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(
+					SearchSpaceMetrics.Phase.SUPPORT_PRODUCT_RELATION_MATERIALIZATION,
+					supportStarted);
+		}
 	}
 
 	private static List<CandidateRealizationReference> canonicalReferences(
@@ -947,6 +989,19 @@ final class NativePlacementContinuity {
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {
+		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
+		try {
+			return candidateTopologyMeasured(key, witness);
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY, started);
+		}
+	}
+
+	private CandidateTopology candidateTopologyMeasured(CompiledHopKey key,
+		NativePoolWitness witness) {
 		CandidateTopologyKey topologyKey = new CandidateTopologyKey(key, witness);
 		CandidateTopology cached = candidateTopologies.get(topologyKey);
 		if(cached != null) {

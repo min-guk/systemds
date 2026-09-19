@@ -30,11 +30,13 @@ public final class PlacementPlanApplication {
 		DMLProgram program, PlacementAnalysis analysis, Runnable diagnostics, Supplier<P> projection,
 		Function<P, NormalizedPlannerResult> selectedResult, ReceiptFactory<P, R> receipts) {
 		PlannerPipelineTiming.planningComplete();
+		CandidateFormationTiming.planningComplete();
 		long phaseStarted = System.nanoTime();
 		long outputStarted = FederatedPlannerTrace.traceOutputNanos();
 		diagnostics.run();
 		FederatedPlannerTrace.logPhaseTiming("POST_SEARCH_TRACE", phaseStarted, outputStarted);
 		PlannerPipelineTiming.diagnosticsComplete();
+		CandidateFormationTiming.diagnosticsComplete();
 
 		phaseStarted = System.nanoTime();
 		outputStarted = FederatedPlannerTrace.traceOutputNanos();
@@ -43,6 +45,7 @@ public final class PlacementPlanApplication {
 			Objects.requireNonNull(selectedResult.apply(projected), "selected normalized plan"));
 		FederatedPlannerTrace.logPhaseTiming("PLAN_CONVERSION", phaseStarted, outputStarted);
 		PlannerPipelineTiming.conversionComplete();
+		CandidateFormationTiming.conversionComplete();
 
 		phaseStarted = System.nanoTime();
 		outputStarted = FederatedPlannerTrace.traceOutputNanos();
@@ -53,6 +56,7 @@ public final class PlacementPlanApplication {
 			throw new IllegalStateException("Planner application receipt changed common emission authority");
 		FederatedPlannerTrace.logPhaseTiming("EMISSION", phaseStarted, outputStarted);
 		PlannerPipelineTiming.applicationComplete();
+		CandidateFormationTiming.applicationComplete();
 		return receipt;
 	}
 }

@@ -22,6 +22,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSo
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.DecisionDomain;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.CandidateFormationTiming;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementPlanApplication;
@@ -56,13 +57,16 @@ public class FederatedPlanExact extends AFederatedPlanner {
 		long phaseStarted = System.nanoTime();
 		long phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		CandidateFormationTiming.modelComplete();
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		CandidateFormationTiming.costSurfaceComplete();
 		FederatedPlannerTrace.logPhaseTiming("MODEL_SETUP", phaseStarted, phaseOutputStarted);
 		phaseStarted = System.nanoTime();
 		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalOptimizer.Result optimized = ExactPhysicalOptimizer.optimize(
 			model, surface, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		CandidateFormationTiming.optimizerComplete();
 		if(FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("Planner-Stage", String.format(Locale.ROOT,
 				"stage=GLOBAL_EXACT_READY plannerElapsedNanos=%d objective=%.17g objectiveBits=%s "
@@ -74,6 +78,7 @@ public class FederatedPlanExact extends AFederatedPlanner {
 		phaseStarted = System.nanoTime();
 		phaseOutputStarted = FederatedPlannerTrace.traceOutputNanos();
 		ExactPhysicalSelection selection = ExactPhysicalSelection.create(model, optimized);
+		CandidateFormationTiming.selectionComplete();
 		FederatedPlannerTrace.logPhaseTiming("SELECTION", phaseStarted, phaseOutputStarted);
 		return PlacementPlanApplication.complete(prog, analysis,
 			() -> tracePhysicalSelection(model, surface, selection),

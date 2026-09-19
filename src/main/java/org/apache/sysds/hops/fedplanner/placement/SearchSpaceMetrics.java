@@ -6,14 +6,73 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.lang.management.ManagementFactory;
+import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
  * Analysis-scoped aggregate work counters for the neutral placement search space.
  *
- * <p>The collector deliberately retains no Hops, candidate objects, query keys, or
- * signatures. Production construction does not create a collector, so the disabled
- * path consists only of null checks at the instrumentation sites.</p>
+ * <p>Production construction does not create a collector, so the disabled path consists
+ * only of null checks at the instrumentation sites. Opt-in diagnostics retain aggregate
+ * counters plus a bounded set of full query-context keys in the owning continuity
+ * instance; overflow is counted rather than sampled or used to alter planning.</p>
  */
 final class SearchSpaceMetrics {
+	enum Phase {
+		ANALYSIS,
+		CONTEXT_OBSERVER,
+		PROOF_TOPOLOGY,
+		PROOF_OVERLAY,
+		PROOF_GROUNDING,
+		SUPPORT_PRODUCT_RELATION_MATERIALIZATION,
+		PUBLIC_PROOF_MATERIALIZATION,
+		CLAUSE_MERGE_CANONICALIZATION,
+		CLOSURE_REPLAY,
+		PUBLICATION_VALIDATION,
+		RECEIPT_RANK_CONSUMER_PREPARATION
+	}
+
+	enum ContextObservationResult { FIRST, REPEATED, OVERFLOW }
+
+	record ContextObservation(ContextObservationResult result,
+		long verifiedHashCollisions) { }
+
+	/** Bounded full-key observer; hash buckets are always verified with equals. */
+	static final class BoundedContextObserver<K> {
+		private final int limit;
+		private final Map<Integer,List<K>> buckets = new HashMap<>();
+		private int size;
+
+		BoundedContextObserver(int limit) {
+			this.limit = Math.max(0, limit);
+		}
+
+		ContextObservation observe(K key) {
+			List<K> bucket = buckets.get(key.hashCode());
+			long collisions = 0;
+			if(bucket != null)
+				for(K retained : bucket) {
+					if(retained.equals(key))
+						return new ContextObservation(ContextObservationResult.REPEATED, collisions);
+					collisions++;
+				}
+			if(size >= limit)
+				return new ContextObservation(ContextObservationResult.OVERFLOW, collisions);
+			if(bucket == null) {
+				bucket = new ArrayList<>();
+				buckets.put(key.hashCode(), bucket);
+			}
+			bucket.add(key);
+			size++;
+			return new ContextObservation(ContextObservationResult.FIRST, collisions);
+		}
+	}
+
 	private long fixedPointPasses;
 	private long cfgRefinementPasses;
 	private long functionBoundaryPasses;
@@ -109,8 +168,21 @@ final class SearchSpaceMetrics {
 	private long topologyCacheBypasses;
 	private long topologyCacheEntries;
 	private long topologyCacheRetainedRows;
+	private long contextObserverHashCollisions;
+	private final long[] phaseCalls = new long[Phase.values().length];
+	private final long[] inclusiveWallNanos = new long[Phase.values().length];
+	private final long[] exclusiveWallNanos = new long[Phase.values().length];
+	private final long[] inclusiveCpuNanos = new long[Phase.values().length];
+	private final long[] exclusiveCpuNanos = new long[Phase.values().length];
+	private final long[] inclusiveAllocatedBytes = new long[Phase.values().length];
+	private final long[] exclusiveAllocatedBytes = new long[Phase.values().length];
+	private final ArrayDeque<PhaseToken> phaseStack = new ArrayDeque<>();
+	private static final com.sun.management.ThreadMXBean ALLOCATION_BEAN = allocationBean();
+	private static final java.lang.management.ThreadMXBean CPU_BEAN = cpuBean();
 
 	void reset() {
+		if(!phaseStack.isEmpty())
+			throw new IllegalStateException("SEARCH_SPACE_PHASE_RESET_WHILE_ACTIVE");
 		fixedPointPasses = cfgRefinementPasses = functionBoundaryPasses = semanticPasses = 0;
 		publicationPasses = proofQueries = exactContextUniqueQueries = exactContextRepeatedQueries = 0;
 		directClosurePasses = directClosureStablePasses = directClosureFullPasses = 0;
@@ -147,6 +219,108 @@ final class SearchSpaceMetrics {
 		structuralArenaOverflows = 0;
 		topologyCacheEvictions = topologyCacheBypasses = topologyCacheEntries = 0;
 		topologyCacheRetainedRows = 0;
+		contextObserverHashCollisions = 0;
+		Arrays.fill(phaseCalls, 0);
+		Arrays.fill(inclusiveWallNanos, 0);
+		Arrays.fill(exclusiveWallNanos, 0);
+		Arrays.fill(inclusiveCpuNanos, 0);
+		Arrays.fill(exclusiveCpuNanos, 0);
+		Arrays.fill(inclusiveAllocatedBytes, 0);
+		Arrays.fill(exclusiveAllocatedBytes, 0);
+	}
+
+	static final class PhaseToken {
+		private final Phase phase;
+		private final long startedWallNanos;
+		private final long startedCpuNanos;
+		private final long startedAllocatedBytes;
+		private long childWallNanos;
+		private long childCpuNanos;
+		private long childAllocatedBytes;
+
+		private PhaseToken(Phase phase, long startedWallNanos, long startedCpuNanos,
+			long startedAllocatedBytes) {
+			this.phase = phase;
+			this.startedWallNanos = startedWallNanos;
+			this.startedCpuNanos = startedCpuNanos;
+			this.startedAllocatedBytes = startedAllocatedBytes;
+		}
+	}
+
+	PhaseToken startPhase(Phase phase) {
+		PhaseToken token = new PhaseToken(phase, System.nanoTime(), currentThreadCpuNanos(),
+			currentThreadAllocatedBytes());
+		phaseStack.push(token);
+		return token;
+	}
+
+	void finishPhase(Phase phase, PhaseToken token) {
+		if(token == null || token.phase != phase || phaseStack.peek() != token)
+			throw new IllegalStateException("SEARCH_SPACE_PHASE_ORDER:" + phase);
+		long wall = delta(token.startedWallNanos, System.nanoTime());
+		long cpu = delta(token.startedCpuNanos, currentThreadCpuNanos());
+		long allocation = delta(token.startedAllocatedBytes, currentThreadAllocatedBytes());
+		phaseStack.pop();
+		long exclusiveWall = subtractChild(wall, token.childWallNanos);
+		long exclusiveCpu = subtractChild(cpu, token.childCpuNanos);
+		long exclusiveAllocation = subtractChild(allocation, token.childAllocatedBytes);
+		int ordinal = phase.ordinal();
+		phaseCalls[ordinal]++;
+		inclusiveWallNanos[ordinal] += wall;
+		exclusiveWallNanos[ordinal] += exclusiveWall;
+		inclusiveCpuNanos[ordinal] = addKnown(inclusiveCpuNanos[ordinal], cpu);
+		exclusiveCpuNanos[ordinal] = addKnown(exclusiveCpuNanos[ordinal], exclusiveCpu);
+		inclusiveAllocatedBytes[ordinal] = addKnown(inclusiveAllocatedBytes[ordinal], allocation);
+		exclusiveAllocatedBytes[ordinal] = addKnown(exclusiveAllocatedBytes[ordinal], exclusiveAllocation);
+		PhaseToken parent = phaseStack.peek();
+		if(parent != null) {
+			parent.childWallNanos += wall;
+			parent.childCpuNanos = addKnown(parent.childCpuNanos, cpu);
+			parent.childAllocatedBytes = addKnown(parent.childAllocatedBytes, allocation);
+		}
+	}
+
+	private static long delta(long started, long current) {
+		return started < 0 || current < started ? -1 : current - started;
+	}
+
+	private static long subtractChild(long inclusive, long child) {
+		if(inclusive < 0 || child < 0)
+			return -1;
+		if(child > inclusive)
+			throw new IllegalStateException("SEARCH_SPACE_PHASE_CHILD_EXCEEDS_PARENT");
+		return inclusive - child;
+	}
+
+	private static long addKnown(long accumulated, long delta) {
+		return accumulated < 0 || delta < 0 ? -1 : accumulated + delta;
+	}
+
+	private static com.sun.management.ThreadMXBean allocationBean() {
+		java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+		if(bean instanceof com.sun.management.ThreadMXBean allocationBean
+			&& allocationBean.isThreadAllocatedMemorySupported()
+			&& allocationBean.isThreadAllocatedMemoryEnabled())
+			return allocationBean;
+		return null;
+	}
+
+	private static long currentThreadAllocatedBytes() {
+		return ALLOCATION_BEAN == null ? -1
+			: ALLOCATION_BEAN.getThreadAllocatedBytes(Thread.currentThread().getId());
+	}
+
+	private static java.lang.management.ThreadMXBean cpuBean() {
+		java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+		return bean.isCurrentThreadCpuTimeSupported() && bean.isThreadCpuTimeEnabled() ? bean : null;
+	}
+
+	private static long currentThreadCpuNanos() {
+		return CPU_BEAN == null ? -1 : CPU_BEAN.getCurrentThreadCpuTime();
+	}
+
+	void recordContextObserver(long verifiedHashCollisions) {
+		contextObserverHashCollisions += Math.max(0, verifiedHashCollisions);
 	}
 
 	void recordFixedPointPass(String phase) {
@@ -353,7 +527,25 @@ final class SearchSpaceMetrics {
 			structuralHandleIdentityHits, structuralHandleStructuralHits,
 			receiptRelationSlots, candidateReceiptsCreated, receiptRankKeyChars,
 			structuralArenaOverflows, topologyCacheEvictions, topologyCacheBypasses,
-			topologyCacheEntries, topologyCacheRetainedRows);
+			topologyCacheEntries, topologyCacheRetainedRows, contextObserverHashCollisions);
+	}
+
+	AttributionSnapshot attributionSnapshot() {
+		if(!phaseStack.isEmpty())
+			throw new IllegalStateException("SEARCH_SPACE_PHASES_STILL_ACTIVE");
+		List<PhaseMeasurement> phases = new ArrayList<>(Phase.values().length);
+		for(Phase phase : Phase.values()) {
+			int ordinal = phase.ordinal();
+			phases.add(new PhaseMeasurement(phase.name(), phaseCalls[ordinal],
+				inclusiveWallNanos[ordinal], exclusiveWallNanos[ordinal],
+				inclusiveCpuNanos[ordinal], exclusiveCpuNanos[ordinal],
+				inclusiveAllocatedBytes[ordinal], exclusiveAllocatedBytes[ordinal]));
+		}
+		long observations = exactContextUniqueQueries + exactContextRepeatedQueries
+			+ exactContextOverflowQueries;
+		return new AttributionSnapshot(List.copyOf(phases), new ContextDistribution(
+			exactContextUniqueQueries, exactContextRepeatedQueries,
+			exactContextOverflowQueries, observations));
 	}
 
 	record Snapshot(long fixedPointPasses, long cfgRefinementPasses,
@@ -395,5 +587,22 @@ final class SearchSpaceMetrics {
 		long candidateReceiptsCreated, long receiptRankKeyChars,
 		long structuralArenaOverflows, long topologyCacheEvictions,
 		long topologyCacheBypasses, long topologyCacheEntries,
-		long topologyCacheRetainedRows) { }
+		long topologyCacheRetainedRows, long contextObserverHashCollisions) { }
+
+	record PhaseMeasurement(String phase, long calls, long inclusiveWallNanos,
+		long exclusiveWallNanos, long inclusiveCpuNanos, long exclusiveCpuNanos,
+		long inclusiveAllocatedBytes, long exclusiveAllocatedBytes) { }
+
+	record ContextDistribution(long unique, long repeated, long overflow, long total) {
+		double uniqueWeight() { return total == 0 ? 0 : (double) unique / total; }
+		double repeatedWeight() { return total == 0 ? 0 : (double) repeated / total; }
+		double overflowWeight() { return total == 0 ? 0 : (double) overflow / total; }
+	}
+
+	record AttributionSnapshot(List<PhaseMeasurement> phases,
+		ContextDistribution contextDistribution) {
+		PhaseMeasurement phase(Phase phase) {
+			return phases.get(phase.ordinal());
+		}
+	}
 }

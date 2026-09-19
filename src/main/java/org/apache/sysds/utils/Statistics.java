@@ -195,6 +195,9 @@ public class Statistics
 	private static long compilePhaseFedPlannerCalls = 0;
 	private static final long[] compilePhaseFedPlannerSplitTimes = new long[6];
 	private static long compilePhaseFedPlannerSplitCalls = 0;
+	private static final long[] compilePhaseFedPlannerCandidateE2ETimes = new long[15];
+	private static long compilePhaseFedPlannerCandidateE2ECalls = 0;
+	private static long compilePhaseFedPlannerCandidateE2EExactPhaseCalls = 0;
 	private static long compileObservedHops = -1;
 
 	public static void resetCompilePhaseTimes() {
@@ -208,6 +211,9 @@ public class Statistics
 		compilePhaseFedPlannerCalls = 0;
 		java.util.Arrays.fill(compilePhaseFedPlannerSplitTimes, 0);
 		compilePhaseFedPlannerSplitCalls = 0;
+		java.util.Arrays.fill(compilePhaseFedPlannerCandidateE2ETimes, 0);
+		compilePhaseFedPlannerCandidateE2ECalls = 0;
+		compilePhaseFedPlannerCandidateE2EExactPhaseCalls = 0;
 		compileObservedHops = -1;
 	}
 
@@ -265,6 +271,23 @@ public class Statistics
 			for(int i = 0; i < values.length; i++)
 				compilePhaseFedPlannerSplitTimes[i] += values[i];
 			compilePhaseFedPlannerSplitCalls++;
+		}
+	}
+
+	public static void addCompilePhaseFedPlannerCandidateE2E(
+		org.apache.sysds.hops.fedplanner.placement.CandidateFormationTiming.Timing timing) {
+		if(DMLScript.STATISTICS) {
+			long[] values = {timing.commonPreparationNanos(), timing.analysisNanos(),
+				timing.plannerSetupNanos(), timing.modelNanos(), timing.costSurfaceNanos(),
+				timing.optimizerNanos(), timing.selectionNanos(), timing.otherPlanningNanos(),
+				timing.diagnosticsNanos(), timing.conversionNanos(), timing.applicationNanos(),
+				timing.finalVerificationNanos(), timing.registrationNanos(),
+				timing.receiptHandoffNanos(), timing.totalNanos()};
+			for(int i = 0; i < values.length; i++)
+				compilePhaseFedPlannerCandidateE2ETimes[i] += values[i];
+			compilePhaseFedPlannerCandidateE2ECalls++;
+			if(timing.exactPhaseAttribution())
+				compilePhaseFedPlannerCandidateE2EExactPhaseCalls++;
 		}
 	}
 
@@ -1166,6 +1189,24 @@ public class Statistics
 				for(int i = 0; i < names.length; i++)
 					sb.append("Compile Phase FedPlanner " + names[i] + ":\t"
 						+ String.format("%.6f", compilePhaseFedPlannerSplitTimes[i] * 1e-9) + " sec.\n");
+			}
+			if(compilePhaseFedPlannerCandidateE2ECalls > 0) {
+				String[] names = {"CommonPreparation", "Analysis", "PlannerSetup", "Model",
+					"CostSurface", "Optimizer", "Selection", "OtherPlanning", "Diagnostics",
+					"Conversion", "Application", "FinalVerification", "Registration",
+					"ReceiptHandoff", "Total"};
+				for(int i = 0; i < names.length; i++)
+					sb.append("Compile Phase FedPlanner CandidateE2E " + names[i] + ":\t"
+						+ String.format("%.6f", compilePhaseFedPlannerCandidateE2ETimes[i] * 1e-9)
+						+ " sec.\n");
+				sb.append("CandidateE2EReceipt schema=candidate-e2e-v1 calls=")
+					.append(compilePhaseFedPlannerCandidateE2ECalls)
+					.append(" exactPhaseCalls=").append(compilePhaseFedPlannerCandidateE2EExactPhaseCalls);
+				for(int i = 0; i < names.length; i++)
+					sb.append(' ').append(Character.toLowerCase(names[i].charAt(0)))
+						.append(names[i].substring(1)).append("Nanos=")
+						.append(compilePhaseFedPlannerCandidateE2ETimes[i]);
+				sb.append('\n');
 			}
 			sb.append(FederatedCompilationTimer.getStringRepresentation());
 		}
