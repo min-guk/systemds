@@ -288,3 +288,47 @@
   반드시 제거될 owner alternative와 dependency slot 수를 observer-only로 분류한다. 그 비중이 충분할
   때만 empty dependency occurrence를 invalidation footprint에 남긴 채 owner alternative 객체 생성 전
   거절하는 설계를 구현한다.
+
+## 초기-empty dependency alternative 조기 거절 실험
+
+- **상태**: NO-GO. production/metrics/test/manifest 변경을 전부 revert했고 accepted DAG fast path만
+  남겼다. 구현 자체는 독립 재검토에서 지적 0건으로 승인됐지만 성능 채택 기준을 충족하지 못했다.
+- **observer와 변경**: LM에서 DAG 제거 alternative 351,893개 중 341,387개(97.01%)가 처음부터
+  alternative가 없는 dependency를 하나 이상 가졌다. 이를 근거로 owner row의 모든 dependency를 기존
+  DFS 순서로 방문해 graph key와 revision footprint를 유지하되, non-backedge dependency graph가 비면
+  `SelectedCandidateProof`와 `CandidateProofDependency` wrapper를 만들지 않았다. root fixed pin/handle,
+  concrete-row가 있던 template fallback 금지, 순서·중복·identity와 cyclic fallback을 보존했다.
+- **회귀/inventory 검증**: empty dependency 뒤의 sibling과 descendants도 방문하는지, 그 sibling만
+  변경한 다음 revision에서 graph를 다시 만드는지를 `empty, sibling` 순서로 검증했다.
+  `NativePlacementContinuityTest` 39개는 38 pass/1 intended skip, branch inventory test 1개는 pass였다.
+  실험 source manifest는 5,844 entries였고 baseline `35d1f49507` 대비 added 675/removed 304의 979개
+  ID를 review TSV에서 누락·잔존·중복 없이 분류했다. 이 manifest/review 변경도 실험 revert에 포함했다.
+- **small/LM 동일성**: two-source, local-mix와 LM snapshot은 accepted 결과와 byte 동일했다. LM
+  fingerprint SHA-256은 모든 run에서
+  `9000bff430f7fde79b901e5af6414eb4e537c1806af73056234f05830d63551a`였다.
+- **LM 구조/성능**: proof graph/state 수는 `13,854/208,726`으로 같고 alternative는
+  `1,185,743 -> 655,763`(-44.70%), dependency edge는 `1,750,172 -> 852,324`(-51.30%)로 줄었다.
+  조기 거절은 529,980 alternatives/897,848 slots였고 뒤 DAG prune 제거는 `351,893 -> 811`이다.
+  그러나 timeout 없는 fresh JVM 12쌍에서 control 중앙 `9,760.5 ms`, current 중앙 `10,440 ms`로
+  679.5 ms(6.96%) 악화했고 current 승리는 6/12였다. peak RSS 중앙은
+  `1,350,384 -> 1,316,110 KiB`(-2.54%)였다. 원자료는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-early-empty-screen-r1-20260919/`에 있다.
+- **GLM 동일성/구조**: 동일 8/32/1 GiB JVM, 외부 timeout과 planning budget 없이 순차 실행했다.
+  control/current fingerprint는 모두 `98b41db8...7109`이고 node/fact/action 및 최종 support/proof,
+  relocation/input leaf 수가 같다. proof graph/state는 `154,362/5,264,559`로 같고 alternative는
+  `284,280,699 -> 242,868,791`(-14.57%), dependency edge는
+  `513,715,666 -> 436,271,206`(-15.08%)로 줄었다. 41,411,908 alternatives와 77,444,460 slots를
+  조기 거절했고 뒤 DAG prune 제거는 `41,415,373 -> 3,465`다.
+- **GLM 성능**: contemporaneous control evaluator `726.065 s`, wall `12:13.22`, peak RSS
+  `30,431,484 KiB`; current evaluator `729.171 s`, wall `12:15.83`, peak RSS `30,432,208 KiB`다.
+  planning은 3.107초(0.43%) 느려졌고 RSS는 사실상 같다. 첫 bootstrap attempt는 CLI `argLine`이
+  POM의 3 GiB 값에 덮여 OOM이 나 비교에서 제외했고, 실제 fork args를 확인한 임시 POM run만
+  위 수치에 사용했다. 원자료, patch와 summary는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-early-empty-glm-pair-r1-20260919/`에 보존한다.
+- **판정/근거**: 수천만 wrapper 생성을 없애도 graph/state traversal, topology lookup과 downstream
+  결과 크기가 그대로라 GLM wall/RSS가 개선되지 않았다. 구조 카운터 감소만으로 채택하지 않는다.
+- **다음 단위**: query별 전체 proof graph 154,362개를 다시 만드는 원인을 먼저 분류한다. query의
+  root overlay와 무관하게 같은 topology DAG가 반복되는 비율, 고유 topology/state/row 수, graph당
+  alternative·edge 분포와 query별 overlay 차이를 observer-only로 계측한다. 충분한 중복이 확인될
+  때만 topology DAG를 factorize하고 root overlay와 occurrence revision footprint를 분리하는 설계를
+  시도한다. 180초 3회, Docker와 전역 plan 보존 증명은 계속 OPEN이다.
