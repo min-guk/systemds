@@ -120,3 +120,24 @@
 - **의사결정 근거**: 합법 후보를 제거하지 않고 이미 동일 의미로 계산되는 lookup, no-op scan,
   acyclic/SCC 작업만 줄인다. correctness의 shared topology·structural cache가 대체한 과거
   performance 변경은 중복 이식하지 않는다.
+
+## 통합 구조의 direct broadcast source index 실험
+
+- **상태**: NO-GO, production/test/manifest 변경 전부 revert.
+- **증상/원인 가설**: `isBroadcastRowProvablyUnselectable`가 broadcast input마다 전체 node를
+  scan한다. resolver 생성 시 동일 value-version의 selectable `BROADCAST/FOUT` source를
+  identity set으로 만들면 반복 scan을 없앨 수 있다고 보았다.
+- **검증**: broadcast value-version/output/snapshot/missing-edge 경계 테스트 4개와 기존
+  continuity/canonicalization/authority suite가 통과했다. two-source/local-mix 및 LM 8회 snapshot은
+  accepted 결과와 모두 byte 동일했다.
+- **성능 결과**: 4-pair LM control `11,350/12,376/10,209/11,965 ms`, current
+  `12,172/10,308/10,666/12,347 ms`; 중앙값 `11,657.5→11,419 ms`(-2.05%)였지만 current가
+  빨랐던 pair는 1/4뿐이었다. RSS 중앙값은 `1,354,892→1,315,266 KiB`(-2.92%).
+- **판정/근거**: 불안정한 작은 중앙값 차이만으로 GLM 837초 병목을 줄인다고 볼 수 없으며,
+  채택 기준인 반복 가능한 wall-clock 개선을 충족하지 못했다. artifact는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/g009-unified-broadcast-index-screen-r1-20260919/`에 보존한다.
+- **잔여 이슈**: no-op dead pruning, singleton SCC, structural-handle 기반 DAG fast path를 같은
+  snapshot·paired gate로 평가한다.
+- **잠재 회귀/감지**: revert 후 통합 HEAD가 clean인지 확인하고 다음 변경은 새 diff로 시작한다.
+- **의사결정 근거**: 후보 합법성은 바꾸지 않았으나, 성능 채택에는 의미 보존 외에 측정 가능한
+  반복 개선도 요구한다.
