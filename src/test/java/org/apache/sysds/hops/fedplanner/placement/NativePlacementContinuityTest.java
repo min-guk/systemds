@@ -1102,6 +1102,54 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void canonicalDependencyReferenceMergeMatchesExactFlattenSortOracle() {
+		Fixture fixture = new Fixture(FType.FULL);
+		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		List<CandidateRealizationReference> references = new ArrayList<>();
+		for(String name : List.of("zeta", "alpha", "theta", "beta", "gamma", "delta")) {
+			Ref owner = fixture.unary(name, OpOp1.ABS, seed, false);
+			references.add(fixture.reference(owner,
+				List.of(CandidateInputState.present(FType.FULL))));
+		}
+		List<CandidateRealizationReference> ordered = oldCanonicalReferenceOracle(references);
+		List<CandidateRealizationReference> even = List.of(
+			ordered.get(0), ordered.get(2), ordered.get(4));
+		CandidateRealizationReference duplicate = new CandidateRealizationReference(
+			ordered.get(2).rule(), ordered.get(2).realization());
+		List<CandidateRealizationReference> oddWithDuplicate = oldCanonicalReferenceOracle(List.of(
+			ordered.get(1), duplicate, ordered.get(3), ordered.get(5)));
+		List<List<CandidateRealizationReference>> groups = List.of(even, oddWithDuplicate);
+
+		Assert.assertEquals("interleaved canonical groups preserve the old global order",
+			oldCanonicalReferenceOracle(groups.stream().flatMap(List::stream).toList()),
+			NativePlacementContinuity.mergeCanonicalReferenceGroups(groups));
+		Assert.assertSame("the first flattened representative wins across groups",
+			ordered.get(2), NativePlacementContinuity.mergeCanonicalReferenceGroups(groups).get(2));
+	}
+
+	@Test
+	public void canonicalDependencyReferenceMergeHandlesEmptySingleAndDefensiveFallback() {
+		Fixture fixture = new Fixture(FType.FULL);
+		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref firstOwner = fixture.unary("first", OpOp1.ABS, seed, false);
+		Ref secondOwner = fixture.unary("second", OpOp1.LOG, seed, false);
+		CandidateRealizationReference first = fixture.reference(firstOwner,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CandidateRealizationReference second = fixture.reference(secondOwner,
+			List.of(CandidateInputState.present(FType.FULL)));
+
+		Assert.assertEquals(List.of(),
+			NativePlacementContinuity.mergeCanonicalReferenceGroups(List.of()));
+		Assert.assertEquals(List.of(first), NativePlacementContinuity
+			.mergeCanonicalReferenceGroups(List.of(List.of(), List.of(first), List.of())));
+		List<CandidateRealizationReference> canonical = oldCanonicalReferenceOracle(
+			List.of(first, second));
+		List<CandidateRealizationReference> reversed = List.of(canonical.get(1), canonical.get(0));
+		Assert.assertEquals("a noncanonical input group retains the exact sort fallback",
+			canonical, NativePlacementContinuity.mergeCanonicalReferenceGroups(List.of(reversed)));
+	}
+
+	@Test
 	public void factorizedDiamondProductMatchesIndependentLegacyEnumeration() {
 		Fixture fixture = new Fixture(FType.FULL);
 		Ref left = fixture.source("left", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -2200,6 +2248,18 @@ public class NativePlacementContinuityTest {
 			attribution.phase(SearchSpaceMetrics.Phase.PROOF_GROUNDING).calls() > 0);
 		Assert.assertEquals(testCase.name + " direct evaluation constructs no overlay graph", 0,
 			attribution.phase(SearchSpaceMetrics.Phase.PROOF_OVERLAY).calls());
+	}
+
+	private static List<CandidateRealizationReference> oldCanonicalReferenceOracle(
+		List<CandidateRealizationReference> references) {
+		Map<Object,CandidateRealizationReference> distinct = new LinkedHashMap<>();
+		for(CandidateRealizationReference reference : references) {
+			Integer structuralHandle = PlacementIdentity.structuralHandle(reference);
+			distinct.putIfAbsent(structuralHandle == null ? reference : structuralHandle, reference);
+		}
+		List<CandidateRealizationReference> canonical = new ArrayList<>(distinct.values());
+		canonical.sort(PlacementAnalysis.canonicalComparator());
+		return List.copyOf(canonical);
 	}
 
 	private static NativePlacementContinuity.NativeContinuityProof bareProof(String id) {
