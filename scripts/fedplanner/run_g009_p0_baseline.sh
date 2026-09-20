@@ -250,8 +250,11 @@ if sys.argv[3] == "qualify-glm":
         raise SystemExit("official GLM requires calls=1 and exactPhaseCalls=1")
 elif values["calls"] < 1 or not 0 <= values["exactPhaseCalls"] <= values["calls"]:
     raise SystemExit("invalid smoke invocation counts")
-fatal = re.compile(r"FATAL|OutOfMemoryError|DMLRuntimeException|\bERROR\b|\bTIMEOUT\b|"
-                   r"Exception in thread|BUILD FAILURE", re.IGNORECASE)
+fatal = re.compile(r"FATAL|OutOfMemoryError|DMLRuntimeException|ERROR:\s+Runtime error|\bTIMEOUT\b|"
+                   r"Exception in thread|BUILD FAILURE|No valid federated plan|"
+                   r"fed_fout requires a federated anchor|"
+                   r"requires federated input but found local at runtime|StackOverflowError|"
+                   r"Segmentation fault", re.IGNORECASE)
 wrapper = pathlib.Path(sys.argv[4]).read_text(errors="replace").splitlines()
 if any(fatal.search(line) for line in log + wrapper):
     raise SystemExit("fatal marker present in qualification log")
