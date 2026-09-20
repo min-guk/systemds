@@ -39,12 +39,15 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
@@ -153,6 +156,33 @@ public class LogicalBoundaryRealizationsTest {
 		Assert.assertThrows(IllegalArgumentException.class, () -> relation.validate(missing));
 	}
 
+	@Test
+	public void factorizedSourceOptionsPreserveExactPoolWithoutLeafMaterialization() {
+		Fixture f = new Fixture();
+		CandidateEmissionRealization factorized = factorizedDurable(f.argument, POOL_A);
+		CandidateSupportRelation relation = factorized.supportRelation();
+		for(int index = 0; index < f.facts.size(); index++) {
+			CandidateRuleFact fact = f.facts.get(index);
+			if(fact.key().parentOccurrence() != f.argument)
+				continue;
+			CandidateEmissionFact prior = fact.allowedEmissionFacts().get(0);
+			CandidateEmissionFact replacement = new CandidateEmissionFact(prior.emissionState(),
+				prior.executionFType(), prior.derivedFoutAction(), List.of(factorized));
+			f.facts.set(index, new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+				fact.shapeProof(), fact.profile(), List.of(replacement), fact.failureCode()));
+		}
+
+		List<CandidateRuleFact> bound = new LogicalBoundaryRealizations(
+			f.nodes, f.edges, f.origins, f.facts).bind(f.facts);
+		CandidateRuleFact reader = bound.stream()
+			.filter(fact -> fact.key().parentOccurrence() == f.reader).findFirst().orElseThrow();
+		Assert.assertTrue(reader.allowedEmissionFacts().get(0).realizations().stream().allMatch(realization ->
+			PlacementIdentity.samePhysicalWorkerPool(
+				realization.uniqueSupportAnnotations().nativeWorkerPoolWitness(), POOL_A)));
+		Assert.assertEquals("logical-boundary indexing must not decode product leaves", 0,
+			relation.leafMaterializationCount());
+	}
+
 	private static CandidateSelectionReceipt receipt(List<CandidateRuleFact> facts,
 		CompiledHopKey key, DurableAnchorKey pool) {
 		CandidateRuleFact fact = facts.stream().filter(candidate -> candidate.key().parentOccurrence() == key).findFirst().orElseThrow();
@@ -203,5 +233,25 @@ public class LogicalBoundaryRealizationsTest {
 	private static CandidateEmissionRealization durable(CompiledHopKey key, DurableAnchorKey pool) {
 		return CandidateEmissionRealization.durable(NATIVE, pool,
 			List.of(new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR, key, pool.normalizedSignature())), List.of());
+	}
+
+	private static CandidateEmissionRealization factorizedDurable(CompiledHopKey owner,
+		DurableAnchorKey pool) {
+		CompiledHopKey leftKey = key("choice-left");
+		CompiledHopKey rightKey = key("choice-right");
+		CandidateRealizationReference left = CandidateRealizationReference.of(
+			new CandidateRuleKey(leftKey, List.of()), durable(leftKey, pool));
+		CandidateRealizationReference right = CandidateRealizationReference.of(
+			new CandidateRuleKey(rightKey, List.of()), durable(rightKey, pool));
+		PlacementProofKey proof = new PlacementProofKey(
+			PlacementProofKind.DURABLE_ANCHOR, owner, pool.normalizedSignature());
+		CandidateSupportRelation.ProductRoute route = new CandidateSupportRelation.ProductRoute(
+			List.of(proof), List.of(), List.of(List.of(
+				CandidateRealizationInputBinding.direct(0, left),
+				CandidateRealizationInputBinding.direct(0, right))),
+			CandidateSupportRelation.SupportAnnotations.exact());
+		PlacementRealizationKey realizationKey = PlacementRealizationKey.durable(NATIVE, pool);
+		return CandidateEmissionRealization.fromSupportRelation(realizationKey,
+			CandidateSupportRelation.fromProducts(owner, new Object(), List.of(route)));
 	}
 }

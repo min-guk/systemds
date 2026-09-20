@@ -414,6 +414,37 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void graphFallbackReadsSafeProductRoutesWithoutMaterializingSupportLeaves() {
+		Fixture fixture = new Fixture(FType.FULL);
+		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref producer = fixture.unary("producer", OpOp1.ABS, seed, false);
+		List<CandidateInputState> producerInputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		Ref root = fixture.unary("root", OpOp1.LOG, producer, false);
+		List<CandidateInputState> rootInputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference producerReference = fixture.reference(producer, producerInputs);
+		CandidateRealizationReference stagedRoot = fixture.reference(root, rootInputs);
+		CandidateSupportRelation relation = CandidateSupportRelation.fromProducts(
+			stagedRoot.realization(), new Object(), List.of(new CandidateSupportRelation.ProductRoute(
+				List.of(), List.of(CandidateRealizationInputBinding.direct(0, producerReference)),
+				List.of(), CandidateSupportRelation.SupportAnnotations.exact())));
+		fixture.replaceInputSupportRelation(root, rootInputs, relation);
+		CandidateRealizationReference rootReference = fixture.reference(root, rootInputs);
+		NativePlacementContinuity resolver = fixture.resolver(new SearchSpaceMetrics(), 8, 128);
+		resolver.disableDirectDagForTesting();
+
+		List<NativePlacementContinuity.NativeContinuityProof> proofs =
+			resolver.proveCandidateProduct(rootReference, seed.anchor).exportLegacy().proofs();
+
+		Assert.assertFalse(proofs.isEmpty());
+		Assert.assertEquals("safe graph fallback must consume the product route directly",
+			0, relation.constructionMaterializedCount());
+		Assert.assertEquals("proof solving must not decode factorized support leaves",
+			0, relation.leafMaterializationCount());
+	}
+
+	@Test
 	public void repeatedOccurrenceWithDifferentOrMultiReferenceGroupsFallsBackWithLegacyParity() {
 		for(boolean multiReference : List.of(false, true)) {
 			Fixture fixture = new Fixture(FType.FULL);
@@ -1982,6 +2013,21 @@ public class NativePlacementContinuityTest {
 				realization.key(), clauses.stream().map(bindings ->
 					new CandidateRealizationSupportClause(original.proofDependencies(), bindings,
 						original.nativeWorkerPoolWitness(), original.nativeWorkerPoolLayoutExact())).toList());
+			CandidateEmissionFact replacement = new CandidateEmissionFact(emission.emissionState(),
+				emission.executionFType(), emission.derivedFoutAction(), List.of(replacementRealization));
+			candidates.set(candidates.indexOf(fact), new CandidateRuleFact(fact.key(), fact.status(),
+				fact.capability(), fact.shapeProof(), fact.profile(), List.of(replacement), fact.failureCode()));
+		}
+
+		private void replaceInputSupportRelation(Ref owner, List<CandidateInputState> inputs,
+			CandidateSupportRelation relation) {
+			CandidateRuleFact fact = candidates.stream().filter(candidate ->
+				candidate.key().parentOccurrence() == owner.key
+					&& candidate.key().orderedInputs().equals(inputs)).findFirst().orElseThrow();
+			CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
+			CandidateEmissionRealization realization = emission.realizations().get(0);
+			CandidateEmissionRealization replacementRealization =
+				CandidateEmissionRealization.fromSupportRelation(realization.key(), relation);
 			CandidateEmissionFact replacement = new CandidateEmissionFact(emission.emissionState(),
 				emission.executionFType(), emission.derivedFoutAction(), List.of(replacementRealization));
 			candidates.set(candidates.indexOf(fact), new CandidateRuleFact(fact.key(), fact.status(),

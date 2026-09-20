@@ -295,6 +295,29 @@ public class CandidateSupportRelationTest {
 	}
 
 	@Test
+	public void structuralComparisonFallsBackToExactFlatAndDeferredSemantics() {
+		List<CandidateRealizationInputBinding> choices = bindings(0, "semantic-fallback", 2);
+		DurableAnchorKey seed = pool("semantic-fallback-seed");
+		DurableAnchorKey output = pool("semantic-fallback-output");
+		DeferredNativeContinuityProof recipe = new DeferredNativeContinuityProof(
+			OWNER.parentOccurrence(), seed, output, true);
+		CandidateSupportRelation factorized = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(new ProductRoute(List.of(), List.of(choices),
+				new SupportAnnotations(output, true), List.of(recipe))));
+		CandidateSupportRelation flat = CandidateSupportRelation.fromFlat(
+			OWNER, new Object(), factorized.exportCanonicalClauses());
+		CandidateSupportRelation strictSubset = CandidateSupportRelation.fromFlat(
+			OWNER, new Object(), List.of(flat.exportCanonicalClauses().get(0)));
+
+		Assert.assertNotEquals("the regression requires different structural representations",
+			new java.util.HashSet<>(factorized.routes()), new java.util.HashSet<>(flat.routes()));
+		Assert.assertTrue(factorized.sameSupportAs(flat));
+		Assert.assertTrue(flat.sameSupportAs(factorized));
+		Assert.assertTrue(factorized.containsAllSupportOf(strictSubset));
+		Assert.assertFalse(strictSubset.containsAllSupportOf(factorized));
+	}
+
+	@Test
 	public void unionIsIdempotentAndRouteOrderIsDeterministicWithoutLeafEnumeration() {
 		ProductRoute route = new ProductRoute(List.of(proof("same")),
 			List.of(bindings(0, "same", 4)), SupportAnnotations.exact());

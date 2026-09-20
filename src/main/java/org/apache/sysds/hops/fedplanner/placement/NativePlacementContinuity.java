@@ -1255,21 +1255,25 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Integer> fixedHandles) {
 		if(metrics != null)
 			metrics.recordTopologyOverlayEvaluation();
-		CandidateTopology topology = candidateTopology(key, witness);
-		if(!topology.eligible)
-			return List.of();
-		List<SelectedCandidateProof> alternatives = new ArrayList<>();
-		List<CandidateTopologyRow> overlayRows = pinned == null ? topology.rows
-			: topology.rowsByHandle.getOrDefault(pinnedHandle, List.of());
-		// The topology rows are already canonical. The old final sort only moved
-		// the synthetic null realization to the front, so publish it first instead.
-		if(pinned == null && topology.nodeDirectGround)
-			alternatives.add(new SelectedCandidateProof(null, null, List.of(), true, witness));
-		for(CandidateTopologyRow row : overlayRows) {
-			if(pinned == null && row.requiresPinned)
-				continue;
-			alternatives.add(new SelectedCandidateProof(row.reference, row.clause,
-				overlayDependencies(row.dependencies, fixed, fixedHandles), row.directGround, witness));
+		List<SelectedCandidateProof> alternatives = factorizedProofAlternatives(key, pinned,
+			pinnedHandle, witness, fixed, fixedHandles);
+		if(alternatives == null) {
+			CandidateTopology topology = candidateTopology(key, witness);
+			if(!topology.eligible)
+				return List.of();
+			alternatives = new ArrayList<>();
+			List<CandidateTopologyRow> overlayRows = pinned == null ? topology.rows
+				: topology.rowsByHandle.getOrDefault(pinnedHandle, List.of());
+			// The topology rows are already canonical. The old final sort only moved
+			// the synthetic null realization to the front, so publish it first instead.
+			if(pinned == null && topology.nodeDirectGround)
+				alternatives.add(new SelectedCandidateProof(null, null, List.of(), true, witness));
+			for(CandidateTopologyRow row : overlayRows) {
+				if(pinned == null && row.requiresPinned)
+					continue;
+				alternatives.add(new SelectedCandidateProof(row.reference, row.clause,
+					overlayDependencies(row.dependencies, fixed, fixedHandles), row.directGround, witness));
+			}
 		}
 		Hop hop = originsByKey.get(key);
 		// Template fallback intentionally remains a separate query-overlay path. Its
@@ -1296,6 +1300,48 @@ final class NativePlacementContinuity {
 						false, witness));
 			}
 		return List.copyOf(alternatives);
+	}
+
+	/**
+	 * Projects a product route only when every dependency choice has already
+	 * collapsed to one proof state. Returning {@code null} preserves the exact
+	 * flat solver for unsupported correlation or genuine multi-choice routes.
+	 */
+	private List<SelectedCandidateProof> factorizedProofAlternatives(CompiledHopKey key,
+		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
+		Map<CompiledHopKey,CandidateRealizationReference> fixed,
+		Map<CompiledHopKey,Integer> fixedHandles) {
+		FactorizedCandidateTopology topology = factorizedCandidateTopology(key, witness);
+		if(topology.fallbackRequired)
+			return null;
+		if(!topology.eligible)
+			return null;
+		List<FactorizedCandidateTopologyRow> overlayRows = pinned == null ? topology.rows
+			: topology.rowsByHandle.getOrDefault(pinnedHandle, List.of());
+		for(FactorizedCandidateTopologyRow row : overlayRows)
+			for(FactorizedCandidateDependency dependency : row.dependencies)
+				if(!fixed.containsKey(dependency.key) && dependency.allowedReferences.size() > 1)
+					return null;
+		List<SelectedCandidateProof> alternatives = new ArrayList<>();
+		if(pinned == null && topology.nodeDirectGround)
+			alternatives.add(new SelectedCandidateProof(null, null, List.of(), true, witness));
+		for(FactorizedCandidateTopologyRow row : overlayRows) {
+			if(pinned == null && row.requiresPinned)
+				continue;
+			List<CandidateProofDependency> dependencies = new ArrayList<>(row.dependencies.size());
+			for(FactorizedCandidateDependency dependency : row.dependencies) {
+				boolean queryPinned = fixed.containsKey(dependency.key);
+				CandidateRealizationReference reference = queryPinned ? fixed.get(dependency.key)
+					: dependency.allowedReferences.isEmpty() ? null
+						: dependency.allowedReferences.get(0);
+				int handle = queryPinned ? fixedHandles.get(dependency.key) : candidateHandle(reference);
+				dependencies.add(new CandidateProofDependency(dependency.key, reference, handle,
+					dependency.witness, dependency.inputPosition));
+			}
+			alternatives.add(new SelectedCandidateProof(row.reference, null,
+				List.copyOf(dependencies), row.directGround, witness));
+		}
+		return alternatives;
 	}
 
 	private FactorizedCandidateTopology factorizedCandidateTopology(CompiledHopKey key,

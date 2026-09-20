@@ -150,7 +150,7 @@ final class CandidateClosureDependencies {
 	}
 
 	private static ChangeKind classify(List<CandidateRuleFact> before, List<CandidateRuleFact> after) {
-		if(before.equals(after))
+		if(structurallyEqual(before, after))
 			return ChangeKind.NONE;
 		Map<Object,CandidateRuleFact> oldByKey = new LinkedHashMap<>();
 		Map<Object,CandidateRuleFact> newByKey = new LinkedHashMap<>();
@@ -196,7 +196,7 @@ final class CandidateClosureDependencies {
 				.filter(candidate -> candidate.key().equals(oldRealization.key()))
 				.findFirst().orElse(null);
 			if(newRealization == null
-				|| !newRealization.supportClauses().containsAll(oldRealization.supportClauses()))
+				|| !newRealization.supportRelation().containsAllSupportOf(oldRealization.supportRelation()))
 				return false;
 		}
 		return true;
@@ -205,9 +205,42 @@ final class CandidateClosureDependencies {
 	private static Set<CompiledHopKey> supportSources(CandidateRuleFact fact) {
 		Set<CompiledHopKey> sources = identitySet();
 		fact.allowedEmissionFacts().forEach(emission -> emission.realizations().forEach(realization ->
-			realization.supportClauses().forEach(clause -> clause.inputBindings().forEach(binding ->
-				sources.add(binding.source().rule().parentOccurrence())))));
+			realization.supportRelation().distinctBindingAtoms().forEach(binding ->
+				sources.add(binding.source().rule().parentOccurrence()))));
 		return sources;
+	}
+
+	private static boolean structurallyEqual(List<CandidateRuleFact> left,
+		List<CandidateRuleFact> right) {
+		if(left.size() != right.size())
+			return false;
+		for(int factIndex = 0; factIndex < left.size(); factIndex++) {
+			CandidateRuleFact a = left.get(factIndex);
+			CandidateRuleFact b = right.get(factIndex);
+			if(!a.key().equals(b.key()) || a.status() != b.status()
+				|| !Objects.equals(a.capability(), b.capability())
+				|| !a.shapeProof().equals(b.shapeProof()) || !a.profile().equals(b.profile())
+				|| !a.failureCode().equals(b.failureCode())
+				|| a.allowedEmissionFacts().size() != b.allowedEmissionFacts().size())
+				return false;
+			for(int emissionIndex = 0; emissionIndex < a.allowedEmissionFacts().size(); emissionIndex++) {
+				CandidateEmissionFact x = a.allowedEmissionFacts().get(emissionIndex);
+				CandidateEmissionFact y = b.allowedEmissionFacts().get(emissionIndex);
+				if(!x.emissionState().equals(y.emissionState())
+					|| !Objects.equals(x.executionFType(), y.executionFType())
+					|| !Objects.equals(x.derivedFoutAction(), y.derivedFoutAction())
+					|| x.realizations().size() != y.realizations().size())
+					return false;
+				for(int realizationIndex = 0; realizationIndex < x.realizations().size(); realizationIndex++) {
+					var p = x.realizations().get(realizationIndex);
+					var q = y.realizations().get(realizationIndex);
+					if(!p.key().equals(q.key())
+						|| !p.supportRelation().sameSupportAs(q.supportRelation()))
+						return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	private static DependencyIndex directedDependencies(List<Node> nodes,

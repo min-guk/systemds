@@ -109,6 +109,26 @@ public final class CandidateSupportRelation {
 	public List<ProductRoute> routes() { return routes; }
 	public long rawCardinality() { return rawCardinality; }
 
+	/**
+	 * Exact extensional equality with a structural fast path.  Fixed-point code normally
+	 * compares the same factor representation and never crosses the flat boundary; the
+	 * fallback preserves the legacy semantics when equivalent flat/static and
+	 * factorized/deferred representations meet during a transition.
+	 */
+	boolean sameSupportAs(CandidateSupportRelation that) {
+		Objects.requireNonNull(that, "support relation");
+		return this == that || new HashSet<>(routes).equals(new HashSet<>(that.routes))
+			|| exportCanonicalClauses().equals(that.exportCanonicalClauses());
+	}
+
+	/** Exact extensional superset with the same structural fast path as equality. */
+	boolean containsAllSupportOf(CandidateSupportRelation that) {
+		Objects.requireNonNull(that, "support relation");
+		if(this == that || new HashSet<>(routes).containsAll(that.routes))
+			return true;
+		return new HashSet<>(exportCanonicalClauses()).containsAll(that.exportCanonicalClauses());
+	}
+
 	/** Computes the extensional OR-set size on demand. */
 	public synchronized long exactCardinality() {
 		if(exactCardinality == null) {

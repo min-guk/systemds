@@ -121,7 +121,10 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue(first.proofStatesBuilt() > 0);
 		Assert.assertTrue(first.proofAlternativesBuilt() >= 0);
 		Assert.assertTrue(first.proofDependencyEdgesBuilt() >= 0);
-		Assert.assertTrue(first.proofRowsExamined() >= first.proofAlternativesBuilt());
+		Assert.assertTrue("factorized proof construction may publish alternatives without row export",
+			first.proofRowsExamined() >= 0);
+		Assert.assertTrue(first.supportProductDescriptorsExpanded()
+			+ first.supportProductDescriptorsReused() > 0);
 		Assert.assertTrue("owner compaction scans cannot be negative",
 			first.ownerCompactionElementsScanned() >= 0);
 		Assert.assertTrue("only legacy-pruned alternatives may require an owner compaction scan",
@@ -132,8 +135,8 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue(first.supportLeaves() >= first.uniqueProofs());
 		Assert.assertEquals(first.supportLeaves(), first.uniqueProofs() + first.duplicateProofs());
 		Assert.assertTrue(first.factorizedClauses() > 0);
-		Assert.assertEquals("receipt slots preserve every clause without eager receipt objects",
-			first.factorizedClauses(), first.receiptRelationSlots());
+		Assert.assertTrue("receipt relation slots are a non-materializing raw product upper bound",
+			first.receiptRelationSlots() >= first.factorizedClauses());
 		Assert.assertEquals(0, first.candidateReceiptsCreated());
 		Assert.assertTrue(first.factorizedProofListsReused() > 0);
 		Assert.assertTrue(first.factorizedBindingListsReused() > 0);
@@ -173,6 +176,23 @@ public class NeutralPlacementFixedPointCompositionTest {
 				((org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt)
 					ranked.get(index)).normalizedSignature());
 		Assert.assertEquals("compressed relation rank must equal legacy receipt bytes", lexical, ranked);
+	}
+
+	@Test
+	public void directNativeProductsRemainUnmaterializedThroughAnalysisFormation() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileProtected(SOURCE + "Y=X+1; print(sum(Y));\n"));
+		List<CandidateSupportRelation> deferred = analysis.candidateRuleFacts().orderedFacts().stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.map(PlacementAnalysis.CandidateEmissionRealization::supportRelation)
+			.filter(relation -> !relation.distinctDeferredNativeProofRecipes().isEmpty()).toList();
+		Assert.assertFalse("fixture must publish deferred native proof products", deferred.isEmpty());
+		Assert.assertTrue("analysis formation must not decode factorized support leaves",
+			deferred.stream().allMatch(relation -> relation.leafMaterializationCount() == 0));
+		Assert.assertTrue("builder must retain product dimensions instead of flat clauses",
+			deferred.stream().anyMatch(relation -> relation.routes().stream()
+				.anyMatch(route -> !route.bindingChoicesBySlot().isEmpty())));
 	}
 
 	@Test
