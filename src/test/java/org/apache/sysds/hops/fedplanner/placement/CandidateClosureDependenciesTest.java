@@ -7,6 +7,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.CandidateClosureDependencies.ChangeKind;
 import org.apache.sysds.hops.fedplanner.placement.CandidateClosureDependencies.IndexStats;
@@ -239,6 +240,25 @@ public class CandidateClosureDependenciesTest {
 		Assert.assertFalse(cyclic.directed());
 		Assert.assertEquals(count, cyclic.directOwners().size());
 		Assert.assertEquals(cyclic.invalidationOwners(), cyclic.directOwners());
+	}
+
+	@Test
+	public void cfgReaderFrontierCoversZeroOneAllAndUnsafeFallbacks() {
+		List<Set<Integer>> reaching = List.of(Set.of(), Set.of(0), Set.of(), Set.of(2));
+		List<Boolean> readers = List.of(false, true, false, true);
+		Assert.assertEquals(Set.of(), CandidateClosureDependencies.selectCfgReaderOrdinals(
+			Set.of(), reaching, readers, true));
+		Assert.assertEquals("one writer must not schedule the unrelated reader", Set.of(1),
+			CandidateClosureDependencies.selectCfgReaderOrdinals(Set.of(0), reaching, readers, true));
+		Assert.assertEquals(Set.of(1, 3), CandidateClosureDependencies.selectCfgReaderOrdinals(
+			Set.of(0, 2), reaching, readers, true));
+		Assert.assertNull("deletion/replacement/authority epochs must replay every reader",
+			CandidateClosureDependencies.selectCfgReaderOrdinals(Set.of(0), reaching, readers, false));
+
+		List<Set<Integer>> loop = List.of(Set.of(), Set.of(), Set.of(0, 1));
+		Assert.assertNull("affected loop/cycle readers must replay in full",
+			CandidateClosureDependencies.selectCfgReaderOrdinals(
+				Set.of(0), loop, List.of(false, false, true), true));
 	}
 
 	private Revision schedule(Map<CompiledHopKey,ChangeKind> changes) {

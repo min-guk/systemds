@@ -52,6 +52,22 @@ final class CandidateClosureDependencies {
 		return classify(before, after);
 	}
 
+	static boolean isPositiveRelationRevision(List<CandidateRuleFact> before,
+		List<CandidateRuleFact> after) {
+		Map<CompiledHopKey,List<CandidateRuleFact>> oldFacts = factsByOwner(before);
+		Map<CompiledHopKey,List<CandidateRuleFact>> newFacts = factsByOwner(after);
+		Set<CompiledHopKey> owners = identitySet();
+		owners.addAll(oldFacts.keySet());
+		owners.addAll(newFacts.keySet());
+		for(CompiledHopKey owner : owners) {
+			ChangeKind kind = classify(oldFacts.getOrDefault(owner, List.of()),
+				newFacts.getOrDefault(owner, List.of()));
+			if(kind != ChangeKind.NONE && kind != ChangeKind.POSITIVE_RELATION)
+				return false;
+		}
+		return true;
+	}
+
 	static Revision scheduleForTesting(Map<CompiledHopKey,ChangeKind> changes,
 		Map<CompiledHopKey,? extends Collection<CompiledHopKey>> directedEdges) {
 		Set<CompiledHopKey> changed = identitySet();
@@ -75,6 +91,26 @@ final class CandidateClosureDependencies {
 
 	static IndexStats aliasIndexStatsForTesting(Map<CompiledHopKey,ValueVersionKey> aliases) {
 		return aliasIndex(new IdentityHashMap<>(), aliases).stats();
+	}
+
+	static Set<Integer> selectCfgReaderOrdinals(Set<Integer> changedOrdinals,
+		List<? extends Set<Integer>> reachingDefinitions, List<Boolean> eligibleReaders,
+		boolean safePositiveEpoch) {
+		if(!safePositiveEpoch)
+			return null;
+		Set<Integer> selected = new java.util.TreeSet<>();
+		for(int ordinal = 0; ordinal < reachingDefinitions.size(); ordinal++) {
+			if(!eligibleReaders.get(ordinal))
+				continue;
+			Set<Integer> definitions = reachingDefinitions.get(ordinal);
+			boolean affected = changedOrdinals.contains(ordinal)
+				|| definitions.stream().anyMatch(changedOrdinals::contains);
+			if(affected && definitions.size() > 1)
+				return null;
+			if(affected)
+				selected.add(ordinal);
+		}
+		return Set.copyOf(selected);
 	}
 
 	static Revision revision(List<CandidateRuleFact> before, List<CandidateRuleFact> after,

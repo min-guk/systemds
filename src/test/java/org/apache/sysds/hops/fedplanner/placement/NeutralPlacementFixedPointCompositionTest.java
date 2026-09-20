@@ -34,6 +34,11 @@ public class NeutralPlacementFixedPointCompositionTest {
 		+ SOURCE + "Y=f(X); print(sum(Y));\n";
 	static final String ACTIONS = SOURCE
 		+ "p=matrix(1,rows=2,cols=1); pred=X%*%p; grad=t(X)%*%pred; print(sum(grad));\n";
+	private static final String SPARSE_CFG = SOURCE
+		+ "left=X+1; right=X+2; gate=matrix(1,rows=1,cols=1); "
+		+ "if(sum(gate)>0) { print(sum(left)); print(sum(right)); }\n";
+	private static final String LOOP_CFG = SOURCE
+		+ "B=matrix(1,rows=2,cols=2); i=1; while(i<=2) { B=B+1; i=i+1; } print(sum(B));\n";
 
 	@Test
 	public void representativeCompositionsTerminateAtStablePassWithinDeclaredBound() throws Exception {
@@ -261,6 +266,59 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue("DELTA must retain non-full passes after its initial full seed",
 			incrementalMetrics.snapshot().directClosureFullPasses()
 				< incrementalMetrics.snapshot().directClosurePasses());
+	}
+
+	@Test
+	public void sparseCfgReplaySkipsIndependentReadersAndMatchesFullAndShadow() throws Exception {
+		SearchSpaceMetrics deltaMetrics = new SearchSpaceMetrics();
+		PlacementAnalysis delta = new NeutralPlacementGraphBuilder(null, deltaMetrics,
+			NeutralPlacementGraphBuilder.DirectClosureMode.DELTA).buildAnalysis(compileProtected(SPARSE_CFG));
+		SearchSpaceMetrics fullMetrics = new SearchSpaceMetrics();
+		PlacementAnalysis full = new NeutralPlacementGraphBuilder(null, fullMetrics,
+			NeutralPlacementGraphBuilder.DirectClosureMode.FULL).buildAnalysis(compileProtected(SPARSE_CFG));
+		PlacementAnalysis shadow = new NeutralPlacementGraphBuilder(null, new SearchSpaceMetrics(),
+			NeutralPlacementGraphBuilder.DirectClosureMode.SHADOW).buildAnalysis(compileProtected(SPARSE_CFG));
+
+		Assert.assertEquals(full.analysisFingerprint(), delta.analysisFingerprint());
+		Assert.assertEquals(full.analysisFingerprint(), shadow.analysisFingerprint());
+		Assert.assertEquals(full.graph().nodes(), delta.graph().nodes());
+		Assert.assertEquals(full.candidateRuleFacts().orderedFacts(), delta.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
+			delta.logicalTransientInputsInCanonicalOrder());
+		Assert.assertTrue("sparse CFG replay must execute a selective pass",
+			deltaMetrics.snapshot().cfgReplaySelectivePasses() > 0);
+		Assert.assertTrue("sparse CFG replay must reuse at least one unrelated exact reader",
+			deltaMetrics.snapshot().cfgReplayReadersReused() > 0);
+		Assert.assertTrue("fixture must still recompute the affected owner/reader cone",
+			deltaMetrics.snapshot().cfgReplayReadersRecomputed() > 0);
+		Assert.assertTrue(fullMetrics.snapshot().cfgReplayFullPasses() > 0);
+		Assert.assertEquals(0, fullMetrics.snapshot().cfgReplaySelectivePasses());
+		Assert.assertEquals(0, fullMetrics.snapshot().cfgReplayReadersReused());
+	}
+
+	@Test
+	public void multiDefinitionLoopFallbackMatchesFullDeltaAndShadowIncludingSeeds() throws Exception {
+		SearchSpaceMetrics deltaMetrics = new SearchSpaceMetrics();
+		PlacementAnalysis delta = new NeutralPlacementGraphBuilder(null, deltaMetrics,
+			NeutralPlacementGraphBuilder.DirectClosureMode.DELTA).buildAnalysis(compileProtected(LOOP_CFG));
+		PlacementAnalysis full = new NeutralPlacementGraphBuilder(null, new SearchSpaceMetrics(),
+			NeutralPlacementGraphBuilder.DirectClosureMode.FULL).buildAnalysis(compileProtected(LOOP_CFG));
+		PlacementAnalysis shadow = new NeutralPlacementGraphBuilder(null, new SearchSpaceMetrics(),
+			NeutralPlacementGraphBuilder.DirectClosureMode.SHADOW).buildAnalysis(compileProtected(LOOP_CFG));
+
+		Assert.assertEquals(full.analysisFingerprint(), delta.analysisFingerprint());
+		Assert.assertEquals(full.analysisFingerprint(), shadow.analysisFingerprint());
+		Assert.assertEquals(full.graph().nodes(), delta.graph().nodes());
+		Assert.assertEquals(full.candidateRuleFacts().orderedFacts(), shadow.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
+			shadow.logicalTransientInputsInCanonicalOrder());
+		Assert.assertTrue("actual loop replay must install provisional loop authority",
+			deltaMetrics.snapshot().cfgReplayLoopSeedsInstalled() > 0);
+		Assert.assertTrue("multi-definition/loop epochs must exercise unsafe fallback",
+			deltaMetrics.snapshot().cfgReplayFallbackPasses() > 0);
+		Assert.assertTrue("mandatory initial full must remain distinct from unsafe fallback",
+			deltaMetrics.snapshot().cfgReplayFullPasses()
+				> deltaMetrics.snapshot().cfgReplayFallbackPasses());
 	}
 
 	private static void assertSupportFactorizationPreservesClauseOwnership(PlacementAnalysis analysis) {

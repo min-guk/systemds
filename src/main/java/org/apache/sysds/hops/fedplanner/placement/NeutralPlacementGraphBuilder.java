@@ -137,6 +137,7 @@ public final class NeutralPlacementGraphBuilder {
 	private final DirectClosureMode directClosureMode;
 
 	enum DirectClosureMode { FULL, DELTA, SHADOW }
+	private enum CfgReplaySelection { INITIAL_FULL, UNSAFE_FALLBACK, SELECTIVE }
 
 	interface FixedPointObserver {
 		void accept(FixedPointPass pass);
@@ -2564,9 +2565,13 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			if(!directConverged)
 				throw new IllegalStateException("Candidate-specific direct realization closure did not converge");
+			Set<CompiledHopKey> initialReaders = pass == 0 ? null : selectiveCfgReaders(
+				occurrences, current.nodes(), cfg, passStart, current, installedLoopSeeds);
+			CfgReplaySelection initialSelection = pass == 0 ? CfgReplaySelection.INITIAL_FULL
+				: initialReaders == null ? CfgReplaySelection.UNSAFE_FALLBACK : CfgReplaySelection.SELECTIVE;
 			CandidateReplay replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
 				factsByHop, current.domainKeys(), current.facts(), current.logicalInputs(), baseline, nativePools,
-				installedLoopSeeds);
+				installedLoopSeeds, initialReaders, initialSelection);
 			closureTrace.add(pass + ":" + beforeSignature + "->n=" + replayed.nodes().hashCode()
 				+ ",f=" + replayed.facts().hashCode() + ",l=" + replayed.logicalInputs().hashCode()
 				+ ",changed=" + replayed.changedOrdinals());
@@ -2579,6 +2584,7 @@ public final class NeutralPlacementGraphBuilder {
 				return replayed;
 			replayed = new CandidateReplay(replayed.nodes(), replayed.domainKeys(), replayed.facts(),
 				replayed.logicalInputs(), List.copyOf(pendingPhysical));
+			CandidateReplay prePhysical = replayed;
 			CandidateReplay physicallyClosed = closePostCfgPhysicalCandidateDependencies(occurrences, replayed,
 				factsByHop, abstractFactsByHop, singlePartitions, ordinalsByBlock, cfg);
 			// Physical rebuilding deliberately restores oracle-owned base emissions and
@@ -2630,10 +2636,14 @@ public final class NeutralPlacementGraphBuilder {
 			// Direct grounding can replace normalized realization identities. Re-run the
 			// exact CFG replay authority so transient compatibility edges name the current
 			// source/reader realizations instead of merely filtering stale signatures.
+			Set<CompiledHopKey> physicalReaders = selectiveCfgReaders(occurrences,
+				physicallyClosed.nodes(), cfg, prePhysical, physicallyClosed, installedLoopSeeds);
+			CfgReplaySelection physicalSelection = physicalReaders == null
+				? CfgReplaySelection.UNSAFE_FALLBACK : CfgReplaySelection.SELECTIVE;
 			CandidateReplay relationClosed = replayUniqueCfgTransientForwards(occurrences,
 				physicallyClosed.nodes(), cfg, factsByHop, physicallyClosed.domainKeys(),
 				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, physicalPools,
-				installedLoopSeeds);
+				installedLoopSeeds, physicalReaders, physicalSelection);
 			// Replay, physical rebuilding, direct proof grounding, and exact relation
 			// regeneration are one composed transfer. Compare only that completed state.
 			if(relationClosed.nodes().equals(passStart.nodes())
@@ -3163,7 +3173,130 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> domainKeys,
 		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
 		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
-		Set<CompiledHopKey> installedLoopSeeds) {
+		Set<CompiledHopKey> installedLoopSeeds, Set<CompiledHopKey> selectedReaders,
+		CfgReplaySelection selection) {
+		Set<CompiledHopKey> effectiveReaders = directClosureMode == DirectClosureMode.FULL
+			? null : selectedReaders;
+		boolean selective = effectiveReaders != null;
+		boolean fallback = directClosureMode != DirectClosureMode.FULL
+			&& selection == CfgReplaySelection.UNSAFE_FALLBACK;
+		if(complexityMetrics != null)
+			complexityMetrics.recordCfgReplayPass(selective, fallback);
+		if(directClosureMode != DirectClosureMode.SHADOW)
+			return replayUniqueCfgTransientForwardsSelected(occurrences, nodes, cfg, factsByHop,
+				domainKeys, facts, existingLogicalInputs, baseline, nativePools, installedLoopSeeds,
+				effectiveReaders, true);
+		Set<CompiledHopKey> deltaSeeds = identityCopy(installedLoopSeeds);
+		Set<CompiledHopKey> fullSeeds = identityCopy(installedLoopSeeds);
+		CandidateReplay delta = replayUniqueCfgTransientForwardsSelected(occurrences, nodes, cfg,
+			factsByHop, domainKeys, facts, existingLogicalInputs, baseline, nativePools,
+			deltaSeeds, effectiveReaders, true);
+		CandidateReplay full = replayUniqueCfgTransientForwardsSelected(occurrences, nodes, cfg,
+			factsByHop, domainKeys, facts, existingLogicalInputs, baseline, nativePools,
+			fullSeeds, null, false);
+		boolean seedsEqual = deltaSeeds.equals(fullSeeds);
+		if(!delta.equals(full) || !seedsEqual)
+			throw new IllegalStateException("CFG_REPLAY_SHADOW_MISMATCH|stateEqual="
+				+ delta.equals(full) + "|loopSeedsEqual=" + seedsEqual
+				+ "|deltaChanged=" + delta.changedOrdinals().size()
+				+ "|fullChanged=" + full.changedOrdinals().size()
+				+ "|deltaSeeds=" + deltaSeeds.size() + "|fullSeeds=" + fullSeeds.size());
+		installedLoopSeeds.clear();
+		installedLoopSeeds.addAll(deltaSeeds);
+		return delta;
+	}
+
+	private static Set<CompiledHopKey> identityCopy(Set<CompiledHopKey> source) {
+		Set<CompiledHopKey> copy = Collections.newSetFromMap(new IdentityHashMap<>());
+		copy.addAll(source);
+		return copy;
+	}
+
+	private static Set<CompiledHopKey> selectiveCfgReaders(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		CandidateReplay before, CandidateReplay after, Set<CompiledHopKey> installedLoopSeeds) {
+		boolean safePositiveEpoch = installedLoopSeeds.isEmpty() && positiveReplayRevision(before, after);
+		Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int ordinal = 0; ordinal < Math.min(before.nodes().size(), after.nodes().size()); ordinal++)
+			if(!before.nodes().get(ordinal).equals(after.nodes().get(ordinal)))
+				changed.add(after.nodes().get(ordinal).key());
+		Map<CompiledHopKey,List<CandidateRuleFact>> beforeFacts = factsByParent(before.facts());
+		Map<CompiledHopKey,List<CandidateRuleFact>> afterFacts = factsByParent(after.facts());
+		Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+		owners.addAll(beforeFacts.keySet());
+		owners.addAll(afterFacts.keySet());
+		for(CompiledHopKey owner : owners)
+			if(!beforeFacts.getOrDefault(owner, List.of()).equals(afterFacts.getOrDefault(owner, List.of())))
+				changed.add(owner);
+		for(LogicalTransientInputFact input : after.logicalInputs())
+			if(!before.logicalInputs().contains(input))
+				changed.add(input.targetRead());
+		Set<Integer> changedOrdinals = new HashSet<>(after.changedOrdinals());
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++)
+			if(changed.contains(nodes.get(ordinal).key()))
+				changedOrdinals.add(ordinal);
+		List<Boolean> eligibleReaders = new ArrayList<>(occurrences.size());
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			Node node = nodes.get(ordinal);
+			eligibleReaders.add(PlacementAnalysis.isCompiledTransientAccess(
+				occurrences.get(ordinal).hop(), node, OpOpData.TRANSIENTREAD)
+				&& !cfg.reachingFunctionInputs().get(ordinal));
+		}
+		Set<Integer> selectedOrdinals = CandidateClosureDependencies.selectCfgReaderOrdinals(
+			changedOrdinals, cfg.reachingDefinitions(), eligibleReaders, safePositiveEpoch);
+		if(selectedOrdinals == null)
+			return null;
+		Set<CompiledHopKey> readers = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int ordinal : selectedOrdinals)
+			readers.add(nodes.get(ordinal).key());
+		return readers;
+	}
+
+	private static boolean positiveReplayRevision(CandidateReplay before, CandidateReplay after) {
+		if(before.nodes().size() != after.nodes().size()
+			|| !after.domainKeys().containsAll(before.domainKeys())
+			|| !after.logicalInputs().containsAll(before.logicalInputs())
+			|| !CandidateClosureDependencies.isPositiveRelationRevision(before.facts(), after.facts()))
+			return false;
+		Map<CompiledHopKey,List<CandidateRuleFact>> beforeFacts = factsByParent(before.facts());
+		Map<CompiledHopKey,List<CandidateRuleFact>> afterFacts = factsByParent(after.facts());
+		for(int ordinal = 0; ordinal < before.nodes().size(); ordinal++) {
+			Node oldNode = before.nodes().get(ordinal);
+			Node newNode = after.nodes().get(ordinal);
+			if(oldNode.key() != newNode.key() || oldNode.kind() != newNode.kind()
+				|| !oldNode.valueVersion().equals(newNode.valueVersion())
+				|| !newNode.legalAlternatives().containsAll(oldNode.legalAlternatives())
+				|| !newNode.anchors().containsAll(oldNode.anchors())
+				|| !newNode.exclusions().equals(oldNode.exclusions()))
+				return false;
+			boolean changed = !oldNode.equals(newNode)
+				|| !beforeFacts.getOrDefault(oldNode.key(), List.of()).equals(
+					afterFacts.getOrDefault(newNode.key(), List.of()));
+			if(changed && (newNode.kind() == NodeKind.FUNCTION_CALL
+				|| newNode.kind() == NodeKind.FUNCTION_INPUT || newNode.kind() == NodeKind.FUNCTION_OUTPUT
+				|| newNode.exclusions().stream().anyMatch(exclusion ->
+					exclusion.reasonCode() == ReasonCode.PRIVACY
+						|| exclusion.reasonCode() == ReasonCode.UNKNOWN_METADATA)))
+				return false;
+		}
+		return true;
+	}
+
+	private static Map<CompiledHopKey,List<CandidateRuleFact>> factsByParent(
+		List<CandidateRuleFact> facts) {
+		Map<CompiledHopKey,List<CandidateRuleFact>> byParent = new IdentityHashMap<>();
+		for(CandidateRuleFact fact : facts)
+			byParent.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+		return byParent;
+	}
+
+	private CandidateReplay replayUniqueCfgTransientForwardsSelected(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> domainKeys,
+		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
+		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
+		Set<CompiledHopKey> installedLoopSeeds, Set<CompiledHopKey> selectedReaders,
+		boolean recordMetrics) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before CFG replay");
 		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
@@ -3189,6 +3322,19 @@ public final class NeutralPlacementGraphBuilder {
 				occurrence.hop(), node, OpOpData.TRANSIENTREAD)
 				&& !cfg.reachingFunctionInputs().get(ordinal)
 				&& !cfg.reachingDefinitions().get(ordinal).isEmpty();
+			if(cfgRead && selectedReaders != null && !selectedReaders.contains(node.key())) {
+				replayedNodes.add(node);
+				for(int slot : candidateSlots.getOrDefault(node.key(), List.of())) {
+					replayedKeys.add(domainKeys.get(slot));
+					replayedFacts.add(facts.get(slot));
+					copiedSlots.add(slot);
+				}
+				if(recordMetrics && complexityMetrics != null)
+					complexityMetrics.recordCfgReplayReader(false);
+				continue;
+			}
+			if(cfgRead && recordMetrics && complexityMetrics != null)
+				complexityMetrics.recordCfgReplayReader(true);
 			boolean hadPriorReplay = cfgRead && logicalInputs.stream()
 				.anyMatch(input -> input.targetRead() == node.key());
 			List<LogicalTransientInputFact> priorInputs = logicalInputs.stream()
@@ -3197,7 +3343,8 @@ public final class NeutralPlacementGraphBuilder {
 			int replacementStart = replayedKeys.size();
 			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
 				factsByHop, facts, replayedKeys, replayedFacts, replacementInputs,
-				!hadPriorReplay && !installedLoopSeeds.contains(node.key()), nativePools, installedLoopSeeds);
+				!hadPriorReplay && !installedLoopSeeds.contains(node.key()), nativePools, installedLoopSeeds,
+				recordMetrics);
 			boolean replayedParent = replayed != node;
 			if(hadPriorReplay && !replayedParent) {
 				Node original = baseline.nodes().get(node.key());
@@ -3264,7 +3411,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleKey> replayedKeys, List<CandidateRuleFact> replayedFacts,
 		List<LogicalTransientInputFact> logicalInputs,
 		boolean allowLoopPlacementSeed, NativePlacementContinuity nativePools,
-		Set<CompiledHopKey> installedLoopSeeds) {
+		Set<CompiledHopKey> installedLoopSeeds, boolean recordMetrics) {
 		if(!PlacementAnalysis.isCompiledTransientAccess(readOccurrence.hop(), read, OpOpData.TRANSIENTREAD))
 			return read;
 		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
@@ -3303,8 +3450,9 @@ public final class NeutralPlacementGraphBuilder {
 		// first closure pass only. Physical closure must ground the carried writer;
 		// every later pass then replays all reaching definitions so the published
 		// compatibility relation cannot permanently omit the loop backedge.
-		if(loopPassThroughSource != null || loopPlacementSeed != null)
-			installedLoopSeeds.add(read.key());
+		if((loopPassThroughSource != null || loopPlacementSeed != null)
+			&& installedLoopSeeds.add(read.key()) && recordMetrics && complexityMetrics != null)
+			complexityMetrics.recordCfgReplayLoopSeedInstalled();
 		return replayed;
 	}
 
