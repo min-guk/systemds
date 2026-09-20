@@ -1,9 +1,14 @@
 # G009 기준선 우선 전체 최적화 실행 계획
 
 - 작성일: 2026-09-20
-- 상태: **실행 전 계획**
+- 상태: **실행 완료 — 결과는 `G009_BASELINE_FIRST_FULL_OPTIMIZATION_RESULTS_2026-09-20.md` 참조**
 - 범위: 계획에 열거된 모든 최적화 항목의 구현 또는 실행 가능한 prototype, 정확성 검증, 동일 workload 성능 판정
 - 이번 문서에서 하지 않는 일: production 코드 수정, benchmark 실행, commit, push
+
+> 실행 중 사용자의 최신 지시에 따라 exploratory 후보는 1회 screen으로 전환했다.
+> 최종 후보는 byte-identical R1-A의 기존 3-pair를 재사용했고 별도 18-pair는 실행하지 않았다.
+> 따라서 결과 보고서의 engineering acceptance는 이 빠른 feedback-loop 정책을 따르며,
+> 아래 원 계획의 18-pair `r_(13)` 통계 gate와 동일한 주장이 아니다.
 
 ## 1. 정정된 목표와 종료 조건
 

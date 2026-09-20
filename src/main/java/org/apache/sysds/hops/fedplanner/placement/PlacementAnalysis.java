@@ -707,63 +707,47 @@ public final class PlacementAnalysis {
 	}
 
 	/** One exact physical layout with alternative executable support clauses. */
-	public static final class CandidateEmissionRealization implements Comparable<CandidateEmissionRealization> {
-		private final PlacementRealizationKey key;
-		private final CandidateSupportRelation supportRelation;
-		private volatile List<CandidateRealizationSupportClause> supportClauses;
-
+	public record CandidateEmissionRealization(PlacementRealizationKey key,
+		List<CandidateRealizationSupportClause> supportClauses)
+		implements Comparable<CandidateEmissionRealization> {
 		public CandidateEmissionRealization(PlacementRealizationKey key,
 			List<PlacementProofKey> proofs, List<CandidateRealizationInputBinding> inputBindings) {
 			this(key, List.of(new CandidateRealizationSupportClause(proofs, inputBindings)));
 		}
-		public CandidateEmissionRealization(PlacementRealizationKey key,
-			List<CandidateRealizationSupportClause> supportClauses) {
-			this(key, CandidateSupportRelation.fromFlat(Objects.requireNonNull(key, "key"), new Object(),
-				canonicalComparableList(supportClauses, "realization support clause")), null);
-		}
-		private CandidateEmissionRealization(PlacementRealizationKey key,
-			CandidateSupportRelation supportRelation, List<CandidateRealizationSupportClause> exported) {
-			this.key = Objects.requireNonNull(key, "key");
-			this.supportRelation = Objects.requireNonNull(supportRelation, "supportRelation");
-			this.supportClauses = exported;
-			validateRelation();
-		}
-
-		static CandidateEmissionRealization fromSupportRelation(PlacementRealizationKey key,
-			CandidateSupportRelation relation) {
-			return new CandidateEmissionRealization(key, relation, null);
-		}
-		CandidateSupportRelation supportRelation() { return supportRelation; }
-
-		private void validateRelation() {
-			if(supportRelation.rawCardinality() == 0)
+		public CandidateEmissionRealization {
+			Objects.requireNonNull(key, "key");
+			supportClauses = canonicalComparableList(supportClauses, "realization support clause");
+			if(supportClauses.isEmpty())
 				throw new IllegalArgumentException("Candidate realization requires support authority");
-			for(CandidateSupportRelation.SupportAnnotations annotation : supportRelation.distinctAnnotations())
-				if(annotation.nativeWorkerPoolWitness() != null
+			for(CandidateRealizationSupportClause clause : supportClauses)
+				if(clause.nativeWorkerPoolWitness() != null
 					&& (key.layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
 						|| key.emissionState().placementState().fType()
-							!= annotation.nativeWorkerPoolWitness().fType()))
-					throw new IllegalArgumentException("Native worker-pool witness and realization layout differ");
-			supportRelation.compatibleAnnotationRepresentative();
-		}
-
-		public PlacementRealizationKey key() { return key; }
-		/** Explicit legacy publication boundary; memoized to preserve clause authority identity. */
-		public List<CandidateRealizationSupportClause> supportClauses() {
-			List<CandidateRealizationSupportClause> current = supportClauses;
-			if(current == null) {
-				current = supportRelation.exportCanonicalClauses();
-				supportClauses = current;
+							!= clause.nativeWorkerPoolWitness().fType()))
+					throw new IllegalArgumentException(
+						"Native worker-pool witness and realization layout differ");
+			DurableAnchorKey nativeWitness = supportClauses.get(0).nativeWorkerPoolWitness();
+			boolean nativeLayoutExact = supportClauses.get(0).nativeWorkerPoolLayoutExact();
+			for(CandidateRealizationSupportClause clause : supportClauses) {
+				DurableAnchorKey candidate = clause.nativeWorkerPoolWitness();
+				if((nativeWitness == null) != (candidate == null)
+					|| nativeWitness != null && (nativeLayoutExact != clause.nativeWorkerPoolLayoutExact()
+						|| !(nativeLayoutExact
+							? PlacementIdentity.samePhysicalLayout(nativeWitness, candidate)
+							: PlacementIdentity.samePhysicalWorkerEndpoints(nativeWitness, candidate))))
+					throw new IllegalArgumentException(
+						"One realization cannot mix unproven or physically distinct native worker pools");
 			}
-			return current;
 		}
 
+		/**
+		 * Reuses a stable-order subset or equality-preserving map of an already
+		 * canonical support list. Callers must not use this for newly unordered rows.
+		 */
 		static CandidateEmissionRealization fromAlreadyCanonicalSupportClauses(
 			PlacementRealizationKey key, List<CandidateRealizationSupportClause> supportClauses) {
-			List<CandidateRealizationSupportClause> canonical = sharedAlreadyCanonicalComparableList(
-				supportClauses, "realization support clause");
-			CandidateSupportRelation relation = CandidateSupportRelation.fromFlat(key, new Object(), canonical);
-			return new CandidateEmissionRealization(key, relation, canonical);
+			return new CandidateEmissionRealization(key, sharedAlreadyCanonicalComparableList(
+				supportClauses, "realization support clause"));
 		}
 
 		public static CandidateEmissionRealization local(PlacementEmissionState emission) {
@@ -773,93 +757,113 @@ public final class PlacementAnalysis {
 			List<PlacementProofKey> proofs, List<CandidateRealizationInputBinding> inputBindings) {
 			return new CandidateEmissionRealization(PlacementRealizationKey.local(emission), proofs, inputBindings);
 		}
+
 		public static CandidateEmissionRealization durable(PlacementEmissionState emission,
 			DurableAnchorKey anchor, List<PlacementProofKey> proofs,
 			List<CandidateRealizationInputBinding> inputBindings) {
-			return new CandidateEmissionRealization(PlacementRealizationKey.durable(emission, anchor), proofs, inputBindings);
+			return new CandidateEmissionRealization(PlacementRealizationKey.durable(emission, anchor),
+				proofs, inputBindings);
 		}
-		public static CandidateEmissionRealization sourceLineage(PlacementEmissionState emission, String sourceIdentity) {
-			return new CandidateEmissionRealization(PlacementRealizationKey.sourceLineage(emission, sourceIdentity), List.of(), List.of());
+
+		public static CandidateEmissionRealization sourceLineage(PlacementEmissionState emission,
+			String sourceIdentity) {
+			return new CandidateEmissionRealization(
+				PlacementRealizationKey.sourceLineage(emission, sourceIdentity), List.of(), List.of());
 		}
 		public static CandidateEmissionRealization sourceLineage(PlacementEmissionState emission,
 			String sourceIdentity, List<CandidateRealizationInputBinding> inputBindings) {
-			return new CandidateEmissionRealization(PlacementRealizationKey.sourceLineage(emission, sourceIdentity), List.of(), inputBindings);
+			return new CandidateEmissionRealization(
+				PlacementRealizationKey.sourceLineage(emission, sourceIdentity), List.of(), inputBindings);
 		}
+
 		public static CandidateEmissionRealization nativeLineage(PlacementEmissionState emission,
-			String lineage, List<PlacementProofKey> proofs, List<CandidateRealizationInputBinding> inputBindings) {
-			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage), proofs, inputBindings);
-		}
-		public static CandidateEmissionRealization nativeLineage(PlacementEmissionState emission,
-			String lineage, DurableAnchorKey witness, List<PlacementProofKey> proofs,
+			String lineage, List<PlacementProofKey> proofs,
 			List<CandidateRealizationInputBinding> inputBindings) {
 			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
-				List.of(new CandidateRealizationSupportClause(proofs, inputBindings, witness)));
+				proofs, inputBindings);
+		}
+		public static CandidateEmissionRealization nativeLineage(PlacementEmissionState emission,
+			String lineage, DurableAnchorKey nativeWorkerPoolWitness, List<PlacementProofKey> proofs,
+			List<CandidateRealizationInputBinding> inputBindings) {
+			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
+				List.of(new CandidateRealizationSupportClause(
+					proofs, inputBindings, nativeWorkerPoolWitness)));
 		}
 		public static CandidateEmissionRealization nativeLineageDynamicLayout(PlacementEmissionState emission,
-			String lineage, DurableAnchorKey witness, List<PlacementProofKey> proofs,
+			String lineage, DurableAnchorKey nativeWorkerPoolWitness, List<PlacementProofKey> proofs,
 			List<CandidateRealizationInputBinding> inputBindings) {
 			return new CandidateEmissionRealization(PlacementRealizationKey.nativeLineage(emission, lineage),
-				List.of(new CandidateRealizationSupportClause(proofs, inputBindings, witness, false)));
+				List.of(new CandidateRealizationSupportClause(
+					proofs, inputBindings, nativeWorkerPoolWitness, false)));
 		}
 
 		public CandidateRealizationSupportClause requireSingletonSupportClause() {
-			List<CandidateRealizationSupportClause> clauses = supportClauses();
-			if(clauses.size() != 1)
+			if(supportClauses.size() != 1)
 				throw new IllegalArgumentException("Candidate realization support clause is ambiguous");
-			return clauses.get(0);
+			return supportClauses.get(0);
 		}
-		public List<PlacementProofKey> proofDependencies() { return requireSingletonSupportClause().proofDependencies(); }
-		public List<CandidateRealizationInputBinding> inputBindings() { return requireSingletonSupportClause().inputBindings(); }
-		public List<CandidateRealizationReference> requiredInputSupport() { return requireSingletonSupportClause().requiredInputSupport(); }
+		/** Compatibility fast path; callers handling alternatives must iterate supportClauses(). */
+		public List<PlacementProofKey> proofDependencies() {
+			return requireSingletonSupportClause().proofDependencies();
+		}
+		/** Compatibility fast path; callers handling alternatives must iterate supportClauses(). */
+		public List<CandidateRealizationInputBinding> inputBindings() {
+			return requireSingletonSupportClause().inputBindings();
+		}
+		/** Compatibility fast path retained only for singleton support authority. */
+		public List<CandidateRealizationReference> requiredInputSupport() {
+			return requireSingletonSupportClause().requiredInputSupport();
+		}
+
 		public PlacementState placementState() { return key.emissionState().placementState(); }
 		public DurableAnchorKey anchor() { return key.durableAnchor(); }
-		private void requireOwned(CandidateRealizationSupportClause clause) {
-			if(!supportRelation.ownsExportedClause(clause))
-				throw new IllegalArgumentException("Support clause is not owned by realization");
-		}
+		/** Exact runtime worker-pool layout, including ROW/COL partition-axis ranges. */
 		public DurableAnchorKey provenWorkerPool(CandidateRealizationSupportClause clause) {
-			requireOwned(clause);
-			return provenWorkerPoolForOwnedClause(clause);
+			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
+				throw new IllegalArgumentException("Support clause is not owned by realization");
+			return key.durableAnchor() != null ? key.durableAnchor()
+				: clause.nativeWorkerPoolLayoutExact() ? clause.nativeWorkerPoolWitness() : null;
 		}
+		/** Native worker residency proof. Dynamic-layout witnesses prove endpoints/FType only. */
 		public DurableAnchorKey nativeWorkerPoolResidencyWitness(CandidateRealizationSupportClause clause) {
-			requireOwned(clause);
-			return nativeWorkerPoolResidencyForOwnedClause(clause);
+			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
+				throw new IllegalArgumentException("Support clause is not owned by realization");
+			return key.durableAnchor() != null ? key.durableAnchor() : clause.nativeWorkerPoolWitness();
 		}
 		public boolean nativeWorkerPoolLayoutExact(CandidateRealizationSupportClause clause) {
-			requireOwned(clause);
-			return nativeWorkerPoolLayoutExactForOwnedClause(clause);
+			if(supportClauses.stream().noneMatch(candidate -> candidate == clause))
+				throw new IllegalArgumentException("Support clause is not owned by realization");
+			return key.durableAnchor() != null || clause.nativeWorkerPoolLayoutExact();
 		}
+		/** Linear bulk query used instead of repeating the public identity guard for every owned clause. */
 		boolean allOwnedSupportClausesHaveExactNativeLayout() {
-			return key.durableAnchor() != null || supportRelation.distinctAnnotations().stream()
-				.allMatch(CandidateSupportRelation.SupportAnnotations::nativeWorkerPoolLayoutExact);
+			return key.durableAnchor() != null
+				|| supportClauses.stream().allMatch(CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact);
 		}
+		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
 		DurableAnchorKey provenWorkerPoolForOwnedClause(CandidateRealizationSupportClause clause) {
 			return key.durableAnchor() != null ? key.durableAnchor()
 				: clause.nativeWorkerPoolLayoutExact() ? clause.nativeWorkerPoolWitness() : null;
 		}
+		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
 		DurableAnchorKey nativeWorkerPoolResidencyForOwnedClause(CandidateRealizationSupportClause clause) {
 			return key.durableAnchor() != null ? key.durableAnchor() : clause.nativeWorkerPoolWitness();
 		}
+		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
 		boolean nativeWorkerPoolLayoutExactForOwnedClause(CandidateRealizationSupportClause clause) {
 			return key.durableAnchor() != null || clause.nativeWorkerPoolLayoutExact();
-		}
-		CandidateSupportRelation.SupportAnnotations uniqueSupportAnnotations() {
-			return supportRelation.compatibleAnnotationRepresentative();
 		}
 		public String normalizedSignature() {
 			String cached = PlacementIdentity.cachedSignature(this);
 			return cached != null ? cached : PlacementIdentity.rememberSignature(this,
-				key.normalizedSignature() + "|support=" + supportClauses().stream()
+				key.normalizedSignature() + "|support=" + supportClauses.stream()
 					.map(CandidateRealizationSupportClause::normalizedSignature).toList());
 		}
-		@Override public int compareTo(CandidateEmissionRealization that) { return compareCanonicalOrdering(this, that); }
-		@Override public boolean equals(Object other) {
-			return this == other || other instanceof CandidateEmissionRealization that
-				&& key.equals(that.key) && supportClauses().equals(that.supportClauses());
+		@Override public int compareTo(CandidateEmissionRealization that) {
+			return compareCanonicalOrdering(this, that);
 		}
-		@Override public int hashCode() { return 31 * key.hashCode() + supportClauses().hashCode(); }
-		@Override public String toString() { return "CandidateEmissionRealization[key=" + key + ", supportClauses=" + supportClauses() + "]"; }
 	}
+
 	/** One exact immutable rule/profile emission with its executable physical realizations. */
 	public record CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType,
 		DerivedFoutMaterializationActionKey derivedFoutAction,
@@ -909,45 +913,40 @@ public final class PlacementAnalysis {
 				return List.of(Objects.requireNonNull(alternatives.iterator().next(),
 					"candidate emission realization"));
 			SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
-			Map<PlacementRealizationKey,List<CandidateSupportRelation>> relationsByKey =
+			Map<PlacementRealizationKey,Map<Object,CandidateRealizationSupportClause>> clausesByKey =
 				new java.util.LinkedHashMap<>();
 			Map<PlacementRealizationKey,CandidateEmissionRealization> firstByKey =
 				new java.util.LinkedHashMap<>();
-			Map<PlacementRealizationKey,Set<CandidateSupportRelation.ProductRoute>> uniqueRoutesByKey =
-				new java.util.LinkedHashMap<>();
+			Set<PlacementRealizationKey> repeated = new java.util.HashSet<>();
 			for(CandidateEmissionRealization realization : alternatives) {
 				Objects.requireNonNull(realization, "candidate emission realization");
 				if(metrics != null)
 					metrics.recordRealizationMergeInput();
-				firstByKey.putIfAbsent(realization.key(), realization);
-				relationsByKey.computeIfAbsent(realization.key(), ignored -> new ArrayList<>())
-					.add(realization.supportRelation());
-				Set<CandidateSupportRelation.ProductRoute> uniqueRoutes = uniqueRoutesByKey.computeIfAbsent(
-					realization.key(), ignored -> new java.util.LinkedHashSet<>());
-				for(CandidateSupportRelation.ProductRoute route : realization.supportRelation().routes()) {
-					boolean unique = uniqueRoutes.add(route);
+				if(firstByKey.putIfAbsent(realization.key(), realization) != null)
+					repeated.add(realization.key());
+				Map<Object,CandidateRealizationSupportClause> clauses = clausesByKey.computeIfAbsent(
+					realization.key(), ignored -> new java.util.LinkedHashMap<>());
+				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					Integer structuralHandle = PlacementIdentity.structuralHandle(clause);
+					Object key = structuralHandle == null ? clause : structuralHandle;
+					boolean unique = clauses.putIfAbsent(key, clause) == null;
 					if(metrics != null)
 						metrics.recordRealizationMergeClause(unique);
 				}
 			}
-			List<CandidateEmissionRealization> merged = new ArrayList<>(relationsByKey.size());
-			for(Map.Entry<PlacementRealizationKey,List<CandidateSupportRelation>> entry :
-				relationsByKey.entrySet())
-				if(entry.getValue().size() == 1 || uniqueRoutesByKey.get(entry.getKey()).equals(
-					new java.util.HashSet<>(firstByKey.get(entry.getKey()).supportRelation().routes()))) {
+			List<CandidateEmissionRealization> merged = new ArrayList<>(clausesByKey.size());
+			for(Map.Entry<PlacementRealizationKey,Map<Object,CandidateRealizationSupportClause>> entry :
+				clausesByKey.entrySet())
+				if(!repeated.contains(entry.getKey())
+					|| entry.getValue().size() == firstByKey.get(entry.getKey()).supportClauses().size()) {
 					merged.add(firstByKey.get(entry.getKey()));
 					if(metrics != null)
 						metrics.recordRealizationMergeReuse();
 				}
 				else
-					merged.add(CandidateEmissionRealization.fromSupportRelation(entry.getKey(),
-						CandidateSupportRelation.union(entry.getKey(), new Object(), entry.getValue())));
-			// Keys are unique after the exact relation union.  The legacy realization
-			// ordering compares the key prefix first, so support export cannot affect
-			// the order of this post-merge domain.
-			if(merged.size() > 1)
-				merged.sort(java.util.Comparator.comparing(CandidateEmissionRealization::key));
-			return List.copyOf(merged);
+					merged.add(new CandidateEmissionRealization(entry.getKey(),
+						List.copyOf(entry.getValue().values())));
+			return canonicalComparableList(merged, "candidate emission realization");
 		}
 
 		private static List<CandidateEmissionRealization> defaultRealizations(PlacementEmissionState emission) {
@@ -1128,7 +1127,7 @@ public final class PlacementAnalysis {
 			private final CandidateRuleKey rule;
 			private final CandidateEmissionFact emission;
 			private final CandidateEmissionRealization realization;
-			private volatile List<CandidateRealizationSupportClause> clauses;
+			private final List<CandidateRealizationSupportClause> clauses;
 			private final SearchSpaceMetrics metrics;
 			private Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> receipts;
 			private int rankBase = -1;
@@ -1139,22 +1138,13 @@ public final class PlacementAnalysis {
 				this.rule = rule;
 				this.emission = emission;
 				this.realization = realization;
+				this.clauses = realization.supportClauses();
 				this.metrics = metrics;
 			}
 
-			private List<CandidateRealizationSupportClause> clauses() {
-				List<CandidateRealizationSupportClause> current = clauses;
-				if(current == null) {
-					current = realization.supportClauses();
-					clauses = current;
-				}
-				return current;
-			}
-
 			private int ownedClauseIndex(CandidateRealizationSupportClause clause) {
-				List<CandidateRealizationSupportClause> owned = clauses();
-				for(int index = 0; index < owned.size(); index++)
-					if(owned.get(index) == clause)
+				for(int index = 0; index < clauses.size(); index++)
+					if(clauses.get(index) == clause)
 						return index;
 				throw new IllegalArgumentException(
 					"Candidate support clause is outside the analysis-owned receipt domain");
@@ -1186,8 +1176,7 @@ public final class PlacementAnalysis {
 			}
 
 			private int assignCanonicalRanks(int firstRank) {
-				List<CandidateRealizationSupportClause> owned = clauses();
-				int size = owned.size();
+				int size = clauses.size();
 				if(size == 1) {
 					rankBase = firstRank;
 					return Math.incrementExact(firstRank);
@@ -1197,7 +1186,7 @@ public final class PlacementAnalysis {
 				int[] lengths = new int[size];
 				for(int index = 0; index < size; index++) {
 					order[index] = index;
-					lengths[index] = canonicalOrderingLength(owned.get(index));
+					lengths[index] = canonicalOrderingLength(clauses.get(index));
 				}
 				stableSortByLengthPrefix(order, work, lengths, 0, size);
 				boolean alreadyCanonical = true;
@@ -1239,9 +1228,7 @@ public final class PlacementAnalysis {
 						byRealization.put(realization, group);
 						allGroups.add(group);
 						if(metrics != null)
-							// Stored relation-slot upper bound; exact unique receipt slots are
-							// intentionally deferred to the explicit rank/requireAll boundary.
-							metrics.recordReceiptRelationSlots(realization.supportRelation().rawCardinality());
+							metrics.recordReceiptRelationSlots(realization.supportClauses().size());
 					}
 					byEmission.put(emission, Collections.unmodifiableMap(byRealization));
 				}
@@ -1254,8 +1241,6 @@ public final class PlacementAnalysis {
 		private synchronized void ensureRanks() {
 			if(ranksInitialized)
 				return;
-			// Canonical rank is a legacy flat-domain operation. This is deliberately
-			// the first point where every group's factorized relation is exported.
 			List<RankedReceiptGroup> ranked = new ArrayList<>(groups.size());
 			for(ReceiptGroup group : groups) {
 				ReceiptGroupOrderKey orderKey = new ReceiptGroupOrderKey(
@@ -1281,10 +1266,9 @@ public final class PlacementAnalysis {
 						receiptClauseComparator();
 					for(int groupIndex = start; groupIndex < end; groupIndex++) {
 						ReceiptGroup group = ranked.get(groupIndex).group();
-						List<CandidateRealizationSupportClause> owned = group.clauses();
-						group.clauseRanks = new int[owned.size()];
-						for(int clauseIndex = 0; clauseIndex < owned.size(); clauseIndex++)
-							clauses.add(new RankedClause(group, owned.get(clauseIndex), clauseIndex));
+						group.clauseRanks = new int[group.clauses.size()];
+						for(int clauseIndex = 0; clauseIndex < group.clauses.size(); clauseIndex++)
+							clauses.add(new RankedClause(group, group.clauses.get(clauseIndex), clauseIndex));
 					}
 					clauses.sort(java.util.Comparator.comparing(RankedClause::clause, clauseComparator));
 					for(RankedClause clause : clauses) {
@@ -2481,14 +2465,12 @@ public final class PlacementAnalysis {
 		for(CandidateRuleFact fact : candidateRuleFacts.orderedFacts())
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 				for(CandidateEmissionRealization realization : emission.realizations()) {
-					if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE)
-						for(CandidateSupportRelation.SupportAnnotations annotation :
-							realization.supportRelation().distinctAnnotations())
-							if(annotation.nativeWorkerPoolWitness() == null)
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+							&& clause.nativeWorkerPoolWitness() == null)
 							throw new IllegalArgumentException(
 								"Published native lineage lacks exact worker-pool authority");
-					for(CandidateRealizationInputBinding binding :
-						realization.supportRelation().distinctBindingAtoms()) {
+						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
 							CandidateEmissionRealization source = requireReferencedRealization(binding.source());
 							if(binding.inputPosition() >= fact.key().orderedInputs().size())
 								throw new IllegalArgumentException("Candidate realization input binding position differs");
@@ -2528,6 +2510,7 @@ public final class PlacementAnalysis {
 											+ binding.source().normalizedSignature() + ", actualSourceValue="
 											+ actualSource.normalizedSignature());
 							}
+						}
 					}
 				}
 	}
@@ -2583,12 +2566,9 @@ public final class PlacementAnalysis {
 			if(proofWitness == null || readerKind != PlacementLayoutKind.NATIVE_LINEAGE)
 				throw new IllegalArgumentException(
 					"Transient native-lineage compatibility lacks typed reader worker-pool authority");
-			CandidateSupportRelation.SupportAnnotations readerAnnotations =
-				reader.uniqueSupportAnnotations();
-			DurableAnchorKey readerWitness = reader.key().durableAnchor() != null
-				? reader.key().durableAnchor() : readerAnnotations.nativeWorkerPoolWitness();
-			boolean readerExact = reader.key().durableAnchor() != null
-				|| readerAnnotations.nativeWorkerPoolLayoutExact();
+			CandidateRealizationSupportClause readerClause = reader.supportClauses().get(0);
+			DurableAnchorKey readerWitness = reader.nativeWorkerPoolResidencyWitness(readerClause);
+			boolean readerExact = reader.nativeWorkerPoolLayoutExact(readerClause);
 			if(readerWitness == null)
 				throw new IllegalArgumentException(
 					"Transient native-lineage reader lacks a worker-pool witness");

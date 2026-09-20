@@ -16,8 +16,6 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -56,7 +54,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCap
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -64,7 +61,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
@@ -381,267 +377,6 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void factorizedProductApiReusesSeedIndependentSupportWithoutFlatMemo() {
-		Fixture full = new Fixture(FType.FULL);
-		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref source = full.unary("source", OpOp1.LOG, seed, false);
-		CandidateRealizationReference reference = full.reference(source,
-			List.of(CandidateInputState.present(FType.FULL)));
-		NativePlacementContinuity legacy = full.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacy.disableDirectDagForTesting();
-		List<NativePlacementContinuity.NativeContinuityProof> oracle =
-			legacy.proveCandidateAlternatives(reference, seed.anchor);
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity resolver = full.resolver(metrics, 8, 128);
-
-		NativeProofProduct first = resolver.proveCandidateProduct(reference, seed.anchor);
-		Assert.assertEquals(0, first.constructionMaterializedLeaves());
-		Assert.assertEquals(oracle, first.exportLegacy().proofs());
-		DurableAnchorKey secondSeed = new DurableAnchorKey("second-seed", FType.FULL,
-			seed.anchor.partitions());
-		NativeProofProduct second = resolver.proveCandidateProduct(reference, secondSeed);
-		Assert.assertEquals(first.checkedRawCardinality(), second.checkedRawCardinality());
-		Assert.assertTrue(second.routes().stream().allMatch(route ->
-			route.externalSeed().equals(secondSeed)));
-		Assert.assertTrue("the second seed must reuse route templates",
-			metrics.snapshot().supportMemoHits() > 0);
-		Assert.assertEquals("product queries do not consult or populate the flat memo",
-			0, metrics.snapshot().memoHits() + metrics.snapshot().memoMisses());
-		Assert.assertEquals("factorized route templates are not materialized unique proofs",
-			0, metrics.snapshot().uniqueProofs());
-		Assert.assertEquals("factorized route templates are not materialized duplicate proofs",
-			0, metrics.snapshot().duplicateProofs());
-	}
-
-	@Test
-	public void graphFallbackReadsSafeProductRoutesWithoutMaterializingSupportLeaves() {
-		Fixture fixture = new Fixture(FType.FULL);
-		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref producer = fixture.unary("producer", OpOp1.ABS, seed, false);
-		List<CandidateInputState> producerInputs =
-			List.of(CandidateInputState.present(FType.FULL));
-		Ref root = fixture.unary("root", OpOp1.LOG, producer, false);
-		List<CandidateInputState> rootInputs =
-			List.of(CandidateInputState.present(FType.FULL));
-		CandidateRealizationReference producerReference = fixture.reference(producer, producerInputs);
-		CandidateRealizationReference stagedRoot = fixture.reference(root, rootInputs);
-		CandidateSupportRelation relation = CandidateSupportRelation.fromProducts(
-			stagedRoot.realization(), new Object(), List.of(new CandidateSupportRelation.ProductRoute(
-				List.of(), List.of(CandidateRealizationInputBinding.direct(0, producerReference)),
-				List.of(), CandidateSupportRelation.SupportAnnotations.exact())));
-		fixture.replaceInputSupportRelation(root, rootInputs, relation);
-		CandidateRealizationReference rootReference = fixture.reference(root, rootInputs);
-		NativePlacementContinuity resolver = fixture.resolver(new SearchSpaceMetrics(), 8, 128);
-		resolver.disableDirectDagForTesting();
-
-		List<NativePlacementContinuity.NativeContinuityProof> proofs =
-			resolver.proveCandidateProduct(rootReference, seed.anchor).exportLegacy().proofs();
-
-		Assert.assertFalse(proofs.isEmpty());
-		Assert.assertEquals("safe graph fallback must consume the product route directly",
-			0, relation.constructionMaterializedCount());
-		Assert.assertEquals("proof solving must not decode factorized support leaves",
-			0, relation.leafMaterializationCount());
-	}
-
-	@Test
-	public void repeatedOccurrenceWithDifferentOrMultiReferenceGroupsFallsBackWithLegacyParity() {
-		for(boolean multiReference : List.of(false, true)) {
-			Fixture fixture = new Fixture(FType.FULL);
-			Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-			Ref producer = fixture.unary("producer", OpOp1.LOG, seed, false);
-			List<CandidateInputState> producerInputs =
-				List.of(CandidateInputState.present(FType.FULL));
-			fixture.samePoolRealizations(producer, producerInputs,
-				new DurableAnchorKey("producer-a", FType.FULL, seed.anchor.partitions()),
-				new DurableAnchorKey("producer-b", FType.FULL, seed.anchor.partitions()));
-			List<CandidateRealizationReference> references =
-				fixture.references(producer, producerInputs);
-			Ref root = fixture.binary("root", OpOp2.PLUS, producer, producer, false);
-			List<CandidateInputState> rootInputs = List.of(
-				CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
-			List<CandidateRealizationInputBinding> first = List.of(
-				CandidateRealizationInputBinding.direct(0, references.get(0)),
-				CandidateRealizationInputBinding.direct(1, references.get(1)));
-			List<List<CandidateRealizationInputBinding>> clauses = multiReference
-				? List.of(first, List.of(
-					CandidateRealizationInputBinding.direct(0, references.get(1)),
-					CandidateRealizationInputBinding.direct(1, references.get(1))))
-				: List.of(first);
-			fixture.replaceInputSupport(root, rootInputs, clauses);
-			CandidateRealizationReference reference = fixture.reference(root, rootInputs);
-
-			NativePlacementContinuity legacy = fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-			legacy.disableDirectDagForTesting();
-			List<NativePlacementContinuity.NativeContinuityProof> expected =
-				legacy.proveCandidateAlternatives(reference, seed.anchor);
-			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-			NativeProofProduct actual = fixture.resolver(metrics, 8, 128)
-				.proveCandidateProduct(reference, seed.anchor);
-
-			Assert.assertEquals("unsupported repeated group must preserve legacy occurrence pinning",
-				expected, actual.exportLegacy().proofs());
-			Assert.assertTrue("unsupported route must execute the flat fallback",
-				metrics.snapshot().proofGraphsBuilt() > 0);
-		}
-	}
-
-	@Test
-	public void positionalPinConstrainsEveryDependencyOfTheSameOccurrence() {
-		Fixture fixture = new Fixture(FType.FULL);
-		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref producer = fixture.unary("producer", OpOp1.LOG, seed, false);
-		List<CandidateInputState> producerInputs =
-			List.of(CandidateInputState.present(FType.FULL));
-		fixture.samePoolRealizations(producer, producerInputs,
-			new DurableAnchorKey("producer-a", FType.FULL, seed.anchor.partitions()),
-			new DurableAnchorKey("producer-b", FType.FULL, seed.anchor.partitions()));
-		List<CandidateRealizationReference> references = fixture.references(producer, producerInputs);
-		Ref root = fixture.binary("root", OpOp2.PLUS, producer, producer, false);
-		List<CandidateInputState> rootInputs = List.of(
-			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
-		fixture.replaceInputSupport(root, rootInputs, List.of(List.of(
-			CandidateRealizationInputBinding.direct(0, references.get(0)))));
-		CandidateRealizationReference rootReference = fixture.reference(root, rootInputs);
-		NativePlacementContinuity legacy = fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacy.disableDirectDagForTesting();
-		List<NativePlacementContinuity.NativeContinuityProof> expected =
-			legacy.proveCandidateAlternatives(rootReference, seed.anchor);
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			fixture.resolver(metrics, 8, 128).proveCandidateProduct(rootReference, seed.anchor)
-				.exportLegacy().proofs();
-
-		Assert.assertEquals(expected, actual);
-		Assert.assertFalse(actual.isEmpty());
-		Assert.assertTrue("the position-0 pin must also constrain position 1",
-			actual.stream().flatMap(proof -> proof.immediateBindings().stream())
-				.allMatch(binding -> binding.source().equals(references.get(0))));
-	}
-
-	@Test
-	public void multiOptionOccurrencePinAcrossRepeatedDependenciesFallsBack() {
-		Fixture fixture = new Fixture(FType.FULL);
-		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref producer = fixture.unary("producer", OpOp1.LOG, seed, false);
-		List<CandidateInputState> producerInputs =
-			List.of(CandidateInputState.present(FType.FULL));
-		fixture.samePoolRealizations(producer, producerInputs,
-			new DurableAnchorKey("producer-a", FType.FULL, seed.anchor.partitions()),
-			new DurableAnchorKey("producer-b", FType.FULL, seed.anchor.partitions()));
-		List<CandidateRealizationReference> references = fixture.references(producer, producerInputs);
-		Ref root = fixture.binary("root", OpOp2.PLUS, producer, producer, false);
-		List<CandidateInputState> rootInputs = List.of(
-			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
-		fixture.replaceInputSupport(root, rootInputs, List.of(
-			List.of(CandidateRealizationInputBinding.direct(0, references.get(0))),
-			List.of(CandidateRealizationInputBinding.direct(0, references.get(1)))));
-		CandidateRealizationReference rootReference = fixture.reference(root, rootInputs);
-		NativePlacementContinuity legacy = fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacy.disableDirectDagForTesting();
-		List<NativePlacementContinuity.NativeContinuityProof> expected =
-			legacy.proveCandidateAlternatives(rootReference, seed.anchor);
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			fixture.resolver(metrics, 8, 128).proveCandidateProduct(rootReference, seed.anchor)
-				.exportLegacy().proofs();
-
-		Assert.assertEquals("multi-option occurrence correlation must match flat legacy pinning",
-			expected, actual);
-		Assert.assertTrue("independent factor dimensions are unsafe for a repeated multi-option pin",
-			metrics.snapshot().proofGraphsBuilt() > 0);
-	}
-
-	@Test
-	public void unsupportedFactorizedRootsNeverShareCompletedSupportMemo() {
-		Fixture fixture = new Fixture(FType.FULL);
-		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref producer = fixture.unary("producer", OpOp1.LOG, seed, false);
-		List<CandidateInputState> producerInputs = List.of(CandidateInputState.present(FType.FULL));
-		fixture.samePoolRealizations(producer, producerInputs,
-			new DurableAnchorKey("producer-a", FType.FULL, seed.anchor.partitions()),
-			new DurableAnchorKey("producer-b", FType.FULL, seed.anchor.partitions()));
-		List<CandidateRealizationReference> references = fixture.references(producer, producerInputs);
-		Ref root = fixture.binary("root", OpOp2.PLUS, producer, producer, false);
-		List<CandidateInputState> rootInputs = List.of(
-			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
-		fixture.replaceInputSupport(root, rootInputs, List.of(List.of(
-			CandidateRealizationInputBinding.direct(0, references.get(0)),
-			CandidateRealizationInputBinding.direct(1, references.get(1)))));
-		CandidateRealizationReference staged = fixture.reference(root, rootInputs);
-		CandidateRealizationReference firstRoot = new CandidateRealizationReference(staged.rule(),
-			PlacementIdentity.PlacementRealizationKey.nativeLineage(
-				staged.realization().emissionState(), "unsupported-root:first"));
-		CandidateRealizationReference secondRoot = new CandidateRealizationReference(staged.rule(),
-			PlacementIdentity.PlacementRealizationKey.nativeLineage(
-				staged.realization().emissionState(), "unsupported-root:second"));
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity resolver = fixture.resolver(metrics, 8, 128);
-
-		resolver.proveCandidateProduct(firstRoot, seed.anchor);
-		long misses = metrics.snapshot().supportMemoMisses();
-		long hits = metrics.snapshot().supportMemoHits();
-		resolver.proveCandidateProduct(secondRoot, seed.anchor);
-
-		Assert.assertEquals("unsupported roots require distinct exact-handle memo keys",
-			misses + 1, metrics.snapshot().supportMemoMisses());
-		Assert.assertEquals("only the same-root exact/dynamic lookup may hit",
-			hits + 1, metrics.snapshot().supportMemoHits());
-	}
-
-	@Test
-	public void completedProofMemoRejectsDisabledAndCountExceededBeforeSignatures() throws Exception {
-		Fixture full = new Fixture(FType.FULL);
-		NativePlacementContinuity.NativeContinuityProof first = bareProof("first");
-		NativePlacementContinuity.NativeContinuityProof second = bareProof("second");
-
-		invokeCacheCompletedProofs(full.resolver(new SearchSpaceMetrics(), 0, 16), List.of(first));
-		Assert.assertNull("a disabled memo must not normalize rejected proofs", cachedSignature(first));
-
-		invokeCacheCompletedProofs(full.resolver(new SearchSpaceMetrics(), 2, 1), List.of(first, second));
-		Assert.assertNull("a count-exceeded result must not normalize its first proof",
-			cachedSignature(first));
-		Assert.assertNull("a count-exceeded result must not normalize trailing proofs",
-			cachedSignature(second));
-	}
-
-	@Test
-	public void completedProofMemoStopsByteEstimationAfterBudgetRejection() throws Exception {
-		Fixture full = new Fixture(FType.FULL);
-		NativePlacementContinuity.NativeContinuityProof first = bareProof("first");
-		NativePlacementContinuity.NativeContinuityProof trailing = bareProof("trailing");
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-
-		invokeCacheCompletedProofs(full.resolver(metrics, 2, 16, 1), List.of(first, trailing));
-
-		Assert.assertNotNull("the proof that crosses the byte limit is measured", cachedSignature(first));
-		Assert.assertNull("proofs after a byte-limit rejection must not be visited",
-			cachedSignature(trailing));
-		Assert.assertEquals(0, metrics.snapshot().memoEntries());
-	}
-
-	@Test
-	public void completedProofMemoAcceptsAnEstimateEqualToItsByteLimit() throws Exception {
-		Fixture full = new Fixture(FType.FULL);
-		NativePlacementContinuity.NativeContinuityProof proof = bareProof("exact-limit");
-		long exactBytes = 96L + 2L * proof.normalizedSignature().length();
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-
-		invokeCacheCompletedProofs(full.resolver(metrics, 2, 16, exactBytes), List.of(proof));
-
-		Assert.assertEquals(1, metrics.snapshot().memoEntries());
-		Assert.assertEquals(exactBytes, metrics.snapshot().memoRetainedEstimatedBytes());
-	}
-
-	@Test
-	public void completedProofMemoBudgetAdditionIsBoundaryAndOverflowSafe() throws Exception {
-		Assert.assertFalse("retained plus additional equal to the budget must be allowed",
-			invokeExceedsBudget(7, 3, 10));
-		Assert.assertTrue("an overflowing retained plus additional sum must be rejected",
-			invokeExceedsBudget(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
-	}
-
-	@Test
 	public void templateSupportMemoRebindsFallbackRootsWithoutChangingProofs() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -656,19 +391,13 @@ public class NativePlacementContinuityTest {
 				staged.realization().emissionState(), "template-root:second"));
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity resolver = full.resolver(metrics, 8, 128);
-		NativeProofProduct firstProduct = resolver.proveCandidateProduct(firstRoot, seed.anchor);
-		Assert.assertFalse(firstProduct.routes().isEmpty());
+		Assert.assertFalse(resolver.proveCandidateAlternatives(firstRoot, seed.anchor).isEmpty());
 		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
 
-		NativeProofProduct secondProduct = resolver.proveCandidateProduct(secondRoot, seed.anchor);
 		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			secondProduct.exportLegacy().proofs();
+			resolver.proveCandidateAlternatives(secondRoot, seed.anchor);
 		NativePlacementContinuity uncached = full.resolver(new SearchSpaceMetrics(), 0, 0);
 		Assert.assertEquals(uncached.proveCandidateAlternatives(secondRoot, seed.anchor), actual);
-		Assert.assertTrue("cached root binding atoms are rebound before publication",
-			actual.stream().flatMap(proof -> proof.immediateBindings().stream())
-				.noneMatch(binding -> binding.source().equals(firstRoot)));
-		Assert.assertEquals(0, secondProduct.constructionMaterializedLeaves());
 		Assert.assertEquals("fallback roots with the same rule/emission share one graph solution",
 			graphBuilds, metrics.snapshot().proofGraphsBuilt());
 		Assert.assertTrue(metrics.snapshot().supportMemoHits() > 0);
@@ -687,10 +416,6 @@ public class NativePlacementContinuityTest {
 			firstRevision.proveCandidateAlternatives(reference, seed.anchor);
 		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
 		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
-		long materializedLeaves = full.candidates.stream()
-			.flatMap(fact -> fact.allowedEmissionFacts().stream())
-			.flatMap(emission -> emission.realizations().stream())
-			.mapToLong(realization -> realization.supportRelation().leafMaterializationCount()).sum();
 
 		NativePlacementContinuity nextRevision = firstRevision.nextRevision(
 			List.copyOf(full.candidates), Set.of());
@@ -700,88 +425,14 @@ public class NativePlacementContinuityTest {
 			graphBuilds, metrics.snapshot().proofGraphsBuilt());
 		Assert.assertEquals("unchanged occurrence expansion crosses the revision",
 			topologyBuilds, metrics.snapshot().topologyExpansionBuilds());
-		Assert.assertEquals("revision equality must not decode factorized support",
-			materializedLeaves, full.candidates.stream()
-				.flatMap(fact -> fact.allowedEmissionFacts().stream())
-				.flatMap(emission -> emission.realizations().stream())
-				.mapToLong(realization -> realization.supportRelation().leafMaterializationCount()).sum());
 		Assert.assertTrue(metrics.snapshot().topologyRevisionEntriesReused() > 0);
 		Assert.assertTrue(metrics.snapshot().supportMemoRevisionEntriesReused() > 0);
 
 		NativePlacementContinuity invalidated = firstRevision.nextRevision(
 			List.copyOf(full.candidates), Set.of(source.key));
-		List<NativePlacementContinuity.NativeContinuityProof> invalidatedProofs =
-			invalidated.proveCandidateAlternatives(reference, seed.anchor);
-		Assert.assertEquals(expected, invalidatedProofs);
-		Assert.assertEquals("unchanged factorized occurrence topology survives conservative invalidation",
-			topologyBuilds, metrics.snapshot().topologyExpansionBuilds());
-		Assert.assertTrue("completed support still invalidates and must be solved again",
+		invalidated.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertTrue("an explicitly invalidated footprint must be solved again",
 			metrics.snapshot().proofGraphsBuilt() > graphBuilds);
-		Assert.assertEquals("revision reuse must preserve fresh-resolver results",
-			full.resolver(new SearchSpaceMetrics(), 0, 0)
-				.proveCandidateAlternatives(reference, seed.anchor), invalidatedProofs);
-	}
-
-	@Test
-	public void changedLocalFactsRebuildFactorizedTopologyWithFreshParity() {
-		Fixture full = new Fixture(FType.FULL);
-		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref source = full.unary("source", OpOp1.LOG, seed, false);
-		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity firstRevision = full.resolver(metrics, 8, 128);
-		firstRevision.proveCandidateProduct(full.reference(source, inputs), seed.anchor);
-		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
-
-		full.samePoolRealizations(source, inputs,
-			new DurableAnchorKey("changed-local-fact", FType.FULL, seed.anchor.partitions()));
-		CandidateRealizationReference changedReference = full.reference(source, inputs);
-		NativePlacementContinuity changed = firstRevision.nextRevision(
-			List.copyOf(full.candidates), Set.of(source.key));
-		NativeProofProduct actual = changed.proveCandidateProduct(changedReference, seed.anchor);
-		NativeProofProduct fresh = full.resolver(new SearchSpaceMetrics(), 0, 0)
-			.proveCandidateProduct(changedReference, seed.anchor);
-
-		Assert.assertTrue("changed occurrence-local facts must rebuild factorized topology",
-			metrics.snapshot().topologyExpansionBuilds() > topologyBuilds);
-		Assert.assertEquals(fresh.exportLegacy().proofs(), actual.exportLegacy().proofs());
-	}
-
-	@Test
-	public void conservativeInvalidationDoesNotReuseFlatTopology() throws Exception {
-		Fixture full = new Fixture(FType.FULL);
-		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref source = full.unary("source", OpOp1.LOG, seed, false);
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity firstRevision = full.resolver(metrics, 8, 128);
-		invokeFlatCandidateTopology(firstRevision, source.key, seed.anchor);
-		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
-
-		NativePlacementContinuity invalidated = firstRevision.nextRevision(
-			List.copyOf(full.candidates), Set.of(source.key));
-		invokeFlatCandidateTopology(invalidated, source.key, seed.anchor);
-
-		Assert.assertEquals("flat topology retains the conservative invalidation boundary",
-			topologyBuilds + 1, metrics.snapshot().topologyExpansionBuilds());
-	}
-
-	@Test
-	public void topologyTimingCountsBuildsWhileCacheHitsRemainVisible() throws Exception {
-		Fixture full = new Fixture(FType.FULL);
-		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref source = full.unary("source", OpOp1.LOG, seed, false);
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity resolver = full.resolver(metrics, 8, 128);
-
-		invokeFactorizedCandidateTopology(resolver, source.key, seed.anchor);
-		invokeFactorizedCandidateTopology(resolver, source.key, seed.anchor);
-		invokeFlatCandidateTopology(resolver, source.key, seed.anchor);
-		invokeFlatCandidateTopology(resolver, source.key, seed.anchor);
-
-		Assert.assertEquals(2, metrics.snapshot().topologyExpansionBuilds());
-		Assert.assertEquals(2, metrics.snapshot().topologyExpansionHits());
-		Assert.assertEquals("opt-in timing covers expansions, not cache-hit diagnostic overhead",
-			2, phaseCalls(metrics, SearchSpaceMetrics.Phase.PROOF_TOPOLOGY));
 	}
 
 	@Test
@@ -840,50 +491,6 @@ public class NativePlacementContinuityTest {
 				System.clearProperty(entriesProperty);
 			else
 				System.setProperty(entriesProperty, priorEntries);
-		}
-	}
-
-	@Test
-	public void flatAndFactorizedTopologiesShareOneResidentBudget() throws Exception {
-		Fixture fixture = new Fixture(FType.FULL);
-		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref source = fixture.unary("source", OpOp1.LOG, seed, false);
-		CandidateRealizationReference reference = fixture.reference(source,
-			List.of(CandidateInputState.present(FType.FULL)));
-		String entriesProperty = "sysds.fedplanner.continuityTopology.maxEntries";
-		String rowsProperty = "sysds.fedplanner.continuityTopology.maxRows";
-		String priorEntries = System.getProperty(entriesProperty);
-		String priorRows = System.getProperty(rowsProperty);
-		try {
-			System.setProperty(entriesProperty, "1");
-			System.setProperty(rowsProperty, "1");
-			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-			NativePlacementContinuity resolver = fixture.resolver(metrics, 8, 128);
-
-			resolver.proveCandidateProduct(reference, seed.anchor);
-			Assert.assertEquals(1, topologyCacheSize(resolver, "factorizedCandidateTopologies"));
-			Assert.assertEquals(0, topologyCacheSize(resolver, "candidateTopologies"));
-			invokeFlatCandidateTopology(resolver, source.key, seed.anchor);
-
-			Assert.assertEquals("flat insertion evicts the factorized resident under one-entry budget",
-				0, topologyCacheSize(resolver, "factorizedCandidateTopologies"));
-			Assert.assertEquals(1, topologyCacheSize(resolver, "candidateTopologies"));
-			Assert.assertEquals("the exported gauge is aggregate across both representations",
-				1, metrics.snapshot().topologyCacheEntries());
-			Assert.assertTrue(metrics.snapshot().topologyCacheRetainedRows() <= 1);
-			Assert.assertTrue("cross-representation replacement must be counted as eviction",
-				metrics.snapshot().topologyCacheEvictions() > 0);
-
-			NativePlacementContinuity next = resolver.nextRevision(
-				List.copyOf(fixture.candidates), Set.of());
-			Assert.assertTrue(topologyCacheSize(next, "candidateTopologies")
-				+ topologyCacheSize(next, "factorizedCandidateTopologies") <= 1);
-			Assert.assertTrue(metrics.snapshot().topologyCacheEntries() <= 1);
-			Assert.assertTrue(metrics.snapshot().topologyCacheRetainedRows() <= 1);
-		}
-		finally {
-			restoreProperty(entriesProperty, priorEntries);
-			restoreProperty(rowsProperty, priorRows);
 		}
 	}
 
@@ -1035,267 +642,11 @@ public class NativePlacementContinuityTest {
 		Ref root = full.unary("root", OpOp1.ABS, loop, false);
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 
-		NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
-		CandidateRealizationReference reference = full.reference(root,
-			List.of(CandidateInputState.present(FType.FULL)));
-		NativeProofProduct product = resolver.proveCandidateProduct(reference, ground.anchor);
-		NativePlacementContinuity legacy = full.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacy.disableDirectDagForTesting();
-		Assert.assertEquals("cyclic fallback flat units remain an exact product adapter",
-			legacy.proveCandidateAlternatives(reference, ground.anchor), product.exportLegacy().proofs());
-		Assert.assertFalse("A cycle remains grounded when one complete AND alternative reaches direct ground",
-			product.routes().isEmpty());
-		Assert.assertEquals(0, product.constructionMaterializedLeaves());
+		Assert.assertNotNull("A cycle remains grounded when one complete AND alternative reaches direct ground",
+			full.resolver(metrics, 0, 0).proveCandidate(full.reference(root,
+				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
 		Assert.assertTrue("a self-loop must keep the cyclic SCC fallback",
 			metrics.snapshot().cyclicProofGraphs() > 0);
-		Assert.assertTrue("the explicit cyclic fallback records its flat leaf work",
-			metrics.snapshot().supportLeaves() > 0);
-	}
-
-	@Test
-	public void exactAcyclicDirectDagMatchesLegacyProofLists() {
-		List<DirectDagDifferentialCase> cases = new ArrayList<>();
-
-		Fixture diamond = new Fixture(FType.BROADCAST);
-		Ref diamondSeed = diamond.source("seed", anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref left = diamond.logicalRead("left");
-		Ref right = diamond.logicalRead("right");
-		diamond.reaching.put(left.key, List.of(diamondSeed.key));
-		diamond.reaching.put(right.key, List.of(diamondSeed.key));
-		Ref diamondRoot = diamond.binary("root", OpOp2.PLUS, left, right, false);
-		DurableAnchorKey distinctSeed = new DurableAnchorKey("alternate-seed", FType.BROADCAST,
-			diamondSeed.anchor.partitions());
-		cases.add(new DirectDagDifferentialCase("diamond-distinct-seed", diamond,
-			diamond.reference(diamondRoot, twoBroadcastInputs()), distinctSeed, true));
-
-		Fixture deadSibling = new Fixture(FType.BROADCAST);
-		Ref deadGround = deadSibling.source("ground",
-			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref dead = deadSibling.read("dead");
-		Ref choice = deadSibling.logicalRead("choice");
-		deadSibling.inheritAnchor(choice, deadGround.anchor);
-		deadSibling.reaching.put(choice.key, List.of(dead.key));
-		Ref deadRoot = deadSibling.unary("root", OpOp1.ABS, choice, false);
-		cases.add(new DirectDagDifferentialCase("dead-sibling", deadSibling,
-			deadSibling.reference(deadRoot, List.of(CandidateInputState.present(FType.BROADCAST))),
-			deadGround.anchor, true));
-
-		Fixture repeated = new Fixture(FType.BROADCAST);
-		Ref repeatedSeed = repeated.source("seed",
-			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref repeatedRoot = repeated.binary("root", OpOp2.PLUS, repeatedSeed, repeatedSeed, false);
-		cases.add(new DirectDagDifferentialCase("repeated-operand-positions", repeated,
-			repeated.reference(repeatedRoot, twoBroadcastInputs()), repeatedSeed.anchor, true));
-
-		Fixture poolMismatch = new Fixture(FType.BROADCAST);
-		Ref expectedPool = poolMismatch.source("expected",
-			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref foreignPool = poolMismatch.source("foreign",
-			anchor(FType.BROADCAST, "worker2:8002", 0, 50));
-		Ref mismatchedRoot = poolMismatch.binary("root", OpOp2.PLUS,
-			expectedPool, foreignPool, false);
-		cases.add(new DirectDagDifferentialCase("ground-loss-pool-mismatch", poolMismatch,
-			poolMismatch.reference(mismatchedRoot, twoBroadcastInputs()), expectedPool.anchor, false));
-
-		for(DirectDagDifferentialCase testCase : cases)
-			assertDirectDagMatchesLegacy(testCase);
-	}
-
-	@Test
-	public void factorizedDiamondProductMatchesIndependentLegacyEnumeration() {
-		Fixture fixture = new Fixture(FType.FULL);
-		Ref left = fixture.source("left", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref right = fixture.source("right", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref producer = fixture.binary("producer", OpOp2.PLUS, left, right, false);
-		List<CandidateInputState> producerInputs = List.of(
-			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
-		fixture.samePoolRealizations(producer, producerInputs,
-			new DurableAnchorKey("producer-a", FType.FULL,
-				List.of(partition("worker1:8001", 0, 50))),
-			new DurableAnchorKey("producer-b", FType.FULL,
-				List.of(partition("worker1:8001", 0, 50))));
-		Ref source = fixture.unary("source", OpOp1.LOG, producer, false);
-		CandidateRealizationReference reference = fixture.reference(source,
-			List.of(CandidateInputState.present(FType.FULL)));
-		NativePlacementContinuity direct = fixture.resolver(new SearchSpaceMetrics(), 8, 128);
-		NativeProofProduct product = direct.proveCandidateProduct(reference, left.anchor);
-		NativePlacementContinuity legacy = fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacy.disableDirectDagForTesting();
-
-		Assert.assertEquals(2, product.checkedRawCardinality());
-		Assert.assertEquals(0, product.constructionMaterializedLeaves());
-		Assert.assertEquals(legacy.proveCandidateAlternatives(reference, left.anchor),
-			product.exportLegacy().proofs());
-	}
-
-	@Test
-	public void boundedDirectSummariesReuseSharedDescendantsButNotAcrossRevisions() {
-		Fixture fixture = new Fixture(FType.BROADCAST);
-		Ref seed = fixture.source("seed", anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref shared = fixture.logicalRead("shared");
-		fixture.reaching.put(shared.key, List.of(seed.key));
-		Ref firstRoot = fixture.unary("firstRoot", OpOp1.ABS, shared, false);
-		Ref secondRoot = fixture.unary("secondRoot", OpOp1.ABS, shared, false);
-		List<CandidateInputState> input = List.of(CandidateInputState.present(FType.BROADCAST));
-		CandidateRealizationReference firstReference = fixture.reference(firstRoot, input);
-		CandidateRealizationReference secondReference = fixture.reference(secondRoot, input);
-
-		SearchSpaceMetrics sharedMetrics = new SearchSpaceMetrics();
-		NativePlacementContinuity resolver = fixture.resolver(sharedMetrics, 8, 128);
-		List<NativePlacementContinuity.NativeContinuityProof> first =
-			resolver.proveCandidateAlternatives(firstReference, seed.anchor);
-		long sharedBeforeSecond = sharedMetrics.snapshot().topologyOverlayEvaluations();
-		long sharedStatesBeforeSecond = sharedMetrics.snapshot().proofStatesBuilt();
-		List<NativePlacementContinuity.NativeContinuityProof> second =
-			resolver.proveCandidateAlternatives(secondReference, seed.anchor);
-		long sharedSecondWork = sharedMetrics.snapshot().topologyOverlayEvaluations()
-			- sharedBeforeSecond;
-		long sharedSecondStates = sharedMetrics.snapshot().proofStatesBuilt()
-			- sharedStatesBeforeSecond;
-
-		SearchSpaceMetrics controlMetrics = new SearchSpaceMetrics();
-		NativePlacementContinuity control = fixture.resolver(controlMetrics, 0, 0);
-		List<NativePlacementContinuity.NativeContinuityProof> controlFirst =
-			control.proveCandidateAlternatives(firstReference, seed.anchor);
-		long controlBeforeSecond = controlMetrics.snapshot().topologyOverlayEvaluations();
-		long controlStatesBeforeSecond = controlMetrics.snapshot().proofStatesBuilt();
-		List<NativePlacementContinuity.NativeContinuityProof> controlSecond =
-			control.proveCandidateAlternatives(secondReference, seed.anchor);
-		long controlSecondWork = controlMetrics.snapshot().topologyOverlayEvaluations()
-			- controlBeforeSecond;
-		long controlSecondStates = controlMetrics.snapshot().proofStatesBuilt()
-			- controlStatesBeforeSecond;
-
-		Assert.assertEquals(controlFirst, first);
-		Assert.assertEquals(controlSecond, second);
-		Assert.assertTrue("the second root must reuse its completed acyclic descendant summary: shared="
-			+ sharedSecondWork + ", control=" + controlSecondWork,
-			sharedSecondWork < controlSecondWork);
-		Assert.assertEquals("proof-state work must count only actually evaluated states",
-			sharedSecondWork, sharedSecondStates);
-		Assert.assertEquals("zero-budget state work must match its topology overlay evaluations",
-			controlSecondWork, controlSecondStates);
-		Assert.assertTrue(sharedSecondStates < controlSecondStates);
-
-		NativePlacementContinuity next = resolver.nextRevision(List.copyOf(fixture.candidates),
-			Set.of(shared.key));
-		long beforeRevisionQuery = sharedMetrics.snapshot().topologyOverlayEvaluations();
-		Assert.assertEquals(controlSecond,
-			next.proveCandidateAlternatives(secondReference, seed.anchor));
-		Assert.assertTrue("direct descendant summaries are resolver-local and never copied to a revision",
-			sharedMetrics.snapshot().topologyOverlayEvaluations() > beforeRevisionQuery);
-	}
-
-	@Test
-	public void directSummaryReuseCannotPoisonAnotherPinnedRootCandidate() {
-		Fixture fixture = new Fixture(FType.BROADCAST);
-		Ref expected = fixture.source("expected",
-			anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref foreign = fixture.source("foreign",
-			anchor(FType.BROADCAST, "worker2:8002", 0, 50));
-		Ref root = fixture.binaryWithoutCandidate("root", OpOp2.PLUS, expected, foreign);
-		List<CandidateInputState> good = List.of(CandidateInputState.present(FType.BROADCAST),
-			CandidateInputState.absentLocal());
-		List<CandidateInputState> bad = List.of(CandidateInputState.absentLocal(),
-			CandidateInputState.present(FType.BROADCAST));
-		fixture.additionalCandidate(root, good);
-		fixture.additionalCandidate(root, bad);
-
-		NativePlacementContinuity resolver = fixture.resolver(new SearchSpaceMetrics(), 8, 128);
-		Assert.assertFalse(resolver.proveCandidateAlternatives(
-			fixture.reference(root, good), expected.anchor).isEmpty());
-		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			resolver.proveCandidateAlternatives(fixture.reference(root, bad), expected.anchor);
-		NativePlacementContinuity control = fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-		List<NativePlacementContinuity.NativeContinuityProof> expectedBad =
-			control.proveCandidateAlternatives(fixture.reference(root, bad), expected.anchor);
-
-		Assert.assertEquals("a different root pin must be evaluated independently",
-			expectedBad, actual);
-		Assert.assertTrue(actual.isEmpty());
-	}
-
-	@Test
-	public void directSummaryRejectsFootprintContainingTheRequestingRoot() {
-		Fixture fixture = new Fixture(FType.BROADCAST);
-		Ref seed = fixture.source("seed", anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref futureRoot = fixture.naryWithoutCandidate("futureRoot", OpOpN.MULT, seed, seed);
-		Ref bridge = fixture.naryWithoutCandidate("bridge", OpOpN.MULT, seed);
-		fixture.edges.add(new CompiledInputEdgeFact(seed.key, futureRoot.key, 0));
-		fixture.edges.add(new CompiledInputEdgeFact(bridge.key, futureRoot.key, 1));
-		fixture.edges.add(new CompiledInputEdgeFact(futureRoot.key, bridge.key, 0));
-		List<CandidateInputState> good = List.of(CandidateInputState.present(FType.BROADCAST),
-			CandidateInputState.absentLocal());
-		List<CandidateInputState> bad = List.of(CandidateInputState.absentLocal(),
-			CandidateInputState.present(FType.BROADCAST));
-		List<CandidateInputState> bridgeInputs =
-			List.of(CandidateInputState.present(FType.BROADCAST));
-		fixture.additionalCandidate(futureRoot, good);
-		fixture.additionalCandidate(futureRoot, bad);
-		fixture.additionalCandidate(bridge, bridgeInputs);
-		CandidateRealizationReference goodFuture = fixture.reference(futureRoot, good);
-		fixture.requireInputSupport(bridge, bridgeInputs, goodFuture);
-		Ref firstRoot = fixture.unary("firstRoot", OpOp1.ABS, bridge, false);
-		CandidateRealizationReference firstReference = fixture.reference(firstRoot, bridgeInputs);
-		CandidateRealizationReference badFuture = fixture.reference(futureRoot, bad);
-
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity resolver = fixture.resolver(metrics, 8, 128);
-		Assert.assertFalse("the good pinned path warms an acyclic bridge summary",
-			resolver.proveCandidateAlternatives(firstReference, seed.anchor).isEmpty());
-		long workBefore = metrics.snapshot().topologyOverlayEvaluations();
-		long cyclesBefore = metrics.snapshot().cyclicProofGraphs();
-		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			resolver.proveCandidateAlternatives(badFuture, seed.anchor);
-
-		NativePlacementContinuity control = fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-		List<NativePlacementContinuity.NativeContinuityProof> expected =
-			control.proveCandidateAlternatives(badFuture, seed.anchor);
-		Assert.assertEquals(expected, actual);
-		Assert.assertTrue(actual.isEmpty());
-		Assert.assertTrue("the cached bridge must be rejected and freshly traversed",
-			metrics.snapshot().topologyOverlayEvaluations() > workBefore);
-		Assert.assertTrue("the fresh traversal must expose the pinned back-edge to legacy fallback",
-			metrics.snapshot().cyclicProofGraphs() > cyclesBefore);
-	}
-
-	@Test
-	public void cyclicFallbackPublishesNoTentativeAcyclicSiblingSummaries() {
-		Fixture fixture = new Fixture(FType.BROADCAST);
-		Ref seed = fixture.source("seed", anchor(FType.BROADCAST, "worker1:8001", 0, 50));
-		Ref sibling = fixture.logicalRead("sibling");
-		fixture.reaching.put(sibling.key, List.of(seed.key));
-		Ref cycle = fixture.logicalRead("cycle");
-		fixture.reaching.put(cycle.key, List.of(cycle.key));
-		Ref failingRoot = fixture.binary("failingRoot", OpOp2.PLUS, sibling, cycle, false);
-		Ref laterRoot = fixture.unary("laterRoot", OpOp1.ABS, sibling, false);
-		CandidateRealizationReference failingReference = fixture.reference(failingRoot,
-			List.of(CandidateInputState.present(FType.BROADCAST),
-				CandidateInputState.present(FType.BROADCAST)));
-		CandidateRealizationReference laterReference = fixture.reference(laterRoot,
-			List.of(CandidateInputState.present(FType.BROADCAST)));
-
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity resolver = fixture.resolver(metrics, 8, 128);
-		Assert.assertTrue(resolver.proveCandidateAlternatives(
-			failingReference, seed.anchor).isEmpty());
-		long beforeLater = metrics.snapshot().topologyOverlayEvaluations();
-		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			resolver.proveCandidateAlternatives(laterReference, seed.anchor);
-		long laterWork = metrics.snapshot().topologyOverlayEvaluations() - beforeLater;
-
-		SearchSpaceMetrics controlMetrics = new SearchSpaceMetrics();
-		NativePlacementContinuity control = fixture.resolver(controlMetrics, 0, 0);
-		control.proveCandidateAlternatives(failingReference, seed.anchor);
-		long controlBeforeLater = controlMetrics.snapshot().topologyOverlayEvaluations();
-		List<NativePlacementContinuity.NativeContinuityProof> expected =
-			control.proveCandidateAlternatives(laterReference, seed.anchor);
-		long controlLaterWork = controlMetrics.snapshot().topologyOverlayEvaluations()
-			- controlBeforeLater;
-
-		Assert.assertEquals(expected, actual);
-		Assert.assertEquals("a failed cyclic traversal must publish none of its tentative siblings",
-			controlLaterWork, laterWork);
 	}
 
 	@Test
@@ -1554,30 +905,9 @@ public class NativePlacementContinuityTest {
 	public void candidateProofDistinguishesDynamicReorgResidencyFromExactAxisContinuity() {
 		Fixture row = new Fixture(FType.ROW);
 		Ref rowSeed = row.source("rowSeed", anchor(FType.ROW, "worker1:8001", 0, 50));
-		Ref exactLog = row.unary("exactLog", OpOp1.LOG, rowSeed, false);
-		CandidateRealizationReference exactReference = row.reference(exactLog,
-			List.of(CandidateInputState.present(FType.ROW)));
-		NativeProofProduct exactProduct = row.resolver().proveCandidateProduct(
-			exactReference, rowSeed.anchor);
-		Assert.assertTrue("range-preserving input keeps only exact routes",
-			!exactProduct.routes().isEmpty()
-				&& exactProduct.routes().stream().allMatch(NativeProofProduct.Route::exactPartitionRanges));
 		Ref reverse = row.reorg("reverse", ReOrgOp.REV, rowSeed, false);
-		CandidateRealizationReference reverseReference = row.reference(reverse,
-			List.of(CandidateInputState.present(FType.ROW)));
-		NativePlacementContinuity reverseResolver = row.resolver();
-		NativeProofProduct reverseProduct = reverseResolver.proveCandidateProduct(
-			reverseReference, rowSeed.anchor);
-		Assert.assertTrue("range-recomputing output keeps only dynamic routes",
-			!reverseProduct.routes().isEmpty()
-				&& reverseProduct.routes().stream().noneMatch(NativeProofProduct.Route::exactPartitionRanges));
-		Assert.assertEquals(0, reverseProduct.constructionMaterializedLeaves());
-		NativePlacementContinuity legacyReverse = row.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacyReverse.disableDirectDagForTesting();
-		Assert.assertEquals(legacyReverse.proveCandidateAlternatives(reverseReference, rowSeed.anchor),
-			reverseProduct.exportLegacy().proofs());
-		NativePlacementContinuity.NativeContinuityProof reverseProof =
-			reverseProduct.exportLegacy().proofs().get(0);
+		NativePlacementContinuity.NativeContinuityProof reverseProof = row.resolver().proveCandidate(
+			row.reference(reverse, List.of(CandidateInputState.present(FType.ROW))), rowSeed.anchor);
 		Assert.assertNotNull("ROW reverse keeps worker residency even though endpoint-to-range ownership changes",
 			reverseProof);
 		Assert.assertFalse("ROW reverse must not publish exact partition ranges",
@@ -2073,54 +1403,6 @@ public class NativePlacementContinuityTest {
 				fact.capability(), fact.shapeProof(), fact.profile(), List.of(replacement), fact.failureCode()));
 		}
 
-		private void requireInputSupport(Ref owner, List<CandidateInputState> inputs,
-			CandidateRealizationReference support) {
-			replaceInputSupport(owner, inputs, List.of(List.of(
-				CandidateRealizationInputBinding.direct(0, support))));
-		}
-
-		private void replaceInputSupport(Ref owner, List<CandidateInputState> inputs,
-			List<List<CandidateRealizationInputBinding>> clauses) {
-			CandidateRuleFact fact = candidates.stream().filter(candidate ->
-				candidate.key().parentOccurrence() == owner.key
-					&& candidate.key().orderedInputs().equals(inputs)).findFirst().orElseThrow();
-			CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
-			CandidateEmissionRealization realization = emission.realizations().get(0);
-			CandidateRealizationSupportClause original = realization.supportClauses().get(0);
-			CandidateEmissionRealization replacementRealization = new CandidateEmissionRealization(
-				realization.key(), clauses.stream().map(bindings ->
-					new CandidateRealizationSupportClause(original.proofDependencies(), bindings,
-						original.nativeWorkerPoolWitness(), original.nativeWorkerPoolLayoutExact())).toList());
-			CandidateEmissionFact replacement = new CandidateEmissionFact(emission.emissionState(),
-				emission.executionFType(), emission.derivedFoutAction(), List.of(replacementRealization));
-			candidates.set(candidates.indexOf(fact), new CandidateRuleFact(fact.key(), fact.status(),
-				fact.capability(), fact.shapeProof(), fact.profile(), List.of(replacement), fact.failureCode()));
-		}
-
-		private void replaceInputSupportRelation(Ref owner, List<CandidateInputState> inputs,
-			CandidateSupportRelation relation) {
-			CandidateRuleFact fact = candidates.stream().filter(candidate ->
-				candidate.key().parentOccurrence() == owner.key
-					&& candidate.key().orderedInputs().equals(inputs)).findFirst().orElseThrow();
-			CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
-			CandidateEmissionRealization realization = emission.realizations().get(0);
-			CandidateEmissionRealization replacementRealization =
-				CandidateEmissionRealization.fromSupportRelation(realization.key(), relation);
-			CandidateEmissionFact replacement = new CandidateEmissionFact(emission.emissionState(),
-				emission.executionFType(), emission.derivedFoutAction(), List.of(replacementRealization));
-			candidates.set(candidates.indexOf(fact), new CandidateRuleFact(fact.key(), fact.status(),
-				fact.capability(), fact.shapeProof(), fact.profile(), List.of(replacement), fact.failureCode()));
-		}
-
-		private List<CandidateRealizationReference> references(Ref owner,
-			List<CandidateInputState> inputs) {
-			CandidateRuleFact fact = candidates.stream().filter(candidate ->
-				candidate.key().parentOccurrence() == owner.key
-					&& candidate.key().orderedInputs().equals(inputs)).findFirst().orElseThrow();
-			return fact.allowedEmissionFacts().get(0).realizations().stream()
-				.map(realization -> CandidateRealizationReference.of(fact.key(), realization)).toList();
-		}
-
 		private CandidateRealizationReference reference(Ref owner, List<CandidateInputState> inputs) {
 			CandidateRuleFact fact = candidates.stream().filter(candidate ->
 				candidate.key().parentOccurrence() == owner.key
@@ -2172,117 +1454,6 @@ public class NativePlacementContinuityTest {
 	}
 
 	private record Ref(CompiledHopKey key, Hop hop, DurableAnchorKey anchor) { }
-	private record DirectDagDifferentialCase(String name, Fixture fixture,
-		CandidateRealizationReference root, DurableAnchorKey externalSeed,
-		boolean expectsProof) { }
-
-	private static List<CandidateInputState> twoBroadcastInputs() {
-		return List.of(CandidateInputState.present(FType.BROADCAST),
-			CandidateInputState.present(FType.BROADCAST));
-	}
-
-	private static void assertDirectDagMatchesLegacy(DirectDagDifferentialCase testCase) {
-		SearchSpaceMetrics directMetrics = new SearchSpaceMetrics();
-		NativePlacementContinuity direct = testCase.fixture.resolver(directMetrics, 0, 0);
-		List<NativePlacementContinuity.NativeContinuityProof> actual =
-			direct.proveCandidateAlternatives(testCase.root, testCase.externalSeed);
-		NativePlacementContinuity legacy = testCase.fixture.resolver(new SearchSpaceMetrics(), 0, 0);
-		legacy.disableDirectDagForTesting();
-		List<NativePlacementContinuity.NativeContinuityProof> oracle =
-			legacy.proveCandidateAlternatives(testCase.root, testCase.externalSeed);
-		Assert.assertEquals(testCase.name + " ordered proof list", oracle, actual);
-		Assert.assertEquals(testCase.name + " proof presence",
-			testCase.expectsProof, !actual.isEmpty());
-		Assert.assertTrue(testCase.name + " external seed attachment", actual.stream()
-			.allMatch(proof -> proof.externalSeed().equals(testCase.externalSeed)));
-		SearchSpaceMetrics.AttributionSnapshot attribution = directMetrics.attributionSnapshot();
-		Assert.assertTrue(testCase.name + " direct evaluation is grounding work",
-			attribution.phase(SearchSpaceMetrics.Phase.PROOF_GROUNDING).calls() > 0);
-		Assert.assertEquals(testCase.name + " direct evaluation constructs no overlay graph", 0,
-			attribution.phase(SearchSpaceMetrics.Phase.PROOF_OVERLAY).calls());
-	}
-
-	private static NativePlacementContinuity.NativeContinuityProof bareProof(String id) {
-		DurableAnchorKey seed = new DurableAnchorKey("seed-" + id, FType.FULL,
-			List.of(partition("worker1:8001", 0, 50)));
-		return new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, List.of());
-	}
-
-	private static void invokeCacheCompletedProofs(NativePlacementContinuity resolver,
-		List<NativePlacementContinuity.NativeContinuityProof> proofs) throws Exception {
-		Method cache = null;
-		for(Method method : NativePlacementContinuity.class.getDeclaredMethods())
-			if(method.getName().equals("cacheCompletedProofs")) {
-				cache = method;
-				break;
-			}
-		Assert.assertNotNull(cache);
-		cache.setAccessible(true);
-		cache.invoke(resolver, null, proofs);
-	}
-
-	private static String cachedSignature(
-		NativePlacementContinuity.NativeContinuityProof proof) throws Exception {
-		Field signature = NativePlacementContinuity.NativeContinuityProof.class
-			.getDeclaredField("normalizedSignature");
-		signature.setAccessible(true);
-		return (String) signature.get(proof);
-	}
-
-	private static boolean invokeExceedsBudget(long retained, long additional, long budget)
-		throws Exception {
-		Method exceedsBudget = NativePlacementContinuity.class.getDeclaredMethod(
-			"exceedsBudget", long.class, long.class, long.class);
-		exceedsBudget.setAccessible(true);
-		return (boolean) exceedsBudget.invoke(null, retained, additional, budget);
-	}
-
-	private static void invokeFlatCandidateTopology(NativePlacementContinuity resolver,
-		CompiledHopKey key, DurableAnchorKey anchor) throws Exception {
-		invokeCandidateTopology(resolver, "candidateTopology", key, anchor);
-	}
-
-	private static void invokeFactorizedCandidateTopology(NativePlacementContinuity resolver,
-		CompiledHopKey key, DurableAnchorKey anchor) throws Exception {
-		invokeCandidateTopology(resolver, "factorizedCandidateTopology", key, anchor);
-	}
-
-	private static void invokeCandidateTopology(NativePlacementContinuity resolver,
-		String methodName, CompiledHopKey key, DurableAnchorKey anchor) throws Exception {
-		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
-			"nativeWitness", DurableAnchorKey.class);
-		nativeWitness.setAccessible(true);
-		Object witness = nativeWitness.invoke(resolver, anchor);
-		Method candidateTopology = null;
-		for(Method method : NativePlacementContinuity.class.getDeclaredMethods())
-			if(method.getName().equals(methodName) && method.getParameterCount() == 2) {
-				candidateTopology = method;
-				break;
-			}
-		Assert.assertNotNull(candidateTopology);
-		candidateTopology.setAccessible(true);
-		candidateTopology.invoke(resolver, key, witness);
-	}
-
-	private static long phaseCalls(SearchSpaceMetrics metrics, SearchSpaceMetrics.Phase phase) {
-		return metrics.attributionSnapshot().phases().stream()
-			.filter(measurement -> measurement.phase().equals(phase.name()))
-			.findFirst().orElseThrow().calls();
-	}
-
-	private static int topologyCacheSize(NativePlacementContinuity resolver, String fieldName)
-		throws Exception {
-		Field cache = NativePlacementContinuity.class.getDeclaredField(fieldName);
-		cache.setAccessible(true);
-		return ((Map<?,?>) cache.get(resolver)).size();
-	}
-
-	private static void restoreProperty(String property, String value) {
-		if(value == null)
-			System.clearProperty(property);
-		else
-			System.setProperty(property, value);
-	}
 
 	private static PlacementState state(FType fType) {
 		return new PlacementState(ExecType.FED, FederatedOutput.FOUT, fType, false);

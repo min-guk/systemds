@@ -120,12 +120,6 @@ final class SearchSpaceMetrics {
 	private long incrementalPasses;
 	private long incrementalFactsRecomputed;
 	private long incrementalFactsReused;
-	private long cfgReplaySelectivePasses;
-	private long cfgReplayFullPasses;
-	private long cfgReplayFallbackPasses;
-	private long cfgReplayReadersRecomputed;
-	private long cfgReplayReadersReused;
-	private long cfgReplayLoopSeedsInstalled;
 	private long memoHits;
 	private long memoMisses;
 	private long memoEvictions;
@@ -205,8 +199,6 @@ final class SearchSpaceMetrics {
 		relocationPeakPendingAssignments = inputPrefixes = inputLeaves = inputPeakDepth = 0;
 		templateLookups = templateLookupCandidatesExamined = 0;
 		incrementalPasses = incrementalFactsRecomputed = incrementalFactsReused = 0;
-		cfgReplaySelectivePasses = cfgReplayFullPasses = cfgReplayFallbackPasses = 0;
-		cfgReplayReadersRecomputed = cfgReplayReadersReused = cfgReplayLoopSeedsInstalled = 0;
 		memoHits = memoMisses = memoEvictions = memoEntries = memoRetainedProofs = 0;
 		memoRetainedEstimatedBytes = 0;
 		supportMemoHits = supportMemoMisses = supportMemoEvictions = supportMemoEntries = 0;
@@ -423,21 +415,6 @@ final class SearchSpaceMetrics {
 			incrementalFactsReused++;
 	}
 	void recordIncrementalPass() { incrementalPasses++; }
-	void recordCfgReplayPass(boolean selective, boolean fallback) {
-		if(selective)
-			cfgReplaySelectivePasses++;
-		else
-			cfgReplayFullPasses++;
-		if(fallback)
-			cfgReplayFallbackPasses++;
-	}
-	void recordCfgReplayLoopSeedInstalled() { cfgReplayLoopSeedsInstalled++; }
-	void recordCfgReplayReader(boolean recomputed) {
-		if(recomputed)
-			cfgReplayReadersRecomputed++;
-		else
-			cfgReplayReadersReused++;
-	}
 	void recordMemoHit() { memoHits++; }
 	void recordMemoMiss() { memoMisses++; }
 	void recordMemoEviction() { memoEvictions++; }
@@ -532,10 +509,7 @@ final class SearchSpaceMetrics {
 			relocationPrefixes, relocationLeaves, relocationPeakDepth,
 			relocationPeakPendingAssignments, inputPrefixes, inputLeaves, inputPeakDepth,
 			templateLookups, templateLookupCandidatesExamined, incrementalPasses,
-			incrementalFactsRecomputed, incrementalFactsReused,
-			cfgReplaySelectivePasses, cfgReplayFullPasses, cfgReplayFallbackPasses,
-			cfgReplayReadersRecomputed, cfgReplayReadersReused, cfgReplayLoopSeedsInstalled,
-			memoHits, memoMisses,
+			incrementalFactsRecomputed, incrementalFactsReused, memoHits, memoMisses,
 			memoEvictions, memoEntries, memoRetainedProofs, memoRetainedEstimatedBytes,
 			supportMemoHits, supportMemoMisses, supportMemoEvictions, supportMemoEntries,
 			supportMemoRetainedTemplates, supportMemoRetainedEstimatedBytes,
@@ -591,9 +565,6 @@ final class SearchSpaceMetrics {
 		long relocationPeakPendingAssignments, long inputPrefixes, long inputLeaves,
 		long inputPeakDepth, long templateLookups, long templateLookupCandidatesExamined,
 		long incrementalPasses, long incrementalFactsRecomputed, long incrementalFactsReused,
-		long cfgReplaySelectivePasses, long cfgReplayFullPasses, long cfgReplayFallbackPasses,
-		long cfgReplayReadersRecomputed, long cfgReplayReadersReused,
-		long cfgReplayLoopSeedsInstalled,
 		long memoHits, long memoMisses, long memoEvictions, long memoEntries,
 		long memoRetainedProofs, long memoRetainedEstimatedBytes,
 		long supportMemoHits, long supportMemoMisses, long supportMemoEvictions,

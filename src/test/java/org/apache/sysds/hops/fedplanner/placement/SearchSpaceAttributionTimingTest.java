@@ -1,13 +1,6 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.placement;
 
-import java.util.List;
-import java.util.Map;
-
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,18 +31,11 @@ public class SearchSpaceAttributionTimingTest {
 		Assert.assertEquals(work.proofQueries(), work.exactContextUniqueQueries()
 			+ work.exactContextRepeatedQueries() + work.exactContextOverflowQueries());
 		for(SearchSpaceMetrics.Phase phase : SearchSpaceMetrics.Phase.values())
-			if(phase != SearchSpaceMetrics.Phase.PUBLIC_PROOF_MATERIALIZATION)
-				Assert.assertTrue("missing phase " + phase,
-					timing.phase(phase).inclusiveWallNanos() > 0);
-		Assert.assertEquals("analysis construction uses factorized proof products, not the opt-in "
-			+ "legacy public-proof export boundary", 0,
-			timing.phase(SearchSpaceMetrics.Phase.PUBLIC_PROOF_MATERIALIZATION).calls());
+			Assert.assertTrue("missing phase " + phase, timing.phase(phase).inclusiveWallNanos() > 0);
 		SearchSpaceMetrics.PhaseMeasurement topology =
 			timing.phase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
-		Assert.assertEquals("opt-in timing measures topology expansions, not cache-hit overhead",
-			work.topologyExpansionBuilds(), topology.calls());
-		Assert.assertTrue("cache hits remain available as aggregate diagnostics",
-			work.topologyExpansionHits() > 0);
+		Assert.assertEquals("each measured topology call is classified as a build or hit",
+			work.topologyExpansionBuilds() + work.topologyExpansionHits(), topology.calls());
 		SearchSpaceMetrics.PhaseMeasurement overlay =
 			timing.phase(SearchSpaceMetrics.Phase.PROOF_OVERLAY);
 		Assert.assertTrue("recursive topology work must be removed from overlay exclusive time",
@@ -60,36 +46,6 @@ public class SearchSpaceAttributionTimingTest {
 			exclusiveWall);
 		assertUnknownOrAdditive(timing, true);
 		assertUnknownOrAdditive(timing, false);
-	}
-
-	@Test
-	public void publicProofExportIsTimedOnceAndMemoHitsDoNotReenterThePhase() throws Exception {
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
-			.buildAnalysis(NeutralPlacementFixedPointCompositionTest.compileProtected(
-				NeutralPlacementFixedPointCompositionTest.ACTIONS));
-		PlacementAnalysis.CandidateRuleFact fact = analysis.candidateRuleFacts().orderedFacts().stream()
-			.filter(candidate -> !candidate.allowedEmissionFacts().isEmpty())
-			.findFirst().orElseThrow();
-		CandidateRealizationReference reference = CandidateRealizationReference.of(fact.key(),
-			fact.allowedEmissionFacts().get(0).realizations().get(0));
-		DurableAnchorKey unavailableSeed = new DurableAnchorKey("public-proof-timing-seed", FType.FULL,
-			List.of(new AnchorPartition("worker1:8001", List.of(0L, 0L), List.of(1L, 1L))));
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity continuity = new NativePlacementContinuity(Map.of(), Map.of(),
-			List.of(), List.of(), Map.of(), metrics);
-
-		Assert.assertTrue("the isolated resolver deliberately has no proof authority",
-			continuity.proveCandidateAlternatives(reference, unavailableSeed).isEmpty());
-		SearchSpaceMetrics.PhaseMeasurement measured = metrics.attributionSnapshot()
-			.phase(SearchSpaceMetrics.Phase.PUBLIC_PROOF_MATERIALIZATION);
-		Assert.assertEquals(1, measured.calls());
-		Assert.assertTrue("the public legacy export boundary must report elapsed wall time",
-			measured.inclusiveWallNanos() > 0);
-
-		Assert.assertTrue(continuity.proveCandidateAlternatives(reference, unavailableSeed).isEmpty());
-		Assert.assertEquals("memo hits must not be charged as proof materialization", 1,
-			metrics.attributionSnapshot()
-				.phase(SearchSpaceMetrics.Phase.PUBLIC_PROOF_MATERIALIZATION).calls());
 	}
 
 	@Test

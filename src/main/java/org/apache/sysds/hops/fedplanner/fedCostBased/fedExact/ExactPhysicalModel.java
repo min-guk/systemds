@@ -130,16 +130,40 @@ final class ExactPhysicalModel {
 		}
 	}
 
+	record CandidateRuleLookupStatistics(long ownerLookups, long candidateFactsExamined) { }
+
+	private interface CandidateRuleLookup {
+		List<CandidateRuleFact> rulesFor(Node node);
+		long factsExamined(Node node, List<CandidateRuleFact> ownerRules);
+	}
+
+	private static final class MutableCandidateRuleLookupStatistics {
+		private long ownerLookups;
+		private long candidateFactsExamined;
+
+		void record(long factsExamined) {
+			ownerLookups++;
+			candidateFactsExamined += factsExamined;
+		}
+
+		CandidateRuleLookupStatistics snapshot() {
+			return new CandidateRuleLookupStatistics(ownerLookups, candidateFactsExamined);
+		}
+	}
+
 	private final PlacementAnalysis analysis;
 	private final List<DecisionDomain> domains;
 	private final List<ExactCategoricalSolver.Factor> hardFactors;
 	private final Map<CompiledHopKey,DecisionDomain> byDecision;
+	private final CandidateRuleLookupStatistics candidateRuleLookupStatistics;
 
 	private ExactPhysicalModel(PlacementAnalysis analysis, List<DecisionDomain> domains,
-		List<ExactCategoricalSolver.Factor> hardFactors) {
+		List<ExactCategoricalSolver.Factor> hardFactors,
+		CandidateRuleLookupStatistics candidateRuleLookupStatistics) {
 		this.analysis = analysis;
 		this.domains = List.copyOf(domains);
 		this.hardFactors = List.copyOf(hardFactors);
+		this.candidateRuleLookupStatistics = candidateRuleLookupStatistics;
 		Map<CompiledHopKey,DecisionDomain> indexed = new IdentityHashMap<>();
 		for(DecisionDomain domain : domains)
 			indexed.put(domain.node().key(), domain);
@@ -147,7 +171,38 @@ final class ExactPhysicalModel {
 	}
 
 	static ExactPhysicalModel build(PlacementAnalysis analysis) {
+		return build(analysis, new CandidateRuleLookup() {
+			@Override
+			public List<CandidateRuleFact> rulesFor(Node node) {
+				return analysis.candidateRuleFacts().orderedFactsForParent(node.key());
+			}
+
+			@Override
+			public long factsExamined(Node node, List<CandidateRuleFact> ownerRules) {
+				return ownerRules.size();
+			}
+		});
+	}
+
+	/** Legacy whole-universe lookup retained only as a focused parity oracle for R1-A. */
+	static ExactPhysicalModel buildWithLegacyCandidateRuleScanForTest(PlacementAnalysis analysis) {
+		return build(analysis, new CandidateRuleLookup() {
+			@Override
+			public List<CandidateRuleFact> rulesFor(Node node) {
+				return analysis.candidateRuleFacts().orderedFacts().stream()
+					.filter(rule -> rule.key().parentOccurrence() == node.key()).toList();
+			}
+
+			@Override
+			public long factsExamined(Node node, List<CandidateRuleFact> ownerRules) {
+				return analysis.candidateRuleFacts().orderedFacts().size();
+			}
+		});
+	}
+
+	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup) {
 		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(ruleLookup, "ruleLookup");
 		analysis.assertProgramStructureUnchanged();
 		// Synthetic function boundaries are planner-visible legality variables even
 		// though they have no concrete Hop mutation. Omitting them dropped the
@@ -156,10 +211,15 @@ final class ExactPhysicalModel {
 		List<Node> nodes = analysis.graph().decisionNodes();
 		Map<CompiledHopKey,List<Link>> incoming = incomingLinks(analysis);
 		List<DecisionDomain> domains = new ArrayList<>(nodes.size());
+		MutableCandidateRuleLookupStatistics lookupStatistics =
+			new MutableCandidateRuleLookupStatistics();
 		for(Node node : nodes) {
+			List<CandidateRuleFact> ownerRules = isSyntheticFunctionBoundary(node) ? List.of()
+				: ruleLookup.rulesFor(node);
+			if(!isSyntheticFunctionBoundary(node))
+				lookupStatistics.record(ruleLookup.factsExamined(node, ownerRules));
 			List<Alternative> alternatives = alternatives(analysis, node,
-				incoming.getOrDefault(node.key(), List.of()),
-				analysis.candidateRuleFacts().orderedFactsForParent(node.key()));
+				incoming.getOrDefault(node.key(), List.of()), ownerRules);
 			ExactCategoricalSolver.Variable variable = new ExactCategoricalSolver.Variable(
 				node.key().normalizedSignature(), alternatives.size());
 			domains.add(new DecisionDomain(node, variable, alternatives));
@@ -175,11 +235,19 @@ final class ExactPhysicalModel {
 		addDerivedFoutAnchorFactors(analysis.graph(), byDecision, factors);
 		addInputAuthorityFactors(analysis, incoming, byDecision, factors);
 		addLatentWdivmmRuntimeInputFactors(analysis, byDecision, factors);
-		return new ExactPhysicalModel(analysis, domains, factors);
+		return new ExactPhysicalModel(analysis, domains, factors, lookupStatistics.snapshot());
+	}
+
+	private static boolean isSyntheticFunctionBoundary(Node node) {
+		return node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+			|| node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT;
 	}
 
 	List<DecisionDomain> domains() { return domains; }
 	PlacementAnalysis analysis() { return analysis; }
+	CandidateRuleLookupStatistics candidateRuleLookupStatistics() {
+		return candidateRuleLookupStatistics;
+	}
 	List<ExactCategoricalSolver.Variable> variables() {
 		return domains.stream().map(DecisionDomain::variable).toList();
 	}
@@ -233,8 +301,7 @@ final class ExactPhysicalModel {
 	private static List<Alternative> alternatives(PlacementAnalysis analysis, Node node, List<Link> incoming,
 		List<CandidateRuleFact> ownerRules) {
 		List<Alternative> alternatives = new ArrayList<>();
-		if(node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
-			|| node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT) {
+		if(isSyntheticFunctionBoundary(node)) {
 			for(PlacementState state : node.legalAlternatives())
 				alternatives.add(nonCandidate(node, state, AuthorityKind.SYNTHETIC_BOUNDARY,
 					null, null));

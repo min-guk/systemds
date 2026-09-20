@@ -106,26 +106,15 @@ public final class LogicalBoundaryRealizations {
 		for(CandidateRuleFact fact : facts)
 			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-					for(CandidateEmissionRealization realization : emission.realizations()) {
-						PlacementState state = realization.key().emissionState().placementState();
-						CandidateRealizationReference reference =
-							CandidateRealizationReference.of(fact.key(), realization);
-						DurableAnchorKey durable = realization.anchor();
-						if(durable != null) {
-							options.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
-								.add(new Option(reference, state, durable));
-							continue;
-						}
-						for(CandidateSupportRelation.SupportAnnotations annotation :
-							realization.supportRelation().distinctAnnotations()) {
-							DurableAnchorKey pool = annotation.nativeWorkerPoolLayoutExact()
-								? annotation.nativeWorkerPoolWitness() : null;
+					for(CandidateEmissionRealization realization : emission.realizations())
+						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+							PlacementState state = realization.key().emissionState().placementState();
+							DurableAnchorKey pool = realization.provenWorkerPoolForOwnedClause(clause);
 							if(state.output() == FederatedOutput.FOUT && pool == null)
-								continue; // Staging/dynamic lineage is not exact native execution authority.
+								continue; // Staging lineage is not native execution authority.
 							options.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
-								.add(new Option(reference, state, pool));
+								.add(new Option(CandidateRealizationReference.of(fact.key(), realization), state, pool));
 						}
-					}
 		options.replaceAll((key, values) -> values.stream().distinct().toList());
 		relations = sources.entrySet().stream()
 			.filter(entry -> options.getOrDefault(entry.getKey(), List.of()).stream()
@@ -187,8 +176,8 @@ public final class LogicalBoundaryRealizations {
 		for(int pass = 0; pass <= nodes.size(); pass++) {
 			List<CandidateRuleFact> next = new LogicalBoundaryRealizations(nodes, constraints, origins, current)
 				.bind(current);
-			if(CandidateClosureDependencies.structurallyEqual(current, next))
-				return current;
+			if(next.equals(current))
+				return next;
 			current = next;
 		}
 		throw new IllegalStateException("Logical boundary realization closure did not converge");

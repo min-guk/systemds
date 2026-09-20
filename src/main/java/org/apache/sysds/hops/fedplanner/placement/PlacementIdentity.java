@@ -60,7 +60,6 @@ public final class PlacementIdentity {
 	private static final ThreadLocal<Map<Object,String>> ACTIVE_STRUCTURAL_SIGNATURES = new ThreadLocal<>();
 	private static final ThreadLocal<Map<Object,String>> ACTIVE_IDENTITY_SIGNATURES = new ThreadLocal<>();
 	private static final ThreadLocal<StructuralArena> ACTIVE_STRUCTURAL_ARENA = new ThreadLocal<>();
-	private static final ThreadLocal<Map<Object,Integer>> ACTIVE_IDENTITY_HASHES = new ThreadLocal<>();
 
 	private static final class StructuralArena {
 		private final Map<Object,Integer> byIdentity = new java.util.IdentityHashMap<>();
@@ -992,35 +991,11 @@ public final class PlacementIdentity {
 	static void beginAnalysisScope(SearchSpaceMetrics metrics) {
 		setActiveMetrics(metrics);
 		ACTIVE_STRUCTURAL_ARENA.set(new StructuralArena(metrics));
-		ACTIVE_IDENTITY_HASHES.set(new java.util.IdentityHashMap<>());
 	}
 
 	static void endAnalysisScope() {
-		ACTIVE_IDENTITY_HASHES.remove();
 		ACTIVE_STRUCTURAL_ARENA.remove();
 		setActiveMetrics(null);
-	}
-
-	/** Exact immutable-object hash cached by identity for the active analysis. */
-	static int cachedStructuralHash(Object value) {
-		Objects.requireNonNull(value, "structural hash value");
-		Map<Object,Integer> hashes = ACTIVE_IDENTITY_HASHES.get();
-		if(hashes == null)
-			return value.hashCode();
-		Integer cached = hashes.get(value);
-		if(cached != null || hashes.containsKey(value))
-			return cached;
-		int computed = value.hashCode();
-		hashes.put(value, computed);
-		return computed;
-	}
-
-	/** Java List hash semantics using the analysis-local immutable-object hash cache. */
-	static int cachedStructuralListHash(List<?> values) {
-		int hash = 1;
-		for(Object value : values)
-			hash = 31 * hash + cachedStructuralHash(value);
-		return hash;
 	}
 
 	/** Analysis-local structural ID; null outside the explicitly bounded build scope. */
