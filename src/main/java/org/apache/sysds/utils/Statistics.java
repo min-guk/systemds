@@ -66,6 +66,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.DoubleAdder;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 
@@ -184,6 +185,8 @@ public class Statistics
 	private static long compileEndTime = 0;
 	private static long execStartTime = 0;
 	private static long execEndTime = 0;
+	private static final ThreadLocal<Long> planningFullInitialStartTime = new ThreadLocal<>();
+	private static final AtomicLong planningFullInitialTime = new AtomicLong(-1);
 
 	private static long compilePhaseParseTime = 0;
 	private static long compilePhaseHopsBuildTime = 0;
@@ -215,6 +218,7 @@ public class Statistics
 		compilePhaseFedPlannerCandidateE2ECalls = 0;
 		compilePhaseFedPlannerCandidateE2EExactPhaseCalls = 0;
 		compileObservedHops = -1;
+		planningFullInitialTime.set(-1);
 	}
 
 	public static void setCompileObservedHops(long hops) {
@@ -443,6 +447,41 @@ public class Statistics
 		if( DMLScript.STATISTICS )
 			compileStartTime = System.nanoTime();
 		resetCompilePhaseTimes();
+	}
+
+	/**
+	 * Starts the initial end-to-end planning timer. This timer deliberately has a
+	 * separate lifecycle from the compilation timer because its end boundary is
+	 * the successful construction of the runtime program.
+	 */
+	public static void startPlanningFullInitialTimer() {
+		if( DMLScript.STATISTICS ) {
+			planningFullInitialTime.set(-1);
+			planningFullInitialStartTime.set(System.nanoTime());
+		}
+	}
+
+	/** Stops the initial planning timer and publishes a receipt for a successful compilation. */
+	public static void stopPlanningFullInitialTimer() {
+		if( DMLScript.STATISTICS ) {
+			Long startTime = planningFullInitialStartTime.get();
+			if( startTime != null ) {
+				planningFullInitialTime.set(System.nanoTime() - startTime);
+				planningFullInitialStartTime.remove();
+			}
+		}
+	}
+
+	/** Discards an in-flight timer without publishing a successful planning receipt. */
+	public static void abortPlanningFullInitialTimer() {
+		if( planningFullInitialStartTime.get() != null ) {
+			planningFullInitialStartTime.remove();
+			planningFullInitialTime.set(-1);
+		}
+	}
+
+	public static long getPlanningFullInitialTime() {
+		return planningFullInitialTime.get();
 	}
 
 	public static void stopCompileTimer() {
@@ -1173,8 +1212,12 @@ public class Statistics
 
 		sb.append("SystemDS Statistics:\n");
 		if( DMLScript.STATISTICS ) {
+			long planningNanos = getPlanningFullInitialTime();
 			sb.append("Total elapsed time:\t\t" + String.format("%.6f", (getCompileTime()+getRunTime())*1e-9) + " sec.\n"); // nanoSec --> sec
 			sb.append("Total compilation time:\t\t" + String.format("%.6f", getCompileTime()*1e-9) + " sec.\n"); // nanoSec --> sec
+			if( planningNanos >= 0 )
+				sb.append("PlanningFullInitialReceipt schema=planning-full-initial-v1 Tplanning_full_initial_nanos=")
+					.append(planningNanos).append('\n');
 			sb.append("Compile Phase Parse:\t\t" + String.format("%.6f", getCompilePhaseParseTime()*1e-9) + " sec.\n");
 			sb.append("Compile Phase HopsBuild:\t" + String.format("%.6f", getCompilePhaseHopsBuildTime()*1e-9) + " sec.\n");
 			sb.append("Compile Phase HopsRewrite:\t" + String.format("%.6f", getCompilePhaseHopsRewriteTime()*1e-9) + " sec.\n");

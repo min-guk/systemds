@@ -359,6 +359,7 @@ public class DMLScript
 			execute(dmlScriptStr, fnameOptConfig, argVals, args);
 		}
 		finally {
+			Statistics.abortPlanningFullInitialTimer();
 			//reset runtime platform and visualize flag
 			setGlobalExecMode(oldrtplatform);
 			EXPLAIN = oldexplain;
@@ -477,6 +478,7 @@ public class DMLScript
 		configureCodeGen();
 
 		//Step 3: parse dml script
+		Statistics.startPlanningFullInitialTimer();
 		Statistics.startCompileTimer();
 		long tParse = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		ParserWrapper parser = ParserFactory.createParser();
@@ -517,6 +519,7 @@ public class DMLScript
 		//Step 8: generate runtime program, incl codegen
 		long tRtprog = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		Program rtprog = dmlt.getRuntimeProgram(prog, ConfigurationManager.getDMLConfig());
+		Statistics.stopPlanningFullInitialTimer();
 		if( DMLScript.STATISTICS )
 			Statistics.setCompilePhaseRuntimeProgramTime(System.nanoTime() - tRtprog);
 		
