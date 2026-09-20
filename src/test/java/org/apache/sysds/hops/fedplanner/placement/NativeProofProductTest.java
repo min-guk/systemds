@@ -222,6 +222,40 @@ public class NativeProofProductTest {
 	}
 
 	@Test
+	public void existentialAtomSelectionUsesDisjointFirstMatchRoutes() {
+		CandidateRealizationInputBinding plainLeft = binding(0, "plain-left");
+		CandidateRealizationInputBinding dynamicLeft = binding(0, "dynamic-left");
+		CandidateRealizationInputBinding plainRight = binding(1, "plain-right");
+		CandidateRealizationInputBinding dynamicRight = binding(1, "dynamic-right");
+		NativeProofProduct product = NativeProofProduct.of(List.of(NativeProofProduct.route(
+			anchor("seed"), anchor("output"), false,
+			List.of(List.of(plainLeft, dynamicLeft), List.of(plainRight, dynamicRight)))));
+
+		NativeProofProduct selected = product.selectAnyAtom(binding ->
+			binding.source().realization().nativeLineage().startsWith("dynamic-"));
+		Assert.assertEquals(2, selected.routes().size());
+		Assert.assertEquals(3, selected.checkedRawCardinality());
+		Assert.assertEquals(3, selected.exportLegacy().proofs().size());
+		Assert.assertTrue(selected.exportLegacy().proofs().stream().allMatch(proof ->
+			proof.immediateBindings().stream().anyMatch(binding ->
+				binding.source().realization().nativeLineage().startsWith("dynamic-"))));
+		Assert.assertEquals(0, selected.constructionMaterializedLeaves());
+	}
+
+	@Test
+	public void existentialAtomSelectionRejectsZeroDimensionalAndNonmatchingRoutes() {
+		NativeProofProduct product = NativeProofProduct.of(List.of(
+			NativeProofProduct.route(anchor("unit-seed"), anchor("unit-output"), false, List.of()),
+			NativeProofProduct.route(anchor("plain-seed"), anchor("plain-output"), false,
+				List.of(List.of(binding(0, "plain"))))));
+
+		NativeProofProduct selected = product.selectAnyAtom(binding -> false);
+		Assert.assertTrue(selected.routes().isEmpty());
+		Assert.assertEquals(0, selected.checkedRawCardinality());
+		Assert.assertEquals(0, selected.constructionMaterializedLeaves());
+	}
+
+	@Test
 	public void legacyExportMatchesManualEnumerationSignatureForSignature() {
 		DurableAnchorKey seed = anchor("seed");
 		DurableAnchorKey output = anchor("output");

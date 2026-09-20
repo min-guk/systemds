@@ -66,6 +66,14 @@ final class NativeProofProduct {
 		return new NativeProofProduct(routes);
 	}
 
+	static NativeProofProduct union(Collection<NativeProofProduct> products) {
+		Objects.requireNonNull(products, "native proof products");
+		List<Route> routes = new ArrayList<>();
+		for(NativeProofProduct product : products)
+			routes.addAll(Objects.requireNonNull(product, "native proof product").routes);
+		return of(routes);
+	}
+
 	static Route route(DurableAnchorKey externalSeed, DurableAnchorKey outputWorkerPoolWitness,
 		boolean exactPartitionRanges, List<List<CandidateRealizationInputBinding>> bindingOptions) {
 		return new Route(externalSeed, outputWorkerPoolWitness, exactPartitionRanges, bindingOptions);
@@ -76,6 +84,11 @@ final class NativeProofProduct {
 	long bindingAtomCount() { return bindingAtoms; }
 	long duplicateRoutesDropped() { return duplicateRoutesDropped; }
 	long constructionMaterializedLeaves() { return 0; }
+
+	NativeProofProduct reseed(DurableAnchorKey externalSeed) {
+		Objects.requireNonNull(externalSeed, "external seed");
+		return of(routes.stream().map(route -> route.withExternalSeed(externalSeed)).toList());
+	}
 
 	NativeProofProduct rebindRoot(CandidateRealizationReference cachedRoot,
 		CandidateRealizationReference requestedRoot) {
@@ -108,6 +121,33 @@ final class NativeProofProduct {
 				filtered.add(route.withBindingOptions(dimensions));
 		}
 		return of(filtered);
+	}
+
+	/** Exact disjoint decomposition of leaves for which at least one atom matches. */
+	NativeProofProduct selectAnyAtom(Predicate<CandidateRealizationInputBinding> predicate) {
+		Objects.requireNonNull(predicate, "binding predicate");
+		List<Route> selected = new ArrayList<>();
+		for(Route route : routes) {
+			List<List<CandidateRealizationInputBinding>> dimensions = route.bindingOptions();
+			for(int match = 0; match < dimensions.size(); match++) {
+				List<List<CandidateRealizationInputBinding>> branch = new ArrayList<>(dimensions.size());
+				boolean complete = true;
+				for(int index = 0; index < dimensions.size(); index++) {
+					List<CandidateRealizationInputBinding> choices = dimensions.get(index);
+					List<CandidateRealizationInputBinding> retained = index < match
+						? choices.stream().filter(predicate.negate()).toList()
+						: index == match ? choices.stream().filter(predicate).toList() : choices;
+					if(retained.isEmpty()) {
+						complete = false;
+						break;
+					}
+					branch.add(retained);
+				}
+				if(complete)
+					selected.add(route.withBindingOptions(branch));
+			}
+		}
+		return of(selected);
 	}
 
 	NativeProofProduct mapAtoms(
@@ -216,6 +256,10 @@ final class NativeProofProduct {
 
 		private Route withBindingOptions(List<List<CandidateRealizationInputBinding>> options) {
 			return new Route(externalSeed, outputWorkerPoolWitness, exactPartitionRanges, options);
+		}
+
+		private Route withExternalSeed(DurableAnchorKey seed) {
+			return new Route(seed, outputWorkerPoolWitness, exactPartitionRanges, bindingOptions);
 		}
 
 		@Override
