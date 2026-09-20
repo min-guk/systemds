@@ -222,8 +222,13 @@ public class NeutralPlacementFixedPointCompositionTest {
 		SearchSpaceMetrics incrementalMetrics = new SearchSpaceMetrics();
 		PlacementAnalysis incremental = new NeutralPlacementGraphBuilder(
 			null, incrementalMetrics, true).buildAnalysis(compileProtected(ACTIONS));
+		SearchSpaceMetrics fullMetrics = new SearchSpaceMetrics();
 		PlacementAnalysis full = new NeutralPlacementGraphBuilder(
-			null, new SearchSpaceMetrics(), false).buildAnalysis(compileProtected(ACTIONS));
+			null, fullMetrics, false).buildAnalysis(compileProtected(ACTIONS));
+		SearchSpaceMetrics shadowMetrics = new SearchSpaceMetrics();
+		PlacementAnalysis shadow = new NeutralPlacementGraphBuilder(null, shadowMetrics,
+			NeutralPlacementGraphBuilder.DirectClosureMode.SHADOW)
+			.buildAnalysis(compileProtected(ACTIONS));
 
 		Assert.assertEquals(full.analysisFingerprint(), incremental.analysisFingerprint());
 		Assert.assertEquals(full.graph().normalizedSignatureWithLegalAssignments(),
@@ -232,10 +237,30 @@ public class NeutralPlacementFixedPointCompositionTest {
 			incremental.candidateRuleFacts().orderedFacts());
 		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
 			incremental.logicalTransientInputsInCanonicalOrder());
+		Assert.assertEquals("shadow compares FULL and DELTA from each identical pre-transfer input",
+			full.analysisFingerprint(), shadow.analysisFingerprint());
+		Assert.assertEquals(full.graph().nodes(), shadow.graph().nodes());
+		Assert.assertEquals(full.candidateRuleFacts().orderedFacts(),
+			shadow.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
+			shadow.logicalTransientInputsInCanonicalOrder());
 		Assert.assertTrue("fixture must execute at least one revision-local dirty pass",
 			incrementalMetrics.snapshot().incrementalPasses() > 0);
 		Assert.assertTrue("an independent component must be reused rather than rebuilt",
 			incrementalMetrics.snapshot().incrementalFactsReused() > 0);
+		Assert.assertTrue("DELTA must recompute fewer facts than FULL",
+			incrementalMetrics.snapshot().incrementalFactsRecomputed()
+				< fullMetrics.snapshot().directClosureFullPasses()
+					* full.candidateRuleFacts().orderedFacts().size());
+		Assert.assertEquals("FULL mode must count every actual full recomputation",
+			fullMetrics.snapshot().directClosurePasses(),
+			fullMetrics.snapshot().directClosureFullPasses());
+		Assert.assertEquals("SHADOW performs one full comparison on every closure pass",
+			shadowMetrics.snapshot().directClosurePasses(),
+			shadowMetrics.snapshot().directClosureFullPasses());
+		Assert.assertTrue("DELTA must retain non-full passes after its initial full seed",
+			incrementalMetrics.snapshot().directClosureFullPasses()
+				< incrementalMetrics.snapshot().directClosurePasses());
 	}
 
 	private static void assertSupportFactorizationPreservesClauseOwnership(PlacementAnalysis analysis) {

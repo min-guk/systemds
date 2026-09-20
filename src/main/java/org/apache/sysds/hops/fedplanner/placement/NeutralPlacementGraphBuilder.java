@@ -134,7 +134,9 @@ public final class NeutralPlacementGraphBuilder {
 	private final FunctionCallSizeInfo suppliedFunctionCallSizes;
 	private final FixedPointObserver fixedPointObserver;
 	private final SearchSpaceMetrics complexityMetrics;
-	private final boolean incrementalDirectClosure;
+	private final DirectClosureMode directClosureMode;
+
+	enum DirectClosureMode { FULL, DELTA, SHADOW }
 
 	interface FixedPointObserver {
 		void accept(FixedPointPass pass);
@@ -144,37 +146,43 @@ public final class NeutralPlacementGraphBuilder {
 		int nodeCount, int candidateCount, int logicalInputCount, int actionCount) { }
 
 	public NeutralPlacementGraphBuilder() {
-		this(null, null, null, null, true);
+		this(null, null, null, null, DirectClosureMode.DELTA);
 	}
 
 	public NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
-		this(fgraph, fcallSizes, null, null, true);
+		this(fgraph, fcallSizes, null, null, DirectClosureMode.DELTA);
 	}
 
 	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver) {
-		this(null, null, fixedPointObserver, null, true);
+		this(null, null, fixedPointObserver, null, DirectClosureMode.DELTA);
 	}
 
 	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver,
 		SearchSpaceMetrics complexityMetrics) {
-		this(null, null, fixedPointObserver, complexityMetrics, true);
+		this(null, null, fixedPointObserver, complexityMetrics, DirectClosureMode.DELTA);
 	}
 
 	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver,
 		SearchSpaceMetrics complexityMetrics, boolean incrementalDirectClosure) {
-		this(null, null, fixedPointObserver, complexityMetrics, incrementalDirectClosure);
+		this(null, null, fixedPointObserver, complexityMetrics,
+			incrementalDirectClosure ? DirectClosureMode.DELTA : DirectClosureMode.FULL);
+	}
+
+	NeutralPlacementGraphBuilder(FixedPointObserver fixedPointObserver,
+		SearchSpaceMetrics complexityMetrics, DirectClosureMode directClosureMode) {
+		this(null, null, fixedPointObserver, complexityMetrics, directClosureMode);
 	}
 
 	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
 		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
-		boolean incrementalDirectClosure) {
+		DirectClosureMode directClosureMode) {
 		if((fgraph == null) != (fcallSizes == null))
 			throw new IllegalArgumentException("Function graph and call-size summary must be supplied together");
 		suppliedFunctionCallGraph = fgraph;
 		suppliedFunctionCallSizes = fcallSizes;
 		this.fixedPointObserver = fixedPointObserver;
 		this.complexityMetrics = complexityMetrics;
-		this.incrementalDirectClosure = incrementalDirectClosure;
+		this.directClosureMode = Objects.requireNonNull(directClosureMode, "directClosureMode");
 	}
 
 	private void recordFixedPointPass(String phase, int pass, int passLimit, boolean stable,
@@ -2535,23 +2543,24 @@ public final class NeutralPlacementGraphBuilder {
 			boolean directConverged = false;
 			Set<CompiledHopKey> directDirty = null;
 			for(int directPass = 0; directPass <= current.facts().size(); directPass++) {
-				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
+				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizationsByMode(
 						directTemplates, current.facts(), current.nodes(), compiledEdges, origins, factsByHop,
-						nativePools, incrementalDirectClosure ? directDirty : null);
+						nativePools, directDirty);
 				directFacts = LogicalBoundaryRealizations.close(current.nodes(), constraints, origins, directFacts);
 				boolean directStable = directFacts.equals(current.facts());
 				if(complexityMetrics != null)
-					complexityMetrics.recordDirectClosurePass(directStable, directDirty == null);
+					complexityMetrics.recordDirectClosurePass(directStable,
+						performedFullDirectClosure(directDirty));
 				if(directStable) {
 					directConverged = true;
 					break;
 				}
-				directDirty = affectedDirectClosureOccurrences(
-					changedCandidateOccurrences(current.facts(), directFacts), current.nodes(), compiledEdges,
-					reachingSources, directFacts);
+				CandidateClosureDependencies.Revision revision = CandidateClosureDependencies.revision(
+					current.facts(), directFacts, current.nodes(), compiledEdges, reachingSources, constraints);
+				directDirty = revision.directOwners();
 				current = new CandidateReplay(current.nodes(), current.domainKeys(), directFacts,
 					current.logicalInputs(), current.changedOrdinals());
-				nativePools = nativePools.nextRevision(current.facts(), directDirty);
+				nativePools = nativePools.nextRevision(current.facts(), revision.invalidationOwners());
 			}
 			if(!directConverged)
 				throw new IllegalStateException("Candidate-specific direct realization closure did not converge");
@@ -2594,24 +2603,27 @@ public final class NeutralPlacementGraphBuilder {
 			boolean physicalDirectConverged = false;
 			Set<CompiledHopKey> physicalDirectDirty = null;
 			for(int directPass = 0; directPass <= physicallyClosed.facts().size(); directPass++) {
-				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizations(
+				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizationsByMode(
 					directTemplates, physicallyClosed.facts(), physicallyClosed.nodes(), physicalEdges,
 					origins, factsByHop, physicalPools,
-					incrementalDirectClosure ? physicalDirectDirty : null);
+					physicalDirectDirty);
 				directFacts = LogicalBoundaryRealizations.close(physicallyClosed.nodes(), constraints, origins, directFacts);
 				boolean directStable = directFacts.equals(physicallyClosed.facts());
 				if(complexityMetrics != null)
-					complexityMetrics.recordDirectClosurePass(directStable, physicalDirectDirty == null);
+					complexityMetrics.recordDirectClosurePass(directStable,
+						performedFullDirectClosure(physicalDirectDirty));
 				if(directStable) {
 					physicalDirectConverged = true;
 					break;
 				}
-				physicalDirectDirty = affectedDirectClosureOccurrences(
-					changedCandidateOccurrences(physicallyClosed.facts(), directFacts),
-					physicallyClosed.nodes(), physicalEdges, physicalReachingSources, directFacts);
+				CandidateClosureDependencies.Revision revision = CandidateClosureDependencies.revision(
+					physicallyClosed.facts(), directFacts, physicallyClosed.nodes(), physicalEdges,
+					physicalReachingSources, constraints);
+				physicalDirectDirty = revision.directOwners();
 				physicallyClosed = new CandidateReplay(physicallyClosed.nodes(), physicallyClosed.domainKeys(),
 					directFacts, physicallyClosed.logicalInputs(), physicallyClosed.changedOrdinals());
-				physicalPools = physicalPools.nextRevision(physicallyClosed.facts(), physicalDirectDirty);
+				physicalPools = physicalPools.nextRevision(physicallyClosed.facts(),
+					revision.invalidationOwners());
 			}
 			if(!physicalDirectConverged)
 				throw new IllegalStateException("Post-physical direct realization closure did not converge");
@@ -2635,6 +2647,29 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	/** Materializes candidate-specific direct native input authority before CFG replay. */
+	private boolean performedFullDirectClosure(Set<CompiledHopKey> dirtyOccurrences) {
+		return directClosureMode == DirectClosureMode.FULL || dirtyOccurrences == null
+			|| directClosureMode == DirectClosureMode.SHADOW;
+	}
+
+	private List<CandidateRuleFact> bindDirectNativeCandidateRealizationsByMode(
+		List<CandidateRuleFact> templates, List<CandidateRuleFact> facts, List<Node> nodes,
+		List<CompiledInputEdgeFact> compiledEdges, Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> shapes, NativePlacementContinuity continuity,
+		Set<CompiledHopKey> dirtyOccurrences) {
+		Set<CompiledHopKey> selected = directClosureMode == DirectClosureMode.FULL ? null : dirtyOccurrences;
+		List<CandidateRuleFact> result = bindDirectNativeCandidateRealizations(templates, facts, nodes,
+			compiledEdges, origins, shapes, continuity, selected);
+		if(directClosureMode == DirectClosureMode.SHADOW && dirtyOccurrences != null) {
+			List<CandidateRuleFact> full = bindDirectNativeCandidateRealizations(templates, facts, nodes,
+				compiledEdges, origins, shapes, continuity, null);
+			if(!result.equals(full))
+				throw new IllegalStateException("DIRECT_CLOSURE_SHADOW_MISMATCH|delta="
+					+ result + "|full=" + full);
+		}
+		return result;
+	}
+
 	private List<CandidateRuleFact> bindDirectNativeCandidateRealizations(
 		List<CandidateRuleFact> templates, List<CandidateRuleFact> facts, List<Node> nodes,
 		List<CompiledInputEdgeFact> compiledEdges,
@@ -2900,79 +2935,6 @@ public final class NeutralPlacementGraphBuilder {
 				fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(rebound);
-	}
-
-	private static Set<CompiledHopKey> changedCandidateOccurrences(List<CandidateRuleFact> before,
-		List<CandidateRuleFact> after) {
-		Map<CompiledHopKey,List<CandidateRuleFact>> beforeByOwner = new IdentityHashMap<>();
-		Map<CompiledHopKey,List<CandidateRuleFact>> afterByOwner = new IdentityHashMap<>();
-		for(CandidateRuleFact fact : before)
-			beforeByOwner.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
-		for(CandidateRuleFact fact : after)
-			afterByOwner.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
-		Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
-		owners.addAll(beforeByOwner.keySet());
-		owners.addAll(afterByOwner.keySet());
-		Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(CompiledHopKey owner : owners)
-			if(!beforeByOwner.getOrDefault(owner, List.of()).equals(
-				afterByOwner.getOrDefault(owner, List.of())))
-				changed.add(owner);
-		return changed;
-	}
-
-	/**
-	 * Conservative revision-local dirty cone. Undirected connectivity deliberately widens
-	 * invalidation across SCC merge/split boundaries, support pins, CFG definitions, and
-	 * value-version aliases. It can only cause extra recomputation, never candidate pruning.
-	 */
-	private static Set<CompiledHopKey> affectedDirectClosureOccurrences(Set<CompiledHopKey> changed,
-		List<Node> nodes, List<CompiledInputEdgeFact> compiledEdges,
-		Map<CompiledHopKey,List<CompiledHopKey>> reachingSources, List<CandidateRuleFact> facts) {
-		if(changed.isEmpty())
-			return Set.of();
-		Map<CompiledHopKey,Set<CompiledHopKey>> adjacent = new IdentityHashMap<>();
-		for(CompiledInputEdgeFact edge : compiledEdges)
-			addIdentityAdjacency(adjacent, edge.consumer(), edge.producer());
-		for(var entry : reachingSources.entrySet())
-			for(CompiledHopKey source : entry.getValue())
-				addIdentityAdjacency(adjacent, entry.getKey(), source);
-		for(CandidateRuleFact fact : facts)
-			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-				for(CandidateEmissionRealization realization : emission.realizations())
-					for(CandidateRealizationSupportClause clause : realization.supportClauses())
-						for(CandidateRealizationInputBinding binding : clause.inputBindings())
-							addIdentityAdjacency(adjacent, fact.key().parentOccurrence(),
-								binding.source().rule().parentOccurrence());
-		Map<ValueVersionKey,List<CompiledHopKey>> aliases = new LinkedHashMap<>();
-		for(Node node : nodes)
-			aliases.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>()).add(node.key());
-		Map<CompiledHopKey,List<CompiledHopKey>> aliasMembers = new IdentityHashMap<>();
-		for(List<CompiledHopKey> members : aliases.values())
-			for(CompiledHopKey member : members)
-				aliasMembers.put(member, members);
-
-		Set<CompiledHopKey> affected = Collections.newSetFromMap(new IdentityHashMap<>());
-		java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>();
-		for(CompiledHopKey occurrence : changed)
-			if(affected.add(occurrence))
-				pending.addLast(occurrence);
-		while(!pending.isEmpty()) {
-			CompiledHopKey occurrence = pending.removeFirst();
-			for(CompiledHopKey neighbor : adjacent.getOrDefault(occurrence, Set.of()))
-				if(affected.add(neighbor))
-					pending.addLast(neighbor);
-			for(CompiledHopKey alias : aliasMembers.getOrDefault(occurrence, List.of()))
-				if(affected.add(alias))
-					pending.addLast(alias);
-		}
-		return affected;
-	}
-
-	private static void addIdentityAdjacency(Map<CompiledHopKey,Set<CompiledHopKey>> adjacent,
-		CompiledHopKey left, CompiledHopKey right) {
-		adjacent.computeIfAbsent(left, ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(right);
-		adjacent.computeIfAbsent(right, ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(left);
 	}
 
 	/**
