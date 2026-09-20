@@ -26,6 +26,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSupportRelation.ProductRoute;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSupportRelation.SupportAnnotations;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
@@ -38,6 +39,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegio
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
@@ -232,6 +234,125 @@ public class CandidateSupportRelationTest {
 				binding(0, "overflow-" + index + "-b")));
 		Assert.assertThrows(ArithmeticException.class,
 			() -> new ProductRoute(List.of(), slots, SupportAnnotations.exact()));
+	}
+
+	@Test
+	public void realizationMergeKeepsFactorizedUnionUnmaterializedUntilExplicitExport() {
+		PlacementRealizationKey key = PlacementRealizationKey.durable(EMISSION, pool("merged"));
+		CandidateSupportRelation left = CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(
+			new ProductRoute(List.of(proof("left")), List.of(
+				bindings(0, "left-a", 4), bindings(1, "left-b", 4)), SupportAnnotations.exact())));
+		CandidateSupportRelation right = CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(
+			new ProductRoute(List.of(proof("right")), List.of(
+				bindings(0, "right-a", 2), bindings(1, "right-b", 2)), SupportAnnotations.exact())));
+		CandidateEmissionRealization leftRealization =
+			CandidateEmissionRealization.fromSupportRelation(key, left);
+		CandidateEmissionRealization rightRealization =
+			CandidateEmissionRealization.fromSupportRelation(key, right);
+
+		CandidateEmissionFact emission = new CandidateEmissionFact(
+			EMISSION, FType.ROW, null, List.of(leftRealization, rightRealization));
+		CandidateEmissionRealization merged = emission.realizations().get(0);
+		Assert.assertEquals(0, left.constructionMaterializedCount());
+		Assert.assertEquals(0, right.constructionMaterializedCount());
+		Assert.assertEquals(20, merged.supportRelation().rawCardinality());
+		Assert.assertEquals(0, merged.supportRelation().constructionMaterializedCount());
+		Assert.assertEquals(0, merged.supportRelation().leafMaterializationCount());
+
+		List<CandidateRealizationSupportClause> first = merged.supportClauses();
+		Assert.assertSame(first, merged.supportClauses());
+		Assert.assertEquals(20, first.size());
+		Assert.assertEquals(20, merged.supportRelation().leafMaterializationCount());
+		Assert.assertSame(first.get(0), merged.supportClauses().get(0));
+		Assert.assertThrows(IllegalArgumentException.class, () ->
+			merged.provenWorkerPool(new CandidateRealizationSupportClause(
+				first.get(0).proofDependencies(), first.get(0).inputBindings())));
+	}
+
+	@Test
+	public void extensionalRealizationEqualityMatchesCompareAcrossRouteOrderAndFlatForm() {
+		PlacementRealizationKey key = PlacementRealizationKey.durable(EMISSION, pool("equality"));
+		ProductRoute first = new ProductRoute(List.of(proof("a")),
+			List.of(bindings(0, "a", 2)), SupportAnnotations.exact());
+		ProductRoute second = new ProductRoute(List.of(proof("b")),
+			List.of(bindings(0, "b", 2)), SupportAnnotations.exact());
+		CandidateSupportRelation ordered = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(first, second));
+		CandidateSupportRelation reversed = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(second, first));
+		CandidateEmissionRealization left = CandidateEmissionRealization.fromSupportRelation(key, ordered);
+		CandidateEmissionRealization right = CandidateEmissionRealization.fromSupportRelation(key, reversed);
+		CandidateEmissionRealization flat = new CandidateEmissionRealization(key,
+			ordered.exportCanonicalClauses());
+
+		Assert.assertEquals(left, right);
+		Assert.assertEquals(left, flat);
+		Assert.assertEquals(left.hashCode(), right.hashCode());
+		Assert.assertEquals(left.hashCode(), flat.hashCode());
+		Assert.assertEquals(0, left.compareTo(right));
+		Assert.assertEquals(0, left.compareTo(flat));
+	}
+
+	@Test
+	public void unionIsIdempotentAndRouteOrderIsDeterministicWithoutLeafEnumeration() {
+		ProductRoute route = new ProductRoute(List.of(proof("same")),
+			List.of(bindings(0, "same", 4)), SupportAnnotations.exact());
+		CandidateSupportRelation first = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(route));
+		CandidateSupportRelation duplicate = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(route));
+		CandidateSupportRelation union = CandidateSupportRelation.union(
+			OWNER, new Object(), List.of(first, duplicate, first));
+		Assert.assertEquals(1, union.routes().size());
+		Assert.assertEquals(4, union.rawCardinality());
+		Assert.assertEquals(0, union.leafMaterializationCount());
+	}
+
+	@Test
+	public void mergeDoesNotLoseNewRouteWhenFirstRelationContainsDuplicates() {
+		PlacementRealizationKey key = PlacementRealizationKey.durable(EMISSION, pool("duplicate-first"));
+		ProductRoute routeA = new ProductRoute(List.of(proof("a")),
+			List.of(bindings(0, "a", 2)), SupportAnnotations.exact());
+		ProductRoute routeB = new ProductRoute(List.of(proof("b")),
+			List.of(bindings(0, "b", 2)), SupportAnnotations.exact());
+		CandidateEmissionRealization duplicateFirst = CandidateEmissionRealization.fromSupportRelation(key,
+			CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(routeA, routeA)));
+		CandidateEmissionRealization newRoute = CandidateEmissionRealization.fromSupportRelation(key,
+			CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(routeB)));
+
+		CandidateEmissionRealization merged = new CandidateEmissionFact(
+			EMISSION, FType.ROW, null, List.of(duplicateFirst, newRoute)).realizations().get(0);
+		Assert.assertEquals(2, merged.supportRelation().routes().size());
+		Assert.assertEquals(4, merged.supportRelation().rawCardinality());
+		Assert.assertEquals(4, merged.supportClauses().size());
+		Assert.assertTrue(merged.supportClauses().stream()
+			.anyMatch(clause -> clause.proofDependencies().contains(proof("b"))));
+	}
+
+	@Test
+	public void physicallyEquivalentAnnotationWitnessesHaveOneLegalRepresentative() {
+		DurableAnchorKey exactA = pool("exact-a");
+		DurableAnchorKey exactB = pool("exact-b");
+		PlacementRealizationKey nativeKey = PlacementRealizationKey.nativeLineage(
+			EMISSION, "annotation-equivalence");
+		PlacementProofKey nativeProof = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, OWNER.parentOccurrence(), "owned-native");
+		CandidateSupportRelation exact = CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(
+			new ProductRoute(List.of(nativeProof), List.of(), new SupportAnnotations(exactA, true)),
+			new ProductRoute(List.of(nativeProof), List.of(), new SupportAnnotations(exactB, true))));
+		CandidateEmissionRealization exactRealization =
+			CandidateEmissionRealization.fromSupportRelation(nativeKey, exact);
+		Assert.assertSame(exactA,
+			exactRealization.uniqueSupportAnnotations().nativeWorkerPoolWitness());
+
+		CandidateSupportRelation dynamic = CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(
+			new ProductRoute(List.of(nativeProof), List.of(), new SupportAnnotations(exactA, false)),
+			new ProductRoute(List.of(nativeProof), List.of(), new SupportAnnotations(exactB, false))));
+		CandidateEmissionRealization dynamicRealization =
+			CandidateEmissionRealization.fromSupportRelation(nativeKey, dynamic);
+		Assert.assertFalse(dynamicRealization.uniqueSupportAnnotations().nativeWorkerPoolLayoutExact());
+		Assert.assertSame(exactA,
+			dynamicRealization.uniqueSupportAnnotations().nativeWorkerPoolWitness());
 	}
 
 	private static CandidateRealizationSupportClause clause(String proof,

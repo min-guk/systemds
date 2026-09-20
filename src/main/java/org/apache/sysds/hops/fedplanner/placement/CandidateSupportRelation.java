@@ -49,6 +49,8 @@ public final class CandidateSupportRelation {
 	private final Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> canonicalLeaves =
 		new HashMap<>();
 	private Long exactCardinality;
+	private volatile List<CandidateRealizationSupportClause> canonicalExport;
+	private long leafMaterializationCount;
 
 	private CandidateSupportRelation(Object owner, Object epoch, List<ProductRoute> routes) {
 		this.owner = Objects.requireNonNull(owner, "owner");
@@ -79,8 +81,25 @@ public final class CandidateSupportRelation {
 			Objects.requireNonNull(clause, "support clause");
 			routes.add(new ProductRoute(clause.proofDependencies(), clause.inputBindings(), List.of(),
 				new SupportAnnotations(clause.nativeWorkerPoolWitness(),
-					clause.nativeWorkerPoolLayoutExact())));
+					clause.nativeWorkerPoolLayoutExact()), clause));
 		}
+		CandidateSupportRelation relation = fromProducts(owner, epoch, routes);
+		// The caller already supplied leaves. Preserve those exact authority
+		// objects while installing the legacy canonical OR-set boundary.
+		TreeSet<CandidateRealizationSupportClause> canonical = new TreeSet<>(flatClauses);
+		relation.canonicalExport = List.copyOf(canonical);
+		return relation;
+	}
+
+	/** Exact OR union. Route graphs are shared and no leaf is decoded. */
+	public static CandidateSupportRelation union(Object owner, Object epoch,
+		List<CandidateSupportRelation> alternatives) {
+		Objects.requireNonNull(alternatives, "alternatives");
+		Set<ProductRoute> unique = new HashSet<>();
+		for(CandidateSupportRelation alternative : alternatives)
+			unique.addAll(Objects.requireNonNull(alternative, "support relation").routes);
+		List<ProductRoute> routes = new ArrayList<>(unique);
+		routes.sort(java.util.Comparator.comparing(ProductRoute::structuralSignature));
 		return fromProducts(owner, epoch, routes);
 	}
 
@@ -101,6 +120,8 @@ public final class CandidateSupportRelation {
 	}
 
 	public synchronized long constructionMaterializedCount() { return materializedPaths.size(); }
+	/** Number of factorized leaves instantiated by explicit decode/export boundaries. */
+	public synchronized long leafMaterializationCount() { return leafMaterializationCount; }
 
 	public List<CandidateRealizationInputBinding> distinctBindingAtoms() {
 		Set<CandidateRealizationInputBinding> distinct = new TreeSet<>();
@@ -110,6 +131,40 @@ public final class CandidateSupportRelation {
 				distinct.addAll(slot);
 		}
 		return List.copyOf(distinct);
+	}
+
+	public List<PlacementProofKey> distinctProofAtoms() {
+		Set<PlacementProofKey> distinct = new TreeSet<>();
+		for(ProductRoute route : routes)
+			distinct.addAll(route.proofAtoms());
+		return List.copyOf(distinct);
+	}
+
+	public List<SupportAnnotations> distinctAnnotations() {
+		return routes.stream().map(ProductRoute::annotations).distinct().toList();
+	}
+
+	/**
+	 * Returns one physical annotation representative after proving that every route
+	 * describes the same exact layout or the same dynamic worker endpoints.
+	 */
+	public SupportAnnotations compatibleAnnotationRepresentative() {
+		if(routes.isEmpty())
+			throw new IllegalArgumentException("Empty support relation has no annotation authority");
+		SupportAnnotations representative = routes.get(0).annotations();
+		for(int index = 1; index < routes.size(); index++) {
+			SupportAnnotations candidate = routes.get(index).annotations();
+			DurableAnchorKey left = representative.nativeWorkerPoolWitness();
+			DurableAnchorKey right = candidate.nativeWorkerPoolWitness();
+			if((left == null) != (right == null)
+				|| representative.nativeWorkerPoolLayoutExact() != candidate.nativeWorkerPoolLayoutExact()
+				|| left != null && !(representative.nativeWorkerPoolLayoutExact()
+					? PlacementIdentity.samePhysicalLayout(left, right)
+					: PlacementIdentity.samePhysicalWorkerEndpoints(left, right)))
+				throw new IllegalArgumentException(
+					"Support relation mixes unproven or physically distinct native worker pools");
+		}
+		return representative;
 	}
 
 	public Summary summary() {
@@ -130,6 +185,9 @@ public final class CandidateSupportRelation {
 
 	/** Explicit publication boundary: extensional dedupe followed by global canonical ordering. */
 	public List<CandidateRealizationSupportClause> exportCanonicalClauses() {
+		List<CandidateRealizationSupportClause> current = canonicalExport;
+		if(current != null)
+			return current;
 		List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
 		for(CandidateRealizationSupportClause clause : decoder()) {
 			if(clauses.size() >= MAX_FLAT_CLAUSES)
@@ -137,7 +195,23 @@ public final class CandidateSupportRelation {
 			clauses.add(clause);
 		}
 		clauses.sort(null);
-		return List.copyOf(clauses);
+		current = List.copyOf(clauses);
+		synchronized(this) {
+			if(canonicalExport == null)
+				canonicalExport = current;
+			return canonicalExport;
+		}
+	}
+
+	/** Identity authority for clauses obtained through the explicit compatibility export. */
+	public boolean ownsExportedClause(CandidateRealizationSupportClause clause) {
+		List<CandidateRealizationSupportClause> exported = canonicalExport;
+		if(exported == null)
+			return false;
+		for(CandidateRealizationSupportClause candidate : exported)
+			if(candidate == clause)
+				return true;
+		return false;
 	}
 
 	/** Random raw-product lookup uses cumulative offsets and binary search. */
@@ -189,7 +263,10 @@ public final class CandidateSupportRelation {
 		CandidateRealizationSupportClause cached = materializedPaths.get(path);
 		if(cached != null)
 			return cached;
-		CandidateRealizationSupportClause leaf = routes.get(path.routeOrdinal()).decode(path.productPath());
+		ProductRoute route = routes.get(path.routeOrdinal());
+		CandidateRealizationSupportClause leaf = route.decode(path.productPath());
+		if(!route.hasFlatLeaf())
+			leafMaterializationCount++;
 		CandidateRealizationSupportClause canonical = canonicalLeaves.get(leaf);
 		if(canonical == null) {
 			canonical = leaf;
@@ -200,8 +277,14 @@ public final class CandidateSupportRelation {
 	}
 
 	private CandidateRealizationSupportClause ephemeralDecode(ChoicePath path) {
-		return routes.get(path.routeOrdinal()).decode(path.productPath());
+		ProductRoute route = routes.get(path.routeOrdinal());
+		CandidateRealizationSupportClause leaf = route.decode(path.productPath());
+		if(!route.hasFlatLeaf())
+			recordLeafMaterialization();
+		return leaf;
 	}
+
+	private synchronized void recordLeafMaterialization() { leafMaterializationCount++; }
 
 	public final class Decoder implements Iterable<CandidateRealizationSupportClause> {
 		private Decoder() { }
@@ -253,17 +336,25 @@ public final class CandidateSupportRelation {
 		private final List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot;
 		private final SupportAnnotations annotations;
 		private final long rawCardinality;
+		private final CandidateRealizationSupportClause flatLeaf;
 
 		public ProductRoute(List<PlacementProofKey> proofAtoms,
 			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
 			SupportAnnotations annotations) {
-			this(proofAtoms, List.of(), bindingChoicesBySlot, annotations);
+			this(proofAtoms, List.of(), bindingChoicesBySlot, annotations, null);
 		}
 
 		public ProductRoute(List<PlacementProofKey> proofAtoms,
 			List<CandidateRealizationInputBinding> fixedBindingAtoms,
 			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
 			SupportAnnotations annotations) {
+			this(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations, null);
+		}
+
+		private ProductRoute(List<PlacementProofKey> proofAtoms,
+			List<CandidateRealizationInputBinding> fixedBindingAtoms,
+			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
+			SupportAnnotations annotations, CandidateRealizationSupportClause flatLeaf) {
 			this.proofAtoms = PlacementAnalysis.sharedCanonicalComparableList(
 				Objects.requireNonNull(proofAtoms, "proofAtoms"), "support proof atom");
 			this.fixedBindingAtoms = PlacementAnalysis.sharedCanonicalComparableList(
@@ -292,6 +383,7 @@ public final class CandidateSupportRelation {
 			}
 			this.bindingChoicesBySlot = List.copyOf(slots);
 			this.annotations = Objects.requireNonNull(annotations, "annotations");
+			this.flatLeaf = flatLeaf;
 			if(annotations.nativeWorkerPoolWitness() != null && this.proofAtoms.stream().noneMatch(proof ->
 				proof.kind() == PlacementProofKind.NATIVE_CONTINUITY && proof.owner() != null))
 				throw new IllegalArgumentException(
@@ -338,13 +430,56 @@ public final class CandidateSupportRelation {
 		private CandidateRealizationSupportClause decode(List<Integer> path) {
 			if(!validPath(path))
 				throw new IllegalArgumentException("Support choice path has wrong arity or index");
+			if(flatLeaf != null)
+				return flatLeaf;
 			List<CandidateRealizationInputBinding> bindings = new ArrayList<>(fixedBindingAtoms);
 			for(int slot = 0; slot < path.size(); slot++)
 				bindings.add(bindingChoicesBySlot.get(slot).get(path.get(slot)));
 			return new CandidateRealizationSupportClause(proofAtoms, bindings,
 				annotations.nativeWorkerPoolWitness(), annotations.nativeWorkerPoolLayoutExact());
 		}
+		private boolean hasFlatLeaf() { return flatLeaf != null; }
+		private String structuralSignature() {
+			StringBuilder value = new StringBuilder();
+			appendToken(value, Integer.toString(proofAtoms.size()));
+			for(PlacementProofKey proof : proofAtoms)
+				appendToken(value, proof.normalizedSignature());
+			appendToken(value, Integer.toString(fixedBindingAtoms.size()));
+			for(CandidateRealizationInputBinding binding : fixedBindingAtoms)
+				appendToken(value, binding.normalizedSignature());
+			appendToken(value, Integer.toString(bindingChoicesBySlot.size()));
+			for(List<CandidateRealizationInputBinding> slot : bindingChoicesBySlot) {
+				appendToken(value, Integer.toString(slot.size()));
+				for(CandidateRealizationInputBinding binding : slot)
+					appendToken(value, binding.normalizedSignature());
+			}
+			appendToken(value, annotations.nativeWorkerPoolWitness() == null ? "-"
+				: annotations.nativeWorkerPoolWitness().normalizedSignature());
+			appendToken(value, Boolean.toString(annotations.nativeWorkerPoolLayoutExact()));
+			return value.toString();
+		}
+		private static void appendToken(StringBuilder target, String token) {
+			target.append(token.length()).append(':').append(token);
+		}
+
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof ProductRoute that))
+				return false;
+			return proofAtoms.equals(that.proofAtoms) && fixedBindingAtoms.equals(that.fixedBindingAtoms)
+				&& bindingChoicesBySlot.equals(that.bindingChoicesBySlot)
+				&& annotations.equals(that.annotations);
+		}
+		@Override public int hashCode() {
+			return Objects.hash(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations);
+		}
 	}
+
+	@Override public boolean equals(Object other) {
+		return this == other || other instanceof CandidateSupportRelation that && routes.equals(that.routes);
+	}
+	@Override public int hashCode() { return routes.hashCode(); }
 
 	public record SupportAnnotations(DurableAnchorKey nativeWorkerPoolWitness,
 		boolean nativeWorkerPoolLayoutExact) {
