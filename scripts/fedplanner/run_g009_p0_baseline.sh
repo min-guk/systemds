@@ -278,13 +278,14 @@ p = pathlib.Path(sys.argv[1]); proof = json.loads(p.read_text())
 claimed = proof.get("payload_sha256")
 payload = dict(proof); payload.pop("payload_sha256", None)
 canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-if proof.get("schema") != "g009-glm-p0-proof-v1" or claimed != hashlib.sha256(canonical).hexdigest():
+if proof.get("schema") != "g009-glm-p0-proof-v2" or claimed != hashlib.sha256(canonical).hexdigest():
     raise SystemExit("invalid stage-validator proof payload")
 jar, head, tree = sys.argv[2:5]
 descriptor, runner, validator, allowlist, command, receipt, log = map(pathlib.Path, sys.argv[5:12])
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 stage, contracts = proof.get("stage", {}), proof.get("contracts", {})
 invocation, result = proof.get("invocation", {}), proof.get("result", {})
+planning_full = result.get("planning_full_initial", {})
 executed_jar = pathlib.Path(stage.get("executed_jar", ""))
 checks = {
     "stage.jar_sha256": stage.get("jar_sha256") == jar,
@@ -307,6 +308,9 @@ checks = {
     "result.planning_receipt_sha256": result.get("planning_receipt_sha256") == sha(receipt),
     "result.coordinator_log": pathlib.Path(result.get("coordinator_log", "")).resolve() == log.resolve(),
     "result.coordinator_log_sha256": result.get("coordinator_log_sha256") == sha(log),
+    "result.planning_full_initial.schema": planning_full.get("schema") == "planning-full-initial-v1",
+    "result.planning_full_initial.nanos": isinstance(planning_full.get("Tplanning_full_initial_nanos"), int)
+                                           and planning_full["Tplanning_full_initial_nanos"] > 0,
     "runtime": bool(proof.get("runtime")),
     "invocation.argv_sha256": bool(invocation.get("argv_sha256")),
 }

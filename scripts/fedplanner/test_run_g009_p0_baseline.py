@@ -60,5 +60,17 @@ class G009P0QualificationFatalPatternTest(unittest.TestCase):
 				self.assertFatal(line)
 
 
+class G009P0ProofContractTest(unittest.TestCase):
+	def test_runner_requires_v2_full_initial_planning_proof(self) -> None:
+		source = RUNNER.read_text(encoding="utf-8")
+		self.assertIn('proof.get("schema") != "g009-glm-p0-proof-v2"', source)
+		self.assertIn(
+			'planning_full.get("schema") == "planning-full-initial-v1"', source)
+		self.assertIn(
+			'planning_full.get("Tplanning_full_initial_nanos"), int', source)
+		self.assertIn(
+			'planning_full["Tplanning_full_initial_nanos"] > 0', source)
+
+
 if __name__ == "__main__":
 	unittest.main()
