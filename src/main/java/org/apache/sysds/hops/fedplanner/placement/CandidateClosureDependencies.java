@@ -205,8 +205,7 @@ final class CandidateClosureDependencies {
 	private static Set<CompiledHopKey> supportSources(CandidateRuleFact fact) {
 		Set<CompiledHopKey> sources = identitySet();
 		fact.allowedEmissionFacts().forEach(emission -> emission.realizations().forEach(realization ->
-			realization.supportRelation().distinctBindingAtoms().forEach(binding ->
-				sources.add(binding.source().rule().parentOccurrence()))));
+			sources.addAll(realization.supportRelation().bindingSourceOccurrences())));
 		return sources;
 	}
 

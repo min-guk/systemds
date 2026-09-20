@@ -95,6 +95,8 @@ final class NativePlacementContinuity {
 		new IdentityHashMap<>();
 	private final Map<CandidateRealizationReference,Integer> candidateHandleByStructure =
 		new java.util.HashMap<>();
+	private final Map<CandidateSupportRelation.ProductRoute,List<RouteBindingGroup>>
+		bindingGroupsByRoute = new IdentityHashMap<>();
 	// Analysis-arena handles are positive. Overflow-local handles use a disjoint
 	// negative namespace so a bounded arena can never alias two references.
 	private int nextCandidateHandle = -1;
@@ -1654,19 +1656,8 @@ final class NativePlacementContinuity {
 	private List<FactorizedCandidateDependency> factorizedCandidateDependencies(
 		CandidateRuleFact fact, CandidateSupportRelation.ProductRoute route, Hop owner,
 		NativePoolWitness witness) {
-		List<RouteBindingGroup> groups = new ArrayList<>();
-		for(CandidateRealizationInputBinding binding : route.fixedBindingAtoms())
-			groups.add(new RouteBindingGroup(binding.source().rule().parentOccurrence(),
-				binding.inputPosition(), List.of(binding.source())));
-		for(List<CandidateRealizationInputBinding> slot : route.bindingChoicesBySlot()) {
-			CompiledHopKey occurrence = slot.get(0).source().rule().parentOccurrence();
-			int position = slot.get(0).inputPosition();
-			if(slot.stream().anyMatch(binding -> binding.inputPosition() != position
-				|| binding.source().rule().parentOccurrence() != occurrence))
-				throw new UnsupportedFactorizedRouteException();
-			groups.add(new RouteBindingGroup(occurrence, position, canonicalReferences(slot.stream()
-				.map(CandidateRealizationInputBinding::source).toList())));
-		}
+		List<RouteBindingGroup> groups = bindingGroupsByRoute.computeIfAbsent(
+			route, NativePlacementContinuity::routeBindingGroups);
 		validateOccurrenceWidePinning(groups);
 		List<FactorizedCandidateDependency> dependencies = new ArrayList<>();
 		for(CompiledHopKey source : reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of())) {
@@ -1710,6 +1701,24 @@ final class NativePlacementContinuity {
 			&& !reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of()).isEmpty()))
 			return null;
 		return validatedFactorizedDependencies(dependencies);
+	}
+
+	private static List<RouteBindingGroup> routeBindingGroups(
+		CandidateSupportRelation.ProductRoute route) {
+		List<RouteBindingGroup> groups = new ArrayList<>();
+		for(CandidateRealizationInputBinding binding : route.fixedBindingAtoms())
+			groups.add(new RouteBindingGroup(binding.source().rule().parentOccurrence(),
+				binding.inputPosition(), List.of(binding.source())));
+		for(List<CandidateRealizationInputBinding> slot : route.bindingChoicesBySlot()) {
+			CompiledHopKey occurrence = slot.get(0).source().rule().parentOccurrence();
+			int position = slot.get(0).inputPosition();
+			if(slot.stream().anyMatch(binding -> binding.inputPosition() != position
+				|| binding.source().rule().parentOccurrence() != occurrence))
+				throw new UnsupportedFactorizedRouteException();
+			groups.add(new RouteBindingGroup(occurrence, position, canonicalReferences(slot.stream()
+				.map(CandidateRealizationInputBinding::source).toList())));
+		}
+		return List.copyOf(groups);
 	}
 
 	private static List<CandidateRealizationReference> routeAllowedReferences(

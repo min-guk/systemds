@@ -20,7 +20,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -45,21 +47,60 @@ final class NativeProofProduct {
 	private NativeProofProduct(Collection<Route> source) {
 		Objects.requireNonNull(source, "native proof routes");
 		Set<Route> distinct = new LinkedHashSet<>();
-		long atoms = 0;
 		long supplied = 0;
 		for(Route route : source) {
 			supplied = Math.incrementExact(supplied);
 			Route checked = Objects.requireNonNull(route, "native proof route");
-			if(distinct.add(checked))
-				atoms = Math.addExact(atoms, checked.bindingAtomCount());
+			distinct.add(checked);
 		}
-		routes = List.copyOf(distinct);
+		duplicateRoutesDropped = Math.subtractExact(supplied, distinct.size());
+		routes = coalesceCompleteSingletonGrids(distinct);
 		long cardinality = 0;
-		for(Route route : routes)
+		long atoms = 0;
+		for(Route route : routes) {
 			cardinality = Math.addExact(cardinality, route.checkedCardinality());
+			atoms = Math.addExact(atoms, route.bindingAtomCount());
+		}
 		rawCardinality = cardinality;
 		bindingAtoms = atoms;
-		duplicateRoutesDropped = Math.subtractExact(supplied, routes.size());
+	}
+
+	/**
+	 * Exact compression for a common closure shape: all singleton tuples of a
+	 * complete Cartesian grid.  Incomplete grids are correlated relations and
+	 * remain separate routes, so this never invents crossed support pairs.
+	 */
+	private static List<Route> coalesceCompleteSingletonGrids(Collection<Route> source) {
+		Map<SingletonGridKey,SingletonGrid> grids = new LinkedHashMap<>();
+		List<Object> order = new ArrayList<>();
+		for(Route route : source) {
+			SingletonGridKey key = route.singletonGridKey();
+			if(key == null) {
+				order.add(route);
+				continue;
+			}
+			SingletonGrid grid = grids.get(key);
+			if(grid == null) {
+				grid = new SingletonGrid(key);
+				grids.put(key, grid);
+				order.add(key);
+			}
+			grid.add(route);
+		}
+		List<Route> compact = new ArrayList<>(source.size());
+		for(Object entry : order) {
+			if(entry instanceof Route route)
+				compact.add(route);
+			else {
+				SingletonGrid grid = grids.get((SingletonGridKey) entry);
+				Route combined = grid.completeProduct();
+				if(combined != null)
+					compact.add(combined);
+				else
+					compact.addAll(grid.members);
+			}
+		}
+		return List.copyOf(compact);
 	}
 
 	static NativeProofProduct of(Collection<Route> routes) {
@@ -254,6 +295,17 @@ final class NativeProofProduct {
 		long checkedCardinality() { return checkedCardinality; }
 		long bindingAtomCount() { return bindingAtomCount; }
 
+		private SingletonGridKey singletonGridKey() {
+			List<Integer> positions = new ArrayList<>(bindingOptions.size());
+			for(List<CandidateRealizationInputBinding> dimension : bindingOptions) {
+				if(dimension.size() != 1)
+					return null;
+				positions.add(dimension.get(0).inputPosition());
+			}
+			return new SingletonGridKey(externalSeed, outputWorkerPoolWitness,
+				exactPartitionRanges, List.copyOf(positions));
+		}
+
 		private Route withBindingOptions(List<List<CandidateRealizationInputBinding>> options) {
 			return new Route(externalSeed, outputWorkerPoolWitness, exactPartitionRanges, options);
 		}
@@ -275,6 +327,44 @@ final class NativeProofProduct {
 				&& externalSeed.equals(that.externalSeed)
 				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness)
 				&& bindingOptions.equals(that.bindingOptions);
+		}
+	}
+
+	private record SingletonGridKey(DurableAnchorKey externalSeed,
+		DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
+		List<Integer> inputPositions) { }
+
+	private static final class SingletonGrid {
+		private final SingletonGridKey key;
+		private final List<Route> members = new ArrayList<>();
+		private final List<Set<CandidateRealizationInputBinding>> choices;
+
+		private SingletonGrid(SingletonGridKey key) {
+			this.key = key;
+			choices = new ArrayList<>(key.inputPositions.size());
+			for(int position = 0; position < key.inputPositions.size(); position++)
+				choices.add(new LinkedHashSet<>());
+		}
+
+		private void add(Route route) {
+			members.add(route);
+			for(int position = 0; position < choices.size(); position++)
+				choices.get(position).add(route.bindingOptions.get(position).get(0));
+		}
+
+		private Route completeProduct() {
+			long cardinality = 1;
+			for(Set<CandidateRealizationInputBinding> dimension : choices) {
+				if(cardinality > members.size() / dimension.size())
+					return null;
+				cardinality *= dimension.size();
+			}
+			if(cardinality != members.size())
+				return null;
+			List<List<CandidateRealizationInputBinding>> dimensions = choices.stream()
+				.map(List::copyOf).toList();
+			return new Route(key.externalSeed, key.outputWorkerPoolWitness,
+				key.exactPartitionRanges, dimensions);
 		}
 	}
 

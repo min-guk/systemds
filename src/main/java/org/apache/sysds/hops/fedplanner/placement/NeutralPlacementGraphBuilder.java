@@ -2768,19 +2768,12 @@ public final class NeutralPlacementGraphBuilder {
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(recomputeNative)
 					for(CandidateEmissionRealization candidate : emission.realizations()) {
-						// Native proof products cannot contain a relocation unless one of their
-						// structural binding atoms says so.  Avoid decoding the product merely to
-						// discover that the relocation-preservation branch is empty.
-						if(candidate.supportRelation().distinctBindingAtoms().stream()
-							.noneMatch(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION))
-							continue;
-						List<CandidateRealizationSupportClause> relocationClauses = candidate.supportClauses().stream()
-							.filter(clause -> clause.inputBindings().stream()
-								.anyMatch(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION))
-							.toList();
-						if(!relocationClauses.isEmpty())
-							realizations.add(CandidateEmissionRealization
-								.fromAlreadyCanonicalSupportClauses(candidate.key(), relocationClauses));
+						CandidateSupportRelation relocationSupport = candidate.supportRelation()
+							.selectAnyBinding(binding -> binding.kind()
+								== CandidateInputBindingKind.RELOCATION);
+						if(relocationSupport.rawCardinality() > 0)
+							realizations.add(CandidateEmissionRealization.fromSupportRelation(
+								candidate.key(), relocationSupport));
 					}
 				for(CandidateEmissionRealization realization : templatesForEmission) {
 					if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE

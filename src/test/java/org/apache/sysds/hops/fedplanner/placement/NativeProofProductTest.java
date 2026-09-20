@@ -185,6 +185,55 @@ public class NativeProofProductTest {
 	}
 
 	@Test
+	public void completeSingletonGridCoalescesWithoutChangingLegacyLeaves() {
+		CandidateRealizationInputBinding leftA = binding(0, "grid-left-a");
+		CandidateRealizationInputBinding leftB = binding(0, "grid-left-b");
+		CandidateRealizationInputBinding rightA = binding(1, "grid-right-a");
+		CandidateRealizationInputBinding rightB = binding(1, "grid-right-b");
+		DurableAnchorKey seed = anchor("grid-seed");
+		DurableAnchorKey output = anchor("grid-output");
+		List<NativeProofProduct.Route> singletonGrid = new ArrayList<>();
+		for(CandidateRealizationInputBinding left : List.of(leftA, leftB))
+			for(CandidateRealizationInputBinding right : List.of(rightA, rightB))
+				singletonGrid.add(NativeProofProduct.route(
+					seed, output, true, List.of(List.of(left), List.of(right))));
+
+		NativeProofProduct product = NativeProofProduct.of(singletonGrid);
+		Assert.assertEquals(1, product.routes().size());
+		Assert.assertEquals(4, product.checkedRawCardinality());
+		Assert.assertEquals(4, product.bindingAtomCount());
+		Assert.assertEquals(4, product.exportLegacy().proofs().size());
+		Assert.assertEquals(0, product.duplicateRoutesDropped());
+	}
+
+	@Test
+	public void everyTwoByTwoSingletonSubsetPreservesItsExactRelation() {
+		List<CandidateRealizationInputBinding> left = List.of(
+			binding(0, "subset-left-a"), binding(0, "subset-left-b"));
+		List<CandidateRealizationInputBinding> right = List.of(
+			binding(1, "subset-right-a"), binding(1, "subset-right-b"));
+		DurableAnchorKey seed = anchor("subset-seed");
+		DurableAnchorKey output = anchor("subset-output");
+		for(int mask = 1; mask < 16; mask++) {
+			List<NativeProofProduct.Route> routes = new ArrayList<>();
+			LinkedHashSet<String> expected = new LinkedHashSet<>();
+			for(int tuple = 0; tuple < 4; tuple++)
+				if((mask & 1 << tuple) != 0) {
+					CandidateRealizationInputBinding l = left.get(tuple / 2);
+					CandidateRealizationInputBinding r = right.get(tuple % 2);
+					routes.add(NativeProofProduct.route(
+						seed, output, true, List.of(List.of(l), List.of(r))));
+					expected.add(List.of(l, r).toString());
+				}
+			NativeProofProduct product = NativeProofProduct.of(routes);
+			LinkedHashSet<String> actual = product.exportLegacy().proofs().stream()
+				.map(proof -> proof.immediateBindings().toString())
+				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+			Assert.assertEquals("singleton subset mask " + mask, expected, actual);
+		}
+	}
+
+	@Test
 	public void atomFilterAndMapPreserveProductsAndDropIncompleteRoutes() {
 		NativeProofProduct product = NativeProofProduct.of(List.of(
 			NativeProofProduct.route(anchor("seed-a"), anchor("output-a"), true,

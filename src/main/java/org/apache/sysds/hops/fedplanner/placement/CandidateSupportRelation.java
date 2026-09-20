@@ -20,8 +20,10 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,6 +32,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
@@ -49,6 +52,8 @@ public final class CandidateSupportRelation {
 	private final Map<ChoicePath,CandidateRealizationSupportClause> materializedPaths = new HashMap<>();
 	private final Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> canonicalLeaves =
 		new HashMap<>();
+	private volatile List<CandidateRealizationInputBinding> distinctBindingAtoms;
+	private volatile Set<CompiledHopKey> bindingSourceOccurrences;
 	private Long exactCardinality;
 	private volatile List<CandidateRealizationSupportClause> canonicalExport;
 	private long leafMaterializationCount;
@@ -129,6 +134,43 @@ public final class CandidateSupportRelation {
 		return new HashSet<>(exportCanonicalClauses()).containsAll(that.exportCanonicalClauses());
 	}
 
+	/**
+	 * Exact disjoint restriction to leaves containing at least one matching binding.
+	 * The first matching choice slot owns each retained leaf, so product correlation is
+	 * preserved without decoding the relation.
+	 */
+	CandidateSupportRelation selectAnyBinding(
+		Predicate<CandidateRealizationInputBinding> predicate) {
+		Objects.requireNonNull(predicate, "binding predicate");
+		List<ProductRoute> selected = new ArrayList<>();
+		for(ProductRoute route : routes) {
+			if(route.fixedBindingAtoms().stream().anyMatch(predicate)) {
+				selected.add(route);
+				continue;
+			}
+			List<List<CandidateRealizationInputBinding>> slots = route.bindingChoicesBySlot();
+			for(int match = 0; match < slots.size(); match++) {
+				List<List<CandidateRealizationInputBinding>> branch = new ArrayList<>(slots.size());
+				boolean complete = true;
+				for(int index = 0; index < slots.size(); index++) {
+					List<CandidateRealizationInputBinding> choices = slots.get(index);
+					List<CandidateRealizationInputBinding> retained = index < match
+						? choices.stream().filter(predicate.negate()).toList()
+						: index == match ? choices.stream().filter(predicate).toList() : choices;
+					if(retained.isEmpty()) {
+						complete = false;
+						break;
+					}
+					branch.add(retained);
+				}
+				if(complete)
+					selected.add(new ProductRoute(route.proofAtoms(), route.fixedBindingAtoms(),
+						branch, route.annotations(), route.deferredNativeProofs()));
+			}
+		}
+		return fromProducts(owner, new Object(), selected);
+	}
+
 	/** Computes the extensional OR-set size on demand. */
 	public synchronized long exactCardinality() {
 		if(exactCardinality == null) {
@@ -145,13 +187,35 @@ public final class CandidateSupportRelation {
 	public synchronized long leafMaterializationCount() { return leafMaterializationCount; }
 
 	public List<CandidateRealizationInputBinding> distinctBindingAtoms() {
+		List<CandidateRealizationInputBinding> current = distinctBindingAtoms;
+		if(current != null)
+			return current;
 		Set<CandidateRealizationInputBinding> distinct = new TreeSet<>();
 		for(ProductRoute route : routes) {
 			distinct.addAll(route.fixedBindingAtoms());
 			for(List<CandidateRealizationInputBinding> slot : route.bindingChoicesBySlot())
 				distinct.addAll(slot);
 		}
-		return List.copyOf(distinct);
+		current = List.copyOf(distinct);
+		distinctBindingAtoms = current;
+		return current;
+	}
+
+	Set<CompiledHopKey> bindingSourceOccurrences() {
+		Set<CompiledHopKey> current = bindingSourceOccurrences;
+		if(current != null)
+			return current;
+		Set<CompiledHopKey> sources = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(ProductRoute route : routes) {
+			for(CandidateRealizationInputBinding binding : route.fixedBindingAtoms())
+				sources.add(binding.source().rule().parentOccurrence());
+			for(List<CandidateRealizationInputBinding> slot : route.bindingChoicesBySlot())
+				for(CandidateRealizationInputBinding binding : slot)
+					sources.add(binding.source().rule().parentOccurrence());
+		}
+		current = Collections.unmodifiableSet(sources);
+		bindingSourceOccurrences = current;
+		return current;
 	}
 
 	public List<PlacementProofKey> distinctProofAtoms() {
@@ -365,6 +429,7 @@ public final class CandidateSupportRelation {
 		private final List<DeferredNativeContinuityProof> deferredNativeProofs;
 		private final long rawCardinality;
 		private final CandidateRealizationSupportClause flatLeaf;
+		private volatile String structuralSignature;
 
 		public ProductRoute(List<PlacementProofKey> proofAtoms,
 			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
@@ -494,6 +559,9 @@ public final class CandidateSupportRelation {
 		}
 		private boolean hasFlatLeaf() { return flatLeaf != null; }
 		private String structuralSignature() {
+			String current = structuralSignature;
+			if(current != null)
+				return current;
 			StringBuilder value = new StringBuilder();
 			appendToken(value, Integer.toString(proofAtoms.size()));
 			for(PlacementProofKey proof : proofAtoms)
@@ -513,7 +581,9 @@ public final class CandidateSupportRelation {
 			appendToken(value, Integer.toString(deferredNativeProofs.size()));
 			for(DeferredNativeContinuityProof recipe : deferredNativeProofs)
 				appendToken(value, recipe.structuralSignature());
-			return value.toString();
+			current = value.toString();
+			structuralSignature = current;
+			return current;
 		}
 		private static void appendToken(StringBuilder target, String token) {
 			target.append(token.length()).append(':').append(token);

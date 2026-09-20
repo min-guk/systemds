@@ -20,6 +20,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.TreeSet;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -89,6 +90,16 @@ public class CandidateSupportRelationTest {
 		Assert.assertEquals(16_777_216L, relation.rawCardinality());
 		Assert.assertEquals(64, relation.summary().storedChoiceBindingAtomCount());
 		Assert.assertEquals(0, relation.constructionMaterializedCount());
+		List<CandidateRealizationInputBinding> atoms = relation.distinctBindingAtoms();
+		Assert.assertEquals(64, atoms.size());
+		Assert.assertSame("immutable binding projection must be cached", atoms,
+			relation.distinctBindingAtoms());
+		Set<CompiledHopKey> sources = relation.bindingSourceOccurrences();
+		Assert.assertEquals(64, sources.size());
+		Assert.assertSame("source occurrence projection must be cached", sources,
+			relation.bindingSourceOccurrences());
+		Assert.assertEquals("binding projection must not decode product leaves",
+			0, relation.leafMaterializationCount());
 	}
 
 	@Test
@@ -330,6 +341,28 @@ public class CandidateSupportRelationTest {
 		Assert.assertEquals(1, union.routes().size());
 		Assert.assertEquals(4, union.rawCardinality());
 		Assert.assertEquals(0, union.leafMaterializationCount());
+	}
+
+	@Test
+	public void existentialBindingSelectionPreservesProductsWithoutDecodingLeaves() {
+		CandidateRealizationInputBinding plainLeft = binding(0, "plain-left");
+		CandidateRealizationInputBinding matchLeft = binding(0, "match-left");
+		CandidateRealizationInputBinding plainRight = binding(1, "plain-right");
+		CandidateRealizationInputBinding matchRight = binding(1, "match-right");
+		CandidateSupportRelation relation = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(new ProductRoute(List.of(),
+				List.of(List.of(plainLeft, matchLeft), List.of(plainRight, matchRight)),
+				SupportAnnotations.exact())));
+
+		CandidateSupportRelation selected = relation.selectAnyBinding(binding ->
+			binding == matchLeft || binding == matchRight);
+		Assert.assertEquals(3, selected.rawCardinality());
+		Assert.assertEquals(2, selected.routes().size());
+		Assert.assertEquals(0, relation.leafMaterializationCount());
+		Assert.assertEquals(0, selected.leafMaterializationCount());
+		Assert.assertTrue(selected.exportCanonicalClauses().stream().allMatch(clause ->
+			clause.inputBindings().stream().anyMatch(binding ->
+				binding == matchLeft || binding == matchRight)));
 	}
 
 	@Test
