@@ -158,7 +158,8 @@ final class ExactPhysicalModel {
 		List<DecisionDomain> domains = new ArrayList<>(nodes.size());
 		for(Node node : nodes) {
 			List<Alternative> alternatives = alternatives(analysis, node,
-				incoming.getOrDefault(node.key(), List.of()));
+				incoming.getOrDefault(node.key(), List.of()),
+				analysis.candidateRuleFacts().orderedFactsForParent(node.key()));
 			ExactCategoricalSolver.Variable variable = new ExactCategoricalSolver.Variable(
 				node.key().normalizedSignature(), alternatives.size());
 			domains.add(new DecisionDomain(node, variable, alternatives));
@@ -229,7 +230,8 @@ final class ExactPhysicalModel {
 			relocations.values().stream().sorted().toList());
 	}
 
-	private static List<Alternative> alternatives(PlacementAnalysis analysis, Node node, List<Link> incoming) {
+	private static List<Alternative> alternatives(PlacementAnalysis analysis, Node node, List<Link> incoming,
+		List<CandidateRuleFact> ownerRules) {
 		List<Alternative> alternatives = new ArrayList<>();
 		if(node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
 			|| node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT) {
@@ -238,9 +240,8 @@ final class ExactPhysicalModel {
 					null, null));
 			return alternatives;
 		}
-		for(CandidateRuleFact rule : analysis.candidateRuleFacts().orderedFacts()) {
-			if(rule.key().parentOccurrence() != node.key()
-				|| rule.status() != CandidateEvaluationStatus.AVAILABLE)
+		for(CandidateRuleFact rule : ownerRules) {
+			if(rule.status() != CandidateEvaluationStatus.AVAILABLE)
 				continue;
 			for(CandidateEmissionFact emission : rule.allowedEmissionFacts())
 			for(CandidateEmissionRealization realization : emission.realizations())
@@ -313,7 +314,7 @@ final class ExactPhysicalModel {
 		if(unique.isEmpty())
 			throw new IllegalArgumentException("EXACT_PHYSICAL_DOMAIN_EMPTY|key="
 				+ node.key().normalizedSignature() + "|legal=" + node.legalAlternatives()
-				+ "|candidates=" + analysis.candidateRuleFacts().orderedFactsForParent(node.key()).stream()
+				+ "|candidates=" + ownerRules.stream()
 					.map(fact -> fact.key().orderedInputs() + ":" + fact.status() + ":"
 						+ fact.allowedEmissionFacts().stream().map(emission -> emission.selectionSignature()
 							+ " realizations=" + emission.realizations().size()).toList()).toList());

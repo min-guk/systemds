@@ -329,6 +329,24 @@ public class CandidateSupportRelationTest {
 	}
 
 	@Test
+	public void structurallyIdenticalFactorizedRelationsCompareWithoutMaterializingLeaves() {
+		List<CandidateRealizationInputBinding> choices = bindings(0, "structural-no-op", 8);
+		ProductRoute firstRoute = new ProductRoute(List.of(proof("structural-no-op")),
+			List.of(choices), SupportAnnotations.exact());
+		ProductRoute secondRoute = new ProductRoute(List.of(proof("structural-no-op")),
+			List.of(choices), SupportAnnotations.exact());
+		CandidateSupportRelation first = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(firstRoute));
+		CandidateSupportRelation second = CandidateSupportRelation.fromProducts(
+			OWNER, new Object(), List.of(secondRoute));
+
+		Assert.assertTrue(first.sameSupportAs(second));
+		Assert.assertTrue(first.containsAllSupportOf(second));
+		Assert.assertEquals(0, first.leafMaterializationCount());
+		Assert.assertEquals(0, second.leafMaterializationCount());
+	}
+
+	@Test
 	public void unionIsIdempotentAndRouteOrderIsDeterministicWithoutLeafEnumeration() {
 		ProductRoute route = new ProductRoute(List.of(proof("same")),
 			List.of(bindings(0, "same", 4)), SupportAnnotations.exact());

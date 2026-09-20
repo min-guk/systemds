@@ -209,7 +209,7 @@ final class CandidateClosureDependencies {
 		return sources;
 	}
 
-	private static boolean structurallyEqual(List<CandidateRuleFact> left,
+	static boolean structurallyEqual(List<CandidateRuleFact> left,
 		List<CandidateRuleFact> right) {
 		if(left.size() != right.size())
 			return false;

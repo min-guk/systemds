@@ -687,6 +687,10 @@ public class NativePlacementContinuityTest {
 			firstRevision.proveCandidateAlternatives(reference, seed.anchor);
 		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
 		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
+		long materializedLeaves = full.candidates.stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.mapToLong(realization -> realization.supportRelation().leafMaterializationCount()).sum();
 
 		NativePlacementContinuity nextRevision = firstRevision.nextRevision(
 			List.copyOf(full.candidates), Set.of());
@@ -696,14 +700,88 @@ public class NativePlacementContinuityTest {
 			graphBuilds, metrics.snapshot().proofGraphsBuilt());
 		Assert.assertEquals("unchanged occurrence expansion crosses the revision",
 			topologyBuilds, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertEquals("revision equality must not decode factorized support",
+			materializedLeaves, full.candidates.stream()
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.flatMap(emission -> emission.realizations().stream())
+				.mapToLong(realization -> realization.supportRelation().leafMaterializationCount()).sum());
 		Assert.assertTrue(metrics.snapshot().topologyRevisionEntriesReused() > 0);
 		Assert.assertTrue(metrics.snapshot().supportMemoRevisionEntriesReused() > 0);
 
 		NativePlacementContinuity invalidated = firstRevision.nextRevision(
 			List.copyOf(full.candidates), Set.of(source.key));
-		invalidated.proveCandidateAlternatives(reference, seed.anchor);
-		Assert.assertTrue("an explicitly invalidated footprint must be solved again",
+		List<NativePlacementContinuity.NativeContinuityProof> invalidatedProofs =
+			invalidated.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertEquals(expected, invalidatedProofs);
+		Assert.assertEquals("unchanged factorized occurrence topology survives conservative invalidation",
+			topologyBuilds, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertTrue("completed support still invalidates and must be solved again",
 			metrics.snapshot().proofGraphsBuilt() > graphBuilds);
+		Assert.assertEquals("revision reuse must preserve fresh-resolver results",
+			full.resolver(new SearchSpaceMetrics(), 0, 0)
+				.proveCandidateAlternatives(reference, seed.anchor), invalidatedProofs);
+	}
+
+	@Test
+	public void changedLocalFactsRebuildFactorizedTopologyWithFreshParity() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity firstRevision = full.resolver(metrics, 8, 128);
+		firstRevision.proveCandidateProduct(full.reference(source, inputs), seed.anchor);
+		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
+
+		full.samePoolRealizations(source, inputs,
+			new DurableAnchorKey("changed-local-fact", FType.FULL, seed.anchor.partitions()));
+		CandidateRealizationReference changedReference = full.reference(source, inputs);
+		NativePlacementContinuity changed = firstRevision.nextRevision(
+			List.copyOf(full.candidates), Set.of(source.key));
+		NativeProofProduct actual = changed.proveCandidateProduct(changedReference, seed.anchor);
+		NativeProofProduct fresh = full.resolver(new SearchSpaceMetrics(), 0, 0)
+			.proveCandidateProduct(changedReference, seed.anchor);
+
+		Assert.assertTrue("changed occurrence-local facts must rebuild factorized topology",
+			metrics.snapshot().topologyExpansionBuilds() > topologyBuilds);
+		Assert.assertEquals(fresh.exportLegacy().proofs(), actual.exportLegacy().proofs());
+	}
+
+	@Test
+	public void conservativeInvalidationDoesNotReuseFlatTopology() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity firstRevision = full.resolver(metrics, 8, 128);
+		invokeFlatCandidateTopology(firstRevision, source.key, seed.anchor);
+		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
+
+		NativePlacementContinuity invalidated = firstRevision.nextRevision(
+			List.copyOf(full.candidates), Set.of(source.key));
+		invokeFlatCandidateTopology(invalidated, source.key, seed.anchor);
+
+		Assert.assertEquals("flat topology retains the conservative invalidation boundary",
+			topologyBuilds + 1, metrics.snapshot().topologyExpansionBuilds());
+	}
+
+	@Test
+	public void topologyTimingCountsBuildsWhileCacheHitsRemainVisible() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 8, 128);
+
+		invokeFactorizedCandidateTopology(resolver, source.key, seed.anchor);
+		invokeFactorizedCandidateTopology(resolver, source.key, seed.anchor);
+		invokeFlatCandidateTopology(resolver, source.key, seed.anchor);
+		invokeFlatCandidateTopology(resolver, source.key, seed.anchor);
+
+		Assert.assertEquals(2, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertEquals(2, metrics.snapshot().topologyExpansionHits());
+		Assert.assertEquals("opt-in timing covers expansions, not cache-hit diagnostic overhead",
+			2, phaseCalls(metrics, SearchSpaceMetrics.Phase.PROOF_TOPOLOGY));
 	}
 
 	@Test
@@ -2161,19 +2239,35 @@ public class NativePlacementContinuityTest {
 
 	private static void invokeFlatCandidateTopology(NativePlacementContinuity resolver,
 		CompiledHopKey key, DurableAnchorKey anchor) throws Exception {
+		invokeCandidateTopology(resolver, "candidateTopology", key, anchor);
+	}
+
+	private static void invokeFactorizedCandidateTopology(NativePlacementContinuity resolver,
+		CompiledHopKey key, DurableAnchorKey anchor) throws Exception {
+		invokeCandidateTopology(resolver, "factorizedCandidateTopology", key, anchor);
+	}
+
+	private static void invokeCandidateTopology(NativePlacementContinuity resolver,
+		String methodName, CompiledHopKey key, DurableAnchorKey anchor) throws Exception {
 		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
 			"nativeWitness", DurableAnchorKey.class);
 		nativeWitness.setAccessible(true);
 		Object witness = nativeWitness.invoke(resolver, anchor);
 		Method candidateTopology = null;
 		for(Method method : NativePlacementContinuity.class.getDeclaredMethods())
-			if(method.getName().equals("candidateTopology") && method.getParameterCount() == 2) {
+			if(method.getName().equals(methodName) && method.getParameterCount() == 2) {
 				candidateTopology = method;
 				break;
 			}
 		Assert.assertNotNull(candidateTopology);
 		candidateTopology.setAccessible(true);
 		candidateTopology.invoke(resolver, key, witness);
+	}
+
+	private static long phaseCalls(SearchSpaceMetrics metrics, SearchSpaceMetrics.Phase phase) {
+		return metrics.attributionSnapshot().phases().stream()
+			.filter(measurement -> measurement.phase().equals(phase.name()))
+			.findFirst().orElseThrow().calls();
 	}
 
 	private static int topologyCacheSize(NativePlacementContinuity resolver, String fieldName)

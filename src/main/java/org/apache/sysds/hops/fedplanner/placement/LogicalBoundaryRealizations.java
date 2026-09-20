@@ -187,8 +187,8 @@ public final class LogicalBoundaryRealizations {
 		for(int pass = 0; pass <= nodes.size(); pass++) {
 			List<CandidateRuleFact> next = new LogicalBoundaryRealizations(nodes, constraints, origins, current)
 				.bind(current);
-			if(next.equals(current))
-				return next;
+			if(CandidateClosureDependencies.structurallyEqual(current, next))
+				return current;
 			current = next;
 		}
 		throw new IllegalStateException("Logical boundary realization closure did not converge");

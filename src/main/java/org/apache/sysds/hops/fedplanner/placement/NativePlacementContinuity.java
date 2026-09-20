@@ -68,6 +68,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -87,6 +88,7 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
 	private final Set<CompiledHopKey> incompleteSources;
 	private final Map<CompiledHopKey,Privacy> privacyByKey;
+	private final Set<ValueVersionKey> broadcastCapableValueVersions;
 	private final Map<CandidateRealizationSupportClause,List<CandidateRealizationReference>>
 		requiredInputSupportByClause = new IdentityHashMap<>();
 	private final Map<DurableAnchorKey,NativePoolWitness> nativeWitnessByAnchor = new IdentityHashMap<>();
@@ -203,6 +205,10 @@ final class NativePlacementContinuity {
 		this.nodesByKey = copyIdentityMap(nodesByKey, "nodesByKey");
 		this.originsByKey = copyIdentityMap(originsByKey, "originsByKey");
 		this.privacyByKey = copyIdentityMap(privacyByKey, "privacyByKey");
+		this.broadcastCapableValueVersions = this.nodesByKey.values().stream()
+			.filter(node -> node.legalAlternatives().stream().anyMatch(state ->
+				state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST))
+			.map(Node::valueVersion).collect(java.util.stream.Collectors.toUnmodifiableSet());
 		this.reachingDefinitions = copyIdentityLists(reachingDefinitions, "reachingDefinitions");
 		Set<CompiledHopKey> incomplete = Collections.newSetFromMap(new IdentityHashMap<>());
 		incomplete.addAll(Objects.requireNonNull(incompleteSources, "incompleteSources"));
@@ -263,21 +269,23 @@ final class NativePlacementContinuity {
 		NativePlacementContinuity next = new NativePlacementContinuity(nodesByKey, originsByKey,
 			candidateFacts, compiledEdges, reachingDefinitions, incompleteSources, privacyByKey,
 			metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+		Map<CompiledHopKey,Boolean> unchangedLocalFacts = new IdentityHashMap<>();
 		long reused = 0;
 		for(var entry : candidateTopologies.entrySet()) {
 			CompiledHopKey occurrence = entry.getKey().occurrence;
 			if(invalidatedOccurrences.contains(occurrence)
-				|| !candidateFactsByKey.getOrDefault(occurrence, List.of()).equals(
-					next.candidateFactsByKey.getOrDefault(occurrence, List.of())))
+				|| !sameLocalFacts(next, occurrence, unchangedLocalFacts))
 				continue;
 			if(next.cacheTopology(entry.getKey(), next.reindexTopology(entry.getValue())))
 				reused++;
 		}
 		for(var entry : factorizedCandidateTopologies.entrySet()) {
 			CompiledHopKey occurrence = entry.getKey().occurrence;
-			if(invalidatedOccurrences.contains(occurrence)
-				|| !candidateFactsByKey.getOrDefault(occurrence, List.of()).equals(
-					next.candidateFactsByKey.getOrDefault(occurrence, List.of())))
+			// Conservative proof invalidation may include an occurrence whose complete
+			// local candidate facts did not change. Factorized topology contains only
+			// those local facts, so it remains reusable. Flat topology and completed
+			// support solutions intentionally retain the broader invalidation boundary.
+			if(!sameLocalFacts(next, occurrence, unchangedLocalFacts))
 				continue;
 			if(next.cacheFactorizedTopology(entry.getKey(),
 				next.reindexFactorizedTopology(entry.getValue())))
@@ -288,8 +296,7 @@ final class NativePlacementContinuity {
 			SupportMemoEntry support = entry.getValue();
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
 				invalidatedOccurrences.contains(occurrence)
-					|| !candidateFactsByKey.getOrDefault(occurrence, List.of()).equals(
-						next.candidateFactsByKey.getOrDefault(occurrence, List.of())));
+					|| !sameLocalFacts(next, occurrence, unchangedLocalFacts));
 			if(!unchanged)
 				continue;
 			CandidateSupportQueryKey nextKey = next.candidateSupportQueryKey(
@@ -303,6 +310,14 @@ final class NativePlacementContinuity {
 		if(metrics != null)
 			metrics.recordSupportMemoRevisionReuse(supportReused);
 		return next;
+	}
+
+	private boolean sameLocalFacts(NativePlacementContinuity next, CompiledHopKey occurrence,
+		Map<CompiledHopKey,Boolean> unchangedLocalFacts) {
+		return unchangedLocalFacts.computeIfAbsent(occurrence, ignored ->
+			CandidateClosureDependencies.structurallyEqual(
+				candidateFactsByKey.getOrDefault(occurrence, List.of()),
+				next.candidateFactsByKey.getOrDefault(occurrence, List.of())));
 	}
 
 	boolean proves(List<CompiledHopKey> sources, DurableAnchorKey externalSeed) {
@@ -744,6 +759,8 @@ final class NativePlacementContinuity {
 								directlyGrounded |= dependencyResult.directlyGrounded;
 							}
 						}
+						// Dependency groups are individually canonical, but concatenating
+						// multiple states does not preserve a global canonical order.
 						List<CandidateRealizationReference> canonical = canonicalReferences(references);
 						if(!canonical.isEmpty())
 							immediateOptions.add(canonical.stream()
@@ -1348,19 +1365,6 @@ final class NativePlacementContinuity {
 
 	private FactorizedCandidateTopology factorizedCandidateTopology(CompiledHopKey key,
 		NativePoolWitness witness) {
-		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
-			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
-		try {
-			return factorizedCandidateTopologyMeasured(key, witness);
-		}
-		finally {
-			if(metrics != null)
-				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY, started);
-		}
-	}
-
-	private FactorizedCandidateTopology factorizedCandidateTopologyMeasured(CompiledHopKey key,
-		NativePoolWitness witness) {
 		CandidateTopologyKey topologyKey = new CandidateTopologyKey(key, witness);
 		FactorizedCandidateTopology cached = factorizedCandidateTopologies.get(topologyKey);
 		if(cached != null) {
@@ -1369,6 +1373,19 @@ final class NativePlacementContinuity {
 				metrics.recordTopologyExpansion(true, 0);
 			return cached;
 		}
+		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
+		try {
+			return factorizedCandidateTopologyMeasured(key, witness, topologyKey);
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY, started);
+		}
+	}
+
+	private FactorizedCandidateTopology factorizedCandidateTopologyMeasured(CompiledHopKey key,
+		NativePoolWitness witness, CandidateTopologyKey topologyKey) {
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
@@ -1471,19 +1488,6 @@ final class NativePlacementContinuity {
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {
-		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
-			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
-		try {
-			return candidateTopologyMeasured(key, witness);
-		}
-		finally {
-			if(metrics != null)
-				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY, started);
-		}
-	}
-
-	private CandidateTopology candidateTopologyMeasured(CompiledHopKey key,
-		NativePoolWitness witness) {
 		CandidateTopologyKey topologyKey = new CandidateTopologyKey(key, witness);
 		CandidateTopology cached = candidateTopologies.get(topologyKey);
 		if(cached != null) {
@@ -1492,6 +1496,19 @@ final class NativePlacementContinuity {
 				metrics.recordTopologyExpansion(true, 0);
 			return cached;
 		}
+		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
+		try {
+			return candidateTopologyMeasured(key, witness, topologyKey);
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY, started);
+		}
+	}
+
+	private CandidateTopology candidateTopologyMeasured(CompiledHopKey key,
+		NativePoolWitness witness, CandidateTopologyKey topologyKey) {
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
@@ -2379,10 +2396,7 @@ final class NativePlacementContinuity {
 			Node source = edge == null ? null : nodesByKey.get(edge.producer());
 			if(source == null)
 				return false;
-			boolean direct = nodesByKey.values().stream()
-				.filter(alias -> alias.valueVersion().equals(source.valueVersion()))
-				.anyMatch(alias -> alias.legalAlternatives().stream().anyMatch(state ->
-					state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST));
+			boolean direct = broadcastCapableValueVersions.contains(source.valueVersion());
 			Privacy privacy = privacyByKey.get(source.key());
 			if(!direct && privacy != null && ExecPlacementPolicy.requiresOriginResidency(privacy))
 				return true;

@@ -2541,12 +2541,13 @@ public final class NeutralPlacementGraphBuilder {
 				occurrences, current.nodes(), ordinalsByBlock, factsByHop);
 			NativePlacementContinuity nativePools = new NativePlacementContinuity(nodesByKey, origins,
 				current.facts(), compiledEdges, reachingSources, complexityMetrics);
+			DirectBindingStaticContext directContext = directBindingStaticContext(
+				directTemplates, current.nodes(), compiledEdges);
 			boolean directConverged = false;
 			Set<CompiledHopKey> directDirty = null;
 			for(int directPass = 0; directPass <= current.facts().size(); directPass++) {
 				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizationsByMode(
-						directTemplates, current.facts(), current.nodes(), compiledEdges, origins, factsByHop,
-						nativePools, directDirty);
+						current.facts(), origins, factsByHop, nativePools, directContext, directDirty);
 				directFacts = LogicalBoundaryRealizations.close(
 					current.nodes(), constraints, origins, directFacts);
 				boolean directStable = sameCandidateFacts(directFacts, current.facts());
@@ -2607,13 +2608,14 @@ public final class NeutralPlacementGraphBuilder {
 							.map(source -> physicalNodes.get(source).key()).toList());
 			NativePlacementContinuity physicalPools = new NativePlacementContinuity(physicalNodesByKey, origins,
 				physicallyClosed.facts(), physicalEdges, physicalReachingSources, complexityMetrics);
+			DirectBindingStaticContext physicalDirectContext = directBindingStaticContext(
+				directTemplates, physicallyClosed.nodes(), physicalEdges);
 			boolean physicalDirectConverged = false;
 			Set<CompiledHopKey> physicalDirectDirty = null;
 			for(int directPass = 0; directPass <= physicallyClosed.facts().size(); directPass++) {
 				List<CandidateRuleFact> directFacts = bindDirectNativeCandidateRealizationsByMode(
-					directTemplates, physicallyClosed.facts(), physicallyClosed.nodes(), physicalEdges,
-					origins, factsByHop, physicalPools,
-					physicalDirectDirty);
+					physicallyClosed.facts(), origins, factsByHop, physicalPools,
+					physicalDirectContext, physicalDirectDirty);
 				directFacts = LogicalBoundaryRealizations.close(
 					physicallyClosed.nodes(), constraints, origins, directFacts);
 				boolean directStable = sameCandidateFacts(directFacts, physicallyClosed.facts());
@@ -2664,17 +2666,50 @@ public final class NeutralPlacementGraphBuilder {
 			|| directClosureMode == DirectClosureMode.SHADOW;
 	}
 
+	/** Builds the revision-invariant indexes once for all direct-closure iterations. */
+	private static DirectBindingStaticContext directBindingStaticContext(
+		List<CandidateRuleFact> templates, List<Node> nodes,
+		List<CompiledInputEdgeFact> compiledEdges) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		Map<FType,List<DurableAnchorKey>> mutableDurableAnchorsByType =
+			new java.util.EnumMap<>(FType.class);
+		for(Node node : nodes) {
+			nodesByKey.put(node.key(), node);
+			for(DurableAnchorKey anchor : node.anchors())
+				mutableDurableAnchorsByType.computeIfAbsent(anchor.fType(), ignored -> new ArrayList<>())
+					.add(anchor);
+		}
+		Map<FType,List<DurableAnchorKey>> durableAnchorsByType =
+			new java.util.EnumMap<>(FType.class);
+		for(Map.Entry<FType,List<DurableAnchorKey>> entry : mutableDurableAnchorsByType.entrySet())
+			durableAnchorsByType.put(entry.getKey(), List.copyOf(entry.getValue()));
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> mutableInputs = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledEdges)
+			mutableInputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
+				.put(edge.inputPosition(), edge.producer());
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = new IdentityHashMap<>();
+		mutableInputs.forEach((consumer, positions) ->
+			inputs.put(consumer, Collections.unmodifiableMap(positions)));
+		Map<DirectTemplateKey,CandidateEmissionFact> templateByKey = new LinkedHashMap<>();
+		for(CandidateRuleFact template : templates)
+			for(CandidateEmissionFact templateEmission : template.allowedEmissionFacts())
+				templateByKey.putIfAbsent(new DirectTemplateKey(template.key(),
+					templateEmission.emissionState(), templateEmission.derivedFoutAction()), templateEmission);
+		return new DirectBindingStaticContext(Collections.unmodifiableMap(nodesByKey),
+			Collections.unmodifiableMap(durableAnchorsByType), Collections.unmodifiableMap(inputs),
+			Collections.unmodifiableMap(templateByKey));
+	}
+
 	private List<CandidateRuleFact> bindDirectNativeCandidateRealizationsByMode(
-		List<CandidateRuleFact> templates, List<CandidateRuleFact> facts, List<Node> nodes,
-		List<CompiledInputEdgeFact> compiledEdges, Map<CompiledHopKey,Hop> origins,
+		List<CandidateRuleFact> facts, Map<CompiledHopKey,Hop> origins,
 		Map<Hop,NodeShapeFact> shapes, NativePlacementContinuity continuity,
-		Set<CompiledHopKey> dirtyOccurrences) {
+		DirectBindingStaticContext staticContext, Set<CompiledHopKey> dirtyOccurrences) {
 		Set<CompiledHopKey> selected = directClosureMode == DirectClosureMode.FULL ? null : dirtyOccurrences;
-		List<CandidateRuleFact> result = bindDirectNativeCandidateRealizations(templates, facts, nodes,
-			compiledEdges, origins, shapes, continuity, selected);
+		List<CandidateRuleFact> result = bindDirectNativeCandidateRealizations(facts, origins, shapes,
+			continuity, staticContext, selected);
 		if(directClosureMode == DirectClosureMode.SHADOW && dirtyOccurrences != null) {
-			List<CandidateRuleFact> full = bindDirectNativeCandidateRealizations(templates, facts, nodes,
-				compiledEdges, origins, shapes, continuity, null);
+			List<CandidateRuleFact> full = bindDirectNativeCandidateRealizations(facts, origins, shapes,
+				continuity, staticContext, null);
 			if(!result.equals(full))
 				throw new IllegalStateException("DIRECT_CLOSURE_SHADOW_MISMATCH|delta="
 					+ result + "|full=" + full);
@@ -2683,33 +2718,17 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private List<CandidateRuleFact> bindDirectNativeCandidateRealizations(
-		List<CandidateRuleFact> templates, List<CandidateRuleFact> facts, List<Node> nodes,
-		List<CompiledInputEdgeFact> compiledEdges,
-		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
-		NativePlacementContinuity continuity, Set<CompiledHopKey> dirtyOccurrences) {
-		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
-		for(Node node : nodes)
-			nodesByKey.put(node.key(), node);
-		Map<FType,List<DurableAnchorKey>> mutableDurableAnchorsByType = new java.util.EnumMap<>(FType.class);
-		for(Node node : nodes)
-			for(DurableAnchorKey anchor : node.anchors())
-				mutableDurableAnchorsByType.computeIfAbsent(anchor.fType(), ignored -> new ArrayList<>()).add(anchor);
-		Map<FType,List<DurableAnchorKey>> durableAnchorsByType = new java.util.EnumMap<>(FType.class);
-		for(Map.Entry<FType,List<DurableAnchorKey>> entry : mutableDurableAnchorsByType.entrySet())
-			durableAnchorsByType.put(entry.getKey(), List.copyOf(entry.getValue()));
-		durableAnchorsByType = Collections.unmodifiableMap(durableAnchorsByType);
-		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = new IdentityHashMap<>();
-		for(CompiledInputEdgeFact edge : compiledEdges)
-			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
-				.put(edge.inputPosition(), edge.producer());
-		Map<DirectTemplateKey,CandidateEmissionFact> templateByKey = new LinkedHashMap<>();
-		for(CandidateRuleFact template : templates)
-			for(CandidateEmissionFact templateEmission : template.allowedEmissionFacts())
-				templateByKey.putIfAbsent(new DirectTemplateKey(template.key(),
-					templateEmission.emissionState(), templateEmission.derivedFoutAction()), templateEmission);
+		List<CandidateRuleFact> facts, Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> shapes,
+		NativePlacementContinuity continuity, DirectBindingStaticContext staticContext,
+		Set<CompiledHopKey> dirtyOccurrences) {
+		Map<CompiledHopKey,Node> nodesByKey = staticContext.nodesByKey();
+		Map<FType,List<DurableAnchorKey>> durableAnchorsByType = staticContext.durableAnchorsByType();
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = staticContext.inputs();
+		Map<DirectTemplateKey,CandidateEmissionFact> templateByKey = staticContext.templateByKey();
 		Map<CompiledHopKey,List<CandidateRealizationReference>> nativeByParent = new IdentityHashMap<>();
 		Map<CandidateRealizationReference,CandidateEmissionRealization> nativeRealizations = new LinkedHashMap<>();
-		Set<String> executableReferences = new LinkedHashSet<>();
+		Map<Integer,List<CandidateRealizationReference>> executableReferences = new java.util.HashMap<>();
 		for(CandidateRuleFact candidate : facts)
 			if(candidate.status() == CandidateEvaluationStatus.AVAILABLE)
 				for(CandidateEmissionFact candidateEmission : candidate.allowedEmissionFacts())
@@ -2717,7 +2736,7 @@ public final class NeutralPlacementGraphBuilder {
 						CandidateRealizationReference reference = CandidateRealizationReference.of(
 							candidate.key(), candidateRealization);
 						if(executableSourceRealization(candidate.key(), candidateRealization))
-							executableReferences.add(reference.normalizedSignature());
+							addStructuralReference(executableReferences, reference);
 						if(candidateRealization.key().emissionState().placementState().output() == FederatedOutput.FOUT) {
 							nativeByParent.computeIfAbsent(candidate.key().parentOccurrence(),
 								ignored -> new ArrayList<>()).add(reference);
@@ -2914,7 +2933,7 @@ public final class NeutralPlacementGraphBuilder {
 	private static NativeProofProduct filterRequiredNativeProduct(NativeProofProduct product,
 		CandidateRuleFact fact, Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
-		Set<String> executableReferences) {
+		Map<Integer,List<CandidateRealizationReference>> executableReferences) {
 		Map<Integer,CompiledHopKey> required = new java.util.TreeMap<>();
 		for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
 			CandidateInputState input = fact.key().orderedInputs().get(position);
@@ -2939,7 +2958,7 @@ public final class NeutralPlacementGraphBuilder {
 				List<CandidateRealizationInputBinding> choices = dimension.stream().filter(binding ->
 					binding.source().rule().parentOccurrence() == source
 						&& binding.source().realization().emissionState().placementState().fType() == requiredType
-						&& executableReferences.contains(binding.source().normalizedSignature())).toList();
+						&& containsStructuralReference(executableReferences, binding.source())).toList();
 				if(choices.isEmpty()) {
 					complete = false;
 					break;
@@ -2954,39 +2973,27 @@ public final class NeutralPlacementGraphBuilder {
 		return NativeProofProduct.of(retainedRoutes);
 	}
 
+	private static void addStructuralReference(
+		Map<Integer,List<CandidateRealizationReference>> references,
+		CandidateRealizationReference reference) {
+		int hash = PlacementIdentity.cachedStructuralHash(reference);
+		List<CandidateRealizationReference> bucket = references.computeIfAbsent(hash,
+			ignored -> new ArrayList<>());
+		if(bucket.stream().noneMatch(reference::equals))
+			bucket.add(reference);
+	}
+
+	private static boolean containsStructuralReference(
+		Map<Integer,List<CandidateRealizationReference>> references,
+		CandidateRealizationReference reference) {
+		return references.getOrDefault(PlacementIdentity.cachedStructuralHash(reference), List.of())
+			.stream().anyMatch(reference::equals);
+	}
+
 	/** Structural fixed-point equality that does not cross the explicit flat support boundary. */
 	private static boolean sameCandidateFacts(List<CandidateRuleFact> left,
 		List<CandidateRuleFact> right) {
-		if(left == right)
-			return true;
-		if(left.size() != right.size())
-			return false;
-		for(int factIndex = 0; factIndex < left.size(); factIndex++) {
-			CandidateRuleFact a = left.get(factIndex);
-			CandidateRuleFact b = right.get(factIndex);
-			if(!a.key().equals(b.key()) || a.status() != b.status()
-				|| !Objects.equals(a.capability(), b.capability())
-				|| !a.shapeProof().equals(b.shapeProof()) || !a.profile().equals(b.profile())
-				|| !a.failureCode().equals(b.failureCode())
-				|| a.allowedEmissionFacts().size() != b.allowedEmissionFacts().size())
-				return false;
-			for(int emissionIndex = 0; emissionIndex < a.allowedEmissionFacts().size(); emissionIndex++) {
-				CandidateEmissionFact x = a.allowedEmissionFacts().get(emissionIndex);
-				CandidateEmissionFact y = b.allowedEmissionFacts().get(emissionIndex);
-				if(!x.emissionState().equals(y.emissionState()) || x.executionFType() != y.executionFType()
-					|| !Objects.equals(x.derivedFoutAction(), y.derivedFoutAction())
-					|| x.realizations().size() != y.realizations().size())
-					return false;
-				for(int realizationIndex = 0; realizationIndex < x.realizations().size(); realizationIndex++) {
-					CandidateEmissionRealization first = x.realizations().get(realizationIndex);
-					CandidateEmissionRealization second = y.realizations().get(realizationIndex);
-					if(!first.key().equals(second.key())
-						|| !first.supportRelation().sameSupportAs(second.supportRelation()))
-						return false;
-				}
-			}
-		}
-		return true;
+		return left == right || CandidateClosureDependencies.structurallyEqual(left, right);
 	}
 
 	private static boolean exactNativeInput(CandidateRealizationInputBinding binding,
@@ -6045,6 +6052,10 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record ExactRealizationOption(CandidateRealizationReference reference,
 		CandidateSupportRelation.SupportAnnotations annotations, ValueVersionKey valueVersion) { }
+	private record DirectBindingStaticContext(Map<CompiledHopKey,Node> nodesByKey,
+		Map<FType,List<DurableAnchorKey>> durableAnchorsByType,
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs,
+		Map<DirectTemplateKey,CandidateEmissionFact> templateByKey) { }
 	private record DirectTemplateKey(CandidateRuleKey rule, PlacementEmissionState emission,
 		DerivedFoutMaterializationActionKey action) { }
 

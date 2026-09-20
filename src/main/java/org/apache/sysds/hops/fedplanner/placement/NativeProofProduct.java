@@ -265,15 +265,19 @@ final class NativeProofProduct {
 				if(position <= priorPosition)
 					throw new IllegalArgumentException(
 						"Native proof product positions must be strictly increasing");
-				Set<CandidateRealizationInputBinding> unique = new LinkedHashSet<>();
+				Map<Integer,List<CandidateRealizationInputBinding>> unique = new java.util.HashMap<>();
 				for(CandidateRealizationInputBinding binding : dimension) {
 					Objects.requireNonNull(binding, "binding option");
 					if(binding.inputPosition() != position)
 						throw new IllegalArgumentException(
 							"Native proof product dimension mixes input positions");
-					if(!unique.add(binding))
+					int bindingHash = PlacementIdentity.cachedStructuralHash(binding);
+					List<CandidateRealizationInputBinding> bucket =
+						unique.computeIfAbsent(bindingHash, ignored -> new ArrayList<>());
+					if(bucket.stream().anyMatch(binding::equals))
 						throw new IllegalArgumentException(
 							"Native proof product dimension contains a duplicate binding");
+					bucket.add(binding);
 				}
 				priorPosition = position;
 				copied.add(dimension);
@@ -283,9 +287,13 @@ final class NativeProofProduct {
 			this.bindingOptions = List.copyOf(copied);
 			checkedCardinality = cardinality;
 			bindingAtomCount = atoms;
-			int hash = 31 * externalSeed.hashCode() + outputWorkerPoolWitness.hashCode();
+			int optionsHash = 1;
+			for(List<CandidateRealizationInputBinding> dimension : this.bindingOptions)
+				optionsHash = 31 * optionsHash + PlacementIdentity.cachedStructuralListHash(dimension);
+			int hash = 31 * PlacementIdentity.cachedStructuralHash(externalSeed)
+				+ PlacementIdentity.cachedStructuralHash(outputWorkerPoolWitness);
 			hash = 31 * hash + Boolean.hashCode(exactPartitionRanges);
-			hashCode = 31 * hash + this.bindingOptions.hashCode();
+			hashCode = 31 * hash + optionsHash;
 		}
 
 		DurableAnchorKey externalSeed() { return externalSeed; }

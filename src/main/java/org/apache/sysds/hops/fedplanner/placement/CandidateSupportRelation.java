@@ -429,6 +429,7 @@ public final class CandidateSupportRelation {
 		private final List<DeferredNativeContinuityProof> deferredNativeProofs;
 		private final long rawCardinality;
 		private final CandidateRealizationSupportClause flatLeaf;
+		private final int hashCode;
 		private volatile String structuralSignature;
 
 		public ProductRoute(List<PlacementProofKey> proofAtoms,
@@ -473,21 +474,23 @@ public final class CandidateSupportRelation {
 				new HashSet<>(this.fixedBindingAtoms);
 			long cardinality = 1;
 			for(List<CandidateRealizationInputBinding> choices : bindingChoicesBySlot) {
-				TreeSet<CandidateRealizationInputBinding> canonical = new TreeSet<>(
-					Objects.requireNonNull(choices, "binding slot"));
+				List<CandidateRealizationInputBinding> supplied =
+					Objects.requireNonNull(choices, "binding slot");
+				List<CandidateRealizationInputBinding> canonical =
+					PlacementAnalysis.sharedCanonicalComparableList(
+						new java.util.LinkedHashSet<>(supplied), "binding product slot");
 				if(canonical.isEmpty())
 					throw new IllegalArgumentException("Binding product slot must not be empty");
-				int position = canonical.first().inputPosition();
+				int position = canonical.get(0).inputPosition();
 				for(CandidateRealizationInputBinding binding : canonical)
 					if(binding.inputPosition() != position)
 						throw new IllegalArgumentException("One binding product slot must target one input");
-				List<CandidateRealizationInputBinding> slot = List.copyOf(canonical);
-				for(CandidateRealizationInputBinding binding : slot)
+				for(CandidateRealizationInputBinding binding : canonical)
 					if(!conjunctiveAtoms.add(binding))
 						throw new IllegalArgumentException(
 							"Binding atom overlaps fixed atoms or another product slot");
-				slots.add(slot);
-				cardinality = Math.multiplyExact(cardinality, slot.size());
+				slots.add(canonical);
+				cardinality = Math.multiplyExact(cardinality, canonical.size());
 			}
 			this.bindingChoicesBySlot = List.copyOf(slots);
 			this.annotations = Objects.requireNonNull(annotations, "annotations");
@@ -502,6 +505,15 @@ public final class CandidateSupportRelation {
 				throw new IllegalArgumentException(
 					"Native worker-pool annotation requires owned native-continuity proof");
 			rawCardinality = cardinality;
+			int choicesHash = 1;
+			for(List<CandidateRealizationInputBinding> slot : this.bindingChoicesBySlot)
+				choicesHash = 31 * choicesHash + PlacementIdentity.cachedStructuralListHash(slot);
+			int hash = 1;
+			hash = 31 * hash + PlacementIdentity.cachedStructuralListHash(this.proofAtoms);
+			hash = 31 * hash + PlacementIdentity.cachedStructuralListHash(this.fixedBindingAtoms);
+			hash = 31 * hash + choicesHash;
+			hash = 31 * hash + PlacementIdentity.cachedStructuralHash(this.annotations);
+			hashCode = 31 * hash + PlacementIdentity.cachedStructuralListHash(this.deferredNativeProofs);
 		}
 
 		public List<PlacementProofKey> proofAtoms() { return proofAtoms; }
@@ -600,8 +612,7 @@ public final class CandidateSupportRelation {
 				&& deferredNativeProofs.equals(that.deferredNativeProofs);
 		}
 		@Override public int hashCode() {
-			return Objects.hash(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations,
-				deferredNativeProofs);
+			return hashCode;
 		}
 	}
 

@@ -104,6 +104,27 @@ public class LogicalBoundaryRealizationsTest {
 	}
 
 	@Test
+	public void exactNoOpClosureReusesOwnedRelationsAndFactList() {
+		Fixture f = new Fixture();
+		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(
+			f.nodes, f.edges, f.origins, f.facts);
+		CandidateRuleFact reader = closed.stream()
+			.filter(fact -> fact.key().parentOccurrence() == f.reader).findFirst().orElseThrow();
+		CandidateSupportRelation support = reader.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportRelation();
+
+		List<CandidateRuleFact> repeated = LogicalBoundaryRealizations.close(
+			f.nodes, f.edges, f.origins, closed);
+
+		Assert.assertSame("an exact no-op must preserve the analysis-owned fact list", closed, repeated);
+		CandidateRuleFact repeatedReader = repeated.stream()
+			.filter(fact -> fact.key().parentOccurrence() == f.reader).findFirst().orElseThrow();
+		Assert.assertSame(reader, repeatedReader);
+		Assert.assertSame(support, repeatedReader.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportRelation());
+	}
+
+	@Test
 	public void chosenWriterCannotBorrowAnotherAlternativePool() {
 		Fixture f = new Fixture();
 		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
