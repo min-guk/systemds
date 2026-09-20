@@ -26,6 +26,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSupportRelation.ProductRoute;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSupportRelation.SupportAnnotations;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSupportRelation.DeferredNativeContinuityProof;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
@@ -353,6 +354,141 @@ public class CandidateSupportRelationTest {
 		Assert.assertFalse(dynamicRealization.uniqueSupportAnnotations().nativeWorkerPoolLayoutExact());
 		Assert.assertSame(exactA,
 			dynamicRealization.uniqueSupportAnnotations().nativeWorkerPoolWitness());
+	}
+
+	@Test
+	public void deferredNativeProofExportMatchesLegacyExactAndDynamicSignatures() {
+		assertDeferredNativeProofParity(true);
+		assertDeferredNativeProofParity(false);
+	}
+
+	@Test
+	public void deferredNativeRecipesParticipateInStructuralEqualityAndHashing() {
+		DurableAnchorKey seed = pool("recipe-seed");
+		DurableAnchorKey output = pool("recipe-output");
+		DeferredNativeContinuityProof base = new DeferredNativeContinuityProof(
+			OWNER.parentOccurrence(), seed, output, true);
+		List<DeferredNativeContinuityProof> different = List.of(
+			new DeferredNativeContinuityProof(key("other-owner"), seed, output, true),
+			new DeferredNativeContinuityProof(OWNER.parentOccurrence(), pool("other-seed"), output, true),
+			new DeferredNativeContinuityProof(OWNER.parentOccurrence(), seed, pool("other-output"), true),
+			new DeferredNativeContinuityProof(OWNER.parentOccurrence(), seed, output, false));
+		ProductRoute route = new ProductRoute(List.of(), List.of(bindings(0, "recipe", 2)),
+			new SupportAnnotations(output, true), List.of(base));
+		ProductRoute equal = new ProductRoute(List.of(), List.of(bindings(0, "recipe", 2)),
+			new SupportAnnotations(output, true), List.of(base));
+		Assert.assertEquals(route, equal);
+		Assert.assertEquals(route.hashCode(), equal.hashCode());
+		for(DeferredNativeContinuityProof recipe : different) {
+			SupportAnnotations annotations = new SupportAnnotations(recipe.outputWorkerPoolWitness(),
+				recipe.exactPartitionRanges());
+			ProductRoute changed = new ProductRoute(List.of(), List.of(bindings(0, "recipe", 2)),
+				annotations, List.of(recipe));
+			Assert.assertNotEquals(route, changed);
+			Assert.assertNotEquals(route.hashCode(), changed.hashCode());
+		}
+	}
+
+	@Test
+	public void deferredEightByEightConstructionDoesNotMaterializeLeaves() {
+		List<List<CandidateRealizationInputBinding>> slots = new ArrayList<>();
+		for(int slot = 0; slot < 8; slot++)
+			slots.add(bindings(slot, "deferred-" + slot + '-', 8));
+		DurableAnchorKey seed = pool("large-seed");
+		DurableAnchorKey output = pool("large-output");
+		DeferredNativeContinuityProof recipe = new DeferredNativeContinuityProof(
+			OWNER.parentOccurrence(), seed, output, true);
+		CandidateSupportRelation relation = CandidateSupportRelation.fromProducts(OWNER, new Object(),
+			List.of(new ProductRoute(List.of(), slots, new SupportAnnotations(output, true), List.of(recipe))));
+		Assert.assertEquals(16_777_216L, relation.rawCardinality());
+		Assert.assertEquals(0, relation.leafMaterializationCount());
+		Assert.assertEquals(List.of(recipe), relation.distinctDeferredNativeProofRecipes());
+		Assert.assertTrue(relation.distinctProofAtoms().isEmpty());
+	}
+
+	@Test
+	public void deferredProofParityPreservesFixedChoicesAndCorrelatedRouteMetadata() {
+		CandidateRealizationInputBinding fixedA = binding(0, "correlated-fixed-a");
+		CandidateRealizationInputBinding fixedB = binding(0, "correlated-fixed-b");
+		List<CandidateRealizationInputBinding> leftA = bindings(1, "correlated-left-a-", 2);
+		List<CandidateRealizationInputBinding> rightA = bindings(2, "correlated-right-a-", 2);
+		List<CandidateRealizationInputBinding> leftB = bindings(1, "correlated-left-b-", 2);
+		List<CandidateRealizationInputBinding> rightB = bindings(2, "correlated-right-b-", 2);
+		DurableAnchorKey seedA = pool("correlated-seed-a");
+		DurableAnchorKey outputA = pool("correlated-output-a");
+		DurableAnchorKey seedB = pool("correlated-seed-b");
+		DurableAnchorKey outputB = pool("correlated-output-b");
+		DeferredNativeContinuityProof recipeA = new DeferredNativeContinuityProof(
+			OWNER.parentOccurrence(), seedA, outputA, true);
+		DeferredNativeContinuityProof recipeB = new DeferredNativeContinuityProof(
+			OWNER.parentOccurrence(), seedB, outputB, false);
+		CandidateSupportRelation relation = CandidateSupportRelation.fromProducts(OWNER, new Object(), List.of(
+			new ProductRoute(List.of(), List.of(fixedA), List.of(leftA, rightA),
+				new SupportAnnotations(outputA, true), List.of(recipeA)),
+			new ProductRoute(List.of(), List.of(fixedB), List.of(leftB, rightB),
+				new SupportAnnotations(outputB, false), List.of(recipeB))));
+
+		List<CandidateRealizationSupportClause> expected = new ArrayList<>();
+		appendLegacyRoute(expected, fixedA, leftA, rightA, seedA, outputA, true);
+		appendLegacyRoute(expected, fixedB, leftB, rightB, seedB, outputB, false);
+		expected.sort(null);
+		List<CandidateRealizationSupportClause> actual = relation.exportCanonicalClauses();
+		Assert.assertEquals(expected.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList(),
+			actual.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList());
+		Assert.assertEquals(8, actual.size());
+		for(CandidateRealizationSupportClause clause : actual) {
+			boolean routeA = clause.inputBindings().contains(fixedA);
+			Assert.assertEquals(routeA ? outputA : outputB, clause.nativeWorkerPoolWitness());
+			Assert.assertEquals(routeA, clause.nativeWorkerPoolLayoutExact());
+			String authority = clause.proofDependencies().get(0).authoritySignature();
+			Assert.assertTrue(authority.contains((routeA ? seedA : seedB).normalizedSignature()));
+			Assert.assertFalse(authority.contains((routeA ? seedB : seedA).normalizedSignature()));
+		}
+	}
+
+	private static void appendLegacyRoute(List<CandidateRealizationSupportClause> target,
+		CandidateRealizationInputBinding fixed, List<CandidateRealizationInputBinding> left,
+		List<CandidateRealizationInputBinding> right, DurableAnchorKey seed,
+		DurableAnchorKey output, boolean exact) {
+		for(CandidateRealizationInputBinding leftBinding : left)
+			for(CandidateRealizationInputBinding rightBinding : right) {
+				List<CandidateRealizationInputBinding> bindings = List.of(fixed, leftBinding, rightBinding);
+				NativePlacementContinuity.NativeContinuityProof legacy =
+					new NativePlacementContinuity.NativeContinuityProof(seed, output, exact, bindings);
+				PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+					OWNER.parentOccurrence(), legacy.normalizedSignature());
+				target.add(new CandidateRealizationSupportClause(
+					List.of(proof), bindings, output, exact));
+			}
+	}
+
+	private static void assertDeferredNativeProofParity(boolean exact) {
+		DurableAnchorKey seed = pool("parity-seed-" + exact);
+		DurableAnchorKey output = pool("parity-output-" + exact);
+		List<CandidateRealizationInputBinding> choices = bindings(0, "parity-" + exact + '-', 2);
+		DeferredNativeContinuityProof recipe = new DeferredNativeContinuityProof(
+			OWNER.parentOccurrence(), seed, output, exact);
+		CandidateSupportRelation relation = CandidateSupportRelation.fromProducts(OWNER, new Object(),
+			List.of(new ProductRoute(List.of(), List.of(choices),
+				new SupportAnnotations(output, exact), List.of(recipe))));
+		List<CandidateRealizationSupportClause> expected = new ArrayList<>();
+		for(CandidateRealizationInputBinding binding : choices) {
+			NativePlacementContinuity.NativeContinuityProof legacy =
+				new NativePlacementContinuity.NativeContinuityProof(seed, output, exact, List.of(binding));
+			PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+				OWNER.parentOccurrence(), legacy.normalizedSignature());
+			expected.add(new CandidateRealizationSupportClause(
+				List.of(proof), List.of(binding), output, exact));
+		}
+		expected.sort(null);
+		List<CandidateRealizationSupportClause> actual = relation.exportCanonicalClauses();
+		Assert.assertEquals(expected.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList(),
+			actual.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList());
+		CandidateSupportRelation foreign = CandidateSupportRelation.fromProducts(OWNER, new Object(),
+			List.of(new ProductRoute(List.of(), List.of(choices),
+				new SupportAnnotations(output, exact), List.of(recipe))));
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> relation.decode(foreign.choiceAt(0)));
 	}
 
 	private static CandidateRealizationSupportClause clause(String proof,

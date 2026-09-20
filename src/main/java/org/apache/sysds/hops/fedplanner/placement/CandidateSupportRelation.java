@@ -33,6 +33,7 @@ import java.util.TreeSet;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
@@ -81,7 +82,7 @@ public final class CandidateSupportRelation {
 			Objects.requireNonNull(clause, "support clause");
 			routes.add(new ProductRoute(clause.proofDependencies(), clause.inputBindings(), List.of(),
 				new SupportAnnotations(clause.nativeWorkerPoolWitness(),
-					clause.nativeWorkerPoolLayoutExact()), clause));
+					clause.nativeWorkerPoolLayoutExact()), List.of(), clause));
 		}
 		CandidateSupportRelation relation = fromProducts(owner, epoch, routes);
 		// The caller already supplied leaves. Preserve those exact authority
@@ -138,6 +139,12 @@ public final class CandidateSupportRelation {
 		for(ProductRoute route : routes)
 			distinct.addAll(route.proofAtoms());
 		return List.copyOf(distinct);
+	}
+
+	/** Stored leaf-dependent proof recipes; no placeholder proof atoms are created. */
+	public List<DeferredNativeContinuityProof> distinctDeferredNativeProofRecipes() {
+		return routes.stream().flatMap(route -> route.deferredNativeProofs().stream())
+			.distinct().sorted().toList();
 	}
 
 	public List<SupportAnnotations> distinctAnnotations() {
@@ -335,26 +342,42 @@ public final class CandidateSupportRelation {
 		private final List<CandidateRealizationInputBinding> fixedBindingAtoms;
 		private final List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot;
 		private final SupportAnnotations annotations;
+		private final List<DeferredNativeContinuityProof> deferredNativeProofs;
 		private final long rawCardinality;
 		private final CandidateRealizationSupportClause flatLeaf;
 
 		public ProductRoute(List<PlacementProofKey> proofAtoms,
 			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
 			SupportAnnotations annotations) {
-			this(proofAtoms, List.of(), bindingChoicesBySlot, annotations, null);
+			this(proofAtoms, List.of(), bindingChoicesBySlot, annotations, List.of(), null);
+		}
+
+		public ProductRoute(List<PlacementProofKey> proofAtoms,
+			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
+			SupportAnnotations annotations, List<DeferredNativeContinuityProof> deferredNativeProofs) {
+			this(proofAtoms, List.of(), bindingChoicesBySlot, annotations, deferredNativeProofs, null);
 		}
 
 		public ProductRoute(List<PlacementProofKey> proofAtoms,
 			List<CandidateRealizationInputBinding> fixedBindingAtoms,
 			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
 			SupportAnnotations annotations) {
-			this(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations, null);
+			this(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations, List.of(), null);
+		}
+
+		public ProductRoute(List<PlacementProofKey> proofAtoms,
+			List<CandidateRealizationInputBinding> fixedBindingAtoms,
+			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
+			SupportAnnotations annotations, List<DeferredNativeContinuityProof> deferredNativeProofs) {
+			this(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations,
+				deferredNativeProofs, null);
 		}
 
 		private ProductRoute(List<PlacementProofKey> proofAtoms,
 			List<CandidateRealizationInputBinding> fixedBindingAtoms,
 			List<List<CandidateRealizationInputBinding>> bindingChoicesBySlot,
-			SupportAnnotations annotations, CandidateRealizationSupportClause flatLeaf) {
+			SupportAnnotations annotations, List<DeferredNativeContinuityProof> deferredNativeProofs,
+			CandidateRealizationSupportClause flatLeaf) {
 			this.proofAtoms = PlacementAnalysis.sharedCanonicalComparableList(
 				Objects.requireNonNull(proofAtoms, "proofAtoms"), "support proof atom");
 			this.fixedBindingAtoms = PlacementAnalysis.sharedCanonicalComparableList(
@@ -383,9 +406,14 @@ public final class CandidateSupportRelation {
 			}
 			this.bindingChoicesBySlot = List.copyOf(slots);
 			this.annotations = Objects.requireNonNull(annotations, "annotations");
+			this.deferredNativeProofs = PlacementAnalysis.sharedCanonicalComparableList(
+				Objects.requireNonNull(deferredNativeProofs, "deferredNativeProofs"),
+				"deferred native-continuity proof");
 			this.flatLeaf = flatLeaf;
 			if(annotations.nativeWorkerPoolWitness() != null && this.proofAtoms.stream().noneMatch(proof ->
-				proof.kind() == PlacementProofKind.NATIVE_CONTINUITY && proof.owner() != null))
+				proof.kind() == PlacementProofKind.NATIVE_CONTINUITY && proof.owner() != null)
+				&& this.deferredNativeProofs.stream().noneMatch(recipe ->
+					recipe.proves(annotations)))
 				throw new IllegalArgumentException(
 					"Native worker-pool annotation requires owned native-continuity proof");
 			rawCardinality = cardinality;
@@ -397,6 +425,7 @@ public final class CandidateSupportRelation {
 			return bindingChoicesBySlot;
 		}
 		public SupportAnnotations annotations() { return annotations; }
+		public List<DeferredNativeContinuityProof> deferredNativeProofs() { return deferredNativeProofs; }
 		public long rawCardinality() { return rawCardinality; }
 		public long storedChoiceBindingAtomCount() {
 			long count = 0;
@@ -435,7 +464,12 @@ public final class CandidateSupportRelation {
 			List<CandidateRealizationInputBinding> bindings = new ArrayList<>(fixedBindingAtoms);
 			for(int slot = 0; slot < path.size(); slot++)
 				bindings.add(bindingChoicesBySlot.get(slot).get(path.get(slot)));
-			return new CandidateRealizationSupportClause(proofAtoms, bindings,
+			List<CandidateRealizationInputBinding> canonicalBindings =
+				List.copyOf(new TreeSet<>(bindings));
+			List<PlacementProofKey> proofs = new ArrayList<>(proofAtoms);
+			for(DeferredNativeContinuityProof recipe : deferredNativeProofs)
+				proofs.add(recipe.instantiate(canonicalBindings));
+			return new CandidateRealizationSupportClause(proofs, canonicalBindings,
 				annotations.nativeWorkerPoolWitness(), annotations.nativeWorkerPoolLayoutExact());
 		}
 		private boolean hasFlatLeaf() { return flatLeaf != null; }
@@ -456,6 +490,9 @@ public final class CandidateSupportRelation {
 			appendToken(value, annotations.nativeWorkerPoolWitness() == null ? "-"
 				: annotations.nativeWorkerPoolWitness().normalizedSignature());
 			appendToken(value, Boolean.toString(annotations.nativeWorkerPoolLayoutExact()));
+			appendToken(value, Integer.toString(deferredNativeProofs.size()));
+			for(DeferredNativeContinuityProof recipe : deferredNativeProofs)
+				appendToken(value, recipe.structuralSignature());
 			return value.toString();
 		}
 		private static void appendToken(StringBuilder target, String token) {
@@ -469,10 +506,12 @@ public final class CandidateSupportRelation {
 				return false;
 			return proofAtoms.equals(that.proofAtoms) && fixedBindingAtoms.equals(that.fixedBindingAtoms)
 				&& bindingChoicesBySlot.equals(that.bindingChoicesBySlot)
-				&& annotations.equals(that.annotations);
+				&& annotations.equals(that.annotations)
+				&& deferredNativeProofs.equals(that.deferredNativeProofs);
 		}
 		@Override public int hashCode() {
-			return Objects.hash(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations);
+			return Objects.hash(proofAtoms, fixedBindingAtoms, bindingChoicesBySlot, annotations,
+				deferredNativeProofs);
 		}
 	}
 
@@ -480,6 +519,48 @@ public final class CandidateSupportRelation {
 		return this == other || other instanceof CandidateSupportRelation that && routes.equals(that.routes);
 	}
 	@Override public int hashCode() { return routes.hashCode(); }
+
+	/** Typed recipe for a native-continuity proof whose binding-dependent bytes are decoded lazily. */
+	public record DeferredNativeContinuityProof(CompiledHopKey owner, DurableAnchorKey externalSeed,
+		DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges)
+		implements Comparable<DeferredNativeContinuityProof> {
+		public DeferredNativeContinuityProof {
+			Objects.requireNonNull(owner, "owner");
+			Objects.requireNonNull(externalSeed, "externalSeed");
+			Objects.requireNonNull(outputWorkerPoolWitness, "outputWorkerPoolWitness");
+		}
+
+		private PlacementProofKey instantiate(List<CandidateRealizationInputBinding> bindings) {
+			return new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY, owner,
+				normalizedProofSignature(bindings));
+		}
+
+		public String normalizedProofSignature(List<CandidateRealizationInputBinding> bindings) {
+			Objects.requireNonNull(bindings, "bindings");
+			return externalSeed.normalizedSignature() + "|outputPool="
+				+ outputWorkerPoolWitness.normalizedSignature() + "|partitionRanges="
+				+ (exactPartitionRanges ? "exact" : "dynamic") + "|bindings=" + bindings.stream()
+					.map(CandidateRealizationInputBinding::normalizedSignature).toList();
+		}
+
+		private boolean proves(SupportAnnotations annotations) {
+			DurableAnchorKey witness = annotations.nativeWorkerPoolWitness();
+			return witness != null && exactPartitionRanges == annotations.nativeWorkerPoolLayoutExact()
+				&& (exactPartitionRanges
+					? PlacementIdentity.samePhysicalLayout(outputWorkerPoolWitness, witness)
+					: PlacementIdentity.samePhysicalWorkerEndpoints(outputWorkerPoolWitness, witness));
+		}
+
+		private String structuralSignature() {
+			return owner.normalizedSignature() + "|seed=" + externalSeed.normalizedSignature()
+				+ "|output=" + outputWorkerPoolWitness.normalizedSignature() + "|exact="
+				+ exactPartitionRanges;
+		}
+
+		@Override public int compareTo(DeferredNativeContinuityProof that) {
+			return structuralSignature().compareTo(that.structuralSignature());
+		}
+	}
 
 	public record SupportAnnotations(DurableAnchorKey nativeWorkerPoolWitness,
 		boolean nativeWorkerPoolLayoutExact) {
