@@ -23,6 +23,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
@@ -1102,51 +1103,108 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void canonicalDependencyReferenceMergeMatchesExactFlattenSortOracle() {
+	public void canonicalComparatorZeroExactlyMatchesReferenceEquality() {
 		Fixture fixture = new Fixture(FType.FULL);
 		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		List<CandidateRealizationReference> references = new ArrayList<>();
-		for(String name : List.of("zeta", "alpha", "theta", "beta", "gamma", "delta")) {
+		for(String name : List.of("plain", "delimiter|name", "unicode-α-雪", "tab\tname")) {
 			Ref owner = fixture.unary(name, OpOp1.ABS, seed, false);
 			references.add(fixture.reference(owner,
 				List.of(CandidateInputState.present(FType.FULL))));
 		}
-		List<CandidateRealizationReference> ordered = oldCanonicalReferenceOracle(references);
-		List<CandidateRealizationReference> even = List.of(
-			ordered.get(0), ordered.get(2), ordered.get(4));
-		CandidateRealizationReference duplicate = new CandidateRealizationReference(
-			ordered.get(2).rule(), ordered.get(2).realization());
-		List<CandidateRealizationReference> oddWithDuplicate = oldCanonicalReferenceOracle(List.of(
-			ordered.get(1), duplicate, ordered.get(3), ordered.get(5)));
-		List<List<CandidateRealizationReference>> groups = List.of(even, oddWithDuplicate);
-
-		Assert.assertEquals("interleaved canonical groups preserve the old global order",
-			oldCanonicalReferenceOracle(groups.stream().flatMap(List::stream).toList()),
-			NativePlacementContinuity.mergeCanonicalReferenceGroups(groups));
-		Assert.assertSame("the first flattened representative wins across groups",
-			ordered.get(2), NativePlacementContinuity.mergeCanonicalReferenceGroups(groups).get(2));
+		references.add(new CandidateRealizationReference(
+			references.get(1).rule(), references.get(1).realization()));
+		for(CandidateRealizationReference left : references)
+			for(CandidateRealizationReference right : references)
+				Assert.assertEquals("canonical comparator equality must be exact reference equality",
+					left.equals(right), PlacementAnalysis.canonicalComparator().compare(left, right) == 0);
 	}
 
 	@Test
-	public void canonicalDependencyReferenceMergeHandlesEmptySingleAndDefensiveFallback() {
+	public void canonicalDependencyReferenceMergeReturnsEmptyAndSingleGroupWithoutCopy() {
 		Fixture fixture = new Fixture(FType.FULL);
 		Ref seed = fixture.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref firstOwner = fixture.unary("first", OpOp1.ABS, seed, false);
-		Ref secondOwner = fixture.unary("second", OpOp1.LOG, seed, false);
-		CandidateRealizationReference first = fixture.reference(firstOwner,
+		Ref owner = fixture.unary("single", OpOp1.ABS, seed, false);
+		CandidateRealizationReference reference = fixture.reference(owner,
 			List.of(CandidateInputState.present(FType.FULL)));
-		CandidateRealizationReference second = fixture.reference(secondOwner,
-			List.of(CandidateInputState.present(FType.FULL)));
+		NativePlacementContinuity.CanonicalReferenceGroup empty = canonicalGroup(List.of());
+		NativePlacementContinuity.CanonicalReferenceGroup single = canonicalGroup(List.of(reference));
 
 		Assert.assertEquals(List.of(),
 			NativePlacementContinuity.mergeCanonicalReferenceGroups(List.of()));
-		Assert.assertEquals(List.of(first), NativePlacementContinuity
-			.mergeCanonicalReferenceGroups(List.of(List.of(), List.of(first), List.of())));
-		List<CandidateRealizationReference> canonical = oldCanonicalReferenceOracle(
-			List.of(first, second));
-		List<CandidateRealizationReference> reversed = List.of(canonical.get(1), canonical.get(0));
-		Assert.assertEquals("a noncanonical input group retains the exact sort fallback",
-			canonical, NativePlacementContinuity.mergeCanonicalReferenceGroups(List.of(reversed)));
+		Assert.assertSame("one nonempty group is returned without allocation", single.references(),
+			NativePlacementContinuity.mergeCanonicalReferenceGroups(List.of(empty, single, empty)));
+	}
+
+	@Test
+	public void canonicalDependencyReferenceMergeConcatenatesMonotoneGroupsExactly() {
+		List<CandidateRealizationReference> ordered = mergeTestReferences();
+		List<NativePlacementContinuity.CanonicalReferenceGroup> groups = List.of(
+			canonicalGroup(ordered.subList(0, 2)), canonicalGroup(List.of()),
+			canonicalGroup(ordered.subList(2, 5)), canonicalGroup(ordered.subList(5, ordered.size())));
+		Assert.assertEquals(ordered, NativePlacementContinuity.mergeCanonicalReferenceGroups(groups));
+	}
+
+	@Test
+	public void canonicalDependencyReferenceMergeCollapsesBoundaryDuplicateChainsAndKeepsFirst() {
+		List<CandidateRealizationReference> ordered = mergeTestReferences();
+		CandidateRealizationReference firstRepresentative = ordered.get(2);
+		CandidateRealizationReference equalCopy = new CandidateRealizationReference(
+			firstRepresentative.rule(), firstRepresentative.realization());
+		CandidateRealizationReference secondCopy = new CandidateRealizationReference(
+			firstRepresentative.rule(), firstRepresentative.realization());
+		List<NativePlacementContinuity.CanonicalReferenceGroup> groups = List.of(
+			canonicalGroup(List.of(ordered.get(0), ordered.get(1), firstRepresentative)),
+			canonicalGroup(List.of()),
+			canonicalGroup(List.of(equalCopy)),
+			canonicalGroup(List.of()),
+			canonicalGroup(List.of(secondCopy, ordered.get(3), ordered.get(4))));
+		List<CandidateRealizationReference> merged =
+			NativePlacementContinuity.mergeCanonicalReferenceGroups(groups);
+		Assert.assertEquals(ordered.subList(0, 5), merged);
+		Assert.assertSame("the first flattened equal representative wins", firstRepresentative, merged.get(2));
+	}
+
+	@Test
+	public void canonicalDependencyReferenceMergeUsesExactFallbackForInvertedBoundary() {
+		List<CandidateRealizationReference> ordered = mergeTestReferences();
+		CandidateRealizationReference firstFlattenedRepresentative = ordered.get(3);
+		CandidateRealizationReference equalCopy = new CandidateRealizationReference(
+			firstFlattenedRepresentative.rule(), firstFlattenedRepresentative.realization());
+		List<NativePlacementContinuity.CanonicalReferenceGroup> inverted = List.of(
+			canonicalGroup(ordered.subList(3, 6)),
+			canonicalGroup(List.of(ordered.get(0), ordered.get(1), ordered.get(2), equalCopy)));
+		List<CandidateRealizationReference> merged =
+			NativePlacementContinuity.mergeCanonicalReferenceGroups(inverted);
+		Assert.assertEquals("an inverted canonical-group boundary retains the legacy exact result",
+			ordered.subList(0, 6), merged);
+		Assert.assertSame("exact fallback retains the first flattened equal representative",
+			firstFlattenedRepresentative, merged.get(3));
+	}
+
+	@Test
+	public void canonicalDependencyReferenceMergeRandomizedMatchesFlattenSortOracle() {
+		List<CandidateRealizationReference> references = mergeTestReferences();
+		Random random = new Random(0x9_60_5L);
+		for(int iteration = 0; iteration < 250; iteration++) {
+			int groupCount = random.nextInt(9);
+			List<NativePlacementContinuity.CanonicalReferenceGroup> groups = new ArrayList<>();
+			List<CandidateRealizationReference> flattenedCanonicalGroups = new ArrayList<>();
+			for(int groupIndex = 0; groupIndex < groupCount; groupIndex++) {
+				List<CandidateRealizationReference> raw = new ArrayList<>();
+				for(int element = 0, size = random.nextInt(7); element < size; element++) {
+					CandidateRealizationReference selected = references.get(random.nextInt(references.size()));
+					raw.add(random.nextBoolean() ? selected : new CandidateRealizationReference(
+						selected.rule(), selected.realization()));
+				}
+				NativePlacementContinuity.CanonicalReferenceGroup group = canonicalGroup(raw);
+				groups.add(group);
+				flattenedCanonicalGroups.addAll(group.references());
+			}
+			Assert.assertEquals("randomized exact differential iteration " + iteration,
+				oldCanonicalReferenceOracle(flattenedCanonicalGroups),
+				NativePlacementContinuity.mergeCanonicalReferenceGroups(groups));
+		}
 	}
 
 	@Test
@@ -2260,6 +2318,23 @@ public class NativePlacementContinuityTest {
 		List<CandidateRealizationReference> canonical = new ArrayList<>(distinct.values());
 		canonical.sort(PlacementAnalysis.canonicalComparator());
 		return List.copyOf(canonical);
+	}
+
+	private static NativePlacementContinuity.CanonicalReferenceGroup canonicalGroup(
+		List<CandidateRealizationReference> references) {
+		return NativePlacementContinuity.canonicalReferencesForTesting(references);
+	}
+
+	private static List<CandidateRealizationReference> mergeTestReferences() {
+		Fixture fixture = new Fixture(FType.FULL);
+		Ref seed = fixture.source("merge-seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		List<CandidateRealizationReference> references = new ArrayList<>();
+		for(String name : List.of("zeta", "alpha", "theta", "beta", "gamma", "delta", "eta", "omega")) {
+			Ref owner = fixture.unary(name, OpOp1.ABS, seed, false);
+			references.add(fixture.reference(owner,
+				List.of(CandidateInputState.present(FType.FULL))));
+		}
+		return oldCanonicalReferenceOracle(references);
 	}
 
 	private static NativePlacementContinuity.NativeContinuityProof bareProof(String id) {

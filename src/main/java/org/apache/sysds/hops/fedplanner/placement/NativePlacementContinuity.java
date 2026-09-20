@@ -652,7 +652,7 @@ final class NativePlacementContinuity {
 							.filter(option -> option.realization != null)
 							.filter(option -> (option.directGround || !option.dependencies.isEmpty())
 								&& option.dependencies.stream().allMatch(child -> grounded.contains(child.state())))
-							.map(SelectedCandidateProof::realization).toList()));
+							.map(SelectedCandidateProof::realization).toList()).references());
 					if(options.isEmpty()) {
 						if(!directlyGrounded.computeIfAbsent(dependency.state(), state -> viable
 							.getOrDefault(state, List.of()).stream().anyMatch(option -> option.directGround))) {
@@ -750,7 +750,7 @@ final class NativePlacementContinuity {
 					for(DirectRootDependency dependency : alternative.dependencies) {
 						if(dependency.inputPosition < 0)
 							continue;
-						List<List<CandidateRealizationReference>> referenceGroups = new ArrayList<>();
+						List<CanonicalReferenceGroup> referenceGroups = new ArrayList<>();
 						boolean directlyGrounded = false;
 						for(CandidateProofState dependencyState : dependency.states) {
 							DirectCandidateResult dependencyResult = traversal.completed.get(dependencyState);
@@ -955,7 +955,7 @@ final class NativePlacementContinuity {
 	private static long estimatedDirectSummaryBytes(DirectCandidateResult result,
 		DirectFootprint footprint) {
 		return 96L + 16L * footprint.occurrences.size()
-			+ 16L * result.groundedReferences.size();
+			+ 16L * result.groundedReferences.references().size();
 	}
 
 	private static Set<CompiledHopKey> identitySetCopy(Set<CompiledHopKey> source) {
@@ -966,8 +966,10 @@ final class NativePlacementContinuity {
 
 	void disableDirectDagForTesting() { directDagEnabled = false; }
 
-	private static List<CandidateRealizationReference> canonicalReferences(
+	private static CanonicalReferenceGroup canonicalReferences(
 		List<CandidateRealizationReference> references) {
+		if(references.isEmpty())
+			return CanonicalReferenceGroup.EMPTY;
 		Map<Object,CandidateRealizationReference> distinct = new java.util.LinkedHashMap<>();
 		for(CandidateRealizationReference reference : references) {
 			Integer structuralHandle = PlacementIdentity.structuralHandle(reference);
@@ -975,72 +977,80 @@ final class NativePlacementContinuity {
 		}
 		List<CandidateRealizationReference> canonical = new ArrayList<>(distinct.values());
 		canonical.sort(PlacementAnalysis.canonicalComparator());
-		return List.copyOf(canonical);
+		return new CanonicalReferenceGroup(List.copyOf(canonical));
 	}
 
 	/**
-	 * Exact merge for direct-DAG dependency results, whose reference lists are
-	 * canonicalized when each {@link DirectCandidateResult} is constructed. The
-	 * group ordinal is the stable tie-breaker, matching the old concatenate then
-	 * stable-sort contract. A defensive exact-sort fallback protects future callers
-	 * that cannot uphold the canonical input boundary.
+	 * Exact merge for direct-DAG dependency results. Each group is canonical and
+	 * unique by construction, so adjacent group boundaries are sufficient to prove
+	 * that concatenation preserves the legacy stable global order. Equal boundary
+	 * references retain the first flattened representative. A boundary inversion,
+	 * or a comparator collision between unequal references, uses the exact legacy
+	 * flatten/canonicalize path.
 	 */
 	static List<CandidateRealizationReference> mergeCanonicalReferenceGroups(
-		List<List<CandidateRealizationReference>> groups) {
+		List<CanonicalReferenceGroup> groups) {
 		Objects.requireNonNull(groups, "groups");
 		java.util.Comparator<CandidateRealizationReference> canonicalOrder =
 			PlacementAnalysis.canonicalComparator();
-		for(List<CandidateRealizationReference> group : groups) {
-			Objects.requireNonNull(group, "canonical reference group");
-			Set<Object> structuralKeys = new java.util.HashSet<>();
-			CandidateRealizationReference previous = null;
-			for(CandidateRealizationReference reference : group) {
-				Object structuralKey = structuralReferenceKey(reference);
-				if((previous != null && canonicalOrder.compare(previous, reference) > 0)
-					|| !structuralKeys.add(structuralKey))
-					return canonicalReferences(groups.stream().flatMap(List::stream).toList());
-				previous = reference;
+		List<CandidateRealizationReference> first = null;
+		List<CandidateRealizationReference> previous = null;
+		int resultSize = 0;
+		int boundaryDuplicates = 0;
+		for(CanonicalReferenceGroup group : groups) {
+			List<CandidateRealizationReference> current =
+				Objects.requireNonNull(group, "canonical reference group").references();
+			if(current.isEmpty())
+				continue;
+			if(first == null)
+				first = current;
+			else {
+				CandidateRealizationReference previousLast = previous.get(previous.size() - 1);
+				CandidateRealizationReference currentFirst = current.get(0);
+				int compared = canonicalOrder.compare(previousLast, currentFirst);
+				if(compared > 0 || (compared == 0 && !previousLast.equals(currentFirst)))
+					return canonicalReferences(groups.stream()
+						.flatMap(candidate -> candidate.references().stream()).toList()).references();
+				if(compared == 0)
+					boundaryDuplicates++;
 			}
+			resultSize += current.size();
+			previous = current;
 		}
-		java.util.PriorityQueue<CanonicalReferenceCursor> cursors = new java.util.PriorityQueue<>(
-			(left, right) -> {
-				int compared = canonicalOrder.compare(left.reference(), right.reference());
-				if(compared != 0)
-					return compared;
-				compared = Integer.compare(left.groupIndex(), right.groupIndex());
-				return compared != 0 ? compared : Integer.compare(left.elementIndex(), right.elementIndex());
-			});
-		for(int groupIndex = 0; groupIndex < groups.size(); groupIndex++)
-			if(!groups.get(groupIndex).isEmpty())
-				cursors.add(new CanonicalReferenceCursor(groupIndex, 0,
-					groups.get(groupIndex).get(0)));
-		List<CandidateRealizationReference> merged = new ArrayList<>();
-		Object previousStructuralKey = null;
-		boolean hasPrevious = false;
-		while(!cursors.isEmpty()) {
-			CanonicalReferenceCursor cursor = cursors.remove();
-			Object structuralKey = structuralReferenceKey(cursor.reference());
-			if(!hasPrevious || !previousStructuralKey.equals(structuralKey)) {
-				merged.add(cursor.reference());
-				previousStructuralKey = structuralKey;
-				hasPrevious = true;
-			}
-			int nextIndex = cursor.elementIndex() + 1;
-			List<CandidateRealizationReference> group = groups.get(cursor.groupIndex());
-			if(nextIndex < group.size())
-				cursors.add(new CanonicalReferenceCursor(cursor.groupIndex(), nextIndex,
-					group.get(nextIndex)));
+		if(first == null)
+			return CanonicalReferenceGroup.EMPTY.references();
+		if(first == previous)
+			return first;
+		List<CandidateRealizationReference> merged =
+			new ArrayList<>(resultSize - boundaryDuplicates);
+		previous = null;
+		for(CanonicalReferenceGroup group : groups) {
+			List<CandidateRealizationReference> current = group.references();
+			if(current.isEmpty())
+				continue;
+			int start = previous != null && previous.get(previous.size() - 1).equals(current.get(0)) ? 1 : 0;
+			merged.addAll(current.subList(start, current.size()));
+			previous = current;
 		}
 		return List.copyOf(merged);
 	}
 
-	private static Object structuralReferenceKey(CandidateRealizationReference reference) {
-		Integer structuralHandle = PlacementIdentity.structuralHandle(reference);
-		return structuralHandle == null ? reference : structuralHandle;
+	static CanonicalReferenceGroup canonicalReferencesForTesting(
+		List<CandidateRealizationReference> references) {
+		return canonicalReferences(references);
 	}
 
-	private record CanonicalReferenceCursor(int groupIndex, int elementIndex,
-		CandidateRealizationReference reference) { }
+	static final class CanonicalReferenceGroup {
+		private static final CanonicalReferenceGroup EMPTY =
+			new CanonicalReferenceGroup(List.of());
+		private final List<CandidateRealizationReference> references;
+
+		private CanonicalReferenceGroup(List<CandidateRealizationReference> references) {
+			this.references = references;
+		}
+
+		List<CandidateRealizationReference> references() { return references; }
+	}
 
 	private Map<CandidateProofState,List<SelectedCandidateProof>> pruneDeadAlternatives(
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph) {
@@ -1796,7 +1806,7 @@ final class NativePlacementContinuity {
 				|| binding.source().rule().parentOccurrence() != occurrence))
 				throw new UnsupportedFactorizedRouteException();
 			groups.add(new RouteBindingGroup(occurrence, position, canonicalReferences(slot.stream()
-				.map(CandidateRealizationInputBinding::source).toList())));
+				.map(CandidateRealizationInputBinding::source).toList()).references()));
 		}
 		return List.copyOf(groups);
 	}
@@ -2336,9 +2346,9 @@ final class NativePlacementContinuity {
 	}
 	private record DirectRootAlternative(List<DirectRootDependency> dependencies) { }
 	private record DirectCandidateResult(boolean viable, boolean grounded,
-		boolean directlyGrounded, List<CandidateRealizationReference> groundedReferences) {
+		boolean directlyGrounded, CanonicalReferenceGroup groundedReferences) {
 		private static final DirectCandidateResult DEAD =
-			new DirectCandidateResult(false, false, false, List.of());
+			new DirectCandidateResult(false, false, false, CanonicalReferenceGroup.EMPTY);
 	}
 	private record DirectFootprint(Set<CompiledHopKey> occurrences, boolean overflow) { }
 	private record DirectCandidateSummary(DirectCandidateResult result,
