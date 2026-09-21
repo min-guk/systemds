@@ -177,7 +177,8 @@ final class ExactPhysicalSelection {
 		Map<RelocationDemandKey,RelocationActionKey> exact = new LinkedHashMap<>();
 		for(Alternative alternative : physical.alternativesInDecisionOrder())
 			for(var authority : alternative.inputAuthorities())
-				if(authority.relocationAction() != null)
+				// DIRECT_FOUT carries the action whose inactivity it proves; it did not select movement.
+				if(authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION)
 					bindExactAction(exact, authority.relocationAction(), alternative.decision(),
 						authority.inputPosition(), alternative.state());
 		// RelocationAction.compatibleConsumers is an option universe, not a statement

@@ -29,6 +29,7 @@ import org.apache.commons.lang3.tuple.Pair;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
@@ -37,6 +38,7 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -784,6 +786,41 @@ public final class NeutralPlacementGraphBuilder {
 			candidateRuleDomainKeys = groundedPublication.domainKeys();
 			candidateRuleFacts = groundedPublication.facts();
 			logicalTransientInputs = groundedPublication.logicalInputs();
+			// A formal TRead has no physical Hop input and CFG replay intentionally
+			// leaves function inputs untouched. Recompose the function-input transfer
+			// before pruning executable realizations, then ground the rebuilt rows in
+			// the same publication pass.
+			FunctionInputCandidateClosure publicationFunctionInputs =
+				closeLogicalFunctionInputCandidates(nodes, candidateRuleDomainKeys,
+					candidateRuleFacts, functionExpansion.constraints(), origins, factsByHop,
+					preliminaryAbstractFacts.shapes(), singlePartitions, occurrences.size());
+			nodes = publicationFunctionInputs.nodes();
+			candidateRuleDomainKeys = publicationFunctionInputs.domainKeys();
+			candidateRuleFacts = publicationFunctionInputs.facts();
+			if(!publicationFunctionInputs.changedOrdinals().isEmpty()) {
+				CandidateReplay functionPhysical = closePostCfgPhysicalCandidateDependencies(
+					occurrences, new CandidateReplay(nodes, candidateRuleDomainKeys,
+						candidateRuleFacts, logicalTransientInputs,
+						publicationFunctionInputs.changedOrdinals()), factsByHop,
+					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
+				materializationReplay = closeWorkerPoolMaterializationDependencies(
+					occurrences, functionPhysical.nodes(), functionPhysical.domainKeys(),
+					functionPhysical.facts(), functionPhysical.logicalInputs(), compiledInputEdges,
+					constraints, origins, factsByHop, concreteShapes,
+					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
+				nodes = materializationReplay.nodes();
+				candidateRuleDomainKeys = materializationReplay.domainKeys();
+				candidateRuleFacts = materializationReplay.facts();
+				logicalTransientInputs = materializationReplay.logicalInputs();
+				groundedPublication = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+					cfgReplayBaseline, origins, constraints);
+				nodes = groundedPublication.nodes();
+				candidateRuleDomainKeys = groundedPublication.domainKeys();
+				candidateRuleFacts = groundedPublication.facts();
+				logicalTransientInputs = groundedPublication.logicalInputs();
+			}
 			candidateRuleFacts = removeUngroundedStagingRealizations(candidateRuleFacts);
 			ExecutableNodeProjection projected = projectCandidateNodesToExecutableStates(
 				nodes, candidateRuleFacts, occurrences.size());
@@ -2811,10 +2848,16 @@ public final class NeutralPlacementGraphBuilder {
 								.forEach(seeds::add);
 					}
 					for(DurableAnchorKey seed : seeds.stream().distinct().sorted().toList()) {
+						DurableAnchorKey outputAnchor = transposeChangesPartitionAxis(
+							owner, seed.fType(), outputState.fType())
+							? transposedNativeOutputAnchor(seed, outputState.fType(),
+								fact.key().parentOccurrence())
+							: nativeOutputAnchor(seed, outputState.fType(), shapes.get(owner),
+								fact.key().parentOccurrence());
 						boolean dynamicOutputLayout = NativePlacementContinuity.recomputesNativePartitionRanges(
 							owner, outputState.fType());
-						DurableAnchorKey outputAnchor = dynamicOutputLayout ? null : nativeOutputAnchor(seed,
-							outputState.fType(), shapes.get(owner), fact.key().parentOccurrence());
+						if(dynamicOutputLayout)
+							outputAnchor = null;
 						if(outputAnchor == null && seed.fType() != outputState.fType() && !dynamicOutputLayout)
 							continue;
 						// Prove the identity that will actually be published. Pinning the
@@ -3185,6 +3228,34 @@ public final class NeutralPlacementGraphBuilder {
 			}
 		}
 		return new DurableAnchorKey("native-output:" + owner.normalizedSignature(), outputType, partitions);
+	}
+
+	private static boolean transposeChangesPartitionAxis(Hop owner, FType inputType, FType outputType) {
+		return owner instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS
+			&& (inputType == FType.ROW && outputType == FType.COL
+				|| inputType == FType.COL && outputType == FType.ROW);
+	}
+
+	/**
+	 * The FED transpose runtime publishes {@code FederationMap.transpose()}, so its
+	 * output ranges are the exact coordinate-wise transpose of the selected input
+	 * map even when the function-local Hop dimensions are still unknown.
+	 */
+	private static DurableAnchorKey transposedNativeOutputAnchor(DurableAnchorKey seed,
+		FType outputType, CompiledHopKey owner) {
+		if(seed == null || !((seed.fType() == FType.ROW && outputType == FType.COL)
+			|| (seed.fType() == FType.COL && outputType == FType.ROW)))
+			return null;
+		List<AnchorPartition> partitions = new ArrayList<>(seed.partitions().size());
+		for(AnchorPartition source : seed.partitions()) {
+			if(source.begin().size() != 2 || source.end().size() != 2)
+				return null;
+			partitions.add(new AnchorPartition(source.workerId(),
+				List.of(source.begin().get(1), source.begin().get(0)),
+				List.of(source.end().get(1), source.end().get(0))));
+		}
+		return new DurableAnchorKey("native-transpose:" + owner.normalizedSignature(),
+			outputType, partitions);
 	}
 
 	private static DurableAnchorKey nativeResidencyWitness(DurableAnchorKey seed, FType outputType,
@@ -4395,8 +4466,10 @@ public final class NeutralPlacementGraphBuilder {
 				throw new IllegalStateException("Function input replay lost an exact boundary endpoint");
 			Node boundary = closedNodes.get(boundaryIndex);
 			List<PlacementState> alternatives = logicalFunctionBoundaryAlternatives(source, target);
+			List<Exclusion> exclusions = boundary.exclusions().stream()
+				.filter(exclusion -> !alternatives.contains(exclusion.state())).toList();
 			Node replacement = new Node(boundary.key(), boundary.kind(), boundary.valueVersion(),
-				boundary.emittedWork(), alternatives, boundary.exclusions(), boundary.anchors());
+				boundary.emittedWork(), alternatives, exclusions, boundary.anchors());
 			closedNodes.set(boundaryIndex, replacement);
 			nodesByKey.put(binding.boundary(), replacement);
 		}
@@ -5938,13 +6011,24 @@ public final class NeutralPlacementGraphBuilder {
 								if(option.reference().realization().emissionState().placementState().fType()
 									!= input.fType())
 									return false;
-								if(pool != null)
-									return PlacementIdentity.samePhysicalWorkerPool(pool, targetPool);
+								if(pool != null) {
+									if(PlacementIdentity.samePhysicalWorkerPool(pool, targetPool))
+										return true;
+									if(isAggregateBinaryColTRow(fact)) {
+										DurableAnchorKey col = pool.fType() == FType.COL ? pool : targetPool;
+										DurableAnchorKey row = pool.fType() == FType.ROW ? pool : targetPool;
+										return PlacementIdentity.samePhysicalColTransposeAlignment(col, row);
+									}
+									return false;
+								}
 								DurableAnchorKey residency = option.clause().nativeWorkerPoolWitness();
-								return owner instanceof AggUnaryOp
-									&& emission.emissionState().placementState().output() == FederatedOutput.LOUT
-									&& residency != null && PlacementIdentity.samePhysicalWorkerEndpoints(
-										residency, targetPool);
+								DurableAnchorKey targetResidency = nativeResidencyWitness(
+									targetPool, input.fType(), fact.key().parentOccurrence());
+								boolean endpointDirect = endpointOnlyDirectLoutInput(owner, fact, emission)
+									&& residency != null && targetResidency != null
+									&& PlacementIdentity.samePhysicalWorkerEndpoints(
+										residency, targetResidency);
+								return endpointDirect;
 							}).map(option -> CandidateRealizationInputBinding.direct(inputPosition, option.reference()))
 							.distinct().toList());
 						for(NeutralPlacementGraph.RelocationAction action : consumerActions) {
@@ -5989,7 +6073,18 @@ public final class NeutralPlacementGraphBuilder {
 							.toList();
 						// A native FED/LOUT aggregate still depends on the exact selected
 						// input realization. Retain direct-only alternatives as well as uploads.
-						if(!proofs.isEmpty() || emission.emissionState().placementState().execType() == ExecType.FED
+						if(emission.derivedFoutAction() != null && !assignment.isEmpty()) {
+							// A derived FOUT executes the action's exact LOUT source first, then
+							// materializes that result at the already-bound durable output anchor.
+							// Preserve the output-action proof while attaching the exact direct or
+							// relocated input receipts required by the source computation.
+							for(CandidateEmissionRealization output : emission.realizations())
+								if(output.key().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
+									for(CandidateRealizationSupportClause outputClause : output.supportClauses())
+										exact.add(new CandidateEmissionRealization(output.key(),
+											mergeProofs(outputClause.proofDependencies(), proofs), assignment));
+						}
+						else if(!proofs.isEmpty() || emission.emissionState().placementState().execType() == ExecType.FED
 							&& emission.emissionState().placementState().output() == FederatedOutput.LOUT
 							&& !assignment.isEmpty()) {
 							if(emission.emissionState().placementState().output() == FederatedOutput.LOUT)
@@ -6024,10 +6119,42 @@ public final class NeutralPlacementGraphBuilder {
 		return List.copyOf(result);
 	}
 
+	private static List<PlacementProofKey> mergeProofs(List<PlacementProofKey> left,
+		List<PlacementProofKey> right) {
+		return java.util.stream.Stream.concat(left.stream(), right.stream()).distinct()
+			.sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList();
+	}
+
 	private static DurableAnchorKey candidatePool(ExactRealizationOption option) {
 		DurableAnchorKey anchor = option.reference().realization().durableAnchor();
 		return anchor != null ? anchor
 			: option.clause().nativeWorkerPoolLayoutExact() ? option.clause().nativeWorkerPoolWitness() : null;
+	}
+
+	/**
+	 * A local-output FED aggregate does not publish the dynamic input ranges as a
+	 * new map. Unary aggregates need only the selected input's worker residency.
+	 * COL x ROW aggregate-binary consumes co-resident transpose-aligned shards and
+	 * reduces their partial products locally; its exact source receipts preserve
+	 * that lineage while the endpoint witness identifies the runtime worker pool.
+	 */
+	private static boolean endpointOnlyDirectLoutInput(Hop owner, CandidateRuleFact fact,
+		CandidateEmissionFact emission) {
+		PlacementState state = emission.emissionState().placementState();
+		if(state.execType() != ExecType.FED || state.output() != FederatedOutput.LOUT
+			&& !emission.emissionState().derivedFedFout())
+			return false;
+		List<FType> present = fact.key().orderedInputs().stream()
+			.filter(CandidateInputState::present).map(CandidateInputState::fType).toList();
+		if(present.size() == 1 || owner instanceof AggUnaryOp)
+			return true;
+		return owner instanceof AggBinaryOp && isAggregateBinaryColTRow(fact);
+	}
+
+	private static boolean isAggregateBinaryColTRow(CandidateRuleFact fact) {
+		List<FType> present = fact.key().orderedInputs().stream()
+			.filter(CandidateInputState::present).map(CandidateInputState::fType).toList();
+		return present.size() == 2 && present.get(0) == FType.COL && present.get(1) == FType.ROW;
 	}
 
 	static void enumerateBindingAssignments(List<List<CandidateRealizationInputBinding>> choices,

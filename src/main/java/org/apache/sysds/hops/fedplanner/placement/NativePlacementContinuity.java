@@ -1167,7 +1167,8 @@ final class NativePlacementContinuity {
 			if(!placementData)
 				continue;
 			presentPlacementData = true;
-			NativePoolWitness dependencyWitness = dependencyWitness(owner, witness, input.fType(), position);
+			NativePoolWitness dependencyWitness = dependencyWitness(
+				owner, fact, witness, input.fType(), position);
 			if(dependencyWitness == null || input.fType() != dependencyWitness.fType || edge == null)
 				return null;
 			CandidateRealizationReference reference = pinned.get(edge.producer());
@@ -1229,8 +1230,8 @@ final class NativePlacementContinuity {
 		return handle;
 	}
 
-	private static NativePoolWitness dependencyWitness(Hop owner, NativePoolWitness outputWitness,
-		FType inputType, int position) {
+	private static NativePoolWitness dependencyWitness(Hop owner, CandidateRuleFact fact,
+		NativePoolWitness outputWitness, FType inputType, int position) {
 		// ROW matmul is the one existing candidate family whose selected
 		// BROADCAST RHS is a native same-pool input. Other families remain
 		// fail-closed until their rule/runtime contract proves the same property.
@@ -1267,8 +1268,11 @@ final class NativePlacementContinuity {
 			// both runtime operations rebuild their output ranges on the same workers.
 			if(inputWitness == null)
 				return null;
-			long placementInputs = owner == null ? 0 : owner.getInput().stream()
-				.filter(NativePlacementContinuity::isPlacementData).count();
+			long placementInputs = owner == null ? 0 : java.util.stream.IntStream
+				.range(0, Math.min(owner.getInput().size(), fact.key().orderedInputs().size()))
+				.filter(inputPosition -> fact.key().orderedInputs().get(inputPosition).present())
+				.filter(inputPosition -> isPlacementData(owner.getInput(inputPosition)))
+				.count();
 			return placementInputs == 1 ? inputWitness : inputWitness.withExactPartitionRanges();
 		}
 		return outputWitness;
@@ -1684,7 +1688,8 @@ final class NativePlacementContinuity {
 			if(!placementData)
 				continue;
 			presentPlacementData = true;
-			NativePoolWitness dependencyWitness = dependencyWitness(owner, witness, input.fType(), position);
+			NativePoolWitness dependencyWitness = dependencyWitness(
+				owner, fact, witness, input.fType(), position);
 			if(dependencyWitness == null || input.fType() != dependencyWitness.fType || edge == null) {
 				proof.valid = false;
 				continue;

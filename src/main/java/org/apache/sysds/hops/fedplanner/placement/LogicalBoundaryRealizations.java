@@ -50,7 +50,8 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 public final class LogicalBoundaryRealizations {
 	public record Relation(CompiledHopKey source, CompiledHopKey target) { }
 	private record Option(CandidateRealizationReference reference, PlacementState state,
-		DurableAnchorKey pool) { }
+		DurableAnchorKey pool, boolean exactLayout) { }
+	private record SupportedPool(DurableAnchorKey pool, boolean exactLayout) { }
 	private final Map<CompiledHopKey,List<CompiledHopKey>> sources = new IdentityHashMap<>();
 	private final Set<CompiledHopKey> declared = Collections.newSetFromMap(new IdentityHashMap<>());
 	private final Set<CompiledHopKey> encoded = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -109,11 +110,12 @@ public final class LogicalBoundaryRealizations {
 					for(CandidateEmissionRealization realization : emission.realizations())
 						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 							PlacementState state = realization.key().emissionState().placementState();
-							DurableAnchorKey pool = realization.provenWorkerPoolForOwnedClause(clause);
+							DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
 							if(state.output() == FederatedOutput.FOUT && pool == null)
 								continue; // Staging lineage is not native execution authority.
 							options.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
-								.add(new Option(CandidateRealizationReference.of(fact.key(), realization), state, pool));
+								.add(new Option(CandidateRealizationReference.of(fact.key(), realization), state,
+									pool, realization.nativeWorkerPoolLayoutExactForOwnedClause(clause)));
 						}
 		options.replaceAll((key, values) -> values.stream().distinct().toList());
 		relations = sources.entrySet().stream()
@@ -151,21 +153,45 @@ public final class LogicalBoundaryRealizations {
 		return relations;
 	}
 
-	private List<DurableAnchorKey> supportedPools(CompiledHopKey target, FType type) {
+	private List<SupportedPool> supportedPools(CompiledHopKey target, FType type) {
 		List<CompiledHopKey> exactSources = sources(target);
 		if(exactSources.isEmpty() || type == null || type == FType.PART || type == FType.OTHER
 			|| encoded.contains(target) && type != FType.ROW && type != FType.FULL)
 			return List.of();
-		return options.getOrDefault(exactSources.get(0), List.of()).stream().map(Option::pool)
-			.filter(pool -> pool != null && pool.fType() == type)
-			.filter(pool -> !encoded.contains(target) || type != FType.FULL || pool.partitions().size() == 1)
-			.filter(pool -> exactSources.stream().allMatch(source -> supportsPool(source, pool)))
-			.distinct().sorted().toList();
+		List<SupportedPool> supported = new ArrayList<>();
+		for(Option candidate : options.getOrDefault(exactSources.get(0), List.of())) {
+			DurableAnchorKey pool = candidate.pool();
+			if(pool == null || pool.fType() != type
+				|| encoded.contains(target) && type == FType.FULL && pool.partitions().size() != 1
+				|| exactSources.stream().anyMatch(source -> !supportsPoolEndpoints(source, pool)))
+				continue;
+			boolean exactLayout = exactSources.stream().allMatch(source -> supportsExactPool(source, pool));
+			SupportedPool replacement = new SupportedPool(pool, exactLayout);
+			int existing = -1;
+			for(int index = 0; index < supported.size(); index++)
+				if(PlacementIdentity.samePhysicalWorkerEndpoints(supported.get(index).pool(), pool)) {
+					existing = index;
+					break;
+				}
+			if(existing < 0)
+				supported.add(replacement);
+			else if(exactLayout && !supported.get(existing).exactLayout())
+				supported.set(existing, replacement);
+		}
+		supported.sort(java.util.Comparator.comparing(entry -> entry.pool().normalizedSignature()));
+		return List.copyOf(supported);
 	}
 
-	private boolean supportsPool(CompiledHopKey source, DurableAnchorKey pool) {
+	private boolean supportsPoolEndpoints(CompiledHopKey source, DurableAnchorKey pool) {
 		return options.getOrDefault(source, List.of()).stream().anyMatch(option -> option.pool() != null
 			&& option.state().output() == FederatedOutput.FOUT && option.state().fType() == pool.fType()
+			&& PlacementIdentity.samePhysicalWorkerEndpoints(option.pool(), pool));
+	}
+
+	private boolean supportsExactPool(CompiledHopKey source, DurableAnchorKey pool) {
+		return options.getOrDefault(source, List.of()).stream().anyMatch(option -> option.pool() != null
+			&& option.exactLayout() && option.state().output() == FederatedOutput.FOUT
+			&& option.state().fType() == pool.fType()
 			&& PlacementIdentity.samePhysicalWorkerPool(option.pool(), pool));
 	}
 
@@ -200,13 +226,18 @@ public final class LogicalBoundaryRealizations {
 					continue;
 				}
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
-				for(DurableAnchorKey pool : supportedPools(target, state.fType())) {
+				for(SupportedPool supported : supportedPools(target, state.fType())) {
+					DurableAnchorKey pool = supported.pool();
 					PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
 						target, "logical-boundary-sources=" + sources(target).stream()
 							.map(CompiledHopKey::normalizedSignature).toList());
-					realizations.add(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
-						"logical-boundary:" + target.normalizedSignature() + "|pool=" + pool.normalizedSignature(),
-						pool, List.of(proof), List.of()));
+					String lineage = "logical-boundary:" + target.normalizedSignature()
+						+ "|pool=" + pool.normalizedSignature();
+					realizations.add(supported.exactLayout()
+						? CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+							lineage, pool, List.of(proof), List.of())
+						: CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
+							lineage, pool, List.of(proof), List.of()));
 				}
 				// No pool is a staging result, not permission to use an arbitrary anchor.
 				emissions.add(realizations.isEmpty()
@@ -226,10 +257,14 @@ public final class LogicalBoundaryRealizations {
 					if(requiresNativeBoundaryProof(emission.emissionState()) && emission.derivedFoutAction() == null)
 						for(CandidateEmissionRealization realization : emission.realizations())
 							for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-								DurableAnchorKey pool = realization.provenWorkerPoolForOwnedClause(clause);
+								DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
+								boolean exactLayout = realization.nativeWorkerPoolLayoutExactForOwnedClause(clause);
 								if(pool == null || !hasCompleteBoundary(fact.key().parentOccurrence())
 									|| supportedPools(fact.key().parentOccurrence(), pool.fType()).stream()
-										.noneMatch(candidate -> PlacementIdentity.samePhysicalWorkerPool(candidate, pool)))
+										.noneMatch(candidate -> exactLayout
+											? candidate.exactLayout() && PlacementIdentity.samePhysicalWorkerPool(
+												candidate.pool(), pool)
+											: PlacementIdentity.samePhysicalWorkerEndpoints(candidate.pool(), pool)))
 									throw new IllegalArgumentException("Function value realization lacks all-source support: "
 										+ fact.key().normalizedSignature());
 							}
@@ -250,10 +285,18 @@ public final class LogicalBoundaryRealizations {
 			return false;
 		if(!requiresNativeBoundaryProof(target.key().emissionState()))
 			return true;
-		DurableAnchorKey targetPool = target.provenWorkerPool(targetClause);
-		DurableAnchorKey sourcePool = source.provenWorkerPool(sourceClause);
+		DurableAnchorKey targetPool = target.nativeWorkerPoolResidencyWitness(targetClause);
+		DurableAnchorKey sourcePool = source.nativeWorkerPoolResidencyWitness(sourceClause);
 		return targetPool != null && sourcePool != null
-			&& PlacementIdentity.samePhysicalWorkerPool(targetPool, sourcePool);
+			&& compatiblePools(targetPool, target.nativeWorkerPoolLayoutExact(targetClause),
+				sourcePool, source.nativeWorkerPoolLayoutExact(sourceClause));
+	}
+
+	private static boolean compatiblePools(DurableAnchorKey left, boolean leftExact,
+		DurableAnchorKey right, boolean rightExact) {
+		return leftExact && rightExact
+			? PlacementIdentity.samePhysicalWorkerPool(left, right)
+			: PlacementIdentity.samePhysicalWorkerEndpoints(left, right);
 	}
 
 	boolean canStillBeCompatible(Map<CompiledHopKey,PlacementState> assignment,
@@ -265,7 +308,8 @@ public final class LogicalBoundaryRealizations {
 				continue; // Existing value/call-boundary constraints still own local legality.
 			List<Option> inputs = possible(relation.source(), assignment, selected, remaining);
 			if(targets.stream().noneMatch(target -> target.pool() != null && inputs.stream().anyMatch(source ->
-				source.pool() != null && PlacementIdentity.samePhysicalWorkerPool(target.pool(), source.pool()))))
+				source.pool() != null && compatiblePools(target.pool(), target.exactLayout(),
+					source.pool(), source.exactLayout()))))
 				return false;
 		}
 		return true;
@@ -278,7 +322,8 @@ public final class LogicalBoundaryRealizations {
 		if(receipt != null)
 			return List.of(new Option(CandidateRealizationReference.of(receipt.rule(), receipt.realization()),
 				receipt.realization().key().emissionState().placementState(),
-				receipt.realization().provenWorkerPool(receipt.supportClause())));
+				receipt.realization().nativeWorkerPoolResidencyWitness(receipt.supportClause()),
+				receipt.realization().nativeWorkerPoolLayoutExact(receipt.supportClause())));
 		PlacementState state = assignment.get(key);
 		List<PlacementState> domain = remaining.get(key);
 		return options.getOrDefault(key, List.of()).stream()

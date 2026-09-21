@@ -554,6 +554,37 @@ public final class PlacementIdentity {
 		return !leftEndpoints.isEmpty() && leftEndpoints.equals(physicalWorkerEndpoints(right));
 	}
 
+	/**
+	 * Exact counterpart of the runtime {@code FederationMap.isAligned(..., COL_T)}
+	 * check used by aggregate-binary matrix multiplication. The COL partition
+	 * interval of each left worker must equal the ROW partition interval of the
+	 * same right worker; endpoint equality alone is not sufficient authority.
+	 */
+	public static boolean samePhysicalColTransposeAlignment(DurableAnchorKey col,
+		DurableAnchorKey row) {
+		Objects.requireNonNull(col, "column anchor");
+		Objects.requireNonNull(row, "row anchor");
+		if(col.fType() != FType.COL || row.fType() != FType.ROW
+			|| col.partitions().size() != row.partitions().size())
+			return false;
+		for(AnchorPartition left : col.partitions()) {
+			if(left.begin().size() < 2 || left.end().size() < 2)
+				return false;
+			String leftWorker = FederationUtils.canonicalFederatedWorkerAddress(left.workerId());
+			boolean matched = row.partitions().stream().anyMatch(right -> {
+				if(right.begin().size() < 2 || right.end().size() < 2)
+					return false;
+				String rightWorker = FederationUtils.canonicalFederatedWorkerAddress(right.workerId());
+				return leftWorker != null && leftWorker.equals(rightWorker)
+					&& left.begin().get(1).equals(right.begin().get(0))
+					&& left.end().get(1).equals(right.end().get(0));
+			});
+			if(!matched)
+				return false;
+		}
+		return true;
+	}
+
 	private static List<String> physicalWorkerEndpoints(DurableAnchorKey anchor) {
 		List<String> endpoints = new ArrayList<>(anchor.partitions().size());
 		for(AnchorPartition partition : anchor.partitions()) {

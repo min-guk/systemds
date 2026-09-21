@@ -32,6 +32,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -332,9 +333,15 @@ public final class NeutralPlacementGraph {
 									binding.inputPosition() == obligation.inputPosition()
 										&& binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT
 										&& CandidateSelections.matchesRealization(binding.source(), selectedSource))));
-					if(residency != null && selectedDirectConsumer
-						&& PlacementIdentity.samePhysicalWorkerEndpoints(
-							residency, action.key().durableAnchor()))
+					boolean sameDirectResidency = residency != null
+						&& (PlacementIdentity.samePhysicalWorkerEndpoints(
+							residency, action.key().durableAnchor())
+							|| action.key().materializationFType() == FType.COL
+								&& residency.fType() == FType.COL
+								&& action.key().durableAnchor().fType() == FType.ROW
+								&& PlacementIdentity.samePhysicalColTransposeAlignment(
+									residency, action.key().durableAnchor()));
+					if(selectedDirectConsumer && sameDirectResidency)
 						return false;
 				}
 			}

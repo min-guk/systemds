@@ -521,6 +521,14 @@ public final class RelocationSelections {
 			return new ExactEmissionScorer(this);
 		}
 
+		boolean hasExactRelocationDemand(CandidateSelectionReceipt receipt) {
+			List<IndexedDemand> demands = demandsByReceipt.get(receipt);
+			if(demands == null)
+				throw new IllegalArgumentException(
+					"Candidate receipt is outside its exact relocation index");
+			return !demands.isEmpty();
+		}
+
 		/**
 		 * Exact factor identities touched by one candidate row. Equal tokens mean
 		 * that two row variables can affect the same anchor constraint, relocation

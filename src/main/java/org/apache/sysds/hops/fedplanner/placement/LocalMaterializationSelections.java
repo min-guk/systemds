@@ -8,6 +8,7 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -281,6 +282,36 @@ public final class LocalMaterializationSelections {
 
 		int physicalEmissionCount() {
 			return physicalEmissionCount;
+		}
+
+		/**
+		 * Admissible lower bound for a partial exact candidate assignment. A local
+		 * emission is counted only when it is already required and no still-allowed
+		 * row can select a derived-FOUT realization that suppresses it.
+		 */
+		int minimumPossiblePhysicalEmissionCount(
+			Collection<CandidateSelectionReceipt> stillAllowed) {
+			boolean[] allowed = new boolean[selectedReceipts.length];
+			for(CandidateSelectionReceipt receipt : stillAllowed) {
+				Integer id = receiptIds.get(receipt);
+				if(id != null)
+					allowed[id] = true;
+			}
+			int lowerBound = 0;
+			for(ScoredProducer producer : producers) {
+				if(anySelected(producer.derivedReceiptIds()))
+					continue;
+				boolean futureDerived = false;
+				for(int receiptId : producer.derivedReceiptIds())
+					if(allowed[receiptId] && !selectedReceipts[receiptId]) {
+						futureDerived = true;
+						break;
+					}
+				if(!futureDerived && (producer.baseRequired()
+					|| anySelected(producer.localRequirementReceiptIds())))
+					lowerBound++;
+			}
+			return lowerBound;
 		}
 
 		/** Exact local-materialization factors whose truth value this row can change. */

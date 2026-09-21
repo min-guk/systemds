@@ -434,7 +434,13 @@ public class FederationUtils {
 		}
 		if (port < 0 || port > 65535)
 			return null;
-		return new InetSocketAddress(host, port);
+		// Canonical placement identity is lexical: resolving a worker hostname can
+		// change neither the durable host:port token nor its authority.  In addition
+		// to making planning depend on external DNS, the resolving constructor creates
+		// an UnknownHostException for every comparison of container-only names such as
+		// worker1 outside Docker. Candidate search performs these comparisons very
+		// frequently, so retain the parsed address without network resolution.
+		return InetSocketAddress.createUnresolved(host, port);
 	}
 
 	private static Integer socketPort(String renderedAddress) {
