@@ -257,7 +257,7 @@ public class OracleFacadeTest {
   }
 
   @Test
-  public void naryFederatedExecutionRejectsMultipleLocalMatrixInputs() {
+  public void naryFederatedExecutionAllowsMultipleLocalMatrixInputs() {
     Hop federated = matrix("federated", 4, 4);
     Hop localLeft = matrix("localLeft", 4, 4);
     Hop localRight = matrix("localRight", 4, 4);
@@ -267,10 +267,10 @@ public class OracleFacadeTest {
     OracleFacade.DecisionEvidence evidence = facade.decideWithEvidence(product,
         Arrays.asList(FType.ROW, null, null), null);
 
-    assertEquals("BuiltinNaryFEDInstruction can broadcast at most one local matrix",
-        ExecType.CP, evidence.caps().exec());
-    assertEquals(FederatedOutput.LOUT, evidence.caps().placement());
-    assertEquals(ReasonCode.BROADCAST_CONSTRAINT, evidence.caps().reason());
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
+    assertEquals(ReasonCode.OK, evidence.caps().reason());
   }
 
   @Test

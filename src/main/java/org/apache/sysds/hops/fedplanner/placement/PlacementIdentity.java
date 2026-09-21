@@ -67,7 +67,14 @@ public final class PlacementIdentity {
 		private final SearchSpaceMetrics metrics;
 		private final int maxEntries = Math.max(0,
 			Integer.getInteger("sysds.fedplanner.structuralArena.maxEntries", 65536));
+		private final int maxIdentityEntries = Math.max(0,
+			Integer.getInteger("sysds.fedplanner.structuralArena.maxIdentityEntries", 65536));
 		private int nextHandle = 1;
+
+		/** Handles here are already exact-equality checked within this arena's scope. */
+		private record ProofStructureKey(PlacementProofKind kind, int owner, String authority) { }
+		private record ClauseStructureKey(List<Integer> proofs, List<Integer> inputs,
+			Integer nativePool, boolean nativePoolLayoutExact) { }
 
 		private StructuralArena(SearchSpaceMetrics metrics) {
 			this.metrics = metrics;
@@ -80,7 +87,10 @@ public final class PlacementIdentity {
 					metrics.recordStructuralHandle(false, true);
 				return handle;
 			}
-			handle = byStructure.get(value);
+			Object key = structuralKey(value);
+			if(key == null)
+				return null;
+			handle = byStructure.get(key);
 			boolean created = handle == null;
 			if(created) {
 				if(byStructure.size() >= maxEntries) {
@@ -89,12 +99,47 @@ public final class PlacementIdentity {
 					return null;
 				}
 				handle = nextHandle++;
-				byStructure.put(value, handle);
+				byStructure.put(key, handle);
 			}
-			byIdentity.put(value, handle);
+			if(byIdentity.size() < maxIdentityEntries)
+				byIdentity.put(value, handle);
 			if(metrics != null)
 				metrics.recordStructuralHandle(created, false);
 			return handle;
+		}
+
+		private Object structuralKey(Object value) {
+			if(value instanceof PlacementProofKey proof) {
+				Integer owner = proof.owner() == null ? Integer.valueOf(0) : handle(proof.owner());
+				return owner == null ? null : new ProofStructureKey(proof.kind(), owner,
+					proof.authoritySignature());
+			}
+			if(value instanceof CandidateRealizationSupportClause clause) {
+				List<Integer> proofs = handles(clause.proofDependencies());
+				if(proofs == null)
+					return null;
+				List<Integer> inputs = handles(clause.inputBindings());
+				if(inputs == null)
+					return null;
+				Integer pool = clause.nativeWorkerPoolWitness() == null ? null
+					: handle(clause.nativeWorkerPoolWitness());
+				if(clause.nativeWorkerPoolWitness() != null && pool == null)
+					return null;
+				return new ClauseStructureKey(proofs, inputs, pool,
+					clause.nativeWorkerPoolLayoutExact());
+			}
+			return value;
+		}
+
+		private List<Integer> handles(List<?> values) {
+			List<Integer> result = new ArrayList<>(values.size());
+			for(Object value : values) {
+				Integer child = handle(value);
+				if(child == null)
+					return null;
+				result.add(child);
+			}
+			return result;
 		}
 	}
 

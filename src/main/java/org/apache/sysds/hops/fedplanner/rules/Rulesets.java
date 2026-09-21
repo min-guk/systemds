@@ -3473,12 +3473,6 @@ public final class Rulesets {
         if (inFTypes.get(inputPosition) == null && sig.inputIsMatrix(inputPosition))
           localMatrixInputs++;
       }
-      // BuiltinNaryFEDInstruction creates one broadcast-sliced request array and
-      // therefore accepts at most one coordinator-resident matrix. Local scalars
-      // are embedded as literals and do not consume this single broadcast slot.
-      if (localMatrixInputs > 1)
-        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-
       FType axis = null;
       boolean hasFedInput = false;
       boolean hasFullInput = false;

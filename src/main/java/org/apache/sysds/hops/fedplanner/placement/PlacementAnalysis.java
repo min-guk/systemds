@@ -134,10 +134,17 @@ public final class PlacementAnalysis {
 		}
 
 		@Override public int compareTo(CanonicalText that) {
+			if(this == that)
+				return 0;
 			CanonicalTextCursor leftCursor = new CanonicalTextCursor(this);
 			CanonicalTextCursor rightCursor = new CanonicalTextCursor(that);
 			int compared = 0;
 			while(compared < length && compared < that.length) {
+				int shared = leftCursor.skipSharedSubtree(rightCursor);
+				if(shared != 0) {
+					compared += shared;
+					continue;
+				}
 				String leftText = leftCursor.text();
 				String rightText = rightCursor.text();
 				// Structural caches deliberately share immutable child signatures. When
@@ -181,6 +188,36 @@ public final class PlacementAnalysis {
 		}
 
 		private void skipText() { advanceText(); }
+
+		/** Skip a shared immutable rope suffix only when both cursors are at the same position in it. */
+		private int skipSharedSubtree(CanonicalTextCursor that) {
+			if(text == null || text != that.text || offset != that.offset)
+				return 0;
+			var left = stack.descendingIterator();
+			var right = that.stack.descendingIterator();
+			int frames = 0;
+			int remaining = text.length() - offset;
+			while(left.hasNext() && right.hasNext()) {
+				CanonicalTextFrame leftFrame = left.next();
+				CanonicalTextFrame rightFrame = right.next();
+				if(leftFrame.value != rightFrame.value || leftFrame.index != rightFrame.index)
+					break;
+				for(int index = leftFrame.index; index < leftFrame.value.pieces.size(); index++) {
+					Object piece = leftFrame.value.pieces.get(index);
+					remaining += piece instanceof String literal ? literal.length() : ((CanonicalText) piece).length;
+				}
+				frames++;
+			}
+			if(frames == 0)
+				return 0;
+			for(int index = 0; index < frames; index++) {
+				stack.removeLast();
+				that.stack.removeLast();
+			}
+			advanceText();
+			that.advanceText();
+			return remaining;
+		}
 
 		private void advanceText() {
 			text = null;

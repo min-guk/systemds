@@ -215,23 +215,27 @@ public class NeutralPlacementFixedPointCompositionTest {
 
 	@Test
 	public void dirtyDirectClosureMatchesFullRecomputeAtTheComposedTransferBoundary() throws Exception {
-		SearchSpaceMetrics incrementalMetrics = new SearchSpaceMetrics();
-		PlacementAnalysis incremental = new NeutralPlacementGraphBuilder(
-			null, incrementalMetrics, true).buildAnalysis(compileProtected(ACTIONS));
-		PlacementAnalysis full = new NeutralPlacementGraphBuilder(
-			null, new SearchSpaceMetrics(), false).buildAnalysis(compileProtected(ACTIONS));
+		for(String script : List.of(ACTIONS, TRANSIENT_CFG, FUNCTION)) {
+			SearchSpaceMetrics incrementalMetrics = new SearchSpaceMetrics();
+			PlacementAnalysis incremental = new NeutralPlacementGraphBuilder(
+				null, incrementalMetrics, true).buildAnalysis(compileProtected(script));
+			PlacementAnalysis full = new NeutralPlacementGraphBuilder(
+				null, new SearchSpaceMetrics(), false).buildAnalysis(compileProtected(script));
 
-		Assert.assertEquals(full.analysisFingerprint(), incremental.analysisFingerprint());
-		Assert.assertEquals(full.graph().normalizedSignatureWithLegalAssignments(),
-			incremental.graph().normalizedSignatureWithLegalAssignments());
-		Assert.assertEquals(full.candidateRuleFacts().orderedFacts(),
-			incremental.candidateRuleFacts().orderedFacts());
-		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
-			incremental.logicalTransientInputsInCanonicalOrder());
-		Assert.assertTrue("fixture must execute at least one revision-local dirty pass",
-			incrementalMetrics.snapshot().incrementalPasses() > 0);
-		Assert.assertTrue("an independent component must be reused rather than rebuilt",
-			incrementalMetrics.snapshot().incrementalFactsReused() > 0);
+			Assert.assertEquals(full.analysisFingerprint(), incremental.analysisFingerprint());
+			Assert.assertEquals(full.graph().normalizedSignatureWithLegalAssignments(),
+				incremental.graph().normalizedSignatureWithLegalAssignments());
+			Assert.assertEquals(full.candidateRuleFacts().orderedFacts(),
+				incremental.candidateRuleFacts().orderedFacts());
+			Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
+				incremental.logicalTransientInputsInCanonicalOrder());
+			if(ACTIONS.equals(script)) {
+				Assert.assertTrue("fixture must execute at least one revision-local dirty pass",
+					incrementalMetrics.snapshot().incrementalPasses() > 0);
+				Assert.assertTrue("an independent component must be reused rather than rebuilt",
+					incrementalMetrics.snapshot().incrementalFactsReused() > 0);
+			}
+		}
 	}
 
 	private static void assertSupportFactorizationPreservesClauseOwnership(PlacementAnalysis analysis) {

@@ -373,6 +373,7 @@ public class DMLTranslator
 			// available.  Normalize lowering-level physical choices only now, while
 			// placement is still unbound but dimensions and memory costs are final.
 			dmlp.requirePlacementAnalysisUnboundForHopRewrite();
+			FederatedLocalZeroCallsiteSpecializer.specialize(dmlp);
 			ProgramRewriter physicalNormalizer = new ProgramRewriter(
 				new RewriteFederatedPlannerPhysicalNormalization());
 			physicalNormalizer.rewriteProgramHopDAGs(dmlp, false);
@@ -386,7 +387,12 @@ public class DMLTranslator
 				new org.apache.sysds.hops.ipa.FunctionCallSizeInfo(fgraph);
 			if(collectCandidateTiming)
 				CandidateFormationTiming.commonPreparationComplete();
+			boolean phaseMarkers = Boolean.getBoolean("sysds.fedplanner.phaseMarkers");
+			if(phaseMarkers)
+				System.err.println("G009_PHASE analysis_begin nanoTime=" + System.nanoTime());
 			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
+			if(phaseMarkers)
+				System.err.println("G009_PHASE analysis_end nanoTime=" + System.nanoTime());
 			if(collectCandidateTiming)
 				CandidateFormationTiming.analysisComplete();
 
@@ -420,7 +426,11 @@ public class DMLTranslator
 				PlannerPipelineTiming.begin(tFedPlanner);
 			AFederatedPlanner.PlannerInvocationReceipt receipt;
 			try {
+				if(phaseMarkers)
+					System.err.println("G009_PHASE planner_begin nanoTime=" + System.nanoTime());
 				receipt = implementation.rewriteProgram(dmlp, fgraph, fcallSizes, analysis);
+				if(phaseMarkers)
+					System.err.println("G009_PHASE planner_end nanoTime=" + System.nanoTime());
 				if(receipt.analysis() != analysis)
 					throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
 			}

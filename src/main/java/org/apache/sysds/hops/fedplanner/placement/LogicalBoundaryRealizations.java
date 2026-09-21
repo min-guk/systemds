@@ -218,6 +218,7 @@ public final class LogicalBoundaryRealizations {
 				continue;
 			}
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			boolean unchanged = true;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				PlacementState state = emission.emissionState().placementState();
 				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
@@ -225,6 +226,7 @@ public final class LogicalBoundaryRealizations {
 					emissions.add(emission);
 					continue;
 				}
+				unchanged = false;
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				for(SupportedPool supported : supportedPools(target, state.fType())) {
 					DurableAnchorKey pool = supported.pool();
@@ -244,8 +246,8 @@ public final class LogicalBoundaryRealizations {
 					? new CandidateEmissionFact(emission.emissionState(), emission.executionFType())
 					: new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), null, realizations));
 			}
-			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
-				fact.profile(), emissions, fact.failureCode()));
+			result.add(unchanged ? fact : new CandidateRuleFact(fact.key(), fact.status(),
+				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(result);
 	}

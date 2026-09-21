@@ -146,7 +146,7 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 		MatrixLineagePair base = selectBaseFederatedInput(ec);
 		List<CPOperand> matrixOps = new ArrayList<>();
 		List<Long> matrixIds = new ArrayList<>();
-		FederatedRequest[] broadcastSlices = null;
+		List<FederatedRequest[]> broadcastSlices = new ArrayList<>();
 
 		for (int idx = 0; idx < inputs.length; idx++) {
 			CPOperand in = inputs[idx];
@@ -173,12 +173,10 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 				matrixIds.add(mo.getFedMapping().getID());
 			}
 			else {
-				if (broadcastSlices != null) {
-					throw new DMLRuntimeException("Federated nary ops support at most one local matrix input.");
-				}
-				broadcastSlices = base.getFedMapping().broadcastSliced(mo, false);
+				FederatedRequest[] slices = base.getFedMapping().broadcastSliced(mo, false);
+				broadcastSlices.add(slices);
 				matrixOps.add(in);
-				matrixIds.add(broadcastSlices[0].getID());
+				matrixIds.add(slices[0].getID());
 			}
 		}
 
@@ -191,9 +189,12 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 			inIds[i] = matrixIds.get(i);
 
 		FederatedRequest fr = FederationUtils.callInstruction(instString, output, inOps, inIds, true);
-		Future<FederatedResponse>[] ffr = (broadcastSlices == null)
+		Future<FederatedResponse>[] ffr = broadcastSlices.isEmpty()
 			? base.getFedMapping().execute(getTID(), true, fr)
-			: base.getFedMapping().execute(getTID(), true, broadcastSlices, fr);
+			: broadcastSlices.size() == 1
+				? base.getFedMapping().execute(getTID(), true, broadcastSlices.get(0), fr)
+				: base.getFedMapping().executeMultipleSlices(getTID(), true,
+					broadcastSlices.toArray(new FederatedRequest[0][]), new FederatedRequest[] {fr});
 
 		long nnz = FederationUtils.sumNonZeros(ffr);
 		setOutputFedMapping(ec, base.getMO(), fr.getID(), nnz);

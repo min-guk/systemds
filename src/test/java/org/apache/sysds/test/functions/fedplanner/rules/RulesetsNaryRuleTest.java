@@ -92,11 +92,23 @@ public class RulesetsNaryRuleTest {
   }
 
   @Test
-  public void twoLocalMatricesRemainRejected() {
+  public void twoLocalMatricesBroadcastWithRowBase() {
+    OpCaps caps = caps(Arrays.asList(FType.ROW, null, null), unknownShape(),
+        InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
+    assertEquals(FType.ROW, caps.foutFType().orElse(null));
+  }
+
+  @Test
+  public void twoLocalMatricesNeedSingleRangeForFullBase() {
     OpCaps caps = caps(Arrays.asList(FType.FULL, null, null), unknownShape(),
         InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX);
+    assertCp(caps, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
 
-    assertCp(caps, ReasonCode.BROADCAST_CONSTRAINT);
+    assertFederatedFull(Arrays.asList(FType.FULL, null, null),
+        new ShapeHint(-1, -1, 0, true),
+        InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX);
   }
 
   @Test

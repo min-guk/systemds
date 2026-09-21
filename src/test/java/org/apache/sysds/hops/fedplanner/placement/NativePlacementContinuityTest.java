@@ -433,6 +433,32 @@ public class NativePlacementContinuityTest {
 		invalidated.proveCandidateAlternatives(reference, seed.anchor);
 		Assert.assertTrue("an explicitly invalidated footprint must be solved again",
 			metrics.snapshot().proofGraphsBuilt() > graphBuilds);
+
+		// A caller may omit a changed occurrence from its dirty hint. Exact row
+		// comparison must still invalidate every cached support that uses it.
+		List<CandidateRuleFact> changedFacts = new ArrayList<>(full.candidates);
+		int sourceIndex = -1;
+		for(int i = 0; i < changedFacts.size(); i++)
+			if(changedFacts.get(i).key().parentOccurrence() == source.key) {
+				sourceIndex = i;
+				break;
+			}
+		Assert.assertTrue(sourceIndex >= 0);
+		CandidateRuleFact original = changedFacts.get(sourceIndex);
+		CandidateEmissionFact emission = original.allowedEmissionFacts().get(0);
+		List<CandidateEmissionRealization> realizations = new ArrayList<>(emission.realizations());
+		realizations.add(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+			"revision-added-alternative", List.of(), List.of()));
+		CandidateEmissionFact changedEmission = new CandidateEmissionFact(emission.emissionState(),
+			emission.executionFType(), emission.derivedFoutAction(), realizations);
+		changedFacts.set(sourceIndex, new CandidateRuleFact(original.key(), original.status(),
+			original.capability(), original.shapeProof(), original.profile(), List.of(changedEmission),
+			original.failureCode()));
+		long beforeOmittedDirty = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity omittedDirty = firstRevision.nextRevision(changedFacts, Set.of());
+		omittedDirty.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertTrue("changed rows cannot reuse a support through an incomplete dirty hint",
+			metrics.snapshot().proofGraphsBuilt() > beforeOmittedDirty);
 	}
 
 	@Test
@@ -743,11 +769,29 @@ public class NativePlacementContinuityTest {
 		Assert.assertTrue("FULL right indexing filters and resizes the map but retains its sole worker endpoint",
 			full.resolver().proves(List.of(initialWrite.key), functionInput.anchor));
 
+		Fixture singleRow = new Fixture(FType.ROW);
+		Ref singleRowInput = singleRow.source("single", anchor(FType.ROW, "worker1:8001", 0, 50));
+		singleRowInput.hop.setDim1(50);
+		Ref singleRowSlice = singleRow.rightIndex("single[,column]", singleRowInput);
+		Assert.assertFalse("runtime filter retypes a single ROW partition to FULL",
+			singleRow.resolver().proves(List.of(singleRowSlice.key), singleRowInput.anchor));
+
 		Fixture row = new Fixture(FType.ROW);
-		Ref rowInput = row.source("X", anchor(FType.ROW, "worker1:8001", 0, 50));
+		DurableAnchorKey partitioned = new DurableAnchorKey("two-row-workers", FType.ROW, List.of(
+			partition("worker1:8001", 0, 25), partition("worker2:8002", 25, 50)));
+		Ref rowInput = row.source("X", partitioned);
+		rowInput.hop.setDim1(50);
 		Ref rowSlice = row.rightIndex("X[,column]", rowInput);
-		Assert.assertFalse("ROW indexing may filter or resize the partition axis and is not a continuity proof",
+		Assert.assertTrue("a proven full-row column slice preserves every ROW worker and row interval",
 			row.resolver().proves(List.of(rowSlice.key), rowInput.anchor));
+		Ref partialRowSlice = row.rightIndex("X[2:50,column]", rowInput, new LiteralOp(2L));
+		Assert.assertFalse("partial ROW indexing can filter or resize the partition axis",
+			row.resolver().proves(List.of(partialRowSlice.key), rowInput.anchor));
+		Ref dynamicRowSlice = row.rightIndex("X[unknown:50,column]", rowInput,
+			new DataOp("unknown", DataType.SCALAR, ValueType.INT64, OpOpData.TRANSIENTREAD,
+				"unknown", -1, -1, -1, 1000));
+		Assert.assertFalse("unknown ROW bounds cannot prove that every worker survives",
+			row.resolver().proves(List.of(dynamicRowSlice.key), rowInput.anchor));
 	}
 
 	@Test
@@ -1274,8 +1318,12 @@ public class NativePlacementContinuityTest {
 		}
 
 		private Ref rightIndex(String name, Ref input) {
+			return rightIndex(name, input, new LiteralOp(1L));
+		}
+
+		private Ref rightIndex(String name, Ref input, Hop rowLower) {
 			IndexingOp hop = new IndexingOp(name, DataType.MATRIX, ValueType.FP64, input.hop,
-				new LiteralOp(1L), new LiteralOp(50L), new LiteralOp(1L), new LiteralOp(1L), false, true);
+				rowLower, new LiteralOp(50L), new LiteralOp(1L), new LiteralOp(1L), false, true);
 			Ref result = add(name, hop, NodeKind.OPERATION, VersionKind.ORDINARY, null);
 			CandidateRuleKey rule = new CandidateRuleKey(result.key, List.of(
 				CandidateInputState.present(fType), CandidateInputState.absentLocal(),

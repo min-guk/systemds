@@ -124,6 +124,10 @@ public class FunctionOp extends MultiThreadedHop
 		return _outputHops;
 	}
 
+	public void setOutputs(ArrayList<Hop> outputs) {
+		_outputHops = outputs;
+	}
+
 	public static Hop getPreferredMultiReturnFunctionOutputSourceForTransientRead(DataOp transientRead,
 			List<Hop> sourceHops) {
 		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD
@@ -281,6 +285,10 @@ public class FunctionOp extends MultiThreadedHop
 	
 	public void setCallOptimized(boolean opt) {
 		_opt = opt;
+	}
+
+	public boolean isCallOptimized() {
+		return _opt;
 	}
 	
 	public boolean isPseudoFunctionCall() {

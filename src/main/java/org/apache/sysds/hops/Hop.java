@@ -213,6 +213,14 @@ public abstract class Hop implements ParseInfo {
 		return _plannerOriginHopID;
 	}
 
+	/** Give a detached pre-planning function clone its own origin, not its source function's authority. */
+	public void resetPlannerOriginForDetachedPreplanningClone() {
+		if(_plannerPlacementSelected || _plannerLoweringAuxiliaryKind != null
+			|| _plannerRewriteReplacementKind != null || _plannerLoweringOwnerRecompileSignature != null)
+			throw new IllegalStateException("Cannot detach a Hop with committed planner authority");
+		_plannerOriginHopID = _ID;
+	}
+
 	/**
 	 * Preserve a committed occurrence when recompilation clones its exact source Hop.
 	 * The caller supplies the source ID from the deep-copy memo, not from a signature match.

@@ -228,6 +228,28 @@ public class CandidateRealizationCanonicalizationTest {
 	}
 
 	@Test
+	public void sharedNestedPrefixOrderingPreservesUtf16AndDuplicateContract() {
+		PlacementProofKey shared = proof("shared-😀-" + "long".repeat(200));
+		List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+		for(String suffix : List.of("empty", "a", "aa", "é", "😀", "z"))
+			clauses.add(new CandidateRealizationSupportClause(List.of(shared, proof(suffix)), List.of()));
+		for(CandidateRealizationSupportClause left : clauses)
+			for(CandidateRealizationSupportClause right : clauses)
+				Assert.assertEquals(Integer.signum(legacySignature(left).compareTo(legacySignature(right))),
+					Integer.signum(PlacementAnalysis.compareCanonicalOrdering(left, right)));
+		Collections.reverse(clauses);
+		CandidateEmissionRealization realization = new CandidateEmissionRealization(
+			fixture().get(0).key(), clauses);
+		Assert.assertEquals(clauses.stream().map(CandidateRealizationCanonicalizationTest::legacySignature)
+			.sorted().toList(), realization.supportClauses().stream()
+			.map(CandidateRealizationSupportClause::normalizedSignature).toList());
+		List<CandidateRealizationSupportClause> duplicate = new ArrayList<>(clauses);
+		duplicate.add(copy(clauses.get(0)));
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> new CandidateEmissionRealization(fixture().get(0).key(), duplicate));
+	}
+
+	@Test
 	public void normalizedSignatureCacheBudgetNeverChangesCanonicalBytes() {
 		CandidateRealizationSupportClause clause = fixture().get(0).supportClauses().get(0);
 		PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(0L);

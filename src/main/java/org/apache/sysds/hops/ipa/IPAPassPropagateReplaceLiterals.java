@@ -99,8 +99,6 @@ public class IPAPassPropagateReplaceLiterals extends IPAPass
 		LocalVariableMap constants = new LocalVariableMap();
 		//propagate final literals across statement blocks
 		for( StatementBlock sb : sbs ) {
-			//delete update constant variables
-			constants.removeAllIn(sb.variablesUpdated().getVariableNames());
 			//literal replacement
 			rReplaceLiterals(sb, constants);
 			//extract literal assignments
@@ -117,6 +115,11 @@ public class IPAPassPropagateReplaceLiterals extends IPAPass
 	
 	private void rReplaceLiterals(StatementBlock sb, LocalVariableMap constants) 
 	{
+		// An if predicate observes the incoming value before either body can update it.
+		// Replacing it after killing all variablesUpdated loses safe constants such as
+		// GLM's known link_type when only the link_type==0 branch reassigns it.
+		if( sb instanceof IfStatementBlock )
+			replaceLiterals(((IfStatementBlock)sb).getPredicateHops(), constants);
 		//remove updated literals
 		for( String varname : sb.variablesUpdated().getVariableNames() )
 			if( constants.keySet().contains(varname) )

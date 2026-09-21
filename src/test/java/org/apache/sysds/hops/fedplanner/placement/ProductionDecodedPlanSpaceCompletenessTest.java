@@ -135,6 +135,28 @@ public class ProductionDecodedPlanSpaceCompletenessTest {
 			.anyMatch(receipt -> bindingPositions(receipt).equals(Set.of(0, 1))));
 		Assert.assertTrue("D must retain the exact selected U and V occurrences", declaredDomains.get("D").stream()
 			.anyMatch(receipt -> hasSources(receipt, roles.get("U"), roles.get("V"))));
+		// Deliberately remove one distinguishable source layout and one consumer
+		// geometry from the *unfiltered* input relation. The literal eight-plan
+		// contract must detect missing joint plans, not merely preserve row counts.
+		Map<String,List<CandidateSelectionReceipt>> withoutNativeX = new LinkedHashMap<>(supportDomains);
+		withoutNativeX.put("X", supportDomains.get("X").stream()
+			.filter(receipt -> !"NATIVE_LINEAGE".equals(
+				receipt.realization().key().layoutKind().name())).toList());
+		assertMissingHalfOfLiteralPlans("source-layout mutation", expected,
+			decodeFullSupport(roles, withoutNativeX).decodedPlans());
+		Map<String,List<CandidateSelectionReceipt>> withoutBGeometryD = new LinkedHashMap<>(supportDomains);
+		withoutBGeometryD.put("D", supportDomains.get("D").stream()
+			.filter(receipt -> !B_GEOMETRY.equals(geometry(receipt))).toList());
+		assertMissingHalfOfLiteralPlans("consumer-geometry mutation", expected,
+			decodeFullSupport(roles, withoutBGeometryD).decodedPlans());
+	}
+
+	private static void assertMissingHalfOfLiteralPlans(String mutation, Set<String> expected,
+		Set<String> actual) {
+		Set<String> missing = new LinkedHashSet<>(expected);
+		missing.removeAll(actual);
+		Assert.assertEquals(mutation + " must eliminate four distinct joint plans", 4, missing.size());
+		Assert.assertTrue(mutation + " must not invent a plan", expected.containsAll(actual));
 	}
 
 	private static long cartesianSize(Map<String,Integer> domainSizes) {

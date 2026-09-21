@@ -58,6 +58,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -239,12 +240,17 @@ final class NativePlacementContinuity {
 		NativePlacementContinuity next = new NativePlacementContinuity(nodesByKey, originsByKey,
 			candidateFacts, compiledEdges, reachingDefinitions, incompleteSources, privacyByKey,
 			metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+		// Many cached supports share the same occurrence. Exact row equality is
+		// still required even when the caller's dirty set is incomplete, but one
+		// comparison per occurrence is enough for this immutable revision pair.
+		Map<CompiledHopKey,Boolean> unchangedRows = new IdentityHashMap<>();
 		long reused = 0;
 		for(var entry : candidateTopologies.entrySet()) {
 			CompiledHopKey occurrence = entry.getKey().occurrence;
-			if(invalidatedOccurrences.contains(occurrence)
-				|| !candidateFactsByKey.getOrDefault(occurrence, List.of()).equals(
-					next.candidateFactsByKey.getOrDefault(occurrence, List.of())))
+			if(!unchangedRows.computeIfAbsent(occurrence, key ->
+				!invalidatedOccurrences.contains(key)
+					&& candidateFactsByKey.getOrDefault(key, List.of()).equals(
+						next.candidateFactsByKey.getOrDefault(key, List.of()))))
 				continue;
 			if(next.cacheTopology(entry.getKey(), next.reindexTopology(entry.getValue())))
 				reused++;
@@ -253,9 +259,10 @@ final class NativePlacementContinuity {
 		for(var entry : completedSupportMemo.entrySet()) {
 			SupportMemoEntry support = entry.getValue();
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
-				invalidatedOccurrences.contains(occurrence)
-					|| !candidateFactsByKey.getOrDefault(occurrence, List.of()).equals(
-						next.candidateFactsByKey.getOrDefault(occurrence, List.of())));
+				!unchangedRows.computeIfAbsent(occurrence, key ->
+					!invalidatedOccurrences.contains(key)
+						&& candidateFactsByKey.getOrDefault(key, List.of()).equals(
+							next.candidateFactsByKey.getOrDefault(key, List.of()))));
 			if(!unchanged)
 				continue;
 			CandidateSupportQueryKey nextKey = next.candidateSupportQueryKey(
@@ -1907,10 +1914,45 @@ final class NativePlacementContinuity {
 					|| witness.fType == FType.FULL && witness.singleEndpoint();
 			}
 		}
-		if(hop instanceof IndexingOp && hop.getDataType().isMatrix()
+		if(hop instanceof IndexingOp index && hop.getDataType().isMatrix()
 			&& !hop.getInput().isEmpty() && hop.getInput(0).getDataType().isMatrix())
-			return witness.fType == FType.FULL && witness.singleEndpoint();
+			return witness.fType == FType.FULL && witness.singleEndpoint()
+				|| exactFullRowColumnSlice(index, witness, fact);
 		return false;
+	}
+
+	/** A literal column slice of every row keeps every ROW partition on its original worker. */
+	private static boolean exactFullRowColumnSlice(IndexingOp index, NativePoolWitness witness,
+		CandidateRuleFact fact) {
+		if(witness.fType != FType.ROW || index.getInput().size() != 5
+			|| !witness.exactPartitionRanges || !retainsRuntimeRowMapType(witness)
+			|| fact.key().orderedInputs().size() != 5 || !index.isAllRows()
+			|| !(index.getInput(1) instanceof LiteralOp)
+			|| !(index.getInput(2) instanceof LiteralOp)
+			|| fact.key().orderedInputs().get(0).fType() != FType.ROW
+			|| !fact.key().orderedInputs().get(0).present()
+			|| fact.key().orderedInputs().subList(1, 5).stream().anyMatch(CandidateInputState::present)
+			|| !(index.getInput(3) instanceof LiteralOp colLower)
+			|| !(index.getInput(4) instanceof LiteralOp colUpper))
+			return false;
+		long columns = index.getInput(0).getDim2();
+		return columns > 0 && colLower.getLongValue() >= 1
+			&& colUpper.getLongValue() >= colLower.getLongValue()
+			&& colUpper.getLongValue() <= columns;
+	}
+
+	/** FederationMap.filter retypes one ROW range to FULL and overlapping full ranges to BROADCAST. */
+	private static boolean retainsRuntimeRowMapType(NativePoolWitness witness) {
+		List<AxisInterval> intervals = witness.partitionAxisIntervals.stream()
+			.sorted(java.util.Comparator.comparingLong(AxisInterval::begin)
+				.thenComparingLong(AxisInterval::end)).toList();
+		if(intervals.size() < 2)
+			return false;
+		for(int i = 0; i < intervals.size(); i++)
+			if(intervals.get(i).begin() < 0 || intervals.get(i).end() <= intervals.get(i).begin()
+				|| i > 0 && intervals.get(i - 1).end() > intervals.get(i).begin())
+				return false;
+		return true;
 	}
 
 	private static boolean requiresExactPartitionAlignment(Hop hop, NativePoolWitness witness,
