@@ -1,0 +1,118 @@
+{
+  "ignoredTests": [
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/IndependentPlanSpaceGenerationCompletenessTest.java",
+      "line": 185,
+      "publicOnly": true,
+      "reason": "Requires one PUBLIC source; excluded by repository privacy-test policy",
+      "sourceSha256": "9127c4f45a46fc541490e532d00a06d24d8b78c0334ee7f729cf4aaadfc5a61a",
+      "symbol": "mixedPrivacyExactRowPoolsGenerateEveryAndOnlyContractRelocation"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/MixedPrivacyRelocationContractTest.java",
+      "line": 70,
+      "publicOnly": true,
+      "reason": "Requires a PUBLIC source; excluded by repository privacy-test policy",
+      "sourceSha256": "ba9cf2cd308bcc7f7b752e6745da063c193886100f0ddae17b948aac3cbcf219",
+      "symbol": "fourPlannersMoveOnlyThePublicOperandToTheProtectedPool"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/NativeLineagePlanSpaceCompletenessTest.java",
+      "line": 52,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "a0c687a5bc59ea64d6019877ee815d487c2d8c6ceeb09b3246351309cf5698d2",
+      "symbol": "nativeLineageHigherArityReceiptProductMatchesIndependentOracle"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/NativeLineagePlanSpaceCompletenessTest.java",
+      "line": 102,
+      "publicOnly": true,
+      "reason": "PUBLIC-only recompile baseline is excluded by the repository test policy",
+      "sourceSha256": "a0c687a5bc59ea64d6019877ee815d487c2d8c6ceeb09b3246351309cf5698d2",
+      "symbol": "publicRecompileRemovesOnlyCpFoutCandidateStates"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuityTest.java",
+      "line": 202,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "dbbb3e5abea6414599d625d3147d465e9b24ab9c18d857e121e9e2b7e8a04517",
+      "symbol": "publicSourceWithoutDirectBroadcastKeepsRelocationRowActive"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/PrivacyMovementCertificationTest.java",
+      "line": 229,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "2e4a610aec4c6b361600b51c1339c57551855c52199c92dabe8cfe336a4d3806",
+      "symbol": "indexedRelocationHonorsExactDirectAndRelocationBindings"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/PrivacyMovementCertificationTest.java",
+      "line": 203,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "2e4a610aec4c6b361600b51c1339c57551855c52199c92dabe8cfe336a4d3806",
+      "symbol": "indexedRelocationScoreMatchesCanonicalSelectedRealizations"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/PrivacyMovementCertificationTest.java",
+      "line": 419,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "2e4a610aec4c6b361600b51c1339c57551855c52199c92dabe8cfe336a4d3806",
+      "symbol": "publicTransposeLoopRetainsExecutablePlacement"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/PrivacyMovementCertificationTest.java",
+      "line": 455,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "2e4a610aec4c6b361600b51c1339c57551855c52199c92dabe8cfe336a4d3806",
+      "symbol": "transientJoinRejectsMissingReachingDefinitionCompatibility"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/TransientPlacementAlternativesTest.java",
+      "line": 263,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "9f5a89d931dd8cc9b58338b727b35245a51e1a58806d1a6ba5a514af2ff1e436",
+      "symbol": "allReachingDurableAndLocalAssignmentSetMatchesIndependentPhysicalOracle"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/TransientPlacementAlternativesTest.java",
+      "line": 152,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "9f5a89d931dd8cc9b58338b727b35245a51e1a58806d1a6ba5a514af2ff1e436",
+      "symbol": "compatibleAndIncompatibleBranchJoinsUseExactPhysicalMaps"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/TransientPlacementAlternativesTest.java",
+      "line": 220,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "9f5a89d931dd8cc9b58338b727b35245a51e1a58806d1a6ba5a514af2ff1e436",
+      "symbol": "identityLoopBackedgeRestoresAllReachingTransientRelations"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/TransientPlacementAlternativesTest.java",
+      "line": 271,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "9f5a89d931dd8cc9b58338b727b35245a51e1a58806d1a6ba5a514af2ff1e436",
+      "symbol": "identityLoopDurableAndLocalAssignmentSetMatchesIndependentPhysicalOracle"
+    },
+    {
+      "file": "src/test/java/org/apache/sysds/hops/fedplanner/placement/TransientPlacementAlternativesTest.java",
+      "line": 76,
+      "publicOnly": true,
+      "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+      "sourceSha256": "9f5a89d931dd8cc9b58338b727b35245a51e1a58806d1a6ba5a514af2ff1e436",
+      "symbol": "rowPredictionSurvivesBranchIntoDownstreamAggregate"
+    }
+  ],
+  "purpose": "excluded test inventory; never a workload PASS",
+  "schemaVersion": 1
+}

@@ -178,6 +178,7 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 		//get input and requested index range
 		CacheableData<?> in = ec.getCacheableData(input1);
 		IndexRange ixrange = getIndexRange(ec);
+		validateRightIndexBounds(ixrange, in.getNumRows(), in.getNumColumns());
 
 		//prepare output federation map (copy-on-write)
 		FederationMap fedMap = in.getFedMapping().filter(ixrange);
@@ -298,6 +299,17 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 			.setBlocksize(in.getBlocksize())
 			.setNonZeros(FederationUtils.sumNonZeros(ret));
 		out.setFedMapping(fedMap.copyWithNewID(fr1[0].getID()));
+	}
+
+	/** Reject invalid global ranges before filtering the map on any worker. */
+	static void validateRightIndexBounds(IndexRange range, long rows, long cols) {
+		if(range.rowStart < 0 || range.colStart < 0 || range.rowEnd < range.rowStart
+			|| range.colEnd < range.colStart || rows > 0 && range.rowEnd >= rows
+			|| cols > 0 && range.colEnd >= cols)
+			throw new DMLRuntimeException("Invalid federated right-index range: ["
+				+ (range.rowStart + 1) + ":" + (range.rowEnd + 1) + ","
+				+ (range.colStart + 1) + ":" + (range.colEnd + 1)
+				+ "] for matrix dimensions [" + rows + "," + cols + "]");
 	}
 
 	private void leftIndexing(ExecutionContext ec)

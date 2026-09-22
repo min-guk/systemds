@@ -23,8 +23,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ExactPhysicalModelCertificateTest {
+	// This test ceiling bounds materialization, not legal plan-space size. Keep
+	// the full preserved candidate relation while allowing modest cost-factor headroom.
 	private static final ExactCategoricalSolver.Limits CAMPAIGN_LIMITS =
-		new ExactCategoricalSolver.Limits(10_000_000, 50_000_000);
+		new ExactCategoricalSolver.Limits(10_000_000, 60_000_000);
 
 	@Test
 	public void sevenWorkloadsBuildBaselineFreePhysicalDomainsAndFactors() throws Exception {
@@ -113,6 +115,11 @@ public class ExactPhysicalModelCertificateTest {
 							&& data.getOp() == org.apache.sysds.common.Types.OpOpData.FEDERATED);
 					}
 					else if(alternative.authorityKind()
+						== ExactPhysicalModel.AuthorityKind.RELOCATION_SOURCE
+						&& alternative.executionEmission() != null)
+						Assert.assertSame(certificate, alternative.state(),
+							alternative.executionEmission().emissionState().placementState());
+					else if(alternative.authorityKind()
 						== ExactPhysicalModel.AuthorityKind.CAPTURED_RULE
 						&& alternative.candidateEmission().emissionState().derivedFedFout()) {
 						Assert.assertNull(certificate, alternative.relocationAction());
@@ -135,11 +142,16 @@ public class ExactPhysicalModelCertificateTest {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(kmeans());
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		for(var domain : model.domains())
-			for(var alternative : domain.alternatives())
+			for(var alternative : domain.alternatives()) {
 				Assert.assertTrue("foreign value-equal state for "
 					+ domain.node().key().normalizedSignature(),
 					domain.node().legalAlternatives().stream()
 						.anyMatch(state -> state == alternative.state()));
+				if(alternative.authorityKind() == ExactPhysicalModel.AuthorityKind.RELOCATION_SOURCE
+					&& alternative.executionEmission() != null)
+					Assert.assertSame(alternative.state(),
+						alternative.executionEmission().emissionState().placementState());
+			}
 	}
 
 	@Test

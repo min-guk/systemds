@@ -112,6 +112,27 @@ public final class FederatedPrivacyConstraintResolver {
 		if(data == null || data.getFilepath() == null)
 			return null;
 		String metadataFile = DataExpression.getMTDFileName(data.getFilepath());
+		// A worker path may also be mounted at the coordinator under the same
+		// relative name. Check that exact local sidecar before resolving a
+		// scheme-less path against Hadoop's (possibly remote) default FS.
+		Path metadataPath = new Path(metadataFile);
+		if(metadataPath.toUri().getScheme() == null) {
+			java.nio.file.Path local = java.nio.file.Path.of(metadataFile);
+			if(java.nio.file.Files.exists(local)) {
+				if(!java.nio.file.Files.isRegularFile(local))
+					throw new IllegalStateException("Local privacy metadata is not a regular file: " + local);
+				try(BufferedReader reader = java.nio.file.Files.newBufferedReader(local)) {
+					MetaDataAll metadata = new MetaDataAll(reader);
+					if(metadata.mtdExists())
+						return metadata.getPrivacyConstraints();
+				}
+				catch(Exception ex) {
+					// A present but unreadable or malformed sidecar must not be silently
+					// replaced by a different filesystem's or worker's privacy claim.
+					throw new IllegalStateException("Cannot read local privacy metadata: " + local, ex);
+				}
+			}
+		}
 		FileSystem fs = null;
 		try {
 			fs = IOUtilFunctions.getFileSystem(metadataFile);

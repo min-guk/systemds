@@ -51,7 +51,7 @@ final class PolicyCandidateSelectionView {
 
 	CandidateSelections.Selection select(Map<CompiledHopKey,PlacementState> assignment) {
 		requireSourceUnchanged();
-		CandidateSelections.Selection selected = CandidateSelections.selectMaterializationMaximal(
+		CandidateSelections.Selection selected = CandidateSelections.selectPolicyFirstFeasible(
 			analysis, authorityGraph, actionUniverse, Objects.requireNonNull(assignment, "assignment"),
 			relocationOrder, reachability);
 		requireSourceUnchanged();

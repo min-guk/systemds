@@ -74,15 +74,30 @@ public final class HeuristicPlacementAdapter {
 			projectRelocations(filteredNodes, base.relocationActions(), policy),
 			projectDerivedFoutMaterializations(filteredNodes,
 				base.derivedFoutMaterializationActions()));
-		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
+		PolicyFirstFeasiblePlacementSelector activeSelector = selector;
+		boolean relaxedPolicy = false;
 		PlacementSelection selection;
 		try {
 			selection = selector.select(analysis, filtered);
 		}
 		catch(IllegalStateException failure) {
-			List<String> impossiblePairs = filtered.constraints().stream().filter(constraint -> {
-				Node left = filtered.node(constraint.left()).orElseThrow();
-				Node right = filtered.node(constraint.right()).orElseThrow();
+			if(failure.getMessage() != null
+				&& failure.getMessage().startsWith("placement policy graph has no ")) {
+				// A demotion/local-prefix view is a preference, not proof that all
+				// other common candidates are illegal. Keep the shared space intact
+				// and choose its first movement-preferred feasible plan when the
+				// strict view has no complete candidate-reachable continuation.
+				filtered = base;
+				activeSelector = new PolicyFirstFeasiblePlacementSelector(StateOrdering.MOVEMENT_FIRST);
+				selection = activeSelector.select(analysis, filtered);
+				exclusions = List.of("POLICY_PREFERENCE_RELAXED|strict-view-infeasible");
+				relaxedPolicy = true;
+			}
+			else {
+			NeutralPlacementGraph rejected = filtered;
+			List<String> impossiblePairs = rejected.constraints().stream().filter(constraint -> {
+				Node left = rejected.node(constraint.left()).orElseThrow();
+				Node right = rejected.node(constraint.right()).orElseThrow();
 				return left.emittedWork() && right.emittedWork()
 					&& left.legalAlternatives().stream().noneMatch(leftState ->
 						right.legalAlternatives().stream().anyMatch(rightState ->
@@ -90,7 +105,9 @@ public final class HeuristicPlacementAdapter {
 			}).map(NeutralPlacementGraph.Constraint::normalizedSignature).toList();
 			throw new IllegalStateException(failure.getMessage() + "|heuristicImpossiblePairs="
 				+ impossiblePairs, failure);
+			}
 		}
+		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
 		validateProjection(analysis, filtered, assignment);
 		List<CandidateSelectionReceipt> candidateReceipts = List.copyOf(selection.selectedCandidateSelections());
@@ -121,7 +138,7 @@ public final class HeuristicPlacementAdapter {
 			"CP_FOUT_MATERIALIZATIONS=" + CandidateSelections.cpFoutPhysicalEmissionCount(candidateReceipts),
 			"DERIVED_FOUT_MATERIALIZATIONS="
 				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidateReceipts));
-		String stateOrdering = selector.stateOrdering().name();
+		String stateOrdering = activeSelector.stateOrdering().name();
 		boolean movementFirst = StateOrdering.MOVEMENT_FIRST.name().equals(stateOrdering);
 		List<String> ties = movementFirst
 			? List.of("MIN_INCIDENT_WEIGHTED_MOVEMENT", "MAX_FED", "MAX_FOUT", "NORMALIZED_ASSIGNMENT")
@@ -137,7 +154,8 @@ public final class HeuristicPlacementAdapter {
 		if(selection.certificate().terminationReason() != TerminationReason.POLICY_FEASIBLE)
 			throw new IllegalStateException("Heuristic selector did not stop at the first feasible assignment");
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
-			"policy", "LOCAL_CONTINUATION_FIRST_POLICY_V3", "markerCount", Integer.toString(policy.markers().size()),
+			"policy", relaxedPolicy ? "LOCAL_CONTINUATION_FIRST_POLICY_V3_RELAXED"
+				: "LOCAL_CONTINUATION_FIRST_POLICY_V3", "markerCount", Integer.toString(policy.markers().size()),
 			"localPrefixCount", Integer.toString(policy.localPrefix().size()),
 			"downstreamMarkerCount", Integer.toString(policy.downstreamMarkers().size()),
 			"frontierEdgeCount", Integer.toString(policy.frontiers().size()),
@@ -147,7 +165,7 @@ public final class HeuristicPlacementAdapter {
 			"shapeProof", "COMMON_ANALYSIS_EXACT_EDGE_CANDIDATE_AND_RELOCATION_FACTS")));
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
 			: assignmentHash(assignment);
-		String policyFingerprint = sha256("LOCAL_CONTINUATION_FIRST_POLICY_V3|" + analysis.analysisFingerprint() + '|'
+		String policyFingerprint = sha256(facts.get("policy") + '|' + analysis.analysisFingerprint() + '|'
 			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions
 			+ (movementFirst ? "|MOVEMENT_FIRST" : ""));
 		String incumbent = selection.score().normalizedSignature();
@@ -156,11 +174,14 @@ public final class HeuristicPlacementAdapter {
 		List<Bound> boundComponents = componentBounds(filtered);
 		long explored = selection.certificate().exploredCount();
 		long pruned = selection.certificate().prunedCount();
+		var structuralUpper = selection.certificate().finalUpperBound();
+		Score upper = new Score(structuralUpper.emittedFedCount(), structuralUpper.foutCount(),
+			structuralUpper.distinctRelocationCount(), structuralUpper.normalizedSignature());
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
 			assignmentHash, explored + pruned, explored, pruned,
 			List.of("first-feasible"), incumbent,
-			incumbent, selection.certificate().terminationReason().name(), false,
-			sha256(filtered.normalizedSignature()), score, score,
+			upper.normalizedSignature(), selection.certificate().terminationReason().name(), relaxedPolicy,
+			sha256(filtered.normalizedSignature()), score, upper,
 			boundComponents, filtered.nodes().size(), filtered.constraints().size(), boundComponents.size(),
 			selection.certificate().boundDerivation());
 		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment,

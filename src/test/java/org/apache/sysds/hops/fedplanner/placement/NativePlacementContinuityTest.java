@@ -795,6 +795,26 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void protectedDynamicColumnSliceKeepsExactRowPoolThroughCbind() {
+		Fixture row = new Fixture(FType.ROW);
+		DurableAnchorKey partitioned = new DurableAnchorKey("two-row-workers", FType.ROW, List.of(
+			partition("worker1:8001", 0, 25), partition("worker2:8002", 25, 50)));
+		Ref source = row.source("X_orig", partitioned);
+		source.hop.setDim1(50);
+		row.privacy(source, Privacy.PRIVATE_AGGREGATE);
+		Hop selectedColumn = new DataOp("column_best", DataType.SCALAR, ValueType.INT64,
+			OpOpData.TRANSIENTREAD, "column_best", -1, -1, -1, 1000);
+		Ref column = row.rightIndex("X_orig[,column_best]", source,
+			new LiteralOp(1L), new UnaryOp("nrow", DataType.SCALAR, ValueType.INT64,
+				OpOp1.NROW, source.hop), selectedColumn, selectedColumn);
+		Ref appended = row.binary("X_global=cbind", OpOp2.CBIND, column, column, false);
+		Assert.assertTrue("full-row dynamic column selection keeps the exact ROW axis",
+			row.resolver().proves(List.of(column.key), partitioned));
+		Assert.assertTrue("aligned ROW cbind keeps every worker and row interval",
+			row.resolver().proves(List.of(appended.key), partitioned));
+	}
+
+	@Test
 	public void provesNativeElementwiseChainThroughLogicalRead() {
 		for(OpOp3 ternaryOp : List.of(OpOp3.PLUS_MULT, OpOp3.MINUS_MULT, OpOp3.IFELSE)) {
 			Fixture full = new Fixture(FType.FULL);
@@ -1322,8 +1342,14 @@ public class NativePlacementContinuityTest {
 		}
 
 		private Ref rightIndex(String name, Ref input, Hop rowLower) {
+			return rightIndex(name, input, rowLower, new LiteralOp(50L),
+				new LiteralOp(1L), new LiteralOp(1L));
+		}
+
+		private Ref rightIndex(String name, Ref input, Hop rowLower, Hop rowUpper,
+			Hop colLower, Hop colUpper) {
 			IndexingOp hop = new IndexingOp(name, DataType.MATRIX, ValueType.FP64, input.hop,
-				rowLower, new LiteralOp(50L), new LiteralOp(1L), new LiteralOp(1L), false, true);
+				rowLower, rowUpper, colLower, colUpper, false, true);
 			Ref result = add(name, hop, NodeKind.OPERATION, VersionKind.ORDINARY, null);
 			CandidateRuleKey rule = new CandidateRuleKey(result.key, List.of(
 				CandidateInputState.present(fType), CandidateInputState.absentLocal(),

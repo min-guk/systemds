@@ -39,8 +39,16 @@ public record PlacementCertificate(PlacementScore incumbentScore, PlacementScore
 		componentBounds = List.copyOf(bounds);
 		if(componentBounds.size() != componentCount)
 			throw new IllegalArgumentException("component bound count differs from componentCount");
-		if(finalUpperBound.compareTo(incumbentScore) > 0)
-			throw new IllegalArgumentException("successful certificate retains a superior upper bound");
+		if(terminationReason == TerminationReason.POLICY_FEASIBLE) {
+			if(finalUpperBound.compareTo(incumbentScore) < 0)
+				throw new IllegalArgumentException("policy envelope is below its selected plan");
+		}
+		else if(finalUpperBound.compareTo(incumbentScore) > 0)
+			throw new IllegalArgumentException("exact certificate retains a superior upper bound");
+	}
+
+	public boolean optimalityProven() {
+		return terminationReason != TerminationReason.POLICY_FEASIBLE;
 	}
 
 	public record ComponentBound(String componentIdentity, Set<String> normalizedNodeSet,

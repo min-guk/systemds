@@ -52,6 +52,7 @@ public class OracleIndependenceContractTest {
 		"src/test/java/org/apache/sysds/test/component/federated/placement/oracle");
 	private static final Path BUILDER_ROOT = ORACLE_ROOT.resolve("builder");
 	private static final Path SELECTOR_ROOT = ORACLE_ROOT.resolve("selector");
+	private static final Path SEMANTIC_ROOT = ORACLE_ROOT.resolve("semantic");
 
 	private static final Pattern IMPORT = Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?([^;]+);");
 	private static final Pattern PRODUCTION_ORACLE_REFERENCE = Pattern.compile(
@@ -66,6 +67,8 @@ public class OracleIndependenceContractTest {
 
 		assertNoForbiddenImports(BUILDER_ROOT, ".placement.oracle.selector");
 		assertNoForbiddenImports(SELECTOR_ROOT, ".placement.oracle.builder");
+		assertJavaSourcesExist(SEMANTIC_ROOT, "semantic");
+		assertNoForbiddenImports(SEMANTIC_ROOT, "org.apache.sysds.hops.fedplanner");
 	}
 
 	@Test

@@ -85,9 +85,12 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		List<Bound> bounds = componentBounds(analysis.graph());
 		long explored = selection.certificate().exploredCount();
 		long pruned = selection.certificate().prunedCount();
+		var structuralUpper = selection.certificate().finalUpperBound();
+		Score upper = new Score(structuralUpper.emittedFedCount(), structuralUpper.foutCount(),
+			structuralUpper.distinctRelocationCount(), structuralUpper.normalizedSignature());
 		Certificate certificate = new Certificate(sha256(analysis.graph().normalizedSignature()),
 			assignmentHash(assignment), explored, pruned, explored + pruned,
-			score, score, bounds, analysis.graph().nodes().size(), analysis.graph().constraints().size(),
+			score, upper, bounds, analysis.graph().nodes().size(), analysis.graph().constraints().size(),
 			structuralComponentCount(analysis.graph()), selection.certificate().boundDerivation(),
 			selection.certificate().terminationReason().name(), false);
 		Result draft = new Result(analysis, assignment, candidates, choices, relocations, score, certificate,

@@ -1,0 +1,926 @@
+{
+  "schemaVersion": 1,
+  "certificationStatus": "OPEN",
+  "ruleSourceSha256": "5928b1d902541d78f9b923e38123452d1f2fc1caed6932149698cc5f0f8b1343",
+  "auditSourceSha256": "64e2500efd5d7e7ab0b1c207861e866d5b69a10bca7ae5c0b9618202c8cb6173",
+  "auditedSourceFiles": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/AFederatedPlanner.java": "021704aa4e4c676d66f341445bf3aca3896302496306a07686032a53930b8c3a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/FTypes.java": "f694df0e8eb6ba6bea7a126ead046d6e5d8a5d711c4ac10cceda780850552f0a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/FederatedCompilationTimer.java": "61b6c5e9095e7bfcc1452db981493cfd0355d5f250adcaaeea63aa6a6c1ed2ca",
+    "src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java": "18e6dbfd39ddbdfee3e70cb594888c1cb0f4873ebbcd1ec8d4f60ab5e441cb60",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java": "ff3bced6e44ac0872547be752a83a6ba1f5e183fb0a7898673fb19e9467c9c36",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerLogger.java": "ee0cd58eed7d9b6612425717becf963f11a2c47bddbd76069dafc15a94a8c2b0",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerTrace.java": "bc594b5d265b3f60ad40d970d976fd6d653f370808d1c45117c4025c1159376b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerUtils.java": "085ff52c5bc3fd1b62bba130665a273faece9589359c74e11bf5816832ec41af",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedTypePropagator.java": "efb40206c7870b2b53acb91c65b7ce942d1092df0acec7b48421936f03959707",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/ExecPlacementPolicy.java": "55791ab374cb1f6da75d864563963fad4d8460a7c0ebbb7373943ccf3ce30782",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "2edd21861f7096a21aa5fa9abccfd03507162ed5a63800ce81ea80d81da1ea69",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedWorkerUtils.java": "c57130a56f56e6c00772c5fa4f490885d7e8cbd0553e0c6e50cf2c559f7f7969",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/HopUtils.java": "5559ea6d18ae123012cf93944efa9796614a7ae931ca1923c5187571f4fef56c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/RewireConstants.java": "6d06f503b653b18bb48e630e3ef1126bcdf438cbb35eec35bd0d4285fcff72b9",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactActivationClassFactorDecomposition.java": "8803b68526d769bc1474cd96633107b4b67faec8bda6e7e5bad6c38999e18c3f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java": "609f9456a5e8d19e8d2f99c78806346acb88539268f4a1fecad07fb6881667cc",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCompensatedCostSum.java": "92764524115d14c2c422ab703d5322374b1b88229277fe9a8c29a0ef8153f5c3",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactEliminationOrderPolicy.java": "15c2a9ab0a3f04bf5b42797bf416ea18f8bded05c8d520f718611cb644b1d040",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactMaterializationActivation.java": "2255a384edcf14062f8ea53a28f2ea171f0a3101421e2fd1a0b4cb84908899cd",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "517a8b187f0c598ef18c915939d12409a28181ceb242ccb2d80d3a269311e40b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalForcedStateAudit.java": "e937b2cba30cac01c05841255f2d3e0ea2ee02134e5f8bc89b4f2933c7007183",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "3558a7e9f6a9b0f7ee8130efa839d1ca4514b78d0185737b1d536c6b9957a6cd",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.java": "31e0544493cf8963cfa563dbbd04689c56d36cb80f431933076be7634c73707b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalPlacementProjector.java": "05b4ec4b04c79f590da9dda84fd8eb59dc802ffb40c7b41dd92b3d7a0a8ef7d0",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.java": "5f4723a178366281735f477771b62ce8d3066d170b154e1a565d443062c0c87c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSelection.java": "343cd6aa47b696cd66d93a070e5fb1b7e3da06c6dafec8488a41830770a70aae",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/FederatedPlanExact.java": "73f11f23ae31f63002c86733099fcf16b3efbdba2bdb594653979e9069abfe47",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/FederatedPlanLocalCost.java": "a67fd76df633bdc48a3f726d7ae6c64661be021b340470c9d29cb62992f961d1",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java": "5ee5f223561119f2269985ef7341a94c39fc13452dc38e0add3d12a41f3d20ed",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalSeed.java": "02bf21c721edd9ae3eff492b2b778af2a983435b2068f971622c4ac3b55648ff",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizer.java": "e1b0e3c2c5413eaf436cc030b2a7c4723646b2a83eea161f0f71bf47bb18397e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalPhysicalOptimizer.java": "de1f75bf75fba7f6a349773c508609d4069f2251d2f43560da3deac00da205ed",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java": "24ce6b12836631c684af2dce964e231c04aa3ee53141a44db39530e6bbc3b712",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparation.java": "1e1f5f32c98a55bf7210a3ebe9bf7ca1b8cdaf90a82edcdb939ebb9b696c540f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/ftype/handlers/FederatedTypeHandler.java": "f9c795ec912363f8456d4ee8ebc5b62b7ffa0512c37210b70f32bfde933b0300",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/ftype/handlers/FederatedTypeHandlerFactory.java": "b97b9c66cabe20cd1efc501e4df171ae22e6b4faab39d0ae7cb6f159421ecd0c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/ftype/handlers/HandlerResult.java": "3ce8d775fa47cb6c1ecdbb82d4732340711af86cb8d223106e8f3b2675efed88",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedHeuristic/FederatedPlannerFedHeuristicSinglePass.java": "6f3b4c3d0b25c13a5d4e6792c1c691d597d9136a1da631f7977ea68dce27995e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/AnchorProvenanceObserver.java": "a3937992d5989fb38aea4d1edef639a2ca6eec68065ab4e1263bbf4ac2438566",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/AnchorProvenanceObserverFactory.java": "4a3357b2549195d0ae5115e669652df4acd3ba8d26a8a3e4972bd4f12f87d5ea",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateDomainRefinement.java": "d4e11c5657bed401e1dc118ccd270f9f2d1fa6976d4927d09896f3949353e9eb",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateFormationTiming.java": "06410c45df047614ba34346dd63bd31e55342dc971d5cee56e65b6a35a7b5e98",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java": "16c3f70bc7275011abba6cb66a76b9c4b192580dff318ee2f91637fe6a1aaff5",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/ExactPlacementRegistration.java": "d9529af7f04e615ee85be7b52e068f992e210fcccd9e8753af00735360c863ae",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/LocalMaterializationSelections.java": "ca85ae8a35b32e818b85dc66674c69e74b98969cd93acf80daed1dcc9440fe95",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/LogicalBoundaryRealizations.java": "43d77c3a89368030caf8e5a327880db9e3c35f24597048d5219c3a08047c3b1a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuity.java": "888ec7c958a6b1550100b0e459339e46bce2e4a80e56b56e31f1e784da5747e2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraph.java": "f28f49a70e5768ae116be66a2c50650f05dec22b399ec4cae3bab9a0ac1a546f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java": "66a7e5407cd27006b7bd751c934b8285c4a58b8e680b29cfd1fd77b77fb2c4d1",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/OccurrenceExecutionFrequencyFacts.java": "c1ccff526f588e442486e4e93382accfba8279aaa2449362f471a20341b4aa0d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PhysicalEmissionTraceFormatter.java": "ffe84ec24c1c2df96ec2fa149289680e44e997ecec46b961262f3a916182f5c0",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAbstractShapeAnalysis.java": "a75688b5501477138729f320701ae6952c27a3aa6adcecc296ad7086c2e19442",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java": "b3b61daee64f0169a9b1ad4c5b187e1ae813d83aa183685109b06c89420003d0",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCandidateRuleResolver.java": "423a4f00bdffc191ec5ec6c03f1177c67ff3783c113a379aede29c096fb9dd09",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "176caee99f7d681f1d8cdad6b81b6d279ca1076e59e5a1908909af746c236523",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionState.java": "ad6090f5b6df3ae9ffceae949f279c0aed2583a0db704aae73007ab350fe8425",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java": "fea7e16d23cd4f6df82b52ac08a250a5ccd08549b6773704eca8624bc6b059fb",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementGraphFingerprint.java": "89e5bdb6c4e4a4913674aa32d05646df2ee410c8f882720e9c5a82fac1485748",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentity.java": "5b37d3896e75eca3e6f50961fc761786b106e6ca5a7063eb9b40770386abfd8b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementPlanApplication.java": "1b1d87ba632fd45f91f2b7c7fe3fe86ca0bcd4b92e70435bf3eab1e129aef00d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementPrivacyFacts.java": "5552570c3640d87cd878fa8b936e25a61b89c38c9ad88095a99a68b36309664b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementShadowComparator.java": "aba30e1c7ec4138948c35dc2a8e905f34e96cfeeb380326c2b7ba1bacbc7bead",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementShadowCoordinator.java": "fa6c807f83ef564ce91710ce4f018a2f96a6078d442222b8fed02e9e38bc66bb",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementShapeFacts.java": "9631378fbf8e7efa774d1b4433e096b02a8a147c7ef364d4d55d5d22fbf49e8f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementState.java": "2b4cfb91626eca5815efdd5fa80b98cb34187b6a907be3a2406079d256f3ee6a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerCandidateSpaceAudit.java": "e18edb2cad010cfa88f38582422e5f34576bc4a51a9813ad62dbca151905a295",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerPipelineTiming.java": "b1bf844636f6c83aa56766921e3ec90472543cea6cc7a76ec95ca9e6e3a8990b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimeActionRegistry.java": "b67bf8e75494ca336e8685444217d786299727b2da7bdede447e295f263ca94d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimeCapabilityAudit.java": "3de703ff3f392ce57fea73c0beb8c8984de177155657932ea2163d6b9490328d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimePlacementAudit.java": "a8960d307a465205b9d1f40283fb1682d9d2da9dae180681644d8fcb48ed3f40",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java": "9db9810d24e55bbb8adf9873c3fd90b8b2d72700754ec17f5800d1e8cdce945e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/SearchSpaceMetrics.java": "feb308da96d54e931df76c76d01af7f427fc2ad1b22bd0968b59a2931e548d2a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/SinglePartitionFacts.java": "13a4cf018f43555d993834e17e2da11675dc1bb8cfb3ae67f379a5dd6e5cbbf0",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/ExactPlacementAdapter.java": "37d66c3d0fba81b576ca8cfdad78b701e1f59b0ddf059e39ad33713afc98a798",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/ExactPlacementInput.java": "d462783b51ffee16836baafb5ea367301bbaaa44a038bc8069bee3270e550d3d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/FedAllPlacementAdapter.java": "1e28a2258e7c373a6a20a98ba2a70b1c19f1f7e2757dea9593af8ba2df358652",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/HeuristicPlacementAdapter.java": "df690c8d36f28989b218e3d61aea398c9a4ff21947e6d9d987df2908fd35d831",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/HeuristicPolicySafetyException.java": "40240b0b9f77cb209cc89522615d61aeb28dd681023eea5fc19573d489cc17c8",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/ImmutableNormalizedPlannerResult.java": "7efb68774709704af4ca935d5600b4d78b46c34329151b6d9fb1beeb44ce4f8e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/NormalizedPlannerResult.java": "3e1cc9ea0bfb88d2df87d0c7096b06d9151c3b07e74b6e195577bfa323143e98",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/NormalizedPlannerResults.java": "2074c7fa8ae257d2fdfce3c7aa1f0b26679ea5c48fa25c1f8489c9ca5317008c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/PlacementPlannerAdapter.java": "f16f4436e8337eba81e19ee8798d97dd2804c5119f76b23438c7447b85c93327",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/PlannerPlacementContext.java": "50a695841d039fe8ad8e1eba2e18d296334d4fd429f83a2c022474e2bee32ef7",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/SyntheticBoundaryProjection.java": "65d2bcf843af700037a5de4e067e77fc378a58ad6e38f771c2e9feef1e7be263",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PlacementAnalysisSelector.java": "0c46cfcb12376b81542f86208408fc7641fc3c6d224a3bf7290f1695dcbfa3d3",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PlacementCertificate.java": "552c93f51aa26a027fb9d0ee272480d216973fc561806b1fb1f43f831d86423c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PlacementScore.java": "6d083d3ccde4ff49f03a0d942ad186a6f9ebdfa253a89bf8e775871b62c3006d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PlacementSelection.java": "a2c4fa47d96f9d6d54c822c7c3abb062bc44a47259d675e0923479de6c8d9b27",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PlacementSelector.java": "cfd9b412b25ce7fcaf31f35db83395a2658c4d0cf919ab00c96099502dc3d1e3",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyCandidateSelectionView.java": "cf44823e8220155475697a465ef6947295f9ebfe97d73f38e441fe3eb5ede068",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyFirstFeasiblePlacementSelector.java": "91f9a30111a48f288e8025cc550cc008535af4ac40f0f7c4b3a138eb1d433d67",
+    "src/main/java/org/apache/sysds/hops/fedplanner/rules/RulesApi.java": "7d505137b4297fa7295c9e3110c03ba523d0ce3212d619b69345bf83f4027492",
+    "src/main/java/org/apache/sysds/hops/fedplanner/rules/RulesCore.java": "5928b1d902541d78f9b923e38123452d1f2fc1caed6932149698cc5f0f8b1343",
+    "src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java": "fa48b7a180f1af618de7caef3a02f07969db87d18a2ab1e7e1e8c355416fe768",
+    "src/main/java/org/apache/sysds/hops/fedplanner/rules/bridge/OracleFacade.java": "9fc9ba418619499af76962040eaf9c8afa7ecc5c52f1e756cb515fdd1c2ac2d8",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/AggregateBinaryFEDInstruction.java": "d757251eb5d7899769a69e3d168af39296d511186cce6a82827fd4297bf7a9b9",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/AggregateTernaryFEDInstruction.java": "4b0e40299b13bd5ebcca09741775d0d140b01e53f7f7d7f4f96bb004963f15f9",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/AggregateUnaryFEDInstruction.java": "c9904d4ba6c7a369370f4892e3ccae048983fd25237a61d56ba3b699cb3ddd65",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/AppendFEDInstruction.java": "057372bc1844635551c26d71fc004fad4d27f9503fcf8d6388415a30f5647fd4",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/BinaryFEDInstruction.java": "7aeee41bfcff8d334d0a3e700e731d63e2dbc72bb920152cd4d0b6469ab1b21a",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/BinaryMatrixMatrixFEDInstruction.java": "187a23667b2b237d8f55043d1bc39730937cd6cf191d4efbb6b560c9892ab668",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/BinaryMatrixScalarFEDInstruction.java": "ac08eb12421c5e9f4ef303b2f78d48eb015b3ba4bb38bb350db3663f2985918e",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/BuiltinNaryFEDInstruction.java": "24e958c78d98cb63b2340848d549f4431ca00038ee5e4d8677b9b16c2f798149",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/CastFEDInstruction.java": "fc3a8f42ad8e2c9a0958f0104e05531a5c6bc83615c0ecc626f7f98bf2d99a27",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/CentralMomentFEDInstruction.java": "d8646337d2619c9cc27aed3fd2bd3ed898f5e3b82a8aa7e13dbc1482b162482d",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/ComputationFEDInstruction.java": "d6d2523024354bae6b69dc04bee967c7ebe3a0bbc9677a3d2fc1f368866b0004",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/CovarianceFEDInstruction.java": "a4604ad6cc0f8d07de810984bc6b2a72693e37efe62ef9fb1a29833b7d70c8e7",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/CtableFEDInstruction.java": "5fa3e3a0d66217d8bf9e36cfb0ca832d24f5093e4d26add35e8837ced8cbab61",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/CumulativeOffsetFEDInstruction.java": "ce60c249f746a782d3cd0a9e8d013389875b2ee84380cf71b4b95b3d9862b06a",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDFoutInstruction.java": "ed17c71020e61b2f9f2895504860bc59dae8c3b93c5e99174439e6e1e90fc915",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDInstruction.java": "286195830c9a93f42186e998f48100c7137cecef44a44d531cd225f27e58a14e",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDInstructionUtils.java": "072b7efaa50438435c13e33b643f10da57cd08a1ee77ee9a846164a73ae2cd34",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDLocalMaterializeUtil.java": "43c65a736ed968f94349e2505d082ea35c297d6d328d25dab7270dac7e17eb47",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDRefedInstruction.java": "d3e73b66c7065ce7ec977e6c9402b4c8847900b943c14125bcd1d539be7d8a6d",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/IndexingFEDInstruction.java": "16d91714296287eeb400ef1967cc97a6c3acd941e1cedc72b905aba1ea57b026",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/InitFEDInstruction.java": "553775b7f0014ea100ea509d0e752fe6d88825c9740137a3d81c6ca17a569a30",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/MMChainFEDInstruction.java": "db9a2df75f31ba0bdcf28e166194e6e3bfe1fc57ab03d430ba3cc74bf5176118",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/MMFEDInstruction.java": "e1ca43ea8b644e6812210128fd7470b6da4aa653b3ccc8a6ceffb61cda52e7c0",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/MultiReturnParameterizedBuiltinFEDInstruction.java": "4fedae26273b2795ded50bc820aa4af0182d121e714dd82d9c6d0b3397fdef60",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/ParameterizedBuiltinFEDInstruction.java": "48d64d7e5ae1280f0196d9d85548fb9032d7e594886eadaf7c03c09b60a919ca",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuantilePickFEDInstruction.java": "0e61fc5bc28024197b137a0bf9291caf7f421d77016ba4074ab3823d3de0435b",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuantileSortFEDInstruction.java": "f9331de5ca1443258729a6d8ba8739601d2293392bbd15595935abaecca0395c",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuaternaryFEDInstruction.java": "ce06fa9a0003e397b1590d6e284bf3350bf33621bd5bc7560306547c643f031a",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuaternaryWCeMMFEDInstruction.java": "68be67d29ea96e26c1ea1332e3e554f574408354f591adf1b206f3036597b7ca",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuaternaryWDivMMFEDInstruction.java": "0999ce68282341fae98959ea71b0efa64a82a14a58f412e2668b0296f54c4991",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuaternaryWSLossFEDInstruction.java": "044c41042316a4aef50baf52720e07ff632b3c3e569cdf630766f8b3099fc049",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuaternaryWSigmoidFEDInstruction.java": "b23c22b5b26007b72ef0ea6feed7637c5124788f3451deb45d1363bcd658c5a8",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/QuaternaryWUMMFEDInstruction.java": "ca45c44ab1fa221c662915cbe906c1dc9285a85ccd0baa063be0bd7e0e28a457",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/ReblockFEDInstruction.java": "5bd0b8e56a79e75230bd314e096dc859478c9f9ce2c7a8a9986652f8de94ef5e",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/ReorgFEDInstruction.java": "fc9764c77543df23ba64798060be3d3b1d02cdb1adc47ddd01120206fe21ea9b",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/ReshapeFEDInstruction.java": "d7e67e27f9b43ff431a82923311a55c08c97112c1c3280581302e65e23bdb12a",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/SpoofFEDInstruction.java": "d80e43aa79d222401ad9deb787428e097184f80449644c3202c91c6c04de9d2f",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/TernaryFEDInstruction.java": "be7880e31546cf91251a47cf8089ef5483395a9c0df269432d8cdc1db8f3fa4a",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/TernaryFrameScalarFEDInstruction.java": "b50f9ca8fcc6187cffa0986c8293903a35327a1588f155f76a3fa10e6a816a21",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/TsmmFEDInstruction.java": "4232dc74c3e24ddc0840ccedd14cc787dd1d6715d6f4fdb31983dc8ea990aec6",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/UnaryFEDInstruction.java": "398aa31eda860f8f643ecdedbd781298dae14365229a770842d1f8f45a914f40",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/UnaryMatrixFEDInstruction.java": "833b0dc4b2fbe0d02b0bec7b34344a909e5ef184afb58d6451657b4aadda0157",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/VariableFEDInstruction.java": "0251e10bf14d485e9dd878e4615cf9da5210fe17d46a8479716c077ed5363b40"
+  },
+  "ruleFamilies": [
+    {
+      "id": "UnaryElemwiseRule",
+      "registryLine": 355,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "UnaryCumulativeRule",
+      "registryLine": 356,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "ReorgUnaryRule",
+      "registryLine": 357,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "ReshapeRule",
+      "registryLine": 358,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "ReblockRule",
+      "registryLine": 359,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "WeightedSquaredLossRule",
+      "registryLine": 360,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "WeightedCrossEntropyRule",
+      "registryLine": 361,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "WeightedSigmoidRule",
+      "registryLine": 362,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "WeightedUnaryMMRule",
+      "registryLine": 363,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "WeightedDivMMRule",
+      "registryLine": 364,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "AggTernaryRule",
+      "registryLine": 365,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "AggUnaryRule",
+      "registryLine": 366,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "AppendRule",
+      "registryLine": 367,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "FrameMapRule",
+      "registryLine": 368,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "TernaryElemwiseRule",
+      "registryLine": 369,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "NaryElemwiseRule",
+      "registryLine": 370,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "BinaryElemwiseRule",
+      "registryLine": 371,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "MMFedRule",
+      "registryLine": 372,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "BinaryMMRule",
+      "registryLine": 373,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "CastRule",
+      "registryLine": 374,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "UnaryCastToFrameRule",
+      "registryLine": 375,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "VariableWriteRule",
+      "registryLine": 376,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "CentralMomentRule",
+      "registryLine": 377,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "CovarianceRule",
+      "registryLine": 378,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "CtableRule",
+      "registryLine": 379,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "CumulativeOffsetRule",
+      "registryLine": 380,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "ContainsRule",
+      "registryLine": 381,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "ReplaceRule",
+      "registryLine": 382,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "RmemptyRule",
+      "registryLine": 383,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "RexpandRule",
+      "registryLine": 384,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "LeftIndexRule",
+      "registryLine": 385,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "MMChainRule",
+      "registryLine": 386,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "QuantileInterquantileCtableDenyRule",
+      "registryLine": 387,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "QuantileSortRule",
+      "registryLine": 388,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "QuantilePickRule",
+      "registryLine": 389,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "RightIndexRule",
+      "registryLine": 390,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "SolveRule",
+      "registryLine": 391,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "TransformEncodeRule",
+      "registryLine": 392,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "SpoofCellwiseRule",
+      "registryLine": 393,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "SpoofRowwiseRule",
+      "registryLine": 394,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "SpoofMultiAggregateRule",
+      "registryLine": 395,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "SpoofOuterProductRule",
+      "registryLine": 396,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "TsmmRule",
+      "registryLine": 397,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "TransientWriteRule",
+      "registryLine": 398,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "FunctionOutputRule",
+      "registryLine": 399,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "TransientReadRule",
+      "registryLine": 400,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "BuiltinMKMeansRule",
+      "registryLine": 401,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    },
+    {
+      "id": "FunctionCallRule",
+      "registryLine": 402,
+      "runtimeTupleCoverage": "OPEN",
+      "positiveFixture": null,
+      "negativeFixture": null,
+      "reason": "Runtime branch/axis parity not certified"
+    }
+  ],
+  "transformations": [
+    {
+      "id": "U01",
+      "source": "B:276-317",
+      "description": "Build occurrence universe and refine CFG/abstract facts, falling back to the conservative CFG on non-convergence",
+      "category": "generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U02",
+      "source": "B:7575-7633",
+      "description": "Expand function occurrences and bind call/input/output identities",
+      "category": "generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U03",
+      "source": "B:7707-7723",
+      "description": "Derive canonical input `FType` domains per compiled occurrence",
+      "category": "generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U04",
+      "source": "B:5020-5037",
+      "description": "Convert an empty input domain to a bottom node instead of fabricating CP/LOUT",
+      "category": "filter",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "U05",
+      "source": "B:5045-5065; rules/bridge/OracleFacade:130-141",
+      "description": "Enumerate the input-domain product and obtain oracle capability/shape evidence",
+      "category": "generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U06",
+      "source": "B:5066-5099; fedCostBased/commons/ExecPlacementPolicy:358-370",
+      "description": "Refine right-index/vector-local output and add native plus forced-LOUT states",
+      "category": "generation/filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U07",
+      "source": "B:5082-5086,5139-5140,7735-7737",
+      "description": "Enforce recompile CP/FOUT and TRead/TWrite placement boundaries",
+      "category": "legality filter",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "U08",
+      "source": "B:5141-5161,5205-5221",
+      "description": "Replace literal federated-source placeholders with their exact source state",
+      "category": "canonicalization",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "U09",
+      "source": "B:5998-6045; rules/bridge/OracleFacade:181-188",
+      "description": "Materialize candidate capability, proof, profile, and emission facts",
+      "category": "representation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U10",
+      "source": "B:5224-5241,5853-5856",
+      "description": "Apply exclusions and re-open only UNKNOWN_METADATA candidates with positive proof",
+      "category": "legality merge",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U11",
+      "source": "B:923-1023",
+      "description": "Propagate fixed privacy and remove states/emissions forbidden by privacy",
+      "category": "legality closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U12",
+      "source": "B:1026-1130; fedCostBased/commons/ExecPlacementPolicy:96-98,125-145",
+      "description": "Close protected payload and policy support across compiled inputs",
+      "category": "legality closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "U13",
+      "source": "B:1147-1157",
+      "description": "Require each derived-FOUT emission to retain its native source witness",
+      "category": "source closure",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "C01",
+      "source": "B:2376-2493",
+      "description": "Replay exact CFG transient candidate dependencies",
+      "category": "closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C02",
+      "source": "B:2530-2707",
+      "description": "Rebind realizations and exact transient alternatives after CFG replay",
+      "category": "closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C03",
+      "source": "N:187-246,263-323",
+      "description": "Prove candidate alternatives and retain only grounded native proof states",
+      "category": "proof closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C04",
+      "source": "N:340-417,662-701,840-868",
+      "description": "Generate native proof alternatives and apply opcode/layout preservation rules",
+      "category": "proof generation/filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C05",
+      "source": "B:2975-3018",
+      "description": "Reconstruct exact transient alternatives from reaching definitions",
+      "category": "generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C06",
+      "source": "B:3020-3089",
+      "description": "Select and canonicalize transient seed layouts",
+      "category": "canonicalization/filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C07",
+      "source": "B:3092-3110",
+      "description": "Merge replay alternatives with equal input state",
+      "category": "merge",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C08",
+      "source": "B:3394-3548,3614-3715",
+      "description": "Rebuild post-CFG physical descendants and validate exact refinements",
+      "category": "closure/filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C09",
+      "source": "B:3812-3936",
+      "description": "Close logical function-input candidates",
+      "category": "function closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C10",
+      "source": "B:3964-4099,4611-4641",
+      "description": "Close function outputs and intersect exact value-boundary alternatives",
+      "category": "function closure/filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C11",
+      "source": "LogicalBoundaryRealizations:127-169,173-234,246-271",
+      "description": "Encode and enforce function/transient boundary realization compatibility",
+      "category": "relation closure",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C12",
+      "source": "B:4933-4955",
+      "description": "Reclassify standalone recompile occurrences",
+      "category": "canonicalization",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C13",
+      "source": "B:643-687,692-842",
+      "description": "Iterate semantic and publication fixed points through replay, privacy, actions, and projection",
+      "category": "phase composition",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C14",
+      "source": "B:5540-5579",
+      "description": "Bind exact candidate emission realizations to graph-owned authorities",
+      "category": "authority binding",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C15",
+      "source": "B:5600-5638",
+      "description": "Bind exact logical-transient source states",
+      "category": "authority binding",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "C16",
+      "source": "B:839-854,5653-5719",
+      "description": "Canonicalize published graph-owned states and verify required emitted nodes remain executable",
+      "category": "publication",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A01",
+      "source": "B:5101-5125,5828-5846",
+      "description": "Derive CP/FOUT and FED/LOUT→FOUT actions from one exact materialization anchor",
+      "category": "action generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A02",
+      "source": "B:6208-6248,6484-6623",
+      "description": "Derive relocation demand while skipping unsupported node CP/FOUT paths and requiring exact candidate input",
+      "category": "action generation/filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A03",
+      "source": "B:6263-6320; QuaternaryWDivMMFEDInstruction:209-243",
+      "description": "Model forced-local WDivMM output and its partition-axis behavior",
+      "category": "runtime boundary",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "A04",
+      "source": "B:5271-5313,5780-5810",
+      "description": "Bind exact derived-FOUT action authorities",
+      "category": "authority binding",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A05",
+      "source": "B:5317-5344,5722-5768",
+      "description": "Bind derived-FOUT physical realizations and pool identity",
+      "category": "realization binding",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A06",
+      "source": "B:5351-5357",
+      "description": "Reuse equal relocation-action objects without changing list cardinality",
+      "category": "canonicalization",
+      "preservationProof": "mechanical"
+    },
+    {
+      "id": "A07",
+      "source": "B:5361-5517,5526-5537",
+      "description": "Bind direct/relocation input support to candidate realizations",
+      "category": "relation binding",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A08",
+      "source": "B:6671-6723",
+      "description": "Build relocation actions and exact obligations",
+      "category": "action generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A09",
+      "source": "B:6726-6869; FEDRefedInstruction:81-143",
+      "description": "Check relocation/runtime anchor and worker-pool correspondence",
+      "category": "runtime boundary",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "A10",
+      "source": "B:7097-7154,7217-7255,7412-7492",
+      "description": "Resolve action alternatives, priorities, fallback paths, and cached indices",
+      "category": "action selection",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A11",
+      "source": "R:237-271",
+      "description": "Form candidate relocation problems from action demands",
+      "category": "action indexing",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A12",
+      "source": "R:1452-1515,1543-1598",
+      "description": "Select canonical relocation choices and validate selected actions",
+      "category": "action selection/validation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A13",
+      "source": "R:1615-1641",
+      "description": "Emit physical relocation actions from canonical choices",
+      "category": "projection",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "A14",
+      "source": "LocalMaterializationSelections:323-386,407-423",
+      "description": "Derive local materialization actions and origin-residency requirements",
+      "category": "action generation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "R01",
+      "source": "A:65-75,299-375",
+      "description": "Represent keys, clauses, bindings, witnesses, and exact realizations",
+      "category": "representation",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "R02",
+      "source": "A:503-529",
+      "description": "Merge equal realization keys by unioning all OR support clauses",
+      "category": "lossless merge",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "R03",
+      "source": "I:42-49,805-811",
+      "description": "Cache canonical signatures without changing semantic identity",
+      "category": "representation cache",
+      "preservationProof": "mechanical"
+    },
+    {
+      "id": "R04",
+      "source": "A:700-734,736-794",
+      "description": "Store and canonicalize candidate rule/emission/receipt authority",
+      "category": "representation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "R05",
+      "source": "C:993-1037,1664-1730,1774-1802",
+      "description": "Filter receipts by reachability, exact bindings, and derived-FOUT authority",
+      "category": "legality filter",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "R06",
+      "source": "C:1376-1445,1471-1487,1554-1585",
+      "description": "Test global realization compatibility and validate a complete receipt selection",
+      "category": "global relation",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "R07",
+      "source": "NeutralPlacementGraph:438-486",
+      "description": "Enumerate state assignments satisfying graph constraints",
+      "category": "state decoder",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "P01",
+      "source": "B:1326-1367",
+      "description": "Project constraint-supported policy states from the shared graph",
+      "category": "policy projection",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "P02",
+      "source": "C:1184-1204,1225-1272",
+      "description": "Build policy domains and rank PRESENT-input/materialization objectives",
+      "category": "policy quotient",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "P03",
+      "source": "C:1253-1268,1326-1352",
+      "description": "Deduplicate policy effects using a key that includes exact receipt identity",
+      "category": "policy quotient",
+      "preservationProof": "partial"
+    },
+    {
+      "id": "P04",
+      "source": "C:2190-2229",
+      "description": "Split exact interaction components only across unshared factors",
+      "category": "search decomposition",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "P05",
+      "source": "C:1491-1545",
+      "description": "Select one materialization-maximal compatible receipt assignment",
+      "category": "policy selection",
+      "preservationProof": "OPEN"
+    },
+    {
+      "id": "P06",
+      "source": "adapter/FedAllPlacementAdapter:59-96; adapter/HeuristicPlacementAdapter:57-80; selector/PolicyFirstFeasiblePlacementSelector:189-196",
+      "description": "Apply the policy projection in FedAll and Heuristic selection",
+      "category": "planner policy",
+      "preservationProof": "OPEN"
+    }
+  ]
+}

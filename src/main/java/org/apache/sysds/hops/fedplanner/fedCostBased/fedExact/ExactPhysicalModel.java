@@ -358,11 +358,13 @@ final class ExactPhysicalModel {
 				List<Alternative> executions = alternatives.stream().filter(candidate -> candidate.captured()
 					&& candidate.state().execType() == ExecType.FED
 					&& candidate.state().output() == FederatedOutput.LOUT).toList();
-				if(state.execType() == ExecType.FED)
+				if(state.execType() == ExecType.FED) {
 					for(Alternative execution : executions)
-						alternatives.add(nonCandidate(node, state, AuthorityKind.RELOCATION_SOURCE,
-							action.key().durableAnchor(), action, execution.candidateRule(),
-							execution.candidateEmission(), execution.realization(), execution.supportClause(), execution.inputAuthorities()));
+						if(execution.candidateEmission().emissionState().placementState() == state)
+							alternatives.add(nonCandidate(node, state, AuthorityKind.RELOCATION_SOURCE,
+								action.key().durableAnchor(), action, execution.candidateRule(),
+								execution.candidateEmission(), execution.realization(), execution.supportClause(), execution.inputAuthorities()));
+				}
 				else
 					alternatives.add(nonCandidate(node, state, AuthorityKind.RELOCATION_SOURCE,
 						action.key().durableAnchor(), action));

@@ -42,6 +42,19 @@ public class PublicationSupportClosureTest {
 	private static final CandidateRuleKey SOURCE = rule("source"), CONSUMER = rule("consumer");
 
 	@Test
+	public void privacyRowReuseRequiresTheSameExactEmissionObjects() {
+		CandidateRuleFact original = fact(SOURCE, ROW, List.of(source("current")));
+		Assert.assertSame(original, NeutralPlacementGraphBuilder.retainUnchangedPrivacyFact(
+			original, original.allowedEmissionFacts()));
+		CandidateEmissionFact replacement = new CandidateEmissionFact(ROW, FType.ROW, null,
+			List.of(source("another-worker-map")));
+		CandidateRuleFact replaced = NeutralPlacementGraphBuilder.retainUnchangedPrivacyFact(
+			original, List.of(replacement));
+		Assert.assertNotSame("a different realization authority must not reuse the old row", original, replaced);
+		Assert.assertEquals(List.of(replacement), replaced.allowedEmissionFacts());
+	}
+
+	@Test
 	public void expiredClauseDoesNotRemoveTheValidAlternative() throws Exception {
 		CandidateEmissionRealization source = source("current"), expired = source("expired");
 		CandidateEmissionRealization validClause = local(source, 0), expiredClause = local(expired, 0);

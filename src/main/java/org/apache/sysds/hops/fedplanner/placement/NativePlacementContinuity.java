@@ -962,9 +962,10 @@ final class NativePlacementContinuity {
 		// the synthetic null realization to the front, so publish it first instead.
 		if(pinned == null && topology.nodeDirectGround)
 			alternatives.add(new SelectedCandidateProof(null, null, List.of(), true, witness));
+		// A staging template is a proof obligation, not publication authority. Keep
+		// its exact input dependencies in recursive loop SCCs; only grounded rows
+		// with executable bindings are materialized by the caller.
 		for(CandidateTopologyRow row : overlayRows) {
-			if(pinned == null && row.requiresPinned)
-				continue;
 			alternatives.add(new SelectedCandidateProof(row.reference, row.clause,
 				overlayDependencies(row.dependencies, fixed, fixedHandles), row.directGround, witness));
 		}
@@ -1053,12 +1054,6 @@ final class NativePlacementContinuity {
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						if(metrics != null)
 							metrics.recordProofRowExamined();
-						boolean requiresPinned = realization.key().layoutKind()
-							== PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
-							&& clause.inputBindings().isEmpty()
-							&& !(hop instanceof DataOp data && (data.getOp() == OpOpData.TRANSIENTREAD
-								|| data.getOp() == OpOpData.TRANSIENTWRITE))
-							&& fact.key().orderedInputs().stream().anyMatch(input -> input.present());
 						List<CandidateDependencySkeleton> dependencies = candidateDependencySkeletons(
 							fact, clause, hop, witness);
 						if(dependencies != null) {
@@ -1069,7 +1064,7 @@ final class NativePlacementContinuity {
 									&& witness.matches(nativeWitness(clause.nativeWorkerPoolWitness()),
 										clause.nativeWorkerPoolLayoutExact());
 							rows.add(new CandidateTopologyRow(reference, clause, dependencies,
-								realizationGround, requiresPinned));
+								realizationGround));
 						}
 					}
 				}
@@ -1199,7 +1194,7 @@ final class NativePlacementContinuity {
 				? fixed.get(skeleton.key) : skeleton.clausePinned;
 			int handle = queryPinned ? fixedHandles.get(skeleton.key) : skeleton.clausePinnedHandle;
 			dependencies.add(new CandidateProofDependency(skeleton.key, pinned,
-				handle, skeleton.witness, skeleton.inputPosition));
+				handle, skeleton.witness, skeleton.inputPosition, queryPinned));
 		}
 		return dependencies;
 	}
@@ -1344,21 +1339,24 @@ final class NativePlacementContinuity {
 		private final int realizationHandle;
 		private final NativePoolWitness witness;
 		private final int inputPosition;
+		private final boolean templateRoot;
 		private final CandidateProofState state;
 		private final int hashCode;
 
 		private CandidateProofDependency(CompiledHopKey key,
 			CandidateRealizationReference realization, int realizationHandle,
-			NativePoolWitness witness, int inputPosition) {
+			NativePoolWitness witness, int inputPosition, boolean templateRoot) {
 			this.key = key;
 			this.realization = realization;
 			this.realizationHandle = realizationHandle;
 			this.witness = witness;
 			this.inputPosition = inputPosition;
-			state = new CandidateProofState(key, realization, realizationHandle, witness, false);
+			this.templateRoot = templateRoot;
+			state = new CandidateProofState(key, realization, realizationHandle, witness, templateRoot);
 			int hash = 31 * System.identityHashCode(key) + realizationHandle;
 			hash = 31 * hash + witness.hashCode();
-			hashCode = 31 * hash + inputPosition;
+			hash = 31 * hash + inputPosition;
+			hashCode = 31 * hash + Boolean.hashCode(templateRoot);
 		}
 
 		private int inputPosition() { return inputPosition; }
@@ -1373,7 +1371,7 @@ final class NativePlacementContinuity {
 				return true;
 			if(!(other instanceof CandidateProofDependency that))
 				return false;
-			return inputPosition == that.inputPosition && key == that.key
+			return inputPosition == that.inputPosition && templateRoot == that.templateRoot && key == that.key
 				&& realizationHandle == that.realizationHandle && witness.equals(that.witness);
 		}
 	}
@@ -1384,8 +1382,7 @@ final class NativePlacementContinuity {
 
 	private record CandidateTopologyRow(CandidateRealizationReference reference,
 		CandidateRealizationSupportClause clause,
-		List<CandidateDependencySkeleton> dependencies, boolean directGround,
-		boolean requiresPinned) {
+		List<CandidateDependencySkeleton> dependencies, boolean directGround) {
 		private CandidateTopologyRow {
 			dependencies = List.copyOf(dependencies);
 		}
@@ -1921,20 +1918,22 @@ final class NativePlacementContinuity {
 		return false;
 	}
 
-	/** A literal column slice of every row keeps every ROW partition on its original worker. */
+	/** A valid column slice of every row keeps every ROW partition on its original worker. */
 	private static boolean exactFullRowColumnSlice(IndexingOp index, NativePoolWitness witness,
 		CandidateRuleFact fact) {
 		if(witness.fType != FType.ROW || index.getInput().size() != 5
 			|| !witness.exactPartitionRanges || !retainsRuntimeRowMapType(witness)
 			|| fact.key().orderedInputs().size() != 5 || !index.isAllRows()
-			|| !(index.getInput(1) instanceof LiteralOp)
-			|| !(index.getInput(2) instanceof LiteralOp)
 			|| fact.key().orderedInputs().get(0).fType() != FType.ROW
 			|| !fact.key().orderedInputs().get(0).present()
-			|| fact.key().orderedInputs().subList(1, 5).stream().anyMatch(CandidateInputState::present)
-			|| !(index.getInput(3) instanceof LiteralOp colLower)
-			|| !(index.getInput(4) instanceof LiteralOp colUpper))
+			|| fact.key().orderedInputs().subList(1, 5).stream().anyMatch(CandidateInputState::present))
 			return false;
+		// The FED rightIndex keeps the ROW partition axis for every valid column
+		// interval, even when its endpoints are scalar expressions. Do not claim
+		// that the other (column) axis or complete 2D map stays unchanged.
+		if(!(index.getInput(3) instanceof LiteralOp colLower)
+			|| !(index.getInput(4) instanceof LiteralOp colUpper))
+			return true;
 		long columns = index.getInput(0).getDim2();
 		return columns > 0 && colLower.getLongValue() >= 1
 			&& colUpper.getLongValue() >= colLower.getLongValue()

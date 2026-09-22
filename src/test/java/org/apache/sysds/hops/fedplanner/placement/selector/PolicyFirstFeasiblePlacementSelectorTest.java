@@ -60,6 +60,12 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 			1, selected.certificate().exploredCount());
 		Assert.assertEquals(TerminationReason.POLICY_FEASIBLE,
 			selected.certificate().terminationReason());
+		Assert.assertFalse("First feasible selection does not prove a global optimum",
+			selected.certificate().optimalityProven());
+		Assert.assertTrue("The structural upper envelope must not reuse the selected score",
+			selected.certificate().finalUpperBound().compareTo(selected.score()) > 0);
+		Assert.assertEquals(selected.certificate().finalUpperBound(),
+			selected.certificate().componentBounds().get(0).upperBound());
 	}
 
 	@Test
@@ -80,6 +86,37 @@ public class PolicyFirstFeasiblePlacementSelectorTest {
 		Assert.assertTrue(NeutralPlacementGraph.constraintSatisfied(conflict,
 			selected.assignment().get(left.key()), selected.assignment().get(right.key())));
 		Assert.assertEquals(1, selected.certificate().exploredCount());
+	}
+
+	@Test
+	public void reconvergentConstraintsNeedJointContinuationBeyondPairwiseArcConsistency() {
+		String fingerprint = "first-feasible-reconvergent-boundary";
+		Node producer = node(fingerprint, "a-producer", 0, List.of(LOCAL, FED));
+		Node left = node(fingerprint, "b-left", 1, List.of(LOCAL, FED));
+		Node right = node(fingerprint, "c-right", 2, List.of(LOCAL, FED));
+		List<Constraint> constraints = List.of(
+			new Constraint(ConstraintKind.DOMINATES, producer.key(), left.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, producer.key(), right.key(), 0, "data-input"),
+			forbid(producer, left, FED, FED),
+			forbid(producer, right, FED, LOCAL),
+			forbid(left, right, LOCAL, FED),
+			forbid(left, right, FED, LOCAL));
+
+		PlacementSelection selected = new PolicyFirstFeasiblePlacementSelector().select(
+			new NeutralPlacementGraph(List.of(producer, left, right), constraints, List.of()));
+
+		Assert.assertEquals("the preferred FED producer has only individually supported"
+			+ " consumers, not a joint continuation", LOCAL,
+			selected.assignment().get(producer.key()));
+		Assert.assertTrue("the current selector must retract that trial to find a plan;"
+			+ " a true single-pass policy needs a joint boundary certificate instead",
+			selected.certificate().prunedCount() > 0);
+	}
+
+	private static Constraint forbid(Node left, Node right, PlacementState leftState,
+		PlacementState rightState) {
+		return new Constraint(ConstraintKind.CONJUNCTIVE, left.key(), right.key(), 0,
+			"forbid-pair:" + leftState.normalizedSignature() + "=>" + rightState.normalizedSignature());
 	}
 
 	@Test

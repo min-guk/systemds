@@ -290,6 +290,7 @@ public final class RelocationSelections {
 		private final RelocationPrivacyIndex originBoundSources;
 		private final Map<CandidateSelectionReceipt,ScoredReceipt> scoredReceipts;
 		private final Map<CandidateSelectionReceipt,long[]> exactInteractionTokens;
+		private final Map<RelocationAction,Set<CompiledHopKey>> actionAffectingOwners;
 		private final ScoredAction[] scoredActions;
 		private final int scoredConsumerCount;
 		private final int scoredAnchorCount;
@@ -417,6 +418,7 @@ public final class RelocationSelections {
 			this.scoredAnchorCount = order.anchorCount();
 			this.maximumScoredDemandCount = maximumDemands;
 			Map<CandidateSelectionReceipt,long[]> interactions = new IdentityHashMap<>();
+			Map<RelocationAction,Set<CompiledHopKey>> affecting = new IdentityHashMap<>();
 			for(CandidateSelectionReceipt receipt : exactReceipts) {
 				Set<Long> interactionTokens = new LinkedHashSet<>();
 				for(ScoredDemand demand : scored.get(receipt).demands()) {
@@ -431,6 +433,9 @@ public final class RelocationSelections {
 					RelocationAction action = scoredActionArray[actionId].action();
 					if(!receiptAffectsAction(receipt, action))
 						continue;
+					affecting.computeIfAbsent(action,
+						ignored -> Collections.newSetFromMap(new IdentityHashMap<>()))
+						.add(receipt.rule().parentOccurrence());
 					interactionTokens.add(interactionToken(1, actionId));
 					interactionTokens.add(interactionToken(2,
 						scoredActionArray[actionId].physicalId()));
@@ -439,6 +444,7 @@ public final class RelocationSelections {
 					.mapToLong(Long::longValue).toArray());
 			}
 			this.exactInteractionTokens = Collections.unmodifiableMap(interactions);
+			this.actionAffectingOwners = Collections.unmodifiableMap(affecting);
 		}
 
 		private boolean receiptAffectsAction(CandidateSelectionReceipt receipt,
@@ -463,6 +469,11 @@ public final class RelocationSelections {
 		private boolean optionAllowed(IndexedOption option,
 			Collection<CandidateSelectionReceipt> selected) {
 			boolean required = requiresEmission(option.action(), selected);
+			return optionAllowed(option, selected, required);
+		}
+
+		private boolean optionAllowed(IndexedOption option,
+			Collection<CandidateSelectionReceipt> selected, boolean required) {
 			return originBoundSources.isPrivacySafe(option.action(), required)
 				&& CandidateSelections.realizationActionAllowed(analysis, assignment, selected,
 					RelocationDemandKey.from(option.obligation()), option.action().key());
@@ -477,12 +488,61 @@ public final class RelocationSelections {
 					option.demand(), action.key());
 		}
 
+		/** Necessary prefix check; an unselected suppressor keeps an option open. */
+		boolean selectedDemandsMayStillComplete(Collection<CandidateSelectionReceipt> selectedReceipts,
+			Collection<CandidateSelectionReceipt> demandedReceipts,
+			Set<CompiledHopKey> selectedOwners) {
+			for(CandidateSelectionReceipt receipt : demandedReceipts) {
+				if(infeasibleReceipts.contains(receipt))
+					return false;
+				for(IndexedDemand demand : demandsByReceipt.get(receipt)) {
+					boolean possible = false;
+					for(IndexedOption option : demand.options()) {
+						Set<CompiledHopKey> affecting = actionAffectingOwners.getOrDefault(
+							option.action(), Set.of());
+						if(affecting.stream().anyMatch(owner -> !selectedOwners.contains(owner))
+							|| optionAllowed(option, selectedReceipts)) {
+							possible = true;
+							break;
+						}
+					}
+					if(!possible)
+						return false;
+				}
+			}
+			return true;
+		}
+
 		Selection select(Collection<CandidateSelectionReceipt> selectedReceipts) {
-			if(selectedReceipts.stream().anyMatch(infeasibleReceipts::contains))
+			return select(selectedReceipts, false);
+		}
+
+		/** Complete one policy witness without proving minimum emission or canonical optimality. */
+		Selection selectFirstFeasible(Collection<CandidateSelectionReceipt> selectedReceipts) {
+			return select(selectedReceipts, selectedReceipts, true);
+		}
+
+		/** Check completed variable components while retaining fixed-row authority as context. */
+		Selection selectFirstFeasible(Collection<CandidateSelectionReceipt> selectedReceipts,
+			Collection<CandidateSelectionReceipt> demandedReceipts) {
+			return select(selectedReceipts, demandedReceipts, true);
+		}
+
+		private Selection select(Collection<CandidateSelectionReceipt> selectedReceipts,
+			boolean firstFeasible) {
+			return select(selectedReceipts, selectedReceipts, firstFeasible);
+		}
+
+		private Selection select(Collection<CandidateSelectionReceipt> selectedReceipts,
+			Collection<CandidateSelectionReceipt> demandedReceipts, boolean firstFeasible) {
+			if(demandedReceipts.stream().anyMatch(infeasibleReceipts::contains))
 				throw new InfeasibleRelocationSelectionException(
 					"Exact indexed relocation-choice search has an origin-bound active movement");
 			List<RankedDemandOptions> rankedDemands = new ArrayList<>();
-			for(CandidateSelectionReceipt receipt : selectedReceipts) {
+			// Action activity depends on this immutable selection, not on the demand.
+			// Reuse it across all options sharing the same physical action.
+			Map<RelocationAction,Boolean> activity = new IdentityHashMap<>();
+			for(CandidateSelectionReceipt receipt : demandedReceipts) {
 				List<IndexedDemand> indexed = demandsByReceipt.get(receipt);
 				if(indexed == null)
 					throw new IllegalArgumentException(
@@ -490,11 +550,12 @@ public final class RelocationSelections {
 				for(IndexedDemand demand : indexed) {
 					List<Option> options = new ArrayList<>(demand.options().size());
 					for(IndexedOption option : demand.options()) {
-						if(!optionAllowed(option, selectedReceipts))
+						boolean required = activity.computeIfAbsent(option.action(),
+							action -> requiresEmission(action, selectedReceipts));
+						if(!optionAllowed(option, selectedReceipts, required))
 							continue;
-						boolean requiresEmission = requiresEmission(option.action(), selectedReceipts);
 						options.add(new Option(option.action(), option.obligation(),
-							requiresEmission, option.choiceRank()));
+							required, option.choiceRank()));
 					}
 					if(options.isEmpty())
 						throw new InfeasibleRelocationSelectionException(
@@ -509,8 +570,11 @@ public final class RelocationSelections {
 				.thenComparingInt(RankedDemandOptions::canonicalRank));
 			List<DemandOptions> demands = rankedDemands.stream()
 				.map(RankedDemandOptions::demand).toList();
-			Search search = new Search(demands, null, order);
-			search.solveExactlyByInteractionComponent();
+			Search search = new Search(demands, null, order, firstFeasible);
+			if(firstFeasible)
+				search.solve(0);
+			else
+				search.solveExactlyByInteractionComponent();
 			if(search.best == null)
 				throw new InfeasibleRelocationSelectionException(
 					"Exact indexed relocation-choice search has no solution");
@@ -1085,6 +1149,24 @@ public final class RelocationSelections {
 		return new Selection(search.best, search.bestEmitted, search.bestCost);
 	}
 
+	/**
+	 * Graph-authority first feasible completion for selectors without candidate-row
+	 * analysis. As with graph-only canonical selection, callers must supply an
+	 * already privacy-authorized graph/action universe.
+	 */
+	public static Selection selectFirstFeasible(NeutralPlacementGraph graph,
+		Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey, PlacementState> assignment) {
+		CanonicalOrderIndex order = canonicalOrderIndex(actionUniverse);
+		Problem problem = problem(graph, actionUniverse, assignment, order);
+		Search search = new Search(problem.demands(), null, order, true);
+		search.solve(0);
+		if(search.best == null)
+			throw new InfeasibleRelocationSelectionException(
+				"First-feasible relocation-choice search has no solution");
+		return new Selection(search.best, search.bestEmitted, search.bestEmissionCount);
+	}
+
 	public static Selection selectMinimumCost(PlacementAnalysis analysis,
 		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey, PlacementState> assignment,
@@ -1277,6 +1359,24 @@ public final class RelocationSelections {
 		Collection<RelocationChoiceReceipt> choices) {
 		return resolveAndValidate(analysis, analysis.graph().relocationActions(), assignment,
 			candidateSelections, choices);
+	}
+
+	/** Exact active demand domains used by the closed-space audit enumerator. */
+	public record AuditDemandOptions(RelocationDemandKey demand, List<RelocationChoiceReceipt> choices) {
+		public AuditDemandOptions { choices = List.copyOf(choices); }
+	}
+
+	public static List<AuditDemandOptions> auditDemandOptions(PlacementAnalysis analysis,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> candidateSelections) {
+		Problem problem = problem(analysis, analysis.graph().relocationActions(), assignment,
+			candidateSelections);
+		List<AuditDemandOptions> result = new ArrayList<>(problem.demands().size());
+		for(DemandOptions demand : problem.demands())
+			result.add(new AuditDemandOptions(demand.demand(), demand.options().stream()
+				.map(option -> new RelocationChoiceReceipt(demand.demand(), option.action().key()))
+				.toList()));
+		return List.copyOf(result);
 	}
 
 	public static List<ResolvedChoice> resolveAndValidate(NeutralPlacementGraph graph,
@@ -1662,6 +1762,7 @@ public final class RelocationSelections {
 		private final AnchorBindings anchorBindings = new AnchorBindings();
 		private final CanonicalOrderIndex order;
 		private final boolean hasAlternative;
+		private final boolean firstFeasible;
 		private List<RelocationChoiceReceipt> best;
 		private List<RelocationActionKey> bestEmitted = List.of();
 		private int bestEmissionCount = Integer.MAX_VALUE;
@@ -1669,11 +1770,17 @@ public final class RelocationSelections {
 
 		private Search(List<DemandOptions> demands, Set<RelocationActionKey> requiredEmitted,
 			CanonicalOrderIndex order) {
+			this(demands, requiredEmitted, order, false);
+		}
+
+		private Search(List<DemandOptions> demands, Set<RelocationActionKey> requiredEmitted,
+			CanonicalOrderIndex order, boolean firstFeasible) {
 			this.searchId = EXACT_SEARCH_IDS.incrementAndGet();
 			this.demands = List.copyOf(demands);
 			this.requiredEmitted = requiredEmitted == null ? null : Set.copyOf(requiredEmitted);
 			this.order = Objects.requireNonNull(order, "order");
 			this.hasAlternative = demands.stream().anyMatch(demand -> demand.options().size() > 1);
+			this.firstFeasible = firstFeasible;
 			if(FederatedPlannerTrace.isEnabled()
 				&& (searchId <= 4 || (searchId & (searchId - 1L)) == 0L))
 				FederatedPlannerTrace.logGlobal("Relocation-Search-Start",
@@ -1819,14 +1926,16 @@ public final class RelocationSelections {
 		}
 
 		private void solve(int index) {
+			if(firstFeasible && best != null)
+				return;
 			if(index == 0 && !hasAlternative) {
 				solveDeterministic();
 				return;
 			}
-			if(physicalEmissionRefs.size() > bestEmissionCount
+			if(!firstFeasible && (physicalEmissionRefs.size() > bestEmissionCount
 				|| bestEmissionCount != Integer.MAX_VALUE
 					&& Math.addExact(physicalEmissionRefs.size(),
-						additionalPhysicalEmissionLowerBound(index)) > bestEmissionCount)
+						additionalPhysicalEmissionLowerBound(index)) > bestEmissionCount))
 				return;
 			if(index == demands.size()) {
 				if(requiredEmitted != null && !emitted.equals(requiredEmitted))
@@ -1840,6 +1949,13 @@ public final class RelocationSelections {
 				List<RelocationChoiceReceipt> candidate = ordered.stream()
 					.map(RankedChoice::receipt).toList();
 				List<Integer> choiceRanks = ordered.stream().map(RankedChoice::rank).toList();
+				if(firstFeasible) {
+					bestEmissionCount = physicalEmissionRefs.size();
+					bestChoiceRanks = choiceRanks;
+					best = List.copyOf(candidate);
+					bestEmitted = canonicalEmittedActions(emitted, order);
+					return;
+				}
 				if(physicalEmissionRefs.size() < bestEmissionCount
 					|| physicalEmissionRefs.size() == bestEmissionCount
 					&& (bestChoiceRanks == null
@@ -1879,6 +1995,8 @@ public final class RelocationSelections {
 						decrementPhysicalRef(physicalEmissionRefs, physical);
 					}
 					anchorBindings.release(option);
+					if(firstFeasible && best != null)
+						return;
 				}
 		}
 

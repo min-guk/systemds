@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.ToDoubleFunction;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -107,6 +108,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 				? producerDependencies(graph, reachability) : Map.of();
 		Map<CompiledHopKey,PlacementState> assignment = new IdentityHashMap<>();
 		long pruned = 0;
+		long explored = 1;
 		int maxDepth = 0;
 		for(PolicyComponent component : policyComponents(graph, reachability)) {
 			Solver solver = new Solver(candidateAnalysis, graph, component.nodes(),
@@ -120,12 +122,31 @@ public final class PolicyFirstFeasiblePlacementSelector
 			pruned = Math.addExact(pruned, solver.pruned);
 			maxDepth = Math.max(maxDepth, solver.maxDepth);
 		}
-		ScoredPlan plan = scoreComplete(candidateAnalysis, candidatePolicy, graph, assignment);
+		ScoredPlan plan;
+		try {
+			plan = scoreComplete(candidateAnalysis, candidatePolicy, graph, assignment);
+		}
+		catch(CandidateSelections.NoPolicyCandidatePlanException
+			| RelocationSelections.InfeasibleRelocationSelectionException ex) {
+			// Component-local state feasibility is only a necessary condition. Retry
+			// the full state search with a complete row/action witness at each leaf.
+			Solver solver = new Solver(candidateAnalysis, graph, graph.decisionNodes(),
+				graph.constraints(), graph.relocationActions(), reachability,
+				stateOrdering, executionWeightOverride, producerDependencies,
+				states -> scoreComplete(candidateAnalysis, candidatePolicy, graph, states));
+			assignment = solver.solve();
+			plan = Objects.requireNonNull(solver.witnessedPlan,
+				"complete policy witness");
+			explored = Math.addExact(explored, solver.explored);
+			pruned = Math.addExact(pruned, solver.pruned);
+			maxDepth = Math.max(maxDepth, solver.maxDepth);
+		}
 		PlacementScore score = new PlacementScore(plan.fedCount(), plan.foutCount(),
 			plan.physicalMovementCount(), normalizedSignature(plan));
-		List<ComponentBound> bounds = policyBounds(graph, score);
-		PlacementCertificate certificate = new PlacementCertificate(score, score,
-			1, pruned, sha256(score.normalizedSignature()),
+		PlacementScore envelope = structuralUpperEnvelope(graph);
+		List<ComponentBound> bounds = policyBounds(graph, envelope);
+		PlacementCertificate certificate = new PlacementCertificate(score, envelope,
+			explored, pruned, sha256(score.normalizedSignature()),
 			sha256(graph.normalizedSignature()), graph.nodes().size(), graph.constraints().size(),
 			bounds.size(), maxDepth, bounds,
 			"deterministic-component-first-feasible-with-localized-arc-consistency"
@@ -180,8 +201,8 @@ public final class PolicyFirstFeasiblePlacementSelector
 		int movement;
 		if(analysis == null) {
 			candidates = List.of();
-			choices = RelocationSelections.selectCanonical(graph, graph.relocationActions(),
-				assignment, (demand, action) -> true);
+			choices = RelocationSelections.selectFirstFeasible(graph, graph.relocationActions(),
+				assignment).choices();
 			relocations = RelocationSelections.emittedActions(graph, graph.relocationActions(),
 				assignment, choices);
 			movement = RelocationSelections.physicalEmissionCount(relocations);
@@ -373,11 +394,13 @@ public final class PolicyFirstFeasiblePlacementSelector
 		private final Map<CompiledHopKey,Double> executionWeights = new IdentityHashMap<>();
 		private final Map<RelocationAction,Double> relocationWeights = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,PlacementState> current = new IdentityHashMap<>();
+		private final Function<Map<CompiledHopKey,PlacementState>,ScoredPlan> completeWitness;
 		private long explored;
 		private long pruned;
 		private int maxDepth;
 
 		private Map<CompiledHopKey,PlacementState> solution;
+		private ScoredPlan witnessedPlan;
 
 		private Solver(PlacementAnalysis analysis, NeutralPlacementGraph graph,
 			List<Node> decisions, List<Constraint> constraints,
@@ -386,6 +409,19 @@ public final class PolicyFirstFeasiblePlacementSelector
 			StateOrdering stateOrdering,
 			ToDoubleFunction<CompiledHopKey> executionWeightOverride,
 			Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies) {
+			this(analysis, graph, decisions, constraints, relocationActions, reachability,
+				stateOrdering, executionWeightOverride, producerDependencies, null);
+		}
+
+		private Solver(PlacementAnalysis analysis, NeutralPlacementGraph graph,
+			List<Node> decisions, List<Constraint> constraints,
+			List<RelocationAction> relocationActions,
+			CandidateSelections.PartialReachabilityIndex reachability,
+			StateOrdering stateOrdering,
+			ToDoubleFunction<CompiledHopKey> executionWeightOverride,
+			Map<CompiledHopKey,List<CompiledHopKey>> producerDependencies,
+			Function<Map<CompiledHopKey,PlacementState>,ScoredPlan> completeWitness) {
+			this.completeWitness = completeWitness;
 			this.analysis = analysis != null && !analysis.candidateRuleFacts().orderedFacts().isEmpty()
 				? analysis : null;
 			this.graph = graph;
@@ -443,7 +479,17 @@ public final class PolicyFirstFeasiblePlacementSelector
 				explored++;
 				if(!constraintsSatisfied(current))
 					return false;
-				solution = Map.copyOf(current);
+				Map<CompiledHopKey,PlacementState> complete = Map.copyOf(current);
+				if(completeWitness != null)
+					try {
+						witnessedPlan = completeWitness.apply(complete);
+					}
+					catch(CandidateSelections.NoPolicyCandidatePlanException
+						| RelocationSelections.InfeasibleRelocationSelectionException ex) {
+						pruned++;
+						return false;
+					}
+				solution = complete;
 				return true;
 			}
 			for(PlacementState state : orderedAlternatives(unresolved, domains)) {
@@ -1250,15 +1296,29 @@ public final class PolicyFirstFeasiblePlacementSelector
 		return String.join("\n", rows);
 	}
 
+	private static PlacementScore structuralUpperEnvelope(NeutralPlacementGraph graph) {
+		int fed = 0;
+		int fout = 0;
+		for(Node node : graph.decisionNodes()) {
+			if(node.legalAlternatives().stream().anyMatch(state -> state.execType() == ExecType.FED))
+				fed++;
+			if(node.legalAlternatives().stream().anyMatch(state -> state.output() == FederatedOutput.FOUT))
+				fout++;
+		}
+		// The empty signature is the best possible canonical tie under PlacementScore.
+		// This is deliberately a loose structural bound, not the selected score.
+		return new PlacementScore(fed, fout, 0, "");
+	}
+
 	private static List<ComponentBound> policyBounds(NeutralPlacementGraph graph,
-		PlacementScore score) {
+		PlacementScore envelope) {
 		if(graph.decisionNodes().isEmpty())
 			return List.of();
 		Set<String> nodes = new LinkedHashSet<>();
 		graph.decisionNodes().stream().map(node -> node.key().normalizedSignature()).sorted()
 			.forEach(nodes::add);
 		return List.of(new ComponentBound("policy-graph", nodes, graph.decisionNodes().size(),
-			graph.constraints().size(), score, "selected-policy-feasible-envelope"));
+			graph.constraints().size(), envelope, "unclosed-structural-policy-envelope"));
 	}
 
 	private static String sha256(String value) {

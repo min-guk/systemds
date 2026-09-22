@@ -167,6 +167,36 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	}
 
 	@Test
+	public void mountedRelativeMetadataWinsWithoutWorkerRequest() throws Exception {
+		Path absolute = workerDataPath("relative-mounted-worker");
+		writePrivacyMetadata(absolute, "private-aggregate");
+		Path relative = Path.of("").toAbsolutePath().relativize(absolute);
+		FederatedData data = workerData(relative);
+
+		Object result = resolve(data);
+
+		assertResolution(result, "private-aggregate", "LOCAL_PRE_REQUEST", "NONE", null, null);
+		verify(data, never()).requestPrivacyConstraints();
+	}
+
+	@Test
+	public void malformedMountedMetadataFailsClosedWithoutWorkerRequest() throws Exception {
+		Path absolute = workerDataPath("malformed-mounted-worker");
+		Files.writeString(Path.of(absolute + ".mtd"), "{not-json");
+		Path relative = Path.of("").toAbsolutePath().relativize(absolute);
+		FederatedData data = workerData(relative);
+
+		try {
+			resolve(data);
+			Assert.fail("A present malformed sidecar must not fall through to another privacy authority");
+		}
+		catch(IllegalStateException expected) {
+			Assert.assertTrue(expected.getMessage().contains("Cannot read local privacy metadata"));
+		}
+		verify(data, never()).requestPrivacyConstraints();
+	}
+
+	@Test
 	public void successfulWorkerResponsePreservesRawPrivacyAndResponse() throws Exception {
 		Path dataPath = workerDataPath("worker-success");
 		FederatedData data = workerData(dataPath);

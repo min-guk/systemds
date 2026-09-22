@@ -608,6 +608,18 @@ public final class PlacementCostSemantics {
 		Objects.requireNonNull(compiledInputEdges, "compiledInputEdges");
 		Objects.requireNonNull(nodes, "nodes");
 		Objects.requireNonNull(ownerKey, "ownerKey");
+		// The exact matcher below rejects every non-transpose owner before reading
+		// the node index. Avoid rebuilding that whole-program index for those owners.
+		Hop owner = origins.get(ownerKey);
+		if(!OptimizerUtils.ALLOW_OPERATOR_FUSION
+			|| !(owner instanceof ReorgOp reorg) || reorg.getOp() != ReOrgOp.TRANS
+			|| owner.getInput() == null || owner.getInput().size() != 1)
+			return null;
+		Hop input = owner.getInput().get(0);
+		if(!(input instanceof AggBinaryOp inner) || !inner.isMatrixMultiply()
+			|| inner.getParent() == null || inner.getParent().size() != 1
+			|| inner.getParent().get(0) != owner)
+			return null;
 		Map<CompiledHopKey,NeutralPlacementGraph.Node> nodesByKey = new java.util.IdentityHashMap<>();
 		for(NeutralPlacementGraph.Node node : nodes)
 			nodesByKey.put(node.key(), node);
@@ -629,7 +641,7 @@ public final class PlacementCostSemantics {
 				return node == null ? List.of() : node.legalAlternatives();
 			}
 		};
-		return latentWdivmmTransposePair(facts, ownerKey, facts.hop(ownerKey));
+		return latentWdivmmTransposePair(facts, ownerKey, owner);
 	}
 
 	/** FED compute cost after replacing a source-level shell with its runtime kernel. */
