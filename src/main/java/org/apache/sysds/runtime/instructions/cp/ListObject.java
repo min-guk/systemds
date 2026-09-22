@@ -90,6 +90,8 @@ public class ListObject extends Data implements Externalizable {
 			new ArrayList<>(that._lineage) : null);
 		if( that._dataState != null )
 			_dataState = Arrays.copyOf(that._dataState, getLength());
+		if(that.hasWorkerPrivacyLevel())
+			setWorkerPrivacyLevel(that.getWorkerPrivacyLevel());
 	}
 	
 	public void deriveAndSetStatusFromData() {
@@ -215,6 +217,8 @@ public class ListObject extends Data implements Externalizable {
 		ListObject ret = new ListObject(new ArrayList<>(getData()), names, LineageItems);
 		if( getStatus() != null )
 			ret.setStatus(Arrays.copyOf(getStatus(), getLength()));
+		if(hasWorkerPrivacyLevel())
+			ret.setWorkerPrivacyLevel(getWorkerPrivacyLevel());
 		return ret;
 	}
 	
