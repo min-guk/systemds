@@ -320,9 +320,18 @@ public class FederatedData {
 					+ " keyTid=" + _key.right + " batch=" + summarizeRequestBatch(request));
 			final Channel ch = getOrCreateChannel();
 			final Promise<FederatedResponse> prom = ch.eventLoop().newPromise();
+			FederatedPhaseCompletion.trackDispatch(_address, requestTid(request), prom);
 			_pending.add(prom);
 
-			final ChannelFuture writeFuture = ch.writeAndFlush(request);
+			final ChannelFuture writeFuture;
+			try {
+				writeFuture = ch.writeAndFlush(request);
+			}
+			catch(RuntimeException | Error t) {
+				_pending.remove(prom);
+				prom.tryFailure(t);
+				throw t;
+			}
 			writeFuture.addListener(f -> {
 				if(!f.isSuccess()) {
 					_pending.remove(prom);
@@ -332,6 +341,10 @@ public class FederatedData {
 				}
 			});
 			return prom;
+		}
+
+		private static long requestTid(FederatedRequest[] requests) {
+			return requests != null && requests.length > 0 && requests[0] != null ? requests[0].getTID() : 0;
 		}
 
 		private Channel getOrCreateChannel() throws Exception {
