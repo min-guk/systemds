@@ -42,9 +42,13 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.ConsumerInputSpec;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.VariableSet;
+import org.apache.sysds.runtime.controlprogram.IfProgramBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
+import org.apache.sysds.runtime.controlprogram.Program;
+import org.apache.sysds.runtime.controlprogram.ProgramBlock;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.After;
@@ -272,6 +276,32 @@ public class PlannerRecompileProgramAuthorityTest {
 	}
 
 	@Test
+	public void nestedIfHierarchyRecompileUsesStatementProgramAuthority() {
+		DMLProgram unrelated = new DMLProgram();
+		DMLProgram hierarchyOwner = new DMLProgram();
+		Hop unrelatedPlan = hop("unrelated-plan", ExecType.FED, FederatedOutput.FOUT);
+		Hop hierarchyPlan = hop("hierarchy-plan", ExecType.CP, FederatedOutput.LOUT);
+		publish(unrelated, unrelatedPlan, ExecType.FED, FederatedOutput.FOUT);
+		publish(hierarchyOwner, hierarchyPlan, ExecType.CP, FederatedOutput.LOUT);
+
+		Program runtimeProgram = new Program(hierarchyOwner);
+		IfProgramBlock outer = ifBlock(runtimeProgram, hierarchyOwner, new LiteralOp(true));
+		Hop nestedPredicate = hop("nested-predicate", null, FederatedOutput.NONE);
+		IfProgramBlock nested = ifBlock(runtimeProgram, hierarchyOwner, nestedPredicate);
+		outer.addProgramBlockIfBody(nested);
+
+		try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+			FederatedPlannerUtils.activatePlannerRecompileOwner(unrelated)) {
+			Recompiler.recompileProgramBlockHierarchy(List.<ProgramBlock>of(outer),
+				new LocalVariableMap(), 0, true, Recompiler.ResetType.NO_RESET);
+		}
+
+		assertEquals("Nested if predicates must ignore unrelated thread-local authority",
+			ExecType.CP, nestedPredicate.getForcedExecType());
+		assertEquals(FederatedOutput.LOUT, nestedPredicate.getFederatedOutput());
+	}
+
+	@Test
 	public void authorityIsInvisibleToUnrelatedCompilationRewrite() {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
 		DMLProgram planned = new DMLProgram();
@@ -470,5 +500,15 @@ public class PlannerRecompileProgramAuthorityTest {
 		hop.setForcedExecType(exec);
 		hop.setFederatedOutput(output);
 		return hop;
+	}
+
+	private static IfProgramBlock ifBlock(Program runtimeProgram, DMLProgram owner, Hop predicate) {
+		IfStatementBlock statementBlock = new IfStatementBlock();
+		statementBlock.setDMLProg(owner);
+		statementBlock.setPredicateHops(predicate);
+		statementBlock.setRecompileOnce(true);
+		IfProgramBlock programBlock = new IfProgramBlock(runtimeProgram, new ArrayList<>());
+		programBlock.setStatementBlock(statementBlock);
+		return programBlock;
 	}
 }

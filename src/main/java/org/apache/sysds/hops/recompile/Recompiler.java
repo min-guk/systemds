@@ -1736,7 +1736,7 @@ public class Recompiler {
 			return;
 		Hop hops = isb.getPredicateHops();
 		ArrayList<Instruction> tmp = recompileHopsDag(
-			hops, vars, status, status.isInPlace(), false, status.getTID());
+			hops, vars, status, status.isInPlace(), false, status.getTID(), isb.getDMLProg());
 		ipb.setPredicate( tmp );
 		if( ParForProgramBlock.RESET_RECOMPILATION_FLAGs && status.isReset() ) {
 			Hop.resetRecompilationFlag(hops, ExecType.CP, status.getReset());
