@@ -123,6 +123,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	/** Federated workload analyzer */
 	private final FederatedWorkloadAnalyzer _fan;
 	private final FederatedWorkerPhaseRegistry _phaseRegistry;
+	private CompletableFuture<Void> _strictTail = CompletableFuture.completedFuture(null);
 
 	private String _remoteAddress = FederatedLookupTable.NOHOST;
 
@@ -195,10 +196,15 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	}
 
 	private void handleStrict(ChannelHandlerContext ctx, Object msg) {
+		_strictTail = _strictTail.thenComposeAsync(ignored -> strictResponse(ctx, msg), ctx.executor())
+			.thenComposeAsync(response -> writeStrict(ctx, response), ctx.executor());
+	}
+
+	private CompletableFuture<FederatedResponse> strictResponse(ChannelHandlerContext ctx, Object msg) {
 		if(!(msg instanceof FederatedRequest[])) {
 			_phaseRegistry.rejectMalformedEnvelope();
-			writeStrict(ctx, new FederatedResponse(ResponseType.ERROR, "invalid STRICT request envelope"));
-			return;
+			return CompletableFuture.completedFuture(
+				new FederatedResponse(ResponseType.ERROR, "invalid STRICT request envelope"));
 		}
 		FederatedRequest[] requests = (FederatedRequest[]) msg;
 		String remoteHost = remoteHost(ctx.channel().remoteAddress());
@@ -208,25 +214,28 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			if(request.getPhaseBatchTag() != null || request.getNumParams() != 1
 				|| !(request.getParam(0) instanceof FederatedPhaseWire.Control)) {
 				_phaseRegistry.rejectMalformedEnvelope();
-				writeStrict(ctx, new FederatedResponse(ResponseType.ERROR, "invalid STRICT control payload"));
-				return;
+				return CompletableFuture.completedFuture(
+					new FederatedResponse(ResponseType.ERROR, "invalid STRICT control payload"));
 			}
-			_phaseRegistry.handleControl((FederatedPhaseWire.Control) request.getParam(0),
-				request.getPID(), remoteHost).whenComplete((response, error) -> ctx.executor().execute(() ->
-				writeStrict(ctx, error == null ? response
-					: new FederatedResponse(ResponseType.ERROR, "STRICT control failed"))));
-			return;
+			return _phaseRegistry.handleControl((FederatedPhaseWire.Control) request.getParam(0),
+				request.getPID(), remoteHost).exceptionally(error ->
+					new FederatedResponse(ResponseType.ERROR, "STRICT control failed"));
 		}
-		_phaseRegistry.executeBatch(requests, remoteHost, () -> createResponse(requests, remoteHost))
-			.whenComplete((response, error) -> ctx.executor().execute(() -> writeStrict(ctx,
-				error == null ? response : new FederatedResponse(ResponseType.ERROR, "STRICT batch failed"))));
+		return _phaseRegistry.executeBatch(requests, remoteHost, () -> createResponse(requests, remoteHost))
+			.exceptionally(error -> new FederatedResponse(ResponseType.ERROR, "STRICT batch failed"));
 	}
 
-	private static void writeStrict(ChannelHandlerContext ctx, FederatedResponse response) {
+	private static CompletableFuture<Void> writeStrict(ChannelHandlerContext ctx, FederatedResponse response) {
+		CompletableFuture<Void> written = new CompletableFuture<>();
 		ctx.writeAndFlush(response).addListener(future -> {
-			if(!future.isSuccess())
+			if(!future.isSuccess()) {
 				ctx.close();
+				written.completeExceptionally(future.cause());
+			}
+			else
+				written.complete(null);
 		});
+		return written;
 	}
 
 	private String remoteHost(SocketAddress remoteAddress) {

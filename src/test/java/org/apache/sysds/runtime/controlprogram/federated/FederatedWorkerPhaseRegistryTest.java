@@ -25,13 +25,16 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.runtime.controlprogram.federated.FederatedPhaseWire.BatchTag;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedPhaseWire.Control;
@@ -260,8 +263,135 @@ public class FederatedWorkerPhaseRegistryTest {
 		}
 	}
 
+	@Test
+	public void embeddedNettyPipeliningPreservesExecutionAndReplyFifo() throws Exception {
+		CountDownLatch firstLookup = new CountDownLatch(1);
+		CountDownLatch releaseFirst = new CountDownLatch(1);
+		AtomicInteger lookups = new AtomicInteger();
+		FederatedLookupTable lookup = new FederatedLookupTable() {
+			@Override
+			public ExecutionContextMap getECM(String host, long pid) {
+				if(lookups.incrementAndGet() == 1) {
+					firstLookup.countDown();
+					await(releaseFirst);
+				}
+				return super.getECM(host, pid);
+			}
+		};
+		EmbeddedChannel channel = new EmbeddedChannel(new FederatedWorkerHandler(lookup,
+			new FederatedReadCache(), null, _registry));
+		try {
+			FederatedRequest first = new FederatedRequest(RequestType.NOOP);
+			PhaseIdentity identity = identity(first.getPID());
+			channel.writeInbound((Object) new FederatedRequest[] {controlRequest(begin(identity))});
+			reply(readOutbound(channel));
+
+			UUID stream = UUID.randomUUID();
+			BatchTag firstTag = new BatchTag(identity, WORKER_ID, stream, 0, 1);
+			BatchTag secondTag = new BatchTag(identity, WORKER_ID, stream, 0, 2);
+			first.setPhaseBatchTag(firstTag);
+			FederatedRequest second = new FederatedRequest(RequestType.NOOP);
+			second.setPhaseBatchTag(secondTag);
+			channel.writeInbound((Object) new FederatedRequest[] {first});
+			assertTrue(firstLookup.await(5, TimeUnit.SECONDS));
+			channel.writeInbound((Object) new FederatedRequest[] {second});
+			channel.runPendingTasks();
+			assertEquals("second batch executed while first was blocked", 1, lookups.get());
+			assertNull(channel.readOutbound());
+
+			releaseFirst.countDown();
+			assertEquals(firstTag, readOutbound(channel).getPhaseBatchTag());
+			assertEquals(secondTag, readOutbound(channel).getPhaseBatchTag());
+		}
+		finally {
+			releaseFirst.countDown();
+			channel.finishAndReleaseAll();
+		}
+	}
+
+	@Test
+	public void authenticatedCloseReleasesOwnerForCleanNextAttempt() throws Exception {
+		FederatedRequest request = new FederatedRequest(RequestType.NOOP);
+		PhaseIdentity first = identity(request.getPID());
+		reply(_registry.handleControl(begin(first), request.getPID(), HOST).get());
+		Reply ended = reply(_registry.handleControl(endEmpty(first, 2), request.getPID(), HOST).get());
+		assertTrue(ended.isTerminal());
+		Reply closed = reply(_registry.handleControl(cleanup(first, 3, ControlOp.CLOSE_SESSION),
+			request.getPID(), HOST).get());
+		assertEquals(ReplyStatus.ACK, closed.getStatus());
+		assertFalse(_registry.hasStrictSession());
+
+		PhaseIdentity next = identity(request.getPID(), UUID.randomUUID());
+		Reply reopened = reply(_registry.handleControl(begin(next), request.getPID(), HOST).get());
+		assertEquals(next.getAttemptId(), reopened.getAttemptId());
+	}
+
+	@Test
+	public void authenticatedAbortClearsQuarantineButUnauthenticatedCloseCannot() throws Exception {
+		FederatedRequest request = new FederatedRequest(RequestType.NOOP);
+		PhaseIdentity identity = identity(request.getPID());
+		reply(_registry.handleControl(begin(identity), request.getPID(), HOST).get());
+		_registry.rejectMalformedEnvelope();
+
+		PhaseIdentity impostor = identity(request.getPID(), UUID.randomUUID());
+		Reply denied = reply(_registry.handleControl(cleanup(impostor, 2, ControlOp.CLOSE_SESSION),
+			request.getPID(), HOST).get());
+		assertEquals(ReplyStatus.QUARANTINED, denied.getStatus());
+		assertTrue("unauthenticated cleanup released the owner", _registry.hasStrictSession());
+
+		Reply aborted = reply(_registry.handleControl(cleanup(identity, 2, ControlOp.ABORT_SESSION),
+			request.getPID(), HOST).get());
+		assertEquals(ReplyStatus.QUARANTINED, aborted.getStatus());
+		assertFalse(_registry.hasStrictSession());
+		PhaseIdentity next = identity(request.getPID(), UUID.randomUUID());
+		assertEquals(ReplyStatus.ACK,
+			reply(_registry.handleControl(begin(next), request.getPID(), HOST).get()).getStatus());
+	}
+
+	@Test
+	public void rootRegistrationIsAtomicAgainstEnd() throws Exception {
+		BlockingExecuteExecutor tasks = new BlockingExecuteExecutor();
+		ExecutorService controls = Executors.newSingleThreadExecutor();
+		FederatedWorkerPhaseRegistry registry = new FederatedWorkerPhaseRegistry(
+			WORKER_ID, WORKER_PID, tasks, controls);
+		try {
+			FederatedRequest request = new FederatedRequest(RequestType.NOOP);
+			PhaseIdentity identity = identity(request.getPID());
+			reply(registry.handleControl(begin(identity), request.getPID(), HOST).get());
+			UUID stream = UUID.randomUUID();
+			request.setPhaseBatchTag(new BatchTag(identity, WORKER_ID, stream, 0, 1));
+			CompletableFuture<CompletableFuture<FederatedResponse>> admitting = CompletableFuture.supplyAsync(() ->
+				registry.executeBatch(new FederatedRequest[] {request}, HOST,
+					() -> new FederatedResponse(ResponseType.SUCCESS_EMPTY)));
+			assertTrue(tasks.executeEntered.await(5, TimeUnit.SECONDS));
+			CountDownLatch endAttempted = new CountDownLatch(1);
+			CompletableFuture<CompletableFuture<FederatedResponse>> ending = CompletableFuture.supplyAsync(() -> {
+				endAttempted.countDown();
+				return registry.handleControl(end(identity, stream, 2), request.getPID(), HOST);
+			});
+			assertTrue(endAttempted.await(5, TimeUnit.SECONDS));
+			assertFalse("END crossed an in-progress root registration", ending.isDone());
+
+			tasks.releaseExecute.countDown();
+			assertTrue(admitting.get(5, TimeUnit.SECONDS).get(5, TimeUnit.SECONDS).isSuccessful());
+			Reply ended = reply(ending.get(5, TimeUnit.SECONDS).get(5, TimeUnit.SECONDS));
+			assertEquals(1, ended.getRootsRegistered());
+			assertEquals(0, ended.getChildrenRegistered());
+			assertEquals(1, ended.getTasksCompleted());
+			assertTrue(ended.isTerminal());
+		}
+		finally {
+			tasks.releaseExecute.countDown();
+			registry.shutdownForTests();
+		}
+	}
+
 	private static PhaseIdentity identity(long coordinatorPid) {
-		return new PhaseIdentity(UUID.fromString("10000000-0000-0000-0000-000000000001"),
+		return identity(coordinatorPid, UUID.fromString("10000000-0000-0000-0000-000000000001"));
+	}
+
+	private static PhaseIdentity identity(long coordinatorPid, UUID attemptId) {
+		return new PhaseIdentity(attemptId,
 			"condition", "stage", "sources", "settings",
 			UUID.fromString("10000000-0000-0000-0000-000000000002"), coordinatorPid, 1, PhaseKind.PLANNING);
 	}
@@ -278,6 +408,16 @@ public class FederatedWorkerPhaseRegistryTest {
 	private static Control end(PhaseIdentity identity, UUID stream, long controlSequence, long lastSequence) {
 		return new Control(identity, WORKER_ID, controlSequence, ControlOp.END_PHASE, 5_000,
 			new StreamFence[] {new StreamFence(stream, 0, lastSequence)}, new String[0], null);
+	}
+
+	private static Control endEmpty(PhaseIdentity identity, long controlSequence) {
+		return new Control(identity, WORKER_ID, controlSequence, ControlOp.END_PHASE, 5_000,
+			new StreamFence[0], new String[0], null);
+	}
+
+	private static Control cleanup(PhaseIdentity identity, long controlSequence, ControlOp op) {
+		return new Control(identity, WORKER_ID, controlSequence, op, 5_000,
+			new StreamFence[0], new String[0], null);
 	}
 
 	private static FederatedRequest controlRequest(Control control) {
@@ -313,6 +453,36 @@ public class FederatedWorkerPhaseRegistryTest {
 		catch(InterruptedException ex) {
 			Thread.currentThread().interrupt();
 			throw new AssertionError(ex);
+		}
+	}
+
+	private static final class BlockingExecuteExecutor extends AbstractExecutorService {
+		private final ExecutorService delegate = Executors.newSingleThreadExecutor();
+		private final CountDownLatch executeEntered = new CountDownLatch(1);
+		private final CountDownLatch releaseExecute = new CountDownLatch(1);
+
+		@Override
+		public void execute(Runnable command) {
+			executeEntered.countDown();
+			await(releaseExecute);
+			delegate.execute(command);
+		}
+
+		@Override
+		public void shutdown() { delegate.shutdown(); }
+
+		@Override
+		public List<Runnable> shutdownNow() { return delegate.shutdownNow(); }
+
+		@Override
+		public boolean isShutdown() { return delegate.isShutdown(); }
+
+		@Override
+		public boolean isTerminated() { return delegate.isTerminated(); }
+
+		@Override
+		public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+			return delegate.awaitTermination(timeout, unit);
 		}
 	}
 }

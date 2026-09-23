@@ -97,10 +97,11 @@ public final class FederatedWorkerPhaseRegistry {
 					return CompletableFuture.completedFuture(begin(control, requestPid, remoteHost));
 				case END_PHASE:
 					return end(control, requestPid, remoteHost);
-				case RESET_WARM_STATE:
-				case PREREAD_SOURCES:
 				case ABORT_SESSION:
 				case CLOSE_SESSION:
+					return cleanup(control, requestPid, remoteHost);
+				case RESET_WARM_STATE:
+				case PREREAD_SOURCES:
 				default:
 					return CompletableFuture.completedFuture(rejectControl(control, ErrorCode.INVALID_CONTROL));
 			}
@@ -112,15 +113,21 @@ public final class FederatedWorkerPhaseRegistry {
 
 	public CompletableFuture<FederatedResponse> executeBatch(FederatedRequest[] requests, String remoteHost,
 		Callable<FederatedResponse> body) {
-		final Admission admission;
-		try {
-			admission = admit(requests, remoteHost);
-		}
-		catch(RuntimeException ex) {
-			return CompletableFuture.completedFuture(batchFailure(null));
-		}
 		CompletableFuture<FederatedResponse> response = new CompletableFuture<>();
 		try {
+			submitRoot(requests, remoteHost, body, response);
+		}
+		catch(RuntimeException ex) {
+			response.complete(batchFailure(null));
+		}
+		return response;
+	}
+
+	private synchronized void submitRoot(FederatedRequest[] requests, String remoteHost,
+		Callable<FederatedResponse> body, CompletableFuture<FederatedResponse> response) {
+		Admission admission = admit(requests, remoteHost);
+		try {
+			admission.session.rootsRegistered++;
 			_tasks.submitRoot(admission.session.token, _taskExecutor, () -> {
 				bind(admission.session);
 				try {
@@ -151,8 +158,8 @@ public final class FederatedWorkerPhaseRegistry {
 		catch(RuntimeException ex) {
 			quarantine(admission.session, ErrorCode.INVALID_BATCH);
 			response.complete(batchFailure(admission.tag));
+			throw ex;
 		}
-		return response;
 	}
 
 	public Future<?> submitChild(Runnable body) {
@@ -167,30 +174,30 @@ public final class FederatedWorkerPhaseRegistry {
 		synchronized(this) {
 			if(session != _session || session.quarantined)
 				throw new IllegalStateException("STRICT child submission belongs to a stale or quarantined phase");
-			session.childrenRegistered++;
-		}
-		try {
-			return _tasks.submitChild(session.token, _taskExecutor, () -> {
-				bind(session);
-				try {
-					body.run();
-				}
-				catch(Throwable ex) {
-					synchronized(FederatedWorkerPhaseRegistry.this) {
-						session.failedTasks++;
-						session.quarantined = true;
-						session.error = ErrorCode.TASK_FAILURE;
+			try {
+				session.childrenRegistered++;
+				return _tasks.submitChild(session.token, _taskExecutor, () -> {
+					bind(session);
+					try {
+						body.run();
 					}
-					throw ex;
-				}
-				finally {
-					_boundSession.remove();
-				}
-			});
-		}
-		catch(RuntimeException ex) {
-			quarantine(session, ErrorCode.INVALID_BATCH);
-			throw ex;
+					catch(Throwable ex) {
+						synchronized(FederatedWorkerPhaseRegistry.this) {
+							session.failedTasks++;
+							session.quarantined = true;
+							session.error = ErrorCode.TASK_FAILURE;
+						}
+						throw ex;
+					}
+					finally {
+						_boundSession.remove();
+					}
+				});
+			}
+			catch(RuntimeException ex) {
+				quarantine(session, ErrorCode.INVALID_BATCH);
+				throw ex;
+			}
 		}
 	}
 
@@ -264,7 +271,56 @@ public final class FederatedWorkerPhaseRegistry {
 		}
 	}
 
-	private synchronized Admission admit(FederatedRequest[] requests, String remoteHost) {
+	private CompletableFuture<FederatedResponse> cleanup(Control control, long requestPid, String remoteHost) {
+		final Session session;
+		synchronized(this) {
+			validateActiveControl(control, requestPid, remoteHost);
+			session = _session;
+			if(control.getOp() == ControlOp.CLOSE_SESSION && !session.terminal && !session.quarantined)
+				throw new IllegalStateException("CLOSE_SESSION requires a terminal or quarantined phase");
+			if(!session.rootsClosed) {
+				_tasks.closeRootAdmission(session.token);
+				session.rootsClosed = true;
+			}
+			session.ending = true;
+			_owner.lastControlSequence = control.getControlSequence();
+		}
+		return CompletableFuture.supplyAsync(() -> awaitCleanup(control, session), _controlExecutor);
+	}
+
+	private FederatedResponse awaitCleanup(Control control, Session session) {
+		FederatedPhaseTasks.Result result;
+		try {
+			result = session.terminal ? _tasks.snapshot(session.token)
+				: _tasks.await(session.token, Duration.ofMillis(control.getTimeoutMillis()));
+		}
+		catch(InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			quarantine(session, ErrorCode.TIMEOUT);
+			result = _tasks.snapshot(session.token);
+		}
+		synchronized(this) {
+			boolean drained = result.isTerminal() && result.getOutstanding() == 0;
+			if(!drained) {
+				quarantine(session, ErrorCode.TIMEOUT);
+				return controlResponse(reply(control, ReplyStatus.QUARANTINED,
+					ErrorCode.TIMEOUT, session, result));
+			}
+			session.terminal = true;
+			ReplyStatus status = result.isClean() && !session.quarantined
+				? ReplyStatus.ACK : ReplyStatus.QUARANTINED;
+			ErrorCode error = status == ReplyStatus.ACK ? ErrorCode.NONE
+				: currentError(ErrorCode.SESSION_QUARANTINED);
+			FederatedResponse response = controlResponse(reply(control, status, error, session, result));
+			if(session == _session) {
+				_session = null;
+				_owner = null;
+			}
+			return response;
+		}
+	}
+
+	private Admission admit(FederatedRequest[] requests, String remoteHost) {
 		if(_session == null || _session.terminal || _session.quarantined)
 			throw new IllegalStateException("no open STRICT worker phase");
 		if(requests == null || requests.length == 0)
@@ -286,7 +342,6 @@ public final class FederatedWorkerPhaseRegistry {
 		if(tag.getBatchSequence() != expected)
 			throw quarantineAndThrow(_session, ErrorCode.INVALID_SEQUENCE);
 		_session.sequences.put(key, tag.getBatchSequence());
-		_session.rootsRegistered++;
 		return new Admission(_session, tag);
 	}
 
@@ -381,8 +436,6 @@ public final class FederatedWorkerPhaseRegistry {
 		FederatedPhaseTasks.Result result) {
 		long roots = session == null ? 0 : session.rootsRegistered;
 		long children = session == null ? 0 : session.childrenRegistered;
-		if(result != null)
-			children = result.getRegistered() - roots;
 		long completed = result == null ? 0 : result.getCompleted();
 		long outstanding = result == null ? roots + children : result.getOutstanding();
 		long rejected = result == null ? 0 : result.getRejected();
