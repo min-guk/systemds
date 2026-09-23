@@ -48,6 +48,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.FederatedSourceMetadata;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
@@ -137,6 +138,7 @@ public final class NeutralPlacementGraphBuilder {
 	private final FixedPointObserver fixedPointObserver;
 	private final SearchSpaceMetrics complexityMetrics;
 	private final boolean incrementalDirectClosure;
+	private final List<CandidatePrivacyClosureEvidence.Pass> candidatePrivacyEvidence = new ArrayList<>();
 
 	interface FixedPointObserver {
 		void accept(FixedPointPass pass);
@@ -320,6 +322,7 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	public PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {
+		candidatePrivacyEvidence.clear();
 		if(complexityMetrics != null)
 			complexityMetrics.reset();
 		SearchSpaceMetrics.PhaseToken analysisStarted = complexityMetrics == null ? null
@@ -509,9 +512,11 @@ public final class NeutralPlacementGraphBuilder {
 		occurrenceAnchorProvenance = anchorClosure.anchors();
 		CfgReplayBaseline cfgReplayBaseline = cfgReplayBaseline(nodes,
 			candidateRuleDomainKeys, candidateRuleFacts);
+		LoopSeedLedger loopSeedLedger = new LoopSeedLedger(new LinkedHashMap<>());
 		CandidateReplay candidateReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 			factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
-			candidateRuleDomainKeys, candidateRuleFacts, List.of(), cfgReplayBaseline, origins, List.of());
+			candidateRuleDomainKeys, candidateRuleFacts, List.of(), cfgReplayBaseline, origins, List.of(),
+			loopSeedLedger);
 		nodes = candidateReplay.nodes();
 		candidateRuleDomainKeys = candidateReplay.domainKeys();
 		candidateRuleFacts = candidateReplay.facts();
@@ -639,8 +644,8 @@ public final class NeutralPlacementGraphBuilder {
 			// and row, so later source-domain widening cannot leave stale authority.
 			CandidateReplay cfgReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
-				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-				origins, constraints, compiledInputEdges, concreteShapes);
+			candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
+			origins, constraints, compiledInputEdges, concreteShapes, List.of(), loopSeedLedger);
 			nodes = cfgReplay.nodes();
 			candidateRuleDomainKeys = cfgReplay.domainKeys();
 			candidateRuleFacts = cfgReplay.facts();
@@ -688,7 +693,7 @@ public final class NeutralPlacementGraphBuilder {
 		CandidateReplay postPrivacyReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 			factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 			candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline, origins, constraints,
-			compiledInputEdges, concreteShapes);
+			compiledInputEdges, concreteShapes, List.of(), loopSeedLedger);
 		nodes = postPrivacyReplay.nodes();
 		candidateRuleDomainKeys = postPrivacyReplay.domainKeys();
 		candidateRuleFacts = postPrivacyReplay.facts();
@@ -740,7 +745,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay semanticReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-				origins, constraints, compiledInputEdges, concreteShapes);
+				origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 			nodes = semanticReplay.nodes();
 			candidateRuleDomainKeys = semanticReplay.domainKeys();
 			candidateRuleFacts = semanticReplay.facts();
@@ -787,7 +792,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay groundedPublication = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-				origins, constraints, compiledInputEdges, concreteShapes);
+				origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 			nodes = groundedPublication.nodes();
 			candidateRuleDomainKeys = groundedPublication.domainKeys();
 			candidateRuleFacts = groundedPublication.facts();
@@ -822,7 +827,8 @@ public final class NeutralPlacementGraphBuilder {
 				groundedPublication = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
-					cfgReplayBaseline, origins, constraints, compiledInputEdges, concreteShapes);
+					cfgReplayBaseline, origins, constraints, compiledInputEdges, concreteShapes,
+					relocations, loopSeedLedger);
 				nodes = groundedPublication.nodes();
 				candidateRuleDomainKeys = groundedPublication.domainKeys();
 				candidateRuleFacts = groundedPublication.facts();
@@ -846,7 +852,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay publicationReplay = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-				origins, constraints, compiledInputEdges, concreteShapes);
+				origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 			nodes = publicationReplay.nodes();
 			candidateRuleDomainKeys = publicationReplay.domainKeys();
 			candidateRuleFacts = publicationReplay.facts();
@@ -874,7 +880,7 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateReplay privacyGrounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-					origins, constraints, compiledInputEdges, concreteShapes);
+					origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 				nodes = privacyGrounded.nodes();
 				candidateRuleDomainKeys = privacyGrounded.domainKeys();
 				candidateRuleFacts = privacyGrounded.facts();
@@ -898,7 +904,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay relocationGrounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 				factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 				candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-				origins, constraints, compiledInputEdges, concreteShapes);
+				origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 			nodes = relocationGrounded.nodes();
 			candidateRuleDomainKeys = relocationGrounded.domainKeys();
 			candidateRuleFacts = relocationGrounded.facts();
@@ -930,7 +936,7 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateReplay privacyGrounded = closeCfgTransientCandidateDependencies(occurrences,
 					nodes, cfg, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-					origins, constraints, compiledInputEdges, concreteShapes);
+					origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 				nodes = privacyGrounded.nodes();
 				candidateRuleDomainKeys = privacyGrounded.domainKeys();
 				candidateRuleFacts = privacyGrounded.facts();
@@ -968,7 +974,7 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateReplay finalGrounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
 					factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
-					origins, constraints, compiledInputEdges, concreteShapes);
+					origins, constraints, compiledInputEdges, concreteShapes, relocations, loopSeedLedger);
 				nodes = finalGrounded.nodes();
 				candidateRuleDomainKeys = finalGrounded.domainKeys();
 				candidateRuleFacts = finalGrounded.facts();
@@ -1005,17 +1011,133 @@ public final class NeutralPlacementGraphBuilder {
 				logicalTransientInputs = bindExactLogicalTransientSourceStates(
 					logicalTransientInputs, candidateRuleFacts);
 			}
+			// Final pruning and action rebinding can replace exact source realizations
+			// without changing a node's coarse placement projection. Recompute the
+			// reader relation from the realizations that this pass will publish.
+			CandidateReplay exactPublication = closeCfgTransientCandidateDependencies(occurrences,
+				nodes, cfg, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+				ordinalsByBlock, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+				cfgReplayBaseline, origins, constraints, compiledInputEdges, concreteShapes,
+				reboundActions, loopSeedLedger);
+			nodes = exactPublication.nodes();
+			candidateRuleDomainKeys = exactPublication.domainKeys();
+			candidateRuleFacts = exactPublication.facts();
+			logicalTransientInputs = exactPublication.logicalInputs();
+			privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+				constraints, origins, compiledInputEdges, privacyFacts);
+			nodes = privacyClosure.nodes();
+			candidateRuleFacts = privacyClosure.candidateRuleFacts();
+			candidateRuleFacts = removeUngroundedStagingRealizations(candidateRuleFacts);
+			logicalTransientInputs = bindExactLogicalTransientSourceStates(
+				logicalTransientInputs, candidateRuleFacts);
+			List<NeutralPlacementGraph.RelocationAction> boundActions = reboundActions;
+			List<NeutralPlacementGraph.RelocationAction> publishedActions = canonicalRelocationActions(
+				relocations(compiledInputEdges, candidateRuleFacts, nodes, logicalTransientInputs,
+					constraints, origins, scopes, factsByHop, concreteShapes, privacyFacts.asMap()),
+				boundActions);
+			// Rebinding a changed action can itself change the exact source/reader
+			// relation and therefore the set of relocation obligations. Close the
+			// composed transfer before accepting graph-owned action references.
+			List<List<?>> actionSeen = new ArrayList<>();
+			for(int actionPass = 0; !publishedActions.equals(boundActions)
+				&& actionPass < semanticPassLimit; actionPass++) {
+				List<?> actionState = List.of(nodes, candidateRuleDomainKeys, candidateRuleFacts,
+					logicalTransientInputs, publishedActions);
+				if(actionSeen.contains(actionState))
+					throw new IllegalStateException("Final publication action/realization closure cycled");
+				actionSeen.add(actionState);
+				boundActions = publishedActions;
+				candidateRuleFacts = bindRelocationCandidateRealizations(candidateRuleFacts, nodes,
+					compiledInputEdges, boundActions, origins, factsByHop);
+				CandidateReplay actionGrounded = closeCfgTransientCandidateDependencies(occurrences,
+					nodes, cfg, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+					ordinalsByBlock, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+					cfgReplayBaseline, origins, constraints, compiledInputEdges, concreteShapes,
+					boundActions, loopSeedLedger);
+				nodes = actionGrounded.nodes();
+				candidateRuleDomainKeys = actionGrounded.domainKeys();
+				candidateRuleFacts = actionGrounded.facts();
+				logicalTransientInputs = actionGrounded.logicalInputs();
+				privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+					constraints, origins, compiledInputEdges, privacyFacts);
+				nodes = privacyClosure.nodes();
+				candidateRuleFacts = removeUngroundedStagingRealizations(privacyClosure.candidateRuleFacts());
+				logicalTransientInputs = bindExactLogicalTransientSourceStates(
+					logicalTransientInputs, candidateRuleFacts);
+				publishedActions = canonicalRelocationActions(
+					relocations(compiledInputEdges, candidateRuleFacts, nodes, logicalTransientInputs,
+						constraints, origins, scopes, factsByHop, concreteShapes, privacyFacts.asMap()),
+					boundActions);
+			}
+			if(!publishedActions.equals(boundActions))
+				throw new IllegalStateException("Final publication action/realization closure did not converge");
+			// Action rebinding replays oracle-owned node domains. It can restore a
+			// placement after its last executable candidate realization disappeared
+			// (notably FED/FOUT on a logical function call). Project once more from
+			// the exact rows that will be published and reclose affected consumers.
+			ExecutableNodeProjection actionProjection = projectCandidateNodesToExecutableStates(
+				nodes, candidateRuleFacts, occurrences.size());
+			nodes = actionProjection.nodes();
+			if(!actionProjection.changedOrdinals().isEmpty()) {
+				CandidateReplay projectedPhysical = closePostCfgPhysicalCandidateDependencies(occurrences,
+					new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts,
+						logicalTransientInputs, actionProjection.changedOrdinals()), factsByHop,
+					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg,
+					compiledInputEdges, origins, concreteShapes);
+				nodes = projectedPhysical.nodes();
+				candidateRuleDomainKeys = projectedPhysical.domainKeys();
+				candidateRuleFacts = projectedPhysical.facts();
+				logicalTransientInputs = projectedPhysical.logicalInputs();
+				// A physical rebuild may restore base emissions, so finish its exact
+				// grounding and privacy transfer before comparing whole-pass states.
+				CandidateReplay projectedGrounded = closeCfgTransientCandidateDependencies(occurrences,
+					nodes, cfg, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
+					ordinalsByBlock, candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs,
+					cfgReplayBaseline, origins, constraints, compiledInputEdges, concreteShapes,
+					boundActions, loopSeedLedger);
+				nodes = projectedGrounded.nodes();
+				candidateRuleDomainKeys = projectedGrounded.domainKeys();
+				candidateRuleFacts = projectedGrounded.facts();
+				logicalTransientInputs = projectedGrounded.logicalInputs();
+				privacyClosure = closePrivacyDomains(nodes, candidateRuleFacts,
+					constraints, origins, compiledInputEdges, privacyFacts);
+				nodes = privacyClosure.nodes();
+				candidateRuleFacts = removeUngroundedStagingRealizations(privacyClosure.candidateRuleFacts());
+				ExecutableNodeProjection groundedProjection = projectCandidateNodesToExecutableStates(
+					nodes, candidateRuleFacts, occurrences.size());
+				if(!actionProjection.changedOrdinals().containsAll(groundedProjection.changedOrdinals()))
+					throw new IllegalStateException(
+						"Final publication projection has an unclosed compiled dependency");
+				for(int ordinal : groundedProjection.changedOrdinals())
+					if(!groundedProjection.nodes().get(ordinal).equals(actionProjection.nodes().get(ordinal)))
+						throw new IllegalStateException(
+							"Final publication projection changed an already closed compiled dependency");
+				nodes = groundedProjection.nodes();
+				logicalTransientInputs = bindExactLogicalTransientSourceStates(
+					logicalTransientInputs, candidateRuleFacts);
+				publishedActions = canonicalRelocationActions(
+					relocations(compiledInputEdges, candidateRuleFacts, nodes, logicalTransientInputs,
+						constraints, origins, scopes, factsByHop, concreteShapes, privacyFacts.asMap()),
+					publishedActions);
+			}
+			// The final projection can change the action domain after rebinding.
+			// Such an action set has not yet passed the composed realization transfer.
+			if(!publishedActions.equals(boundActions)) {
+				relocations = publishedActions;
+				continue;
+			}
 			boolean stable = nodes.equals(priorNodes) && candidateRuleDomainKeys.equals(priorDomain)
 				&& candidateRuleFacts.equals(priorFacts) && logicalTransientInputs.equals(priorLogical)
-				&& reboundActions.equals(priorActions);
+				&& publishedActions.equals(priorActions);
 			recordFixedPointPass("publication", pass, semanticPassLimit, stable,
-				nodes, candidateRuleFacts, logicalTransientInputs, reboundActions);
+				nodes, candidateRuleFacts, logicalTransientInputs, publishedActions);
 			if(stable) {
-				relocations = reboundActions;
+				verifyPublishedRelocationRealizations(candidateRuleFacts, publishedActions);
+				relocations = publishedActions;
 				publicationConverged = true;
 				break;
 			}
-			relocations = reboundActions;
+			relocations = publishedActions;
 		}
 		if(!publicationConverged)
 			throw new IllegalStateException("Executable realization/action publication did not converge");
@@ -1097,7 +1219,9 @@ public final class NeutralPlacementGraphBuilder {
 		analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
-			compiledInputEdges, logicalTransientInputs, privacyFacts, programStructureGuard);
+			compiledInputEdges, logicalTransientInputs, privacyFacts,
+			new CandidatePrivacyClosureEvidence(candidatePrivacyEvidence),
+			functionExpansion.logicalInlinedFunctionInputs(), programStructureGuard);
 		PlannerCandidateSpaceAudit.record(analysis, prePrivacyNodes, prePrivacyCandidateRuleFacts);
 		}
 		finally {
@@ -1121,14 +1245,14 @@ public final class NeutralPlacementGraphBuilder {
 	 * Resolve one occurrence-scoped privacy lattice before any planner selector is
 	 * created, then remove candidate emissions that violate that common authority.
 	 */
-	private static PrivacyClosure closePrivacyDomains(List<Node> nodes,
+	private PrivacyClosure closePrivacyDomains(List<Node> nodes,
 		List<CandidateRuleFact> candidateRuleFacts, Set<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges) {
 		return closePrivacyDomains(nodes, candidateRuleFacts, constraints, origins,
 			compiledInputEdges, null);
 	}
 
-	private static PrivacyClosure closePrivacyDomains(List<Node> nodes,
+	private PrivacyClosure closePrivacyDomains(List<Node> nodes,
 		List<CandidateRuleFact> candidateRuleFacts, Set<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges,
 		PlacementPrivacyFacts fixedPrivacy) {
@@ -1252,15 +1376,18 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Set<PlacementState>> candidateStates = new IdentityHashMap<>();
 		Map<CompiledHopKey,Set<PlacementState>> retainedStates = new IdentityHashMap<>();
 		List<CandidateRuleFact> filteredFacts = new ArrayList<>(candidateRuleFacts.size());
+		List<CandidatePrivacyClosureEvidence.Rule> evidenceRules = new ArrayList<>(candidateRuleFacts.size());
 		for(CandidateRuleFact fact : candidateRuleFacts) {
-			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
-				filteredFacts.add(fact);
-				continue;
-			}
 			Hop hop = origins.get(fact.key().parentOccurrence());
 			Privacy privacy = effective.get(fact.key().parentOccurrence());
 			if(hop == null || privacy == null)
 				throw new IllegalStateException("Candidate privacy authority is incomplete");
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
+				filteredFacts.add(fact);
+				evidenceRules.add(candidatePrivacyEvidence(fact, fact, hop, privacy,
+					protectedPayloadInputs.get(fact.key().parentOccurrence())));
+				continue;
+			}
 			Set<PlacementState> seen = candidateStates.computeIfAbsent(
 				fact.key().parentOccurrence(), ignored -> new LinkedHashSet<>());
 			Set<PlacementState> retained = retainedStates.computeIfAbsent(
@@ -1277,15 +1404,21 @@ public final class NeutralPlacementGraphBuilder {
 			emissions = sourceClosedCandidateEmissions(emissions);
 			for(CandidateEmissionFact emission : emissions)
 				retained.add(emission.emissionState().placementState());
+			CandidateRuleFact published;
 			if(emissions.isEmpty()) {
 				String failure = "PRIVACY:" + privacy.name();
-				filteredFacts.add(new CandidateRuleFact(fact.key(),
+				published = new CandidateRuleFact(fact.key(),
 					CandidateEvaluationStatus.PRIVACY_EXCLUDED, fact.capability(), fact.shapeProof(),
-					fact.profile(), List.of(), failure));
+					fact.profile(), List.of(), failure);
 			}
 			else
-				filteredFacts.add(retainUnchangedPrivacyFact(fact, emissions));
+				published = retainUnchangedPrivacyFact(fact, emissions);
+			filteredFacts.add(published);
+			evidenceRules.add(candidatePrivacyEvidence(fact, published, hop, privacy,
+				protectedPayloadInputs.get(fact.key().parentOccurrence())));
 		}
+		candidatePrivacyEvidence.add(new CandidatePrivacyClosureEvidence.Pass(
+			candidatePrivacyEvidence.size(), evidenceRules));
 
 		List<Node> filteredNodes = new ArrayList<>(nodes.size());
 		for(Node node : nodes) {
@@ -1362,6 +1495,45 @@ public final class NeutralPlacementGraphBuilder {
 		// merely in another input signature or in the union of the node's legal states.
 		return emissions.stream().filter(emission -> emission.derivedFoutAction() == null
 			|| nativeSources.contains(emission.derivedFoutAction().sourcePlacement())).toList();
+	}
+
+	private static CandidatePrivacyClosureEvidence.Rule candidatePrivacyEvidence(
+		CandidateRuleFact input, CandidateRuleFact output, Hop hop, Privacy privacy,
+		Map<Integer,CompiledHopKey> protectedPayloadInputs) {
+		CandidateCapabilityFact capability = input.capability();
+		boolean dmlFunction = hop instanceof FunctionOp function
+			&& function.getFunctionType() == FunctionOp.FunctionType.DML;
+		boolean multiReturn = hop instanceof FunctionOp function
+			&& function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			|| isMultiReturnBuiltinOutputCarrier(hop);
+		String dataOp = hop instanceof DataOp data ? data.getOp().name() : "-";
+		List<Integer> protectedPositions = protectedPayloadInputs == null ? List.of()
+			: protectedPayloadInputs.keySet().stream().sorted().toList();
+		return new CandidatePrivacyClosureEvidence.Rule(
+			PlacementGraphFingerprint.sha256(input.key().normalizedSignature()),
+			input.status().name(), input.failureCode(), capability != null, input.profile().available(),
+			capability == null ? "-" : capability.nativeExec().name(),
+			capability == null ? "-" : capability.nativeOutput().name(), privacy.name(),
+			hop.getDataType() != null && hop.getDataType().isMatrix(), isFederatedSource(hop),
+			HopUtils.isPrintOrPWrite(hop), dmlFunction, multiReturn, dataOp,
+			input.key().orderedInputs().stream().map(CandidateInputState::present).toList(),
+			protectedPositions, input.allowedEmissionFacts().stream()
+				.map(NeutralPlacementGraphBuilder::privacyEmissionEvidence).toList(),
+			output.status().name(), output.failureCode(), output.allowedEmissionFacts().stream()
+				.map(emission -> PlacementGraphFingerprint.sha256(emission.normalizedSignature())).toList());
+	}
+
+	private static CandidatePrivacyClosureEvidence.Emission privacyEmissionEvidence(
+		CandidateEmissionFact emission) {
+		PlacementState state = emission.emissionState().placementState();
+		return new CandidatePrivacyClosureEvidence.Emission(
+			PlacementGraphFingerprint.sha256(emission.normalizedSignature()),
+			state.normalizedSignature(),
+			state.execType().name(), state.output().name(),
+			state.fType() == null ? "-" : state.fType().name(),
+			emission.executionFType() == null ? "-" : emission.executionFType().name(),
+			emission.emissionState().derivedFedFout(), emission.derivedFoutAction() == null ? "-"
+				: emission.derivedFoutAction().sourcePlacement().normalizedSignature());
 	}
 
 	/** All privacy and source-support checks have run; reuse only an identical immutable row. */
@@ -2417,6 +2589,16 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record FunctionExitValue(Set<Integer> definitionOrdinals,
 		Set<CfgFunctionOutputDefinition> functionOutputDefinitions, boolean reachesFunctionInput) { }
+	private record LoopSeedRevision(String read, List<Node> proofNodes,
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> proofFacts,
+		List<LogicalTransientInputFact> logicalInputs,
+		List<String> compiledEdges, List<Constraint> constraints,
+		List<NeutralPlacementGraph.RelocationAction> actionAuthority, boolean privacyClosed) { }
+	private record LoopSeedLedger(Map<LoopSeedRevision,CandidateReplay> completedTransfers) {
+		private LoopSeedLedger {
+			Objects.requireNonNull(completedTransfers, "completedTransfers");
+		}
+	}
 
 	private record CfgAnalysis(List<Integer> definitionOrdinals, List<VersionKind> versionKinds,
 		List<Set<Integer>> reachingDefinitions,
@@ -2598,16 +2780,146 @@ public final class NeutralPlacementGraphBuilder {
 		return left.fType() == right.fType() && left.partitions().equals(right.partitions());
 	}
 
+	/**
+	 * A provisional loop seed may run once for each complete proof-input revision.
+	 * Later function, privacy, or relocation closure creates a new revision and may be
+	 * seeded, while both sides of a completed seed transfer are consumed together so an
+	 * enclosing fixed point cannot restart the provisional two-state cycle.
+	 */
+	private static Map<CompiledHopKey,LoopSeedRevision> loopSeedEligibleReads(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
+		List<LogicalTransientInputFact> logicalInputs,
+		List<CompiledInputEdgeFact> compiledEdges, java.util.Collection<Constraint> constraints,
+		List<NeutralPlacementGraph.RelocationAction> actionAuthority, boolean privacyClosed) {
+		List<Node> proofNodes = List.copyOf(nodes);
+		List<CandidateRuleFact> proofFacts = List.copyOf(facts);
+		List<LogicalTransientInputFact> proofLogicalInputs = logicalInputs.stream().sorted().toList();
+		List<String> proofCompiledEdges = loopSeedCompiledEdges(compiledEdges);
+		List<Constraint> proofConstraints = constraints.stream().sorted().toList();
+		Map<CompiledHopKey,LoopSeedRevision> eligible = new IdentityHashMap<>();
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			if(!isTransientRead(occurrences.get(ordinal).hop())
+				|| cfg.reachingFunctionInputs().get(ordinal)
+				|| cfg.reachingDefinitions().get(ordinal).size() <= 1)
+				continue;
+			LoopSeedRevision revision = new LoopSeedRevision(
+				nodes.get(ordinal).key().normalizedSignature(), proofNodes, List.copyOf(domainKeys), proofFacts,
+				proofLogicalInputs, proofCompiledEdges, proofConstraints,
+				List.copyOf(actionAuthority), privacyClosed);
+			eligible.put(nodes.get(ordinal).key(), revision);
+		}
+		return Collections.unmodifiableMap(eligible);
+	}
+
+	private static List<String> loopSeedCompiledEdges(List<CompiledInputEdgeFact> compiledEdges) {
+		return compiledEdges.stream().map(edge -> edge.producer().normalizedSignature() + '\u0000'
+			+ edge.consumer().normalizedSignature() + '\u0000' + edge.inputPosition()).sorted().toList();
+	}
+
+	private CandidateReplay completedLoopSeedTransfer(
+		Map<CompiledHopKey,LoopSeedRevision> revisions, CandidateReplay current,
+		int compiledOccurrenceCount, List<CompiledInputEdgeFact> compiledEdges,
+		List<NeutralPlacementGraph.RelocationAction> actionAuthority,
+		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
+		LoopSeedLedger ledger) {
+		CandidateReplay completed = null;
+		for(LoopSeedRevision revision : revisions.values()) {
+			CandidateReplay candidate = ledger.completedTransfers().get(revision);
+			if(candidate == null)
+				continue;
+			if(completed != null && !completed.equals(candidate))
+				throw new IllegalStateException("Loop seed revision has conflicting memoized exits");
+			completed = candidate;
+		}
+		if(completed == null)
+			return null;
+		List<CandidateRuleFact> reboundFacts = bindRelocationCandidateRealizations(
+			completed.facts(), completed.nodes(), compiledEdges, actionAuthority, origins, shapes);
+		List<LogicalTransientInputFact> reboundLogical = bindExactLogicalTransientSourceStates(
+			completed.logicalInputs(), reboundFacts);
+		completed = new CandidateReplay(completed.nodes(), completed.domainKeys(), reboundFacts,
+			reboundLogical, List.of());
+		boolean unchanged = completed.nodes().equals(current.nodes())
+			&& completed.domainKeys().equals(current.domainKeys())
+			&& completed.facts().equals(current.facts())
+			&& completed.logicalInputs().equals(current.logicalInputs());
+		List<Integer> changed = new ArrayList<>();
+		if(!unchanged)
+			for(int ordinal = 0; ordinal < compiledOccurrenceCount; ordinal++)
+				changed.add(ordinal);
+		return new CandidateReplay(completed.nodes(), completed.domainKeys(), completed.facts(),
+			completed.logicalInputs(), List.copyOf(changed));
+	}
+
+	static <K,R> void recordInstalledLoopSeedRevisions(
+		Map<K,R> eligibleLoopSeeds, Set<K> installedLoopSeeds, Set<R> seenLoopSeedRevisions) {
+		for(K read : installedLoopSeeds) {
+			R revision = eligibleLoopSeeds.get(read);
+			if(revision != null)
+				seenLoopSeedRevisions.add(revision);
+		}
+	}
+
+	static <R,T> void recordCompletedLoopSeedTransfer(
+		R entryRevision, T completedReplay, boolean retained, Map<R,T> completedTransfers) {
+		if(!retained)
+			throw new IllegalStateException("Installed loop seed was not retained by composed closure");
+		T prior = completedTransfers.putIfAbsent(
+			Objects.requireNonNull(entryRevision, "entryRevision"),
+			Objects.requireNonNull(completedReplay, "completedReplay"));
+		if(prior != null && !prior.equals(completedReplay))
+			throw new IllegalStateException("Loop seed entry has conflicting completed transfers");
+	}
+
+	private static void recordCompletedLoopSeedRevisions(
+		Map<CompiledHopKey,LoopSeedRevision> eligibleLoopSeeds,
+		Set<CompiledHopKey> installedLoopSeeds, CfgAnalysis cfg,
+		List<Node> nodes, List<CandidateRuleFact> facts,
+		List<LogicalTransientInputFact> logicalInputs, List<CompiledInputEdgeFact> compiledEdges,
+		java.util.Collection<Constraint> constraints, boolean privacyClosed,
+		LoopSeedLedger loopSeedLedger) {
+		for(CompiledHopKey read : installedLoopSeeds) {
+			int readOrdinal = -1;
+			for(int ordinal = 0; ordinal < nodes.size(); ordinal++)
+				if(nodes.get(ordinal).key() == read) {
+					readOrdinal = ordinal;
+					break;
+				}
+			if(readOrdinal < 0 || readOrdinal >= cfg.reachingDefinitions().size())
+				throw new IllegalStateException("Installed loop seed has no retained CFG read");
+			Set<CompiledHopKey> expectedSources = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(int definition : cfg.reachingDefinitions().get(readOrdinal))
+				expectedSources.add(nodes.get(definition).key());
+			Set<CompiledHopKey> retainedSources = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(LogicalTransientInputFact input : logicalInputs)
+				if(input.targetRead() == read)
+					retainedSources.add(input.sourceWrite());
+			if(retainedSources.size() != expectedSources.size()
+				|| !retainedSources.containsAll(expectedSources))
+				throw new IllegalStateException(
+					"Installed loop seed did not retain every reaching definition");
+		}
+		CandidateReplay completed = new CandidateReplay(List.copyOf(nodes), facts.stream()
+			.map(CandidateRuleFact::key).toList(), List.copyOf(facts),
+			logicalInputs.stream().sorted().toList(), List.of());
+		for(CompiledHopKey read : installedLoopSeeds) {
+			recordCompletedLoopSeedTransfer(eligibleLoopSeeds.get(read), completed,
+				true, loopSeedLedger.completedTransfers());
+		}
+	}
+
 	private CandidateReplay closeCfgTransientCandidateDependencies(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
 		Map<Hop,NodeShapeFact> factsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
 		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
 		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
 		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
-		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints) {
+		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints,
+		LoopSeedLedger loopSeedLedger) {
 		return closeCfgTransientCandidateDependencies(occurrences, nodes, cfg, factsByHop,
 			abstractFactsByHop, singlePartitions, ordinalsByBlock, domainKeys, facts,
-			logicalInputs, baseline, origins, constraints, null, null);
+			logicalInputs, baseline, origins, constraints, null, null, List.of(), loopSeedLedger);
 	}
 
 	private CandidateReplay closeCfgTransientCandidateDependencies(
@@ -2618,7 +2930,10 @@ public final class NeutralPlacementGraphBuilder {
 		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
 		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints,
 		List<CompiledInputEdgeFact> compiledInputEdges,
-		Map<Hop,NodeShapeFact> sourceCompiledFactsByHop) {
+		Map<Hop,NodeShapeFact> sourceCompiledFactsByHop,
+		List<NeutralPlacementGraph.RelocationAction> actionAuthority,
+		LoopSeedLedger loopSeedLedger) {
+		Objects.requireNonNull(loopSeedLedger, "loopSeedLedger");
 		SearchSpaceMetrics.PhaseToken phaseStarted =
 			complexityMetrics == null ? null : complexityMetrics.startPhase(
 				SearchSpaceMetrics.Phase.CLOSURE_REPLAY);
@@ -2626,7 +2941,7 @@ public final class NeutralPlacementGraphBuilder {
 			return closeCfgTransientCandidateDependenciesMeasured(occurrences, nodes, cfg,
 				factsByHop, abstractFactsByHop, singlePartitions, ordinalsByBlock, domainKeys,
 				facts, logicalInputs, baseline, origins, constraints, compiledInputEdges,
-				sourceCompiledFactsByHop);
+				sourceCompiledFactsByHop, actionAuthority, loopSeedLedger);
 		}
 		finally {
 			if(complexityMetrics != null)
@@ -2643,7 +2958,9 @@ public final class NeutralPlacementGraphBuilder {
 		List<LogicalTransientInputFact> logicalInputs, CfgReplayBaseline baseline,
 		Map<CompiledHopKey,Hop> origins, java.util.Collection<Constraint> constraints,
 		List<CompiledInputEdgeFact> compiledInputEdges,
-		Map<Hop,NodeShapeFact> sourceCompiledFactsByHop) {
+		Map<Hop,NodeShapeFact> sourceCompiledFactsByHop,
+		List<NeutralPlacementGraph.RelocationAction> actionAuthority,
+		LoopSeedLedger loopSeedLedger) {
 		List<CandidateRuleFact> boundFacts = bindExactCandidateEmissionRealizations(
 			facts, nodes, origins, factsByHop);
 		List<CandidateRuleFact> directTemplates = boundFacts;
@@ -2654,6 +2971,17 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementPrivacyFacts fixedClosurePrivacy = null;
 		Set<Constraint> closurePrivacyConstraints = privacyAlreadyClosed
 			? new LinkedHashSet<>(constraints) : Set.of();
+		List<CompiledInputEdgeFact> loopSeedEntryEdges = deriveCompiledInputEdges(
+			occurrences, current.nodes(), ordinalsByBlock, factsByHop);
+		Map<CompiledHopKey,LoopSeedRevision> eligibleLoopSeedRevisions = loopSeedEligibleReads(
+			occurrences, current.nodes(), cfg, current.domainKeys(), current.facts(),
+			current.logicalInputs(), loopSeedEntryEdges, constraints, actionAuthority, privacyAlreadyClosed);
+		CandidateReplay memoized = completedLoopSeedTransfer(eligibleLoopSeedRevisions,
+			current, occurrences.size(), loopSeedEntryEdges, actionAuthority,
+			origins, factsByHop, loopSeedLedger);
+		if(memoized != null)
+			return memoized;
+		Set<CompiledHopKey> eligibleLoopSeeds = eligibleLoopSeedRevisions.keySet();
 		Set<CompiledHopKey> installedLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
 		int maxPasses = Math.max(1, occurrences.size() + domainKeys.size() + logicalInputs.size() + 1);
 		List<String> closureTrace = new ArrayList<>();
@@ -2704,7 +3032,7 @@ public final class NeutralPlacementGraphBuilder {
 			priorLoopSeeds.addAll(installedLoopSeeds);
 			CandidateReplay replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
 				factsByHop, current.domainKeys(), current.facts(), current.logicalInputs(), baseline, nativePools,
-				installedLoopSeeds, privacyAlreadyClosed);
+				eligibleLoopSeeds, installedLoopSeeds);
 			Map<CompiledHopKey,CompiledHopKey> newlyInstalledLoopSeeds = new IdentityHashMap<>();
 			for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 				CompiledHopKey readKey = current.nodes().get(ordinal).key();
@@ -2728,8 +3056,15 @@ public final class NeutralPlacementGraphBuilder {
 			// replay itself is now idempotent; consume it before declaring closure.
 			Set<Integer> pendingPhysical = new java.util.TreeSet<>(current.changedOrdinals());
 			pendingPhysical.addAll(replayed.changedOrdinals());
-			if(pendingPhysical.isEmpty())
+			if(pendingPhysical.isEmpty()) {
+				List<CompiledInputEdgeFact> replayedEdges = deriveCompiledInputEdges(
+					occurrences, replayed.nodes(), ordinalsByBlock, factsByHop);
+				recordCompletedLoopSeedRevisions(eligibleLoopSeedRevisions,
+					installedLoopSeeds, cfg, replayed.nodes(), replayed.facts(),
+					replayed.logicalInputs(), replayedEdges, constraints, privacyAlreadyClosed,
+					loopSeedLedger);
 				return replayed;
+			}
 			replayed = new CandidateReplay(replayed.nodes(), replayed.domainKeys(), replayed.facts(),
 				replayed.logicalInputs(), List.copyOf(pendingPhysical));
 			CandidateReplay physicallyClosed = closePostCfgPhysicalCandidateDependencies(occurrences, replayed,
@@ -2803,7 +3138,7 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateReplay relationClosed = replayUniqueCfgTransientForwards(occurrences,
 				physicallyClosed.nodes(), cfg, factsByHop, physicallyClosed.domainKeys(),
 				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, allDefinitionPools,
-				installedLoopSeeds, false);
+				eligibleLoopSeeds, installedLoopSeeds);
 			if(privacyAlreadyClosed) {
 				PrivacyClosure filtered = closePrivacyDomains(relationClosed.nodes(), relationClosed.facts(),
 					closurePrivacyConstraints, origins, physicalEdges, fixedClosurePrivacy);
@@ -2817,8 +3152,15 @@ public final class NeutralPlacementGraphBuilder {
 			if(relationClosed.nodes().equals(passStart.nodes())
 				&& relationClosed.domainKeys().equals(passStart.domainKeys())
 				&& relationClosed.facts().equals(passStart.facts())
-				&& relationClosed.logicalInputs().equals(passStart.logicalInputs()))
+				&& relationClosed.logicalInputs().equals(passStart.logicalInputs())) {
+				List<CompiledInputEdgeFact> relationEdges = deriveCompiledInputEdges(
+					occurrences, relationClosed.nodes(), ordinalsByBlock, factsByHop);
+				recordCompletedLoopSeedRevisions(eligibleLoopSeedRevisions,
+					installedLoopSeeds, cfg, relationClosed.nodes(), relationClosed.facts(),
+					relationClosed.logicalInputs(), relationEdges, constraints, privacyAlreadyClosed,
+					loopSeedLedger);
 				return relationClosed;
+			}
 			current = relationClosed;
 		}
 		throw new IllegalStateException("CFG transient candidate closure did not converge: " + closureTrace);
@@ -2897,7 +3239,7 @@ public final class NeutralPlacementGraphBuilder {
 				}
 				old.executableSignatures().forEach((signature, count) ->
 					executableSignatures.computeIfPresent(signature, (ignored, prior) ->
-						prior == count ? null : prior - count));
+						prior.intValue() == count.intValue() ? null : prior - count));
 			}
 			for(CompiledHopKey owner : changed) {
 				SourceRow row = staged.get(owner);
@@ -3601,7 +3943,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> domainKeys,
 		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
 		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
-		Set<CompiledHopKey> installedLoopSeeds, boolean allowPriorLoopSeed) {
+		Set<CompiledHopKey> eligibleLoopSeeds, Set<CompiledHopKey> installedLoopSeeds) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before CFG replay");
 		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
@@ -3635,7 +3977,10 @@ public final class NeutralPlacementGraphBuilder {
 			int replacementStart = replayedKeys.size();
 			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
 				factsByHop, facts, replayedKeys, replayedFacts, replacementInputs,
-				(!hadPriorReplay || allowPriorLoopSeed) && !installedLoopSeeds.contains(node.key()),
+				// Prior replay may have seen only the local source. A later function-boundary
+				// widening can expose the native source, so seed once per read in this
+				// closure invocation and then publish the all-definition replay below.
+				eligibleLoopSeeds.contains(node.key()) && !installedLoopSeeds.contains(node.key()),
 				nativePools, installedLoopSeeds);
 			boolean replayedParent = replayed != node;
 			if(hadPriorReplay && !replayedParent) {
@@ -5141,6 +5486,8 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes) {
 		List<Node> expanded = new ArrayList<>(nodes);
 		List<Constraint> constraints = new ArrayList<>();
+		List<PlacementAnalysis.LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs =
+			new ArrayList<>();
 		Map<CompiledHopKey,Hop> expandedOrigins = new java.util.LinkedHashMap<>(origins);
 		Map<CompiledHopKey,Long> expandedScopes = new java.util.LinkedHashMap<>(scopes);
 		Map<StatementBlock,Map<Hop,Node>> nodesByBlock = new IdentityHashMap<>();
@@ -5391,6 +5738,9 @@ public final class NeutralPlacementGraphBuilder {
 						argument == null ? List.of() : argument.anchors());
 					input = traceOnlyInlinedFunctionInput(input);
 					expanded.add(input);
+					logicalInlinedFunctionInputs.add(new PlacementAnalysis.LogicalInlinedFunctionInputFact(
+						Optional.ofNullable(argument == null ? null : argument.key()), input.key(), inputPosition,
+						Optional.ofNullable(argument == null ? null : argument.valueVersion()), input.valueVersion()));
 					if(contextBoundary == null)
 						contextBoundary = input;
 					expandedOrigins.put(input.key(), origins.get(callAuthority.key()));
@@ -5437,7 +5787,8 @@ public final class NeutralPlacementGraphBuilder {
 		outputBoundariesByDefinition.forEach((key, node) -> outputBoundaryKeys.put(key, node.key()));
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins),
-			Collections.unmodifiableMap(expandedScopes), Collections.unmodifiableMap(outputBoundaryKeys));
+			Collections.unmodifiableMap(expandedScopes), Collections.unmodifiableMap(outputBoundaryKeys),
+			List.copyOf(logicalInlinedFunctionInputs));
 	}
 
 	private static boolean isRuntimeCoupledMultiReturnPrimary(FunctionOp call, int outputPosition) {
@@ -5792,7 +6143,8 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record FunctionExpansion(List<Node> nodes, List<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes,
-		Map<FunctionOutputBoundaryKey,CompiledHopKey> outputBoundaryKeys) { }
+		Map<FunctionOutputBoundaryKey,CompiledHopKey> outputBoundaryKeys,
+		List<PlacementAnalysis.LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs) { }
 
 	private static void addCfgFunctionOutputConstraints(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
@@ -6589,6 +6941,45 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private record ExecutableNodeProjection(List<Node> nodes, List<Integer> changedOrdinals) { }
+
+	/** Checks action/realization identity without mutating the converged publication. */
+	private static void verifyPublishedRelocationRealizations(List<CandidateRuleFact> facts,
+		List<NeutralPlacementGraph.RelocationAction> actions) {
+		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> byKey = new LinkedHashMap<>();
+		for(NeutralPlacementGraph.RelocationAction action : actions)
+			if(byKey.putIfAbsent(action.key(), action) != null)
+				throw new IllegalStateException("Final publication has duplicate relocation action keys");
+		Set<CandidateRealizationReference> liveSources = new HashSet<>();
+		for(CandidateRuleFact fact : facts)
+			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations())
+						liveSources.add(CandidateRealizationReference.of(fact.key(), realization));
+		Set<RelocationActionKey> usedActions = new HashSet<>();
+		for(CandidateRuleFact fact : facts) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations())
+					for(CandidateRealizationSupportClause clause : realization.supportClauses())
+						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+							if(binding.kind() != CandidateInputBindingKind.RELOCATION)
+								continue;
+							NeutralPlacementGraph.RelocationAction action = byKey.get(binding.relocationAction());
+							if(action == null || !liveSources.contains(binding.source())
+								|| action.obligations().stream().noneMatch(obligation ->
+									obligation.consumer() == fact.key().parentOccurrence()
+										&& obligation.inputPosition() == binding.inputPosition()
+										&& obligation.requiredPlacement().equals(
+											emission.emissionState().placementState())))
+								throw new IllegalStateException("Final publication has an ungrounded relocation realization");
+							usedActions.add(action.key());
+						}
+		}
+		for(NeutralPlacementGraph.RelocationAction action : actions)
+			if(action.directSourcePlacements().isEmpty() && !usedActions.contains(action.key()))
+				throw new IllegalStateException("Final publication has an unbound relocation action");
+	}
 
 	/** Removes selectable FOUT states that have no final executable candidate realization authority. */
 	private static ExecutableNodeProjection projectCandidateNodesToExecutableStates(List<Node> nodes,

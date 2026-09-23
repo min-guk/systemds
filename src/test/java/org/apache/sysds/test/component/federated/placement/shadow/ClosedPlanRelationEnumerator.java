@@ -17,6 +17,7 @@ package org.apache.sysds.test.component.federated.placement.shadow;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -47,6 +48,25 @@ import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
  * This proves equivalence to the P-native raw model, not completeness of runtime feasibility.
  */
 public final class ClosedPlanRelationEnumerator {
+	/**
+	 * Ordered native acceptance path. The offline verifier can replay decision graph constraints,
+	 * candidate privacy closure, candidate derived-FOUT ownership, and classification of captured
+	 * non-decision candidate owners. Candidate, relocation, and non-decision-owner rows remain
+	 * universes whose completeness is not established by the model artifact alone.
+	 */
+	static List<String> acceptancePredicateIds() {
+		return List.of("DECISION_GRAPH_CONSTRAINTS",
+			"CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING",
+			"CANDIDATE_FEASIBLE_VARIANTS_AND_SOURCE_REACHABILITY",
+			"CANDIDATE_SELECTION_COVERAGE_AND_REALIZATION_COMPATIBILITY",
+			"RELOCATION_ACTIVE_DEMAND_CONSTRUCTION",
+			"RELOCATION_SELECTION_COVERAGE_AND_WORKER_POOL_COMPATIBILITY",
+			"CANDIDATE_RELOCATION_REALIZATION_ALIGNMENT",
+			"DERIVED_FOUT_GRAPH_OWNERSHIP",
+			"UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION",
+			"JAVA_VALIDATOR_EXCEPTION_CLASSIFICATION");
+	}
+
 	public record StateInspection(BigInteger stateOrdinal, BigInteger rawCandidateAssignments,
 		BigInteger survivingCandidateAssignments, BigInteger rawRelocationAssignments,
 		FullProductionJointPlanExport.Verdict earlyVerdict, String reason) { }
@@ -59,11 +79,15 @@ public final class ClosedPlanRelationEnumerator {
 		}
 	}
 
+	/** Counts state assignments rejected by a lossless binary-constraint frontier. */
+	public record FrontierResult(Summary summary, BigInteger prunedStates) { }
+
 	private static final BigInteger ONE = BigInteger.ONE;
 	private static final BigInteger ZERO = BigInteger.ZERO;
 	private final PlacementAnalysis analysis;
 	private final NeutralPlacementGraph graph;
 	private final List<NeutralPlacementGraph.Node> nodes;
+	private final List<IndexedConstraint> indexedConstraints;
 	private final List<CompiledHopKey> candidateOwners;
 	private final List<List<CandidateSelectionReceipt>> candidateDomains;
 	private final List<List<RelocationChoiceReceipt>> relocationDomains;
@@ -74,10 +98,23 @@ public final class ClosedPlanRelationEnumerator {
 	private final BigInteger rawCount;
 	private final boolean unresolvedOwner;
 
+	private record IndexedConstraint(NeutralPlacementGraph.Constraint constraint, int left, int right) { }
+
 	public ClosedPlanRelationEnumerator(PlacementAnalysis analysis) {
 		this.analysis = Objects.requireNonNull(analysis, "analysis");
 		graph = analysis.graph();
 		nodes = List.copyOf(graph.decisionNodes());
+		Map<CompiledHopKey,Integer> nodePositions = new LinkedHashMap<>();
+		for(int i = 0; i < nodes.size(); i++)
+			nodePositions.put(nodes.get(i).key(), i);
+		List<IndexedConstraint> indexed = new ArrayList<>();
+		for(NeutralPlacementGraph.Constraint constraint : graph.constraints()) {
+			Integer left = nodePositions.get(constraint.left());
+			Integer right = nodePositions.get(constraint.right());
+			if(left != null && right != null)
+				indexed.add(new IndexedConstraint(constraint, left, right));
+		}
+		indexedConstraints = List.copyOf(indexed);
 		Map<CompiledHopKey,Set<CandidateSelectionReceipt>> byOwner = new LinkedHashMap<>();
 		for(NeutralPlacementGraph.Node node : nodes)
 			byOwner.put(node.key(), new LinkedHashSet<>());
@@ -135,26 +172,133 @@ public final class ClosedPlanRelationEnumerator {
 	/** Enumerates whole state cells; a caller can checkpoint at the next state ordinal. */
 	public Summary enumerateStates(BigInteger begin, BigInteger end,
 		Consumer<FullProductionJointPlanExport.Audit> acceptedSink) {
+		return enumerateConstraintFrontier(begin, end, acceptedSink).summary();
+	}
+
+	public FrontierResult enumerateConstraintFrontier(BigInteger begin, BigInteger end,
+		Consumer<FullProductionJointPlanExport.Audit> acceptedSink) {
+		return enumerateRange(begin, end, acceptedSink, true);
+	}
+
+	// Reference path for differential tests: visit every state, including graph-invalid ones.
+	FrontierResult enumerateWithoutConstraintFrontier(BigInteger begin, BigInteger end,
+		Consumer<FullProductionJointPlanExport.Audit> acceptedSink) {
+		return enumerateRange(begin, end, acceptedSink, false);
+	}
+
+	private FrontierResult enumerateRange(BigInteger begin, BigInteger end,
+		Consumer<FullProductionJointPlanExport.Audit> acceptedSink, boolean frontier) {
 		Objects.requireNonNull(acceptedSink, "acceptedSink");
 		if(begin.signum() < 0 || end.compareTo(begin) < 0 || end.compareTo(stateCount) > 0)
 			throw new IllegalArgumentException("Invalid half-open state ordinal range");
 		Counter count = new Counter();
-		for(BigInteger ordinal = begin; ordinal.compareTo(end) < 0; ordinal = ordinal.add(ONE)) {
-			Prepared state = prepare(ordinal);
-			BigInteger rawPerState = candidateCount.multiply(relocationCount);
-			count.raw = count.raw.add(rawPerState);
-			if(state.inspection.earlyVerdict() != null) {
-				count.add(state.inspection.earlyVerdict(), rawPerState);
-				continue;
-			}
-			BigInteger surviving = state.inspection.survivingCandidateAssignments();
-			BigInteger pruned = candidateCount.subtract(surviving).multiply(relocationCount);
-			count.rejected = count.rejected.add(pruned);
-			count.candidatePruned = count.candidatePruned.add(pruned);
-			selectCandidates(state, 0, ZERO, ONE, new ArrayList<>(), count, acceptedSink);
+		if(frontier && !unresolvedOwner && !indexedConstraints.isEmpty()) {
+			int[] fixed = new int[nodes.size()];
+			Arrays.fill(fixed, -1);
+			visitFrontier(nodes.size() - 1, ZERO, stateCount, begin, end, fixed, count, acceptedSink);
 		}
-		return new Summary(count.raw, count.accepted, count.rejected,
-			count.unknown, count.candidatePruned);
+		else
+			for(BigInteger ordinal = begin; ordinal.compareTo(end) < 0; ordinal = ordinal.add(ONE))
+				visitState(ordinal, count, acceptedSink);
+		return new FrontierResult(new Summary(count.raw, count.accepted, count.rejected,
+			count.unknown, count.candidatePruned), count.constraintPrunedStates);
+	}
+
+	private void visitFrontier(int position, BigInteger start, BigInteger width,
+		BigInteger begin, BigInteger end, int[] fixed, Counter count,
+		Consumer<FullProductionJointPlanExport.Audit> sink) {
+		BigInteger clippedBegin = start.max(begin);
+		BigInteger clippedEnd = start.add(width).min(end);
+		if(clippedBegin.compareTo(clippedEnd) >= 0)
+			return;
+		if(!hasConstraintSupport(fixed)) {
+			BigInteger states = clippedEnd.subtract(clippedBegin);
+			count.constraintPrunedStates = count.constraintPrunedStates.add(states);
+			BigInteger raw = states.multiply(candidateCount).multiply(relocationCount);
+			count.raw = count.raw.add(raw);
+			count.rejected = count.rejected.add(raw);
+			return;
+		}
+		if(position < 0) {
+			visitState(start, count, sink);
+			return;
+		}
+		int radix = nodes.get(position).legalAlternatives().size();
+		BigInteger childWidth = width.divide(BigInteger.valueOf(radix));
+		for(int digit = 0; digit < radix; digit++) {
+			fixed[position] = digit;
+			visitFrontier(position - 1, start.add(childWidth.multiply(BigInteger.valueOf(digit))),
+				childWidth, begin, end, fixed, count, sink);
+		}
+		fixed[position] = -1;
+	}
+
+	/** Arc consistency can prove impossibility, but never asserts that a supported tuple is feasible. */
+	private boolean hasConstraintSupport(int[] fixed) {
+		boolean[][] domain = new boolean[nodes.size()][];
+		for(int i = 0; i < nodes.size(); i++) {
+			domain[i] = new boolean[nodes.get(i).legalAlternatives().size()];
+			for(int digit = 0; digit < domain[i].length; digit++)
+				domain[i][digit] = fixed[i] < 0 || fixed[i] == digit;
+		}
+		boolean changed;
+		do {
+			changed = false;
+			for(IndexedConstraint edge : indexedConstraints) {
+				for(int side = 0; side < 2; side++) {
+					int owner = side == 0 ? edge.left() : edge.right();
+					int other = side == 0 ? edge.right() : edge.left();
+					for(int digit = 0; digit < domain[owner].length; digit++) {
+						if(!domain[owner][digit])
+							continue;
+						boolean supported = false;
+						for(int counterpart = 0; counterpart < domain[other].length; counterpart++) {
+							if(!domain[other][counterpart] || owner == other && digit != counterpart)
+								continue;
+							PlacementState left = nodes.get(edge.left()).legalAlternatives().get(
+								side == 0 ? digit : counterpart);
+							PlacementState right = nodes.get(edge.right()).legalAlternatives().get(
+								side == 0 ? counterpart : digit);
+							if(NeutralPlacementGraph.constraintSatisfied(edge.constraint(), left, right)) {
+								supported = true;
+								break;
+							}
+						}
+						if(!supported) {
+							domain[owner][digit] = false;
+							changed = true;
+						}
+					}
+					if(!any(domain[owner]))
+						return false;
+				}
+			}
+		}
+		while(changed);
+		return true;
+	}
+
+	private static boolean any(boolean[] values) {
+		for(boolean value : values)
+			if(value)
+				return true;
+		return false;
+	}
+
+	private void visitState(BigInteger ordinal, Counter count,
+		Consumer<FullProductionJointPlanExport.Audit> acceptedSink) {
+		Prepared state = prepare(ordinal);
+		BigInteger rawPerState = candidateCount.multiply(relocationCount);
+		count.raw = count.raw.add(rawPerState);
+		if(state.inspection.earlyVerdict() != null) {
+			count.add(state.inspection.earlyVerdict(), rawPerState);
+			return;
+		}
+		BigInteger surviving = state.inspection.survivingCandidateAssignments();
+		BigInteger pruned = candidateCount.subtract(surviving).multiply(relocationCount);
+		count.rejected = count.rejected.add(pruned);
+		count.candidatePruned = count.candidatePruned.add(pruned);
+		selectCandidates(state, 0, ZERO, ONE, new ArrayList<>(), count, acceptedSink);
 	}
 
 	private record Prepared(BigInteger ordinal, Map<CompiledHopKey,PlacementState> assignment,
@@ -346,7 +490,7 @@ public final class ClosedPlanRelationEnumerator {
 
 	private static final class Counter {
 		private BigInteger raw = ZERO, accepted = ZERO, rejected = ZERO, unknown = ZERO,
-			candidatePruned = ZERO;
+			candidatePruned = ZERO, constraintPrunedStates = ZERO;
 		private void add(FullProductionJointPlanExport.Verdict verdict, BigInteger amount) {
 			switch(verdict) {
 				case ACCEPTED -> accepted = accepted.add(amount);

@@ -18,10 +18,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.HexFormat;
+import java.util.HashMap;
 import java.util.zip.GZIPOutputStream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -47,7 +51,7 @@ public final class LegacyClosedSpaceBridgeTest {
 		String fixture = required("legacy.fixture");
 		String source = required("legacy.source");
 		Path output = Path.of(required("legacy.output"));
-		var program = ProductionShadowFixtureFactory.compile(fixture);
+		var program = compileInput(fixture);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
 		Path catalog = Path.of(required("legacy.catalog.output"));
@@ -99,7 +103,8 @@ public final class LegacyClosedSpaceBridgeTest {
 				"readValueVersion", edge.readValueVersion()));
 		return row("contract", "legacy-source-catalog-v1", "version", VERSION,
 			"fixture", fixture, "sourcePrivacy", Privacy.PRIVATE_AGGREGATE.name(),
-			"inputDmlSha256", inputDmlSha256(fixture), "nodes", nodes,
+			"inputDmlSha256", inputDmlSha256(fixture),
+			"inputDmlPath", System.getProperty("legacy.dml.path"), "nodes", nodes,
 			"orderedInputs", inputs, "logicalInputs", logicalInputs,
 			"constraints", analysis.graph().constraints());
 	}
@@ -309,9 +314,34 @@ public final class LegacyClosedSpaceBridgeTest {
 	}
 
 	private static String inputDmlSha256(String fixture) throws Exception {
+		String path = System.getProperty("legacy.dml.path");
+		if(path != null) {
+			byte[] bytes = Files.readAllBytes(Path.of(path));
+			String actual = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+			if(!actual.equals(required("legacy.dml.sha256")))
+				throw new IllegalArgumentException("LEGACY_DML_SHA_MISMATCH");
+			return actual;
+		}
 		String script = ProductionShadowFixtureFactory.scripts().get(fixture);
 		if(script == null) throw new IllegalArgumentException("LEGACY_FIXTURE_UNKNOWN: " + fixture);
 		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
 			.digest(script.getBytes(StandardCharsets.UTF_8)));
+	}
+
+	private static DMLProgram compileInput(String fixture) throws Exception {
+		String path = System.getProperty("legacy.dml.path");
+		if(path == null) return ProductionShadowFixtureFactory.compile(fixture);
+		byte[] bytes = Files.readAllBytes(Path.of(path));
+		String actual = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+		if(!actual.equals(required("legacy.dml.sha256")))
+			throw new IllegalArgumentException("LEGACY_DML_SHA_MISMATCH");
+		String script = new String(bytes, StandardCharsets.UTF_8);
+		DMLProgram program = ParserFactory.createParser().parse(path, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
 	}
 }

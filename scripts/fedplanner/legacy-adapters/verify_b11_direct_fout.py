@@ -29,7 +29,8 @@ def load(receipt_path):
     require(receipt["fixture"] == "B-11" and receipt["nativeCoverage"] == "COMPLETE"
             and receipt["errors"] == 0 and receipt["start"] == 0
             and receipt["stop"] == receipt["rawCount"], "B-11 native coverage incomplete")
-    rows_path = Path(receipt["rowsPath"])
+    rows_path = Path(receipt["rowsPath"]) if "rowsPath" in receipt else \
+        receipt_path.with_suffix("").with_suffix(".jsonl.gz")
     catalog_path = Path(receipt["sourceCatalogPath"])
     require(sha(rows_path) == receipt["rowsSha256"], "B-11 native rows digest differs")
     require(sha(catalog_path) == receipt["sourceCatalogSha256"],
@@ -127,9 +128,19 @@ def project_b1(row, catalog):
                 require(authority["inputPosition"] == position and
                         authority["kind"] == ("NATIVE_LOCAL" if kind == "ABSENT_LOCAL"
                                               else "DIRECT_FOUT") and
-                        authority["relocationAction"] is None and
-                        authority["sourceDecision"] == source,
+                        authority["sourceDecision"] == (None if kind == "ABSENT_LOCAL" else source),
                         "B-11 E input authority differs from source edge")
+                if kind == "ABSENT_LOCAL":
+                    require(authority["relocationAction"] is None,
+                            "B-11 native local authority unexpectedly selects an action")
+                else:
+                    action = authority["relocationAction"]
+                    if action is not None:
+                        require(any(obligation["consumer"] == choice["occurrence"] and
+                                    obligation["inputPosition"] == position and
+                                    obligation["requiredPlacement"] == state
+                                    for obligation in action["obligations"]),
+                                "B-11 direct FOUT action witness has no matching obligation")
             bindings.append({"position": position, "kind": kind, "source": source,
                              "ftype": input_state["fType"]})
         physical.append({"occurrence": node["occurrence"], "sourceHop": node["sourceHop"],
@@ -143,6 +154,7 @@ def compare(e_receipt_path, p_receipt_path):
     p, p_catalog, p_rows = load(p_receipt_path)
     require(e["source"] == "E" and p["source"] == "P" and
             e["version"] == p["version"] and
+            e["bridgeSha256"] == p["bridgeSha256"] and
             e["sourceCatalogSha256"] == p["sourceCatalogSha256"],
             "B-11 P/E revision or source catalog differs")
     result = {"fixture": "B-11", "version": e["version"],
@@ -178,7 +190,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     print(json.dumps(result, sort_keys=True))
-    if result["status"] == "DIFFERENT":
+    if result["status"] != "SELF_EQUAL_B11_PROFILE":
         raise SystemExit(2)
 
 

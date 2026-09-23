@@ -96,6 +96,44 @@ public class ClosedPlanRelationEnumeratorTest {
 		Assert.assertEquals(all.candidatePruned(), left.candidatePruned().add(right.candidatePruned()));
 	}
 
+	@Test
+	public void binaryConstraintFrontierMatchesUnprunedEnumerationAndRangePartitions() throws Exception {
+		boolean witnessedPruning = false;
+		for(String id : List.of("B-01", "B-14", "B-21")) {
+			ClosedPlanRelationEnumerator enumerator = new ClosedPlanRelationEnumerator(analysis(id));
+			List<FullProductionJointPlanExport.Audit> reference = new ArrayList<>();
+			var unpruned = enumerator.enumerateWithoutConstraintFrontier(BigInteger.ZERO,
+				enumerator.stateCount(), reference::add);
+			List<FullProductionJointPlanExport.Audit> frontierRows = new ArrayList<>();
+			var frontier = enumerator.enumerateConstraintFrontier(BigInteger.ZERO,
+				enumerator.stateCount(), frontierRows::add);
+			Assert.assertEquals(id, unpruned.summary(), frontier.summary());
+			Assert.assertEquals(id, reference, frontierRows);
+			Assert.assertEquals(id, enumerator.rawCount(), frontier.summary().raw());
+			witnessedPruning |= frontier.prunedStates().signum() > 0;
+
+			BigInteger cut = enumerator.stateCount().divide(BigInteger.valueOf(3)).add(BigInteger.ONE);
+			List<FullProductionJointPlanExport.Audit> partitionRows = new ArrayList<>();
+			var first = enumerator.enumerateConstraintFrontier(BigInteger.ZERO, cut,
+				partitionRows::add);
+			var second = enumerator.enumerateConstraintFrontier(cut, enumerator.stateCount(),
+				partitionRows::add);
+			Assert.assertEquals(id, reference, partitionRows);
+			Assert.assertEquals(id, frontier.summary().raw(),
+				first.summary().raw().add(second.summary().raw()));
+			Assert.assertEquals(id, frontier.summary().accepted(),
+				first.summary().accepted().add(second.summary().accepted()));
+			Assert.assertEquals(id, frontier.summary().rejected(),
+				first.summary().rejected().add(second.summary().rejected()));
+			Assert.assertEquals(id, frontier.summary().unknown(),
+				first.summary().unknown().add(second.summary().unknown()));
+			Assert.assertEquals(id, frontier.prunedStates(),
+				first.prunedStates().add(second.prunedStates()));
+		}
+		Assert.assertTrue("Fixture must exercise at least one impossible binary-constraint branch",
+			witnessedPruning);
+	}
+
 	private static PlacementAnalysis analysis(String id) throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);

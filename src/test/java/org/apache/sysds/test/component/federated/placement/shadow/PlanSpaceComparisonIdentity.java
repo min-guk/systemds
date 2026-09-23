@@ -32,6 +32,12 @@ import org.apache.sysds.hops.FunctionOp;
  * never appear in a physical identity row. A missing or ambiguous join is an adapter error.
  */
 public final class PlanSpaceComparisonIdentity {
+	record StructuralCallSiteKey(String callSitePath, String recompileContext) {
+		StructuralCallSiteKey {
+			Objects.requireNonNull(callSitePath);
+			Objects.requireNonNull(recompileContext);
+		}
+	}
 	private final Map<CompiledHopKey,String> occurrences;
 	private final Map<CompiledHopKey,Map<String,Object>> occurrenceDetails;
 	private final Map<CompiledHopKey,Map<String,Object>> nodesByKey;
@@ -75,17 +81,24 @@ public final class PlanSpaceComparisonIdentity {
 			throw new IllegalArgumentException("Not a CFG function output reference");
 		String[] parts = reference.split(":", 4);
 		if(parts.length != 4) throw new IllegalArgumentException("Malformed CFG function output: " + reference);
-		int position;
-		try { position = Integer.parseInt(parts[2]); }
+		int callOrdinal, position;
+		try {
+			callOrdinal = Integer.parseInt(parts[1]);
+			position = Integer.parseInt(parts[2]);
+		}
 		catch(NumberFormatException error) {
 			throw new IllegalArgumentException("Malformed CFG function output: " + reference, error);
 		}
+		if(callOrdinal < 0 || position < 0)
+			throw new IllegalArgumentException("Malformed CFG function output: " + reference);
 		List<CompiledHopKey> matches = analysis.graph().constraints().stream()
 			.filter(constraint -> constraint.right() == consumer
 				&& constraint.evidence().equals("cfg-function-output-value:" + parts[3])
 				&& analysis.graph().node(constraint.left()).orElseThrow().kind()
 					== NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT
-				&& constraint.left().callSitePath().endsWith("/output-" + position))
+				&& constraint.left().callSitePath().endsWith("/output-" + position)
+				&& constraint.left().emittedHopInstance().equals(
+					"output-" + callOrdinal + '-' + position))
 			.map(NeutralPlacementGraph.Constraint::left).distinct().toList();
 		if(matches.size() != 1)
 			throw new IllegalArgumentException("Ambiguous CFG function output source: " + reference);
@@ -302,16 +315,15 @@ public final class PlanSpaceComparisonIdentity {
 					? "block/" + region : region).toList());
 			details.put(key, Map.copyOf(coordinate));
 		}
-		Map<String,String> structuralCallSites = new HashMap<>();
-		for(Map.Entry<CompiledHopKey,Map<String,Object>> entry : details.entrySet()) {
-			String raw = entry.getKey().callSitePath();
-			String mapped = (String) entry.getValue().get("callSitePath");
-			String prior = structuralCallSites.putIfAbsent(raw, mapped);
-			if(prior != null && !prior.equals(mapped))
-				throw new IllegalArgumentException("Ambiguous structural call-site mapping");
-		}
+		Map<StructuralCallSiteKey,String> structuralCallSites = structuralCallSites(details);
 		Map<String,Map<String,Object>> valuesByReference = new HashMap<>();
 		Map<String,Map<String,Object>> functionOutputs = new HashMap<>();
+		Set<String> referencedValues = new HashSet<>();
+		for(NeutralPlacementGraph.Node node : analysis.graph().nodes())
+			for(String reference : node.valueVersion().predecessorVersions()) {
+				String target = valueReferenceTarget(reference);
+				if(target != null) referencedValues.add(target);
+			}
 		for(NeutralPlacementGraph.Node target : analysis.graph().nodes())
 			for(String reference : target.valueVersion().predecessorVersions()) {
 				if(!reference.startsWith("cfg-function-output:")) continue;
@@ -325,6 +337,7 @@ public final class PlanSpaceComparisonIdentity {
 			}
 		for(NeutralPlacementGraph.Node node : analysis.graph().nodes()) {
 			ValueVersionKey value = node.valueVersion();
+			if(!referencedValues.contains(value.cfgReferenceSignature())) continue;
 			Map<String,Object> coordinate = baseValueVersion(value, callPathsBySignature,
 				structuralCallSites);
 			Map<String,Object> prior = valuesByReference.putIfAbsent(value.cfgReferenceSignature(), coordinate);
@@ -415,8 +428,10 @@ public final class PlanSpaceComparisonIdentity {
 				.filter(function -> call.functionKey().equals(function.key())
 					|| call.functionKey().equals(function.name())
 					|| call.functionKey().endsWith("::" + function.name())).toList();
-			if(definitions.size() != 1)
+			if(definitions.size() > 1)
 				throw new IllegalArgumentException("Inlined call lacks a unique source function definition");
+			List<String> formalInputs = definitions.isEmpty()
+				? removedInlinedFunctionInputs(call) : definitions.get(0).inputs();
 			if(call.statementPosition() < 0)
 				throw new IllegalArgumentException("Negative inlined call statement position");
 			String callSite = "block/" + call.blockPath() + "/inlined-call/"
@@ -425,41 +440,29 @@ public final class PlanSpaceComparisonIdentity {
 				if(input.position() < 0 || input.statementPosition() < 0
 					|| input.formal() == null || input.formal().isBlank()
 					|| input.bound() == null || input.bound().isBlank()
-					|| !definitions.get(0).inputs().contains(input.formal()))
+					|| input.position() >= formalInputs.size()
+					|| !formalInputs.get(input.position()).equals(input.formal()))
 					throw new IllegalArgumentException("Incomplete inlined function input boundary");
-				List<NeutralPlacementGraph.Node> sourceMatches;
-				Object actual;
-				if(input.actual() != null && !input.actual().isBlank()) {
-					sourceMatches = analysis.graph().nodes().stream()
-						.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.TRANSIENT_READ)
-						.filter(node -> node.key().callSitePath().equals(call.blockPath()))
-						.filter(node -> node.valueVersion().lexicalVariable().equals(input.actual()))
-						.toList();
-					actual = input.actual();
-				}
-				else {
-					List<CompiledHopKey> expressionMatches = analysis.compiledHopOccurrences().stream()
-						.filter(projection -> input.bound().equals(projection.hop().getName()))
-						.map(PlacementAnalysis.HopOccurrenceProjection::key)
-						.filter(key -> occurrencePaths.get(key) != null
-							&& occurrencePaths.get(key).startsWith("block/" + call.blockPath() + "/"))
-						.toList();
-					if(expressionMatches.size() != 1)
-						throw new IllegalArgumentException("Inlined expression argument is ambiguous");
-					CompiledHopKey expression = expressionMatches.get(0);
-					sourceMatches = analysis.graph().nodes().stream()
-						.filter(node -> node.key().equals(expression) && node.emittedWork()).toList();
-					actual = Map.of("kind", "EXPRESSION", "source", occurrencePaths.get(expression));
-				}
 				String boundaryPath = callSite + "/boundary/input/" + input.position();
 				List<NeutralPlacementGraph.Node> targetMatches = analysis.graph().nodes().stream()
 					.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT)
 					.filter(node -> boundaryPath.equals(occurrencePaths.get(node.key()))).toList();
-				if(sourceMatches.size() != 1 || targetMatches.size() != 1)
-					throw new IllegalArgumentException("Inlined function input endpoints are not unique");
+				if(targetMatches.size() != 1)
+					throw new IllegalArgumentException("Inlined function input boundary is not unique");
+				CompiledHopKey boundary = targetMatches.get(0).key();
+				PlacementAnalysis.LogicalInlinedFunctionInputFact fact = analysis
+					.requireExactLogicalInlinedFunctionInput(boundary, input.position());
+				// Compiler-owned absence proves that the rewrite eliminated the argument's
+				// physical occurrence. Only this explicit outcome may omit the logical edge.
+				if(fact.sourceArgument().isEmpty()) continue;
+				CompiledHopKey source = fact.sourceArgument().orElseThrow();
+				String sourcePath = occurrencePaths.get(source);
+				if(sourcePath == null)
+					throw new IllegalArgumentException("Inlined function input source is unresolved");
+				Object actual = input.actual() != null && !input.actual().isBlank() ? input.actual()
+					: Map.of("kind", "EXPRESSION", "source", sourcePath);
 				logicalInputs.add(Map.of("kind", "INLINED_FUNCTION_INPUT",
-					"source", occurrencePaths.get(sourceMatches.get(0).key()),
-					"target", occurrencePaths.get(targetMatches.get(0).key()),
+					"source", sourcePath, "target", occurrencePaths.get(boundary),
 					"callSite", callSite, "functionKey", call.functionKey(),
 					"position", input.position(), "statementPosition", input.statementPosition(),
 					"formal", input.formal(), "actual", actual,
@@ -474,9 +477,33 @@ public final class PlanSpaceComparisonIdentity {
 			logicalInputs);
 	}
 
+	private static List<String> removedInlinedFunctionInputs(PrebuilderSnapshot.InlinedCall call) {
+		if(call.functionKey() == null || call.functionKey().isBlank() || call.inputs() == null
+			|| call.outputs() == null)
+			throw new IllegalArgumentException("Inlined call lacks a source function identity");
+		List<String> inputs = new ArrayList<>();
+		Set<String> inputFormals = new HashSet<>();
+		for(int position = 0; position < call.inputs().size(); position++) {
+			PrebuilderSnapshot.InputBoundary input = call.inputs().get(position);
+			if(input == null || input.position() != position || input.formal() == null
+				|| input.formal().isBlank() || !inputFormals.add(input.formal()))
+				throw new IllegalArgumentException("Incomplete removed inlined function signature");
+			inputs.add(input.formal());
+		}
+		Set<Integer> outputPositions = new HashSet<>();
+		Set<String> outputFormals = new HashSet<>();
+		for(PrebuilderSnapshot.OutputBoundary output : call.outputs())
+			if(output == null || output.position() < 0 || output.formal() == null
+				|| output.formal().isBlank() || !outputPositions.add(output.position())
+				|| !outputFormals.add(output.formal()))
+				throw new IllegalArgumentException("Incomplete removed inlined function signature");
+		return List.copyOf(inputs);
+	}
+
 	private static Map<String,Object> valueVersion(ValueVersionKey value,
 		Map<String,Map<String,Object>> valuesByReference, Map<String,String> callPathsBySignature,
-		Map<String,String> structuralCallSites, Map<String,Map<String,Object>> functionOutputs,
+		Map<StructuralCallSiteKey,String> structuralCallSites,
+		Map<String,Map<String,Object>> functionOutputs,
 		PrebuilderSnapshot snapshot) {
 		List<Map<String,Object>> predecessors = new ArrayList<>();
 		for(String reference : value.predecessorVersions()) {
@@ -544,11 +571,24 @@ public final class PlanSpaceComparisonIdentity {
 		return Map.copyOf(row);
 	}
 
+	private static String valueReferenceTarget(String reference) {
+		if(reference.startsWith("input-")) {
+			int colon = reference.indexOf(':');
+			return colon < 0 ? null : reference.substring(colon + 1);
+		}
+		if(reference.startsWith("cfg-definition:"))
+			return reference.substring("cfg-definition:".length());
+		if(reference.startsWith("callsite:") || reference.startsWith("cfg-function-input:")
+			|| reference.startsWith("cfg-function-output:"))
+			return null;
+		return reference;
+	}
+
 	private static String syntheticPath(NeutralPlacementGraph.Node node, PlacementAnalysis analysis,
 		PrebuilderSnapshot snapshot, Map<CompiledHopKey,String> occurrencePaths) {
 		if(node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_CALL) {
 			List<PrebuilderSnapshot.InlinedCall> matches = snapshot.inlinedCalls().stream()
-				.filter(call -> call.blockPath().equals(node.key().callSitePath())).toList();
+				.filter(call -> sameCompilerBlockPath(call.blockPath(), node.key().callSitePath())).toList();
 			if(matches.size() == 1)
 				return "block/" + matches.get(0).blockPath() + "/inlined-call/"
 					+ matches.get(0).statementPosition() + "/" + matches.get(0).functionKey();
@@ -566,14 +606,21 @@ public final class PlanSpaceComparisonIdentity {
 			throw new IllegalArgumentException("Opaque function boundary path: " + path);
 		String callPath = path.substring(0, delimiter);
 		String function = path.substring(delimiter + 2, suffix);
-		for(PlacementAnalysis.HopOccurrenceProjection projection : analysis.compiledHopOccurrences())
-			if(projection.hop() instanceof FunctionOp call && projection.key().callSitePath().equals(callPath)
-				&& (function.equals(call.getFunctionName())
-					|| function.endsWith("::" + call.getFunctionName())))
-				return occurrencePaths.get(projection.key()) + "/boundary/" + function + "/"
-					+ direction + "/" + path.substring(suffix + direction.length() + 2);
+		List<PlacementAnalysis.HopOccurrenceProjection> calls = analysis.compiledHopOccurrences().stream()
+			.filter(projection -> projection.hop() instanceof FunctionOp)
+			.filter(projection -> projection.key().callSitePath().equals(callPath))
+			.filter(projection -> function.equals(((FunctionOp) projection.hop()).getFunctionName())
+				|| function.endsWith("::" + ((FunctionOp) projection.hop()).getFunctionName()))
+			.toList();
+		String context = node.key().recompileContext();
+		if(context.startsWith("callsite:"))
+			calls = calls.stream().filter(projection -> context.equals(
+				"callsite:" + projection.key().normalizedSignature())).toList();
+		if(calls.size() == 1)
+			return occurrencePaths.get(calls.get(0).key()) + "/boundary/" + function + "/"
+				+ direction + "/" + path.substring(suffix + direction.length() + 2);
 		for(PrebuilderSnapshot.InlinedCall call : snapshot.inlinedCalls())
-			if(call.blockPath().equals(callPath)
+			if(sameCompilerBlockPath(call.blockPath(), callPath)
 				&& (function.equals(call.functionKey()) || function.endsWith("::" + call.functionKey())))
 				return "block/" + call.blockPath() + "/inlined-call/" + call.statementPosition()
 					+ "/" + function + "/boundary/" + direction + "/"
@@ -581,8 +628,24 @@ public final class PlanSpaceComparisonIdentity {
 		throw new IllegalArgumentException("Unresolved function boundary call: " + path);
 	}
 
+	/** Parser snapshots name control bodies by syntax; placement keys use CFG role names. */
+	static boolean sameCompilerBlockPath(String sourcePath, String compiledPath) {
+		Objects.requireNonNull(sourcePath);
+		Objects.requireNonNull(compiledPath);
+		String[] parts = sourcePath.split("/", -1);
+		for(int i = 0; i < parts.length; i++)
+			parts[i] = switch(parts[i]) {
+				case "while", "for" -> "loop-body";
+				case "if" -> "branch-if";
+				case "else" -> "branch-else";
+				default -> parts[i];
+			};
+		return String.join("/", parts).equals(compiledPath);
+	}
+
 	private static Map<String,Object> baseValueVersion(ValueVersionKey value,
-		Map<String,String> callPathsBySignature, Map<String,String> structuralCallSites) {
+		Map<String,String> callPathsBySignature,
+		Map<StructuralCallSiteKey,String> structuralCallSites) {
 		Map<String,Object> row = new LinkedHashMap<>();
 		row.put("variable", value.lexicalVariable());
 		List<String> path = new ArrayList<>();
@@ -600,7 +663,8 @@ public final class PlanSpaceComparisonIdentity {
 		row.put("functionNamespace", value.definingControlRegion().functionNamespace());
 		String callSite = value.definingControlRegion().callSitePath();
 		if(callSite.contains("->")) {
-			callSite = structuralCallSites.get(callSite);
+			callSite = structuralCallSites.get(new StructuralCallSiteKey(callSite,
+				value.definingControlRegion().recompileContext()));
 			if(callSite == null) throw new IllegalArgumentException("Unresolved value-version call site");
 		}
 		else if(callSite.startsWith("main/") || callSite.startsWith("function/"))
@@ -620,6 +684,21 @@ public final class PlanSpaceComparisonIdentity {
 		row.put("definitionOrdinal", value.definitionOrdinal());
 		row.put("kind", value.versionKind().name());
 		return Map.copyOf(row);
+	}
+
+	static Map<StructuralCallSiteKey,String> structuralCallSites(
+		Map<CompiledHopKey,Map<String,Object>> details) {
+		Map<StructuralCallSiteKey,String> result = new HashMap<>();
+		for(Map.Entry<CompiledHopKey,Map<String,Object>> entry : details.entrySet()) {
+			CompiledHopKey occurrence = entry.getKey();
+			StructuralCallSiteKey key = new StructuralCallSiteKey(occurrence.callSitePath(),
+				occurrence.recompileContext());
+			String mapped = (String) entry.getValue().get("callSitePath");
+			String prior = result.putIfAbsent(key, mapped);
+			if(prior != null && !prior.equals(mapped))
+				throw new IllegalArgumentException("Ambiguous structural call-site mapping");
+		}
+		return Map.copyOf(result);
 	}
 
 

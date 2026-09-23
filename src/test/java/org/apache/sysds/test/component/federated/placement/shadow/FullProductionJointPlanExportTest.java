@@ -19,7 +19,10 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
@@ -109,7 +112,8 @@ public class FullProductionJointPlanExportTest {
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
-		var exporter = new FullProductionJointPlanExport(new NeutralPlacementGraphBuilder().buildAnalysis(program));
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var exporter = new FullProductionJointPlanExport(analysis);
 		Assert.assertEquals(1, exporter.graph().derivedFoutMaterializationActions().size());
 		List<FullProductionJointPlanExport.Audit> sample = new ArrayList<>();
 		exporter.stream(BigInteger.ZERO, BigInteger.valueOf(5000), sample::add);
@@ -119,10 +123,101 @@ public class FullProductionJointPlanExportTest {
 		Assert.assertTrue(sample.stream().flatMap(row -> row.derivedFoutActions().stream())
 			.allMatch(action -> exporter.graph().derivedFoutMaterializationActions().stream()
 				.anyMatch(graphAction -> graphAction.key() == action)));
+		Map<String,Object> domain = PlanningNativeModelCapture.domain(analysis, exporter);
+		List<?> actions = (List<?>) domain.get("derivedFoutActions");
+		List<?> bindings = (List<?>) domain.get("derivedFoutOwnershipBindings");
+		Assert.assertEquals(1, actions.size());
+		Assert.assertFalse(bindings.isEmpty());
+		for(Object value : bindings) {
+			List<?> binding = (List<?>) value;
+			Assert.assertTrue(((Number) binding.get(2)).intValue() >= 0);
+			Assert.assertTrue(((Number) binding.get(2)).intValue() < actions.size());
+		}
+		List<?> activationFacts = (List<?>) domain.get("candidateReceiptActivationFacts");
+		Assert.assertFalse(activationFacts.isEmpty());
+		Assert.assertTrue(activationFacts.stream().map(Map.class::cast)
+			.filter(row -> Boolean.TRUE.equals(((Map<?,?>) row.get("derivedFoutAuthority")).get("required")))
+			.anyMatch(row -> {
+				Map<?,?> authority = (Map<?,?>) row.get("derivedFoutAuthority");
+				return ((Number) authority.get("graphActionIndex")).intValue() >= 0
+					&& ((Number) authority.get("producerPlacementCoordinateIndex")).intValue() >= 0
+					&& ((Number) authority.get("anchorOwnerPlacementCoordinateIndex")).intValue() >= 0
+					&& !((List<?>) authority.get("anchorOwnerCompatibleFoutAlternativeIndices")).isEmpty();
+			}));
+	}
+
+	@Test
+	public void candidateActivationFactsRoundTripExactCoordinatesAndRejectMutation() throws Exception {
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compiledFunctionProgram());
+		var exporter = new FullProductionJointPlanExport(analysis);
+		Map<String,Object> domain = PlanningNativeModelCapture.domain(analysis, exporter);
+		ObjectMapper json = new ObjectMapper();
+		JsonNode roundTrip = json.readTree(json.writeValueAsBytes(domain));
+		JsonNode placements = roundTrip.path("placementDomains");
+		JsonNode candidates = roundTrip.path("candidateDomains");
+		JsonNode activation = roundTrip.path("candidateReceiptActivationFacts");
+		int candidateCount = 0;
+		for(JsonNode coordinate : candidates)
+			candidateCount += coordinate.path(1).size();
+		Assert.assertEquals(candidateCount, activation.size());
+		PlanningNativeModelCapture.verifyCandidateActivationFacts(roundTrip, placements, candidates);
+
+		boolean hasExactSourceCoordinate = false;
+		boolean hasFunctionForwardingCoordinate = false;
+		for(JsonNode fact : activation)
+			for(JsonNode input : fact.path("inputs")) {
+				for(JsonNode source : input.path("compiledSources"))
+					hasExactSourceCoordinate |= source.path("placementCoordinateIndex").asInt(-1) >= 0;
+			}
+		for(JsonNode source : roundTrip.path("logicalCandidateCoordinateAuthority").path("function"))
+			hasFunctionForwardingCoordinate |= source.path("sourceNodeIndex").asInt(-1) >= 0
+				&& source.path("boundaryNodeIndex").asInt(-1) >= 0
+				&& source.path("targetNodeIndex").asInt(-1) >= 0;
+		Assert.assertTrue("At least one compiled source must retain its exact placement coordinate",
+			hasExactSourceCoordinate);
+		Assert.assertTrue("Function forwarding must retain exact actual, boundary, and formal node identities",
+			hasFunctionForwardingCoordinate);
+
+		Assert.assertFalse(activation.isEmpty());
+		((com.fasterxml.jackson.databind.node.ObjectNode) activation.get(0))
+			.put("activePlacementAlternativeIndex", Integer.MAX_VALUE);
+		try {
+			PlanningNativeModelCapture.verifyCandidateActivationFacts(roundTrip, placements, candidates);
+			Assert.fail("A mutated activation coordinate must fail closed");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage().contains("activation coordinate differs"));
+		}
 	}
 
 	private static DMLProgram protectedProgram(String id) throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		return program;
+	}
+
+	private static DMLProgram compiledFunctionProgram() throws Exception {
+		String script = """
+			f = function(matrix[double] A) return (matrix[double] B) {
+				B = A;
+				i = 1;
+				while(i < 2) {
+					B = B + 1;
+					i = i + 1;
+				}
+			}
+			X = federated(addresses=list("localhost:8001/X", "localhost:8002/X"),
+				ranges=list(list(0, 0), list(500, 100), list(500, 0), list(1000, 100)));
+			Y = f(X);
+			print(sum(Y));
+			""";
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
 		return program;
 	}

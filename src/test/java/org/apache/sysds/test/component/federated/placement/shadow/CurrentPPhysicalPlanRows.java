@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
@@ -31,11 +33,13 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 
 /** Strict source-coordinate projection of one accepted current-P plan. */
 public final class CurrentPPhysicalPlanRows {
 	private record PhiSource(CompiledHopKey producer, String controlArm) { }
 	private record CfgInput(CompiledHopKey direct, List<PhiSource> alternatives) { }
+	private record CfgReference(String signature, boolean definition) { }
 	private final PlacementAnalysis analysis;
 	private final PlanSpaceComparisonIdentity source;
 	private final String logicalIdentity;
@@ -78,16 +82,24 @@ public final class CurrentPPhysicalPlanRows {
 			authorityId.put("kind", kind);
 			if(receipt == null) authorityId.put("layout", "BOUNDARY");
 			else {
-				authorityId.put("layout", receipt.realization().key().layoutKind().name());
+				String layout = receipt.realization().key().layoutKind().name();
+				authorityId.put("layout", layout);
 				DurableAnchorKey anchor = receipt.realization().provenWorkerPool(receipt.supportClause());
 				if(anchor != null) {
 					authorityId.put("anchor", anchor(anchor));
 					addGeometry(geometry, occurrence, anchor);
 				}
-				else if(receipt.realization().key().layoutKind().name().equals("DURABLE_MAP")
-					|| receipt.realization().key().layoutKind().name().equals("NATIVE_LINEAGE"))
+				else if(layout.equals("NATIVE_LINEAGE")) {
+					DurableAnchorKey witness = receipt.realization()
+						.nativeWorkerPoolResidencyWitness(receipt.supportClause());
+					if(witness == null)
+						throw new IllegalArgumentException(
+							"Native layout lacks structural worker authority");
+					authorityId.put("workerResidency", workerResidency(witness));
+				}
+				else if(layout.equals("DURABLE_MAP"))
 					throw new IllegalArgumentException("Federated layout lacks exact structural geometry");
-				if(receipt.realization().key().layoutKind().name().equals("SOURCE_LINEAGE")) {
+				if(layout.equals("SOURCE_LINEAGE")) {
 					Object external = catalogNode.get("externalSource");
 					if(!(external instanceof Map<?,?>))
 						throw new IllegalArgumentException("Source lineage lacks frozen external source");
@@ -130,6 +142,22 @@ public final class CurrentPPhysicalPlanRows {
 		row.put("authority", List.copyOf(authorities));
 		row.put("logicalInputs", source.physicalLogicalInputs());
 		return Map.copyOf(row);
+	}
+
+	private static Map<String,Object> workerResidency(DurableAnchorKey witness) {
+		List<String> raw = new ArrayList<>();
+		for(AnchorPartition partition : witness.partitions()) {
+			String endpoint = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			if(endpoint == null || endpoint.isBlank())
+				throw new IllegalArgumentException(
+					"Native layout has invalid worker endpoint authority");
+			raw.add(endpoint);
+		}
+		List<String> endpoints = raw.stream().distinct().sorted().toList();
+		if(endpoints.isEmpty())
+			throw new IllegalArgumentException("Native layout has no worker endpoint authority");
+		return Map.of("ftype", witness.fType().name(), "endpoints", endpoints,
+			"layoutExact", false);
 	}
 
 	public static Map<String,Object> occurrence(PlanSpaceComparisonIdentity source, CompiledHopKey key) {
@@ -343,13 +371,15 @@ public final class CurrentPPhysicalPlanRows {
 	private CfgInput cfgPredecessor(CompiledHopKey consumer, int inputPosition,
 		FullProductionJointPlanExport.Audit proof) {
 		ValueVersionKey value = analysis.graph().node(consumer).orElseThrow().valueVersion();
-		List<String> references = new ArrayList<>();
+		List<CfgReference> references = new ArrayList<>();
 		List<PhiSource> matched = new ArrayList<>();
 		for(String predecessor : value.predecessorVersions()) {
 			if(inputPosition == 0 && predecessor.startsWith("cfg-definition:"))
-				references.add(predecessor.substring("cfg-definition:".length()));
+				references.add(new CfgReference(
+					predecessor.substring("cfg-definition:".length()), true));
 			else if(predecessor.startsWith("input-" + inputPosition + ":"))
-				references.add(predecessor.substring(("input-" + inputPosition + ":").length()));
+				references.add(new CfgReference(
+					predecessor.substring(("input-" + inputPosition + ":").length()), false));
 			else if(inputPosition == 0 && predecessor.startsWith("cfg-function-output:")) {
 				CompiledHopKey producer = PlanSpaceComparisonIdentity.cfgFunctionOutput(
 					analysis, consumer, predecessor);
@@ -377,14 +407,23 @@ public final class CurrentPPhysicalPlanRows {
 		if(references.isEmpty() && matched.isEmpty())
 			throw new IllegalArgumentException("Unresolved CFG input authority: "
 				+ source.occurrence(consumer) + " slot=" + inputPosition);
-		for(String reference : references) {
+		for(CfgReference reference : references) {
 			List<CompiledHopKey> matches = analysis.graph().nodes().stream()
 				.filter(node -> proof.assignment().containsKey(node.key()))
-				.filter(node -> node.valueVersion().cfgReferenceSignature().equals(reference))
+				.filter(node -> node.valueVersion().cfgReferenceSignature().equals(reference.signature()))
+				// A TRead can share the writer's ValueVersionKey. A cfg-definition
+				// reference denotes the actual definition, not that aliasing read.
+				.filter(node -> !reference.definition() || analysis.hop(node.key())
+					.filter(hop -> hop instanceof DataOp data &&
+						(data.getOp() == OpOpData.TRANSIENTWRITE ||
+							data.getOp() == OpOpData.FUNCTIONOUTPUT)).isPresent())
 				.map(NeutralPlacementGraph.Node::key).toList();
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("Ambiguous CFG input authority: "
-					+ source.occurrence(consumer) + " slot=" + inputPosition);
+					+ source.occurrence(consumer) + " slot=" + inputPosition
+					+ " reference=" + reference + " matches=" + matches.stream()
+						.map(key -> source.occurrence(key) + ":"
+							+ analysis.graph().node(key).orElseThrow().kind()).toList());
 			CompiledHopKey producer = matches.get(0);
 			String controlArm = requiredString(source.occurrenceDetails(producer).get("callSitePath"),
 				"CFG control arm");
