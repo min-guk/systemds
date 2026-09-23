@@ -62,6 +62,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateSha
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
@@ -77,6 +78,116 @@ import org.junit.Test;
 
 /** Typed, coinductive native worker-pool continuity proofs. */
 public class NativePlacementContinuityTest {
+	@Test
+	public void directProofTemplateDoesNotConsumePreviouslyPublishedRootReceipt() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey firstAnchor = anchor(FType.FULL, "worker1:8001", 0, 50);
+		DurableAnchorKey secondAnchor = new DurableAnchorKey("same-layout-second-value", FType.FULL,
+			firstAnchor.partitions());
+		Ref source = full.federatedSource("source", firstAnchor);
+		List<CandidateInputState> sourceInputs = List.of(
+			CandidateInputState.absentLocal(), CandidateInputState.absentLocal());
+		full.samePoolRealizations(source, sourceInputs, firstAnchor, secondAnchor);
+		Ref owner = full.unary("owner", OpOp1.LOG, source, false);
+		CandidateRuleFact ownerFact = full.candidates.stream()
+			.filter(fact -> fact.key().parentOccurrence() == owner.key).findFirst().orElseThrow();
+		CandidateEmissionFact ownerEmission = ownerFact.allowedEmissionFacts().get(0);
+		CandidateRuleFact sourceFact = full.candidates.stream()
+			.filter(fact -> fact.key().parentOccurrence() == source.key).findFirst().orElseThrow();
+		List<CandidateRealizationReference> sources = sourceFact.allowedEmissionFacts().get(0)
+			.realizations().stream().map(realization -> CandidateRealizationReference.of(
+				sourceFact.key(), realization)).toList();
+
+		CandidateRealizationReference firstQuery = publish(
+			full, ownerFact, ownerEmission, sources.get(0), firstAnchor);
+		NativePlacementContinuity publishedFirst = full.resolver();
+		List<NativePlacementContinuity.NativeContinuityProof> firstPublished =
+			publishedFirst.proveCandidateAlternatives(firstQuery, firstAnchor);
+		List<NativePlacementContinuity.NativeContinuityProof> firstTemplate =
+			publishedFirst.provePrimitiveCandidateAlternatives(firstQuery, firstAnchor);
+		NativePlacementContinuity primitiveFirst = full.resolver();
+		List<NativePlacementContinuity.NativeContinuityProof> firstTemplateReverse =
+			primitiveFirst.provePrimitiveCandidateAlternatives(firstQuery, firstAnchor);
+		List<NativePlacementContinuity.NativeContinuityProof> firstPublishedReverse =
+			primitiveFirst.proveCandidateAlternatives(firstQuery, firstAnchor);
+		Assert.assertEquals("public query cache must be independent of primitive-query order",
+			firstPublished, firstPublishedReverse);
+		Assert.assertEquals("primitive query cache must be independent of public-query order",
+			firstTemplate, firstTemplateReverse);
+		Assert.assertTrue("the proof-only root must never escape as an executable input receipt",
+			firstTemplate.stream().flatMap(proof -> proof.immediateBindings().stream())
+				.noneMatch(binding -> binding.source().equals(firstQuery)
+					|| "native-continuity:primitive-query-root".equals(
+						binding.source().realization().nativeLineage())));
+		CandidateRealizationReference collidingQuery = publishNativeLineage(
+			full, ownerFact, ownerEmission, sources.get(0), firstAnchor,
+			"native-continuity:primitive-query-root");
+		Assert.assertEquals("an ordinary lineage spelling cannot disable primitive query semantics",
+			firstTemplate, full.resolver().provePrimitiveCandidateAlternatives(
+				collidingQuery, firstAnchor));
+		List<NativePlacementContinuity.NativeContinuityProof> secondPublished = publishAndProve(
+			full, ownerFact, ownerEmission, sources.get(1), firstAnchor, false);
+		List<NativePlacementContinuity.NativeContinuityProof> secondTemplate = publishAndProve(
+			full, ownerFact, ownerEmission, sources.get(1), firstAnchor, true);
+
+		Assert.assertNotEquals("fixture must expose root-receipt feedback",
+			firstPublished, secondPublished);
+		Assert.assertEquals("the primitive direct rule relation is revision invariant",
+			firstTemplate, secondTemplate);
+		Assert.assertEquals("both executable same-pool source variants remain feasible",
+			2, firstTemplate.size());
+	}
+
+	private static List<NativePlacementContinuity.NativeContinuityProof> publishAndProve(
+		Fixture fixture, CandidateRuleFact original, CandidateEmissionFact emission,
+		CandidateRealizationReference selectedSource, DurableAnchorKey witness,
+		boolean templateQuery) {
+		CandidateRealizationReference query = publish(
+			fixture, original, emission, selectedSource, witness);
+		return templateQuery
+			? fixture.resolver().provePrimitiveCandidateAlternatives(query, witness)
+			: fixture.resolver().proveCandidateAlternatives(query, witness);
+	}
+
+	private static CandidateRealizationReference publish(
+		Fixture fixture, CandidateRuleFact original, CandidateEmissionFact emission,
+		CandidateRealizationReference selectedSource, DurableAnchorKey witness) {
+		CandidateEmissionRealization published = CandidateEmissionRealization.durable(
+			emission.emissionState(), witness, List.of(),
+			List.of(CandidateRealizationInputBinding.direct(0, selectedSource)));
+		CandidateEmissionFact replacementEmission = new CandidateEmissionFact(
+			emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(),
+			List.of(published));
+		CandidateRuleFact replacement = new CandidateRuleFact(original.key(), original.status(),
+			original.capability(), original.shapeProof(), original.profile(),
+			List.of(replacementEmission), original.failureCode());
+		int index = java.util.stream.IntStream.range(0, fixture.candidates.size())
+			.filter(candidate -> fixture.candidates.get(candidate).key().equals(original.key()))
+			.findFirst().orElseThrow();
+		fixture.candidates.set(index, replacement);
+		return CandidateRealizationReference.of(replacement.key(), published);
+	}
+
+	private static CandidateRealizationReference publishNativeLineage(
+		Fixture fixture, CandidateRuleFact original, CandidateEmissionFact emission,
+		CandidateRealizationReference selectedSource, DurableAnchorKey witness,
+		String lineage) {
+		CandidateEmissionRealization published = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), lineage, List.of(),
+			List.of(CandidateRealizationInputBinding.direct(0, selectedSource)));
+		CandidateEmissionFact replacementEmission = new CandidateEmissionFact(
+			emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(),
+			List.of(published));
+		CandidateRuleFact replacement = new CandidateRuleFact(original.key(), original.status(),
+			original.capability(), original.shapeProof(), original.profile(),
+			List.of(replacementEmission), original.failureCode());
+		int index = java.util.stream.IntStream.range(0, fixture.candidates.size())
+			.filter(candidate -> fixture.candidates.get(candidate).key().equals(original.key()))
+			.findFirst().orElseThrow();
+		fixture.candidates.set(index, replacement);
+		return CandidateRealizationReference.of(replacement.key(), published);
+	}
+
 	@Test
 	public void nativeFullLeftIndexChainKeepsOnlyItsGroundedRhsWorker() {
 		Fixture f = new Fixture(FType.FULL);

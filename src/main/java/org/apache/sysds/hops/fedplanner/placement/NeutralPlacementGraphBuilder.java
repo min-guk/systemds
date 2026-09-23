@@ -3520,17 +3520,18 @@ public final class NeutralPlacementGraphBuilder {
 							outputAnchor = null;
 						if(outputAnchor == null && seed.fType() != outputState.fType() && !dynamicOutputLayout)
 							continue;
-						// Prove the identity that will actually be published. Pinning the
-						// staging template into a backedge invalidates its own proof as soon
-						// as the producer is grounded to the exact output map.
 						String nativeLineage = "direct-native:" + fact.key().parentOccurrence().normalizedSignature()
 							+ "|seed=" + seed.normalizedSignature();
 						CandidateRealizationReference output = new CandidateRealizationReference(fact.key(),
 							outputAnchor != null
-								? PlacementIdentity.PlacementRealizationKey.durable(emission.emissionState(), outputAnchor)
-								: PlacementIdentity.PlacementRealizationKey.nativeLineage(emission.emissionState(), nativeLineage));
+								? PlacementIdentity.PlacementRealizationKey.durable(
+									emission.emissionState(), outputAnchor)
+								: PlacementIdentity.PlacementRealizationKey.nativeLineage(
+									emission.emissionState(), nativeLineage));
+						// Derive direct publication from the primitive candidate rule. A prior
+						// publication of this same output is a result, never a proof premise.
 						for(NativePlacementContinuity.NativeContinuityProof proof :
-							continuity.proveCandidateAlternatives(output, seed)) {
+							continuity.provePrimitiveCandidateAlternatives(output, seed)) {
 							List<CandidateRealizationInputBinding> bindings =
 								new ArrayList<>(proof.immediateBindings());
 							boolean complete = true;

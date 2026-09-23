@@ -34,6 +34,16 @@ public class NeutralPlacementFixedPointCompositionTest {
 		+ SOURCE + "Y=f(X); print(sum(Y));\n";
 	static final String ACTIONS = SOURCE
 		+ "p=matrix(1,rows=2,cols=1); pred=X%*%p; grad=t(X)%*%pred; print(sum(grad));\n";
+	private static final String RECURSIVE_DIRECT = "X=federated(addresses=list("
+		+ "\"localhost:18101/X1\",\"localhost:18102/X2\"),"
+		+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));\n"
+		+ "B=matrix(1,rows=2,cols=2); P=X%*%B; outer=1;\n"
+		+ "while(outer<=2) { S=matrix(0,rows=2,cols=2); R=B-S; V=R; inner=1; P_1K=P;\n"
+		+ " while(inner<=2) { ssX_V=V; Q=P_1K*(X%*%ssX_V);"
+		+ " HV=t(X)%*%(Q-P_1K*(rowSums(Q)%*%matrix(1,rows=1,cols=2)));"
+		+ " alpha=sum(R^2)/sum(V*HV); S=S+alpha*V; R=R-alpha*HV; V=R+V; inner=inner+1; }\n"
+		+ " B=B+S; P=X%*%B; outer=outer+1; }\n"
+		+ "print(sum(Q));\n";
 
 	@Test
 	public void representativeCompositionsTerminateAtStablePassWithinDeclaredBound() throws Exception {
@@ -235,6 +245,34 @@ public class NeutralPlacementFixedPointCompositionTest {
 				Assert.assertTrue("an independent component must be reused rather than rebuilt",
 					incrementalMetrics.snapshot().incrementalFactsReused() > 0);
 			}
+		}
+	}
+
+	@Test
+	public void recursiveDirectPublicationIsStableWithIncrementalAndMemoDisabled() throws Exception {
+		String memoProperty = "sysds.fedplanner.continuityMemo.maxEntries";
+		String prior = System.getProperty(memoProperty);
+		try {
+			System.setProperty(memoProperty, "0");
+			SearchSpaceMetrics incrementalMetrics = new SearchSpaceMetrics();
+			PlacementAnalysis incremental = new NeutralPlacementGraphBuilder(
+				null, incrementalMetrics, true).buildAnalysis(compileProtected(RECURSIVE_DIRECT));
+			PlacementAnalysis full = new NeutralPlacementGraphBuilder(
+				null, new SearchSpaceMetrics(), false).buildAnalysis(compileProtected(RECURSIVE_DIRECT));
+
+			Assert.assertEquals(full.analysisFingerprint(), incremental.analysisFingerprint());
+			Assert.assertEquals(full.graph().normalizedSignatureWithLegalAssignments(),
+				incremental.graph().normalizedSignatureWithLegalAssignments());
+			Assert.assertEquals(full.candidateRuleFacts().orderedFacts(),
+				incremental.candidateRuleFacts().orderedFacts());
+			Assert.assertTrue("fixture must exercise repeated direct closure",
+				incrementalMetrics.snapshot().directClosurePasses() > 1);
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(memoProperty);
+			else
+				System.setProperty(memoProperty, prior);
 		}
 	}
 
