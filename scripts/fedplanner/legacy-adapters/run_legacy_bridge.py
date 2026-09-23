@@ -17,6 +17,7 @@ VERSIONS = {
     "B1": ("d8fbd30b5476a1ceef460c9f3886381a369ac619", "d8fbd30b"),
 }
 JAVA_REL = Path("src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LegacyClosedSpaceBridgeTest.java")
+FACTORY_REL = Path("src/test/java/org/apache/sysds/test/component/federated/placement/shadow/ProductionShadowFixtureFactory.java")
 
 
 def command(*args, cwd):
@@ -31,11 +32,25 @@ def file_sha(path):
     return digest.hexdigest()
 
 
+def verify_historical_test_sources(worktree, commit):
+    changed = command("git", "status", "--porcelain", "--untracked-files=all",
+                      "--", "src/test", cwd=worktree).splitlines()
+    if any(line[3:] != str(JAVA_REL) for line in changed):
+        raise SystemExit("LEGACY_TEST_SOURCE_MODIFIED")
+    factory = worktree / FACTORY_REL
+    committed = subprocess.run(["git", "show", f"{commit}:{FACTORY_REL.as_posix()}"],
+                               cwd=worktree, check=True, capture_output=True).stdout
+    if not factory.is_file() or hashlib.sha256(factory.read_bytes()).digest() != hashlib.sha256(committed).digest():
+        raise SystemExit("LEGACY_FIXTURE_FACTORY_MODIFIED")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", choices=VERSIONS, required=True)
     parser.add_argument("--worktree", type=Path, required=True)
     parser.add_argument("--fixture", required=True)
+    parser.add_argument("--dml", type=Path,
+                        help="frozen real DML source; compiled by the pinned historical parser")
     parser.add_argument("--source", choices=("P", "E"), required=True)
     parser.add_argument("--start", type=int, required=True)
     parser.add_argument("--stop", type=int, required=True)
@@ -44,6 +59,10 @@ def main():
     parser.add_argument("--compact-rows", action="store_true",
                         help="P only: keep full accepted rows and short rejected ordinal/status rows")
     args = parser.parse_args()
+    if args.dml and args.fixture.startswith("B-"):
+        parser.error("--dml requires a real-cell identifier, not a shadow fixture")
+    if not args.dml and not args.fixture.startswith("B-"):
+        parser.error("a real-cell identifier requires --dml")
     if args.start < 0 or args.stop < args.start:
         parser.error("invalid half-open range")
     if args.compact_rows and args.source != "P":
@@ -55,7 +74,10 @@ def main():
         raise SystemExit("LEGACY_COMMIT_MISMATCH")
     if command("git", "status", "--porcelain", "--untracked-files=all", "--", "src/main", "pom.xml", cwd=worktree):
         raise SystemExit("LEGACY_PRODUCTION_SOURCE_MODIFIED")
+    verify_historical_test_sources(worktree, expected)
     template = Path(__file__).resolve().parent / name / JAVA_REL
+    dml = args.dml.resolve(strict=True) if args.dml else None
+    dml_sha = file_sha(dml) if dml else None
     target = worktree / JAVA_REL
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(template.read_bytes())
@@ -66,11 +88,13 @@ def main():
     subprocess.run([
         "mvn", "-q", "-Dtest=LegacyClosedSpaceBridgeTest",
         f"-Dlegacy.fixture={args.fixture}", f"-Dlegacy.source={args.source}",
+        *([f"-Dlegacy.dml.path={dml}", f"-Dlegacy.dml.sha256={dml_sha}"] if dml else []),
         f"-Dlegacy.begin={args.start}", f"-Dlegacy.end={args.stop}",
         f"-Dlegacy.catalog.output={catalog_path.resolve()}",
         f"-Dlegacy.compact.rows={str(args.compact_rows).lower()}",
         f"-Dlegacy.output={args.rows.resolve()}", "test",
     ], cwd=worktree, check=True)
+    verify_historical_test_sources(worktree, expected)
 
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     if (catalog.get("contract") != "legacy-source-catalog-v1" or
@@ -81,6 +105,10 @@ def main():
             not isinstance(catalog.get("logicalInputs"), list) or
             not isinstance(catalog.get("constraints"), list)):
         raise SystemExit("LEGACY_SOURCE_CATALOG_INVALID")
+    if dml and catalog.get("inputDmlSha256") != dml_sha:
+        raise SystemExit("LEGACY_DML_CATALOG_SHA_MISMATCH")
+    if dml and catalog.get("inputDmlPath") != str(dml):
+        raise SystemExit("LEGACY_DML_CATALOG_PATH_MISMATCH")
     node_keys = {json.dumps(node["occurrence"], sort_keys=True) for node in catalog["nodes"]}
     if len(node_keys) != len(catalog["nodes"]):
         raise SystemExit("LEGACY_SOURCE_CATALOG_DUPLICATE_OCCURRENCE")
@@ -133,6 +161,8 @@ def main():
         raise SystemExit("LEGACY_TRUNCATED_RANGE")
     if input_dml_sha is not None and input_dml_sha != catalog.get("inputDmlSha256"):
         raise SystemExit("LEGACY_SOURCE_CATALOG_DML_MISMATCH")
+    if dml and (input_dml_sha != dml_sha or file_sha(dml) != dml_sha):
+        raise SystemExit("LEGACY_DML_CHANGED_DURING_CAPTURE")
     receipt = {
         "contract": "legacy-native-audit-v1",
         "version": expected,
@@ -140,6 +170,7 @@ def main():
         "source": args.source,
         "sourcePrivacy": "PRIVATE_AGGREGATE",
         "inputDmlSha256": input_dml_sha,
+        "inputDmlPath": str(dml) if dml else None,
         "start": args.start,
         "stop": args.stop,
         "rawCount": raw_count,

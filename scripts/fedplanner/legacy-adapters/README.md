@@ -28,6 +28,42 @@ python3 scripts/fedplanner/legacy-adapters/run_legacy_bridge.py \
   --receipt /grid/3/.../B0-E-B01.receipt.json
 ```
 
+For a frozen real DML cell, use an identifier outside the `B-*` shadow corpus
+and pass its absolute source path:
+
+```bash
+python3 scripts/fedplanner/legacy-adapters/run_legacy_bridge.py \
+  --version B0 --worktree /grid/3/.../B0 --fixture lm-w3-lan \
+  --dml /grid/3/.../input_templates/w3/programs/lm.dml \
+  --source E --start 0 --stop 1 --rows /grid/3/.../B0-E-lm-w3.jsonl \
+  --receipt /grid/3/.../B0-E-lm-w3.receipt.json
+```
+
+The pinned revision's own parser and translator compile the DML with the same
+live-variable, validation, HOP-construction, and rewrite sequence as its
+shadow fixture factory. Its historical builder and validators still determine
+the native domain. The wrapper hashes the DML before and after capture; Java
+checks that hash before compilation and records its path and hash in the source
+catalog and receipt. The external DML's dependency bytes (for example builtin
+functions) are supplied by the pinned worktree; the DML hash alone is not a
+whole-program source hash. The receipt pins the historical commit and bridge
+template hash. Compilation is an original-version IR observation, so a changed
+set of compiled HOPs across revisions is a result to analyze, not a mapping
+that this bridge silently normalizes.
+
+Real LM w3 LAN compiles on both pinned revisions, but the row stream does not
+prove self-equality. Its native raw E products are 7,864,320 (B0) and
+45,121,536 (B1), while P products exceed 2.4 × 10^45 (B0) and
+5.4 × 10^47 (B1). Both source catalogs have 127 compiled nodes and 45
+ordered physical inputs, but B0 exposes 4 logical inputs and 188 graph
+constraints versus B1's 25 and 209. Prefix receipts
+remain `PARTIAL`, and `physicalDecode=LEGACY_REPRESENTATION_LIMIT`: the
+source-catalog coordinates and native rows have no proven lossless physical
+decoder for the full real-DML graph. In particular, ordinal-zero rejection
+does not imply absence of feasible plans. Use an exact relation representation
+and a proven native-to-physical map before claiming P/E self-equality or
+cross-version addition/deletion for this cell.
+
 Every row carries exact ordinal, native `EMITTED`/`REJECTED`/`ERROR` status,
 raw product size, and nested structural records for choices, actions,
 authorities, ordered inputs, and receipts. The wrapper verifies contiguous

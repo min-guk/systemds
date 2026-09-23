@@ -19,11 +19,25 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.parser.DMLProgram;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class PlanSpaceComparisonIdentityTest {
+	@Test public void sourceControlPathsMatchOnlyTheirExactCfgCoordinates() {
+		String source = "function/.builtinNS::cg/body/4/while/1/if/1/if/0";
+		String compiled = "function/.builtinNS::cg/body/4/loop-body/1/branch-if/1/branch-if/0";
+		Assert.assertTrue(PlanSpaceComparisonIdentity.sameCompilerBlockPath(source, compiled));
+		Assert.assertFalse(PlanSpaceComparisonIdentity.sameCompilerBlockPath(source,
+			"function/.builtinNS::cg/body/4/loop-body/1/branch-if/1/branch-if/1"));
+		Assert.assertFalse(PlanSpaceComparisonIdentity.sameCompilerBlockPath(source,
+			"function/.builtinNS::other/body/4/loop-body/1/branch-if/1/branch-if/0"));
+	}
+
 	@Test public void logicalFactsHaveCompleteStructuralEndpoints() throws Exception {
 		for(String fixture : List.of("B-02", "B-21")) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
@@ -150,7 +164,8 @@ public class PlanSpaceComparisonIdentityTest {
 			Assert.assertEquals(fixture,
 				analysis.logicalTransientInputsInCanonicalOrder().size()
 					+ analysis.logicalFunctionInputsInCanonicalOrder().size()
-					+ snapshot.inlinedCalls().stream().mapToInt(call -> call.inputs().size()).sum(),
+					+ analysis.logicalInlinedFunctionInputsInCanonicalOrder().stream()
+						.filter(fact -> fact.sourceArgument().isPresent()).count(),
 				identity.logicalInputs().size());
 			if(fixture.equals("B-02"))
 				Assert.assertTrue("B-02 transient relation missing", identity.logicalInputs().stream()
@@ -173,7 +188,8 @@ public class PlanSpaceComparisonIdentityTest {
 			Assert.assertEquals(fixture,
 				analysis.logicalTransientInputsInCanonicalOrder().size()
 					+ analysis.logicalFunctionInputsInCanonicalOrder().size()
-					+ snapshot.inlinedCalls().stream().mapToInt(call -> call.inputs().size()).sum(),
+					+ analysis.logicalInlinedFunctionInputsInCanonicalOrder().stream()
+						.filter(fact -> fact.sourceArgument().isPresent()).count(),
 				identity.logicalInputs().size());
 			if(fixture.equals("B-21"))
 				Assert.assertTrue("B-21 transient relation missing", identity.logicalInputs().stream()
@@ -219,6 +235,119 @@ public class PlanSpaceComparisonIdentityTest {
 				}
 		}
 		Assert.assertTrue("No value predecessor was exercised", references > 0);
+	}
+
+	@Test public void cfgFunctionOutputReferencesBindTheirExactCallOrdinal() throws Exception {
+		var original = new NeutralPlacementGraphBuilder().buildAnalysis(
+			ProductionShadowFixtureFactory.compile("B-21")).graph();
+		var output = original.nodes().stream()
+			.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+			.findFirst().orElseThrow();
+		var consumer = original.nodes().stream()
+			.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.OPERATION)
+			.findFirst().orElseThrow();
+		CompiledHopKey base = output.key();
+		CompiledHopKey first = new CompiledHopKey(base.programFingerprint(),
+			base.functionNamespace(), base.callSitePath(), base.recompileContext(),
+			base.controlRegion(), "output-1177-0", base.canonicalSourceOrigin());
+		CompiledHopKey second = new CompiledHopKey(base.programFingerprint(),
+			base.functionNamespace(), base.callSitePath(), base.recompileContext(),
+			base.controlRegion(), "output-1213-0", base.canonicalSourceOrigin());
+		var firstNode = new NeutralPlacementGraph.Node(first, output.kind(),
+			output.valueVersion(), output.emittedWork(), output.legalAlternatives(),
+			output.exclusions(), output.anchors());
+		var secondNode = new NeutralPlacementGraph.Node(second, output.kind(),
+			output.valueVersion(), output.emittedWork(), output.legalAlternatives(),
+			output.exclusions(), output.anchors());
+		var graph = new NeutralPlacementGraph(List.of(firstNode, secondNode, consumer),
+			List.of(new NeutralPlacementGraph.Constraint(
+				NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT, first,
+				consumer.key(), -1, "cfg-function-output-value:weight"),
+				new NeutralPlacementGraph.Constraint(
+					NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT, second,
+					consumer.key(), -1, "cfg-function-output-value:weight")), List.of());
+		var analysis = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph);
+		Assert.assertEquals(first, PlanSpaceComparisonIdentity.cfgFunctionOutput(
+			analysis, consumer.key(), "cfg-function-output:1177:0:weight"));
+		Assert.assertEquals(second, PlanSpaceComparisonIdentity.cfgFunctionOutput(
+			analysis, consumer.key(), "cfg-function-output:1213:0:weight"));
+		try {
+			PlanSpaceComparisonIdentity.cfgFunctionOutput(analysis, consumer.key(),
+				"cfg-function-output:9999:0:weight");
+			Assert.fail("Unmatched call ordinal must fail closed");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage().contains("Ambiguous"));
+		}
+	}
+
+	@Test public void fullyInlinedFunctionCanUseItsRetainedBoundarySignature() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-17");
+		PrebuilderSnapshot beforeRemoval = PrebuilderSnapshot.capture(program, Map.of());
+		Assert.assertEquals(2, beforeRemoval.inlinedCalls().size());
+		String functionKey = beforeRemoval.inlinedCalls().get(0).functionKey();
+		Assert.assertTrue(beforeRemoval.functions().stream()
+			.anyMatch(function -> functionKey.equals(function.key())
+				|| functionKey.endsWith("::" + function.name())));
+
+		program.removeFunctionStatementBlock(functionKey);
+		PrebuilderSnapshot afterRemoval = PrebuilderSnapshot.capture(program, Map.of());
+		Assert.assertTrue(afterRemoval.functions().stream()
+			.noneMatch(function -> functionKey.equals(function.key())
+				|| functionKey.endsWith("::" + function.name())));
+		Assert.assertEquals(beforeRemoval.inlinedCalls(), afterRemoval.inlinedCalls());
+
+		PlanSpaceComparisonIdentity identity = PlanSpaceComparisonIdentity.from(
+			new NeutralPlacementGraphBuilder().buildAnalysis(program), afterRemoval);
+		Assert.assertEquals(2, identity.logicalInputs().stream()
+			.filter(fact -> "INLINED_FUNCTION_INPUT".equals(fact.get("kind"))).count());
+	}
+
+	@Test public void repeatedStructuralBoundaryUsesExactCompilerCallContext() throws Exception {
+		Map<CompiledHopKey,Map<String,Object>> details = repeatedBoundaryDetails(false);
+		Map<PlanSpaceComparisonIdentity.StructuralCallSiteKey,String> resolved =
+			PlanSpaceComparisonIdentity.structuralCallSites(details);
+		Assert.assertEquals(2, resolved.size());
+		Assert.assertEquals(2, resolved.values().stream().distinct().count());
+	}
+
+	@Test public void repeatedStructuralBoundaryFailsClosedWithoutDistinctCallContext() throws Exception {
+		try {
+			PlanSpaceComparisonIdentity.structuralCallSites(repeatedBoundaryDetails(true));
+			Assert.fail("Two source calls with the same structural context must remain ambiguous");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage().contains("Ambiguous structural call-site"));
+		}
+	}
+
+	private static Map<CompiledHopKey,Map<String,Object>> repeatedBoundaryDetails(
+		boolean collideContext) throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-17");
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var identity = PlanSpaceComparisonIdentity.from(analysis,
+			PrebuilderSnapshot.capture(program, Map.of()));
+		List<NeutralPlacementGraph.Node> boundaries = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT)
+			.sorted(java.util.Comparator.comparing(node -> identity.occurrence(node.key())))
+			.toList();
+		Assert.assertEquals(2, boundaries.size());
+		String sharedPath = "main/repeated-call->.defaultNS::f/input-0";
+		String firstContext = boundaries.get(0).key().recompileContext();
+		Map<CompiledHopKey,Map<String,Object>> details = new HashMap<>();
+		for(int i = 0; i < boundaries.size(); i++) {
+			CompiledHopKey source = boundaries.get(i).key();
+			String context = collideContext && i > 0 ? firstContext : source.recompileContext();
+			ControlRegionKey region = source.controlRegion();
+			ControlRegionKey repeatedRegion = new ControlRegionKey(region.programFingerprint(),
+				region.functionNamespace(), region.regionPath(), sharedPath, context);
+			CompiledHopKey repeated = new CompiledHopKey(source.programFingerprint(),
+				source.functionNamespace(), sharedPath, context, repeatedRegion,
+				source.emittedHopInstance(), source.canonicalSourceOrigin());
+			details.put(repeated, Map.of("callSitePath",
+				identity.occurrenceDetails(source).get("callSitePath")));
+		}
+		return details;
 	}
 
 	private static void registerSources(Hop hop, String fixture,

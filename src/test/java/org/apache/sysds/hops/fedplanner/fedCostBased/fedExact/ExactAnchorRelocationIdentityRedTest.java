@@ -198,6 +198,7 @@ public class ExactAnchorRelocationIdentityRedTest {
 		Assert.assertEquals("fixture must expose both exact common-anchor physical alternatives",
 			2, anchors.size());
 
+		int directActions = 0;
 		for(var producer : model.domains().stream().filter(domain -> analysis.hop(domain.node().key())
 			.map(hop -> "A".equals(hop.getName()) || "B".equals(hop.getName())).orElse(false)).toList()) {
 			var uploadKeys = surface.transferKeys().stream()
@@ -206,17 +207,51 @@ public class ExactAnchorRelocationIdentityRedTest {
 				.filter(key -> key.endpoints().stream().anyMatch(endpoint ->
 					endpoint.consumer() == consumer.node().key()))
 				.toList();
-			var expectedIdentities = analysis.graph().relocationActions().stream()
+			var producerActions = analysis.graph().relocationActions().stream()
 				.filter(action -> action.key().sourceValueVersion().equals(producer.node().valueVersion()))
 				.filter(action -> action.obligations().stream().anyMatch(obligation ->
-					obligation.consumer() == consumer.node().key()))
+					obligation.consumer() == consumer.node().key())).toList();
+			var emittedActions = producerActions.stream().filter(action ->
+				consumer.alternatives().stream().anyMatch(alternative ->
+					alternative.inputAuthorities().stream().anyMatch(authority ->
+							authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
+							&& action.equals(authority.relocationAction()))
+						&& action.obligations().stream().anyMatch(obligation ->
+							obligation.requiredPlacement().equals(alternative.state()))
+						&& (alternative.captured()
+							? alternative.candidateEmission().emissionState().placementState()
+								.equals(alternative.state())
+							: alternative.executionEmission() != null
+								&& alternative.executionEmission().emissionState().placementState()
+									.equals(alternative.state())))).toList();
+			var expectedIdentities = emittedActions.stream()
 				.map(action -> RelocationSelections.physicalEmissionIdentity(action.key()))
 				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
 			var actualIdentities = uploadKeys.stream()
 				.map(ExactPhysicalCostModel.PhysicalTransferKey::physicalEmissionIdentity)
 				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
-			Assert.assertEquals("cost factors must retain every graph-owned physical emission identity",
+			Assert.assertEquals("cost factors must retain every selectable emitted relocation identity",
 				expectedIdentities, actualIdentities);
+			for(var action : producerActions.stream()
+				.filter(action -> !emittedActions.contains(action)).toList()) {
+				directActions++;
+				Assert.assertTrue("non-emitted action must be selectable only as direct FOUT authority",
+					consumer.alternatives().stream().anyMatch(alternative ->
+						alternative.inputAuthorities().stream().anyMatch(authority ->
+							authority.kind() == ExactPhysicalModel.InputAuthorityKind.DIRECT_FOUT
+								&& action.equals(authority.relocationAction()))));
+				Assert.assertFalse("direct FOUT authority must not create an upload cost identity",
+					actualIdentities.contains(RelocationSelections.physicalEmissionIdentity(action.key())));
+			}
+			for(var alternative : consumer.alternatives())
+				for(var authority : alternative.inputAuthorities())
+					if(producerActions.contains(authority.relocationAction())) {
+						var emission = alternative.captured() ? alternative.candidateEmission()
+							: alternative.executionEmission();
+						Assert.assertNotNull("authority-bearing alternative needs exact emission", emission);
+						Assert.assertEquals("mismatched emission must never become a selectable authority",
+							alternative.state(), emission.emissionState().placementState());
+					}
 			Assert.assertEquals("equal FType emissions to two anchors must not be coalesced", 2,
 				analysis.graph().relocationActions().stream()
 					.filter(action -> action.key().sourceValueVersion().equals(producer.node().valueVersion()))
@@ -224,6 +259,8 @@ public class ExactAnchorRelocationIdentityRedTest {
 						obligation.consumer() == consumer.node().key()))
 					.map(action -> action.key().durableAnchor()).distinct().count());
 		}
+		Assert.assertTrue("fixture must cover a direct action with no upload cost identity",
+			directActions > 0);
 
 		for(DurableAnchorKey anchor : anchors) {
 			double[] forceCosts = new double[consumer.alternatives().size()];
@@ -266,11 +303,13 @@ public class ExactAnchorRelocationIdentityRedTest {
 				forced.inputAuthorities().stream().filter(authority -> authority.kind()
 					== ExactPhysicalModel.InputAuthorityKind.RELOCATION).count());
 			List<RelocationActionKey> expectedReceipts = forced.inputAuthorities().stream()
+				.filter(authority -> authority.kind()
+					== ExactPhysicalModel.InputAuthorityKind.RELOCATION)
 				.map(authority -> authority.relocationAction().key()).sorted().toList();
 			List<RelocationActionKey> selectedReceipts = selected.relocationChoices().stream()
 				.filter(choice -> choice.demand().consumer() == consumer.node().key())
 				.map(RelocationChoiceReceipt::action).sorted().toList();
-			Assert.assertEquals("projection must retain both exact input receipts",
+			Assert.assertEquals("selection must retain exactly the emitted relocation receipt",
 				expectedReceipts, selectedReceipts);
 			List<RelocationActionKey> expectedEmitted = forced.inputAuthorities().stream()
 				.filter(authority -> authority.kind()

@@ -125,27 +125,31 @@ public class PrivacyMovementCertificationTest {
 		FixtureProgram samePoolProgram = FixtureProgram.adopt(compile(crossPoolScript(true)));
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(samePoolProgram, Privacy.PUBLIC);
 		PlacementAnalysis samePublic = new NeutralPlacementGraphBuilder().buildAnalysis(samePoolProgram);
-		NormalizedPlannerResult samePlan = new FedAllPlacementAdapter().select(samePublic);
-		List<RelocationSelections.ResolvedChoice> direct = RelocationSelections.resolveAndValidate(
-			samePublic, samePlan.selectedStates(), samePlan.selectedCandidateSelections(),
-			samePlan.selectedRelocationChoices());
-		Assert.assertTrue("fixture must retain a non-emitting same-pool receipt",
-			direct.stream().anyMatch(choice -> !choice.requiresEmission()));
-		NeutralPlacementGraph.Node directSource = relocationSource(samePublic,
-			direct.stream().filter(choice -> !choice.requiresEmission()).findFirst().orElseThrow()
-				.action().key());
+		NeutralPlacementGraph.Node directSource = federatedSource(samePublic, "A");
+		NeutralPlacementGraph.RelocationAction directAction = samePublic.graph().relocationActions().stream()
+				.filter(action -> action.key().sourceValueVersion().equals(directSource.valueVersion()))
+				.filter(action -> !action.directSourcePlacements().isEmpty())
+				.findFirst().orElseThrow();
 		PlacementAnalysis sameProtected = withPrivacy(samePublic,
 			Map.of(directSource.key(), Privacy.PRIVATE_AGGREGATE), samePoolProgram);
+		RelocationSelections.RelocationPrivacyIndex samePrivacy =
+			RelocationSelections.relocationPrivacyIndex(sameProtected, sameProtected.graph(),
+				sameProtected.graph().relocationActions());
+		Assert.assertTrue("protected source must require origin residency",
+			samePrivacy.requiresOriginResidency(directAction));
+		Assert.assertTrue("non-emitting same-pool receipt must remain privacy-safe",
+			samePrivacy.isPrivacySafe(directAction, false));
+		Assert.assertFalse("active relocation from the protected source must remain unavailable",
+			samePrivacy.isPrivacySafe(directAction, true));
 		NormalizedPlannerResult sameProtectedPlan = new FedAllPlacementAdapter().select(sameProtected);
 		CandidateSelections.PartialReachabilityIndex sameReachability =
 			CandidateSelections.partialReachabilityIndex(sameProtected, sameProtected.graph(),
 				sameProtected.graph().relocationActions());
 		Assert.assertTrue("safe same-pool receipt must remain candidate-reachable",
 			sameReachability.canStillBeReachable(sameProtectedPlan.selectedStates()));
-		Assert.assertTrue(RelocationSelections.resolveAndValidate(sameProtected,
-			sameProtectedPlan.selectedStates(), sameProtectedPlan.selectedCandidateSelections(),
-			sameProtectedPlan.selectedRelocationChoices()).stream()
-			.anyMatch(choice -> !choice.requiresEmission()));
+		Assert.assertTrue("protected source must not be emitted",
+			sameProtectedPlan.selectedRelocations().stream().noneMatch(action ->
+				action.sourceValueVersion().equals(directSource.valueVersion())));
 		RelocationSelections.CandidateProblemIndex directIndex = RelocationSelections.candidateProblemIndex(
 			sameProtected, sameProtected.graph(), sameProtected.graph().relocationActions(),
 			sameProtectedPlan.selectedStates(), sameProtectedPlan.selectedCandidateSelections(),
@@ -606,14 +610,6 @@ public class PrivacyMovementCertificationTest {
 		return analysis.graph().nodes().stream().filter(node -> analysis.hop(node.key())
 			.filter(DataOp.class::isInstance).map(DataOp.class::cast)
 			.map(hop -> name.equals(hop.getName())).orElse(false)).findFirst().orElseThrow();
-	}
-
-	private static NeutralPlacementGraph.Node relocationSource(PlacementAnalysis analysis,
-		RelocationActionKey action) {
-		return analysis.graph().nodes().stream()
-			.filter(node -> analysis.isCompiledHopOccurrence(node.key())
-				&& node.valueVersion().equals(action.sourceValueVersion()))
-			.findFirst().orElseThrow();
 	}
 
 	private static String localMaterializationScript() {

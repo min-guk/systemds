@@ -82,6 +82,17 @@ public class DirectSourceIndexRevisionTest {
 			realization(index, reference(firstFact)));
 	}
 
+	@Test
+	public void deletingMoreThanIntegerCacheRangeDuplicatesRemovesExecutableMembership() throws Exception {
+		CompiledHopKey owner = key("many");
+		CandidateRuleFact source = fact(owner, "same-route", "same-proof");
+		Object index = index(Collections.nCopies(128, source));
+		Assert.assertTrue(executable(index, reference(source)));
+		CandidateRuleFact failed = failed(owner);
+		revise(index, Collections.nCopies(128, failed), owner);
+		Assert.assertFalse(executable(index, reference(source)));
+	}
+
 	private static CompiledHopKey key(String name) {
 		return new CompiledHopKey(FINGERPRINT, "main", "main", "compiled", REGION, name, name);
 	}

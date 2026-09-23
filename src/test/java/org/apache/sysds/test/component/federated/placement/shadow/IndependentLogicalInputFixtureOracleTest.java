@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import org.apache.sysds.common.Types.OpOpData;
@@ -148,6 +149,100 @@ public class IndependentLogicalInputFixtureOracleTest {
 			summary.accepted().intValueExact(), observed[0]);
 	}
 
+	@Test public void branchPhiOracleRejectsDeletedAndInventedSourceArms() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-02");
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var catalog = PlanSpaceComparisonIdentity.from(analysis,
+			PrebuilderSnapshot.capture(program, Map.of()));
+		var projector = new CurrentPPhysicalPlanRows(analysis, catalog, "B-02");
+		var relation = new ClosedPlanRelationEnumerator(analysis);
+		var observed = new AtomicReference<List<Map<String,Object>>>();
+		relation.enumerateStates(BigInteger.ZERO, relation.stateCount(), proof -> {
+			if(observed.get() != null) return;
+			for(Map<String,Object> binding : bindings(projector.physicalPlan(proof))) {
+				@SuppressWarnings("unchecked")
+				Map<String,Object> consumer = (Map<String,Object>) binding.get("consumer");
+				if(!"block/main/2/body/0/in/0/in/0".equals(consumer.get("sourceOrigin")))
+					continue;
+				@SuppressWarnings("unchecked")
+				List<Map<String,Object>> alternatives =
+					(List<Map<String,Object>>) binding.get("producerAlternatives");
+				observed.set(alternatives);
+				break;
+			}
+		});
+		Assert.assertNotNull("B-02 must have an accepted PHI plan", observed.get());
+		Assert.assertTrue("The source if/else has exactly these two definitions",
+			sourcePhiArms(observed.get()));
+		Assert.assertFalse("Deleting the else definition must invalidate the plan",
+			sourcePhiArms(observed.get().stream().filter(alternative ->
+				!"block/main/1/branch-else/0".equals(alternative.get("controlArm"))).toList()));
+		Map<String,Object> invented = Map.of(
+			"producer", Map.of("sourceOrigin", "block/main/0/body/0"),
+			"controlArm", "block/main/1/branch-else/0");
+		var inserted = new java.util.ArrayList<>(observed.get());
+		inserted.add(invented);
+		Assert.assertFalse("An invented third reaching definition must invalidate the plan",
+			sourcePhiArms(inserted));
+	}
+
+	@Test public void branchPhiOracleRejectsAuthoritySubstitution() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-02");
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var catalog = PlanSpaceComparisonIdentity.from(analysis,
+			PrebuilderSnapshot.capture(program, Map.of()));
+		var projector = new CurrentPPhysicalPlanRows(analysis, catalog, "B-02");
+		var relation = new ClosedPlanRelationEnumerator(analysis);
+		var observed = new AtomicReference<Map<String,Object>>();
+		relation.enumerateStates(BigInteger.ZERO, relation.stateCount(), proof -> {
+			if(observed.get() != null) return;
+			for(Map<String,Object> binding : bindings(projector.physicalPlan(proof))) {
+				@SuppressWarnings("unchecked")
+				Map<String,Object> consumer = (Map<String,Object>) binding.get("consumer");
+				if("block/main/2/body/0/in/0/in/0".equals(consumer.get("sourceOrigin"))) {
+					observed.set(binding);
+					break;
+				}
+			}
+		});
+		Assert.assertNotNull("B-02 must have a joined X input", observed.get());
+		Assert.assertTrue("The source X read is a branch join", sourcePhiBinding(observed.get()));
+		var substituted = new HashMap<>(observed.get());
+		substituted.put("inputAuthority", "DIRECT");
+		Assert.assertFalse("Direct authority cannot replace two conditional definitions",
+			sourcePhiBinding(substituted));
+	}
+
+	@Test public void matrixMultiplyRequiresBothOrderedSourceOperands() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-15");
+		var snapshot = PrebuilderSnapshot.capture(program, Map.of());
+		long product = snapshot.nodes().values().stream().filter(node ->
+			"ba(+*)".equals(node.operation())).findFirst().orElseThrow().hopId();
+		var operands = snapshot.edges().stream().filter(edge -> edge.parentId() == product).toList();
+		Assert.assertEquals("The compiled sum(X%*%Y) still has two operands", 2, operands.size());
+		Assert.assertEquals("ua(+C)", snapshot.nodes().get(operands.get(0).childId()).operation());
+		Assert.assertEquals("ua(+R)", snapshot.nodes().get(operands.get(1).childId()).operation());
+
+		var catalog = PlanSpaceComparisonIdentity.from(
+			new NeutralPlacementGraphBuilder().buildAnalysis(program), snapshot);
+		String productPath = catalog.nodes().stream().filter(node ->
+			"ba(+*)".equals(node.get("operation"))).map(node -> (String) node.get("occurrence"))
+			.findFirst().orElseThrow();
+		var rows = catalog.orderedInputs().stream().filter(edge ->
+			productPath.equals(edge.get("consumer"))).toList();
+		Assert.assertTrue("Both matrix operands retain their source slots",
+			sourceMatrixOperandSlots(rows, productPath));
+		Assert.assertFalse("Disjunctive support would admit a plan missing Y",
+			sourceMatrixOperandSlots(List.of(rows.get(0)), productPath));
+		var swapped = List.of(
+			Map.<String,Object>of("consumer", rows.get(0).get("consumer"), "inputPosition", 1,
+				"producer", rows.get(0).get("producer")),
+			Map.<String,Object>of("consumer", rows.get(1).get("consumer"), "inputPosition", 0,
+				"producer", rows.get(1).get("producer")));
+		Assert.assertFalse("Swapping X and Y operand slots changes the source expression",
+			sourceMatrixOperandSlots(swapped, productPath));
+	}
+
 	@Test public void federatedAnchorPreservesLiteralWorkerPartitionRanges() throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile("B-21");
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
@@ -215,6 +310,32 @@ public class IndependentLogicalInputFixtureOracleTest {
 				"end", List.of(2L, (long) width)),
 			Map.of("worker", "localhost:1235/X2", "begin", List.of(2L, 0L),
 				"end", List.of(4L, (long) width))));
+	}
+
+	private static boolean sourcePhiArms(List<Map<String,Object>> alternatives) {
+		Set<String> sourceArms = Set.of(
+			"block/main/1/if/0/body/0@block/main/1/branch-if/0",
+			"block/main/1/else/0/body/0@block/main/1/branch-else/0");
+		Set<String> actual = new HashSet<>();
+		for(Map<String,Object> alternative : alternatives) {
+			@SuppressWarnings("unchecked")
+			Map<String,Object> producer = (Map<String,Object>) alternative.get("producer");
+			actual.add(producer.get("sourceOrigin") + "@" + alternative.get("controlArm"));
+		}
+		return alternatives.size() == sourceArms.size() && actual.equals(sourceArms);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static boolean sourcePhiBinding(Map<String,Object> binding) {
+		return "PHI".equals(binding.get("inputAuthority"))
+			&& sourcePhiArms((List<Map<String,Object>>) binding.get("producerAlternatives"));
+	}
+
+	private static boolean sourceMatrixOperandSlots(List<Map<String,Object>> rows,
+		String product) {
+		return rows.size() == 2 && Set.copyOf(rows).equals(Set.of(
+			Map.of("consumer", product, "inputPosition", 0, "producer", product + "/in/0"),
+			Map.of("consumer", product, "inputPosition", 1, "producer", product + "/in/1")));
 	}
 
 	private static Set<Map<String,Object>> originalPartitions() {

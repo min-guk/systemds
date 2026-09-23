@@ -2051,6 +2051,32 @@ public final class PlacementAnalysis {
 		@Override public CompiledHopKey sourceOccurrence() { return sourceArgument; }
 	}
 
+	/** Exact compiler-owned argument -> trace-only boundary relation for one AST-inlined call. */
+	public record LogicalInlinedFunctionInputFact(Optional<CompiledHopKey> sourceArgument, CompiledHopKey boundary,
+		int callInputPosition, Optional<ValueVersionKey> sourceValueVersion, ValueVersionKey boundaryValueVersion)
+		implements Comparable<LogicalInlinedFunctionInputFact> {
+		public LogicalInlinedFunctionInputFact {
+			Objects.requireNonNull(sourceArgument, "sourceArgument");
+			Objects.requireNonNull(boundary, "boundary");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(boundaryValueVersion, "boundaryValueVersion");
+			if(callInputPosition < 0)
+				throw new IllegalArgumentException("Inlined function input position must be non-negative");
+			if(sourceArgument.isPresent() != sourceValueVersion.isPresent())
+				throw new IllegalArgumentException("Inlined function input source key/value presence differs");
+		}
+
+		@Override public int compareTo(LogicalInlinedFunctionInputFact that) {
+			int boundaryOrder = boundary.compareTo(that.boundary);
+			if(boundaryOrder != 0) return boundaryOrder;
+			int positionOrder = Integer.compare(callInputPosition, that.callInputPosition);
+			if(positionOrder != 0) return positionOrder;
+			if(sourceArgument.isEmpty()) return that.sourceArgument.isEmpty() ? 0 : -1;
+			return that.sourceArgument.isEmpty() ? 1
+				: sourceArgument.orElseThrow().compareTo(that.sourceArgument.orElseThrow());
+		}
+	}
+
 	/** Stable association between a neutral graph key and its concrete compiled Hop origin. */
 	public record HopOccurrenceProjection(CompiledHopKey key, Hop hop, long scopeId, int normalizedOrdinal,
 		String normalizedSignature) {
@@ -2075,6 +2101,7 @@ public final class PlacementAnalysis {
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
 	private final PlacementPrivacyFacts privacyFacts;
+	private final CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence;
 	private final OccurrenceExecutionFrequencyFacts executionFrequencyFacts;
 	private final String analysisFingerprint;
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
@@ -2098,6 +2125,7 @@ public final class PlacementAnalysis {
 	private final List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>>>
 		logicalFunctionInputsByIdentity;
+	private final List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputsInCanonicalOrder;
 	private final DMLProgram programOwner;
 	private final Map<String,FunctionStatementBlock> namedFunctionStatementBlocks;
 	private final Runnable programMutationGuard;
@@ -2169,8 +2197,49 @@ public final class PlacementAnalysis {
 		List<CompiledInputEdgeFact> compiledInputEdges,
 		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
 		Runnable programMutationGuard) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
+			compiledInputEdges, logicalTransientInputs, privacyFacts,
+			new CandidatePrivacyClosureEvidence(List.of()), programMutationGuard);
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		Runnable programMutationGuard) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
+			compiledInputEdges, logicalTransientInputs, privacyFacts, candidatePrivacyClosureEvidence,
+			null, programMutationGuard);
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
+		Runnable programMutationGuard) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
+		this.candidatePrivacyClosureEvidence = Objects.requireNonNull(
+			candidatePrivacyClosureEvidence, "candidatePrivacyClosureEvidence");
 		this.programOwner = programOwner;
 		this.programMutationGuard = programMutationGuard == null ? () -> { } : programMutationGuard;
 		this.guardedFunctionRoots = programOwner != null && programMutationGuard != null;
@@ -2251,6 +2320,9 @@ public final class PlacementAnalysis {
 			deriveLogicalFunctionInputs(), analysisKeysByIdentity);
 		this.logicalFunctionInputsByIdentity = indexLogicalFunctionInputs(
 			this.logicalFunctionInputsInCanonicalOrder);
+		this.logicalInlinedFunctionInputsInCanonicalOrder = logicalInlinedFunctionInputs == null
+			? deriveLogicalInlinedFunctionInputs()
+			: validateLogicalInlinedFunctionInputs(logicalInlinedFunctionInputs, analysisKeysByIdentity);
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
@@ -2742,6 +2814,62 @@ public final class PlacementAnalysis {
 		return result.stream().sorted().toList();
 	}
 
+	private List<LogicalInlinedFunctionInputFact> deriveLogicalInlinedFunctionInputs() {
+		List<LogicalInlinedFunctionInputFact> result = new ArrayList<>();
+		Map<CompiledHopKey,Set<Integer>> slots = new LinkedHashMap<>();
+		for(Constraint constraint : graph.constraints()) {
+			if(constraint.kind() != ConstraintKind.CONJUNCTIVE
+				|| !constraint.evidence().startsWith("inlined-function-argument:"))
+				continue;
+			NeutralPlacementGraph.Node source = graph.node(constraint.left()).orElseThrow();
+			NeutralPlacementGraph.Node boundary = graph.node(constraint.right()).orElseThrow();
+			if(!source.emittedWork() || boundary.kind() != NodeKind.FUNCTION_INPUT
+				|| boundary.emittedWork() || constraint.inputPosition() < 0)
+				throw new IllegalArgumentException("Inlined function input constraint endpoints differ");
+			if(!slots.computeIfAbsent(boundary.key(), ignored -> new java.util.LinkedHashSet<>())
+				.add(constraint.inputPosition()))
+				throw new IllegalArgumentException("Inlined function input has ambiguous compiler authority");
+			result.add(new LogicalInlinedFunctionInputFact(Optional.of(source.key()), boundary.key(),
+				constraint.inputPosition(), Optional.of(source.valueVersion()), boundary.valueVersion()));
+		}
+		return result.stream().sorted().toList();
+	}
+
+	private List<LogicalInlinedFunctionInputFact> validateLogicalInlinedFunctionInputs(
+		List<LogicalInlinedFunctionInputFact> supplied, Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		Objects.requireNonNull(supplied, "logicalInlinedFunctionInputs");
+		Map<CompiledHopKey,Set<Integer>> slots = new LinkedHashMap<>();
+		for(LogicalInlinedFunctionInputFact fact : supplied) {
+			if(!analysisKeysByIdentity.containsKey(fact.boundary())
+				|| fact.sourceArgument().isPresent()
+					&& !analysisKeysByIdentity.containsKey(fact.sourceArgument().orElseThrow()))
+				throw new IllegalArgumentException("Inlined function input fact references a foreign occurrence");
+			NeutralPlacementGraph.Node boundary = graph.node(fact.boundary()).orElseThrow();
+			if(boundary.kind() != NodeKind.FUNCTION_INPUT || boundary.emittedWork()
+				|| !boundary.valueVersion().equals(fact.boundaryValueVersion()))
+				throw new IllegalArgumentException("Inlined function input boundary differs from graph authority");
+			if(fact.sourceArgument().isPresent()) {
+				NeutralPlacementGraph.Node source = graph.node(fact.sourceArgument().orElseThrow()).orElseThrow();
+				if(!source.emittedWork() || !source.valueVersion().equals(fact.sourceValueVersion().orElseThrow()))
+					throw new IllegalArgumentException("Inlined function input source differs from graph authority");
+				boolean constraint = graph.constraints().stream().anyMatch(edge ->
+					edge.kind() == ConstraintKind.CONJUNCTIVE
+						&& edge.left().equals(source.key()) && edge.right().equals(boundary.key())
+						&& edge.inputPosition() == fact.callInputPosition()
+						&& edge.evidence().startsWith("inlined-function-argument:"));
+				if(!constraint)
+					throw new IllegalArgumentException("Inlined function input source lacks compiler constraint");
+			}
+			else if(graph.constraints().stream().anyMatch(edge -> edge.right().equals(boundary.key())
+				&& edge.evidence().startsWith("inlined-function-argument:")))
+				throw new IllegalArgumentException("Eliminated inlined input retains a physical source constraint");
+			if(!slots.computeIfAbsent(fact.boundary(), ignored -> new java.util.LinkedHashSet<>())
+				.add(fact.callInputPosition()))
+				throw new IllegalArgumentException("Inlined function input has ambiguous compiler outcome");
+		}
+		return supplied.stream().sorted().toList();
+	}
+
 	private List<LogicalFunctionInputFact> validateLogicalFunctionInputs(
 		List<LogicalFunctionInputFact> supplied, Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
 		Objects.requireNonNull(supplied, "logicalFunctionInputs");
@@ -3123,6 +3251,10 @@ public final class PlacementAnalysis {
 		return privacyFacts;
 	}
 
+	public CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence() {
+		return candidatePrivacyClosureEvidence;
+	}
+
 	public Map<CompiledHopKey,Privacy> privacyFacts() {
 		return privacyFacts.asMap();
 	}
@@ -3433,6 +3565,24 @@ public final class PlacementAnalysis {
 
 	public List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder() {
 		return logicalFunctionInputsInCanonicalOrder;
+	}
+
+	public List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputsInCanonicalOrder() {
+		return logicalInlinedFunctionInputsInCanonicalOrder;
+	}
+
+	public LogicalInlinedFunctionInputFact requireExactLogicalInlinedFunctionInput(
+		CompiledHopKey boundary, int callInputPosition) {
+		Objects.requireNonNull(boundary, "boundary");
+		List<LogicalInlinedFunctionInputFact> matches = logicalInlinedFunctionInputsInCanonicalOrder.stream()
+			.filter(fact -> fact.boundary().equals(boundary)
+				&& fact.callInputPosition() == callInputPosition)
+			.toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException("Inlined function input outcome is not unique: boundary="
+				+ boundary.normalizedSignature() + " position=" + callInputPosition
+				+ " matches=" + matches.size());
+		return matches.get(0);
 	}
 
 	public LogicalFunctionInputFact requireExactLogicalFunctionInput(CompiledHopKey sourceArgument,

@@ -360,6 +360,9 @@ final class ExactPhysicalModel {
 					&& candidate.state().output() == FederatedOutput.LOUT).toList();
 				if(state.execType() == ExecType.FED) {
 					for(Alternative execution : executions)
+						// A relocation cannot change the selected execution emission: the
+						// final selection requires its placement state to be identical.
+						// Otherwise the hard-factor model admits a tuple that create() rejects.
 						if(execution.candidateEmission().emissionState().placementState() == state)
 							alternatives.add(nonCandidate(node, state, AuthorityKind.RELOCATION_SOURCE,
 								action.key().durableAnchor(), action, execution.candidateRule(),
@@ -714,8 +717,10 @@ final class ExactPhysicalModel {
 				throw new IllegalArgumentException("Transient compatibility decision domain missing");
 			List<DecisionDomain> scope = write == read ? List.of(write) : List.of(write, read);
 			factors.add(ExactCategoricalSolver.Factor.lazy(scope.stream().map(DecisionDomain::variable).toList(), values -> {
-				CandidateSelectionReceipt source = candidateReceipt(analysis, selected(write, scope, values));
-				CandidateSelectionReceipt target = candidateReceipt(analysis, selected(read, scope, values));
+				CandidateSelectionReceipt source = candidateReceipt(analysis,
+					write.alternatives().get(values[0]));
+				CandidateSelectionReceipt target = candidateReceipt(analysis,
+					read.alternatives().get(values[write == read ? 0 : 1]));
 				return input.compatibility().stream().anyMatch(edge ->
 					CandidateSelections.matchesRealization(edge.sourceRealization(), source)
 						&& CandidateSelections.matchesRealization(edge.readerRealization(), target))
@@ -734,10 +739,10 @@ final class ExactPhysicalModel {
 				throw new IllegalArgumentException("Function value compatibility decision domain missing");
 			List<DecisionDomain> scope = source == target ? List.of(source) : List.of(source, target);
 			factors.add(ExactCategoricalSolver.Factor.lazy(scope.stream().map(DecisionDomain::variable).toList(), values -> {
-				Alternative read = selected(target, scope, values);
+				Alternative read = target.alternatives().get(values[source == target ? 0 : 1]);
 				if(read.state().output() == FederatedOutput.LOUT)
 					return 0.0;
-				Alternative write = selected(source, scope, values);
+				Alternative write = source.alternatives().get(values[0]);
 				return LogicalBoundaryRealizations.compatible(read.realization(), read.supportClause(),
 					write.realization(), write.supportClause()) ? 0.0 : Double.POSITIVE_INFINITY;
 			}));
@@ -774,10 +779,11 @@ final class ExactPhysicalModel {
 					throw new IllegalArgumentException("Realization proof has no physical decision owner");
 				List<DecisionDomain> scope = consumer == source ? List.of(consumer) : List.of(consumer, source);
 				factors.add(ExactCategoricalSolver.Factor.lazy(scope.stream().map(DecisionDomain::variable).toList(), values -> {
-					Alternative owner = selected(consumer, scope, values);
+					Alternative owner = consumer.alternatives().get(values[0]);
 					if(owner.realization() == null)
 						return 0.0;
-					CandidateSelectionReceipt selectedSource = candidateReceipt(analysis, selected(source, scope, values));
+					CandidateSelectionReceipt selectedSource = candidateReceipt(analysis,
+						source.alternatives().get(values[consumer == source ? 0 : 1]));
 					return owner.supportClause().requiredInputSupport().stream()
 						.filter(reference -> reference.rule().parentOccurrence() == dependency)
 						.allMatch(reference -> CandidateSelections.matchesRealization(reference, selectedSource))
@@ -875,7 +881,7 @@ final class ExactPhysicalModel {
 		Link link, DecisionDomain consumer,
 		DecisionDomain directSource, List<DecisionDomain> scope, int[] values) {
 		NeutralPlacementGraph graph = analysis.graph();
-		Alternative selectedConsumer = selected(consumer, scope, values);
+		Alternative selectedConsumer = consumer.alternatives().get(values[0]);
 		if(selectedConsumer.orderedInputs().isEmpty()
 			|| link.position >= selectedConsumer.orderedInputs().size())
 			return 0.0;
@@ -886,7 +892,7 @@ final class ExactPhysicalModel {
 		if(matching.size() != 1)
 			return Double.POSITIVE_INFINITY;
 		InputAuthority authority = matching.get(0);
-		Alternative source = selected(directSource, scope, values);
+		Alternative source = directSource.alternatives().get(values[consumer == directSource ? 0 : 1]);
 		if(authority.kind() == InputAuthorityKind.NATIVE_LOCAL)
 			// ABSENT_LOCAL describes the FED instruction's native coordinator-local input
 			// mode, not the producer's selected output placement. A FOUT producer remains
@@ -991,11 +997,6 @@ final class ExactPhysicalModel {
 		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
 			return source.output() == FederatedOutput.FOUT && source.fType() == authority.expectedFType();
 		throw new IllegalArgumentException("EXACT_PHYSICAL_RELOCATION_REQUIRES_ASSIGNMENT_CONTEXT");
-	}
-
-	private static Alternative selected(DecisionDomain domain, List<DecisionDomain> scope, int[] values) {
-		int index = scope.indexOf(domain);
-		return domain.alternatives().get(values[index]);
 	}
 
 	private record Link(Node sourceNode, CompiledHopKey consumer, int position, LinkKind kind) { }

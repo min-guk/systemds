@@ -84,8 +84,55 @@ public class InlinedFunctionInputTraceContractTest {
 			.map(NeutralPlacementGraph.Constraint::right).collect(Collectors.toSet());
 		Assert.assertFalse("an exact lexical argument may retain its optional trace constraint",
 			constrainedInputs.isEmpty());
+		List<PlacementAnalysis.LogicalInlinedFunctionInputFact> outcomes =
+			analysis.logicalInlinedFunctionInputsInCanonicalOrder();
+		Assert.assertEquals("every compiler input boundary must publish one source outcome",
+			inputs.size(), outcomes.size());
+		Assert.assertEquals("present source outcomes must equal exact compiler constraints",
+			constrainedInputs.size(), outcomes.stream()
+				.filter(outcome -> outcome.sourceArgument().isPresent()).count());
+		for(Node input : inputs)
+			Assert.assertSame("boundary/position lookup must retain the compiler-owned outcome",
+				outcomes.stream().filter(outcome -> outcome.boundary() == input.key()).findFirst().orElseThrow(),
+				analysis.requireExactLogicalInlinedFunctionInput(input.key(),
+					input.valueVersion().definitionOrdinal()));
+		try {
+			analysis.requireExactLogicalInlinedFunctionInput(inputs.get(0).key(), Integer.MAX_VALUE);
+			Assert.fail("an unrecorded input position must fail closed");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage().contains("outcome is not unique"));
+		}
 		// A generated RHS may retain a compiler name even for an expression actual.
 		// The builtin-GLM regression separately covers names removed by HOP rewrites.
+	}
+
+	@Test
+	public void rewrittenExpressionArgumentsPublishExplicitAbsentOutcomes() throws Exception {
+		DMLProgram program = compile("""
+			source("scripts/builtin/glm.dml") as glm;
+			fm=function(matrix[double] X) return (matrix[double] Y){Y=X+1;}
+			F=federated(addresses=list("localhost:1234/X"),ranges=list(list(0,0),list(2,1)));
+			B=fm(F);
+			g=rand(rows=2,cols=1,seed=7); z=matrix(2,rows=2,cols=1);
+			p=matrix(3,rows=2,cols=1); q=matrix(4,rows=2,cols=1);
+			r=matrix(5,rows=2,cols=1);
+			[new_z,f_change]=glm::get_trust_boundary_point(g,z,p,q,r,
+				sum(p*p),sum(p*q),100.0);
+			print(sum(B)+sum(new_z)+f_change);
+			""", true);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		List<Node> boundaries = inlinedInputNodes(analysis);
+		List<PlacementAnalysis.LogicalInlinedFunctionInputFact> outcomes =
+			analysis.logicalInlinedFunctionInputsInCanonicalOrder();
+		Assert.assertEquals("every rewritten input boundary needs an explicit outcome",
+			boundaries.size(), outcomes.size());
+		Assert.assertTrue("substituted scalar expressions must be explicitly marked nonphysical",
+			outcomes.stream().anyMatch(outcome -> outcome.sourceArgument().isEmpty()));
+		for(PlacementAnalysis.LogicalInlinedFunctionInputFact outcome : outcomes)
+			Assert.assertSame(outcome, analysis.requireExactLogicalInlinedFunctionInput(
+				outcome.boundary(), outcome.callInputPosition()));
 	}
 
 	@Test

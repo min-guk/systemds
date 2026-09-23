@@ -13,8 +13,11 @@
 package org.apache.sysds.test.component.federated.placement.shadow;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
@@ -30,6 +33,9 @@ import org.apache.sysds.hops.Hop;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecMode;
+import org.apache.sysds.runtime.instructions.fed.FEDInstructionUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -43,7 +49,10 @@ public class PlanningNativeModelCaptureTest {
 	@Test public void frozenPlanningProfileCapturesExactNativeDomainWithoutSemanticClaim() throws Exception {
 		Assume.assumeTrue(Files.isRegularFile(CATALOG) && Files.isDirectory(EVALUATION));
 		String cell = cellId("planning-w1:P1_FULL", "lan");
-		Path artifact = Files.createTempFile("planning-native-model-", ".json.gz");
+		String retainedArtifact = System.getProperty("plan.space.capture.test.artifact", "");
+		Path artifact = retainedArtifact.isBlank()
+			? Files.createTempFile("planning-native-model-", ".json.gz")
+			: Path.of(retainedArtifact).toAbsolutePath();
 		Map<String,Object> capture;
 		try {
 			capture = PlanningNativeModelCapture.captureWithArtifact(CATALOG, EVALUATION,
@@ -62,8 +71,24 @@ public class PlanningNativeModelCaptureTest {
 				saved.path("nativeDomain").path("placementDomains").size());
 			Assert.assertEquals(((Number) capture.get("candidateCoordinates")).intValue(),
 				saved.path("nativeDomain").path("candidateDomains").size());
+			int candidateReceipts = 0;
+			for(JsonNode coordinate : saved.path("nativeDomain").path("candidateDomains"))
+				candidateReceipts += coordinate.path(1).size();
+			Assert.assertEquals(candidateReceipts,
+				saved.path("nativeDomain").path("candidateReceiptSemanticFacts").size());
+			Assert.assertEquals(candidateReceipts,
+				saved.path("nativeDomain").path("candidateReceiptActivationFacts").size());
+			Assert.assertTrue(saved.path("nativeDomain").path("candidateRealizationReferenceFacts").isArray());
+			Assert.assertTrue(saved.path("nativeDomain").path("compiledCandidateInputEdges").isArray());
+			Assert.assertTrue(saved.path("nativeDomain").path("logicalCandidateReachability").isObject());
+			Assert.assertTrue(saved.path("nativeDomain").path("relocationActionFacts").isArray());
 			Assert.assertEquals(((Number) capture.get("relocationCoordinates")).intValue(),
 				saved.path("nativeDomain").path("relocationDomains").size());
+			Assert.assertTrue(saved.path("nativeDomain").path("derivedFoutActions").isArray());
+			Assert.assertTrue(saved.path("nativeDomain").path("derivedFoutOwnershipBindings").isArray());
+			Assert.assertTrue(saved.path("nativeDomain").path("candidatePrivacyClosurePasses").isArray());
+			Assert.assertFalse(saved.path("nativeDomain").path("candidatePrivacyClosurePasses").isEmpty());
+			Assert.assertTrue(saved.path("nativeDomain").path("candidateRuleFactInventory").isArray());
 			Assert.assertEquals(((Number) capture.get("prebuilderNodes")).intValue(),
 				saved.path("preRewriteGraph").path("nodes").size());
 			Assert.assertEquals(((Number) capture.get("finalHopNodes")).intValue(),
@@ -81,7 +106,8 @@ public class PlanningNativeModelCaptureTest {
 			}
 		}
 		finally {
-			Files.deleteIfExists(artifact);
+			if(retainedArtifact.isBlank())
+				Files.deleteIfExists(artifact);
 		}
 		Assert.assertEquals(capture.toString(), "COMPLETE", capture.get("status"));
 		Assert.assertEquals("closed-native-model-capture-v1", capture.get("schema"));
@@ -152,6 +178,101 @@ public class PlanningNativeModelCaptureTest {
 		Assert.assertFalse(((List<?>) capture.get("stackTrace")).isEmpty());
 	}
 
+	@Test public void promotedCompileConditionAcceptsSemicolonAndPreparesPinnedSourceFacts() throws Exception {
+		Path root = Files.createTempDirectory("promoted-capture-input-");
+		String property = "sysds.test.promoted.capture";
+		String prior = System.getProperty(property);
+		ExecMode priorExecMode = DMLScript.getGlobalExecMode();
+		int priorSeed = DMLScript.SEED;
+		boolean priorStats = DMLScript.STATISTICS;
+		int priorStatsCount = DMLScript.STATISTICS_COUNT;
+		boolean priorNoFedConversion = FEDInstructionUtils.noFedRuntimeConversion;
+		try {
+			Path program = root.resolve("frozen/program.dml");
+			Files.createDirectories(program.getParent());
+			String script = "X = federated(addresses=list(\"worker1/data/X\"), "
+				+ "ranges=list(list(0,0),list(10,2)));\nprint(sum(X))\n";
+			Files.writeString(program, script);
+			String programSha = sha(script);
+			Map<String,Object> planned = Map.of("workers", 1,
+				"network", Map.of("cost_environment", Map.of("SYSDS_FED_COST_NET_BW", "2")),
+				"case", Map.of("program", "frozen/program.dml", "program_sha256", programSha,
+					"arguments", Map.of(), "imports", Map.of(), "compileLocalArguments", Map.of(),
+					"federatedSources", List.of(
+						Map.of("variable", "X", "origins", List.of("worker1/data/X"),
+							"ranges", List.of(List.of(0, 0), List.of(10, 2)),
+							"privacy", "PRIVATE_AGGREGATE", "federationType", "ROW"))));
+			Map<String,Object> binding = Map.of("kind", "campaign-compile-condition",
+				"conditionStatus", "SNAPSHOT_ONLY", "conditionSha256", "condition",
+				"plannedCondition", planned,
+				"compilerArgv", List.of("-exec", "singlenode", "-seed", "7",
+					"-noFedRuntimeConversion", "-stats", "100"),
+				"workloadJvmOptions", List.of("-D" + property + "=true"));
+			Map<String,Object> cell = Map.of("id", "promoted", "inventoryStatus", "IN_SCOPE",
+				"sourceFiles", Map.of("frozen/program.dml", programSha), "sourceBinding", binding);
+			Path catalog = root.resolve("catalog.json");
+			new ObjectMapper().writeValue(catalog.toFile(), Map.of("cells", List.of(cell)));
+			System.setProperty(property, "true");
+			var input = PlanningNativeModelCapture.prepareInput(catalog, root, "promoted", false);
+			Assert.assertEquals(programSha, input.programSha256());
+			Assert.assertEquals(Map.of(property, "true"), input.workloadJvmProperties());
+			Assert.assertEquals(Map.of("SYSDS_FED_COST_NET_BW", "2"), input.networkEnvironment());
+			Assert.assertEquals(1, input.finalSources().size());
+			Assert.assertEquals(List.of("-exec", "singlenode", "-seed", "7",
+				"-noFedRuntimeConversion", "-stats", "100"), input.compilerArgv());
+			Assert.assertEquals("SINGLE_NODE", input.compilerConfiguration().get("execMode"));
+			Assert.assertEquals(7, input.compilerConfiguration().get("seed"));
+			Assert.assertEquals("PARSE_VALIDATE_CONSTRUCT_REWRITE",
+				input.compilerConfiguration().get("appliedBefore"));
+			Assert.assertEquals(ExecMode.SINGLE_NODE, DMLScript.getGlobalExecMode());
+			Assert.assertEquals(7, DMLScript.SEED);
+			Assert.assertTrue(DMLScript.STATISTICS);
+			Assert.assertEquals(100, DMLScript.STATISTICS_COUNT);
+			Assert.assertTrue(FEDInstructionUtils.noFedRuntimeConversion);
+		}
+		finally {
+			if(prior == null) System.clearProperty(property);
+			else System.setProperty(property, prior);
+			DMLScript.setGlobalExecMode(priorExecMode);
+			DMLScript.SEED = priorSeed;
+			DMLScript.STATISTICS = priorStats;
+			DMLScript.STATISTICS_COUNT = priorStatsCount;
+			FEDInstructionUtils.noFedRuntimeConversion = priorNoFedConversion;
+		}
+	}
+
+	@Test public void promotedCompileConditionRejectsProgramSourceLiteralDrift() throws Exception {
+		Path root = Files.createTempDirectory("promoted-source-drift-");
+		Path catalog = promotedCatalog(root,
+			"X = federated(addresses=list(\"worker2/data/X\"), ranges=list(list(0,0),list(10,2)))\n"
+				+ "print(sum(X))\n",
+			List.of("worker1/data/X"), List.of(List.of(0, 0), List.of(10, 2)),
+			List.of("-exec", "singlenode", "-seed", "7", "-noFedRuntimeConversion", "-stats", "100"));
+		try {
+			PlanningNativeModelCapture.prepareInput(catalog, root, "promoted", false);
+			Assert.fail("A program/source address mismatch must fail closed");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage().contains("literal differs"));
+		}
+	}
+
+	@Test public void promotedCompileConditionRejectsUnsupportedCompilerArgv() throws Exception {
+		Path root = Files.createTempDirectory("promoted-compiler-argv-");
+		Path catalog = promotedCatalog(root,
+			"X = federated(addresses=list(\"worker1/data/X\"), ranges=list(list(0,0),list(10,2)))\n"
+				+ "print(sum(X))\n",
+			List.of("worker1/data/X"), List.of(List.of(0, 0), List.of(10, 2)),
+			List.of("-exec", "hybrid", "-seed", "7", "-noFedRuntimeConversion", "-stats", "100"));
+		try {
+			PlanningNativeModelCapture.prepareInput(catalog, root, "promoted", false);
+			Assert.fail("An unsupported compiler argv must fail closed");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertTrue(expected.getMessage().contains("supports only -exec singlenode"));
+		}
+	}
+
 	private static String cellId(String discovery, String condition) throws Exception {
 		JsonNode rows = new ObjectMapper().readTree(CATALOG.toFile()).path("cells");
 		for(JsonNode row : rows)
@@ -159,5 +280,34 @@ public class PlanningNativeModelCaptureTest {
 				&& condition.equals(row.path("conditionId").asText()))
 				return row.path("id").asText();
 		throw new IllegalArgumentException("Planning test cell absent");
+	}
+
+	private static String sha(String value) throws Exception {
+		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+			.digest(value.getBytes(StandardCharsets.UTF_8)));
+	}
+
+	private static Path promotedCatalog(Path root, String script, List<String> origins,
+		List<List<Integer>> ranges, List<String> compilerArgv) throws Exception {
+		Path program = root.resolve("frozen/program.dml");
+		Files.createDirectories(program.getParent());
+		Files.writeString(program, script);
+		String programSha = sha(script);
+		Map<String,Object> source = Map.of("variable", "X", "origins", origins, "ranges", ranges,
+			"privacy", "PRIVATE_AGGREGATE", "federationType", "ROW");
+		Map<String,Object> testCase = Map.of("program", "frozen/program.dml",
+			"program_sha256", programSha, "arguments", Map.of(), "imports", Map.of(),
+			"compileLocalArguments", Map.of(), "federatedSources", List.of(source));
+		Map<String,Object> planned = Map.of("workers", 1,
+			"network", Map.of("cost_environment", Map.of("SYSDS_FED_COST_NET_BW", "2")),
+			"case", testCase);
+		Map<String,Object> binding = Map.of("kind", "campaign-compile-condition",
+			"conditionStatus", "SNAPSHOT_ONLY", "conditionSha256", "condition",
+			"plannedCondition", planned, "compilerArgv", compilerArgv, "workloadJvmOptions", List.of());
+		Map<String,Object> cell = Map.of("id", "promoted", "inventoryStatus", "IN_SCOPE",
+			"sourceFiles", Map.of("frozen/program.dml", programSha), "sourceBinding", binding);
+		Path catalog = root.resolve("catalog.json");
+		new ObjectMapper().writeValue(catalog.toFile(), Map.of("cells", List.of(cell)));
+		return catalog;
 	}
 }

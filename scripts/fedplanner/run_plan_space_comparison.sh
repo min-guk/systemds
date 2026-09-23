@@ -12,6 +12,10 @@ ARTIFACT_ROOT=/grid/3/cofee-lm-sweep-mchoi-20260914/pe-history-20260921
 JOBS=4
 RESUME=false
 CAMPAIGN_MANIFEST=
+P_MATRIX_DIR=
+P_MATRIX_CATALOG=
+P_MATRIX_EVALUATION_ROOT=
+P_MATRIX_EXPECTED_CONDITIONS=
 
 while (($#)); do
 	case "$1" in
@@ -20,6 +24,10 @@ while (($#)); do
 		--current) CURRENT="$2"; shift 2 ;;
 		--manifest) CASES="$2"; shift 2 ;;
 		--campaign-manifest) CAMPAIGN_MANIFEST="$2"; shift 2 ;;
+		--p-matrix-dir) P_MATRIX_DIR="$2"; shift 2 ;;
+		--p-matrix-catalog) P_MATRIX_CATALOG="$2"; shift 2 ;;
+		--p-matrix-evaluation-root) P_MATRIX_EVALUATION_ROOT="$2"; shift 2 ;;
+		--p-matrix-expected-conditions) P_MATRIX_EXPECTED_CONDITIONS="$2"; shift 2 ;;
 		--artifact-root) ARTIFACT_ROOT="$2"; shift 2 ;;
 		--jobs) JOBS="$2"; shift 2 ;;
 		--resume) RESUME=true; shift ;;
@@ -41,30 +49,76 @@ if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
 	printf '%s\n' 'Jobs must be positive' >&2
 	exit 64
 fi
+if [[ -n "$P_MATRIX_DIR$P_MATRIX_CATALOG$P_MATRIX_EVALUATION_ROOT$P_MATRIX_EXPECTED_CONDITIONS" ]] &&
+   [[ -z "$P_MATRIX_DIR" || -z "$P_MATRIX_CATALOG" || -z "$P_MATRIX_EVALUATION_ROOT" ||
+      -z "$P_MATRIX_EXPECTED_CONDITIONS" ]]; then
+	printf '%s\n' 'P matrix import requires dir, frozen catalog, evaluation root, and independent expected conditions' >&2
+	exit 64
+fi
 mkdir -p "$ARTIFACT_ROOT"
 python3 "$ROOT/scripts/fedplanner/build_closed_comparison_cases.py" --check --output "$CASES"
 python3 "$ROOT/scripts/fedplanner/snapshot_plan_space_versions.py" create \
 	--output "$ARTIFACT_ROOT/snapshots" > "$ARTIFACT_ROOT/latest-source-snapshot.json"
 
-python3 - "$CASES" "$CAMPAIGN_MANIFEST" "$ARTIFACT_ROOT" <<'PY'
+python3 - "$CASES" "$CAMPAIGN_MANIFEST" "$ARTIFACT_ROOT" "$ROOT/scripts/fedplanner" \
+    "$P_MATRIX_DIR" "$P_MATRIX_CATALOG" "$P_MATRIX_EVALUATION_ROOT" \
+    "$P_MATRIX_EXPECTED_CONDITIONS" <<'PY'
+import hashlib
 import json
 from pathlib import Path
 import sys
 
-cases, campaign, root = sys.argv[1:]
+cases, campaign, root, scripts, matrix_dir, matrix_catalog, matrix_evaluation, expected_conditions = sys.argv[1:]
 catalog = json.loads(Path(cases).read_text())
 pending = [(cell['id'], pair['left'], pair['right'])
            for cell in catalog['cells'] for pair in cell['expectedPairs']
            if pair['applicability'] == 'UNDETERMINED']
 unfrozen = [cell['id'] for cell in catalog['cells']
             if cell['inventoryStatus'] == 'IN_SCOPE' and cell['nativeInputCapture'] != 'COMPLETE']
+unresolved = [cell['id'] for cell in catalog['cells']
+              if cell['inventoryStatus'] == 'IN_SCOPE' and
+              (cell.get('sourceBinding') or {}).get('conditionStatus') == 'UNRESOLVED']
 result = {'contract': 'closed-model-pe-history-v1', 'status': 'INCOMPLETE',
           'unclassifiedHistoricalPairs': len(pending),
           'uncapturedCurrentCells': len(unfrozen),
+          'unresolvedCurrentConditions': len(unresolved),
           'campaignManifestPresent': bool(campaign and Path(campaign).is_file()),
+          'pMatrixStatus': 'NOT_PROVIDED', 'verifiedPModelCells': 0,
+          'pMatrixSha256': None, 'pMatrixFailures': [],
           'runtimeSemanticCoverage': 'NOT_ASSESSED_BY_THIS_CONTRACT'}
+if matrix_dir:
+    matrix = Path(matrix_dir).resolve()
+    frozen_catalog = Path(matrix_catalog).resolve()
+    frozen_evaluation = Path(matrix_evaluation).resolve()
+    conditions = expected_conditions.split(',')
+    try:
+        manifest = matrix / 'matrix.json'
+        if manifest.is_file():
+            result['pMatrixSha256'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        if not conditions or any(not condition for condition in conditions) or len(conditions) != len(set(conditions)):
+            raise ValueError('independent expected condition scope is empty or duplicated')
+        if hashlib.sha256(frozen_catalog.read_bytes()).digest() != hashlib.sha256(Path(cases).read_bytes()).digest():
+            raise ValueError('P matrix frozen catalog differs from gate catalog')
+        sys.path.insert(0, scripts)
+        from verify_current_p_matrix import verify
+        verdict = verify(matrix, frozen_catalog, frozen_evaluation,
+                         expected_conditions=set(conditions))
+        result.update(pMatrixStatus=verdict['status'],
+                      verifiedPModelCells=verdict['verifiedComplete'],
+                      pMatrixSha256=verdict['matrixSha256'],
+                      pMatrixVerifierSha256=verdict['verifierSha256'],
+                      pMatrixClaimScope=verdict['claimScope'],
+                      pMatrixAcceptance=verdict['acceptance'],
+                      pMatrixCellCount=verdict['cellCount'],
+                      pMatrixExpectedConditions=sorted(conditions),
+                      pMatrixFailures=verdict['failures'])
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        result.update(pMatrixStatus='ERROR',
+                      pMatrixFailures=[{'reason': 'MATRIX_IMPORT_ERROR',
+                                        'detail': str(error)[:300]}])
 Path(root, 'preflight.json').write_text(json.dumps(result, sort_keys=True, indent=2) + '\n')
-if pending or unfrozen or not result['campaignManifestPresent']:
+if pending or unfrozen or unresolved or not result['campaignManifestPresent'] or (
+        matrix_dir and result['pMatrixStatus'] != 'PASS'):
     print(json.dumps(result, sort_keys=True))
     sys.exit(2)
 PY
