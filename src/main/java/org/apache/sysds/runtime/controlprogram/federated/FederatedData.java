@@ -35,6 +35,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
@@ -223,6 +225,7 @@ public class FederatedData {
 	 */
 	public static Future<FederatedResponse> executeFederatedOperation(InetSocketAddress address,
 		FederatedRequest... request) {
+		rejectNativeControlOnOrdinaryPath(request);
 		PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(request);
 		return executeFederatedOperation(address, 1, request);
 	}
@@ -237,6 +240,7 @@ public class FederatedData {
 	 */
 	public synchronized static Future<FederatedResponse> executeFederatedOperation(InetSocketAddress address, int retry,
 		FederatedRequest... request) {
+		rejectNativeControlOnOrdinaryPath(request);
 		try {
 			if(workerGroup == null)
 				createWorkGroup();
@@ -264,6 +268,36 @@ public class FederatedData {
 				throw new DMLRuntimeException(e);
 			}
 			throw new DMLRuntimeException("Failed sending federated operation", e);
+		}
+	}
+
+	private static void rejectNativeControlOnOrdinaryPath(FederatedRequest[] requests) {
+		if(requests != null)
+			for(FederatedRequest request : requests)
+				if(request != null && request.getType() == RequestType.PHASE_CONTROL)
+					throw new IllegalArgumentException("Native phase controls require the dedicated control path");
+	}
+
+	/**
+	 * The only untracked transport path: one validated native phase control, never an instruction or UDF.
+	 * Callers must independently enforce phase lifecycle admission before invoking this package-private method.
+	 */
+	static synchronized Future<FederatedResponse> executeNativePhaseControl(InetSocketAddress address,
+		FederatedPhaseWire.Control control) {
+		if(address == null || control == null)
+			throw new IllegalArgumentException("Native phase control requires an address and payload");
+		FederatedRequest request = new FederatedRequest(RequestType.PHASE_CONTROL, 0, control);
+		if(request.getPID() != control.getIdentity().getCoordinatorPid())
+			throw new IllegalArgumentException("Native control coordinator PID mismatch");
+		if(workerGroup == null)
+			createWorkGroup();
+		ImmutablePair<InetSocketAddress, Long> key = ImmutablePair.of(address, 0L);
+		PooledConnection conn = pooledConnections.computeIfAbsent(key, k -> new PooledConnection(k, address));
+		try {
+			return conn.sendNativeControl(request, control);
+		}
+		catch(Exception ex) {
+			throw new DMLRuntimeException("Failed sending native phase control", ex);
 		}
 	}
 
@@ -303,11 +337,29 @@ public class FederatedData {
 	}
 
 	private static class PooledConnection {
+		private static final AtomicReferenceFieldUpdater<PooledConnection, Channel> CHANNEL =
+			AtomicReferenceFieldUpdater.newUpdater(PooledConnection.class, Channel.class, "_channel");
 		private final ImmutablePair<InetSocketAddress, Long> _key;
 		private final InetSocketAddress _address;
 		private final Object _connectLock = new Object();
+		private final Object _sendLock = new Object();
 		private volatile Channel _channel;
-		private final Queue<Promise<FederatedResponse>> _pending = new ConcurrentLinkedQueue<>();
+		// A delayed callback from an old channel must never consume or fail a replacement's replies.
+		private final Map<Channel, Queue<PendingResponse>> _pending = new ConcurrentHashMap<>();
+		private final AtomicBoolean _nativeControlPending = new AtomicBoolean();
+
+		private static final class PendingResponse {
+			private final Promise<FederatedResponse> promise;
+			private final FederatedPhaseWire.BatchTag batchTag;
+			private final FederatedPhaseWire.Control control;
+
+			private PendingResponse(Promise<FederatedResponse> promise,
+				FederatedPhaseWire.BatchTag batchTag, FederatedPhaseWire.Control control) {
+				this.promise = promise;
+				this.batchTag = batchTag;
+				this.control = control;
+			}
+		}
 
 		public PooledConnection(ImmutablePair<InetSocketAddress, Long> key, InetSocketAddress address) {
 			_key = key;
@@ -315,32 +367,97 @@ public class FederatedData {
 		}
 
 		public Future<FederatedResponse> send(FederatedRequest... request) throws Exception {
+			return sendInternal(request, null);
+		}
+
+		private Future<FederatedResponse> sendNativeControl(FederatedRequest request,
+			FederatedPhaseWire.Control control) throws Exception {
+			if(request == null || request.getType() != RequestType.PHASE_CONTROL
+				|| request.getNumParams() != 1 || request.getParam(0) != control
+				|| request.getPhaseBatchTag() != null)
+				throw new IllegalArgumentException("Invalid native phase control envelope");
+			if(!_nativeControlPending.compareAndSet(false, true))
+				throw new IllegalStateException("A native phase control is already outstanding for this worker");
+			try {
+				Future<FederatedResponse> response = sendInternal(new FederatedRequest[] {request}, control);
+				((Promise<FederatedResponse>) response).addListener(f -> _nativeControlPending.set(false));
+				return response;
+			}
+			catch(Exception | Error ex) {
+				_nativeControlPending.set(false);
+				throw ex;
+			}
+		}
+
+		private Future<FederatedResponse> sendInternal(FederatedRequest[] request,
+			FederatedPhaseWire.Control control) throws Exception {
+			if(control == null)
+				validateOrdinaryPhaseBatch(request);
 			if (DEBUG_FEDREQ)
 				System.out.println("[DBG-FEDREQ][coordinator][send] addr=" + _address
 					+ " keyTid=" + _key.right + " batch=" + summarizeRequestBatch(request));
-			final Channel ch = getOrCreateChannel();
+			for(int attempt = 0; attempt < 3; attempt++) {
+				final Channel ch = getOrCreateChannel();
+				synchronized(_sendLock) {
+					if(_channel != ch || !ch.isActive())
+						continue;
+					return sendOnChannel(ch, request, control);
+				}
+			}
+			throw new DMLRuntimeException("Federated channel changed during request admission");
+		}
+
+		private Future<FederatedResponse> sendOnChannel(Channel ch, FederatedRequest[] request,
+			FederatedPhaseWire.Control control) {
 			final Promise<FederatedResponse> prom = ch.eventLoop().newPromise();
-			FederatedPhaseCompletion.trackDispatch(_address, requestTid(request), prom);
-			_pending.add(prom);
+			if(control == null)
+				FederatedPhaseCompletion.trackDispatch(_address, requestTid(request), prom);
+			FederatedPhaseWire.BatchTag batchTag = control == null && request != null && request.length > 0
+				&& request[0] != null ? request[0].getPhaseBatchTag() : null;
+			PendingResponse pending = new PendingResponse(prom, batchTag, control);
+			Queue<PendingResponse> channelPending = _pending.computeIfAbsent(ch,
+				ignored -> new ConcurrentLinkedQueue<>());
+			channelPending.add(pending);
 
 			final ChannelFuture writeFuture;
 			try {
 				writeFuture = ch.writeAndFlush(request);
 			}
 			catch(RuntimeException | Error t) {
-				_pending.remove(prom);
+				invalidateChannel(ch);
 				prom.tryFailure(t);
 				throw t;
 			}
 			writeFuture.addListener(f -> {
 				if(!f.isSuccess()) {
-					_pending.remove(prom);
-					if(!prom.isDone())
-						prom.setFailure(f.cause());
+					// A failed write leaves response alignment uncertain; quarantine only
+					// this channel generation, including every pending request on it.
 					invalidateChannel(ch);
 				}
 			});
 			return prom;
+		}
+
+		private static void validateOrdinaryPhaseBatch(FederatedRequest[] requests) {
+			if(requests == null || requests.length == 0 || requests[0] == null)
+				return; // legacy validation remains with the worker
+			FederatedPhaseWire.BatchTag tag = requests[0].getPhaseBatchTag();
+			if(tag == null) {
+				for(FederatedRequest request : requests)
+					if(request != null && request.getPhaseBatchTag() != null)
+						throw new IllegalArgumentException("Mixed tagged and legacy federated batch");
+				return;
+			}
+			long pid = requests[0].getPID();
+			long tid = requests[0].getTID();
+			long normalizedTid = tid <= 0 ? 0 : tid;
+			if(tag.getIdentity().getCoordinatorPid() != pid || tag.getNormalizedTid() != normalizedTid)
+				throw new IllegalArgumentException("Federated phase tag PID/TID mismatch");
+			for(FederatedRequest request : requests)
+				if(request == null || request.getType() == RequestType.PHASE_CONTROL
+					|| request.getPID() != pid || request.getTID() != tid
+					|| !tag.equals(request.getPhaseBatchTag()))
+					throw new IllegalArgumentException("Inconsistent federated phase batch");
 		}
 
 		private static long requestTid(FederatedRequest[] requests) {
@@ -352,44 +469,108 @@ public class FederatedData {
 			if(ch != null && ch.isActive())
 				return ch;
 			synchronized(_connectLock) {
-				ch = _channel;
-				if(ch != null && ch.isActive())
-					return ch;
-
-				final Bootstrap b = new Bootstrap();
-				b.group(workerGroup);
-				b.channel(NioSocketChannel.class);
-				b.handler(createChannel(_address, new PooledDataRequestHandler(this)));
-				final ChannelFuture f = b.connect(_address).sync();
-				_channel = f.channel();
-				return _channel;
+				while(true) {
+					ch = _channel;
+					if(ch != null && ch.isActive())
+						return ch;
+					final Bootstrap b = new Bootstrap();
+					b.group(workerGroup);
+					b.channel(NioSocketChannel.class);
+					b.handler(createChannel(_address, new PooledDataRequestHandler(this)));
+					final ChannelFuture f = b.connect(_address);
+					final Channel candidate = f.channel();
+					if(!CHANNEL.compareAndSet(this, ch, candidate)) {
+						candidate.close();
+						continue;
+					}
+					try {
+						f.sync();
+					}
+					catch(Exception ex) {
+						invalidateChannel(candidate);
+						throw ex;
+					}
+					if(_channel != candidate || !candidate.isActive())
+						throw new DMLRuntimeException("Federated channel closed during connection");
+					return candidate;
+				}
 			}
 		}
 
 		private void invalidateChannel(Channel ch) {
-			// fail all pending promises (if any)
-			Promise<FederatedResponse> prom;
-			final DMLRuntimeException ex = new DMLRuntimeException("Federated response channel closed without a reply");
-			while((prom = _pending.poll()) != null) {
-				if(!prom.isDone())
-					prom.setFailure(ex);
+			if(ch == null)
+				return;
+			synchronized(_sendLock) {
+				Queue<PendingResponse> channelPending = _pending.remove(ch);
+				PendingResponse pending;
+				final DMLRuntimeException ex =
+					new DMLRuntimeException("Federated response channel closed without a reply");
+				while(channelPending != null && (pending = channelPending.poll()) != null)
+					pending.promise.tryFailure(ex);
+				// Keep the pool entry stable: this connection recreates its channel on
+				// the next send. Removing it here can orphan a replacement installed
+				// concurrently after the compare-and-set.
+				CHANNEL.compareAndSet(this, ch, null);
 			}
-
-			// remove from pool so future requests reconnect
-			_channel = null;
-			pooledConnections.remove(_key, this);
-
-			if(ch != null)
-				ch.close();
+			ch.close();
 		}
 
-		private void completeNext(FederatedResponse res) {
-			final Promise<FederatedResponse> prom = _pending.poll();
-			if(prom == null) {
-				LOG.error("Received federated response without a pending request: " + res);
+		private void close() {
+			Channel current = _channel;
+			if(current != null)
+				invalidateChannel(current);
+			for(Channel ch : _pending.keySet())
+				invalidateChannel(ch);
+		}
+
+		private void completeNext(Channel ch, FederatedResponse res) {
+			Queue<PendingResponse> channelPending = _pending.get(ch);
+			final PendingResponse pending = channelPending == null ? null : channelPending.poll();
+			if(pending == null) {
+				LOG.error("Received federated response without a pending request on its channel: " + res);
+				invalidateChannel(ch);
 				return;
 			}
-			prom.setSuccess(res);
+			try {
+				validateReply(pending, res);
+				pending.promise.trySuccess(res);
+			}
+			catch(RuntimeException ex) {
+				invalidateChannel(ch);
+				pending.promise.tryFailure(ex);
+			}
+		}
+
+		private static void validateReply(PendingResponse pending, FederatedResponse response) {
+			if(response == null || !java.util.Objects.equals(pending.batchTag, response.getPhaseBatchTag()))
+				throw new DMLRuntimeException("Federated response phase tag mismatch");
+			if(pending.control == null)
+				return;
+			if(!response.isSuccessful())
+				throw new DMLRuntimeException("Native phase control failed without a valid reply");
+			final Object[] data;
+			try {
+				data = response.getData();
+			}
+			catch(Exception ex) {
+				throw new DMLRuntimeException("Native phase control reply is invalid", ex);
+			}
+			if(data == null || data.length != 1 || data[0] == null
+				|| data[0].getClass() != FederatedPhaseWire.Reply.class)
+				throw new DMLRuntimeException("Native phase control reply has invalid payload");
+			FederatedPhaseWire.Reply reply = (FederatedPhaseWire.Reply) data[0];
+			FederatedPhaseWire.Control control = pending.control;
+			if(!reply.getAttemptId().equals(control.getIdentity().getAttemptId())
+				|| reply.getEpoch() != control.getIdentity().getEpoch()
+				|| reply.getControlSequence() != control.getControlSequence()
+				|| reply.getOp() != control.getOp()
+				|| (control.getExpectedWorkerJvmInstanceId() != null
+					&& !reply.getWorkerJvmInstanceId().equals(control.getExpectedWorkerJvmInstanceId())))
+				throw new DMLRuntimeException("Native phase control reply identity mismatch");
+			if(reply.getStatus() == FederatedPhaseWire.ReplyStatus.ACK
+				&& (!reply.getAcceptedStageSeal().equals(control.getIdentity().getStageSeal())
+					|| !reply.getAcceptedSettingsDigest().equals(control.getIdentity().getSettingsDigest())))
+				throw new DMLRuntimeException("Native phase control ACK stage/settings mismatch");
 		}
 	}
 
@@ -440,7 +621,7 @@ public class FederatedData {
 
 		@Override
 		public void channelRead(ChannelHandlerContext ctx, Object msg) {
-			_conn.completeNext((FederatedResponse) msg);
+			_conn.completeNext(ctx.channel(), (FederatedResponse) msg);
 		}
 
 		@Override
@@ -481,7 +662,7 @@ public class FederatedData {
 	private static void closePooledConnections() {
 		for(PooledConnection conn : pooledConnections.values()) {
 			try {
-				conn.invalidateChannel(null);
+				conn.close();
 			}
 			catch(Exception ignore) {
 				// ignore

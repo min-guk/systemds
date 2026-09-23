@@ -37,6 +37,8 @@ import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Queue;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -73,7 +75,10 @@ public class FederatedPhaseCompletionNettyTest {
 	private enum ServerMode {
 		SUCCESS,
 		ERROR,
-		CLOSE_WITHOUT_RESPONSE
+		CLOSE_WITHOUT_RESPONSE,
+		CONTROL_SUCCESS,
+		CONTROL_WRONG_ATTEMPT,
+		TAG_MISMATCH
 	}
 
 	@After
@@ -105,6 +110,177 @@ public class FederatedPhaseCompletionNettyTest {
 		assertEquals(1, result.getExceptional());
 		assertEquals(0, result.getOutstanding());
 		assertFalse(result.isClean());
+	}
+
+	@Test
+	public void ordinaryPathRejectsNativeControlBeforeNetwork() {
+		FederatedPhaseWire.Control control = initialControl();
+		FederatedRequest request = new FederatedRequest(RequestType.PHASE_CONTROL, 0, control);
+		InetSocketAddress address = InetSocketAddress.createUnresolved("no-control.invalid", 18404);
+		try {
+			FederatedData.executeFederatedOperation(address, request);
+			fail("ordinary dispatch accepted a native control");
+		}
+		catch(IllegalArgumentException expected) {
+			// exact native control route is required
+		}
+		try {
+			FederatedData.executeFederatedOperation(address, 1, request);
+			fail("retry overload accepted a native control");
+		}
+		catch(IllegalArgumentException expected) {
+			// exact native control route is required
+		}
+	}
+
+	@Test
+	public void nativeControlValidatesExactReplyIdentity() throws Exception {
+		try(TestServer server = new TestServer(ServerMode.CONTROL_SUCCESS);
+			Scope scope = FederatedPhaseCompletion.begin("native-control-after-ordinary-drain")) {
+			scope.sealAfterProducersComplete(CompletableFuture.completedFuture(null));
+			scope.await(DRAIN_TIMEOUT);
+			FederatedResponse response = FederatedData.executeNativePhaseControl(server.address(), initialControl())
+				.get(5, TimeUnit.SECONDS);
+			assertTrue(response.isSuccessful());
+			FederatedPhaseWire.Reply reply = (FederatedPhaseWire.Reply) response.getData()[0];
+			assertEquals(FederatedPhaseWire.ReplyStatus.ACK, reply.getStatus());
+			assertEquals(FederatedPhaseWire.INITIAL_EPOCH, reply.getEpoch());
+			assertTrue(scope.finish().isClean());
+		}
+		try(TestServer server = new TestServer(ServerMode.CONTROL_WRONG_ATTEMPT)) {
+			try {
+				FederatedData.executeNativePhaseControl(server.address(), initialControl())
+					.get(5, TimeUnit.SECONDS);
+				fail("wrong-attempt control reply was accepted");
+			}
+			catch(ExecutionException expected) {
+				assertTrue(expected.getCause().getMessage().contains("identity mismatch"));
+			}
+		}
+	}
+
+	@Test
+	public void taggedRequestRejectsUntaggedResponse() throws Exception {
+		try(TestServer server = new TestServer(ServerMode.TAG_MISMATCH);
+			Scope scope = FederatedPhaseCompletion.begin("tag-mismatch")) {
+			FederatedRequest request = request(85);
+			FederatedPhaseWire.PhaseIdentity identity = phaseIdentity(request.getPID());
+			request.setPhaseBatchTag(new FederatedPhaseWire.BatchTag(identity, UUID.randomUUID(),
+				UUID.randomUUID(), 85, 1));
+			try {
+				FederatedData.executeFederatedOperation(server.address(), request).get(5, TimeUnit.SECONDS);
+				fail("untagged response matched a tagged request");
+			}
+			catch(ExecutionException expected) {
+				assertTrue(expected.getCause().getMessage().contains("phase tag mismatch"));
+			}
+			scope.sealAfterProducersComplete(CompletableFuture.completedFuture(null));
+			assertEquals(1, scope.await(DRAIN_TIMEOUT).getExceptional());
+			scope.abort();
+		}
+	}
+
+	@Test
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	public void staleChannelFailureCannotDrainReplacementGeneration() throws Exception {
+		InetSocketAddress address = InetSocketAddress.createUnresolved("generation.invalid", 18405);
+		Channel oldChannel = mock(Channel.class);
+		Channel newChannel = mock(Channel.class);
+		EventLoop oldLoop = mock(EventLoop.class);
+		EventLoop newLoop = mock(EventLoop.class);
+		when(oldChannel.isActive()).thenReturn(true);
+		when(newChannel.isActive()).thenReturn(true);
+		when(oldChannel.eventLoop()).thenReturn(oldLoop);
+		when(newChannel.eventLoop()).thenReturn(newLoop);
+		when(oldLoop.newPromise()).thenAnswer(invocation ->
+			new DefaultPromise<>(ImmediateEventExecutor.INSTANCE));
+		when(newLoop.newPromise()).thenAnswer(invocation ->
+			new DefaultPromise<>(ImmediateEventExecutor.INSTANCE));
+		when(oldChannel.writeAndFlush(any())).thenReturn(mock(ChannelFuture.class));
+		when(newChannel.writeAndFlush(any())).thenReturn(mock(ChannelFuture.class));
+		Object connection = pooledConnection(address, oldChannel);
+		Class<?> type = connection.getClass();
+		Field channelField = type.getDeclaredField("_channel");
+		channelField.setAccessible(true);
+		Method send = type.getDeclaredMethod("send", FederatedRequest[].class);
+		send.setAccessible(true);
+		Method completeNext = type.getDeclaredMethod("completeNext", Channel.class, FederatedResponse.class);
+		completeNext.setAccessible(true);
+		Method invalidate = type.getDeclaredMethod("invalidateChannel", Channel.class);
+		invalidate.setAccessible(true);
+
+		try(Scope scope = FederatedPhaseCompletion.begin("channel-generation")) {
+			Future<FederatedResponse> oldResponse = (Future<FederatedResponse>) send.invoke(connection,
+				(Object) new FederatedRequest[] {request(84)});
+			// Simulate an already established replacement before a delayed callback
+			// from the old, now inactive, channel is delivered.
+			channelField.set(connection, newChannel);
+			Future<FederatedResponse> newResponse = (Future<FederatedResponse>) send.invoke(connection,
+				(Object) new FederatedRequest[] {request(85)});
+			FederatedResponse staleBadReply = new FederatedResponse(
+				FederatedResponse.ResponseType.SUCCESS_EMPTY);
+			staleBadReply.setPhaseBatchTag(new FederatedPhaseWire.BatchTag(
+				phaseIdentity(new FederatedRequest(RequestType.NOOP).getPID()),
+				UUID.randomUUID(), UUID.randomUUID(), 84, 1));
+			completeNext.invoke(connection, oldChannel, staleBadReply);
+			invalidate.invoke(connection, oldChannel); // delayed channelInactive
+			try {
+				oldResponse.get(5, TimeUnit.SECONDS);
+				fail("old mismatched response was accepted");
+			}
+			catch(ExecutionException expected) {
+				assertTrue(expected.getCause().getMessage().contains("phase tag mismatch"));
+			}
+			assertFalse(newResponse.isDone());
+			assertEquals(newChannel, channelField.get(connection));
+			completeNext.invoke(connection, newChannel,
+				new FederatedResponse(FederatedResponse.ResponseType.SUCCESS_EMPTY));
+			assertTrue(newResponse.get(5, TimeUnit.SECONDS).isSuccessful());
+			scope.sealAfterProducersComplete(CompletableFuture.completedFuture(null));
+			Result result = scope.await(DRAIN_TIMEOUT);
+			assertEquals(2, result.getRegistered());
+			assertEquals(1, result.getExceptional());
+			assertEquals(1, result.getSuccessful());
+			scope.abort();
+		}
+	}
+
+	@Test
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	public void clearWorkGroupFailsPendingAndClosesPooledChannel() throws Exception {
+		InetSocketAddress address = InetSocketAddress.createUnresolved("teardown.invalid", 18406);
+		Channel channel = mock(Channel.class);
+		EventLoop eventLoop = mock(EventLoop.class);
+		when(channel.isActive()).thenReturn(true);
+		when(channel.eventLoop()).thenReturn(eventLoop);
+		when(eventLoop.newPromise()).thenAnswer(invocation ->
+			new DefaultPromise<>(ImmediateEventExecutor.INSTANCE));
+		when(channel.writeAndFlush(any())).thenReturn(mock(ChannelFuture.class));
+		Object connection = pooledConnection(address, channel);
+		Field poolField = FederatedData.class.getDeclaredField("pooledConnections");
+		poolField.setAccessible(true);
+		Map pool = (Map) poolField.get(null);
+		pool.put(ImmutablePair.of(address, 0L), connection);
+		Method send = connection.getClass().getDeclaredMethod("send", FederatedRequest[].class);
+		send.setAccessible(true);
+
+		try(Scope scope = FederatedPhaseCompletion.begin("teardown-pending")) {
+			Future<FederatedResponse> response = (Future<FederatedResponse>) send.invoke(connection,
+				(Object) new FederatedRequest[] {request(0)});
+			FederatedData.clearWorkGroup();
+			try {
+				response.get(5, TimeUnit.SECONDS);
+				fail("teardown accepted an unanswered response");
+			}
+			catch(ExecutionException expected) {
+				assertTrue(expected.getCause().getMessage().contains("closed without a reply"));
+			}
+			verify(channel).close();
+			assertTrue(pool.isEmpty());
+			scope.sealAfterProducersComplete(CompletableFuture.completedFuture(null));
+			assertEquals(1, scope.await(DRAIN_TIMEOUT).getExceptional());
+			scope.abort();
+		}
 	}
 
 	@Test
@@ -146,7 +322,8 @@ public class FederatedPhaseCompletionNettyTest {
 
 			Field pendingField = connectionClass.getDeclaredField("_pending");
 			pendingField.setAccessible(true);
-			assertTrue(((Queue<?>) pendingField.get(connection)).isEmpty());
+			assertTrue(((Map<?, Queue<?>>) pendingField.get(connection)).values().stream()
+				.allMatch(Queue::isEmpty));
 			scope.abort();
 		}
 	}
@@ -270,6 +447,19 @@ public class FederatedPhaseCompletionNettyTest {
 		return request;
 	}
 
+	private static FederatedPhaseWire.PhaseIdentity phaseIdentity(long pid) {
+		return new FederatedPhaseWire.PhaseIdentity(UUID.randomUUID(), "condition", "stage",
+			"source", "settings", UUID.randomUUID(), pid, FederatedPhaseWire.INITIAL_EPOCH,
+			FederatedPhaseWire.PhaseKind.PLANNING);
+	}
+
+	private static FederatedPhaseWire.Control initialControl() {
+		long pid = new FederatedRequest(RequestType.NOOP).getPID();
+		return new FederatedPhaseWire.Control(phaseIdentity(pid), null, 1,
+			FederatedPhaseWire.ControlOp.BEGIN_PHASE, 5000,
+			new FederatedPhaseWire.StreamFence[0], new String[0], null);
+	}
+
 	private static Object pooledConnection(InetSocketAddress address, Channel channel) throws Exception {
 		Class<?> connectionClass = Class.forName(FederatedData.class.getName() + "$PooledConnection");
 		Constructor<?> constructor = connectionClass.getDeclaredConstructor(ImmutablePair.class,
@@ -299,6 +489,21 @@ public class FederatedPhaseCompletionNettyTest {
 						channel.pipeline().addLast(new SimpleChannelInboundHandler<Object>() {
 							@Override
 							protected void channelRead0(ChannelHandlerContext context, Object message) {
+								if(mode == ServerMode.CONTROL_SUCCESS || mode == ServerMode.CONTROL_WRONG_ATTEMPT) {
+									FederatedRequest[] batch = (FederatedRequest[]) message;
+									FederatedPhaseWire.Control control =
+										(FederatedPhaseWire.Control) batch[0].getParam(0);
+									FederatedPhaseWire.PhaseIdentity identity = control.getIdentity();
+									FederatedPhaseWire.Reply reply = new FederatedPhaseWire.Reply(
+										mode == ServerMode.CONTROL_SUCCESS ? identity.getAttemptId() : UUID.randomUUID(),
+										identity.getEpoch(), control.getControlSequence(), control.getOp(),
+										FederatedPhaseWire.ReplyStatus.ACK, FederatedPhaseWire.ErrorCode.NONE,
+										UUID.randomUUID(), 1, identity.getStageSeal(), identity.getSettingsDigest(),
+										new FederatedPhaseWire.StreamFence[0], 0, 0, 0, 0, 0, 0,
+										false, false, false, null, new FederatedPhaseWire.SourceResidencyReceipt[0]);
+									context.writeAndFlush(new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, reply));
+									return;
+								}
 								if(mode == ServerMode.CLOSE_WITHOUT_RESPONSE) {
 									context.close();
 									return;
