@@ -27,13 +27,21 @@ OPAQUE_ACCEPTANCE_PREDICATES = (
 )
 
 INDEPENDENT_ARTIFACT_PREDICATES = {
-    "CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING",
+    "SERIALIZED_CANDIDATE_PRIVACY_TRANSFORMATION",
     "SERIALIZED_CANDIDATE_RECEIPT_SEMANTICS_AND_SOURCE_LINKS",
     "SERIALIZED_RELOCATION_RECEIPT_SEMANTICS_AND_ACTION_LINKS",
     "DERIVED_FOUT_GRAPH_OWNERSHIP",
     "UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION",
-    "SERIALIZED_CANDIDATE_ASSIGNMENT_PRIMITIVES",
+    "SERIALIZED_CANDIDATE_ASSIGNMENT_STRUCTURAL_LINKS",
 }
+
+PRODUCER_CARRIED_ACTIVATION_FIELDS = (
+    "compiledSources.latentWdivmmBoundary",
+    "specialRuntimeAuthority",
+    "supportAuthorityIndex",
+    "logicalCandidateCoordinateAuthority.function.callInputPosition",
+)
+MAX_DECOMPRESSED_ARTIFACT_BYTES = 512 * 1024 * 1024
 
 
 def _candidate_status_valid(status, failure, capability, profile, emissions):
@@ -1149,28 +1157,48 @@ def verify_candidate_assignment_primitives(domain):
     return {"activationFacts": len(facts), "supportAuthorities": len(supports),
             "logicalAuthorities": sum(len(value) for value in logical_by_kind.values()),
             "relocationWorkerPools": len(relocation_pools),
-            "producerAssessmentFieldsTrusted": False}
+            "producerAssessmentFieldsTrusted": False,
+            "producerCarriedUnassessedFields":
+                list(PRODUCER_CARRIED_ACTIVATION_FIELDS)}
 
 
-def artifact_assessed_predicates(domain):
+def artifact_assessment(domain):
+    """Verify each serialized evidence family once and retain its result."""
     assessed = []
-    if verify_candidate_privacy_closure(domain):
-        assessed.append("CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING")
+    privacy = verify_candidate_privacy_closure(domain)
+    if privacy:
+        assessed.append("SERIALIZED_CANDIDATE_PRIVACY_TRANSFORMATION")
     receipt_evidence = verify_candidate_receipt_semantics_and_source_links(domain)
     if receipt_evidence and receipt_evidence["unsupportedSourceLinkReceipts"] == 0:
         assessed.append("SERIALIZED_CANDIDATE_RECEIPT_SEMANTICS_AND_SOURCE_LINKS")
-    if verify_relocation_receipt_semantics_and_action_links(domain):
+    relocation_evidence = verify_relocation_receipt_semantics_and_action_links(domain)
+    if relocation_evidence:
         assessed.append("SERIALIZED_RELOCATION_RECEIPT_SEMANTICS_AND_ACTION_LINKS")
-    if verify_derived_fout_graph_ownership(domain):
+    derived_fout = verify_derived_fout_graph_ownership(domain)
+    if derived_fout:
         assessed.append("DERIVED_FOUT_GRAPH_OWNERSHIP")
-    if verify_nondecision_candidate_owner_classification(domain):
+    owner_classification = verify_nondecision_candidate_owner_classification(domain)
+    if owner_classification:
         assessed.append("UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION")
-    if verify_candidate_assignment_primitives(domain):
-        assessed.append("SERIALIZED_CANDIDATE_ASSIGNMENT_PRIMITIVES")
-    return tuple(assessed)
+    activation_evidence = verify_candidate_assignment_primitives(domain)
+    if activation_evidence:
+        assessed.append("SERIALIZED_CANDIDATE_ASSIGNMENT_STRUCTURAL_LINKS")
+    evidence = {
+        "privacyTransformation": privacy,
+        "candidateReceipt": receipt_evidence,
+        "relocationReceipt": relocation_evidence,
+        "derivedFoutOwnership": derived_fout,
+        "ownerClassification": owner_classification,
+        "candidateAssignmentStructuralLinks": activation_evidence,
+    }
+    return tuple(assessed), evidence
 
 
-def acceptance_coverage(domain, assessed=()):
+def artifact_assessed_predicates(domain):
+    return artifact_assessment(domain)[0]
+
+
+def _acceptance_coverage(domain, assessed, verified_evidence):
     """Describe the exact acceptance boundary of an offline verification receipt."""
     constraints = domain.get("constraints")
     nodes = domain.get("nodes")
@@ -1195,25 +1223,31 @@ def acceptance_coverage(domain, assessed=()):
     }
     if unsupported:
         raise ValueError("unsupported assessed acceptance predicate")
-    if "UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION" in assessed and \
-            not verify_nondecision_candidate_owner_classification(domain):
+    evidence_fields = {"privacyTransformation", "candidateReceipt",
+                       "relocationReceipt", "derivedFoutOwnership",
+                       "ownerClassification", "candidateAssignmentStructuralLinks"}
+    if not isinstance(verified_evidence, dict) or set(verified_evidence) != evidence_fields:
+        raise ValueError("verified acceptance evidence malformed")
+    privacy_evidence = verified_evidence["privacyTransformation"]
+    receipt_evidence = verified_evidence["candidateReceipt"]
+    relocation_receipt_evidence = verified_evidence["relocationReceipt"]
+    derived_fout_evidence = verified_evidence["derivedFoutOwnership"]
+    owner_evidence = verified_evidence["ownerClassification"]
+    activation_evidence = verified_evidence["candidateAssignmentStructuralLinks"]
+    if "UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION" in assessed and not owner_evidence:
         raise ValueError("assessed owner classification evidence absent")
-    if "DERIVED_FOUT_GRAPH_OWNERSHIP" in assessed and \
-            not verify_derived_fout_graph_ownership(domain):
+    if "DERIVED_FOUT_GRAPH_OWNERSHIP" in assessed and not derived_fout_evidence:
         raise ValueError("assessed derived FOUT ownership evidence absent")
-    if "CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING" in assessed and \
-            not verify_candidate_privacy_closure(domain):
+    if "SERIALIZED_CANDIDATE_PRIVACY_TRANSFORMATION" in assessed and not privacy_evidence:
         raise ValueError("assessed candidate privacy evidence absent")
-    receipt_evidence = verify_candidate_receipt_semantics_and_source_links(domain)
     if "SERIALIZED_CANDIDATE_RECEIPT_SEMANTICS_AND_SOURCE_LINKS" in assessed and \
             not receipt_evidence:
         raise ValueError("assessed candidate receipt semantic evidence absent")
-    relocation_receipt_evidence = verify_relocation_receipt_semantics_and_action_links(domain)
     if "SERIALIZED_RELOCATION_RECEIPT_SEMANTICS_AND_ACTION_LINKS" in assessed and \
             not relocation_receipt_evidence:
         raise ValueError("assessed relocation receipt semantic evidence absent")
-    activation_evidence = verify_candidate_assignment_primitives(domain)
-    if "SERIALIZED_CANDIDATE_ASSIGNMENT_PRIMITIVES" in assessed and not activation_evidence:
+    if "SERIALIZED_CANDIDATE_ASSIGNMENT_STRUCTURAL_LINKS" in assessed and \
+            not activation_evidence:
         raise ValueError("assessed candidate assignment primitive evidence absent")
     serialized_unassessed = []
     if constraints_absent:
@@ -1224,14 +1258,17 @@ def acceptance_coverage(domain, assessed=()):
         serialized_unassessed.append("NON_DECISION_ENDPOINT_GRAPH_CONSTRAINT_RECORDS")
     if "DERIVED_FOUT_GRAPH_OWNERSHIP" not in assessed:
         serialized_unassessed.append("DERIVED_FOUT_ACTION_IDENTITY_BINDINGS")
-    if "CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING" not in assessed:
+    if "SERIALIZED_CANDIDATE_PRIVACY_TRANSFORMATION" not in assessed:
         serialized_unassessed.append("CANDIDATE_PRIVACY_CLOSURE_PASS_EVIDENCE")
     if "SERIALIZED_CANDIDATE_RECEIPT_SEMANTICS_AND_SOURCE_LINKS" not in assessed:
         serialized_unassessed.append("CANDIDATE_RECEIPT_SEMANTICS_AND_SOURCE_LINKS")
     if "SERIALIZED_RELOCATION_RECEIPT_SEMANTICS_AND_ACTION_LINKS" not in assessed:
         serialized_unassessed.append("RELOCATION_RECEIPT_SEMANTICS_AND_ACTION_LINKS")
-    if "SERIALIZED_CANDIDATE_ASSIGNMENT_PRIMITIVES" not in assessed:
-        serialized_unassessed.append("CANDIDATE_ASSIGNMENT_PRIMITIVE_EVIDENCE")
+    if "SERIALIZED_CANDIDATE_ASSIGNMENT_STRUCTURAL_LINKS" not in assessed:
+        serialized_unassessed.append("CANDIDATE_ASSIGNMENT_STRUCTURAL_LINK_EVIDENCE")
+    else:
+        serialized_unassessed.append(
+            "CANDIDATE_ASSIGNMENT_PRODUCER_CARRIED_AUTHORITY_FIELDS")
     serialized_unassessed.extend((
         "CANDIDATE_ASSIGNMENT_DEPENDENT_FEASIBILITY",
         "NON_DECISION_CANDIDATE_OWNER_UNIVERSE",
@@ -1246,8 +1283,14 @@ def acceptance_coverage(domain, assessed=()):
         "nonDecisionGraphConstraints": nondecision_constraints,
         "candidateReceiptEvidence": receipt_evidence or None,
         "relocationReceiptEvidence": relocation_receipt_evidence or None,
-        "candidateAssignmentPrimitiveEvidence": activation_evidence or None,
+        "candidateAssignmentStructuralLinkEvidence": activation_evidence or None,
     }
+
+
+def acceptance_coverage(domain, assessed=()):
+    """Public coverage check; independently verifies every referenced evidence family."""
+    _, evidence = artifact_assessment(domain)
+    return _acceptance_coverage(domain, assessed, evidence)
 
 
 def require_full_acceptance(receipt):
@@ -1270,7 +1313,10 @@ def source_order(value):
 
 
 def verify(path, expected_sha):
-    plain = gzip.decompress(Path(path).read_bytes())
+    with gzip.open(path, "rb") as stream:
+        plain = stream.read(MAX_DECOMPRESSED_ARTIFACT_BYTES + 1)
+    if len(plain) > MAX_DECOMPRESSED_ARTIFACT_BYTES:
+        raise ValueError("P artifact exceeds decompressed byte budget")
     if hashlib.sha256(plain).hexdigest() != expected_sha:
         raise ValueError("P artifact digest differs")
     artifact = json.loads(plain)
@@ -1333,12 +1379,12 @@ def verify(path, expected_sha):
         if node[1] == "FUNCTION_CALL" and any(
                 state != "CP/LOUT/-/SHAPE_INDEPENDENT" for state in node[3]):
             raise ValueError("P function call has non-CP executable placement")
-    assessed = artifact_assessed_predicates(domain)
+    assessed, evidence = artifact_assessment(domain)
     return {"schema": "p-native-model-structure-verification-v1",
             "status": "STRUCTURE_VERIFIED", "cell": summary.get("cell"),
             "raw": str(product), "artifactSha256": expected_sha,
             "acceptance": "NOT_ASSESSED_BY_THIS_CONTRACT",
-            "acceptanceCoverage": acceptance_coverage(domain, assessed),
+            "acceptanceCoverage": _acceptance_coverage(domain, assessed, evidence),
             "functionCallPlacementGuard": "VERIFIED"}
 
 

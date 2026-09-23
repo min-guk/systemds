@@ -5,9 +5,13 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from scripts.fedplanner import verify_p_model_artifact as p_verifier
 from scripts.fedplanner.verify_p_model_artifact import (
-    candidate_assignment_locally_compatible, candidate_derived_fout_action, canonical,
+    OPAQUE_ACCEPTANCE_PREDICATES, acceptance_coverage,
+    artifact_assessed_predicates, candidate_assignment_locally_compatible,
+    candidate_derived_fout_action, canonical,
     decode_java_length_fields, source_order, verify,
     verify_candidate_privacy_closure, verify_derived_fout_graph_ownership,
     verify_candidate_assignment_primitives,
@@ -92,6 +96,19 @@ class PModelArtifactVerificationTest(unittest.TestCase):
         missing["candidatePrivacyClosurePasses"][0]["rules"][0].pop("effectivePrivacy")
         with self.assertRaisesRegex(ValueError, "contract differs"):
             verify_candidate_privacy_closure(missing)
+
+        privacy_evidence = self.privacy_domain(copy.deepcopy(cases[2]))
+        assessed = artifact_assessed_predicates(privacy_evidence)
+        self.assertIn("SERIALIZED_CANDIDATE_PRIVACY_TRANSFORMATION", assessed)
+        self.assertNotIn("CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING", assessed)
+        coverage_domain = privacy_evidence
+        coverage_domain.update({"constraints": [], "nodes": [],
+                                "placementDomains": []})
+        coverage = acceptance_coverage(coverage_domain, assessed)
+        self.assertIn("CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING",
+                      coverage["opaquePredicates"])
+        self.assertIn("CANDIDATE_RULE_STATUS_AND_PRIVACY_FILTERING",
+                      OPAQUE_ACCEPTANCE_PREDICATES)
 
     @staticmethod
     def java_token(value):
@@ -324,7 +341,12 @@ class PModelArtifactVerificationTest(unittest.TestCase):
         evidence = verify_candidate_assignment_primitives(domain)
         self.assertEqual({"activationFacts": 1, "supportAuthorities": 2,
                           "logicalAuthorities": 0, "relocationWorkerPools": 1,
-                          "producerAssessmentFieldsTrusted": False}, evidence)
+                          "producerAssessmentFieldsTrusted": False,
+                          "producerCarriedUnassessedFields": [
+                              "compiledSources.latentWdivmmBoundary",
+                              "specialRuntimeAuthority", "supportAuthorityIndex",
+                              "logicalCandidateCoordinateAuthority.function.callInputPosition",
+                          ]}, evidence)
 
         for mutate, message in [
             (lambda value: value["candidateReceiptActivationFacts"][0].__setitem__(
@@ -351,6 +373,43 @@ class PModelArtifactVerificationTest(unittest.TestCase):
         fact["unsupportedReasons"] = []
         self.assertFalse(verify_candidate_assignment_primitives(untrusted)[
             "producerAssessmentFieldsTrusted"])
+
+        producer_carried = copy.deepcopy(domain)
+        producer_carried["candidateReceiptActivationFacts"][0]["inputs"][0][
+            "compiledSources"][0]["latentWdivmmBoundary"] = True
+        producer_carried["candidateReceiptActivationFacts"][0][
+            "specialRuntimeAuthority"] = {
+                "kind": "DIRECT_WDIVMM", "producerPayload": "unassessed"}
+        producer_carried["candidateRealizationSupportAuthorities"][1][
+            "supportAuthorities"].append(
+                {"kind": "ABSENT", "ftype": "-", "layoutExact": False})
+        producer_carried["candidateReceiptActivationFacts"][0][
+            "supportAuthorityIndex"] = 1
+        evidence = verify_candidate_assignment_primitives(producer_carried)
+        self.assertFalse(evidence["producerAssessmentFieldsTrusted"])
+        self.assertEqual(4, len(evidence["producerCarriedUnassessedFields"]))
+
+        function_carried = copy.deepcopy(domain)
+        function_carried["logicalCandidateReachability"]["function"] = [{
+            "source": "source-owner", "boundary": "consumer-owner",
+            "target": "source-owner", "inputPosition": 0}]
+        authority = {"source": "source-owner", "boundary": "consumer-owner",
+            "target": "source-owner", "sourceNodeIndex": 0,
+            "sourcePlacementCoordinateIndex": 0, "boundaryNodeIndex": 1,
+            "boundaryPlacementCoordinateIndex": 1, "targetNodeIndex": 0,
+            "targetPlacementCoordinateIndex": 0, "callInputPosition": 7,
+            "logicalPosition": 0}
+        function_carried["logicalCandidateCoordinateAuthority"]["function"] = [
+            authority]
+        function_carried["candidateReceiptActivationFacts"][0]["inputs"][0][
+            "functionForwardingSources"] = [{name: authority[name] for name in (
+                "sourceNodeIndex", "sourcePlacementCoordinateIndex",
+                "boundaryNodeIndex", "boundaryPlacementCoordinateIndex",
+                "targetNodeIndex", "targetPlacementCoordinateIndex",
+                "callInputPosition", "logicalPosition")}]
+        evidence = verify_candidate_assignment_primitives(function_carried)
+        self.assertIn("logicalCandidateCoordinateAuthority.function.callInputPosition",
+                      evidence["producerCarriedUnassessedFields"])
 
     def test_java_length_fields_handles_utf16_and_rejects_mutations(self):
         signature = "|".join(self.java_token(value) for value in ("a", "😀", ""))
@@ -480,6 +539,9 @@ class PModelArtifactVerificationTest(unittest.TestCase):
                 return hashlib.sha256(plain).hexdigest()
 
             self.assertEqual("STRUCTURE_VERIFIED", verify(path, write())["status"])
+            with patch.object(p_verifier, "MAX_DECOMPRESSED_ARTIFACT_BYTES", 16), \
+                    self.assertRaisesRegex(ValueError, "decompressed byte budget"):
+                verify(path, write())
             artifact["nativeDomain"]["derivedFoutActions"].clear()
             artifact["summary"]["nativeDomainSha256"] = hashlib.sha256(
                 canonical(artifact["nativeDomain"])).hexdigest()
