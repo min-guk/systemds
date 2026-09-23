@@ -35,6 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.runtime.controlprogram.federated.FederatedPhaseWire.BatchTag;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedPhaseWire.Control;
@@ -430,40 +431,53 @@ public class FederatedWorkerPhaseRegistryTest {
 
 	@Test
 	public void concurrentEndAndAbortUseStableReplyIdentityAndPermitImmediateNewAttempt() throws Exception {
-		FederatedRequest request = new FederatedRequest(RequestType.NOOP);
-		PhaseIdentity identity = identity(request.getPID());
-		reply(_registry.handleControl(begin(identity), request.getPID(), HOST).get());
-		UUID stream = UUID.randomUUID();
-		request.setPhaseBatchTag(new BatchTag(identity, WORKER_ID, stream, 0, 1));
-		CountDownLatch rootStarted = new CountDownLatch(1);
+		ExecutorService tasks = Executors.newCachedThreadPool();
+		GatedFirstExecuteExecutor controls = new GatedFirstExecuteExecutor();
+		FederatedWorkerPhaseRegistry registry = new FederatedWorkerPhaseRegistry(
+			WORKER_ID, WORKER_PID, tasks, controls);
 		CountDownLatch releaseRoot = new CountDownLatch(1);
-		CompletableFuture<FederatedResponse> batch = _registry.executeBatch(
-			new FederatedRequest[] {request}, HOST, () -> {
-				rootStarted.countDown();
-				await(releaseRoot);
-				return new FederatedResponse(ResponseType.SUCCESS_EMPTY);
-			});
-		assertTrue(rootStarted.await(5, TimeUnit.SECONDS));
+		try {
+			FederatedRequest request = new FederatedRequest(RequestType.NOOP);
+			PhaseIdentity identity = identity(request.getPID());
+			reply(registry.handleControl(begin(identity), request.getPID(), HOST).get());
+			UUID stream = UUID.randomUUID();
+			request.setPhaseBatchTag(new BatchTag(identity, WORKER_ID, stream, 0, 1));
+			CountDownLatch rootStarted = new CountDownLatch(1);
+			CompletableFuture<FederatedResponse> batch = registry.executeBatch(
+				new FederatedRequest[] {request}, HOST, () -> {
+					rootStarted.countDown();
+					await(releaseRoot);
+					return new FederatedResponse(ResponseType.SUCCESS_EMPTY);
+				});
+			assertTrue(rootStarted.await(5, TimeUnit.SECONDS));
 
-		CompletableFuture<FederatedResponse> ending = _registry.handleControl(
-			end(identity, stream, 2), request.getPID(), HOST);
-		CompletableFuture<FederatedResponse> aborting = _registry.handleControl(
-			cleanup(identity, 3, ControlOp.ABORT_SESSION), request.getPID(), HOST);
-		assertFalse(ending.isDone());
-		assertFalse(aborting.isDone());
-		releaseRoot.countDown();
-		assertTrue(batch.get(5, TimeUnit.SECONDS).isSuccessful());
-		Reply aborted = reply(aborting.get(5, TimeUnit.SECONDS));
-		assertEquals(identity.getStageSeal(), aborted.getAcceptedStageSeal());
-		assertEquals(identity.getSettingsDigest(), aborted.getAcceptedSettingsDigest());
-		assertFalse(_registry.hasStrictSession());
+			CompletableFuture<FederatedResponse> ending = registry.handleControl(
+				end(identity, stream, 2), request.getPID(), HOST);
+			assertTrue(controls.firstQueued.await(5, TimeUnit.SECONDS));
+			CompletableFuture<FederatedResponse> aborting = registry.handleControl(
+				cleanup(identity, 3, ControlOp.ABORT_SESSION), request.getPID(), HOST);
+			releaseRoot.countDown();
+			assertTrue(batch.get(5, TimeUnit.SECONDS).isSuccessful());
+			Reply aborted = reply(aborting.get(5, TimeUnit.SECONDS));
+			assertEquals(identity.getStageSeal(), aborted.getAcceptedStageSeal());
+			assertFalse(registry.hasStrictSession());
+			assertFalse("gated END unexpectedly constructed its reply", ending.isDone());
 
-		PhaseIdentity next = identity(request.getPID(), UUID.randomUUID());
-		assertEquals(ReplyStatus.ACK,
-			reply(_registry.handleControl(begin(next), request.getPID(), HOST).get()).getStatus());
-		Reply ended = reply(ending.get(5, TimeUnit.SECONDS));
-		assertEquals(identity.getStageSeal(), ended.getAcceptedStageSeal());
-		assertEquals(identity.getSettingsDigest(), ended.getAcceptedSettingsDigest());
+			PhaseIdentity next = identity(request.getPID(), UUID.randomUUID());
+			assertEquals(ReplyStatus.ACK,
+				reply(registry.handleControl(begin(next), request.getPID(), HOST).get()).getStatus());
+			controls.releaseFirst();
+			Reply ended = reply(ending.get(5, TimeUnit.SECONDS));
+			assertEquals(identity.getStageSeal(), ended.getAcceptedStageSeal());
+			assertEquals(identity.getSettingsDigest(), ended.getAcceptedSettingsDigest());
+			assertFalse("old END receipt crossed into the new attempt",
+				next.getAttemptId().equals(ended.getAttemptId()));
+		}
+		finally {
+			releaseRoot.countDown();
+			controls.releaseFirst();
+			registry.shutdownForTests();
+		}
 	}
 
 	private static PhaseIdentity identity(long coordinatorPid) {
@@ -546,6 +560,46 @@ public class FederatedWorkerPhaseRegistryTest {
 			executeEntered.countDown();
 			await(releaseExecute);
 			delegate.execute(command);
+		}
+
+		@Override
+		public void shutdown() { delegate.shutdown(); }
+
+		@Override
+		public List<Runnable> shutdownNow() { return delegate.shutdownNow(); }
+
+		@Override
+		public boolean isShutdown() { return delegate.isShutdown(); }
+
+		@Override
+		public boolean isTerminated() { return delegate.isTerminated(); }
+
+		@Override
+		public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+			return delegate.awaitTermination(timeout, unit);
+		}
+	}
+
+	private static final class GatedFirstExecuteExecutor extends AbstractExecutorService {
+		private final ExecutorService delegate = Executors.newCachedThreadPool();
+		private final AtomicInteger submissions = new AtomicInteger();
+		private final AtomicReference<Runnable> first = new AtomicReference<>();
+		private final CountDownLatch firstQueued = new CountDownLatch(1);
+
+		@Override
+		public void execute(Runnable command) {
+			if(submissions.incrementAndGet() == 1) {
+				first.set(command);
+				firstQueued.countDown();
+			}
+			else
+				delegate.execute(command);
+		}
+
+		private void releaseFirst() {
+			Runnable command = first.getAndSet(null);
+			if(command != null)
+				delegate.execute(command);
 		}
 
 		@Override

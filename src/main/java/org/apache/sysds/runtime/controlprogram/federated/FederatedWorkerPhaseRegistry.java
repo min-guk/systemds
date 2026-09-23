@@ -252,7 +252,7 @@ public final class FederatedWorkerPhaseRegistry {
 	private FederatedResponse awaitEnd(Control control, Session session) {
 		FederatedPhaseTasks.Result result;
 		try {
-			result = _tasks.await(session.token, Duration.ofMillis(control.getTimeoutMillis()));
+			result = awaitTasks(session, control.getTimeoutMillis());
 		}
 		catch(InterruptedException ex) {
 			Thread.currentThread().interrupt();
@@ -294,8 +294,7 @@ public final class FederatedWorkerPhaseRegistry {
 	private FederatedResponse awaitCleanup(Control control, Session session) {
 		FederatedPhaseTasks.Result result;
 		try {
-			result = session.terminal ? _tasks.snapshot(session.token)
-				: _tasks.await(session.token, Duration.ofMillis(control.getTimeoutMillis()));
+			result = awaitTasks(session, control.getTimeoutMillis());
 		}
 		catch(InterruptedException ex) {
 			Thread.currentThread().interrupt();
@@ -320,6 +319,23 @@ public final class FederatedWorkerPhaseRegistry {
 				_owner = null;
 			}
 			return response;
+		}
+	}
+
+	private FederatedPhaseTasks.Result awaitTasks(Session session, long timeoutMillis) throws InterruptedException {
+		synchronized(this) {
+			if(session.terminal)
+				return _tasks.snapshot(session.token);
+		}
+		try {
+			return _tasks.await(session.token, Duration.ofMillis(timeoutMillis));
+		}
+		catch(IllegalStateException ex) {
+			synchronized(this) {
+				if(session.terminal)
+					return _tasks.snapshot(session.token);
+			}
+			throw ex;
 		}
 	}
 
