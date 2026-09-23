@@ -276,6 +276,8 @@ public final class FederatedWorkerPhaseRegistry {
 		synchronized(this) {
 			validateActiveControl(control, requestPid, remoteHost);
 			session = _session;
+			if(session.cleanupRequested)
+				throw quarantineAndThrow(session, ErrorCode.INVALID_SEQUENCE);
 			if(control.getOp() == ControlOp.CLOSE_SESSION && !session.terminal && !session.quarantined)
 				throw new IllegalStateException("CLOSE_SESSION requires a terminal or quarantined phase");
 			if(!session.rootsClosed) {
@@ -283,6 +285,7 @@ public final class FederatedWorkerPhaseRegistry {
 				session.rootsClosed = true;
 			}
 			session.ending = true;
+			session.cleanupRequested = true;
 			_owner.lastControlSequence = control.getControlSequence();
 		}
 		return CompletableFuture.supplyAsync(() -> awaitCleanup(control, session), _controlExecutor);
@@ -446,8 +449,10 @@ public final class FederatedWorkerPhaseRegistry {
 			rejected = 0;
 			failed = 0;
 		}
-		String acceptedStageSeal = _owner == null ? "" : _owner.stageSeal;
-		String acceptedSettingsDigest = _owner == null ? "" : _owner.settingsDigest;
+		String acceptedStageSeal = session != null ? session.identity.getStageSeal()
+			: _owner == null ? "" : _owner.stageSeal;
+		String acceptedSettingsDigest = session != null ? session.identity.getSettingsDigest()
+			: _owner == null ? "" : _owner.settingsDigest;
 		return new Reply(control.getIdentity().getAttemptId(), control.getIdentity().getEpoch(),
 			control.getControlSequence(), control.getOp(), status, error, _workerJvmInstanceId, _workerPid,
 			acceptedStageSeal, acceptedSettingsDigest,
@@ -535,6 +540,7 @@ public final class FederatedWorkerPhaseRegistry {
 		private long failedTasks;
 		private boolean rootsClosed;
 		private boolean ending;
+		private boolean cleanupRequested;
 		private boolean terminal;
 		private boolean quarantined;
 		private ErrorCode error = ErrorCode.NONE;

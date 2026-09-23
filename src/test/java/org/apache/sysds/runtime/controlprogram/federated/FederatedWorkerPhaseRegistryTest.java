@@ -310,6 +310,48 @@ public class FederatedWorkerPhaseRegistryTest {
 	}
 
 	@Test
+	public void embeddedNettyQueuedBeginPreventsUntaggedLegacyBypass() throws Exception {
+		EmbeddedChannel channel = new EmbeddedChannel(new FederatedWorkerHandler(new FederatedLookupTable(),
+			new FederatedReadCache(), null, _registry));
+		try {
+			FederatedRequest untagged = new FederatedRequest(RequestType.NOOP);
+			PhaseIdentity identity = identity(untagged.getPID());
+			channel.writeInbound((Object) new FederatedRequest[] {controlRequest(begin(identity))});
+			channel.writeInbound((Object) new FederatedRequest[] {untagged});
+
+			assertEquals(ReplyStatus.ACK, reply(readOutbound(channel)).getStatus());
+			assertFalse("untagged request bypassed queued BEGIN", readOutbound(channel).isSuccessful());
+		}
+		finally {
+			channel.finishAndReleaseAll();
+		}
+	}
+
+	@Test
+	public void embeddedNettyQueuedCloseRoutesFollowingRequestAsLegacyInReplyOrder() throws Exception {
+		EmbeddedChannel channel = new EmbeddedChannel(new FederatedWorkerHandler(new FederatedLookupTable(),
+			new FederatedReadCache(), null, _registry));
+		try {
+			FederatedRequest legacy = new FederatedRequest(RequestType.NOOP);
+			PhaseIdentity identity = identity(legacy.getPID());
+			channel.writeInbound((Object) new FederatedRequest[] {controlRequest(begin(identity))});
+			reply(readOutbound(channel));
+			channel.writeInbound((Object) new FederatedRequest[] {controlRequest(endEmpty(identity, 2))});
+			reply(readOutbound(channel));
+
+			channel.writeInbound((Object) new FederatedRequest[] {
+				controlRequest(cleanup(identity, 3, ControlOp.CLOSE_SESSION))});
+			channel.writeInbound((Object) new FederatedRequest[] {legacy});
+			assertEquals(ControlOp.CLOSE_SESSION, reply(readOutbound(channel)).getOp());
+			assertTrue("legacy request was routed before queued CLOSE completed",
+				readOutbound(channel).isSuccessful());
+		}
+		finally {
+			channel.finishAndReleaseAll();
+		}
+	}
+
+	@Test
 	public void authenticatedCloseReleasesOwnerForCleanNextAttempt() throws Exception {
 		FederatedRequest request = new FederatedRequest(RequestType.NOOP);
 		PhaseIdentity first = identity(request.getPID());
@@ -384,6 +426,44 @@ public class FederatedWorkerPhaseRegistryTest {
 			tasks.releaseExecute.countDown();
 			registry.shutdownForTests();
 		}
+	}
+
+	@Test
+	public void concurrentEndAndAbortUseStableReplyIdentityAndPermitImmediateNewAttempt() throws Exception {
+		FederatedRequest request = new FederatedRequest(RequestType.NOOP);
+		PhaseIdentity identity = identity(request.getPID());
+		reply(_registry.handleControl(begin(identity), request.getPID(), HOST).get());
+		UUID stream = UUID.randomUUID();
+		request.setPhaseBatchTag(new BatchTag(identity, WORKER_ID, stream, 0, 1));
+		CountDownLatch rootStarted = new CountDownLatch(1);
+		CountDownLatch releaseRoot = new CountDownLatch(1);
+		CompletableFuture<FederatedResponse> batch = _registry.executeBatch(
+			new FederatedRequest[] {request}, HOST, () -> {
+				rootStarted.countDown();
+				await(releaseRoot);
+				return new FederatedResponse(ResponseType.SUCCESS_EMPTY);
+			});
+		assertTrue(rootStarted.await(5, TimeUnit.SECONDS));
+
+		CompletableFuture<FederatedResponse> ending = _registry.handleControl(
+			end(identity, stream, 2), request.getPID(), HOST);
+		CompletableFuture<FederatedResponse> aborting = _registry.handleControl(
+			cleanup(identity, 3, ControlOp.ABORT_SESSION), request.getPID(), HOST);
+		assertFalse(ending.isDone());
+		assertFalse(aborting.isDone());
+		releaseRoot.countDown();
+		assertTrue(batch.get(5, TimeUnit.SECONDS).isSuccessful());
+		Reply aborted = reply(aborting.get(5, TimeUnit.SECONDS));
+		assertEquals(identity.getStageSeal(), aborted.getAcceptedStageSeal());
+		assertEquals(identity.getSettingsDigest(), aborted.getAcceptedSettingsDigest());
+		assertFalse(_registry.hasStrictSession());
+
+		PhaseIdentity next = identity(request.getPID(), UUID.randomUUID());
+		assertEquals(ReplyStatus.ACK,
+			reply(_registry.handleControl(begin(next), request.getPID(), HOST).get()).getStatus());
+		Reply ended = reply(ending.get(5, TimeUnit.SECONDS));
+		assertEquals(identity.getStageSeal(), ended.getAcceptedStageSeal());
+		assertEquals(identity.getSettingsDigest(), ended.getAcceptedSettingsDigest());
 	}
 
 	private static PhaseIdentity identity(long coordinatorPid) {

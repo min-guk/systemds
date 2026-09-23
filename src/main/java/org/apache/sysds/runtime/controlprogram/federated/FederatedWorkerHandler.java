@@ -123,7 +123,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	/** Federated workload analyzer */
 	private final FederatedWorkloadAnalyzer _fan;
 	private final FederatedWorkerPhaseRegistry _phaseRegistry;
-	private CompletableFuture<Void> _strictTail = CompletableFuture.completedFuture(null);
+	private CompletableFuture<Void> _channelTail = CompletableFuture.completedFuture(null);
 
 	private String _remoteAddress = FederatedLookupTable.NOHOST;
 
@@ -166,20 +166,8 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	public void channelRead(ChannelHandlerContext ctx, Object msg) {
 		if(LOG.isInfoEnabled())
 			LOG.info("Federated worker received request: " + msg.getClass().getName());
-		if(useStrictPath(msg)) {
-			handleStrict(ctx, msg);
-			return;
-		}
-		// Do NOT close the channel after every response. Federated requests can be
-		// multiplexed over a persistent connection to preserve strict request order
-		// (important for stateful worker-side execution contexts and cleanup).
-		ctx.writeAndFlush(createResponse(msg, ctx.channel().remoteAddress()))
-			.addListener(f -> {
-				if(!f.isSuccess()) {
-					LOG.error("Federated worker write failed", f.cause());
-					ctx.close();
-				}
-			});
+		_channelTail = _channelTail.thenComposeAsync(ignored -> response(ctx, msg), ctx.executor())
+			.thenComposeAsync(response -> writeResponse(ctx, response), ctx.executor());
 	}
 
 	private boolean useStrictPath(Object msg) {
@@ -195,9 +183,10 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		return false;
 	}
 
-	private void handleStrict(ChannelHandlerContext ctx, Object msg) {
-		_strictTail = _strictTail.thenComposeAsync(ignored -> strictResponse(ctx, msg), ctx.executor())
-			.thenComposeAsync(response -> writeStrict(ctx, response), ctx.executor());
+	private CompletableFuture<FederatedResponse> response(ChannelHandlerContext ctx, Object msg) {
+		if(useStrictPath(msg))
+			return strictResponse(ctx, msg);
+		return CompletableFuture.completedFuture(createResponse(msg, ctx.channel().remoteAddress()));
 	}
 
 	private CompletableFuture<FederatedResponse> strictResponse(ChannelHandlerContext ctx, Object msg) {
@@ -225,10 +214,11 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			.exceptionally(error -> new FederatedResponse(ResponseType.ERROR, "STRICT batch failed"));
 	}
 
-	private static CompletableFuture<Void> writeStrict(ChannelHandlerContext ctx, FederatedResponse response) {
+	private static CompletableFuture<Void> writeResponse(ChannelHandlerContext ctx, FederatedResponse response) {
 		CompletableFuture<Void> written = new CompletableFuture<>();
 		ctx.writeAndFlush(response).addListener(future -> {
 			if(!future.isSuccess()) {
+				LOG.error("Federated worker write failed", future.cause());
 				ctx.close();
 				written.completeExceptionally(future.cause());
 			}
