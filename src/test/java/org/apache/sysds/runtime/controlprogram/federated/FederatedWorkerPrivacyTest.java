@@ -26,30 +26,34 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.lops.Lop;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.instructions.Instruction;
+import org.apache.sysds.runtime.instructions.InstructionParser;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.AggregateUnaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.Data.WorkerPrivacyLevel;
 import org.apache.sysds.runtime.instructions.cp.DoubleObject;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
+import org.apache.sysds.runtime.instructions.cp.StringObject;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
-import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestUtils;
 import org.junit.Test;
@@ -117,6 +121,253 @@ public class FederatedWorkerPrivacyTest {
 		assertEquals(WorkerPrivacyLevel.PUBLIC, propagateFullSum(WorkerPrivacyLevel.PRIVATE_AGGREGATE));
 		assertEquals(WorkerPrivacyLevel.PRIVATE, propagateFullSum(WorkerPrivacyLevel.PRIVATE));
 		assertEquals(WorkerPrivacyLevel.UNKNOWN, propagateFullSum(WorkerPrivacyLevel.UNKNOWN));
+	}
+
+	@Test
+	public void fullSumRemainsProtectedUntilSuccessfulReleaseApplication() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PRIVATE_AGGREGATE);
+		ec.setVariable("sum", scalar(0, WorkerPrivacyLevel.PUBLIC));
+		String instruction = InstructionUtils.concatOperands("CP", "uak+",
+			operand("X", DataType.MATRIX, ValueType.FP64),
+			operand("sum", DataType.SCALAR, ValueType.FP64), "1");
+		Instruction parsed = InstructionParser.parseSingleInstruction(instruction);
+		WorkerPrivacyLevel executionLabel = FederatedWorkerPrivacy.inferInstructionOutput(ec, parsed);
+		assertEquals(WorkerPrivacyLevel.PRIVATE_AGGREGATE, executionLabel);
+		FederatedWorkerPrivacy.protectInstructionAliases(ec, parsed, executionLabel);
+		assertEquals(WorkerPrivacyLevel.PRIVATE_AGGREGATE,
+			ec.getVariable("sum").getWorkerPrivacyLevel());
+		parsed.processInstruction(ec);
+		FederatedWorkerPrivacy.applyInstructionOutput(ec, parsed, executionLabel);
+		assertEquals(WorkerPrivacyLevel.PUBLIC, ec.getVariable("sum").getWorkerPrivacyLevel());
+	}
+
+	@Test
+	public void operationContractsPreserveLabelsUntilAnExplicitRelease() {
+		for(WorkerPrivacyLevel level : WorkerPrivacyLevel.values()) {
+			assertEquals(level, inferUnaryMatrixLabel("r'", level, true));
+			assertEquals(level, inferUnaryMatrixLabel("rev", level, false));
+			assertEquals(nonDeclassifiable(level), inferUnaryMatrixLabel("uacmax", level, true));
+			assertEquals(nonDeclassifiable(level),
+				inferRightIndexLabel(level, WorkerPrivacyLevel.PUBLIC));
+		}
+	}
+
+	@Test
+	public void indexingAccountsForEveryVariableOperandAndBound() {
+		for(WorkerPrivacyLevel level : List.of(WorkerPrivacyLevel.PRIVATE_AGGREGATE,
+			WorkerPrivacyLevel.PRIVATE, WorkerPrivacyLevel.UNKNOWN)) {
+			assertEquals(nonDeclassifiable(level),
+				inferRightIndexLabel(WorkerPrivacyLevel.PUBLIC, level));
+			assertEquals(nonDeclassifiable(level), inferLeftIndexLabel(WorkerPrivacyLevel.PUBLIC, level,
+				WorkerPrivacyLevel.PUBLIC));
+			assertEquals(nonDeclassifiable(level), inferLeftIndexLabel(WorkerPrivacyLevel.PUBLIC,
+				WorkerPrivacyLevel.PUBLIC, level));
+		}
+	}
+
+	@Test
+	public void nonBijectivePrivateAggregateOperationsCannotComposeIntoFullSumRelease() throws Exception {
+		for(String opcode : List.of("rightIndex", "leftIndex", "uacmax")) {
+			Path data = writeCsv("private-aggregate");
+			long inputId = NEXT_ID.incrementAndGet();
+			long intermediateId = NEXT_ID.incrementAndGet();
+			long sumId = NEXT_ID.incrementAndGet();
+			FederatedWorkerHandler handler = new FederatedWorkerHandler(new FederatedLookupTable(),
+				new FederatedReadCache(), null);
+			assertEquals(true, execute(handler, new FederatedRequest(RequestType.READ_VAR, inputId,
+				data.toString(), DataType.MATRIX.name())).isSuccessful());
+			assertEquals("non-bijective operation must execute: " + opcode, true,
+				execute(handler, new FederatedRequest(RequestType.EXEC_INST, intermediateId,
+					localOperation(opcode, inputId, intermediateId))).isSuccessful());
+
+			String sum = InstructionUtils.concatOperands("CP", "uak+",
+				operand(Long.toString(intermediateId), DataType.MATRIX, ValueType.FP64),
+				operand(Long.toString(sumId), DataType.SCALAR, ValueType.FP64), "1");
+			assertEquals(true,
+				execute(handler, new FederatedRequest(RequestType.EXEC_INST, sumId, sum)).isSuccessful());
+			assertEquals("derived aggregate must remain private: " + opcode, false,
+				execute(handler, new FederatedRequest(RequestType.GET_VAR, sumId)).isSuccessful());
+		}
+	}
+
+	@Test
+	public void bijectivePrivateAggregateReorgStillAllowsFullSumRelease() throws Exception {
+		for(String opcode : List.of("r'", "rev")) {
+			Path data = writeCsv("private-aggregate");
+			long inputId = NEXT_ID.incrementAndGet();
+			long intermediateId = NEXT_ID.incrementAndGet();
+			long sumId = NEXT_ID.incrementAndGet();
+			FederatedWorkerHandler handler = new FederatedWorkerHandler(new FederatedLookupTable(),
+				new FederatedReadCache(), null);
+			assertEquals(true, execute(handler, new FederatedRequest(RequestType.READ_VAR, inputId,
+				data.toString(), DataType.MATRIX.name())).isSuccessful());
+			assertEquals(true, execute(handler, new FederatedRequest(RequestType.EXEC_INST, intermediateId,
+				localOperation(opcode, inputId, intermediateId))).isSuccessful());
+
+			String sum = InstructionUtils.concatOperands("CP", "uak+",
+				operand(Long.toString(intermediateId), DataType.MATRIX, ValueType.FP64),
+				operand(Long.toString(sumId), DataType.SCALAR, ValueType.FP64), "1");
+			assertEquals(true,
+				execute(handler, new FederatedRequest(RequestType.EXEC_INST, sumId, sum)).isSuccessful());
+			FederatedResponse released = execute(handler, new FederatedRequest(RequestType.GET_VAR, sumId));
+			assertEquals(true, released.isSuccessful());
+			assertEquals(10d, ((DoubleObject) released.getData()[0]).getDoubleValue(), 0d);
+		}
+	}
+
+	@Test
+	public void literalFlagsCannotHideMatrixOperandsButLiteralBoundsRemainPublic() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PRIVATE);
+		String forgedTranspose = InstructionUtils.concatOperands("CP", "r'",
+			operand("X", DataType.MATRIX, ValueType.FP64, true),
+			operand("Y", DataType.MATRIX, ValueType.FP64), "1");
+		assertThrows(FederatedWorkerHandlerException.class,
+			() -> FederatedWorkerPrivacy.inferInstructionOutput(ec,
+				InstructionParser.parseSingleInstruction(forgedTranspose)));
+
+		String forgedRightIndex = InstructionUtils.concatOperands("CP", "rightIndex",
+			operand("X", DataType.MATRIX, ValueType.FP64, true), literalIndex(1), literalIndex(1),
+			literalIndex(1), literalIndex(1), operand("Y", DataType.MATRIX, ValueType.FP64));
+		assertThrows(FederatedWorkerHandlerException.class,
+			() -> FederatedWorkerPrivacy.inferInstructionOutput(ec,
+				InstructionParser.parseSingleInstruction(forgedRightIndex)));
+
+		String validRightIndex = InstructionUtils.concatOperands("CP", "rightIndex",
+			operand("X", DataType.MATRIX, ValueType.FP64), literalIndex(1), literalIndex(1),
+			literalIndex(1), literalIndex(1), operand("Y", DataType.MATRIX, ValueType.FP64));
+		assertEquals(WorkerPrivacyLevel.PRIVATE,
+			FederatedWorkerPrivacy.inferInstructionOutput(ec,
+				InstructionParser.parseSingleInstruction(validRightIndex)));
+	}
+
+	@Test
+	public void preExecutionProtectionCoversReusedOutputAndInPlaceAliasesOnFailure() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PUBLIC);
+		MatrixObject input = ec.getMatrixObject("X");
+		input.setUpdateType(UpdateType.INPLACE);
+		ec.setVariable("X_ALIAS", input);
+		ec.setVariable("R", scalar(9, WorkerPrivacyLevel.PRIVATE));
+
+		MatrixObject reusedOutput = matrix(WorkerPrivacyLevel.PUBLIC);
+		ec.setVariable("Y", reusedOutput);
+		ec.setVariable("Y_ALIAS", reusedOutput);
+		String leftIndex = InstructionUtils.concatOperands("CP", "leftIndex",
+			operand("X", DataType.MATRIX, ValueType.FP64),
+			operand("R", DataType.SCALAR, ValueType.FP64), literalIndex(3), literalIndex(3),
+			literalIndex(1), literalIndex(1), operand("Y", DataType.MATRIX, ValueType.FP64));
+		Instruction instruction = InstructionParser.parseSingleInstruction(leftIndex);
+		WorkerPrivacyLevel label = FederatedWorkerPrivacy.inferInstructionOutput(ec, instruction);
+		FederatedWorkerPrivacy.protectInstructionAliases(ec, instruction, label);
+
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("X").getWorkerPrivacyLevel());
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("X_ALIAS").getWorkerPrivacyLevel());
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("Y").getWorkerPrivacyLevel());
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("Y_ALIAS").getWorkerPrivacyLevel());
+		assertThrows(FederatedWorkerHandlerException.class,
+			() -> FederatedWorkerPrivacy.validateRawRelease(ec.getVariable("X_ALIAS")));
+		assertThrows(FederatedWorkerHandlerException.class,
+			() -> FederatedWorkerPrivacy.validateRawRelease(ec.getVariable("Y_ALIAS")));
+		assertThrows(RuntimeException.class, () -> instruction.processInstruction(ec));
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("X_ALIAS").getWorkerPrivacyLevel());
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("Y_ALIAS").getWorkerPrivacyLevel());
+	}
+
+	@Test
+	public void successfulPartialUpdateCannotDowngradeReusedPrivateOutputAlias() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PUBLIC);
+		ec.setVariable("R", scalar(9, WorkerPrivacyLevel.PUBLIC));
+		MatrixObject reusedOutput = matrix(WorkerPrivacyLevel.PRIVATE);
+		ec.setVariable("Y", reusedOutput);
+		ec.setVariable("Y_ALIAS", reusedOutput);
+		String leftIndex = InstructionUtils.concatOperands("CP", "leftIndex",
+			operand("X", DataType.MATRIX, ValueType.FP64),
+			operand("R", DataType.SCALAR, ValueType.FP64), literalIndex(1), literalIndex(1),
+			literalIndex(1), literalIndex(1), operand("Y", DataType.MATRIX, ValueType.FP64));
+		Instruction instruction = InstructionParser.parseSingleInstruction(leftIndex);
+		WorkerPrivacyLevel label = FederatedWorkerPrivacy.inferInstructionOutput(ec, instruction);
+		assertEquals(WorkerPrivacyLevel.PUBLIC, label);
+		FederatedWorkerPrivacy.protectInstructionAliases(ec, instruction, label);
+		instruction.processInstruction(ec);
+		FederatedWorkerPrivacy.applyInstructionOutput(ec, instruction, label);
+
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("Y").getWorkerPrivacyLevel());
+		assertEquals(WorkerPrivacyLevel.PRIVATE, ec.getVariable("Y_ALIAS").getWorkerPrivacyLevel());
+		assertThrows(FederatedWorkerHandlerException.class,
+			() -> FederatedWorkerPrivacy.validateRawRelease(ec.getVariable("Y_ALIAS")));
+	}
+
+	@Test
+	public void rmvarCanDeleteProtectedStateWithoutReleasingIt() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PRIVATE);
+		Instruction rmvar = InstructionParser.parseSingleInstruction(
+			InstructionUtils.concatOperands("CP", "rmvar", "X"));
+		assertEquals(WorkerPrivacyLevel.PUBLIC,
+			FederatedWorkerPrivacy.inferInstructionOutput(ec, rmvar));
+		rmvar.processInstruction(ec);
+		assertEquals(false, ec.containsVariable("X"));
+	}
+
+	@Test
+	public void handlerExecutesAllowedProtectedLocalOperationsWithoutRawRelease() throws Exception {
+		for(String opcode : List.of("r'", "rev", "uacmax", "rightIndex", "leftIndex")) {
+			Path data = writeCsv("private-aggregate");
+			long inputId = NEXT_ID.incrementAndGet();
+			long outputId = NEXT_ID.incrementAndGet();
+			FederatedWorkerHandler handler = new FederatedWorkerHandler(new FederatedLookupTable(),
+				new FederatedReadCache(), null);
+			assertEquals(true, execute(handler, new FederatedRequest(RequestType.READ_VAR, inputId,
+				data.toString(), DataType.MATRIX.name())).isSuccessful());
+
+			String instruction = localOperation(opcode, inputId, outputId);
+			assertEquals("allowed operation must execute: " + opcode, true,
+				execute(handler, new FederatedRequest(RequestType.EXEC_INST, outputId, instruction)).isSuccessful());
+			assertEquals("protected result must not be released: " + opcode, false,
+				execute(handler, new FederatedRequest(RequestType.GET_VAR, outputId)).isSuccessful());
+		}
+
+		Path data = writeCsv("private");
+		long inputId = NEXT_ID.incrementAndGet();
+		FederatedWorkerHandler handler = new FederatedWorkerHandler(new FederatedLookupTable(),
+			new FederatedReadCache(), null);
+		assertEquals(true, execute(handler, new FederatedRequest(RequestType.READ_VAR, inputId,
+			data.toString(), DataType.MATRIX.name())).isSuccessful());
+		String rmvar = InstructionUtils.concatOperands("CP", "rmvar", Long.toString(inputId));
+		assertEquals(true,
+			execute(handler, new FederatedRequest(RequestType.EXEC_INST, inputId, rmvar)).isSuccessful());
+		assertEquals(false,
+			execute(handler, new FederatedRequest(RequestType.GET_VAR, inputId)).isSuccessful());
+	}
+
+	@Test
+	public void placeholderPatchedOutputIsRejectedBeforeExistingDestinationMutation() throws Exception {
+		Path data = writeCsv("private");
+		long inputId = NEXT_ID.incrementAndGet();
+		long selectorId = NEXT_ID.incrementAndGet();
+		long destinationId = NEXT_ID.incrementAndGet();
+		FederatedWorkerHandler handler = new FederatedWorkerHandler(new FederatedLookupTable(),
+			new FederatedReadCache(), null);
+		assertEquals(true, execute(handler, new FederatedRequest(RequestType.READ_VAR, inputId,
+			data.toString(), DataType.MATRIX.name())).isSuccessful());
+		assertEquals(true, execute(handler,
+			new FederatedRequest(RequestType.PUT_VAR, selectorId,
+				new StringObject(Long.toString(destinationId))),
+			new FederatedRequest(RequestType.PUT_VAR, destinationId,
+				new MatrixBlock(1, 1, 7d))).isSuccessful());
+
+		String patchedOutput = Lop.VARIABLE_NAME_PLACEHOLDER + selectorId + Lop.VARIABLE_NAME_PLACEHOLDER;
+		String transpose = InstructionUtils.concatOperands("CP", "r'",
+			operand(Long.toString(inputId), DataType.MATRIX, ValueType.FP64),
+			operand(patchedOutput, DataType.MATRIX, ValueType.FP64), "1");
+		assertEquals(false, execute(handler,
+			new FederatedRequest(RequestType.EXEC_INST, destinationId, transpose)).isSuccessful());
+
+		FederatedResponse destination = execute(handler,
+			new FederatedRequest(RequestType.GET_VAR, destinationId));
+		assertEquals(true, destination.isSuccessful());
+		MatrixBlock unchanged = (MatrixBlock) destination.getData()[0];
+		assertEquals(1, unchanged.getNumRows());
+		assertEquals(1, unchanged.getNumColumns());
+		assertEquals(7d, unchanged.get(0, 0), 0d);
 	}
 
 	@Test
@@ -420,6 +671,99 @@ public class FederatedWorkerPrivacyTest {
 		WorkerPrivacyLevel inferred = FederatedWorkerPrivacy.inferInstructionOutput(ec, parsed);
 		FederatedWorkerPrivacy.applyInstructionOutput(ec, parsed, inferred);
 		return ec.getVariable("sum").getWorkerPrivacyLevel();
+	}
+
+	private static WorkerPrivacyLevel inferUnaryMatrixLabel(String opcode, WorkerPrivacyLevel level,
+		boolean threads) {
+		ExecutionContext ec = matrixContext("X", level);
+		String instruction = threads ? InstructionUtils.concatOperands("CP", opcode,
+			operand("X", DataType.MATRIX, ValueType.FP64),
+			operand("Y", DataType.MATRIX, ValueType.FP64), "1")
+			: InstructionUtils.concatOperands("CP", opcode, operand("X", DataType.MATRIX, ValueType.FP64),
+				operand("Y", DataType.MATRIX, ValueType.FP64));
+		return FederatedWorkerPrivacy.inferInstructionOutput(ec,
+			InstructionParser.parseSingleInstruction(instruction));
+	}
+
+	private static WorkerPrivacyLevel inferRightIndexLabel(WorkerPrivacyLevel inputLevel,
+		WorkerPrivacyLevel boundLevel) {
+		ExecutionContext ec = matrixContext("X", inputLevel);
+		ec.setVariable("B", scalar(1, boundLevel));
+		String instruction = InstructionUtils.concatOperands("CP", "rightIndex",
+			operand("X", DataType.MATRIX, ValueType.FP64), operand("B", DataType.SCALAR, ValueType.INT64),
+			literalIndex(1), literalIndex(1), literalIndex(1),
+			operand("Y", DataType.MATRIX, ValueType.FP64));
+		return FederatedWorkerPrivacy.inferInstructionOutput(ec,
+			InstructionParser.parseSingleInstruction(instruction));
+	}
+
+	private static WorkerPrivacyLevel inferLeftIndexLabel(WorkerPrivacyLevel inputLevel,
+		WorkerPrivacyLevel rhsLevel, WorkerPrivacyLevel boundLevel) {
+		ExecutionContext ec = matrixContext("X", inputLevel);
+		ec.setVariable("R", matrix(rhsLevel));
+		ec.setVariable("B", scalar(1, boundLevel));
+		String instruction = InstructionUtils.concatOperands("CP", "leftIndex",
+			operand("X", DataType.MATRIX, ValueType.FP64), operand("R", DataType.MATRIX, ValueType.FP64),
+			operand("B", DataType.SCALAR, ValueType.INT64), literalIndex(1), literalIndex(1), literalIndex(1),
+			operand("Y", DataType.MATRIX, ValueType.FP64));
+		return FederatedWorkerPrivacy.inferInstructionOutput(ec,
+			InstructionParser.parseSingleInstruction(instruction));
+	}
+
+	private static ExecutionContext matrixContext(String name, WorkerPrivacyLevel level) {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setVariable(name, matrix(level));
+		return ec;
+	}
+
+	private static MatrixObject matrix(WorkerPrivacyLevel level) {
+		MatrixObject matrix = ExecutionContext.createMatrixObject(new MatrixBlock(2, 2, 1));
+		matrix.setWorkerPrivacyLevel(level);
+		return matrix;
+	}
+
+	private static DoubleObject scalar(double value, WorkerPrivacyLevel level) {
+		DoubleObject scalar = new DoubleObject(value);
+		scalar.setWorkerPrivacyLevel(level);
+		return scalar;
+	}
+
+	private static String operand(String name, DataType dataType, ValueType valueType) {
+		return InstructionUtils.concatOperandParts(name, dataType.name(), valueType.name());
+	}
+
+	private static String operand(String name, DataType dataType, ValueType valueType, boolean literal) {
+		return InstructionUtils.concatOperandParts(name, dataType.name(), valueType.name(),
+			Boolean.toString(literal));
+	}
+
+	private static String literalIndex(long value) {
+		return operand(Long.toString(value), DataType.SCALAR, ValueType.INT64, true);
+	}
+
+	private static String localOperation(String opcode, long inputId, long outputId) {
+		String input = operand(Long.toString(inputId), DataType.MATRIX, ValueType.FP64);
+		String output = operand(Long.toString(outputId), DataType.MATRIX, ValueType.FP64);
+		switch(opcode) {
+			case "r'":
+			case "uacmax":
+				return InstructionUtils.concatOperands("CP", opcode, input, output, "1");
+			case "rev":
+				return InstructionUtils.concatOperands("CP", opcode, input, output);
+			case "rightIndex":
+				return InstructionUtils.concatOperands("CP", opcode, input, literalIndex(1), literalIndex(1),
+					literalIndex(1), literalIndex(1), output);
+			case "leftIndex":
+				return InstructionUtils.concatOperands("CP", opcode, input,
+					operand("9", DataType.SCALAR, ValueType.FP64, true), literalIndex(1), literalIndex(1),
+					literalIndex(1), literalIndex(1), output);
+			default:
+				throw new IllegalArgumentException("unsupported test opcode " + opcode);
+		}
+	}
+
+	private static WorkerPrivacyLevel nonDeclassifiable(WorkerPrivacyLevel level) {
+		return level == WorkerPrivacyLevel.PRIVATE_AGGREGATE ? WorkerPrivacyLevel.PRIVATE : level;
 	}
 
 	private static String metadata(String privacy) {

@@ -674,7 +674,9 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		final long tid = request.getTID();
 		final ExecutionContext ec = getContextForInstruction(tid, ins, ecm);
 		setThreads(ins);
+		FederatedWorkerPrivacy.validateStableExecutionTarget(ec, ins);
 		WorkerPrivacyLevel outputPrivacy = FederatedWorkerPrivacy.inferInstructionOutput(ec, ins);
+		FederatedWorkerPrivacy.protectInstructionAliases(ec, ins, outputPrivacy);
 		try {
 			exec(ec, ins);
 			FederatedWorkerPrivacy.applyInstructionOutput(ec, ins, outputPrivacy);
@@ -689,7 +691,9 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 							+ " by re-reading from " + readInfo.filename);
 					}
 					readData(readInfo.filename, readInfo.dataType, missingVarId, tid, ecm, null);
+					FederatedWorkerPrivacy.validateStableExecutionTarget(ec, ins);
 					outputPrivacy = FederatedWorkerPrivacy.inferInstructionOutput(ec, ins);
+					FederatedWorkerPrivacy.protectInstructionAliases(ec, ins, outputPrivacy);
 					exec(ec, ins);
 					FederatedWorkerPrivacy.applyInstructionOutput(ec, ins, outputPrivacy);
 				}
