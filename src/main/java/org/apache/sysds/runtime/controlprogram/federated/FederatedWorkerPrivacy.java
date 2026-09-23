@@ -39,6 +39,7 @@ import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.Data.WorkerPrivacyLevel;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.MatrixIndexingCPInstruction;
+import org.apache.sysds.runtime.instructions.cp.ParameterizedBuiltinCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.ReorgCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstructionUtils;
@@ -150,6 +151,16 @@ final class FederatedWorkerPrivacy {
 			// Conservatively make every PA-dependent indexing result non-releasable.
 			return makeNonDeclassifiable(label);
 		}
+		else if(instruction.getClass() == ParameterizedBuiltinCPInstruction.class) {
+			ParameterizedBuiltinCPInstruction replacement = (ParameterizedBuiltinCPInstruction) instruction;
+			String target = replacement.getParam("target");
+			if(target == null || !ec.containsVariable(target) || !(ec.getVariable(target) instanceof MatrixObject))
+				throw new FederatedWorkerHandlerException(
+					"Federated worker privacy policy requires a matrix replace target.");
+			// replace is a local, non-bijective transform: never turn a partial
+			// PRIVATE_AGGREGATE shard into a releasable full aggregate.
+			return makeNonDeclassifiable(effectiveLabel(ec.getVariable(target)));
+		}
 		else if(instruction.getClass() == VariableCPInstruction.class) {
 			VariableCPInstruction variable = (VariableCPInstruction) instruction;
 			if(variable.isRemoveVariableNoFile())
@@ -197,7 +208,26 @@ final class FederatedWorkerPrivacy {
 
 	private static boolean isSupportedInstruction(Instruction instruction) {
 		return isSupportedAggregate(instruction) || isSupportedReorg(instruction)
-			|| isSupportedIndexing(instruction) || isSupportedVariable(instruction);
+			|| isSupportedIndexing(instruction) || isSupportedReplace(instruction)
+			|| isSupportedVariable(instruction);
+	}
+
+	private static boolean isSupportedReplace(Instruction instruction) {
+		if(instruction.getClass() != ParameterizedBuiltinCPInstruction.class
+			|| !"replace".equalsIgnoreCase(instruction.getOpcode()))
+			return false;
+		ParameterizedBuiltinCPInstruction replacement = (ParameterizedBuiltinCPInstruction) instruction;
+		if(replacement.getParameterMap().size() != 3 || replacement.getParam("target") == null
+			|| replacement.getParam("pattern") == null || replacement.getParam("replacement") == null)
+			return false;
+		try {
+			Double.parseDouble(replacement.getParam("pattern"));
+			Double.parseDouble(replacement.getParam("replacement"));
+			return true;
+		}
+		catch(NumberFormatException ex) {
+			return false;
+		}
 	}
 
 	private static boolean isSupportedAggregate(Instruction instruction) {

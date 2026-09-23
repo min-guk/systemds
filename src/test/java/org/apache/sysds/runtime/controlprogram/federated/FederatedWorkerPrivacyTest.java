@@ -148,6 +148,7 @@ public class FederatedWorkerPrivacyTest {
 			assertEquals(level, inferUnaryMatrixLabel("rev", level, false));
 			assertEquals(nonDeclassifiable(level), inferUnaryMatrixLabel("uacmax", level, true));
 			assertEquals(nonDeclassifiable(level), inferUnaryMatrixLabel("uacmean", level, true));
+			assertEquals(nonDeclassifiable(level), inferReplaceLabel(level));
 			assertEquals(nonDeclassifiable(level),
 				inferRightIndexLabel(level, WorkerPrivacyLevel.PUBLIC));
 		}
@@ -168,7 +169,7 @@ public class FederatedWorkerPrivacyTest {
 
 	@Test
 	public void nonBijectivePrivateAggregateOperationsCannotComposeIntoFullSumRelease() throws Exception {
-		for(String opcode : List.of("rightIndex", "leftIndex", "uacmax", "uacmean")) {
+		for(String opcode : List.of("rightIndex", "leftIndex", "uacmax", "uacmean", "replace")) {
 			Path data = writeCsv("private-aggregate");
 			long inputId = NEXT_ID.incrementAndGet();
 			long intermediateId = NEXT_ID.incrementAndGet();
@@ -310,7 +311,8 @@ public class FederatedWorkerPrivacyTest {
 
 	@Test
 	public void handlerExecutesAllowedProtectedLocalOperationsWithoutRawRelease() throws Exception {
-		for(String opcode : List.of("r'", "rev", "uacmax", "uacmean", "rightIndex", "leftIndex")) {
+		for(String opcode : List.of("r'", "rev", "uacmax", "uacmean", "rightIndex", "leftIndex",
+			"replace")) {
 			Path data = writeCsv("private-aggregate");
 			long inputId = NEXT_ID.incrementAndGet();
 			long outputId = NEXT_ID.incrementAndGet();
@@ -337,6 +339,43 @@ public class FederatedWorkerPrivacyTest {
 			execute(handler, new FederatedRequest(RequestType.EXEC_INST, inputId, rmvar)).isSuccessful());
 		assertEquals(false,
 			execute(handler, new FederatedRequest(RequestType.GET_VAR, inputId)).isSuccessful());
+	}
+
+	@Test
+	public void replaceCannotReadAnUndeclaredTargetOrAcceptNonNumericParameters() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PRIVATE_AGGREGATE);
+		for(String instruction : List.of(
+			InstructionUtils.concatOperands("CP", "replace", "target=missing", "pattern=NaN",
+				"replacement=0", operand("Y", DataType.MATRIX, ValueType.FP64)),
+			InstructionUtils.concatOperands("CP", "replace", "target=X", "pattern=secret",
+				"replacement=0", operand("Y", DataType.MATRIX, ValueType.FP64))))
+			assertThrows(FederatedWorkerHandlerException.class,
+				() -> FederatedWorkerPrivacy.inferInstructionOutput(ec,
+					InstructionParser.parseSingleInstruction(instruction)));
+	}
+
+	@Test
+	public void localReplacePreservesSourceAndPreventsRawRelease() {
+		ExecutionContext ec = matrixContext("X", WorkerPrivacyLevel.PRIVATE_AGGREGATE);
+		MatrixObject source = ec.getMatrixObject("X");
+		MatrixBlock original = source.acquireRead();
+		original.set(0, 0, Double.NaN);
+		source.release();
+		ec.setVariable("Y", matrix(WorkerPrivacyLevel.PUBLIC));
+		Instruction replacement = InstructionParser.parseSingleInstruction(
+			InstructionUtils.concatOperands("CP", "replace", "target=X", "pattern=NaN", "replacement=0",
+				operand("Y", DataType.MATRIX, ValueType.FP64)));
+		WorkerPrivacyLevel label = FederatedWorkerPrivacy.inferInstructionOutput(ec, replacement);
+		assertEquals(WorkerPrivacyLevel.PRIVATE, label);
+		FederatedWorkerPrivacy.protectInstructionAliases(ec, replacement, label);
+		replacement.processInstruction(ec);
+		FederatedWorkerPrivacy.applyInstructionOutput(ec, replacement, label);
+		assertEquals(true, Double.isNaN(source.acquireRead().get(0, 0)));
+		source.release();
+		assertEquals(0d, ec.getMatrixObject("Y").acquireRead().get(0, 0), 0d);
+		ec.getMatrixObject("Y").release();
+		assertThrows(FederatedWorkerHandlerException.class,
+			() -> FederatedWorkerPrivacy.validateRawRelease(ec.getVariable("Y")));
 	}
 
 	@Test
@@ -686,6 +725,14 @@ public class FederatedWorkerPrivacyTest {
 			InstructionParser.parseSingleInstruction(instruction));
 	}
 
+	private static WorkerPrivacyLevel inferReplaceLabel(WorkerPrivacyLevel level) {
+		ExecutionContext ec = matrixContext("X", level);
+		String instruction = InstructionUtils.concatOperands("CP", "replace", "target=X", "pattern=NaN",
+			"replacement=0", operand("Y", DataType.MATRIX, ValueType.FP64));
+		return FederatedWorkerPrivacy.inferInstructionOutput(ec,
+			InstructionParser.parseSingleInstruction(instruction));
+	}
+
 	private static WorkerPrivacyLevel inferRightIndexLabel(WorkerPrivacyLevel inputLevel,
 		WorkerPrivacyLevel boundLevel) {
 		ExecutionContext ec = matrixContext("X", inputLevel);
@@ -759,6 +806,9 @@ public class FederatedWorkerPrivacyTest {
 				return InstructionUtils.concatOperands("CP", opcode, input,
 					operand("9", DataType.SCALAR, ValueType.FP64, true), literalIndex(1), literalIndex(1),
 					literalIndex(1), literalIndex(1), output);
+			case "replace":
+				return InstructionUtils.concatOperands("CP", opcode, "target=" + inputId,
+					"pattern=NaN", "replacement=0", output);
 			default:
 				throw new IllegalArgumentException("unsupported test opcode " + opcode);
 		}
