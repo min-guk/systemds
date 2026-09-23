@@ -55,9 +55,19 @@ public class FederatedWorkloadAnalyzer {
 	}
 
 	public void compressRun(ExecutionContext ec, long tid) {
+		compressRun(ec, tid, null);
+	}
+
+	public void compressRun(ExecutionContext ec, long tid, FederatedWorkerPhaseRegistry phaseRegistry) {
 		if(counter >= compressRunFrequency ){
 			counter = 0;
-			get(tid).forEach((K, V) -> CompressedMatrixBlockFactory.compressAsync(ec, Long.toString(K), V));
+			get(tid).forEach((K, V) -> {
+				if(phaseRegistry == null)
+					CompressedMatrixBlockFactory.compressAsync(ec, Long.toString(K), V);
+				else
+					phaseRegistry.submitChild(() -> CompressedMatrixBlockFactory.compressSynchronously(
+						ec, Long.toString(K), V));
+			});
 		}
 	}
 

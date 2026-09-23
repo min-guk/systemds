@@ -122,6 +122,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	
 	/** Federated workload analyzer */
 	private final FederatedWorkloadAnalyzer _fan;
+	private final FederatedWorkerPhaseRegistry _phaseRegistry;
 
 	private String _remoteAddress = FederatedLookupTable.NOHOST;
 
@@ -136,9 +137,15 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	 * @param fan A Workload analyzer object (should be null if not used).
 	 */
 	public FederatedWorkerHandler(FederatedLookupTable flt, FederatedReadCache frc, FederatedWorkloadAnalyzer fan) {
+		this(flt, frc, fan, FederatedWorkerPhaseRegistry.shared());
+	}
+
+	FederatedWorkerHandler(FederatedLookupTable flt, FederatedReadCache frc, FederatedWorkloadAnalyzer fan,
+		FederatedWorkerPhaseRegistry phaseRegistry) {
 		_flt = flt;
 		_frc = frc;
 		_fan = fan;
+		_phaseRegistry = phaseRegistry;
 		
 		if(DMLScript.LINEAGE) {
 			// Compiler assisted optimizations are not applicable for Fed workers.
@@ -158,6 +165,10 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	public void channelRead(ChannelHandlerContext ctx, Object msg) {
 		if(LOG.isInfoEnabled())
 			LOG.info("Federated worker received request: " + msg.getClass().getName());
+		if(useStrictPath(msg)) {
+			handleStrict(ctx, msg);
+			return;
+		}
 		// Do NOT close the channel after every response. Federated requests can be
 		// multiplexed over a persistent connection to preserve strict request order
 		// (important for stateful worker-side execution contexts and cleanup).
@@ -168,6 +179,68 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 					ctx.close();
 				}
 			});
+	}
+
+	private boolean useStrictPath(Object msg) {
+		if(_phaseRegistry.hasStrictSession())
+			return true;
+		if(!(msg instanceof FederatedRequest[]))
+			return false;
+		for(FederatedRequest request : (FederatedRequest[]) msg) {
+			if(request != null && (request.getType() == RequestType.PHASE_CONTROL
+				|| request.getPhaseBatchTag() != null))
+				return true;
+		}
+		return false;
+	}
+
+	private void handleStrict(ChannelHandlerContext ctx, Object msg) {
+		if(!(msg instanceof FederatedRequest[])) {
+			_phaseRegistry.rejectMalformedEnvelope();
+			writeStrict(ctx, new FederatedResponse(ResponseType.ERROR, "invalid STRICT request envelope"));
+			return;
+		}
+		FederatedRequest[] requests = (FederatedRequest[]) msg;
+		String remoteHost = remoteHost(ctx.channel().remoteAddress());
+		if(requests.length == 1 && requests[0] != null
+			&& requests[0].getType() == RequestType.PHASE_CONTROL) {
+			FederatedRequest request = requests[0];
+			if(request.getPhaseBatchTag() != null || request.getNumParams() != 1
+				|| !(request.getParam(0) instanceof FederatedPhaseWire.Control)) {
+				_phaseRegistry.rejectMalformedEnvelope();
+				writeStrict(ctx, new FederatedResponse(ResponseType.ERROR, "invalid STRICT control payload"));
+				return;
+			}
+			_phaseRegistry.handleControl((FederatedPhaseWire.Control) request.getParam(0),
+				request.getPID(), remoteHost).whenComplete((response, error) -> ctx.executor().execute(() ->
+				writeStrict(ctx, error == null ? response
+					: new FederatedResponse(ResponseType.ERROR, "STRICT control failed"))));
+			return;
+		}
+		_phaseRegistry.executeBatch(requests, remoteHost, () -> createResponse(requests, remoteHost))
+			.whenComplete((response, error) -> ctx.executor().execute(() -> writeStrict(ctx,
+				error == null ? response : new FederatedResponse(ResponseType.ERROR, "STRICT batch failed"))));
+	}
+
+	private static void writeStrict(ChannelHandlerContext ctx, FederatedResponse response) {
+		ctx.writeAndFlush(response).addListener(future -> {
+			if(!future.isSuccess())
+				ctx.close();
+		});
+	}
+
+	private String remoteHost(SocketAddress remoteAddress) {
+		if(remoteAddress == null)
+			return FederatedLookupTable.NOHOST;
+		if(remoteAddress instanceof InetSocketAddress) {
+			_remoteAddress = remoteAddress.toString();
+			return ((InetSocketAddress) remoteAddress).getHostString();
+		}
+		_remoteAddress = remoteAddress.toString();
+		String value = remoteAddress.toString();
+		int slash = value.indexOf('/');
+		int colon = value.lastIndexOf(':');
+		return value.substring(slash >= 0 ? slash + 1 : 0, colon > 0 ? colon : value.length());
 	}
 
 	@Override
@@ -195,14 +268,8 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 				+ FederatedLookupTable.NOHOST + " as host identifier.");
 			host = FederatedLookupTable.NOHOST;
 		}
-		else if(remoteAddress instanceof InetSocketAddress) {
-			host = ((InetSocketAddress) remoteAddress).getHostString();
-			_remoteAddress = remoteAddress.toString();
-		}
-		else {
-			host = remoteAddress.toString().split(":")[0].split("/")[1];
-			_remoteAddress = remoteAddress.toString();
-		}
+		else
+			host = remoteHost(remoteAddress);
 		
 
 		FederatedResponse res = createResponse(msg, host);
@@ -471,7 +538,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		FederatedWorkerPrivacy.attachReadLabel(cd, readPrivacy);
 		
 		if(shouldTryAsyncCompress()) // TODO: replace the reused object
-			CompressedMatrixBlockFactory.compressAsync(ec, sId);
+			compressAsync(ec, sId, null);
 
 		if(DMLScript.LINEAGE)
 			// create a literal type lineage item with the file name
@@ -618,7 +685,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		}
 
 		if(shouldTryAsyncCompress())
-			CompressedMatrixBlockFactory.compressAsync(ec, varName);
+			compressAsync(ec, varName, null);
 
 		if(DMLScript.LINEAGE) {
 			if(request.getParam(0) instanceof CacheBlock && request.getLineageTrace() != null) {
@@ -778,13 +845,25 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		return null;
 	}
 
-	private static void adaptToWorkload(ExecutionContext ec, FederatedWorkloadAnalyzer fan,  long tid, Instruction ins){
+	private void adaptToWorkload(ExecutionContext ec, FederatedWorkloadAnalyzer fan, long tid, Instruction ins) {
 		if(fan != null){
-			CompletableFuture.runAsync(() -> {
+			Runnable adaptation = () -> {
 				fan.incrementWorkload(ec, tid, ins);
-				fan.compressRun(ec, tid);
-			});
+				fan.compressRun(ec, tid, _phaseRegistry.isBoundStrictTask() ? _phaseRegistry : null);
+			};
+			if(_phaseRegistry.isBoundStrictTask())
+				_phaseRegistry.submitChild(adaptation);
+			else
+				CompletableFuture.runAsync(adaptation);
 		}
+	}
+
+	private void compressAsync(ExecutionContext ec, String variable,
+		org.apache.sysds.runtime.compress.cost.InstructionTypeCounter counter) {
+		if(_phaseRegistry.isBoundStrictTask())
+			_phaseRegistry.submitChild(() -> CompressedMatrixBlockFactory.compressSynchronously(ec, variable, counter));
+		else
+			CompressedMatrixBlockFactory.compressAsync(ec, variable, counter);
 	}
 
 	private static long getOutputNnz(ExecutionContext ec, Instruction ins) {
