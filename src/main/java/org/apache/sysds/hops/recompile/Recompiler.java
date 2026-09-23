@@ -264,21 +264,32 @@ public class Recompiler {
 		StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec, RecompileStatus status,
 		boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt,
 		boolean pred, ExecType et, long tid) {
-		FEDERATED_RECOMPILE_REGISTRY_LOCK.lock();
+		RuntimeRecompileAudit.Observation observation = RuntimeRecompileAudit.observeDag(owner, forceEt);
 		try {
-			clearFederatedRecompileRegistries();
-			if(owner == null)
-				return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
-					updateStats, forceEt, pred, et, tid);
-			try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
-				FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
-				return recompileInternal(sb, hops, ec, status, inplace, replaceLit,
-					updateStats, forceEt, pred, et, tid);
+			ArrayList<Instruction> result;
+			FEDERATED_RECOMPILE_REGISTRY_LOCK.lock();
+			try {
+				clearFederatedRecompileRegistries();
+				if(owner == null)
+					result = recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+						updateStats, forceEt, pred, et, tid);
+				else {
+					try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+						FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
+						result = recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+							updateStats, forceEt, pred, et, tid);
+					}
+				}
 			}
+			finally {
+				clearFederatedRecompileRegistries();
+				FEDERATED_RECOMPILE_REGISTRY_LOCK.unlock();
+			}
+			observation.succeeded();
+			return result;
 		}
 		finally {
-			clearFederatedRecompileRegistries();
-			FEDERATED_RECOMPILE_REGISTRY_LOCK.unlock();
+			observation.close();
 		}
 	}
 
@@ -1189,23 +1200,31 @@ public class Recompiler {
 	}
 
 	public static void recompileProgramBlockHierarchy( List<ProgramBlock> pbs, LocalVariableMap vars, long tid, boolean inplace, ResetType resetRecompile ) {
-		//function recompilation via two-phase approach due to challenges 
-		//of unclear reconciliation of arbitrary complex control flow
-		
-		// phase 1: normal inplace=true w/o rewrite as usual, but track requiresRecompile
-		// (preserve variables for potential second pass, otherwise corrupted stats)
-		RecompileStatus status1 = new RecompileStatus(tid, true, resetRecompile, false);
 		synchronized( pbs ) {
-			for( ProgramBlock pb : pbs )
-				rRecompileProgramBlock(pb, vars, status1);
-		
-			// phase 2: if called with inplace-false, run a second in-place=false pass in
-			// order to apply rewrites (at this point sizes are already propagated, but for
-			// correctness we call it with an empty symbol table to avoid invalid size updates)
-			if( !status1.requiresRecompile() && !inplace ) {
-				RecompileStatus status2 = new RecompileStatus(tid, false, resetRecompile, false);
+			RuntimeRecompileAudit.Observation observation = RuntimeRecompileAudit.observeHierarchy(
+				getProgramOwner(pbs), false);
+			try {
+				//function recompilation via two-phase approach due to challenges
+				//of unclear reconciliation of arbitrary complex control flow
+
+				// phase 1: normal inplace=true w/o rewrite as usual, but track requiresRecompile
+				// (preserve variables for potential second pass, otherwise corrupted stats)
+				RecompileStatus status1 = new RecompileStatus(tid, true, resetRecompile, false);
 				for( ProgramBlock pb : pbs )
-					rRecompileProgramBlock(pb, new LocalVariableMap(), status2);
+					rRecompileProgramBlock(pb, vars, status1);
+
+				// phase 2: if called with inplace-false, run a second in-place=false pass in
+				// order to apply rewrites (at this point sizes are already propagated, but for
+				// correctness we call it with an empty symbol table to avoid invalid size updates)
+				if( !status1.requiresRecompile() && !inplace ) {
+					RecompileStatus status2 = new RecompileStatus(tid, false, resetRecompile, false);
+					for( ProgramBlock pb : pbs )
+						rRecompileProgramBlock(pb, new LocalVariableMap(), status2);
+				}
+				observation.succeeded();
+			}
+			finally {
+				observation.close();
 			}
 		}
 	}
@@ -1222,9 +1241,37 @@ public class Recompiler {
 	 */
 	public static void recompileProgramBlockHierarchy2Forced( ArrayList<ProgramBlock> pbs, long tid, Set<String> fnStack, ExecType et ) {
 		synchronized( pbs ) {
-			for( ProgramBlock pb : pbs )
-				rRecompileProgramBlock2Forced(pb, tid, fnStack, et);
+			RuntimeRecompileAudit.Observation observation = RuntimeRecompileAudit.observeHierarchy(
+				getProgramOwner(pbs), true);
+			try {
+				for( ProgramBlock pb : pbs )
+					rRecompileProgramBlock2Forced(pb, tid, fnStack, et);
+				observation.succeeded();
+			}
+			finally {
+				observation.close();
+			}
 		}
+	}
+
+	private static DMLProgram getProgramOwner(List<ProgramBlock> pbs) {
+		DMLProgram owner = null;
+		if(pbs == null)
+			return null;
+		for(ProgramBlock pb : pbs) {
+			if(pb == null)
+				continue;
+			Program program = pb.getProgram();
+			if(program == null)
+				continue;
+			DMLProgram candidate = program.getDMLProg();
+			if(candidate == null)
+				continue;
+			if(owner != null && owner != candidate)
+				return null;
+			owner = candidate;
+		}
+		return owner;
 	}
 	
 	/**
