@@ -35,21 +35,6 @@ public abstract class Data implements Serializable
 	protected final DataType dataType;
 	protected final ValueType valueType;
 
-	/**
-	 * Worker-owned release label. This deliberately remains independent of the
-	 * planner privacy model: a federated worker must decide whether a concrete
-	 * runtime value may cross the worker boundary from evidence it owns.
-	 */
-	public enum WorkerPrivacyLevel {
-		PUBLIC,
-		PRIVATE_AGGREGATE,
-		PRIVATE,
-		UNKNOWN
-	}
-
-	private WorkerPrivacyLevel _workerPrivacyLevel = WorkerPrivacyLevel.UNKNOWN;
-	private boolean _workerPrivacyAssigned = false;
-
 	protected Data(DataType dt, ValueType vt) {
 		dataType = dt;
 		valueType = vt;
@@ -64,19 +49,6 @@ public abstract class Data implements Serializable
 
 	public ValueType getValueType() {
 		return valueType;
-	}
-
-	public WorkerPrivacyLevel getWorkerPrivacyLevel() {
-		return _workerPrivacyLevel;
-	}
-
-	public boolean hasWorkerPrivacyLevel() {
-		return _workerPrivacyAssigned;
-	}
-
-	public void setWorkerPrivacyLevel(WorkerPrivacyLevel level) {
-		_workerPrivacyLevel = level == null ? WorkerPrivacyLevel.UNKNOWN : level;
-		_workerPrivacyAssigned = true;
 	}
 
 	public void setMetaData(MetaData md) {

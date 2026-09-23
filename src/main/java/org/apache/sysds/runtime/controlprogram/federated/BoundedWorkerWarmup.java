@@ -23,7 +23,6 @@ import java.lang.management.ManagementFactory;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.instructions.cp.Data;
-import org.apache.sysds.runtime.instructions.cp.Data.WorkerPrivacyLevel;
 import org.apache.sysds.runtime.matrix.data.LibMatrixMult;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
@@ -79,19 +78,9 @@ final class BoundedWorkerWarmup {
 			!("public".equals(privacy) || "private-aggregate".equals(privacy) || "private".equals(privacy)))
 			throw denied();
 		Data data = ec.getVariable(String.valueOf(request.getID()));
-		if(!(data instanceof MatrixObject matrix) || !path.equals(matrix.getFileName()) ||
-			matrix.getWorkerPrivacyLevel() != label(privacy))
+		if(!(data instanceof MatrixObject matrix) || !path.equals(matrix.getFileName()))
 			throw denied();
 		return matrix;
-	}
-
-	private static WorkerPrivacyLevel label(String privacy) {
-		switch(privacy) {
-			case "public": return WorkerPrivacyLevel.PUBLIC;
-			case "private-aggregate": return WorkerPrivacyLevel.PRIVATE_AGGREGATE;
-			case "private": return WorkerPrivacyLevel.PRIVATE;
-			default: throw denied();
-		}
 	}
 
 	static void warm(MatrixBlock sample, int repeats) {

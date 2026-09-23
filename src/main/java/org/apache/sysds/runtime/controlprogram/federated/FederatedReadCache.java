@@ -76,13 +76,6 @@ public class FederatedReadCache {
 		rce.setInvalid();
 	}
 
-	/** Quarantine a cached object after worker-owned privacy revalidation fails. */
-	public void markPrivacyUnknown(String fname) {
-		ReadCacheEntry rce = _rmap.get(fname);
-		if(rce != null)
-			rce.markPrivacyUnknown();
-	}
-
 	/**
 	 * Class representing an entry of the federated read cache.
 	 */
@@ -130,10 +123,5 @@ public class FederatedReadCache {
 			notify(); // resume one waiting thread so it can try reading the data
 		}
 
-		public synchronized void markPrivacyUnknown() {
-			if(_data != null)
-				_data.setWorkerPrivacyLevel(
-					org.apache.sysds.runtime.instructions.cp.Data.WorkerPrivacyLevel.UNKNOWN);
-		}
 	}
 }

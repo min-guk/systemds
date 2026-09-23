@@ -67,7 +67,6 @@ import org.apache.sysds.runtime.instructions.InstructionParser;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.ComputationCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.Data;
-import org.apache.sysds.runtime.instructions.cp.Data.WorkerPrivacyLevel;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
@@ -492,17 +491,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			// early throwing of exception to avoid infinitely waiting threads for data
 			throw new FederatedWorkerHandlerException("Could not recognize datatype");
 		final ExecutionContext ec = ecm.get(tid);
-		// Resolve before touching any read/lineage cache or requested execution-context id.
-		// A failed revalidation must not install a stale previously-public object.
-		final WorkerPrivacyLevel readPrivacy;
-		try {
-			readPrivacy = FederatedWorkerPrivacy.resolveReadLabel(filename);
-		}
-		catch(RuntimeException ex) {
-			_frc.markPrivacyUnknown(filename);
-			FederatedWorkerPrivacy.quarantineReadAliases(ec, filename);
-			throw ex;
-		}
 
 		final LineageItem linItem = new LineageItem(filename);
 		CacheableData<?> cd = null;
@@ -535,15 +523,11 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			}
 		}
 
-		// Always re-establish the label from the worker-local sidecar. This covers
-		// physical reads, federated read-cache hits, lineage-cache hits, and blocks
-		// supplied with the READ request without trusting coordinator annotations.
 		Data readObject = ec.getVariable(sId);
 		if(!(readObject instanceof CacheableData))
 			throw new FederatedWorkerHandlerException("Worker READ did not create cacheable data.");
 		cd = (CacheableData<?>) readObject;
-		FederatedWorkerPrivacy.attachReadLabel(cd, readPrivacy);
-		
+
 		if(shouldTryAsyncCompress()) // TODO: replace the reused object
 			compressAsync(ec, sId, null);
 
@@ -678,11 +662,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			throw new FederatedWorkerHandlerException(
 				"Unsupported object type, has to be of type CacheBlock or ScalarObject");
 
-		// PUT values already reside at the coordinator, so they introduce no new
-		// worker-owned disclosure restriction. Derived values are relabeled after
-		// each worker instruction.
-		FederatedWorkerPrivacy.markCoordinatorOwned(data);
-
 				
 		// set variable and construct empty response
 		ec.setVariable(varName, data);
@@ -719,7 +698,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	
 			// get variable and construct response
 			Data dataObject = ec.getVariable(String.valueOf(request.getID()));
-			FederatedWorkerPrivacy.validateRawRelease(dataObject);
 			switch(dataObject.getDataType()) {
 				case TENSOR:
 				case MATRIX:
@@ -748,12 +726,8 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		final long tid = request.getTID();
 		final ExecutionContext ec = getContextForInstruction(tid, ins, ecm);
 		setThreads(ins);
-		FederatedWorkerPrivacy.validateStableExecutionTarget(ec, ins);
-		WorkerPrivacyLevel outputPrivacy = FederatedWorkerPrivacy.inferInstructionOutput(ec, ins);
-		FederatedWorkerPrivacy.protectInstructionAliases(ec, ins, outputPrivacy);
 		try {
 			exec(ec, ins);
-			FederatedWorkerPrivacy.applyInstructionOutput(ec, ins, outputPrivacy);
 		}
 		catch (Exception ex) {
 			if (ENABLE_MISSING_VAR_RECOVERY) {
@@ -765,11 +739,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 							+ " by re-reading from " + readInfo.filename);
 					}
 					readData(readInfo.filename, readInfo.dataType, missingVarId, tid, ecm, null);
-					FederatedWorkerPrivacy.validateStableExecutionTarget(ec, ins);
-					outputPrivacy = FederatedWorkerPrivacy.inferInstructionOutput(ec, ins);
-					FederatedWorkerPrivacy.protectInstructionAliases(ec, ins, outputPrivacy);
 					exec(ec, ins);
-					FederatedWorkerPrivacy.applyInstructionOutput(ec, ins, outputPrivacy);
 				}
 				else {
 					logExecutionContextState(ec, ins);
@@ -781,13 +751,13 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 				logExecutionContextState(ec, ins);
 				throw new FederatedWorkerHandlerException(
 					"Failed to execute federated instruction: " + ins.toString(), ex);
-				}
 			}
-			preserveWorkerOutputForReuse(ec, ins);
-			adaptToWorkload(ec, _fan, tid, ins);
-			return new FederatedResponse(
-				ResponseType.SUCCESS_EMPTY, getOutputNnz(ec, ins));
 		}
+		preserveWorkerOutputForReuse(ec, ins);
+		adaptToWorkload(ec, _fan, tid, ins);
+		return new FederatedResponse(
+			ResponseType.SUCCESS_EMPTY, getOutputNnz(ec, ins));
+	}
 	
 	private static ExecutionContext getContextForInstruction(long id, Instruction ins, ExecutionContextMap ecm){
 		final ExecutionContext ec = ecm.get(id);
@@ -1006,10 +976,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			Data[] inputs = Arrays.stream(udf.getInputIDs())
 				.mapToObj(id -> ec.getVariable(String.valueOf(id)))
 				.toArray(Data[]::new);
-			// UDFs receive the entire execution context, so only an exact reviewed
-			// metadata-query class may cross this boundary in the interim policy.
-			FederatedWorkerPrivacy.validateUdfInputs(udf, inputs);
-
 			// trace lineage
 			if(DMLScript.LINEAGE)
 				LineageItemUtils.traceFedUDF(ec, udf);

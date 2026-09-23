@@ -25,7 +25,6 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysds.runtime.instructions.cp.Data.WorkerPrivacyLevel;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.meta.MetaData;
@@ -37,7 +36,7 @@ public class BoundedWorkerWarmupTest {
 
 	@Test
 	public void protectedSourceIsNotModifiedAndOnlyMetadataLeavesWorker() throws Exception {
-		ExecutionContext ec = context(WorkerPrivacyLevel.PRIVATE_AGGREGATE);
+		ExecutionContext ec = context();
 		FederatedResponse read = BoundedWorkerWarmup.prepare(new FederatedRequest(
 			FederatedRequest.RequestType.SOURCE_PREPARE, ID, PATH, "private-aggregate"), ec);
 		FederatedResponse warm = BoundedWorkerWarmup.run(new FederatedRequest(
@@ -62,24 +61,20 @@ public class BoundedWorkerWarmupTest {
 	}
 
 	@Test
-	public void sourcePrivacyAndBoundsFailClosed() {
-		ExecutionContext ec = context(WorkerPrivacyLevel.PUBLIC);
-		assertThrows(FederatedWorkerHandlerException.class, () -> BoundedWorkerWarmup.run(
-			new FederatedRequest(FederatedRequest.RequestType.BOUNDED_WARMUP,
-				ID, PATH, 2048, 128, 3), ec));
+	public void sourceIdentityAndBoundsFailClosed() {
+		ExecutionContext ec = context();
 		assertThrows(FederatedWorkerHandlerException.class, () -> BoundedWorkerWarmup.prepare(
 			new FederatedRequest(FederatedRequest.RequestType.SOURCE_PREPARE,
-				ID, PATH, "private-aggregate"), ec));
-		ExecutionContext protectedEc = context(WorkerPrivacyLevel.PRIVATE_AGGREGATE);
+				ID, PATH, "invalid"), ec));
 		assertThrows(FederatedWorkerHandlerException.class, () -> BoundedWorkerWarmup.run(
 			new FederatedRequest(FederatedRequest.RequestType.BOUNDED_WARMUP,
-				ID, PATH, 2049, 128, 3), protectedEc));
+				ID, PATH, 2049, 128, 3), ec));
 		assertThrows(FederatedWorkerHandlerException.class, () -> BoundedWorkerWarmup.run(
 			new FederatedRequest(FederatedRequest.RequestType.BOUNDED_WARMUP,
-				ID, "/tmp/other", 2048, 128, 3), protectedEc));
+				ID, "/tmp/other", 2048, 128, 3), ec));
 	}
 
-	private static ExecutionContext context(WorkerPrivacyLevel label) {
+	private static ExecutionContext context() {
 		MatrixBlock values = new MatrixBlock(2, 2, false);
 		values.allocateDenseBlock();
 		values.set(0, 0, 2d);
@@ -87,7 +82,6 @@ public class BoundedWorkerWarmupTest {
 		values.recomputeNonZeros();
 		MatrixObject source = new MatrixObject(ValueType.FP64, PATH,
 			new MetaData(new MatrixCharacteristics(2, 2, 1024, 2)), values);
-		source.setWorkerPrivacyLevel(label);
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 		ec.setVariable(String.valueOf(ID), source);
 		return ec;

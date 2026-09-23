@@ -43,9 +43,6 @@ public class FederatedLocalData extends FederatedData {
 		_fwh = new FederatedWorkerHandler(_flt, _frc, _fan);
 
 		_data = data;
-		// This in-process transport starts from a value already held by the
-		// coordinator; mirror PUT_VAR's public ingress classification.
-		FederatedWorkerPrivacy.markCoordinatorOwned(_data);
 		long pid = Long.valueOf(IDHandler.getProcessID());
 		ExecutionContextMap ecm = _flt.getECM(FederatedLookupTable.NOHOST, pid);
 		synchronized(ecm) {
