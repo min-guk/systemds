@@ -119,10 +119,11 @@ final class FederatedWorkerPrivacy {
 			// label during execution and only declassify an explicitly contracted
 			// aggregate after successful completion.
 			WorkerPrivacyLevel label = labelOf(ec, aggregate.input1);
-			// uacmax is a partial column-wise reduction. Its result is not the
+			// uacmax/uacmean are partial column-wise reductions. Their results are not the
 			// original full aggregate authorized for PRIVATE_AGGREGATE, so a later
 			// uak+ must not declassify it.
-			return "uacmax".equalsIgnoreCase(aggregate.getOpcode())
+			return ("uacmax".equalsIgnoreCase(aggregate.getOpcode()) ||
+				"uacmean".equalsIgnoreCase(aggregate.getOpcode()))
 				? makeNonDeclassifiable(label) : label;
 		}
 		else if(instruction.getClass() == ReorgCPInstruction.class) {
@@ -202,7 +203,8 @@ final class FederatedWorkerPrivacy {
 	private static boolean isSupportedAggregate(Instruction instruction) {
 		return instruction.getClass() == AggregateUnaryCPInstruction.class
 			&& ("uak+".equalsIgnoreCase(instruction.getOpcode())
-				|| "uacmax".equalsIgnoreCase(instruction.getOpcode()));
+				|| "uacmax".equalsIgnoreCase(instruction.getOpcode())
+				|| "uacmean".equalsIgnoreCase(instruction.getOpcode()));
 	}
 
 	private static boolean isSupportedReorg(Instruction instruction) {

@@ -147,6 +147,7 @@ public class FederatedWorkerPrivacyTest {
 			assertEquals(level, inferUnaryMatrixLabel("r'", level, true));
 			assertEquals(level, inferUnaryMatrixLabel("rev", level, false));
 			assertEquals(nonDeclassifiable(level), inferUnaryMatrixLabel("uacmax", level, true));
+			assertEquals(nonDeclassifiable(level), inferUnaryMatrixLabel("uacmean", level, true));
 			assertEquals(nonDeclassifiable(level),
 				inferRightIndexLabel(level, WorkerPrivacyLevel.PUBLIC));
 		}
@@ -167,7 +168,7 @@ public class FederatedWorkerPrivacyTest {
 
 	@Test
 	public void nonBijectivePrivateAggregateOperationsCannotComposeIntoFullSumRelease() throws Exception {
-		for(String opcode : List.of("rightIndex", "leftIndex", "uacmax")) {
+		for(String opcode : List.of("rightIndex", "leftIndex", "uacmax", "uacmean")) {
 			Path data = writeCsv("private-aggregate");
 			long inputId = NEXT_ID.incrementAndGet();
 			long intermediateId = NEXT_ID.incrementAndGet();
@@ -309,7 +310,7 @@ public class FederatedWorkerPrivacyTest {
 
 	@Test
 	public void handlerExecutesAllowedProtectedLocalOperationsWithoutRawRelease() throws Exception {
-		for(String opcode : List.of("r'", "rev", "uacmax", "rightIndex", "leftIndex")) {
+		for(String opcode : List.of("r'", "rev", "uacmax", "uacmean", "rightIndex", "leftIndex")) {
 			Path data = writeCsv("private-aggregate");
 			long inputId = NEXT_ID.incrementAndGet();
 			long outputId = NEXT_ID.incrementAndGet();
@@ -747,6 +748,7 @@ public class FederatedWorkerPrivacyTest {
 		switch(opcode) {
 			case "r'":
 			case "uacmax":
+			case "uacmean":
 				return InstructionUtils.concatOperands("CP", opcode, input, output, "1");
 			case "rev":
 				return InstructionUtils.concatOperands("CP", opcode, input, output);
