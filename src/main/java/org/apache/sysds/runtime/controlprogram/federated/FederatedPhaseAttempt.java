@@ -280,6 +280,11 @@ public final class FederatedPhaseAttempt {
 			FederatedPhaseTasks.Result tasks = phase.tasks.await(phase.token, remainingDuration());
 			if(!tasks.isClean() || phase.coordinatorRoots == 0)
 				throw new DMLRuntimeException("Coordinator phase has no clean admitted root task tree");
+			// This is only a necessary admission check; the full-DML bridge must separately
+			// prove that these batches exercised the selected kernels on each worker.
+			if(phase.identity.getKind() == PhaseKind.WARMUP && phase.workers.values().stream()
+				.anyMatch(worker -> worker.dispatchedRoots == 0))
+				throw new DMLRuntimeException("WARMUP did not dispatch to every declared worker");
 			for(PendingBatch pending : snapshotPending(phase))
 				validateOrdinaryReply(pending.tag, await(pending.response));
 			Map<InetSocketAddress, Reply> replies = endWorkers(phase);

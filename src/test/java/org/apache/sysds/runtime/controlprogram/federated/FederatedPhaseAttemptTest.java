@@ -98,14 +98,38 @@ public class FederatedPhaseAttemptTest {
 		assertEquals(2, planningResult.getResponsesDrained());
 
 		PhaseHandle warmup = attempt.nextWarmup(warmupIdentity());
-		warmup.submitRoot(DIRECT, () -> warmup.dispatch(W1, request()));
+		warmup.submitRoot(DIRECT, () -> {
+			warmup.dispatch(W1, request());
+			warmup.dispatch(W2, request());
+		});
 		warmup.closeRootAdmission();
 		FederatedPhaseAttempt.Result warmupResult = warmup.finish();
-		assertEquals(1, warmupResult.getResponsesDrained());
+		assertEquals(2, warmupResult.getResponsesDrained());
 		assertFalse(attempt.isPoisoned());
 		assertTrue(attempt.isTeardownRequired());
 		assertFalse(attempt.isWorkerOwnerReleased());
 		assertEquals(Arrays.asList(1L, 1L, 2L, 2L, 3L, 3L, 4L, 4L), transport.controlSequences());
+	}
+
+	@Test
+	public void warmupWithoutEveryDeclaredWorkerPoisonsBeforeEnd() throws Exception {
+		FakeTransport transport = new FakeTransport(W1, W2);
+		FederatedPhaseAttempt attempt = attempt(transport, workers(W1, W2), Duration.ofSeconds(2));
+		PhaseHandle planning = attempt.beginPlanning();
+		planning.submitRoot(DIRECT, () -> {
+			planning.dispatch(W1, request());
+			planning.dispatch(W2, request());
+		});
+		planning.closeRootAdmission();
+		planning.finish();
+
+		PhaseHandle warmup = attempt.nextWarmup(warmupIdentity());
+		warmup.submitRoot(DIRECT, () -> warmup.dispatch(W1, request()));
+		warmup.closeRootAdmission();
+		expectFailure(warmup::finish);
+		assertTrue(attempt.isPoisoned());
+		assertEquals(2, transport.controlOps().stream()
+			.filter(op -> op == ControlOp.END_PHASE).count());
 	}
 
 	@Test
