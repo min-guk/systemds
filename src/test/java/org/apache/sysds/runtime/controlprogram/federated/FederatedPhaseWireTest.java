@@ -142,6 +142,12 @@ public class FederatedPhaseWireTest {
 	@Test
 	public void controlRejectsMixedOrUnboundedPayloads() {
 		PhaseIdentity planning = identity(PhaseKind.PLANNING, 1);
+		new Control(planning, null, 0, ControlOp.BEGIN_PHASE, 1000,
+			new StreamFence[0], new String[0], null);
+		assertThrows(IllegalArgumentException.class, () -> new Control(identity(PhaseKind.PLANNING, 2), null, 0,
+			ControlOp.BEGIN_PHASE, 1000, new StreamFence[0], new String[0], null));
+		assertThrows(IllegalArgumentException.class, () -> new Control(identity(PhaseKind.WARMUP, 2), null, 0,
+			ControlOp.BEGIN_PHASE, 1000, new StreamFence[0], new String[0], null));
 		assertThrows(IllegalArgumentException.class, () -> new Control(planning, null, 0,
 			ControlOp.END_PHASE, 1000, new StreamFence[0], new String[0], null));
 		assertThrows(IllegalArgumentException.class, () -> new Control(planning, _worker, 0,
@@ -172,6 +178,53 @@ public class FederatedPhaseWireTest {
 	}
 
 	@Test
+	public void replyEnforcesExactOverflowSafeTaskAccounting() {
+		Reply nonterminalBegin = replyWithCounters(ControlOp.BEGIN_PHASE, ReplyStatus.ACK, ErrorCode.NONE,
+			1, 0, 0, 1, 0, 0, false, false);
+		assertFalse(nonterminalBegin.isTerminal());
+		assertEquals(1, nonterminalBegin.getOutstanding());
+
+		assertThrows(IllegalArgumentException.class, () -> replyWithCounters(ControlOp.END_PHASE,
+			ReplyStatus.ACK, ErrorCode.NONE, 1, 1, 1, 0, 0, 0, true, false));
+		assertThrows(IllegalArgumentException.class, () -> replyWithCounters(ControlOp.END_PHASE,
+			ReplyStatus.ACK, ErrorCode.NONE, 1, 0, 1, 0, 0, 0, false, true));
+		assertThrows(IllegalArgumentException.class, () -> replyWithCounters(ControlOp.END_PHASE,
+			ReplyStatus.FAILED, ErrorCode.TASK_FAILURE, 1, 0, 1, 0, 0, 2, true, true));
+		assertThrows(IllegalArgumentException.class, () -> replyWithCounters(ControlOp.END_PHASE,
+			ReplyStatus.ACK, ErrorCode.NONE, 1, 0, 1, 0, 1, 0, true, true));
+		assertThrows(IllegalArgumentException.class, () -> replyWithCounters(ControlOp.END_PHASE,
+			ReplyStatus.FAILED, ErrorCode.TASK_FAILURE, Long.MAX_VALUE, 1, Long.MAX_VALUE, 1,
+			0, 0, true, false));
+		assertThrows(IllegalArgumentException.class, () -> replyWithCounters(ControlOp.END_PHASE,
+			ReplyStatus.FAILED, ErrorCode.TASK_FAILURE, Long.MAX_VALUE, 0, Long.MAX_VALUE, 1,
+			0, 0, true, false));
+	}
+
+	@Test
+	public void deserializationBreaksControlAndReplyArrayAliases() throws Exception {
+		Control control = new Control(identity(PhaseKind.PREREAD, 3), _worker, 4,
+			ControlOp.PREREAD_SOURCES, 1000, new StreamFence[0], new String[] {"source-X"}, null);
+		String[] internalSourceIds = (String[]) fieldValue(control, "_sourceIds");
+		Object[] restoredControlGraph = roundTrip(new Object[] {control, internalSourceIds});
+		Control restoredControl = (Control) restoredControlGraph[0];
+		((String[]) restoredControlGraph[1])[0] = "aliased-mutation";
+		assertArrayEquals(new String[] {"source-X"}, restoredControl.getSourceIds());
+
+		StreamFence fence = new StreamFence(_stream, 3, 8);
+		SourceResidencyReceipt source = new SourceResidencyReceipt("source-X", PrivacyLabel.PRIVATE_AGGREGATE,
+			SourceDataType.MATRIX, "source-sha", "sidecar-sha", true, true, UUID.randomUUID());
+		Reply reply = reply(new StreamFence[] {fence}, new SourceResidencyReceipt[] {source});
+		StreamFence[] internalFences = (StreamFence[]) fieldValue(reply, "_completedFences");
+		SourceResidencyReceipt[] internalSources = (SourceResidencyReceipt[]) fieldValue(reply, "_sources");
+		Object[] restoredReplyGraph = roundTrip(new Object[] {reply, internalFences, internalSources});
+		Reply restoredReply = (Reply) restoredReplyGraph[0];
+		((StreamFence[]) restoredReplyGraph[1])[0] = new StreamFence(UUID.randomUUID(), 9, 9);
+		((SourceResidencyReceipt[]) restoredReplyGraph[2])[0] = null;
+		assertEquals(fence, restoredReply.getCompletedFences()[0]);
+		assertEquals(source.getSourceId(), restoredReply.getSources()[0].getSourceId());
+	}
+
+	@Test
 	public void deserializationRevalidatesVersion() throws Exception {
 		PhaseIdentity identity = identity(PhaseKind.PLANNING, 1);
 		Field version = PhaseIdentity.class.getDeclaredField("_protocolVersion");
@@ -190,6 +243,20 @@ public class FederatedPhaseWireTest {
 		return new Reply(_attempt, 3, 5, ControlOp.END_PHASE, ReplyStatus.ACK, ErrorCode.NONE,
 			_worker, 222, "stage", "settings", fences, 1, 1, 2, 0, 0, 0,
 			true, true, false, UUID.randomUUID(), sources);
+	}
+
+	private Reply replyWithCounters(ControlOp op, ReplyStatus status, ErrorCode error,
+		long roots, long children, long completed, long outstanding, long rejected, long failed,
+		boolean rootsClosed, boolean terminal) {
+		return new Reply(_attempt, 3, 5, op, status, error, _worker, 222, "stage", "settings",
+			new StreamFence[0], roots, children, completed, outstanding, rejected, failed,
+			rootsClosed, terminal, false, null, new SourceResidencyReceipt[0]);
+	}
+
+	private static Object fieldValue(Object value, String name) throws Exception {
+		Field field = value.getClass().getDeclaredField(name);
+		field.setAccessible(true);
+		return field.get(value);
 	}
 
 	@SuppressWarnings("unchecked")

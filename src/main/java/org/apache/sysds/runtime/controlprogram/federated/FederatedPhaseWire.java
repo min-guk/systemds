@@ -22,6 +22,7 @@ package org.apache.sysds.runtime.controlprogram.federated;
 import java.io.IOException;
 import java.io.InvalidObjectException;
 import java.io.ObjectInputStream;
+import java.io.ObjectStreamException;
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -37,6 +38,7 @@ import java.util.UUID;
  */
 public final class FederatedPhaseWire {
 	public static final int PROTOCOL_VERSION = 1;
+	public static final long INITIAL_EPOCH = 1;
 	public static final int MAX_STRING_LENGTH = 512;
 	public static final int MAX_ARRAY_LENGTH = 1024;
 	public static final long MAX_TIMEOUT_MILLIS = 600_000;
@@ -319,8 +321,9 @@ public final class FederatedPhaseWire {
 			requireArray(_sourceIds, "sourceIds");
 			validateFences(_fences);
 			validateSourceIds(_sourceIds);
-			if(_expectedWorkerJvmInstanceId == null && _op != ControlOp.BEGIN_PHASE)
-				throw new IllegalArgumentException("expectedWorkerJvmInstanceId is null outside initial open");
+			if(_expectedWorkerJvmInstanceId == null && (_op != ControlOp.BEGIN_PHASE
+				|| _identity.getKind() != PhaseKind.PLANNING || _identity.getEpoch() != INITIAL_EPOCH))
+				throw new IllegalArgumentException("null expectedWorkerJvmInstanceId requires initial PLANNING epoch");
 			switch(_op) {
 				case BEGIN_PHASE:
 					requireEmpty(_fences, "BEGIN_PHASE fences");
@@ -375,6 +378,11 @@ public final class FederatedPhaseWire {
 		private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
 			input.defaultReadObject();
 			validateAfterDeserialization(this::validate);
+		}
+
+		private Object readResolve() throws ObjectStreamException {
+			return new Control(_identity, _expectedWorkerJvmInstanceId, _controlSequence, _op,
+				_timeoutMillis, _fences, _sourceIds, _residencyLeaseId);
 		}
 	}
 
@@ -548,13 +556,18 @@ public final class FederatedPhaseWire {
 			requireNonNegative(_outstanding, "outstanding");
 			requireNonNegative(_rejectedTasks, "rejectedTasks");
 			requireNonNegative(_failedTasks, "failedTasks");
-			long registered = Math.addExact(_rootsRegistered, _childrenRegistered);
-			if(_tasksCompleted > registered || _outstanding > registered)
-				throw new IllegalArgumentException("task counters exceed registered tasks");
-			if(_terminal && _outstanding != 0)
-				throw new IllegalArgumentException("terminal reply has outstanding tasks");
+			long registered = checkedAdd(_rootsRegistered, _childrenRegistered, "registered tasks");
+			long resolved = checkedAdd(_tasksCompleted, _outstanding, "resolved tasks");
+			if(registered != resolved)
+				throw new IllegalArgumentException("registered tasks must equal completed plus outstanding");
+			if(_failedTasks > _tasksCompleted)
+				throw new IllegalArgumentException("failedTasks exceeds completed tasks");
+			if(_terminal && (!_rootsClosed || _outstanding != 0))
+				throw new IllegalArgumentException("terminal reply requires closed roots and no outstanding tasks");
 			if((_status == ReplyStatus.ACK) != (_error == ErrorCode.NONE))
 				throw new IllegalArgumentException("reply status/error mismatch");
+			if(_status == ReplyStatus.ACK && (_failedTasks != 0 || _rejectedTasks != 0))
+				throw new IllegalArgumentException("ACK reply cannot contain failed or rejected tasks");
 			if(_resetVerified && (_op != ControlOp.RESET_WARM_STATE || _status != ReplyStatus.ACK))
 				throw new IllegalArgumentException("resetVerified is invalid for this reply");
 		}
@@ -562,6 +575,22 @@ public final class FederatedPhaseWire {
 		private void readObject(ObjectInputStream input) throws IOException, ClassNotFoundException {
 			input.defaultReadObject();
 			validateAfterDeserialization(this::validate);
+		}
+
+		private Object readResolve() throws ObjectStreamException {
+			return new Reply(_protocolVersion, _attemptId, _epoch, _controlSequence, _op, _status, _error,
+				_workerJvmInstanceId, _workerPid, _acceptedStageSeal, _acceptedSettingsDigest, _completedFences,
+				_rootsRegistered, _childrenRegistered, _tasksCompleted, _outstanding, _rejectedTasks, _failedTasks,
+				_rootsClosed, _terminal, _resetVerified, _residencyLeaseId, _sources);
+		}
+	}
+
+	private static long checkedAdd(long left, long right, String name) {
+		try {
+			return Math.addExact(left, right);
+		}
+		catch(ArithmeticException ex) {
+			throw new IllegalArgumentException(name + " overflow", ex);
 		}
 	}
 
