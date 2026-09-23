@@ -48,6 +48,7 @@ public class FederatedRequest implements Serializable {
 		GET_VAR,   // return local variable to main
 		EXEC_INST, // execute arbitrary instruction over
 		EXEC_UDF,  // execute arbitrary user-defined function
+		PHASE_CONTROL, // reserved native phase protocol; unhandled requests fail closed
 		CLEAR,     // clear all variables and execution contexts (i.e., rmvar ALL)
 		NOOP,      // no operation (part of request sequence and ID carrying)
 	}
@@ -60,6 +61,7 @@ public class FederatedRequest implements Serializable {
 	private long _pid;
 	private String _lineageTrace; // the serialized lineage trace of a put object
 	private PlannerRuntimeAuthority _plannerRuntimeAuthority;
+	private FederatedPhaseWire.BatchTag _phaseBatchTag;
 
 	/**
 	 * Serializable proof that this request was emitted while executing one exact, planner-proved
@@ -170,6 +172,14 @@ public class FederatedRequest implements Serializable {
 		_plannerRuntimeAuthority = authority;
 	}
 
+	public FederatedPhaseWire.BatchTag getPhaseBatchTag() {
+		return _phaseBatchTag;
+	}
+
+	public void setPhaseBatchTag(FederatedPhaseWire.BatchTag phaseBatchTag) {
+		_phaseBatchTag = phaseBatchTag;
+	}
+
 	public FederatedRequest deepClone() {
 		FederatedRequest copy = new FederatedRequest(_method, _id, new ArrayList<>(_data));
 		copy._tid = _tid;
@@ -177,6 +187,7 @@ public class FederatedRequest implements Serializable {
 		copy._lineageTrace = _lineageTrace;
 		copy._checksums = _checksums == null ? null : new ArrayList<>(_checksums);
 		copy._plannerRuntimeAuthority = _plannerRuntimeAuthority;
+		copy._phaseBatchTag = _phaseBatchTag;
 		return copy;
 	}
 

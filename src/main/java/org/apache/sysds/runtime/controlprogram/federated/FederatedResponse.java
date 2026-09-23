@@ -36,6 +36,7 @@ public class FederatedResponse implements Serializable {
 
 	private ResponseType _status;
 	private Object[] _data;
+	private FederatedPhaseWire.BatchTag _phaseBatchTag;
 	
 	private transient LineageItem _linItem = null; // not included in serialized object
 
@@ -119,6 +120,14 @@ public class FederatedResponse implements Serializable {
 
 	public LineageItem getLineageItem() {
 		return _linItem;
+	}
+
+	public FederatedPhaseWire.BatchTag getPhaseBatchTag() {
+		return _phaseBatchTag;
+	}
+
+	public void setPhaseBatchTag(FederatedPhaseWire.BatchTag phaseBatchTag) {
+		_phaseBatchTag = phaseBatchTag;
 	}
 
 	@Override
