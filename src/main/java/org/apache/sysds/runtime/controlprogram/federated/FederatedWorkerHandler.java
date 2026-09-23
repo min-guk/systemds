@@ -449,6 +449,14 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			case EXEC_UDF:
 				result = execUDF(request, ecm, eventStage);
 				break;
+			case SOURCE_PREPARE:
+				eventStage.operation = method.name();
+				result = BoundedWorkerWarmup.prepare(request, ecm.get(request.getTID()));
+				break;
+			case BOUNDED_WARMUP:
+				eventStage.operation = method.name();
+				result = BoundedWorkerWarmup.run(request, ecm.get(request.getTID()));
+				break;
 			case CLEAR:
 				eventStage.operation = method.name();
 				result = execClear(ecm);

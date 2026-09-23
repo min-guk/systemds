@@ -48,6 +48,8 @@ public class FederatedRequest implements Serializable {
 		GET_VAR,   // return local variable to main
 		EXEC_INST, // execute arbitrary instruction over
 		EXEC_UDF,  // execute arbitrary user-defined function
+		SOURCE_PREPARE, // read one already registered matrix locally; return metadata only
+		BOUNDED_WARMUP, // bounded worker-local calculation on one protected X matrix
 		PHASE_CONTROL, // reserved native phase protocol; unhandled requests fail closed
 		CLEAR,     // clear all variables and execution contexts (i.e., rmvar ALL)
 		NOOP,      // no operation (part of request sequence and ID carrying)
