@@ -231,6 +231,33 @@ public class FederatedData {
 	}
 
 	/**
+	 * Sends one explicitly admitted STRICT phase batch without attaching it to the process-wide legacy
+	 * {@link FederatedPhaseCompletion} scope. The attempt owner is responsible for retaining and draining
+	 * the returned response. This path deliberately does not retry: after an ambiguous write or response,
+	 * replaying a stateful batch would be unsafe and the owning attempt must be torn down.
+	 */
+	static synchronized Future<FederatedResponse> executeTaggedPhaseOperation(InetSocketAddress address,
+		FederatedRequest... requests) {
+		if(address == null || requests == null || requests.length == 0 || requests[0] == null
+			|| requests[0].getPhaseBatchTag() == null)
+			throw new IllegalArgumentException("Tagged phase operation requires an address and phase tag");
+		rejectNativeControlOnOrdinaryPath(requests);
+		PlannerRuntimePlacementAudit.validateFederatedRequestDispatch(requests);
+		try {
+			if(workerGroup == null)
+				createWorkGroup();
+			long tid = requests[0].getTID();
+			ImmutablePair<InetSocketAddress, Long> key = ImmutablePair.of(address, tid <= 0 ? 0L : tid);
+			PooledConnection conn = pooledConnections.computeIfAbsent(key,
+				k -> new PooledConnection(k, address));
+			return conn.sendTagged(requests);
+		}
+		catch(Exception ex) {
+			throw new DMLRuntimeException("Failed sending tagged federated phase operation", ex);
+		}
+	}
+
+	/**
 	 * Executes an federated operation on a federated worker.
 	 *
 	 * @param address socket address (incl host and port)
@@ -367,7 +394,11 @@ public class FederatedData {
 		}
 
 		public Future<FederatedResponse> send(FederatedRequest... request) throws Exception {
-			return sendInternal(request, null);
+			return sendInternal(request, null, true);
+		}
+
+		private Future<FederatedResponse> sendTagged(FederatedRequest... request) throws Exception {
+			return sendInternal(request, null, false);
 		}
 
 		private Future<FederatedResponse> sendNativeControl(FederatedRequest request,
@@ -379,7 +410,7 @@ public class FederatedData {
 			if(!_nativeControlPending.compareAndSet(false, true))
 				throw new IllegalStateException("A native phase control is already outstanding for this worker");
 			try {
-				Future<FederatedResponse> response = sendInternal(new FederatedRequest[] {request}, control);
+				Future<FederatedResponse> response = sendInternal(new FederatedRequest[] {request}, control, false);
 				((Promise<FederatedResponse>) response).addListener(f -> _nativeControlPending.set(false));
 				return response;
 			}
@@ -390,7 +421,7 @@ public class FederatedData {
 		}
 
 		private Future<FederatedResponse> sendInternal(FederatedRequest[] request,
-			FederatedPhaseWire.Control control) throws Exception {
+			FederatedPhaseWire.Control control, boolean trackLegacyCompletion) throws Exception {
 			if(control == null)
 				validateOrdinaryPhaseBatch(request);
 			if (DEBUG_FEDREQ)
@@ -401,16 +432,16 @@ public class FederatedData {
 				synchronized(_sendLock) {
 					if(_channel != ch || !ch.isActive())
 						continue;
-					return sendOnChannel(ch, request, control);
+					return sendOnChannel(ch, request, control, trackLegacyCompletion);
 				}
 			}
 			throw new DMLRuntimeException("Federated channel changed during request admission");
 		}
 
 		private Future<FederatedResponse> sendOnChannel(Channel ch, FederatedRequest[] request,
-			FederatedPhaseWire.Control control) {
+			FederatedPhaseWire.Control control, boolean trackLegacyCompletion) {
 			final Promise<FederatedResponse> prom = ch.eventLoop().newPromise();
-			if(control == null)
+			if(control == null && trackLegacyCompletion)
 				FederatedPhaseCompletion.trackDispatch(_address, requestTid(request), prom);
 			FederatedPhaseWire.BatchTag batchTag = control == null && request != null && request.length > 0
 				&& request[0] != null ? request[0].getPhaseBatchTag() : null;
