@@ -44,3 +44,14 @@
 - **잔여 이슈:** 실제 PCA/LM 전체 DML 결과·참조값 검증 전이다. 새 JAR·seal·protocol과 Docker worker 재배포 전에는 이전 stage로 성공을 주장하지 않는다.
 - **잠재 회귀 위험:** 직접 `GET_VAR`는 이제 worker가 차단하지 않는다. coordinator/planner를 신뢰하지 않는 배포로 오용하면 보호 원본이 노출될 수 있으므로 해당 신뢰 모델은 실험 receipt/protocol에 명시하고 봉인된 production classpath를 검사한다. 완전한 planner privacy 보증은 로컬 작은 회귀만으로 확립되지 않는다.
 - **의사결정 근거:** 금지된 runtime fallback이나 planner 후보 축소가 아니라, 사용자 승인에 따라 중복 worker 독립 판단을 production에서 제거하고 coordinator 책임으로 되돌린 것이다.
+
+### test-only 분리의 봉인 stage 실제 경로 확인
+
+- **상태:** 제한된 W1/LAN PCA·LM 진단 완료, 수치 reference 미검증으로 campaign 자격은 미충족.
+- **환경/재현:** source commit `07726cd7fb2e50e8801d46d775454b2c418dadf4`, 새 JAR SHA-256 `1dc2482d37d4d7b06e50bcd21f54a2c136b7a023108b8c375de9fa6644b992f2`, seal `ecf77f4ef2362bfbcf9ca41cbc40d2844493d6b128b08feb4df90e711c095838`; so002/so007 Docker, W1/LAN FedFirst. 평가 저장소의 자세한 실행 보고서는 `/home/mchoi/cofee-evaluation/docs/W1357_WORKER_PRIVACY_TEST_ONLY_EXECUTION_2026-09-23.md`.
+- **관측 증상/원인:** 기존 prototype이 거부하던 PCA `uacmean→replace`와 LM `ba+*`는 실제 worker에서 각각 오류 없이 실행됐다. 두 receipt 모두 본 workload 1회, `runtimeStatus=success`, output 파일 존재, network valid이며 `FederatedWorkerPrivacy` 예외가 없다. Worker 독립 allowlist를 production에서 제거한 결과로 해석한다. 출력의 수치적 정당성이 증명된 결과로 해석하지 않는다.
+- **해결/수정 파일:** 위 test-only 분리 구현과 동일; 이 절에서 Java를 추가 변경하지 않았다. 새 stage·protocol/receipt는 평가 저장소에서 생성·보존했다.
+- **검증:** clean package JAR과 production classpath에 prototype 클래스가 없고, 신뢰 모델 식별자가 seal-derived classpath inventory에 결속됐다. PCA attempt `2b67b3961548`, LM attempt `5290a31b9b71` 모두 runner의 `receipt_errors=[]`지만 `correctness=unverified`라 상태 `invalid`; qualified 0/896이다.
+- **잔여 이슈:** 독립 reference 비교, 전체 emitted/recompile plan 검증, W3/5/7·다른 planner·WAN 및 전체 campaign. 이전 stage hardlink 원본의 지속 불변성도 운영 전제다.
+- **잠재 회귀 위험/감지:** coordinator를 신뢰하지 않는 환경에서 직접 worker 원시 반환이 허용된다. 이 배포 경계가 바뀌면 별도 보안 요구·negative test를 다시 도입해야 한다. 현 실험에서는 coordinator privacy/placement regression과 receipt의 trust model/JAR 부재 검사를 유지한다.
+- **의사결정 근거:** coordinator 책임을 명시한 test-only 분리이며 runtime fallback이나 planner 후보 축소가 아니다.
