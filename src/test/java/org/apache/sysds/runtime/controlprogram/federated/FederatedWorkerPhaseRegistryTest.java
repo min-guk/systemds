@@ -459,6 +459,9 @@ public class FederatedWorkerPhaseRegistryTest {
 			releaseRoot.countDown();
 			assertTrue(batch.get(5, TimeUnit.SECONDS).isSuccessful());
 			Reply aborted = reply(aborting.get(5, TimeUnit.SECONDS));
+			assertEquals(ReplyStatus.ACK, aborted.getStatus());
+			assertEquals(0, aborted.getRejectedTasks());
+			assertEquals(0, aborted.getFailedTasks());
 			assertEquals(identity.getStageSeal(), aborted.getAcceptedStageSeal());
 			assertFalse(registry.hasStrictSession());
 			assertFalse("gated END unexpectedly constructed its reply", ending.isDone());
@@ -468,6 +471,9 @@ public class FederatedWorkerPhaseRegistryTest {
 				reply(registry.handleControl(begin(next), request.getPID(), HOST).get()).getStatus());
 			controls.releaseFirst();
 			Reply ended = reply(ending.get(5, TimeUnit.SECONDS));
+			assertEquals(ReplyStatus.ACK, ended.getStatus());
+			assertEquals(0, ended.getRejectedTasks());
+			assertEquals(0, ended.getFailedTasks());
 			assertEquals(identity.getStageSeal(), ended.getAcceptedStageSeal());
 			assertEquals(identity.getSettingsDigest(), ended.getAcceptedSettingsDigest());
 			assertFalse("old END receipt crossed into the new attempt",

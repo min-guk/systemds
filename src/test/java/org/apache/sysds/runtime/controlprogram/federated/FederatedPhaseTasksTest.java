@@ -243,6 +243,24 @@ public class FederatedPhaseTasksTest {
 	}
 
 	@Test
+	public void awaitingTerminalOwnedTokenAfterNextPhaseIsIdempotentAndClean() throws Exception {
+		FederatedPhaseTasks tasks = new FederatedPhaseTasks();
+		PhaseToken old = tasks.begin("old-terminal");
+		tasks.closeRootAdmission(old);
+		assertTrue(tasks.await(old, TEST_TIMEOUT).isClean());
+
+		PhaseToken next = tasks.begin("next-live");
+		Result repeated = tasks.await(old, TEST_TIMEOUT);
+		assertTrue(repeated.isClean());
+		assertTrue(repeated.isTerminal());
+		assertEquals(0, repeated.getRejected());
+		assertEquals(0, repeated.getFailures().size());
+
+		tasks.closeRootAdmission(next);
+		assertTrue(tasks.await(next, TEST_TIMEOUT).isClean());
+	}
+
+	@Test
 	public void concurrentRootCloseAndSubmissionHasExactlyOneAccountedOutcome() throws Exception {
 		ExecutorService race = Executors.newFixedThreadPool(2);
 		try {

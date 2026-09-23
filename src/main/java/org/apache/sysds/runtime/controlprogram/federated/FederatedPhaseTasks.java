@@ -104,7 +104,13 @@ public final class FederatedPhaseTasks {
 			throw new IllegalArgumentException("Federated task phase timeout must be positive and finite");
 
 		synchronized(_gate) {
-			Phase phase = requireCurrent(token);
+			Phase phase = requireOwned(token);
+			if(phase.terminal)
+				return new Result(phase);
+			if(_current != phase) {
+				reject(phase, FailureKind.STALE_TOKEN, null);
+				throw new IllegalStateException("Federated task phase token is stale");
+			}
 			if(!phase.rootsClosed)
 				throw new IllegalStateException("Root admission must be closed before awaiting task termination");
 			long remaining = timeoutNanos;

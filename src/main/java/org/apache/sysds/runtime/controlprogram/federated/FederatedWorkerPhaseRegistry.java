@@ -323,20 +323,7 @@ public final class FederatedWorkerPhaseRegistry {
 	}
 
 	private FederatedPhaseTasks.Result awaitTasks(Session session, long timeoutMillis) throws InterruptedException {
-		synchronized(this) {
-			if(session.terminal)
-				return _tasks.snapshot(session.token);
-		}
-		try {
-			return _tasks.await(session.token, Duration.ofMillis(timeoutMillis));
-		}
-		catch(IllegalStateException ex) {
-			synchronized(this) {
-				if(session.terminal)
-					return _tasks.snapshot(session.token);
-			}
-			throw ex;
-		}
+		return _tasks.await(session.token, Duration.ofMillis(timeoutMillis));
 	}
 
 	private Admission admit(FederatedRequest[] requests, String remoteHost) {
