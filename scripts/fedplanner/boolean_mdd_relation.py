@@ -368,6 +368,49 @@ class MDDManager:
             cache[current] = result
         return cache[root]
 
+    def compact(self, roots):
+        """Discard nodes and operation caches unreachable from ``roots``.
+
+        Handles for retained roots and nodes stay valid.  This makes compaction
+        safe between exact construction stages while preserving the canonical
+        serialized root identifiers.  The returned value is the number of
+        discarded nonterminal nodes.
+        """
+        if isinstance(roots, dict):
+            selected = tuple(roots.values())
+        elif isinstance(roots, _Handle):
+            selected = (roots,)
+        else:
+            try:
+                selected = tuple(roots)
+            except TypeError as error:
+                raise ValueError("compaction roots must be handles or an iterable") \
+                    from error
+        if not selected:
+            raise ValueError("compaction requires at least one root")
+        for root in selected:
+            self._check_root(root)
+
+        reachable = set()
+        stack = list(selected)
+        while stack:
+            current = stack.pop()
+            if current in (self.false, self.true) or current in reachable:
+                continue
+            reachable.add(current)
+            stack.extend(self._nodes[current].children)
+
+        before = len(self._nodes)
+        self._nodes = {handle: node for handle, node in self._nodes.items()
+                       if handle in reachable}
+        self._unique = {(node.level, node.children): handle
+                        for handle, node in self._nodes.items()}
+        # Cached results may point at reclaimed nodes. Rebuilding them lazily is
+        # both safer and smaller than attempting to retain a transitive cache.
+        self._apply_cache = {}
+        self._not_cache = {self.false: self.true, self.true: self.false}
+        return before - len(self._nodes)
+
     def difference(self, left, right):
         """Return the exact directional difference ``left AND NOT right``."""
         return self.and_(left, self.not_(right))

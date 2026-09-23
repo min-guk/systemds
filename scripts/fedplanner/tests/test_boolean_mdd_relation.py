@@ -237,6 +237,43 @@ class BooleanMDDRelationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not belong"):
             self.manager.is_empty(other.false)
 
+    def test_compaction_preserves_roots_and_reclaims_only_unreachable_nodes(self):
+        kept = self.manager.from_predicate(
+            lambda row: row[0] == row[2] and row[1] != 2)
+        discarded = self.manager.from_predicate(
+            lambda row: row[0] != row[2] or row[1] == 2)
+        before = self.manager.to_artifact({"kept": kept})
+        expected = [(self.manager.evaluate(kept, row), row)
+                    for row in self.assignments]
+        expected_count = self.manager.count(kept)
+        expected_witness = self.manager.witness(kept)
+        self.assertGreater(self.manager.compact({"kept": kept}), 0)
+        self.assertEqual(before, self.manager.to_artifact({"kept": kept}))
+        self.assertEqual(expected,
+                         [(self.manager.evaluate(kept, row), row)
+                          for row in self.assignments])
+        self.assertEqual(expected_count, self.manager.count(kept))
+        self.assertEqual(expected_witness, self.manager.witness(kept))
+        self.assertEqual(self.manager.false,
+                         self.manager.directional_difference(kept, kept))
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            self.manager.evaluate(discarded, self.assignments[0])
+
+    def test_compaction_validates_roots_and_can_recover_node_budget(self):
+        manager = MDDManager(self.variables, max_nodes=3)
+        first = manager.literal(0, {0})
+        second = manager.literal(1, {0})
+        third = manager.literal(2, {0})
+        with self.assertRaisesRegex(MDDResourceLimitError, "node budget"):
+            manager.and_(first, second)
+        self.assertEqual(2, manager.compact(third))
+        combined = manager.and_(third, manager.literal(0, {1}))
+        self.assertTrue(manager.evaluate(combined, (1, 0, 0)))
+        with self.assertRaisesRegex(ValueError, "at least one root"):
+            manager.compact([])
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            manager.compact(MDDManager(self.variables).true)
+
     def test_deep_not_serialization_and_validation_are_iterative(self):
         variables = tuple(Variable("v" + str(index), ("0", "1"))
                           for index in range(1100))
