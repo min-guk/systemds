@@ -48,7 +48,7 @@
 
 | 검증 | 결과 | 증거의 한계 |
 |---|---|---|
-| Python 단위·mutation 회귀 | 최신 통합 377개 통과(선택형 저장 artifact 스캔 1개 제외); 빈 별도 bytecode cache에서 소스 재로딩 | 모델 전체 적용을 대신하지 않음 |
+| Python 단위·mutation 회귀 | 최신 통합 382개 통과(선택형 저장 artifact 스캔 1개 제외); 빈 별도 bytecode cache에서 소스 재로딩 | 모델 전체 적용을 대신하지 않음 |
 | planning P matrix 저장 artifact 재검사 | 224/224 PASS | native P acceptance 전체 인증 아님 |
 | LM 한 조건의 기존 JSON ↔ compact | P/E 양방향 물리 집합 일치 | pilot 한 조건 |
 | Pca w5/wan_heavy compact pilot | P accepted proof 377,856 → 물리 identity 600; E accepted proof 479,232 → 물리 identity 600; **P-only 0, E-only 0** | 해당 captured model 비교이며 P acceptance 전체 인증 아님 |
@@ -243,6 +243,10 @@ Pca 동결 worklist 12셀의 개별 생산 certificate는 모두 `PASS`에 도�
 큰 공간의 다음 정확한 단위는 완전한 target 물리 plan의 행을 E typed atom과 hard factor에 결속하는 target-preimage compiler다. 현재 P2 대표 `cell_00d1aa1ca27bce14d826`에는 PHI binding이 없지만 P1 대표에는 PHI template 83개가 있어 첫 구현은 non-PHI만 지원하고 나머지는 `INCOMPLETE`로 남겨야 한다. 물리 action·geometry의 동일한 행은 여러 native 출처에서 나올 수 있으므로 출처 atom의 bit-vector 동일성만으로 membership을 판정하면 거짓 음성이 생긴다. target 행의 존재·불필요한 행의 부재와 공유 native assignment의 hard factor를 함께 만족시키는 정확한 전상(preimage)을 만든 뒤, 작은 전수 oracle과 양방향으로 대조해야 한다. 이 경로도 먼저 하나의 target membership을 해결하는 것이며 P/E 양방향 전체 집합 동등성으로 승격할 수 없다.
 
 그 전상 중 target 행→Boolean factor 변환만 `e_target_preimage.py`에 진단용으로 구현했다. 실제 P2 대표의 canonical target 547행에서 factor cell 1,284개를 생성했고 상태는 `COMPLETE/FACTORIZED`다. 이는 SAT/UNSAT 계산이나 Java 의미론 연결이 아니며, 저장된 물리 집합의 포함 판정도 아니다. source가 불명확하거나 PHI가 필요한 경우 `INCOMPLETE`로 남긴다. 작은 전수 oracle과의 대조 및 독립 재검토를 통과한 54개 집중 테스트(선택형 1개 제외)는 컴파일러의 제한된 계약을 검증한다.
+
+`query_e_factorized_membership.py`와 독립 `e_factorized_membership_checker.py`는 이 전상 factor와 E hard/atom factor를 atom→native 순서로 제거한다. producer MDD의 최종 root만 믿지 않고 단계별 output truth·witness를 저장한 뒤 각 bucket의 모든 조합을 별도 checker가 다시 계산한다. 실제 v12 P2의 ALLOW witness에서 만든 target은 6,373 bucket cell을 재생해 약 3초에 `SAT`였고, 원본 E hard factor의 `ALLOW` 및 pinned typed decoder의 canonical target 일치를 별도로 확인했다. 저장 `result.json`의 SHA-256은 `f7a29949053b0bc27bf3164b56f35681ca6f564b49b848268b47539187ad7999`; 빈 cache의 별도 프로세스로 만든 `verification.json`은 `PASS`이며 SHA-256 `e865e64ac6cd7d7299e2ef9e95aa361eefc70d9ce5a47b0ec91e4d7d585516f3`이다. 둘은 `current-e-factorized-membership-p2-v1`에 있고 target SHA-256은 `a50cd6763ff64d93afe119429a8ab48d9d7c12a2750d667128497a1626096ed5`이다.
+
+반대로 같은 P2의 all-zero assignment에서 만든 target은 압축 factor상 해가 없었지만 결과를 `UNSAT`로 내지 않고 `INCOMPLETE/ATOM_DECODER_SEMANTICS_NOT_CERTIFIED`로 남겼다. 저장 negative artifact와 별도 검사도 각각 생성·재생됐으며 `compiledFactorsUnsat=true`는 조건부 진단일 뿐이다. atom-equivalence factor가 실제 typed decoder와 모든 assignment에서 같다는 독립 증명이 아직 없기 때문이다. 이 코드의 결과는 `UNATTESTED_NORMAL_PYTHON_IMPORT_GRAPH`를 명시하며 Java planner 의미론, P==E, 실행 소스 attestation을 주장하지 않는다. 독립 코드 검토에서 잔여 HIGH/MEDIUM 0건이었고 self-consistent target/proof/budget 변조 회귀를 포함한 23개 집중 경우를 통과했다.
 
 전체 612조건의 저장 증거를 재검사할 수 있도록 `verify_current_pe_matrix_parallel.py`를 추가했다. 기존 동결 runner를 source에서 컴파일해 사용하고, 전체 영수증·요약의 해시를 작업 전후에 결속하며, 비어 있는 별도 Python bytecode cache에서 8개 P 검증 작업과 물리 셀 검증을 병렬화한다. 코드의 독립 검토와 mutation 테스트는 통과했다. 실제 v12 전체 artifact-only 병렬 재검사는 실행 중이며, 최종 attestation이 발행되기 전까지 `PASS`로 적지 않는다. 원래 직렬 `verify`는 별도 운영 재검사로 계속 실행 중이지만, 시작 환경에 비어 있는 bytecode cache가 없어 최종 독립 증거로 승격하지 않는다.
 
