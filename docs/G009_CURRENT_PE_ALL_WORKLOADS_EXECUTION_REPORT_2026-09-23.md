@@ -256,6 +256,8 @@ P acceptance의 작은 독립 진단으로 `check_p_required_input_support.py`�
 
 `check_p_transient_relation_support.py`는 검증된 P v2 모델에 저장된 transient relation 각각의 edge에서 source와 reader reference가 **같은 edge 안에서** 동시에 가능한지 검사한다. 선택된 owner는 정확한 reference, 미선택 owner는 현재 placement에 맞는 `AVAILABLE` reference를 요구한다. relation별 AND·edge별 OR를 Java 조건식과 대조했고, 모든 edge의 reference/owner를 먼저 검증하며 relation 위치 0·중복 slot 금지·reader realization 범위를 확인한다. 실제 v12 LM 모델의 비어 있지 않은 relation 20개와 edge 20개는 `PASS`였고, `current-p-transient-relation-lm-v1`의 저장 요청·결과·새 프로세스 재생 SHA-256은 차례로 `226ba2b34026573d3aa9d35fec8ca0aa54b5db255f613aec4060cb7825df7776`, `e73669ab42030c2837231aa13e39b7bf86ef389206eaa7ea69f3d696c188ef16`, `bae1d7ef5e36b3be029d3ca1aa30cd5d394237f29376ac8ba03e8940ef2cc73d`다. 검사기 소스 SHA-256은 `126192168db3d7b750fff6b4668af723bad91b89a7a3efec50f105992b7d6b61`이다. 별도 코드 검토에서 발견된 edge-budget 사후 적용 문제를 사전 상한 검사로 수정했고, 관련 22개 집중 테스트 및 전체 fedplanner Python 411개 테스트(1개 skip)가 통과했다. 이 결과는 **저장된 relation 한 predicate의 부분 판정**이다. Java proof의 anchor·dependency와 relation 생성·완전성, 전체 P acceptance, Java exception은 검증하지 않았으며 opaque predicate 7개는 그대로다.
 
+`check_p_fout_materialization_reachability.py`는 선택된 P receipt의 FOUT materialization action 필요성·정확한 graph action·동일 `AVAILABLE` rule의 action 없는 source emission·현재 anchor-owner 배치를 Java helper의 complete-assignment 조건에 맞춰 검사한다. 실제 v12 `microbench:hourglass-k1`에서는 action-bearing receipt 1건을 선택한 assignment가 `PASS`였고, materialization 목표 `BROADCAST`와 anchor owner의 필수 FType `ROW`를 별개의 조건으로 유지했다. `current-p-fout-materialization-hourglass-k1-v1`의 요청·결과·빈 bytecode cache의 별도 재생 파일 SHA-256은 차례로 `1ac849017ec6c7413ce804e015367a7b7cfe03a3c0f2c0745196d4d0abb11688`, `6c62d94d7b82a4d2cb34266084d51499ee7f0e361ceca8091a450807d4ec8d33`, `351421cc29f7ccc88b45a9f1567fd7dc91dc15f03fb1930387a097f5af88d32d`다. 검사기 소스 SHA-256은 `966742e5eece25786e4496279016f1133969f8d59ed1a984fe3586f2f2189115`이고 집중 테스트 14개와 전체 fedplanner Python 433개 테스트(1개 skip)가 통과했다. 별도 최종 코드 검토의 HIGH/MEDIUM 지적은 0건이다. 이 증거도 검증된 저장 P 모델의 **단일 local predicate**이며 producer-carried action inventory의 완전성, 다른 acceptance 조건, Java exception, P==E를 인증하지 않는다.
+
 E raw 2,057,529,600개인 base/ML10 Pca의 중간 크기 조건 20개에서 별도 실행을 시작한 4개를 뺀 16개를 `run_current_pe_medium_pca.py`의 해시 결속 worklist로 동결했다. worklist SHA-256은 `afa54932345546b878bceb0942c81078b5b136bf0999913bbd0806e874b8e075`이다. 최대 4셀·8 JVM으로 병렬 실행하고, 각 certificate를 저장 artifact만으로 다시 검사하며, 중단 후 같은 worklist로 재개한다. 실제 16셀 실행은 진행 중이다. 최종 `summary.json` 및 별도 `verify`가 나오기 전에는 전체 중간 공간의 동등성을 주장하지 않는다.
 
 ## 저장 증거 재실행 명령
@@ -333,6 +335,25 @@ actual = check(request["model"], request["modelSha256"],
                request["placements"], request["candidates"])
 assert actual == expected and actual["verdict"] == "PASS"
 print("PASS", actual["relationCount"], actual["storedEdgeCount"])
+PY
+```
+
+FOUT materialization leaf도 저장된 `current-p-fout-materialization-hourglass-k1-v1/request.json`의 assignment로 동일하게 재생한다.
+
+```bash
+S="$B/current-p-fout-materialization-hourglass-k1-v1"
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="$(mktemp -d "$B/pycache-p-fout-XXXXXXXX")" \
+  python3 - "$S" <<'PY'
+import json, sys
+from pathlib import Path
+from scripts.fedplanner.check_p_fout_materialization_reachability import check
+root = Path(sys.argv[1])
+request = json.loads((root / "request.json").read_text())
+expected = json.loads((root / "result.json").read_text())
+actual = check(request["model"], request["modelSha256"],
+               request["placements"], request["candidates"])
+assert actual == expected and actual["verdict"] == "PASS"
+print("PASS", actual["requiredMaterializationCount"])
 PY
 ```
 
