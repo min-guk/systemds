@@ -246,7 +246,7 @@ Pca 동결 worklist 12셀의 개별 생산 certificate는 모두 `PASS`에 도�
 
 전체 612조건의 저장 증거를 재검사할 수 있도록 `verify_current_pe_matrix_parallel.py`를 추가했다. 기존 동결 runner를 source에서 컴파일해 사용하고, 전체 영수증·요약의 해시를 작업 전후에 결속하며, 비어 있는 별도 Python bytecode cache에서 8개 P 검증 작업과 물리 셀 검증을 병렬화한다. 코드의 독립 검토와 mutation 테스트는 통과했다. 실제 v12 전체 artifact-only 병렬 재검사는 실행 중이며, 최종 attestation이 발행되기 전까지 `PASS`로 적지 않는다. 원래 직렬 `verify`는 별도 운영 재검사로 계속 실행 중이지만, 시작 환경에 비어 있는 bytecode cache가 없어 최종 독립 증거로 승격하지 않는다.
 
-E raw 2,057,529,600개인 base/ML10 Pca의 중간 크기 조건 20개에서 이미 별도로 실행한 4개를 뺀 16개를 `run_current_pe_medium_pca.py`의 해시 결속 worklist로 동결했다. worklist SHA-256은 `afa54932345546b878bceb0942c81078b5b136bf0999913bbd0806e874b8e075`이다. 최대 4셀·8 JVM으로 병렬 실행하고, 각 certificate를 저장 artifact만으로 다시 검사하며, 중단 후 같은 worklist로 재개한다. 실제 16셀 실행은 진행 중이다. 최종 `summary.json` 및 별도 `verify`가 나오기 전에는 전체 중간 공간의 동등성을 주장하지 않는다.
+E raw 2,057,529,600개인 base/ML10 Pca의 중간 크기 조건 20개에서 별도 실행을 시작한 4개를 뺀 16개를 `run_current_pe_medium_pca.py`의 해시 결속 worklist로 동결했다. worklist SHA-256은 `afa54932345546b878bceb0942c81078b5b136bf0999913bbd0806e874b8e075`이다. 최대 4셀·8 JVM으로 병렬 실행하고, 각 certificate를 저장 artifact만으로 다시 검사하며, 중단 후 같은 worklist로 재개한다. 실제 16셀 실행은 진행 중이다. 최종 `summary.json` 및 별도 `verify`가 나오기 전에는 전체 중간 공간의 동등성을 주장하지 않는다.
 
 ## 저장 증거 재실행 명령
 
@@ -274,9 +274,9 @@ Pca 12조건은 별도 `current-pe-v12-ledger-aware-pca-representatives/worklist
 ## 완료되지 않은 의무
 
 1. v11의 두 capture 오류는 v12에서 수정했고 동결 612조건의 P/E 모델 캡처·저장물 재검사가 각각 612/612 통과했다. 그러나 v4 catalog의 `IN_SCOPE` placeholder 59행→동결 successor 388행 매핑 외에 적용성 149행이 여전히 미해결이다. SliceLine 64조건과 microbench 28조건의 파생 compile-model 입력 정책도 동결해야 하므로 `FULL_CURRENT`가 아니다.
-2. P acceptance의 남은 opaque predicate를 저장 규칙과 별도 interpreter로 재검사해야 한다. Java 생산자의 accepted proof만 확인한 셀은 `CAPTURED_EQUAL` 이상으로 올리지 않는다.
-3. Pca 12개 열거 가능 조건의 전체 양방향 물리 집합을 비교하고, w1·P1·P2를 위한 정확한 압축 관계·projection·차집합 및 독립 재검사를 구현해야 한다.
+2. P acceptance의 남은 opaque predicate를 저장 규칙과 별도 interpreter로 재검사해야 한다. Java 생산자의 accepted proof만 확인한 셀은 `CAPTURED_EQUAL`을 초과한 독립 P==E/완전성 판정으로 승격하지 않는다.
+3. Pca 12개 열거 가능 조건의 개별 양방향 물리 집합 비교는 통과했지만, 집계 summary와 빈 bytecode cache의 별도 artifact-only 검증을 마쳐야 한다. w1·P1·P2를 위한 정확한 압축 관계·projection·차집합 및 독립 재검사도 구현해야 한다.
 4. v12 P/E 모델 matrix와 별도 저장물 재검사는 완료됐다. 전체 물리 집합의 one-command gate와 cold/warm/중단·재개 및 필수 셀의 정확한 물리 관계 비교는 아직 완료해야 한다.
 5. 역사 버전 B0/B1 비교와 독립 runtime R 인증은 이 보고서의 P/E 명제와 별도 후속 의무로 유지한다.
 
-현재 확보된 증거는 큰 공간의 E factor 계수와 작은/중간 공간의 저장 형식 정확성까지다. 위 필수 의무가 남아 있으므로 계획의 최종 체크리스트는 통과하지 않았다.
+현재 확보된 증거는 큰 공간의 E factor 계수와 선별된 작은 조건·Pca 12개 개별 저장 집합 비교까지다. 위 필수 의무가 남아 있으므로 계획의 최종 체크리스트는 통과하지 않았다.
