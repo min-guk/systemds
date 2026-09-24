@@ -20,6 +20,7 @@
 package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Future;
 
@@ -167,7 +168,8 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 			if (mo.isFederated()) {
 				if (base.isFederatedExcept(FType.BROADCAST) && mo.isFederatedExcept(FType.BROADCAST)
 					&& !isAligned(base, mo)) {
-					throw new DMLRuntimeException("Federated nary ops require aligned federated inputs.");
+					throw new DMLRuntimeException("Federated nary ops require aligned federated inputs: base="
+						+ describePlacement(base) + ", input=" + in.getName() + " " + describePlacement(mo));
 				}
 				matrixOps.add(in);
 				matrixIds.add(mo.getFedMapping().getID());
@@ -208,6 +210,15 @@ public class BuiltinNaryFEDInstruction extends FEDInstruction implements Lineage
 		if (base.isFederated(FType.FULL))
 			return base.getFedMapping().isAligned(other.getFedMapping(), AlignType.FULL);
 		return base.isFederated(FType.BROADCAST);
+	}
+
+	private static String describePlacement(MatrixLineagePair matrix) {
+		return "{type=" + matrix.getFedMapping().getType()
+			+ ",dims=" + matrix.getNumRows() + "x" + matrix.getNumColumns()
+			+ ",ranges=" + Arrays.toString(matrix.getFedMapping().getFederatedRanges())
+			+ ",workers=" + Arrays.toString(Arrays.stream(matrix.getFedMapping().getFederatedData())
+				.map(data -> data.getAddress() == null ? "null" : data.getAddress().toString())
+				.toArray(String[]::new)) + "}";
 	}
 
 	private MatrixLineagePair selectBaseFederatedInput(ExecutionContext ec) {

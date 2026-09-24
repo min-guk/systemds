@@ -24,6 +24,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -125,6 +126,20 @@ public class FederationUtilsRefedReuseLayoutTest {
 			assertEquals(origRanges[i].getEndDims()[0], rebuiltRanges[i].getEndDims()[0]);
 			assertEquals(original.getFederatedData()[i].getAddress(), rebuilt.getFederatedData()[i].getAddress());
 		}
+	}
+
+	@Test(timeout = 5_000)
+	public void testBuildAnchorMapUnknownHostPreservesUnresolvedAddress() {
+		String host = "w1357-runtime-anchor-does-not-exist.invalid";
+		FederationMap rebuilt = FederationUtils.buildAnchorMapFromKey(
+			host + ":8123;|0,0,4,2;|FULL");
+
+		assertNotNull(rebuilt);
+		InetSocketAddress address = rebuilt.getFederatedData()[0].getAddress();
+		assertTrue("unresolvable runtime anchors must preserve historical unresolved behavior",
+			address.isUnresolved());
+		assertEquals(host, address.getHostString());
+		assertEquals(8123, address.getPort());
 	}
 
 	@Test(expected = DMLRuntimeException.class)

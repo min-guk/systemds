@@ -339,6 +339,10 @@ public class FederationUtils {
 			InetSocketAddress isa = parseAddress(token);
 			if (isa == null)
 				return null;
+			// Anchor maps are consumed by runtime instructions and must use the same
+			// resolved endpoint representation as native fedinit maps. Keep parseAddress
+			// lexical for DNS-free planner identity, and resolve only at this boundary.
+			isa = new InetSocketAddress(isa.getHostString(), isa.getPort());
 			FederatedData data = new FederatedData(Types.DataType.MATRIX, isa, null);
 			FederatedRange range = parseRangeToken(rangeTokens, workerIx, fType);
 			if (range == null)
