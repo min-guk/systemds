@@ -236,7 +236,7 @@ Harness alias 9행은 `source-manifest.json`의 정확한 출처 경로·SHA와 
 
 별도 microbench v12 파일럿의 `reuse-k1`과 `update-k1`은 각각 P/E accepted proof 3,072개, 물리 identity 840개씩, 양방향 차집합 0으로 생산 certificate와 artifact-only 재검사가 `PASS`였다. 두 certificate SHA-256은 순서대로 `0958bf6f8fafec912ccb3c5d36a5639885491d5b8ff7705133783c6a8b271b63`, `91c91f0b474b5644e5221ac585e59ed0d0d2183dd1db46be2cece0778a2ef4ec`이다. 두 셀 역시 `CAPTURED_NATIVE_PHYSICAL_SET_EQUALITY`이며 독립 P acceptance 또는 모든 microbench 조건의 대표 증거가 아니다.
 
-Pca 동결 worklist 12셀의 개별 생산 certificate는 모두 `PASS`에 도달했다. 각 셀에서 P accepted proof 377,856개, E accepted proof 479,232개였고, 물리 identity는 양측 600개, 양방향 차집합은 0개다. 같은 입력·source/class의 저장 certificate 12개를 묶는 `run_current_pe_pca12.py run` 집계도 exit 0으로 끝났고 `summary.json`은 `CAPTURED_EQUAL` 12/12, 파일 SHA-256 `9f4405abf493c20fa676f7674b99a7698c313cbbd7192380ae2205979000dddf`이다. 빈 bytecode cache에서 저장 artifact만 재검사하는 별도 `verify`는 진행 중이며, 그 결과가 나오기 전에는 12셀 집계의 최종 독립 재생 완료를 주장하지 않는다.
+Pca 동결 worklist 12셀의 개별 생산 certificate는 모두 `PASS`에 도달했다. 각 셀에서 P accepted proof 377,856개, E accepted proof 479,232개였고, 물리 identity는 양측 600개, 양방향 차집합은 0개다. 같은 입력·source/class의 저장 certificate 12개를 묶는 `run_current_pe_pca12.py run` 집계도 exit 0으로 끝났고 `summary.json`은 `CAPTURED_EQUAL` 12/12, 파일 SHA-256 `9f4405abf493c20fa676f7674b99a7698c313cbbd7192380ae2205979000dddf`이다. 빈 bytecode cache의 별도 `run_current_pe_pca12.py verify`도 저장 artifact만 재검사해 12/12 `CAPTURED_EQUAL`, 종료 코드 0으로 끝났다. `results/summary-verification.json`의 SHA-256도 `9f4405abf493c20fa676f7674b99a7698c313cbbd7192380ae2205979000dddf`이며 생산 집계와 바이트 단위로 같다. 이 증거의 범위는 여전히 캡처된 native 물리 집합이고 P의 전체 production acceptance 독립 인증은 아니다.
 
 `query_e_canonical_membership.py`에는 하나의 완전한 canonical 물리 plan에 대해 E의 저장 hard factor와 typed projection을 전수 검사하는 bounded oracle을 추가했다. definite `ALLOW` witness에만 `SAT`, 모든 native assignment를 방문하고 일치하는 `UNKNOWN`도 없을 때만 `UNSAT`, 예산 초과·지원되지 않는 projection에는 `INCOMPLETE`를 반환한다. 실제 v12 LM `cell_0b7e2829a1e84335c6ae`의 71,680 assignment에서 저장 E 사전에 있는 plan은 32,033개 방문 후 `SAT`, opcode를 바꾼 plan은 전체 71,680개 방문 후 `UNSAT`으로 재현했다. 저장 사전의 포함 여부와 두 답이 일치했다. CLI 원시 입력과 API canonical target의 byte budget, PHI producer-derived FType 차단, verifier 무결성 오류 전파를 포함한 10개 집중 테스트가 통과했고 독립 재검토에서 잔여 지적 0건이었다. 이 결과는 captured E typed decoder 내부의 membership 근거이며 Java projector 의미 연결이나 P/E 전체 집합 동등성은 아니다.
 
@@ -250,9 +250,11 @@ Pca 동결 worklist 12셀의 개별 생산 certificate는 모두 `PASS`에 도�
 
 후속 `e_atom_semantics_checker.py`는 비-PHI typed projection의 원본 slot emission에서 atom 전체를 별도로 재구성했다. 원본 E hard table→translated hard factor→실제 소거 입력인 `allFactors`의 일치, 639개 atom의 Boolean 등가 진리표, canonical codec의 node·authority·binding·action·geometry 조립 조건을 지역 범위에서 검사한다. 실제 P2에서는 native domain 144개(가변 37개), 의미 진리표 6,516칸, 조건 비교 상한 57,398회, dense bucket 재생 6,373칸을 확인했다. 같은 all-zero target을 새 schema v2로 다시 계산하면 **captured non-PHI typed-decoder 모델 내부에서 `UNSAT`, `membership=false`**이고, 빈 bytecode cache의 별도 artifact-only 검사는 `PASS`다. `current-e-factorized-membership-p2-atom-bridge-v1/result.json` 파일 SHA-256은 `b9b9559d44bf94d6c5d363ca9005662135df4da8d129258feb123ad2580bb75d`, `verification.json`은 `ffba7c06be9dc426e75dad598ead0b0276fb431bdbef42e71da19105f35f5447`이다. 같은 버전의 positive witness도 `SAT`와 별도 `PASS`로 재생됐고 결과·검증 파일 SHA-256은 각각 `3a24dc3ee49e5dbec3c313bfbdd5a89cf73f9a54da89328533794eadbe272123`, `d49d94010c48dc408a157a78ccaaf5bdfc259f9cf8e517a34047da313b710d0a`이다. checker 소스 SHA-256은 `aaaeeb093699edd3e6eac4e2ccf43e00c904a8ab4b5cc1d4ba58a37d743dcd4b`이며 새 bridge 집중 테스트 12개와 전체 fedplanner Python 400개 테스트(1개 skip)가 통과했다. 별도 설계 검토에서 잔여 HIGH/MEDIUM 지적은 0건이었다. 이 승격은 저장된 E typed projection의 음성 target 한 건에만 적용된다. PHI·UNKNOWN·예산 초과는 계속 `INCOMPLETE`, Java planner 의미 연결·실행 소스 attestation·전체 P==E는 여전히 미확립이다.
 
-전체 612조건의 저장 증거를 재검사할 수 있도록 `verify_current_pe_matrix_parallel.py`를 추가했다. 기존 동결 runner를 source에서 컴파일해 사용하고, 전체 영수증·요약의 해시를 작업 전후에 결속하며, 비어 있는 별도 Python bytecode cache에서 8개 P 검증 작업과 물리 셀 검증을 병렬화한다. 코드의 독립 검토와 mutation 테스트는 통과했다. 실제 v12 전체 artifact-only 병렬 재검사는 종료됐다. `current-pe-campaign-v12-ledger-aware/physical-results/parallel-verification.json`의 파일 SHA-256은 `9eea49c58b2cb2ad9657211f83c5eff2aba321bd696e50a6c9741ce18d345066`이며, 동결 612개 영수증의 해시를 결속하고 `CAPTURED_EQUAL` 61개·`INCOMPLETE` 551개를 다시 확인했다. 최상위 상태는 `INCOMPLETE`, 종료 코드는 2다. 이는 저장 증거의 무결성·기존 판정 재생이며 P acceptance의 독립 의미 검증이나 전체 P==E `PASS`가 아니다. 원래 직렬 `verify`는 별도 운영 재검사로 계속 실행 중이지만, 시작 환경에 비어 있는 bytecode cache가 없어 최종 독립 증거로 승격하지 않는다.
+전체 612조건의 저장 증거를 재검사할 수 있도록 `verify_current_pe_matrix_parallel.py`를 추가했다. 기존 동결 runner를 source에서 컴파일해 사용하고, 전체 영수증·요약의 해시를 작업 전후에 결속하며, 비어 있는 별도 Python bytecode cache에서 8개 P 검증 작업과 물리 셀 검증을 병렬화한다. 코드의 독립 검토와 mutation 테스트는 통과했다. 실제 v12 전체 artifact-only 병렬 재검사는 종료됐다. `current-pe-campaign-v12-ledger-aware/physical-results/parallel-verification.json`의 파일 SHA-256은 `9eea49c58b2cb2ad9657211f83c5eff2aba321bd696e50a6c9741ce18d345066`이며, 동결 612개 영수증의 해시를 결속하고 `CAPTURED_EQUAL` 61개·`INCOMPLETE` 551개를 다시 확인했다. 최상위 상태는 `INCOMPLETE`, 종료 코드는 2다. 이는 저장 증거의 무결성·기존 판정 재생이며 P acceptance의 독립 의미 검증이나 전체 P==E `PASS`가 아니다. 원래 직렬 `verify`도 종료 코드 2와 `suite-verification.json`의 `INCOMPLETE`로 끝났으나, 시작 환경에 비어 있는 bytecode cache가 없어 최종 독립 증거로 승격하지 않는다.
 
 P acceptance의 작은 독립 진단으로 `check_p_required_input_support.py`를 추가했다. 검증된 P v2 모델의 선택된 receipt마다 `requiredInputSupport`를 읽고, 지원 owner가 선택됐으면 정확한 realization reference를, 미선택이면 할당된 placement와 맞는 `AVAILABLE` reference의 존재를 확인한다. 실제 v12 P2의 비어 있지 않은 support 선택 1건은 `PASS`였고, 입력·결과·별도 재생 파일은 `current-p-required-support-p2-v1`에 저장했다. `request.json` SHA-256은 `7986dee9d4a503d38e673b789f483f20bdca025243cd0ee0d15838d64928837c`, `result.json`은 `319f1e118dd1fa52278e7e9e4c770e269e3e08966efe249904b770a29f452f58`, 별도 재생 `verification.json`은 파일 SHA-256 `8a676c42be394c40a0b29c486506217575cc7b9f7631ab467b9cb11356324d3f`로 `PASS`이며 검사기 소스 SHA-256 `cad902871310d17a046cb9808bc57aa20482f33accfbd59d0f71d67e916a3b11`을 기록한다. 선택된 다른 realization·같은 realization의 다른 support clause·미선택 owner의 존재적 지원·해시 변조 거부와 실제 P2의 self-consistent rule-parent 변조 거부를 포함한 11개 집중 테스트가 통과했다. 결과는 `VERIFIED_P_V2_SINGLE_ACCEPTANCE_LEAF_ONLY`와 `UNATTESTED_NORMAL_PYTHON_IMPORT_GRAPH`를 명시한다. 전체 fedplanner Python 400개 테스트가 통과했고 1개가 skip됐다. 다른 candidate/relocation 조건, Java 예외 종류, producer-carried authority는 검사하지 않으므로 opaque predicate 7개와 전체 acceptance `complete=false`는 그대로다.
+
+`check_p_transient_relation_support.py`는 검증된 P v2 모델에 저장된 transient relation 각각의 edge에서 source와 reader reference가 **같은 edge 안에서** 동시에 가능한지 검사한다. 선택된 owner는 정확한 reference, 미선택 owner는 현재 placement에 맞는 `AVAILABLE` reference를 요구한다. relation별 AND·edge별 OR를 Java 조건식과 대조했고, 모든 edge의 reference/owner를 먼저 검증하며 relation 위치 0·중복 slot 금지·reader realization 범위를 확인한다. 실제 v12 LM 모델의 비어 있지 않은 relation 20개와 edge 20개는 `PASS`였고, `current-p-transient-relation-lm-v1`의 저장 요청·결과·새 프로세스 재생 SHA-256은 차례로 `226ba2b34026573d3aa9d35fec8ca0aa54b5db255f613aec4060cb7825df7776`, `e73669ab42030c2837231aa13e39b7bf86ef389206eaa7ea69f3d696c188ef16`, `bae1d7ef5e36b3be029d3ca1aa30cd5d394237f29376ac8ba03e8940ef2cc73d`다. 검사기 소스 SHA-256은 `126192168db3d7b750fff6b4668af723bad91b89a7a3efec50f105992b7d6b61`이다. 별도 코드 검토에서 발견된 edge-budget 사후 적용 문제를 사전 상한 검사로 수정했고, 관련 22개 집중 테스트 및 전체 fedplanner Python 411개 테스트(1개 skip)가 통과했다. 이 결과는 **저장된 relation 한 predicate의 부분 판정**이다. Java proof의 anchor·dependency와 relation 생성·완전성, 전체 P acceptance, Java exception은 검증하지 않았으며 opaque predicate 7개는 그대로다.
 
 E raw 2,057,529,600개인 base/ML10 Pca의 중간 크기 조건 20개에서 별도 실행을 시작한 4개를 뺀 16개를 `run_current_pe_medium_pca.py`의 해시 결속 worklist로 동결했다. worklist SHA-256은 `afa54932345546b878bceb0942c81078b5b136bf0999913bbd0806e874b8e075`이다. 최대 4셀·8 JVM으로 병렬 실행하고, 각 certificate를 저장 artifact만으로 다시 검사하며, 중단 후 같은 worklist로 재개한다. 실제 16셀 실행은 진행 중이다. 최종 `summary.json` 및 별도 `verify`가 나오기 전에는 전체 중간 공간의 동등성을 주장하지 않는다.
 
@@ -315,6 +317,25 @@ print("PASS")
 PY
 ```
 
+LM의 저장된 transient relation 조건은 같은 방식으로 아래처럼 재검사한다. 이 검사는 Java proof의 생성 근거를 재구성하지 않는다.
+
+```bash
+S="$B/current-p-transient-relation-lm-v1"
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="$(mktemp -d "$B/pycache-p-transient-XXXXXXXX")" \
+  python3 - "$S" <<'PY'
+import json, sys
+from pathlib import Path
+from scripts.fedplanner.check_p_transient_relation_support import check
+root = Path(sys.argv[1])
+request = json.loads((root / "request.json").read_text())
+expected = json.loads((root / "result.json").read_text())
+actual = check(request["model"], request["modelSha256"],
+               request["placements"], request["candidates"])
+assert actual == expected and actual["verdict"] == "PASS"
+print("PASS", actual["relationCount"], actual["storedEdgeCount"])
+PY
+```
+
 P2의 schema v2 양성·음성 target은 다음처럼 별도 프로세스에서 재검사한다. `PASS`는 저장된 model-local proof의 재생 성공이며 전체 P/E 판정이 아니다. 옛 `current-e-factorized-membership-p2-v1` 증명은 당시의 조건부 진단으로 보존하며 새 v2 verifier에 넣지 않는다.
 
 ```bash
@@ -337,8 +358,8 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX="$(mktemp -d "$B/pycache-p2-zero-r
 
 1. v11의 두 capture 오류는 v12에서 수정했고 동결 612조건의 P/E 모델 캡처·저장물 재검사가 각각 612/612 통과했다. 그러나 v4 catalog의 `IN_SCOPE` placeholder 59행→동결 successor 388행 매핑 외에 적용성 149행이 여전히 미해결이다. SliceLine 64조건과 microbench 28조건의 파생 compile-model 입력 정책도 동결해야 하므로 `FULL_CURRENT`가 아니다.
 2. P acceptance의 남은 opaque predicate를 저장 규칙과 별도 interpreter로 재검사해야 한다. Java 생산자의 accepted proof만 확인한 셀은 `CAPTURED_EQUAL`을 초과한 독립 P==E/완전성 판정으로 승격하지 않는다.
-3. Pca 12개 열거 가능 조건의 개별 양방향 물리 집합 비교와 집계 summary는 통과했지만, 빈 bytecode cache의 별도 artifact-only 검증을 마쳐야 한다. w1·P1·P2를 위한 정확한 압축 관계·projection·차집합 및 독립 재검사도 구현해야 한다.
+3. Pca 12개 열거 가능 조건의 개별 양방향 물리 집합 비교, 집계 summary, 빈 bytecode cache의 별도 artifact-only 검증은 통과했다. w1·P1·P2를 위한 정확한 압축 관계·projection·차집합 및 독립 재검사는 여전히 구현해야 한다.
 4. v12 P/E 모델 matrix와 별도 저장물 재검사는 완료됐다. 전체 물리 집합의 one-command gate와 cold/warm/중단·재개 및 필수 셀의 정확한 물리 관계 비교는 아직 완료해야 한다.
 5. 역사 버전 B0/B1 비교와 독립 runtime R 인증은 이 보고서의 P/E 명제와 별도 후속 의무로 유지한다.
 
-현재 확보된 증거는 큰 공간의 E factor 계수와 선별된 작은 조건·Pca 12개 개별 저장 집합 비교까지다. 위 필수 의무가 남아 있으므로 계획의 최종 체크리스트는 통과하지 않았다.
+현재 확보된 증거는 큰 공간의 E factor 계수와 선별된 작은 조건·Pca 12개 캡처 물리 집합의 집계 재검사까지다. 위 필수 의무가 남아 있으므로 계획의 최종 체크리스트는 통과하지 않았다.
