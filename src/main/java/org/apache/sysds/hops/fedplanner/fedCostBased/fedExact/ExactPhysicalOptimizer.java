@@ -10,7 +10,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 final class ExactPhysicalOptimizer {
 	static final String COMPACT_PROPERTY = "sysds.fedplanner.exact.compact";
 	static final ExactCategoricalSolver.Limits PRODUCTION_LIMITS =
-		new ExactCategoricalSolver.Limits(10_000_000L, 50_000_000L);
+		new ExactCategoricalSolver.Limits(Integer.MAX_VALUE, Long.MAX_VALUE);
 
 	record Result(ExactCategoricalSolver.Result solverResult,
 		long canonicalObjectiveBits, String contributionFingerprint) {

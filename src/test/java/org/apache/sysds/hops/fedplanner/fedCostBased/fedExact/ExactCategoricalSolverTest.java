@@ -262,6 +262,45 @@ public class ExactCategoricalSolverTest {
 	}
 
 	@Test
+	public void productionLimitsAcceptW1357LogregFactorStructureBeforeEvaluation() {
+		var rows = variable("rows", 7_248);
+		var columns = variable("columns", 2_339);
+		AtomicInteger evaluations = new AtomicInteger();
+		var factor = ExactCategoricalSolver.Factor.lazy(List.of(rows, columns), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+
+		var stats = ExactCategoricalSolver.analyze(List.of(rows, columns), List.of(factor),
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+
+		Assert.assertEquals(16_953_072L, stats.maximumFactorCells());
+		Assert.assertEquals(0, evaluations.get());
+		Assert.assertEquals(Integer.MAX_VALUE,
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumFactorCells());
+		Assert.assertEquals(Long.MAX_VALUE,
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumMaterializedCells());
+	}
+
+	@Test
+	public void productionLimitsStillRejectUnrepresentableFactorBeforeEvaluation() {
+		var rows = variable("rows", 46_341);
+		var columns = variable("columns", 46_341);
+		AtomicInteger evaluations = new AtomicInteger();
+		var factor = ExactCategoricalSolver.Factor.lazy(List.of(rows, columns), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactCategoricalSolver.analyze(List.of(rows, columns), List.of(factor),
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS));
+
+		Assert.assertEquals("EXACT_VE_FACTOR_CELL_OVERFLOW", error.getMessage());
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
 	public void domainWeightedOrderAvoidsMinFillMaterializationBlowup() {
 		var a = variable("a", 2);
 		var b = variable("b", 100);

@@ -129,3 +129,73 @@ mvn -q \
   - **감지 방법**: 다른 FULL range가 계속 실패하는 음성 테스트를 유지한다.
 - **위험**: 진단 메시지에 값 데이터가 유출될 수 있다.
   - **감지 방법**: 메시지는 placement metadata만 구성하며 회귀 테스트는 matrix 값이 아닌 type/dims/ranges/workers만 확인한다.
+
+## Exact variable-elimination production factor cap 제거 — 해결
+
+### 상태
+
+해결. 소스와 focused regression suite까지 통합했으며 production stage나 workload는 실행하지 않았다.
+
+### 환경/조건
+
+- 통합 기준 commit: `0857dcd7a7`
+- 대상: Exact physical optimizer의 production variable-elimination limits
+- 관측 workload factor 크기: `7,248 x 2,339 = 16,953,072` cells
+- 검증 로그: `/home/mchoi/w1357-diagnostics/logreg-repair-integration-20260925`
+
+### 재현 절차
+
+기존 production limit에서 위 factor structure를 `ExactCategoricalSolver.analyze`에 전달하면 실제 factor 값 평가 전 다음 오류로 거부됐다.
+
+```text
+EXACT_VE_FACTOR_LIMIT_EXCEEDED
+cells=16953072
+limit=10000000
+```
+
+### 관측 증상
+
+Exact planner가 표현 가능한 16,953,072-cell factor를 임의의 10,000,000-cell production cap 때문에 평가 전에 중단했다. 이 cap은 Java 자료구조로 표현할 수 없는 크기를 막는 overflow guard와 별개였다.
+
+### 원인 분석
+
+`ExactPhysicalOptimizer.PRODUCTION_LIMITS`가 maximum factor cells를 `10_000_000L`, maximum materialized cells를 `50_000_000L`로 고정했다. 따라서 solver의 기존 산술 overflow 검사에 도달하기 전에 workload-specific 크기 제한이 실행을 차단했다.
+
+### 해결 요약
+
+production limits를 `Integer.MAX_VALUE` factor cells와 `Long.MAX_VALUE` materialized cells로 올려 임의의 workload cap을 제거했다. solver 내부의 int-addressability 및 곱셈 overflow 검사는 그대로 유지한다. 따라서 `46,341 x 46,341`처럼 `Integer.MAX_VALUE`를 넘는 factor는 값을 평가하기 전에 계속 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 거부된다.
+
+### 수정 파일
+
+- `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.java`
+- `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolverTest.java`
+
+### 검증
+
+다음 단일 targeted Maven suite를 실행했다.
+
+```bash
+mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverTest,org.apache.sysds.runtime.instructions.fed.BuiltinNaryFEDInstructionBroadcastTest,org.apache.sysds.runtime.controlprogram.federated.FederationUtilsCanonicalWorkerAddressTest,org.apache.sysds.test.component.federated.FederationUtilsRefedReuseLayoutTest,org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest test
+```
+
+- Exact solver: **20 tests**
+- 기존 runtime-anchor/nary 회귀: **28 tests**
+- 합계: **48 tests, 0 failures, 0 errors, 0 skipped**, Maven exit 0
+- 명령, 실행 시간, 전체 로그와 5개 Surefire XML은 `/home/mchoi/w1357-diagnostics/logreg-repair-integration-20260925`에 보관했다.
+
+### 의사결정 근거
+
+runtime이나 planner candidate-space를 우회하지 않고, Exact solver의 임의 production 크기 정책만 제거했다. 표현 불가능한 factor를 차단하는 solver의 실제 안전성 제약은 보존했다.
+
+### 잔여 이슈
+
+- 이번 단계에서는 production package/stage를 빌드하거나 배포하지 않았다.
+- 실제 Exact workload의 메모리·시간 비용은 이 단위 테스트가 보증하지 않는다.
+- 수치 정확성 검증이나 workload replay를 수행하지 않았다.
+
+### 잠재 회귀 위험
+
+- **위험**: 이전 cap보다 큰 표현 가능한 factor가 이제 더 많은 CPU와 메모리를 소비할 수 있다.
+  - **감지 방법**: 실제 campaign에서는 기존 process/container resource limit와 phase timing을 기록하고, 개별 실패는 campaign 정책에 따라 기록한다.
+- **위험**: cap 제거 과정에서 overflow 보호까지 약화될 수 있다.
+  - **감지 방법**: `productionLimitsStillRejectUnrepresentableFactorBeforeEvaluation`이 `EXACT_VE_FACTOR_CELL_OVERFLOW`와 평가 횟수 0을 고정한다.
