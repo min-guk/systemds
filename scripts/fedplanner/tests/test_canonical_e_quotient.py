@@ -76,7 +76,7 @@ class CanonicalEQuotientTest(unittest.TestCase):
                    {"producerDomain": 2, "controlArm": "right"}]}
         variables.append({"domain": 3, "occurrence": owner("phi"),
                           "alternatives": [fragment("phi", "phi", bindings=[phi])]})
-        return {"schema": "closed-e-native-model-artifact-v1",
+        return {"schema": "closed-e-native-model-artifact-v2",
                 "acceptance": "MATERIALIZED_FACTOR_TABLES", "cell": "quotient-toy",
                 "programSha256": "program", "conditionSha256": "condition",
                 "sourceFiles": [],
@@ -85,7 +85,10 @@ class CanonicalEQuotientTest(unittest.TestCase):
                      "alternatives": [native(name + "-" + str(choice))
                                       for choice in range(len(variables[index]["alternatives"]))]}
                     for index, name in enumerate(names)],
-                "factors": [],
+                "factorAggregation": "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+                "nativeFactorCount": 0, "materializedFactorCount": 0,
+                "sourceFactorScopes": [], "nativeFactorCells": "0",
+                "materializedFactorCells": "0", "factors": [],
                 "sourceIdentity": {
                     "nodes": [{"occurrence": name, "operation": name}
                               for name in names],

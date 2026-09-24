@@ -11,7 +11,10 @@ import json
 from itertools import product
 from pathlib import Path
 
-from exact_e_factor_count import decode_factor_truth
+from exact_e_factor_count import (DEFAULT_MAX_MODEL_COMPRESSED_BYTES,
+                                  DEFAULT_MAX_MODEL_DECODED_BYTES, MODEL_SCHEMA_V1,
+                                  MODEL_SCHEMA_V2, decode_factor_truth, read_gzip_json,
+                                  validate_factor_aggregation)
 
 
 def sha(path):
@@ -103,13 +106,17 @@ def factor_relation(radices, factors, *, component_limit=2_000_000,
             'rejected': suffix[0] - nonrejected}, ordinals
 
 
-def verify(model_path, expected_model_sha, rows_path, receipt_path, compact_result=None):
-    plain = gzip.decompress(Path(model_path).read_bytes())
-    if hashlib.sha256(plain).hexdigest() != expected_model_sha:
+def verify(model_path, expected_model_sha, rows_path, receipt_path, compact_result=None, *,
+           max_model_decoded_bytes=DEFAULT_MAX_MODEL_DECODED_BYTES,
+           max_model_compressed_bytes=DEFAULT_MAX_MODEL_COMPRESSED_BYTES,
+           allow_legacy_v1=False):
+    model, model_sha = read_gzip_json(
+        model_path, max_decoded_bytes=max_model_decoded_bytes,
+        max_compressed_bytes=max_model_compressed_bytes)
+    if model_sha != expected_model_sha:
         raise ValueError('E model artifact SHA-256 mismatch')
-    model = json.loads(plain)
     receipt = json.loads(Path(receipt_path).read_text())
-    if (model.get('schema') != 'closed-e-native-model-artifact-v1' or
+    if (model.get('schema') not in (MODEL_SCHEMA_V1, MODEL_SCHEMA_V2) or
             model.get('acceptance') != 'MATERIALIZED_FACTOR_TABLES' or
             receipt.get('schema') not in ('closed-planning-physical-shard-v1',
                                           'closed-planning-physical-shard-compact-v1') or
@@ -139,11 +146,13 @@ def verify(model_path, expected_model_sha, rows_path, receipt_path, compact_resu
                 if emission is not None and not emission.startswith(alternative['state'] + '|'):
                     raise ValueError('E relocation source execution state differs from selected state')
         radices.append(len(alternatives))
+    aggregation = validate_factor_aggregation(
+        model, radices, allow_legacy_v1=allow_legacy_v1)
     validated_factors = []
     for factor in factors:
         scope, truth = factor.get('scope'), factor.get('truth')
-        if (not isinstance(scope, list) or any(type(i) is not int or i < 0 or i >= len(radices)
-                                               for i in scope)):
+        if (not isinstance(scope, list) or len(scope) != len(set(scope)) or
+                any(type(i) is not int or i < 0 or i >= len(radices) for i in scope)):
             raise ValueError('E factor has opaque or malformed scope/truth table')
         cells = 1
         for index in scope:
@@ -186,6 +195,8 @@ def verify(model_path, expected_model_sha, rows_path, receipt_path, compact_resu
         if row_count != counts['accepted']:
             raise ValueError('E physical row count differs from accepted assignments')
     return {'status': 'INDEPENDENT_FACTOR_TABLE_VERIFIED', 'cell': model['cell'],
+            'modelSchema': model['schema'],
+            'factorAggregation': aggregation.get('factorAggregation'),
             'raw': str(raw), **{key: str(value) for key, value in counts.items()},
             'acceptedOrdinalsSha256': ordinals.hexdigest(),
             'scope': 'captured E factor truth tables and emitted assignments only'}
@@ -197,8 +208,17 @@ def main():
     parser.add_argument('--model-sha256', required=True)
     parser.add_argument('--rows', type=Path, required=True)
     parser.add_argument('--receipt', type=Path, required=True)
+    parser.add_argument('--max-model-decoded-bytes', type=int,
+                        default=DEFAULT_MAX_MODEL_DECODED_BYTES)
+    parser.add_argument('--max-model-compressed-bytes', type=int,
+                        default=DEFAULT_MAX_MODEL_COMPRESSED_BYTES)
+    parser.add_argument('--legacy-v1', action='store_true')
     args = parser.parse_args()
-    print(json.dumps(verify(args.model, args.model_sha256, args.rows, args.receipt),
+    print(json.dumps(verify(
+        args.model, args.model_sha256, args.rows, args.receipt,
+        max_model_decoded_bytes=args.max_model_decoded_bytes,
+        max_model_compressed_bytes=args.max_model_compressed_bytes,
+        allow_legacy_v1=args.legacy_v1),
                      sort_keys=True))
 
 

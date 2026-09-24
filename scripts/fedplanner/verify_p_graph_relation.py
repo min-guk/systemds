@@ -29,8 +29,8 @@ ACTIVE = {"SAME_PLACEMENT", "SAME_VALUE_PLACEMENT", "SAME_FTYPE", "CONJUNCTIVE"}
 PASSIVE = {"DOMINATES", "DISTINCT_CONTEXT", "SAME_ORIGIN"}
 
 
-def load_model(path, digest):
-    verify_model(path, digest)
+def load_model(path, digest, *, allow_legacy_v1=False):
+    verify_model(path, digest, allow_legacy_v1=allow_legacy_v1)
     plain = gzip.decompress(Path(path).read_bytes())
     if hashlib.sha256(plain).hexdigest() != digest:
         raise ValueError("P artifact digest differs after structural verification")
@@ -155,8 +155,8 @@ def satisfies(indices, choices, domains, edges):
                for left, right, kind, evidence in edges if left in chosen and right in chosen)
 
 
-def create_certificate(model_path, model_sha):
-    domain = load_model(model_path, model_sha)
+def create_certificate(model_path, model_sha, *, allow_legacy_v1=False):
+    domain = load_model(model_path, model_sha, allow_legacy_v1=allow_legacy_v1)
     domains, edges, components = compile_relation(domain)
     rows = []
     for indices in components:
@@ -172,7 +172,7 @@ def create_certificate(model_path, model_sha):
             "graphValidPlacementCount": str(prod(len(row["tuples"]) for row in rows))}
 
 
-def verify_certificate(model_path, model_sha, certificate_path):
+def verify_certificate(model_path, model_sha, certificate_path, *, allow_legacy_v1=False):
     payload = gzip.decompress(Path(certificate_path).read_bytes())
     certificate = json.loads(payload)
     if payload != canonical(certificate):
@@ -183,7 +183,7 @@ def verify_certificate(model_path, model_sha, certificate_path):
             certificate.get("schema") != SCHEMA or certificate.get("modelSha256") != model_sha or \
             certificate.get("scope") != "GRAPH_CONSTRAINT_PLACEMENT_ONLY_ACCEPTANCE_OPEN":
         raise ValueError("certificate contract or model hash differs")
-    domain = load_model(model_path, model_sha)
+    domain = load_model(model_path, model_sha, allow_legacy_v1=allow_legacy_v1)
     domains, edges, components = compile_relation(domain)
     if certificate.get("nonDecisionConstraintIds") != nondecision_ids(domain) or \
             certificate.get("choiceComponents") != sum(
@@ -240,9 +240,12 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--model-sha256", required=True)
     parser.add_argument("--certificate", type=Path, required=True)
+    parser.add_argument("--allow-legacy-v1", action="store_true",
+                        help="diagnostic-only access to historical v1 P artifacts")
     args = parser.parse_args()
     if args.mode == "create":
-        receipt = create_certificate(args.model, args.model_sha256)
+        receipt = create_certificate(args.model, args.model_sha256,
+                                     allow_legacy_v1=args.allow_legacy_v1)
         args.certificate.parent.mkdir(parents=True, exist_ok=True)
         with args.certificate.open("wb") as handle:
             with gzip.GzipFile(fileobj=handle, mode="wb", filename="", mtime=0, compresslevel=9) as packed:
@@ -251,7 +254,9 @@ def main():
                           "components": len(receipt["components"]),
                           "graphValidPlacementCount": receipt["graphValidPlacementCount"]}, sort_keys=True))
     else:
-        print(json.dumps(verify_certificate(args.model, args.model_sha256, args.certificate), sort_keys=True))
+        print(json.dumps(verify_certificate(
+            args.model, args.model_sha256, args.certificate,
+            allow_legacy_v1=args.allow_legacy_v1), sort_keys=True))
 
 
 if __name__ == "__main__":

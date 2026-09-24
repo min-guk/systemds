@@ -8,8 +8,10 @@ from pathlib import Path
 import random
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from scripts.fedplanner.exact_e_factor_count import certify, count_relation
+from scripts.fedplanner.exact_e_factor_count import (certify, count_relation, read_model,
+                                                     validate_factor_aggregation)
 
 
 def packed_truth(statuses):
@@ -25,7 +27,104 @@ def packed_truth(statuses):
             'statusCounts': {status: str(statuses.count(status)) for status in codes}}
 
 
+def v2_model():
+    return {
+        'schema': 'closed-e-native-model-artifact-v2',
+        'acceptance': 'MATERIALIZED_FACTOR_TABLES', 'cell': 'aggregated',
+        'domains': [
+            {'index': 0, 'alternatives': [{'signature': 'a'}, {'signature': 'b'}]},
+            {'index': 1, 'alternatives': [
+                {'signature': 'x'}, {'signature': 'y'}, {'signature': 'z'}]}],
+        'factorAggregation': 'ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1',
+        'nativeFactorCount': 3, 'materializedFactorCount': 2,
+        'sourceFactorScopes': [[0], [1, 0], [0]],
+        'nativeFactorCells': '10', 'materializedFactorCells': '8',
+        'factors': [
+            {'sourceFactorIndices': [0, 2], 'scope': [0], 'cells': '2',
+             'truth': ['ALLOW', 'REJECT']},
+            {'sourceFactorIndices': [1], 'scope': [1, 0], 'cells': '6',
+             'truth': ['ALLOW'] * 6}],
+    }
+
+
 class ExactEFactorCountTest(unittest.TestCase):
+    def test_v2_aggregation_and_v1_legacy_are_accepted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'model.json.gz'
+            model = v2_model()
+            path.write_bytes(gzip.compress(json.dumps(model).encode()))
+            loaded, _, radices, _ = read_model(path)
+            self.assertEqual(3, validate_factor_aggregation(
+                loaded, radices)['nativeFactorCount'])
+            current = certify(path)
+            self.assertEqual('closed-e-native-model-artifact-v2',
+                             current['modelSchema'])
+            self.assertEqual('ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1',
+                             current['factorAggregation'])
+            legacy = copy.deepcopy(model)
+            legacy['schema'] = 'closed-e-native-model-artifact-v1'
+            for key in ('factorAggregation', 'nativeFactorCount',
+                        'materializedFactorCount', 'sourceFactorScopes',
+                        'nativeFactorCells', 'materializedFactorCells'):
+                legacy.pop(key)
+            for factor in legacy['factors']:
+                factor.pop('sourceFactorIndices')
+            path.write_bytes(gzip.compress(json.dumps(legacy).encode()))
+            self.assertEqual(2, len(read_model(path, allow_legacy_v1=True)[3]))
+            with self.assertRaisesRegex(ValueError, 'explicit legacy mode'):
+                read_model(path)
+            with self.assertRaisesRegex(ValueError, 'explicit legacy mode'):
+                certify(path)
+            legacy['nativeFactorCount'] = 2
+            path.write_bytes(gzip.compress(json.dumps(legacy).encode()))
+            with self.assertRaisesRegex(ValueError, 'hybrid'):
+                read_model(path, allow_legacy_v1=True)
+
+    def test_v2_zero_arity_factor_has_one_cell(self):
+        model = v2_model()
+        model.update(nativeFactorCount=1, materializedFactorCount=1,
+                     sourceFactorScopes=[[]], nativeFactorCells='1',
+                     materializedFactorCells='1')
+        model['factors'] = [{'sourceFactorIndices': [0], 'scope': [], 'cells': '1',
+                             'truth': ['ALLOW']}]
+        self.assertEqual('1', validate_factor_aggregation(
+            model, [2, 3])['materializedFactorCells'])
+
+    def test_v2_aggregation_hostile_mutations_fail_closed(self):
+        mutations = {
+            'gap': lambda model: model['factors'][0].update(sourceFactorIndices=[0]),
+            'duplicate': lambda model: model['factors'][1].update(sourceFactorIndices=[1, 2]),
+            'reorder': lambda model: model['factors'].reverse(),
+            'source scope': lambda model: model['sourceFactorScopes'].__setitem__(1, [0, 1]),
+            'group scope': lambda model: model['factors'][1].update(scope=[0, 1]),
+            'native count': lambda model: model.update(nativeFactorCount=4),
+            'materialized count': lambda model: model.update(materializedFactorCount=3),
+            'native cells': lambda model: model.update(nativeFactorCells='9'),
+            'materialized cells': lambda model: model.update(materializedFactorCells='7'),
+            'aggregation': lambda model: model.update(factorAggregation='FORGED'),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                model = v2_model()
+                mutate(model)
+                with self.assertRaises(ValueError):
+                    validate_factor_aggregation(model, [2, 3])
+
+    def test_model_gzip_byte_limits_fail_before_json_validation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'model.json.gz'
+            model = v2_model()
+            model['padding'] = 'x' * 4096
+            path.write_bytes(gzip.compress(json.dumps(model).encode()))
+            with self.assertRaisesRegex(ValueError, 'decoded-byte budget'):
+                read_model(path, max_decoded_bytes=128)
+            with self.assertRaisesRegex(ValueError, 'compressed-byte budget'):
+                read_model(path, max_compressed_bytes=8)
+            with patch('scripts.fedplanner.exact_e_factor_count.tempfile.SpooledTemporaryFile',
+                       wraps=tempfile.SpooledTemporaryFile) as spool:
+                read_model(path)
+                self.assertEqual(path.parent, spool.call_args.kwargs['dir'])
+
     def test_packed_truth_matches_list_and_mutations_fail_closed(self):
         with tempfile.TemporaryDirectory() as folder:
             model_path = Path(folder) / 'model.json.gz'
@@ -36,10 +135,10 @@ class ExactEFactorCountTest(unittest.TestCase):
                                  for k in range(5)]}],
                      'factors': [{'scope': [0], 'cells': '5', 'truth': statuses}]}
             model_path.write_bytes(gzip.compress(json.dumps(model).encode()))
-            listed = certify(model_path)
+            listed = certify(model_path, allow_legacy_v1=True)
             model['factors'][0]['truth'] = packed_truth(statuses)
             model_path.write_bytes(gzip.compress(json.dumps(model).encode()))
-            packed = certify(model_path)
+            packed = certify(model_path, allow_legacy_v1=True)
             self.assertEqual(tuple(listed[key] for key in
                                    ('raw', 'accepted', 'rejected', 'unknown')),
                              tuple(packed[key] for key in
@@ -50,7 +149,7 @@ class ExactEFactorCountTest(unittest.TestCase):
                 mutator(damaged['factors'][0]['truth'])
                 model_path.write_bytes(gzip.compress(json.dumps(damaged).encode()))
                 with self.assertRaisesRegex(ValueError, message):
-                    certify(model_path)
+                    certify(model_path, allow_legacy_v1=True)
 
             rejected(lambda truth: truth.update(data='!'), 'base64')
             rejected(lambda truth: truth.update(packedSha256='0' * 64), 'SHA-256')
@@ -65,7 +164,7 @@ class ExactEFactorCountTest(unittest.TestCase):
             reserved(reserved_model['factors'][0]['truth'])
             model_path.write_bytes(gzip.compress(json.dumps(reserved_model).encode()))
             with self.assertRaisesRegex(ValueError, 'reserved'):
-                certify(model_path)
+                certify(model_path, allow_legacy_v1=True)
 
             def padding(truth):
                 data = bytearray(base64.b64decode(truth['data']))
@@ -76,7 +175,7 @@ class ExactEFactorCountTest(unittest.TestCase):
             padding(padding_model['factors'][0]['truth'])
             model_path.write_bytes(gzip.compress(json.dumps(padding_model).encode()))
             with self.assertRaisesRegex(ValueError, 'padding'):
-                certify(model_path)
+                certify(model_path, allow_legacy_v1=True)
 
     def test_elimination_matches_primitive_cartesian_enumeration(self):
         rng = random.Random(93751)
@@ -116,12 +215,12 @@ class ExactEFactorCountTest(unittest.TestCase):
                      'factors': [{'scope': [0, 1], 'cells': '4',
                                   'truth': ['ALLOW', 'REJECT', 'UNKNOWN', 'ALLOW']}]}
             model_path.write_bytes(gzip.compress(json.dumps(model).encode()))
-            result = certify(model_path)
+            result = certify(model_path, allow_legacy_v1=True)
             self.assertEqual(('4', '2', '1', '1'), tuple(result[key] for key in
                              ('raw', 'accepted', 'rejected', 'unknown')))
             model['factors'][0]['truth'][3] = 'REJECT'
             model_path.write_bytes(gzip.compress(json.dumps(model).encode()))
-            changed = certify(model_path)
+            changed = certify(model_path, allow_legacy_v1=True)
             self.assertNotEqual(result['modelSha256'], changed['modelSha256'])
             self.assertEqual('1', changed['accepted'])
 

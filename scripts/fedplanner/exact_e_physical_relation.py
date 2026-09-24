@@ -435,8 +435,10 @@ def exhaustive_differential(model, relation, radices, tables, limit):
             'canonicalPhysicalPlans': dict(sorted(physical.items()))}
 
 
-def build(model_path, max_bag_cells=1_000_000, exhaustive_limit=100_000):
-    model, model_sha, radices, tables = read_model(model_path)
+def build(model_path, max_bag_cells=1_000_000, exhaustive_limit=100_000, *,
+          allow_legacy_v1=False):
+    model, model_sha, radices, tables = read_model(
+        model_path, allow_legacy_v1=allow_legacy_v1)
     identity, identity_occurrences = validate_identity(model)
     dictionary = {}
     variables = []
@@ -526,8 +528,9 @@ def publish(path, value):
 
 
 def verify_artifact(model_path, artifact_path, max_bag_cells=1_000_000,
-                    exhaustive_limit=100_000):
-    expected = build(model_path, max_bag_cells, exhaustive_limit)
+                    exhaustive_limit=100_000, *, allow_legacy_v1=False):
+    expected = build(model_path, max_bag_cells, exhaustive_limit,
+                     allow_legacy_v1=allow_legacy_v1)
     if read_artifact(artifact_path) != expected:
         raise ValueError('saved E physical relation differs from independent recomputation')
     return expected
@@ -542,15 +545,18 @@ def main():
     parser.add_argument('--exhaustive-limit', type=int, default=100_000)
     parser.add_argument('--require-complete', action='store_true',
                         help='fail unless canonical physical projection is certified complete')
+    parser.add_argument('--legacy-v1', action='store_true')
     args = parser.parse_args()
     if args.max_bag_cells < 1 or args.exhaustive_limit < 0:
         parser.error('limits must be nonnegative and max-bag-cells must be positive')
-    result = build(args.model, args.max_bag_cells, args.exhaustive_limit)
+    result = build(args.model, args.max_bag_cells, args.exhaustive_limit,
+                   allow_legacy_v1=args.legacy_v1)
     if args.mode == 'run':
         publish(args.artifact, result)
     else:
         result = verify_artifact(args.model, args.artifact, args.max_bag_cells,
-                                 args.exhaustive_limit)
+                                 args.exhaustive_limit,
+                                 allow_legacy_v1=args.legacy_v1)
     if args.require_complete and result['status'] != 'COMPLETE':
         blockers = result['projectionContract']['blockers'] or [result['physicalImageStatus']]
         raise ValueError('canonical E physical image is not complete: ' + ','.join(blockers))

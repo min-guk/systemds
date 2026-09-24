@@ -53,6 +53,9 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -77,6 +80,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 
 /** Read-only native P model capture for one frozen planning cell; it does not certify runtime legality. */
 public final class PlanningNativeModelCapture {
+	private static final String ARTIFACT_SCHEMA = "closed-native-model-artifact-v2";
 	private static final ObjectMapper JSON = new ObjectMapper()
 		.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 	private static final Pattern SOURCE = Pattern.compile("source\\(\"([^\"]+)\"\\)");
@@ -129,7 +133,7 @@ public final class PlanningNativeModelCapture {
 		}
 		if(!hex(digest.digest()).equals(expectedSha256))
 			throw new IllegalArgumentException("Native model artifact digest differs");
-		if(!"closed-native-model-artifact-v1".equals(artifact.path("schema").asText())
+		if(!ARTIFACT_SCHEMA.equals(artifact.path("schema").asText())
 			|| !"PRODUCTION_JAVA_PREDICATE_NOT_SERIALIZED".equals(artifact.path("acceptance").asText()))
 			throw new IllegalArgumentException("Unsupported native model artifact contract");
 		JsonNode summary = artifact.path("summary");
@@ -177,11 +181,158 @@ public final class PlanningNativeModelCapture {
 		}
 		if(!product.toString().equals(summary.path("rawCount").asText()))
 			throw new IllegalArgumentException("Native raw product differs");
+		verifyCandidateRealizationClauseInventory(domain);
 		verifyCandidateActivationFacts(domain, placements, candidates);
 		return Map.of("status", "STRUCTURE_VERIFIED", "cell", summary.path("cell").asText(),
 			"artifactSha256", expectedSha256, "nativeDomainSha256",
 			summary.path("nativeDomainSha256").asText(), "acceptance",
 			"PRODUCTION_JAVA_PREDICATE_NOT_SERIALIZED");
+	}
+
+	static void verifyCandidateRealizationClauseInventory(JsonNode domain) {
+		JsonNode inventory = domain.path("candidateRealizationClauseInventory");
+		JsonNode references = domain.path("candidateRealizationReferenceFacts");
+		JsonNode authorities = domain.path("candidateRealizationSupportAuthorities");
+		JsonNode rules = domain.path("candidateRuleFactInventory");
+		JsonNode semantics = domain.path("candidateReceiptSemanticFacts");
+		if(!inventory.isArray() || inventory.isEmpty() || !references.isArray()
+			|| inventory.size() != references.size() || !authorities.isArray()
+			|| authorities.size() != references.size() || !rules.isArray() || !semantics.isArray())
+			throw new IllegalArgumentException("Candidate realization clause inventory coverage differs");
+		Map<String,JsonNode> referenceByIdentity = new LinkedHashMap<>();
+		for(JsonNode reference : references) {
+			String identity = reference.path("reference").asText("");
+			if(identity.isEmpty() || referenceByIdentity.putIfAbsent(identity, reference) != null)
+				throw new IllegalArgumentException("Candidate realization reference identity differs");
+		}
+		Map<String,JsonNode> ruleByHash = new LinkedHashMap<>();
+		for(JsonNode rule : rules) {
+			String identity = rule.path("ruleSignature").asText("");
+			if(identity.isEmpty() || ruleByHash.putIfAbsent(identity, rule) != null)
+				throw new IllegalArgumentException("Candidate rule inventory identity differs");
+		}
+		Map<String,Set<String>> clausesByReference = new LinkedHashMap<>();
+		for(int index = 0; index < inventory.size(); index++) {
+			JsonNode row = inventory.get(index);
+			JsonNode reference = references.get(index);
+			JsonNode authority = authorities.get(index);
+			if(!exactFields(row, "reference", "rule", "owner", "emission", "placement",
+				"realization", "clauses") || !row.path("reference").equals(reference.path("reference"))
+				|| !row.path("rule").equals(reference.path("rule"))
+				|| !row.path("owner").equals(reference.path("owner"))
+				|| !row.path("placement").equals(reference.path("placement"))
+				|| !row.path("realization").equals(reference.path("realization"))
+				|| authority.path("referenceIndex").asInt(-1) != index)
+				throw new IllegalArgumentException("Candidate realization clause inventory reference differs");
+			JsonNode clauses = row.path("clauses");
+			JsonNode supportAuthorities = authority.path("supportAuthorities");
+			if(!clauses.isArray() || clauses.isEmpty() || !supportAuthorities.isArray()
+				|| clauses.size() != supportAuthorities.size())
+				throw new IllegalArgumentException("Candidate realization clause inventory count differs");
+			JsonNode rule = ruleByHash.get(shaText(row.path("rule").asText()));
+			if(rule == null || !rule.path("status").asText().equals("AVAILABLE")
+				|| !inventoryContainsRealization(rule.path("emissions"), row.path("emission").asText(),
+					row.path("realization").asText()))
+				throw new IllegalArgumentException("Candidate realization clause inventory rule differs");
+			Set<String> clauseIdentities = new LinkedHashSet<>();
+			for(int ordinal = 0; ordinal < clauses.size(); ordinal++) {
+				JsonNode clause = clauses.get(ordinal);
+				if(!exactFields(clause, "ordinal", "clauseIdentity", "proofDependencies",
+					"requiredInputSupport", "inputBindings", "nativeWorkerPoolWitness",
+					"workerPoolAuthority", "nativeWorkerPoolLayoutExact")
+					|| clause.path("ordinal").asInt(-1) != ordinal
+					|| !clause.path("proofDependencies").isArray()
+					|| !clause.path("requiredInputSupport").isArray()
+					|| !clause.path("inputBindings").isArray()
+					|| !clause.path("nativeWorkerPoolLayoutExact").isBoolean()
+					|| !clause.path("workerPoolAuthority").equals(supportAuthorities.get(ordinal)))
+					throw new IllegalArgumentException("Candidate realization clause inventory row differs");
+				List<String> proofs = textValues(clause.path("proofDependencies"));
+				List<String> required = textValues(clause.path("requiredInputSupport"));
+				List<String> bindingSignatures = new ArrayList<>();
+				Set<String> bindingSources = new java.util.TreeSet<>();
+				for(JsonNode binding : clause.path("inputBindings")) {
+					if(!exactFields(binding, "signature", "inputPosition", "source", "sourceOwner",
+						"sourcePlacement", "kind", "relocationAction"))
+						throw new IllegalArgumentException("Candidate realization clause binding differs");
+					JsonNode source = referenceByIdentity.get(binding.path("source").asText());
+					String expectedBinding = lengthFields(Integer.toString(
+						binding.path("inputPosition").asInt(-1)), binding.path("source").asText(),
+						binding.path("kind").asText(), binding.path("relocationAction").asText());
+					if(binding.path("inputPosition").asInt(-1) < 0 || source == null
+						|| !binding.path("sourceOwner").equals(source.path("owner"))
+						|| !binding.path("sourcePlacement").equals(source.path("placement"))
+						|| !expectedBinding.equals(binding.path("signature").asText()))
+						throw new IllegalArgumentException("Candidate realization clause binding authority differs");
+					bindingSignatures.add(expectedBinding);
+					bindingSources.add(binding.path("source").asText());
+				}
+				if(!required.equals(List.copyOf(bindingSources)))
+					throw new IllegalArgumentException("Candidate realization clause required support differs");
+				String witness = clause.path("nativeWorkerPoolWitness").asText();
+				String expectedIdentity = "proofs=" + proofs + "|inputs=" + bindingSignatures
+					+ "|nativePool=" + witness + ("-".equals(witness)
+						|| clause.path("nativeWorkerPoolLayoutExact").asBoolean() ? ""
+						: "|nativePoolLayout=dynamic");
+				if(!expectedIdentity.equals(clause.path("clauseIdentity").asText())
+					|| !clauseIdentities.add(expectedIdentity))
+					throw new IllegalArgumentException("Candidate realization support-clause identity differs");
+			}
+			clausesByReference.put(row.path("reference").asText(), clauseIdentities);
+		}
+		for(JsonNode semantic : semantics) {
+			String identity = "proofs=" + textValues(semantic.path("proofDependencies"))
+				+ "|inputs=" + semanticBindingSignatures(semantic.path("inputBindings"))
+				+ "|nativePool=" + semantic.path("nativeWorkerPoolWitness").asText()
+				+ (semantic.path("nativeWorkerPoolWitness").asText().equals("-")
+					|| semantic.path("nativeWorkerPoolLayoutExact").asBoolean() ? ""
+					: "|nativePoolLayout=dynamic");
+			Set<String> identities = clausesByReference.get(semantic.path("reference").asText());
+			if(identities == null || !identities.contains(identity))
+				throw new IllegalArgumentException("Candidate receipt lacks immutable clause authority");
+		}
+	}
+
+	private static boolean inventoryContainsRealization(JsonNode emissions, String selection,
+		String realization) {
+		if(!emissions.isArray()) return false;
+		for(JsonNode emission : emissions)
+			if(selection.equals(emission.path("selection").asText()))
+				for(JsonNode candidate : emission.path("realizations"))
+					if(realization.equals(candidate.asText())) return true;
+		return false;
+	}
+
+	private static List<String> semanticBindingSignatures(JsonNode bindings) {
+		List<String> result = new ArrayList<>();
+		if(!bindings.isArray()) return result;
+		for(JsonNode binding : bindings)
+			result.add(binding.path("signature").asText());
+		return result;
+	}
+
+	private static List<String> textValues(JsonNode values) {
+		if(!values.isArray())
+			throw new IllegalArgumentException("Candidate realization clause text list differs");
+		List<String> result = new ArrayList<>();
+		for(JsonNode value : values) {
+			if(!value.isTextual())
+				throw new IllegalArgumentException("Candidate realization clause text value differs");
+			result.add(value.asText());
+		}
+		return List.copyOf(result);
+	}
+
+	private static boolean exactFields(JsonNode value, String... names) {
+		if(!value.isObject() || value.size() != names.length) return false;
+		for(String name : names)
+			if(!value.has(name)) return false;
+		return true;
+	}
+
+	private static String lengthFields(String... values) {
+		return java.util.Arrays.stream(values).map(value -> value.length() + ":" + value)
+			.collect(java.util.stream.Collectors.joining("|"));
 	}
 
 	static void verifyCandidateActivationFacts(JsonNode domain, JsonNode placements,
@@ -441,7 +592,7 @@ public final class PlanningNativeModelCapture {
 		result.put("runtimeSemanticCoverage", "NOT_ASSESSED_BY_THIS_CONTRACT");
 		result.put("physicalDecode", "UNRESOLVED");
 		Map<String,Object> artifact = new LinkedHashMap<>();
-		artifact.put("schema", "closed-native-model-artifact-v1");
+		artifact.put("schema", ARTIFACT_SCHEMA);
 		artifact.put("summary", result);
 		artifact.put("nativeDomain", nativeDomain);
 		artifact.put("preRewriteGraph", graphRows(input.preRewriteGraph()));
@@ -743,6 +894,10 @@ public final class PlanningNativeModelCapture {
 
 	static Map<String,Object> domain(PlacementAnalysis analysis, FullProductionJointPlanExport exporter) {
 		NeutralPlacementGraph graph = exporter.graph();
+		// Capture the immutable rule-fact authority before deriving any receipt domain.
+		// This inventory is deliberately independent of canonicalCandidateReceipts.
+		List<Map<String,Object>> candidateRealizationClauseInventory =
+			candidateRealizationClauseInventory(analysis.candidateRuleFacts().orderedFacts());
 		List<Integer> radices = new ArrayList<>();
 		List<Object> placementRows = new ArrayList<>();
 		List<Object> nodes = new ArrayList<>();
@@ -871,6 +1026,7 @@ public final class PlanningNativeModelCapture {
 			candidateRealizationReferences.keySet().stream().map(reference -> Map.of(
 				"referenceIndex", candidateRealizationReferenceIndex.get(reference),
 				"supportAuthorities", candidateRealizationSupportAuthorities.get(reference))).toList());
+		descriptor.put("candidateRealizationClauseInventory", candidateRealizationClauseInventory);
 		descriptor.put("compiledCandidateInputEdges", analysis.compiledInputEdgesInCanonicalOrder().stream()
 			.map(edge -> Map.of("producer", edge.producer().normalizedSignature(),
 				"consumer", edge.consumer().normalizedSignature(),
@@ -941,6 +1097,79 @@ public final class PlanningNativeModelCapture {
 					.map(PlanningNativeModelCapture::candidateInventoryEmission).toList())).toList());
 		descriptor.put("radices", radices);
 		return descriptor;
+	}
+
+	/**
+	 * Canonical support-clause authority projected directly from immutable rule facts.
+	 * Receipt enumeration is intentionally absent from this method's inputs.
+	 */
+	static List<Map<String,Object>> candidateRealizationClauseInventory(List<CandidateRuleFact> facts) {
+		List<Map<String,Object>> result = new ArrayList<>();
+		Set<String> references = new LinkedHashSet<>();
+		for(CandidateRuleFact fact : List.copyOf(facts)) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(var emission : fact.allowedEmissionFacts())
+				for(var realization : emission.realizations()) {
+					String reference = org.apache.sysds.hops.fedplanner.placement.PlacementIdentity
+						.CandidateRealizationReference.of(fact.key(), realization).normalizedSignature();
+					if(!references.add(reference))
+						throw new IllegalStateException("Duplicate candidate realization clause authority: "
+							+ reference);
+					List<Map<String,Object>> clauses = new ArrayList<>(realization.supportClauses().size());
+					Set<String> clauseIdentities = new LinkedHashSet<>();
+					CandidateRealizationSupportClause previous = null;
+					for(int ordinal = 0; ordinal < realization.supportClauses().size(); ordinal++) {
+						CandidateRealizationSupportClause clause = realization.supportClauses().get(ordinal);
+						String identity = clause.normalizedSignature();
+						if(!clauseIdentities.add(identity))
+							throw new IllegalStateException("Duplicate candidate realization support-clause identity: "
+								+ reference);
+						if(previous != null && previous.compareTo(clause) >= 0)
+							throw new IllegalStateException("Candidate realization support-clause order is not canonical: "
+								+ reference);
+						previous = clause;
+						Map<String,Object> row = new LinkedHashMap<>();
+						row.put("ordinal", ordinal);
+						row.put("clauseIdentity", identity);
+						row.put("proofDependencies", clause.proofDependencies().stream()
+							.map(proof -> proof.normalizedSignature()).toList());
+						row.put("requiredInputSupport", clause.requiredInputSupport().stream()
+							.map(support -> support.normalizedSignature()).toList());
+						row.put("inputBindings", candidateInputBindingRows(clause.inputBindings()));
+						row.put("nativeWorkerPoolWitness", clause.nativeWorkerPoolWitness() == null ? "-"
+							: clause.nativeWorkerPoolWitness().normalizedSignature());
+						row.put("workerPoolAuthority", workerPoolAuthority(realization, clause));
+						row.put("nativeWorkerPoolLayoutExact", clause.nativeWorkerPoolLayoutExact());
+						clauses.add(Map.copyOf(row));
+					}
+					Map<String,Object> row = new LinkedHashMap<>();
+					row.put("reference", reference);
+					row.put("rule", fact.key().normalizedSignature());
+					row.put("owner", fact.key().parentOccurrence().normalizedSignature());
+					row.put("emission", emission.selectionSignature());
+					row.put("placement", realization.key().emissionState().placementState()
+						.normalizedSignature());
+					row.put("realization", realization.key().normalizedSignature());
+					row.put("clauses", List.copyOf(clauses));
+					result.add(Map.copyOf(row));
+				}
+		}
+		return List.copyOf(result);
+	}
+
+	private static List<Map<String,Object>> candidateInputBindingRows(
+		List<CandidateRealizationInputBinding> bindings) {
+		return bindings.stream().map(binding -> Map.<String,Object>of(
+			"signature", binding.normalizedSignature(),
+			"inputPosition", binding.inputPosition(),
+			"source", binding.source().normalizedSignature(),
+			"sourceOwner", binding.source().rule().parentOccurrence().normalizedSignature(),
+			"sourcePlacement", binding.source().realization().emissionState()
+				.placementState().normalizedSignature(),
+			"kind", binding.kind().name(),
+			"relocationAction", binding.relocationAction() == null ? "-"
+				: binding.relocationAction().normalizedSignature())).toList();
 	}
 
 	private static Map<String,Object> logicalTransientAuthority(

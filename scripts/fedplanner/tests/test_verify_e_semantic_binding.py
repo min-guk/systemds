@@ -9,7 +9,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from exact_e_physical_relation import canonical, compose_physical_projection, digest
-from verify_e_semantic_binding import verify_case, verify_cases
+from verify_e_semantic_binding import (verify_case as verify_case_current,
+                                       verify_cases as verify_cases_current)
+
+
+def verify_case(*args, **kwargs):
+    kwargs.setdefault("allow_legacy_v1", True)
+    return verify_case_current(*args, **kwargs)
+
+
+def verify_cases(*args, **kwargs):
+    kwargs.setdefault("allow_legacy_v1", True)
+    return verify_cases_current(*args, **kwargs)
 
 
 def owner(name):
@@ -84,6 +95,8 @@ class SemanticBindingTest(unittest.TestCase):
     def test_exact_differential_passes_but_missing_coverage_stays_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
             case = self.artifacts(directory)
+            with self.assertRaisesRegex(ValueError, "explicit legacy mode"):
+                verify_cases_current([case])
             result = verify_cases([case])
             self.assertEqual("PASS_EXHAUSTIVE_FULL_PHYSICAL_IDENTITY",
                              result["cases"][0]["comparisonStatus"])
@@ -164,6 +177,29 @@ class SemanticBindingTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "decoded-byte budget exhausted"):
                 verify_case(model_path, oracle_path, oracle_sha,
                             max_decoded_bytes=budget)
+
+    def test_v2_aggregation_is_checked_before_semantic_comparison(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model, oracle = fixture()
+            model.update({
+                "schema": "closed-e-native-model-artifact-v2",
+                "factorAggregation": "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+                "nativeFactorCount": 1, "materializedFactorCount": 1,
+                "sourceFactorScopes": [[0]], "nativeFactorCells": "2",
+                "materializedFactorCells": "2"})
+            model["factors"][0]["sourceFactorIndices"] = [0]
+            model_path, model_sha = self.save(directory, "v2-model.json.gz", model)
+            oracle["modelSha256"] = model_sha
+            oracle_path, oracle_sha = self.save(directory, "v2-oracle.json.gz", oracle)
+            self.assertEqual("PASS_EXHAUSTIVE_FULL_PHYSICAL_IDENTITY", verify_case_current(
+                model_path, oracle_path, oracle_sha)["comparisonStatus"])
+
+            model["sourceFactorScopes"] = [[0, 0]]
+            model_path, model_sha = self.save(directory, "bad-v2-model.json.gz", model)
+            oracle["modelSha256"] = model_sha
+            oracle_path, oracle_sha = self.save(directory, "bad-v2-oracle.json.gz", oracle)
+            with self.assertRaisesRegex(ValueError, "source factor scope"):
+                verify_case_current(model_path, oracle_path, oracle_sha)
 
 
 if __name__ == "__main__":

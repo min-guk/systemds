@@ -20,7 +20,7 @@ import sys
 import time
 
 from capture_current_plan_matrix import quarantine_cell_artifacts, select_cells
-from exact_e_factor_count import PackedTruth, read_model
+from exact_e_factor_count import PackedTruth, read_model, validate_factor_aggregation
 from run_current_pe_cell import (check_frozen_inputs, check_frozen_model_settings,
                                  class_tree_sha, frozen_capture_settings,
                                  frozen_compiler_configuration, read, save, sha,
@@ -192,7 +192,8 @@ def verify_one(receipt, row, args):
             receipt.get("cell") != cell or receipt.get("status") != "COMPLETE" or
             receipt.get("artifactPath") != str(path)):
         raise ValueError("E matrix receipt path/status differs")
-    model, digest, radices, tables = read_model(path)
+    model, digest, radices, tables = read_model(path, allow_legacy_v1=False)
+    aggregation = validate_factor_aggregation(model, radices)
     if digest != receipt.get("artifactSha256"):
         raise ValueError("E model bytes differ from receipt")
     _, options, network = frozen_capture_settings(args.catalog, args.evaluation_root,
@@ -226,6 +227,10 @@ def verify_one(receipt, row, args):
             native.get("factorCount") != len(model["factors"]) or
             str(math.prod(radices)) != native.get("rawCount")):
         raise ValueError("E model frozen input/domain differs")
+    if any(native.get(key) != aggregation[key] for key in (
+            "factorAggregation", "nativeFactorCount", "materializedFactorCount",
+            "nativeFactorCells", "materializedFactorCells")):
+        raise ValueError("E model and native receipt factor aggregation differ")
     return sum(int(truth.wire()["statusCounts"]["UNKNOWN"])
                if isinstance(truth, PackedTruth) else truth.count("UNKNOWN")
                for _, truth in tables)

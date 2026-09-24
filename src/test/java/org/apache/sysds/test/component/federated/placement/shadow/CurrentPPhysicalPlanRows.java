@@ -447,7 +447,7 @@ public final class CurrentPPhysicalPlanRows {
 		List<Map<String,Object>> obligations = graphMatches.get(0).obligations().stream()
 			.map(obligation -> Map.<String,Object>of("consumer", occurrence(source, obligation.consumer()),
 				"inputPosition", obligation.inputPosition(), "requiredState", state(obligation.requiredPlacement())))
-			.sorted(Comparator.comparing(Object::toString)).toList();
+			.sorted(Comparator.comparing(PlanSpaceComparisonIdentity::structuralSortKey)).toList();
 		return Map.of("kind", "RELOCATION", "source", owner,
 			"sourceValueVersion", valueVersion(source, owners.get(0), key.sourceValueVersion()),
 			"target", state(key.targetPlacement()), "anchor", anchor(key.durableAnchor()),

@@ -326,17 +326,19 @@ def summarize(args, campaign, cells, run_binding, results, *, write=True):
     return summary
 
 
-def verify_planning_matrix(campaign, cells, matrix_dir, catalog, evaluation):
+def verify_planning_matrix(campaign, cells, matrix_dir, catalog, evaluation, jobs=1):
     if campaign["scope"] == "PLANNING_COHORT_224":
         rows = read(catalog)["cells"]
         selected = set(cells)
         conditions = {row["conditionId"] for row in rows if row["id"] in selected}
         result = verify_p_matrix(matrix_dir, catalog, evaluation,
-                                 expected_conditions=conditions)
+                                 expected_conditions=conditions, jobs=jobs)
     elif campaign["scope"] == "FULL_CURRENT":
-        result = verify_p_matrix(matrix_dir, catalog, evaluation, full_in_scope=True)
+        result = verify_p_matrix(matrix_dir, catalog, evaluation,
+                                 full_in_scope=True, jobs=jobs)
     else:
-        result = verify_p_matrix(matrix_dir, catalog, evaluation, ready_in_scope=True)
+        result = verify_p_matrix(matrix_dir, catalog, evaluation,
+                                 ready_in_scope=True, jobs=jobs)
     if result["status"] != "PASS" or result["verifiedComplete"] != len(cells):
         raise ValueError("P matrix offline verification incomplete")
     save(matrix_dir / "verification.json", result)
@@ -363,7 +365,7 @@ def run(args):
         args.e_matrix_dir, cells, args.catalog, args.evaluation_root, args.build_root,
         matrix["sourceTreeSha256"], matrix["classTreeSha256"])
     verify_planning_matrix(campaign, cells, args.p_matrix_dir, args.catalog,
-                           args.evaluation_root)
+                           args.evaluation_root, getattr(args, 'p_verify_jobs', 2))
     verify_exact_matrix(cells, args.e_matrix_dir, args.catalog,
                         args.evaluation_root, e_matrix)
     resources = check_resources(args)
@@ -393,7 +395,7 @@ def verify(args):
         expected_source=matrix["sourceTreeSha256"],
         expected_classes=matrix["classTreeSha256"])
     verify_planning_matrix(campaign, cells, args.p_matrix_dir, args.catalog,
-                           args.evaluation_root)
+                           args.evaluation_root, getattr(args, 'p_verify_jobs', 2))
     verify_exact_matrix(cells, args.e_matrix_dir, args.catalog,
                         args.evaluation_root, e_matrix)
     expected_binding = binding(args, campaign, matrix, e_matrix)
@@ -440,6 +442,7 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--build-root", type=Path)
     parser.add_argument("--jobs", type=int, default=2)
+    parser.add_argument("--p-verify-jobs", type=int, default=2)
     parser.add_argument("--shard-jobs", type=int, default=2)
     parser.add_argument("--state-budget", type=int, default=1000)
     parser.add_argument("--e-raw-budget", type=int, default=1000000)
@@ -458,7 +461,7 @@ def main():
         path = getattr(args, name)
         if path is not None:
             setattr(args, name, path.resolve())
-    if min(args.jobs, args.shard_jobs, args.state_budget, args.e_raw_budget,
+    if min(args.jobs, args.p_verify_jobs, args.shard_jobs, args.state_budget, args.e_raw_budget,
            args.shard_size, args.cell_timeout) < 1:
         parser.error("jobs, budgets, shard size, and timeout must be positive")
     if args.max_jvms is None:

@@ -28,6 +28,20 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class PlanSpaceComparisonIdentityTest {
+	@Test public void structuralSortKeyIgnoresNestedMapInsertionOrder() {
+		Map<String,Object> left = new java.util.LinkedHashMap<>();
+		left.put("consumer", Map.of("sourceOrigin", "block/main/0", "region", Map.of("b", 2, "a", 1)));
+		left.put("inputPosition", 1);
+		Map<String,Object> right = new java.util.LinkedHashMap<>();
+		right.put("inputPosition", 1);
+		right.put("consumer", Map.of("region", Map.of("a", 1, "b", 2), "sourceOrigin", "block/main/0"));
+		Assert.assertEquals(PlanSpaceComparisonIdentity.structuralSortKey(left),
+			PlanSpaceComparisonIdentity.structuralSortKey(right));
+		right.put("inputPosition", 2);
+		Assert.assertNotEquals(PlanSpaceComparisonIdentity.structuralSortKey(left),
+			PlanSpaceComparisonIdentity.structuralSortKey(right));
+	}
+
 	@Test public void sourceControlPathsMatchOnlyTheirExactCfgCoordinates() {
 		String source = "function/.builtinNS::cg/body/4/while/1/if/1/if/0";
 		String compiled = "function/.builtinNS::cg/body/4/loop-body/1/branch-if/1/branch-if/0";

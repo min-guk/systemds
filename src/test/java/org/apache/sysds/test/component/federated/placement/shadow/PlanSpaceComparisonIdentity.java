@@ -20,6 +20,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -32,6 +36,18 @@ import org.apache.sysds.hops.FunctionOp;
  * never appear in a physical identity row. A missing or ambiguous join is an adapter error.
  */
 public final class PlanSpaceComparisonIdentity {
+	private static final ObjectMapper SORT_KEY_MAPPER = new ObjectMapper()
+		.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+
+	/** Stable ordering key for nested structural JSON; Map.toString() follows unspecified map iteration order. */
+	public static String structuralSortKey(Object value) {
+		try {
+			return SORT_KEY_MAPPER.writeValueAsString(value);
+		}
+		catch(JsonProcessingException ex) {
+			throw new IllegalArgumentException("Structural identity cannot be serialized", ex);
+		}
+	}
 	record StructuralCallSiteKey(String callSitePath, String recompileContext) {
 		StructuralCallSiteKey {
 			Objects.requireNonNull(callSitePath);
@@ -470,7 +486,7 @@ public final class PlanSpaceComparisonIdentity {
 						"formal", input.formal())));
 			}
 		}
-		logicalInputs.sort(Comparator.comparing(row -> row.toString()));
+		logicalInputs.sort(Comparator.comparing(PlanSpaceComparisonIdentity::structuralSortKey));
 		if(new HashSet<>(logicalInputs).size() != logicalInputs.size())
 			throw new IllegalArgumentException("Duplicate logical input fact");
 		return new PlanSpaceComparisonIdentity(occurrencePaths, details, nodesByKey, nodes, inputs,

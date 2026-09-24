@@ -57,7 +57,8 @@ class CurrentPeCampaignGateTest(unittest.TestCase):
             args = SimpleNamespace(campaign=root / 'campaign.json',
                                    catalog=root / 'catalog.json', evaluation_root=root,
                                    verification_root=root, artifact_root=root,
-                                   physical_jobs=2, shard_jobs=2, state_budget=1000,
+                                   physical_jobs=2, p_verify_jobs=2,
+                                   shard_jobs=2, state_budget=1000,
                                    e_raw_budget=1000000, cell_timeout=3600,
                                    max_jvms=8, min_free_disk_gib=20,
                                    build_root=root / 'build')

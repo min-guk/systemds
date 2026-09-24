@@ -44,6 +44,26 @@ public class NeutralPlacementFixedPointCompositionTest {
 		+ " alpha=sum(R^2)/sum(V*HV); S=S+alpha*V; R=R-alpha*HV; V=R+V; inner=inner+1; }\n"
 		+ " B=B+S; P=X%*%B; outer=outer+1; }\n"
 		+ "print(sum(Q));\n";
+	private static final String PRIVACY_LOOP_SEED = """
+		X=federated(addresses=list("localhost:18101/X1","localhost:18102/X2",
+		 "localhost:18103/X3","localhost:18104/X4"),
+		 ranges=list(list(0,0),list(1024,64),list(1024,0),list(2048,64),
+		 list(2048,0),list(3072,64),list(3072,0),list(4096,64)));
+		R=matrix(1,rows=64,cols=64);
+		n=nrow(X); d=ncol(X);
+		v0=t(colSums(X))/n;
+		s=v0/(abs(v0)+1);
+		Rn=R/(abs(R)+1);
+		anchor=s; state=s;
+		for(iter in 1:5) {
+		 RUP1=X%*%state;
+		 RUQ1=abs(RUP1);
+		 RUA1=(t(X)%*%RUQ1)/n;
+		 RU1=(abs(RUA1)+anchor)/(d+1)+1/1000;
+		 state=RU1;
+		}
+		print(sum(state));
+		""";
 
 	@Test
 	public void representativeCompositionsTerminateAtStablePassWithinDeclaredBound() throws Exception {
@@ -274,6 +294,17 @@ public class NeutralPlacementFixedPointCompositionTest {
 			else
 				System.setProperty(memoProperty, prior);
 		}
+	}
+
+	@Test
+	public void privacyFilteredLoopSeedProgressDoesNotBecomeAFalseCycle() throws Exception {
+		DMLProgram program = compileProtected(PRIVACY_LOOP_SEED);
+		PlacementAnalysis first = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis second = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		Assert.assertFalse(first.candidateRuleFacts().orderedFacts().isEmpty());
+		Assert.assertEquals(first.analysisFingerprint(), second.analysisFingerprint());
+		Assert.assertEquals(first.candidateRuleFacts().orderedFacts(),
+			second.candidateRuleFacts().orderedFacts());
 	}
 
 	private static void assertSupportFactorizationPreservesClauseOwnership(PlacementAnalysis analysis) {

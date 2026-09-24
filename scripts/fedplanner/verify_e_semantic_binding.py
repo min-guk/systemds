@@ -12,7 +12,8 @@ import json
 from math import prod
 from pathlib import Path
 
-from exact_e_factor_count import decode_factor_truth
+from exact_e_factor_count import (MODEL_SCHEMA_V1, MODEL_SCHEMA_V2,
+                                  decode_factor_truth, validate_factor_aggregation)
 from exact_e_physical_relation import (canonical, compose_physical_projection, digest,
                                        factor_status)
 
@@ -47,9 +48,9 @@ def _read_gzip(path, max_decoded_bytes=MAX_DECODED_BYTES):
     return value, hashlib.sha256(raw).hexdigest()
 
 
-def _read_model(path, max_decoded_bytes):
+def _read_model(path, max_decoded_bytes, allow_legacy_v1):
     model, model_sha = _read_gzip(path, max_decoded_bytes)
-    if (model.get("schema") != "closed-e-native-model-artifact-v1" or
+    if (model.get("schema") not in (MODEL_SCHEMA_V1, MODEL_SCHEMA_V2) or
             model.get("acceptance") != "MATERIALIZED_FACTOR_TABLES"):
         raise ValueError("E model has no complete materialized hard factors")
     domains, factors = model.get("domains"), model.get("factors")
@@ -65,6 +66,7 @@ def _read_model(path, max_decoded_bytes):
                 len({item.get("signature") for item in alternatives}) != len(alternatives)):
             raise ValueError("E domain index or alternatives invalid")
         radices.append(len(alternatives))
+    validate_factor_aggregation(model, radices, allow_legacy_v1=allow_legacy_v1)
     tables = []
     for factor in factors:
         scope = factor.get("scope") if isinstance(factor, dict) else None
@@ -143,7 +145,7 @@ def _coverage(model, assignments, plans):
 
 
 def verify_case(model_path, oracle_path, expected_oracle_sha256, *,
-                max_decoded_bytes=MAX_DECODED_BYTES):
+                max_decoded_bytes=MAX_DECODED_BYTES, allow_legacy_v1=False):
     if (not isinstance(expected_oracle_sha256, str) or
             len(expected_oracle_sha256) != 64 or
             any(character not in "0123456789abcdef"
@@ -160,7 +162,8 @@ def verify_case(model_path, oracle_path, expected_oracle_sha256, *,
             "TINY_FIXTURE_FULL_PHYSICAL_IDENTITY_DIFFERENTIAL_ONLY" or
             not isinstance(oracle.get("fixture"), str) or not oracle["fixture"]):
         raise ValueError("unsupported Java semantic oracle schema")
-    model, model_sha, radices, tables = _read_model(model_path, max_decoded_bytes)
+    model, model_sha, radices, tables = _read_model(
+        model_path, max_decoded_bytes, allow_legacy_v1)
     if model_sha != oracle.get("modelSha256") or model.get("cell") != oracle["fixture"]:
         raise ValueError("Java oracle model commitment differs")
     if (oracle.get("programSha256") != model.get("programSha256") or
@@ -218,8 +221,9 @@ def verify_case(model_path, oracle_path, expected_oracle_sha256, *,
             "comparisonStatus": "PASS_EXHAUSTIVE_FULL_PHYSICAL_IDENTITY"}
 
 
-def verify_cases(cases, *, max_decoded_bytes=MAX_DECODED_BYTES):
-    results = [verify_case(*case, max_decoded_bytes=max_decoded_bytes) for case in cases]
+def verify_cases(cases, *, max_decoded_bytes=MAX_DECODED_BYTES, allow_legacy_v1=False):
+    results = [verify_case(*case, max_decoded_bytes=max_decoded_bytes,
+                           allow_legacy_v1=allow_legacy_v1) for case in cases]
     coverage = set().union(*(result["coverage"] for result in results))
     missing = sorted(REQUIRED_COVERAGE - coverage)
     return {"schema": RESULT_SCHEMA, "status": "PASS" if not missing else "BLOCKED",
@@ -238,10 +242,12 @@ def main():
                         metavar=("MODEL", "ORACLE", "ORACLE_SHA256"))
     parser.add_argument("--result", type=Path)
     parser.add_argument("--max-decoded-bytes", type=int, default=MAX_DECODED_BYTES)
+    parser.add_argument("--legacy-v1", action="store_true")
     args = parser.parse_args()
     result = verify_cases([(Path(model), Path(oracle), sha)
-                           for model, oracle, sha in args.case],
-                          max_decoded_bytes=args.max_decoded_bytes)
+                          for model, oracle, sha in args.case],
+                          max_decoded_bytes=args.max_decoded_bytes,
+                          allow_legacy_v1=args.legacy_v1)
     wire = canonical(result)
     if args.result:
         args.result.parent.mkdir(parents=True, exist_ok=True)

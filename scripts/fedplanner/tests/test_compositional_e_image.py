@@ -5,6 +5,7 @@ import hashlib
 import json
 from itertools import product
 from pathlib import Path
+import random
 import sys
 import tempfile
 import unittest
@@ -48,6 +49,27 @@ def fragment(name, suffix, output="LOUT", bindings=(), actions=(), geometry=()):
 
 
 class CompositionalEImageTest(unittest.TestCase):
+    def assert_exact_atom_image(self, model, result):
+        validated = validate_artifact(result["relation"])
+        tokens = tuple(result["atomVariableTokens"])
+        radices = [len(domain["alternatives"]) for domain in model["domains"]]
+        expected = set()
+        for native in product(*(range(radix) for radix in radices)):
+            if all(factor_status(tuple(row["scope"]), row["truth"], native,
+                                 radices) == "ALLOW"
+                   for row in model["factors"]):
+                active = self.active_tokens(result, native)
+                expected.add(tuple(int(token in active) for token in tokens))
+        actual = set()
+        for bits in product((0, 1), repeat=len(tokens)):
+            by_token = dict(zip(tokens, bits))
+            replay = tuple(0 if variable.name.startswith("native:") else
+                           by_token[variable.name[5:]]
+                           for variable in validated.variables)
+            if validated.evaluate("definitelyAcceptedAtomImage", replay):
+                actual.add(bits)
+        self.assertEqual(expected, actual)
+
     def test_large_atom_tautology_check_respects_cell_budget(self):
         # This DNF is true, but proving it by enumeration visits 2**30
         # assignments. Keeping the atom dynamic remains an exact fallback.
@@ -72,8 +94,15 @@ class CompositionalEImageTest(unittest.TestCase):
             for fragment in model["physicalProjection"]["variables"][1]["alternatives"]:
                 fragment["bindings"] = []
             model["factors"] = [
-                {"scope": [0], "cells": "2", "truth": ["ALLOW", "ALLOW"]},
-                {"scope": [1], "cells": "2", "truth": ["ALLOW", "ALLOW"]}]
+                {"sourceFactorIndices": [0], "scope": [0], "cells": "2",
+                 "truth": ["ALLOW", "ALLOW"]},
+                {"sourceFactorIndices": [1], "scope": [1], "cells": "2",
+                 "truth": ["ALLOW", "ALLOW"]}]
+            model["nativeFactorCount"] = 2
+            model["materializedFactorCount"] = 2
+            model["sourceFactorScopes"] = [[0], [1]]
+            model["nativeFactorCells"] = "4"
+            model["materializedFactorCells"] = "4"
             path = self.write_model(root, model)
             ordinary = build(path)
             left = validate_artifact(ordinary["relation"])
@@ -117,6 +146,104 @@ class CompositionalEImageTest(unittest.TestCase):
                                      right.evaluate("definitelyAcceptedAtomImage",
                                                     right_values))
 
+    def test_cutset_conditioned_image_matches_all_existing_tiny_strategies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = self.model()
+            path = self.write_model(root, model)
+            results = [build(path, image_strategy=strategy)
+                       for strategy in ("partitioned", "decomposed-components",
+                                        "terminal-aware-components")]
+            cutset = build(path, image_strategy="cutset-conditioned-components",
+                           native_cutset=(0,))
+            results.append(cutset)
+            for result in results:
+                self.assertEqual("DIAGNOSTIC_COMPLETE", result["diagnosticStatus"])
+                self.assert_exact_atom_image(model, result)
+            self.assertEqual({result["counts"][
+                "uniqueDefinitelyAcceptedProvenanceAtomSets"] for result in results},
+                {"2"})
+            self.assertEqual([0], cutset["nativeCutset"])
+            self.assertEqual(2, cutset["resourceUsage"]["cutsetAssignments"])
+            self.assertEqual("COMPLETE", cutset["constructionSchedule"][
+                "conditionedDependencyCoverage"])
+            artifact = root / "cutset.json.gz"
+            publish(artifact, cutset)
+            self.assertEqual("PASS", verify_saved(
+                artifact, path,
+                hashlib.sha256(artifact.read_bytes()).hexdigest())["status"])
+
+    def test_cutset_handles_impossible_branches_separator_atoms_and_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = self.model()
+            model["factors"][0]["truth"] = ["ALLOW", "ALLOW", "REJECT",
+                                                   "REJECT"]
+            impossible = build(
+                self.write_model(root, model),
+                image_strategy="cutset-conditioned-components", native_cutset=(0,))
+            self.assert_exact_atom_image(model, impossible)
+            self.assertEqual(1, impossible["resourceUsage"]["feasibleBranches"])
+
+            model = self.model()
+            separator = build(
+                self.write_model(root, model),
+                image_strategy="cutset-conditioned-components",
+                native_cutset=(0, 1))
+            self.assert_exact_atom_image(model, separator)
+            self.assertTrue(any(branch["forcedPresentAtoms"] or
+                                branch["forcedAbsentAtoms"]
+                                for branch in separator["constructionSchedule"][
+                                    "branches"]))
+
+            model = self.model()
+            for variable in model["physicalProjection"]["variables"]:
+                variable["alternatives"][1] = copy.deepcopy(
+                    variable["alternatives"][0])
+            model["domains"][0]["alternatives"][1]["state"] = \
+                model["domains"][0]["alternatives"][0]["state"]
+            duplicate = build(
+                self.write_model(root, model),
+                image_strategy="cutset-conditioned-components",
+                native_cutset=(0, 1))
+            self.assert_exact_atom_image(model, duplicate)
+            self.assertEqual("1", duplicate["counts"][
+                "uniqueDefinitelyAcceptedProvenanceAtomSets"])
+
+    def test_cutset_treats_singleton_factor_domains_as_constants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = self.model()
+            model["domains"][1]["alternatives"] = \
+                model["domains"][1]["alternatives"][:1]
+            model["physicalProjection"]["variables"][1]["alternatives"] = \
+                model["physicalProjection"]["variables"][1]["alternatives"][:1]
+            model["factors"][0]["cells"] = "2"
+            model["factors"][0]["truth"] = ["ALLOW", "REJECT"]
+            model["nativeFactorCells"] = "2"
+            model["materializedFactorCells"] = "2"
+            result = build(
+                self.write_model(Path(directory), model),
+                image_strategy="cutset-conditioned-components", native_cutset=(0,))
+            self.assertEqual("DIAGNOSTIC_COMPLETE", result["diagnosticStatus"])
+            self.assert_exact_atom_image(model, result)
+
+    def test_random_tiny_cutset_images_match_brute_force_native_image(self):
+        generator = random.Random(192837)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for iteration in range(100):
+                model = self.model()
+                model["cell"] = "random-%d" % iteration
+                model["factors"][0]["truth"] = [generator.choice(
+                    ("ALLOW", "REJECT", "UNKNOWN")) for _ in range(4)]
+                path = self.write_model(root, model)
+                result = build(
+                    path, image_strategy="cutset-conditioned-components",
+                    native_cutset=(generator.randrange(2),))
+                self.assertEqual("DIAGNOSTIC_COMPLETE",
+                                 result["diagnosticStatus"])
+                self.assert_exact_atom_image(model, result)
+
     def test_native_support_is_checked_not_inferred_from_count_divisibility(self):
         manager = MDDManager([Variable("native:0", ("0", "1")),
                               Variable("native:1", ("0", "1")),
@@ -147,7 +274,7 @@ class CompositionalEImageTest(unittest.TestCase):
                                  "ranges": [[0, 9], [0, 4]],
                                  "owner": owner("b"), "ftype": "ROW"}])
         return {
-            "schema": "closed-e-native-model-artifact-v1",
+            "schema": "closed-e-native-model-artifact-v2",
             "acceptance": "MATERIALIZED_FACTOR_TABLES", "cell": "toy",
             "programSha256": "p", "conditionSha256": "c", "sourceFiles": [],
             "domains": [
@@ -156,7 +283,11 @@ class CompositionalEImageTest(unittest.TestCase):
                 {"index": 1, "occurrence": "b", "nodeKind": "OPERATION",
                  "alternatives": [alternative("b0"), alternative("b1")]},
             ],
-            "factors": [{"scope": [0, 1], "cells": "4",
+            "factorAggregation": "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+            "nativeFactorCount": 1, "materializedFactorCount": 1,
+            "sourceFactorScopes": [[0, 1]], "nativeFactorCells": "4",
+            "materializedFactorCells": "4",
+            "factors": [{"sourceFactorIndices": [0], "scope": [0, 1], "cells": "4",
                          "truth": ["ALLOW", "REJECT", "REJECT", "ALLOW"]}],
             "sourceIdentity": {
                 "nodes": [{"occurrence": "a", "operation": "a"},
@@ -328,6 +459,18 @@ class CompositionalEImageTest(unittest.TestCase):
             self.assertEqual("PASS", verify_saved(
                 terminal_artifact, path,
                 hashlib.sha256(terminal_artifact.read_bytes()).hexdigest())["status"])
+            cutset_budget = build(
+                path, image_strategy="cutset-conditioned-components",
+                native_cutset=(0,), max_cutset_assignments=1)
+            self.assertEqual("DIAGNOSTIC_BLOCKED_RESOURCE_LIMIT",
+                             cutset_budget["diagnosticStatus"])
+            self.assertIn("NATIVE_CUTSET_ASSIGNMENT_BUDGET_EXHAUSTED",
+                          cutset_budget["blockers"])
+            cutset_artifact = root / "cutset-budget-blocked.json.gz"
+            publish(cutset_artifact, cutset_budget)
+            self.assertEqual("PASS", verify_saved(
+                cutset_artifact, path,
+                hashlib.sha256(cutset_artifact.read_bytes()).hexdigest())["status"])
             terms = build(path, max_terms=1)
             self.assertEqual("DIAGNOSTIC_BLOCKED_RESOURCE_LIMIT",
                              terms["diagnosticStatus"])

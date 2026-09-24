@@ -919,7 +919,7 @@ public final class NeutralPlacementGraphBuilder {
 			// to that exact identity. Reprove from the surviving rows until the
 			// privacy-filtered relation stabilizes before pruning expired support.
 			// Never remap an expired reference or restore withdrawn authority.
-			List<CandidateReplay> privacySeen = new ArrayList<>();
+			List<PrivacyGroundingRevision> privacySeen = new ArrayList<>();
 			int maxPrivacyPasses = Math.max(1,
 				nodes.size() + candidateRuleDomainKeys.size() + logicalTransientInputs.size() + 1);
 			// relocationGrounded is already the completed composed CFG/direct/physical
@@ -930,9 +930,14 @@ public final class NeutralPlacementGraphBuilder {
 			for(int privacyPass = 0; !privacyGroundedConverged && privacyPass < maxPrivacyPasses; privacyPass++) {
 				CandidateReplay beforePrivacyGrounding = new CandidateReplay(nodes, candidateRuleDomainKeys,
 					candidateRuleFacts, logicalTransientInputs, List.of());
-				if(privacySeen.contains(beforePrivacyGrounding))
+				// A repeated proof state is not a transfer cycle while new completed
+				// loop-seed revisions have been memoized. The ledger is append-only,
+				// so its size identifies progress without embedding its large keys.
+				PrivacyGroundingRevision revision = new PrivacyGroundingRevision(
+					beforePrivacyGrounding, loopSeedLedger.completedTransfers().size());
+				if(privacySeen.contains(revision))
 					throw new IllegalStateException("Privacy-filtered candidate proof closure cycled");
-				privacySeen.add(beforePrivacyGrounding);
+				privacySeen.add(revision);
 				CandidateReplay privacyGrounded = closeCfgTransientCandidateDependencies(occurrences,
 					nodes, cfg, factsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 					candidateRuleDomainKeys, candidateRuleFacts, logicalTransientInputs, cfgReplayBaseline,
@@ -1240,6 +1245,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record PrivacyClosure(List<Node> nodes, List<CandidateRuleFact> candidateRuleFacts,
 		PlacementPrivacyFacts privacyFacts) { }
+	private record PrivacyGroundingRevision(CandidateReplay replay, int completedLoopSeedTransfers) { }
 
 	/**
 	 * Resolve one occurrence-scoped privacy lattice before any planner selector is

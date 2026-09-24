@@ -167,8 +167,9 @@ public final class ExactPhysicalComparisonRow {
 		}
 		List<Map<String,Object>> bindings = new ArrayList<>(bindings(model, catalog, selected, keysByPath,
 			authorityByKey, versions, versionOwners));
-		nodes.sort(Comparator.comparing(node -> node.get("occurrence").toString()));
-		bindings.sort(Comparator.comparing((Map<String,Object> binding) -> binding.get("consumer").toString())
+		nodes.sort(Comparator.comparing(node -> PlanSpaceComparisonIdentity.structuralSortKey(node.get("occurrence"))));
+		bindings.sort(Comparator.comparing((Map<String,Object> binding) ->
+			PlanSpaceComparisonIdentity.structuralSortKey(binding.get("consumer")))
 			.thenComparingInt(binding -> (Integer) binding.get("inputPosition")));
 		return fields("schema", "physical-plan-v1", "context", fields("logical", logicalProgram),
 			"nodes", List.copyOf(nodes),
@@ -214,8 +215,8 @@ public final class ExactPhysicalComparisonRow {
 				"alternatives", List.copyOf(alternatives)));
 		}
 		List<Integer> nodeOrder = java.util.stream.IntStream.range(0, model.domains().size()).boxed()
-			.sorted(Comparator.comparing(index -> occurrence(catalog,
-				model.domains().get(index).node().key()).toString())).toList();
+			.sorted(Comparator.comparing(index -> PlanSpaceComparisonIdentity.structuralSortKey(
+				occurrence(catalog, model.domains().get(index).node().key())))).toList();
 		List<Integer> bindingOrder = nodeOrder.stream().filter(index ->
 			model.domains().get(index).alternatives().stream().anyMatch(alternative ->
 				!projectionBindings(model, catalog, model.domains().get(index).node().key(),
@@ -732,7 +733,7 @@ public final class ExactPhysicalComparisonRow {
 			demands.add(fields("consumer", occurrence(catalog, obligation.consumer()),
 				"inputPosition", obligation.inputPosition(), "requiredState",
 				state(obligation.requiredPlacement())));
-		demands.sort(Comparator.comparing(Object::toString));
+		demands.sort(Comparator.comparing(PlanSpaceComparisonIdentity::structuralSortKey));
 		List<CompiledHopKey> owners = versionOwners.get(key.sourceValueVersion());
 		if(owners == null || owners.size() != 1)
 			throw new IllegalArgumentException("E relocation source owner unavailable or ambiguous");
