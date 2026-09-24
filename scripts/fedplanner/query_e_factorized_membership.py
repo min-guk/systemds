@@ -21,13 +21,16 @@ from e_target_preimage import compile_target_preimage
 from e_factorized_membership_checker import (check_dense_certificate,
                                                recover_dense_witness,
                                                verify_residual_roots)
+from e_atom_semantics_checker import (certify_atom_semantics,
+                                      verify_atom_semantics_certificate)
 from exact_e_physical_relation import compose_physical_projection, factor_status
 from factor_forest_image import (eliminate_factor_forest,
                                  verify_factor_forest_artifact)
 from physical_coordinate_contract import PhysicalCoordinateCodec
 
 
-SCHEMA = "e-factorized-canonical-membership-query-v1"
+SCHEMA = "e-factorized-canonical-membership-query-v2"
+VERIFICATION_SCHEMA = "e-factorized-canonical-membership-verification-v2"
 CLAIM_SCOPE = "CAPTURED_E_DEFINITE_ALLOW_TYPED_DECODER_MEMBERSHIP_ONLY"
 DEFAULT_MAX_TARGET_PLAN_BYTES = 64 * 1024 ** 2
 _COORDINATES = ("nodes", "authority", "actions", "bindings", "geometry")
@@ -384,6 +387,10 @@ def query_factorized_membership(
         if bindings.get(key) != value:
             raise ValueError("preimage/translation binding mismatch: " + key)
 
+    atom_semantics = certify_atom_semantics(
+        model_path, translated,
+        max_semantic_cells=max_equivalence_checks)
+
     variables = translated["allVariables"]
     target_factors = preimage["factorPayload"]["targetFactors"]
     independent_target, target_blocker = _independent_target_factors(
@@ -475,19 +482,27 @@ def query_factorized_membership(
         "producerMddResidualReplay": "PASS_EVERY_ROOT",
         "finalConjunction": satisfiable,
         "compiledFactorsUnsat": not satisfiable,
+        "atomSemantics": atom_semantics,
     }
+    negative_decided = (not satisfiable and
+                        atom_semantics.get("status") == "COMPLETE")
+    semantics_replayed = atom_semantics.get("status") == "COMPLETE"
     result = {
         "schema": SCHEMA, "claimScope": CLAIM_SCOPE,
-        "status": "SAT" if satisfiable else "INCOMPLETE",
-        "blockers": [] if satisfiable else
-        ["ATOM_DECODER_SEMANTICS_NOT_CERTIFIED"],
+        "status": "SAT" if satisfiable else
+        "UNSAT" if negative_decided else "INCOMPLETE",
+        "blockers": [] if satisfiable or negative_decided else
+        (atom_semantics.get("blockers") or
+         ["ATOM_DECODER_SEMANTICS_NOT_CERTIFIED"]),
         "bindings": bindings, "budgets": budgets,
         "preimageArtifactSha256": preimage["artifactSha256"],
-        "membership": True if satisfiable else None,
+        "membership": True if satisfiable else False if negative_decided else None,
         "witness": witness_payload,
         "proof": proof,
         "diagnosticStatus": ("MODEL_LOCAL_MEMBERSHIP_DECIDED" if satisfiable
-                             else "COMPILED_FACTORS_UNSAT_CONDITIONAL"),
+                             else "MODEL_LOCAL_NON_PHI_MEMBERSHIP_DECIDED"
+                             if negative_decided else
+                             "COMPILED_FACTORS_UNSAT_CONDITIONAL"),
         "executionProvenance": preimage["executionProvenance"],
         "claims": {"executableAttestation": "NOT_ESTABLISHED",
                    "javaPlannerSemantics": "NOT_ESTABLISHED",
@@ -495,7 +510,9 @@ def query_factorized_membership(
         "semanticBoundary": [
             "MODEL_LOCAL_UNATTESTED_EXECUTION_RESULT",
             "CAPTURED_TYPED_DECODER_NOT_INDEPENDENTLY_BOUND_TO_JAVA_SEMANTICS",
-            "CAPTURED_HARD_AND_ATOM_FACTOR_TRANSLATION_IS_MODEL_INPUT",
+            ("CAPTURED_NON_PHI_ATOM_AND_HARD_FACTOR_TRANSLATION_REPLAYED"
+             if semantics_replayed else
+             "CAPTURED_HARD_AND_ATOM_FACTOR_TRANSLATION_IS_MODEL_INPUT"),
             "NOT_A_P_E_EQUALITY_RESULT",
         ],
     }
@@ -505,7 +522,7 @@ def query_factorized_membership(
 
 def _verification_incomplete(artifact, blocker):
     result = {
-        "schema": "e-factorized-canonical-membership-verification-v1",
+        "schema": VERIFICATION_SCHEMA,
         "status": "INCOMPLETE", "claimScope": CLAIM_SCOPE,
         "blockers": [blocker],
         "verifiedArtifactSha256": artifact.get("artifactSha256"),
@@ -649,7 +666,7 @@ def verify_factorized_membership(
         "denseResidualSha256", "inputFactorsSha256",
         "targetFactorsSha256", "producerMddResultSha256", "producerMdd",
         "producerMddResidualReplay", "finalConjunction",
-        "compiledFactorsUnsat"}
+        "compiledFactorsUnsat", "atomSemantics"}
     if set(proof) != expected_proof_keys:
         raise ValueError("stored membership proof shape differs")
     if (proof["eliminationOrder"] != list(eliminate_levels) or
@@ -700,11 +717,21 @@ def verify_factorized_membership(
     verify_residual_roots(producer["relation"], variables, dense)
     satisfiable = all(row["scope"] == () and row["truth"] == (True,)
                       for row in dense)
-    expected_status = "SAT" if satisfiable else "INCOMPLETE"
-    expected_membership = True if satisfiable else None
-    expected_blockers = ([] if satisfiable else
+    semantic_verification = verify_atom_semantics_certificate(
+        proof.get("atomSemantics"), model_path, translated,
+        max_semantic_cells=max_equivalence_checks)
+    semantic_complete = semantic_verification.get("status") == "PASS"
+    negative_decided = not satisfiable and semantic_complete
+    expected_status = ("SAT" if satisfiable else
+                       "UNSAT" if negative_decided else "INCOMPLETE")
+    expected_membership = (True if satisfiable else
+                           False if negative_decided else None)
+    expected_blockers = ([] if satisfiable or negative_decided else
+                         proof["atomSemantics"].get("blockers") or
                          ["ATOM_DECODER_SEMANTICS_NOT_CERTIFIED"])
     expected_diagnostic = ("MODEL_LOCAL_MEMBERSHIP_DECIDED" if satisfiable else
+                           "MODEL_LOCAL_NON_PHI_MEMBERSHIP_DECIDED"
+                           if negative_decided else
                            "COMPILED_FACTORS_UNSAT_CONDITIONAL")
     expected_claims = {"executableAttestation": "NOT_ESTABLISHED",
                        "javaPlannerSemantics": "NOT_ESTABLISHED",
@@ -712,7 +739,9 @@ def verify_factorized_membership(
     expected_boundary = [
         "MODEL_LOCAL_UNATTESTED_EXECUTION_RESULT",
         "CAPTURED_TYPED_DECODER_NOT_INDEPENDENTLY_BOUND_TO_JAVA_SEMANTICS",
-        "CAPTURED_HARD_AND_ATOM_FACTOR_TRANSLATION_IS_MODEL_INPUT",
+        ("CAPTURED_NON_PHI_ATOM_AND_HARD_FACTOR_TRANSLATION_REPLAYED"
+         if semantic_complete else
+         "CAPTURED_HARD_AND_ATOM_FACTOR_TRANSLATION_IS_MODEL_INPUT"),
         "NOT_A_P_E_EQUALITY_RESULT"]
     if (artifact.get("status") != expected_status or
             artifact.get("membership") is not expected_membership or
@@ -747,7 +776,7 @@ def verify_factorized_membership(
     elif artifact.get("witness") is not None:
         raise ValueError("conditional factor UNSAT artifact contract differs")
     result = {
-        "schema": "e-factorized-canonical-membership-verification-v1",
+        "schema": VERIFICATION_SCHEMA,
         "status": "PASS", "claimScope": CLAIM_SCOPE,
         "verifiedArtifactSha256": artifact["artifactSha256"],
         "blockers": [],
@@ -818,7 +847,7 @@ def main(argv=None):
             max_dense_factor_lookups=args.max_dense_factor_lookups,
             max_target_plan_bytes=args.max_target_plan_bytes)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-    return 0 if result["status"] in ("SAT", "PASS") else 2
+    return 0 if result["status"] in ("SAT", "UNSAT", "PASS") else 2
 
 
 if __name__ == "__main__":

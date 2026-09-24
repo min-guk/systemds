@@ -61,9 +61,9 @@ class EFactorizedMembershipTest(unittest.TestCase):
                     factorized = query_factorized_membership(
                         path, target, CALIBRATION_ROOT)
                     expected = ("SAT" if exhaustive["status"] == "SAT" else
-                                "INCOMPLETE")
+                                "UNSAT")
                     self.assertEqual(expected, factorized["status"], factorized)
-                    self.assertEqual(True if expected == "SAT" else None,
+                    self.assertEqual(expected == "SAT",
                                      factorized["membership"])
                     self.assertEqual("PASS_COMPLETE",
                                      factorized["proof"]["denseReplayStatus"])
@@ -83,8 +83,9 @@ class EFactorizedMembershipTest(unittest.TestCase):
                                 source, witness)))
                     else:
                         self.assertIsNone(factorized["witness"])
-                        self.assertIn("ATOM_DECODER_SEMANTICS_NOT_CERTIFIED",
-                                      factorized["blockers"])
+                        self.assertEqual([], factorized["blockers"])
+                        self.assertEqual("COMPLETE", factorized["proof"]
+                                         ["atomSemantics"]["status"])
                         self.assertTrue(factorized["proof"]
                                         ["compiledFactorsUnsat"])
 
@@ -299,9 +300,11 @@ class EFactorizedMembershipTest(unittest.TestCase):
             source, tuple(0 for _ in source["domains"]))
         zero_result = query_factorized_membership(
             REAL_P2_MODEL, zero_target, CALIBRATION_ROOT)
-        self.assertEqual("INCOMPLETE", zero_result["status"], zero_result)
-        self.assertIn("ATOM_DECODER_SEMANTICS_NOT_CERTIFIED",
-                      zero_result["blockers"])
+        self.assertEqual("UNSAT", zero_result["status"], zero_result)
+        self.assertFalse(zero_result["membership"])
+        self.assertEqual([], zero_result["blockers"])
+        self.assertEqual("COMPLETE",
+                         zero_result["proof"]["atomSemantics"]["status"])
         self.assertTrue(zero_result["proof"]["compiledFactorsUnsat"])
         self.assertEqual("PASS_COMPLETE",
                          zero_result["proof"]["denseReplayStatus"])
