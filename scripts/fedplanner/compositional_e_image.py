@@ -78,12 +78,15 @@ def _merge_condition(*entries):
     return tuple(sorted(result.items()))
 
 
-def _add_atom(atoms, terms, term_counter, atom, condition, max_atoms, max_terms):
+def _add_atom(atoms, terms, seen_terms, term_counter, atom, condition,
+              max_atoms, max_terms):
     if condition is None:
         return
     token = _token("a_", atom, atoms)
     rows = terms.setdefault(token, [])
-    if condition not in rows:
+    seen = seen_terms.setdefault(token, set())
+    if condition not in seen:
+        seen.add(condition)
         rows.append(condition)
         term_counter[0] += 1
         if term_counter[0] > max_terms:
@@ -96,6 +99,7 @@ def compile_atoms(projection, max_atoms, max_terms):
     """Compile reconstructible atoms and their partial native assignments."""
     atoms = {}
     terms = {}
+    seen_terms = {}
     term_counter = [0]
     variables = projection["variables"]
     node_position = {domain: position
@@ -107,18 +111,18 @@ def compile_atoms(projection, max_atoms, max_terms):
         for alternative, fragment in enumerate(variable["alternatives"]):
             own = _merge_condition((domain, alternative))
             if domain in node_position:
-                _add_atom(atoms, terms, term_counter, {
+                _add_atom(atoms, terms, seen_terms, term_counter, {
                     "coordinate": "nodes", "position": node_position[domain],
                     "value": fragment["node"]}, own, max_atoms, max_terms)
-            _add_atom(atoms, terms, term_counter, {
+            _add_atom(atoms, terms, seen_terms, term_counter, {
                 "coordinate": "authority", "position": domain,
                 "value": fragment["authority"]}, own, max_atoms, max_terms)
             for ordinal, row in enumerate(fragment["actions"]):
-                _add_atom(atoms, terms, term_counter, {
+                _add_atom(atoms, terms, seen_terms, term_counter, {
                     "coordinate": "actions", "sourceDomain": domain,
                     "ordinal": ordinal, "value": row}, own, max_atoms, max_terms)
             for ordinal, row in enumerate(fragment["geometry"]):
-                _add_atom(atoms, terms, term_counter, {
+                _add_atom(atoms, terms, seen_terms, term_counter, {
                     "coordinate": "geometry", "sourceDomain": domain,
                     "ordinal": ordinal, "value": row}, own, max_atoms, max_terms)
 
@@ -138,7 +142,7 @@ def compile_atoms(projection, max_atoms, max_terms):
                                   producer={"kind": "PHI_JOIN_PORT",
                                             "owner": template["consumer"]},
                                   inputAuthority="PHI")
-                    _add_atom(atoms, terms, term_counter, {
+                    _add_atom(atoms, terms, seen_terms, term_counter, {
                         "coordinate": "bindings", "bindingOrder": order,
                         "ordinal": ordinal, "part": "PHI_HEADER", "value": header},
                         _merge_condition(consumer_choice), max_atoms, max_terms)
@@ -152,7 +156,7 @@ def compile_atoms(projection, max_atoms, max_terms):
                                 "controlArm": producer_template["controlArm"],
                                 "sourceAuthorityRef": producer["authority"]["id"],
                             }
-                            _add_atom(atoms, terms, term_counter, {
+                            _add_atom(atoms, terms, seen_terms, term_counter, {
                                 "coordinate": "bindings", "bindingOrder": order,
                                 "ordinal": ordinal, "part": "PHI_ALTERNATIVE",
                                 "producerOrdinal": producer_ordinal, "value": value},
@@ -176,7 +180,7 @@ def compile_atoms(projection, max_atoms, max_terms):
                         "DIRECT" if mode == "DIRECT_OR_FOUT" else mode)
                     if mode == "RELOCATION":
                         row["actionRef"] = template["actionRef"]
-                    _add_atom(atoms, terms, term_counter, {
+                    _add_atom(atoms, terms, seen_terms, term_counter, {
                         "coordinate": "bindings", "bindingOrder": order,
                         "ordinal": ordinal, "part": "ROW", "value": row},
                         _merge_condition(

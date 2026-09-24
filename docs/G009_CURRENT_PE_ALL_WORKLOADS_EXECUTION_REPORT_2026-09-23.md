@@ -8,7 +8,7 @@
 
 각 동결 조건에서 P와 E가 수용하는 모든 native assignment를 공통 물리 identity로 projection한 **집합**이 같은지 검사한다. accepted proof 수의 일치, 한두 계획의 존재, graph-only 관계 또는 모델 생산자의 영수증은 전체 집합 동등성의 증거가 아니다. 또한 P == E 자체는 독립 runtime 의미론 R에 대한 feasible-plan 완전성 증명이 아니다.
 
-이번 실행은 source-backed 612조건의 입력 분모와 모델 수집 경로를 확정했지만, historical snapshot과 파생 조건의 구분, P/E acceptance, 큰 공간의 정확한 물리 관계 비교가 열려 있다. 아래 제한 범위를 전체 `EQUAL`이나 `PASS`로 승격하지 않았다.
+이번 실행은 source-backed 612조건의 입력 분모와 P/E 모델 캡처·저장물 검증을 완료했지만, historical snapshot과 파생 조건의 구분, P acceptance, 큰 공간의 정확한 물리 관계 비교가 열려 있다. 아래 제한 범위를 전체 `EQUAL`이나 `PASS`로 승격하지 않았다.
 
 ## 분모와 동결 입력
 
@@ -16,12 +16,12 @@
 
 | 범위 | 조건 | 현재 입력 상태 | 비교 상태 |
 |---|---:|---|---|
-| planning 기존 cohort | 224 | 동결·캡처 가능 | 전체 P/E 미완료 |
-| base/ML10 | 296 | DML, metadata, privacy, partition, network, 정확한 compiler argv 정적 동결 | native capture adapter 연결; 대표 ML10 LM 완료 |
-| generated microbench | 28 | 생성 DML과 compile-model 가정 정적 동결 | native capture adapter 연결; 대표 linear-k1 완료 |
-| base SliceLine | 32 | sealed stage metadata·topology로 파생한 compile-model 입력 | P/E 대표 캡처 완료, 전체 비교 대기 |
-| planning-parent SliceLine | 32 | parent manifest·effective privacy override로 파생한 compile-model 입력 | P/E 대표 캡처 완료, 전체 비교 대기 |
-| **합계** | **612** | **612 정적 준비, 0 미해결** | **derived cohort 범위; 전체 P/E 미완료** |
+| planning 기존 cohort | 224 | 동결·P/E 모델 캡처·저장물 검증 완료 | 전체 물리 P/E 미완료 |
+| base/ML10 | 296 | DML, metadata, privacy, partition, network, 정확한 compiler argv 정적 동결·P/E 모델 검증 완료 | 전체 물리 P/E 미완료 |
+| generated microbench | 28 | 생성 DML과 compile-model 가정 정적 동결·P/E 모델 검증 완료 | 전체 물리 P/E 미완료 |
+| base SliceLine | 32 | sealed stage metadata·topology로 파생한 compile-model 입력·P/E 모델 검증 완료 | 전체 물리 P/E 미완료 |
+| planning-parent SliceLine | 32 | parent manifest·effective privacy override로 파생한 compile-model 입력·P/E 모델 검증 완료 | 전체 물리 P/E 미완료 |
+| **합계** | **612** | **612 정적 준비·P/E 모델 검증 완료** | **derived cohort 범위; 전체 물리 P/E 미완료** |
 
 정적 준비는 runtime 데이터나 worker 접속을 검증했다는 뜻이 아니다. 특히 microbench 28조건은 스크립트에 없는 4-worker·4096×64·1 ms·5 Gbit compile-model 가정을 명시해 고정한 범위이다. base SliceLine과 planning remainder의 입력을 임의로 만들거나 대상에서 삭제하지 않았다.
 
@@ -48,7 +48,7 @@
 
 | 검증 | 결과 | 증거의 한계 |
 |---|---|---|
-| Python 단위·mutation 회귀 | 최신 통합 220개 통과 | 모델 전체 적용을 대신하지 않음 |
+| Python 단위·mutation 회귀 | 최신 통합 344개 통과(선택형 저장 artifact 스캔 1개 제외) | 모델 전체 적용을 대신하지 않음 |
 | planning P matrix 저장 artifact 재검사 | 224/224 PASS | native P acceptance 전체 인증 아님 |
 | LM 한 조건의 기존 JSON ↔ compact | P/E 양방향 물리 집합 일치 | pilot 한 조건 |
 | Pca w5/wan_heavy compact pilot | P accepted proof 377,856 → 물리 identity 600; E accepted proof 479,232 → 물리 identity 600; **P-only 0, E-only 0** | 해당 captured model 비교이며 P acceptance 전체 인증 아님 |
@@ -198,16 +198,69 @@ v11 P1 `cell_38844b94fdcf53069c7c`의 E v2 모델에 정확한 두 native cutset
 
 memo-aware closure 수정에 대한 고정 회귀 테스트 `privacyFilteredLoopSeedProgressDoesNotBecomeAFalseCycle`은 현재 guard에서 통과하고, 정확히 그 guard 한 줄만 옛 방식으로 되돌린 격리 빌드에서 `Privacy-filtered candidate proof closure cycled`로 실패했다. 비교 영수증은 `privacy-ledger-guard-regression-test-v1/receipt.json`이다. 선택한 Java 10개 클래스의 85개 테스트와 전체 fedplanner Python 218개 테스트가 통과했다. 새 612셀 P/E 모델 캡처는 `current-pe-build-v12-ledger-aware-candidate`의 source/class SHA-256 `6dfd5fb7441b60724feb60c8272831a9a5bf4b37e59703a2e9354e6cb900d44e`/`bbcc1cd57bd649be2c12ca0f7191b4e1ae37366e9d787163b695b9f688924acb`에 고정해 `current-pe-campaign-v12-ledger-aware`에서 병렬 실행 중이다. 모델 완료 수는 최종 manifest와 offline verification에서 확정한다.
 
-v11 P의 artifact-only 행렬 재검사는 612개 중 610개 `COMPLETE`·2개 `ERROR`를 확인했지만 `verifiedComplete=574`였다. 나머지 36개 완료 산출물은 구조 검사가 실패한 것이 아니라 Python 검증기의 512 MiB 압축 해제 제한에서 중단됐다. 36개 gzip footer의 원문 크기는 517.96~1162.72 MiB이며 최대 파일은 `cell_2371107ddd5d6a7508e3`이다. 이를 근거로 유한한 상한을 2 GiB로 높이고, 같은 모델을 행렬 검증기에서 두 번째로 전량 압축 해제하는 경로를 제거했다. 최대 파일을 실제 재검사해 `STRUCTURE_VERIFIED`를 얻었으며 2분 38.37초·최대 RSS 3,923,036 KiB였다(`current-pe-campaign-v11/p-largest-recheck.json`). 새 v12의 963.5 MiB v2 모델 `cell_03e6e6fcbb64b97e54d9`도 `STRUCTURE_VERIFIED`였고 1분 21.96초·최대 RSS 3,278,384 KiB였다(`current-pe-campaign-v12-ledger-aware/p-v12-large-v2-structural-pilot.json`). 두 검사는 P acceptance를 판정하지 않는다. 기존 제한에서 막힌 36개 완료 산출물을 두 작업 병렬로 모두 다시 검사해 36/36 `STRUCTURE_VERIFIED`, 오류 0을 얻었다. 각 결과와 외부 decoded SHA, 검증기 SHA를 독립 대조한 집계 영수증은 `current-pe-campaign-v11/p-budget-36-recheck/summary.json`이며 SHA-256은 `018817f550e83b3aa05d795e7c0ffa2d4bf649379950a3fdb15042b2219ab3b0`이다. 36개 합산 작업시간은 3,633.523초다. 이 부분 재검사는 전체 612셀 행렬 PASS가 아니며, 동일 검증기에서 전체 v11 행렬을 `--jobs 4`로 다시 검사 중이다. 전체 행렬 verifier에도 결정적 순서로 결과를 취합하는 bounded process 병렬 옵션 `--jobs`를 추가하고 한 명령 campaign의 기본 P 검증 동시성을 2로 설정했다. 수정 후 전체 fedplanner Python 218개와 추가 병렬 단위 테스트가 통과했다. 최종 v12 전체 행렬 재검사는 별도 완료 기록이 필요하며, 처음 발행한 v11 `verifiedComplete=574` 영수증 자체는 당시 검증 결과로 보존한다.
+v11 P의 artifact-only 행렬 재검사는 612개 중 610개 `COMPLETE`·2개 `ERROR`를 확인했지만 `verifiedComplete=574`였다. 나머지 36개 완료 산출물은 구조 검사가 실패한 것이 아니라 Python 검증기의 512 MiB 압축 해제 제한에서 중단됐다. 36개 gzip footer의 원문 크기는 517.96~1162.72 MiB이며 최대 파일은 `cell_2371107ddd5d6a7508e3`이다. 이를 근거로 유한한 상한을 2 GiB로 높이고, 같은 모델을 행렬 검증기에서 두 번째로 전량 압축 해제하는 경로를 제거했다. 최대 파일을 실제 재검사해 `STRUCTURE_VERIFIED`를 얻었으며 2분 38.37초·최대 RSS 3,923,036 KiB였다(`current-pe-campaign-v11/p-largest-recheck.json`). 새 v12의 963.5 MiB v2 모델 `cell_03e6e6fcbb64b97e54d9`도 `STRUCTURE_VERIFIED`였고 1분 21.96초·최대 RSS 3,278,384 KiB였다(`current-pe-campaign-v12-ledger-aware/p-v12-large-v2-structural-pilot.json`). 두 검사는 P acceptance를 판정하지 않는다. 기존 제한에서 막힌 36개 완료 산출물을 두 작업 병렬로 모두 다시 검사해 36/36 `STRUCTURE_VERIFIED`, 오류 0을 얻었다. 각 결과와 외부 decoded SHA, 검증기 SHA를 독립 대조한 집계 영수증은 `current-pe-campaign-v11/p-budget-36-recheck/summary.json`이며 SHA-256은 `018817f550e83b3aa05d795e7c0ffa2d4bf649379950a3fdb15042b2219ab3b0`이다. 36개 합산 작업시간은 3,633.523초다. 이 부분 재검사는 전체 612셀 행렬 PASS가 아니며, 아래에 기록한 전체 v11 행렬 재검사로 확인했다. 전체 행렬 verifier에도 결정적 순서로 결과를 취합하는 bounded process 병렬 옵션 `--jobs`를 추가하고 한 명령 campaign의 기본 P 검증 동시성을 2로 설정했다. 수정 후 전체 fedplanner Python 218개와 추가 병렬 단위 테스트가 통과했다. 최종 v12 전체 행렬 재검사는 별도 완료 기록이 필요하며, 처음 발행한 v11 `verifiedComplete=574` 영수증 자체는 당시 검증 결과로 보존한다.
 
 `privacy-ledger-aware-physical-diagnostic`의 5d 물리 캡처는 실행 도중 격리 빌드가 바뀌어 최종 certificate 갱신 전에 종료됐다. 현재 mutable 검증기로는 기존 certificate의 verifier hash가 달라져 재검사가 실패한다. 검증기 hash가 정확히 일치하는 `current-pe-build-v12-ledger-aware-candidate/target/classes/scripts/fedplanner` 동결 사본으로 기존 P/E matrix import와 물리 artifact를 다시 검사했다. 원본 seed SHA-256 `9fd49e109b61e4302fa67febd20d66f7c0c959131f20cac290abc8d684e5f8fd`에서 재계산한 certificate SHA-256은 `ccdd199f331ece4c99c767f4218ff3498401059ca2273620164b7afc8875104b`다. 다시 읽은 별도 artifact-only 검사도 `PASS`였고 재검사 영수증 `artifact-only-recovery-verification.json` SHA-256은 `0042cbb0771b515e50d47744b7064651cfc40eceaa9f967b79b3ecd76d57d23d`이다. b9의 저장 certificate도 같은 동결 검증기로 별도 `PASS`를 재현했다(certificate SHA-256 `a40532902b0172a7310e04dfbff1b17f7c4297314c44f5df5eb1cc74b25491f3`). 두 셀 모두 P/E 수용 각각 3,072, 물리 각각 840, 양방향 차집합 0이며 판정 범위는 `CAPTURED_NATIVE_PHYSICAL_SET_EQUALITY`, P acceptance는 `PRODUCER_RECEIPT_ONLY`다.
 
+v11 P 전체 행렬을 새 검증기에서 `--jobs 4`로 다시 검사한 결과 610개 `COMPLETE` 산출물이 모두 구조 검증을 통과했고, `verifiedComplete=610`·실패는 기존 privacy `ERROR` 2개뿐이었다. 새 `p-models/verification.json` SHA-256은 `34d634ce6d84ac37cf697287583c667955520e4d1aac0ca6cf02af63f6a648ff`이다. 실행 시간은 35분 8.20초, 최대 프로세스 RSS는 3,935,440 KiB였고 종료 코드는 범위의 두 오류 때문에 2다. 이로써 이전 36개 byte-cap 미검사는 해소됐지만 v11 전체 상태는 여전히 `INCOMPLETE`다. v12 동결 캠페인에서 두 오류 셀을 포함한 612개를 새 source/class로 다시 캡처하고 있다.
+
+동결 v12의 Pca 대표 `cell_82438f671fc60acb9bb7`은 `current-pe-v12-ledger-aware-pca-pilot`에 별도 1셀 P/E matrix로 재캡처했다. 양측 모델의 decoded SHA-256이 612셀 v12 campaign의 동일 셀과 각각 완전히 같고, gzip 파일 byte도 같다. 별도 행렬 검증은 P/E 모두 `PASS`다(P 검증 영수증 SHA-256 `3d59345947e9f3c4a11951ea971a21624f75d5d5438016ff50216cf2de107c60`, E `39e8bb9254865f9192e09f2166b6ad5ff5e0160358f14de2759a7a1f78f093e7`). v11→v12 E hard-factor 관계는 197개 원시 factor/173개 grouped factor/678개 table cell의 truth를 정확히 재검사해 `PASS`였다. 물리 projection metadata에서는 `nodeOrder`, `bindingDomainOrder`가 달라 동일 물리 집합을 이 factor 비교만으로 결론 내릴 수 없다. 비교 영수증 `e-factor-v11-v12-differential.json` SHA-256은 `cf843e0108bf923f0cabb71f15466e8af18b145838200954a6711e47969be5d6`이다. 다만 별도 1셀 matrix는 Python `.pyc` 오염 당시 classpath 해시 `3798c546a1451e9cc0b6598ab006d2aac6436270e25517c649717ba9af447427`에 묶여 있었고, 물리 행 출력 후 원래 classpath를 복원하면서 최종 guard에서 중단됐다. 기존 P/E dictionary 각 600개는 진단용으로만 보존한다. 검증된 612셀 matrix와 원래 classpath 해시를 사용하는 새 Pca 실행은 `current-pe-v12-ledger-aware-pca-representatives/physical`에서 진행 중이다.
+
+동결 v12 전체 campaign에서 앞서 v11 오류였던 b9·5d 두 셀의 P/E 모델 4개가 모두 `COMPLETE`로 발행됐다. 각 모델의 decoded SHA-256뿐 아니라 gzip 파일 바이트도 memo-aware 진단의 같은 셀·같은 측 모델과 완전히 일치한다. 영수증과 모델 해시를 묶은 `current-pe-campaign-v12-ledger-aware/privacy-regression-model-identity.json`은 `PASS`, SHA-256 `d9d65fdfff1e66b31a00d1a82ee300ec1a189eca7ddd2c02d63d428cd7cc84a0`이다. 이는 전체 v12 capture가 이전 두 오류를 넘겼다는 실제 근거지만, 나머지 610셀의 완료나 전체 물리 equality로 승격하지 않는다.
+
+Pca의 원래 12개 열거 가능 조건(w3/w5/w7 × LAN·3 WAN)을 `current-pe-v12-ledger-aware-pca-representatives/worklist.json`으로 동결했다(SHA-256 `fb5c233a0e7ea5adc9fbc2611e5fbc0e28f9fa1e7af1bd219735c4ce7955fcaa`). 각 셀의 E raw는 2,057,529,600이고 worklist는 검증된 P/E 612셀 행렬·검증 영수증 SHA에 결속된다. 별도 직렬화 모델 필드 대조에서는 같은 worker 구성의 네 네트워크 조건이 서로 같아 총 3개 묶음이었다(`model-equivalence-diagnostic.json` SHA-256 `5ea8159bb18ea85f1d43c3f46dadb930aaa66b332067f6bb55530084e92309c1`). P 물리 decoder의 셀 간 동일성은 아직 증명하지 않았으므로 이 진단은 계산 결과 재사용이나 P/E 동등성의 근거가 아니다.
+
+v12 P의 612개 모델 receipt는 모두 `COMPLETE`였지만, 최초 matrix 발행 시 classpath 종료 digest 검사에서 중단됐다. 동결 빌드의 Java 클래스/JAR가 아니라 별도 Python 검증기 실행 중 `target/classes/scripts/fedplanner/__pycache__`의 `.pyc` 5개가 재생성되어 전체 classpath digest가 달라진 것이 원인이었다. 새 5개를 별도 보존하고 원래 byte를 복원해 시작 classpath SHA-256 `bbcc1cd57bd649be2c12ca0f7191b4e1ae37366e9d787163b695b9f688924acb`를 정확히 재현했다. 같은 capture runner의 `--resume`에서 612개 원문 모델 SHA를 다시 확인한 뒤 P `matrix.json`이 `COMPLETE` 612/612로 발행됐다(SHA-256 `7f99da1553207443c7ed2c5297624895e22d3cc1ecc58e168a93a8dc866974fc`). 별도 P offline 구조 verifier는 612/612 `PASS`, 실패 0개를 재현했다. `p-models/verification.json` SHA-256은 `b782d9af847093dc293463667a9555a1f115e186d264a22638a0d42602ebf33d`, 행렬 SHA 결속도 일치하며 30분 14.19초·최대 RSS 6,678,472 KiB였다. 이는 acceptance 의미론을 독립 판정하지 않는다. E 모델도 612/612 `COMPLETE`로 발행됐고 P와 source/class 해시가 정확히 같았다. E `matrix.json` SHA-256은 `42541ce2d52bf69162800555cf663d8fa904f76716a1e40ae813289a6a9377a6`이다. 별도 저장 factor 재검사는 `verifiedKnown=612`, `unknownFactorCells=[]`, 실패 0개로 `PASS`였으며 `e-models/verification.json` SHA-256은 `8e6cf37b25dd801e3038c49ca0d1b1f00a8708e22b9fa9b9dfc23b0d55a53727`이다. 양쪽 재검사 영수증은 각각 matrix SHA에 정확히 결속된다. 복구 근거와 재발 위험은 `docs/SESSION_ISSUES_2026-09-24.md`에 기록했다.
+
+S0에서 기존 164개 미해결 행 중 `common:gmm_p1_compat`와 SliceFinder의 `slicefinder_core.dml` 두 행을 추가로 해소했다. 별도 parser probe를 현재 소스에서 임시 컴파일해 해당 DML에 최상위 실행문이 없고 각각 함수 13개·9개만 정의함을 확인하고, 정확한 source 경로·SHA와 활성 P1 16셀·SliceLine 32셀의 import에 연결했다. probe의 source/class와 parser runtime 56개 class, catalog/inventory 해시를 묶은 v3 receipt SHA-256은 `89a836c794949be14e65a3a43db982385310559f52063425a8cc844c1e543446`이다. v1 ledger를 보존한 별도 v2 ledger SHA-256은 `b162f7b26753b095ebffa5d4cc7bec6698d512a35db0909e7891638b790bf894`이며 상태는 `INCOMPLETE`, resolved 2·unresolved 162다. 특히 source 경로·SHA가 없는 `optional:gmm_p1_compat`는 같은 basename만으로 연결하지 않고 `UNRESOLVED`로 남겼다. receipt와 ledger의 `--check`, 집중 테스트와 독립 코드 재검토가 통과했다. 이 판정은 imported function library의 구조적 범위 증거이며 호출 가능성이나 runtime 의미를 증명하지 않는다.
+
+이후 `common:*` 템플릿 13개를 정확한 경로·SHA로 동결 planning 프로그램 224조건(서로 다른 프로그램 56개)에 연결했다. 독립 렌더러가 템플릿 바이트, 동결 worker partition의 주소·범위, context/protocol seed, metadata·출력 경로에서 각 프로그램을 다시 만들었고 224개 모두 동결 파일의 바이트·SHA와 일치했다. 원본 inventory/parent source evidence, discovery의 worker·workload 권한, 224개 전역 cell ID 유일성도 검사한다. 최종 v3 receipt는 `current-scope-template-closure-v3/receipt.json`(SHA-256 `12773007df5ef162960bae4be67404f6627455d93f14ee4ce5881b97d337e08f`), v5 ledger는 `current-scope-applicability-audit-v5-template-closure/ledger.json`(SHA-256 `cce670d6c863b2d0910c87b88e6048a3f46784957ac47efa6129da50e373b001`)이다. ledger는 164행 중 library 2·template 13행 resolved, 149행 `UNRESOLVED`인 `INCOMPLETE`다. 바이트만 같은 harness alias 9개는 경로가 달라 승격하지 않았다. 이전 v1/v3·v2/v4 템플릿 영수증은 변조 테스트에서 빠진 생성 연결·권한 결함이 발견돼 격리했다. 최종 v3/v5의 독립 재검토는 HIGH/MEDIUM 잔여 지적 0건으로 승인했고, 전체 fedplanner Python 266개 테스트와 두 artifact `--check`가 통과했다. 이 결과는 동결 프로그램의 source 적용 관계이며 runtime 데이터·FederationMap 의미나 전체 workload 분모 완성을 인증하지 않는다.
+
+v12 P1 E 모델 `cell_38844b94fdcf53069c7c`에 두 native cutset `[195,528]`을 조건화한 압축 image를 다시 시도했다. 첫 분기의 residual component는 native 28개·atom 361개였고, stage 18에서 250,000 MDD node 상한에 걸렸다. 결과 `current-pe-compositional-e-p1-cutset-v1/cell_38844b94fdcf53069c7c/result.json.gz`의 gzip SHA-256은 `26336bf4d638da49b77c8d0551ca0a2c4ea534e44667cb8e0a9f58d15f87b4c0`이며 `BLOCKED/DIAGNOSTIC_BLOCKED_RESOURCE_LIMIT`다. 지정한 gzip SHA와 모델 SHA의 artifact-only 무결성 재검사는 `PASS`였지만, 관계 구성은 완료되지 않아 의미 재생 상태가 `NOT_APPLICABLE_BLOCKED_CONSTRUCTION`이다. 이 결과로 해당 plan이 불가능하다거나 P와 E가 다르다고 추론할 수 없다.
+
+v12 Pca 첫 완주 셀 `cell_b86071769d8225c53d14`는 검증된 612셀 P/E 행렬을 import해 P accepted 377,856개·E accepted 479,232개에서 양측 물리 identity 600개씩을 얻었다. P-only/E-only는 모두 0이며 생산 certificate와 별도 artifact-only 재검사가 `PASS`였다. certificate SHA-256은 `0a42b56babc2c5664995a24d421ee86ad9d2f9cd82d6f87789c48a094226c97a`이다. 이 결과의 범위는 `CAPTURED_NATIVE_PHYSICAL_SET_EQUALITY`이고 P acceptance는 여전히 `PRODUCER_RECEIPT_ONLY`다. Pca 12셀 전체의 집계 명령은 `run_current_pe_pca12.py`에 구현했고 실제 첫 셀 smoke가 `CAPTURED_EQUAL`을 재현했다. 전체 fedplanner Python 회귀 266개와 Maven `test-compile`이 통과했다. Pca 12셀의 전체 집계와 재검사는 진행 중이다.
+
+v12 전체 물리 campaign의 한 명령 `run`은 동결 612조건 모두에 receipt를 남기고 `INCOMPLETE`/exit 2로 종료했다. `current-pe-campaign-v12-ledger-aware/suite.json` SHA-256은 `713e6813e8e22c411aa1ce9c7b0b49e9bac398c4afa665a97fa09041e6b0e068`, `physical-results/summary.json` SHA-256은 `6dc8532c490c3078cf57e132da0d666f2e18a73d18ed36dd22c56523707d5cab`이다. P/E 모델은 각각 612 `COMPLETE`; 물리 판정은 `CAPTURED_EQUAL` 61, `E_RAW_BUDGET`로 `INCOMPLETE` 551, `DIFFERENT`/`ERROR` 0이다. 실행 시간은 2시간 21분 23초, 최대 RSS는 14,738,040 KiB였다. E 모델 receipt의 native raw 조합 수를 612개 전체에서 재집계하면 61개가 100만 이하, 37개가 100만 초과·2,057,529,600 이하, 23개가 그 초과·1조 이하, 491개가 1조 초과다. 따라서 551개 예산 초과는 전체 탐색의 불가능성이나 P/E 일치가 아니라 현재 열거 예산의 경계다. 별도 artifact-only 전체 `verify`는 실행 중이다.
+
+P1 cutset image의 전역 conjunction 폭증을 분리하기 위해 `factor_forest_image.py`의 사건 factor만 AND→존재 양화하는 진단 커널과 `diagnose_e_factor_forest.py`의 E hard-factor adapter를 만들었다. 빈 변수·빈 factor·UNKNOWN·ordered scope·자원 초과·변조·검증 예산 경계를 테스트했고 독립 검토의 HIGH/MEDIUM 지적을 수정한 최종 재검토는 지적 0건으로 승인됐다. 250개 작은 E 모델에서 별도의 전수 definite-ALLOW satisfiability와 일치했다. P2 `cell_00d1aa1ca27bce14d826`의 144 native domain 중 변화하는 37개, factor 242개를 제거한 진단은 node peak 78·apply pair 9로 완료됐다. 저장 `current-e-factor-forest-v1/cell_00d1aa1ca27bce14d826/diagnostic.json.gz`의 file SHA-256은 `64a4712073ab6eb4a8330f48073d6c9e1fe446660277b9cc6e515439871431d5`, artifact SHA-256은 `bee3cf416a7e7453dd53755391958ff26439763130475279839231d683a20711`이고 source 모델로 결정적 재생성한 별도 검사도 `PASS`다. 그러나 이 진단에는 물리 plan 좌표가 없고 큰 native domain의 독립 전수 의미 재생은 예산으로 차단돼 있으므로 P2 물리 집합 또는 P/E 동등성을 증명하지 않는다.
+
+Harness alias 9행은 `source-manifest.json`의 정확한 출처 경로·SHA와 동결 planning 144조건의 독립 재렌더링 바이트가 같았다. 그러나 이 경로가 실제 동결 planning 실행에서 선택됐다는 근거는 없다. 첫 `ACTIVE` 판정 영수증/ledger를 `invalid-review-overclaim`로 격리했고, 최종 후보 전용 영수증 `current-scope-harness-alias-render-candidates-v2/receipt.json` SHA-256 `2964ffa2a265ad0e49533a6ca3206a014043b6e5fa32a46cffa847bfa32fe44e`와 v6 ledger `current-scope-applicability-audit-v6-harness-alias-candidates/ledger.json` SHA-256 `a7c42a14e7fdf2abae5290ca7d063cb2365584085ca535725335c93395e4a0af`를 발행했다. 두 저장물의 `--check`와 독립 재검토가 통과했지만 9행은 계속 `UNRESOLVED`이고 전체 미해결은 149행 그대로다. ML10 stage와 planning 조건의 역할 차이 및 repository→stage 역사적 복사 관계 미증명을 명시했다.
+
+2026-09-24에 `physical_coordinate_contract.py`의 공통 물리 output 좌표 계약을 추가했다. 기존 `closed_physical_identity.canonical_plan`이 승인한 전체 canonical plan을 손실 없이 담고 native proof domain·ordinal만 좌표에서 제외한다. 검증기 두 파일의 정확한 바이트 SHA를 고정하고, 디스크·이미 로드된 모듈·런타임 함수 결속의 변조를 거부한다. 16개 집중 테스트와 명시적 저장 artifact 스캔(작은 셀/Pca의 dictionary 12파일 전 행)이 통과했고 독립 코드 검토의 정확성 지적은 0건이다. 이 좌표 코드는 아직 612셀의 P/E 압축 관계 비교에 연결하지 않았으므로 새로운 전체 동등성 판정은 만들지 않는다.
+
+`interpret_p_acceptance_slice.py`에는 검증된 P v2 artifact와 SHA를 필수 입력으로 하는 별도 부분 판정기를 추가했다. candidate coverage/simple local, 선택된 relocation worker pool, realization alignment의 세 규칙만 판정하며, 근거가 모자란 assignment는 `UNKNOWN`으로 남긴다. ROW/COL의 partitioned axis, FULL/BROADCAST의 canonical worker endpoint와 중복 수를 Java `samePhysicalWorkerPool`에 맞춰 재검토했다. Python 집중 테스트 22개와 대응 Java `RelocationSelectionsPhysicalAnchorTest` 7개가 통과했고 독립 재검토에서 잔여 HIGH/MEDIUM 지적이 없었다. 나머지 P 생산 predicate 7개와 전체 assignment coverage는 여전히 독립 인증되지 않았다.
+
+`diagnose_e_physical_forest.py`는 E hard factor와 typed physical atom의 조건을 Boolean 동치 factor로 연결하고 native 변수만 제거하는 진단을 구현했다. P2 `cell_00d1aa1ca27bce14d826`의 v2 저장 결과는 `current-e-physical-factor-forest-v2/cell_00d1aa1ca27bce14d826/diagnostic.json.gz`에 있으며 파일 SHA-256 `9a698393902d6572e28346fccb14c540ba28e2db646dbeebad34493b35e94bf2`, artifact SHA-256 `530d559e7b6ed8b91b8d0a120f4419135964c38fc82af4db25ceef040b1b4b70`이다. native 가변 변수 37개·hard factor 242개·atom 변수 639개를 구성했고 저장물의 결정적 재생과 해시가 `PASS`였다. atom 수집은 집합 기반으로 중복 검사를 줄이고 DNF reduction과 진리표 평가의 공유 작업 예산을 강제했다. 독립 재검토에서 잔여 HIGH/MEDIUM 지적이 없었다. 이 산출물의 최상위 상태는 `BLOCKED`이다. Java 의미 연결, 서로 다른 canonical 물리 plan의 정확한 quotient, P/E 차집합이 없으므로 물리 동등성 증거로 승격하지 않는다.
+
+별도 microbench v12 파일럿의 `reuse-k1`과 `update-k1`은 각각 P/E accepted proof 3,072개, 물리 identity 840개씩, 양방향 차집합 0으로 생산 certificate와 artifact-only 재검사가 `PASS`였다. 두 certificate SHA-256은 순서대로 `0958bf6f8fafec912ccb3c5d36a5639885491d5b8ff7705133783c6a8b271b63`, `91c91f0b474b5644e5221ac585e59ed0d0d2183dd1db46be2cece0778a2ef4ec`이다. 두 셀 역시 `CAPTURED_NATIVE_PHYSICAL_SET_EQUALITY`이며 독립 P acceptance 또는 모든 microbench 조건의 대표 증거가 아니다.
+
+## 저장 증거 재실행 명령
+
+저장소 루트에서 아래 두 명령을 순서대로 실행한다. `run`은 같은 artifact root의 검증된 셀을 재사용하고 미완료 셀은 예산 경계까지 처리한다. 현재 612조건에서는 전체 물리 관계가 미완료이므로 정상적인 총괄 종료 코드도 2다. `verify`는 Java planner 재캡처 없이 저장 증거를 다시 읽으며, 저장 `suite.json`과 재구성한 요약을 대조한다.
+
+```bash
+B=/grid/3/cofee-lm-sweep-mchoi-20260914/pe-history-20260921
+C=$B/frozen-capture-cohort-derived-argv-v4
+R=$B/current-pe-campaign-v12-ledger-aware
+COMMON=(--campaign "$C/campaign.json" --catalog "$C/catalog.json" \
+  --evaluation-root "$C/evaluation" --verification-root /home/mchoi/cofee-evaluation \
+  --artifact-root "$R" --p-jobs 4 --e-jobs 4 --p-verify-jobs 8 \
+  --physical-jobs 4 --shard-jobs 2 --max-jvms 8 --timeout 7200 \
+  --cell-timeout 7200 --state-budget 1000 --e-raw-budget 1000000)
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/fedplanner/run_current_pe_campaign.py run \
+  "${COMMON[@]}" --build-root "$B/current-pe-build-v12-ledger-aware-candidate"
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/fedplanner/run_current_pe_campaign.py verify \
+  "${COMMON[@]}"
+```
+
+Pca 12조건은 별도 `current-pe-v12-ledger-aware-pca-representatives/worklist.json`과 동일한 동결 P/E 행렬을 입력으로 사용한다. 집계 명령 `run_current_pe_pca12.py run/verify`는 12개가 모두 끝난 뒤 저장 certificate를 별도로 재검사하며, 최종 판정 범위는 `CAPTURED_EQUAL`이다. P acceptance의 독립 완전성이나 모든 workload의 `FULL_CURRENT` 인증 명령으로 해석하지 않는다.
+
 ## 완료되지 않은 의무
 
-1. 동결 v11 612조건의 P/E 캡처는 각각 610개 완료·동일한 2개 오류로 끝났다. 오류를 고쳐 새 source/class binding으로 재실행해야 한다. v4 catalog의 `IN_SCOPE` placeholder 59행→동결 successor 388행 매핑(28×1, 13×16, 10×12, 8×4)은 별도 ledger로 검증해 frozen cohort 안에서 `SUPERSEDED`로 감사했다. `UNSUPPORTED` 148행과 `HISTORICAL` 16행은 전수 추적했지만 적용성 164행 모두 미해결이다. SliceLine 64조건과 microbench 28조건의 파생 compile-model 입력 정책도 동결해야 하므로 `FULL_CURRENT`가 아니다.
+1. v11의 두 capture 오류는 v12에서 수정했고 동결 612조건의 P/E 모델 캡처·저장물 재검사가 각각 612/612 통과했다. 그러나 v4 catalog의 `IN_SCOPE` placeholder 59행→동결 successor 388행 매핑 외에 적용성 149행이 여전히 미해결이다. SliceLine 64조건과 microbench 28조건의 파생 compile-model 입력 정책도 동결해야 하므로 `FULL_CURRENT`가 아니다.
 2. P acceptance의 남은 opaque predicate를 저장 규칙과 별도 interpreter로 재검사해야 한다. Java 생산자의 accepted proof만 확인한 셀은 `CAPTURED_EQUAL` 이상으로 올리지 않는다.
 3. Pca 12개 열거 가능 조건의 전체 양방향 물리 집합을 비교하고, w1·P1·P2를 위한 정확한 압축 관계·projection·차집합 및 독립 재검사를 구현해야 한다.
-4. 변경된 최종 source/class/input hash로 612조건의 P/E 모델 matrix를 끝내고 저장 artifact를 독립 재검사해야 한다. 이후 전체 물리 집합의 one-command gate와 cold/warm/중단·재개를 실제 완료해야 한다.
+4. v12 P/E 모델 matrix와 별도 저장물 재검사는 완료됐다. 전체 물리 집합의 one-command gate와 cold/warm/중단·재개 및 필수 셀의 정확한 물리 관계 비교는 아직 완료해야 한다.
 5. 역사 버전 B0/B1 비교와 독립 runtime R 인증은 이 보고서의 P/E 명제와 별도 후속 의무로 유지한다.
 
 현재 확보된 증거는 큰 공간의 E factor 계수와 작은/중간 공간의 저장 형식 정확성까지다. 위 필수 의무가 남아 있으므로 계획의 최종 체크리스트는 통과하지 않았다.
