@@ -17,6 +17,72 @@ def verify(*args, **kwargs):
 
 
 class EFactorArtifactVerificationTest(unittest.TestCase):
+    def compact_fixture(self, root, reference_text='0\t0\n'):
+        model_path = root / 'model.json.gz'
+        receipt_path = root / 'receipt.json'
+        references = root / 'refs.tsv.gz'
+        with gzip.open(references, 'wt') as stream:
+            stream.write(reference_text)
+        model = {
+            'schema': 'closed-e-native-model-artifact-v1',
+            'acceptance': 'MATERIALIZED_FACTOR_TABLES',
+            'cell': 'cell_fallback', 'programSha256': 'p' * 64,
+            'conditionSha256': 'c' * 64, 'sourceFiles': {'program.dml': 'd' * 64},
+            'domains': [{'index': 0, 'alternatives': [
+                {'signature': 'left'}, {'signature': 'right'}]}],
+            'factors': [{'scope': [0], 'cells': '2',
+                         'truth': ['ALLOW', 'REJECT']}],
+        }
+        plain = json.dumps(model).encode()
+        model_path.write_bytes(gzip.compress(plain))
+        ordinals = ''.join(line.split('\t', 1)[0] + '\n'
+                           for line in reference_text.splitlines())
+        receipt = {'schema': 'closed-planning-physical-shard-compact-v1',
+                   'source': 'E_C0', 'status': 'COMPLETE', 'cell': 'cell_fallback',
+                   'programSha256': 'p' * 64, 'conditionSha256': 'c' * 64,
+                   'sourceFiles': {'program.dml': 'd' * 64}, 'raw': '2',
+                   'accepted': '1', 'rejected': '1', 'unknown': '0',
+                   'acceptedOrdinalsSha256': hashlib.sha256(ordinals.encode()).hexdigest(),
+                   'references': str(references)}
+        receipt_path.write_text(json.dumps(receipt))
+        compact = {'receipt': receipt, 'proofCount': len(reference_text.splitlines()),
+                   'acceptedOrdinalsSha256': receipt['acceptedOrdinalsSha256']}
+        return (model_path, hashlib.sha256(plain).hexdigest(), receipt_path,
+                compact, receipt)
+
+    def test_forced_compact_fallback_matches_exhaustive_relation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model, digest, receipt, compact, _ = self.compact_fixture(root)
+            exhaustive = verify(model, digest, root / 'dictionary.jsonl.gz',
+                                receipt, compact)
+            fallback = verify(model, digest, root / 'dictionary.jsonl.gz',
+                              receipt, compact, component_limit=1)
+            for key in ('raw', 'accepted', 'rejected', 'unknown',
+                        'acceptedOrdinalsSha256'):
+                self.assertEqual(exhaustive[key], fallback[key])
+            self.assertEqual('EXHAUSTIVE_FACTOR_RELATION',
+                             exhaustive['ordinalVerification'])
+            self.assertEqual('EXACT_COUNT_AND_REFERENCE_MEMBERSHIP',
+                             fallback['ordinalVerification'])
+
+    def test_compact_fallback_rejects_omitted_accepted_ordinal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model, digest, receipt_path, compact, _ = self.compact_fixture(root, '')
+            with self.assertRaisesRegex(ValueError, 'omits factor-accepted'):
+                verify(model, digest, root / 'dictionary.jsonl.gz', receipt_path,
+                       compact, component_limit=1)
+
+    def test_compact_fallback_rejects_illegal_ordinal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model, digest, receipt_path, compact, _ = self.compact_fixture(
+                root, '1\t0\n')
+            with self.assertRaisesRegex(ValueError, 'not factor-accepted'):
+                verify(model, digest, root / 'dictionary.jsonl.gz', receipt_path,
+                       compact, component_limit=1)
+
     def test_packed_unknown_remains_unknown_in_independent_verification(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

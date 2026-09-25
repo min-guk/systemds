@@ -77,6 +77,19 @@ public class CurrentPePhysicalSetCorrespondenceTest {
 				proofsByPhysical.computeIfAbsent(key, ignored -> new ArrayList<>()).add(proof);
 		});
 		Assert.assertEquals(fixture + " P UNKNOWN", BigInteger.ZERO, summary.unknown());
+		Set<String> rawPhysical = null;
+		if(fixture.equals("B-01") || fixture.equals("B-14")) {
+			var raw = new FullProductionJointPlanExport(analysis);
+			Assert.assertTrue(fixture + " raw fixture exceeds exhaustive test budget",
+				raw.rawCount().compareTo(BigInteger.valueOf(100_000)) <= 0);
+			rawPhysical = new HashSet<>();
+			Set<String> exhaustive = rawPhysical;
+			raw.stream(BigInteger.ZERO, raw.rawCount(), proof -> {
+				if(proof.verdict() == FullProductionJointPlanExport.Verdict.ACCEPTED)
+					exhaustive.add(canonical(projector.physicalPlan(proof)));
+			});
+			Assert.assertEquals(fixture + " raw/optimized physical plans", rawPhysical, p);
+		}
 		Set<String> e = new HashSet<>();
 		Map<String,Integer> eMultiplicity = new HashMap<>();
 		long eAccepted = ExactPhysicalComparisonRow.streamFixture(fixture, row -> {
@@ -90,6 +103,8 @@ public class CurrentPePhysicalSetCorrespondenceTest {
 		eOnly.removeAll(p);
 		Assert.assertTrue(fixture + " P-only physical plans=" + pOnly.size(), pOnly.isEmpty());
 		Assert.assertTrue(fixture + " E-only physical plans=" + eOnly.size(), eOnly.isEmpty());
+		if(rawPhysical != null)
+			Assert.assertEquals(fixture + " raw/E physical plans", rawPhysical, e);
 		Assert.assertEquals(fixture + " accepted proof count", summary.accepted().longValueExact(), eAccepted);
 		Assert.assertEquals(fixture + " projected proof multiplicity", multiplicity, eMultiplicity);
 		if(fixture.equals("B-01")) {

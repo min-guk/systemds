@@ -58,7 +58,7 @@ ledger 상태는 `INCOMPLETE`이며, template/library closure 이후에도 149�
 | 저장 결과 | 개수 | 의미 |
 |---|---:|---|
 | `CAPTURED_EQUAL` | 61 | 저장된 P/E physical identity 집합이 일치한 조건 |
-| `INCOMPLETE` | 551 | 물리 비교에 필요한 저장 relation 또는 재검사 조건이 부족한 조건 |
+| `INCOMPLETE` | 551 | 모두 기본 E raw 상한 1,000,000을 넘어서 `E_RAW_BUDGET`으로 사전 종료한 조건 |
 | `DIFFERENT` | 0 | 현재 저장 결과에서 확인된 차이 없음 |
 | `ERROR` | 0 | 현재 저장 결과에서 확정된 오류 없음 |
 
@@ -180,8 +180,11 @@ python3 scripts/fedplanner/verify_current_pe_matrix_parallel.py verify \
   --verification-root /home/mchoi/cofee-evaluation \
   --p-matrix-dir "$B/current-pe-campaign-v12-ledger-aware/p-models" \
   --e-matrix-dir "$B/current-pe-campaign-v12-ledger-aware/e-models" \
-  --physical-result-dir "$B/current-pe-campaign-v12-ledger-aware/physical-results" \
-  --jobs 8
+  --artifact-root "$B/current-pe-campaign-v12-ledger-aware/physical-artifacts" \
+  --result-dir "$B/current-pe-campaign-v12-ledger-aware/physical-results" \
+  --jobs 4 --p-verify-jobs 8 --shard-jobs 2 --state-budget 1000 \
+  --e-raw-budget 1000000 --cell-timeout 7200 --max-jvms 8 \
+  --min-free-disk-gib 20 --compact --verification-jobs 8
 ```
 
 현재 기대 상태는 `INCOMPLETE`, exit code 2이며, 61 `CAPTURED_EQUAL`과 551 `INCOMPLETE`을 유지해야 한다.
@@ -195,6 +198,8 @@ tail -f "$B/current-pe-v12-medium-pca16/run.log"
 다중 root overlay의 다음 실행은 집계기 review 결함을 수정하고 targeted test를 다시 통과시킨 뒤에만 수행한다. 결과가 일부 `CAPTURED_EQUAL`이어도 전체 status는 미완료 셀이 남아 있는 한 `INCOMPLETE`이어야 한다.
 
 ## 다음 종료 조건
+
+2026-09-25 후속 정정: 아래 순서는 당시 제안이다. 최신 실행 순서는 [실행 중심 재정렬 계획](../.omx/plans/g009-pe-execution-first-reset-20260925.md)을, 최신 결과는 [실행 보고서](G009_PE_EXECUTION_FIRST_REPORT_2026-09-25.md)를 따른다. 위 61/551 표는 원래 저장 campaign의 시점 기록이다. 새 집계기 완성을 실제 비교의 선행 조건으로 두지 않는다.
 
 작업을 최종적으로 닫으려면 다음 순서를 지켜야 한다.
 
