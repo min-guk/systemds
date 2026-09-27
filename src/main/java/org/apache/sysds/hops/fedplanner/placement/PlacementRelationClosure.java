@@ -500,10 +500,7 @@ final class PlacementRelationClosure {
 			shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 			ruleKeys, ruleFacts, List.of(), cfgReplayBaseline, origins, List.of(),
 			loopSeedLedger);
-		nodes = candidateReplay.nodes();
-		ruleKeys = candidateReplay.domainKeys();
-		ruleFacts = candidateReplay.facts();
-		transientBindings = candidateReplay.logicalInputs();
+		applyUpdate(candidateReplay);
 		nodes = reclassifyStandaloneRecompileOccurrences(occurrences, nodes);
 		nodes = classifyOrphanFunctionBodies(occurrences, nodes);
 		if(nodes.size() != occurrences.size())
@@ -552,10 +549,7 @@ final class PlacementRelationClosure {
 				transientBindings, cardinalityReplayOrdinals), shapeFactsByHop,
 			preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg,
 			compiledInputEdges, origins, compiledShapeFactsByHop);
-		nodes = cardinalityReplay.nodes();
-		ruleKeys = cardinalityReplay.domainKeys();
-		ruleFacts = cardinalityReplay.facts();
-		transientBindings = cardinalityReplay.logicalInputs();
+		applyUpdate(cardinalityReplay);
 		ClosureUpdate materializationReplay = closeWorkerPoolMaterializationDependencies(
 			occurrences, nodes, ruleKeys, ruleFacts, transientBindings,
 			compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
@@ -591,10 +585,7 @@ final class PlacementRelationClosure {
 					occurrences, functionReplay.nodes(), functionReplay.domainKeys(), functionReplay.facts(),
 					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
-				nodes = materializationReplay.nodes();
-				ruleKeys = materializationReplay.domainKeys();
-				ruleFacts = materializationReplay.facts();
-				transientBindings = materializationReplay.logicalInputs();
+				applyUpdate(materializationReplay);
 			}
 
 			// FunctionCallCP aliases the exact returned Data object. Its synthetic output
@@ -619,10 +610,7 @@ final class PlacementRelationClosure {
 					occurrences, functionReplay.nodes(), functionReplay.domainKeys(), functionReplay.facts(),
 					functionReplay.logicalInputs(), compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
-				nodes = materializationReplay.nodes();
-				ruleKeys = materializationReplay.domainKeys();
-				ruleFacts = materializationReplay.facts();
-				transientBindings = materializationReplay.logicalInputs();
+				applyUpdate(materializationReplay);
 			}
 			nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
 			// Function-boundary closure can widen a TWrite only after the initial CFG
@@ -634,19 +622,13 @@ final class PlacementRelationClosure {
 				shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 			ruleKeys, ruleFacts, transientBindings, cfgReplayBaseline,
 			origins, constraints, compiledInputEdges, compiledShapeFactsByHop, List.of(), loopSeedLedger);
-			nodes = cfgReplay.nodes();
-			ruleKeys = cfgReplay.domainKeys();
-			ruleFacts = cfgReplay.facts();
-			transientBindings = cfgReplay.logicalInputs();
+			applyUpdate(cfgReplay);
 			if(!cfgReplay.changedOrdinals().isEmpty()) {
 				ClosureUpdate materializationReplay = closeWorkerPoolMaterializationDependencies(
 					occurrences, nodes, ruleKeys, ruleFacts,
 					transientBindings, compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
-				nodes = materializationReplay.nodes();
-				ruleKeys = materializationReplay.domainKeys();
-				ruleFacts = materializationReplay.facts();
-				transientBindings = materializationReplay.logicalInputs();
+				applyUpdate(materializationReplay);
 			}
 			boolean stable = nodes.equals(passNodes) && ruleKeys.equals(passDomainKeys)
 				&& ruleFacts.equals(passFacts)
@@ -686,18 +668,12 @@ final class PlacementRelationClosure {
 			shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 			ruleKeys, ruleFacts, transientBindings, cfgReplayBaseline, origins, constraints,
 			compiledInputEdges, compiledShapeFactsByHop, List.of(), loopSeedLedger);
-		nodes = postPrivacyReplay.nodes();
-		ruleKeys = postPrivacyReplay.domainKeys();
-		ruleFacts = postPrivacyReplay.facts();
-		transientBindings = postPrivacyReplay.logicalInputs();
+		applyUpdate(postPrivacyReplay);
 		if(!postPrivacyReplay.changedOrdinals().isEmpty()) {
 			ClosureUpdate postPrivacyPhysical = closePhysicalDependencies(occurrences,
 				postPrivacyReplay, shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions,
 				ordinalsByBlock, cfg, compiledInputEdges, origins, compiledShapeFactsByHop);
-			nodes = postPrivacyPhysical.nodes();
-			ruleKeys = postPrivacyPhysical.domainKeys();
-			ruleFacts = postPrivacyPhysical.facts();
-			transientBindings = postPrivacyPhysical.logicalInputs();
+			applyUpdate(postPrivacyPhysical);
 		}
 		privacyClosure = closePrivacyDomains(nodes, ruleFacts,
 			constraints, origins, compiledInputEdges, privacyClosure.privacyFacts());
@@ -789,10 +765,7 @@ final class PlacementRelationClosure {
 					physical.nodes(), physical.domainKeys(), physical.facts(), physical.logicalInputs(),
 					compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop,
 					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
-				nodes = materializationReplay.nodes();
-				ruleKeys = materializationReplay.domainKeys();
-				ruleFacts = materializationReplay.facts();
-				transientBindings = materializationReplay.logicalInputs();
+				applyUpdate(materializationReplay);
 			}
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "physical-materialization", nodes, ruleFacts);
@@ -816,11 +789,8 @@ final class PlacementRelationClosure {
 				shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
 				ruleKeys, ruleFacts, transientBindings, cfgReplayBaseline,
 				origins, constraints, compiledInputEdges, compiledShapeFactsByHop, relocations, loopSeedLedger);
-			nodes = grounded.nodes();
-			ruleKeys = grounded.domainKeys();
-			ruleFacts = grounded.facts();
-			List<LogicalTransientInputFact> completeLogicalTransientInputs = grounded.logicalInputs();
-			transientBindings = completeLogicalTransientInputs;
+			applyUpdate(grounded);
+			List<LogicalTransientInputFact> completeLogicalTransientInputs = transientBindings;
 			if(exportDiagnostics != null) {
 				exportDiagnostics.logicalDelta(pass, "cfg-grounded", diagnosticLogical, transientBindings);
 				diagnosticLogical = transientBindings;
@@ -942,6 +912,14 @@ final class PlacementRelationClosure {
 		}
 		if(!publicationConverged)
 			throw new IllegalStateException("Executable realization/action composition did not converge");
+	}
+
+	/** Apply only the four fields carried by a complete transfer; actions and pending work keep their owners. */
+	private void applyUpdate(ClosureUpdate update) {
+		nodes = update.nodes();
+		ruleKeys = update.domainKeys();
+		ruleFacts = update.facts();
+		transientBindings = update.logicalInputs();
 	}
 
 	/** Publish stable graph-owned authority without generating or repairing candidates. */
@@ -4811,6 +4789,30 @@ final class PlacementRelationClosure {
 		}
 	}
 
+	/** Method-local physical authority: a complete owner commit also expires every lazy proof index. */
+	private static final class PhysicalCandidateState {
+		private final List<Node> nodes;
+		private final List<List<CandidateRuleKey>> keysByOrdinal;
+		private final List<List<CandidateRuleFact>> factsByOrdinal;
+		private CommittedProofInventory proofInventory;
+
+		private PhysicalCandidateState(List<Node> nodes, List<List<CandidateRuleKey>> keysByOrdinal,
+			List<List<CandidateRuleFact>> factsByOrdinal) {
+			this.nodes = nodes;
+			this.keysByOrdinal = keysByOrdinal;
+			this.factsByOrdinal = factsByOrdinal;
+		}
+
+		private void commit(int ordinal, Hop hop, Node replacement, List<CandidateRuleKey> keys,
+			List<CandidateRuleFact> facts, Map<Hop,Node> exactBlockNodes) {
+			nodes.set(ordinal, replacement);
+			exactBlockNodes.put(hop, replacement);
+			keysByOrdinal.set(ordinal, List.copyOf(keys));
+			factsByOrdinal.set(ordinal, List.copyOf(facts));
+			proofInventory = null;
+		}
+	}
+
 	private ClosureUpdate closePhysicalDependenciesMeasured(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, ClosureUpdate replay,
 		Map<Hop,NodeShapeFact> shapeFactsByHop, Map<Hop,AbstractShapeFact> abstractFactsByHop, SinglePartitionFacts singlePartitions,
@@ -4863,7 +4865,7 @@ final class PlacementRelationClosure {
 		// current Hop lookup across its consumer rebuilds instead of rescanning every
 		// Hop in the block for each edge in the dirty cone.
 		Map<StatementBlock,Map<Hop,Node>> blockNodes = new IdentityHashMap<>();
-		CommittedProofInventory proofInventory = null;
+		PhysicalCandidateState physicalState = new PhysicalCandidateState(nodes, keysByOrdinal, factsByOrdinal);
 		while(!worklist.isEmpty()) {
 			int producerOrdinal = worklist.pollFirst();
 			for(int consumerOrdinal : consumersByProducer.get(producerOrdinal)) {
@@ -4899,21 +4901,21 @@ final class PlacementRelationClosure {
 						Node inputNode = exactBlockNodes.get(input);
 						return inputNode == null ? null : inputNode.key();
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-				if(proofInventory == null && physicalGenerationContext != null
+				if(physicalState.proofInventory == null && physicalGenerationContext != null
 					&& compiledInputEdges != null) {
 					List<CandidateRuleFact> proofFacts = new ArrayList<>();
 					for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
 						proofFacts.addAll(ownerFacts);
 					// One lazy index belongs to this committed authority revision. The local-input
 					// boundary and materialization closure must query the same inventory.
-					proofInventory = new CommittedProofInventory(nodes, proofFacts,
+					physicalState.proofInventory = new CommittedProofInventory(nodes, proofFacts,
 						compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
 						origins, shapeFactsByHop);
 				}
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
 				exactInputDomains = preserveExecutableFoutLocalInputDomains(hop, current,
-					exactInputDomains, exactBlockNodes, factsByOrdinal, ordinalsByKey, proofInventory);
+					exactInputDomains, exactBlockNodes, factsByOrdinal, ordinalsByKey, physicalState.proofInventory);
 				NodeShapeFact outputShape = shapeFactsByHop.get(hop);
 				// A derived anchor is certified by the current exact inputs, not by a
 				// prior replay. Recompute it so provisional loop anchors cannot survive
@@ -4943,7 +4945,7 @@ final class PlacementRelationClosure {
 					replacement, replacementKeys, replacementFacts, origins);
 				if(physicalGenerationContext != null && compiledInputEdges != null) {
 					// Consumers observe a complete generation envelope, never a raw midpoint.
-					privacyBase = normalizePhysicalGenerationEnvelope(privacyBase, proofInventory);
+					privacyBase = normalizePhysicalGenerationEnvelope(privacyBase, physicalState.proofInventory);
 				}
 				replacement = privacyBase.node();
 				replacementKeys = new ArrayList<>(privacyBase.keys());
@@ -5022,12 +5024,8 @@ final class PlacementRelationClosure {
 							+ "|replacementFacts=" + replacementFacts);
 					}
 				}
-				nodes.set(consumerOrdinal, replacement);
-				exactBlockNodes.put(hop, replacement);
-				keysByOrdinal.set(consumerOrdinal, List.copyOf(replacementKeys));
-				factsByOrdinal.set(consumerOrdinal, List.copyOf(replacementFacts));
-				// Every committed revision invalidates the complete proof authority.
-				proofInventory = null;
+				physicalState.commit(consumerOrdinal, hop, replacement,
+					replacementKeys, replacementFacts, exactBlockNodes);
 				refinedOrdinals.add(consumerOrdinal);
 				worklist.add(consumerOrdinal);
 			}

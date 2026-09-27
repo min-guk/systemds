@@ -112,3 +112,20 @@ writers, foreign owners, dirty SCC topology repair, pending work, inventory revi
 isolation and diagnostic parity. P4 adds edge-first/resolver-first query-order coverage
 only if this is not already covered. No broad CFG/privacy/action fusion is attempted: its
 commutativity is not established. The six full equality checks remain the stop condition.
+
+## C0 / P3 checkpoint
+
+C0 is satisfied by `evidence/c0/gate.json`: frozen final correctness source and
+integrated source each pass the original 48-class clean suite (469 tests, zero
+failures/errors); paired JAR hashes and source manifests are retained. Protected
+P/E exports equal the initial baseline in both directions and multiplicity (216/56),
+including the original B-21 192/36 assertion.
+
+P3 replaces ten repeated complete updates with `applyUpdate`. Partial writes stay
+explicit, including the initial materialization call that intentionally does not
+replace logical bindings. `PhysicalCandidateState.commit` writes node, exact block
+index, keys and facts, then invalidates inventory, before scheduling consumers.
+The combined semantic/stale-test-repair slice ran 102 cases; all P3 semantics passed.
+Four failures are in the test maintenance work (real function setup, source-capability
+parity and an obsolete privacy source guard), separately tracked and not accepted as
+a green test run. No support predicate or transfer order changed.
