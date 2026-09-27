@@ -7634,7 +7634,7 @@ final class PlacementRelationClosure {
 					// These are the existing materialization eligibility checks. Scalar,
 					// transient and unavailable-only owner outputs need no proof graph.
 					resolver = inventory.resolverForQuery();
-					matrixEdgesByConsumer = inventory.matrixEdgesByConsumer;
+					matrixEdgesByConsumer = inventory.matrixEdgesByConsumer();
 				}
 				List<DurableAnchorKey> anchors = resolver
 					.resolveSameFullWorkerPoolCandidateInputs(fact).stream().toList();
@@ -8087,6 +8087,7 @@ final class PlacementRelationClosure {
 		private final java.util.Collection<Constraint> constraints;
 		private final Map<CompiledHopKey,Hop> origins;
 		private final Map<Hop,NodeShapeFact> shapeFactsByHop;
+		private Map<CompiledHopKey,Node> nodesByKey;
 		private Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer;
 		private WorkerPoolAnchorResolver resolver;
 
@@ -8105,17 +8106,26 @@ final class PlacementRelationClosure {
 
 		private WorkerPoolAnchorResolver resolverForQuery() {
 			if(resolver == null) {
-				Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
-				for(Node node : nodes)
-					nodesByKey.put(node.key(), node);
+				Map<CompiledHopKey,Node> currentNodes = nodesByKey();
 				Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edges = matrixEdgesByConsumer();
-				WorkerPoolAnchorResolver next = new WorkerPoolAnchorResolver(nodesByKey, edges,
+				WorkerPoolAnchorResolver next = new WorkerPoolAnchorResolver(currentNodes, edges,
 					facts, logicalInputs, constraints, origins, shapeFactsByHop);
 				resolver = next;
 			}
 			else
 				resolver.resetQueryState();
 			return resolver;
+		}
+
+		/** Both lazy proof indexes read this same immutable committed revision. */
+		private Map<CompiledHopKey,Node> nodesByKey() {
+			if(nodesByKey == null) {
+				Map<CompiledHopKey,Node> indexed = new IdentityHashMap<>();
+				for(Node node : nodes)
+					indexed.put(node.key(), node);
+				nodesByKey = indexed;
+			}
+			return nodesByKey;
 		}
 
 		private CompiledInputEdgeFact inputEdge(CompiledHopKey consumer, int position) {
@@ -8128,11 +8138,8 @@ final class PlacementRelationClosure {
 					matrixEdgesByConsumer = Map.of();
 					return matrixEdgesByConsumer;
 				}
-				Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
-				for(Node node : nodes)
-					nodesByKey.put(node.key(), node);
 				matrixEdgesByConsumer = PlacementRelationClosure.matrixEdgesByConsumer(
-					compiledInputEdges, nodesByKey);
+					compiledInputEdges, nodesByKey());
 			}
 			return matrixEdgesByConsumer;
 		}

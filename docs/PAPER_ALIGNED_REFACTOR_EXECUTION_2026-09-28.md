@@ -129,3 +129,20 @@ The combined semantic/stale-test-repair slice ran 102 cases; all P3 semantics pa
 Four failures are in the test maintenance work (real function setup, source-capability
 parity and an obsolete privacy source guard), separately tracked and not accepted as
 a green test run. No support predicate or transfer order changed.
+
+## P4 checkpoint
+
+Independent review approved the P3 commit and P4 index reuse. The latter removes
+one duplicate full node-index traversal and one map allocation when both edge lookup
+and the materialization resolver first use the same committed revision (two builds
+become one). This is a structural operation count, not a claimed wall-time gain.
+The immutable node snapshot, `IdentityHashMap`, lazy edge validation, fresh query
+memo and commit-driven inventory expiry remain unchanged.
+
+`edgeAndResolverQueriesAreOrderIndependentAndRevisionScoped` compares both query
+orders against cold owners, distinguishes changed worker pools, and rechecks the old
+inventory after the new revision. It passes along with existing immutable-constructor,
+failed-duplicate-edge, physical generation, source reappearance and dirty-SCC tests.
+The current 103-test slice leaves two errors in a separately repaired synthetic
+function fixture; all P3/P4 semantics pass. Final completion still requires the final
+clean combined suite and identical before/after protected exports.

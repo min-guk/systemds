@@ -92,6 +92,35 @@ public class MaterializationProofInventoryTest {
 	}
 
 	@Test
+	public void edgeAndResolverQueriesAreOrderIndependentAndRevisionScoped() throws Exception {
+		Fixture f = new Fixture();
+		Node source = f.nodes.get(0);
+		List<Node> changedNodes = new ArrayList<>(f.nodes);
+		DurableAnchorKey changedAnchor = new DurableAnchorKey("changed-pool", FType.FULL,
+			List.of(new AnchorPartition("worker-b", List.of(0L, 0L), List.of(4L, 2L))));
+		changedNodes.set(0, new Node(source.key(), source.kind(), source.valueVersion(),
+			source.emittedWork(), source.legalAlternatives(), source.exclusions(), List.of(changedAnchor)));
+		Object original = f.cold(f.nodes.get(1), f.facts.get(1), f.nodes, f.edges);
+		Object changed = f.cold(f.nodes.get(1), f.facts.get(1), changedNodes, f.edges);
+		Assert.assertNotEquals("fixture must distinguish the committed worker-pool revision", original, changed);
+		Method edge = inventoryType().getDeclaredMethod("inputEdge", CompiledHopKey.class, int.class);
+		edge.setAccessible(true);
+		for(boolean edgeFirst : List.of(true, false)) {
+			Object oldInventory = f.inventory(f.nodes, f.edges);
+			Object newInventory = f.inventory(changedNodes, f.edges);
+			for(Object inventory : List.of(oldInventory, newInventory)) {
+				if(edgeFirst)
+					Assert.assertSame(f.edges.get(0), edge.invoke(inventory, f.nodes.get(1).key(), 0));
+				Assert.assertEquals(inventory == oldInventory ? original : changed,
+					shared(f.nodes.get(1), f.facts.get(1), inventory));
+				Assert.assertSame(f.edges.get(0), edge.invoke(inventory, f.nodes.get(1).key(), 0));
+			}
+			Assert.assertEquals("querying the newer revision cannot change the prior inventory",
+				original, shared(f.nodes.get(1), f.facts.get(1), oldInventory));
+		}
+	}
+
+	@Test
 	public void lazyInventoryRetainsImmutableConstructorTimeNodesAndFacts() throws Exception {
 		Fixture f = new Fixture();
 		Node raw = f.nodes.get(1);
