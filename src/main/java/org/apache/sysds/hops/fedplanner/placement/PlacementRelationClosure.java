@@ -4827,8 +4827,6 @@ final class PlacementRelationClosure {
 		List<List<CandidateRuleKey>> keysByOrdinal = new ArrayList<>(occurrences.size());
 		List<List<CandidateRuleFact>> factsByOrdinal = new ArrayList<>(occurrences.size());
 		List<Set<Integer>> consumersByProducer = new ArrayList<>(occurrences.size());
-		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> inputEdgesByConsumer =
-			compiledInputEdges == null ? Map.of() : new IdentityHashMap<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			ordinalsByKey.put(nodes.get(ordinal).key(), ordinal);
 			keysByOrdinal.add(new ArrayList<>());
@@ -4845,14 +4843,6 @@ final class PlacementRelationClosure {
 			keysByOrdinal.get(ordinal).add(key);
 			factsByOrdinal.get(ordinal).add(fact);
 		}
-		if(compiledInputEdges != null)
-			for(CompiledInputEdgeFact edge : compiledInputEdges) {
-				Map<Integer,CompiledInputEdgeFact> byPosition = inputEdgesByConsumer.computeIfAbsent(
-					edge.consumer(), ignored -> new LinkedHashMap<>());
-				if(byPosition.put(edge.inputPosition(), edge) != null)
-					throw new IllegalStateException(
-						"Compiled consumer input has duplicate exact physical edges");
-			}
 		for(int consumerOrdinal = 0; consumerOrdinal < occurrences.size(); consumerOrdinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
 			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
@@ -4909,11 +4899,21 @@ final class PlacementRelationClosure {
 						Node inputNode = exactBlockNodes.get(input);
 						return inputNode == null ? null : inputNode.key();
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+				if(proofInventory == null && physicalGenerationContext != null
+					&& compiledInputEdges != null) {
+					List<CandidateRuleFact> proofFacts = new ArrayList<>();
+					for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
+						proofFacts.addAll(ownerFacts);
+					// One lazy index belongs to this committed authority revision. The local-input
+					// boundary and materialization closure must query the same inventory.
+					proofInventory = new CommittedProofInventory(nodes, proofFacts,
+						compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
+						origins, shapeFactsByHop);
+				}
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
 				exactInputDomains = preserveExecutableFoutLocalInputDomains(hop, current,
-					exactInputDomains, nodes, factsByOrdinal, ordinalsByKey,
-					inputEdgesByConsumer, origins);
+					exactInputDomains, exactBlockNodes, factsByOrdinal, ordinalsByKey, proofInventory);
 				NodeShapeFact outputShape = shapeFactsByHop.get(hop);
 				// A derived anchor is certified by the current exact inputs, not by a
 				// prior replay. Recompute it so provisional loop anchors cannot survive
@@ -4942,16 +4942,6 @@ final class PlacementRelationClosure {
 				CandidateBase privacyBase = projectFreshBasePrivacy(
 					replacement, replacementKeys, replacementFacts, origins);
 				if(physicalGenerationContext != null && compiledInputEdges != null) {
-					if(proofInventory == null) {
-						List<CandidateRuleFact> proofFacts = new ArrayList<>();
-						for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
-							proofFacts.addAll(ownerFacts);
-						// Only committed authority is indexed. Edges, logical inputs, origins,
-						// shapes and constraints remain fixed throughout this worklist.
-						proofInventory = new CommittedProofInventory(nodes, proofFacts,
-							compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
-							origins, shapeFactsByHop);
-					}
 					// Consumers observe a complete generation envelope, never a raw midpoint.
 					privacyBase = normalizePhysicalGenerationEnvelope(privacyBase, proofInventory);
 				}
@@ -8120,16 +8110,33 @@ final class PlacementRelationClosure {
 				Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 				for(Node node : nodes)
 					nodesByKey.put(node.key(), node);
-				Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edges =
-					matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
+				Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edges = matrixEdgesByConsumer();
 				WorkerPoolAnchorResolver next = new WorkerPoolAnchorResolver(nodesByKey, edges,
 					facts, logicalInputs, constraints, origins, shapeFactsByHop);
-				matrixEdgesByConsumer = edges;
 				resolver = next;
 			}
 			else
 				resolver.resetQueryState();
 			return resolver;
+		}
+
+		private CompiledInputEdgeFact inputEdge(CompiledHopKey consumer, int position) {
+			return matrixEdgesByConsumer().getOrDefault(consumer, Map.of()).get(position);
+		}
+
+		private Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer() {
+			if(matrixEdgesByConsumer == null) {
+				if(compiledInputEdges == null) {
+					matrixEdgesByConsumer = Map.of();
+					return matrixEdgesByConsumer;
+				}
+				Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+				for(Node node : nodes)
+					nodesByKey.put(node.key(), node);
+				matrixEdgesByConsumer = PlacementRelationClosure.matrixEdgesByConsumer(
+					compiledInputEdges, nodesByKey);
+			}
+			return matrixEdgesByConsumer;
 		}
 	}
 
@@ -8846,38 +8853,37 @@ final class PlacementRelationClosure {
 	 * direct PRESENT FederationMap input instead.
 	 */
 	private List<List<FType>> preserveExecutableFoutLocalInputDomains(Hop consumer,
-		Node consumerNode, List<List<FType>> domains, List<Node> nodes,
+		Node consumerNode, List<List<FType>> domains, Map<Hop,Node> exactBlockNodes,
 		List<List<CandidateRuleFact>> factsByOrdinal, Map<CompiledHopKey,Integer> ordinalsByKey,
-		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> inputEdgesByConsumer,
-		Map<CompiledHopKey,Hop> origins) {
+		CommittedProofInventory proofInventory) {
 		StaticPrivacyProjection privacyProjection = staticPrivacyProjection;
-		if(privacyProjection == null
+		if(privacyProjection == null || proofInventory == null
 			|| PlacementAnalysis.isDmlFunctionCallBoundary(consumerNode, consumer))
-			return domains;
-		Map<Integer,CompiledInputEdgeFact> edges = inputEdgesByConsumer.get(consumerNode.key());
-		if(edges == null)
 			return domains;
 		List<List<FType>> retained = null;
 		for(int position = 0; position < domains.size(); position++) {
 			List<FType> domain = domains.get(position);
 			if(domain.isEmpty() || domain.contains(null))
 				continue;
-			CompiledInputEdgeFact edge = edges.get(position);
-			if(edge == null)
+			if(position >= consumer.getInput().size())
 				continue;
-			Integer sourceOrdinal = ordinalsByKey.get(edge.producer());
-			Hop source = origins.get(edge.producer());
-			Privacy sourcePrivacy = privacyProjection.effective().get(edge.producer());
-			if(sourceOrdinal == null || source == null || sourcePrivacy == null)
+			Hop source = consumer.getInput(position);
+			Node sourceNode = exactBlockNodes.get(source);
+			if(sourceNode == null)
+				continue;
+			Integer sourceOrdinal = ordinalsByKey.get(sourceNode.key());
+			Privacy sourcePrivacy = privacyProjection.effective().get(sourceNode.key());
+			if(sourceOrdinal == null || sourcePrivacy == null)
 				continue;
 			PlacementAnalysis.CoordinatorInputAccess access =
 				PlacementAnalysis.coordinatorInputAccess(source, consumer, position);
 			if(access != PlacementAnalysis.CoordinatorInputAccess.PAYLOAD
 				|| ExecPlacementPolicy.requiresOriginResidency(sourcePrivacy))
 				continue;
-			Node sourceNode = nodes.get(sourceOrdinal);
-			if(sourceNode.key() != edge.producer()
-				|| !hasExecutableOrdinaryFout(sourceNode, factsByOrdinal.get(sourceOrdinal)))
+			if(!hasExecutableOrdinaryFout(sourceNode, factsByOrdinal.get(sourceOrdinal)))
+				continue;
+			CompiledInputEdgeFact edge = proofInventory.inputEdge(consumerNode.key(), position);
+			if(edge == null || edge.producer() != sourceNode.key())
 				continue;
 			if(retained == null)
 				retained = new ArrayList<>(domains);

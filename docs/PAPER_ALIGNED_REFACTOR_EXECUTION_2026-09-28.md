@@ -83,6 +83,32 @@ stage is claimed complete yet.
 - Public builder 192 lines; facts, generator, relation closure, support operations and diagnostics now have separate owners. L3 is split into seed, boundary, function, privacy, feasibility and publication phases.
 - Independent extraction review found no change to identity creation, call order, six-component convergence or commit/invalidation lifetime. Published immutable objects survive cleanup and builder reuse.
 - Clean expanded 44-class suite: baseline and P2 each 365 tests, 9 failures, 3 errors, 5 existing skips. Failure identities match; the stale source-branch inventory observes moved source locations. Evidence: `evidence/{baseline/p2-expanded-reference,p2/expanded-clean-v1}.json`.
-- Protected physical exports: before/P2 each 216 proofs / 56 physical plans on P and E; bidirectional canonical physical sets and multiplicity match. The P audit is retained separately; raw bytes differ and require semantic classification. Comparator was unchanged.
+- Protected physical exports: before/P2 each 216 proofs / 56 physical plans on P and E; bidirectional canonical physical sets and multiplicity match. All 216 P audit rows are equal as parsed JSON in order; raw serialization differs. Comparator was unchanged.
 - Static checking: no configured lint/SAST gate in POM. Explicit default Checkstyle report and baseline/context delta are recorded in `evidence/P2_STATIC_CHECKSTYLE_REPORT.md`; not reported as lint green. Unused imports: zero.
 - External C0 finished independently at `cfab6c8258c1525761b33ee8f6a6caa8c55c84b8`. It is imported after this separate P2 checkpoint, with source/JAR and regression evidence refreshed before P3.
+
+## P3/P4 plan and transfer dependency review (before edits)
+
+Independent reader `extract_generator` reviewed the original and extracted callers.
+P3 consolidates only already-complete `ClosureUpdate` assignments. Partial updates
+keep their original field writes and actions/pending work remain independently owned.
+A method-local physical state owner will keep node/index/key/fact commit and proof
+inventory invalidation together, in the original order; scheduling follows the commit.
+No transfer is reordered. P4 shares the duplicated lazy node identity index inside
+one immutable committed inventory. It never shares indexes between revisions.
+
+| Transfer | Reads | Writes / adds or deletes | Invalidation and order |
+| --- | --- | --- | --- |
+| CFG replay | Current candidate/logical state; all compiler writers | Four update fields; adds/removes rows and logical compatibility | Existing loop-seed and native revision contracts |
+| Physical rebuild | Current exact input state and committed proof inventory | Owner node, block lookup, ordered keys/facts; adds/deletes support | Four writes then inventory invalidation, then refined/worklist scheduling |
+| Materialization | Fresh generated base and committed source authority | Fields already returned/consumed by each caller | Preserve partial vs full caller update; actions unchanged |
+| Privacy/prune/projection | Latest privacy, sources, actions | Explicit nodes/facts only; removes invalid states/clauses | Global transfer retained; localization is not proven |
+| Relocation | Current complete relation and actions | Replacement-bound clauses; action state at pass end | Discover/bind replacements before expired-clause removal |
+| Publication | Stable state | Equal graph-owned states, canonical factors/logical binding | No candidate generation/recovery |
+| Lazy proof indexes | Immutable constructor-time nodes, edges | One identity index and one edge index per inventory | Commit discards inventory; resolver query memo resets remain per query |
+
+Existing regressions cover base identity/source reappearance, OR/AND siblings, all
+writers, foreign owners, dirty SCC topology repair, pending work, inventory revision
+isolation and diagnostic parity. P4 adds edge-first/resolver-first query-order coverage
+only if this is not already covered. No broad CFG/privacy/action fusion is attempted: its
+commutativity is not established. The six full equality checks remain the stop condition.
