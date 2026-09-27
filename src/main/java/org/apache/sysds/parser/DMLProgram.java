@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.SearchSpaceMetrics;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileAuthority;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
@@ -57,11 +58,18 @@ public class DMLProgram
 	}
 
 	PlacementAnalysis bindPlacementAnalysisAtFinalHopBoundary() {
+		return bindPlacementAnalysisAtFinalHopBoundary(null);
+	}
+
+	PlacementAnalysis bindPlacementAnalysisAtFinalHopBoundary(SearchSpaceMetrics metrics) {
 		FunctionCallGraph fgraph = new FunctionCallGraph(this);
 		FunctionCallSizeInfo fcallSizes = new FunctionCallSizeInfo(fgraph);
 		PlacementAnalysis current = _placementAnalysisAuthority.get();
 		if(current == null) {
-			PlacementAnalysis candidate = new NeutralPlacementGraphBuilder(fgraph, fcallSizes)
+			NeutralPlacementGraphBuilder builder = metrics == null ?
+				new NeutralPlacementGraphBuilder(fgraph, fcallSizes) :
+				new NeutralPlacementGraphBuilder(fgraph, fcallSizes, metrics);
+			PlacementAnalysis candidate = builder
 				.buildDetachedAnalysis(this);
 			_placementAnalysisAuthority.compareAndSet(null, candidate);
 			current = _placementAnalysisAuthority.get();

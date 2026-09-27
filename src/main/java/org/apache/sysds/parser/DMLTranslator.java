@@ -88,6 +88,7 @@ import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristi
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.SearchSpaceMetrics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.ExactPlacementInput;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
@@ -365,40 +366,16 @@ public class DMLTranslator
 		}
 			synchronized(dmlp) {
 			boolean collectCandidateTiming = DMLScript.STATISTICS || FederatedPlannerTrace.isEnabled();
-			long commonPreparationStarted = collectCandidateTiming ? System.nanoTime() : 0L;
+			long commonPreparationStarted = System.nanoTime();
 			CandidateFormationTiming.Scope candidateTimingScope = collectCandidateTiming ?
 				CandidateFormationTiming.begin(commonPreparationStarted) : null;
 			try {
-			// The generic dynamic rewrite pass runs before final memory estimates are
-			// available.  Normalize lowering-level physical choices only now, while
-			// placement is still unbound but dimensions and memory costs are final.
-			dmlp.requirePlacementAnalysisUnboundForHopRewrite();
-			FederatedLocalZeroCallsiteSpecializer.specialize(dmlp);
-			ProgramRewriter physicalNormalizer = new ProgramRewriter(
-				new RewriteFederatedPlannerPhysicalNormalization());
-			physicalNormalizer.rewriteProgramHopDAGs(dmlp, false);
-			resetHopsDAGVisitStatus(dmlp);
-			refreshMemEstimates(dmlp);
-			resetHopsDAGVisitStatus(dmlp);
-			FederatedPlannerUtils.resetFederatedPlannerRunState();
-			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
-			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
-			org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes =
-				new org.apache.sysds.hops.ipa.FunctionCallSizeInfo(fgraph);
-			if(collectCandidateTiming)
-				CandidateFormationTiming.commonPreparationComplete();
+			SearchSpacePreparation searchSpace = prepareCommonSearchSpace(dmlp, null,
+				collectCandidateTiming, commonPreparationStarted);
+			PlacementAnalysis analysis = searchSpace.analysis();
+			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = searchSpace.functionCallGraph();
+			org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes = searchSpace.functionCallSizes();
 			boolean phaseMarkers = Boolean.getBoolean("sysds.fedplanner.phaseMarkers");
-			if(phaseMarkers)
-				System.err.println("G009_PHASE analysis_begin nanoTime=" + System.nanoTime());
-			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
-			if(phaseMarkers)
-				System.err.println("G009_PHASE analysis_end nanoTime=" + System.nanoTime());
-			if(collectCandidateTiming)
-				CandidateFormationTiming.analysisComplete();
-
-			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
-			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
-			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
 			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
 				org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalForcedStateAudit
 					.targetsAnalysis(analysis) ?
@@ -496,6 +473,110 @@ public class DMLTranslator
 			}
 		}
 	}
+
+	/**
+	 * Builds the canonical planner-neutral search space at the same final-Hop boundary used by
+	 * production compilation, then stops before planner construction or invocation.
+	 */
+	public SearchSpaceOnlyReceipt prepareSearchSpaceOnly(DMLProgram dmlp) {
+		return prepareSearchSpaceOnly(dmlp, true);
+	}
+
+	/** Disable detailed counters for an unbiased production-like timing trial. */
+	public SearchSpaceOnlyReceipt prepareSearchSpaceOnly(DMLProgram dmlp,
+		boolean collectDetailedMetrics) {
+		Objects.requireNonNull(dmlp, "dmlp");
+		String planner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		if(!(OptimizerUtils.FEDERATED_COMPILATION
+			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)))
+			throw new IllegalStateException("Search-space-only preparation requires a compiled federated planner");
+		try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+			FederatedPlannerUtils.activatePlannerRecompileOwner(dmlp)) {
+			dmlp.getPlannerRecompileAuthority().beginPlanning();
+			synchronized(dmlp) {
+				SearchSpaceMetrics metrics = collectDetailedMetrics ? new SearchSpaceMetrics() : null;
+				long started = System.nanoTime();
+				try {
+					SearchSpacePreparation prepared = prepareCommonSearchSpace(dmlp, metrics, false, started);
+					dmlp.getPlannerRecompileAuthority().seal();
+					long diagnosticStarted = System.nanoTime();
+					SearchSpaceMetrics.Snapshot snapshot = metrics == null ? null : metrics.snapshot();
+					SearchSpaceMetrics.AttributionSnapshot attribution = metrics == null
+						? null : metrics.attributionSnapshot();
+					long diagnosticNanos = System.nanoTime() - diagnosticStarted;
+					return new SearchSpaceOnlyReceipt(true, prepared.commonPreparationNanos(),
+						prepared.analysisNanos(), prepared.boundaryFinalizationNanos(), prepared.totalNanos(),
+						prepared.analysisFingerprint(), snapshot, attribution, diagnosticNanos, 0, 0, 0);
+				}
+				catch(RuntimeException | Error failure) {
+					dmlp.getPlannerRecompileAuthority().beginPlanning();
+					dmlp.getPlannerRecompileAuthority().seal();
+					throw failure;
+				}
+			}
+		}
+		finally {
+			FederatedPlannerUtils.clearFedRmvarProtectedVars();
+			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
+		}
+	}
+
+	private static SearchSpacePreparation prepareCommonSearchSpace(DMLProgram dmlp,
+		SearchSpaceMetrics metrics, boolean collectCandidateTiming, long preparationStarted) {
+		// The generic dynamic rewrite pass runs before final memory estimates are available.
+		// Keep this shared preparation identical for production and search-space-only diagnostics.
+		dmlp.requirePlacementAnalysisUnboundForHopRewrite();
+		FederatedLocalZeroCallsiteSpecializer.specialize(dmlp);
+		ProgramRewriter physicalNormalizer = new ProgramRewriter(
+			new RewriteFederatedPlannerPhysicalNormalization());
+		physicalNormalizer.rewriteProgramHopDAGs(dmlp, false);
+		resetHopsDAGVisitStatus(dmlp);
+		refreshMemEstimates(dmlp);
+		resetHopsDAGVisitStatus(dmlp);
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
+		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph =
+			new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
+		org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes =
+			new org.apache.sysds.hops.ipa.FunctionCallSizeInfo(fgraph);
+		long analysisStarted = System.nanoTime();
+		if(collectCandidateTiming)
+			CandidateFormationTiming.commonPreparationComplete();
+		boolean phaseMarkers = Boolean.getBoolean("sysds.fedplanner.phaseMarkers");
+		if(phaseMarkers)
+			System.err.println("G009_PHASE analysis_begin nanoTime=" + analysisStarted);
+		PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary(metrics);
+		long analysisEnded = System.nanoTime();
+		if(phaseMarkers)
+			System.err.println("G009_PHASE analysis_end nanoTime=" + analysisEnded);
+		if(collectCandidateTiming)
+			CandidateFormationTiming.analysisComplete();
+		String analysisFingerprint = analysis.analysisFingerprint();
+		org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+		org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
+		org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
+		long boundaryFinalized = System.nanoTime();
+		return new SearchSpacePreparation(analysis, fgraph, fcallSizes,
+			analysisStarted - preparationStarted, analysisEnded - analysisStarted,
+			boundaryFinalized - analysisEnded, boundaryFinalized - preparationStarted,
+			analysisFingerprint);
+	}
+
+	private record SearchSpacePreparation(PlacementAnalysis analysis,
+		org.apache.sysds.hops.ipa.FunctionCallGraph functionCallGraph,
+		org.apache.sysds.hops.ipa.FunctionCallSizeInfo functionCallSizes,
+		long commonPreparationNanos, long analysisNanos, long boundaryFinalizationNanos,
+		long totalNanos, String analysisFingerprint) { }
+
+	public record SearchSpaceOnlyReceipt(boolean spaceReady, long commonPreparationNanos,
+		long analysisNanos, long boundaryFinalizationNanos, long searchSpaceNanos,
+		String analysisFingerprint,
+		SearchSpaceMetrics.Snapshot metrics, SearchSpaceMetrics.AttributionSnapshot attribution,
+		long diagnosticSnapshotNanos, int selectorInvocationCount,
+		int runtimeProgramEmissionCount, int workloadExecutionCount) { }
 
 	static CandidateFormationTiming.Timing completeCandidateReceiptHandoff(
 		Runnable receiptHandoff, CandidateFormationTiming.Scope timingScope) {
