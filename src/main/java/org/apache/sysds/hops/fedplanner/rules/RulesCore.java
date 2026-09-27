@@ -321,18 +321,21 @@ public final class RulesCore {
     public OracleEngine(RuleRegistry reg) { this.reg = Objects.requireNonNull(reg); }
 
     public OpCaps decide(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
-      Optional<Rule> r = reg.byOpcode(sig.opcode());
-      if (r.isPresent()) {
-        return safeCaps(r.get(), sig, inFTypes, hint, ReasonCode.NOT_IMPLEMENTED);
-      }
+      return prepare(sig).apply(inFTypes, hint);
+    }
 
-      for (Rule rr : reg.ofCategory(sig.category())) {
-        if (rr.supports(sig)) {
-          return safeCaps(rr, sig, inFTypes, hint, ReasonCode.NOT_IMPLEMENTED);
-        }
+    /** Resolve operation dispatch once for a fixed signature, not once per input tuple. */
+    public java.util.function.BiFunction<List<FType>,ShapeHint,OpCaps> prepare(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if (exact.isPresent()) {
+        Rule rule = exact.get();
+        return (inputs, hint) -> safeCaps(rule, sig, inputs, hint, ReasonCode.NOT_IMPLEMENTED);
       }
-
-      return cpDefault(sig, ReasonCode.NO_RULE);
+      for (Rule rule : reg.ofCategory(sig.category())) {
+        if (rule.supports(sig))
+          return (inputs, hint) -> safeCaps(rule, sig, inputs, hint, ReasonCode.NOT_IMPLEMENTED);
+      }
+      return (inputs, hint) -> cpDefault(sig, ReasonCode.NO_RULE);
     }
 
     private static OpCaps safeCaps(Rule rule, OpSig sig, List<FType> inFTypes, ShapeHint hint, ReasonCode fallbackReason) {

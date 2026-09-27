@@ -127,18 +127,35 @@ public final class OracleFacade {
 	return decideWithEvidence(hop, inFTypes, hint).caps();
   }
 
-	public DecisionEvidence decideWithEvidence(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
-    Objects.requireNonNull(hop, "hop");
-    OpSig sig = buildSignature(hop);
-    List<FType> mapped = mapFederatedTypes(hop, inFTypes);
-    // A caller-supplied hint is occurrence authority, including UNKNOWN. Never
-    // supplement it from global lexical-name registries left by another program.
-    ShapeHint effectiveHint = hint != null ? hint : buildShapeHint(hop, inFTypes);
-    logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
-    RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop,
-        oracle.decide(sig, mapped, effectiveHint));
-    logOracleResult(hop, caps);
-	return new DecisionEvidence(caps, effectiveHint.proof());
+  public DecisionEvidence decideWithEvidence(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
+    return prepareDecision(hop).decideWithEvidence(inFTypes, hint);
+  }
+
+  /** A node-build-local operation snapshot; do not reuse after mutating the Hop or registry. */
+  public PreparedDecision prepareDecision(Hop hop) {
+    return new PreparedDecision(Objects.requireNonNull(hop, "hop"));
+  }
+
+  public final class PreparedDecision {
+    private final Hop hop;
+    private final OpSig signature;
+    private final java.util.function.BiFunction<List<FType>,ShapeHint,RulesApi.OpCaps> decision;
+
+    private PreparedDecision(Hop hop) {
+      this.hop = hop;
+      signature = buildSignature(hop);
+      decision = oracle.prepare(signature);
+    }
+
+    public DecisionEvidence decideWithEvidence(List<FTypes.FType> inFTypes, ShapeHint hint) {
+      List<FType> mapped = mapFederatedTypes(hop, inFTypes);
+      // Supplied UNKNOWN remains occurrence authority; never supplement it from a registry.
+      ShapeHint effectiveHint = hint != null ? hint : buildShapeHint(hop, inFTypes);
+      logOracleInvocation(hop, signature, mapped, effectiveHint, "begin");
+      RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop, decision.apply(mapped, effectiveHint));
+      logOracleResult(hop, caps);
+      return new DecisionEvidence(caps, effectiveHint.proof());
+    }
   }
 
   /**
@@ -150,7 +167,7 @@ public final class OracleFacade {
    * matrix's FType as a federated scalar result.
    */
   private static RulesApi.OpCaps normalizeConcreteOutputPlacement(Hop hop, RulesApi.OpCaps caps) {
-    if (hop == null || caps == null || hop.getDataType() == null || !hop.getDataType().isScalar()
+    if (hop.getDataType() == null || !hop.getDataType().isScalar()
         || caps.exec() != ExecType.FED || caps.placement() != FederatedOutput.FOUT)
       return caps;
 

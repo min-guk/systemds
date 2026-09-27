@@ -70,6 +70,24 @@ public class OracleFacadeTest {
       new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 
   @Test
+  public void preparedDecisionRetainsTupleAndUnknownShapeAuthority() {
+    Hop plus = binary(matrix("left", 4, 2), matrix("right", 4, 2));
+    OracleFacade.PreparedDecision prepared = facade.prepareDecision(plus);
+    for (ShapeHint hint : List.of(new ShapeHint(4, 2, 1000), new ShapeHint(-1, -1, -1)))
+      for (List<FType> tuple : List.of(List.of(FType.ROW, FType.ROW),
+          List.of(FType.FULL, FType.FULL), Arrays.<FType>asList(null, null))) {
+        OracleFacade.DecisionEvidence expected = facade.decideWithEvidence(plus, tuple, hint);
+        OracleFacade.DecisionEvidence actual = prepared.decideWithEvidence(tuple, hint);
+        assertEquals(expected.caps().exec(), actual.caps().exec());
+        assertEquals(expected.caps().placement(), actual.caps().placement());
+        assertEquals(expected.caps().foutFType(), actual.caps().foutFType());
+        assertEquals(expected.caps().reason(), actual.caps().reason());
+        assertEquals(expected.caps().detail(), actual.caps().detail());
+        assertEquals(expected.shapeProof(), actual.shapeProof());
+      }
+  }
+
+  @Test
   public void fullSingleHintRequiresEverySelectedFullInputToBeKnownSingle() {
     assertEquals("true", inferredFullSinglePartition(
         binary(federated("left", 1), federated("right", 1)),
