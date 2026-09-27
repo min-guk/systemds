@@ -282,7 +282,8 @@ def build(model_path, p_rows_path=None, *, max_nodes=250_000,
           max_factor_cells=1_000_000,
           max_visited_prefixes=1_000_000,
           max_accepted_assignments=100_000,
-          coordinates=REQUIRED_PHYSICAL_COORDINATES):
+          coordinates=REQUIRED_PHYSICAL_COORDINATES,
+          allow_legacy_v1=False):
     """Construct an exact bounded image of accepted typed E projections.
 
     ``p_rows_path`` may point at provided physical rows.  Any comparison is
@@ -302,7 +303,8 @@ def build(model_path, p_rows_path=None, *, max_nodes=250_000,
             any(key not in REQUIRED_PHYSICAL_COORDINATES for key in coordinates)):
         raise ValueError('coordinates must be unique common physical coordinates')
 
-    model, model_sha, radices, tables = read_model(model_path)
+    model, model_sha, radices, tables = read_model(
+        model_path, allow_legacy_v1=allow_legacy_v1)
     cell = model.get('cell')
     input_bindings = {
         'model': {'contentSha256': model_sha,
@@ -513,7 +515,7 @@ def read_artifact(path):
 
 
 def verify_artifact(artifact_path, model_path, p_rows_path=None,
-                    expected_envelope_sha=None):
+                    expected_envelope_sha=None, *, allow_legacy_v1=False):
     """Verify a saved diagnostic artifact against an immutable commitment.
 
     Completed relations are deterministically replayed from the bound model and
@@ -543,7 +545,8 @@ def verify_artifact(artifact_path, model_path, p_rows_path=None,
     if not isinstance(bindings, dict) or set(bindings) != {'model', 'providedPImage'}:
         raise ValueError('symbolic image input bindings are invalid')
     model_binding = bindings['model']
-    model, model_sha, radices, tables = read_model(model_path)
+    model, model_sha, radices, tables = read_model(
+        model_path, allow_legacy_v1=allow_legacy_v1)
     if (not isinstance(model_binding, dict) or
             model_binding.get('contentSha256') != model_sha or
             model_binding.get('fileSha256') != file_digest(model_path) or
@@ -721,7 +724,7 @@ def verify_artifact(artifact_path, model_path, p_rows_path=None,
             max_factor_cells=budgets['maxFactorCells'],
             max_visited_prefixes=budgets['maxVisitedPrefixes'],
             max_accepted_assignments=budgets['maxAcceptedAssignments'],
-            coordinates=tuple(coordinates))
+            coordinates=tuple(coordinates), allow_legacy_v1=allow_legacy_v1)
         replay_fields = (
             'diagnosticStatus', 'claimScope', 'semanticBindingStatus', 'blockers',
             'nativeAcceptanceStatus', 'counts', 'prefixEnumeration', 'budgets',
@@ -765,10 +768,12 @@ def main():
     parser.add_argument('--max-factor-cells', type=int, default=1_000_000)
     parser.add_argument('--max-visited-prefixes', type=int, default=1_000_000)
     parser.add_argument('--max-accepted-assignments', type=int, default=100_000)
+    parser.add_argument('--legacy-v1', action='store_true')
     args = parser.parse_args()
     if args.mode == 'verify':
         result = verify_artifact(args.artifact, args.model, args.p_rows,
-                                 args.expected_envelope_sha256)
+                                 args.expected_envelope_sha256,
+                                 allow_legacy_v1=args.legacy_v1)
         print(json.dumps(result, sort_keys=True))
         return
     result = build(args.model, args.p_rows, max_nodes=args.max_nodes,
@@ -776,7 +781,8 @@ def main():
                    max_bag_cells=args.max_bag_cells,
                    max_factor_cells=args.max_factor_cells,
                    max_visited_prefixes=args.max_visited_prefixes,
-                   max_accepted_assignments=args.max_accepted_assignments)
+                   max_accepted_assignments=args.max_accepted_assignments,
+                   allow_legacy_v1=args.legacy_v1)
     publish(args.artifact, result)
     print(json.dumps({key: result.get(key) for key in
                       ('cell', 'status', 'diagnosticStatus',

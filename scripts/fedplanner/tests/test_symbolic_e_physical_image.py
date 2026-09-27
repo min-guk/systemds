@@ -73,7 +73,7 @@ class SymbolicEPhysicalImageTest(unittest.TestCase):
                                  'ranges': [[0, 9], [0, 4]],
                                  'owner': owner('b'), 'ftype': 'ROW'}])
         return {
-            'schema': 'closed-e-native-model-artifact-v1',
+            'schema': 'closed-e-native-model-artifact-v2',
             'acceptance': 'MATERIALIZED_FACTOR_TABLES', 'cell': 'toy',
             'programSha256': 'p', 'conditionSha256': 'c', 'sourceFiles': [],
             'domains': [
@@ -82,7 +82,11 @@ class SymbolicEPhysicalImageTest(unittest.TestCase):
                 {'index': 1, 'occurrence': 'b', 'nodeKind': 'OPERATION',
                  'alternatives': [alternative('b0'), alternative('b1')]},
             ],
-            'factors': [{'scope': [0, 1], 'cells': '4',
+            'factorAggregation': 'ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1',
+            'nativeFactorCount': 1, 'materializedFactorCount': 1,
+            'sourceFactorScopes': [[0, 1]], 'nativeFactorCells': '4',
+            'materializedFactorCells': '4',
+            'factors': [{'sourceFactorIndices': [0], 'scope': [0, 1], 'cells': '4',
                          'truth': ['ALLOW', 'REJECT', 'REJECT', 'ALLOW']}],
             'sourceIdentity': {
                 'nodes': [{'occurrence': 'a', 'operation': 'a'},

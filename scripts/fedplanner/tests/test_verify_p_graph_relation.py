@@ -13,6 +13,20 @@ from scripts.fedplanner.verify_p_graph_relation import (
 from scripts.fedplanner.verify_p_model_artifact import source_order
 
 
+_create_certificate = create_certificate
+_verify_certificate = verify_certificate
+
+
+def create_certificate(*args, **kwargs):
+    kwargs.setdefault("allow_legacy_v1", True)
+    return _create_certificate(*args, **kwargs)
+
+
+def verify_certificate(*args, **kwargs):
+    kwargs.setdefault("allow_legacy_v1", True)
+    return _verify_certificate(*args, **kwargs)
+
+
 class GraphPlacementRelationTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -49,7 +63,8 @@ class GraphPlacementRelationTest(unittest.TestCase):
                         "finalHopGraphSha256": digest},
         }
         self.digest = self.write_model()
-        self.write_certificate(create_certificate(self.model, self.digest))
+        self.write_certificate(create_certificate(
+            self.model, self.digest, allow_legacy_v1=True))
 
     @staticmethod
     def constraint(kind):
@@ -208,8 +223,8 @@ class GraphPlacementRelationTest(unittest.TestCase):
     def test_model_swap_after_structural_check_rejected(self):
         original_verify = relation.verify_model
 
-        def swap_after_check(path, digest):
-            original_verify(path, digest)
+        def swap_after_check(path, digest, **kwargs):
+            original_verify(path, digest, **kwargs)
             self.domain["constraints"][0]["kind"] = "CONJUNCTIVE"
             self.write_model()
 

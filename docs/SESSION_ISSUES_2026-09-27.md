@@ -8,6 +8,19 @@
 - **게시 절차:** 원격 `main` 변경을 일반 병합하고 최종 합성 소스의 clean 회귀/package를 검증한다. `.omx`, 로컬 진단·실험·생성 산출물은 커밋하지 않는다. 테스트/푸시 결과는 별도 최종 체크포인트 문서에 기록한다.
 - **의사결정 근거:** 새로운 privacy 완화, 후보 제한, runtime fallback 또는 추가 성능 실험 없이 현재 검증 가능한 변경을 공유한다.
 
+## origin/main 병합 검증 — 테스트 격차를 숨기지 않는 체크포인트
+
+- **문제/환경:** 로컬 28개 커밋과 원격 `main` 13개 커밋이 분기되어 일반 merge를 수행했다. Native/Builder와 관련 테스트·날짜별 문서가 겹쳤다. 과거 증거/문서를 보존하고 force push나 공유 이력 재작성을 사용하지 않는다.
+- **해결:** upstream direct-publication cycle 방지를 로컬 단일 `GenerationRoot` 경로로 통합했다. primitive API는 정확한 current fact/emission을 찾는 fail-closed adapter이며, query root가 자기 executable input receipt가 되는 것을 차단한다. 생성/검증 cache namespace, fresh query state, inventory commit 무효화와 로컬 closure 최적화는 유지한다. 삭제된 구형 privacy inner loop는 복구하지 않고 upstream loop-progress 회귀를 보존한다.
+- **수정 파일:** `NativePlacementContinuity.java`, `NeutralPlacementGraphBuilder.java`, 두 continuity/composition 테스트; `PlanningNativeModelCapture`의 upstream V2 inventory와 로컬 CAPTURE/Optional evidence를 모두 보존했다.
+- **첫 clean 검증:** 48개 클래스, 468건, 실패 2/오류 2/기존 skip 6. Native70건(기존 skip1), Physical7건, Inventory4건, Exact capture14건, Planning capture8건에는 실패/오류가 없다.
+- **테스트 자체 OOM 해결:** recursive direct-publication 회귀는 두 분석과 fingerprint 일치를 통과한 뒤 bounded-shadow 전용 legal-assignment 전수 나열에서 OOM이었다. 전체 graph definition(후보 domain/constraint/action/obligation) signature와 exact candidate facts를 비교하도록 **테스트만** 수정했다. heap 확대/후보 cap/production 변경은 없다. 수정 후 해당 회귀 1/1 PASS.
+- **기존 미해결 2건:** `OracleFacadeTest.binaryFullMatrixWithLocalMatrixDoesNotRequireEncodedWidth`의 FED/CP 기대 불일치, `LoopSeedReplayWideningTest.protectedAlsLoopRetainsWidenedNativeSourceAndAllReachingWriters`의 비정본 alsCG PRIVATE_AGGREGATE placement 오류. skip 추가나 privacy 완화 없이 실패를 유지/공개한다.
+- **새로 드러난 비교 격차:** `CurrentPePhysicalSetCorrespondenceTest` B-21은 P/E 집합과 multiplicity 상호 비교를 통과하지만, 원격 baseline의 raw proof192/physical36과 현재 raw160/physical30이 다르다. 처음에는 raw 표현만 달라졌을 가능성을 검토했으나 physical36 assertion이 실패하여 그 가정을 철회했다. **기대값 192/36을 그대로 복원했으며 이 격차는 미해결이다.** 합법 계획 감소인지 identity 변화인지 입증하지 않았고 harmless normalization이라고 주장하지 않는다.
+- **Python 환경 구분:** 최초 잘못된 하위 cwd 호출의 import 오류는 root cwd에서 재검증했다. upstream38모듈362건(기존skip1), evaluation14모듈122건 통과. library-resolution 한 모듈은 archived receipt가 정확한 원래 checkout 절대경로를 요구하므로 이 worktree에서는 fail-closed이다. 동일 source hash와 정확한 origin/main checkout의 해당 5/5 PASS를 별도 확인했으며 receipt/hash/path 제약을 고치지 않았다.
+- **잔여/위험:** 미해결 3건이 있으므로 전체 테스트 green, P/E 전체 동등성 또는 성능 수용 완료로 게시하지 않는다. 사용자 요청에 따라 추가 최적화를 재개하지 않고 이 검증 격차를 포함한 작업 체크포인트를 공유한다. 최종 clean 재검증/package/probe 수치는 체크포인트 문서에 기록한다.
+- **의사결정 근거:** 기존 privacy/runtime/exact proof 계약을 보존하며 현재 상태를 정직하게 게시한다. 검증을 통과시키기 위해 정책·후보·test expectation을 임의로 축소하지 않는다.
+
 ## All14 r8 — 동일 inventory 인덱스 수명 / exact stable-wave 감지 (정확성 검증 완료, 성능 미측정)
 
 - **증상/근거:** r7 OFF logreg28.0627/GLM32.6594/P1 28.7731초로20초 미달. GLM의 physical normalize 아래 전체 WorkerPoolAnchorResolver 생성이386 CPU samples/4.342GB이며, P1 direct3748waves 중3539stable이다. 후보나 privacy를 축소하지 않고 중복 인덱스 생성만 줄인다.

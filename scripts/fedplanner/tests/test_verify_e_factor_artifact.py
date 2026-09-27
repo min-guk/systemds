@@ -8,10 +8,81 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.fedplanner.verify_e_factor_artifact import factor_relation, verify
+from scripts.fedplanner.verify_e_factor_artifact import factor_relation, verify as verify_current
+
+
+def verify(*args, **kwargs):
+    kwargs.setdefault('allow_legacy_v1', True)
+    return verify_current(*args, **kwargs)
 
 
 class EFactorArtifactVerificationTest(unittest.TestCase):
+    def compact_fixture(self, root, reference_text='0\t0\n'):
+        model_path = root / 'model.json.gz'
+        receipt_path = root / 'receipt.json'
+        references = root / 'refs.tsv.gz'
+        with gzip.open(references, 'wt') as stream:
+            stream.write(reference_text)
+        model = {
+            'schema': 'closed-e-native-model-artifact-v1',
+            'acceptance': 'MATERIALIZED_FACTOR_TABLES',
+            'cell': 'cell_fallback', 'programSha256': 'p' * 64,
+            'conditionSha256': 'c' * 64, 'sourceFiles': {'program.dml': 'd' * 64},
+            'domains': [{'index': 0, 'alternatives': [
+                {'signature': 'left'}, {'signature': 'right'}]}],
+            'factors': [{'scope': [0], 'cells': '2',
+                         'truth': ['ALLOW', 'REJECT']}],
+        }
+        plain = json.dumps(model).encode()
+        model_path.write_bytes(gzip.compress(plain))
+        ordinals = ''.join(line.split('\t', 1)[0] + '\n'
+                           for line in reference_text.splitlines())
+        receipt = {'schema': 'closed-planning-physical-shard-compact-v1',
+                   'source': 'E_C0', 'status': 'COMPLETE', 'cell': 'cell_fallback',
+                   'programSha256': 'p' * 64, 'conditionSha256': 'c' * 64,
+                   'sourceFiles': {'program.dml': 'd' * 64}, 'raw': '2',
+                   'accepted': '1', 'rejected': '1', 'unknown': '0',
+                   'acceptedOrdinalsSha256': hashlib.sha256(ordinals.encode()).hexdigest(),
+                   'references': str(references)}
+        receipt_path.write_text(json.dumps(receipt))
+        compact = {'receipt': receipt, 'proofCount': len(reference_text.splitlines()),
+                   'acceptedOrdinalsSha256': receipt['acceptedOrdinalsSha256']}
+        return (model_path, hashlib.sha256(plain).hexdigest(), receipt_path,
+                compact, receipt)
+
+    def test_forced_compact_fallback_matches_exhaustive_relation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model, digest, receipt, compact, _ = self.compact_fixture(root)
+            exhaustive = verify(model, digest, root / 'dictionary.jsonl.gz',
+                                receipt, compact)
+            fallback = verify(model, digest, root / 'dictionary.jsonl.gz',
+                              receipt, compact, component_limit=1)
+            for key in ('raw', 'accepted', 'rejected', 'unknown',
+                        'acceptedOrdinalsSha256'):
+                self.assertEqual(exhaustive[key], fallback[key])
+            self.assertEqual('EXHAUSTIVE_FACTOR_RELATION',
+                             exhaustive['ordinalVerification'])
+            self.assertEqual('EXACT_COUNT_AND_REFERENCE_MEMBERSHIP',
+                             fallback['ordinalVerification'])
+
+    def test_compact_fallback_rejects_omitted_accepted_ordinal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model, digest, receipt_path, compact, _ = self.compact_fixture(root, '')
+            with self.assertRaisesRegex(ValueError, 'omits factor-accepted'):
+                verify(model, digest, root / 'dictionary.jsonl.gz', receipt_path,
+                       compact, component_limit=1)
+
+    def test_compact_fallback_rejects_illegal_ordinal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model, digest, receipt_path, compact, _ = self.compact_fixture(
+                root, '1\t0\n')
+            with self.assertRaisesRegex(ValueError, 'not factor-accepted'):
+                verify(model, digest, root / 'dictionary.jsonl.gz', receipt_path,
+                       compact, component_limit=1)
+
     def test_packed_unknown_remains_unknown_in_independent_verification(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -158,8 +229,68 @@ class EFactorArtifactVerificationTest(unittest.TestCase):
             }
             receipt_path.write_text(json.dumps(receipt))
             model_sha = hashlib.sha256(plain).hexdigest()
+            with self.assertRaisesRegex(ValueError, 'explicit legacy mode'):
+                verify_current(model_path, model_sha, rows_path, receipt_path)
             self.assertEqual('INDEPENDENT_FACTOR_TABLE_VERIFIED',
                              verify(model_path, model_sha, rows_path, receipt_path)['status'])
+
+            model.update({
+                'schema': 'closed-e-native-model-artifact-v2',
+                'factorAggregation': 'ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1',
+                'nativeFactorCount': 1, 'materializedFactorCount': 1,
+                'sourceFactorScopes': [[0, 1]], 'nativeFactorCells': '4',
+                'materializedFactorCells': '4'})
+            model['factors'][0]['sourceFactorIndices'] = [0]
+            v2_plain = json.dumps(model).encode()
+            model_path.write_bytes(gzip.compress(v2_plain))
+            current_result = verify_current(
+                model_path, hashlib.sha256(v2_plain).hexdigest(), rows_path,
+                receipt_path)
+            self.assertEqual('INDEPENDENT_FACTOR_TABLE_VERIFIED', current_result['status'])
+            self.assertEqual('closed-e-native-model-artifact-v2',
+                             current_result['modelSchema'])
+            self.assertEqual('ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1',
+                             current_result['factorAggregation'])
+            model['materializedFactorCells'] = '5'
+            malformed = json.dumps(model).encode()
+            model_path.write_bytes(gzip.compress(malformed))
+            with self.assertRaisesRegex(ValueError, 'cell totals'):
+                verify(model_path, hashlib.sha256(malformed).hexdigest(), rows_path,
+                       receipt_path)
+            model['schema'] = 'closed-e-native-model-artifact-v1'
+            for key in ('factorAggregation', 'nativeFactorCount',
+                        'materializedFactorCount', 'sourceFactorScopes',
+                        'nativeFactorCells', 'materializedFactorCells'):
+                model.pop(key)
+            model['factors'][0].pop('sourceFactorIndices')
+            plain = json.dumps(model).encode()
+            model_path.write_bytes(gzip.compress(plain))
+            model_sha = hashlib.sha256(plain).hexdigest()
+
+            model['factors'][0]['scope'] = [0, 0]
+            duplicate_scope = json.dumps(model).encode()
+            model_path.write_bytes(gzip.compress(duplicate_scope))
+            with self.assertRaisesRegex(ValueError, 'malformed scope'):
+                verify_current(model_path, hashlib.sha256(duplicate_scope).hexdigest(),
+                               rows_path, receipt_path, allow_legacy_v1=True)
+            model['factors'][0]['scope'] = [0, 1]
+            model['factorAggregation'] = 'ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1'
+            hybrid = json.dumps(model).encode()
+            model_path.write_bytes(gzip.compress(hybrid))
+            with self.assertRaisesRegex(ValueError, 'hybrid'):
+                verify_current(model_path, hashlib.sha256(hybrid).hexdigest(), rows_path,
+                               receipt_path, allow_legacy_v1=True)
+            model.pop('factorAggregation')
+            plain = json.dumps(model).encode()
+            model_path.write_bytes(gzip.compress(plain))
+            model_sha = hashlib.sha256(plain).hexdigest()
+
+            with self.assertRaisesRegex(ValueError, 'decoded-byte budget'):
+                verify(model_path, model_sha, rows_path, receipt_path,
+                       max_model_decoded_bytes=64)
+            with self.assertRaisesRegex(ValueError, 'compressed-byte budget'):
+                verify(model_path, model_sha, rows_path, receipt_path,
+                       max_model_compressed_bytes=8)
 
             receipt['acceptedOrdinalsSha256'] = '0' * 64
             receipt_path.write_text(json.dumps(receipt))

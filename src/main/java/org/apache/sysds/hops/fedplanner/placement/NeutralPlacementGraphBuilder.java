@@ -4275,9 +4275,8 @@ public final class NeutralPlacementGraphBuilder {
 								fact.key().parentOccurrence());
 						if(outputAnchor == null && seed.fType() != outputState.fType() && !dynamicOutputLayout)
 							continue;
-						// Prove the identity that will actually be published. Pinning the
-						// staging template into a backedge invalidates its own proof as soon
-						// as the producer is grounded to the exact output map.
+						// Keep the exact output identity, but derive its direct publication
+						// from the primitive rule rather than a prior published root receipt.
 						String nativeLineage = directNativeDerivedLineage(
 							fact.key().parentOccurrence(), seed);
 						CandidateRealizationReference output = new CandidateRealizationReference(fact.key(),
@@ -4298,7 +4297,7 @@ public final class NeutralPlacementGraphBuilder {
 							// newly available input alternatives or make raw reset history matter.
 							proofs = recomputeNative
 								? continuity.proveGeneratedCandidateAlternatives(fact, emission, output, seed)
-								: continuity.proveCandidateAlternatives(output, seed);
+								: continuity.provePrimitiveCandidateAlternatives(output, seed);
 						}
 						finally {
 							if(complexityMetrics != null)

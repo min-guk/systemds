@@ -19,8 +19,9 @@ import org.junit.Test;
 public class DerivedFoutMaterializationAuthorityTest {
 	@Test
 	public void selectedDerivedCandidateRequiresItsExactGraphOwnedAction() throws Exception {
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(
-			fed() + "P=A/2;S=colSums(P);write(S,\"out\",format=\"binary\");"));
+		DMLProgram program = compile(fed() + "P=A/2;S=colSums(P);write(S,\"out\",format=\"binary\");");
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		CandidateEmissionFact derived = analysis.candidateRuleFacts().orderedFacts().stream()
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.filter(fact -> fact.emissionState().derivedFedFout()).findFirst().orElseThrow();

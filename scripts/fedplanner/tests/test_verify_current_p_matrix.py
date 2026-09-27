@@ -79,6 +79,8 @@ class MatrixArtifactVerifierTest(unittest.TestCase):
             result = verify(matrix, catalog, root, expected_cell="c1")
             self.assertEqual("INCOMPLETE", result["status"])
             self.assertEqual([{"cell": "c1", "reason": "ERROR"}], result["failures"])
+            self.assertEqual(result, verify(matrix, catalog, root,
+                                            expected_cell="c1", jobs=2))
             source.write_text("changed")
             result = verify(matrix, catalog, root, expected_cell="c1")
             self.assertEqual("FROZEN_SOURCE_CHANGED", result["failures"][0]["reason"])

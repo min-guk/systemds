@@ -15,6 +15,7 @@ from scripts.fedplanner.verify_p_model_artifact import (
     decode_java_length_fields, source_order, verify,
     verify_candidate_privacy_closure, verify_derived_fout_graph_ownership,
     verify_candidate_assignment_primitives,
+    verify_candidate_realization_clause_inventory,
     verify_candidate_receipt_semantics_and_source_links,
     verify_relocation_receipt_semantics_and_action_links,
     verify_nondecision_candidate_owner_classification,
@@ -538,29 +539,126 @@ class PModelArtifactVerificationTest(unittest.TestCase):
                 path.write_bytes(gzip.compress(plain))
                 return hashlib.sha256(plain).hexdigest()
 
-            self.assertEqual("STRUCTURE_VERIFIED", verify(path, write())["status"])
+            with self.assertRaisesRegex(ValueError, "artifact contract differs"):
+                verify(path, write())
+            self.assertEqual("STRUCTURE_VERIFIED",
+                             verify(path, write(), allow_legacy_v1=True)["status"])
+            self.assertEqual(artifact["summary"], verify(
+                path, write(), allow_legacy_v1=True, include_summary=True)["summary"])
             with patch.object(p_verifier, "MAX_DECOMPRESSED_ARTIFACT_BYTES", 16), \
                     self.assertRaisesRegex(ValueError, "decompressed byte budget"):
-                verify(path, write())
+                verify(path, write(), allow_legacy_v1=True)
             artifact["nativeDomain"]["derivedFoutActions"].clear()
             artifact["summary"]["nativeDomainSha256"] = hashlib.sha256(
                 canonical(artifact["nativeDomain"])).hexdigest()
             with self.assertRaisesRegex(ValueError, "not graph-owned"):
-                verify(path, write())
+                verify(path, write(), allow_legacy_v1=True)
             artifact["nativeDomain"]["derivedFoutActions"].append("owned")
             artifact["nativeDomain"]["radices"][1] = 3
             artifact["summary"]["nativeDomainSha256"] = hashlib.sha256(
                 canonical(artifact["nativeDomain"])).hexdigest()
             with self.assertRaisesRegex(ValueError, "radix"):
-                verify(path, write())
+                verify(path, write(), allow_legacy_v1=True)
             artifact["nativeDomain"]["radices"][1] = 2
             artifact["nativeDomain"]["nodes"][0][1] = "FUNCTION_CALL"
             artifact["nativeDomain"]["nodes"][0][3] = ["FED/FOUT/ROW/SHAPE_INDEPENDENT"]
-            artifact["nativeDomain"]["placementDomains"][0][1] = ["FED/FOUT/ROW/SHAPE_INDEPENDENT"]
+            artifact["nativeDomain"]["placementDomains"][0][1] = [
+                "FED/FOUT/ROW/SHAPE_INDEPENDENT"]
             artifact["summary"]["nativeDomainSha256"] = hashlib.sha256(
                 canonical(artifact["nativeDomain"])).hexdigest()
             with self.assertRaisesRegex(ValueError, "function call has non-CP"):
-                verify(path, write())
+                verify(path, write(), allow_legacy_v1=True)
+
+    def test_v2_clause_inventory_is_hash_bound_and_hostile_mutations_fail_closed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "model.json.gz"
+            domain = self.activation_primitive_domain()
+            source_reference, consumer_reference = domain["candidateRealizationReferenceFacts"]
+            semantic = domain["candidateReceiptSemanticFacts"][0]
+            source_emission = (source_reference["placement"]
+                               + "|derivedFedFout=false|executionFType=ROW|derivedAction=-")
+            source_clause = "proofs=[]|inputs=[]|nativePool=-"
+            consumer_binding = semantic["inputBindings"][0]
+            consumer_clause = ("proofs=[]|inputs=[" + consumer_binding["signature"]
+                               + "]|nativePool=-")
+            absent = {"kind": "ABSENT", "ftype": "-", "layoutExact": False}
+            domain["candidateRealizationSupportAuthorities"] = [
+                {"referenceIndex": 0, "supportAuthorities": [copy.deepcopy(absent)]},
+                {"referenceIndex": 1, "supportAuthorities": [copy.deepcopy(absent)]},
+            ]
+            domain["candidateRealizationClauseInventory"] = [
+                {**source_reference, "emission": source_emission, "clauses": [{
+                    "ordinal": 0, "clauseIdentity": source_clause,
+                    "proofDependencies": [], "requiredInputSupport": [],
+                    "inputBindings": [], "nativeWorkerPoolWitness": "-",
+                    "workerPoolAuthority": copy.deepcopy(absent),
+                    "nativeWorkerPoolLayoutExact": True}]},
+                {**consumer_reference, "emission": semantic["emission"], "clauses": [{
+                    "ordinal": 0, "clauseIdentity": consumer_clause,
+                    "proofDependencies": [],
+                    "requiredInputSupport": [source_reference["reference"]],
+                    "inputBindings": [copy.deepcopy(consumer_binding)],
+                    "nativeWorkerPoolWitness": "-",
+                    "workerPoolAuthority": copy.deepcopy(absent),
+                    "nativeWorkerPoolLayoutExact": True}]},
+            ]
+            domain["candidateRuleFactInventory"].append({
+                "ruleSignature": hashlib.sha256(source_reference["rule"].encode()).hexdigest(),
+                "status": "AVAILABLE", "failure": "", "capabilityPresent": True,
+                "profileAvailable": True,
+                "emissions": [{"selection": source_emission,
+                               "realizations": [source_reference["realization"]]}],
+            })
+            state = source_reference["placement"]
+            domain["placementDomains"] = [["source-owner", [state]],
+                                          ["consumer-owner", [state]]]
+            domain["relocationDomains"] = []
+            domain["radices"] = [1, 1, 1, 2]
+            domain["constraints"] = []
+            graph = {key: [] for key in
+                     ("blocks", "roots", "nodes", "edges", "functions", "calls", "inlinedCalls")}
+            graph_digest = hashlib.sha256(source_order(list(graph.values()))).hexdigest()
+            artifact = {
+                "schema": "closed-native-model-artifact-v2",
+                "acceptance": "PRODUCTION_JAVA_PREDICATE_NOT_SERIALIZED",
+                "preRewriteGraph": graph, "finalHopGraph": graph,
+                "nativeDomain": domain,
+                "summary": {"status": "COMPLETE", "cell": "v2", "rawCount": "2",
+                            "placementCoordinates": 2, "candidateCoordinates": 2,
+                            "relocationCoordinates": 0, "preRewriteGraphSha256": graph_digest,
+                            "finalHopGraphSha256": graph_digest},
+            }
+
+            def write():
+                artifact["summary"]["nativeDomainSha256"] = hashlib.sha256(
+                    canonical(domain)).hexdigest()
+                plain = canonical(artifact)
+                path.write_bytes(gzip.compress(plain, mtime=0))
+                return hashlib.sha256(plain).hexdigest()
+
+            receipt = verify(path, write())
+            self.assertEqual({"realizations": 2, "clauses": 2, "receipts": 1},
+                             receipt["candidateRealizationClauseInventory"])
+            self.assertEqual("closed-native-model-artifact-v2", receipt["modelSchema"])
+
+            hostile = copy.deepcopy(domain)
+            hostile["candidateRealizationClauseInventory"][1]["clauses"][0][
+                "clauseIdentity"] = "forged"
+            with self.assertRaisesRegex(ValueError, "support-clause identity differs"):
+                verify_candidate_realization_clause_inventory(hostile)
+            hostile = copy.deepcopy(domain)
+            hostile["candidateRealizationClauseInventory"][1]["clauses"][0][
+                "requiredInputSupport"] = []
+            with self.assertRaisesRegex(ValueError, "required support differs"):
+                verify_candidate_realization_clause_inventory(hostile)
+            hostile = copy.deepcopy(domain)
+            hostile["candidateRealizationClauseInventory"][1]["clauses"][0][
+                "workerPoolAuthority"] = {"kind": "ABSENT", "ftype": "ROW",
+                                          "layoutExact": False}
+            with self.assertRaisesRegex(ValueError, "inventory row differs"):
+                verify_candidate_realization_clause_inventory(hostile)
+            with self.assertRaisesRegex(ValueError, "digest differs"):
+                verify(path, "0" * 64)
 
     def test_nondecision_owner_role_mutation_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -596,9 +694,9 @@ class PModelArtifactVerificationTest(unittest.TestCase):
                 return hashlib.sha256(plain).hexdigest()
 
             with self.assertRaisesRegex(ValueError, "classification differs"):
-                verify(path, write())
+                verify(path, write(), allow_legacy_v1=True)
             domain["nonDecisionCandidateOwners"][0][1] = "INERT_FUNCTION_TEMPLATE"
-            receipt = verify(path, write())
+            receipt = verify(path, write(), allow_legacy_v1=True)
             self.assertIn("UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION",
                           receipt["acceptanceCoverage"]["assessedPredicates"])
             self.assertNotIn("UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION",

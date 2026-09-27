@@ -253,12 +253,17 @@ class EModelMatrixVerifierTest(unittest.TestCase):
                      "networkEnvironment": {"SYSDS_FED_COST_NET_BW": "2"},
                      "workloadJvmProperties": {}, "compilerArgv": argv,
                      "compilerConfiguration": compiler}
-            model = {"schema": "closed-e-native-model-artifact-v1",
+            model = {"schema": "closed-e-native-model-artifact-v2",
                      "acceptance": "MATERIALIZED_FACTOR_TABLES", "cell": "c", "source": "E_C0",
                      "programSha256": sha(program), "conditionSha256": "condition",
                      "sourceFiles": row["sourceFiles"], **facts,
                      "domains": [{"index": 0, "alternatives": [{"signature": "a"}]}],
-                     "factors": [{"scope": [0], "cells": "1", "truth": ["ALLOW"]}]}
+                     "factorAggregation": "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+                     "nativeFactorCount": 1, "materializedFactorCount": 1,
+                     "sourceFactorScopes": [[0]], "nativeFactorCells": "1",
+                     "materializedFactorCells": "1",
+                     "factors": [{"sourceFactorIndices": [0], "scope": [0],
+                                  "cells": "1", "truth": ["ALLOW"]}]}
             artifact = root / "artifacts/c/e-model.json.gz"
             artifact.parent.mkdir(parents=True)
             def write_model():
@@ -273,7 +278,12 @@ class EModelMatrixVerifierTest(unittest.TestCase):
                                   "radices": [1], "opaqueFactors": 0,
                                   "status": "COMPLETE", "cell": "c",
                                   "artifactSha256": None, "domainCount": 1,
-                                  "factorCount": 1, "rawCount": "1"},
+                                  "factorCount": 1, "rawCount": "1",
+                                  "factorAggregation":
+                                      "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+                                  "nativeFactorCount": 1, "materializedFactorCount": 1,
+                                  "nativeFactorCells": "1",
+                                  "materializedFactorCells": "1"},
                        "networkEnvironment": facts["networkEnvironment"],
                        "jvmOptions": [], "compilerArgv": argv,
                        "compilerConfiguration": compiler}
@@ -302,6 +312,35 @@ class EModelMatrixVerifierTest(unittest.TestCase):
             receipt["artifactSha256"] = write_model()
             receipt["native"]["artifactSha256"] = receipt["artifactSha256"]
             with self.assertRaisesRegex(ValueError, "factor table cardinality"):
+                verify_one(receipt, row, args)
+            model["factors"][0]["cells"] = "1"
+            model.update({
+                "schema": "closed-e-native-model-artifact-v2",
+                "factorAggregation": "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+                "nativeFactorCount": 1, "materializedFactorCount": 1,
+                "sourceFactorScopes": [[0]], "nativeFactorCells": "1",
+                "materializedFactorCells": "1"})
+            model["factors"][0]["sourceFactorIndices"] = [0]
+            receipt["artifactSha256"] = write_model()
+            receipt["native"].update({
+                "artifactSha256": receipt["artifactSha256"],
+                "factorAggregation": "ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1",
+                "nativeFactorCount": 1, "materializedFactorCount": 1,
+                "nativeFactorCells": "1", "materializedFactorCells": "1"})
+            self.assertEqual(0, verify_one(receipt, row, args))
+            receipt["native"]["nativeFactorCells"] = "2"
+            with self.assertRaisesRegex(ValueError, "factor aggregation differ"):
+                verify_one(receipt, row, args)
+            receipt["native"]["nativeFactorCells"] = "1"
+            model["schema"] = "closed-e-native-model-artifact-v1"
+            for key in ("factorAggregation", "nativeFactorCount",
+                        "materializedFactorCount", "sourceFactorScopes",
+                        "nativeFactorCells", "materializedFactorCells"):
+                model.pop(key)
+            model["factors"][0].pop("sourceFactorIndices")
+            receipt["artifactSha256"] = write_model()
+            receipt["native"]["artifactSha256"] = receipt["artifactSha256"]
+            with self.assertRaisesRegex(ValueError, "explicit legacy mode"):
                 verify_one(receipt, row, args)
 
 

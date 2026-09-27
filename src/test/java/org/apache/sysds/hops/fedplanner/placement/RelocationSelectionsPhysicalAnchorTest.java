@@ -108,6 +108,18 @@ public class RelocationSelectionsPhysicalAnchorTest {
 		assertShiftedPartitionsRejected(FType.COL);
 	}
 
+	@Test
+	public void fullWorkerPoolPreservesRepeatedEndpointMultiplicity() {
+		DurableAnchorKey repeated = new DurableAnchorKey("full-repeated", FType.FULL, List.of(
+			new AnchorPartition("localhost:1234/first", List.of(0L, 0L), List.of(5L, 8L)),
+			new AnchorPartition("localhost:1234/second", List.of(5L, 0L), List.of(10L, 8L))));
+		DurableAnchorKey single = new DurableAnchorKey("full-single", FType.FULL, List.of(
+			new AnchorPartition("localhost:1234/only", List.of(0L, 0L), List.of(10L, 8L))));
+
+		Assert.assertFalse(PlacementIdentity.samePhysicalWorkerPool(repeated, single));
+		Assert.assertTrue(PlacementIdentity.samePhysicalWorkerEndpoints(repeated, single));
+	}
+
 	private static void assertShiftedPartitionsRejected(FType axis) {
 		PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, axis, false);
 		DurableAnchorKey left = partitionedAnchor("left", axis, 4);

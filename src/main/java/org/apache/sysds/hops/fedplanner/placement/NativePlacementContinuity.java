@@ -584,6 +584,39 @@ final class NativePlacementContinuity {
 	}
 
 	/**
+	 * Proves a proof-only root from the current exact ordinary native row. This is
+	 * the compatibility entry point for direct publication: it delegates to the
+	 * single generated-query mode rather than creating a second cache/state mode.
+	 */
+	List<NativeContinuityProof> provePrimitiveCandidateAlternatives(
+		CandidateRealizationReference source, DurableAnchorKey externalSeed) {
+		Objects.requireNonNull(source, "primitive proof source");
+		Objects.requireNonNull(externalSeed, "primitive proof external seed");
+		CandidateRuleFact matchedFact = null;
+		CandidateEmissionFact matchedEmission = null;
+		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(
+			source.rule().parentOccurrence(), List.of())) {
+			if(!fact.key().equals(source.rule())
+				|| fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				continue;
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				PlacementState state = emission.emissionState().placementState();
+				if(!emission.emissionState().equals(source.realization().emissionState())
+					|| state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
+					|| state.fType() == null || emission.executionFType() != state.fType()
+					|| emission.derivedFoutAction() != null)
+					continue;
+				if(matchedFact != null)
+					return List.of();
+				matchedFact = fact;
+				matchedEmission = emission;
+			}
+		}
+		return matchedFact == null ? List.of() : proveGeneratedCandidateAlternatives(
+			matchedFact, matchedEmission, source, externalSeed);
+	}
+
+	/**
 	 * Proves one prospective native output from the current exact base row. Unlike
 	 * declared-realization validation, the root is derived from an empty support
 	 * clause and therefore cannot inherit or self-ground from prior publication
@@ -985,6 +1018,12 @@ final class NativePlacementContinuity {
 				for(CandidateProofDependency dependency : alternative.dependencies) {
 					if(dependency.inputPosition() < 0)
 						continue;
+					// A query-pinned generated recurrence may prove its SCC, but the
+					// proposed output is not an executable premise for its own receipt.
+					if(generation != null && dependency.state().equals(root)) {
+						complete = false;
+						break;
+					}
 					List<CandidateRealizationReference> options = groundedReferences.computeIfAbsent(
 						dependency.state(), state -> canonicalReferences(viable.getOrDefault(state, List.of()).stream()
 							.filter(option -> option.realization != null)

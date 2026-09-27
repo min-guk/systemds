@@ -17,25 +17,53 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecMode;
 import org.apache.sysds.runtime.instructions.fed.FEDInstructionUtils;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -63,7 +91,7 @@ public class PlanningNativeModelCaptureTest {
 				plain = stream.readAllBytes();
 			}
 			JsonNode saved = new ObjectMapper().readTree(plain);
-			Assert.assertEquals("closed-native-model-artifact-v1", saved.path("schema").asText());
+			Assert.assertEquals("closed-native-model-artifact-v2", saved.path("schema").asText());
 			Assert.assertEquals(cell, saved.path("summary").path("cell").asText());
 			Assert.assertEquals("PRODUCTION_JAVA_PREDICATE_NOT_SERIALIZED",
 				saved.path("acceptance").asText());
@@ -79,6 +107,31 @@ public class PlanningNativeModelCaptureTest {
 			Assert.assertEquals(candidateReceipts,
 				saved.path("nativeDomain").path("candidateReceiptActivationFacts").size());
 			Assert.assertTrue(saved.path("nativeDomain").path("candidateRealizationReferenceFacts").isArray());
+			JsonNode clauseInventory = saved.path("nativeDomain")
+				.path("candidateRealizationClauseInventory");
+			Assert.assertTrue(clauseInventory.isArray());
+			Assert.assertFalse(clauseInventory.isEmpty());
+			Assert.assertEquals(saved.path("nativeDomain")
+				.path("candidateRealizationReferenceFacts").size(), clauseInventory.size());
+			int clauseCount = 0;
+			Set<String> workerAuthorityKinds = new LinkedHashSet<>();
+			Set<String> bindingKinds = new LinkedHashSet<>();
+			for(JsonNode realization : clauseInventory)
+				for(JsonNode clause : realization.path("clauses")) {
+					clauseCount++;
+					workerAuthorityKinds.add(clause.path("workerPoolAuthority").path("kind").asText());
+					for(JsonNode binding : clause.path("inputBindings"))
+						bindingKinds.add(binding.path("kind").asText());
+				}
+			int authorityCount = 0;
+			for(JsonNode realization : saved.path("nativeDomain")
+				.path("candidateRealizationSupportAuthorities"))
+				authorityCount += realization.path("supportAuthorities").size();
+			Assert.assertEquals(authorityCount, clauseCount);
+			Assert.assertTrue(workerAuthorityKinds.contains("EXACT_LAYOUT"));
+			Assert.assertTrue(workerAuthorityKinds.contains("DYNAMIC_RESIDENCY"));
+			Assert.assertTrue(bindingKinds.contains("DIRECT"));
+			Assert.assertTrue(bindingKinds.contains("RELOCATION"));
 			Assert.assertTrue(saved.path("nativeDomain").path("compiledCandidateInputEdges").isArray());
 			Assert.assertTrue(saved.path("nativeDomain").path("logicalCandidateReachability").isObject());
 			Assert.assertTrue(saved.path("nativeDomain").path("relocationActionFacts").isArray());
@@ -97,6 +150,15 @@ public class PlanningNativeModelCaptureTest {
 			Assert.assertEquals(64, ((String) capture.get("artifactSha256")).length());
 			Assert.assertEquals("STRUCTURE_VERIFIED", PlanningNativeModelCapture.verifyArtifact(
 				artifact, (String) capture.get("artifactSha256")).get("status"));
+			assertArtifactMutationRejected(saved, root ->
+				((ObjectNode) root.path("nativeDomain")).remove("candidateRealizationClauseInventory"),
+				"clause inventory coverage differs");
+			assertArtifactMutationRejected(saved, root ->
+				((ObjectNode) root.path("nativeDomain")).putArray("candidateRealizationClauseInventory"),
+				"clause inventory coverage differs");
+			assertArtifactMutationRejected(saved, root -> ((ObjectNode) root.path("nativeDomain")
+				.path("candidateRealizationClauseInventory").path(0).path("clauses").path(0))
+				.put("clauseIdentity", "forged"), "support-clause identity differs");
 			try {
 				PlanningNativeModelCapture.verifyArtifact(artifact, "0".repeat(64));
 				Assert.fail("A wrong artifact digest must fail closed");
@@ -127,6 +189,51 @@ public class PlanningNativeModelCaptureTest {
 		for(Object radix : (List<?>) capture.get("radices"))
 			product = product.multiply(BigInteger.valueOf(((Number) radix).longValue()));
 		Assert.assertEquals(new BigInteger((String) capture.get("rawCount")), product);
+	}
+
+	@Test public void supportClauseInventoryIsReceiptIndependentAndCanonicallyOrdered() {
+		CandidateRuleFact reversed = supportClauseFact("b", "a");
+		CandidateRuleFact forward = supportClauseFact("a", "b");
+		List<Map<String,Object>> expected =
+			PlanningNativeModelCapture.candidateRealizationClauseInventory(List.of(reversed));
+		Assert.assertEquals(expected,
+			PlanningNativeModelCapture.candidateRealizationClauseInventory(List.of(forward)));
+
+		CandidateEmissionFact emission = reversed.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization realization = emission.realizations().get(0);
+		List<CandidateSelectionReceipt> hostileReceipts = new ArrayList<>();
+		for(CandidateRealizationSupportClause clause : realization.supportClauses())
+			hostileReceipts.add(new CandidateSelectionReceipt(reversed.key(), emission,
+				realization, clause, List.of()));
+		Collections.reverse(hostileReceipts);
+		hostileReceipts.add(hostileReceipts.get(0));
+		hostileReceipts.remove(1);
+		Assert.assertEquals("receipt mutations must not alter rule-fact clause authority", expected,
+			PlanningNativeModelCapture.candidateRealizationClauseInventory(List.of(reversed)));
+
+		Map<String,Object> realizationRow = expected.get(0);
+		Assert.assertEquals(2, ((List<?>) realizationRow.get("clauses")).size());
+		Assert.assertEquals(reversed.key().normalizedSignature(), realizationRow.get("rule"));
+		@SuppressWarnings("unchecked")
+		List<Map<String,Object>> clauses = (List<Map<String,Object>>) realizationRow.get("clauses");
+		for(int ordinal = 0; ordinal < clauses.size(); ordinal++) {
+			Map<String,Object> clause = clauses.get(ordinal);
+			Assert.assertEquals(ordinal, clause.get("ordinal"));
+			Assert.assertEquals(realization.supportClauses().get(ordinal).normalizedSignature(),
+				clause.get("clauseIdentity"));
+			Assert.assertEquals("ABSENT", ((Map<?,?>) clause.get("workerPoolAuthority")).get("kind"));
+			Assert.assertTrue(((List<?>) clause.get("requiredInputSupport")).isEmpty());
+			Assert.assertTrue(((List<?>) clause.get("inputBindings")).isEmpty());
+		}
+		CandidateRealizationSupportClause duplicate = realization.supportClauses().get(0);
+		IllegalArgumentException duplicateClause = Assert.assertThrows(IllegalArgumentException.class,
+			() -> new CandidateEmissionRealization(realization.key(), List.of(duplicate, duplicate)));
+		Assert.assertTrue(duplicateClause.getMessage().contains("Duplicate realization support clause"));
+		IllegalStateException duplicateReference = Assert.assertThrows(IllegalStateException.class,
+			() -> PlanningNativeModelCapture.candidateRealizationClauseInventory(
+				List.of(reversed, reversed)));
+		Assert.assertTrue(duplicateReference.getMessage().contains(
+			"Duplicate candidate realization clause authority"));
 	}
 
 	@Test public void unrecognizedFederatedSourceCannotAcquireAnonymousPrivacy() {
@@ -283,8 +390,57 @@ public class PlanningNativeModelCaptureTest {
 	}
 
 	private static String sha(String value) throws Exception {
-		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-			.digest(value.getBytes(StandardCharsets.UTF_8)));
+		return sha(value.getBytes(StandardCharsets.UTF_8));
+	}
+
+	private static String sha(byte[] value) throws Exception {
+		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+	}
+
+	private static void assertArtifactMutationRejected(JsonNode original,
+		Consumer<ObjectNode> mutation, String expectedMessage) throws Exception {
+		ObjectNode mutated = original.deepCopy();
+		mutation.accept(mutated);
+		ObjectMapper mapper = new ObjectMapper()
+			.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+		byte[] domain = mapper.writeValueAsBytes(mutated.path("nativeDomain"));
+		((ObjectNode) mutated.path("summary")).put("nativeDomainSha256", sha(domain));
+		byte[] plain = mapper.writeValueAsBytes(mutated);
+		Path artifact = Files.createTempFile("mutated-planning-native-model-", ".json.gz");
+		try {
+			try(GZIPOutputStream gzip = new GZIPOutputStream(Files.newOutputStream(artifact))) {
+				gzip.write(plain);
+			}
+			IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+				() -> PlanningNativeModelCapture.verifyArtifact(artifact, sha(plain)));
+			Assert.assertTrue(error.getMessage(), error.getMessage().contains(expectedMessage));
+		}
+		finally {
+			Files.deleteIfExists(artifact);
+		}
+	}
+
+	private static CandidateRuleFact supportClauseFact(String first, String second) {
+		ControlRegionKey region = new ControlRegionKey(
+			"capture-clause", "main", List.of("main"), "main", "compiled");
+		CompiledHopKey owner = new CompiledHopKey("capture-clause", "main", "main",
+			"compiled", region, "owner", "owner");
+		CandidateRuleKey rule = new CandidateRuleKey(owner, List.of());
+		PlacementEmissionState state = new PlacementEmissionState(
+			new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false), false);
+		CandidateRealizationSupportClause left = new CandidateRealizationSupportClause(
+			List.of(new PlacementProofKey(PlacementProofKind.SHAPE, owner, first)), List.of());
+		CandidateRealizationSupportClause right = new CandidateRealizationSupportClause(
+			List.of(new PlacementProofKey(PlacementProofKind.SHAPE, owner, second)), List.of());
+		CandidateEmissionRealization realization = new CandidateEmissionRealization(
+			PlacementRealizationKey.local(state), List.of(left, right));
+		CandidateEmissionFact emission = new CandidateEmissionFact(
+			state, null, null, List.of(realization));
+		return new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
+			new CandidateCapabilityFact(OpCategory.OTHER, "fixture", ExecType.CP,
+				FederatedOutput.LOUT, null, ReasonCode.OK, "fixture", List.of()),
+			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
+			new CandidateProfileFact(List.of(), ""), List.of(emission), "");
 	}
 
 	private static Path promotedCatalog(Path root, String script, List<String> origins,

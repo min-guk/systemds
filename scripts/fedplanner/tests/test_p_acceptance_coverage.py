@@ -59,7 +59,7 @@ class PAcceptanceCoverageTest(unittest.TestCase):
         self.model.write_bytes(gzip.compress(raw, mtime=0))
 
     def test_structure_receipt_lists_every_opaque_predicate(self):
-        receipt = verify(self.model, self.digest)
+        receipt = verify(self.model, self.digest, allow_legacy_v1=True)
         coverage = receipt["acceptanceCoverage"]
         self.assertFalse(coverage["complete"])
         self.assertEqual(["DERIVED_FOUT_GRAPH_OWNERSHIP",
@@ -75,9 +75,10 @@ class PAcceptanceCoverageTest(unittest.TestCase):
             require_full_acceptance(receipt)
 
     def test_graph_receipt_assesses_only_decision_endpoint_constraints(self):
-        certificate = create_certificate(self.model, self.digest)
+        certificate = create_certificate(self.model, self.digest, allow_legacy_v1=True)
         self.certificate.write_bytes(gzip.compress(canonical(certificate), mtime=0))
-        receipt = verify_certificate(self.model, self.digest, self.certificate)
+        receipt = verify_certificate(self.model, self.digest, self.certificate,
+                                     allow_legacy_v1=True)
         coverage = receipt["acceptanceCoverage"]
         self.assertFalse(coverage["complete"])
         self.assertEqual(["DECISION_ENDPOINT_NEUTRAL_GRAPH_CONSTRAINTS",
@@ -98,7 +99,7 @@ class PAcceptanceCoverageTest(unittest.TestCase):
             canonical(self.domain)).hexdigest()
         raw = canonical(artifact)
         self.model.write_bytes(gzip.compress(raw, mtime=0))
-        receipt = verify(self.model, hashlib.sha256(raw).hexdigest())
+        receipt = verify(self.model, hashlib.sha256(raw).hexdigest(), allow_legacy_v1=True)
         self.assertNotIn("UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION",
                          receipt["acceptanceCoverage"]["assessedPredicates"])
         self.assertIn("UNRESOLVED_CANDIDATE_OWNER_CLASSIFICATION",
@@ -112,7 +113,7 @@ class PAcceptanceCoverageTest(unittest.TestCase):
             canonical(self.domain)).hexdigest()
         raw = canonical(artifact)
         self.model.write_bytes(gzip.compress(raw, mtime=0))
-        receipt = verify(self.model, hashlib.sha256(raw).hexdigest())
+        receipt = verify(self.model, hashlib.sha256(raw).hexdigest(), allow_legacy_v1=True)
         self.assertNotIn("DERIVED_FOUT_GRAPH_OWNERSHIP",
                          receipt["acceptanceCoverage"]["assessedPredicates"])
         self.assertIn("DERIVED_FOUT_GRAPH_OWNERSHIP",

@@ -81,7 +81,9 @@ def physical_stage_args(args, mode):
               '--e-matrix-dir', str(args.artifact_root / 'e-models'),
               '--artifact-root', str(args.artifact_root / 'physical-artifacts'),
               '--result-dir', str(args.artifact_root / 'physical-results'),
-              '--jobs', str(args.physical_jobs), '--shard-jobs', str(args.shard_jobs),
+              '--jobs', str(args.physical_jobs),
+              '--p-verify-jobs', str(args.p_verify_jobs),
+              '--shard-jobs', str(args.shard_jobs),
               '--state-budget', str(args.state_budget),
               '--e-raw-budget', str(args.e_raw_budget),
               '--cell-timeout', str(args.cell_timeout),
@@ -211,7 +213,8 @@ def run(args, campaign, cells):
         'verify_current_p_matrix.py',
         ['--matrix-dir', str(args.artifact_root / 'p-models'),
          '--catalog', str(args.catalog), '--evaluation-root',
-         str(args.evaluation_root), '--frozen-ready'],
+         str(args.evaluation_root), '--frozen-ready',
+         '--jobs', str(args.p_verify_jobs)],
         args.artifact_root / 'verify-P.log')
     model_p = model_status(args.artifact_root, 'P', cells)
     model_e = model_status(args.artifact_root, 'E', cells)
@@ -239,7 +242,8 @@ def verify(args, campaign, cells):
     stages['P-verification'] = stage('verify_current_p_matrix.py',
                         ['--matrix-dir', str(args.artifact_root / 'p-models'),
                          '--catalog', str(args.catalog), '--evaluation-root',
-                         str(args.evaluation_root), '--frozen-ready'],
+                         str(args.evaluation_root), '--frozen-ready',
+                         '--jobs', str(args.p_verify_jobs)],
                         args.artifact_root / 'verify-P.log')
     stages['P'] = previous['stages']['P']
     stages['E'] = stage('capture_current_e_model_matrix.py',
@@ -269,6 +273,7 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--build-root', type=Path)
     parser.add_argument('--p-jobs', type=int, default=4)
+    parser.add_argument('--p-verify-jobs', type=int, default=2)
     parser.add_argument('--e-jobs', type=int, default=4)
     parser.add_argument('--max-jvms', type=int, default=8)
     parser.add_argument('--physical-jobs', type=int, default=2)

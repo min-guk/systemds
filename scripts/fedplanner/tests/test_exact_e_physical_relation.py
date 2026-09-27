@@ -35,11 +35,15 @@ class ExactEPhysicalRelationTest(unittest.TestCase):
 
     def model(self):
         return {
-            'schema': 'closed-e-native-model-artifact-v1', 'acceptance': 'MATERIALIZED_FACTOR_TABLES',
+            'schema': 'closed-e-native-model-artifact-v2', 'acceptance': 'MATERIALIZED_FACTOR_TABLES',
             'cell': 'fixture', 'programSha256': 'p', 'conditionSha256': 'c', 'sourceFiles': [],
             'domains': [domain(0, 'a', [alternative('a0'), alternative('a1')]),
                         domain(1, 'b', [alternative('b0'), alternative('b1')])],
-            'factors': [{'scope': [0, 1], 'cells': '4',
+            'factorAggregation': 'ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1',
+            'nativeFactorCount': 1, 'materializedFactorCount': 1,
+            'sourceFactorScopes': [[0, 1]], 'nativeFactorCells': '4',
+            'materializedFactorCells': '4',
+            'factors': [{'sourceFactorIndices': [0], 'scope': [0, 1], 'cells': '4',
                          'truth': ['ALLOW', 'REJECT', 'UNKNOWN', 'ALLOW']}],
             'sourceIdentity': {
                 'nodes': [{'occurrence': 'a', 'operation': 'a'},
@@ -96,6 +100,23 @@ class ExactEPhysicalRelationTest(unittest.TestCase):
             self.assertEqual(result['decodeScopes'][0]['domainScope'], [0, 1])
             self.assertIn('EXPLICIT_COMPOSITIONAL_PROJECTION_CONTRACT_MISSING',
                           result['projectionContract']['blockers'])
+
+    def test_legacy_model_requires_explicit_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = self.model()
+            model['schema'] = 'closed-e-native-model-artifact-v1'
+            for key in ('factorAggregation', 'nativeFactorCount',
+                        'materializedFactorCount', 'sourceFactorScopes',
+                        'nativeFactorCells', 'materializedFactorCells'):
+                model.pop(key)
+            model['factors'][0].pop('sourceFactorIndices')
+            path = self.write_model(root, model)
+            with self.assertRaisesRegex(ValueError, 'explicit legacy mode'):
+                build(path, exhaustive_limit=4)
+            self.assertEqual('4', build(
+                path, exhaustive_limit=4,
+                allow_legacy_v1=True)['counts']['raw'])
 
     def test_packed_factor_remains_packed_through_exhaustive_differential(self):
         with tempfile.TemporaryDirectory() as directory:

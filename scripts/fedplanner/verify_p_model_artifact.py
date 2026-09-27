@@ -41,7 +41,11 @@ PRODUCER_CARRIED_ACTIVATION_FIELDS = (
     "supportAuthorityIndex",
     "logicalCandidateCoordinateAuthority.function.callInputPosition",
 )
-MAX_DECOMPRESSED_ARTIFACT_BYTES = 512 * 1024 * 1024
+# Frozen in-scope captures reach 1.16 GiB uncompressed. Keep a finite bound
+# above that observed maximum, so oversized/corrupt gzip streams still fail.
+MAX_DECOMPRESSED_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
+MODEL_SCHEMA_V1 = "closed-native-model-artifact-v1"
+MODEL_SCHEMA_V2 = "closed-native-model-artifact-v2"
 
 
 def _candidate_status_valid(status, failure, capability, profile, emissions):
@@ -851,6 +855,158 @@ def _verify_support_authority(authority):
         raise ValueError("candidate support authority kind unsupported")
 
 
+def _text_list(value, description):
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(description + " differs")
+    return value
+
+
+def verify_candidate_realization_clause_inventory(domain):
+    """Verify the v2 immutable support-clause authority independently."""
+    inventory = domain.get("candidateRealizationClauseInventory")
+    references = domain.get("candidateRealizationReferenceFacts")
+    authorities = domain.get("candidateRealizationSupportAuthorities")
+    rules = domain.get("candidateRuleFactInventory")
+    semantics = domain.get("candidateReceiptSemanticFacts")
+    if not isinstance(inventory, list) or not inventory or \
+            not isinstance(references, list) or len(inventory) != len(references) or \
+            not isinstance(authorities, list) or len(authorities) != len(references) or \
+            not isinstance(rules, list) or not isinstance(semantics, list):
+        raise ValueError("candidate realization clause inventory coverage differs")
+
+    reference_fields = {"reference", "rule", "owner", "placement", "realization"}
+    reference_by_identity = {}
+    for reference in references:
+        if not isinstance(reference, dict) or set(reference) != reference_fields or \
+                any(not isinstance(reference[field], str) or not reference[field]
+                    for field in reference_fields) or \
+                reference["reference"] in reference_by_identity:
+            raise ValueError("candidate realization reference identity differs")
+        reference_by_identity[reference["reference"]] = reference
+
+    rule_fields = {"ruleSignature", "status", "failure", "capabilityPresent",
+                   "profileAvailable", "emissions"}
+    rule_by_hash = {}
+    for rule in rules:
+        if not isinstance(rule, dict) or set(rule) != rule_fields or \
+                not isinstance(rule["ruleSignature"], str) or not rule["ruleSignature"] or \
+                rule["ruleSignature"] in rule_by_hash or not isinstance(rule["emissions"], list):
+            raise ValueError("candidate rule inventory identity differs")
+        rule_by_hash[rule["ruleSignature"]] = rule
+
+    clauses_by_reference = {}
+    row_fields = {"reference", "rule", "owner", "emission", "placement",
+                  "realization", "clauses"}
+    clause_fields = {"ordinal", "clauseIdentity", "proofDependencies",
+                     "requiredInputSupport", "inputBindings", "nativeWorkerPoolWitness",
+                     "workerPoolAuthority", "nativeWorkerPoolLayoutExact"}
+    binding_fields = {"signature", "inputPosition", "source", "sourceOwner",
+                      "sourcePlacement", "kind", "relocationAction"}
+    for index, (row, reference, authority_row) in enumerate(
+            zip(inventory, references, authorities)):
+        if not isinstance(row, dict) or set(row) != row_fields or \
+                any(row.get(field) != reference.get(field)
+                    for field in ("reference", "rule", "owner", "placement", "realization")) or \
+                not isinstance(row.get("emission"), str) or not row["emission"] or \
+                not isinstance(authority_row, dict) or \
+                set(authority_row) != {"referenceIndex", "supportAuthorities"} or \
+                type(authority_row["referenceIndex"]) is not int or \
+                authority_row["referenceIndex"] != index:
+            raise ValueError("candidate realization clause inventory reference differs")
+        clauses = row["clauses"]
+        support_authorities = authority_row["supportAuthorities"]
+        if not isinstance(clauses, list) or not clauses or \
+                not isinstance(support_authorities, list) or \
+                len(clauses) != len(support_authorities):
+            raise ValueError("candidate realization clause inventory count differs")
+        rule = rule_by_hash.get(hashlib.sha256(row["rule"].encode("utf-8")).hexdigest())
+        realization_authorized = False
+        if rule is not None and rule.get("status") == "AVAILABLE":
+            for emission in rule["emissions"]:
+                if isinstance(emission, dict) and \
+                        set(emission) == {"selection", "realizations"} and \
+                        emission["selection"] == row["emission"] and \
+                        isinstance(emission["realizations"], list) and \
+                        row["realization"] in emission["realizations"]:
+                    realization_authorized = True
+                    break
+        if not realization_authorized:
+            raise ValueError("candidate realization clause inventory rule differs")
+
+        identities = set()
+        for ordinal, (clause, support_authority) in enumerate(
+                zip(clauses, support_authorities)):
+            if not isinstance(clause, dict) or set(clause) != clause_fields or \
+                    type(clause["ordinal"]) is not int or clause["ordinal"] != ordinal or \
+                    not isinstance(clause["clauseIdentity"], str) or \
+                    not isinstance(clause["inputBindings"], list) or \
+                    type(clause["nativeWorkerPoolLayoutExact"]) is not bool or \
+                    not isinstance(clause["nativeWorkerPoolWitness"], str) or \
+                    clause["workerPoolAuthority"] != support_authority:
+                raise ValueError("candidate realization clause inventory row differs")
+            _verify_support_authority(support_authority)
+            proofs = _text_list(clause["proofDependencies"],
+                                "candidate realization clause proof list")
+            required = _text_list(clause["requiredInputSupport"],
+                                  "candidate realization clause support list")
+            binding_signatures = []
+            binding_sources = set()
+            for binding in clause["inputBindings"]:
+                if not isinstance(binding, dict) or set(binding) != binding_fields or \
+                        type(binding["inputPosition"]) is not int or \
+                        binding["inputPosition"] < 0 or \
+                        any(not isinstance(binding[field], str)
+                            for field in binding_fields - {"inputPosition"}):
+                    raise ValueError("candidate realization clause binding differs")
+                source = reference_by_identity.get(binding["source"])
+                expected_binding = encode_java_length_fields((
+                    str(binding["inputPosition"]), binding["source"], binding["kind"],
+                    binding["relocationAction"]))
+                if source is None or binding["sourceOwner"] != source["owner"] or \
+                        binding["sourcePlacement"] != source["placement"] or \
+                        binding["signature"] != expected_binding:
+                    raise ValueError("candidate realization clause binding authority differs")
+                binding_signatures.append(expected_binding)
+                binding_sources.add(binding["source"])
+            if required != sorted(binding_sources):
+                raise ValueError("candidate realization clause required support differs")
+            witness = clause["nativeWorkerPoolWitness"]
+            expected_identity = (f"proofs={_java_list(proofs)}"
+                                 f"|inputs={_java_list(binding_signatures)}"
+                                 f"|nativePool={witness}")
+            if witness != "-" and not clause["nativeWorkerPoolLayoutExact"]:
+                expected_identity += "|nativePoolLayout=dynamic"
+            if clause["clauseIdentity"] != expected_identity or expected_identity in identities:
+                raise ValueError("candidate realization support-clause identity differs")
+            identities.add(expected_identity)
+        clauses_by_reference[row["reference"]] = identities
+
+    for semantic in semantics:
+        if not isinstance(semantic, dict) or \
+                not isinstance(semantic.get("reference"), str) or \
+                not isinstance(semantic.get("inputBindings"), list) or \
+                not isinstance(semantic.get("nativeWorkerPoolWitness"), str) or \
+                type(semantic.get("nativeWorkerPoolLayoutExact")) is not bool:
+            raise ValueError("candidate receipt immutable clause evidence malformed")
+        proofs = _text_list(semantic.get("proofDependencies"),
+                            "candidate receipt proof dependency list")
+        signatures = []
+        for binding in semantic["inputBindings"]:
+            if not isinstance(binding, dict) or not isinstance(binding.get("signature"), str):
+                raise ValueError("candidate receipt clause binding differs")
+            signatures.append(binding["signature"])
+        witness = semantic["nativeWorkerPoolWitness"]
+        identity = (f"proofs={_java_list(proofs)}|inputs={_java_list(signatures)}"
+                    f"|nativePool={witness}")
+        if witness != "-" and not semantic["nativeWorkerPoolLayoutExact"]:
+            identity += "|nativePoolLayout=dynamic"
+        if identity not in clauses_by_reference.get(semantic["reference"], set()):
+            raise ValueError("candidate receipt lacks immutable clause authority")
+    return {"realizations": len(inventory),
+            "clauses": sum(len(row["clauses"]) for row in inventory),
+            "receipts": len(semantics)}
+
+
 def verify_candidate_assignment_primitives(domain):
     """Recompute the serialized coordinate-level inputs to candidate feasibility.
 
@@ -1312,7 +1468,7 @@ def source_order(value):
                       ensure_ascii=False).encode("utf-8")
 
 
-def verify(path, expected_sha):
+def verify(path, expected_sha, *, allow_legacy_v1=False, include_summary=False):
     with gzip.open(path, "rb") as stream:
         plain = stream.read(MAX_DECOMPRESSED_ARTIFACT_BYTES + 1)
     if len(plain) > MAX_DECOMPRESSED_ARTIFACT_BYTES:
@@ -1320,8 +1476,10 @@ def verify(path, expected_sha):
     if hashlib.sha256(plain).hexdigest() != expected_sha:
         raise ValueError("P artifact digest differs")
     artifact = json.loads(plain)
-    if (artifact.get("schema") != "closed-native-model-artifact-v1" or
-            artifact.get("acceptance") != "PRODUCTION_JAVA_PREDICATE_NOT_SERIALIZED"):
+    del plain
+    schema = artifact.get("schema")
+    if (schema != MODEL_SCHEMA_V2 and not (allow_legacy_v1 and schema == MODEL_SCHEMA_V1)) or \
+            artifact.get("acceptance") != "PRODUCTION_JAVA_PREDICATE_NOT_SERIALIZED":
         raise ValueError("P artifact contract differs")
     summary, domain = artifact.get("summary"), artifact.get("nativeDomain")
     if not isinstance(summary, dict) or not isinstance(domain, dict) or \
@@ -1379,22 +1537,32 @@ def verify(path, expected_sha):
         if node[1] == "FUNCTION_CALL" and any(
                 state != "CP/LOUT/-/SHAPE_INDEPENDENT" for state in node[3]):
             raise ValueError("P function call has non-CP executable placement")
+    clause_evidence = verify_candidate_realization_clause_inventory(domain) \
+        if schema == MODEL_SCHEMA_V2 else None
     assessed, evidence = artifact_assessment(domain)
-    return {"schema": "p-native-model-structure-verification-v1",
+    result = {"schema": "p-native-model-structure-verification-v2",
             "status": "STRUCTURE_VERIFIED", "cell": summary.get("cell"),
             "raw": str(product), "artifactSha256": expected_sha,
+            "modelSchema": schema,
+            "candidateRealizationClauseInventory": clause_evidence,
             "acceptance": "NOT_ASSESSED_BY_THIS_CONTRACT",
             "acceptanceCoverage": _acceptance_coverage(domain, assessed, evidence),
             "functionCallPlacementGuard": "VERIFIED"}
+    if include_summary:
+        result["summary"] = summary
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--model-sha256", required=True)
+    parser.add_argument("--allow-legacy-v1", action="store_true",
+                        help="diagnostic-only access to historical v1 P artifacts")
     parser.add_argument("--require-full-acceptance", action="store_true")
     args = parser.parse_args()
-    receipt = verify(args.model, args.model_sha256)
+    receipt = verify(args.model, args.model_sha256,
+                     allow_legacy_v1=args.allow_legacy_v1)
     if args.require_full_acceptance:
         require_full_acceptance(receipt)
     print(json.dumps(receipt, sort_keys=True))

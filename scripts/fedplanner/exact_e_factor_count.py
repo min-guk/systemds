@@ -28,6 +28,15 @@ PACKED_TRUTH_FIELDS = frozenset((
     'schema', 'encoding', 'cells', 'statusCodes', 'data',
     'packedSha256', 'statusCounts'))
 STATUS_NAMES = ('ALLOW', 'REJECT', 'UNKNOWN')
+MODEL_SCHEMA_V1 = 'closed-e-native-model-artifact-v1'
+MODEL_SCHEMA_V2 = 'closed-e-native-model-artifact-v2'
+FACTOR_AGGREGATION_V2 = 'ORDERED_SCOPE_REJECT_DOMINATES_UNKNOWN_V1'
+V2_AGGREGATION_FIELDS = frozenset((
+    'factorAggregation', 'nativeFactorCount', 'materializedFactorCount',
+    'sourceFactorScopes', 'nativeFactorCells', 'materializedFactorCells'))
+DEFAULT_MAX_MODEL_DECODED_BYTES = 4 * 1024 ** 3
+DEFAULT_MAX_MODEL_COMPRESSED_BYTES = 4 * 1024 ** 3
+MODEL_READ_CHUNK_BYTES = 1024 * 1024
 
 
 def _packed_byte_counts(value):
@@ -124,10 +133,119 @@ def factor_truth_wire(truth):
     return truth.wire() if isinstance(truth, PackedTruth) else list(truth)
 
 
-def read_model(path):
-    plain = gzip.decompress(Path(path).read_bytes())
-    model = json.loads(plain)
-    if (model.get('schema') != 'closed-e-native-model-artifact-v1' or
+def read_gzip_json(path, *, max_decoded_bytes=DEFAULT_MAX_MODEL_DECODED_BYTES,
+                   max_compressed_bytes=DEFAULT_MAX_MODEL_COMPRESSED_BYTES):
+    """Read gzip JSON after enforcing compressed and decoded byte limits."""
+    if (type(max_decoded_bytes) is not int or max_decoded_bytes < 1 or
+            type(max_compressed_bytes) is not int or max_compressed_bytes < 1):
+        raise ValueError('E model byte limits must be positive integers')
+    path = Path(path)
+    if path.stat().st_size > max_compressed_bytes:
+        raise ValueError('E model compressed-byte budget exhausted')
+    decoded = 0
+    digest_value = hashlib.sha256()
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode='w+b',
+                                       dir=path.parent) as target:
+        with gzip.open(path, 'rb') as source:
+            while True:
+                block = source.read(MODEL_READ_CHUNK_BYTES)
+                if not block:
+                    break
+                decoded += len(block)
+                if decoded > max_decoded_bytes:
+                    raise ValueError('E model decoded-byte budget exhausted')
+                digest_value.update(block)
+                target.write(block)
+        target.seek(0)
+        return json.load(target), digest_value.hexdigest()
+
+
+def validate_factor_aggregation(model, radices, *, allow_legacy_v1=False):
+    """Validate the v1/v2 materialized-factor metadata and return its counts.
+
+    V2 groups native factors by their exact ordered scope.  This check derives
+    the expected first-occurrence grouping from ``sourceFactorScopes`` rather
+    than trusting the materialized rows to describe their own provenance.
+    """
+    schema = model.get('schema')
+    factors = model.get('factors')
+    if not isinstance(factors, list):
+        raise ValueError('E model lacks finite domains/factors')
+    if schema == MODEL_SCHEMA_V1:
+        if not allow_legacy_v1:
+            raise ValueError('legacy E v1 model requires explicit legacy mode')
+        if (any(field in model for field in V2_AGGREGATION_FIELDS) or
+                any(isinstance(factor, dict) and 'sourceFactorIndices' in factor
+                    for factor in factors)):
+            raise ValueError('E v1/v2 hybrid factor aggregation is invalid')
+        return {'schema': schema, 'nativeFactorCount': len(factors),
+                'materializedFactorCount': len(factors)}
+    if schema != MODEL_SCHEMA_V2:
+        raise ValueError('E model has unsupported schema')
+    if model.get('factorAggregation') != FACTOR_AGGREGATION_V2:
+        raise ValueError('E v2 factor aggregation contract invalid')
+    native_count = model.get('nativeFactorCount')
+    materialized_count = model.get('materializedFactorCount')
+    source_scopes = model.get('sourceFactorScopes')
+    if (type(native_count) is not int or native_count < 0 or
+            type(materialized_count) is not int or materialized_count < 0 or
+            not isinstance(source_scopes, list) or len(source_scopes) != native_count or
+            materialized_count != len(factors)):
+        raise ValueError('E v2 factor aggregation counts invalid')
+
+    expected_groups = {}
+    native_cells = 0
+    for source_index, scope in enumerate(source_scopes):
+        if (not isinstance(scope, list) or len(scope) != len(set(scope)) or
+                any(type(index) is not int or index < 0 or index >= len(radices)
+                    for index in scope)):
+            raise ValueError('E v2 source factor scope invalid')
+        cells = 1
+        for index in scope:
+            cells *= radices[index]
+        native_cells += cells
+        expected_groups.setdefault(tuple(scope), []).append(source_index)
+
+    expected = list(expected_groups.items())
+    if len(expected) != materialized_count:
+        raise ValueError('E v2 materialized factor count differs from scope grouping')
+    materialized_cells = 0
+    for position, (factor, (expected_scope, expected_indices)) in enumerate(
+            zip(factors, expected, strict=True)):
+        if not isinstance(factor, dict):
+            raise ValueError('E v2 materialized factor row invalid')
+        scope = factor.get('scope')
+        indices = factor.get('sourceFactorIndices')
+        if (scope != list(expected_scope) or indices != expected_indices or
+                not isinstance(indices, list) or not indices or
+                any(type(index) is not int for index in indices) or
+                any(left >= right for left, right in zip(indices, indices[1:]))):
+            raise ValueError(
+                f'E v2 materialized factor provenance/order invalid at row {position}')
+        cells = 1
+        for index in scope:
+            cells *= radices[index]
+        if factor.get('cells') != str(cells):
+            raise ValueError('E factor table cardinality/status invalid')
+        materialized_cells += cells
+
+    if (model.get('nativeFactorCells') != str(native_cells) or
+            model.get('materializedFactorCells') != str(materialized_cells)):
+        raise ValueError('E v2 factor cell totals invalid')
+    return {'schema': schema, 'factorAggregation': FACTOR_AGGREGATION_V2,
+            'nativeFactorCount': native_count,
+            'materializedFactorCount': materialized_count,
+            'nativeFactorCells': str(native_cells),
+            'materializedFactorCells': str(materialized_cells)}
+
+
+def read_model(path, *, max_decoded_bytes=DEFAULT_MAX_MODEL_DECODED_BYTES,
+               max_compressed_bytes=DEFAULT_MAX_MODEL_COMPRESSED_BYTES,
+               allow_legacy_v1=False):
+    model, model_sha = read_gzip_json(
+        path, max_decoded_bytes=max_decoded_bytes,
+        max_compressed_bytes=max_compressed_bytes)
+    if (model.get('schema') not in (MODEL_SCHEMA_V1, MODEL_SCHEMA_V2) or
             model.get('acceptance') != 'MATERIALIZED_FACTOR_TABLES'):
         raise ValueError('E model has no complete materialized hard factors')
     domains = model.get('domains')
@@ -141,6 +259,7 @@ def read_model(path):
                 len({choice.get('signature') for choice in choices}) != len(choices)):
             raise ValueError('E domain index or alternatives invalid')
         radices.append(len(choices))
+    validate_factor_aggregation(model, radices, allow_legacy_v1=allow_legacy_v1)
     tables = []
     for row in factors:
         scope = row.get('scope')
@@ -155,7 +274,7 @@ def read_model(path):
         if row.get('cells') != str(cells):
             raise ValueError('E factor table cardinality/status invalid')
         tables.append((tuple(scope), decode_factor_truth(truth, cells)))
-    return model, hashlib.sha256(plain).hexdigest(), radices, tables
+    return model, model_sha, radices, tables
 
 
 def index_of(values, radices):
@@ -232,8 +351,13 @@ def count_relation(radices, tables, allowed, max_bag_cells=1_000_000):
     return count, peak, trace
 
 
-def certify(model_path, max_bag_cells=1_000_000):
-    model, model_sha, radices, tables = read_model(model_path)
+def certify(model_path, max_bag_cells=1_000_000, *,
+            max_decoded_bytes=DEFAULT_MAX_MODEL_DECODED_BYTES,
+            max_compressed_bytes=DEFAULT_MAX_MODEL_COMPRESSED_BYTES,
+            allow_legacy_v1=False):
+    model, model_sha, radices, tables = read_model(
+        model_path, max_decoded_bytes=max_decoded_bytes,
+        max_compressed_bytes=max_compressed_bytes, allow_legacy_v1=allow_legacy_v1)
     accepted, accept_peak, accept_trace = count_relation(
         radices, tables, frozenset(('ALLOW',)), max_bag_cells)
     nonrejected, nonreject_peak, nonreject_trace = count_relation(
@@ -246,6 +370,8 @@ def certify(model_path, max_bag_cells=1_000_000):
     return {'schema': 'exact-e-factor-count-v1', 'status': 'COMPLETE',
             'claimScope': 'CAPTURED_E_HARD_FACTOR_CARDINALITY_ONLY',
             'cell': model['cell'], 'modelSha256': model_sha,
+            'modelSchema': model['schema'],
+            'factorAggregation': model.get('factorAggregation'),
             'raw': str(raw), 'accepted': str(accepted),
             'rejected': str(raw - nonrejected),
             'unknown': str(nonrejected - accepted),
@@ -271,10 +397,18 @@ def main():
     parser.add_argument('--model', type=Path, required=True)
     parser.add_argument('--artifact', type=Path, required=True)
     parser.add_argument('--max-bag-cells', type=int, default=1_000_000)
+    parser.add_argument('--max-model-decoded-bytes', type=int,
+                        default=DEFAULT_MAX_MODEL_DECODED_BYTES)
+    parser.add_argument('--max-model-compressed-bytes', type=int,
+                        default=DEFAULT_MAX_MODEL_COMPRESSED_BYTES)
+    parser.add_argument('--legacy-v1', action='store_true')
     args = parser.parse_args()
     if args.max_bag_cells < 1:
         parser.error('max-bag-cells must be positive')
-    result = certify(args.model, args.max_bag_cells)
+    result = certify(args.model, args.max_bag_cells,
+                     max_decoded_bytes=args.max_model_decoded_bytes,
+                     max_compressed_bytes=args.max_model_compressed_bytes,
+                     allow_legacy_v1=args.legacy_v1)
     if args.mode == 'run':
         publish(args.artifact, result)
     elif json.loads(args.artifact.read_text()) != result:
