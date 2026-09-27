@@ -193,7 +193,7 @@ public class BaseCandidateOwnershipTest {
 			List.of(available(supported(fresh, binding)))).get(0);
 		Assert.assertTrue("fixture must preserve the tentative local support", hasBinding(result, binding));
 		Method prune = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
-			"removeUngroundedStagingRealizations", List.class);
+			"pruneUnsupportedRealizations", List.class);
 		prune.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		List<CandidateRuleFact> withdrawn = (List<CandidateRuleFact>)prune.invoke(null, List.of(result));

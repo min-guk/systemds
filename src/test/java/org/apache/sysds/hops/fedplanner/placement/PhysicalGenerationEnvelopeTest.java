@@ -337,7 +337,7 @@ public class PhysicalGenerationEnvelopeTest {
 		}
 
 		private Object rawBuild() throws Exception {
-			Class<?> type = nested("BaseCandidateBuild");
+			Class<?> type = nested("CandidateBase");
 			Constructor<?> constructor = type.getDeclaredConstructor(Node.class, List.class, List.class);
 			constructor.setAccessible(true);
 			return constructor.newInstance(rawNode, List.of(ownerRule), List.of(rawFact));
@@ -464,7 +464,7 @@ public class PhysicalGenerationEnvelopeTest {
 
 		private ReplayState close(ReplayState replay, List<CompiledInputEdgeFact> inputEdges) throws Exception {
 			Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
-				"closePostCfgPhysicalCandidateDependenciesMeasured", List.class, nested("CandidateReplay"),
+				"closePhysicalDependenciesMeasured", List.class, nested("ClosureUpdate"),
 				Map.class, Map.class, SinglePartitionFacts.class, Map.class, nested("CfgAnalysis"),
 				List.class, Map.class, Map.class);
 			method.setAccessible(true);
@@ -486,7 +486,7 @@ public class PhysicalGenerationEnvelopeTest {
 		}
 
 		private Object candidateReplay(ReplayState replay) throws Exception {
-			Constructor<?> constructor = nested("CandidateReplay").getDeclaredConstructor(
+			Constructor<?> constructor = nested("ClosureUpdate").getDeclaredConstructor(
 				List.class, List.class, List.class, List.class, List.class);
 			constructor.setAccessible(true);
 			return constructor.newInstance(replay.nodes(), replay.domainKeys(), replay.facts(),
@@ -584,14 +584,14 @@ public class PhysicalGenerationEnvelopeTest {
 		Object raw, List<Node> proofNodes, List<CandidateRuleFact> proofFacts,
 		List<CompiledInputEdgeFact> edges, Map<CompiledHopKey,Hop> origins,
 		Map<Hop,NodeShapeFact> shapes) throws Exception {
-		Class<?> inventoryType = nested("MaterializationProofInventory");
+		Class<?> inventoryType = nested("CommittedProofInventory");
 		Constructor<?> constructor = inventoryType.getDeclaredConstructor(List.class, List.class,
 			List.class, List.class, Collection.class, Map.class, Map.class);
 		constructor.setAccessible(true);
 		Object inventory = constructor.newInstance(proofNodes, proofFacts, edges,
 			List.<LogicalTransientInputFact>of(), List.<Constraint>of(), origins, shapes);
 		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(name,
-			nested("BaseCandidateBuild"), inventoryType);
+			nested("CandidateBase"), inventoryType);
 		method.setAccessible(true);
 		Object result = method.invoke(builder, raw, inventory);
 		return envelope(result);
@@ -643,7 +643,7 @@ public class PhysicalGenerationEnvelopeTest {
 			facts = record.getClass().getDeclaredMethod("facts");
 		}
 		catch(NoSuchMethodException ignored) {
-			facts = record.getClass().getDeclaredMethod("candidateRuleFacts");
+			facts = record.getClass().getDeclaredMethod("ruleFacts");
 		}
 		facts.setAccessible(true);
 		List<Node> outputNodes = singularNode ? List.of((Node)nodes.invoke(record))

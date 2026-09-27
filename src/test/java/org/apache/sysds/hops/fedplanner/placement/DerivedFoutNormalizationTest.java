@@ -187,7 +187,7 @@ public class DerivedFoutNormalizationTest {
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> publish(List<CandidateRuleFact> facts) throws Exception {
 		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
-			"removeUngroundedStagingRealizations", List.class);
+			"pruneUnsupportedRealizations", List.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts);
 	}

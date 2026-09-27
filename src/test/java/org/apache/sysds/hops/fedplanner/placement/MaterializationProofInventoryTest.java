@@ -241,7 +241,7 @@ public class MaterializationProofInventoryTest {
 	}
 
 	private static Class<?> inventoryType() throws ClassNotFoundException {
-		return Class.forName(NeutralPlacementGraphBuilder.class.getName() + "$MaterializationProofInventory");
+		return Class.forName(NeutralPlacementGraphBuilder.class.getName() + "$CommittedProofInventory");
 	}
 
 	private static Object field(Object owner, String name) throws Exception {

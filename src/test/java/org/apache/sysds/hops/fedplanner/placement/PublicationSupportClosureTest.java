@@ -258,7 +258,7 @@ public class PublicationSupportClosureTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> publish(List<CandidateRuleFact> facts) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("removeUngroundedStagingRealizations", List.class);
+		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("pruneUnsupportedRealizations", List.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts);
 	}
@@ -267,7 +267,7 @@ public class PublicationSupportClosureTest {
 	private static List<CandidateRuleFact> publish(List<CandidateRuleFact> facts,
 		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions) throws Exception {
 		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
-			"removeUngroundedStagingRealizations", List.class, Map.class);
+			"pruneUnsupportedRealizations", List.class, Map.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts, actions);
 	}
@@ -283,7 +283,7 @@ public class PublicationSupportClosureTest {
 		List<LogicalTransientInputFact> logicalInputs,
 		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) throws Exception {
 		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
-			"removeUngroundedStagingRealizations", List.class, Map.class, List.class, Map.class);
+			"pruneUnsupportedRealizations", List.class, Map.class, List.class, Map.class);
 		method.setAccessible(true);
 		List<CandidateRuleFact> current = facts;
 		while(true) {
