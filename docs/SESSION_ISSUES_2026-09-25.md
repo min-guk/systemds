@@ -199,3 +199,70 @@ runtime이나 planner candidate-space를 우회하지 않고, Exact solver의 �
   - **감지 방법**: 실제 campaign에서는 기존 process/container resource limit와 phase timing을 기록하고, 개별 실패는 campaign 정책에 따라 기록한다.
 - **위험**: cap 제거 과정에서 overflow 보호까지 약화될 수 있다.
   - **감지 방법**: `productionLimitsStillRejectUnrepresentableFactorBeforeEvaluation`이 `EXACT_VE_FACTOR_CELL_OVERFLOW`와 평가 횟수 0을 고정한다.
+
+## W1357 search-space 재계산 증폭 — 60초 목표 미달
+
+- 재현: `/home/mchoi/w1357-diagnostics/search-space-60s-revised-20260925/runs/on-04/`의 실제 logreg W1/LAN search-space-only receipt. 채택 가능한 metrics ON 시간은 459.285986484초이며 60초가 아니다.
+- 원인: CFG/함수/물리/출판 closure가 중첩되어 물리 base 재구성이 이미 증명된 derived binding을 버리고 다시 direct proof를 요청한다. 53 closure replay, 852 direct pass, 240,459 proof query가 남았다. 별도 결함으로 `CompiledInputEdgeFact`가 재생성되지만 값 동등성이 없어 같은 edge를 제거+추가로 오인해 가짜 dirty를 만들었다.
+- 이번 수정: production privacy 필터를 유지하며 test용 evidence 생성만 기본 NONE으로 분리했다. direct dirty cone이 이전·새 사실·의존관계를 추적하고, 재생성 edge는 endpoint identity+position으로 비교한다. 완료된 outer direct frontier를 재사용하고 singleton SCC 재분해를 생략한다. 채택 JAR SHA-256은 `a00c93688c9ea8366de61a90f7db64c1f1ad7115096372603c00ec5036544f34`이다.
+- 검증: 최종 영향 테스트 110건, 실패·오류 0, 기존 skip 1; Maven package 및 `git diff --check` 통과. on-04 정상 search-space-only receipt·cleanup. 전체 suite·수치 정답·896조건은 검증하지 않았다.
+- 철회된 시도: 단순 물리 base 보존은 on-05에서 406.179885782초로 줄었지만 relation slot이 31,029→31,604로 바뀌어 의미 보존 미확인이다. 소스는 on-04 상태로 되돌리고 on-05 JAR/receipt를 진단 증거로 보존했다.
+- 잔여 위험/다음 단계: base oracle 사실과 derived support/action/privacy를 분리하고, 삭제·새 source 등장까지 포함하는 완전한 영향 관계로 성분별 재계산해야 한다. 단순 캐시·SCC 미세 최적화나 증명 생략만으로 60초 달성을 주장하지 않는다. 상세 결과는 `/home/mchoi/cofee-evaluation/docs/COFEE_W1357_SEARCH_SPACE_60S_REVISED_EXECUTION_REPORT_2026-09-25.md`에 있다.
+
+## W1357 구조 단순화 1차 패치 리뷰 — 철회
+
+- **환경/조건**: 기존 on-04 JAR에서 출발하여 계획 `/home/mchoi/cofee-evaluation/.omx/plans/COFEE_W1357_SEARCH_SPACE_60S_STRUCTURAL_SIMPLIFICATION_PLAN_2026-09-25.md`의 S0/S1/S2를 순차 검토. 같은 DML bytes의 search-space-only ON 진단 `.../runs/struct-on-01/`을 완료했다. 학습/selector/896조건은 실행하지 않았다.
+- **관측 증상**: 단위 회귀 114건(오류·실패 0, 기존 skip 1)과 package는 통과했지만, 독립 리뷰에서 새 물리 캐시의 latent-WDivMM 간접 문맥 누락을 발견했다. physical cache는 같은 `closePostCfgPhysicalCandidateDependencies` 호출 내부의 동일 완료 row만 재사용한다. 새 acyclic `exactRelation`도 실제 cache hit의 proof 계산에는 소비되지 않고 footprint 보관에만 사용된다.
+- **원인**: 물리 cache key는 즉시 입력 domain/anchor와 current row를 포함하지만 `closeLatentWdivmmRuntimeOutputContracts`가 읽는 transitive weights-node FED/FOUT legality를 포함하지 않는다. 그 상태가 변해도 cache hit하면 normalization을 건너뛸 수 있다. 또한 이 cache는 base와 derived binding 소유권을 분리하지 않아 기존 재증명 증폭을 제거하지 못한다. acyclic DAG 저장은 기존 grounded-boundary hit 경로를 대체하지 못한다.
+- **해결/변경 요약**: 새 물리 cache와 사용되지 않는 `exactRelation` 사본/관련 테스트를 철회했다. 물리 phase 자체가 on-04에서 0.926초이므로 키 확장보다 제거가 합리적이다. 기존 acyclic grounded-boundary 경로와 on-04 정책은 유지한다. 실제 병목을 줄이려면 outer closure 사이의 완료 direct/proof 결과 재사용 또는 base/derived 결과 소유권 분리가 필요하다.
+- **수정 파일**: 1차 시도의 `NeutralPlacementGraphBuilder.java` 물리 row cache와 `PublicationSupportClosureTest.java` 테스트는 철회했다. `NativePlacementContinuity.java`의 새 exact DAG 사본 및 세 테스트도 제거했다. 다른 선행 수정은 보존했다.
+- **검증**: 철회 전 12개 클래스 통합 targeted Maven 114건, 실패·오류 0, 기존 skip 1; package 성공. 코드 리뷰는 S1 correctness HIGH 1건, 목표 미구현 HIGH 1건, S2 불필요한 사본/비용 MEDIUM 1건, 테스트 부족 MEDIUM 1건으로 **REQUEST CHANGES**였다. `struct-on-01`은 정상 종료 및 cleanup/lease 해제를 확인했지만 Tspace **530.954250564초**로 on-04의 459.285986484초보다 느렸다. 1회 측정 차이를 패치의 순수 효과로 단정하지 않는다. proof query 240,459회와 relation slot 31,029개는 on-04와 동일했다. 철회 후 영향 회귀 63건, 실패·오류 0, 기존 skip 1 및 package 통과.
+- **잔여 이슈**: 새 완료 direct frontier의 별도 ON 실측 중. 최종 새 JVM OFF 3회와 V4는 아직 미실행. `struct-on-01` 로컬 overlay JAR은 Maven이 hard link를 덮어써 한 번 변했으나 so007의 원본 SHA-256 `306494b7cf60aaba43755a6a990582f39c498bf14c573557ceaea6de4a4d5a99`에서 복원하고 target inode를 분리해 원래 provenance를 회복했다.
+- **잠재 회귀 위험과 감지**: cache를 그대로 두면 latent-WDivMM에서 stale LOUT/FOUT correction이 남을 수 있다(간접 weights legality 변경 반례 필요). proof 관계 저장만 늘리면 메모리/시간이 악화될 수 있다(ON phase·allocation 비교 및 cache hit 소비 확인). **규칙 근거**: runtime 지원 후보를 줄이거나 privacy/재배치 판단을 우회하지 않으며, 테스트 전용 search space 진단도 미검증 후보를 성공으로 세지 않는다.
+
+## W1357 바깥 closure 간 direct frontier 재사용 — 효과 미달로 철회
+
+- **재현**: 기존 `initialPostPhysicalDirectDirty`의 before/after 비교를 바깥 `closeCfgTransientCandidateDependencies` 호출 사이에도 적용했다. 분석 단위 완료 frontier를 보관하고 정확한 CFG/origins/constraints 문맥만 재사용했다. `struct-frontier-on-01` 단일 metrics ON, 원본 DML hash와 search-only 조건을 유지했다.
+- **관측**: Tspace 466.794469197초, full direct pass 115→98회, proof query 240,459→236,357회, relation slot 31,029개. status/planningStatus/spaceReady 정상, selector·runtime·workload 호출 0, cleanup·lease 해제 정상. 1회 차이로 엄밀한 성능 회귀를 단정하지는 않지만 **60초에는 명백히 미달**하며 핵심 반복 수요 감소는 약 1.7%뿐이다.
+- **원인**: 호출 간 같은 완료 상태 일부만 생략했을 뿐, base/derived 사실의 이중 소유와 14개 호출 지점의 중첩된 semantic/publication/action closure는 그대로다. 이미 비슷한 문맥에서 partial memo를 더 늘려도 이 크기의 격차를 메울 근거가 없다.
+- **해결**: 이 변경을 소스에서 철회했다. 기존 on-04 의미 경로를 보존하고 별도 run JAR/receipt는 진단 증거로 남겼다. 철회 후 `NativePlacementContinuityTest`, `NeutralPlacementFixedPointCompositionTest`, `DirectedDirectClosureDirtyConeTest`, `PublicationSupportClosureTest` 합계 66건, 실패·오류 0, 기존 skip 1; `git diff --check` 통과.
+- **남은 위험/검증**: stage-owned base/derived 결과와 SCC별 transfer, 안정 후 publication 한 번을 구현하지 못했다. metrics OFF 새 JVM 3회 ≤60초 및 V4 플래너 소비 확인은 아직 시작하지 않았다. 상세 보고서: `/home/mchoi/cofee-evaluation/docs/COFEE_W1357_SEARCH_SPACE_60S_STRUCTURAL_EXECUTION_REPORT_2026-09-25.md`.
+
+## W1357 S1 stage ownership — flat candidate row 설계 제약
+
+- **증상/원인**: 현재 `CandidateReplay`는 하나의 `List<CandidateRuleFact>`에 oracle base와 direct/CFG/privacy/relocation/action 결과를 섞는다. direct는 relocation clause를 복사하고 relocation은 direct-only FED/LOUT clause도 만든다. CFG는 TRead 행 전체, privacy는 상태와 emission 목록, latent-WDivMM은 transitive legality에 따라 계약 전체를 변경한다. binding kind나 단일 clause owner는 충분한 stage provenance가 아니다.
+- **검토한 해결과 기각 근거**: 물리 base side-map만 추가해 동일 descriptor에서 현재 bound 행을 보존하면 source/action 삭제 후 stale binding 위험(on-05)을 반복한다. 매번 base로 초기화하는 안전한 방법은 기존 재증명 비용을 유지한다. 공개 clause에 owner 필드를 넣으면 signature/canonical merge/receipt identity가 바뀌거나 비의미적 owner가 복사·factorization 과정에서 소실된다.
+- **결과**: Builder·PlacementAnalysis로 범위를 넓혀 검토했지만, revision-capable stage transition API와 row/node/status/logical/action 전체의 계층 소유권이 없이는 작은 안전 patch가 불가능하다고 판정했다. 추측성 코드는 추가하지 않았다. 이는 문제 해결 완료나 production 우회를 뜻하지 않는다.
+- **다음 작업/검증**: dependency component scheduler를 먼저 독립적으로 고정하고, cutover 시 source/action 삭제, absent→present, privacy 제외/복귀, 두 callsite, loop seed, latent-WDivMM 간접 legality의 단계별 반례를 포함한다. 전체 row layer/transfer를 실제 production 경로에 통합하기 전에는 60초 달성을 주장하지 않는다.
+
+### S2-A 순수 dependency schedule 진행
+
+`PlacementDependencyComponents.java`를 새로 추가해 semantic producer→consumer SCC와 별도 alias invalidation을 분리했다. 최초 리뷰에서 전체 transitive downstream을 미리 enqueue하는 O(N²) 위험과 지연 alias 누락이 발견되어, `initialDirtyComponents`와 **실제 export 변경 후** `exportChangeFrontier`(alias closure + immediate semantic successors)로 계약을 수정했다. adjacency 중복 제거도 owner별 identity set으로 바꿨다. chain/diamond/join/loop/self-loop/callsite/alias/512-chain 반례 11건 통과. 이 타입은 아직 production Builder에 연결되지 않아 search-space 시간 개선을 주장하지 않는다.
+
+## W1357 실행 관계와 proof 이력의 혼합 — 철학 변경 계획
+
+- **상태:** 원인 조사·계획 작성 완료, 수정 미구현. 이번 조사에서 코드 변경·새 테스트·새 성능 실행은 하지 않았다.
+- **환경/재현 근거:** 실제 logreg W1/LAN, on-04 search-space-only. `/home/mchoi/w1357-diagnostics/search-space-60s-revised-20260925/runs/on-04/probe-receipt.json`에서 Tspace 459.285986484초, 최종 relation slot 31,029개, 누적 proof alternative 289,863,369개, dependency edge 401,000,706개, closure replay 53회/direct pass 852회를 확인했다. 누적 작업량과 최종 공간 크기는 다르며, 그 차이 전체가 불필요한 후보라고 단정하지 않는다.
+- **문제 정의:** 같은 실행 관계의 여러 증명 경로를 후보별 graph로 반복 전개하고, 나중에 support를 합친다. 실행 불가능한 일부 조합도 product 생성 시 제외하지 않는다. 물리 cache·frontier 일부 재사용보다 경우의 수의 정의를 바꿀 필요가 있다.
+- **코드로 확인한 원인:**
+  1. `NativePlacementContinuity.java:803–818`의 input-position Cartesian product에는 동일 producer occurrence의 exact reference 일관성 join이 없다. 같은 X의 선택 A/B를 두 입력에서 사용하면 AB/BA가 생길 수 있지만, `ExactPhysicalModel.java:771–790`의 단일 selectedSource 제약은 이를 허용하지 않는다.
+  2. `NativePlacementContinuity.java:1303–1307`은 한 clause의 동일 owner에 대한 다른 support reference를 map에 마지막 값으로 덮어쓴다. 모순 clause를 앞에서 거부하도록 바꿀 대상이다. 실제 logreg에서 이 모순이 얼마나 발생했는지는 미측정이다.
+  3. `NativePlacementContinuity.java:1199–1249`는 realization의 clause마다 topology row를 만든다. private grounding에 쓰이는 exact reference·ground·완전한 dependency skeleton이 같은 경우까지 proof 설명 이력 때문에 반복 전개할 필요는 없다. 서로 다른 public source reference나 AND 의무는 합치면 안 된다.
+  4. `NeutralPlacementGraphBuilder.java:3620–3673,3707–3729`는 전체 호환 seed를 순회하며 seed signature를 native lineage/public proof에 포함한다. 내부 support memo는 이미 seed-free이므로 새 cache를 발명하는 문제가 아니다. 내부 계산 공유와 public seed/root 권한을 분리해야 한다.
+- **해결 계획:** 동일-occurrence consistency join → private semantic hyperedge 사전 중복 제거 → revision별 공유 obligation graph와 root-active view → 실제 export 변경에 따른 요청 전파. source/action/callsite/geometry/exactness는 유지한다. 전체 candidate row의 stage ownership 개편을 첫 선행 조건으로 두지 않는다.
+- **의사결정 근거:** runtime이 지원하는 대안을 임의로 줄이지 않는다. 충돌 join의 제외는 이미 존재하는 전역 선택 합법성 제약을 앞에서 적용하는 것이고, private proof-history 통합은 외부 합법 실행 대안을 지우지 않는 표현 변경이다. PRIVATE_AGGREGATE·runtime fallback 금지·TRead/TWrite/recompile 제약을 완화하지 않는다.
+- **문서 수정 파일:** `/home/mchoi/cofee-evaluation/.omx/plans/COFEE_W1357_SEARCH_SPACE_60S_EXECUTION_RELATION_PLAN_2026-09-25.md`, 직전 구조 계획·검증 계획·구조 실행 보고서의 최신 계획 링크, 이 이슈 문서. 엔진 Java 파일은 이번 조사에서 수정하지 않았다.
+- **검증 방법/현재 결과:** source·receipt read-only 조사와 독립 코드 검토. 검토에서 (a) seed가 같아 보이더라도 public root/proof 권한은 유지할 것, (b) root pin에 따라 SCC가 바뀌므로 root 영향 component를 다시 계산할 것, (c) 내부 solve가 재사용돼도 provenance-only 변경은 게시하고 마지막 grounding authority가 사라지면 재계산할 것을 반영했다. public seed별 선택 identity 전체 통합은 이번 내부 관계 공유 단계의 요구가 아니다. 문서 확인은 알고리즘 회귀 통과나 60초 성능 증거가 아니다.
+- **예정 회귀:** AA/BB만 허용하는 동일-owner product, 같은 reference의 여러 입력 위치 허용, 다른 alias/callsite 미병합, AND/OR 상관관계, pure self-cycle/grounded loop, root-pinned good/bad sibling, source/action 삭제와 absent→present, exact/dynamic range 구분. 수정 묶음별 작은 테스트와 ON 1회, 최종 OFF 새 JVM 3회 각각 ≤60초 및 기존 V4 연결만 수행한다. 수치 정답/896조건 검증은 추가하지 않는다.
+- **잔여 이슈:** 충돌 조합과 history-only duplicate의 실제 workload 비중은 아직 없다. R1/R2만으로 60초 달성을 예측할 수 없으며, 75.519초의 closure exclusive 비용도 남을 수 있다. 기준선·미달 상태는 그대로다.
+- **잠재 회귀 위험/감지:** pool이 같다는 이유로 다른 producer 권한을 합치거나, query pin을 root 첫 row에만 적용하거나, OR-of-AND를 입력별 product로 평탄화하면 불가능한 조합/잘못된 grounding이 생긴다. 위 작은 반례와 public 소비자 테스트로 확인한다. graph/index/public 변환을 selector로 넘겨 시간을 숨기는 위험은 기존 Tspace 경계 및 V4로 확인한다.
+
+## W1357 실행 관계 계획 구현 — R1/R2 완료, R3/R4 부분 구현, 60초 미달
+
+- **상태/환경:** 기준 계획 `/home/mchoi/cofee-evaluation/.omx/plans/COFEE_W1357_SEARCH_SPACE_60S_EXECUTION_RELATION_PLAN_2026-09-25.md`. 실제 logreg W1/LAN의 search-space-only 진단. 최종 JAR SHA-256 `1787854e444fb1b97441f2e24c362fa054842b63863fa2aa235af933f09c4418`. 896조건, selector, runtime workload, 수치 reference 검증은 실행하지 않았다.
+- **증상/원인:** R1/R2는 내부 proof alternative 누적을 289,863,369→55,044,203으로 줄이고 public relation slot 31,029를 보존했지만 ON Tspace는 459.286→417.071초였다. 후속 SCC 밖 cyclic child summary와 memo·semantic revision 재사용 후에도 final ON 415.751초, **fresh JVM metrics OFF 406.735초**다. 목표 60초의 약 6.78배이며 OFF 합격 첫 시도가 실패했다. 852 direct pass와 53 closure replay는 그대로이고, 의미 projection 후에도 proof query 230,359회다. Builder의 반복 transfer 수요 자체가 남았다.
+- **변경 요약:** 동일 occurrence의 상충 exact 선택 product와 clause pin을 조기 거부(R1). proof 이력만 다른 private hyperedge를 topology·root overlay에서 합치고 선언된 invalid ref의 staging fallback을 차단(R2). private row/selected proof에서 쓰이지 않는 clause field를 제거. compiled input/reaching의 보수적 occurrence SCC를 만들어 root SCC 밖 cyclic child를 grounded summary로 재사용하고, summary를 온전한 footprint 검사 후 revision으로 이전(R3 일부). `proofDependencies`만 제외하고 status/key/emission/exact realization/binding owner identity/action/native witness/layout을 포함하는 projection으로 topology/support/public memo를 revision 재사용(R4 일부). 설명만 달라진 public candidate fact는 다음 revision의 publication에서 보존된다. Public memo footprint 메모리도 bounded 예산에 포함했다.
+- **수정 파일:** `NativePlacementContinuity.java`, `SearchSpaceMetrics.java`, `NativePlacementContinuityTest.java`, `NeutralPlacementFixedPointCompositionTest.java`. 진단 `initialize_run.py`, `template/prepare_overlay.py`, `test_initialize_run.py`, `README.md`도 독립 overlay inode·Docker-bind 경로 계약을 수정했다. 원래 있던 다른 dirty worktree 변경은 되돌리지 않았다.
+- **검증:** 최종 영향 Java 8 suite 105 cases, failures/errors 0, 기존 skip 1; Maven package 0, `git diff --check` 0. 독립 코드 리뷰는 최종 의미 projection에 HIGH 문제 없음. ON `relation-r12-on04` 417.070854217초, `relation-r34-on05` 411.550707756초, `relation-r34-semantic-on06` 415.750729691초; 최종 OFF `relation-r34-semantic-off01` 406.735203534초. 모두 정상 search-only receipt·cleanup·lease 해제, selector/runtime/workload count 0. 각 ON은 1회라 수 초 차이를 순수 패치 효과로 단정하지 않는다. 증거와 전체 상태는 `/home/mchoi/cofee-evaluation/docs/COFEE_W1357_EXECUTION_RELATION_IMPLEMENTATION_REPORT_2026-09-25.md`에 있다.
+- **미완료/위험:** R3의 공유 obligation graph가 기존 per-root ancestor graph build를 대체하지 못했고, R4의 실제 support-export delta 기반 component worklist는 Builder에 연결되지 않았다. 단순 one-hop dirty propagation은 중간 fact가 동일해도 아래 source grounding이 바뀌어 downstream proof가 바뀌는 경우 stale support를 만들 수 있으므로 적용하지 않았다. OFF 첫 시도 실패로 같은 버전의 OFF 2·3회와 V4를 성공 검증으로 반복하지 않았다. **60초 달성·전체 계획 완료를 주장하지 않는다.**
+- **데이터/자원 보존:** so002 Snap Docker는 `/grid/3` bind를 거부하므로 실제 진단은 home에 유지했다. 기존 generated Maven `target/lib`와 완료된 ON overlay JAR 3개는 SHA/bytes 확인 후 `/grid/3/cofee-lm-sweep-mchoi-20260914/` 아래에 보존 이동하고 원위치 symlink를 둔 상태다. 기존 결과/데이터는 삭제하지 않았다. preflight-only 실패 run과 Docker bind/resource-gate 실패 run도 각각 증거로 보존했다.
