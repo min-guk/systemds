@@ -285,11 +285,11 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			if(countMatches(facts, "\\bpackage\\s+org\\.apache\\.sysds\\.hops\\.fedplanner\\.placement\\s*;") != 1
 				|| countMatches(facts, "\\bfinal\\s+class\\s+PlacementShapeFacts\\b") != 1)
 				violations.add("PlacementShapeFacts must be an explicit final carrier in the placement package");
-			if(countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?NodeShapeFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 1
+			if(countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?NodeShapeFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 2
 				|| countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?AbstractShapeFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 1
 				|| countMatches(facts, "\\bprivate\\s+final\\s+(?:java\\.util\\.)?Map\\s*<\\s*(?:PlacementIdentity\\s*\\.\\s*)?CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?ScalarLiteralFact\\s*>\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*;") != 1
-				|| countMatches(facts, "\\b(?:java\\.util\\.)?Map\\s*\\.\\s*copyOf\\s*\\(") != 3)
-				violations.add("PlacementShapeFacts must own one immutable concrete, abstract, and scalar fact map");
+				|| countMatches(facts, "\\b(?:java\\.util\\.)?Map\\s*\\.\\s*copyOf\\s*\\(") != 4)
+				violations.add("PlacementShapeFacts must own immutable current/source concrete, abstract, and scalar fact maps");
 			if(matches(facts, "\\bOracleFacade\\b|\\bnodeShape\\s*\\(")
 				|| matches(facts, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
 				violations.add("PlacementShapeFacts must store builder-owned facts, not derive shape metadata");
@@ -349,7 +349,8 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		if(!facts.isEmpty()) {
 			for(Map.Entry<Path, String> entry : production.entrySet())
 				if(!entry.getKey().equals(SHAPE_FACTS) && matches(entry.getValue(),
-					"\\bMap\\s*<\\s*CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?NodeShapeFact\\s*>"))
+					"\\bMap\\s*<\\s*CompiledHopKey\\s*,\\s*(?:PlacementAnalysis\\s*\\.\\s*)?NodeShapeFact\\s*>"
+						+ "\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*(?:=|;)"))
 					violations.add("alternate shape-fact map carrier: " + ROOT.relativize(entry.getKey()));
 		}
 
@@ -359,7 +360,8 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			violations.add("builder must derive shape facts only through its sole OracleFacade.nodeShape call");
 		if(matches(fixture, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
 			violations.add("fixture bridge must use explicit/projected facts rather than direct Hop shape getters");
-		addForbiddenA2Indirection(violations, "PlacementAnalysis", analysis);
+		String analysisShapeSeam = constructorSeams(analysisSource, "PlacementAnalysis");
+		addForbiddenA2Indirection(violations, "PlacementAnalysis", analysisShapeSeam);
 		if(!facts.isEmpty()) addForbiddenA2Indirection(violations, "PlacementShapeFacts", facts);
 		addForbiddenA2Indirection(violations, "NeutralPlacementGraphBuilder", builder);
 		addForbiddenA2Indirection(violations, "CampaignBPlacementAnalysisFixtureBridge", fixture);
@@ -429,6 +431,17 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			.matcher(code);
 		while(matcher.find()) if(matcher.group(1).contains(parameterToken)) return matcher.group(1);
 		return "";
+	}
+
+	private static String constructorSeams(String source, String type) {
+		String code = JavaSourceBoundaryScanner.codeOnly(source);
+		Matcher declarations = Pattern.compile("\\b" + Pattern.quote(type)
+			+ "\\s*\\(([^)]*)\\)\\s*(?:throws\\s+[^\\{]+)?\\{").matcher(code);
+		List<String> seams = new ArrayList<>();
+		while(declarations.find())
+			seams.add(declarations.group(1));
+		seams.addAll(JavaSourceBoundaryScanner.methodBodies(source, type, ""));
+		return String.join("\n", seams);
 	}
 
 	private static String typedParameterName(String parameters, String typeExpression) {
@@ -533,6 +546,16 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		String code = JavaSourceBoundaryScanner.codeOnly(fixture);
 		Assert.assertEquals(1, countMatches(code, "\\bOracleFacade\\s*\\.\\s*nodeShape\\s*\\("));
 		Assert.assertEquals(1, countMatches(code, "\\bnew\\s+PlacementShapeFacts\\s*\\("));
+		List<String> erased = new ArrayList<>();
+		addForbiddenA2Indirection(erased, "fixture", constructorSeams(
+			"final class PlacementAnalysis { PlacementAnalysis(Graph graph, Object shapeFacts) {} }",
+			"PlacementAnalysis"));
+		Assert.assertFalse("A2 scanner must reject an erased shape-fact constructor seam", erased.isEmpty());
+		List<String> typed = new ArrayList<>();
+		addForbiddenA2Indirection(typed, "fixture", constructorSeams(
+			"final class PlacementAnalysis { PlacementAnalysis(Graph graph, PlacementShapeFacts shapeFacts) {} }",
+			"PlacementAnalysis"));
+		Assert.assertTrue("A2 scanner must accept the exact typed shape-fact constructor seam", typed.isEmpty());
 	}
 
 	private static Map<Path, String> productionJava() throws Exception {

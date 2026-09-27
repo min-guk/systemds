@@ -1,6 +1,6 @@
 # Session issues — 2026-09-28
 
-## Paper-aligned refactor in an independent workspace — in progress
+## Paper-aligned refactor in an independent workspace — initial issue
 
 - Problem: the 10k-line search-space builder combines compiler facts, candidate
   generation, relation convergence, observation and publication in one owner.
@@ -12,13 +12,14 @@
   sets while giving paper concepts explicit code responsibility boundaries.
 - Files: see `PAPER_ALIGNED_REFACTOR_EXECUTION_2026-09-28.md` for the cleanup plan,
   state ownership table, evidence locations, reviewers and verification ledger.
-- Remaining bugs: external C0 correctness prerequisite is not yet verified.
-  P3/P4 must not proceed without its source-matched evidence.
+- Initial blocker: external C0 was not verified at startup. The later C0 entry
+  records its resolution before P3/P4 proceeded.
 - Regression risks: stale proof inventory, lost pending work, owner identity
   changes, candidate-dependent facts moved too early, and expired action removal
   deleting valid OR siblings. Existing semantic regression and multiset exports
   will detect these; assertion values and comparator remain unchanged.
-- Verification: in progress. No success claim until fresh results are recorded.
+- Verification at this checkpoint: pending. Final evidence is recorded in the
+  subsequent entries and the paper-aligned report.
 
 ## P2 책임 추출 및 기준 회귀 — 해결
 
@@ -44,3 +45,12 @@
 - 수정 파일: `CampaignBG014PlacementCandidateRuleFactsSliceATest`, `CampaignBG014PlacementCandidateResolverSliceATest`, `CampaignBG011PrivacyResolverOwnerContractTest`, `PlacementAnalysisS2ContractTest`. Production은 바꾸지 않았다.
 - 검증: 네 클래스 27/27 통과, 실패/오류/skip 0, source 전후 동일 (`evidence/p4/stale-contracts-four-v6.json`). 중간 fixture 구성 오류와 수정 과정의 raw XML은 별도 보존했다.
 - 위험: source guard가 의미 회귀를 대체할 수 없다. frozen physical multiset 및 기존 writer/foreign-owner/OR-of-AND 의미 검사를 계속 적용한다.
+
+## 최종 architecture guard의 오래된 계약 — 해결
+
+- 증상: 첫 최종 clean 73-suite 검사에서 576건 중 guard 세 건 실패. Production 의미 검사는 통과했다. 수정 중에는 package-private fingerprint helper를 하위 test package에서 호출한 compile 오류도 발견했다.
+- 원인: shape carrier의 현재/원본 concrete map을 하나로 세던 검사, 정당한 분석 method parameter를 alternate map owner로 오인한 정규식, `equals(Object)`까지 차단한 전체 클래스 token 검사, `CompiledHopKey`를 `Hop`으로 인식한 부분 문자열 검사, builder 전후 traversal scratch를 의미 구조와 혼동한 fingerprint 검사였다. 해당 production 파일은 C0와 동일하다.
+- 해결: 네 typed immutable map을 정확히 요구하고 map 선언과 모든 constructor signature/body를 검사한다. typed/erased seam 및 정확한 selector 타입의 양성·음성 fixture를 유지한다. builder parity 후에는 공개 `assertProgramStructureUnchanged()`로 structural authority를 검증한다.
+- 파일: `PlacementAnalysisConstructionArchitectureTest`, `PlacementFoundationArchitectureGuardTest`. Production visibility와 계약은 변경하지 않았다. Docker wrapper의 설명도 실제 selector-free common search-space 실행과 일치시켰다.
+- 검증: 두 guard 클래스 11/11 통과, 실패/오류/skip 0, source 전후 동일 (`evidence/final/architecture-guards-v2.json`). 전체 clean 재검증 결과는 최종 항목에 기록한다.
+- 잔여 위험: source guard는 실제 physical 동등성 검사를 대체하지 않는다. 최종 protected export 및 동일 Docker 측정을 별도로 수행한다.

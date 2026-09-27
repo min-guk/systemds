@@ -12,9 +12,10 @@ in-progress correctness patch imported from `/home/mchoi/w1357-logreg-nary-fix`.
 That import is a separate review unit, not part of the refactor.
 The immutable baseline checkout, per-file source manifest, imported patch, and
 approved plan are under `/home/mchoi/w1357-diagnostics/paper-refactor-20260928`.
-The external correctness prerequisite C0 remains unproven until the original
-three methods, related regressions, original B-21 192/36 assertions and frozen
-physical multisets pass on a source/JAR-matched snapshot.
+The external correctness prerequisite C0 was subsequently satisfied on final
+correctness commit `cfab6c8258` and its exact translated import `a8bfa88413`.
+The original three methods, related clean 469-case suite, B-21 192/36 and frozen
+physical multisets pass on paired source/JAR snapshots; see `evidence/c0/gate.json`.
 
 ## Cleanup plan written before production edits
 
@@ -75,12 +76,13 @@ Independent P2 review approved this table after correcting the publication/actio
 boundary and explicitly separating initial vs relation-refined single-partition
 facts (both corrections applied before extraction).
 
-Status: baseline verification and boundary review in progress; no implementation
-stage is claimed complete yet.
+Status: P0–P4 implementation and independent boundary/update/index reviews are
+complete. P5 final clean, physical exports and Docker comparison are in progress.
+The checkpoint results below are historical evidence, including repaired failures.
 
 ## P2 checkpoint
 
-- Public builder 192 lines; facts, generator, relation closure, support operations and diagnostics now have separate owners. L3 is split into seed, boundary, function, privacy, feasibility and publication phases.
+- Public builder 190 lines; facts, generator, relation closure, support operations and diagnostics now have separate owners. L3 is split into seed, boundary, function, privacy, feasibility and publication phases.
 - Independent extraction review found no change to identity creation, call order, six-component convergence or commit/invalidation lifetime. Published immutable objects survive cleanup and builder reuse.
 - Clean expanded 44-class suite: baseline and P2 each 365 tests, 9 failures, 3 errors, 5 existing skips. Failure identities match; the stale source-branch inventory observes moved source locations. Evidence: `evidence/{baseline/p2-expanded-reference,p2/expanded-clean-v1}.json`.
 - Protected physical exports: before/P2 each 216 proofs / 56 physical plans on P and E; bidirectional canonical physical sets and multiplicity match. All 216 P audit rows are equal as parsed JSON in order; raw serialization differs. Comparator was unchanged.
@@ -162,3 +164,14 @@ lazy index sharing. This is a structural guard, not universal semantic proof.
 The final golden has 7,471 sites. Diagnostics remains in the source coverage after
 extraction (146 sites), so no old branch surface is silently omitted. Comparator/
 scanner logic is unchanged; only the owner source list and reviewed data change.
+
+## Final source-guard maintenance
+
+The first final 73-suite clean run had 576 cases, three failures, no errors and
+ten existing public-only skips. All three failures were stale architecture source
+guards. The underlying production shape/analysis/selector files match C0 exactly.
+The guards now require all four immutable shape maps, inspect actual map ownership
+declarations and every constructor seam, recognize complete Java type tokens, and
+check the public structural authority contract instead of compiler traversal scratch.
+Positive and adversarial fixtures remain active. Both guard classes pass 11/11
+(`evidence/final/architecture-guards-v2.json`); the final combined clean run follows.

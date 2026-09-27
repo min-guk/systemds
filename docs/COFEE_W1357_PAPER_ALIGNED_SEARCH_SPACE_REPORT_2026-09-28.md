@@ -1,12 +1,13 @@
 # W1357 search space: 논문 개념과 구현의 대응
 
-## 범위와 현재 단계
+## 구현 범위
 
 승인된 2026-09-28 계획을 별도 worktree
 `/home/mchoi/w1357-paper-aligned-refactor`에서 구현한다. 원본 엔진과 평가
-저장소의 진행 중 변경은 보존한다. P0/P1/P2 책임 추출과 기준 동등성
-검증을 완료했다. P3/P4 및 Docker 비교는 후속 단계다. 외부 correctness
-최종 commit `cfab6c8258`의 자료를 받아 C0 기준을 새로 고정한다.
+저장소의 진행 중 변경은 보존했다. P0–P4 구현을 완료했고 최종 P5 검증을
+진행한다. 외부 correctness 최종 commit `cfab6c8258`은 별도 diff로 반영했으며,
+C0의 원래 세 메서드와 관련 clean 469건, B-21 192/36 및 전체 protected
+집합·multiplicity를 확인한 뒤 P3/P4를 적용했다.
 
 ## 세 계층과 실제 진입점
 
@@ -22,7 +23,7 @@
 | 게시 | `PlacementRelationClosure.publish` | 동등한 graph-owned state 정규화, factorization, authority 검증, analysis 구성 |
 | 관측 | `PlacementClosureDiagnostics`, 기존 `SearchSpaceMetrics` | recurrence/export 차이와 문자열; 의미 상태의 정본이 아님 |
 
-`NeutralPlacementGraphBuilder`는 공개 생성자/API, facts→closure 조립과
+`NeutralPlacementGraphBuilder`는 190행이며 공개 생성자/API, facts→closure 조립과
 analysis scope의 시작·종료를 유지한다. Oracle tuple 처리, CFG 정밀화,
 support 제거, 상세 진단 문자열의 본체는 각 소유자로 이동했다.
 
@@ -47,7 +48,7 @@ flowchart TD
 
 ## 실제 순서를 반영한 알고리즘
 
-아래는 P2의 실제 phase 순서다. 원래 계획의 상위 transfer 초안으로
+아래는 최종 구현의 실제 phase 순서다. 원래 계획의 상위 transfer 초안으로
 실행 순서를 바꾸지 않았다. 각 단계 내부의 기존 반복·guard도 유지한다.
 
 ```text
@@ -101,6 +102,9 @@ BuildSearchSpace(program):
    검증한 뒤 기존 DP/Exact가 전체 선택을 수행한다. 같은 output label만으로
    source/clause/action을 합치지 않는다.
 
+이 예제의 이항 OR-of-AND 식은 상관관계를 설명하는 일반식이다. 단항
+`rowSums` 자체에 두 matrix 입력이 있다는 뜻은 아니다.
+
 고정 기준 B-21은 P와 E 각각 192 raw proofs / 36 physical plans다. 두 값과
 양방향 physical identity, multiplicity를 따로 검증하며 160/30으로 낮추지
 않는다. 리팩터링 후 전체 비교 결과는 최종 검증 표에 기록한다.
@@ -114,30 +118,38 @@ BuildSearchSpace(program):
 - Owner의 node/index/key/fact commit 뒤 proof inventory를 무효화한다.
   query memo reset과 source revision commit은 서로 대체하지 않는다.
 - Direct support의 edge 추가/삭제가 SCC 구조를 바꾸면 schedule을 다시
-  만들면서 미처리 작업을 보존한다. P2에서 이 알고리즘은 변경하지 않는다.
+  만들면서 미처리 작업을 보존한다. 이번 변경에서 이 알고리즘은 유지했다.
 - metrics OFF에서는 상세 비교와 문자열을 만들지 않는다. 진단 snapshot을
   실행 상태로 사용하지 않는다.
 - Builder 재사용과 예외 종료 모두 `finally`에서 closure의 현재 상태와
   proof context를 해제한다. 게시된 불변 객체를 clear하지 않는다.
 
+## 갱신과 중복 순회 통합
+
+P3의 `applyUpdate(ClosureUpdate)`는 기존의 완전한 네 필드 갱신 열 곳을
+대체한다. `nodes`, `ruleKeys`, `ruleFacts`, `transientBindings`만 반영하고,
+반환값에 없는 action과 pending work는 원래 소유자에게 남긴다. 일부 필드만
+갱신하던 호출은 명시적인 부분 갱신으로 유지한다.
+
+`PhysicalCandidateState.commit`은 node → exact block index → ordered keys →
+facts → proof inventory 무효화를 한 경계로 묶는다. 소비자 scheduling은
+그 뒤 원래 위치에서 수행한다. 기존 리스트의 구조 공유와 정확한 identity를
+유지하고, 범용 transaction/pass framework는 도입하지 않았다.
+
+P4의 `CommittedProofInventory.nodesByKey()`는 같은 불변 commit snapshot에서
+edge index와 materialization resolver가 사용하던 동일 노드 순회를 공유한다.
+둘을 모두 조회할 때 전체 노드 인덱스 생성과 map 할당이 **2회에서 1회**로
+줄어든다. 서로 다른 revision 사이에는 공유하지 않고 resolver query memo는
+매 query마다 기존대로 초기화한다. edge-first/resolver-first 순서와 변경된
+worker pool, 새 revision 조회 뒤 옛 inventory 재조회까지 cold owner와 비교한다.
+
+CFG/privacy/action transfer의 교환 가능성은 증명되지 않았으므로 global
+transfer와 반복 순서를 유지했다. 후보·proof 수 감소를 이번 성과로 주장하지
+않는다. 관측 횟수 보존과 중복 index 생성 제거는 서로 다른 검증 항목이다.
+
 ## 검증 추적
 
-전체 명령·source manifest·XML·JAR·NDJSON은
-`/home/mchoi/w1357-diagnostics/paper-refactor-20260928/evidence/`에 있다.
-P0/P1 상세는 `BASELINE_AND_P1_SUMMARY.md`를 참조한다.
-
-| 항목 | 현재 확인 결과 |
-| --- | --- |
-| 고정 기준 | `aaa574ebb5`; 원본 HEAD와 correctness patch를 별도 기록 |
-| P1 | `a5e4996cf6`; 역이름변환 시 production 소스가 바이트 단위로 원본과 일치 |
-| 기준/P1 clean 대상 회귀 | 각각 170건, 동일한 기존 실패 5, 오류 0, 기존 skip 4 |
-| 기준 C0 원래 세 메서드 | 3/3 통과; 관련 회귀 실패로 C0 전체는 미충족 |
-| 기준 protected P/E | 216 proofs / 56 physical; 양방향 집합 및 multiplicity 일치 |
-| B-01 기준→P1 | P와 E 각각 차이 0; proof multiplicity 및 P audit 일치 |
-| P2 | clean 365건 결과가 기준과 동일; protected P/E 216/56 전후 집합·multiplicity 동일 |
-| P3/P4 | C0 선행조건에 의해 미실행 |
-| Docker 성능 비교 | 미실행; P5 최종 근거로 남아 있음. 속도 향상 주장 없음 |
-
-실패 5건의 메서드·증상은 실행 기록과 원본 XML에 보존한다. 기대값을
-약화하거나 구조 변경에 correctness 수정을 섞지 않는다. 이 문서는 전체
-리팩터링 완료 보고서가 아니다.
+최종 clean 검사와 physical export, 동일 Docker 비교를 진행 중이다. 확정된
+원본 명령·source manifest·XML·JAR·NDJSON 및 단계별 실패 기록은
+`/home/mchoi/w1357-diagnostics/paper-refactor-20260928/`에 보존한다.
+최종 표는 새 clean JAR와 일치하는 artifact가 준비되면 기록한다.

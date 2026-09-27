@@ -14,7 +14,6 @@ import java.util.stream.Stream;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -33,7 +32,6 @@ public class PlacementFoundationArchitectureGuardTest {
 	@Test
 	public void builderExposesOneObservableAnalysisUniverseAndLegacyParity() throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile("B-22");
-		String before = PlacementGraphFingerprint.capture(program);
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
 		PlacementAnalysis analysis = builder.buildAnalysis(program);
 		PlacementAnalysis detached = builder.buildDetachedAnalysis(program);
@@ -41,7 +39,8 @@ public class PlacementFoundationArchitectureGuardTest {
 		Assert.assertNotSame(analysis, detached);
 		Assert.assertEquals(analysis.analysisFingerprint(), detached.analysisFingerprint());
 		Assert.assertEquals(analysis.graph().normalizedSignature(), builder.build(program).normalizedSignature());
-		Assert.assertEquals(before, PlacementGraphFingerprint.capture(program));
+		analysis.assertProgramStructureUnchanged();
+		detached.assertProgramStructureUnchanged();
 		try {
 			builder.requireAuthoritativeAnalysis(program);
 			Assert.fail("unbound program unexpectedly exposed canonical placement authority");
@@ -61,11 +60,14 @@ public class PlacementFoundationArchitectureGuardTest {
 
 	@Test
 	public void selectorBoundaryIsGraphOnlyAndContainsNoFallbackSuccessVocabulary() throws IOException {
+		Assert.assertTrue(forbiddenSelectorSignature("void select(Hop hop) {}"));
+		Assert.assertTrue(forbiddenSelectorSignature("void select(org.apache.sysds.parser.DMLProgram program) {}"));
+		Assert.assertFalse(forbiddenSelectorSignature("void select(Map<CompiledHopKey,PlacementState> states) {}"));
 		Path selectorRoot = PLACEMENT.resolve("selector");
 		List<String> violations = new ArrayList<>();
 		for(Path source : javaSources(selectorRoot)) {
 			String text = read(source);
-			if(text.matches("(?s).*select\\s*\\([^)]*(?:DMLProgram|Hop|StatementBlock|FederatedPlanner)[^)]*\\).*"))
+			if(forbiddenSelectorSignature(text))
 				violations.add(relative(source) + ": selector consumes a planner/program/Hop universe");
 			String lower = text.toLowerCase();
 			for(String forbidden : List.of("timeout_success", "cap_success", "greedy_success", "approximate_success",
@@ -74,6 +76,11 @@ public class PlacementFoundationArchitectureGuardTest {
 					violations.add(relative(source) + ':' + forbidden);
 		}
 		Assert.assertTrue("selector boundary violations: " + violations, violations.isEmpty());
+	}
+
+	private static boolean forbiddenSelectorSignature(String source) {
+		return JavaSourceBoundaryScanner.codeOnly(source).matches(
+			"(?s).*\\bselect\\s*\\([^)]*\\b(?:DMLProgram|Hop|StatementBlock|FederatedPlanner)\\b[^)]*\\).*");
 	}
 
 	@Test

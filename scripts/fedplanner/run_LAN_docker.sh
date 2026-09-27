@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot Docker-only DP search-space validation entrypoint.
+# One-shot Docker-only common search-space validation entrypoint.
 #
 # This deliberately delegates to the frozen P5 evidence harness. It does not
 # invoke run_LAN.sh, run Java on the host, execute a workload, resume the paused
