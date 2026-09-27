@@ -458,7 +458,10 @@ public class OracleFacadeTest {
 
   @Test
   public void binaryFullMatrixWithLocalMatrixDoesNotRequireEncodedWidth() {
-    Hop full = matrix("encoded", 100_000, -1);
+    Hop full = federated("encoded", 1);
+    full.setDim1(100_000);
+    full.setDim2(-1);
+    full.setBlocksize(1000);
     Hop local = matrix("bound", 1, -1);
     BinaryOp less = new BinaryOp(
         "less", DataType.MATRIX, ValueType.FP64, OpOp2.LESS, full, local);
@@ -474,6 +477,29 @@ public class OracleFacadeTest {
     assertEquals(Optional.of(FType.FULL), evidence.caps().foutFType());
     assertEquals("FULL plus a local operand is independent of ROW/COL shape proof",
         Set.of(), evidence.shapeProof().missingRequiredFacts());
+    assertEquals("The runtime prerequisite is the source's single FULL range, not its width",
+        Map.of("fullSinglePartition", "true"), evidence.shapeProof().consultedFacts());
+  }
+
+  @Test
+  public void binaryFullMatrixWithUnknownCardinalityFailsClosed() {
+    Hop full = matrix("encoded", 100_000, -1);
+    Hop local = matrix("bound", 1, -1);
+    BinaryOp less = new BinaryOp(
+        "less", DataType.MATRIX, ValueType.FP64, OpOp2.LESS, full, local);
+    less.setDim1(100_000);
+    less.setDim2(-1);
+    less.setBlocksize(1000);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(less, Arrays.asList(FType.FULL, null), null);
+
+    assertEquals(ExecType.CP, evidence.caps().exec());
+    assertEquals(FederatedOutput.LOUT, evidence.caps().placement());
+    assertEquals(ReasonCode.FULL_MULTI_PARTITIONS_UNSUPPORTED, evidence.caps().reason());
+    assertEquals(Map.of("fullSinglePartition", "UNKNOWN"),
+        evidence.shapeProof().consultedFacts());
+    assertEquals(Set.of("fullSinglePartition"), evidence.shapeProof().missingRequiredFacts());
   }
 
   @Test

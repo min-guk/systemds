@@ -27,6 +27,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostModel.BoundaryMode;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostModel.Direction;
@@ -72,6 +73,63 @@ public class ExactCompiledMaterializationScopeTest {
 		Assert.assertEquals("A loop-invariant MatrixObject is collected once while a loop-updated"
 			+ " MatrixObject is collected once per produced state",
 			ITERATIONS * stableCost, updatedCost, Math.max(1e-12, stableCost * 1e-12));
+	}
+
+	@Test
+	public void b21OrdinaryFoutLocalInputHasFinitePayloadDownload() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-21");
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(
+			program, Privacy.PRIVATE_AGGREGATE);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+		var consumers = analysis.graph().decisionNodes().stream().filter(node ->
+			analysis.hop(node.key()).map(hop -> hop instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTWRITE
+				&& "Y".equals(data.getName())).orElse(false))
+			.toList();
+		Assert.assertEquals("B-21 must expose one exact TWrite Y consumer", 1, consumers.size());
+		var edge = analysis.compiledInputEdge(consumers.get(0).key(), 0).orElseThrow();
+		Assert.assertEquals("B-21 TWrite Y input must come from rowSums",
+			"ua(+R)", analysis.hop(edge.producer()).orElseThrow().getOpString());
+		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		ExactPhysicalCostModel.PhysicalCostSurface surface =
+			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		Assert.assertTrue("B-21 ordinary FOUT/local input must own an exact ROW download",
+			surface.transferKeys().stream().anyMatch(key -> key.direction() == Direction.DOWNLOAD
+				&& key.boundaryMode() == BoundaryMode.ANCHOR_TRANSFER && key.fType() == FType.ROW
+				&& key.endpoints().stream().anyMatch(endpoint -> endpoint.producer() == edge.producer()
+					&& endpoint.consumer() == edge.consumer() && endpoint.inputPosition() == 0)));
+
+		var source = domain(model, edge.producer());
+		var consumer = domain(model, edge.consumer());
+		int sourceValue = -1, consumerValue = -1;
+		for(int value = 0; value < source.alternatives().size(); value++) {
+			var alternative = source.alternatives().get(value);
+			if(alternative.state().execType() == ExecType.FED
+				&& alternative.state().output() == FederatedOutput.FOUT
+				&& alternative.state().fType() == FType.ROW
+				&& alternative.candidateEmission() != null
+				&& !alternative.candidateEmission().emissionState().derivedFedFout()
+				&& alternative.derivedFoutAction() == null) {
+				sourceValue = value;
+				break;
+			}
+		}
+		for(int value = 0; value < consumer.alternatives().size(); value++) {
+			var alternative = consumer.alternatives().get(value);
+			if(alternative.state().execType() == ExecType.CP
+				&& alternative.state().output() == FederatedOutput.LOUT
+				&& !alternative.orderedInputs().isEmpty()
+				&& !alternative.orderedInputs().get(0).present()) {
+				consumerValue = value;
+				break;
+			}
+		}
+		Assert.assertTrue("B-21 ordinary FED/FOUT/ROW alternative missing", sourceValue >= 0);
+		Assert.assertTrue("B-21 CP/LOUT ABSENT_LOCAL TWrite alternative missing", consumerValue >= 0);
+		double cost = forcedDownloadContribution(surface, model, new Download("B-21 Y",
+			edge.producer(), List.of(), edge.consumer(), source, consumer, sourceValue, consumerValue));
+		Assert.assertTrue("B-21 exact payload download must have finite positive cost",
+			Double.isFinite(cost) && cost > 0d);
 	}
 
 	private static Download download(PlacementAnalysis analysis, ExactPhysicalModel model,

@@ -12,21 +12,28 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalComparisonRow;
+import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -116,8 +123,74 @@ public class CurrentPePhysicalSetCorrespondenceTest {
 			Assert.assertEquals(36, p.size());
 			Assert.assertTrue("B-21 must audit raw-proof multiplicity",
 				multiplicity.values().stream().anyMatch(count -> count > 1));
+			assertOrdinaryFoutLocalInputBoundary(analysis, proofsByPhysical);
+			assertDerivedFoutRetainsLocalSourceView(analysis);
 			assertKnownNoEmissionProofCollapse(analysis, proofsByPhysical);
 		}
+	}
+
+	private static void assertOrdinaryFoutLocalInputBoundary(PlacementAnalysis analysis,
+		Map<String,List<FullProductionJointPlanExport.Audit>> groups) {
+		var consumers = analysis.graph().decisionNodes().stream().filter(node ->
+			analysis.hop(node.key()).map(hop -> hop instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTWRITE && "Y".equals(data.getName())).orElse(false))
+			.toList();
+		Assert.assertEquals("B-21 must expose one exact TWrite Y consumer", 1, consumers.size());
+		var consumer = consumers.get(0);
+		var edge = analysis.compiledInputEdgesInCanonicalOrder().stream().filter(candidate ->
+			candidate.consumer() == consumer.key() && candidate.inputPosition() == 0)
+			.findFirst().orElseThrow();
+		var source = analysis.graph().decisionNodes().stream()
+			.filter(node -> node.key() == edge.producer()).findFirst().orElseThrow();
+		Assert.assertEquals("B-21 TWrite Y input must come from rowSums",
+			"ua(+R)", analysis.hop(source.key()).orElseThrow().getOpString());
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC,
+			analysis.requirePrivacy(source.key()));
+		Assert.assertEquals(PlacementAnalysis.CoordinatorInputAccess.PAYLOAD,
+			analysis.coordinatorInputAccess(edge));
+
+		FullProductionJointPlanExport.Audit witness = groups.values().stream().flatMap(List::stream)
+			.filter(proof -> {
+				var sourceState = proof.assignment().get(source.key());
+				var consumerState = proof.assignment().get(consumer.key());
+				var sourceReceipt = proof.candidates().stream().filter(candidate ->
+					candidate.rule().parentOccurrence() == source.key()).findFirst().orElse(null);
+				var consumerReceipt = proof.candidates().stream().filter(candidate ->
+					candidate.rule().parentOccurrence() == consumer.key()).findFirst().orElse(null);
+				return sourceState != null && sourceState.execType() == ExecType.FED
+					&& sourceState.output() == FederatedOutput.FOUT && sourceState.fType() == FType.ROW
+					&& sourceReceipt != null && !sourceReceipt.emission().emissionState().derivedFedFout()
+					&& sourceReceipt.emission().derivedFoutAction() == null
+					&& consumerState != null && consumerState.execType() == ExecType.CP
+					&& consumerState.output() == FederatedOutput.LOUT && consumerReceipt != null
+					&& !consumerReceipt.rule().orderedInputs().get(edge.inputPosition()).present();
+			}).findFirst().orElseThrow(() -> new AssertionError(
+				"B-21 lost the ordinary FED/FOUT to CP/LOUT ABSENT_LOCAL boundary"));
+		Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey,
+			PlacementEmissionState> emissions = new IdentityHashMap<>();
+		witness.assignment().forEach((key, state) ->
+			emissions.put(key, new PlacementEmissionState(state, false)));
+		witness.candidates().forEach(candidate -> emissions.put(candidate.rule().parentOccurrence(),
+			candidate.emission().emissionState()));
+		var locals = LocalMaterializationSelections.derive(analysis, witness.assignment(),
+			emissions, witness.candidates());
+		Assert.assertTrue("B-21 ordinary FOUT/local input must own the exact LOCAL lowering action",
+			locals.stream().anyMatch(action -> action.sourceOccurrence() == source.key()
+				&& action.obligations().stream().anyMatch(obligation ->
+					obligation.consumerOccurrence() == consumer.key()
+						&& obligation.inputPosition() == edge.inputPosition())));
+	}
+
+	private static void assertDerivedFoutRetainsLocalSourceView(PlacementAnalysis analysis) {
+		for(var fact : analysis.candidateRuleFacts().orderedFacts())
+			for(var emission : fact.allowedEmissionFacts()) {
+				var action = emission.derivedFoutAction();
+				if(action == null)
+					continue;
+				Assert.assertTrue("Derived FOUT must retain its exact physical LOUT source view",
+					fact.allowedEmissionFacts().stream().anyMatch(candidate ->
+						candidate.emissionState().placementState().equals(action.sourcePlacement())));
+			}
 	}
 
 	private static void assertKnownNoEmissionProofCollapse(

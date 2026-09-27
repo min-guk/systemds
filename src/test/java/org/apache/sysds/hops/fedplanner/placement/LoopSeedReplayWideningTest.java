@@ -59,7 +59,7 @@ public class LoopSeedReplayWideningTest {
 	}
 
 	@Test
-	public void completedLoopSeedMemoizesEntryAndExitWithTheExactConvergedTransfer() {
+	public void completedLoopSeedLeavesWidenedExitRetryableUntilItsOwnTransfer() {
 		Map<ReplayRevision,String> completedTransfers = new HashMap<>();
 		ReplayRevision entry = new ReplayRevision(List.of("entry-source"),
 			List.of("entry-action"), false);
@@ -67,14 +67,29 @@ public class LoopSeedReplayWideningTest {
 			List.of("completed-action"), true);
 		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
 			entry, "converged-proof-state", true, completedTransfers);
+		Assert.assertEquals("only the revision that actually installed a seed is completed",
+			1, completedTransfers.size());
+		Assert.assertEquals("converged-proof-state", completedTransfers.get(entry));
+		Assert.assertFalse("a widened EXIT still needs its own provisional seed transfer",
+			completedTransfers.containsKey(exit));
+
+		// The widened EXIT is now the entry of a separately executed, stable transfer.
 		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
 			exit, "converged-proof-state", true, completedTransfers);
 
-		Assert.assertEquals("the completed EXIT must replay without another provisional seed",
+		Assert.assertEquals("the EXIT can replay only after its own transfer completed",
 			"converged-proof-state", completedTransfers.get(exit));
-		Assert.assertEquals("entry and completed EXIT must retain the identical payload",
+		Assert.assertEquals("both actually completed revisions retain the converged payload",
 			Set.of("converged-proof-state"), Set.copyOf(completedTransfers.values()));
 		Assert.assertEquals(2, completedTransfers.size());
+		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+			exit, "converged-proof-state", true, completedTransfers);
+		Assert.assertEquals("a completed revision remains one-shot", 2, completedTransfers.size());
+		Assert.assertThrows(IllegalStateException.class, () ->
+			NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+				exit, "conflicting-proof-state", true, completedTransfers));
+		Assert.assertEquals("a conflicting replay cannot replace the completed transfer",
+			"converged-proof-state", completedTransfers.get(exit));
 		Assert.assertFalse("a changed source proof must miss the completed EXIT",
 			completedTransfers.containsKey(new ReplayRevision(
 				List.of("different-source"), exit.actions(), exit.privacyClosed())));
