@@ -58,6 +58,7 @@ public class CandidateAffectingBranchInventoryTest {
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCandidateGenerator.java",
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java",
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementSupportRelations.java",
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementClosureDiagnostics.java",
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuity.java",
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java",
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java",

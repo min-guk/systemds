@@ -146,3 +146,19 @@ failed-duplicate-edge, physical generation, source reappearance and dirty-SCC te
 The current 103-test slice leaves two errors in a separately repaired synthetic
 function fixture; all P3/P4 semantics pass. Final completion still requires the final
 clean combined suite and identical before/after protected exports.
+
+## Branch inventory rebase
+
+The old reviewed manifest had 5,832 sites while the frozen P0 source already had
+7,459. That prior drift is explicitly retained as `pre_existing_manifest_drift`,
+not attributed to this refactor. The unchanged AST scanner was run on actual P0,
+C0, P1 and each refactor checkpoint. Each removed/added ID is classified in
+`evidence/branch-inventory/classified-deltas.tsv`; the human audit and stage counts
+are adjacent. P2 has 3,593 byte-identical moved branch snippets on each side; the
+remaining edits map to reviewed private renames, extraction and lifecycle phases.
+P3 has 13 replacements and P4 has 7 removed/8 added sites for update/commit and
+lazy index sharing. This is a structural guard, not universal semantic proof.
+
+The final golden has 7,471 sites. Diagnostics remains in the source coverage after
+extraction (146 sites), so no old branch surface is silently omitted. Comparator/
+scanner logic is unchanged; only the owner source list and reviewed data change.
