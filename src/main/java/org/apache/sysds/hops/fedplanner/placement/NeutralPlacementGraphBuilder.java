@@ -3232,9 +3232,9 @@ public final class NeutralPlacementGraphBuilder {
 
 	/**
 	 * A provisional loop seed may run once for each complete proof-input revision.
-	 * Later function, privacy, or relocation closure creates a new revision and may be
-	 * seeded, while both sides of a completed seed transfer are consumed together so an
-	 * enclosing fixed point cannot restart the provisional two-state cycle.
+	 * Only the entry revision that actually installed a seed is consumed. Later function,
+	 * privacy, or relocation closure can widen the exit into a new proof-input revision;
+	 * that revision must run its own seed transfer before becoming replayable.
 	 */
 	private static Map<CompiledHopKey,LoopSeedRevision> loopSeedEligibleReads(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
@@ -3428,8 +3428,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,LoopSeedRevision> eligibleLoopSeeds,
 		Set<CompiledHopKey> installedLoopSeeds, CfgAnalysis cfg,
 		List<Node> nodes, List<CandidateRuleFact> facts,
-		List<LogicalTransientInputFact> logicalInputs, List<CompiledInputEdgeFact> compiledEdges,
-		java.util.Collection<Constraint> constraints, boolean privacyClosed,
+		List<LogicalTransientInputFact> logicalInputs,
 		List<Integer> changedOrdinals,
 		LoopSeedLedger loopSeedLedger) {
 		for(CompiledHopKey read : installedLoopSeeds) {
@@ -3479,17 +3478,13 @@ public final class NeutralPlacementGraphBuilder {
 		CandidateReplay completed = new CandidateReplay(List.copyOf(nodes), facts.stream()
 			.map(CandidateRuleFact::key).toList(), List.copyOf(facts),
 			logicalInputs.stream().sorted().toList(), List.copyOf(changedOrdinals));
-		List<String> completedEdges = loopSeedCompiledEdges(compiledEdges);
-		List<Constraint> completedConstraints = constraints.stream().sorted().toList();
 		for(CompiledHopKey read : installedLoopSeeds) {
 			LoopSeedRevision entry = Objects.requireNonNull(
 				eligibleLoopSeeds.get(read), "entryRevision");
+			// Only the revision that actually installed the provisional seed has
+			// completed this transfer. The exit can contain a newly widened source and
+			// must remain eligible for its own revision-scoped seed.
 			recordCompletedLoopSeedTransfer(entry, completed,
-				true, loopSeedLedger.completedTransfers());
-			LoopSeedRevision exit = new LoopSeedRevision(entry.read(), completed.nodes(),
-				completed.domainKeys(), completed.facts(), completed.logicalInputs(), completedEdges,
-				completedConstraints, entry.actionAuthority(), privacyClosed, entry.materializationEnabled());
-			recordCompletedLoopSeedTransfer(exit, completed,
 				true, loopSeedLedger.completedTransfers());
 		}
 	}
@@ -3659,11 +3654,9 @@ public final class NeutralPlacementGraphBuilder {
 			Set<Integer> pendingPhysical = new java.util.TreeSet<>(current.changedOrdinals());
 			pendingPhysical.addAll(replayed.changedOrdinals());
 			if(pendingPhysical.isEmpty()) {
-				List<CompiledInputEdgeFact> replayedEdges = deriveCompiledInputEdges(
-					occurrences, replayed.nodes(), ordinalsByBlock, factsByHop);
 				recordCompletedLoopSeedRevisions(eligibleLoopSeedRevisions,
 					installedLoopSeeds, cfg, replayed.nodes(), replayed.facts(),
-					replayed.logicalInputs(), replayedEdges, constraints, privacyAlreadyClosed,
+					replayed.logicalInputs(),
 					replayed.changedOrdinals(),
 					loopSeedLedger);
 				return replayed;
@@ -3756,11 +3749,9 @@ public final class NeutralPlacementGraphBuilder {
 				&& relationClosed.domainKeys().equals(passStart.domainKeys())
 				&& relationClosed.facts().equals(passStart.facts())
 				&& relationClosed.logicalInputs().equals(passStart.logicalInputs())) {
-				List<CompiledInputEdgeFact> relationEdges = deriveCompiledInputEdges(
-					occurrences, relationClosed.nodes(), ordinalsByBlock, factsByHop);
 				recordCompletedLoopSeedRevisions(eligibleLoopSeedRevisions,
 					installedLoopSeeds, cfg, relationClosed.nodes(), relationClosed.facts(),
-					relationClosed.logicalInputs(), relationEdges, constraints, privacyAlreadyClosed,
+					relationClosed.logicalInputs(),
 					relationClosed.changedOrdinals(),
 					loopSeedLedger);
 				return relationClosed;
@@ -5799,8 +5790,21 @@ public final class NeutralPlacementGraphBuilder {
 						Node inputNode = exactBlockNodes.get(input);
 						return inputNode == null ? null : inputNode.key();
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+				if(proofInventory == null && physicalGenerationContext != null
+					&& compiledInputEdges != null) {
+					List<CandidateRuleFact> proofFacts = new ArrayList<>();
+					for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
+						proofFacts.addAll(ownerFacts);
+					// One lazy index belongs to this committed authority revision. The local-input
+					// boundary and materialization closure must query the same inventory.
+					proofInventory = new MaterializationProofInventory(nodes, proofFacts,
+						compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
+						origins, factsByHop);
+				}
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
+				exactInputDomains = preserveExecutableFoutLocalInputDomains(hop, current,
+					exactInputDomains, exactBlockNodes, factsByOrdinal, ordinalsByKey, proofInventory);
 				NodeShapeFact outputShape = factsByHop.get(hop);
 				// A derived anchor is certified by the current exact inputs, not by a
 				// prior replay. Recompute it so provisional loop anchors cannot survive
@@ -5829,16 +5833,6 @@ public final class NeutralPlacementGraphBuilder {
 				BaseCandidateBuild privacyBase = projectFreshBasePrivacy(
 					replacement, replacementKeys, replacementFacts, origins);
 				if(physicalGenerationContext != null && compiledInputEdges != null) {
-					if(proofInventory == null) {
-						List<CandidateRuleFact> proofFacts = new ArrayList<>();
-						for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
-							proofFacts.addAll(ownerFacts);
-						// Only committed authority is indexed. Edges, logical inputs, origins,
-						// shapes and constraints remain fixed throughout this worklist.
-						proofInventory = new MaterializationProofInventory(nodes, proofFacts,
-							compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
-							origins, factsByHop);
-					}
 					// Consumers observe a complete generation envelope, never a raw midpoint.
 					privacyBase = normalizePhysicalGenerationEnvelope(privacyBase, proofInventory);
 				}
@@ -9948,16 +9942,33 @@ public final class NeutralPlacementGraphBuilder {
 				Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 				for(Node node : nodes)
 					nodesByKey.put(node.key(), node);
-				Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edges =
-					matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
+				Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edges = matrixEdgesByConsumer();
 				WorkerPoolAnchorResolver next = new WorkerPoolAnchorResolver(nodesByKey, edges,
 					facts, logicalInputs, constraints, origins, factsByHop);
-				matrixEdgesByConsumer = edges;
 				resolver = next;
 			}
 			else
 				resolver.resetQueryState();
 			return resolver;
+		}
+
+		private CompiledInputEdgeFact inputEdge(CompiledHopKey consumer, int position) {
+			return matrixEdgesByConsumer().getOrDefault(consumer, Map.of()).get(position);
+		}
+
+		private Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer() {
+			if(matrixEdgesByConsumer == null) {
+				if(compiledInputEdges == null) {
+					matrixEdgesByConsumer = Map.of();
+					return matrixEdgesByConsumer;
+				}
+				Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+				for(Node node : nodes)
+					nodesByKey.put(node.key(), node);
+				matrixEdgesByConsumer = NeutralPlacementGraphBuilder.matrixEdgesByConsumer(
+					compiledInputEdges, nodesByKey);
+			}
+			return matrixEdgesByConsumer;
 		}
 	}
 
@@ -10664,6 +10675,64 @@ public final class NeutralPlacementGraphBuilder {
 			}
 		}
 		return domains;
+	}
+
+	/**
+	 * A consumer's coordinator-local input mode is independent of an ordinary producer's
+	 * selected FED/FOUT placement.  Once privacy has settled, retain that mode when the
+	 * exact compiled edge can collect payload. The selected-plan projection later owns
+	 * that boundary through a LOCAL materialization. Metadata-only consumers retain their
+	 * direct PRESENT FederationMap input instead.
+	 */
+	private List<List<FType>> preserveExecutableFoutLocalInputDomains(Hop consumer,
+		Node consumerNode, List<List<FType>> domains, Map<Hop,Node> exactBlockNodes,
+		List<List<CandidateRuleFact>> factsByOrdinal, Map<CompiledHopKey,Integer> ordinalsByKey,
+		MaterializationProofInventory proofInventory) {
+		StaticPrivacyProjection privacyProjection = staticPrivacyProjection;
+		if(privacyProjection == null || proofInventory == null
+			|| PlacementAnalysis.isDmlFunctionCallBoundary(consumerNode, consumer))
+			return domains;
+		List<List<FType>> retained = null;
+		for(int position = 0; position < domains.size(); position++) {
+			List<FType> domain = domains.get(position);
+			if(domain.isEmpty() || domain.contains(null))
+				continue;
+			if(position >= consumer.getInput().size())
+				continue;
+			Hop source = consumer.getInput(position);
+			Node sourceNode = exactBlockNodes.get(source);
+			if(sourceNode == null)
+				continue;
+			Integer sourceOrdinal = ordinalsByKey.get(sourceNode.key());
+			Privacy sourcePrivacy = privacyProjection.effective().get(sourceNode.key());
+			if(sourceOrdinal == null || sourcePrivacy == null)
+				continue;
+			PlacementAnalysis.CoordinatorInputAccess access =
+				PlacementAnalysis.coordinatorInputAccess(source, consumer, position);
+			if(access != PlacementAnalysis.CoordinatorInputAccess.PAYLOAD
+				|| ExecPlacementPolicy.requiresOriginResidency(sourcePrivacy))
+				continue;
+			if(!hasExecutableOrdinaryFout(sourceNode, factsByOrdinal.get(sourceOrdinal)))
+				continue;
+			CompiledInputEdgeFact edge = proofInventory.inputEdge(consumerNode.key(), position);
+			if(edge == null || edge.producer() != sourceNode.key())
+				continue;
+			if(retained == null)
+				retained = new ArrayList<>(domains);
+			List<FType> localFirst = new ArrayList<>(domain.size() + 1);
+			localFirst.add(null);
+			localFirst.addAll(domain);
+			retained.set(position, Collections.unmodifiableList(localFirst));
+		}
+		return retained == null ? domains : Collections.unmodifiableList(retained);
+	}
+
+	private static boolean hasExecutableOrdinaryFout(Node source,
+		List<CandidateRuleFact> sourceFacts) {
+		return source.legalAlternatives().stream().filter(state -> state.execType() == ExecType.FED
+			&& state.output() == FederatedOutput.FOUT && state.fType() != null)
+			.anyMatch(state -> sourceRealizations(source.key(), state, sourceFacts).stream()
+				.anyMatch(realization -> !realization.realization().emissionState().derivedFedFout()));
 	}
 
 	private static List<DurableAnchorKey> functionInputAnchors(Hop hop,
