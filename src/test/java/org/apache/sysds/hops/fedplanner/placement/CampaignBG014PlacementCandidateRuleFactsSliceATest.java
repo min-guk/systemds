@@ -21,6 +21,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -36,9 +41,16 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DataIdentifier;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -51,7 +63,7 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 	public void canonicalBuilderPublishesOneOrderedImmutableFactPerCandidateKey() throws Exception {
 		for(String fixture : FIXTURES) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-			String before = PlacementGraphFingerprint.capture(program);
+			String before = PlacementGraphFingerprint.captureProgramAuthority(program);
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 			List<CandidateRuleKey> keys = analysis.candidateRuleDomain().orderedRuleKeys();
 			List<CandidateRuleFact> facts = analysis.candidateRuleFacts().orderedFacts();
@@ -79,7 +91,7 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 
 			assertDeeplyImmutable(fixture, analysis);
 			Assert.assertEquals(fixture + " builder/fact inspection mutated the program", before,
-				PlacementGraphFingerprint.capture(program));
+				PlacementGraphFingerprint.captureProgramAuthority(program));
 		}
 		assertExplicitFunctionCarrierCandidateFacts();
 	}
@@ -87,8 +99,8 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 	private static void assertExplicitFunctionCarrierCandidateFacts() {
 		FunctionOp call = PlacementIdentityKnownEqualityContractTest.functionCall(
 			new String[] {"X"}, new String[] {"Y"});
-		DMLProgram program = PlacementIdentityKnownEqualityContractTest.program(call);
-		String before = PlacementGraphFingerprint.capture(program);
+		DMLProgram program = definedFunctionProgram(call);
+		String before = PlacementGraphFingerprint.captureProgramAuthority(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 
 		List<HopOccurrenceProjection> originals = analysis.occurrences().stream()
@@ -111,11 +123,34 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 			Assert.assertFalse("synthetic function boundary must not become candidate-bearing",
 				analysis.candidateRuleDomain().containsExactParent(boundary.key()));
 		Assert.assertEquals("explicit FunctionOp analysis must remain mutation-free", before,
-			PlacementGraphFingerprint.capture(program));
+			PlacementGraphFingerprint.captureProgramAuthority(program));
 	}
 
 	private static boolean isFunctionBoundary(HopOccurrenceProjection occurrence) {
 		return occurrence.key().canonicalSourceOrigin().startsWith("function-boundary:");
+	}
+
+	private static DMLProgram definedFunctionProgram(FunctionOp call) {
+		DMLProgram program = PlacementIdentityKnownEqualityContractTest.program(call);
+		program.createNamespace(DMLProgram.DEFAULT_NAMESPACE);
+		FunctionStatement function = new FunctionStatement();
+		function.setName("pca");
+		function.setInputParams(new ArrayList<>(List.of(new DataIdentifier("X"))));
+		function.setOutputParams(new ArrayList<>(List.of(new DataIdentifier("Y"))));
+		DataOp input = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 2, 2, -1, -1);
+		DataOp output = new DataOp("Y", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.TRANSIENTWRITE, "Y");
+		StatementBlock body = new StatementBlock();
+		body.setHops(new ArrayList<>(List.of(output)));
+		body.setDMLProg(program);
+		function.setBody(new ArrayList<>(List.of(body)));
+		FunctionStatementBlock block = new FunctionStatementBlock();
+		block.addStatement(function);
+		program.addFunctionStatementBlock("pca", block);
+		program.getStatementBlocks().forEach(statementBlock -> statementBlock.setDMLProg(program));
+		block.setDMLProg(program);
+		return program;
 	}
 
 	@Test
@@ -123,7 +158,7 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 		for(String fixture : FIXTURES) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-			String before = PlacementGraphFingerprint.capture(program);
+			String before = PlacementGraphFingerprint.captureProgramAuthority(program);
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 			Map<CompiledHopKey,Hop> hops = new IdentityHashMap<>();
 			for(HopOccurrenceProjection occurrence : analysis.occurrences())
@@ -135,27 +170,72 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 				var expected = oracle.decideWithEvidence(hop, inputs, null);
 				CandidateCapabilityFact actual = fact.capability();
 				Assert.assertNotNull(fixture + " canonical rule evidence", actual);
-				Assert.assertEquals(expected.caps().category(), actual.category());
-				Assert.assertEquals(expected.caps().opcode(), actual.opcode());
-				Assert.assertEquals(expected.caps().exec(), actual.nativeExec());
-				Assert.assertEquals(expected.caps().placement(), actual.nativeOutput());
-				Assert.assertEquals(expected.caps().foutFType().orElse(null), actual.nativeFoutFType());
-				Assert.assertEquals(expected.caps().reason(), actual.reasonCode());
-				Assert.assertEquals(expected.caps().detail().orElse(""), actual.detail());
-				Assert.assertEquals(expected.caps().notes().size(), actual.notes().size());
-				for(int i = 0; i < actual.notes().size(); i++) {
-					Assert.assertEquals(expected.caps().notes().get(i).code(), actual.notes().get(i).code());
-					Assert.assertEquals(expected.caps().notes().get(i).message(), actual.notes().get(i).message());
+				if("literal-federated-source".equals(actual.detail())) {
+					Node owner = analysis.graph().node(fact.key().parentOccurrence()).orElseThrow();
+					Set<FType> anchorTypes = owner.anchors().stream()
+						.map(PlacementIdentity.DurableAnchorKey::fType).collect(java.util.stream.Collectors.toSet());
+					Assert.assertEquals("literal source must have one exact durable-anchor FType", 1,
+						anchorTypes.size());
+					Assert.assertEquals(OpCategory.OTHER, actual.category());
+					Assert.assertEquals(hop.getOpString(), actual.opcode());
+					Assert.assertEquals(ExecType.FED, actual.nativeExec());
+					Assert.assertEquals(FederatedOutput.FOUT, actual.nativeOutput());
+					Assert.assertEquals(anchorTypes.iterator().next(), actual.nativeFoutFType());
+					Assert.assertEquals(ReasonCode.INFO, actual.reasonCode());
+					Assert.assertEquals(List.of(), actual.notes());
+					CandidateShapeProofFact proof = fact.shapeProof();
+					Assert.assertEquals(Map.of("literalFederatedSourceFType", actual.nativeFoutFType().name()),
+						proof.consultedFacts());
+					Assert.assertEquals(List.of("literalFederatedSourceFType"), proof.requiredFacts());
+					Assert.assertEquals(List.of(), proof.missingRequiredFacts());
+					Assert.assertEquals(List.of(actual.nativeFoutFType()), fact.profile().producerOutputs());
+					Assert.assertTrue(fact.profile().available());
 				}
-				CandidateShapeProofFact proof = fact.shapeProof();
-				Assert.assertEquals(expected.shapeProof().consultedFacts(), proof.consultedFacts());
-				Assert.assertEquals(expected.shapeProof().requiredFacts(), Set.copyOf(proof.requiredFacts()));
-				Assert.assertEquals(expected.shapeProof().missingRequiredFacts(),
-					Set.copyOf(proof.missingRequiredFacts()));
-				assertProfileEvidence(oracle, hop, inputs, fact);
+				else if(actual.detail().startsWith("logical-transient-replay|")) {
+					Node owner = analysis.graph().node(fact.key().parentOccurrence()).orElseThrow();
+					Assert.assertFalse("logical replay must retain exact CFG definition owners",
+						analysis.cfgDefinitionSourcesInCanonicalOrder(owner.key()).isEmpty());
+					Assert.assertEquals(OpCategory.OTHER, actual.category());
+					Assert.assertEquals(hop.getOpString(), actual.opcode());
+					Assert.assertEquals(ExecType.CP, actual.nativeExec());
+					Assert.assertEquals(FederatedOutput.LOUT, actual.nativeOutput());
+					Assert.assertNull(actual.nativeFoutFType());
+					Assert.assertEquals(ReasonCode.OK, actual.reasonCode());
+					Assert.assertEquals(List.of("cfg-reaching-definitions", "reader-layout", "source-realization"),
+						fact.shapeProof().requiredFacts());
+					Assert.assertEquals("builder-local", fact.shapeProof().consultedFacts()
+						.get("logicalTransientReplay"));
+					Assert.assertEquals(owner.key().normalizedSignature(),
+						fact.shapeProof().consultedFacts().get("read"));
+					Assert.assertEquals(List.of(), fact.shapeProof().missingRequiredFacts());
+					Assert.assertTrue(fact.profile().available());
+					Assert.assertEquals(List.of(), fact.profile().producerOutputs());
+					Assert.assertEquals(1, actual.notes().size());
+					Assert.assertEquals(ReasonCode.INFO, actual.notes().get(0).code());
+				}
+				else {
+					Assert.assertEquals(expected.caps().category(), actual.category());
+					Assert.assertEquals(expected.caps().opcode(), actual.opcode());
+					Assert.assertEquals(expected.caps().exec(), actual.nativeExec());
+					Assert.assertEquals(expected.caps().placement(), actual.nativeOutput());
+					Assert.assertEquals(expected.caps().foutFType().orElse(null), actual.nativeFoutFType());
+					Assert.assertEquals(expected.caps().reason(), actual.reasonCode());
+					Assert.assertEquals(expected.caps().detail().orElse(""), actual.detail());
+					Assert.assertEquals(expected.caps().notes().size(), actual.notes().size());
+					for(int i = 0; i < actual.notes().size(); i++) {
+						Assert.assertEquals(expected.caps().notes().get(i).code(), actual.notes().get(i).code());
+						Assert.assertEquals(expected.caps().notes().get(i).message(), actual.notes().get(i).message());
+					}
+					CandidateShapeProofFact proof = fact.shapeProof();
+					Assert.assertEquals(expected.shapeProof().consultedFacts(), proof.consultedFacts());
+					Assert.assertEquals(expected.shapeProof().requiredFacts(), Set.copyOf(proof.requiredFacts()));
+					Assert.assertEquals(expected.shapeProof().missingRequiredFacts(),
+						Set.copyOf(proof.missingRequiredFacts()));
+					assertProfileEvidence(oracle, hop, inputs, fact);
+				}
 			}
 			Assert.assertEquals(fixture + " oracle parity mutated the compiled graph", before,
-				PlacementGraphFingerprint.capture(program));
+				PlacementGraphFingerprint.captureProgramAuthority(program));
 		}
 	}
 
@@ -233,12 +313,24 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 			Assert.assertFalse(fixture + " original occurrence lacks candidate facts: " + parent.key(), actual.isEmpty());
 			Node parentNode = analysis.graph().node(parent.key()).orElseThrow();
 			List<List<FType>> domains = parentNode.valueVersion().versionKind() == VersionKind.FUNCTION_INPUT
-				? functionInputDomains(parent, analysis) : directInputDomains(parent.hop(), analysis);
+				? functionInputDomains(parent, analysis) : exactInputDomains(parent, analysis);
 			List<List<CandidateInputState>> expected = new ArrayList<>();
 			enumerateDomains(domains, new ArrayList<>(), expected);
 			Assert.assertEquals(fixture + " exact Cartesian domain for " + parent.key(), expected,
 				actual.stream().map(CandidateRuleKey::orderedInputs).toList());
 		}
+	}
+
+	private static List<List<FType>> exactInputDomains(HopOccurrenceProjection parent,
+		PlacementAnalysis analysis) {
+		if(parent.hop() instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD
+			&& parent.hop().getInput().isEmpty()) {
+			List<CompiledHopKey> definitions = analysis.cfgDefinitionSourcesInCanonicalOrder(parent.key());
+			if(!definitions.isEmpty())
+				return List.of(domainForNodes(definitions.stream()
+					.map(key -> analysis.graph().node(key).orElseThrow()).toList()));
+		}
+		return directInputDomains(parent.hop(), analysis);
 	}
 
 	private static List<List<FType>> directInputDomains(Hop parent, PlacementAnalysis analysis) {
@@ -289,7 +381,7 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 		Set<FType> types = new java.util.LinkedHashSet<>();
 		boolean local = false;
 		for(PlacementState state : predecessor.legalAlternatives()) {
-			if(state.fType() == null)
+			if(state.output() != FederatedOutput.FOUT || state.fType() == null)
 				local = true;
 			else
 				types.add(state.fType());
@@ -299,6 +391,26 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 		List<FType> domain = new ArrayList<>(types);
 		domain.sort(java.util.Comparator.comparing(Enum::name));
 		if(local)
+			domain.add(0, null);
+		return Collections.unmodifiableList(domain);
+	}
+
+	private static List<FType> domainForNodes(List<Node> predecessors) {
+		Set<FType> types = new java.util.LinkedHashSet<>();
+		boolean local = false;
+		for(Node predecessor : predecessors) {
+			if(predecessor.legalAlternatives().isEmpty())
+				return List.of();
+			for(PlacementState state : predecessor.legalAlternatives()) {
+				if(state.output() != FederatedOutput.FOUT || state.fType() == null)
+					local = true;
+				else
+					types.add(state.fType());
+			}
+		}
+		List<FType> domain = new ArrayList<>(types);
+		domain.sort(java.util.Comparator.comparing(Enum::name));
+		if(local || domain.isEmpty())
 			domain.add(0, null);
 		return Collections.unmodifiableList(domain);
 	}

@@ -11,6 +11,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
@@ -31,6 +35,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DataIdentifier;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -110,8 +118,8 @@ public class CampaignBG014PlacementCandidateResolverSliceATest {
 	public void originalFunctionCarrierIsCapturedButSyntheticBoundaryKeysAreNot() {
 		FunctionOp call = PlacementIdentityKnownEqualityContractTest.functionCall(
 			new String[] {"X"}, new String[] {"Y"});
-		DMLProgram program = PlacementIdentityKnownEqualityContractTest.program(call);
-		String before = PlacementGraphFingerprint.capture(program);
+		DMLProgram program = definedFunctionProgram(call);
+		String before = PlacementGraphFingerprint.captureProgramAuthority(program);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 
 		List<HopOccurrenceProjection> originals = analysis.occurrences().stream()
@@ -133,11 +141,34 @@ public class CampaignBG014PlacementCandidateResolverSliceATest {
 		}
 		Assert.assertEquals(Set.of(NodeKind.FUNCTION_INPUT, NodeKind.FUNCTION_OUTPUT), kinds);
 		Assert.assertEquals("function-boundary analysis must be mutation-free", before,
-			PlacementGraphFingerprint.capture(program));
+			PlacementGraphFingerprint.captureProgramAuthority(program));
 	}
 
 	private static boolean isFunctionBoundary(HopOccurrenceProjection occurrence) {
 		return occurrence.key().canonicalSourceOrigin().startsWith("function-boundary:");
+	}
+
+	private static DMLProgram definedFunctionProgram(FunctionOp call) {
+		DMLProgram program = PlacementIdentityKnownEqualityContractTest.program(call);
+		program.createNamespace(DMLProgram.DEFAULT_NAMESPACE);
+		FunctionStatement function = new FunctionStatement();
+		function.setName("pca");
+		function.setInputParams(new ArrayList<>(List.of(new DataIdentifier("X"))));
+		function.setOutputParams(new ArrayList<>(List.of(new DataIdentifier("Y"))));
+		DataOp input = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "X", 2, 2, -1, -1);
+		DataOp output = new DataOp("Y", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.TRANSIENTWRITE, "Y");
+		StatementBlock body = new StatementBlock();
+		body.setHops(new ArrayList<>(List.of(output)));
+		body.setDMLProg(program);
+		function.setBody(new ArrayList<>(List.of(body)));
+		FunctionStatementBlock block = new FunctionStatementBlock();
+		block.addStatement(function);
+		program.addFunctionStatementBlock("pca", block);
+		program.getStatementBlocks().forEach(statementBlock -> statementBlock.setDMLProg(program));
+		block.setDMLProg(program);
+		return program;
 	}
 
 	@Test
@@ -247,8 +278,8 @@ public class CampaignBG014PlacementCandidateResolverSliceATest {
 	private static FixtureState fixture(String id) {
 		try {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
-			String before = PlacementGraphFingerprint.capture(program);
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+			String before = PlacementGraphFingerprint.capture(program);
 			return new FixtureState(id, program, analysis, before,
 				List.copyOf(analysis.candidateRuleFacts().orderedFacts()),
 				List.copyOf(analysis.candidateConsumerProfileFacts().orderedFacts()));

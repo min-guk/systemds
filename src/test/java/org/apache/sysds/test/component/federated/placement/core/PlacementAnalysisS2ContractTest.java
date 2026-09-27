@@ -102,11 +102,13 @@ public class PlacementAnalysisS2ContractTest {
 
 	@Test
 	public void copiedReversedRepeatedAndConcurrentProjectionsPreserveTheExactFingerprint() throws Exception {
+		org.apache.sysds.parser.DMLProgram program = ProductionShadowFixtureFactory.compile("B-17");
 		PlacementAnalysis source = new NeutralPlacementGraphBuilder()
-			.buildAnalysis(ProductionShadowFixtureFactory.compile("B-17"));
-		PlacementAnalysis normal = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(source.graph());
-		PlacementAnalysis reversed = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(source.graph(),
-			ProjectionOrder.REVERSED);
+			.buildAnalysis(program);
+		PlacementAnalysis normal = CampaignBPlacementAnalysisFixtureBridge.withProjectionOrder(
+			source, program, ProjectionOrder.NORMAL);
+		PlacementAnalysis reversed = CampaignBPlacementAnalysisFixtureBridge.withProjectionOrder(
+			source, program, ProjectionOrder.REVERSED);
 		Assert.assertEquals("projection reversal changed the analysis universe", normal.analysisFingerprint(),
 			reversed.analysisFingerprint());
 		Assert.assertEquals("repeated reads changed the fingerprint", normal.analysisFingerprint(),
@@ -119,7 +121,7 @@ public class PlacementAnalysisS2ContractTest {
 			List<Callable<String>> tasks = new ArrayList<>();
 			for(int i = 0; i < 16; i++) {
 				ProjectionOrder order = i % 2 == 0 ? ProjectionOrder.NORMAL : ProjectionOrder.REVERSED;
-				tasks.add(() -> CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(source.graph(), order)
+				tasks.add(() -> CampaignBPlacementAnalysisFixtureBridge.withProjectionOrder(source, program, order)
 					.analysisFingerprint());
 			}
 			Set<String> fingerprints = new LinkedHashSet<>();

@@ -44,6 +44,10 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedHeuristic/FederatedPlannerFedHeuristicSinglePass.java"),
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/SyntheticBoundaryProjection.java"),
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/FederatedPlanExact.java"));
+	private static final List<Path> PRIVACY_CONSUMER_SOURCES = List.of(
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/LocalMaterializationSelections.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java"),
+		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/RelocationSelections.java"));
 
 	@Rule
 	public final TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -122,20 +126,24 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	public void placementAnalysisOwnsPrivacyBeforeEveryPlannerSelector() throws Exception {
 		String builderSource = Files.readString(PLACEMENT_BUILDER);
 		String closure = JavaSourceBoundaryScanner.methodBody(builderSource,
-			"closePrivacyDomains", "List<Node> nodes");
-		String translator = JavaSourceBoundaryScanner.methodBody(Files.readString(DML_TRANSLATOR),
+			"closePrivacyDomainsMeasured", "List<Node> nodes");
+		String translatorSource = Files.readString(DML_TRANSLATOR);
+		String translator = JavaSourceBoundaryScanner.methodBody(translatorSource,
 			"runFederatedPlannerAtFinalHopBoundary", "DMLProgram dmlp");
+		String preparation = JavaSourceBoundaryScanner.methodBody(translatorSource,
+			"prepareCommonSearchSpace", "DMLProgram dmlp");
 		List<String> failures = new ArrayList<>();
 
 		if(countSequence(JavaSourceTokenScanner.tokens(closure),
 			"FederatedPlannerUtils", ".", "resolveFederatedSourceMetadata", "(") != 1)
 			failures.add("commonAnalysisMustOwnOneSourceAcquisitionCall");
 		if(!closure.contains("derivePrivacyConstraint") || !closure.contains("PRIVACY_EXCLUDED")
-			|| !closure.contains("ReasonCode.PRIVACY"))
+			|| !builderSource.contains("ReasonCode.PRIVACY"))
 			failures.add("commonAnalysisPrivacyPropagationOrExclusionMissing");
-		int bind = translator.indexOf("bindPlacementAnalysisAtFinalHopBoundary");
+		int prepare = translator.indexOf("prepareCommonSearchSpace");
 		int create = translator.indexOf("FederatedPlannerFactory.create");
-		if(bind < 0 || create <= bind)
+		if(prepare < 0 || create <= prepare
+			|| !preparation.contains("bindPlacementAnalysisAtFinalHopBoundary"))
 			failures.add("placementAnalysisMustPrecedePlannerFactory");
 
 		for(Path sourcePath : SELECTOR_SIDE_SOURCES) {
@@ -145,11 +153,9 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 				if(source.contains(forbidden))
 					failures.add(sourcePath.getFileName() + "StillAcquiresOrPropagatesPrivacy:" + forbidden);
 		}
-		String dpEnumerator = Files.readString(SELECTOR_SIDE_SOURCES.get(2));
-		String dpAdapter = Files.readString(SELECTOR_SIDE_SOURCES.get(4));
-		if(!dpEnumerator.contains("analysis().requirePrivacy(")
-			|| !dpAdapter.contains("analysis.requirePrivacy("))
-			failures.add("dpMustConsumeExactAnalysisPrivacyFacts");
+		for(Path sourcePath : PRIVACY_CONSUMER_SOURCES)
+			if(!Files.readString(sourcePath).contains("analysis.requirePrivacy("))
+				failures.add(sourcePath.getFileName() + "MustConsumeExactAnalysisPrivacyFacts");
 
 		Assert.assertEquals("G011_COMMON_PRE_SELECTOR_PRIVACY_AUTHORITY", List.of(), failures);
 	}
