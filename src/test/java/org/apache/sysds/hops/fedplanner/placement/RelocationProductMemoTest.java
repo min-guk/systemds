@@ -88,9 +88,10 @@ public class RelocationProductMemoTest {
 		Map<Object,Object> previous = new HashMap<>();
 		List<CandidateEmissionRealization> original = product(builder, OWNER, emission,
 			List.of(List.of(first)), output, false, null, previous);
-		Field cache = NeutralPlacementGraphBuilder.class.getDeclaredField("relocationProducts");
+		Object relationClosure = PlacementBuilderTestAccess.relationClosure(builder);
+		Field cache = PlacementRelationClosure.class.getDeclaredField("relocationProducts");
 		cache.setAccessible(true);
-		cache.set(builder, previous);
+		cache.set(relationClosure, previous);
 		Map<Object,Object> current = new HashMap<>();
 		long leaves = metrics.snapshot().relocationLeaves();
 		Assert.assertSame(original, product(builder, OWNER, emission,
@@ -103,11 +104,11 @@ public class RelocationProductMemoTest {
 		Assert.assertEquals(cold(emission, List.of(List.of(first, second)), output, false, null), expanded);
 		List<List<CandidateRealizationInputBinding>> absent = List.of(List.of());
 		Assert.assertTrue(product(builder, OWNER, emission, absent, output, false, null, current).isEmpty());
-		Field hits = NeutralPlacementGraphBuilder.class.getDeclaredField("relocationProductHits");
+		Field hits = PlacementRelationClosure.class.getDeclaredField("relocationProductHits");
 		hits.setAccessible(true);
-		long before = hits.getLong(builder);
+		long before = hits.getLong(relationClosure);
 		Assert.assertTrue(product(builder, OWNER, emission, absent, output, false, null, current).isEmpty());
-		Assert.assertEquals("cached empty is not an absent entry", before + 1, hits.getLong(builder));
+		Assert.assertEquals("cached empty is not an absent entry", before + 1, hits.getLong(relationClosure));
 		Assert.assertSame("restored exact input may reuse its prior generated relation", original,
 			product(builder, OWNER, emission, List.of(List.of(first)), output, false, null, current));
 	}
@@ -172,7 +173,7 @@ public class RelocationProductMemoTest {
 	private static List<CandidateEmissionRealization> cold(CandidateEmissionFact emission,
 		List<List<CandidateRealizationInputBinding>> choices, DurableAnchorKey output,
 		boolean recomputes, DurableAnchorKey dynamic) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("generateRelocationBindingProduct",
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("generateRelocationBindingProduct",
 			CompiledHopKey.class, CandidateEmissionFact.class, List.class, DurableAnchorKey.class,
 			boolean.class, DurableAnchorKey.class, SearchSpaceMetrics.class);
 		method.setAccessible(true);
@@ -252,11 +253,12 @@ public class RelocationProductMemoTest {
 		CompiledHopKey owner, CandidateEmissionFact emission,
 		List<List<CandidateRealizationInputBinding>> choices, DurableAnchorKey output,
 		boolean recomputesRanges, DurableAnchorKey dynamic, Map<Object,Object> currentProducts) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("relocationBindingProduct",
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("relocationBindingProduct",
 			CompiledHopKey.class, CandidateEmissionFact.class, List.class, DurableAnchorKey.class,
 			boolean.class, DurableAnchorKey.class, Map.class);
 		method.setAccessible(true);
-		return (List<CandidateEmissionRealization>)method.invoke(builder, owner, emission, choices,
+		return (List<CandidateEmissionRealization>)method.invoke(
+			PlacementBuilderTestAccess.relationClosure(builder), owner, emission, choices,
 			output, recomputesRanges, dynamic, currentProducts);
 	}
 

@@ -54,7 +54,7 @@ public class CandidateInputBottomDomainTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<List<FType>> inputDomains(Hop consumer, Map<Hop,Node> nodes) throws Exception {
-		Method method = java.util.Arrays.stream(NeutralPlacementGraphBuilder.class.getDeclaredMethods())
+		Method method = java.util.Arrays.stream(PlacementRelationClosure.class.getDeclaredMethods())
 			.filter(candidate -> candidate.getName().equals("inputDomains")
 				&& candidate.getParameterCount() == 6)
 			.findFirst().orElseThrow();

@@ -91,7 +91,9 @@ public class NeutralPlacementGraphCrossRecompileTransientTest {
 
 	@Test
 	public void crossCompileBoundaryBridgeRetainsIdentityAndKnownContextGuards() throws Exception {
-		Method guard = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Class<?> relationClosure = Class.forName(
+			"org.apache.sysds.hops.fedplanner.placement.PlacementRelationClosure");
+		Method guard = relationClosure.getDeclaredMethod(
 			"sameTransientForwardContext", Node.class, Node.class);
 		guard.setAccessible(true);
 		Node source = node("program", "main", "X", "compiled");

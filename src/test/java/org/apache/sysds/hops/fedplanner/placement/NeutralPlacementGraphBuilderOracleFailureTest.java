@@ -134,7 +134,7 @@ public class NeutralPlacementGraphBuilderOracleFailureTest {
 
 	private static boolean calledFrom(String methodName) {
 		return StackWalker.getInstance().walk(frames -> frames.anyMatch(frame ->
-			frame.getClassName().equals(NeutralPlacementGraphBuilder.class.getName())
+			frame.getClassName().equals(PlacementCandidateGenerator.class.getName())
 				&& frame.getMethodName().equals(methodName)));
 	}
 
@@ -142,9 +142,9 @@ public class NeutralPlacementGraphBuilderOracleFailureTest {
 		RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
 		registry.register(rule);
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
-		Field oracle = NeutralPlacementGraphBuilder.class.getDeclaredField("oracle");
+		Field oracle = PlacementCandidateGenerator.class.getDeclaredField("oracle");
 		oracle.setAccessible(true);
-		oracle.set(builder, new OracleFacade(registry));
+		oracle.set(PlacementBuilderTestAccess.candidateGenerator(builder), new OracleFacade(registry));
 		return builder;
 	}
 

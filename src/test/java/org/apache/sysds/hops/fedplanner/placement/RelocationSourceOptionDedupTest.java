@@ -51,7 +51,7 @@ public class RelocationSourceOptionDedupTest {
 			List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY, owner, "dynamic")),
 			List.of(), pool, false);
 
-		Class<?> optionClass = Class.forName(NeutralPlacementGraphBuilder.class.getName()
+		Class<?> optionClass = Class.forName(PlacementRelationClosure.class.getName()
 			+ "$ExactRealizationOption");
 		Constructor<?> constructor = optionClass.getDeclaredConstructor(
 			CandidateRealizationReference.class, CandidateRealizationSupportClause.class,
@@ -60,7 +60,7 @@ public class RelocationSourceOptionDedupTest {
 		List<Object> options = List.of(constructor.newInstance(reference, first, version),
 			constructor.newInstance(reference, historyOnly, version),
 			constructor.newInstance(reference, dynamic, version));
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"distinctRelocationSourceOptions", List.class);
 		method.setAccessible(true);
 		List<?> distinct = (List<?>)method.invoke(null, options);

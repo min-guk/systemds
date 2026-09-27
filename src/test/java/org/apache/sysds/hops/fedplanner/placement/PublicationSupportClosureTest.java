@@ -59,7 +59,7 @@ public class PublicationSupportClosureTest {
 
 	@Test
 	public void equivalentSeedRequestsStillDistinguishPinnedOutputAndRanges() throws Exception {
-		var ctor = Class.forName(NeutralPlacementGraphBuilder.class.getName() + "$DirectNativeSeedKey")
+		var ctor = Class.forName(PlacementRelationClosure.class.getName() + "$DirectNativeSeedKey")
 			.getDeclaredConstructor(FType.class, List.class, CandidateRealizationReference.class);
 		ctor.setAccessible(true);
 		var partitions = source("seed-a").anchor().partitions();
@@ -76,11 +76,11 @@ public class PublicationSupportClosureTest {
 	@Test
 	public void privacyRowReuseRequiresTheSameExactEmissionObjects() {
 		CandidateRuleFact original = fact(SOURCE, ROW, List.of(source("current")));
-		Assert.assertSame(original, NeutralPlacementGraphBuilder.retainUnchangedPrivacyFact(
+		Assert.assertSame(original, PlacementSupportRelations.retainUnchangedPrivacyFact(
 			original, original.allowedEmissionFacts()));
 		CandidateEmissionFact replacement = new CandidateEmissionFact(ROW, FType.ROW, null,
 			List.of(source("another-worker-map")));
-		CandidateRuleFact replaced = NeutralPlacementGraphBuilder.retainUnchangedPrivacyFact(
+		CandidateRuleFact replaced = PlacementSupportRelations.retainUnchangedPrivacyFact(
 			original, List.of(replacement));
 		Assert.assertNotSame("a different realization authority must not reuse the old row", original, replaced);
 		Assert.assertEquals(List.of(replacement), replaced.allowedEmissionFacts());
@@ -258,7 +258,7 @@ public class PublicationSupportClosureTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> publish(List<CandidateRuleFact> facts) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("pruneUnsupportedRealizations", List.class);
+		Method method = PlacementSupportRelations.class.getDeclaredMethod("pruneUnsupportedRealizations", List.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts);
 	}
@@ -266,7 +266,7 @@ public class PublicationSupportClosureTest {
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> publish(List<CandidateRuleFact> facts,
 		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementSupportRelations.class.getDeclaredMethod(
 			"pruneUnsupportedRealizations", List.class, Map.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts, actions);
@@ -282,7 +282,7 @@ public class PublicationSupportClosureTest {
 	private static List<CandidateRuleFact> publishClosed(List<CandidateRuleFact> facts,
 		List<LogicalTransientInputFact> logicalInputs,
 		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementSupportRelations.class.getDeclaredMethod(
 			"pruneUnsupportedRealizations", List.class, Map.class, List.class, Map.class);
 		method.setAccessible(true);
 		List<CandidateRuleFact> current = facts;

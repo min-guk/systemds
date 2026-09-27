@@ -55,7 +55,7 @@ public class PlacementAnalysisS2ContractTest {
 	private static final Path ANALYSIS = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java");
 	private static final Path BUILDER = ROOT.resolve(
-		"src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java");
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java");
 	private static final List<Path> SELECTOR_CLOSURE = List.of(
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/selector"),
 		ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter"),

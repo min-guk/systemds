@@ -29,7 +29,7 @@ public class NeutralPlacementBindingAssignmentStreamingTest {
 			bindings(0, "a", 2), bindings(1, "b", 3), bindings(2, "c", 2));
 		List<List<CandidateRealizationInputBinding>> actual = new ArrayList<>();
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NeutralPlacementGraphBuilder.enumerateBindingAssignments(
+		PlacementRelationClosure.enumerateBindingAssignments(
 			choices, 0, new ArrayList<>(), actual::add, metrics);
 
 		List<List<CandidateRealizationInputBinding>> expected = new ArrayList<>();
@@ -52,18 +52,18 @@ public class NeutralPlacementBindingAssignmentStreamingTest {
 	@Test
 	public void emptyProductContractsAndConsumerFailureArePreserved() {
 		List<List<CandidateRealizationInputBinding>> zeroDimension = new ArrayList<>();
-		NeutralPlacementGraphBuilder.enumerateBindingAssignments(
+		PlacementRelationClosure.enumerateBindingAssignments(
 			List.of(), 0, new ArrayList<>(), zeroDimension::add, null);
 		Assert.assertEquals(List.of(List.of()), zeroDimension);
 
 		List<List<CandidateRealizationInputBinding>> emptyDomain = new ArrayList<>();
-		NeutralPlacementGraphBuilder.enumerateBindingAssignments(
+		PlacementRelationClosure.enumerateBindingAssignments(
 			List.of(bindings(0, "a", 1), List.of()), 0, new ArrayList<>(), emptyDomain::add, null);
 		Assert.assertTrue(emptyDomain.isEmpty());
 
 		List<CandidateRealizationInputBinding> traversal = new ArrayList<>();
 		IllegalStateException failure = Assert.assertThrows(IllegalStateException.class,
-			() -> NeutralPlacementGraphBuilder.enumerateBindingAssignments(
+			() -> PlacementRelationClosure.enumerateBindingAssignments(
 				List.of(bindings(0, "a", 2)), 0, traversal,
 				ignored -> { throw new IllegalStateException("consumer"); }, null));
 		Assert.assertEquals("consumer", failure.getMessage());
@@ -76,7 +76,7 @@ public class NeutralPlacementBindingAssignmentStreamingTest {
 			Arrays.asList(null, FType.ROW), List.of(FType.COL, FType.FULL));
 		List<List<FType>> actual = new ArrayList<>();
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NeutralPlacementGraphBuilder.forEachInputCombination(domains, actual::add, metrics);
+		PlacementCandidateGenerator.forEachInputCombination(domains, actual::add, metrics);
 
 		List<List<FType>> expected = List.of(
 			Arrays.asList(null, FType.COL), Arrays.asList(null, FType.FULL),
@@ -87,10 +87,10 @@ public class NeutralPlacementBindingAssignmentStreamingTest {
 		Assert.assertEquals(2, metrics.snapshot().inputPeakDepth());
 
 		List<List<FType>> zeroDimension = new ArrayList<>();
-		NeutralPlacementGraphBuilder.forEachInputCombination(List.of(), zeroDimension::add, null);
+		PlacementCandidateGenerator.forEachInputCombination(List.of(), zeroDimension::add, null);
 		Assert.assertEquals(List.of(List.of()), zeroDimension);
 		List<List<FType>> emptyDomain = new ArrayList<>();
-		NeutralPlacementGraphBuilder.forEachInputCombination(
+		PlacementCandidateGenerator.forEachInputCombination(
 			List.of(List.of(FType.ROW), List.of()), emptyDomain::add, null);
 		Assert.assertTrue(emptyDomain.isEmpty());
 	}

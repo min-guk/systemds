@@ -58,7 +58,7 @@ public class DirectedDirectClosureDirtyConeTest {
 		PlacementDependencyComponents schedule = new PlacementDependencyComponents(
 			List.of(a.key(), b.key()), List.of(new PlacementDependencyComponents.SemanticDependency(a.key(), b.key())),
 			List.of(new PlacementDependencyComponents.InvalidationAdjacency(a.key(), b.key())));
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"readyDirectOwners", PlacementDependencyComponents.class, Set.class);
 		method.setAccessible(true);
 		Assert.assertEquals(keys(a), method.invoke(null, schedule, keys(a, b)));
@@ -254,7 +254,7 @@ public class DirectedDirectClosureDirtyConeTest {
 		List<CandidateRuleFact> before = List.of(supportFact(source, selected), bound);
 		List<CandidateRuleFact> after = List.of(supportFact(other, selected), proofChanged);
 		Object index = supportIndex(before);
-		Method changedMethod = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method changedMethod = PlacementRelationClosure.class.getDeclaredMethod(
 			"changedCandidateOccurrences", List.class, List.class);
 		changedMethod.setAccessible(true);
 		@SuppressWarnings("unchecked")
@@ -402,7 +402,7 @@ public class DirectedDirectClosureDirtyConeTest {
 
 	private static PlacementDependencyComponents supportSchedule(List<Node> nodes,
 		Map<CompiledHopKey,Set<CompiledHopKey>> support) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("directComponentSchedule",
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("directComponentSchedule",
 			List.class, Map.class, Map.class, List.class);
 		method.setAccessible(true);
 		return (PlacementDependencyComponents)method.invoke(null, nodes.stream().map(Node::key).toList(),
@@ -410,7 +410,7 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	private static Object supportIndex(List<CandidateRuleFact> facts) throws Exception {
-		Class<?> type = Class.forName(NeutralPlacementGraphBuilder.class.getName() + "$DirectSupportIndex");
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectSupportIndex");
 		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, List.class);
 		constructor.setAccessible(true);
 		Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
@@ -449,7 +449,7 @@ public class DirectedDirectClosureDirtyConeTest {
 	@SuppressWarnings("unchecked")
 	private static Set<CompiledHopKey> changedCandidateOccurrences(List<CandidateRuleFact> before,
 		List<CandidateRuleFact> after) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"changedCandidateOccurrences", List.class, List.class);
 		method.setAccessible(true);
 		return (Set<CompiledHopKey>)method.invoke(null, before, after);
@@ -458,7 +458,7 @@ public class DirectedDirectClosureDirtyConeTest {
 	@SuppressWarnings("unchecked")
 	private static Map<CompiledHopKey,Set<CompiledHopKey>> fullSupport(List<CandidateRuleFact> facts) throws Exception {
 		Map<CompiledHopKey,Set<CompiledHopKey>> result = new IdentityHashMap<>();
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"addDirectSupportDependencies", Map.class, List.class);
 		method.setAccessible(true);
 		method.invoke(null, result, facts);
@@ -505,7 +505,7 @@ public class DirectedDirectClosureDirtyConeTest {
 		List<CompiledInputEdgeFact> afterEdges,
 		Map<CompiledHopKey,List<CompiledHopKey>> afterReaching,
 		Set<CompiledHopKey> changedLoopSeeds) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"initialPostPhysicalDirectDirty", List.class, List.class, List.class, Map.class,
 			List.class, List.class, List.class, Map.class, Set.class);
 		method.setAccessible(true);
@@ -565,7 +565,7 @@ public class DirectedDirectClosureDirtyConeTest {
 	private static Set<CompiledHopKey> affected(Set<CompiledHopKey> changed, List<Node> nodes,
 		List<CompiledInputEdgeFact> edges, Map<CompiledHopKey,List<CompiledHopKey>> reaching,
 		List<CandidateRuleFact> before, List<CandidateRuleFact> after) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"affectedDirectClosureOccurrences", Set.class, List.class, List.class, Map.class,
 			List.class, List.class);
 		method.setAccessible(true);

@@ -59,7 +59,7 @@ public class LoopSeedMemoRelocationIdentityTest {
 		Assert.assertNotSame(memoAction.key(), currentAction.key());
 		List<CandidateRuleFact> freshExit = List.of(fact(memoAction.key()));
 
-		List<CandidateRuleFact> first = NeutralPlacementGraphBuilder
+		List<CandidateRuleFact> first = PlacementRelationClosure
 			.normalizeMemoizedRelocationActionIdentity(freshExit, List.of(currentAction));
 		Assert.assertEquals("memo replay must preserve the fresh completed-exit value", freshExit, first);
 		Assert.assertSame("candidate rule ownership identity is unchanged",
@@ -67,7 +67,7 @@ public class LoopSeedMemoRelocationIdentityTest {
 		Assert.assertSame("equal relocation authority must use the current graph-owned key",
 			currentAction.key(), relocationKey(first));
 
-		List<CandidateRuleFact> second = NeutralPlacementGraphBuilder
+		List<CandidateRuleFact> second = PlacementRelationClosure
 			.normalizeMemoizedRelocationActionIdentity(first, List.of(currentAction));
 		Assert.assertSame("repeated identity normalization must be allocation-free and idempotent",
 			first, second);
@@ -80,9 +80,9 @@ public class LoopSeedMemoRelocationIdentityTest {
 		RelocationAction changedAction = action(anchor("changed"));
 		List<CandidateRuleFact> completed = List.of(fact(memoAction.key()));
 
-		List<CandidateRuleFact> missing = NeutralPlacementGraphBuilder
+		List<CandidateRuleFact> missing = PlacementRelationClosure
 			.normalizeMemoizedRelocationActionIdentity(completed, List.of());
-		List<CandidateRuleFact> changed = NeutralPlacementGraphBuilder
+		List<CandidateRuleFact> changed = PlacementRelationClosure
 			.normalizeMemoizedRelocationActionIdentity(completed, List.of(changedAction));
 		Assert.assertSame("missing authority remains for ordinary final pruning", completed, missing);
 		Assert.assertSame("changed authority must not be invented as an equal replacement", completed, changed);

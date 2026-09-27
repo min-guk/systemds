@@ -36,7 +36,7 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	private static final Path PLANNER_UTILS = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerUtils.java");
 	private static final Path PLACEMENT_BUILDER = ROOT.resolve(
-		"src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java");
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java");
 	private static final Path DML_TRANSLATOR = ROOT.resolve(
 		"src/main/java/org/apache/sysds/parser/DMLTranslator.java");
 	private static final List<Path> SELECTOR_SIDE_SOURCES = List.of(

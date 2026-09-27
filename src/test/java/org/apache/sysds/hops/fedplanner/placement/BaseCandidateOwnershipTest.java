@@ -62,26 +62,26 @@ public class BaseCandidateOwnershipTest {
 		CandidateRuleFact derived = available(emission(ROW, "derived"));
 
 		Assert.assertTrue("realization/proof derivation may differ behind the same complete base shell",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base), List.of(derived)));
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base), List.of(derived)));
 		Assert.assertFalse("a missing semantic slot must be rebuilt",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base), List.of()));
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base), List.of()));
 		Assert.assertFalse("an unavailable current row must be rebuilt",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base),
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base),
 				List.of(profileError())));
 		Assert.assertFalse("profile evidence is part of the exact semantic shell",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base),
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base),
 				List.of(availableWithProfile(emission(ROW, "derived"), List.of(FType.COL)))));
 		Assert.assertFalse("shape evidence is part of the exact semantic shell",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base),
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base),
 				List.of(availableWithShape(emission(ROW, "derived"), Map.of("rows", "changed")))));
 		Assert.assertFalse("capability evidence is part of the exact semantic shell",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base),
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base),
 				List.of(availableWithCapability(emission(ROW, "derived"), "changed"))));
 		Assert.assertFalse("an extra derived-FOUT emission sharing the coarse state is not base coverage",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base),
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base),
 				List.of(available(List.of(emission(ROW, "derived"), derivedEmission())))));
 		Assert.assertFalse("a stale privacy-excluded row must not hide a reappearing raw native source",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(base),
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(base),
 				List.of(fact(CandidateEvaluationStatus.PRIVACY_EXCLUDED, capability("base"), shape(Map.of()),
 					new CandidateProfileFact(List.of(FType.ROW), ""), List.of(), "PRIVACY:PRIVATE"))));
 	}
@@ -91,10 +91,10 @@ public class BaseCandidateOwnershipTest {
 		CandidateEmissionFact nativeSource = nativeSourceEmission();
 		CandidateEmissionFact derived = derivedEmission();
 		Assert.assertTrue("a derived target without its row-owned source is removed",
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(List.of(derived)).isEmpty());
+			PlacementRelationClosure.sourceClosedCandidateEmissions(List.of(derived)).isEmpty());
 		Assert.assertEquals("fresh raw reconstruction must re-evaluate source closure instead of trusting old status",
 			List.of(nativeSource, derived),
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(List.of(nativeSource, derived)));
+			PlacementRelationClosure.sourceClosedCandidateEmissions(List.of(nativeSource, derived)));
 	}
 
 	@Test
@@ -102,7 +102,7 @@ public class BaseCandidateOwnershipTest {
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
 		CandidateRuleFact base = available(emission(ROW, "base"));
 		CandidateRuleFact derived = available(emission(ROW, "derived"));
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod("retainCompleteDerivedBase",
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("retainCompleteDerivedBase",
 			Node.class, List.class, List.class, Node.class, List.class, List.class);
 		method.setAccessible(true);
 
@@ -133,7 +133,7 @@ public class BaseCandidateOwnershipTest {
 		Assert.assertEquals(fresh.key(), reconciled.get(0).key());
 		Assert.assertEquals(fresh.profile(), reconciled.get(0).profile());
 		Assert.assertFalse("whole-base retention still rejects the extra emission",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(fresh), List.of(prior)));
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(fresh), List.of(prior)));
 	}
 
 	@Test
@@ -147,7 +147,7 @@ public class BaseCandidateOwnershipTest {
 		CandidateRuleFact fresh = available(List.of(nativeFresh, localFresh, derivedFresh));
 		CandidateRuleFact prior = available(List.of(localPrior, derivedPrior));
 		Assert.assertFalse("a missing native sibling still requires fresh inventory reconstruction",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(List.of(fresh), List.of(prior)));
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(List.of(fresh), List.of(prior)));
 		CandidateRuleFact result = reconcile(List.of(fresh), List.of(prior)).get(0);
 		Assert.assertEquals(3, result.allowedEmissionFacts().size());
 		Assert.assertTrue("missing native generation is restored", result.allowedEmissionFacts().contains(nativeFresh));
@@ -192,7 +192,7 @@ public class BaseCandidateOwnershipTest {
 		CandidateRuleFact result = reconcile(List.of(available(fresh)),
 			List.of(available(supported(fresh, binding)))).get(0);
 		Assert.assertTrue("fixture must preserve the tentative local support", hasBinding(result, binding));
-		Method prune = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method prune = PlacementSupportRelations.class.getDeclaredMethod(
 			"pruneUnsupportedRealizations", List.class);
 		prune.setAccessible(true);
 		@SuppressWarnings("unchecked")
@@ -266,7 +266,7 @@ public class BaseCandidateOwnershipTest {
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> reconcile(List<CandidateRuleFact> fresh,
 		List<CandidateRuleFact> prior) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"reconcilePhysicalSupports", List.class, List.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, fresh, prior);
@@ -274,7 +274,8 @@ public class BaseCandidateOwnershipTest {
 
 	private static boolean invoke(Method method, NeutralPlacementGraphBuilder builder,
 		CandidateRuleFact current, CandidateRuleFact fresh) throws Exception {
-		return (boolean)method.invoke(builder, NODE, List.of(RULE), List.of(current),
+		return (boolean)method.invoke(PlacementBuilderTestAccess.relationClosure(builder),
+			NODE, List.of(RULE), List.of(current),
 			NODE, List.of(RULE), List.of(fresh));
 	}
 

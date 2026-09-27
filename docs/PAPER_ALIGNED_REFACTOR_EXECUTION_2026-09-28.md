@@ -77,3 +77,12 @@ facts (both corrections applied before extraction).
 
 Status: baseline verification and boundary review in progress; no implementation
 stage is claimed complete yet.
+
+## P2 checkpoint
+
+- Public builder 192 lines; facts, generator, relation closure, support operations and diagnostics now have separate owners. L3 is split into seed, boundary, function, privacy, feasibility and publication phases.
+- Independent extraction review found no change to identity creation, call order, six-component convergence or commit/invalidation lifetime. Published immutable objects survive cleanup and builder reuse.
+- Clean expanded 44-class suite: baseline and P2 each 365 tests, 9 failures, 3 errors, 5 existing skips. Failure identities match; the stale source-branch inventory observes moved source locations. Evidence: `evidence/{baseline/p2-expanded-reference,p2/expanded-clean-v1}.json`.
+- Protected physical exports: before/P2 each 216 proofs / 56 physical plans on P and E; bidirectional canonical physical sets and multiplicity match. The P audit is retained separately; raw bytes differ and require semantic classification. Comparator was unchanged.
+- Static checking: no configured lint/SAST gate in POM. Explicit default Checkstyle report and baseline/context delta are recorded in `evidence/P2_STATIC_CHECKSTYLE_REPORT.md`; not reported as lint green. Unused imports: zero.
+- External C0 finished independently at `cfab6c8258c1525761b33ee8f6a6caa8c55c84b8`. It is imported after this separate P2 checkpoint, with source/JAR and regression evidence refreshed before P3.

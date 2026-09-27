@@ -234,7 +234,7 @@ public class WorkerPoolAnchorResolverFunctionReturnTest {
 	private static Set<DurableAnchorKey> resolve(List<Node> nodes,
 		List<Constraint> constraints, CompiledHopKey target) throws Exception {
 		Class<?> resolverClass = java.util.Arrays.stream(
-			NeutralPlacementGraphBuilder.class.getDeclaredClasses())
+			PlacementRelationClosure.class.getDeclaredClasses())
 			.filter(type -> type.getSimpleName().equals("WorkerPoolAnchorResolver"))
 			.findFirst().orElseThrow();
 		Constructor<?> constructor = resolverClass.getDeclaredConstructor(Map.class, Map.class,

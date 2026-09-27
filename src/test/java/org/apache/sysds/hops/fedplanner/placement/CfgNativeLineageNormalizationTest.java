@@ -76,7 +76,7 @@ public class CfgNativeLineageNormalizationTest {
 
 	private static String lineage(CompiledHopKey owner, DurableAnchorKey seed,
 		boolean exactLayout) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"cfgNativeDerivedLineage", CompiledHopKey.class, DurableAnchorKey.class, boolean.class);
 		method.setAccessible(true);
 		return (String)method.invoke(null, owner, seed, exactLayout);

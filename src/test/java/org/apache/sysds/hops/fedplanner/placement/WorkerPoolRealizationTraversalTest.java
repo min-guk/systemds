@@ -85,7 +85,7 @@ public class WorkerPoolRealizationTraversalTest {
 	@SuppressWarnings("unchecked")
 	private static Set<DurableAnchorKey> resolve(CandidateRealizationReference root,
 		Map<String,CandidateEmissionRealization> facts, Set<String> visited) throws Exception {
-		Class<?> type = Class.forName(NeutralPlacementGraphBuilder.class.getName() + "$WorkerPoolAnchorResolver");
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$WorkerPoolAnchorResolver");
 		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, Map.class, List.class,
 			List.class, Collection.class, Map.class, Map.class);
 		constructor.setAccessible(true);

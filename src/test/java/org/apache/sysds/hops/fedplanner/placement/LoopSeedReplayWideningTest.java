@@ -48,11 +48,11 @@ public class LoopSeedReplayWideningTest {
 		Set<String> seen = new LinkedHashSet<>();
 		Map<String,String> eligible = Map.of("loop-read", "proof-input-revision");
 
-		NeutralPlacementGraphBuilder.recordInstalledLoopSeedRevisions(
+		PlacementRelationClosure.recordInstalledLoopSeedRevisions(
 			eligible, Set.of(), seen);
 		Assert.assertFalse("a rejected seed must remain retryable", seen.contains("proof-input-revision"));
 
-		NeutralPlacementGraphBuilder.recordInstalledLoopSeedRevisions(
+		PlacementRelationClosure.recordInstalledLoopSeedRevisions(
 			eligible, Set.of("loop-read"), seen);
 		Assert.assertTrue("a successfully installed seed must become one-shot",
 			seen.contains("proof-input-revision"));
@@ -65,7 +65,7 @@ public class LoopSeedReplayWideningTest {
 			List.of("entry-action"), false);
 		ReplayRevision exit = new ReplayRevision(List.of("completed-source"),
 			List.of("completed-action"), true);
-		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+		PlacementRelationClosure.recordCompletedLoopSeedTransfer(
 			entry, "converged-proof-state", true, completedTransfers);
 		Assert.assertEquals("only the revision that actually installed a seed is completed",
 			1, completedTransfers.size());
@@ -74,7 +74,7 @@ public class LoopSeedReplayWideningTest {
 			completedTransfers.containsKey(exit));
 
 		// The widened EXIT is now the entry of a separately executed, stable transfer.
-		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+		PlacementRelationClosure.recordCompletedLoopSeedTransfer(
 			exit, "converged-proof-state", true, completedTransfers);
 
 		Assert.assertEquals("the EXIT can replay only after its own transfer completed",
@@ -82,11 +82,11 @@ public class LoopSeedReplayWideningTest {
 		Assert.assertEquals("both actually completed revisions retain the converged payload",
 			Set.of("converged-proof-state"), Set.copyOf(completedTransfers.values()));
 		Assert.assertEquals(2, completedTransfers.size());
-		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+		PlacementRelationClosure.recordCompletedLoopSeedTransfer(
 			exit, "converged-proof-state", true, completedTransfers);
 		Assert.assertEquals("a completed revision remains one-shot", 2, completedTransfers.size());
 		Assert.assertThrows(IllegalStateException.class, () ->
-			NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+			PlacementRelationClosure.recordCompletedLoopSeedTransfer(
 				exit, "conflicting-proof-state", true, completedTransfers));
 		Assert.assertEquals("a conflicting replay cannot replace the completed transfer",
 			"converged-proof-state", completedTransfers.get(exit));
@@ -105,7 +105,7 @@ public class LoopSeedReplayWideningTest {
 	public void privacyRejectedLoopSeedDoesNotConsumeEitherProofState() {
 		Map<String,String> completedTransfers = new HashMap<>();
 		try {
-			NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+			PlacementRelationClosure.recordCompletedLoopSeedTransfer(
 				"entry-proof-state", "privacy-filtered-state", false, completedTransfers);
 			Assert.fail("a filtered provisional seed must fail closed");
 		}

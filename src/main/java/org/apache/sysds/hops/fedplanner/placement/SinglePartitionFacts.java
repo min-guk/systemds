@@ -80,7 +80,7 @@ final class SinglePartitionFacts {
 				continue;
 			}
 			if(hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
-				var partitions = NeutralPlacementGraphBuilder.fedInitLiteralPartitions(data);
+				var partitions = PlacementProgramFacts.fedInitLiteralPartitions(data);
 				String endpoint = UNKNOWN;
 				if(partitions.size() == 1) {
 					var part = partitions.get(0);
@@ -163,7 +163,7 @@ final class SinglePartitionFacts {
 				continue;
 			}
 			if(hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
-				var partitions = NeutralPlacementGraphBuilder.fedInitLiteralPartitions(data);
+				var partitions = PlacementProgramFacts.fedInitLiteralPartitions(data);
 				String endpoint = UNKNOWN;
 				if(partitions.size() == 1) {
 					var part = partitions.get(0);

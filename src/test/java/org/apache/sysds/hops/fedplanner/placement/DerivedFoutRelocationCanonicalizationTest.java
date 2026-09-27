@@ -97,7 +97,7 @@ public class DerivedFoutRelocationCanonicalizationTest {
 
 	private static CandidateEmissionFact merge(CandidateEmissionFact emission,
 		List<CandidateRealizationInputBinding>... assignments) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"canonicalDerivedFoutRealizations", CompiledHopKey.class,
 			CandidateEmissionFact.class, List.class);
 		method.setAccessible(true);
@@ -115,7 +115,7 @@ public class DerivedFoutRelocationCanonicalizationTest {
 	private static List<CandidateRealizationSupportClause> canonicalClauses(
 		DerivedFoutMaterializationActionKey action,
 		List<CandidateRealizationSupportClause> clauses) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"canonicalDerivedFoutClauses", CompiledHopKey.class,
 			DerivedFoutMaterializationActionKey.class, List.class);
 		method.setAccessible(true);

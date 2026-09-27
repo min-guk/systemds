@@ -42,7 +42,7 @@ public class ConstraintSupportedPolicyStatesTest {
 			new Constraint(ConstraintKind.CONJUNCTIVE, middle.key(), sink.key(), 0, "chain-sink")));
 
 		Map<CompiledHopKey,List<PlacementState>> supported =
-			NeutralPlacementGraphBuilder.constraintSupportedPolicyStates(graph);
+			PlacementRelationClosure.constraintSupportedPolicyStates(graph);
 
 		Assert.assertEquals(List.of(ROW_FOUT), supported.get(source.key()));
 		Assert.assertEquals(List.of(ROW_FOUT), supported.get(middle.key()));
@@ -63,7 +63,7 @@ public class ConstraintSupportedPolicyStatesTest {
 		Assert.assertTrue(right.legalAlternatives().stream()
 			.anyMatch(state -> NeutralPlacementGraph.constraintSatisfied(forbidsLout, ROW_FOUT, state)));
 
-		Map<CompiledHopKey,List<PlacementState>> supported = NeutralPlacementGraphBuilder
+		Map<CompiledHopKey,List<PlacementState>> supported = PlacementRelationClosure
 			.constraintSupportedPolicyStates(graph(List.of(left, right), List.of(forbidsFout, forbidsLout)));
 
 		Assert.assertTrue("different per-constraint witnesses are not one consistent pair",
@@ -76,14 +76,14 @@ public class ConstraintSupportedPolicyStatesTest {
 		Node fixedLeft = node("reverse", "fixed", 0, List.of(ROW_FOUT));
 		Node variableRight = node("reverse", "variable", 1, List.of(ROW_LOUT, ROW_FOUT));
 		Constraint reverse = forbid(fixedLeft, variableRight, ROW_FOUT, ROW_FOUT);
-		Map<CompiledHopKey,List<PlacementState>> reverseSupported = NeutralPlacementGraphBuilder
+		Map<CompiledHopKey,List<PlacementState>> reverseSupported = PlacementRelationClosure
 			.constraintSupportedPolicyStates(graph(List.of(fixedLeft, variableRight), List.of(reverse)));
 		Assert.assertEquals("processing the right endpoint must not reverse directional evidence",
 			List.of(ROW_LOUT), reverseSupported.get(variableRight.key()));
 
 		Node self = node("self", "self", 0, List.of(ROW_LOUT, ROW_FOUT));
 		Constraint selfForbid = forbid(self, self, ROW_FOUT, ROW_FOUT);
-		Map<CompiledHopKey,List<PlacementState>> selfSupported = NeutralPlacementGraphBuilder
+		Map<CompiledHopKey,List<PlacementState>> selfSupported = PlacementRelationClosure
 			.constraintSupportedPolicyStates(graph(List.of(self), List.of(selfForbid)));
 		Assert.assertEquals(List.of(ROW_LOUT), selfSupported.get(self.key()));
 	}
@@ -97,7 +97,7 @@ public class ConstraintSupportedPolicyStatesTest {
 			new Constraint(ConstraintKind.SAME_PLACEMENT, fixed.key(), constrained.key(), 0, "same")));
 
 		Map<CompiledHopKey,List<PlacementState>> supported =
-			NeutralPlacementGraphBuilder.constraintSupportedPolicyStates(graph);
+			PlacementRelationClosure.constraintSupportedPolicyStates(graph);
 
 		Assert.assertEquals(unrelated.legalAlternatives(), supported.get(unrelated.key()));
 		Assert.assertEquals(unrelated.legalAlternatives(),

@@ -1270,11 +1270,11 @@ public class NativePlacementContinuityTest {
 		List<Node> nodes = List.copyOf(full.nodes.values());
 		NativePlacementContinuity continuity = full.resolver();
 
-		Method indexMethod = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method indexMethod = PlacementRelationClosure.class.getDeclaredMethod(
 			"directBindingIndex", List.class, List.class, List.class, List.class);
 		indexMethod.setAccessible(true);
 		Object index = indexMethod.invoke(null, facts, nodes, full.edges, facts);
-		Method bind = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
 			"bindDirectNativeCandidateRealizationsMeasured", index.getClass(), List.class,
 			Map.class, Map.class, NativePlacementContinuity.class, Set.class);
 		bind.setAccessible(true);
@@ -1283,7 +1283,8 @@ public class NativePlacementContinuityTest {
 			shapes.put(hop, new NodeShapeFact(DataType.MATRIX, 4, 2));
 		@SuppressWarnings("unchecked")
 		List<CandidateRuleFact> rebound = (List<CandidateRuleFact>)bind.invoke(
-			new NeutralPlacementGraphBuilder(), index, facts, full.origins, shapes,
+			PlacementBuilderTestAccess.relationClosure(new NeutralPlacementGraphBuilder()),
+			index, facts, full.origins, shapes,
 			continuity, Set.of(sum.key));
 
 		Field memoField = accessibleField(NativePlacementContinuity.class, "completedProofMemo");
@@ -1590,7 +1591,7 @@ public class NativePlacementContinuityTest {
 	private static List<PlacementAnalysis.TransientCompatibilityProof> transientCertificates(
 		Fixture fixture, Ref source, CandidateRealizationReference sourceRealization,
 		DurableAnchorKey seed, List<PlacementProofKey> commonProofs) {
-		return NeutralPlacementGraphBuilder.nativeTransientCompatibilityProofs(source.key,
+		return PlacementRelationClosure.nativeTransientCompatibilityProofs(source.key,
 			sourceRealization, seed, fixture.resolver(), commonProofs);
 	}
 

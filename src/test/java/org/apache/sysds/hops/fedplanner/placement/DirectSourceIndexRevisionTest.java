@@ -124,7 +124,7 @@ public class DirectSourceIndexRevisionTest {
 	}
 
 	private static Class<?> sourceIndexClass() {
-		for(Class<?> type : NeutralPlacementGraphBuilder.class.getDeclaredClasses())
+		for(Class<?> type : PlacementRelationClosure.class.getDeclaredClasses())
 			if(type.getSimpleName().equals("DirectSourceIndex"))
 				return type;
 		throw new AssertionError("DirectSourceIndex was not found");

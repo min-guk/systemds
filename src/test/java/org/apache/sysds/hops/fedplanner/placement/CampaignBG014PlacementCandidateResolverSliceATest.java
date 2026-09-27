@@ -149,7 +149,7 @@ public class CampaignBG014PlacementCandidateResolverSliceATest {
 		Assert.assertFalse("resolver must not rebuild a neutral graph", resolver.contains("NeutralPlacementGraphBuilder"));
 
 		String builder = Files.readString(Path.of(
-			"src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java"));
+			"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCandidateGenerator.java"));
 		int targetBranch = builder.indexOf("if(i == targetPosition)");
 		int matrixBranch = builder.indexOf("else if(inputShapeFacts.get(i).dataType().isMatrix())", targetBranch);
 		Assert.assertTrue("target position must be pinned before scalar/non-matrix handling",

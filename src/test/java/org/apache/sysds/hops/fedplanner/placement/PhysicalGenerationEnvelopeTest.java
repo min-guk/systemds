@@ -150,7 +150,7 @@ public class PhysicalGenerationEnvelopeTest {
 			List.of(CandidateEmissionRealization.durable(state,
 				fixture.outputPool("output-b", "worker-a"), List.of(), List.of())));
 		Assert.assertFalse("same coarse derived action with a different durable output is incomplete",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(
 				List.of(fact(fixture.ownerRule, firstDerived)),
 				List.of(fact(fixture.ownerRule, otherDerivedOutput))));
 
@@ -163,7 +163,7 @@ public class PhysicalGenerationEnvelopeTest {
 			List.of(CandidateEmissionRealization.durable(nativeState,
 				fixture.pool("native-b", "worker-a"), List.of(), List.of())));
 		Assert.assertTrue("native staging keys may differ because native support is regenerated",
-			NeutralPlacementGraphBuilder.hasCompleteBaseEmissionCoverage(
+			PlacementRelationClosure.hasCompleteBaseEmissionCoverage(
 				List.of(fact(fixture.ownerRule, firstNative)),
 				List.of(fact(fixture.ownerRule, otherNative))));
 	}
@@ -463,12 +463,13 @@ public class PhysicalGenerationEnvelopeTest {
 		}
 
 		private ReplayState close(ReplayState replay, List<CompiledInputEdgeFact> inputEdges) throws Exception {
-			Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+			Method method = PlacementRelationClosure.class.getDeclaredMethod(
 				"closePhysicalDependenciesMeasured", List.class, nested("ClosureUpdate"),
 				Map.class, Map.class, SinglePartitionFacts.class, Map.class, nested("CfgAnalysis"),
 				List.class, Map.class, Map.class);
 			method.setAccessible(true);
-			Object closed = method.invoke(builder, occurrences, candidateReplay(replay), shapes,
+			Object closed = method.invoke(PlacementBuilderTestAccess.relationClosure(builder),
+				occurrences, candidateReplay(replay), shapes,
 				abstractShapes, singlePartitions, ordinalsByBlock, cfg, inputEdges, origins, shapes);
 			return replay(closed);
 		}
@@ -543,9 +544,10 @@ public class PhysicalGenerationEnvelopeTest {
 		Class<?> type = nested("PhysicalGenerationContext");
 		Constructor<?> constructor = type.getDeclaredConstructor(List.class, Map.class);
 		constructor.setAccessible(true);
-		Field field = NeutralPlacementGraphBuilder.class.getDeclaredField("physicalGenerationContext");
+		Field field = PlacementRelationClosure.class.getDeclaredField("physicalGenerationContext");
 		field.setAccessible(true);
-		field.set(builder, constructor.newInstance(List.<Constraint>of(), scopes));
+		field.set(PlacementBuilderTestAccess.relationClosure(builder),
+			constructor.newInstance(List.<Constraint>of(), scopes));
 	}
 
 	private static void installPrivacy(NeutralPlacementGraphBuilder builder, CompiledHopKey source,
@@ -561,9 +563,10 @@ public class PhysicalGenerationEnvelopeTest {
 		Class<?> type = nested("StaticPrivacyProjection");
 		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, Map.class);
 		constructor.setAccessible(true);
-		Field field = NeutralPlacementGraphBuilder.class.getDeclaredField("staticPrivacyProjection");
+		Field field = PlacementRelationClosure.class.getDeclaredField("staticPrivacyProjection");
 		field.setAccessible(true);
-		field.set(builder, constructor.newInstance(effective, protectedInputs));
+		field.set(PlacementBuilderTestAccess.relationClosure(builder),
+			constructor.newInstance(effective, protectedInputs));
 	}
 
 	private static Object cfg(int size) throws Exception {
@@ -590,17 +593,17 @@ public class PhysicalGenerationEnvelopeTest {
 		constructor.setAccessible(true);
 		Object inventory = constructor.newInstance(proofNodes, proofFacts, edges,
 			List.<LogicalTransientInputFact>of(), List.<Constraint>of(), origins, shapes);
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(name,
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(name,
 			nested("CandidateBase"), inventoryType);
 		method.setAccessible(true);
-		Object result = method.invoke(builder, raw, inventory);
+		Object result = method.invoke(PlacementBuilderTestAccess.relationClosure(builder), raw, inventory);
 		return envelope(result);
 	}
 
 	private static Envelope invokeMaterializer(List<Node> nodes, List<CandidateRuleFact> facts,
 		List<Node> proofNodes, List<CandidateRuleFact> proofFacts, List<CompiledInputEdgeFact> edges,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"closeDerivedWorkerPoolMaterializationCandidates", List.class, List.class, List.class, List.class,
 			List.class, List.class, Collection.class, Map.class, Map.class);
 		method.setAccessible(true);
@@ -652,7 +655,9 @@ public class PhysicalGenerationEnvelopeTest {
 	}
 
 	private static Class<?> nested(String simpleName) {
-		for(Class<?> type : NeutralPlacementGraphBuilder.class.getDeclaredClasses())
+		Class<?> owner = simpleName.equals("CfgAnalysis")
+			? PlacementProgramFacts.class : PlacementRelationClosure.class;
+		for(Class<?> type : owner.getDeclaredClasses())
 			if(type.getSimpleName().equals(simpleName))
 				return type;
 		throw new AssertionError("missing nested seam " + simpleName);

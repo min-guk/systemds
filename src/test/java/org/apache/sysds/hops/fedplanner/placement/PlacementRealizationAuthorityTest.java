@@ -121,15 +121,15 @@ public class PlacementRealizationAuthorityTest {
 			new CandidateRuleKey(key("different-source"), List.of()), differentLayout);
 
 		Assert.assertTrue("metadata aliases with one exact geometry may certify the transient value",
-			NeutralPlacementGraphBuilder.exactTransientIdentitySupport(reader,
+			PlacementRelationClosure.exactTransientIdentitySupport(reader,
 				new CandidateRealizationSupportClause(List.of(),
 					List.of(CandidateRealizationInputBinding.direct(0, same)))));
 		Assert.assertFalse("a different DIRECT receipt must keep the transient value layout ambiguous",
-			NeutralPlacementGraphBuilder.exactTransientIdentitySupport(reader,
+			PlacementRelationClosure.exactTransientIdentitySupport(reader,
 				new CandidateRealizationSupportClause(List.of(),
 					List.of(CandidateRealizationInputBinding.direct(0, different)))));
 		Assert.assertFalse("an unbound transient realization is not exact runtime-map authority",
-			NeutralPlacementGraphBuilder.exactTransientIdentitySupport(reader,
+			PlacementRelationClosure.exactTransientIdentitySupport(reader,
 				new CandidateRealizationSupportClause(List.of(), List.of())));
 	}
 

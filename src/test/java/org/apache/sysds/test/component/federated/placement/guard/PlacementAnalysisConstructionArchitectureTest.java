@@ -21,6 +21,10 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	private static final Path ROOT = Paths.get("").toAbsolutePath().normalize();
 	private static final Path BUILDER = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java");
+	private static final Path PROGRAM_FACTS = ROOT.resolve(
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementProgramFacts.java");
+	private static final Path RELATION_CLOSURE = ROOT.resolve(
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java");
 	private static final Path SHADOW = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementShadowCoordinator.java");
 	private static final Path ANALYSIS = ROOT.resolve(
@@ -34,8 +38,42 @@ public class PlacementAnalysisConstructionArchitectureTest {
 
 	@Test
 	public void productionUsesOneForwardMutationGuardedAnalysisPath() throws Exception {
-		List<String> violations = constructionViolations(read(BUILDER), read(SHADOW));
+		List<String> violations = splitConstructionViolations(
+			read(BUILDER), read(PROGRAM_FACTS), read(RELATION_CLOSURE), read(SHADOW));
 		Assert.assertTrue("placement analysis construction violations: " + violations, violations.isEmpty());
+	}
+
+	private static List<String> splitConstructionViolations(String builderSource,
+		String factsSource, String closureSource, String shadowSource) {
+		List<String> violations = new ArrayList<>();
+		String facts = JavaSourceBoundaryScanner.codeOnly(factsSource);
+		String closure = JavaSourceBoundaryScanner.codeOnly(closureSource);
+		String shadow = JavaSourceBoundaryScanner.codeOnly(shadowSource);
+		String build = JavaSourceBoundaryScanner.methodBody(builderSource, "build", "DMLProgram program");
+		String buildAnalysis = JavaSourceBoundaryScanner.methodBody(
+			builderSource, "buildAnalysis", "DMLProgram program");
+		String detached = JavaSourceBoundaryScanner.methodBody(
+			builderSource, "buildDetachedAnalysis", "DMLProgram program");
+		if(!matches(build, "return\\s+buildAnalysis\\s*\\(\\s*program\\s*\\)\\s*\\.\\s*graph\\s*\\(\\s*\\)"))
+			violations.add("legacy build is not a forward delegate");
+		if(!matches(buildAnalysis, "return\\s+buildDetachedAnalysis\\s*\\(\\s*program\\s*\\)"))
+			violations.add("buildAnalysis and buildDetachedAnalysis expose divergent construction paths");
+		if(countMatches(detached, "\\bPlacementProgramFacts\\s*\\.\\s*analyze\\s*\\(") != 1)
+			violations.add("buildDetachedAnalysis must prepare exactly one compiler-facts universe");
+		if(countMatches(detached, "\\brelationClosure\\s*\\.\\s*close\\s*\\(") != 1)
+			violations.add("buildDetachedAnalysis must close exactly one placement universe");
+		if(countMatches(facts, Pattern.quote(ORDERED_OCCURRENCES)) != 1)
+			violations.add("facts preparation must perform exactly one ordered occurrence pass");
+		if(countMatches(facts, "\\bPlacementGraphFingerprint\\s*\\.\\s*capture\\s*\\(") != 1
+			|| countMatches(facts, "\\bregistrySentinel\\s*\\(") < 1)
+			violations.add("facts preparation must capture both mutation sentinels");
+		if(countMatches(closure, "\\bnew\\s+PlacementAnalysis\\s*\\(") != 1
+			|| countMatches(closure, "\\bPlacementGraphFingerprint\\s*\\.\\s*capture\\s*\\(") != 1
+			|| countMatches(closure, "\\bregistrySentinel\\s*\\(") != 1)
+			violations.add("relation closure must publish once inside both mutation sentinels");
+		if(!matches(shadow, "new\\s+NeutralPlacementGraphBuilder\\s*\\([^)]*\\)\\s*\\.\\s*buildAnalysis\\s*\\("))
+			violations.add("shadow coordinator must enter through the public builder boundary");
+		return List.copyOf(violations);
 	}
 
 	@Test
@@ -223,7 +261,8 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		List<String> violations = new ArrayList<>();
 		String analysisSource = read(ANALYSIS);
 		String analysis = JavaSourceBoundaryScanner.codeOnly(analysisSource);
-		String builder = JavaSourceBoundaryScanner.codeOnly(read(BUILDER));
+		String builder = JavaSourceBoundaryScanner.codeOnly(read(RELATION_CLOSURE));
+		String programFacts = JavaSourceBoundaryScanner.codeOnly(read(PROGRAM_FACTS));
 		String fixtureSource = read(FIXTURE);
 		String fixture = JavaSourceBoundaryScanner.codeOnly(fixtureSource);
 		if(matches(analysis, "\\bOracleFacade\\b") || matches(analysis,
@@ -261,7 +300,7 @@ public class PlacementAnalysisConstructionArchitectureTest {
 				violations.add("PlacementShapeFacts must reject both missing and extra keys by exact set equality");
 		}
 
-		if(countMatches(builder, "\\bOracleFacade\\s*\\.\\s*nodeShape\\s*\\(") != 1)
+		if(countMatches(programFacts, "\\bOracleFacade\\s*\\.\\s*nodeShape\\s*\\(") != 1)
 			violations.add("builder must derive shape facts through exactly one OracleFacade.nodeShape call");
 		Matcher factVariable = Pattern.compile("\\bPlacementShapeFacts\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*new\\s+PlacementShapeFacts\\s*\\(")
 			.matcher(builder);
@@ -293,8 +332,9 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			for(int i = 0; i < countMatches(entry.getValue(), "\\bOracleFacade\\s*\\.\\s*nodeShape\\s*\\("); i++)
 				derivations.add(ROOT.relativize(entry.getKey()).toString());
 		}
-		String builderPath = ROOT.relativize(BUILDER).toString();
-		if(!derivations.equals(List.of(builderPath)))
+		String builderPath = ROOT.relativize(RELATION_CLOSURE).toString();
+		String factsPath = ROOT.relativize(PROGRAM_FACTS).toString();
+		if(!derivations.equals(List.of(factsPath)))
 			violations.add("builder must own the sole production OracleFacade.nodeShape derivation: " + derivations);
 		if(!allocations.equals(List.of(builderPath)))
 			violations.add("builder must be the sole production PlacementAnalysis allocation root: " + allocations);
@@ -315,7 +355,7 @@ public class PlacementAnalysisConstructionArchitectureTest {
 
 		if(matches(fixture, "\\bOracleFacade\\b") || matches(fixture, "\\bnodeShape\\s*\\("))
 			violations.add("fixture bridge must not derive shape facts through OracleFacade");
-		if(matches(builder, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
+		if(matches(programFacts, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
 			violations.add("builder must derive shape facts only through its sole OracleFacade.nodeShape call");
 		if(matches(fixture, "\\.\\s*(?:getDataType|getDim1|getDim2)\\s*\\("))
 			violations.add("fixture bridge must use explicit/projected facts rather than direct Hop shape getters");

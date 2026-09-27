@@ -40,9 +40,9 @@ public class NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState, Exclusion> excluded = new TreeMap<>();
 
-		NeutralPlacementGraphBuilder.addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, ROW_FOUT,
+		PlacementCandidateGenerator.addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, ROW_FOUT,
 			"inputs=0:null,1:ROW|missingRequiredFacts=[cols]");
-		NeutralPlacementGraphBuilder.addLegalCandidate(legal, excluded, ROW_FOUT);
+		PlacementCandidateGenerator.addLegalCandidate(legal, excluded, ROW_FOUT);
 
 		Assert.assertTrue("state proven by a later input-domain must stay legal", legal.contains(ROW_FOUT));
 		Assert.assertFalse("input-specific UNKNOWN_METADATA must not remain a global state exclusion",
@@ -54,8 +54,8 @@ public class NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState, Exclusion> excluded = new TreeMap<>();
 
-		NeutralPlacementGraphBuilder.addLegalCandidate(legal, excluded, ROW_FOUT);
-		NeutralPlacementGraphBuilder.addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, ROW_FOUT,
+		PlacementCandidateGenerator.addLegalCandidate(legal, excluded, ROW_FOUT);
+		PlacementCandidateGenerator.addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, ROW_FOUT,
 			"inputs=0:null,1:ROW|missingRequiredFacts=[cols]");
 
 		Assert.assertTrue(legal.contains(ROW_FOUT));
@@ -66,10 +66,10 @@ public class NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest {
 	public void globalExclusionStillVetoesLegalCandidateForSameState() {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState, Exclusion> excluded = new TreeMap<>();
-		NeutralPlacementGraphBuilder.addGlobalExclusion(legal, excluded,
+		PlacementCandidateGenerator.addGlobalExclusion(legal, excluded,
 			new Exclusion(ROW_FOUT, ReasonCode.RECOMPILE_CP_FOUT, "global legality exclusion"));
 
-		NeutralPlacementGraphBuilder.addLegalCandidate(legal, excluded, ROW_FOUT);
+		PlacementCandidateGenerator.addLegalCandidate(legal, excluded, ROW_FOUT);
 
 		Assert.assertFalse("global exclusions must not be erased by input-domain reconciliation",
 			legal.contains(ROW_FOUT));
@@ -81,8 +81,8 @@ public class NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState, Exclusion> excluded = new TreeMap<>();
 
-		NeutralPlacementGraphBuilder.addLegalCandidate(legal, excluded, ROW_FOUT);
-		NeutralPlacementGraphBuilder.addGlobalExclusion(legal, excluded,
+		PlacementCandidateGenerator.addLegalCandidate(legal, excluded, ROW_FOUT);
+		PlacementCandidateGenerator.addGlobalExclusion(legal, excluded,
 			new Exclusion(ROW_FOUT, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, "global legality exclusion"));
 
 		Assert.assertFalse("global exclusions must remain authoritative even if discovered after legality",
@@ -95,9 +95,9 @@ public class NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState, Exclusion> excluded = new TreeMap<>();
 
-		NeutralPlacementGraphBuilder.addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, ROW_FOUT,
+		PlacementCandidateGenerator.addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, ROW_FOUT,
 			"inputs=0:null,1:ROW|missingRequiredFacts=[cols]");
-		NeutralPlacementGraphBuilder.addGlobalExclusion(legal, excluded,
+		PlacementCandidateGenerator.addGlobalExclusion(legal, excluded,
 			new Exclusion(ROW_FOUT, ReasonCode.RULE_ERROR, "global legality exclusion"));
 
 		Assert.assertFalse(legal.contains(ROW_FOUT));
@@ -110,9 +110,9 @@ public class NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState, Exclusion> excluded = new TreeMap<>();
 
-		NeutralPlacementGraphBuilder.addGlobalExclusion(legal, excluded,
+		PlacementCandidateGenerator.addGlobalExclusion(legal, excluded,
 			new Exclusion(ROW_FOUT, ReasonCode.RECOMPILE_CP_FOUT, "first global legality exclusion"));
-		NeutralPlacementGraphBuilder.addGlobalExclusion(legal, excluded,
+		PlacementCandidateGenerator.addGlobalExclusion(legal, excluded,
 			new Exclusion(ROW_FOUT, ReasonCode.RULE_ERROR, "second global legality exclusion"));
 
 		Assert.assertFalse(legal.contains(ROW_FOUT));

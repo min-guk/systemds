@@ -224,7 +224,7 @@ public class MaterializationProofInventoryTest {
 
 		private Object cold(Node raw, CandidateRuleFact fact, List<Node> proofNodes,
 			List<CompiledInputEdgeFact> proofEdges) throws Exception {
-			Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+			Method method = PlacementRelationClosure.class.getDeclaredMethod(
 				"closeDerivedWorkerPoolMaterializationCandidates", List.class, List.class, List.class,
 				List.class, List.class, List.class, Collection.class, Map.class, Map.class);
 			method.setAccessible(true);
@@ -234,14 +234,14 @@ public class MaterializationProofInventoryTest {
 	}
 
 	private static Object shared(Node raw, CandidateRuleFact fact, Object inventory) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"closeDerivedWorkerPoolMaterializationCandidates", List.class, List.class, inventoryType());
 		method.setAccessible(true);
 		return method.invoke(null, List.of(raw), List.of(fact), inventory);
 	}
 
 	private static Class<?> inventoryType() throws ClassNotFoundException {
-		return Class.forName(NeutralPlacementGraphBuilder.class.getName() + "$CommittedProofInventory");
+		return Class.forName(PlacementRelationClosure.class.getName() + "$CommittedProofInventory");
 	}
 
 	private static Object field(Object owner, String name) throws Exception {
@@ -252,7 +252,7 @@ public class MaterializationProofInventoryTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> outputFacts(Object result) throws Exception {
-		Method method = result.getClass().getDeclaredMethod("candidateRuleFacts");
+		Method method = result.getClass().getDeclaredMethod("ruleFacts");
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(result);
 	}

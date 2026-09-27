@@ -468,7 +468,7 @@ public class WorkerPoolAnchorResolverCycleTest {
 		}
 
 		private Class<?> resolverClass() {
-			return java.util.Arrays.stream(NeutralPlacementGraphBuilder.class.getDeclaredClasses())
+			return java.util.Arrays.stream(PlacementRelationClosure.class.getDeclaredClasses())
 				.filter(type -> type.getSimpleName().equals("WorkerPoolAnchorResolver"))
 				.findFirst().orElseThrow();
 		}

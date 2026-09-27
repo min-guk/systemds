@@ -154,7 +154,7 @@ public class DerivedFoutNormalizationTest {
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> bind(List<CandidateRuleFact> facts,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"bindDerivedFoutRealizations", List.class, Map.class, Map.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts, origins, shapes);
@@ -186,7 +186,7 @@ public class DerivedFoutNormalizationTest {
 
 	@SuppressWarnings("unchecked")
 	private static List<CandidateRuleFact> publish(List<CandidateRuleFact> facts) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementSupportRelations.class.getDeclaredMethod(
 			"pruneUnsupportedRealizations", List.class);
 		method.setAccessible(true);
 		return (List<CandidateRuleFact>)method.invoke(null, facts);

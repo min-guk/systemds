@@ -100,7 +100,7 @@ public class ExecutableProjectionAuthorityTest {
 
 	@SuppressWarnings("unchecked")
 	private static Node project(Node node, List<CandidateRuleFact> facts) throws Exception {
-		Method method = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method method = PlacementSupportRelations.class.getDeclaredMethod(
 			"projectCandidateNodesToExecutableStates", List.class, List.class, int.class);
 		method.setAccessible(true);
 		Object projection = method.invoke(null, List.of(node), facts, 1);

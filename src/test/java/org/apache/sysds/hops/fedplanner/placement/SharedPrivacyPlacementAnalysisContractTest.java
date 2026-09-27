@@ -105,10 +105,10 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 
 	private static void assertStaticPrivacyProjectionCleared(NeutralPlacementGraphBuilder builder)
 		throws ReflectiveOperationException {
-		Field field = NeutralPlacementGraphBuilder.class.getDeclaredField("staticPrivacyProjection");
+		Field field = PlacementRelationClosure.class.getDeclaredField("staticPrivacyProjection");
 		field.setAccessible(true);
 		Assert.assertNull("analysis-scoped static privacy authority must not leak across builds",
-			field.get(builder));
+			field.get(PlacementBuilderTestAccess.relationClosure(builder)));
 	}
 
 	private static void assertCandidateAndPrivacyParity(PlacementAnalysis expected, PlacementAnalysis actual) {
@@ -251,18 +251,19 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 		Map<PlacementIdentity.CompiledHopKey,Hop> origins = new IdentityHashMap<>();
 		for(var graphNode : analysis.graph().nodes())
 			origins.put(graphNode.key(), analysis.hop(graphNode.key()).orElseThrow());
-		Method projectionFactory = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+		Method projectionFactory = PlacementRelationClosure.class.getDeclaredMethod(
 			"staticPrivacyProjection", List.class, List.class, Map.class, Map.class);
 		projectionFactory.setAccessible(true);
 		Object projection = projectionFactory.invoke(null, analysis.graph().nodes(),
 			analysis.compiledInputEdgesInCanonicalOrder(), origins, analysis.privacyFacts());
-		Field projectionField = NeutralPlacementGraphBuilder.class.getDeclaredField("staticPrivacyProjection");
+		Field projectionField = PlacementRelationClosure.class.getDeclaredField("staticPrivacyProjection");
 		projectionField.setAccessible(true);
-		projectionField.set(builder, projection);
-		Method project = NeutralPlacementGraphBuilder.class.getDeclaredMethod("projectFreshBasePrivacy",
+		Object relationClosure = PlacementBuilderTestAccess.relationClosure(builder);
+		projectionField.set(relationClosure, projection);
+		Method project = PlacementRelationClosure.class.getDeclaredMethod("projectFreshBasePrivacy",
 			NeutralPlacementGraph.Node.class, List.class, List.class, Map.class);
 		project.setAccessible(true);
-		Object projected = project.invoke(builder, rawNode,
+		Object projected = project.invoke(relationClosure, rawNode,
 			publishedFacts.stream().map(PlacementAnalysis.CandidateRuleFact::key).toList(), rawFacts, origins);
 		Method projectedNode = projected.getClass().getDeclaredMethod("node");
 		Method projectedKeys = projected.getClass().getDeclaredMethod("keys");
@@ -275,7 +276,7 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 		Assert.assertEquals("early projection must reproduce the final privacy-filtered candidate rows",
 			publishedFacts, projectedFacts.invoke(projected));
 
-		Method retain = NeutralPlacementGraphBuilder.class.getDeclaredMethod("retainCompleteDerivedBase",
+		Method retain = PlacementRelationClosure.class.getDeclaredMethod("retainCompleteDerivedBase",
 			NeutralPlacementGraph.Node.class, List.class, List.class,
 			NeutralPlacementGraph.Node.class, List.class, List.class);
 		retain.setAccessible(true);
@@ -286,9 +287,9 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 		List<PlacementAnalysis.CandidateRuleFact> facts =
 			(List<PlacementAnalysis.CandidateRuleFact>)projectedFacts.invoke(projected);
 		Assert.assertFalse("first projected base observation installs ownership",
-			(boolean)retain.invoke(builder, node, keys, publishedFacts, node, keys, facts));
+			(boolean)retain.invoke(relationClosure, node, keys, publishedFacts, node, keys, facts));
 		Assert.assertTrue("an identical raw rebuild becomes retainable after the same static projection",
-			(boolean)retain.invoke(builder, node, keys, publishedFacts, node, keys, facts));
+			(boolean)retain.invoke(relationClosure, node, keys, publishedFacts, node, keys, facts));
 	}
 
 	@Test

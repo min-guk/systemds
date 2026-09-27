@@ -105,10 +105,10 @@ public class NeutralPlacementFixedPointCompositionTest {
 
 	@Test
 	public void nativeContinuityIsClearedAfterExceptionalAndSuccessfulBuilds() throws Exception {
-		java.lang.reflect.Field continuity = NeutralPlacementGraphBuilder.class
+		java.lang.reflect.Field continuity = PlacementRelationClosure.class
 			.getDeclaredField("allDefinitionContinuity");
 		continuity.setAccessible(true);
-		java.lang.reflect.Field products = NeutralPlacementGraphBuilder.class
+		java.lang.reflect.Field products = PlacementRelationClosure.class
 			.getDeclaredField("relocationProducts");
 		products.setAccessible(true);
 		boolean[] abort = {true};
@@ -118,7 +118,7 @@ public class NeutralPlacementFixedPointCompositionTest {
 			if(abort[0] && "publication".equals(pass.phase())) {
 				try {
 					Assert.assertNotNull("fixture must populate the build-local resolver before abort",
-						continuity.get(builder[0]));
+						continuity.get(PlacementBuilderTestAccess.relationClosure(builder[0])));
 				}
 				catch(IllegalAccessException e) {
 					throw new AssertionError(e);
@@ -134,14 +134,15 @@ public class NeutralPlacementFixedPointCompositionTest {
 		catch(RuntimeException failure) {
 			Assert.assertSame(expected, failure);
 		}
-		Assert.assertNull("failed analysis must not retain its proof context", continuity.get(builder[0]));
+		Object relationClosure = PlacementBuilderTestAccess.relationClosure(builder[0]);
+		Assert.assertNull("failed analysis must not retain its proof context", continuity.get(relationClosure));
 		Assert.assertTrue("failed analysis must release relocation products",
-			((java.util.Map<?,?>)products.get(builder[0])).isEmpty());
+			((java.util.Map<?,?>)products.get(relationClosure)).isEmpty());
 		abort[0] = false;
 		PlacementAnalysis repeated = builder[0].buildAnalysis(program);
-		Assert.assertNull("successful analysis must also release its context", continuity.get(builder[0]));
+		Assert.assertNull("successful analysis must also release its context", continuity.get(relationClosure));
 		Assert.assertTrue("successful analysis must release relocation products",
-			((java.util.Map<?,?>)products.get(builder[0])).isEmpty());
+			((java.util.Map<?,?>)products.get(relationClosure)).isEmpty());
 		PlacementAnalysis fresh = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		Assert.assertEquals(fresh.analysisFingerprint(), repeated.analysisFingerprint());
 		Assert.assertEquals(fresh.candidateRuleFacts().orderedFacts(), repeated.candidateRuleFacts().orderedFacts());

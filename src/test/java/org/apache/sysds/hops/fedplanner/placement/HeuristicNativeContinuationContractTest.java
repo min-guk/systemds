@@ -28,7 +28,7 @@ public class HeuristicNativeContinuationContractTest {
 			.flatMap(path -> path.reentries().stream()).findFirst().orElseThrow();
 
 		HeuristicNativeContinuationFact nativeContinuation =
-			NeutralPlacementGraphBuilder.exactHeuristicNativeContinuation(analysis.graph(),
+			PlacementRelationClosure.exactHeuristicNativeContinuation(analysis.graph(),
 				analysis.compiledInputEdgesInCanonicalOrder(),
 				analysis.candidateRuleFacts().orderedFacts(), reusable.localProducer(),
 				reusable.consumer(), reusable.inputPosition());

@@ -42,7 +42,7 @@ public class PrivacyDerivedMaterializationClosureTest {
 	public void survivingNativeSourceRetainsDerivedMaterialization() {
 		Fixture fixture = fixture();
 		Assert.assertEquals(List.of(fixture.nativeSource(), fixture.derivedTarget()),
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(
+			PlacementRelationClosure.sourceClosedCandidateEmissions(
 				List.of(fixture.nativeSource(), fixture.derivedTarget())));
 	}
 
@@ -50,7 +50,7 @@ public class PrivacyDerivedMaterializationClosureTest {
 	public void removedSourceDropsOnlyDerivedTargetAndPreservesNativeFout() {
 		Fixture fixture = fixture();
 		Assert.assertEquals(List.of(fixture.nativeFout()),
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(
+			PlacementRelationClosure.sourceClosedCandidateEmissions(
 				List.of(fixture.derivedTarget(), fixture.nativeFout())));
 	}
 
@@ -58,10 +58,10 @@ public class PrivacyDerivedMaterializationClosureTest {
 	public void equalSourceInAnotherCandidateRowCannotRescueDerivedTarget() {
 		Fixture fixture = fixture();
 		Assert.assertEquals(List.of(fixture.nativeSource()),
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(
+			PlacementRelationClosure.sourceClosedCandidateEmissions(
 				List.of(fixture.nativeSource())));
 		Assert.assertEquals(List.of(fixture.nativeFout()),
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(
+			PlacementRelationClosure.sourceClosedCandidateEmissions(
 				List.of(fixture.derivedTarget(), fixture.nativeFout())));
 	}
 
@@ -78,7 +78,7 @@ public class PrivacyDerivedMaterializationClosureTest {
 			new PlacementEmissionState(wrongShapeDependence, false), FType.ROW);
 
 		Assert.assertEquals(List.of(colSource, shapeDependentSource),
-			NeutralPlacementGraphBuilder.sourceClosedCandidateEmissions(
+			PlacementRelationClosure.sourceClosedCandidateEmissions(
 				List.of(colSource, shapeDependentSource, fixture.derivedTarget())));
 	}
 
