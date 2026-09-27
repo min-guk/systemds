@@ -613,11 +613,11 @@ public final class PlacementIdentity {
 			|| col.partitions().size() != row.partitions().size())
 			return false;
 		for(AnchorPartition left : col.partitions()) {
-			if(left.begin().size() < 2 || left.end().size() < 2)
+			if(left.begin().size() < 2)
 				return false;
 			String leftWorker = FederationUtils.canonicalFederatedWorkerAddress(left.workerId());
 			boolean matched = row.partitions().stream().anyMatch(right -> {
-				if(right.begin().size() < 2 || right.end().size() < 2)
+				if(right.begin().size() < 2)
 					return false;
 				String rightWorker = FederationUtils.canonicalFederatedWorkerAddress(right.workerId());
 				return leftWorker != null && leftWorker.equals(rightWorker)
@@ -649,7 +649,7 @@ public final class PlacementIdentity {
 				return List.of();
 			if(anchor.fType() == FType.ROW || anchor.fType() == FType.COL) {
 				int axis = anchor.fType() == FType.ROW ? 0 : 1;
-				if(partition.begin().size() <= axis || partition.end().size() <= axis)
+				if(partition.begin().size() <= axis)
 					return List.of();
 				layout.add(worker + '|' + partition.begin().get(axis) + ':' + partition.end().get(axis));
 			}
@@ -995,21 +995,23 @@ public final class PlacementIdentity {
 	/** Package peers may reuse this cache only for one immutable structural serialization. */
 	static String cachedSignature(Object identity) {
 		SearchSpaceMetrics metrics = ACTIVE_METRICS.get();
-		String signature = metrics == null
+		Map<Object,String> activeIdentity = ACTIVE_IDENTITY_SIGNATURES.get();
+		Map<Object,String> activeStructural = ACTIVE_STRUCTURAL_SIGNATURES.get();
+		String signature = activeIdentity == null
 			? NORMALIZED_SIGNATURES_BY_IDENTITY.get().get(identity)
-			: ACTIVE_IDENTITY_SIGNATURES.get().get(identity);
+			: activeIdentity.get(identity);
 		if(signature != null) {
 			if(metrics != null)
 				metrics.recordSignatureIdentityCacheHit();
 			return signature;
 		}
-		signature = metrics == null ? NORMALIZED_SIGNATURES.get().get(identity)
-			: ACTIVE_STRUCTURAL_SIGNATURES.get().get(identity);
+		signature = activeStructural == null ? NORMALIZED_SIGNATURES.get().get(identity)
+			: activeStructural.get(identity);
 		if(signature != null) {
-			if(metrics == null)
+			if(activeIdentity == null)
 				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
 			else
-				ACTIVE_IDENTITY_SIGNATURES.get().put(identity, signature);
+				activeIdentity.put(identity, signature);
 			if(metrics != null)
 				metrics.recordSignatureStructuralCacheHit();
 			return signature;
@@ -1021,19 +1023,21 @@ public final class PlacementIdentity {
 
 	static String rememberSignature(Object identity, String signature) {
 		SearchSpaceMetrics metrics = ACTIVE_METRICS.get();
+		Map<Object,String> activeIdentity = ACTIVE_IDENTITY_SIGNATURES.get();
+		Map<Object,String> activeStructural = ACTIVE_STRUCTURAL_SIGNATURES.get();
 		if(metrics != null)
 			metrics.recordSignatureSerialization(signature.length());
 		long[] retained = NORMALIZED_SIGNATURE_CHARS.get();
 		long limit = NORMALIZED_SIGNATURE_TEST_MAX_CHARS.get() == null
 			? NORMALIZED_SIGNATURE_CACHE_MAX_CHARS : NORMALIZED_SIGNATURE_TEST_MAX_CHARS.get();
 		if(signature.length() <= limit - retained[0]) {
-			if(metrics == null) {
+			if(activeIdentity == null) {
 				NORMALIZED_SIGNATURES.get().put(identity, signature);
 				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
 			}
 			else {
-				ACTIVE_STRUCTURAL_SIGNATURES.get().put(identity, signature);
-				ACTIVE_IDENTITY_SIGNATURES.get().put(identity, signature);
+				activeStructural.put(identity, signature);
+				activeIdentity.put(identity, signature);
 			}
 			retained[0] += signature.length();
 		}
@@ -1050,13 +1054,11 @@ public final class PlacementIdentity {
 	static void setActiveMetrics(SearchSpaceMetrics metrics) {
 		if(metrics == null) {
 			ACTIVE_METRICS.remove();
-			ACTIVE_STRUCTURAL_SIGNATURES.remove();
-			ACTIVE_IDENTITY_SIGNATURES.remove();
+			endActiveSignatureCache();
 		}
 		else {
 			ACTIVE_METRICS.set(metrics);
-			ACTIVE_STRUCTURAL_SIGNATURES.set(new java.util.HashMap<>());
-			ACTIVE_IDENTITY_SIGNATURES.set(new java.util.IdentityHashMap<>());
+			beginActiveSignatureCache();
 		}
 	}
 
@@ -1065,13 +1067,28 @@ public final class PlacementIdentity {
 	}
 
 	static void beginAnalysisScope(SearchSpaceMetrics metrics) {
-		setActiveMetrics(metrics);
+		if(metrics == null)
+			ACTIVE_METRICS.remove();
+		else
+			ACTIVE_METRICS.set(metrics);
+		beginActiveSignatureCache();
 		ACTIVE_STRUCTURAL_ARENA.set(new StructuralArena(metrics));
 	}
 
 	static void endAnalysisScope() {
 		ACTIVE_STRUCTURAL_ARENA.remove();
-		setActiveMetrics(null);
+		ACTIVE_METRICS.remove();
+		endActiveSignatureCache();
+	}
+
+	private static void beginActiveSignatureCache() {
+		ACTIVE_STRUCTURAL_SIGNATURES.set(new java.util.HashMap<>());
+		ACTIVE_IDENTITY_SIGNATURES.set(new java.util.IdentityHashMap<>());
+	}
+
+	private static void endActiveSignatureCache() {
+		ACTIVE_STRUCTURAL_SIGNATURES.remove();
+		ACTIVE_IDENTITY_SIGNATURES.remove();
 	}
 
 	/** Analysis-local structural ID; null outside the explicitly bounded build scope. */

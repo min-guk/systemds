@@ -404,7 +404,8 @@ public final class PlanningNativeModelCapture {
 	private static Captured captureModel(Path catalogPath, Path evaluationRoot, String cellId,
 		boolean requireEnvironment) throws Exception {
 		PreparedInput input = prepareInput(catalogPath, evaluationRoot, cellId, requireEnvironment);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(input.program());
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder(
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.CAPTURE).buildAnalysis(input.program());
 		FullProductionJointPlanExport exporter = new FullProductionJointPlanExport(analysis);
 		Map<String,Object> nativeDomain = domain(analysis, exporter);
 		String domainSha = shaJson(nativeDomain);
@@ -929,9 +930,11 @@ public final class PlanningNativeModelCapture {
 		descriptor.put("derivedFoutOwnershipBindings", derivedFoutOwnershipBindings);
 		descriptor.put("nonDecisionCandidateOwners", exporter.nonDecisionCandidateOwners().stream()
 			.map(owner -> List.of(owner.key().normalizedSignature(), owner.role().name())).toList());
-		descriptor.put("candidatePrivacyClosurePasses",
-			analysis.candidatePrivacyClosureEvidence().passes().stream()
+		analysis.candidatePrivacyClosureEvidence().ifPresentOrElse(evidence -> {
+			descriptor.put("candidatePrivacyClosureEvidenceStatus", "CAPTURED");
+			descriptor.put("candidatePrivacyClosurePasses", evidence.passes().stream()
 				.map(pass -> JSON.convertValue(pass, Map.class)).toList());
+		}, () -> descriptor.put("candidatePrivacyClosureEvidenceStatus", "NOT_CAPTURED"));
 		descriptor.put("candidateRuleFactInventory", analysis.candidateRuleFacts().orderedFacts().stream()
 			.map(fact -> Map.of("ruleSignature", shaText(fact.key().normalizedSignature()),
 				"status", fact.status().name(), "failure", fact.failureCode(),

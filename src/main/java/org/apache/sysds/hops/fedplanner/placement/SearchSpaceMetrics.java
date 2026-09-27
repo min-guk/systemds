@@ -22,9 +22,16 @@ import java.util.Map;
  * counters plus a bounded set of full query-context keys in the owning continuity
  * instance; overflow is counted rather than sampled or used to alter planning.</p>
  */
-final class SearchSpaceMetrics {
-	enum Phase {
+public final class SearchSpaceMetrics {
+	public SearchSpaceMetrics() { }
+
+	public enum Phase {
 		ANALYSIS,
+		RELOCATION_DISCOVERY,
+		RELOCATION_BINDING,
+		SOURCE_PRUNING,
+		LOOP_SEED_BOOKKEEPING,
+		MATERIALIZATION,
 		CONTEXT_OBSERVER,
 		PROOF_TOPOLOGY,
 		PROOF_OVERLAY,
@@ -33,6 +40,12 @@ final class SearchSpaceMetrics {
 		PUBLIC_PROOF_MATERIALIZATION,
 		CLAUSE_MERGE_CANONICALIZATION,
 		CLOSURE_REPLAY,
+		DIRECT_BINDING,
+		DIRECT_PROOF_CALL,
+		PRIVACY_CLOSURE,
+		PRIVACY_EVIDENCE,
+		CFG_REPLAY,
+		PHYSICAL_REBUILD,
 		PUBLICATION_VALIDATION,
 		RECEIPT_RANK_CONSUMER_PREPARATION
 	}
@@ -103,6 +116,8 @@ final class SearchSpaceMetrics {
 	private long sccEdgesScanned;
 	private long sccMaxRefinementDepth;
 	private long supportPrefixes;
+	private long supportConflictPrefixes;
+	private long contradictoryClausePins;
 	private long supportLeaves;
 	private long uniqueProofs;
 	private long duplicateProofs;
@@ -154,7 +169,9 @@ final class SearchSpaceMetrics {
 	private long topologyExpansionBuilds;
 	private long topologyExpansionHits;
 	private long topologyRowsBuilt;
+	private long topologyRowsCollapsed;
 	private long topologyOverlayEvaluations;
+	private long topologyOverlayRowsCollapsed;
 	private long topologyRevisionEntriesReused;
 	private long structuralHandleLookups;
 	private long structuralHandlesCreated;
@@ -177,6 +194,12 @@ final class SearchSpaceMetrics {
 	private final long[] inclusiveAllocatedBytes = new long[Phase.values().length];
 	private final long[] exclusiveAllocatedBytes = new long[Phase.values().length];
 	private final ArrayDeque<PhaseToken> phaseStack = new ArrayDeque<>();
+	private final boolean liveMetrics = Boolean.getBoolean("sysds.fedplanner.liveMetrics");
+	private final long liveIntervalNanos = Math.max(1L,
+		Long.getLong("sysds.fedplanner.liveMetricsIntervalMs", 5000L)) * 1_000_000L;
+	private long lastLiveNanos;
+	private long liveSequence;
+
 	private static final com.sun.management.ThreadMXBean ALLOCATION_BEAN = allocationBean();
 	private static final java.lang.management.ThreadMXBean CPU_BEAN = cpuBean();
 
@@ -193,7 +216,8 @@ final class SearchSpaceMetrics {
 		deadStatesQueued = dependencyNotifications = alternativesRemoved = 0;
 		ownerCompactionElementsScanned = sccInvocations = sccStatesScanned = 0;
 		sccAlternativesScanned = sccEdgesScanned = sccMaxRefinementDepth = 0;
-		supportPrefixes = supportLeaves = uniqueProofs = duplicateProofs = 0;
+		supportPrefixes = supportConflictPrefixes = contradictoryClausePins = 0;
+		supportLeaves = uniqueProofs = duplicateProofs = 0;
 		supportProductDescriptorsExpanded = supportProductDescriptorsReused = 0;
 		relocationPrefixes = relocationLeaves = relocationPeakDepth = 0;
 		relocationPeakPendingAssignments = inputPrefixes = inputLeaves = inputPeakDepth = 0;
@@ -211,8 +235,8 @@ final class SearchSpaceMetrics {
 		canonicalSortCalls = canonicalSortElements = canonicalOrderingKeys = canonicalComparisons = 0;
 		realizationMergeInputs = realizationMergeUniqueClauses = realizationMergeDuplicateClauses = 0;
 		realizationMergeReusedRealizations = 0;
-		topologyExpansionBuilds = topologyExpansionHits = topologyRowsBuilt = 0;
-		topologyOverlayEvaluations = topologyRevisionEntriesReused = 0;
+		topologyExpansionBuilds = topologyExpansionHits = topologyRowsBuilt = topologyRowsCollapsed = 0;
+		topologyOverlayEvaluations = topologyOverlayRowsCollapsed = topologyRevisionEntriesReused = 0;
 		structuralHandleLookups = structuralHandlesCreated = 0;
 		structuralHandleIdentityHits = structuralHandleStructuralHits = 0;
 		receiptRelationSlots = candidateReceiptsCreated = receiptRankKeyChars = 0;
@@ -220,6 +244,7 @@ final class SearchSpaceMetrics {
 		topologyCacheEvictions = topologyCacheBypasses = topologyCacheEntries = 0;
 		topologyCacheRetainedRows = 0;
 		contextObserverHashCollisions = 0;
+		lastLiveNanos = liveSequence = 0;
 		Arrays.fill(phaseCalls, 0);
 		Arrays.fill(inclusiveWallNanos, 0);
 		Arrays.fill(exclusiveWallNanos, 0);
@@ -251,6 +276,8 @@ final class SearchSpaceMetrics {
 		PhaseToken token = new PhaseToken(phase, System.nanoTime(), currentThreadCpuNanos(),
 			currentThreadAllocatedBytes());
 		phaseStack.push(token);
+		if(liveMetrics)
+			emitLiveMetrics(false);
 		return token;
 	}
 
@@ -278,6 +305,74 @@ final class SearchSpaceMetrics {
 			parent.childCpuNanos = addKnown(parent.childCpuNanos, cpu);
 			parent.childAllocatedBytes = addKnown(parent.childAllocatedBytes, allocation);
 		}
+		if(liveMetrics)
+			emitLiveMetrics(phaseStack.isEmpty());
+	}
+
+	/** Live diagnostic only; inclusive phases overlap, exclusive self times do not. */
+	record LivePhase(String phase, long completedCalls, long activeCount,
+		long inclusiveWallNanos, long exclusiveWallNanos, long inclusiveCpuNanos,
+		long exclusiveCpuNanos, long inclusiveAllocatedBytes, long exclusiveAllocatedBytes) { }
+
+	List<LivePhase> livePhaseSnapshot() {
+		long wallNow = System.nanoTime(), cpuNow = currentThreadCpuNanos();
+		long allocationNow = currentThreadAllocatedBytes();
+		long[] wall = inclusiveWallNanos.clone(), selfWall = exclusiveWallNanos.clone();
+		long[] cpu = inclusiveCpuNanos.clone(), selfCpu = exclusiveCpuNanos.clone();
+		long[] allocation = inclusiveAllocatedBytes.clone(), selfAllocation = exclusiveAllocatedBytes.clone();
+		long[] active = new long[phaseCalls.length];
+		long activeChildWall = 0, activeChildCpu = 0, activeChildAllocation = 0;
+		// ArrayDeque iteration is innermost to outermost. Subtract both completed
+		// children and the one still-active child, without changing timer state.
+		for(PhaseToken token : phaseStack) {
+			int i = token.phase.ordinal();
+			long openWall = delta(token.startedWallNanos, wallNow);
+			long openCpu = delta(token.startedCpuNanos, cpuNow);
+			long openAllocation = delta(token.startedAllocatedBytes, allocationNow);
+			active[i]++;
+			wall[i] = addKnown(wall[i], openWall);
+			cpu[i] = addKnown(cpu[i], openCpu);
+			allocation[i] = addKnown(allocation[i], openAllocation);
+			selfWall[i] = addKnown(selfWall[i], subtractChild(openWall,
+				addKnown(token.childWallNanos, activeChildWall)));
+			selfCpu[i] = addKnown(selfCpu[i], subtractChild(openCpu,
+				addKnown(token.childCpuNanos, activeChildCpu)));
+			selfAllocation[i] = addKnown(selfAllocation[i], subtractChild(openAllocation,
+				addKnown(token.childAllocatedBytes, activeChildAllocation)));
+			activeChildWall = openWall;
+			activeChildCpu = openCpu;
+			activeChildAllocation = openAllocation;
+		}
+		List<LivePhase> result = new ArrayList<>();
+		for(Phase phase : Phase.values()) {
+			int i = phase.ordinal();
+			result.add(new LivePhase(phase.name(), phaseCalls[i], active[i], wall[i], selfWall[i],
+				cpu[i], selfCpu[i], allocation[i], selfAllocation[i]));
+		}
+		return List.copyOf(result);
+	}
+
+	private void emitLiveMetrics(boolean terminal) {
+		long now = System.nanoTime();
+		if(!terminal && lastLiveNanos != 0 && now - lastLiveNanos < liveIntervalNanos)
+			return;
+		lastLiveNanos = now;
+		long sequence = ++liveSequence;
+		for(LivePhase phase : livePhaseSnapshot())
+			if(phase.completedCalls() != 0 || phase.activeCount() != 0)
+				System.err.println("SEARCH_SPACE_LIVE|seq=" + sequence + "|terminal=" + terminal
+					+ "|" + phase);
+		System.err.println("SEARCH_SPACE_WORK|seq=" + sequence
+			+ "|directPasses=" + directClosurePasses + "|recomputed=" + incrementalFactsRecomputed
+			+ "|reused=" + incrementalFactsReused + "|queries=" + proofQueries
+			+ "|graphs=" + proofGraphsBuilt + "|rows=" + proofRowsExamined
+			+ "|memoHits=" + memoHits + "|memoMisses=" + memoMisses
+			+ "|supportPrefixes=" + supportPrefixes + "|supportLeaves=" + supportLeaves
+			+ "|relocationPrefixes=" + relocationPrefixes + "|relocationLeaves=" + relocationLeaves
+			+ "|serializations=" + signatureSerializations + "|serializedChars=" + signatureSerializedChars
+			+ "|sorts=" + canonicalSortCalls + "|sortElements=" + canonicalSortElements
+			+ "|comparisons=" + canonicalComparisons);
+		System.err.flush();
 	}
 
 	private static long delta(long started, long current) {
@@ -380,6 +475,8 @@ final class SearchSpaceMetrics {
 	}
 
 	void recordSupportPrefix(int depth) { supportPrefixes++; }
+	void recordSupportConflictPrefix() { supportConflictPrefixes++; }
+	void recordContradictoryClausePin() { contradictoryClausePins++; }
 	void recordSupportLeaf() { supportLeaves++; }
 	void recordProofResult(long rawProofs, long distinctProofs) {
 		uniqueProofs += distinctProofs;
@@ -470,6 +567,8 @@ final class SearchSpaceMetrics {
 		}
 	}
 	void recordTopologyOverlayEvaluation() { topologyOverlayEvaluations++; }
+	void recordTopologyRowCollapsed() { topologyRowsCollapsed++; }
+	void recordTopologyOverlayRowCollapsed() { topologyOverlayRowsCollapsed++; }
 	void recordTopologyRevisionReuse(long entries) { topologyRevisionEntriesReused += entries; }
 	void recordStructuralHandle(boolean created, boolean identityHit) {
 		structuralHandleLookups++;
@@ -495,7 +594,7 @@ final class SearchSpaceMetrics {
 		topologyCacheRetainedRows = rows;
 	}
 
-	Snapshot snapshot() {
+	public Snapshot snapshot() {
 		return new Snapshot(fixedPointPasses, cfgRefinementPasses, functionBoundaryPasses,
 			semanticPasses, publicationPasses, directClosurePasses, directClosureStablePasses,
 			directClosureFullPasses, proofQueries, exactContextUniqueQueries,
@@ -504,7 +603,8 @@ final class SearchSpaceMetrics {
 			cyclicProofGraphs, acyclicAlternativesRemoved, proofRowsExamined, deadStatesQueued,
 			dependencyNotifications, alternativesRemoved, ownerCompactionElementsScanned,
 			sccInvocations, sccStatesScanned, sccAlternativesScanned, sccEdgesScanned,
-			sccMaxRefinementDepth, supportPrefixes, supportLeaves, uniqueProofs, duplicateProofs,
+			sccMaxRefinementDepth, supportPrefixes, supportConflictPrefixes,
+			contradictoryClausePins, supportLeaves, uniqueProofs, duplicateProofs,
 			supportProductDescriptorsExpanded, supportProductDescriptorsReused,
 			relocationPrefixes, relocationLeaves, relocationPeakDepth,
 			relocationPeakPendingAssignments, inputPrefixes, inputLeaves, inputPeakDepth,
@@ -522,7 +622,8 @@ final class SearchSpaceMetrics {
 			realizationMergeInputs, realizationMergeUniqueClauses,
 			realizationMergeDuplicateClauses, realizationMergeReusedRealizations,
 			topologyExpansionBuilds, topologyExpansionHits, topologyRowsBuilt,
-			topologyOverlayEvaluations, topologyRevisionEntriesReused,
+			topologyRowsCollapsed, topologyOverlayEvaluations, topologyOverlayRowsCollapsed,
+			topologyRevisionEntriesReused,
 			structuralHandleLookups, structuralHandlesCreated,
 			structuralHandleIdentityHits, structuralHandleStructuralHits,
 			receiptRelationSlots, candidateReceiptsCreated, receiptRankKeyChars,
@@ -530,7 +631,7 @@ final class SearchSpaceMetrics {
 			topologyCacheEntries, topologyCacheRetainedRows, contextObserverHashCollisions);
 	}
 
-	AttributionSnapshot attributionSnapshot() {
+	public AttributionSnapshot attributionSnapshot() {
 		if(!phaseStack.isEmpty())
 			throw new IllegalStateException("SEARCH_SPACE_PHASES_STILL_ACTIVE");
 		List<PhaseMeasurement> phases = new ArrayList<>(Phase.values().length);
@@ -548,7 +649,7 @@ final class SearchSpaceMetrics {
 			exactContextOverflowQueries, observations));
 	}
 
-	record Snapshot(long fixedPointPasses, long cfgRefinementPasses,
+	public record Snapshot(long fixedPointPasses, long cfgRefinementPasses,
 		long functionBoundaryPasses, long semanticPasses, long publicationPasses,
 		long directClosurePasses, long directClosureStablePasses, long directClosureFullPasses,
 		long proofQueries, long exactContextUniqueQueries, long exactContextRepeatedQueries,
@@ -559,7 +660,8 @@ final class SearchSpaceMetrics {
 		long deadStatesQueued, long dependencyNotifications, long alternativesRemoved,
 		long ownerCompactionElementsScanned, long sccInvocations, long sccStatesScanned,
 		long sccAlternativesScanned, long sccEdgesScanned, long sccMaxRefinementDepth,
-		long supportPrefixes, long supportLeaves, long uniqueProofs, long duplicateProofs,
+		long supportPrefixes, long supportConflictPrefixes, long contradictoryClausePins,
+		long supportLeaves, long uniqueProofs, long duplicateProofs,
 		long supportProductDescriptorsExpanded, long supportProductDescriptorsReused,
 		long relocationPrefixes, long relocationLeaves, long relocationPeakDepth,
 		long relocationPeakPendingAssignments, long inputPrefixes, long inputLeaves,
@@ -580,7 +682,8 @@ final class SearchSpaceMetrics {
 		long canonicalComparisons, long realizationMergeInputs,
 		long realizationMergeUniqueClauses, long realizationMergeDuplicateClauses,
 		long realizationMergeReusedRealizations, long topologyExpansionBuilds,
-		long topologyExpansionHits, long topologyRowsBuilt, long topologyOverlayEvaluations,
+		long topologyExpansionHits, long topologyRowsBuilt, long topologyRowsCollapsed,
+		long topologyOverlayEvaluations, long topologyOverlayRowsCollapsed,
 		long topologyRevisionEntriesReused, long structuralHandleLookups,
 		long structuralHandlesCreated, long structuralHandleIdentityHits,
 		long structuralHandleStructuralHits, long receiptRelationSlots,
@@ -589,17 +692,17 @@ final class SearchSpaceMetrics {
 		long topologyCacheBypasses, long topologyCacheEntries,
 		long topologyCacheRetainedRows, long contextObserverHashCollisions) { }
 
-	record PhaseMeasurement(String phase, long calls, long inclusiveWallNanos,
+	public record PhaseMeasurement(String phase, long calls, long inclusiveWallNanos,
 		long exclusiveWallNanos, long inclusiveCpuNanos, long exclusiveCpuNanos,
 		long inclusiveAllocatedBytes, long exclusiveAllocatedBytes) { }
 
-	record ContextDistribution(long unique, long repeated, long overflow, long total) {
+	public record ContextDistribution(long unique, long repeated, long overflow, long total) {
 		double uniqueWeight() { return total == 0 ? 0 : (double) unique / total; }
 		double repeatedWeight() { return total == 0 ? 0 : (double) repeated / total; }
 		double overflowWeight() { return total == 0 ? 0 : (double) overflow / total; }
 	}
 
-	record AttributionSnapshot(List<PhaseMeasurement> phases,
+	public record AttributionSnapshot(List<PhaseMeasurement> phases,
 		ContextDistribution contextDistribution) {
 		PhaseMeasurement phase(Phase phase) {
 			return phases.get(phase.ordinal());

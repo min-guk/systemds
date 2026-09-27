@@ -104,8 +104,16 @@ public final class LogicalBoundaryRealizations {
 			if(complete && !leaves.isEmpty())
 				sources.put(target, List.copyOf(leaves));
 		}
+		// Only boundary targets and their flattened source leaves are queried below.
+		// Do not expand unrelated candidate clauses again in every direct wave.
+		Set<CompiledHopKey> relevant = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Map.Entry<CompiledHopKey,List<CompiledHopKey>> entry : sources.entrySet()) {
+			relevant.add(entry.getKey());
+			relevant.addAll(entry.getValue());
+		}
 		for(CandidateRuleFact fact : facts)
-			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			if(relevant.contains(fact.key().parentOccurrence())
+				&& fact.status() == CandidateEvaluationStatus.AVAILABLE)
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 					for(CandidateEmissionRealization realization : emission.realizations())
 						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {

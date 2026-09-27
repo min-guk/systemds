@@ -153,6 +153,27 @@ public class LogicalBoundaryRealizationsTest {
 		Assert.assertThrows(IllegalArgumentException.class, () -> relation.validate(missing));
 	}
 
+	@Test
+	public void unrelatedCandidateIsPreservedButNotExpandedIntoBoundaryOptions() throws Exception {
+		Fixture f = new Fixture();
+		CompiledHopKey unrelated = key("unrelated");
+		CandidateRuleFact source = f.facts.get(0);
+		CandidateRuleFact extra = new CandidateRuleFact(new CandidateRuleKey(unrelated, List.of()),
+			source.status(), source.capability(), source.shapeProof(), source.profile(),
+			source.allowedEmissionFacts(), source.failureCode());
+		f.facts.add(extra);
+		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
+		Assert.assertSame(extra, closed.get(closed.size() - 1));
+		var relation = new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, closed);
+		relation.validate(closed);
+		Assert.assertEquals(2, relation.relations().size());
+		var field = LogicalBoundaryRealizations.class.getDeclaredField("options");
+		field.setAccessible(true);
+		Map<?,?> indexed = (Map<?,?>)field.get(relation);
+		Assert.assertFalse("unrelated clauses must not be expanded in each direct wave", indexed.containsKey(unrelated));
+		Assert.assertEquals(3, indexed.size());
+	}
+
 	private static CandidateSelectionReceipt receipt(List<CandidateRuleFact> facts,
 		CompiledHopKey key, DurableAnchorKey pool) {
 		CandidateRuleFact fact = facts.stream().filter(candidate -> candidate.key().parentOccurrence() == key).findFirst().orElseThrow();

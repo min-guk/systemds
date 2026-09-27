@@ -5,12 +5,14 @@ import java.util.HashMap;
 import java.util.List;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -23,7 +25,10 @@ public class DerivedFoutMaterializationAuthorityTest {
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.filter(fact -> fact.emissionState().derivedFedFout()).findFirst().orElseThrow();
 		CandidateRuleKey rule = derived.derivedFoutAction().candidateRule();
-		CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(rule, derived, List.of());
+		var realization = derived.realizations().get(0);
+		var support = realization.supportClauses().get(0);
+		CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
+			rule, derived, realization, support, List.of());
 
 		Assert.assertTrue(CandidateSelections.derivedFoutActionReachable(analysis.graph(), receipt));
 		NeutralPlacementGraph missing = new NeutralPlacementGraph(analysis.graph().nodes(),
@@ -32,7 +37,8 @@ public class DerivedFoutMaterializationAuthorityTest {
 			CandidateSelections.derivedFoutActionReachable(missing, receipt));
 
 		CandidateRuleKey foreignRule = new CandidateRuleKey(rule.parentOccurrence(), rule.orderedInputs());
-		CandidateSelectionReceipt foreign = new CandidateSelectionReceipt(foreignRule, derived, List.of());
+		CandidateSelectionReceipt foreign = new CandidateSelectionReceipt(
+			foreignRule, derived, realization, support, List.of());
 		Assert.assertFalse("structurally equal foreign candidate identity must fail closed",
 			CandidateSelections.derivedFoutActionReachable(analysis.graph(), foreign));
 		Assert.assertThrows("derived emission without an action must be unrepresentable",
@@ -53,6 +59,8 @@ public class DerivedFoutMaterializationAuthorityTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(
+			program, Privacy.PRIVATE_AGGREGATE);
 		return program;
 	}
 }

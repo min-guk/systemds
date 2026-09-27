@@ -13,12 +13,17 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -69,6 +74,52 @@ public class NeutralPlacementFixedPointCompositionTest {
 	}
 
 	@Test
+	public void nativeContinuityIsClearedAfterExceptionalAndSuccessfulBuilds() throws Exception {
+		java.lang.reflect.Field continuity = NeutralPlacementGraphBuilder.class
+			.getDeclaredField("allDefinitionContinuity");
+		continuity.setAccessible(true);
+		java.lang.reflect.Field products = NeutralPlacementGraphBuilder.class
+			.getDeclaredField("relocationProducts");
+		products.setAccessible(true);
+		boolean[] abort = {true};
+		NeutralPlacementGraphBuilder[] builder = new NeutralPlacementGraphBuilder[1];
+		RuntimeException expected = new RuntimeException("test-only publication interruption");
+		builder[0] = new NeutralPlacementGraphBuilder(pass -> {
+			if(abort[0] && "publication".equals(pass.phase())) {
+				try {
+					Assert.assertNotNull("fixture must populate the build-local resolver before abort",
+						continuity.get(builder[0]));
+				}
+				catch(IllegalAccessException e) {
+					throw new AssertionError(e);
+				}
+				throw expected;
+			}
+		});
+		DMLProgram program = compileProtected(ACTIONS);
+		try {
+			builder[0].buildAnalysis(program);
+			Assert.fail("publication observer must interrupt the first build");
+		}
+		catch(RuntimeException failure) {
+			Assert.assertSame(expected, failure);
+		}
+		Assert.assertNull("failed analysis must not retain its proof context", continuity.get(builder[0]));
+		Assert.assertTrue("failed analysis must release relocation products",
+			((java.util.Map<?,?>)products.get(builder[0])).isEmpty());
+		abort[0] = false;
+		PlacementAnalysis repeated = builder[0].buildAnalysis(program);
+		Assert.assertNull("successful analysis must also release its context", continuity.get(builder[0]));
+		Assert.assertTrue("successful analysis must release relocation products",
+			((java.util.Map<?,?>)products.get(builder[0])).isEmpty());
+		PlacementAnalysis fresh = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		Assert.assertEquals(fresh.analysisFingerprint(), repeated.analysisFingerprint());
+		Assert.assertEquals(fresh.candidateRuleFacts().orderedFacts(), repeated.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(fresh.logicalTransientInputsInCanonicalOrder(),
+			repeated.logicalTransientInputsInCanonicalOrder());
+	}
+
+	@Test
 	public void independentStatementOrderPreservesSemanticFixedPointSnapshot() throws Exception {
 		String firstOrder = SOURCE + "a=X+1; b=X+2; print(sum(a)+sum(b));\n";
 		String reverseOrder = SOURCE + "b=X+2; a=X+1; print(sum(a)+sum(b));\n";
@@ -105,6 +156,12 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue(first.cfgRefinementPasses() > 0);
 		Assert.assertTrue(first.semanticPasses() > 0);
 		Assert.assertTrue(first.publicationPasses() > 0);
+		long composedClosures = metrics.attributionSnapshot().phases().stream()
+			.filter(phase -> phase.phase().equals("CLOSURE_REPLAY")).findFirst().orElseThrow().calls();
+		Assert.assertEquals("one closure per function/composed pass, plus initial and privacy boundaries",
+			first.functionBoundaryPasses() + first.publicationPasses() + 2, composedClosures);
+		Assert.assertEquals("semantic and publication are one completed transfer",
+			first.semanticPasses(), first.publicationPasses());
 		Assert.assertTrue(first.directClosurePasses() > 0);
 		Assert.assertTrue(first.directClosureStablePasses() > 0);
 		Assert.assertTrue(first.directClosureFullPasses() > 0);
@@ -133,8 +190,15 @@ public class NeutralPlacementFixedPointCompositionTest {
 		PlacementAnalysis repeated = instrumentedBuilder.buildAnalysis(compileProtected(ACTIONS));
 		SearchSpaceMetrics.Snapshot second = metrics.snapshot();
 		Assert.assertEquals(instrumented.analysisFingerprint(), repeated.analysisFingerprint());
-		Assert.assertEquals("a reused builder must reset rather than accumulate analysis counters",
-			first, second);
+		for(var component : SearchSpaceMetrics.Snapshot.class.getRecordComponents()) {
+			// Identity-cache hits depend on object reuse across analysis invocations;
+			// they are diagnostic, not an analysis-scoped work count.
+			if(component.getName().equals("signatureIdentityCacheHits"))
+				continue;
+			Assert.assertEquals("a reused builder must reset rather than accumulate "
+				+ component.getName(), component.getAccessor().invoke(first),
+				component.getAccessor().invoke(second));
+		}
 	}
 
 	@Test
@@ -236,6 +300,34 @@ public class NeutralPlacementFixedPointCompositionTest {
 					incrementalMetrics.snapshot().incrementalFactsReused() > 0);
 			}
 		}
+	}
+
+	@Test
+	public void ordinaryTransientReaderRetainsExactNativeBindingAfterPhysicalReplay() throws Exception {
+		String script = TRANSIENT_CFG;
+		PlacementAnalysis incremental = new NeutralPlacementGraphBuilder(null,
+			new SearchSpaceMetrics(), true).buildAnalysis(compileProtected(script));
+		PlacementAnalysis full = new NeutralPlacementGraphBuilder(null,
+			new SearchSpaceMetrics(), false).buildAnalysis(compileProtected(script));
+		Assert.assertEquals(full.analysisFingerprint(), incremental.analysisFingerprint());
+		Assert.assertEquals(full.candidateRuleFacts().orderedFacts(),
+			incremental.candidateRuleFacts().orderedFacts());
+		Assert.assertEquals(full.logicalTransientInputsInCanonicalOrder(),
+			incremental.logicalTransientInputsInCanonicalOrder());
+		boolean readerBoundNative = incremental.candidateRuleFacts().orderedFacts().stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.filter(emission -> emission.emissionState().placementState().execType() == ExecType.FED
+				&& emission.emissionState().placementState().output() == FederatedOutput.FOUT)
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+				|| realization.key().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
+			.flatMap(realization -> realization.supportClauses().stream())
+			.flatMap(clause -> clause.inputBindings().stream())
+			.anyMatch(binding -> incremental.hop(binding.source().rule().parentOccurrence())
+				.filter(hop -> hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD)
+				.isPresent());
+		Assert.assertTrue("fixture must actually exercise direct native proof through an ordinary TRead",
+			readerBoundNative);
 	}
 
 	private static void assertSupportFactorizationPreservesClauseOwnership(PlacementAnalysis analysis) {

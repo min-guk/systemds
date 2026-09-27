@@ -55,11 +55,13 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
@@ -69,6 +71,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -81,11 +85,14 @@ final class NativePlacementContinuity {
 		Set.copyOf(new Rulesets.UnaryCumulativeRule().opcodes());
 	private static final Set<String> NATIVE_BINARY_ELEMWISE_OPCODES =
 		Set.copyOf(new Rulesets.BinaryElemwiseRule().opcodes());
+	private final StructuralContext structuralContext;
 	private final Map<CompiledHopKey,Node> nodesByKey;
 	private final Map<CompiledHopKey,Hop> originsByKey;
+	private final List<CandidateRuleFact> candidateFacts;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
+	private final PlacementDependencyComponents occurrenceComponents;
 	private final Set<CompiledHopKey> incompleteSources;
 	private final Map<CompiledHopKey,Privacy> privacyByKey;
 	private final Map<CandidateRealizationSupportClause,List<CandidateRealizationReference>>
@@ -118,8 +125,18 @@ final class NativePlacementContinuity {
 	private final long supportMemoMaxTemplates;
 	private final long supportMemoMaxEstimatedBytes;
 	private final Map<CandidateSupportQueryKey,SupportMemoEntry> completedSupportMemo;
+	private final Map<AcyclicRootSupportKey,SupportMemoEntry> acyclicRootSupportMemo;
 	private long supportMemoRetainedTemplates;
 	private long supportMemoRetainedEstimatedBytes;
+	// Acyclic child components retain one immutable exact relation DAG while their
+	// grounded boundary rows provide the fast path. The complete footprint guards
+	// the query-local root pin and revision invalidation.
+	private final Map<CandidateProofState,AcyclicComponentSummary> acyclicComponentMemo;
+	private final int acyclicComponentMaxEntries;
+	private final long acyclicComponentMaxStates;
+	private final long acyclicComponentMaxAlternatives;
+	private long acyclicComponentRetainedStates;
+	private long acyclicComponentRetainedAlternatives;
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
 		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
@@ -162,9 +179,9 @@ final class NativePlacementContinuity {
 		SearchSpaceMetrics metrics) {
 		this(nodesByKey, originsByKey, candidateFacts, compiledEdges, reachingDefinitions,
 			incompleteSources, privacyByKey, metrics,
-			Integer.getInteger("sysds.fedplanner.continuityMemo.maxEntries", 256),
-			Long.getLong("sysds.fedplanner.continuityMemo.maxProofs", 8192L),
-			Long.getLong("sysds.fedplanner.continuityMemo.maxEstimatedBytes", 16L * 1024 * 1024));
+			Integer.getInteger("sysds.fedplanner.continuityMemo.maxEntries", 4096),
+			Long.getLong("sysds.fedplanner.continuityMemo.maxProofs", 65536L),
+			Long.getLong("sysds.fedplanner.continuityMemo.maxEstimatedBytes", 64L * 1024 * 1024));
 	}
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
@@ -185,13 +202,22 @@ final class NativePlacementContinuity {
 		Set<CompiledHopKey> incompleteSources, Map<CompiledHopKey,Privacy> privacyByKey,
 		SearchSpaceMetrics metrics, int memoMaxEntries, long memoMaxProofs,
 		long memoMaxEstimatedBytes) {
-		this.nodesByKey = copyIdentityMap(nodesByKey, "nodesByKey");
-		this.originsByKey = copyIdentityMap(originsByKey, "originsByKey");
-		this.privacyByKey = copyIdentityMap(privacyByKey, "privacyByKey");
-		this.reachingDefinitions = copyIdentityLists(reachingDefinitions, "reachingDefinitions");
-		Set<CompiledHopKey> incomplete = Collections.newSetFromMap(new IdentityHashMap<>());
-		incomplete.addAll(Objects.requireNonNull(incompleteSources, "incompleteSources"));
-		this.incompleteSources = Collections.unmodifiableSet(incomplete);
+		this(new StructuralContext(nodesByKey, originsByKey, compiledEdges, reachingDefinitions,
+			incompleteSources, privacyByKey), candidateFacts, metrics, memoMaxEntries,
+			memoMaxProofs, memoMaxEstimatedBytes);
+	}
+
+	private NativePlacementContinuity(StructuralContext structuralContext,
+		List<CandidateRuleFact> candidateFacts, SearchSpaceMetrics metrics,
+		int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes) {
+		this.structuralContext = Objects.requireNonNull(structuralContext, "structuralContext");
+		nodesByKey = structuralContext.nodesByKey;
+		originsByKey = structuralContext.originsByKey;
+		privacyByKey = structuralContext.privacyByKey;
+		reachingDefinitions = structuralContext.reachingDefinitions;
+		incompleteSources = structuralContext.incompleteSources;
+		edgesByConsumer = structuralContext.edgesByConsumer;
+		occurrenceComponents = structuralContext.occurrenceComponents;
 		this.metrics = metrics;
 		int observedQueryLimit = Math.max(0,
 			Integer.getInteger("sysds.fedplanner.metrics.maxExactContexts", 4096));
@@ -208,49 +234,49 @@ final class NativePlacementContinuity {
 			Long.getLong("sysds.fedplanner.continuitySupportMemo.maxTemplates", 131072L)) : 0;
 		supportMemoMaxEstimatedBytes = resultCachingEnabled ? Math.max(0,
 			Long.getLong("sysds.fedplanner.continuitySupportMemo.maxEstimatedBytes", 16L * 1024 * 1024)) : 0;
+		acyclicComponentMaxEntries = resultCachingEnabled ? Math.max(0,
+			Integer.getInteger("sysds.fedplanner.continuityAcyclicComponent.maxEntries", 4096)) : 0;
+		acyclicComponentMaxStates = resultCachingEnabled ? Math.max(0,
+			Long.getLong("sysds.fedplanner.continuityAcyclicComponent.maxStates", 131072L)) : 0;
+		acyclicComponentMaxAlternatives = resultCachingEnabled ? Math.max(0,
+			Long.getLong("sysds.fedplanner.continuityAcyclicComponent.maxAlternatives", 32768L)) : 0;
 		topologyMaxEntries = Math.max(0,
 			Integer.getInteger("sysds.fedplanner.continuityTopology.maxEntries", 2048));
 		topologyMaxRows = Math.max(0,
 			Long.getLong("sysds.fedplanner.continuityTopology.maxRows", 131072L));
 		completedProofMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		completedSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
+		acyclicRootSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
+		acyclicComponentMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
+		this.candidateFacts = List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts"));
 		candidateFactsByKey = new IdentityHashMap<>();
-		for(CandidateRuleFact fact : List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts")))
+		for(CandidateRuleFact fact : this.candidateFacts)
 			candidateFactsByKey.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
 		candidateFactsByKey.replaceAll((ignored, facts) -> List.copyOf(facts));
-		edgesByConsumer = new IdentityHashMap<>();
-		for(CompiledInputEdgeFact edge : List.copyOf(Objects.requireNonNull(compiledEdges, "compiledEdges"))) {
-			Map<Integer,CompiledInputEdgeFact> positions = edgesByConsumer.computeIfAbsent(
-				edge.consumer(), ignored -> new java.util.LinkedHashMap<>());
-			if(positions.put(edge.inputPosition(), edge) != null)
-				throw new IllegalArgumentException("Duplicate compiled input edge position");
-		}
+	}
+
+	/** Returns an exact resolver with no query-local history. */
+	NativePlacementContinuity freshQueryState() {
+		return new NativePlacementContinuity(structuralContext, candidateFacts, metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
 	}
 
 	/**
-	 * Starts a fact revision while retaining only root-independent expansions whose
-	 * complete occurrence-local fact rows are unchanged. Completed query results and
-	 * query overlays are deliberately never transferred across revisions.
+	 * Starts a fact revision. The nodes, compiled edges, reaching definitions,
+	 * privacy and Hops remain unchanged. Only the candidate facts may change; explanatory
+	 * proof dependencies do not change this private execution relation.
 	 */
-	NativePlacementContinuity nextRevision(List<CandidateRuleFact> candidateFacts,
-		Set<CompiledHopKey> invalidatedOccurrences) {
-		Objects.requireNonNull(invalidatedOccurrences, "invalidatedOccurrences");
-		List<CompiledInputEdgeFact> compiledEdges = edgesByConsumer.values().stream()
-			.flatMap(edges -> edges.values().stream()).toList();
-		NativePlacementContinuity next = new NativePlacementContinuity(nodesByKey, originsByKey,
-			candidateFacts, compiledEdges, reachingDefinitions, incompleteSources, privacyByKey,
-			metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
-		// Many cached supports share the same occurrence. Exact row equality is
-		// still required even when the caller's dirty set is incomplete, but one
-		// comparison per occurrence is enough for this immutable revision pair.
+	NativePlacementContinuity nextRevision(List<CandidateRuleFact> candidateFacts) {
+		NativePlacementContinuity next = new NativePlacementContinuity(structuralContext,
+			candidateFacts, metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+		// Reuse is governed by the complete private execution projection, so
+		// proof-history-only changes do not force recomputation while any changed
+		// execution row still invalidates its cached supports.
 		Map<CompiledHopKey,Boolean> unchangedRows = new IdentityHashMap<>();
 		long reused = 0;
 		for(var entry : candidateTopologies.entrySet()) {
 			CompiledHopKey occurrence = entry.getKey().occurrence;
-			if(!unchangedRows.computeIfAbsent(occurrence, key ->
-				!invalidatedOccurrences.contains(key)
-					&& candidateFactsByKey.getOrDefault(key, List.of()).equals(
-						next.candidateFactsByKey.getOrDefault(key, List.of()))))
+			if(!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)))
 				continue;
 			if(next.cacheTopology(entry.getKey(), next.reindexTopology(entry.getValue())))
 				reused++;
@@ -259,23 +285,261 @@ final class NativePlacementContinuity {
 		for(var entry : completedSupportMemo.entrySet()) {
 			SupportMemoEntry support = entry.getValue();
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
-				!unchangedRows.computeIfAbsent(occurrence, key ->
-					!invalidatedOccurrences.contains(key)
-						&& candidateFactsByKey.getOrDefault(key, List.of()).equals(
-							next.candidateFactsByKey.getOrDefault(key, List.of()))));
+				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
 			if(!unchanged)
 				continue;
 			CandidateSupportQueryKey nextKey = next.candidateSupportQueryKey(
-				support.root, entry.getKey().witness);
+				support.root, entry.getKey().witness, entry.getKey().generated);
 			next.cacheCompletedSupports(nextKey, support);
 			if(next.completedSupportMemo.containsKey(nextKey))
 				supportReused++;
 		}
-		if(metrics != null)
+		for(var entry : acyclicRootSupportMemo.entrySet()) {
+			SupportMemoEntry support = entry.getValue();
+			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
+				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+			if(unchanged)
+				next.cacheAcyclicRootSupport(entry.getKey(), support);
+		}
+		for(var entry : completedProofMemo.entrySet()) {
+			MemoEntry proof = entry.getValue();
+			boolean unchanged = proof.occurrences().stream().noneMatch(occurrence ->
+				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+			if(unchanged)
+				next.cacheCompletedProofs(entry.getKey(), proof);
+		}
+		for(var entry : acyclicComponentMemo.entrySet()) {
+			AcyclicComponentSummary summary = entry.getValue();
+			boolean unchanged = summary.occurrences.stream().noneMatch(occurrence ->
+				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+			if(!unchanged)
+				continue;
+			CandidateProofState state = entry.getKey();
+			CandidateProofState rebound = new CandidateProofState(state.key(), state.realization(),
+				next.candidateHandle(state.realization()), state.witness(), state.templateRoot());
+			next.cacheAcyclicSummary(rebound, summary);
+		}
+		if(metrics != null) {
 			metrics.recordTopologyRevisionReuse(reused);
-		if(metrics != null)
 			metrics.recordSupportMemoRevisionReuse(supportReused);
+		}
 		return next;
+	}
+
+	/**
+	 * Returns whether the supplied program structure is exactly the immutable structure owned by
+	 * this resolver. Candidate facts are deliberately excluded: callers may use {@link #nextRevision(List)}
+	 * only after this complete identity-sensitive boundary succeeds.
+	 */
+	boolean matchesStructuralContext(Map<CompiledHopKey,Node> nodes,
+		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> edges,
+		Map<CompiledHopKey,List<CompiledHopKey>> reaching, Set<CompiledHopKey> incomplete,
+		Map<CompiledHopKey,Privacy> privacy) {
+		return structuralContext.matches(nodes, origins, edges, reaching, incomplete, privacy);
+	}
+
+	private boolean sameContinuityFacts(NativePlacementContinuity next, CompiledHopKey occurrence) {
+		List<CandidateRuleFact> before = candidateFactsByKey.getOrDefault(occurrence, List.of());
+		List<CandidateRuleFact> after = next.candidateFactsByKey.getOrDefault(occurrence, List.of());
+		return before.equals(after) || continuityProjection(before).equals(continuityProjection(after));
+	}
+
+	private static Set<ContinuityFactProjection> continuityProjection(List<CandidateRuleFact> facts) {
+		Set<ContinuityFactProjection> projected = new java.util.HashSet<>();
+		for(CandidateRuleFact fact : facts) {
+			Set<ContinuityEmissionProjection> emissions = new java.util.HashSet<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				Set<ContinuityRealizationProjection> realizations = new java.util.HashSet<>();
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						List<ContinuityBindingProjection> bindings = clause.inputBindings().stream()
+							.map(ContinuityBindingProjection::new).toList();
+						clauses.add(new ContinuityClauseProjection(bindings,
+							clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
+					}
+					realizations.add(new ContinuityRealizationProjection(realization.key(), clauses));
+				}
+				emissions.add(new ContinuityEmissionProjection(emission.emissionState(),
+					emission.executionFType(), emission.derivedFoutAction(), realizations));
+			}
+			projected.add(new ContinuityFactProjection(fact.key(), fact.status(), emissions));
+		}
+		return projected;
+	}
+
+	private record ContinuityFactProjection(CandidateRuleKey key, CandidateEvaluationStatus status,
+		Set<ContinuityEmissionProjection> emissions) { }
+	private record ContinuityEmissionProjection(PlacementEmissionState state, FType executionFType,
+		DerivedFoutMaterializationActionKey action,
+		Set<ContinuityRealizationProjection> realizations) { }
+	private record ContinuityRealizationProjection(PlacementRealizationKey key,
+		Set<ContinuityClauseProjection> clauses) { }
+	private record ContinuityClauseProjection(List<ContinuityBindingProjection> bindings,
+		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) { }
+	private static final class ContinuityBindingProjection {
+		private final CandidateRealizationInputBinding binding;
+		private final CompiledHopKey owner;
+		private final int hashCode;
+
+		private ContinuityBindingProjection(CandidateRealizationInputBinding binding) {
+			this.binding = binding;
+			owner = binding.source().rule().parentOccurrence();
+			hashCode = 31 * binding.hashCode() + System.identityHashCode(owner);
+		}
+
+		@Override public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			return this == other || other instanceof ContinuityBindingProjection that
+				&& owner == that.owner && binding.equals(that.binding);
+		}
+	}
+
+	/**
+	 * Immutable program structure shared by every fact revision. Construction is
+	 * the sole validation boundary for compiled edges and the sole SCC build.
+	 */
+	private static final class StructuralContext {
+		private final Map<CompiledHopKey,Node> nodesByKey;
+		private final Map<CompiledHopKey,Hop> originsByKey;
+		private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
+		private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
+		private final Set<CompiledHopKey> incompleteSources;
+		private final Map<CompiledHopKey,Privacy> privacyByKey;
+		private final PlacementDependencyComponents occurrenceComponents;
+
+		private StructuralContext(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Hop> originsByKey, List<CompiledInputEdgeFact> compiledEdges,
+			Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions,
+			Set<CompiledHopKey> incompleteSources, Map<CompiledHopKey,Privacy> privacyByKey) {
+			this.nodesByKey = immutableIdentityMap(nodesByKey, "nodesByKey");
+			this.originsByKey = immutableIdentityMap(originsByKey, "originsByKey");
+			this.privacyByKey = immutableIdentityMap(privacyByKey, "privacyByKey");
+			this.reachingDefinitions = immutableIdentityLists(
+				reachingDefinitions, "reachingDefinitions");
+			Set<CompiledHopKey> incomplete = Collections.newSetFromMap(new IdentityHashMap<>());
+			incomplete.addAll(Objects.requireNonNull(incompleteSources, "incompleteSources"));
+			this.incompleteSources = Collections.unmodifiableSet(incomplete);
+
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> indexed = new IdentityHashMap<>();
+			for(CompiledInputEdgeFact edge : List.copyOf(
+				Objects.requireNonNull(compiledEdges, "compiledEdges"))) {
+				Map<Integer,CompiledInputEdgeFact> positions = indexed.computeIfAbsent(
+					edge.consumer(), ignored -> new java.util.LinkedHashMap<>());
+				if(positions.put(edge.inputPosition(), edge) != null)
+					throw new IllegalArgumentException("Duplicate compiled input edge position");
+			}
+			indexed.replaceAll((ignored, positions) -> Collections.unmodifiableMap(positions));
+			edgesByConsumer = Collections.unmodifiableMap(indexed);
+
+			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+			owners.addAll(this.nodesByKey.keySet());
+			List<PlacementDependencyComponents.SemanticDependency> dependencies = new ArrayList<>();
+			for(Map<Integer,CompiledInputEdgeFact> inputs : edgesByConsumer.values())
+				for(CompiledInputEdgeFact edge : inputs.values()) {
+					owners.add(edge.producer());
+					owners.add(edge.consumer());
+					dependencies.add(new PlacementDependencyComponents.SemanticDependency(
+						edge.producer(), edge.consumer()));
+				}
+			for(var entry : this.reachingDefinitions.entrySet()) {
+				owners.add(entry.getKey());
+				for(CompiledHopKey producer : entry.getValue()) {
+					owners.add(producer);
+					dependencies.add(new PlacementDependencyComponents.SemanticDependency(
+						producer, entry.getKey()));
+				}
+			}
+			occurrenceComponents = new PlacementDependencyComponents(
+				List.copyOf(owners), dependencies, List.of());
+		}
+
+		private boolean matches(Map<CompiledHopKey,Node> nodes,
+			Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> edges,
+			Map<CompiledHopKey,List<CompiledHopKey>> reaching, Set<CompiledHopKey> incomplete,
+			Map<CompiledHopKey,Privacy> privacy) {
+			if(nodes == null || origins == null || edges == null || reaching == null
+				|| incomplete == null || privacy == null)
+				return false;
+			Map<CompiledHopKey,Node> nodesByIdentity = new IdentityHashMap<>(nodes);
+			Map<CompiledHopKey,Hop> originsByIdentity = new IdentityHashMap<>(origins);
+			Map<CompiledHopKey,List<CompiledHopKey>> reachingByIdentity = new IdentityHashMap<>(reaching);
+			Map<CompiledHopKey,Privacy> privacyByIdentity = new IdentityHashMap<>(privacy);
+			if(!sameIdentityKeys(nodesByKey, nodesByIdentity)
+				|| !sameIdentityKeys(originsByKey, originsByIdentity)
+				|| !sameIdentityKeys(reachingDefinitions, reachingByIdentity)
+				|| !sameIdentityKeys(privacyByKey, privacyByIdentity)
+				|| !sameIdentitySet(incompleteSources, incomplete))
+				return false;
+			for(CompiledHopKey key : nodesByKey.keySet())
+				if(!nodesByKey.get(key).equals(nodesByIdentity.get(key)))
+					return false;
+			for(CompiledHopKey key : originsByKey.keySet())
+				if(originsByKey.get(key) != originsByIdentity.get(key))
+					return false;
+			for(CompiledHopKey key : reachingDefinitions.keySet()) {
+				List<CompiledHopKey> before = reachingDefinitions.get(key);
+				List<CompiledHopKey> after = reachingByIdentity.get(key);
+				if(after == null || before.size() != after.size())
+					return false;
+				for(int index = 0; index < before.size(); index++)
+					if(before.get(index) != after.get(index))
+						return false;
+			}
+			for(CompiledHopKey key : privacyByKey.keySet())
+				if(privacyByKey.get(key) != privacyByIdentity.get(key))
+					return false;
+			return matchesEdges(edges);
+		}
+
+		private boolean matchesEdges(List<CompiledInputEdgeFact> edges) {
+			int expectedCount = edgesByConsumer.values().stream().mapToInt(Map::size).sum();
+			if(edges.size() != expectedCount)
+				return false;
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> indexed = new IdentityHashMap<>();
+			for(CompiledInputEdgeFact edge : edges) {
+				if(edge == null)
+					return false;
+				Map<Integer,CompiledInputEdgeFact> positions = indexed.computeIfAbsent(
+					edge.consumer(), ignored -> new java.util.HashMap<>());
+				if(positions.put(edge.inputPosition(), edge) != null)
+					return false;
+			}
+			if(!sameIdentityKeys(edgesByConsumer, indexed))
+				return false;
+			for(var consumer : edgesByConsumer.entrySet()) {
+				Map<Integer,CompiledInputEdgeFact> after = indexed.get(consumer.getKey());
+				if(after == null || consumer.getValue().size() != after.size())
+					return false;
+				for(var position : consumer.getValue().entrySet()) {
+					CompiledInputEdgeFact candidate = after.get(position.getKey());
+					if(candidate == null || candidate.producer() != position.getValue().producer()
+						|| candidate.consumer() != position.getValue().consumer())
+						return false;
+				}
+			}
+			return true;
+		}
+
+		private static boolean sameIdentityKeys(Map<CompiledHopKey,?> before,
+			Map<CompiledHopKey,?> after) {
+			if(before.size() != after.size())
+				return false;
+			Set<CompiledHopKey> afterKeys = Collections.newSetFromMap(new IdentityHashMap<>());
+			afterKeys.addAll(after.keySet());
+			return afterKeys.size() == after.size() && before.keySet().stream().allMatch(afterKeys::contains);
+		}
+
+		private static boolean sameIdentitySet(Set<CompiledHopKey> before,
+			Set<CompiledHopKey> after) {
+			if(before.size() != after.size())
+				return false;
+			Set<CompiledHopKey> afterKeys = Collections.newSetFromMap(new IdentityHashMap<>());
+			afterKeys.addAll(after);
+			return afterKeys.size() == after.size() && before.stream().allMatch(afterKeys::contains);
+		}
 	}
 
 	boolean proves(List<CompiledHopKey> sources, DurableAnchorKey externalSeed) {
@@ -316,9 +580,39 @@ final class NativePlacementContinuity {
 
 	List<NativeContinuityProof> proveCandidateAlternatives(CandidateRealizationReference source,
 		DurableAnchorKey externalSeed) {
-		Objects.requireNonNull(source, "source");
-		Objects.requireNonNull(externalSeed, "externalSeed");
-		PublicCandidateQueryKey query = new PublicCandidateQueryKey(source, externalSeed);
+		return proveCandidateSupport(source, externalSeed).proofs();
+	}
+
+	/**
+	 * Proves one prospective native output from the current exact base row. Unlike
+	 * declared-realization validation, the root is derived from an empty support
+	 * clause and therefore cannot inherit or self-ground from prior publication
+	 * history. Recursive descendants still use the current exact candidate facts.
+	 */
+	List<NativeContinuityProof> proveGeneratedCandidateAlternatives(
+		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission,
+		CandidateRealizationReference proposedOutput, DurableAnchorKey externalSeed) {
+		Objects.requireNonNull(trustedBase, "trusted generator base");
+		Objects.requireNonNull(baseEmission, "generator base emission");
+		Objects.requireNonNull(proposedOutput, "proposed generator output");
+		Objects.requireNonNull(externalSeed, "generator external seed");
+		CompiledHopKey root = trustedBase.key().parentOccurrence();
+		boolean currentBase = candidateFactsByKey.getOrDefault(root, List.of()).stream()
+			.anyMatch(fact -> fact == trustedBase);
+		boolean currentEmission = trustedBase.allowedEmissionFacts().stream()
+			.anyMatch(emission -> emission == baseEmission);
+		PlacementState state = baseEmission.emissionState().placementState();
+		if(!currentBase || !currentEmission
+			|| trustedBase.status() != CandidateEvaluationStatus.AVAILABLE
+			|| !proposedOutput.rule().equals(trustedBase.key())
+			|| !proposedOutput.realization().emissionState().equals(baseEmission.emissionState())
+			|| state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
+			|| state.fType() == null || baseEmission.executionFType() != state.fType()
+			|| baseEmission.derivedFoutAction() != null)
+			return List.of();
+		GenerationRoot generation = new GenerationRoot(trustedBase, baseEmission);
+		PublicCandidateQueryKey query = new PublicCandidateQueryKey(
+			proposedOutput, externalSeed, true);
 		MemoEntry cached = completedProofMemo.get(query);
 		if(cached != null) {
 			if(metrics != null)
@@ -327,47 +621,85 @@ final class NativePlacementContinuity {
 		}
 		if(metrics != null)
 			metrics.recordMemoMiss();
-		List<NativeContinuityProof> computed = computeCandidateAlternatives(source, externalSeed);
+		ComputedPublicProof computed = computeCandidateAlternatives(
+			proposedOutput, externalSeed, generation);
 		cacheCompletedProofs(query, computed);
-		return computed;
+		return computed.proofs();
 	}
 
-	private List<NativeContinuityProof> computeCandidateAlternatives(CandidateRealizationReference source,
+	/** Native-continuity result plus its complete native proof occurrence footprint. */
+	CandidateSupportResult proveCandidateSupport(CandidateRealizationReference source,
 		DurableAnchorKey externalSeed) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(externalSeed, "externalSeed");
+		PublicCandidateQueryKey query = new PublicCandidateQueryKey(source, externalSeed, false);
+		MemoEntry cached = completedProofMemo.get(query);
+		if(cached != null) {
+			if(metrics != null)
+				metrics.recordMemoHit();
+			return new CandidateSupportResult(cached.proofs(), cached.occurrences());
+		}
+		if(metrics != null)
+			metrics.recordMemoMiss();
+		ComputedPublicProof computed = computeCandidateAlternatives(source, externalSeed, null);
+		cacheCompletedProofs(query, computed);
+		return new CandidateSupportResult(computed.proofs(), computed.occurrences());
+	}
+
+	private ComputedPublicProof computeCandidateAlternatives(CandidateRealizationReference source,
+		DurableAnchorKey externalSeed, GenerationRoot generation) {
 		NativePoolWitness seedWitness = nativeWitness(
 			externalSeed);
 		if(seedWitness == null)
-			return List.of();
+			return new ComputedPublicProof(List.of(), Set.of(source.rule().parentOccurrence()));
 		FType outputType = source.realization().emissionState().placementState().fType();
 		NativePoolWitness witness = seedWitness.retyped(outputType);
 		Hop owner = originsByKey.get(source.rule().parentOccurrence());
 		if(witness == null && recomputesNativePartitionRanges(owner, outputType))
 			witness = seedWitness.retypedForResidency(outputType);
 		if(witness == null)
-			return List.of();
-		List<NativeContinuityProof> exact = proveCandidateAlternatives(source, externalSeed, witness);
+			return new ComputedPublicProof(List.of(), Set.of(source.rule().parentOccurrence()));
+		ComputedPublicProof exact = proveCandidateAlternatives(
+			source, externalSeed, witness, generation);
 		if(witness.fType != FType.ROW && witness.fType != FType.COL && witness.fType != FType.FULL)
 			return exact;
 		FType witnessType = witness.fType;
-		List<NativeContinuityProof> dynamic = proveCandidateAlternatives(
-			source, externalSeed, witness.withDynamicPartitionRanges()).stream()
+		ComputedPublicProof dynamic = proveCandidateAlternatives(
+			source, externalSeed, witness.withDynamicPartitionRanges(), generation);
+		List<NativeContinuityProof> dynamicProofs = dynamic.proofs().stream()
 			.filter(proof -> recomputesNativePartitionRanges(owner, witnessType)
 				|| proof.immediateBindings().stream().anyMatch(binding ->
 					hasDynamicNativeLayout(binding.source())))
 			.toList();
-		return java.util.stream.Stream.concat(exact.stream(), dynamic.stream())
-			.distinct().sorted(java.util.Comparator.comparing(NativeContinuityProof::normalizedSignature)).toList();
+		Set<CompiledHopKey> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
+		occurrences.addAll(exact.occurrences());
+		occurrences.addAll(dynamic.occurrences());
+		return new ComputedPublicProof(java.util.stream.Stream.concat(exact.proofs().stream(),
+			dynamicProofs.stream()).distinct()
+			.sorted(java.util.Comparator.comparing(NativeContinuityProof::normalizedSignature)).toList(),
+			Collections.unmodifiableSet(occurrences));
 	}
 
-	private void cacheCompletedProofs(PublicCandidateQueryKey query,
-		List<NativeContinuityProof> proofs) {
-		long estimatedBytes = estimatedProofBytes(proofs);
+	private void cacheCompletedProofs(PublicCandidateQueryKey query, ComputedPublicProof computed) {
+		long proofBytes = estimatedProofBytes(computed.proofs());
+		// Every public entry retains its footprint even when it shares proof objects.
+		// Account for the identity-set backing table rather than treating 64 MiB as
+		// a bound on proofs alone.
+		long footprintBytes = 64L + 64L * computed.occurrences().size();
+		long estimatedBytes = Long.MAX_VALUE - proofBytes < footprintBytes
+			? Long.MAX_VALUE : proofBytes + footprintBytes;
+		cacheCompletedProofs(query, new MemoEntry(computed.proofs(),
+			estimatedBytes, computed.occurrences()));
+	}
+
+	private void cacheCompletedProofs(PublicCandidateQueryKey query, MemoEntry entry) {
+		long estimatedBytes = entry.estimatedBytes();
 		if(memoMaxEntries == 0 || memoMaxProofs == 0 || memoMaxEstimatedBytes == 0
-			|| proofs.size() > memoMaxProofs || estimatedBytes > memoMaxEstimatedBytes)
+			|| entry.proofs().size() > memoMaxProofs || estimatedBytes > memoMaxEstimatedBytes)
 			return;
 		while(!completedProofMemo.isEmpty()
 			&& (completedProofMemo.size() >= memoMaxEntries
-				|| memoRetainedProofs + proofs.size() > memoMaxProofs
+				|| memoRetainedProofs + entry.proofs().size() > memoMaxProofs
 				|| memoRetainedEstimatedBytes + estimatedBytes > memoMaxEstimatedBytes)) {
 			var oldest = completedProofMemo.entrySet().iterator().next();
 			memoRetainedProofs -= oldest.getValue().proofs().size();
@@ -376,8 +708,8 @@ final class NativePlacementContinuity {
 			if(metrics != null)
 				metrics.recordMemoEviction();
 		}
-		completedProofMemo.put(query, new MemoEntry(proofs, estimatedBytes));
-		memoRetainedProofs += proofs.size();
+		completedProofMemo.put(query, entry);
+		memoRetainedProofs += entry.proofs().size();
 		memoRetainedEstimatedBytes += estimatedBytes;
 		if(metrics != null)
 			metrics.recordMemoResident(completedProofMemo.size(), memoRetainedProofs,
@@ -395,11 +727,11 @@ final class NativePlacementContinuity {
 	}
 
 	private CandidateSupportQueryKey candidateSupportQueryKey(
-		CandidateRealizationReference source, NativePoolWitness witness) {
+		CandidateRealizationReference source, NativePoolWitness witness, boolean generated) {
 		int sourceHandle = candidateHandle(source);
 		CandidateTopology topology = candidateTopology(source.rule().parentOccurrence(), witness);
 		boolean exactTopologyRow = topology.rowsByHandle.containsKey(sourceHandle);
-		return new CandidateSupportQueryKey(source, sourceHandle, witness, exactTopologyRow);
+		return new CandidateSupportQueryKey(source, sourceHandle, witness, exactTopologyRow, generated);
 	}
 
 	private List<NativeContinuityProof> instantiateSupportTemplates(SupportMemoEntry entry,
@@ -493,32 +825,78 @@ final class NativePlacementContinuity {
 				&& !clause.nativeWorkerPoolLayoutExact());
 	}
 
-	private List<NativeContinuityProof> proveCandidateAlternatives(CandidateRealizationReference source,
-		DurableAnchorKey externalSeed, NativePoolWitness witness) {
-		CandidateSupportQueryKey query = candidateSupportQueryKey(source, witness);
+	private ComputedPublicProof proveCandidateAlternatives(CandidateRealizationReference source,
+		DurableAnchorKey externalSeed, NativePoolWitness witness, GenerationRoot generation) {
+		boolean generated = generation != null;
+		CandidateSupportQueryKey query = candidateSupportQueryKey(source, witness, generated);
 		SupportMemoEntry cached = completedSupportMemo.get(query);
 		if(cached != null) {
 			if(metrics != null)
 				metrics.recordSupportMemoHit();
-			return instantiateSupportTemplates(cached, source, externalSeed);
+			return new ComputedPublicProof(instantiateSupportTemplates(cached, source, externalSeed),
+				cached.occurrences());
+		}
+		AcyclicRootSupportKey rootSupportKey = generated ? null
+			: acyclicRootSupportKey(source, witness);
+		SupportMemoEntry sharedRoot = rootSupportKey == null ? null
+			: acyclicRootSupportMemo.get(rootSupportKey);
+		if(sharedRoot != null) {
+			if(metrics != null)
+				metrics.recordSupportMemoHit();
+			cacheCompletedSupports(query, sharedRoot);
+			return new ComputedPublicProof(
+				instantiateSupportTemplates(sharedRoot, source, externalSeed), sharedRoot.occurrences());
 		}
 		if(metrics != null)
 			metrics.recordSupportMemoMiss();
-		ComputedCandidateSupport computed = computeCandidateSupportAlternatives(source, witness);
+		ComputedCandidateSupport computed = computeCandidateSupportAlternatives(
+			source, witness, generation);
 		SupportMemoEntry entry = new SupportMemoEntry(source, computed.templates,
-			computed.occurrences, estimatedSupportBytes(computed.templates));
+			computed.occurrences, estimatedSupportBytes(computed.templates), computed.rootIndependent);
 		cacheCompletedSupports(query, entry);
-		return instantiateSupportTemplates(entry, source, externalSeed);
+		if(rootSupportKey != null && entry.rootIndependent)
+			cacheAcyclicRootSupport(rootSupportKey, entry);
+		return new ComputedPublicProof(instantiateSupportTemplates(entry, source, externalSeed),
+			entry.occurrences());
+	}
+
+	private AcyclicRootSupportKey acyclicRootSupportKey(CandidateRealizationReference source,
+		NativePoolWitness witness) {
+		CompiledHopKey occurrence = source.rule().parentOccurrence();
+		if(occurrenceComponents.componentOf(occurrence).cyclic())
+			return null;
+		CandidateTopology topology = candidateTopology(occurrence, witness);
+		int handle = candidateHandle(source);
+		List<CandidateTopologyRow> rows = topology.rowsByHandle.get(handle);
+		if(rows == null || rows.isEmpty())
+			return null;
+		List<RootTopologyRowKey> relation = rows.stream().map(row -> new RootTopologyRowKey(
+			row.dependencies().stream().map(ContinuityDependencyKey::of).toList(),
+			row.directGround())).toList();
+		return new AcyclicRootSupportKey(occurrence, witness, relation);
+	}
+
+	private void cacheAcyclicRootSupport(AcyclicRootSupportKey key, SupportMemoEntry entry) {
+		if(supportMemoMaxEntries == 0 || supportMemoMaxTemplates == 0
+			|| supportMemoMaxEstimatedBytes == 0
+			|| entry.templates.size() > supportMemoMaxTemplates
+			|| entry.estimatedBytes > supportMemoMaxEstimatedBytes)
+			return;
+		acyclicRootSupportMemo.remove(key);
+		while(acyclicRootSupportMemo.size() >= supportMemoMaxEntries)
+			acyclicRootSupportMemo.remove(acyclicRootSupportMemo.entrySet().iterator().next().getKey());
+		acyclicRootSupportMemo.put(key, entry);
 	}
 
 	private ComputedCandidateSupport computeCandidateSupportAlternatives(
-		CandidateRealizationReference source, NativePoolWitness witness) {
+		CandidateRealizationReference source, NativePoolWitness witness,
+		GenerationRoot generation) {
 		if(metrics != null) {
 			metrics.recordProofQuery();
 			SearchSpaceMetrics.PhaseToken observerStarted =
 				metrics.startPhase(SearchSpaceMetrics.Phase.CONTEXT_OBSERVER);
 			try {
-				CandidateQueryKey observed = new CandidateQueryKey(source, witness);
+				CandidateQueryKey observed = new CandidateQueryKey(source, witness, generation);
 				SearchSpaceMetrics.ContextObservation observation = observedQueries.observe(observed);
 				metrics.recordContextObserver(observation.verifiedHashCollisions());
 				switch(observation.result()) {
@@ -544,7 +922,8 @@ final class NativePlacementContinuity {
 		long[] graphWork = metrics == null ? null : new long[2];
 		CandidateProofTraversal traversal = new CandidateProofTraversal();
 		try {
-			buildCandidateProofGraph(root, graph, traversal, fixed, fixedHandles, graphWork);
+			buildCandidateProofGraph(root, root, generation,
+				graph, traversal, fixed, fixedHandles, graphWork);
 			if(metrics != null)
 				metrics.recordProofGraph(graph.size(), graphWork[0], graphWork[1]);
 		}
@@ -559,13 +938,23 @@ final class NativePlacementContinuity {
 		long acyclicRemoved = 0;
 		try {
 			if(traversal.cycleDetected) {
+				Map<CandidateProofState,AcyclicComponentFootprint> independentChildren =
+					rootIndependentChildFootprints(root, graph, traversal);
 				viable = pruneDeadAlternatives(graph);
 				grounded = groundedCandidateStates(viable);
+			cacheAcyclicRootChildren(independentChildren, viable, grounded,
+				generation == null ? null : root.key());
 			}
 			else {
+				Map<CandidateProofState,AcyclicComponentFootprint> childFootprints =
+					acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
+						|| acyclicComponentMaxAlternatives == 0 ? Map.of()
+						: acyclicRootChildFootprints(root, graph, traversal);
 				acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder);
 				viable = graph;
 				grounded = groundedAcyclicCandidateStates(viable, traversal.completionOrder);
+			cacheAcyclicRootChildren(childFootprints, viable, grounded,
+				generation == null ? null : root.key());
 			}
 			if(metrics != null)
 				metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
@@ -583,7 +972,7 @@ final class NativePlacementContinuity {
 		Set<CandidateSupportTemplate> proofs = new LinkedHashSet<>();
 		Set<List<List<CandidateRealizationInputBinding>>> expandedSupportProducts =
 			new java.util.HashSet<>();
-		long[] rawProofs = {0};
+		long[] rawProofs = metrics == null ? null : new long[] {0};
 		DurableAnchorKey outputWitness = witness.asAnchor(
 			"native-proof-output:" + source.rule().parentOccurrence().normalizedSignature());
 		if(grounded.contains(root))
@@ -623,19 +1012,33 @@ final class NativePlacementContinuity {
 					if(!expand)
 						continue;
 					enumerateImmediateSupports(immediateOptions, 0, new ArrayList<>(), support -> {
-						rawProofs[0]++;
+						if(metrics != null)
+							rawProofs[0]++;
 						proofs.add(new CandidateSupportTemplate(outputWitness,
 							witness.exactPartitionRanges, support));
 					});
 				}
 			}
 		List<CandidateSupportTemplate> distinct = List.copyOf(proofs);
+		if(distinct.isEmpty())
+			traceFailedCandidateSupport(source, root, graph, grounded);
 		if(metrics != null)
 			metrics.recordProofResult(rawProofs[0], distinct.size());
 		Set<CompiledHopKey> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(CandidateProofState state : graph.keySet())
 			occurrences.add(state.key());
-		return new ComputedCandidateSupport(distinct, Collections.unmodifiableSet(occurrences));
+		// A reused acyclic boundary deliberately hides its transitive graph states
+		// from this query's work graph. They still belong to the completed support's
+		// invalidation footprint and must cross revisions only when every row matches.
+		for(AcyclicComponentSummary reused : traversal.reusedComponents.values())
+			occurrences.addAll(reused.occurrences);
+		boolean rootIndependent = graph.entrySet().stream()
+			.filter(entry -> !entry.getKey().equals(root))
+			.flatMap(entry -> entry.getValue().stream())
+			.flatMap(alternative -> alternative.dependencies.stream())
+			.noneMatch(dependency -> dependency.key == root.key());
+		return new ComputedCandidateSupport(distinct, Collections.unmodifiableSet(occurrences),
+			rootIndependent);
 		}
 		finally {
 			if(metrics != null)
@@ -643,6 +1046,68 @@ final class NativePlacementContinuity {
 					SearchSpaceMetrics.Phase.SUPPORT_PRODUCT_RELATION_MATERIALIZATION,
 					supportStarted);
 		}
+	}
+
+	private void traceFailedCandidateSupport(CandidateRealizationReference source,
+		CandidateProofState root, Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		Set<CandidateProofState> grounded) {
+		Hop owner = originsByKey.get(source.rule().parentOccurrence());
+		if(!FederatedPlannerTrace.shouldTrace(owner))
+			return;
+		StringBuilder detail = new StringBuilder("owner=")
+			.append(source.rule().parentOccurrence().callSitePath()).append(':')
+			.append(source.rule().parentOccurrence().emittedHopInstance())
+			.append("|opcode=").append(owner.getOpString())
+			.append("|rootGrounded=").append(grounded.contains(root))
+			.append("|rootPinnedHash=").append(source.hashCode())
+			.append("|rootDeclared=").append(declaresExactRealization(
+				source.rule().parentOccurrence(), source)).append("|states=[");
+		int emitted = 0;
+		for(var entry : graph.entrySet()) {
+			CandidateProofState state = entry.getKey();
+			List<SelectedCandidateProof> alternatives = entry.getValue();
+			if(state != root && grounded.contains(state) && !alternatives.isEmpty())
+				continue;
+			if(emitted++ >= 6)
+				break;
+			if(emitted > 1)
+				detail.append(',');
+			Hop stateOwner = originsByKey.get(state.key());
+			Node node = nodesByKey.get(state.key());
+			detail.append('{').append(state.key().callSitePath()).append(':')
+				.append(state.key().emittedHopInstance())
+				.append("|opcode=").append(stateOwner == null ? "-" : stateOwner.getOpString())
+				.append("|pinnedHash=").append(state.realization() == null ? "-"
+					: state.realization().hashCode())
+				.append("|declared=").append(state.realization() != null
+					&& declaresExactRealization(state.key(), state.realization()))
+				.append("|witness=").append(state.witness().fType).append('/')
+				.append(state.witness().exactPartitionRanges ? "exact" : "dynamic")
+				.append("|legal=").append(node == null ? List.of() : node.legalAlternatives())
+				.append("|grounded=").append(grounded.contains(state))
+				.append("|alternatives=").append(alternatives.size()).append('[');
+			for(int alternativeIndex = 0;
+				alternativeIndex < Math.min(6, alternatives.size()); alternativeIndex++) {
+				if(alternativeIndex > 0)
+					detail.append(',');
+				SelectedCandidateProof alternative = alternatives.get(alternativeIndex);
+				detail.append("direct=").append(alternative.directGround()).append(";deps=");
+				detail.append('[');
+				for(int dependencyIndex = 0;
+					dependencyIndex < Math.min(6, alternative.dependencies().size()); dependencyIndex++) {
+					if(dependencyIndex > 0)
+						detail.append(',');
+					CandidateProofDependency dependency = alternative.dependencies().get(dependencyIndex);
+					detail.append(dependency.key.callSitePath()).append(':')
+						.append(dependency.key.emittedHopInstance()).append("#")
+						.append(dependency.realization == null ? "-" : dependency.realization.hashCode());
+				}
+				detail.append(']');
+			}
+			detail.append("]}");
+		}
+		detail.append(']');
+		FederatedPlannerTrace.log(owner, "Native-EmptyCandidateSupport", detail.toString());
 	}
 
 	private static List<CandidateRealizationReference> canonicalReferences(
@@ -659,56 +1124,123 @@ final class NativePlacementContinuity {
 
 	private Map<CandidateProofState,List<SelectedCandidateProof>> pruneDeadAlternatives(
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph) {
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable = new java.util.LinkedHashMap<>();
-		Map<CandidateProofState,List<DependentAlternative>> reverseDependencies = new java.util.HashMap<>();
-		Map<CandidateProofState,Integer> liveCounts = new java.util.HashMap<>();
+		boolean hasDeadSeed = false;
 		for(var entry : graph.entrySet()) {
-			viable.put(entry.getKey(), new ArrayList<>(entry.getValue()));
-			liveCounts.put(entry.getKey(), entry.getValue().size());
-			for(SelectedCandidateProof alternative : entry.getValue()) {
-				Set<CandidateProofState> dependencies = new java.util.HashSet<>();
-				for(CandidateProofDependency dependency : alternative.dependencies)
-					dependencies.add(dependency.state());
-				for(CandidateProofState dependency : dependencies)
-					reverseDependencies.computeIfAbsent(dependency, ignored -> new ArrayList<>())
-						.add(new DependentAlternative(entry.getKey(), alternative));
+			if(metrics != null)
+				metrics.recordOwnerElementsScanned(entry.getValue().size());
+			hasDeadSeed |= entry.getValue().isEmpty();
+			if(!hasDeadSeed) {
+				alternatives:
+				for(SelectedCandidateProof alternative : entry.getValue())
+					for(CandidateProofDependency dependency : alternative.dependencies)
+						if(!graph.containsKey(dependency.state())) {
+							hasDeadSeed = true;
+							break alternatives;
+						}
 			}
 		}
-		java.util.ArrayDeque<CandidateProofState> dead = new java.util.ArrayDeque<>();
-		Set<CandidateProofState> knownDead = new java.util.HashSet<>();
-		for(var entry : viable.entrySet())
-			if(entry.getValue().isEmpty() && knownDead.add(entry.getKey())) {
-				dead.addLast(entry.getKey());
+		if(!hasDeadSeed)
+			return graph;
+		// Dense IDs are query-local aliases for the complete state equality, not a
+		// structural quotient. Keep every original key (including dead states) for
+		// downstream SCC grounding and revision invalidation.
+		Map<CandidateProofState,Integer> stateIds = new java.util.HashMap<>();
+		int slotCount = 0, edgeCount = 0;
+		for(var entry : graph.entrySet()) {
+			stateIds.put(entry.getKey(), stateIds.size());
+			slotCount = Math.addExact(slotCount, entry.getValue().size());
+			for(SelectedCandidateProof alternative : entry.getValue())
+				edgeCount = Math.addExact(edgeCount, alternative.dependencies.size());
+		}
+		int[] slotRemovalIds = new int[slotCount];
+		int[] alternativeOwners = new int[slotCount];
+		int[] dependencyStates = new int[edgeCount];
+		int[] dependencySlots = new int[edgeCount];
+		IdentityHashMap<SelectedCandidateProof,Integer> ownerAlternatives = new IdentityHashMap<>();
+		int owner = 0, slot = 0, edge = 0;
+		for(List<SelectedCandidateProof> alternatives : graph.values()) {
+			ownerAlternatives.clear();
+			for(SelectedCandidateProof alternative : alternatives) {
+				Integer previousSlot = ownerAlternatives.putIfAbsent(alternative, slot);
+				int removalId = previousSlot == null ? slot : previousSlot;
+				slotRemovalIds[slot] = removalId;
+				alternativeOwners[removalId] = owner;
+				for(CandidateProofDependency dependency : alternative.dependencies) {
+					dependencyStates[edge] = stateIds.computeIfAbsent(dependency.state(),
+						ignored -> stateIds.size());
+					dependencySlots[edge++] = slot;
+				}
+				slot++;
+			}
+			owner++;
+		}
+		int[] reverseHeads = new int[stateIds.size()];
+		int[] reverseNext = new int[edgeCount];
+		int[] lastSlot = new int[stateIds.size()];
+		java.util.Arrays.fill(reverseHeads, -1);
+		java.util.Arrays.fill(lastSlot, -1);
+		for(edge = 0; edge < edgeCount; edge++) {
+			int dependency = dependencyStates[edge];
+			// The legacy reverse index deduplicates dependencies per original list
+			// slot, not per shared alternative object or per owner.
+			if(lastSlot[dependency] == dependencySlots[edge])
+				continue;
+			lastSlot[dependency] = dependencySlots[edge];
+			reverseNext[edge] = reverseHeads[dependency];
+			reverseHeads[dependency] = edge;
+		}
+		int[] liveCounts = new int[stateIds.size()];
+		owner = 0;
+		for(List<SelectedCandidateProof> alternatives : graph.values())
+			liveCounts[owner++] = alternatives.size();
+		int[] dead = new int[stateIds.size()];
+		int nextDead = 0, deadCount = 0;
+		for(int state = 0; state < liveCounts.length; state++)
+			if(liveCounts[state] == 0) {
+				dead[deadCount++] = state;
 				if(metrics != null)
 					metrics.recordDeadStateQueued();
 			}
-		for(CandidateProofState dependency : reverseDependencies.keySet())
-			if(!viable.containsKey(dependency) && knownDead.add(dependency)) {
-				dead.addLast(dependency);
-				if(metrics != null)
-					metrics.recordDeadStateQueued();
-			}
-		Set<SelectedCandidateProof> removed = Collections.newSetFromMap(new IdentityHashMap<>());
-		while(!dead.isEmpty())
-			for(DependentAlternative dependent : reverseDependencies.getOrDefault(dead.removeFirst(), List.of())) {
+		boolean[] removed = new boolean[slotCount];
+		while(nextDead < deadCount)
+			for(edge = reverseHeads[dead[nextDead++]]; edge >= 0; edge = reverseNext[edge]) {
 				if(metrics != null)
 					metrics.recordDependencyNotification();
-				if(!removed.add(dependent.alternative()))
+				int removalId = slotRemovalIds[dependencySlots[edge]];
+				if(removed[removalId])
 					continue;
+				removed[removalId] = true;
 				if(metrics != null)
 					metrics.recordAlternativeRemoved();
-				int live = liveCounts.compute(dependent.owner(), (ignored, count) -> count - 1);
-				if(live == 0 && knownDead.add(dependent.owner())) {
-					dead.addLast(dependent.owner());
+				// Duplicate object slots share one removal but retain the legacy
+				// original-list live count. Equal distinct objects do not share it.
+				owner = alternativeOwners[removalId];
+				if(--liveCounts[owner] == 0) {
+					dead[deadCount++] = owner;
 					if(metrics != null)
 						metrics.recordDeadStateQueued();
 				}
 			}
-		viable.replaceAll((ignored, alternatives) -> {
-			if(metrics != null)
-				metrics.recordOwnerElementsScanned(alternatives.size());
-			return alternatives.stream().filter(alternative -> !removed.contains(alternative)).toList();
-		});
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable =
+			new java.util.LinkedHashMap<>(graph);
+		slot = 0;
+		for(var entry : graph.entrySet()) {
+			List<SelectedCandidateProof> alternatives = entry.getValue();
+			List<SelectedCandidateProof> survivors = null;
+			for(int index = 0; index < alternatives.size(); index++) {
+				if(removed[slotRemovalIds[slot + index]]) {
+					if(survivors == null) {
+						survivors = new ArrayList<>(alternatives.size() - 1);
+						survivors.addAll(alternatives.subList(0, index));
+					}
+				}
+				else if(survivors != null)
+					survivors.add(alternatives.get(index));
+			}
+			if(survivors != null)
+				viable.put(entry.getKey(), List.copyOf(survivors));
+			slot += alternatives.size();
+		}
 		return viable;
 	}
 
@@ -777,6 +1309,13 @@ final class NativePlacementContinuity {
 	private void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
 		int ordinal, List<CandidateRealizationInputBinding> current,
 		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer) {
+		enumerateImmediateSupports(options, ordinal, current, new IdentityHashMap<>(), consumer);
+	}
+
+	private void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
+		int ordinal, List<CandidateRealizationInputBinding> current,
+		Map<CompiledHopKey,CandidateRealizationReference> selected,
+		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer) {
 		if(metrics != null)
 			metrics.recordSupportPrefix(ordinal);
 		if(ordinal == options.size()) {
@@ -786,9 +1325,24 @@ final class NativePlacementContinuity {
 			return;
 		}
 		for(CandidateRealizationInputBinding binding : options.get(ordinal)) {
+			CompiledHopKey owner = binding.source().rule().parentOccurrence();
+			CandidateRealizationReference prior = selected.get(owner);
+			// The physical decision owner can select only one exact realization.
+			// Reject mixed choices before constructing a product leaf (ExactPhysicalModel
+			// rejects the same pair later through its selected-source factor).
+			if(prior != null && !prior.equals(binding.source())) {
+				if(metrics != null)
+					metrics.recordSupportConflictPrefix();
+				continue;
+			}
+			boolean first = prior == null;
+			if(first)
+				selected.put(owner, binding.source());
 			current.add(binding);
-			enumerateImmediateSupports(options, ordinal + 1, current, consumer);
+			enumerateImmediateSupports(options, ordinal + 1, current, selected, consumer);
 			current.remove(current.size() - 1);
+			if(first)
+				selected.remove(owner);
 		}
 	}
 
@@ -808,13 +1362,11 @@ final class NativePlacementContinuity {
 		if(metrics != null)
 			metrics.recordSccScan(scan[0], scan[1], scan[2], 0);
 		Set<CandidateProofState> grounded = new java.util.HashSet<>();
-		boolean changed;
-		do {
-			changed = false;
-			for(Set<CandidateProofState> component : maximalComponents)
-				changed |= groundEligibleComponents(component, viable, grounded, 1);
-		}
-		while(changed);
+		// Tarjan closes every owner-to-dependency edge before its owner component,
+		// so this list is dependency-first. A component rejected for an ungrounded
+		// external dependency cannot be revived by a later sibling.
+		for(Set<CandidateProofState> component : maximalComponents)
+			groundEligibleComponents(component, viable, grounded, 1);
 		return grounded;
 	}
 
@@ -823,26 +1375,79 @@ final class NativePlacementContinuity {
 		Set<CandidateProofState> grounded, int refinementDepth) {
 		if(component.isEmpty() || grounded.containsAll(component))
 			return false;
+		if(component.size() == 1)
+			return groundEligibleSingleton(component.iterator().next(), viable, grounded);
 		Map<CandidateProofState,List<SelectedCandidateProof>> eligible = new java.util.LinkedHashMap<>();
-		for(CandidateProofState state : component)
-			eligible.put(state, viable.getOrDefault(state, List.of()).stream()
-				.filter(alternative -> isGroundableAlternative(alternative, component, grounded))
-				.toList());
-		List<Set<CandidateProofState>> refined = stronglyConnectedComponents(eligible, refinementDepth);
-		if(refined.size() == 1 && refined.get(0).size() == component.size()) {
-			boolean everyStateSupported = eligible.values().stream().noneMatch(List::isEmpty);
-			boolean hasGroundPath = eligible.values().stream().flatMap(List::stream)
-				.anyMatch(alternative -> alternative.directGround
-					|| alternative.dependencies.stream().anyMatch(dependency ->
-						!component.contains(dependency.state()) && grounded.contains(dependency.state())));
-			if(everyStateSupported && hasGroundPath)
-				return grounded.addAll(component);
-			return false;
+		boolean relationUnchanged = true;
+		boolean everyStateSupported = true;
+		boolean hasGroundPath = false;
+		for(CandidateProofState state : component) {
+			List<SelectedCandidateProof> alternatives = viable.getOrDefault(state, List.of());
+			List<SelectedCandidateProof> survivors = null;
+			for(int index = 0; index < alternatives.size(); index++) {
+				SelectedCandidateProof alternative = alternatives.get(index);
+				boolean supported = alternative.directGround || !alternative.dependencies.isEmpty();
+				boolean alternativeHasGroundPath = alternative.directGround;
+				for(CandidateProofDependency dependency : alternative.dependencies) {
+					CandidateProofState dependencyState = dependency.state();
+					if(component.contains(dependencyState))
+						continue;
+					if(!grounded.contains(dependencyState)) {
+						supported = false;
+						break;
+					}
+					alternativeHasGroundPath = true;
+				}
+				if(supported) {
+					if(survivors != null)
+						survivors.add(alternative);
+					// A direct-looking alternative cannot seed the SCC until every AND dependency is eligible.
+					hasGroundPath |= alternativeHasGroundPath;
+				}
+				else {
+					relationUnchanged = false;
+					if(survivors == null)
+						survivors = new ArrayList<>(alternatives.subList(0, index));
+				}
+			}
+			List<SelectedCandidateProof> allowed = survivors == null ? alternatives : List.copyOf(survivors);
+			eligible.put(state, allowed);
+			everyStateSupported &= !allowed.isEmpty();
 		}
+		// Retaining every exact alternative leaves this maximal SCC's induced edge relation unchanged.
+		// Any rejection, even of a redundant edge, still takes the existing refinement path.
+		if(relationUnchanged)
+			return everyStateSupported && hasGroundPath && grounded.addAll(component);
+		List<Set<CandidateProofState>> refined = stronglyConnectedComponents(eligible, refinementDepth);
+		if(refined.size() == 1 && refined.get(0).size() == component.size())
+			return everyStateSupported && hasGroundPath && grounded.addAll(component);
 		boolean changed = false;
 		for(Set<CandidateProofState> subcomponent : refined)
 			changed |= groundEligibleComponents(subcomponent, viable, grounded, refinementDepth + 1);
 		return changed;
+	}
+
+	private static boolean groundEligibleSingleton(CandidateProofState state,
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		Set<CandidateProofState> grounded) {
+		for(SelectedCandidateProof alternative : viable.getOrDefault(state, List.of())) {
+			if(!alternative.directGround && alternative.dependencies.isEmpty())
+				continue;
+			boolean supported = true;
+			boolean hasGroundPath = alternative.directGround;
+			for(CandidateProofDependency dependency : alternative.dependencies) {
+				if(state.equals(dependency.state()))
+					continue;
+				if(!grounded.contains(dependency.state())) {
+					supported = false;
+					break;
+				}
+				hasGroundPath = true;
+			}
+			if(supported && hasGroundPath)
+				return grounded.add(state);
+		}
+		return false;
 	}
 
 	private List<Set<CandidateProofState>> stronglyConnectedComponents(
@@ -907,14 +1512,8 @@ final class NativePlacementContinuity {
 		components.add(component);
 	}
 
-	private static boolean isGroundableAlternative(SelectedCandidateProof alternative,
-		Set<CandidateProofState> component, Set<CandidateProofState> grounded) {
-		return (alternative.directGround || !alternative.dependencies.isEmpty())
-			&& alternative.dependencies.stream().allMatch(dependency ->
-				component.contains(dependency.state()) || grounded.contains(dependency.state()));
-	}
-
-	private void buildCandidateProofGraph(CandidateProofState state,
+	private void buildCandidateProofGraph(CandidateProofState state, CandidateProofState root,
+		GenerationRoot generation,
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph, CandidateProofTraversal traversal,
 		Map<CompiledHopKey,CandidateRealizationReference> fixed,
 		Map<CompiledHopKey,Integer> fixedHandles, long[] graphWork) {
@@ -924,11 +1523,23 @@ final class NativePlacementContinuity {
 		}
 		if(graph.containsKey(state))
 			return;
+		boolean generatedRoot = generation != null && state.key() == root.key()
+			&& Objects.equals(state.realization(), root.realization());
+		AcyclicComponentSummary shared = generatedRoot
+			? null : reusableAcyclicComponent(state, fixed.keySet());
+		if(shared != null) {
+			graph.put(state, shared.groundedAlternatives);
+			traversal.reusedComponents.put(state, shared);
+			if(graphWork != null)
+				graphWork[0] += shared.groundedAlternatives.size();
+			traversal.completionOrder.add(state);
+			return;
+		}
 		traversal.active.add(state);
 		try {
 			List<SelectedCandidateProof> alternatives = candidateProofAlternatives(
 				state.key(), state.realization(), state.realizationHandle(), state.witness(),
-				state.templateRoot(), fixed, fixedHandles);
+				state.templateRoot(), fixed, fixedHandles, generatedRoot ? generation : null);
 			graph.put(state, alternatives);
 			if(graphWork != null) {
 				graphWork[0] += alternatives.size();
@@ -937,7 +1548,7 @@ final class NativePlacementContinuity {
 			}
 			for(SelectedCandidateProof alternative : alternatives)
 				for(CandidateProofDependency dependency : alternative.dependencies)
-					buildCandidateProofGraph(dependency.state(), graph, traversal,
+					buildCandidateProofGraph(dependency.state(), root, generation, graph, traversal,
 						fixed, fixedHandles, graphWork);
 			traversal.completionOrder.add(state);
 		}
@@ -946,34 +1557,214 @@ final class NativePlacementContinuity {
 		}
 	}
 
+	private AcyclicComponentSummary reusableAcyclicComponent(CandidateProofState state,
+		Set<CompiledHopKey> fixedOccurrences) {
+		AcyclicComponentSummary summary = acyclicComponentMemo.get(state);
+		if(summary == null)
+			return null;
+		for(CompiledHopKey fixed : fixedOccurrences)
+			if(summary.occurrences.contains(fixed))
+				return null;
+		return summary;
+	}
+
+	private Map<CandidateProofState,AcyclicComponentFootprint> acyclicRootChildFootprints(
+		CandidateProofState root, Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		CandidateProofTraversal traversal) {
+		Map<CandidateProofState,AcyclicComponentFootprint> footprints = new java.util.LinkedHashMap<>();
+		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
+			for(CandidateProofDependency dependency : alternative.dependencies)
+				if(!dependency.state().equals(root))
+					footprints.computeIfAbsent(dependency.state(), child ->
+						acyclicComponentFootprint(child, graph, traversal));
+		return footprints;
+	}
+
+	/** A pinned root cannot affect a child outside its conservative occurrence SCC. */
+	private Map<CandidateProofState,AcyclicComponentFootprint> rootIndependentChildFootprints(
+		CandidateProofState root, Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		CandidateProofTraversal traversal) {
+		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
+			|| acyclicComponentMaxAlternatives == 0)
+			return Map.of();
+		var rootComponent = occurrenceComponents.componentOf(root.key());
+		Map<CandidateProofState,AcyclicComponentFootprint> footprints = new java.util.LinkedHashMap<>();
+		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
+			for(CandidateProofDependency dependency : alternative.dependencies) {
+				CandidateProofState child = dependency.state();
+				if(occurrenceComponents.componentOf(child.key()) != rootComponent)
+					footprints.computeIfAbsent(child, state ->
+						acyclicComponentFootprint(state, graph, traversal));
+			}
+		return footprints;
+	}
+
+	private AcyclicComponentFootprint acyclicComponentFootprint(CandidateProofState child,
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		CandidateProofTraversal traversal) {
+		Set<CandidateProofState> states = new java.util.HashSet<>();
+		Set<CompiledHopKey> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
+		java.util.ArrayDeque<CandidateProofState> pending = new java.util.ArrayDeque<>();
+		long retainedStates = 0;
+		pending.add(child);
+		while(!pending.isEmpty()) {
+			CandidateProofState state = pending.removeFirst();
+			if(!states.add(state))
+				continue;
+			AcyclicComponentSummary reused = traversal.reusedComponents.get(state);
+			if(reused != null) {
+				occurrences.addAll(reused.occurrences);
+				retainedStates += reused.retainedStates;
+				if(retainedStates > acyclicComponentMaxStates)
+					return null;
+				continue;
+			}
+			occurrences.add(state.key());
+			retainedStates++;
+			if(retainedStates > acyclicComponentMaxStates)
+				return null;
+			for(SelectedCandidateProof alternative : graph.getOrDefault(state, List.of()))
+				for(CandidateProofDependency dependency : alternative.dependencies)
+					pending.addLast(dependency.state());
+		}
+		return new AcyclicComponentFootprint(Collections.unmodifiableSet(occurrences),
+			retainedStates);
+	}
+
+	private void cacheAcyclicRootChildren(
+		Map<CandidateProofState,AcyclicComponentFootprint> childFootprints,
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		Set<CandidateProofState> grounded, CompiledHopKey generatedRoot) {
+		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
+			|| acyclicComponentMaxAlternatives == 0)
+			return;
+		for(var entry : childFootprints.entrySet())
+			if(generatedRoot == null || !entry.getValue().occurrences.contains(generatedRoot))
+				cacheAcyclicComponent(entry.getKey(), entry.getValue(), viable, grounded);
+	}
+
+	private void cacheAcyclicComponent(CandidateProofState child, AcyclicComponentFootprint footprint,
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		Set<CandidateProofState> grounded) {
+		long retainedStates = footprint.retainedStates;
+		if(retainedStates > acyclicComponentMaxStates)
+			return;
+		List<SelectedCandidateProof> groundedAlternatives = new ArrayList<>();
+		if(grounded.contains(child))
+			for(SelectedCandidateProof alternative : viable.getOrDefault(child, List.of()))
+				if((alternative.directGround || !alternative.dependencies.isEmpty())
+					&& alternative.dependencies.stream().allMatch(dependency ->
+						grounded.contains(dependency.state()))) {
+					if(groundedAlternatives.size() >= acyclicComponentMaxAlternatives)
+						return; // Oversized boundary: exact recomputation is the safe fallback.
+					groundedAlternatives.add(new SelectedCandidateProof(alternative.realization,
+						List.of(), true, alternative.witness));
+				}
+		AcyclicComponentSummary summary = new AcyclicComponentSummary(groundedAlternatives,
+			footprint.occurrences, retainedStates);
+		cacheAcyclicSummary(child, summary);
+	}
+
+	private void cacheAcyclicSummary(CandidateProofState child, AcyclicComponentSummary summary) {
+		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
+			|| acyclicComponentMaxAlternatives == 0
+			|| summary.retainedStates > acyclicComponentMaxStates
+			|| summary.groundedAlternatives.size() > acyclicComponentMaxAlternatives)
+			return;
+		long retainedStates = summary.retainedStates;
+		List<SelectedCandidateProof> groundedAlternatives = summary.groundedAlternatives;
+		AcyclicComponentSummary prior = acyclicComponentMemo.remove(child);
+		if(prior != null) {
+			acyclicComponentRetainedStates -= prior.retainedStates;
+			acyclicComponentRetainedAlternatives -= prior.groundedAlternatives.size();
+		}
+		while(!acyclicComponentMemo.isEmpty()
+			&& (acyclicComponentMemo.size() >= acyclicComponentMaxEntries
+				|| acyclicComponentRetainedStates + retainedStates > acyclicComponentMaxStates
+				|| acyclicComponentRetainedAlternatives + groundedAlternatives.size()
+					> acyclicComponentMaxAlternatives)) {
+			var oldest = acyclicComponentMemo.entrySet().iterator().next();
+			acyclicComponentRetainedStates -= oldest.getValue().retainedStates;
+			acyclicComponentRetainedAlternatives -= oldest.getValue().groundedAlternatives.size();
+			acyclicComponentMemo.remove(oldest.getKey());
+		}
+		acyclicComponentMemo.put(child, summary);
+		acyclicComponentRetainedStates += retainedStates;
+		acyclicComponentRetainedAlternatives += groundedAlternatives.size();
+	}
+
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
 		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
 		boolean allowPinnedTemplate, Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles) {
+		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation) {
 		if(metrics != null)
 			metrics.recordTopologyOverlayEvaluation();
+		if(generation != null)
+			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
 		CandidateTopology topology = candidateTopology(key, witness);
 		if(!topology.eligible)
 			return List.of();
+		// A topology owns immutable default edges, not query/grounding results.
+		// Unrelated fixed owners cannot change any immediate dependency, so reuse
+		// the enclosing canonical list too. Synthetic anchors and empty/template
+		// cases intentionally remain on their existing query-local paths below.
+		if((pinned != null || !topology.nodeDirectGround) && !topology.hasFixedDependency(fixed)) {
+			List<SelectedCandidateProof> defaults = pinned == null ? topology.defaultAlternatives
+				: topology.defaultAlternativesByHandle.getOrDefault(pinnedHandle, List.of());
+			if(!defaults.isEmpty())
+				return defaults;
+		}
 		List<SelectedCandidateProof> alternatives = new ArrayList<>();
 		List<CandidateTopologyRow> overlayRows = pinned == null ? topology.rows
 			: topology.rowsByHandle.getOrDefault(pinnedHandle, List.of());
 		// The topology rows are already canonical. The old final sort only moved
 		// the synthetic null realization to the front, so publish it first instead.
 		if(pinned == null && topology.nodeDirectGround)
-			alternatives.add(new SelectedCandidateProof(null, null, List.of(), true, witness));
+			alternatives.add(new SelectedCandidateProof(null, List.of(), true, witness));
 		// A staging template is a proof obligation, not publication authority. Keep
 		// its exact input dependencies in recursive loop SCCs; only grounded rows
 		// with executable bindings are materialized by the caller.
-		for(CandidateTopologyRow row : overlayRows) {
-			alternatives.add(new SelectedCandidateProof(row.reference, row.clause,
-				overlayDependencies(row.dependencies, fixed, fixedHandles), row.directGround, witness));
+		// Topology construction already deduplicates defaults by the equivalent edge key.
+		// The first query-local overlay creates the only collision opportunity, so seed
+		// every preceding default then check that row and all later defaults/overlays.
+		Set<ContinuityEdgeKey> seen = null;
+		for(int rowIndex = 0; rowIndex < overlayRows.size(); rowIndex++) {
+			CandidateTopologyRow row = overlayRows.get(rowIndex);
+			boolean queryOverlay = false;
+			for(CandidateDependencySkeleton dependency : row.dependencies)
+				if(fixed.containsKey(dependency.key)) {
+					queryOverlay = true;
+					break;
+				}
+			SelectedCandidateProof alternative;
+			ContinuityEdgeKey edge;
+			if(queryOverlay) {
+				if(seen == null) {
+					seen = new java.util.HashSet<>();
+					for(int priorIndex = 0; priorIndex < rowIndex; priorIndex++)
+						seen.add(overlayRows.get(priorIndex).defaultEdge);
+				}
+				List<CandidateProofDependency> dependencies =
+					overlayDependencies(row.dependencies, fixed, fixedHandles);
+				alternative = new SelectedCandidateProof(row.reference,
+					dependencies, row.directGround, witness);
+				edge = ContinuityEdgeKey.ofEffective(row.reference, row.directGround, dependencies);
+			}
+			else {
+				alternative = row.defaultAlternative;
+				edge = row.defaultEdge;
+			}
+			if(seen == null || seen.add(edge))
+				alternatives.add(alternative);
+			else if(metrics != null)
+				metrics.recordTopologyOverlayRowCollapsed();
 		}
 		Hop hop = originsByKey.get(key);
 		// Template fallback intentionally remains a separate query-overlay path. Its
 		// predicates differ from normal candidate rows and must not be folded into the
 		// shared topology merely because both name the same occurrence and witness.
-		if(alternatives.isEmpty() && allowPinnedTemplate && pinned != null)
+		if(alternatives.isEmpty() && allowPinnedTemplate && pinned != null
+			&& !declaresExactRealization(key, pinned))
 			for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 				if(metrics != null)
 					metrics.recordProofRowExamined();
@@ -990,10 +1781,49 @@ final class NativePlacementContinuity {
 				List<CandidateProofDependency> dependencies = candidateDependencies(
 					fact, templateClause, hop, witness, fixed, fixedHandles);
 				if(dependencies != null)
-					alternatives.add(new SelectedCandidateProof(pinned, templateClause, dependencies,
+					alternatives.add(new SelectedCandidateProof(pinned, dependencies,
 						false, witness));
 			}
 		return List.copyOf(alternatives);
+	}
+
+	private List<SelectedCandidateProof> generatedRootAlternative(CompiledHopKey key,
+		CandidateRealizationReference proposed, NativePoolWitness witness,
+		Map<CompiledHopKey,CandidateRealizationReference> fixed,
+		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation) {
+		CandidateRuleFact fact = generation.trustedBase();
+		CandidateEmissionFact emission = generation.baseEmission();
+		Node node = nodesByKey.get(key);
+		Hop hop = originsByKey.get(key);
+		PlacementState state = emission.emissionState().placementState();
+		if(key != fact.key().parentOccurrence() || node == null || hop == null
+			|| incompleteSources.contains(key)
+			|| fact.status() != CandidateEvaluationStatus.AVAILABLE
+			|| isBroadcastRowProvablyUnselectable(fact)
+			|| !operationPreservesWitness(hop, witness, fact)
+			|| state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
+			|| state.fType() != witness.fType || emission.executionFType() != witness.fType
+			|| emission.derivedFoutAction() != null
+			|| node.legalAlternatives().stream().noneMatch(candidate -> candidate.execType() == ExecType.FED
+				&& candidate.output() == FederatedOutput.FOUT && candidate.fType() == witness.fType))
+			return List.of();
+		CandidateRealizationSupportClause empty =
+			new CandidateRealizationSupportClause(List.of(), List.of());
+		List<CandidateProofDependency> dependencies = candidateDependencies(
+			fact, empty, hop, witness, fixed, fixedHandles);
+		return dependencies == null ? List.of()
+			: List.of(new SelectedCandidateProof(proposed, dependencies, false, witness));
+	}
+
+	private boolean declaresExactRealization(CompiledHopKey key,
+		CandidateRealizationReference pinned) {
+		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of()))
+			if(fact.key().equals(pinned.rule()))
+				for(var emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations())
+						if(CandidateRealizationReference.of(fact.key(), realization).equals(pinned))
+							return true;
+		return false;
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {
@@ -1031,6 +1861,7 @@ final class NativePlacementContinuity {
 		boolean nodeDirectGround = node.anchors().stream()
 			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
 		List<CandidateTopologyRow> rows = new ArrayList<>();
+		Set<ContinuityEdgeKey> seen = new java.util.HashSet<>();
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(metrics != null)
 				metrics.recordProofRowExamined();
@@ -1044,7 +1875,7 @@ final class NativePlacementContinuity {
 				var state = emission.emissionState().placementState();
 				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
 					|| state.fType() != witness.fType || emission.executionFType() != witness.fType
-					|| emission.derivedFoutAction() != null || emission.emissionState().derivedFedFout())
+					|| emission.derivedFoutAction() != null)
 					continue;
 				for(CandidateEmissionRealization realization : emission.realizations()) {
 					if(metrics != null)
@@ -1063,8 +1894,12 @@ final class NativePlacementContinuity {
 							|| clause.nativeWorkerPoolWitness() != null
 									&& witness.matches(nativeWitness(clause.nativeWorkerPoolWitness()),
 										clause.nativeWorkerPoolLayoutExact());
-							rows.add(new CandidateTopologyRow(reference, clause, dependencies,
-								realizationGround));
+							CandidateTopologyRow row = CandidateTopologyRow.create(reference,
+								dependencies, realizationGround, witness);
+							if(seen.add(ContinuityEdgeKey.of(row)))
+								rows.add(row);
+							else if(metrics != null)
+								metrics.recordTopologyRowCollapsed();
 						}
 					}
 				}
@@ -1091,12 +1926,21 @@ final class NativePlacementContinuity {
 	private CandidateTopology reindexTopology(CandidateTopology topology) {
 		if(!topology.eligible || topology.rows.isEmpty())
 			return topology;
+		List<CandidateTopologyRow> rows = new ArrayList<>(topology.rows.size());
+		for(CandidateTopologyRow row : topology.rows) {
+			List<CandidateDependencySkeleton> dependencies = row.dependencies.stream()
+				.map(dependency -> new CandidateDependencySkeleton(dependency.key,
+					dependency.clausePinned, candidateHandle(dependency.clausePinned),
+					dependency.witness, dependency.inputPosition)).toList();
+			rows.add(CandidateTopologyRow.create(row.reference, dependencies,
+				row.directGround, row.defaultAlternative.witness()));
+		}
 		Map<Integer,List<CandidateTopologyRow>> rowsByHandle = new java.util.HashMap<>();
-		for(CandidateTopologyRow row : topology.rows)
+		for(CandidateTopologyRow row : rows)
 			rowsByHandle.computeIfAbsent(candidateHandle(row.reference),
 				ignored -> new ArrayList<>()).add(row);
-		rowsByHandle.replaceAll((ignored, rows) -> List.copyOf(rows));
-		return new CandidateTopology(true, topology.nodeDirectGround, topology.rows,
+		rowsByHandle.replaceAll((ignored, referenceRows) -> List.copyOf(referenceRows));
+		return new CandidateTopology(true, topology.nodeDirectGround, List.copyOf(rows),
 			Collections.unmodifiableMap(rowsByHandle));
 	}
 
@@ -1138,8 +1982,15 @@ final class NativePlacementContinuity {
 	private List<CandidateDependencySkeleton> candidateDependencySkeletons(CandidateRuleFact fact,
 		CandidateRealizationSupportClause clause, Hop owner, NativePoolWitness witness) {
 		Map<CompiledHopKey,CandidateRealizationReference> pinned = new IdentityHashMap<>();
-		for(CandidateRealizationReference support : requiredInputSupport(clause))
-			pinned.put(support.rule().parentOccurrence(), support);
+		for(CandidateRealizationReference support : requiredInputSupport(clause)) {
+			CompiledHopKey source = support.rule().parentOccurrence();
+			CandidateRealizationReference prior = pinned.putIfAbsent(source, support);
+			if(prior != null && !prior.equals(support)) {
+				if(metrics != null)
+					metrics.recordContradictoryClausePin();
+				return null; // An AND clause cannot pin one decision owner to two realizations.
+			}
+		}
 		List<CandidateDependencySkeleton> dependencies = new ArrayList<>();
 		for(CompiledHopKey source : reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of())) {
 			CandidateRealizationReference reference = pinned.get(source);
@@ -1180,7 +2031,10 @@ final class NativePlacementContinuity {
 		if(!presentPlacementData && !(transformEncodePreservesPool(owner, witness.fType)
 			&& !reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of()).isEmpty()))
 			return null;
-		return dependencies.stream().distinct().toList();
+		Map<ContinuityDependencyKey,CandidateDependencySkeleton> distinct = new java.util.LinkedHashMap<>();
+		for(CandidateDependencySkeleton dependency : dependencies)
+			distinct.putIfAbsent(ContinuityDependencyKey.of(dependency), dependency);
+		return List.copyOf(distinct.values());
 	}
 
 	private List<CandidateProofDependency> overlayDependencies(
@@ -1201,9 +2055,17 @@ final class NativePlacementContinuity {
 
 	private List<CandidateRealizationReference> requiredInputSupport(
 		CandidateRealizationSupportClause clause) {
-		return requiredInputSupportByClause.computeIfAbsent(clause, ignored ->
-			clause.inputBindings().stream().map(CandidateRealizationInputBinding::source)
-				.distinct().sorted(PlacementAnalysis.<CandidateRealizationReference>canonicalComparator()).toList());
+		return requiredInputSupportByClause.computeIfAbsent(clause, ignored -> {
+			List<CandidateRealizationReference> distinct = new ArrayList<>();
+			for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+				CandidateRealizationReference source = binding.source();
+				if(distinct.stream().noneMatch(existing -> existing.rule().parentOccurrence()
+					== source.rule().parentOccurrence() && existing.equals(source)))
+					distinct.add(source);
+			}
+			distinct.sort(PlacementAnalysis.canonicalComparator());
+			return List.copyOf(distinct);
+		});
 	}
 
 	private int candidateHandle(CandidateRealizationReference reference) {
@@ -1280,6 +2142,16 @@ final class NativePlacementContinuity {
 		return outputWitness;
 	}
 
+	record CandidateSupportResult(List<NativeContinuityProof> proofs,
+		Set<CompiledHopKey> dependencyOccurrences) {
+		CandidateSupportResult {
+			proofs = Objects.requireNonNull(proofs, "proofs");
+			Set<CompiledHopKey> immutable = Collections.newSetFromMap(new IdentityHashMap<>());
+			immutable.addAll(dependencyOccurrences);
+			dependencyOccurrences = Collections.unmodifiableSet(immutable);
+		}
+	}
+
 	static final class NativeContinuityProof {
 		private final DurableAnchorKey externalSeed;
 		private final DurableAnchorKey outputWorkerPoolWitness;
@@ -1310,10 +2182,32 @@ final class NativePlacementContinuity {
 		List<CandidateRealizationInputBinding> immediateBindings() { return immediateBindings; }
 		String normalizedSignature() {
 			if(normalizedSignature == null)
-				normalizedSignature = externalSeed.normalizedSignature() + "|outputPool="
-					+ outputWorkerPoolWitness.normalizedSignature() + "|partitionRanges="
-					+ (exactPartitionRanges ? "exact" : "dynamic") + "|bindings=" + immediateBindings.stream()
-						.map(CandidateRealizationInputBinding::normalizedSignature).toList();
+				normalizedSignature = PlacementIdentity.cachedSignature(this);
+			if(normalizedSignature == null) {
+				String seedSignature = externalSeed.normalizedSignature();
+				String outputSignature = outputWorkerPoolWitness.normalizedSignature();
+				String[] bindingSignatures = new String[immediateBindings.size()];
+				long estimatedCapacity = (long)seedSignature.length() + outputSignature.length()
+					+ "|outputPool=".length() + "|partitionRanges=".length()
+					+ (exactPartitionRanges ? "exact".length() : "dynamic".length())
+					+ "|bindings=[]".length() + 2L * Math.max(0, immediateBindings.size() - 1);
+				for(int index = 0; index < immediateBindings.size(); index++) {
+					String bindingSignature = immediateBindings.get(index).normalizedSignature();
+					bindingSignatures[index] = bindingSignature;
+					estimatedCapacity += bindingSignature.length();
+				}
+				StringBuilder builder = new StringBuilder((int)Math.min(
+					Integer.MAX_VALUE - 8L, estimatedCapacity));
+				builder.append(seedSignature).append("|outputPool=").append(outputSignature)
+					.append("|partitionRanges=")
+					.append(exactPartitionRanges ? "exact" : "dynamic").append("|bindings=[");
+				for(int index = 0; index < bindingSignatures.length; index++) {
+					if(index > 0)
+						builder.append(", ");
+					builder.append(bindingSignatures[index]);
+				}
+				normalizedSignature = PlacementIdentity.rememberSignature(this, builder.append(']').toString());
+			}
 			return normalizedSignature;
 		}
 
@@ -1380,20 +2274,148 @@ final class NativePlacementContinuity {
 		CandidateRealizationReference clausePinned, int clausePinnedHandle, NativePoolWitness witness,
 		int inputPosition) { }
 
+	private record ContinuityDependencyKey(CompiledHopKey key,
+		CandidateRealizationReference pinned, int handle, NativePoolWitness witness,
+		int inputPosition, boolean templateRoot) {
+		private static ContinuityDependencyKey of(CandidateDependencySkeleton skeleton) {
+			return new ContinuityDependencyKey(skeleton.key(), skeleton.clausePinned(),
+				skeleton.clausePinnedHandle(), skeleton.witness(), skeleton.inputPosition(), false);
+		}
+
+		private static ContinuityDependencyKey of(CandidateProofDependency dependency) {
+			return new ContinuityDependencyKey(dependency.key, dependency.realization,
+				dependency.realizationHandle, dependency.witness, dependency.inputPosition,
+				dependency.templateRoot);
+		}
+
+		@Override
+		public int hashCode() {
+			int hash = 31 * System.identityHashCode(key) + Objects.hashCode(pinned);
+			hash = 31 * hash + handle;
+			hash = 31 * hash + witness.hashCode();
+			hash = 31 * hash + inputPosition;
+			return 31 * hash + Boolean.hashCode(templateRoot);
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof ContinuityDependencyKey that))
+				return false;
+			return key == that.key && Objects.equals(pinned, that.pinned) && handle == that.handle
+				&& witness.equals(that.witness) && inputPosition == that.inputPosition
+				&& templateRoot == that.templateRoot;
+		}
+	}
+
+	private record ContinuityEdgeKey(CandidateRealizationReference reference,
+		boolean directGround, List<ContinuityDependencyKey> dependencies) {
+		private ContinuityEdgeKey {
+			dependencies = List.copyOf(dependencies);
+		}
+
+		private static ContinuityEdgeKey of(CandidateTopologyRow row) {
+			return new ContinuityEdgeKey(row.reference(), row.directGround(),
+				row.dependencies().stream().map(ContinuityDependencyKey::of).toList());
+		}
+
+		private static ContinuityEdgeKey ofEffective(CandidateRealizationReference reference,
+			boolean directGround, List<CandidateProofDependency> dependencies) {
+			return new ContinuityEdgeKey(reference, directGround,
+				dependencies.stream().map(ContinuityDependencyKey::of).toList());
+		}
+	}
+
 	private record CandidateTopologyRow(CandidateRealizationReference reference,
-		CandidateRealizationSupportClause clause,
-		List<CandidateDependencySkeleton> dependencies, boolean directGround) {
+		List<CandidateDependencySkeleton> dependencies, boolean directGround,
+		SelectedCandidateProof defaultAlternative, ContinuityEdgeKey defaultEdge) {
 		private CandidateTopologyRow {
+			dependencies = List.copyOf(dependencies);
+			Objects.requireNonNull(defaultAlternative, "defaultAlternative");
+			Objects.requireNonNull(defaultEdge, "defaultEdge");
+		}
+
+		private static CandidateTopologyRow create(CandidateRealizationReference reference,
+			List<CandidateDependencySkeleton> dependencies, boolean directGround,
+			NativePoolWitness witness) {
+			List<CandidateDependencySkeleton> immutable = List.copyOf(dependencies);
+			List<CandidateProofDependency> defaults = immutable.stream().map(skeleton ->
+				new CandidateProofDependency(skeleton.key(), skeleton.clausePinned(),
+					skeleton.clausePinnedHandle(), skeleton.witness(),
+					skeleton.inputPosition(), false)).toList();
+			SelectedCandidateProof alternative = new SelectedCandidateProof(
+				reference, defaults, directGround, witness);
+			return new CandidateTopologyRow(reference, immutable, directGround, alternative,
+				ContinuityEdgeKey.ofEffective(reference, directGround, defaults));
+		}
+	}
+
+	private static final class CandidateTopology {
+		private final boolean eligible;
+		private final boolean nodeDirectGround;
+		private final List<CandidateTopologyRow> rows;
+		private final Map<Integer,List<CandidateTopologyRow>> rowsByHandle;
+		private final List<SelectedCandidateProof> defaultAlternatives;
+		private final Map<Integer,List<SelectedCandidateProof>> defaultAlternativesByHandle;
+		private final Set<CompiledHopKey> dependencyOwners;
+
+		private CandidateTopology(boolean eligible, boolean nodeDirectGround,
+			List<CandidateTopologyRow> rows, Map<Integer,List<CandidateTopologyRow>> rowsByHandle) {
+			this.eligible = eligible;
+			this.nodeDirectGround = nodeDirectGround;
+			this.rows = List.copyOf(rows);
+			this.rowsByHandle = Map.copyOf(rowsByHandle);
+			defaultAlternatives = this.rows.stream().map(row -> row.defaultAlternative).toList();
+			Map<Integer,List<SelectedCandidateProof>> defaults = new java.util.HashMap<>();
+			this.rowsByHandle.forEach((handle, handleRows) -> defaults.put(handle,
+				handleRows.stream().map(row -> row.defaultAlternative).toList()));
+			defaultAlternativesByHandle = Map.copyOf(defaults);
+			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CandidateTopologyRow row : this.rows)
+				for(CandidateDependencySkeleton dependency : row.dependencies)
+					owners.add(dependency.key);
+			dependencyOwners = Collections.unmodifiableSet(owners);
+		}
+
+		private boolean hasFixedDependency(Map<CompiledHopKey,CandidateRealizationReference> fixed) {
+			// Production query pins are identity maps over analysis-owned occurrences.
+			for(CompiledHopKey owner : fixed.keySet())
+				if(dependencyOwners.contains(owner))
+					return true;
+			return false;
+		}
+	}
+
+	private record RootTopologyRowKey(List<ContinuityDependencyKey> dependencies,
+		boolean directGround) {
+		private RootTopologyRowKey {
 			dependencies = List.copyOf(dependencies);
 		}
 	}
 
-	private record CandidateTopology(boolean eligible, boolean nodeDirectGround,
-		List<CandidateTopologyRow> rows,
-		Map<Integer,List<CandidateTopologyRow>> rowsByHandle) {
-		private CandidateTopology {
-			rows = List.copyOf(rows);
-			rowsByHandle = Map.copyOf(rowsByHandle);
+	private static final class AcyclicRootSupportKey {
+		private final CompiledHopKey occurrence;
+		private final NativePoolWitness witness;
+		private final List<RootTopologyRowKey> relation;
+		private final int hashCode;
+
+		private AcyclicRootSupportKey(CompiledHopKey occurrence, NativePoolWitness witness,
+			List<RootTopologyRowKey> relation) {
+			this.occurrence = occurrence;
+			this.witness = witness;
+			this.relation = List.copyOf(relation);
+			int hash = 31 * System.identityHashCode(occurrence) + witness.hashCode();
+			hashCode = 31 * hash + this.relation.hashCode();
+		}
+
+		@Override public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			return this == other || other instanceof AcyclicRootSupportKey that
+				&& occurrence == that.occurrence && witness.equals(that.witness)
+				&& relation.equals(that.relation);
 		}
 	}
 
@@ -1420,14 +2442,18 @@ final class NativePlacementContinuity {
 		private final CompiledHopKey rootOccurrence;
 		private final CandidateRealizationReference source;
 		private final NativePoolWitness witness;
+		private final boolean generated;
 		private final int hashCode;
 
-		private CandidateQueryKey(CandidateRealizationReference source, NativePoolWitness witness) {
+		private CandidateQueryKey(CandidateRealizationReference source, NativePoolWitness witness,
+			GenerationRoot generation) {
 			this.rootOccurrence = source.rule().parentOccurrence();
 			this.source = source;
 			this.witness = witness;
+			generated = generation != null;
 			int hash = 31 * System.identityHashCode(rootOccurrence) + source.hashCode();
-			hashCode = 31 * hash + witness.hashCode();
+			hash = 31 * hash + witness.hashCode();
+			hashCode = 31 * hash + Boolean.hashCode(generated);
 		}
 
 		@Override
@@ -1440,7 +2466,7 @@ final class NativePlacementContinuity {
 			if(!(other instanceof CandidateQueryKey that))
 				return false;
 			return rootOccurrence == that.rootOccurrence && source.equals(that.source)
-				&& witness.equals(that.witness);
+				&& witness.equals(that.witness) && generated == that.generated;
 		}
 	}
 
@@ -1450,15 +2476,17 @@ final class NativePlacementContinuity {
 		private final PlacementEmissionState emissionState;
 		private final int exactSourceHandle;
 		private final NativePoolWitness witness;
+		private final boolean generated;
 		private final int hashCode;
 
 		private CandidateSupportQueryKey(CandidateRealizationReference source, int sourceHandle,
-			NativePoolWitness witness, boolean exactTopologyRow) {
+			NativePoolWitness witness, boolean exactTopologyRow, boolean generated) {
 			rootOccurrence = source.rule().parentOccurrence();
 			rule = source.rule();
 			emissionState = source.realization().emissionState();
 			exactSourceHandle = exactTopologyRow ? sourceHandle : 0;
 			this.witness = witness;
+			this.generated = generated;
 			int hash = 31 * System.identityHashCode(rootOccurrence) + witness.hashCode();
 			if(exactSourceHandle != 0)
 				hash = 31 * hash + exactSourceHandle;
@@ -1466,7 +2494,7 @@ final class NativePlacementContinuity {
 				hash = 31 * hash + rule.hashCode();
 				hash = 31 * hash + emissionState.hashCode();
 			}
-			hashCode = hash;
+			hashCode = 31 * hash + Boolean.hashCode(generated);
 		}
 
 		@Override public int hashCode() { return hashCode; }
@@ -1477,6 +2505,7 @@ final class NativePlacementContinuity {
 				return true;
 			if(!(other instanceof CandidateSupportQueryKey that)
 				|| rootOccurrence != that.rootOccurrence || !witness.equals(that.witness)
+				|| generated != that.generated
 				|| (exactSourceHandle == 0) != (that.exactSourceHandle == 0))
 				return false;
 			return exactSourceHandle != 0 ? exactSourceHandle == that.exactSourceHandle
@@ -1488,15 +2517,18 @@ final class NativePlacementContinuity {
 		private final CompiledHopKey rootOccurrence;
 		private final CandidateRealizationReference source;
 		private final DurableAnchorKey externalSeed;
+		private final boolean generated;
 		private final int hashCode;
 
 		private PublicCandidateQueryKey(CandidateRealizationReference source,
-			DurableAnchorKey externalSeed) {
+			DurableAnchorKey externalSeed, boolean generated) {
 			rootOccurrence = source.rule().parentOccurrence();
 			this.source = source;
 			this.externalSeed = externalSeed;
+			this.generated = generated;
 			int hash = 31 * System.identityHashCode(rootOccurrence) + source.hashCode();
-			hashCode = 31 * hash + externalSeed.hashCode();
+			hash = 31 * hash + externalSeed.hashCode();
+			hashCode = 31 * hash + Boolean.hashCode(generated);
 		}
 
 		@Override
@@ -1509,11 +2541,23 @@ final class NativePlacementContinuity {
 			if(!(other instanceof PublicCandidateQueryKey that))
 				return false;
 			return rootOccurrence == that.rootOccurrence && source.equals(that.source)
-				&& externalSeed.equals(that.externalSeed);
+				&& externalSeed.equals(that.externalSeed)
+				&& generated == that.generated;
 		}
 	}
 
-	private record MemoEntry(List<NativeContinuityProof> proofs, long estimatedBytes) { }
+	private record GenerationRoot(CandidateRuleFact trustedBase,
+		CandidateEmissionFact baseEmission) {
+		private GenerationRoot {
+			Objects.requireNonNull(trustedBase, "trusted generator base");
+			Objects.requireNonNull(baseEmission, "generator base emission");
+		}
+	}
+
+	private record MemoEntry(List<NativeContinuityProof> proofs, long estimatedBytes,
+		Set<CompiledHopKey> occurrences) { }
+	private record ComputedPublicProof(List<NativeContinuityProof> proofs,
+		Set<CompiledHopKey> occurrences) { }
 	private record CandidateSupportTemplate(DurableAnchorKey outputWorkerPoolWitness,
 		boolean exactPartitionRanges,
 		List<CandidateRealizationInputBinding> immediateBindings) {
@@ -1522,18 +2566,32 @@ final class NativePlacementContinuity {
 		}
 	}
 	private record ComputedCandidateSupport(List<CandidateSupportTemplate> templates,
-		Set<CompiledHopKey> occurrences) { }
+		Set<CompiledHopKey> occurrences, boolean rootIndependent) { }
 	private record SupportMemoEntry(CandidateRealizationReference root,
 		List<CandidateSupportTemplate> templates, Set<CompiledHopKey> occurrences,
-		long estimatedBytes) {
+		long estimatedBytes, boolean rootIndependent) {
 		private SupportMemoEntry {
 			templates = List.copyOf(templates);
 			occurrences = Collections.unmodifiableSet(occurrences);
 		}
 	}
+	private record AcyclicComponentSummary(List<SelectedCandidateProof> groundedAlternatives,
+		Set<CompiledHopKey> occurrences, long retainedStates) {
+		private AcyclicComponentSummary {
+			groundedAlternatives = List.copyOf(groundedAlternatives);
+			Set<CompiledHopKey> immutableOccurrences =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			immutableOccurrences.addAll(occurrences);
+			occurrences = Collections.unmodifiableSet(immutableOccurrences);
+		}
+	}
+	private record AcyclicComponentFootprint(Set<CompiledHopKey> occurrences,
+		long retainedStates) { }
 	private static final class CandidateProofTraversal {
 		private final Set<CandidateProofState> active = new java.util.HashSet<>();
 		private final List<CandidateProofState> completionOrder = new ArrayList<>();
+		private final Map<CandidateProofState,AcyclicComponentSummary> reusedComponents =
+			new java.util.HashMap<>();
 		private boolean cycleDetected;
 	}
 
@@ -1577,10 +2635,8 @@ final class NativePlacementContinuity {
 				&& realizationHandle == that.realizationHandle && witness.equals(that.witness);
 		}
 	}
-	private record DependentAlternative(CandidateProofState owner,
-		SelectedCandidateProof alternative) { }
 	private record SelectedCandidateProof(CandidateRealizationReference realization,
-		CandidateRealizationSupportClause clause, List<CandidateProofDependency> dependencies,
+		List<CandidateProofDependency> dependencies,
 		boolean directGround, NativePoolWitness witness) { }
 
 	private void buildProof(CompiledHopKey key, NativePoolWitness witness,
@@ -1618,8 +2674,7 @@ final class NativePlacementContinuity {
 				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
 					|| state.fType() != witness.fType)
 					continue;
-				if(emission.executionFType() == witness.fType && emission.derivedFoutAction() == null
-					&& !emission.emissionState().derivedFedFout())
+				if(emission.executionFType() == witness.fType && emission.derivedFoutAction() == null)
 					matchingNativeRow = true;
 			}
 			if(!matchingNativeRow)
@@ -2099,6 +3154,7 @@ final class NativePlacementContinuity {
 		private final List<AxisInterval> partitionAxisIntervals;
 		private final boolean exactPartitionRanges;
 		private final int hashCode;
+		private NativePoolWitness dynamicPartitionRangesWitness;
 
 		private NativePoolWitness(FType fType, List<String> endpoints,
 			List<AxisInterval> partitionAxisIntervals, boolean exactPartitionRanges) {
@@ -2149,9 +3205,13 @@ final class NativePlacementContinuity {
 		}
 
 		private NativePoolWitness withDynamicPartitionRanges() {
+			if(!exactPartitionRanges)
+				return this;
 			if(fType != FType.ROW && fType != FType.COL && fType != FType.FULL)
 				return this;
-			return new NativePoolWitness(fType, endpoints, partitionAxisIntervals, false);
+			if(dynamicPartitionRangesWitness == null)
+				dynamicPartitionRangesWitness = new NativePoolWitness(fType, endpoints, partitionAxisIntervals, false);
+			return dynamicPartitionRangesWitness;
 		}
 
 		private NativePoolWitness withExactPartitionRanges() {
@@ -2226,19 +3286,19 @@ final class NativePlacementContinuity {
 		}
 	}
 
-	private static <K,V> Map<K,V> copyIdentityMap(Map<K,V> source, String name) {
+	private static <K,V> Map<K,V> immutableIdentityMap(Map<K,V> source, String name) {
 		Objects.requireNonNull(source, name);
 		Map<K,V> copy = new IdentityHashMap<>();
 		source.forEach((key, value) -> copy.put(Objects.requireNonNull(key, name + " key"),
 			Objects.requireNonNull(value, name + " value")));
-		return copy;
+		return Collections.unmodifiableMap(copy);
 	}
 
-	private static <K,V> Map<K,List<V>> copyIdentityLists(Map<K,List<V>> source, String name) {
+	private static <K,V> Map<K,List<V>> immutableIdentityLists(Map<K,List<V>> source, String name) {
 		Objects.requireNonNull(source, name);
 		Map<K,List<V>> copy = new IdentityHashMap<>();
 		source.forEach((key, value) -> copy.put(Objects.requireNonNull(key, name + " key"),
 			List.copyOf(Objects.requireNonNull(value, name + " value"))));
-		return copy;
+		return Collections.unmodifiableMap(copy);
 	}
 }

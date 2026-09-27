@@ -65,14 +65,46 @@ public final class PlacementAnalysis {
 	private static final class SharedCanonicalList<T> extends java.util.AbstractList<T>
 		implements java.util.RandomAccess {
 		private final List<T> values;
-		private SharedCanonicalList(List<T> values) { this.values = values; }
+		private final List<CanonicalText> orderingKeys;
+		private int cachedHash;
+		private volatile boolean hashComputed;
+		private SharedCanonicalList(List<T> values) { this(values, null); }
+		private SharedCanonicalList(List<T> values, List<CanonicalText> orderingKeys) {
+			this.values = values;
+			this.orderingKeys = orderingKeys;
+			if(orderingKeys != null && orderingKeys.size() != values.size())
+				throw new IllegalArgumentException("Canonical descriptor count differs from value count");
+		}
 		@Override public T get(int index) { return values.get(index); }
 		@Override public int size() { return values.size(); }
+		@Override public List<T> subList(int fromIndex, int toIndex) {
+			return new SharedCanonicalList<>(List.copyOf(values.subList(fromIndex, toIndex)),
+				orderingKeys == null ? null : List.copyOf(orderingKeys.subList(fromIndex, toIndex)));
+		}
+		@Override public boolean equals(Object other) {
+			return this == other || values.equals(other instanceof SharedCanonicalList<?> shared
+				? shared.values : other);
+		}
+		@Override public int hashCode() {
+			// Canonical authority elements and their nested lists are immutable.
+			// Publish the cached value only after computing it, including a zero hash.
+			if(!hashComputed) {
+				cachedHash = values.hashCode();
+				hashComputed = true;
+			}
+			return cachedHash;
+		}
 	}
 
 	@SuppressWarnings("unchecked")
 	private static <T extends Comparable<? super T>> List<T> canonicalComparableList(
 		java.util.Collection<T> values, String label) {
+		return canonicalComparableList(values, label, false);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static <T extends Comparable<? super T>> List<T> canonicalComparableList(
+		java.util.Collection<T> values, String label, boolean retainOrderingKeys) {
 		Objects.requireNonNull(values, label + "s");
 		if(values instanceof SharedCanonicalList<?>)
 			return (List<T>) values;
@@ -99,13 +131,19 @@ public final class PlacementAnalysis {
 				metrics.recordCanonicalComparison();
 			return left.orderingKey().compareTo(right.orderingKey());
 		});
-		List<T> canonical = decorated.stream().map(CanonicalEntry<T>::value)
-			.collect(java.util.stream.Collectors.toCollection(
-				() -> new ArrayList<>(decorated.size())));
+		List<T> canonical = new ArrayList<>(decorated.size());
+		List<CanonicalText> orderingKeys = retainOrderingKeys
+			? new ArrayList<>(decorated.size()) : null;
+		for(CanonicalEntry<T> entry : decorated) {
+			canonical.add(entry.value());
+			if(orderingKeys != null)
+				orderingKeys.add(entry.orderingKey());
+		}
 		for(int i = 1; i < canonical.size(); i++)
 			if(canonical.get(i - 1).equals(canonical.get(i)))
 				throw new IllegalArgumentException("Duplicate " + label);
-		return List.copyOf(canonical);
+		return new SharedCanonicalList<>(List.copyOf(canonical),
+			orderingKeys == null ? null : List.copyOf(orderingKeys));
 	}
 
 	private record CanonicalEntry<T>(T value, CanonicalText orderingKey) { }
@@ -134,12 +172,25 @@ public final class PlacementAnalysis {
 		}
 
 		@Override public int compareTo(CanonicalText that) {
-			if(this == that)
+			return this == that ? 0 : new CanonicalTextComparison().compare(this, that);
+		}
+	}
+
+	/** Reusable only inside one canonical sort invocation; ordinary comparisons create a fresh instance. */
+	private static final class CanonicalTextComparison {
+		private final CanonicalTextCursor leftCursor = new CanonicalTextCursor();
+		private final CanonicalTextCursor rightCursor = new CanonicalTextCursor();
+
+		private int compare(CanonicalText left, CanonicalText right) {
+			if(left == right) {
+				leftCursor.clear();
+				rightCursor.clear();
 				return 0;
-			CanonicalTextCursor leftCursor = new CanonicalTextCursor(this);
-			CanonicalTextCursor rightCursor = new CanonicalTextCursor(that);
+			}
+			leftCursor.reset(left);
+			rightCursor.reset(right);
 			int compared = 0;
-			while(compared < length && compared < that.length) {
+			while(compared < left.length && compared < right.length) {
 				int shared = leftCursor.skipSharedSubtree(rightCursor);
 				if(shared != 0) {
 					compared += shared;
@@ -156,35 +207,89 @@ public final class PlacementAnalysis {
 					rightCursor.skipText();
 					continue;
 				}
-				char left = leftCursor.nextCharacter();
-				char right = rightCursor.nextCharacter();
-				if(left != right)
-					return Character.compare(left, right);
-				compared++;
+				int leftOffset = leftCursor.offset(), rightOffset = rightCursor.offset();
+				int count = Math.min(leftText.length() - leftOffset, rightText.length() - rightOffset);
+				// Compare a contiguous literal once, not one rope traversal per UTF-16
+				// character. Whole literals use the JDK's optimized String comparator.
+				if(leftOffset == 0 && rightOffset == 0
+					&& count == leftText.length() && count == rightText.length()) {
+					int order = leftText.compareTo(rightText);
+					if(order != 0)
+						return order;
+				}
+				else {
+					for(int index = 0; index < count; index++) {
+						char leftCharacter = leftText.charAt(leftOffset + index);
+						char rightCharacter = rightText.charAt(rightOffset + index);
+						if(leftCharacter != rightCharacter)
+							return Character.compare(leftCharacter, rightCharacter);
+					}
+				}
+				leftCursor.advance(count);
+				rightCursor.advance(count);
+				compared += count;
 			}
-			return Integer.compare(length, that.length);
+			return Integer.compare(left.length, right.length);
 		}
 	}
 
 	/** Depth-first cursor over a shared CanonicalText rope; no flattened segment list is created. */
 	private static final class CanonicalTextCursor {
-		private final java.util.ArrayDeque<CanonicalTextFrame> stack = new java.util.ArrayDeque<>();
+		private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
+		private CanonicalText[] nodes = new CanonicalText[8];
+		private int[] indices = new int[8];
+		private int depth;
 		private String text;
 		private int offset;
-
-		private CanonicalTextCursor(CanonicalText root) {
-			stack.addLast(new CanonicalTextFrame(root));
-			advanceText();
-		}
 
 		private String text() { return text; }
 		private int offset() { return offset; }
 
-		private char nextCharacter() {
-			char value = text.charAt(offset++);
+		private void reset(CanonicalText root) {
+			clear();
+			push(root);
+			advanceText();
+		}
+
+		private void clear() {
+			while(depth != 0) {
+				nodes[--depth] = null;
+				indices[depth] = 0;
+			}
+			text = null;
+			offset = 0;
+		}
+
+		private void push(CanonicalText value) {
+			if(depth == nodes.length)
+				grow();
+			nodes[depth] = value;
+			indices[depth] = 0;
+			depth++;
+		}
+
+		private void grow() {
+			if(depth == Integer.MAX_VALUE)
+				throw new OutOfMemoryError("Canonical text nesting exceeds JVM array limit");
+			int required = depth + 1;
+			int grown = nodes.length + (nodes.length >> 1) + 1;
+			if(grown < 0 || grown > MAX_ARRAY_SIZE)
+				grown = required > MAX_ARRAY_SIZE ? Integer.MAX_VALUE : MAX_ARRAY_SIZE;
+			if(grown < required)
+				grown = required;
+			nodes = java.util.Arrays.copyOf(nodes, grown);
+			indices = java.util.Arrays.copyOf(indices, grown);
+		}
+
+		private void pop() {
+			nodes[--depth] = null;
+			indices[depth] = 0;
+		}
+
+		private void advance(int count) {
+			offset += count;
 			if(offset == text.length())
 				advanceText();
-			return value;
 		}
 
 		private void skipText() { advanceText(); }
@@ -193,26 +298,29 @@ public final class PlacementAnalysis {
 		private int skipSharedSubtree(CanonicalTextCursor that) {
 			if(text == null || text != that.text || offset != that.offset)
 				return 0;
-			var left = stack.descendingIterator();
-			var right = that.stack.descendingIterator();
+			int leftPosition = depth - 1;
+			int rightPosition = that.depth - 1;
 			int frames = 0;
 			int remaining = text.length() - offset;
-			while(left.hasNext() && right.hasNext()) {
-				CanonicalTextFrame leftFrame = left.next();
-				CanonicalTextFrame rightFrame = right.next();
-				if(leftFrame.value != rightFrame.value || leftFrame.index != rightFrame.index)
+			while(leftPosition >= 0 && rightPosition >= 0) {
+				CanonicalText leftNode = nodes[leftPosition];
+				CanonicalText rightNode = that.nodes[rightPosition];
+				int leftIndex = indices[leftPosition];
+				if(leftNode != rightNode || leftIndex != that.indices[rightPosition])
 					break;
-				for(int index = leftFrame.index; index < leftFrame.value.pieces.size(); index++) {
-					Object piece = leftFrame.value.pieces.get(index);
+				for(int index = leftIndex; index < leftNode.pieces.size(); index++) {
+					Object piece = leftNode.pieces.get(index);
 					remaining += piece instanceof String literal ? literal.length() : ((CanonicalText) piece).length;
 				}
 				frames++;
+				leftPosition--;
+				rightPosition--;
 			}
 			if(frames == 0)
 				return 0;
 			for(int index = 0; index < frames; index++) {
-				stack.removeLast();
-				that.stack.removeLast();
+				pop();
+				that.pop();
 			}
 			advanceText();
 			that.advanceText();
@@ -222,26 +330,23 @@ public final class PlacementAnalysis {
 		private void advanceText() {
 			text = null;
 			offset = 0;
-			while(!stack.isEmpty()) {
-				CanonicalTextFrame frame = stack.peekLast();
-				if(frame.index == frame.value.pieces.size()) {
-					stack.removeLast();
+			while(depth != 0) {
+				int position = depth - 1;
+				CanonicalText node = nodes[position];
+				int index = indices[position];
+				if(index == node.pieces.size()) {
+					pop();
 					continue;
 				}
-				Object piece = frame.value.pieces.get(frame.index++);
+				Object piece = node.pieces.get(index);
+				indices[position] = index + 1;
 				if(piece instanceof String literal) {
 					text = literal;
 					return;
 				}
-				stack.addLast(new CanonicalTextFrame((CanonicalText) piece));
+				push((CanonicalText) piece);
 			}
 		}
-	}
-
-	private static final class CanonicalTextFrame {
-		private final CanonicalText value;
-		private int index;
-		private CanonicalTextFrame(CanonicalText value) { this.value = value; }
 	}
 
 	private static final class CanonicalTextBuilder {
@@ -259,12 +364,23 @@ public final class PlacementAnalysis {
 			return this;
 		}
 
-		private CanonicalTextBuilder appendFields(CanonicalText... values) {
+		private CanonicalTextBuilder appendFields(Object... values) {
 			for(int index = 0; index < values.length; index++) {
 				if(index > 0)
 					append("|");
-				CanonicalText value = values[index];
-				append(Integer.toString(value.length)).append(":").append(value);
+				Object value = Objects.requireNonNull(values[index], "canonical field");
+				int length;
+				if(value instanceof String literal)
+					length = literal.length();
+				else if(value instanceof CanonicalText text)
+					length = text.length;
+				else
+					throw new IllegalArgumentException("Unsupported canonical field type " + value.getClass().getName());
+				append(Integer.toString(length)).append(":");
+				// Literals already carry their UTF-16 text; only actual structural
+				// children need a rope node. Preserve those children by identity.
+				if(length != 0)
+					pieces.add(value);
 			}
 			return this;
 		}
@@ -382,9 +498,9 @@ public final class PlacementAnalysis {
 	private static CanonicalText canonicalProofOrderingText(PlacementProofKey proof,
 		CanonicalTextContext context) {
 		return new CanonicalTextBuilder().appendFields(
-			CanonicalText.literal(proof.kind().name()),
-			CanonicalText.literal(proof.owner() == null ? "-" : proof.owner().normalizedSignature()),
-			CanonicalText.literal(proof.authoritySignature())).build();
+			proof.kind().name(),
+			proof.owner() == null ? "-" : proof.owner().normalizedSignature(),
+			proof.authoritySignature()).build();
 	}
 
 	private static CanonicalText canonicalReferenceOrderingText(
@@ -412,10 +528,9 @@ public final class PlacementAnalysis {
 		CanonicalTextContext context) {
 		return new CanonicalTextBuilder().appendFields(
 			canonicalEmissionOrderingText(key.emissionState(), context),
-			CanonicalText.literal(key.layoutKind().name()),
-			CanonicalText.literal(key.durableAnchor() == null ? "-"
-				: key.durableAnchor().normalizedSignature()),
-			CanonicalText.literal(key.nativeLineage() == null ? "-" : key.nativeLineage())).build();
+			key.layoutKind().name(),
+			key.durableAnchor() == null ? "-" : key.durableAnchor().normalizedSignature(),
+			key.nativeLineage() == null ? "-" : key.nativeLineage()).build();
 	}
 
 	private static CanonicalText canonicalEmissionOrderingText(PlacementEmissionState emission,
@@ -430,12 +545,12 @@ public final class PlacementAnalysis {
 
 	private static CanonicalText canonicalBindingOrderingText(
 		CandidateRealizationInputBinding binding, CanonicalTextContext context) {
-		CanonicalText action = binding.relocationAction() == null ? CanonicalText.literal("-")
+		Object action = binding.relocationAction() == null ? "-"
 			: canonicalRelocationActionOrderingText(binding.relocationAction(), context);
 		return new CanonicalTextBuilder().appendFields(
-			CanonicalText.literal(Integer.toString(binding.inputPosition())),
+			Integer.toString(binding.inputPosition()),
 			canonicalOrderingKey(binding.source(), context),
-			CanonicalText.literal(binding.kind().name()), action).build();
+			binding.kind().name(), action).build();
 	}
 
 	private static CanonicalText canonicalRelocationActionOrderingText(RelocationActionKey action,
@@ -446,26 +561,29 @@ public final class PlacementAnalysis {
 		CanonicalTextBuilder consumers = new CanonicalTextBuilder();
 		for(int index = 0; index < action.compatibleConsumers().size(); index++) {
 			if(index > 0) consumers.append(",");
-			CanonicalText consumer = CanonicalText.literal(
-				action.compatibleConsumers().get(index).normalizedSignature());
-			consumers.append(Integer.toString(consumer.length)).append(":").append(consumer);
+			String consumer = action.compatibleConsumers().get(index).normalizedSignature();
+			consumers.append(Integer.toString(consumer.length())).append(":").append(consumer);
 		}
 		return context.put(action, new CanonicalTextBuilder().appendFields(
-			CanonicalText.literal(action.sourceValueVersion().normalizedSignature()),
-			CanonicalText.literal(action.targetPlacement().normalizedSignature()),
-			CanonicalText.literal(action.materializationFType().name()),
-			CanonicalText.literal(action.durableAnchor().normalizedSignature()),
-			CanonicalText.literal(action.statementBlockScope()), consumers.build()).build());
+			action.sourceValueVersion().normalizedSignature(),
+			action.targetPlacement().normalizedSignature(),
+			action.materializationFType().name(),
+			action.durableAnchor().normalizedSignature(),
+			action.statementBlockScope(), consumers.build()).build());
 	}
 
 	static <T extends Comparable<? super T>> List<T> sharedCanonicalComparableList(
 		java.util.Collection<T> values, String label) {
-		return new SharedCanonicalList<>(canonicalComparableList(values, label));
+		List<T> canonical = canonicalComparableList(values, label);
+		return canonical instanceof SharedCanonicalList<?> ? canonical
+			: new SharedCanonicalList<>(canonical);
 	}
 
 	static <T extends Comparable<? super T>> List<T> sharedAlreadyCanonicalComparableList(
 		List<T> values, String label) {
 		Objects.requireNonNull(values, label + "s");
+		if(values instanceof SharedCanonicalList<?>)
+			return values;
 		List<T> copy = new ArrayList<>(values.size());
 		for(T value : values)
 			copy.add(Objects.requireNonNull(value, label));
@@ -473,6 +591,18 @@ public final class PlacementAnalysis {
 			if(copy.get(index - 1).equals(copy.get(index)))
 				throw new IllegalArgumentException("Duplicate " + label);
 		return new SharedCanonicalList<>(List.copyOf(copy));
+	}
+
+	private static List<CanonicalText> retainedCanonicalOrderingKeys(List<?> values) {
+		return values instanceof SharedCanonicalList<?> shared ? shared.orderingKeys : null;
+	}
+
+	private static List<CanonicalText> canonicalOrderingKeys(List<?> values,
+		CanonicalTextContext context) {
+		List<CanonicalText> orderingKeys = new ArrayList<>(values.size());
+		for(Object value : values)
+			orderingKeys.add(canonicalOrderingKey(value, context));
+		return List.copyOf(orderingKeys);
 	}
 
 	public enum InputPresence { ABSENT_LOCAL, PRESENT }
@@ -753,7 +883,8 @@ public final class PlacementAnalysis {
 		}
 		public CandidateEmissionRealization {
 			Objects.requireNonNull(key, "key");
-			supportClauses = canonicalComparableList(supportClauses, "realization support clause");
+			supportClauses = canonicalComparableList(
+				supportClauses, "realization support clause", true);
 			if(supportClauses.isEmpty())
 				throw new IllegalArgumentException("Candidate realization requires support authority");
 			for(CandidateRealizationSupportClause clause : supportClauses)
@@ -950,40 +1081,267 @@ public final class PlacementAnalysis {
 				return List.of(Objects.requireNonNull(alternatives.iterator().next(),
 					"candidate emission realization"));
 			SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
-			Map<PlacementRealizationKey,Map<Object,CandidateRealizationSupportClause>> clausesByKey =
+			// Direct/closure publication overwhelmingly joins two immutable authorities.
+			// Merge that exact relation before allocating maps or recursively hashing the
+			// already-canonical support graph. The general 3+ path remains below.
+			if(alternatives.size() == 2) {
+				var iterator = alternatives.iterator();
+				CandidateEmissionRealization left = Objects.requireNonNull(iterator.next(),
+					"candidate emission realization");
+				CandidateEmissionRealization right = Objects.requireNonNull(iterator.next(),
+					"candidate emission realization");
+				if(!left.key().equals(right.key())) {
+					if(metrics != null) {
+						metrics.recordRealizationMergeInput();
+						metrics.recordRealizationMergeInput();
+						for(int index = 0; index < left.supportClauses().size()
+							+ right.supportClauses().size(); index++)
+							metrics.recordRealizationMergeClause(true);
+					}
+					return canonicalRealizationList(List.of(left, right));
+				}
+				List<CandidateRealizationSupportClause> leftClauses = left.supportClauses();
+				List<CandidateRealizationSupportClause> rightClauses = right.supportClauses();
+				if(leftClauses == rightClauses || leftClauses.equals(rightClauses)) {
+					if(metrics != null) {
+						metrics.recordRealizationMergeInput();
+						metrics.recordRealizationMergeInput();
+						for(int index = 0; index < leftClauses.size(); index++) {
+							metrics.recordRealizationMergeClause(true);
+							metrics.recordRealizationMergeClause(false);
+						}
+						metrics.recordRealizationMergeReuse();
+					}
+					return List.of(left);
+				}
+
+				List<CanonicalText> leftOrderingKeys = retainedCanonicalOrderingKeys(leftClauses);
+				List<CanonicalText> rightOrderingKeys = retainedCanonicalOrderingKeys(rightClauses);
+				if(leftOrderingKeys == null || rightOrderingKeys == null) {
+					CanonicalTextContext missingContext = new CanonicalTextContext();
+					if(leftOrderingKeys == null)
+						leftOrderingKeys = canonicalOrderingKeys(leftClauses, missingContext);
+					if(rightOrderingKeys == null)
+						rightOrderingKeys = canonicalOrderingKeys(rightClauses, missingContext);
+				}
+				List<CandidateRealizationSupportClause> union =
+					new ArrayList<>(leftClauses.size() + rightClauses.size());
+				List<CanonicalText> unionOrderingKeys =
+					new ArrayList<>(leftClauses.size() + rightClauses.size());
+				boolean rightAdded = false;
+				boolean ambiguousOrderingTie = false;
+				int uniqueClauses = 0, duplicateClauses = 0, comparisons = 0;
+				int leftIndex = 0, rightIndex = 0;
+				while(leftIndex < leftClauses.size() && rightIndex < rightClauses.size()) {
+					CandidateRealizationSupportClause leftClause = leftClauses.get(leftIndex);
+					CandidateRealizationSupportClause rightClause = rightClauses.get(rightIndex);
+					comparisons++;
+					int order = leftOrderingKeys.get(leftIndex).compareTo(rightOrderingKeys.get(rightIndex));
+					if(order < 0) {
+						union.add(leftClause);
+						unionOrderingKeys.add(leftOrderingKeys.get(leftIndex));
+						leftIndex++;
+						uniqueClauses++;
+					}
+					else if(order > 0) {
+						union.add(rightClause);
+						unionOrderingKeys.add(rightOrderingKeys.get(rightIndex));
+						rightIndex++;
+						rightAdded = true;
+						uniqueClauses++;
+					}
+					else if(leftClause.equals(rightClause)) {
+						// Equality, never a hash or comparator collision alone, removes an
+						// exact duplicate. Preserve the first authority object's identity.
+						union.add(leftClause);
+						unionOrderingKeys.add(leftOrderingKeys.get(leftIndex));
+						leftIndex++;
+						rightIndex++;
+						uniqueClauses++;
+						duplicateClauses++;
+					}
+					else {
+						// A comparator tie is not semantic identity. Advancing both cursors
+						// could miss an equal object later in either tie group. Fall back to
+						// the exact map-based merge, which retains stable concatenation order.
+						ambiguousOrderingTie = true;
+						break;
+					}
+				}
+				while(!ambiguousOrderingTie && leftIndex < leftClauses.size()) {
+					union.add(leftClauses.get(leftIndex++));
+					unionOrderingKeys.add(leftOrderingKeys.get(leftIndex - 1));
+					uniqueClauses++;
+				}
+				while(!ambiguousOrderingTie && rightIndex < rightClauses.size()) {
+					union.add(rightClauses.get(rightIndex++));
+					unionOrderingKeys.add(rightOrderingKeys.get(rightIndex - 1));
+					rightAdded = true;
+					uniqueClauses++;
+				}
+				if(metrics != null)
+					for(int index = 0; index < comparisons; index++)
+						metrics.recordCanonicalComparison();
+				if(!ambiguousOrderingTie && metrics != null) {
+					metrics.recordRealizationMergeInput();
+					metrics.recordRealizationMergeInput();
+					for(int index = 0; index < uniqueClauses; index++)
+						metrics.recordRealizationMergeClause(true);
+					for(int index = 0; index < duplicateClauses; index++)
+						metrics.recordRealizationMergeClause(false);
+				}
+				if(!ambiguousOrderingTie && !rightAdded) {
+					if(metrics != null)
+						metrics.recordRealizationMergeReuse();
+					return List.of(left);
+				}
+				if(!ambiguousOrderingTie)
+					return List.of(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+						left.key(), new SharedCanonicalList<>(List.copyOf(union),
+							List.copyOf(unionOrderingKeys))));
+			}
+			Map<PlacementRealizationKey,List<CandidateEmissionRealization>> groupsByKey =
 				new java.util.LinkedHashMap<>();
-			Map<PlacementRealizationKey,CandidateEmissionRealization> firstByKey =
-				new java.util.LinkedHashMap<>();
-			Set<PlacementRealizationKey> repeated = new java.util.HashSet<>();
 			for(CandidateEmissionRealization realization : alternatives) {
 				Objects.requireNonNull(realization, "candidate emission realization");
 				if(metrics != null)
 					metrics.recordRealizationMergeInput();
-				if(firstByKey.putIfAbsent(realization.key(), realization) != null)
-					repeated.add(realization.key());
-				Map<Object,CandidateRealizationSupportClause> clauses = clausesByKey.computeIfAbsent(
-					realization.key(), ignored -> new java.util.LinkedHashMap<>());
-				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-					Integer structuralHandle = PlacementIdentity.structuralHandle(clause);
-					Object key = structuralHandle == null ? clause : structuralHandle;
-					boolean unique = clauses.putIfAbsent(key, clause) == null;
-					if(metrics != null)
-						metrics.recordRealizationMergeClause(unique);
-				}
+				groupsByKey.computeIfAbsent(realization.key(), ignored -> new ArrayList<>())
+					.add(realization);
 			}
-			List<CandidateEmissionRealization> merged = new ArrayList<>(clausesByKey.size());
-			for(Map.Entry<PlacementRealizationKey,Map<Object,CandidateRealizationSupportClause>> entry :
-				clausesByKey.entrySet())
-				if(!repeated.contains(entry.getKey())
-					|| entry.getValue().size() == firstByKey.get(entry.getKey()).supportClauses().size()) {
-					merged.add(firstByKey.get(entry.getKey()));
+			List<CandidateEmissionRealization> merged = new ArrayList<>(groupsByKey.size());
+			for(List<CandidateEmissionRealization> group : groupsByKey.values()) {
+				if(group.size() == 1) {
+					merged.add(group.get(0));
 					if(metrics != null)
 						metrics.recordRealizationMergeReuse();
 				}
 				else
-					merged.add(new CandidateEmissionRealization(entry.getKey(),
-						List.copyOf(entry.getValue().values())));
-			return canonicalComparableList(merged, "candidate emission realization");
+					merged.add(mergeRealizationGroup(group, metrics));
+			}
+			return canonicalRealizationList(merged);
+		}
+
+		/** Typed boundary for final realization ordering; specialized by Gate B after behavior RED. */
+		@SuppressWarnings("unchecked")
+		static List<CandidateEmissionRealization> canonicalRealizationList(
+			java.util.Collection<CandidateEmissionRealization> realizations) {
+			Objects.requireNonNull(realizations, "candidate emission realizations");
+			if(realizations instanceof SharedCanonicalList<?>)
+				return (List<CandidateEmissionRealization>) realizations;
+			if(realizations.isEmpty())
+				return List.of();
+			if(realizations.size() == 1)
+				return List.of(Objects.requireNonNull(realizations.iterator().next(),
+					"candidate emission realization"));
+			SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+			if(metrics != null)
+				metrics.recordCanonicalSort(realizations.size());
+			CanonicalTextContext context = new CanonicalTextContext();
+			List<RealizationOrderingEntry> decorated = new ArrayList<>(realizations.size());
+			for(CandidateEmissionRealization realization : realizations) {
+				if(metrics != null)
+					metrics.recordCanonicalOrderingKey();
+				CandidateEmissionRealization value = Objects.requireNonNull(
+					realization, "candidate emission realization");
+				decorated.add(new RealizationOrderingEntry(value,
+					canonicalOrderingKey(value.key(), context)));
+			}
+			decorated.sort((left, right) -> {
+				if(metrics != null)
+					metrics.recordCanonicalComparison();
+				int keyOrder = left.keyText().compareTo(right.keyText());
+				return keyOrder != 0 ? keyOrder
+					: canonicalOrderingKey(left.value(), context)
+						.compareTo(canonicalOrderingKey(right.value(), context));
+			});
+			List<CandidateEmissionRealization> canonical = new ArrayList<>(decorated.size());
+			for(RealizationOrderingEntry entry : decorated)
+				canonical.add(entry.value());
+			for(int index = 1; index < canonical.size(); index++)
+				if(canonical.get(index - 1).equals(canonical.get(index)))
+					throw new IllegalArgumentException("Duplicate candidate emission realization");
+			return new SharedCanonicalList<>(List.copyOf(canonical));
+		}
+
+		private record RealizationOrderingEntry(
+			CandidateEmissionRealization value, CanonicalText keyText) { }
+
+
+		private static CandidateEmissionRealization mergeRealizationGroup(
+			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			CandidateEmissionRealization first = group.get(0);
+			List<CandidateRealizationSupportClause> firstClauses = first.supportClauses();
+			boolean allEqual = true;
+			for(int index = 1; index < group.size() && allEqual; index++)
+				allEqual = firstClauses.equals(group.get(index).supportClauses());
+			if(allEqual) {
+				if(metrics != null) {
+					for(int groupIndex = 0; groupIndex < group.size(); groupIndex++)
+						for(int clauseIndex = 0; clauseIndex < firstClauses.size(); clauseIndex++)
+							metrics.recordRealizationMergeClause(groupIndex == 0);
+					metrics.recordRealizationMergeReuse();
+				}
+				return first;
+			}
+
+			List<List<CandidateRealizationSupportClause>> clausesByGroup = new ArrayList<>(group.size());
+			List<List<CanonicalText>> keysByGroup = new ArrayList<>(group.size());
+			CanonicalTextContext missingContext = null;
+			int totalClauses = 0;
+			for(CandidateEmissionRealization realization : group) {
+				List<CandidateRealizationSupportClause> clauses = realization.supportClauses();
+				clausesByGroup.add(clauses);
+				totalClauses = Math.addExact(totalClauses, clauses.size());
+				List<CanonicalText> keys = retainedCanonicalOrderingKeys(clauses);
+				if(keys == null) {
+					if(missingContext == null)
+						missingContext = new CanonicalTextContext();
+					keys = canonicalOrderingKeys(clauses, missingContext);
+				}
+				keysByGroup.add(keys);
+			}
+
+			Map<CandidateRealizationSupportClause,CanonicalText> descriptorsByClause =
+				new java.util.LinkedHashMap<>(totalClauses);
+			for(int groupIndex = 0; groupIndex < group.size(); groupIndex++) {
+				List<CandidateRealizationSupportClause> clauses = clausesByGroup.get(groupIndex);
+				List<CanonicalText> keys = keysByGroup.get(groupIndex);
+				for(int position = 0; position < clauses.size(); position++) {
+					boolean unique = descriptorsByClause.putIfAbsent(
+						clauses.get(position), keys.get(position)) == null;
+					if(metrics != null)
+						metrics.recordRealizationMergeClause(unique);
+				}
+			}
+			List<Map.Entry<CandidateRealizationSupportClause,CanonicalText>> ordered =
+				new ArrayList<>(descriptorsByClause.entrySet());
+			if(metrics != null)
+				metrics.recordCanonicalSort(ordered.size());
+			CanonicalTextComparison comparison = new CanonicalTextComparison();
+			ordered.sort((left, right) ->
+				compareCanonicalText(left.getValue(), right.getValue(), metrics, comparison));
+			List<CandidateRealizationSupportClause> union = new ArrayList<>(ordered.size());
+			List<CanonicalText> unionKeys = new ArrayList<>(ordered.size());
+			for(Map.Entry<CandidateRealizationSupportClause,CanonicalText> entry : ordered) {
+				union.add(entry.getKey());
+				unionKeys.add(entry.getValue());
+			}
+			if(firstClauses.equals(union)) {
+				if(metrics != null)
+					metrics.recordRealizationMergeReuse();
+				return first;
+			}
+			return CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(first.key(),
+				new SharedCanonicalList<>(List.copyOf(union), List.copyOf(unionKeys)));
+		}
+
+		private static int compareCanonicalText(
+			CanonicalText left, CanonicalText right, SearchSpaceMetrics metrics,
+			CanonicalTextComparison comparison) {
+			if(metrics != null)
+				metrics.recordCanonicalComparison();
+			return comparison.compare(left, right);
 		}
 
 		private static List<CandidateEmissionRealization> defaultRealizations(PlacementEmissionState emission) {
@@ -2101,7 +2459,7 @@ public final class PlacementAnalysis {
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
 	private final PlacementPrivacyFacts privacyFacts;
-	private final CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence;
+	private final Optional<CandidatePrivacyClosureEvidence> candidatePrivacyClosureEvidence;
 	private final OccurrenceExecutionFrequencyFacts executionFrequencyFacts;
 	private final String analysisFingerprint;
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
@@ -2201,7 +2559,7 @@ public final class PlacementAnalysis {
 			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
 			compiledInputEdges, logicalTransientInputs, privacyFacts,
-			new CandidatePrivacyClosureEvidence(List.of()), programMutationGuard);
+			null, programMutationGuard);
 	}
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -2238,8 +2596,7 @@ public final class PlacementAnalysis {
 		Runnable programMutationGuard) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
-		this.candidatePrivacyClosureEvidence = Objects.requireNonNull(
-			candidatePrivacyClosureEvidence, "candidatePrivacyClosureEvidence");
+		this.candidatePrivacyClosureEvidence = Optional.ofNullable(candidatePrivacyClosureEvidence);
 		this.programOwner = programOwner;
 		this.programMutationGuard = programMutationGuard == null ? () -> { } : programMutationGuard;
 		this.guardedFunctionRoots = programOwner != null && programMutationGuard != null;
@@ -3251,7 +3608,8 @@ public final class PlacementAnalysis {
 		return privacyFacts;
 	}
 
-	public CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence() {
+	/** Empty unless the builder explicitly enabled privacy audit evidence capture. */
+	public Optional<CandidatePrivacyClosureEvidence> candidatePrivacyClosureEvidence() {
 		return candidatePrivacyClosureEvidence;
 	}
 

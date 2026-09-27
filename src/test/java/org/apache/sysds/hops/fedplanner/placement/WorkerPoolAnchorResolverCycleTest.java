@@ -264,6 +264,65 @@ public class WorkerPoolAnchorResolverCycleTest {
 		Assert.assertTrue(f.resolve(consumerRead163, FType.FULL).isEmpty());
 	}
 
+	@Test
+	public void resetQueryStateUsesFreshNativeFallbackInEitherRootOrder() throws Exception {
+		Fixture f = new Fixture();
+		Ref seed = f.source("seed", "localhost:1234");
+		f.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		Ref first = f.groundedLoopConsumer("first", seed);
+		Ref second = f.groundedLoopConsumer("second", seed);
+		Object forward = f.resolver();
+		Set<DurableAnchorKey> expectedFirst = f.resolve(f.resolver(), first, FType.FULL);
+		Set<DurableAnchorKey> expectedSecond = f.resolve(f.resolver(), second, FType.FULL);
+		Assert.assertEquals(1, expectedFirst.size());
+		Assert.assertEquals(1, expectedSecond.size());
+
+		Assert.assertEquals(expectedFirst, f.resolve(forward, first, FType.FULL));
+		Object firstNative = f.nativeContinuity(forward);
+		Assert.assertFalse("the first root must genuinely enter Native CFG fallback",
+			f.nativeWitnesses(firstNative).isEmpty());
+		f.resetQueryState(forward);
+		Object secondNative = f.nativeContinuity(forward);
+		Assert.assertNotSame(firstNative, secondNative);
+		Assert.assertTrue(f.nativeWitnesses(secondNative).isEmpty());
+		Assert.assertTrue(f.memo(forward).isEmpty());
+		Assert.assertEquals(expectedSecond, f.resolve(forward, second, FType.FULL));
+
+		Object reverse = f.resolver();
+		Assert.assertEquals(expectedSecond, f.resolve(reverse, second, FType.FULL));
+		f.resetQueryState(reverse);
+		Assert.assertEquals(expectedFirst, f.resolve(reverse, first, FType.FULL));
+	}
+
+	@Test
+	public void resetQueryStateRejectsAnActiveResolutionInsteadOfClearingIt() throws Exception {
+		Fixture f = new Fixture();
+		Ref seed = f.source("seed", "localhost:1234");
+		f.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		Ref target = f.groundedLoopConsumer("target", seed);
+		Object resolver = f.resolver();
+		Assert.assertEquals(1, f.resolve(resolver, target, FType.FULL).size());
+		Object nativeBefore = f.nativeContinuity(resolver);
+		Assert.assertFalse(f.nativeWitnesses(nativeBefore).isEmpty());
+		Map<?,?> memoBefore = f.memo(resolver);
+		Assert.assertFalse(memoBefore.isEmpty());
+		Map<?,?> memoSnapshot = new IdentityHashMap<>(memoBefore);
+		Map<CompiledHopKey,Set<FType>> active = f.active(resolver);
+		active.put(target.key, java.util.EnumSet.of(FType.FULL));
+		java.lang.reflect.InvocationTargetException thrown = Assert.assertThrows(
+			java.lang.reflect.InvocationTargetException.class, () -> f.resetQueryState(resolver));
+		Assert.assertTrue(thrown.getCause() instanceof IllegalStateException);
+		Assert.assertSame(nativeBefore, f.nativeContinuity(resolver));
+		Assert.assertSame(memoBefore, f.memo(resolver));
+		Assert.assertEquals(memoSnapshot, f.memo(resolver));
+		Assert.assertFalse("failed reset must not clear in-flight authority", active.isEmpty());
+		active.clear();
+		f.resetQueryState(resolver);
+		Assert.assertNotSame(nativeBefore, f.nativeContinuity(resolver));
+		Assert.assertSame(memoBefore, f.memo(resolver));
+		Assert.assertTrue(f.memo(resolver).isEmpty());
+	}
+
 	private static final class Fixture {
 		private static final PlacementState FULL =
 			new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
@@ -387,16 +446,35 @@ public class WorkerPoolAnchorResolverCycleTest {
 				"function-formal-input"));
 		}
 
+		private Ref groundedLoopConsumer(String prefix, Ref seed) {
+			Ref local = read(prefix + "-local");
+			Ref append = append(prefix + "-append", local, seed);
+			candidate(append, FType.FULL, CandidateInputState.present(FType.FULL),
+				CandidateInputState.absentLocal());
+			Ref loopWrite = write(prefix + "-loop-write", append);
+			candidate(loopWrite, FType.FULL, CandidateInputState.present(FType.FULL));
+			definitions(local, seed, loopWrite);
+			Ref identityWrite = write(prefix + "-identity-write", local);
+			candidate(identityWrite, FType.FULL, CandidateInputState.present(FType.FULL));
+			Ref consumer = read(prefix + "-consumer");
+			definitions(consumer, identityWrite);
+			for(Ref ref : List.of(local, append, loopWrite, identityWrite, consumer))
+				privacy(ref, Privacy.PRIVATE_AGGREGATE);
+			return consumer;
+		}
+
 		private void privacy(Ref ref, Privacy value) {
 			privacy.put(ref.key, value);
 		}
 
-		@SuppressWarnings("unchecked")
-		private Set<DurableAnchorKey> resolve(Ref target, FType fType) throws Exception {
-			Class<?> resolverClass = java.util.Arrays.stream(
-				NeutralPlacementGraphBuilder.class.getDeclaredClasses())
+		private Class<?> resolverClass() {
+			return java.util.Arrays.stream(NeutralPlacementGraphBuilder.class.getDeclaredClasses())
 				.filter(type -> type.getSimpleName().equals("WorkerPoolAnchorResolver"))
 				.findFirst().orElseThrow();
+		}
+
+		private Object resolver() throws Exception {
+			Class<?> resolverClass = resolverClass();
 			Constructor<?> constructor = resolverClass.getDeclaredConstructor(Map.class, Map.class,
 				List.class, List.class, Collection.class, Map.class, Map.class, Map.class);
 			constructor.setAccessible(true);
@@ -405,11 +483,50 @@ public class WorkerPoolAnchorResolverCycleTest {
 			for(CompiledInputEdgeFact edge : edges)
 				edgesByConsumer.computeIfAbsent(edge.consumer(), ignored -> new LinkedHashMap<>())
 					.put(edge.inputPosition(), edge);
-			Object resolver = constructor.newInstance(nodes, edgesByConsumer, candidates, List.of(),
+			return constructor.newInstance(nodes, edgesByConsumer, candidates, List.of(),
 				constraints, origins, shapes, privacy);
-			Method resolve = resolverClass.getDeclaredMethod("resolve", CompiledHopKey.class, FType.class);
+		}
+
+		@SuppressWarnings("unchecked")
+		private Set<DurableAnchorKey> resolve(Object resolver, Ref target, FType fType) throws Exception {
+			Method resolve = resolverClass().getDeclaredMethod("resolve", CompiledHopKey.class, FType.class);
 			resolve.setAccessible(true);
 			return (Set<DurableAnchorKey>)resolve.invoke(resolver, target.key, fType);
+		}
+
+		private Set<DurableAnchorKey> resolve(Ref target, FType fType) throws Exception {
+			return resolve(resolver(), target, fType);
+		}
+
+		private void resetQueryState(Object resolver) throws Exception {
+			Method reset = resolverClass().getDeclaredMethod("resetQueryState");
+			reset.setAccessible(true);
+			reset.invoke(resolver);
+		}
+
+		private Object field(Object owner, String name) throws Exception {
+			java.lang.reflect.Field field = owner.getClass().getDeclaredField(name);
+			field.setAccessible(true);
+			return field.get(owner);
+		}
+
+		private Object nativeContinuity(Object resolver) throws Exception {
+			return field(resolver, "nativeContinuity");
+		}
+
+		@SuppressWarnings("unchecked")
+		private Map<?,?> nativeWitnesses(Object nativeContinuity) throws Exception {
+			return (Map<?,?>)field(nativeContinuity, "nativeWitnessByAnchor");
+		}
+
+		@SuppressWarnings("unchecked")
+		private Map<?,?> memo(Object resolver) throws Exception {
+			return (Map<?,?>)field(resolver, "memo");
+		}
+
+		@SuppressWarnings("unchecked")
+		private Map<CompiledHopKey,Set<FType>> active(Object resolver) throws Exception {
+			return (Map<CompiledHopKey,Set<FType>>)field(resolver, "active");
 		}
 
 		private Ref add(String name, Hop hop, NodeKind kind, DurableAnchorKey anchor) {

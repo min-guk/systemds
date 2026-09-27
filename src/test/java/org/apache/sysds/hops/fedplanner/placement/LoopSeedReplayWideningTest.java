@@ -41,6 +41,8 @@ import org.junit.Test;
 
 /** A later function-boundary source widening must survive loop CFG replay. */
 public class LoopSeedReplayWideningTest {
+	private record ReplayRevision(List<String> sources, List<String> actions, boolean privacyClosed) { }
+
 	@Test
 	public void failedLoopSeedAttemptDoesNotConsumeItsRevision() {
 		Set<String> seen = new LinkedHashSet<>();
@@ -57,14 +59,31 @@ public class LoopSeedReplayWideningTest {
 	}
 
 	@Test
-	public void completedLoopSeedMemoizesTheExactConvergedTransfer() {
-		Map<String,String> completedTransfers = new HashMap<>();
+	public void completedLoopSeedMemoizesEntryAndExitWithTheExactConvergedTransfer() {
+		Map<ReplayRevision,String> completedTransfers = new HashMap<>();
+		ReplayRevision entry = new ReplayRevision(List.of("entry-source"),
+			List.of("entry-action"), false);
+		ReplayRevision exit = new ReplayRevision(List.of("completed-source"),
+			List.of("completed-action"), true);
 		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
-			"entry-proof-state", "converged-proof-state", true, completedTransfers);
+			entry, "converged-proof-state", true, completedTransfers);
+		NeutralPlacementGraphBuilder.recordCompletedLoopSeedTransfer(
+			exit, "converged-proof-state", true, completedTransfers);
 
-		Assert.assertEquals(Map.of("entry-proof-state", "converged-proof-state"), completedTransfers);
-		Assert.assertFalse("a later transitive proof change must remain seedable",
-			completedTransfers.containsKey("late-transitive-proof-state"));
+		Assert.assertEquals("the completed EXIT must replay without another provisional seed",
+			"converged-proof-state", completedTransfers.get(exit));
+		Assert.assertEquals("entry and completed EXIT must retain the identical payload",
+			Set.of("converged-proof-state"), Set.copyOf(completedTransfers.values()));
+		Assert.assertEquals(2, completedTransfers.size());
+		Assert.assertFalse("a changed source proof must miss the completed EXIT",
+			completedTransfers.containsKey(new ReplayRevision(
+				List.of("different-source"), exit.actions(), exit.privacyClosed())));
+		Assert.assertFalse("a changed action authority must miss the completed EXIT",
+			completedTransfers.containsKey(new ReplayRevision(
+				exit.sources(), List.of("different-action"), exit.privacyClosed())));
+		Assert.assertFalse("a changed privacy closure must miss the completed EXIT",
+			completedTransfers.containsKey(new ReplayRevision(
+				exit.sources(), exit.actions(), false)));
 	}
 
 	@Test

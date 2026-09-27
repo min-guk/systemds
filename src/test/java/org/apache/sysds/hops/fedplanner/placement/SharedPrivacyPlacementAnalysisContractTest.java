@@ -19,12 +19,14 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
@@ -63,6 +65,67 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 	private static final String FEDERATED_SOURCE =
 		"A=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n";
+
+	@Test
+	public void privacyEvidenceCaptureIsExplicitAndDoesNotChangeCandidateAuthority() throws Exception {
+		DMLProgram program = compile(FEDERATED_SOURCE + "print(sum(A));\n", false);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		PlacementAnalysis withoutEvidence = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		NeutralPlacementGraphBuilder captureBuilder = new NeutralPlacementGraphBuilder(
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.CAPTURE);
+		PlacementAnalysis captured = captureBuilder.buildAnalysis(program);
+		PlacementAnalysis capturedAgain = captureBuilder.buildAnalysis(program);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementAnalysis metricsWithoutEvidence = new NeutralPlacementGraphBuilder(null,
+			metrics).buildAnalysis(program);
+		PlacementAnalysis nextDefault = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+
+		Assert.assertTrue("default analysis must report evidence as absent, not successful empty evidence",
+			withoutEvidence.candidatePrivacyClosureEvidence().isEmpty());
+		Assert.assertTrue("metrics must not implicitly enable audit evidence",
+			metricsWithoutEvidence.candidatePrivacyClosureEvidence().isEmpty());
+		Assert.assertTrue("CAPTURE must retain independently replayable privacy evidence",
+			captured.candidatePrivacyClosureEvidence().orElseThrow().passes().size() > 0);
+		Assert.assertEquals("reusing one CAPTURE builder must not retain prior-analysis passes",
+			captured.candidatePrivacyClosureEvidence().orElseThrow().passes(),
+			capturedAgain.candidatePrivacyClosureEvidence().orElseThrow().passes());
+		Assert.assertTrue("CAPTURE must not leak to a later analysis in the same JVM",
+			nextDefault.candidatePrivacyClosureEvidence().isEmpty());
+		assertStaticPrivacyProjectionCleared(captureBuilder);
+		try {
+			captureBuilder.buildAnalysis(null);
+			Assert.fail("invalid analysis input must fail");
+		}
+		catch(RuntimeException expected) {
+			assertStaticPrivacyProjectionCleared(captureBuilder);
+		}
+		assertCandidateAndPrivacyParity(withoutEvidence, captured);
+		assertCandidateAndPrivacyParity(withoutEvidence, metricsWithoutEvidence);
+	}
+
+	private static void assertStaticPrivacyProjectionCleared(NeutralPlacementGraphBuilder builder)
+		throws ReflectiveOperationException {
+		Field field = NeutralPlacementGraphBuilder.class.getDeclaredField("staticPrivacyProjection");
+		field.setAccessible(true);
+		Assert.assertNull("analysis-scoped static privacy authority must not leak across builds",
+			field.get(builder));
+	}
+
+	private static void assertCandidateAndPrivacyParity(PlacementAnalysis expected, PlacementAnalysis actual) {
+		Assert.assertEquals(expected.graph().normalizedSignature(), actual.graph().normalizedSignature());
+		Assert.assertEquals(expected.privacyFactAuthority().normalizedSignature(),
+			actual.privacyFactAuthority().normalizedSignature());
+		Assert.assertEquals(expected.candidateRuleFacts().orderedFacts().stream()
+			.map(SharedPrivacyPlacementAnalysisContractTest::candidateAuthority).toList(),
+			actual.candidateRuleFacts().orderedFacts().stream()
+				.map(SharedPrivacyPlacementAnalysisContractTest::candidateAuthority).toList());
+	}
+
+	private static String candidateAuthority(PlacementAnalysis.CandidateRuleFact fact) {
+		return fact.key().normalizedSignature() + '|' + fact.status().name() + '|' + fact.failureCode()
+			+ "|emissions=" + fact.allowedEmissionFacts().stream()
+				.map(PlacementAnalysis.CandidateEmissionFact::normalizedSignature).toList();
+	}
 
 	@Test
 	public void publicAggregateCannotCollectPrivateAggregateInputsForCpExecution() throws Exception {
@@ -149,6 +212,83 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 				Assert.assertEquals(ExecType.FED, state.execType());
 				Assert.assertEquals(FederatedOutput.FOUT, state.output());
 			});
+	}
+
+	@Test
+	public void rawProtectedBaseProjectsToPublishedShellAndThenRetains() throws Exception {
+		DMLProgram program = isolatedFederatedChain();
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE);
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		PlacementAnalysis analysis = builder.buildAnalysis(program);
+		var node = analysis.graph().nodes().stream()
+			.filter(candidate -> analysis.requirePrivacy(candidate.key()) == Privacy.PRIVATE)
+			.filter(candidate -> !analysis.candidateRuleFacts()
+				.orderedFactsForParent(candidate.key()).stream()
+				.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE).toList().isEmpty())
+			.findFirst().orElseThrow();
+		var publishedFacts = analysis.candidateRuleFacts().orderedFactsForParent(node.key());
+		var available = publishedFacts.stream()
+			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.findFirst().orElseThrow();
+		PlacementState deniedState = new PlacementState(
+			ExecType.CP, FederatedOutput.LOUT, null, false);
+		var deniedEmission = new PlacementAnalysis.CandidateEmissionFact(
+			new PlacementEmissionState(deniedState, false), null);
+		List<PlacementAnalysis.CandidateEmissionFact> rawEmissions =
+			new ArrayList<>(available.allowedEmissionFacts());
+		rawEmissions.add(deniedEmission);
+		var rawFact = new PlacementAnalysis.CandidateRuleFact(available.key(),
+			CandidateEvaluationStatus.AVAILABLE, available.capability(), available.shapeProof(),
+			available.profile(), rawEmissions, "");
+		List<PlacementAnalysis.CandidateRuleFact> rawFacts = new ArrayList<>(publishedFacts);
+		rawFacts.set(rawFacts.indexOf(available), rawFact);
+		List<PlacementState> rawStates = new ArrayList<>(node.legalAlternatives());
+		rawStates.add(deniedState);
+		var rawNode = new NeutralPlacementGraph.Node(node.key(), node.kind(), node.valueVersion(), true,
+			rawStates, node.exclusions().stream().filter(exclusion -> !exclusion.state().equals(deniedState)).toList(),
+			node.anchors());
+
+		Map<PlacementIdentity.CompiledHopKey,Hop> origins = new IdentityHashMap<>();
+		for(var graphNode : analysis.graph().nodes())
+			origins.put(graphNode.key(), analysis.hop(graphNode.key()).orElseThrow());
+		Method projectionFactory = NeutralPlacementGraphBuilder.class.getDeclaredMethod(
+			"staticPrivacyProjection", List.class, List.class, Map.class, Map.class);
+		projectionFactory.setAccessible(true);
+		Object projection = projectionFactory.invoke(null, analysis.graph().nodes(),
+			analysis.compiledInputEdgesInCanonicalOrder(), origins, analysis.privacyFacts());
+		Field projectionField = NeutralPlacementGraphBuilder.class.getDeclaredField("staticPrivacyProjection");
+		projectionField.setAccessible(true);
+		projectionField.set(builder, projection);
+		Method project = NeutralPlacementGraphBuilder.class.getDeclaredMethod("projectFreshBasePrivacy",
+			NeutralPlacementGraph.Node.class, List.class, List.class, Map.class);
+		project.setAccessible(true);
+		Object projected = project.invoke(builder, rawNode,
+			publishedFacts.stream().map(PlacementAnalysis.CandidateRuleFact::key).toList(), rawFacts, origins);
+		Method projectedNode = projected.getClass().getDeclaredMethod("node");
+		Method projectedKeys = projected.getClass().getDeclaredMethod("keys");
+		Method projectedFacts = projected.getClass().getDeclaredMethod("facts");
+		projectedNode.setAccessible(true);
+		projectedKeys.setAccessible(true);
+		projectedFacts.setAccessible(true);
+		Assert.assertEquals("early projection must reproduce the final privacy-filtered node shell",
+			node, projectedNode.invoke(projected));
+		Assert.assertEquals("early projection must reproduce the final privacy-filtered candidate rows",
+			publishedFacts, projectedFacts.invoke(projected));
+
+		Method retain = NeutralPlacementGraphBuilder.class.getDeclaredMethod("retainCompleteDerivedBase",
+			NeutralPlacementGraph.Node.class, List.class, List.class,
+			NeutralPlacementGraph.Node.class, List.class, List.class);
+		retain.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		List<PlacementAnalysis.CandidateRuleKey> keys =
+			(List<PlacementAnalysis.CandidateRuleKey>)projectedKeys.invoke(projected);
+		@SuppressWarnings("unchecked")
+		List<PlacementAnalysis.CandidateRuleFact> facts =
+			(List<PlacementAnalysis.CandidateRuleFact>)projectedFacts.invoke(projected);
+		Assert.assertFalse("first projected base observation installs ownership",
+			(boolean)retain.invoke(builder, node, keys, publishedFacts, node, keys, facts));
+		Assert.assertTrue("an identical raw rebuild becomes retainable after the same static projection",
+			(boolean)retain.invoke(builder, node, keys, publishedFacts, node, keys, facts));
 	}
 
 	@Test
