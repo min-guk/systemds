@@ -62,6 +62,39 @@ public class FEDInstructionParserCtableTest {
 			FEDInstructionParser.parseSingleInstruction(inst).getFederatedOutput());
 	}
 
+	@Test
+	public void encodeAndParseForcedLocalScalarWeightWithExplicitDimensions() {
+		assertForcedLocalWithExplicitDimensions(Data.createLiteralLop(ValueType.FP64, "1.0"),
+			OperationTypes.CTABLE_TRANSFORM_SCALAR_WEIGHT, "1.0");
+	}
+
+	@Test
+	public void encodeAndParseForcedLocalMatrixWeightWithExplicitDimensions() {
+		assertForcedLocalWithExplicitDimensions(matrixInput("W"),
+			OperationTypes.CTABLE_TRANSFORM, "W");
+	}
+
+	private static void assertForcedLocalWithExplicitDimensions(Data weight,
+		OperationTypes operation, String weightName) {
+		Ctable ctable = new Ctable(new Lop[] {matrixInput("A"), matrixInput("B"), weight,
+			Data.createLiteralLop(ValueType.INT64, "32561"),
+			Data.createLiteralLop(ValueType.INT64, "128")}, operation,
+			DataType.MATRIX, ValueType.FP64, false, true, ExecType.FED, 1);
+		ctable.setFederatedOutput(FederatedOutput.LOUT);
+
+		String inst = ctable.getInstructions("A", "B", weightName, "C");
+		assertTrue(inst.contains(Lop.OPERAND_DELIMITOR + "32561" + Lop.LITERAL_PREFIX + "true"
+			+ Lop.OPERAND_DELIMITOR + "128" + Lop.LITERAL_PREFIX + "true" + Lop.OPERAND_DELIMITOR));
+		assertTrue(inst.endsWith(Lop.OPERAND_DELIMITOR + FederatedOutput.LOUT.name()));
+		FEDInstruction parsed = FEDInstructionParser.parseSingleInstruction(inst);
+		assertTrue(parsed instanceof CtableFEDInstruction);
+		assertEquals("ctable", parsed.getOpcode());
+		assertEquals(FederatedOutput.LOUT, parsed.getFederatedOutput());
+		CtableFEDInstruction parsedCtable = (CtableFEDInstruction) parsed;
+		assertEquals(weight.getDataType(), parsedCtable.input3.getDataType());
+		assertEquals(weightName, parsedCtable.input3.getName());
+	}
+
 	private static Data matrixInput(String name) {
 		return new Data(OpOpData.TRANSIENTREAD, null, null, name, null,
 			DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);

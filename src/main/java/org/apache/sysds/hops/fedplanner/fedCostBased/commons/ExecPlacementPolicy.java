@@ -34,6 +34,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -359,6 +360,9 @@ public final class ExecPlacementPolicy {
 		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
 			return false;
 		if (hop instanceof QuaternaryOp && ((QuaternaryOp) hop).getOp() == Types.OpOp4.WDIVMM)
+			return true;
+		if (hop instanceof TernaryOp && ((TernaryOp) hop).getOp() == Types.OpOp3.CTABLE
+			&& !((TernaryOp) hop).isSequenceRewriteApplicable(true))
 			return true;
 		if (hop instanceof IndexingOp)
 			return true;
