@@ -163,3 +163,18 @@ compiled-input/cardinality 의존성 부재다. 이 occurrence의 producer subty
 경계를 후속 조사한다. global worker1 가정, cbind 특례, privacy 완화는 해결책으로 채택하지 않는다.
 
 증거: `early-privacy-pruning-evidence/glm-baseline-diagnosis/`.
+
+### 전체 compile survey 재개 및 logreg60초 확인 (2026-09-28T18:29:25.571733+00:00)
+
+동일 frozen engine으로 `--phase all --keep-going --compile-timeout 60 --runtime-timeout 60`을
+재개했다. driver PID3151697/session69733, 로그는 evidence root의 `run06-full-driver.log`다.
+현재 snapshot: compile **1 성공 / 2 실패 / 893 대기**, runtime0, compile gate=false.
+
+DP-local/logreg/W1/LAN은 이번에도60초 timeout(rc124), cleanup 완료였다. 성공 compile/search-space/
+planning 시간은 공란으로 유지한다. phase marker에서는 analysis 종료까지28.027129초와
+planner 진입을 확인했으나 planner 완료는 없다. 기존 run05 동일 조건도60초 timeout이며
+analysis phase30.188883초였다. 이 부분 marker를 성공 compile 시간으로 바꾸어 집계하지 않는다.
+
+**이번 P0–P3 구현으로 모든60초 timeout이 해소된 것은 아니다.** DP 선택 단계 성능과 기존 GLM
+cardinality 문제가 남는다. 전체 compile gate가 거짓이므로 runtime은 실행하지 않는다.
+증거: `run06-continuation-verification.json`, `run06-logreg-phase-comparison.json`.
