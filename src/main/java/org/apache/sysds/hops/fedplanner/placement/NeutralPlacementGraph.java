@@ -318,13 +318,14 @@ public final class NeutralPlacementGraph {
 					.findFirst().orElse(null);
 				// Coarse residency was sufficient before one state could carry several
 				// maps. An exact selected map must agree with the action's target pool.
-				if(selectedSource == null || selectedSource.provenWorkerPool() != null
-					&& PlacementIdentity.samePhysicalWorkerPool(selectedSource.provenWorkerPool(),
+				DurableAnchorKey provenWorkerPool = selectedSource == null
+					? null : selectedSource.provenWorkerPool();
+				if(selectedSource == null || provenWorkerPool != null
+					&& PlacementIdentity.samePhysicalWorkerPool(provenWorkerPool,
 						action.key().durableAnchor()))
 					return false;
 				if(selectedSource != null) {
-					DurableAnchorKey residency = selectedSource.realization()
-						.nativeWorkerPoolResidencyWitness(selectedSource.supportClause());
+					DurableAnchorKey residency = selectedSource.nativeWorkerPoolResidencyWitness();
 					boolean selectedDirectConsumer = selectedCandidates.stream().anyMatch(selected ->
 						action.obligations().stream().anyMatch(obligation ->
 							obligation.consumer() == selected.rule().parentOccurrence()

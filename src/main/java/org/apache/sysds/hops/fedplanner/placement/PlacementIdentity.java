@@ -952,7 +952,12 @@ public final class PlacementIdentity {
 
 		/** Exact selected worker-pool proof, if this clause owns one. */
 		public DurableAnchorKey provenWorkerPool() {
-			return realization.provenWorkerPool(supportClause);
+			return realization.provenWorkerPoolForOwnedClause(supportClause);
+		}
+
+		/** Exact selected native worker residency, including dynamic-layout witnesses. */
+		public DurableAnchorKey nativeWorkerPoolResidencyWitness() {
+			return realization.nativeWorkerPoolResidencyForOwnedClause(supportClause);
 		}
 
 		@Override

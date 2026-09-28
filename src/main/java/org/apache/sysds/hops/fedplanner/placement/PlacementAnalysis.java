@@ -1008,12 +1008,18 @@ public final class PlacementAnalysis {
 			return key.durableAnchor() != null
 				|| supportClauses.stream().allMatch(CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact);
 		}
-		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
+		/**
+		 * Package-internal fast path; the caller must obtain {@code clause} by iterating
+		 * {@link #supportClauses()} or from a constructor-validated immutable candidate receipt.
+		 */
 		DurableAnchorKey provenWorkerPoolForOwnedClause(CandidateRealizationSupportClause clause) {
 			return key.durableAnchor() != null ? key.durableAnchor()
 				: clause.nativeWorkerPoolLayoutExact() ? clause.nativeWorkerPoolWitness() : null;
 		}
-		/** Package-internal fast path; caller must obtain {@code clause} by iterating {@link #supportClauses()}. */
+		/**
+		 * Package-internal fast path; the caller must obtain {@code clause} by iterating
+		 * {@link #supportClauses()} or from a constructor-validated immutable candidate receipt.
+		 */
 		DurableAnchorKey nativeWorkerPoolResidencyForOwnedClause(CandidateRealizationSupportClause clause) {
 			return key.durableAnchor() != null ? key.durableAnchor() : clause.nativeWorkerPoolWitness();
 		}

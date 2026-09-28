@@ -207,6 +207,70 @@ public class PlacementRealizationAuthorityTest {
 	}
 
 	@Test
+	public void validatedReceiptPoolQueriesPreserveGuardedClauseAuthority() {
+		DurableAnchorKey durablePool = anchor("durable-pool", 4);
+		CandidateEmissionRealization durableFirst = CandidateEmissionRealization.durable(
+			FED_EMISSION, durablePool, List.of(anchorProof(durablePool)), List.of());
+		CandidateEmissionRealization durableSecond = CandidateEmissionRealization.durable(
+			FED_EMISSION, durablePool, List.of(new PlacementProofKey(
+				PlacementProofKind.SHAPE, OWNER, "durable-shape")), List.of());
+		CandidateEmissionFact durableEmission = new CandidateEmissionFact(
+			FED_EMISSION, FType.ROW, null, List.of(durableFirst, durableSecond));
+		CandidateEmissionRealization durable = durableEmission.realizations().get(0);
+		Assert.assertEquals(2, durable.supportClauses().size());
+		for(CandidateRealizationSupportClause clause : durable.supportClauses())
+			assertReceiptPoolQueries(durableEmission, durable, clause, durablePool, durablePool);
+
+		DurableAnchorKey nativePool = anchor("native-pool-fast-path", 4);
+		PlacementProofKey continuity = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, OWNER, "native-fast-path");
+		CandidateEmissionRealization exactNative = CandidateEmissionRealization.nativeLineage(
+			FED_EMISSION, "native-exact", nativePool, List.of(continuity), List.of());
+		CandidateEmissionFact exactEmission = new CandidateEmissionFact(
+			FED_EMISSION, FType.ROW, null, List.of(exactNative));
+		CandidateRealizationSupportClause exactClause = exactNative.supportClauses().get(0);
+		assertReceiptPoolQueries(exactEmission, exactNative, exactClause, nativePool, nativePool);
+
+		CandidateEmissionRealization dynamicNative =
+			CandidateEmissionRealization.nativeLineageDynamicLayout(
+				FED_EMISSION, "native-dynamic", nativePool, List.of(continuity), List.of());
+		CandidateEmissionFact dynamicEmission = new CandidateEmissionFact(
+			FED_EMISSION, FType.ROW, null, List.of(dynamicNative));
+		assertReceiptPoolQueries(dynamicEmission, dynamicNative,
+			dynamicNative.supportClauses().get(0), null, nativePool);
+
+		CandidateEmissionRealization unwitnessedNative = CandidateEmissionRealization.nativeLineage(
+			FED_EMISSION, "native-unwitnessed", List.of(), List.of());
+		CandidateEmissionFact unwitnessedEmission = new CandidateEmissionFact(
+			FED_EMISSION, FType.ROW, null, List.of(unwitnessedNative));
+		assertReceiptPoolQueries(unwitnessedEmission, unwitnessedNative,
+			unwitnessedNative.supportClauses().get(0), null, null);
+
+		CandidateRealizationSupportClause foreign = new CandidateRealizationSupportClause(
+			exactClause.proofDependencies(), exactClause.inputBindings(),
+			exactClause.nativeWorkerPoolWitness(), exactClause.nativeWorkerPoolLayoutExact());
+		Assert.assertEquals(exactClause, foreign);
+		Assert.assertNotSame(exactClause, foreign);
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> exactNative.provenWorkerPool(foreign));
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> exactNative.nativeWorkerPoolResidencyWitness(foreign));
+		Assert.assertThrows(IllegalArgumentException.class, () -> new CandidateSelectionReceipt(
+			RULE, exactEmission, exactNative, foreign, List.of()));
+	}
+
+	private static void assertReceiptPoolQueries(CandidateEmissionFact emission,
+		CandidateEmissionRealization realization, CandidateRealizationSupportClause clause,
+		DurableAnchorKey expectedProvenPool, DurableAnchorKey expectedResidency) {
+		CandidateSelectionReceipt receipt = new CandidateSelectionReceipt(
+			RULE, emission, realization, clause, List.of());
+		Assert.assertSame(expectedProvenPool, realization.provenWorkerPool(clause));
+		Assert.assertSame(expectedProvenPool, receipt.provenWorkerPool());
+		Assert.assertSame(expectedResidency, realization.nativeWorkerPoolResidencyWitness(clause));
+		Assert.assertSame(expectedResidency, receipt.nativeWorkerPoolResidencyWitness());
+	}
+
+	@Test
 	public void joinRequiresEveryReachingDefinitionAndOneCommonExactReaderLayout() {
 		CompiledHopKey firstWriter = key("first-writer");
 		CompiledHopKey secondWriter = key("second-writer");
