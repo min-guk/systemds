@@ -54,3 +54,21 @@
 - 파일: `PlacementAnalysisConstructionArchitectureTest`, `PlacementFoundationArchitectureGuardTest`. Production visibility와 계약은 변경하지 않았다. Docker wrapper의 설명도 실제 selector-free common search-space 실행과 일치시켰다.
 - 검증: 두 guard 클래스 11/11 통과, 실패/오류/skip 0, source 전후 동일 (`evidence/final/architecture-guards-v2.json`). 전체 clean 재검증 결과는 최종 항목에 기록한다.
 - 잔여 위험: source guard는 실제 physical 동등성 검사를 대체하지 않는다. 최종 protected export 및 동일 Docker 측정을 별도로 수행한다.
+
+## 최종 기능 검증 — 완료
+
+- 결과: `cab3ca86b6`의 clean test + jar:jar는 73 suites / 576건, 실패 0·오류 0·기존 public-only skip 10. source/POM 전후 SHA가 동일하다. 별도 protected export 네 메서드는 4/4 통과했다.
+- 동등성: 초기 P0와 최종 C0 각각에 대해 최종 P/E의 216 proofs / 56 physical identities가 양방향·multiplicity로 동일하며, P↔E도 같다. 기존 B-21 192/36 assertion을 유지했다. P audit 216행은 파싱한 내용과 순서가 같고 raw serialization은 다르다.
+- 검사 정비: 앞선 fixture/source guard 실패는 모두 해결됐다. 대상 suite에 미해결 실패를 남기지 않았다. 범위 밖 60M-cell certificate 문제와 외부 Sun 스타일 findings는 별도 한계로 남는다.
+- 산출물: source/JAR hash, clean XML/log, 새 NDJSON, 다섯 비교 receipt가 `evidence/final`에 있다. 최종 JAR SHA `a2417987edcfea6a87691939f1a4bc57f22480372d228f5581522614cce4447a`.
+
+## P5 OFF 시간 증가 — 조사 완료, 원인 확정 한계
+
+- 증상: 동일 Docker·입력·worker·JVM 조건의 새 JVM 한 번씩에서 공통 search-space OFF 시간 28.004892853→30.975320421초, +10.6068%. 계획의 5% 조사 기준을 초과했다.
+- 조사: 증가 2.97초는 analysis 구간이다. Source/JAR/input/image/network provenance와 cleanup을 검증했다. ON의 모든 phase 호출 및 candidate/closure/proof 횟수는 같다. OFF GC pause는 양쪽 16회, 누적 623.257→608.088ms로 감소했고 heap 관측 최댓값도 -0.2858%다. 추가 pass/proof 폭증이나 GC pause 증가가 지연을 설명하지 않는다.
+- 한계: ON 단일 관측은 32.716452974→29.201786084초로 반대 방향이다. 이를 OFF 대신 사용하지 않는다. OFF에는 세부 CPU/JIT profile이 없어서 정확한 원인은 확정할 수 없다. JIT/host 변동은 가설이며 속도 개선·시간 동등성·통계적 유의성을 주장하지 않는다.
+- 처리: 불리한 OFF 표본을 보존하고 좋은 결과를 고르는 재측정은 하지 않았다. runtime/selector 비용으로 생성 비용을 옮기지 않았고 paused 20초 목표를 재개하지 않았다. 이 조사는 구조 리팩터링의 검증 범위이며 별도 성능 최적화를 섞지 않았다.
+- 파일/근거: `scripts/fedplanner/run_LAN_docker.sh`, 최종 paper-aligned 보고서, `perf-harness/p5-comparison.json`, `evidence/final/P5_PERFORMANCE_INVESTIGATION.md`. 원본 run receipts와 GC 로그를 보존했다.
+- 잔여 위험: 대표 한 조건의 시간 증가 및 실제 peak heap을 직접 측정하지 못한 한계. GC 경계/종료 시점의 관측 high-water를 정확한 peak로 표시하지 않는다.
+
+- 독립 최종 감사 보완: raw metric 100개 중 identity cache hit -49,045(-0.2476%), structural cache hit +1의 차이는 보존된 구성 횟수와 따로 기록했다. 소스/bytecode 감사에서 중복 pass·OFF 진단 생성·cache 수명 오류는 발견하지 못했다. local→field, 소규모 owner 객체, method/class 분리의 실행 차이는 있지만 OFF 증가의 원인으로 입증되지 않았다.

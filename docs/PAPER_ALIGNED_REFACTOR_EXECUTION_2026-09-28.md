@@ -77,8 +77,10 @@ boundary and explicitly separating initial vs relation-refined single-partition
 facts (both corrections applied before extraction).
 
 Status: P0–P4 implementation and independent boundary/update/index reviews are
-complete. P5 final clean, physical exports and Docker comparison are in progress.
-The checkpoint results below are historical evidence, including repaired failures.
+complete. P5 final clean, physical exports, scoped static checking and one-shot
+Docker comparisons are complete. The OFF timing increase and measurement limits
+are retained; no timing-equivalence or speedup claim is made. The checkpoint
+results below are historical evidence, including repaired failures.
 
 ## P2 checkpoint
 
@@ -175,3 +177,59 @@ declarations and every constructor seam, recognize complete Java type tokens, an
 check the public structural authority contract instead of compiler traversal scratch.
 Positive and adversarial fixtures remain active. Both guard classes pass 11/11
 (`evidence/final/architecture-guards-v2.json`); the final combined clean run follows.
+
+## Final clean and physical evidence
+
+Frozen validation head: `cab3ca86b6eb2442f2eb14d33ee856ac61cc1f90`.
+`evidence/final/clean-73-final.json` records clean test + jar:jar, 73 suites,
+576 cases, zero failures/errors and ten existing public-only skips. Source/POM
+manifest is unchanged before/after; SHA `1c4f56131fa41feed62895afda8337ec3c07e27af74479a2d196e429dab4eae7`.
+Final JAR SHA is `a2417987edcfea6a87691939f1a4bc57f22480372d228f5581522614cce4447a`.
+
+Fresh protected export passes 4/4 methods. Initial P0 and final C0 each equal final
+P and E: 216 proofs, 56 canonical physical identities, both directional differences
+zero, all proof multiplicities equal. Final P versus E also matches. The original
+B-21 192/36 assertions execute unchanged. P audit parsed JSON rows and order match;
+raw serialization differs. All five comparisons, source receipts and raw rows are
+under `evidence/final`. No changed comparator or stale append file was used.
+
+Final source/report review by `extract_generator` approved P2/P3/P4. Its two low
+priority documentation corrections were applied: changedOrdinals work is consumed
+separately by callers, and the L2 map includes anchor/profile entry points.
+
+## P5 final performance and static result
+
+The wrapper uses the evidence-local frozen multi-host Docker lifecycle. Baseline
+and refactor OFF/ON each ran exactly once in a new JVM on the same fixed W1 logreg
+cell and input, image per host, network, 24g container/cpuset 0–7 and 16g JVM.
+No selector, runtime program emission or workload execution occurred; this is
+common search-space construction evidence. All four fingerprints agree, cleanup
+and lease release are confirmed, and source/JAR hashes match clean build receipts.
+
+OFF Tspace is 28.004892853 -> 30.975320421 seconds (+10.6068%). The increase is
+entirely analysis; additive prep/analysis/boundary attribution is preserved.
+The >5% investigation found unchanged ON counts (including all 22 phase calls),
+16 GC pauses each, slightly lower GC pause time and observed heap high-water
+2,567,962,624 -> 2,560,622,592 bytes (-0.2858%). This heap observation is not exact
+peak heap. ON separately measured 32.716452974 -> 29.201786084 seconds. It does not
+replace OFF; the one-shot data cannot establish the exact slowdown cause, JIT/host
+causality, statistical significance or a performance guarantee. No favorable rerun
+was selected, and the paused 20-second goal was not resumed.
+
+The scoped external Sun Checkstyle report has 11,003 Java findings vs P1 10,706,
+with 10,337 matched contexts, 666 new contexts (657 on added lines), and zero
+unused imports. Fourteen findings touch P4's added production lines. These style
+findings remain; Maven report generation success is not a clean lint result.
+No configured standalone Checkstyle/PMD/SpotBugs gate or dependency was added.
+
+See the final paper-aligned report for the diagram, actual algorithm, typed
+concept mapping, B-21 example, source/commit/JAR identity, raw evidence links and
+explicit verification limits. Further commits update documentation only.
+
+The independent verifier confirmed the final receipts and recorded two cache-hit
+counter differences among 100 raw metrics: identity hits -49,045 (-0.2476%) and
+structural hits +1. These are not included in the selected equal construction
+counters. A separate source/bytecode audit found no duplicate pass, OFF diagnostic
+allocation or cache-lifetime bug. Local-to-field state, bounded owner allocations
+and method/class splitting are confirmed differences, but no exact causal link to
+the OFF increase is established.
