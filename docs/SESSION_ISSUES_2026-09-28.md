@@ -929,3 +929,36 @@
 - **증거:** `run05/timeout60-verification.json`에 두 result SHA, command60, raw process time,
   cleanup/OOM/CSV/gate 검증과 고정 snapshot을 보존했다. 회귀 suite83/83 및 독립 review와 별개로
   실제 Docker timeout 작동을 확인한 것이다. 현재 session27440의 survey는 계속 실행 중이다.
+
+## 조기 privacy pruning 및 공통 후보 축소 계획 — 분석/계획 완료, 미구현
+
+- **요청/증상:** 사용자가 큰 search space를 줄이기 위해 privacy를 가능한 가장 초기에 적용하고
+  추가 pruning 계획을 요청했다. 이번 작업 범위는 계획이며 active run05의 엔진/harness는 변경하지 않는다.
+- **원인/현재 사실:** privacy는 마지막 선택 때만 검사하는 것이 아니다. 최초 input Cartesian
+  생성 이후 boundary/function/privacy를 닫고 physical/replay/export에서도 재적용한다.
+  따라서 첫 tuple/Oracle/emission 확장에서는 나중에 privacy로 탈락할 대안을 먼저 만드는 비용이 남는다.
+  최종 합법 후보 공간과 중간 생성 작업량을 구분하며, 이 사실만으로 현재 DP timeout의 지배 원인이라고
+  단정하거나 모든60초 실패가 해소될 것이라고 약속하지 않는다.
+- **발견한 구현 경계:** (1) output privacy와 protected input payload 접근은 다른 제약,
+  (2) occurrence/value-version/CFG/function 정보가 초기에는 미완성,
+  (3) PRIVACY_EXCLUDED 존재를 privacyAlreadyClosed로 쓰는 stage coupling,
+  (4) excluded row도 실제 capability/profile이 필요한 domain/lookup 계약,
+  (5) raw Cartesian completeness와 pre/published audit가 미생성 tuple을 놓칠 수 있음.
+- **계획/원칙:** 기존 판정기를 재사용해 확정된 금지만 먼저 거절하고 UNKNOWN은 보존한다.
+  P0 회귀/계측·명시적 stage authority → P1 불법 emission의 support/realization 생성 억제 →
+  P2 certified consumer mask·prefix rejection과 원래 unmasked-domain coverage →
+  P3 exact binding semijoin·post-rebind deletion worklist 순서다.
+  DP/Exact factor-freeze 전 hard support/표현 개선은 별도 후순위이며, 기존 conditional compaction을
+  새 기능으로 재구현하지 않는다. top-K/cap 상향/정책별 공통 후보 삭제/runtime fallback은 제외한다.
+- **수정 파일:** 계획 문서 `docs/FEDPLANNER_EARLY_PRIVACY_PRUNING_PLAN_2026-09-28_KO.md`와 본 기록.
+  동일 계획을 `.omx/plans/fedplanner-early-privacy-pruning-2026-09-28.md`에 저장했다.
+- **검증:** 독립 read-only explore2개가 privacy 파이프라인·현재 pruning·domain/audit 의존성을 조사했고,
+  architect가 실제 계획 문서를 검토하여 APPROVE했다. 권고에 따라 가설적 profile의 정확한
+  consumer/source/revision authority와 동일 unmasked domain revision의 coverage 기준을 명시했다.
+  이는 소스 기반 설계 검토다. 이번 계획에 대해 새 Java/Python 테스트 또는 성능 workload를 돌리지 않았다.
+- **잔여/회귀 위험:** early emission suppression과 진짜 tuple omission은 별도 구현 게이트가 필요하다.
+  temporary bottom/loop widening, OR 대안과 모든 reaching writer, no-op/실제 relocation, same-row
+  derived source를 잃지 않아야 한다. 작은 전체 합법 계획 집합 parity·인증 없는 누락 rejection·
+  canonical survivor 순서 및 실제 생성 counter로 검출한다. 구현/성능 개선은 아직 미검증이다.
+- **진행 중 실험:** 2026-09-28 16:59:37UTC run05는 compile30 passed/16 failed/850 pending,
+  runtime0이었다. 이 수치는 기존60초 baseline이고 새 pruning 결과가 아니다. 측정은 그대로 계속한다.
