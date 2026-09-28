@@ -161,3 +161,13 @@ realization/authority proof 재검증, native-local 비용의 target-only 불변
 4. **896조건 compile gate 통과 후에만** logreg → l2svm → 나머지 runtime 및 수치 결과 비교를 실행한다.
 
 스냅샷 당시 active attempt: `01790608542853124342-445b7f84`.
+
+## 8. 60초 정책 적용 후 실제 확인 (16:04:17 UTC)
+
+- 정책 커밋 `551fe1cfee` 푸시 완료. 엔진 JAR는 그대로이고 새 run05에서 측정 중이다.
+- Python matrix 회귀 **83/83**, syntax/diff 검사 및 독립 review 통과.
+- DP/logreg/W1의 LAN·WAN-light가 설정된60초 한도에서 timeout(rc124)되었다.
+  프로세스 종료 회수까지61.692초·62.091초였고 두 건 모두 container 정리 확인/OOM0이다.
+- 당시 새 기준 **0통과 / 2 timeout 실패 / 894대기**, runtime0. 실패를 성공 시간으로 채우지 않는다.
+- 원본은 `w1357-policy-matrix-20260928-run05/timeout60-verification.json`;
+  이후 진행 건수는 같은 root의 `summary.json`/비교 CSV를 따른다.

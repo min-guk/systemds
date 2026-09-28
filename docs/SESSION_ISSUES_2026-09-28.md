@@ -909,3 +909,23 @@
   JSON deep copy 후 identity/measurement 각각의 missing/900 변조를 독립 검사한다.
   measurement-only2건 intended RED를 보존했고 최종83/83 및 syntax/diff 검사가 통과했다.
 - **최종 독립 review:** measurement-only guard와 회귀 보강까지 실제 diff 재검토 APPROVE(추가 findings0). 실행 전 최종83/83 결과는 root가 확인했다.
+
+### run05 실제60초 timeout 및 정리 검증 — 전체 compile survey 계속
+
+- **동결/재개:** `551fe1cfeed53e49c4d5559c5fe2b0b6314938bb`를 origin에 푸시하고
+  clean tree에서 새 run05를 시작했다. identity/measurement의 compile/runtime60초,
+  기존 JAR 불변,896조건, runtime 미시작을 확인했다.
+- **실제 관측(2026-09-28 16:04:17 UTC):** DP/logreg/W1의 LAN 및 WAN-light가 각60초
+  설정으로 자연 timeout(rc124) 처리됐다. 종료/SSH 회수까지의 process wall time은
+  61.691963초와62.090587초다. compile/search-space/planning 성공 시간은 채우지 않았다.
+- **안전/게이트:** 두 건 모두 exact-owned2개 container ID/name 부재와 OOM0을 검증했다.
+  CSV896행에 timeout60/failed/성공 timing 공란을 확인했다. snapshot은0통과/2실패/894대기,
+  compile gate=false/runtime0이며 다음 WAN-mid 조건으로 진행한다. 실행 중 stage lease는
+  정상적으로 유지되며 이전 run04의 lease release 증거와 혼동하지 않는다.
+- **원인/한계:** 이 timeout은 새60초 한도에서의 미완료이며 infeasibility가 아니다.
+  같은 엔진의 과거 W1/LAN206.913초·WAN-light211.483초 완료 기록이 있으므로 한도 단축과
+  일치하지만 그 과거 성공을 새 결과로 승계하지 않는다. 전체 실패 원인 분석과 성능 개선은
+  후속 과제이며 아직4개 플래너 전체 결과나 runtime 성공을 주장하지 않는다.
+- **증거:** `run05/timeout60-verification.json`에 두 result SHA, command60, raw process time,
+  cleanup/OOM/CSV/gate 검증과 고정 snapshot을 보존했다. 회귀 suite83/83 및 독립 review와 별개로
+  실제 Docker timeout 작동을 확인한 것이다. 현재 session27440의 survey는 계속 실행 중이다.
