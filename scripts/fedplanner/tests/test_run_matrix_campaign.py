@@ -119,6 +119,139 @@ class MatrixContractTest(unittest.TestCase):
 				(row["suite"], row["workload"]) for row in block})
 
 
+class FixedTimeoutContractTest(unittest.TestCase):
+	def test_cli_defaults_and_explicit_values_are_sixty_for_both_phases(self):
+		parse_args = CAMPAIGN.argparse.ArgumentParser.parse_args
+
+		def inspect_args(parser, argv):
+			args = parse_args(parser, argv)
+			self.assertEqual(60, args.compile_timeout)
+			self.assertEqual(60, args.runtime_timeout)
+			return args
+
+		for options in ([], ["--compile-timeout", "60", "--runtime-timeout", "60"]):
+			with self.subTest(options=options), \
+					mock.patch.object(CAMPAIGN.argparse.ArgumentParser, "parse_args", inspect_args), \
+					mock.patch.object(CAMPAIGN, "dependencies",
+						side_effect=RuntimeError("REACHED_VALIDATED_ARGUMENTS")):
+				with self.assertRaisesRegex(RuntimeError, "REACHED_VALIDATED_ARGUMENTS"):
+					CAMPAIGN.main(["--root", "/tmp/not-used", *options])
+
+	def test_cli_rejects_any_other_timeout_before_external_work(self):
+		for flag in ("--compile-timeout", "--runtime-timeout"):
+			for value in ("0", "59", "61", "900", "3600"):
+				with self.subTest(flag=flag, value=value), \
+						mock.patch.object(CAMPAIGN, "dependencies") as dependencies, \
+						redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+					CAMPAIGN.main(["--root", "/tmp/not-used", flag, value])
+				self.assertEqual(2, raised.exception.code)
+				dependencies.assert_not_called()
+
+	def test_policy_is_frozen_in_identity_and_measurement_and_checked_on_resume(self):
+		with tempfile.TemporaryDirectory() as directory:
+			repo = Path(directory)
+			(repo / "src/main").mkdir(parents=True)
+			(repo / "pom.xml").write_text("pom")
+			probe = repo / "Probe.java"
+			probe.write_text("probe")
+			jar = repo / "target/systemds-3.4.0-SNAPSHOT.jar"
+			jar.parent.mkdir()
+			jar.write_text("jar")
+			root, stage = repo / "campaign", repo / "stage"
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "PROBE_SOURCE", probe), \
+					mock.patch.object(CAMPAIGN, "sha", return_value="a" * 64), \
+					mock.patch.object(CAMPAIGN, "run", return_value="mocked"):
+				manifest = CAMPAIGN.initialize(root, stage)
+				for section in ("identity", "measurement"):
+					self.assertEqual({"compile": 60, "runtime": 60},
+						manifest[section]["timeout_seconds"])
+				self.assertEqual(manifest, CAMPAIGN.initialize(root, stage))
+				for section in ("identity", "measurement"):
+					for timeout in (None, {"compile": 900, "runtime": 60}):
+						with self.subTest(section=section, timeout=timeout):
+							altered = json.loads(json.dumps(manifest))
+							if timeout is None:
+								del altered[section]["timeout_seconds"]
+							else:
+								altered[section]["timeout_seconds"] = timeout
+							CAMPAIGN.dump(root / "manifest.json", altered)
+							with self.assertRaisesRegex(RuntimeError, "campaign .* changed"):
+								CAMPAIGN.initialize(root, stage)
+
+	def test_gate_rejects_missing_or_non_sixty_second_attempt_provenance(self):
+		for timeout in (None, 900, 3600):
+			passed = {row["id"]: {"status": "passed", "timeout_seconds": 60}
+				for row in CAMPAIGN.matrix()}
+			row = passed[CAMPAIGN.matrix()[0]["id"]]
+			if timeout is None:
+				del row["timeout_seconds"]
+			else:
+				row["timeout_seconds"] = timeout
+			with self.subTest(timeout=timeout), \
+					mock.patch.object(CAMPAIGN, "latest", return_value=passed):
+				self.assertFalse(CAMPAIGN.compile_gate(Path("unused")))
+
+	def test_comparison_csv_records_timeout_without_fabricating_success_timing(self):
+		cell = CAMPAIGN.matrix()[0]
+		row = {"status": "failed", "timeout_seconds": 60, "attempt": "timeout"}
+		with tempfile.TemporaryDirectory() as directory, \
+				mock.patch.object(CAMPAIGN, "latest", side_effect=({cell["id"]: row}, {})), \
+				mock.patch.object(CAMPAIGN, "schedule", return_value=[cell]), \
+				mock.patch.object(CAMPAIGN, "compile_gate", return_value=False):
+			root = Path(directory)
+			CAMPAIGN.summarize(root)
+			with (root / "compile-comparison.csv").open() as stream:
+				exported = next(CAMPAIGN.csv.DictReader(stream))
+			self.assertEqual("60", exported["timeout_seconds"])
+			self.assertEqual("failed", exported["status"])
+			self.assertEqual("", exported["compile_seconds"])
+
+	def test_actual_commands_use_sixty_and_timeout_still_runs_exact_cleanup(self):
+		for phase in ("compile", "runtime"):
+			with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+				root = Path(directory)
+				node = SimpleNamespace(host="so007")
+				spec = SimpleNamespace(coordinator=node, workers=[],
+					container_name=lambda selected: "test-coordinator")
+				base = SimpleNamespace(parse_manifest=lambda value: spec,
+					prepare_remote_directories=lambda *args: None,
+					build_plan=lambda *args: None,
+					capture_network_snapshot=lambda *args: {},
+					validate_network_quality=lambda *args: {"valid": True})
+				cleanup = mock.Mock(return_value={"resolved": True})
+				campaign = SimpleNamespace(
+					bounded_pilot_lifecycle=lambda *args, **kwargs: {
+						"mounts": [], "coordinator": {"environment": {}}, "workers": []},
+					remote_resource_preflight=lambda *args: {"passed": True},
+					_strict_experiment_cleanup=cleanup)
+				renderer = SimpleNamespace(render=lambda cell: {"source": "print(1);"})
+				# Even a direct helper call cannot revive the old long budgets.
+				args = SimpleNamespace(stage=Path("/stage"), compile_timeout=900,
+					runtime_timeout=3600)
+				with mock.patch.object(CAMPAIGN, "run", return_value=""), \
+						mock.patch.object(CAMPAIGN, "ssh", side_effect=lambda host, argv, **kw:
+							"null" if "receipt.json" in " ".join(map(str, argv)) else ""), \
+						mock.patch.object(CAMPAIGN.lifecycle, "execute_start"), \
+						mock.patch.object(CAMPAIGN, "capture_container_health", return_value={
+							"state": {"OOMKilled": False}, "oom_events": []}), \
+						mock.patch.object(CAMPAIGN.subprocess, "run",
+							return_value=SimpleNamespace(returncode=124)) as process, \
+						mock.patch("sys.stdout", new=io.StringIO()):
+					result = CAMPAIGN.execute_cell(root, {
+						"remote_root": "/remote", "identity": {"jar_sha256": "a" * 64}},
+						CAMPAIGN.matrix()[0], phase, args, campaign, base, renderer)
+				self.assertEqual(60, result["timeout_seconds"])
+				self.assertEqual(124, result["returncode"])
+				self.assertEqual("failed", result["status"])
+				self.assertNotIn("compile_seconds", result)
+				self.assertTrue(result["cleanup_resolved"])
+				cleanup.assert_called_once_with(base, spec)
+				command = CAMPAIGN.shlex.split(process.call_args.args[0][-1])
+				self.assertEqual("60", command[command.index("--kill-after=30s") + 1])
+				self.assertEqual(150, process.call_args.kwargs["timeout"])
+
+
 class TimingContractTest(unittest.TestCase):
 	def test_exclusive_phases_reconcile_and_searchspace_includes_common_preparation(self):
 		phases = candidate_phases()
@@ -252,7 +385,8 @@ class GateAndResumeContractTest(unittest.TestCase):
 		return outcome, events
 
 	def test_compile_gate_requires_every_latest_cell_to_pass(self):
-		passed = {row["id"]: {"status": "passed"} for row in CAMPAIGN.matrix()}
+		passed = {row["id"]: {"status": "passed", "timeout_seconds": 60}
+			for row in CAMPAIGN.matrix()}
 		with mock.patch.object(CAMPAIGN, "latest", return_value=passed):
 			self.assertTrue(CAMPAIGN.compile_gate(Path("unused")))
 		failed = dict(passed)

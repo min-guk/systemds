@@ -1,5 +1,13 @@
 # W1357 FedFirst/AggLocal 구현 및 전체 실험 진행상황
 
+> **후속 정책 변경 — 2026-09-28 15:55 UTC:** 사용자 요청으로 compile과 runtime의
+> coordinator 실행 timeout을 **60초로 고정**했다. 아래 15:17 스냅샷은 과거 기록이다.
+> run04는 22통과 후 정책 전환을 위해 중단했고, 중단된 1건은 planner 오류나 자연 timeout이 아니다.
+> 해당 건의 4개 컨테이너와 8개 host lease 해제를 검증했다.
+> 새 60초 기준은 별도 `run05` root에서 다시 측정하며 기존 장기 timeout 성공을 합산하지 않는다.
+> 전체 compile survey는 실패/timeout도 기록하면서 계속하고, runtime은 새 기준 896조건 통과 전까지 차단한다.
+> 60초는 workload 종료신호 시점이다. 기존 강제 종료 유예 30초와 setup/증거 수집/정리 시간은 별도다.
+
 - **스냅샷:** 2026-09-28 15:17:23 UTC / 17:17:23 Europe/Berlin
 - **저장소:** `/home/mchoi/w1357-paper-aligned-refactor`
 - **상태:** 진행 중. 보고서 작성 때문에 실행을 중단하지 않았다.
@@ -71,7 +79,7 @@ FedFirst/AggLocal의 공유 후보 조합 생성은 유지한다. “선택부�
 - `planning/selection adapter`: planner setup/model/cost-surface/optimizer/selection/other-planning 합.
 - application, conversion, final verification 등은 별도 항목이므로 마지막 두 열의 합이 전체 compile과 같지는 않다.
 - 각 조건은 fresh workers/JVM의 **1회 표본**, warm-up 0회다. 아직 통계적 유의성이나 플래너별 우열을 주장하지 않는다.
-- Docker 24GiB / JVM 16GiB / 8 cores, 일반 compile timeout 900초를 유지한다. setup만 병렬화하고 실제 측정은 한 번에 한 조건만 실행한다.
+- 이 스냅샷의 Docker 24GiB / JVM 16GiB / 8 cores, compile timeout은 900초였다. 이후 timeout만 위 정책에 따라 60초로 변경했다. setup만 병렬화하고 실제 측정은 한 번에 한 조건만 실행한다.
 - 실패/timeout은 성공이나 infeasibility 증명으로 처리하지 않는다. 진단 실행의 timing은 일반 비교 CSV에서 제외한다.
 
 ### W3/LAN 회귀 성공의 확인 범위
@@ -147,7 +155,7 @@ realization/authority proof 재검증, native-local 비용의 target-only 불변
 
 ### 계속 수행할 일
 
-1. 현재 run04의 동일 frozen engine으로 나머지 compile 조건을 계속 실행한다.
+1. 후속 사용자 정책에 따라 새 run05의 동일 frozen engine 및 60초 timeout으로 compile 조건을 측정한다. run04의 장기 timeout 결과는 별도로 보존한다.
 2. 실패하면 원본·cleanup·자원 상태를 확인하고 원인 수정/회귀/E2E를 거친다. 엔진 변경 시 새 root로 분리한다.
 3. 4개 플래너를 같은 조건끼리 비교해 전체 compile/shared search-space/planning 결과를 정리한다.
 4. **896조건 compile gate 통과 후에만** logreg → l2svm → 나머지 runtime 및 수치 결과 비교를 실행한다.

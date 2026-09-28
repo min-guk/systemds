@@ -108,7 +108,7 @@ class DiagnosticCliContractTest(unittest.TestCase):
 
 class DiagnosticGateAndReportingTest(unittest.TestCase):
     def test_compact_manifest_flag_alone_closes_gate(self):
-        passed = {row['id']: {'status': 'passed'} for row in CAMPAIGN.matrix()}
+        passed = {row['id']: {'status': 'passed', 'timeout_seconds': 60} for row in CAMPAIGN.matrix()}
         for manifest in ({'measurement': {'diagnostic_compact': True}},
                          {'identity': {'diagnostic': {'diagnostic_compact': True}}}):
             with self.subTest(manifest=manifest), tempfile.TemporaryDirectory() as directory:
@@ -118,7 +118,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
                     self.assertFalse(CAMPAIGN.compile_gate(root))
 
     def test_identity_flag_or_individual_diagnostic_row_also_closes_gate(self):
-        passed = {row['id']: {'status': 'passed'} for row in CAMPAIGN.matrix()}
+        passed = {row['id']: {'status': 'passed', 'timeout_seconds': 60} for row in CAMPAIGN.matrix()}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             CAMPAIGN.dump(root / 'manifest.json', {
@@ -131,7 +131,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
                 self.assertFalse(CAMPAIGN.compile_gate(root))
 
     def test_global_gate_rejects_diagnostic_root_even_if_every_cell_passes(self):
-        passed = {row['id']: {'status': 'passed'} for row in CAMPAIGN.matrix()}
+        passed = {row['id']: {'status': 'passed', 'timeout_seconds': 60} for row in CAMPAIGN.matrix()}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             CAMPAIGN.dump(root / 'manifest.json', {
@@ -142,7 +142,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
     def test_diagnostic_timings_are_blank_in_ordinary_comparison_csv(self):
         cell = CAMPAIGN.matrix()[0]
         row = {'status': 'passed', 'diagnostic_only': True, 'diagnostic_compact': True,
-               'attempt': 'diagnostic',
+               'attempt': 'diagnostic', 'timeout_seconds': 60,
                'compile_seconds': 12.3, 'searchspace_seconds': 4.5,
                'selection_adapter_seconds': 2.1}
         with tempfile.TemporaryDirectory() as directory, \
@@ -154,6 +154,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
             CAMPAIGN.summarize(root)
             with (root / 'compile-comparison.csv').open(newline='') as stream:
                 exported = next(csv.DictReader(stream))
+            self.assertEqual('60', exported['timeout_seconds'])
             self.assertEqual('True', exported['diagnostic_only'])
             self.assertEqual('True', exported['diagnostic_compact'])
             self.assertEqual('', exported['compile_seconds'])

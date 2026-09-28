@@ -863,3 +863,49 @@
   다른 엔진·diagnostic의 성공을 합산하지 않는다. full896 compile gate 이전 runtime은 계속 차단한다.
 - **범위 확정:** 사용자가 지연 도착한 질의 응답에서 SliceLine을 기존 기본 ADULT·COVTYPE로
   명시했다. 이미 실행 중인896조건과 일치하므로 matrix/manifest/engine을 바꾸거나 재시작하지 않는다.
+
+## 사용자 요청: compile/runtime timeout 60초 고정 — 구현·로컬 회귀 완료
+
+- **환경/증상:** 사용자가 기존 timeout이 너무 길다고 지적하고 60초 고정을 명시했다.
+  기존 harness 기본값은 compile900초/runtime3600초였고 CLI로 임의 값을 허용했다.
+  timeout이 manifest identity에 없어서 같은 root에 다른 제한의 결과가 들어갈 수 있었다.
+- **원칙/결정:** workload 제한만 변경한다. 엔진·공유 후보·비용·privacy·oracle·resource cap은
+  그대로 유지하며 시간초과를 성공이나 infeasibility로 해석하지 않는다.
+- **기존 실행의 안전한 종료:** run04 Python driver PID2390380의 정확한 argv와 timed
+  `subprocess.run` 자식 argv를 확인하고 **driver에만 SIGINT**를 보냈다.
+  JVM/GNU timeout/process group에 직접 신호를 보내지 않았다. 기존 finally가 exact-owned
+  4개 container ID/name 부재와 8개 stage lease 해제를 증명했고 driver는 rc130으로 종료했다.
+  run04는22 passed/1 interrupted-as-failed/873 pending이며 runtime0이다.
+  중단 attempt `01790610644952265544-d3b665b1`은 정책 전환이지 새 엔진 실패나 자연 timeout이 아니다.
+  기존 result를 재작성하지 않고 `run04/timeout60-transition.json`에 원인·증거를 별도 보존했다.
+- **변경 요약:** compile/runtime CLI 기본값과 허용값을 모두60으로 고정했다. helper 직접 호출도
+ 60초를 사용한다. identity/measurement에 단계별60초를 동결하고 result/CSV에 명시한다.
+  gate는60초 provenance가 없는 성공도 거절하므로 기존 장기 timeout 실행을 승계할 수 없다.
+  진단 CSV에서는 timing만 비우고 timeout 정책은 보존한다.
+- **시간 의미:** coordinator의 compile-only 또는 compile+runtime JVM 전체에60초 후 TERM을
+  보낸다. 기존 kill-after30초는 종료 유예이고 SSH/setup/로그 수집/cleanup도 별도다.
+  따라서 컨테이너 한 조건의 전체 lifecycle wall time까지60초라는 뜻은 아니다.
+  종료 유예 중 끝난 작업도 GNU timeout 실패를 성공으로 바꾸지 않는다.
+- **수정 파일:** `scripts/fedplanner/run_matrix_campaign.py`,
+  `scripts/fedplanner/tests/test_run_matrix_campaign.py`,
+  `scripts/fedplanner/tests/test_matrix_jfr_diagnostic.py`, campaign/progress 문서.
+- **검증:** 변경 전77개 baseline PASS, 새 정책의 intended RED 보존, 수정 후83/83 matrix
+  회귀 PASS. CLI 양쪽 기본/명시60, 다른 값 거절, frozen identity/resume mismatch,
+  gate의 missing/900/3600 provenance 거절, 실제 mock command 양쪽60·rc124 실패·cleanup,
+  CSV 실패 timing 공란과 진단 정책 보존을 확인했다. bash syntax/py_compile/diff-check PASS.
+  엔진 JAR SHA `0b4cfe5dbc41c502f70fa65774f77c6b53eb6d6064e82f78a928e392c3f7152b`는 불변이다.
+- **재개/잔여:** 새 `w1357-policy-matrix-20260928-run05`에서 `run_LAN_docker.sh --campaign`
+  `--phase all --keep-going`으로60초 compile survey를 재개한다. 실패도 보존하여 다른 조건의
+  측정을 계속하지만 full896 compile 성공 이전 runtime은 차단한다. 독립 review 및 실제60초
+  natural timeout/cleanup 확인은 이어서 기록한다.
+- **잠재 회귀 위험:** 기존 성공 중60초보다 긴 조건은 새 기준에서 timeout이 될 수 있다.
+  timeout을 수치 시간60초의 성공 표본으로 넣지 않고 성공 timing 공란/실패로 감지한다.
+  유예/정리 시간을 compile 시간으로 오인하지 않도록 command/receipt/process 기록을 구분한다.
+- **증거 경로:** `/grid/3/cofee-lm-sweep-mchoi-20260914/matrix-timeout60-evidence/`
+  (`PLAN.md`, `baseline.log`, `red.log`, `green.log`) 및 run04 transition/cleanup/lease-release.
+- **독립 review 후 보강:** reviewer가 identity만 검사하면 measurement-only timeout 변경을
+  resume에서 놓치는 provenance 불일치를 발견했다. 실행/게이트의60초 강제에는 영향이 없었지만,
+  측정 metadata도 동결한다는 계약에 맞게 resume 시 명시적으로 일치 검사를 추가했다.
+  JSON deep copy 후 identity/measurement 각각의 missing/900 변조를 독립 검사한다.
+  measurement-only2건 intended RED를 보존했고 최종83/83 및 syntax/diff 검사가 통과했다.
+- **최종 독립 review:** measurement-only guard와 회귀 보강까지 실제 diff 재검토 APPROVE(추가 findings0). 실행 전 최종83/83 결과는 root가 확인했다.

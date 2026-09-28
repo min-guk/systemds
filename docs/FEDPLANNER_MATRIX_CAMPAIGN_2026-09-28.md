@@ -35,6 +35,17 @@ datasets are not part of the existing canonical 14-workload input set.
 
 ## Measurement contract
 
+- **2026-09-28 user override:** every compile-only and compile+runtime coordinator
+  invocation now has a **fixed 60-second workload timeout**, including diagnostics.
+  Both timeout flags accept only `60`. The policy is frozen in identity/measurement
+  metadata and each attempt/CSV; old 900/3600-second results cannot satisfy the
+  new runtime gate. At 60 seconds the existing TERM cancellation begins; the
+  existing 30-second forced-kill grace, transport, setup, evidence collection and
+  exact cleanup are separate, not extra successful workload time. Thus the whole
+  Docker cell lifecycle can take longer than 60 seconds.
+  Preserve run04 as historical evidence and use a new run05 root. A compile survey
+  with `--keep-going` records failures/timeouts and continues the remaining compile
+  cells; it never bypasses the all-896-pass gate or ignores unresolved cleanup.
 - Initial coverage pass: one fresh JVM/cell, no discarded warmup or best-run
   selection. This is a coverage/timing survey, not a statistically powered
   speedup claim. Record order and each attempt; failures have no successful

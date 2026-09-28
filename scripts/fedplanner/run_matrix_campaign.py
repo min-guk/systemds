@@ -37,6 +37,8 @@ IMAGE = 'cofee-experiment:content-0861f4ff197c868f42abf6478b66505f650325c267caa8
 PLANNERS = ('DP-local', 'FedFirst', 'AggLocal', 'DP-global')
 PROFILES = ('lan', 'wan_light', 'wan_mid', 'wan_heavy')
 WORKERS = (1, 3, 5, 7)
+# Fixed workload budget for every planner and phase; setup/cleanup are separate.
+WORKLOAD_TIMEOUT_SECONDS = 60
 WORKLOADS = (('ml', 'logreg'), ('ml', 'l2svm'), ('ml', 'pca'), ('ml', 'als'),
              ('ml', 'kmeans'), ('ml', 'lm'), ('ml', 'steplm'), ('ml', 'glm'),
              ('ml', 'gnmf'), ('ml', 'gmm'), ('p1', 'P1_FULL'), ('p2', 'P2_PREP'),
@@ -149,11 +151,14 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
                 'lifecycle_sha256': sha(Path(lifecycle.__file__)),
                 'external_sha256': {str(p): sha(p) for p in external},
                 'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json'),
+                'timeout_seconds': dict.fromkeys(('compile', 'runtime'), WORKLOAD_TIMEOUT_SECONDS),
                 'diagnostic': diagnostic_contract(diagnostic_jfr, diagnostic_compact)}
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
         if manifest['identity'] != identity:
             raise RuntimeError('campaign identity changed: use a new root, never mix revisions')
+        if manifest.get('measurement', {}).get('timeout_seconds') != identity['timeout_seconds']:
+            raise RuntimeError('campaign timeout measurement changed: use a new root, never mix policies')
         for name, expected in manifest['overlay_sha256'].items():
             if sha(root / 'overlay' / name) != expected:
                 raise RuntimeError(f'frozen overlay changed: {name}')
@@ -177,6 +182,7 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
                     'fresh_workers': True, 'detailed_searchspace_metrics': False,
                     'compile_is_full_production_pipeline': True, 'runtime_audit': True,
                     'parallel_setup_only': True, 'concurrent_timed_cells': 1,
+                    'timeout_seconds': dict(identity['timeout_seconds']),
                     'timeout_semantics': 'unresolved failure, not infeasibility',
                     'runtime_order': [list(x) for x in WORKLOADS],
                     **diagnostic_contract(diagnostic_jfr, diagnostic_compact)}}
@@ -236,6 +242,7 @@ def compile_gate(root):
     rows = latest(root, 'compile')
     return len(rows) == len(matrix()) and all(
         rows.get(c['id'], {}).get('status') == 'passed'
+        and rows[c['id']].get('timeout_seconds') == WORKLOAD_TIMEOUT_SECONDS
         and not rows[c['id']].get('diagnostic_only') for c in matrix())
 
 
@@ -378,8 +385,8 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
               'attempt': token, 'status': 'failed', 'errors': [], 'remote': str(remote),
               'diagnostic_only': bool(getattr(args, 'diagnostic_jfr', False)),
               'diagnostic_compact': bool(getattr(args, 'diagnostic_compact', False)),
-              'jar_sha256': manifest['identity']['jar_sha256'], 'timeout_seconds':
-              args.compile_timeout if phase == 'compile' else args.runtime_timeout}
+              'jar_sha256': manifest['identity']['jar_sha256'],
+              'timeout_seconds': WORKLOAD_TIMEOUT_SECONDS}
     nodes = [spec.coordinator, *spec.workers]
     start_attempted = False
     before = None
@@ -500,7 +507,7 @@ def summarize(root):
                           'failed': sum(r['status'] != 'passed' for r in rows.values()),
                           'pending': len(matrix()) - len(rows)}
         columns = ['id', 'planner', 'suite', 'workload', 'workers', 'profile', 'status',
-                   'diagnostic_only', 'diagnostic_compact',
+                   'diagnostic_only', 'diagnostic_compact', 'timeout_seconds',
                    'compile_seconds', 'common_preparation_seconds', 'analysis_seconds',
                    'searchspace_seconds', 'selection_adapter_seconds',
                    'planning_after_analysis_seconds', 'full_initial_planning_seconds',
@@ -513,7 +520,7 @@ def summarize(root):
                 values = {k: cell.get(k, row.get(k, '')) for k in columns}
                 if row.get('diagnostic_only'):
                     for key in columns:
-                        if key.endswith('_seconds'):
+                        if key.endswith('_seconds') and key != 'timeout_seconds':
                             values[key] = ''
                 writer.writerow(values)
     summary['compile_gate'] = compile_gate(root)
@@ -526,8 +533,9 @@ def main(argv=None):
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path, default=STAGE)
     parser.add_argument('--phase', choices=('prepare', 'compile', 'runtime', 'all', 'summary'), default='compile')
-    parser.add_argument('--compile-timeout', type=int, default=900)
-    parser.add_argument('--runtime-timeout', type=int, default=3600)
+    for phase in ('compile', 'runtime'):
+        parser.add_argument(f'--{phase}-timeout', type=int, default=WORKLOAD_TIMEOUT_SECONDS,
+                            choices=(WORKLOAD_TIMEOUT_SECONDS,), help='fixed workload timeout: 60 seconds')
     parser.add_argument('--reference-manifest', type=Path)
     parser.add_argument('--max-cells', type=int)
     parser.add_argument('--retry-failed', action='store_true')
