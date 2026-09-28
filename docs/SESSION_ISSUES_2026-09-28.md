@@ -710,3 +710,42 @@
   SharedRegionalPreparation9/9 PASS, package exit0. `solver-work-diagnostic-evidence/SOURCE_FREEZE.json`에
   새 source/JAR/runner/test hash를 기록했다. diag03는 새 immutable root에서300초 관측하며
   normal matrix timing 또는 compile gate에는 포함하지 않는다.
+
+## diag03 실제 VE 작업량 확인 — 조건부 exact reduction 비교 진행 중
+
+- **환경/결과:** commit `8468991128ceba10a1e87304f95722d4e856a139`, JAR
+  `0ab951c1b4820e1cd13ea6d4e802538aeb41f9cabe90befde7c935e84094c037`의
+  DP/logreg/W3/LAN diagnostic-only 실행이300초 관측 후 자연 timeout됐다
+  (rc124, process302.019078초). runtime은 실행하지 않았다.
+- **증거:** `/grid/3/cofee-lm-sweep-mchoi-20260914/w1357-policy-matrix-20260928-diag03/`,
+  attempt `01790605025518566636-3be1a882`. JFR9,556,651 bytes의 SHA는
+  `96d0172a870a7ee171d6b13ee44f22645e9e36230271770c1469950ede2d51ea`다.
+  네 컨테이너 oom/oom_kill/event0, coordinator peak14,175,797,248 bytes로24GiB 이내다.
+  exact ID/name cleanup 및8개 stage lease 해제는 모두 성공했다.
+- **정량 원인:** 첫 hard-conflict repair의7개 physical decisions가70개 encoded 변수/240개
+  factor로 확장된다. 선택된 MIN_SEPARATOR_CELLS order는658,322,977,640개의 대입 평가를
+  요구하며, 한 단계가657,511,403,008개(약99.88%)다. 결과 table의 최대 크기는202,998,272 cells다.
+  나머지 기존 세 order의 최대 table은10,273,615,672 cells로, 실제 production per-factor
+  한도2,147,483,647을 넘는다. 따라서 기존 portfolio 순서를 단순 교체하는 것은 허용 가능한 대안이 아니다.
+  root489 decisions/887 variables/4,125 factors, 해당 block 입력49,793,890 cells 등의 원본
+  trace-line SHA와 파싱 값은 `symbolic-work-summary.json`에 보존했다.
+- **대응 계획:** 같은 JAR·입력·W3/LAN·24/16GiB·300초 조건에서 이미 존재하는
+  `sysds.fedplanner.regional.compact=true`를 별도 diagnostic-only root로 비교한다.
+  이 경로는 **조건을 고정한 뒤 exact reduction을 다시 수행하고 singleton을 대입**한다.
+  root reduction만으로 conditioned domain의 추가 축소를 대신할 수는 없다.
+  CLI를 diagnostic JFR/compile/single-cell에만 허용하고 실제 coordinator JVM 옵션,
+  manifest identity, measurement에 variant를 묶는다. 일반 timing CSV/runtime gate에는 넣지 않는다.
+- **의사결정 근거:** 독립 architecture 검토는 위 bounded ablation만 승인했다.
+  cheapest-repair를 first-feasible로 바꾸거나 후보를 임의로 제거하거나 cap을 늘리지 않는다.
+  global Exact 및 production compact 기본값은 이 단계에서 바꾸지 않는다.
+- **잔여/회귀 위험:** compact 경로는 equal-cost tie의 선택을 바꿀 수 있어 objective 동치와
+  assignment 동치를 혼동하면 안 된다. 성능 개선이나 전체 compile 성공은 아직 증명되지 않았다.
+  비교 후 조건부 support/quotient, boundary 변화, singleton constants, auxiliary 복원,
+  coupled tie 회귀와 signal-free900초 실행으로 production 채택 여부를 판단한다.
+
+- **진단 harness 검증:** 기존 helper에 compact argument가 없어 실패하는 RED를 보존한 후
+  `--diagnostic-compact`를 구현했다. coordinator-only option/CLI 제한/identity·measurement·result
+  binding을 검증했고 독립 diff review는 findings0/APPROVE다. compact flag만 남은 manifest도
+  gate를 닫는 회귀와 CSV label을 추가한 최종 Python matrix77/77, bash syntax 및 diff-check가 통과했다.
+  증거는 `diagnostic-compact-harness-evidence`에 보존한다. 새 production JAR를 만들지 않았고
+  위 baseline JAR SHA를 그대로 사용한다.

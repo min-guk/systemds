@@ -58,6 +58,7 @@ JFR_OPTIONS = (
 )
 DIAGNOSTIC_TRACE_OPTIONS = ('-Dsysds.fedplanner.trace=true',
                             '-Dsysds.fedplanner.trace.details=false')
+DIAGNOSTIC_COMPACT_OPTIONS = ('-Dsysds.fedplanner.regional.compact=true',)
 CP = '/candidate/probe/classes:/candidate/SystemDS.jar:/opt/systemds/target/lib/*'
 
 
@@ -118,13 +119,16 @@ def ssh(host, argv, **kwargs):
                 shlex.join(map(str, argv))], **kwargs)
 
 
-def diagnostic_contract(enabled):
+def diagnostic_contract(enabled, compact=False):
     return {'diagnostic_jfr': bool(enabled),
             'diagnostic_jfr_options': list(JFR_OPTIONS) if enabled else [],
-            'diagnostic_planner_trace_options': list(DIAGNOSTIC_TRACE_OPTIONS) if enabled else []}
+            'diagnostic_planner_trace_options': list(DIAGNOSTIC_TRACE_OPTIONS) if enabled else [],
+            'diagnostic_compact': bool(enabled and compact),
+            'diagnostic_compact_options': list(DIAGNOSTIC_COMPACT_OPTIONS)
+                if enabled and compact else []}
 
 
-def initialize(root, stage, diagnostic_jfr=False):
+def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
     """Freeze build/probe once. Resumes verify rather than replace artifacts."""
     manifest_path = root / 'manifest.json'
     jar = REPO / 'target/systemds-3.4.0-SNAPSHOT.jar'
@@ -145,7 +149,7 @@ def initialize(root, stage, diagnostic_jfr=False):
                 'lifecycle_sha256': sha(Path(lifecycle.__file__)),
                 'external_sha256': {str(p): sha(p) for p in external},
                 'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json'),
-                'diagnostic': diagnostic_contract(diagnostic_jfr)}
+                'diagnostic': diagnostic_contract(diagnostic_jfr, diagnostic_compact)}
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
         if manifest['identity'] != identity:
@@ -175,7 +179,7 @@ def initialize(root, stage, diagnostic_jfr=False):
                     'parallel_setup_only': True, 'concurrent_timed_cells': 1,
                     'timeout_semantics': 'unresolved failure, not infeasibility',
                     'runtime_order': [list(x) for x in WORKLOADS],
-                    **diagnostic_contract(diagnostic_jfr)}}
+                    **diagnostic_contract(diagnostic_jfr, diagnostic_compact)}}
     dump(manifest_path, manifest)
     return manifest
 
@@ -225,7 +229,9 @@ def compile_gate(root):
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text())
         if (manifest.get('measurement', {}).get('diagnostic_jfr') is True
-                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_jfr') is True):
+                or manifest.get('measurement', {}).get('diagnostic_compact') is True
+                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_jfr') is True
+                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_compact') is True):
             return False
     rows = latest(root, 'compile')
     return len(rows) == len(matrix()) and all(
@@ -233,11 +239,15 @@ def compile_gate(root):
         and not rows[c['id']].get('diagnostic_only') for c in matrix())
 
 
-def coordinator_java(cell, phase, diagnostic_jfr=False):
+def coordinator_java(cell, phase, diagnostic_jfr=False, diagnostic_compact=False):
+    if diagnostic_compact and not diagnostic_jfr:
+        raise ValueError('diagnostic compact requires diagnostic JFR')
     java = list(JAVA)
     if diagnostic_jfr:
         java.extend(JFR_OPTIONS)
         java.extend(DIAGNOSTIC_TRACE_OPTIONS)
+        if diagnostic_compact:
+            java.extend(DIAGNOSTIC_COMPACT_OPTIONS)
     if cell['suite'] == 'p2':
         java.append('-Dsysds.privacy.allowPublicRecodeMetadata=true')
     java += ['-cp', CP, PROBE, '--mode', phase, '--script', 'tmp/cell.dml',
@@ -367,6 +377,7 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
     result = {'schema': 'w1357-matrix-attempt/v1', 'cell': cell, 'phase': phase,
               'attempt': token, 'status': 'failed', 'errors': [], 'remote': str(remote),
               'diagnostic_only': bool(getattr(args, 'diagnostic_jfr', False)),
+              'diagnostic_compact': bool(getattr(args, 'diagnostic_compact', False)),
               'jar_sha256': manifest['identity']['jar_sha256'], 'timeout_seconds':
               args.compile_timeout if phase == 'compile' else args.runtime_timeout}
     nodes = [spec.coordinator, *spec.workers]
@@ -394,7 +405,8 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
         lifecycle.execute_start(base.build_plan(spec, 'start'), start_command)
         before = base.capture_network_snapshot(spec)
         dump(local / 'netem-before.json', before)
-        java = coordinator_java(cell, phase, getattr(args, 'diagnostic_jfr', False))
+        java = coordinator_java(cell, phase, getattr(args, 'diagnostic_jfr', False),
+                                getattr(args, 'diagnostic_compact', False))
         command = ['ssh', '-o', 'BatchMode=yes', '--', spec.coordinator.host,
             shlex.join(['docker', 'exec', spec.container_name(spec.coordinator), 'timeout',
                 '--signal=TERM', '--kill-after=30s', str(result['timeout_seconds']), *java])]
@@ -488,7 +500,7 @@ def summarize(root):
                           'failed': sum(r['status'] != 'passed' for r in rows.values()),
                           'pending': len(matrix()) - len(rows)}
         columns = ['id', 'planner', 'suite', 'workload', 'workers', 'profile', 'status',
-                   'diagnostic_only',
+                   'diagnostic_only', 'diagnostic_compact',
                    'compile_seconds', 'common_preparation_seconds', 'analysis_seconds',
                    'searchspace_seconds', 'selection_adapter_seconds',
                    'planning_after_analysis_seconds', 'full_initial_planning_seconds',
@@ -522,11 +534,15 @@ def main(argv=None):
     parser.add_argument('--keep-going', action='store_true')
     parser.add_argument('--diagnostic-jfr', action='store_true',
                         help='single compile-only coordinator JFR/planner-trace diagnostic; never benchmark data')
+    parser.add_argument('--diagnostic-compact', action='store_true',
+                        help='diagnostic-only regional compact ablation; never a production default')
     for key, options in (('planner', PLANNERS), ('profile', PROFILES), ('workload', tuple(w for _, w in WORKLOADS))):
         parser.add_argument('--' + key, choices=options)
     parser.add_argument('--workers', type=int, choices=WORKERS)
     args = parser.parse_args(argv)
     args.root = args.root.resolve()
+    if args.diagnostic_compact and not args.diagnostic_jfr:
+        parser.error('--diagnostic-compact requires --diagnostic-jfr')
     if args.diagnostic_jfr and (args.phase != 'compile' or args.max_cells != 1):
         parser.error('--diagnostic-jfr requires --phase compile and --max-cells 1')
     if args.phase == 'summary':
@@ -537,7 +553,7 @@ def main(argv=None):
     if args.phase in ('runtime', 'all') and any(getattr(args, k) is not None for k in ('planner', 'profile', 'workload', 'workers')):
         parser.error('runtime/all must preserve the complete schedule; filters are compile-only')
     campaign, base, renderer_module = dependencies()
-    manifest = initialize(args.root, args.stage, args.diagnostic_jfr)
+    manifest = initialize(args.root, args.stage, args.diagnostic_jfr, args.diagnostic_compact)
     if args.phase == 'prepare':
         print(json.dumps({'prepared': True, 'cells': len(matrix()), 'root': str(args.root)}))
         return 0

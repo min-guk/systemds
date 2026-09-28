@@ -34,6 +34,26 @@ class DiagnosticCliContractTest(unittest.TestCase):
                 CAMPAIGN.main(['--root', '/tmp/not-used', '--diagnostic-jfr', *options])
             dependencies.assert_not_called()
 
+    def test_compact_ablation_requires_the_single_cell_jfr_diagnostic(self):
+        invalid = (
+            ('--phase', 'compile', '--max-cells', '1'),
+            ('--diagnostic-jfr', '--phase', 'runtime', '--max-cells', '1'),
+            ('--diagnostic-jfr', '--phase', 'compile'),
+            ('--diagnostic-jfr', '--phase', 'compile', '--max-cells', '2'),
+        )
+        for options in invalid:
+            with self.subTest(options=options), \
+                    mock.patch.object(CAMPAIGN, 'dependencies') as dependencies, \
+                    redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                CAMPAIGN.main(['--root', '/tmp/not-used', '--diagnostic-compact', *options])
+            dependencies.assert_not_called()
+
+        with mock.patch.object(CAMPAIGN, 'dependencies',
+                side_effect=RuntimeError('VALID_COMPACT_REACHED_DEPENDENCIES')):
+            with self.assertRaisesRegex(RuntimeError, 'VALID_COMPACT_REACHED_DEPENDENCIES'):
+                CAMPAIGN.main(['--root', '/tmp/not-used', '--diagnostic-compact',
+                    '--diagnostic-jfr', '--phase', 'compile', '--max-cells', '1'])
+
     def test_flags_apply_only_to_coordinator_probe_java(self):
         cell = CAMPAIGN.matrix()[0]
         ordinary = CAMPAIGN.coordinator_java(cell, 'compile', False)
@@ -64,8 +84,39 @@ class DiagnosticCliContractTest(unittest.TestCase):
                                                 '-Dsysds.fedplanner.regional.fastBlock',
                                                 '-Dsysds.fedplanner.regional.compact')))
 
+    def test_compact_option_is_exact_and_coordinator_diagnostic_only(self):
+        cell = CAMPAIGN.matrix()[0]
+        compact = CAMPAIGN.coordinator_java(cell, 'compile', True, True)
+        baseline_diagnostic = CAMPAIGN.coordinator_java(cell, 'compile', True, False)
+        ordinary = CAMPAIGN.coordinator_java(cell, 'compile', False, False)
+        option = '-Dsysds.fedplanner.regional.compact=true'
+        self.assertEqual(1, compact.count(option))
+        self.assertNotIn(option, baseline_diagnostic)
+        self.assertNotIn(option, ordinary)
+        self.assertNotIn(option, CAMPAIGN.JAVA)
+        self.assertEqual(baseline_diagnostic, [item for item in compact if item != option])
+        with self.assertRaisesRegex(ValueError, 'requires diagnostic JFR'):
+            CAMPAIGN.coordinator_java(cell, 'compile', False, True)
+        self.assertEqual({
+            'diagnostic_jfr': True,
+            'diagnostic_jfr_options': list(CAMPAIGN.JFR_OPTIONS),
+            'diagnostic_planner_trace_options': list(CAMPAIGN.DIAGNOSTIC_TRACE_OPTIONS),
+            'diagnostic_compact': True,
+            'diagnostic_compact_options': [option],
+        }, CAMPAIGN.diagnostic_contract(True, True))
+
 
 class DiagnosticGateAndReportingTest(unittest.TestCase):
+    def test_compact_manifest_flag_alone_closes_gate(self):
+        passed = {row['id']: {'status': 'passed'} for row in CAMPAIGN.matrix()}
+        for manifest in ({'measurement': {'diagnostic_compact': True}},
+                         {'identity': {'diagnostic': {'diagnostic_compact': True}}}):
+            with self.subTest(manifest=manifest), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                CAMPAIGN.dump(root / 'manifest.json', manifest)
+                with mock.patch.object(CAMPAIGN, 'latest', return_value=passed):
+                    self.assertFalse(CAMPAIGN.compile_gate(root))
+
     def test_identity_flag_or_individual_diagnostic_row_also_closes_gate(self):
         passed = {row['id']: {'status': 'passed'} for row in CAMPAIGN.matrix()}
         with tempfile.TemporaryDirectory() as directory:
@@ -90,7 +141,8 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
 
     def test_diagnostic_timings_are_blank_in_ordinary_comparison_csv(self):
         cell = CAMPAIGN.matrix()[0]
-        row = {'status': 'passed', 'diagnostic_only': True, 'attempt': 'diagnostic',
+        row = {'status': 'passed', 'diagnostic_only': True, 'diagnostic_compact': True,
+               'attempt': 'diagnostic',
                'compile_seconds': 12.3, 'searchspace_seconds': 4.5,
                'selection_adapter_seconds': 2.1}
         with tempfile.TemporaryDirectory() as directory, \
@@ -103,6 +155,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
             with (root / 'compile-comparison.csv').open(newline='') as stream:
                 exported = next(csv.DictReader(stream))
             self.assertEqual('True', exported['diagnostic_only'])
+            self.assertEqual('True', exported['diagnostic_compact'])
             self.assertEqual('', exported['compile_seconds'])
             self.assertEqual('', exported['searchspace_seconds'])
             self.assertEqual('', exported['selection_adapter_seconds'])
