@@ -158,9 +158,12 @@ public final class PlacementCandidateRuleResolver {
 			fact = analysis.candidateRuleFacts().requireExact(request.parentOccurrence(), request.orderedInputs());
 		}
 		catch(CandidateRuleLookupException ex) {
-			throw failure(ex.failure() == PlacementAnalysis.CandidateLookupFailure.MISSING_FACT
-				? CapturedResolutionFailure.MISSING_FACT : CapturedResolutionFailure.STALE_FACT,
-				request, ex.getMessage());
+			CapturedResolutionFailure reason = switch(ex.failure()) {
+				case PRIVACY_EXCLUDED -> CapturedResolutionFailure.PRIVACY_EXCLUDED;
+				case MISSING_FACT -> CapturedResolutionFailure.MISSING_FACT;
+				default -> CapturedResolutionFailure.STALE_FACT;
+			};
+			throw failure(reason, request, ex.getMessage());
 		}
 		if(fact.status() == CandidateEvaluationStatus.RULE_ERROR || fact.capability() == null)
 			throw failure(CapturedResolutionFailure.RULE_EVALUATION_FAILED, request, fact.failureCode());

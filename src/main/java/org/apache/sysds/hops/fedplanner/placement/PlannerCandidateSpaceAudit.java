@@ -132,6 +132,27 @@ public final class PlannerCandidateSpaceAudit {
 			rows.add(row);
 		}
 		append(rows);
+		List<Map<String,Object>> pruningRows = new ArrayList<>();
+		for(CandidatePrivacyInputPruning evidence : analysis.candidateRuleDomain().privacyPrunedInputs()) {
+			Map<String,Object> row = new LinkedHashMap<>();
+			row.put("schema", "fedplanner-candidate-pruning-v1");
+			row.put("analysisFingerprint", analysis.analysisFingerprint());
+			row.put("auditContext", auditContext);
+			row.put("auditInvocation", currentAuditInvocation());
+			row.put("occurrence", evidence.consumer().occurrence().normalizedSignature());
+			row.put("consumerPrivacyAuthority", evidence.consumer().normalizedSignature());
+			row.put("originalInputDomains", evidence.originalDomains().stream()
+				.map(PlannerCandidateSpaceAudit::inputs).toList());
+			Map<String,String> sources = new LinkedHashMap<>();
+			evidence.protectedInputs().forEach((position, source) ->
+				sources.put(Integer.toString(position), source.normalizedSignature()));
+			row.put("protectedPayloadAuthorities", sources);
+			row.put("predicate", "ABSENT_LOCAL_AT_PROTECTED_PAYLOAD");
+			row.put("generatedTuples", evidence.generatedTupleCount().toString());
+			row.put("rejectedTuples", evidence.rejectedTupleCount().toString());
+			pruningRows.add(row);
+		}
+		append(pruningRows, "candidate-pruning-");
 	}
 
 	/**
@@ -447,10 +468,14 @@ public final class PlannerCandidateSpaceAudit {
 	}
 
 	private static void append(List<Map<String,Object>> rows) {
+		append(rows, "candidate-space-");
+	}
+
+	private static void append(List<Map<String,Object>> rows, String prefix) {
 		if(rows.isEmpty())
 			return;
 		Path directory = Path.of(System.getProperty(DIRECTORY_PROPERTY, DEFAULT_DIRECTORY));
-		Path output = directory.resolve("candidate-space-" + ProcessHandle.current().pid() + ".jsonl");
+		Path output = directory.resolve(prefix + ProcessHandle.current().pid() + ".jsonl");
 		try {
 			synchronized(WRITE_LOCK) {
 				Files.createDirectories(directory);

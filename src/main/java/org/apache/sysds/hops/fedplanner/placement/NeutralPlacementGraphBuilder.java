@@ -89,9 +89,22 @@ public final class NeutralPlacementGraphBuilder {
 			PrivacyEvidenceMode.NONE);
 	}
 
+	NeutralPlacementGraphBuilder(FixedPointObserver observer, SearchSpaceMetrics metrics,
+		boolean incrementalDirectClosure, boolean earlyPrivacyPruning) {
+		this(null, null, observer, metrics, incrementalDirectClosure, PrivacyEvidenceMode.NONE,
+			earlyPrivacyPruning);
+	}
+
 	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
 		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
 		boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode) {
+		this(fgraph, fcallSizes, fixedPointObserver, complexityMetrics, incrementalDirectClosure,
+			privacyEvidenceMode, true);
+	}
+
+	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
+		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
+		boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode, boolean earlyPrivacyPruning) {
 		if((fgraph == null) != (fcallSizes == null))
 			throw new IllegalArgumentException("Function graph and call-size summary must be supplied together");
 		suppliedFunctionCallGraph = fgraph;
@@ -102,7 +115,7 @@ public final class NeutralPlacementGraphBuilder {
 			new OracleFacade(RulesCore.RulesModule.createDefaultRegistry()), complexityMetrics);
 		relationClosure = new PlacementRelationClosure(candidateGenerator, fixedPointObserver,
 			complexityMetrics, incrementalDirectClosure,
-			Objects.requireNonNull(privacyEvidenceMode, "privacyEvidenceMode"));
+			Objects.requireNonNull(privacyEvidenceMode, "privacyEvidenceMode"), earlyPrivacyPruning);
 	}
 
 	public List<String> selectedProjection(DMLProgram program) {

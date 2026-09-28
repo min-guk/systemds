@@ -359,8 +359,10 @@ public final class ExactPhysicalCostModel {
 
 		FingerprintWriter normalized = new FingerprintWriter();
 		normalized.append(analysis.analysisFingerprint());
-		// The optimization receipt must bind the complete authority-bearing physical
-		// universe, not merely factor scopes. A changed candidate capability/emission or
+		// The in-process optimization receipt binds published candidate facts and the
+		// physical factor universe, not merely factor scopes. Compact omission proofs
+		// are validated by the owning analysis; this is not a standalone legality proof.
+		// A changed candidate capability/emission or
 		// a changed numeric factor table must therefore produce a different certificate
 		// even when a reconstructed analysis reuses the old structural fingerprint.
 		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())

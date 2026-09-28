@@ -660,9 +660,16 @@ public final class PlacementAnalysis {
 		private final List<CandidateRuleKey> orderedRuleKeys;
 		private final List<CandidateConsumerProfileKey> orderedConsumerKeys;
 		private final Map<CompiledHopKey,Boolean> parentsByIdentity;
+		private final List<CandidatePrivacyInputPruning> privacyPrunedInputs;
+		private final Map<CompiledHopKey,CandidatePrivacyInputPruning> pruningByParent;
 
 		public CandidateRuleDomain(String analysisFingerprint, List<CandidateRuleKey> ruleKeys,
 			List<CandidateConsumerProfileKey> consumerKeys) {
+			this(analysisFingerprint, ruleKeys, consumerKeys, List.of());
+		}
+
+		CandidateRuleDomain(String analysisFingerprint, List<CandidateRuleKey> ruleKeys,
+			List<CandidateConsumerProfileKey> consumerKeys, List<CandidatePrivacyInputPruning> pruning) {
 			if(analysisFingerprint == null || analysisFingerprint.isBlank())
 				throw new IllegalArgumentException("Candidate domain fingerprint must not be blank");
 			this.analysisFingerprint = analysisFingerprint;
@@ -671,6 +678,15 @@ public final class PlacementAnalysis {
 			Map<CompiledHopKey,Boolean> parents = new IdentityHashMap<>();
 			for(CandidateRuleKey key : orderedRuleKeys)
 				parents.put(key.parentOccurrence(), Boolean.TRUE);
+			privacyPrunedInputs = List.copyOf(pruning);
+			Map<CompiledHopKey,CandidatePrivacyInputPruning> byParent = new IdentityHashMap<>();
+			for(CandidatePrivacyInputPruning evidence : privacyPrunedInputs) {
+				CompiledHopKey owner = evidence.consumer().occurrence();
+				if(byParent.put(owner, evidence) != null)
+					throw new IllegalArgumentException("Multiple privacy domain revisions for one consumer");
+				parents.put(owner, Boolean.TRUE);
+			}
+			pruningByParent = Collections.unmodifiableMap(byParent);
 			for(CandidateConsumerProfileKey key : orderedConsumerKeys)
 				if(!parents.containsKey(key.consumerOccurrence()))
 					throw new IllegalArgumentException("Consumer profile owner is outside the candidate domain");
@@ -681,18 +697,22 @@ public final class PlacementAnalysis {
 		public List<CandidateRuleKey> orderedRuleKeys() { return orderedRuleKeys; }
 		public List<CandidateConsumerProfileKey> orderedConsumerKeys() { return orderedConsumerKeys; }
 		public boolean containsExactParent(CompiledHopKey key) { return parentsByIdentity.containsKey(key); }
+		public List<CandidatePrivacyInputPruning> privacyPrunedInputs() { return privacyPrunedInputs; }
+		boolean privacyRejects(CompiledHopKey owner, List<CandidateInputState> inputs) {
+			CandidatePrivacyInputPruning evidence = pruningByParent.get(owner);
+			return evidence != null && evidence.rejects(inputs);
+		}
 
 		private static List<CandidateRuleKey> copyDistinctRuleKeys(List<CandidateRuleKey> source) {
 			Objects.requireNonNull(source, "ruleKeys");
 			List<CandidateRuleKey> copied = new java.util.ArrayList<>(source.size());
-			Map<CompiledHopKey,List<List<CandidateInputState>>> byParent = new IdentityHashMap<>();
+			Map<CompiledHopKey,Set<List<CandidateInputState>>> byParent = new IdentityHashMap<>();
 			for(CandidateRuleKey key : source) {
 				Objects.requireNonNull(key, "candidate rule domain key");
-				List<List<CandidateInputState>> inputs = byParent.computeIfAbsent(key.parentOccurrence(),
-					ignored -> new java.util.ArrayList<>());
-				if(inputs.contains(key.orderedInputs()))
+				Set<List<CandidateInputState>> inputs = byParent.computeIfAbsent(key.parentOccurrence(),
+					ignored -> new java.util.HashSet<>());
+				if(!inputs.add(key.orderedInputs()))
 					throw new IllegalArgumentException("Duplicate candidate rule domain key");
-				inputs.add(key.orderedInputs());
 				copied.add(key);
 			}
 			return List.copyOf(copied);
@@ -1411,7 +1431,7 @@ public final class PlacementAnalysis {
 
 
 	public enum CandidateLookupFailure {
-		FOREIGN_PARENT, NON_CANDIDATE_PARENT, MISSING_FACT, REORDERED_INPUTS, PRESENT_NULL
+		FOREIGN_PARENT, NON_CANDIDATE_PARENT, MISSING_FACT, REORDERED_INPUTS, PRESENT_NULL, PRIVACY_EXCLUDED
 	}
 
 	public static final class CandidateRuleLookupException extends IllegalArgumentException {
@@ -1479,6 +1499,9 @@ public final class PlacementAnalysis {
 						"Present-null cannot be a candidate input state");
 			CandidateRuleFact fact = factsByKey.get(new CandidateRuleKey(parentOccurrence, orderedInputs));
 			if(fact == null) {
+				if(domain.privacyRejects(parentOccurrence, orderedInputs))
+					throw new CandidateRuleLookupException(CandidateLookupFailure.PRIVACY_EXCLUDED,
+						"Certified protected-payload local tuple: " + parentOccurrence.normalizedSignature());
 				boolean reordered = orderedFacts.stream().filter(candidate ->
 					candidate.key().parentOccurrence() == parentOccurrence
 						&& candidate.key().orderedInputs().size() == orderedInputs.size())
@@ -2600,6 +2623,25 @@ public final class PlacementAnalysis {
 		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
 		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
 		Runnable programMutationGuard) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
+			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
+			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard, List.of());
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
+		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
 		this.candidatePrivacyClosureEvidence = Optional.ofNullable(candidatePrivacyClosureEvidence);
@@ -2647,7 +2689,7 @@ public final class PlacementAnalysis {
 		this.analysisFingerprint = canonicalizeSuppliedAnalysisFingerprint(analysisFingerprint);
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
 		this.candidateRuleDomain = new CandidateRuleDomain(this.analysisFingerprint, candidateRuleDomainKeys,
-			candidateConsumerDomainKeys);
+			candidateConsumerDomainKeys, privacyPrunedInputs);
 		Map<CompiledHopKey,Boolean> analysisKeysByIdentity = this.occurrenceKeysByIdentity;
 		for(CandidateRuleKey key : this.candidateRuleDomain.orderedRuleKeys())
 			if(!analysisKeysByIdentity.containsKey(key.parentOccurrence()))
@@ -2693,6 +2735,8 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Heuristic policy producer/value pair does not match the analysis graph");
 		}
 		validateHeuristicPaths(analysisKeysByIdentity);
+		for(CandidatePrivacyInputPruning evidence : privacyPrunedInputs)
+			evidence.validate(this);
 		this.executionFrequencyFacts = OccurrenceExecutionFrequencyFacts.from(this);
 	}
 

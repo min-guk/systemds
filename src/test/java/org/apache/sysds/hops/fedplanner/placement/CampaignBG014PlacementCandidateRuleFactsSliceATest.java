@@ -305,6 +305,22 @@ public class CampaignBG014PlacementCandidateRuleFactsSliceATest {
 	}
 
 	private static void assertExactCombinationUniverse(String fixture, PlacementAnalysis analysis) {
+		// The generator's unmasked revision is distinct from a later predecessor
+		// projection. Independently partition that original product, rather than
+		// accepting the already-pruned domain as its own completeness baseline.
+		for(CandidatePrivacyInputPruning evidence : analysis.candidateRuleDomain().privacyPrunedInputs()) {
+			evidence.validate(analysis);
+			List<List<CandidateInputState>> original = new ArrayList<>();
+			enumerateDomains(evidence.originalDomains().stream().map(domain ->
+				domain.stream().map(CandidateInputState::fType).toList()).toList(), new ArrayList<>(), original);
+			List<List<CandidateInputState>> generated = original.stream().filter(row -> !evidence.rejects(row)).toList();
+			Assert.assertEquals(fixture + " original unmasked privacy partition",
+				java.math.BigInteger.valueOf(original.size()),
+				evidence.generatedTupleCount().add(evidence.rejectedTupleCount()));
+			Assert.assertEquals(fixture + " canonical surviving product", generated,
+				analysis.candidateRuleFacts().orderedFactsForParent(evidence.consumer().occurrence()).stream()
+					.map(fact -> fact.key().orderedInputs()).toList());
+		}
 		for(HopOccurrenceProjection parent : analysis.occurrences()) {
 			if(parent.key().canonicalSourceOrigin().startsWith("function-boundary:"))
 				continue;

@@ -201,9 +201,12 @@ public class SharedPrivacyPlacementAnalysisContractTest {
 		Assert.assertTrue("privacy pruning must remain explicit in the shared graph",
 			analysis.graph().nodes().stream().flatMap(node -> node.exclusions().stream())
 				.anyMatch(exclusion -> exclusion.reasonCode() == ReasonCode.PRIVACY));
-		Assert.assertTrue("privacy-denied candidate rows must remain auditable",
+		Assert.assertTrue("privacy-denied rows or compact omitted-tuple certificates must remain auditable",
 			analysis.candidateRuleFacts().orderedFacts().stream()
-				.anyMatch(fact -> fact.status() == CandidateEvaluationStatus.PRIVACY_EXCLUDED));
+				.anyMatch(fact -> fact.status() == CandidateEvaluationStatus.PRIVACY_EXCLUDED)
+				|| analysis.candidateRuleDomain().privacyPrunedInputs().stream()
+					.anyMatch(evidence -> evidence.rejectedTupleCount().signum() > 0));
+		analysis.candidateRuleDomain().privacyPrunedInputs().forEach(evidence -> evidence.validate(analysis));
 		analysis.candidateRuleFacts().orderedFacts().stream()
 			.filter(fact -> analysis.requirePrivacy(fact.key().parentOccurrence()) == Privacy.PRIVATE)
 			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)

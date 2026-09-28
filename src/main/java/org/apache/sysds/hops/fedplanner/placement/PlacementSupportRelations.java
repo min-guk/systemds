@@ -6,6 +6,7 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -180,6 +181,312 @@ final class PlacementSupportRelations {
 				result.add(retainUnchangedPrivacyFact(fact, emissions));
 		}
 		return List.copyOf(result);
+	}
+
+	/**
+	 * Computes the same greatest deletion fixed point as repeated invocations of
+	 * {@link #pruneUnsupportedRealizations}, but indexes exact support incidences
+	 * once for this immutable source/action epoch.
+	 */
+	static List<CandidateRuleFact> pruneUnsupportedRealizationsToFixedPoint(
+		List<CandidateRuleFact> facts,
+		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
+		List<LogicalTransientInputFact> completeLogicalInputs,
+		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) {
+		return pruneUnsupportedRealizationsToFixedPointWithWork(
+			facts, actions, completeLogicalInputs, requiredWriters).facts();
+	}
+
+	static WorklistResult pruneUnsupportedRealizationsToFixedPointWithWork(
+		List<CandidateRuleFact> facts,
+		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
+		List<LogicalTransientInputFact> completeLogicalInputs,
+		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) {
+		SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.SOURCE_PRUNING);
+		try {
+			return pruneUnsupportedRealizationsToFixedPointMeasured(
+				facts, actions, completeLogicalInputs, requiredWriters);
+		}
+		finally {
+			if(metrics != null)
+				metrics.finishPhase(SearchSpaceMetrics.Phase.SOURCE_PRUNING, started);
+		}
+	}
+
+	private static WorklistResult pruneUnsupportedRealizationsToFixedPointMeasured(
+		List<CandidateRuleFact> facts,
+		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
+		List<LogicalTransientInputFact> completeLogicalInputs,
+		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) {
+		List<FixedPointFact> indexedFacts = new ArrayList<>(facts.size());
+		Map<CandidateRealizationReference,FixedPointReference> references = new LinkedHashMap<>();
+		List<FixedPointRealization> realizations = new ArrayList<>();
+		long indexedClauses = 0;
+		for(CandidateRuleFact fact : facts) {
+			List<FixedPointEmission> emissions = new ArrayList<>();
+			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+					List<FixedPointRealization> emissionRealizations = new ArrayList<>();
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						CandidateRealizationReference reference =
+							CandidateRealizationReference.of(fact.key(), realization);
+						FixedPointReference referenceState = references.computeIfAbsent(
+							reference, FixedPointReference::new);
+						FixedPointRealization slot = new FixedPointRealization(
+							fact, emission, realization, referenceState,
+							executableSourceRealization(fact.key(), realization));
+						if(slot.live)
+							referenceState.liveSlots++;
+						realizations.add(slot);
+						emissionRealizations.add(slot);
+						indexedClauses += realization.supportClauses().size();
+					}
+					emissions.add(new FixedPointEmission(emission, emissionRealizations));
+				}
+			indexedFacts.add(new FixedPointFact(fact, emissions));
+		}
+
+		Map<CompiledHopKey,List<LogicalTransientInputFact>> logicalInputsByReader = new IdentityHashMap<>();
+		if(completeLogicalInputs != null)
+			for(LogicalTransientInputFact logicalInput : completeLogicalInputs)
+				logicalInputsByReader.computeIfAbsent(logicalInput.targetRead(), ignored -> new ArrayList<>())
+					.add(logicalInput);
+
+		long reverseIncidences = 0;
+		long logicalRequirements = 0;
+		for(FixedPointRealization slot : realizations) {
+			if(!slot.live)
+				continue;
+			for(CandidateRealizationSupportClause clause : slot.realization.supportClauses()) {
+				boolean actionSupported = clause.inputBindings().stream().allMatch(binding ->
+					actions == null || binding.kind() != CandidateInputBindingKind.RELOCATION
+						|| supportsRelocationBinding(actions.get(binding.relocationAction()),
+							slot.fact.key(), slot.emission.emissionState(), binding));
+				List<FixedPointReference> sources = new ArrayList<>();
+				if(actionSupported)
+					for(CandidateRealizationReference source : clause.requiredInputSupport()) {
+						FixedPointReference sourceState = references.get(source);
+						if(sourceState == null || sourceState.liveSlots == 0) {
+							actionSupported = false;
+							break;
+						}
+						sources.add(sourceState);
+					}
+				FixedPointClause clauseState = new FixedPointClause(slot, clause, actionSupported);
+				slot.clauses.add(clauseState);
+				if(actionSupported) {
+					slot.liveClauses++;
+					for(FixedPointReference source : sources) {
+						source.dependentClauses.add(clauseState);
+						reverseIncidences++;
+					}
+				}
+			}
+
+			List<LogicalTransientInputFact> logicalInputs =
+				logicalInputsByReader.get(slot.fact.key().parentOccurrence());
+			List<CompiledHopKey> writers = requiredWriters == null ? null
+				: requiredWriters.get(slot.fact.key().parentOccurrence());
+			if(writers != null)
+				for(CompiledHopKey writer : writers) {
+					LinkedHashSet<CandidateRealizationReference> sources = new LinkedHashSet<>();
+					if(logicalInputs != null)
+						for(LogicalTransientInputFact input : logicalInputs)
+							if(input.sourceWrite() == writer)
+								for(TransientPlacementCompatibility edge :
+									input.compatibilityForReader(slot.reference.reference))
+									sources.add(edge.sourceRealization());
+					reverseIncidences += addLogicalRequirement(slot, sources, references);
+					logicalRequirements++;
+				}
+			if(logicalInputs != null)
+				for(LogicalTransientInputFact input : logicalInputs) {
+					LinkedHashSet<CandidateRealizationReference> sources = new LinkedHashSet<>();
+					for(TransientPlacementCompatibility edge :
+						input.compatibilityForReader(slot.reference.reference))
+						sources.add(edge.sourceRealization());
+					reverseIncidences += addLogicalRequirement(slot, sources, references);
+					logicalRequirements++;
+				}
+		}
+
+		ArrayDeque<FixedPointRealization> deletions = new ArrayDeque<>();
+		for(FixedPointRealization slot : realizations)
+			if(slot.live && (slot.liveClauses == 0 || slot.unsupportedLogicalRequirements > 0))
+				scheduleDeletion(slot, deletions);
+		long queueVisits = 0;
+		long invalidatedClauses = 0;
+		while(!deletions.isEmpty()) {
+			FixedPointRealization removed = deletions.removeFirst();
+			queueVisits++;
+			if(!removed.live)
+				continue;
+			removed.live = false;
+			FixedPointReference reference = removed.reference;
+			if(--reference.liveSlots != 0)
+				continue;
+			for(FixedPointClause dependent : reference.dependentClauses)
+				if(dependent.live) {
+					dependent.live = false;
+					invalidatedClauses++;
+					if(--dependent.owner.liveClauses == 0)
+						scheduleDeletion(dependent.owner, deletions);
+				}
+			for(FixedPointLogicalRequirement requirement : reference.logicalRequirements)
+				if(requirement.liveSources > 0 && --requirement.liveSources == 0) {
+					requirement.owner.unsupportedLogicalRequirements++;
+					scheduleDeletion(requirement.owner, deletions);
+				}
+		}
+
+		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
+		for(FixedPointFact indexedFact : indexedFacts) {
+			CandidateRuleFact fact = indexedFact.fact;
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
+				result.add(fact);
+				continue;
+			}
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(FixedPointEmission indexedEmission : indexedFact.emissions) {
+				List<CandidateEmissionRealization> survivors = new ArrayList<>();
+				for(FixedPointRealization slot : indexedEmission.realizations) {
+					if(!slot.live)
+						continue;
+					List<CandidateRealizationSupportClause> clauses = slot.clauses.stream()
+						.filter(candidate -> candidate.live).map(candidate -> candidate.clause).toList();
+					survivors.add(clauses.size() == slot.realization.supportClauses().size()
+						? slot.realization : CandidateEmissionRealization
+							.fromAlreadyCanonicalSupportClauses(slot.realization.key(), clauses));
+				}
+				if(!survivors.isEmpty()) {
+					boolean unchanged = survivors.size() == indexedEmission.emission.realizations().size();
+					for(int index = 0; unchanged && index < survivors.size(); index++)
+						unchanged = survivors.get(index) == indexedEmission.emission.realizations().get(index);
+					emissions.add(unchanged ? indexedEmission.emission : new CandidateEmissionFact(
+						indexedEmission.emission.emissionState(), indexedEmission.emission.executionFType(),
+						indexedEmission.emission.derivedFoutAction(), survivors));
+				}
+			}
+			if(emissions.isEmpty())
+				result.add(new CandidateRuleFact(fact.key(), CandidateEvaluationStatus.PROFILE_ERROR,
+					fact.capability(), fact.shapeProof(),
+					new CandidateProfileFact(List.of(), "NO_EXECUTABLE_REALIZATION"),
+					List.of(), "NO_EXECUTABLE_REALIZATION"));
+			else
+				result.add(retainUnchangedPrivacyFact(fact, emissions));
+		}
+
+		long deletedRealizations = realizations.stream().filter(slot -> !slot.live).count();
+		return new WorklistResult(List.copyOf(result), new WorklistWork(
+			realizations.size(), indexedClauses, reverseIncidences, logicalRequirements,
+			queueVisits, deletedRealizations, invalidatedClauses));
+	}
+
+	private static long addLogicalRequirement(FixedPointRealization owner,
+		Set<CandidateRealizationReference> sourceReferences,
+		Map<CandidateRealizationReference,FixedPointReference> references) {
+		FixedPointLogicalRequirement requirement = new FixedPointLogicalRequirement(owner);
+		long incidences = 0;
+		for(CandidateRealizationReference sourceReference : sourceReferences) {
+			FixedPointReference source = references.get(sourceReference);
+			if(source == null || source.liveSlots == 0)
+				continue;
+			requirement.liveSources++;
+			source.logicalRequirements.add(requirement);
+			incidences++;
+		}
+		if(requirement.liveSources == 0)
+			owner.unsupportedLogicalRequirements++;
+		return incidences;
+	}
+
+	private static void scheduleDeletion(FixedPointRealization realization,
+		ArrayDeque<FixedPointRealization> deletions) {
+		if(realization.live && !realization.deletionScheduled) {
+			realization.deletionScheduled = true;
+			deletions.addLast(realization);
+		}
+	}
+
+	record WorklistWork(long indexedRealizations, long indexedClauses,
+		long reverseIncidences, long logicalRequirements, long queueVisits,
+		long deletedRealizations, long invalidatedClauses) { }
+
+	record WorklistResult(List<CandidateRuleFact> facts, WorklistWork work) {
+		WorklistResult {
+			facts = List.copyOf(facts);
+		}
+	}
+
+	private static final class FixedPointFact {
+		private final CandidateRuleFact fact;
+		private final List<FixedPointEmission> emissions;
+		private FixedPointFact(CandidateRuleFact fact, List<FixedPointEmission> emissions) {
+			this.fact = fact;
+			this.emissions = emissions;
+		}
+	}
+
+	private static final class FixedPointEmission {
+		private final CandidateEmissionFact emission;
+		private final List<FixedPointRealization> realizations;
+		private FixedPointEmission(CandidateEmissionFact emission,
+			List<FixedPointRealization> realizations) {
+			this.emission = emission;
+			this.realizations = realizations;
+		}
+	}
+
+	private static final class FixedPointRealization {
+		private final CandidateRuleFact fact;
+		private final CandidateEmissionFact emission;
+		private final CandidateEmissionRealization realization;
+		private final FixedPointReference reference;
+		private final List<FixedPointClause> clauses = new ArrayList<>();
+		private boolean live;
+		private boolean deletionScheduled;
+		private int liveClauses;
+		private int unsupportedLogicalRequirements;
+		private FixedPointRealization(CandidateRuleFact fact, CandidateEmissionFact emission,
+			CandidateEmissionRealization realization, FixedPointReference reference, boolean live) {
+			this.fact = fact;
+			this.emission = emission;
+			this.realization = realization;
+			this.reference = reference;
+			this.live = live;
+		}
+	}
+
+	private static final class FixedPointReference {
+		private final CandidateRealizationReference reference;
+		private final List<FixedPointClause> dependentClauses = new ArrayList<>();
+		private final List<FixedPointLogicalRequirement> logicalRequirements = new ArrayList<>();
+		private int liveSlots;
+		private FixedPointReference(CandidateRealizationReference reference) {
+			this.reference = reference;
+		}
+	}
+
+	private static final class FixedPointClause {
+		private final FixedPointRealization owner;
+		private final CandidateRealizationSupportClause clause;
+		private boolean live;
+		private FixedPointClause(FixedPointRealization owner,
+			CandidateRealizationSupportClause clause, boolean live) {
+			this.owner = owner;
+			this.clause = clause;
+			this.live = live;
+		}
+	}
+
+	private static final class FixedPointLogicalRequirement {
+		private final FixedPointRealization owner;
+		private int liveSources;
+		private FixedPointLogicalRequirement(FixedPointRealization owner) {
+			this.owner = owner;
+		}
 	}
 
 	/** Every reaching writer must retain at least one live exact source for this reader alternative. */

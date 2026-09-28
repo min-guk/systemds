@@ -32,6 +32,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -74,11 +75,46 @@ final class PlacementCandidateGenerator {
 		this.complexityMetrics = complexityMetrics;
 	}
 
+	/** UNKNOWN is represented by no gate, never by a provisional PUBLIC seed. */
+	record GenerationPrivacy(Privacy outputPrivacy, Set<Integer> protectedPayloadPositions) {
+		GenerationPrivacy {
+			Objects.requireNonNull(outputPrivacy, "outputPrivacy");
+			protectedPayloadPositions = Set.copyOf(protectedPayloadPositions);
+		}
+	}
+
+	private boolean allowsEmission(GenerationPrivacy privacy, Hop hop, OpCaps caps,
+		List<FType> inputs, PlacementState state, boolean derived, FType executionType) {
+		if(privacy == null)
+			return true;
+		boolean allowed = privacy.protectedPayloadPositions().isEmpty()
+			|| state.execType() == ExecType.FED && privacy.protectedPayloadPositions().stream()
+				.allMatch(position -> position < inputs.size() && inputs.get(position) != null);
+		if(allowed) {
+			FType logical = state.fType() != null ? state.fType() : executionType;
+			allowed = ExecPlacementPolicy.allowsCandidateEmission(
+				ExecPlacementPolicy.decide(hop, privacy.outputPrivacy(), logical, caps),
+				state.execType(), state.output(), derived);
+		}
+		if(!allowed && complexityMetrics != null)
+			complexityMetrics.recordPrivacyEmissionAllocationAvoided();
+		return allowed;
+	}
+
 	Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
 		List<DurableAnchorKey> inputAnchors, List<CompiledHopKey> inputAnchorOwners,
 		NodeShapeFact shape, AbstractShapeFact abstractShape, SinglePartitionFacts singlePartitions,
 		List<NodeShapeFact> inputShapeFacts, List<List<FType>> inputDomains,
 		List<CandidateRuleKey> ruleKeys, List<CandidateRuleFact> ruleFacts) {
+		return buildNode(hop, key, value, anchors, inputAnchors, inputAnchorOwners, shape,
+			abstractShape, singlePartitions, inputShapeFacts, inputDomains, ruleKeys, ruleFacts, null);
+	}
+
+	Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
+		List<DurableAnchorKey> inputAnchors, List<CompiledHopKey> inputAnchorOwners,
+		NodeShapeFact shape, AbstractShapeFact abstractShape, SinglePartitionFacts singlePartitions,
+		List<NodeShapeFact> inputShapeFacts, List<List<FType>> inputDomains,
+		List<CandidateRuleKey> ruleKeys, List<CandidateRuleFact> ruleFacts, GenerationPrivacy privacy) {
 		int candidateFactStart = ruleFacts.size();
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
@@ -111,12 +147,12 @@ final class PlacementCandidateGenerator {
 			CandidateRuleKey candidateKey = new CandidateRuleKey(key, candidateInputStates(inputs));
 			ruleKeys.add(candidateKey);
 			Set<CandidateEmissionFact> exactEmissionFacts = new LinkedHashSet<>();
-			if(legal.contains(cp))
-				exactEmissionFacts.add(candidateEmissionFact(exactLegalState(legal, cp), false, null));
 			OpCaps caps;
 			DecisionEvidence evidence;
 			boolean shapeDependent;
 			try {
+				if(complexityMetrics != null)
+					complexityMetrics.recordCandidateOracleCall();
 				evidence = preparedOracle.decideWithEvidence(inputs,
 					exactShapeHint(hop, shape, inputShapeFacts,
 						singlePartitions.fullInputHint(hop, inputAnchorOwners, inputs)));
@@ -128,6 +164,8 @@ final class PlacementCandidateGenerator {
 			}
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
 				throw oracleReportedRuleError(key.normalizedSignature(), hop, inputs, caps);
+			if(legal.contains(cp) && allowsEmission(privacy, hop, caps, inputs, cp, false, null))
+				exactEmissionFacts.add(candidateEmissionFact(exactLegalState(legal, cp), false, null));
 			ExactRightIndexRuntimeFact exactRightIndex = exactRightIndexRuntimeFact(
 				hop, inputs, inputAnchors, caps);
 			FType exactVectorLocalType = exactAggregateBinaryVectorLocalType(hop, abstractShape, inputs);
@@ -154,14 +192,14 @@ final class PlacementCandidateGenerator {
 				addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, state, detail);
 			else if(caps.exec() == ExecType.FED) {
 				PlacementState exactNative = addLegalCandidate(legal, excluded, state);
-				if(exactNative != null)
+				if(exactNative != null && allowsEmission(privacy, hop, caps, inputs, exactNative, false, outType))
 					exactEmissionFacts.add(candidateEmissionFact(exactNative, false, outType));
 				if(caps.placement() == FederatedOutput.FOUT
 					&& ExecPlacementPolicy.supportsForcedLocalFederatedOutput(hop)
 					&& !hasExactVectorLocalEmission) {
 					PlacementState exactLout = addLegalCandidate(legal, excluded,
 						new PlacementState(ExecType.FED, FederatedOutput.LOUT, outType, exactShapeDependent));
-					if(exactLout != null)
+					if(exactLout != null && allowsEmission(privacy, hop, caps, inputs, exactLout, false, outType))
 						exactEmissionFacts.add(candidateEmissionFact(exactLout, false, outType));
 				}
 				MaterializationAnchor materialization = exactCandidateMaterializationAnchor(
@@ -173,7 +211,9 @@ final class PlacementCandidateGenerator {
 					PlacementState cpFout = addLegalCandidate(legal, excluded,
 						new PlacementState(ExecType.CP, FederatedOutput.FOUT, materializationFType,
 							exactShapeDependent));
-					if(cpFout != null) {
+					if(cpFout != null && allowsEmission(privacy, hop, caps, inputs, cpFout, false, null)
+						&& exactEmissionFacts.stream().anyMatch(emission ->
+							emission.emissionState().placementState().equals(cp))) {
 						DerivedFoutMaterializationActionKey action = derivedFoutAction(key, value, candidateKey,
 							exactLegalState(legal, cp), cpFout, materializationAnchor,
 							materialization.owner(), materialization.ownerFType(), materializationFType);
@@ -183,7 +223,9 @@ final class PlacementCandidateGenerator {
 						PlacementState derivedFout = addLegalCandidate(legal, excluded,
 							new PlacementState(ExecType.FED, FederatedOutput.FOUT, materializationFType,
 								exactShapeDependent));
-						if(derivedFout != null) {
+						if(derivedFout != null && allowsEmission(privacy, hop, caps, inputs, derivedFout, true, outType)
+							&& exactEmissionFacts.stream().anyMatch(emission ->
+								emission.emissionState().placementState().equals(exactNative))) {
 							DerivedFoutMaterializationActionKey action = derivedFoutAction(key, value, candidateKey,
 								exactNative, derivedFout, materializationAnchor,
 								materialization.owner(), materialization.ownerFType(), materializationFType);
@@ -195,12 +237,12 @@ final class PlacementCandidateGenerator {
 					if(isAggregateBinaryVectorInput(hop, abstractShape, inputType)) {
 						PlacementState supplemental = addLegalCandidate(legal, excluded,
 							new PlacementState(ExecType.FED, FederatedOutput.LOUT, inputType, true));
-						if(supplemental != null)
+						if(supplemental != null && allowsEmission(privacy, hop, caps, inputs, supplemental, false, inputType))
 							exactEmissionFacts.add(candidateEmissionFact(supplemental, false, inputType));
 					}
 			}
 			ruleFacts.add(candidateRuleFact(hop, candidateKey, inputShapeFacts, inputs, caps,
-				evidence, exactRightIndex, exactEmissionFacts));
+				evidence, exactRightIndex, exactEmissionFacts, privacy));
 		}, complexityMetrics);
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
@@ -312,7 +354,8 @@ final class PlacementCandidateGenerator {
 
 	private CandidateRuleFact candidateRuleFact(Hop hop, CandidateRuleKey key,
 		List<NodeShapeFact> inputShapeFacts, List<FType> inputs, OpCaps caps, DecisionEvidence evidence,
-		ExactRightIndexRuntimeFact exactRightIndex, Set<CandidateEmissionFact> exactEmissionFacts) {
+		ExactRightIndexRuntimeFact exactRightIndex, Set<CandidateEmissionFact> exactEmissionFacts,
+		GenerationPrivacy privacy) {
 		List<CandidateRuleNote> notes = caps.notes().stream()
 			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
 		FType nativeFoutFType = exactRightIndex == null
@@ -355,6 +398,9 @@ final class PlacementCandidateGenerator {
 		}
 		CandidateEvaluationStatus status = profile.available() ? CandidateEvaluationStatus.AVAILABLE
 			: CandidateEvaluationStatus.PROFILE_ERROR;
+		if(status == CandidateEvaluationStatus.AVAILABLE && exactEmissionFacts.isEmpty() && privacy != null)
+			return new CandidateRuleFact(key, CandidateEvaluationStatus.PRIVACY_EXCLUDED,
+				capability, shapeProof, profile, List.of(), "PRIVACY:" + privacy.outputPrivacy().name());
 		return new CandidateRuleFact(key, status, capability, shapeProof, profile,
 			status == CandidateEvaluationStatus.AVAILABLE ? List.copyOf(exactEmissionFacts) : List.of(),
 			profile.evaluationFailure());

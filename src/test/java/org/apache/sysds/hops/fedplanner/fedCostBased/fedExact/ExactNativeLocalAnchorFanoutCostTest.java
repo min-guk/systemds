@@ -38,7 +38,7 @@ import org.junit.Test;
 /** Unrelated graph endpoints must not multiply the selected native FULL upload. */
 public class ExactNativeLocalAnchorFanoutCostTest {
 	private static final String PROTECTED_NATIVE_LOCAL_FINGERPRINT =
-		"84eb7160f4b4605efb174f37d7705cf4d9fe7828db41b9b4a1b9b5b903b89b0e";
+		"373c055df8b56905d0962010cee1b249bd42be37ed2840ff56af5cfcb004f2dd";
 	private static final String PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256 =
 		"6eabb96f81f1c831a67ee82f76775d1f8ea8e64dd7b7cd0776a09f7cb674c4d3";
 	private static final String PROTECTED_NATIVE_LOCAL_BITS_SHA256 =
@@ -55,9 +55,20 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 					authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
 			.count();
 		Assert.assertTrue(nativeLocalAlternatives > 0);
-		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_FINGERPRINT, surface.contributionFingerprint());
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256, structureDigest(model, surface));
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_BITS_SHA256, contributionBitsDigest(model, surface));
+		// The authority receipt hashes even excluded rows. Certified omission of
+		// the aggregate's illegal ABSENT_LOCAL row changes that receipt, not the
+		// historical factor structure or raw cost bits asserted above.
+		var omittedAggregate = analysis.candidateRuleDomain().privacyPrunedInputs().stream()
+			.filter(proof -> analysis.hop(proof.consumer().occurrence()).orElseThrow()
+				instanceof org.apache.sysds.hops.AggUnaryOp).findFirst().orElseThrow();
+		var localTuple = List.of(PlacementAnalysis.CandidateInputState.absentLocal());
+		Assert.assertTrue(omittedAggregate.rejects(localTuple));
+		var lookup = Assert.assertThrows(PlacementAnalysis.CandidateRuleLookupException.class,
+			() -> analysis.candidateRuleFacts().requireExact(omittedAggregate.consumer().occurrence(), localTuple));
+		Assert.assertEquals(PlacementAnalysis.CandidateLookupFailure.PRIVACY_EXCLUDED, lookup.failure());
+		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_FINGERPRINT, surface.contributionFingerprint());
 	}
 
 	@Test

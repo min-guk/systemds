@@ -1,5 +1,7 @@
 # 공통 후보 생성의 조기 privacy pruning 및 추가 축소 계획
 
+> 이 문서는 설계 시점 기록이다. 후속 구현·검증 상태: [P0–P3 구현 보고서](FEDPLANNER_EARLY_PRIVACY_PRUNING_IMPLEMENTATION_2026-09-28_KO.md).
+
 - 작성: 2026-09-28. 분석 기준 HEAD `8769ef4dfaae5cc521188e0df07a9185cac1c3a2`.
 - 상태: **설계 계획. 엔진·harness 구현을 변경하거나 새 성능 개선을 검증한 상태가 아니다.**
 - 적용: DP-local / FedFirst / AggLocal / DP-global의 **동일한 공통 후보 생성기**.

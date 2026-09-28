@@ -151,12 +151,14 @@ final class PlacementRelationClosure {
 	private final PlacementCandidateGenerator candidateGenerator;
 
 	PlacementRelationClosure(PlacementCandidateGenerator candidateGenerator, FixedPointObserver fixedPointObserver,
-		SearchSpaceMetrics complexityMetrics, boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode) {
+		SearchSpaceMetrics complexityMetrics, boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode,
+		boolean earlyPrivacyPruning) {
 		this.candidateGenerator = candidateGenerator;
 		this.fixedPointObserver = fixedPointObserver;
 		this.complexityMetrics = complexityMetrics;
 		this.incrementalDirectClosure = incrementalDirectClosure;
 		this.privacyEvidenceMode = privacyEvidenceMode;
+		this.earlyPrivacyPruning = earlyPrivacyPruning;
 		candidatePrivacyEvidence = privacyEvidenceMode == PrivacyEvidenceMode.CAPTURE ? new ArrayList<>() : null;
 		privacyEmissionEvidenceCache = privacyEvidenceMode == PrivacyEvidenceMode.CAPTURE ? new IdentityHashMap<>() : null;
 	}
@@ -177,6 +179,13 @@ final class PlacementRelationClosure {
 	void clearBuildState() {
 		generationBasesByOccurrence.clear();
 		staticPrivacyProjection = null;
+		privacyAuthorityEstablished = false;
+		generationPrivacyAuthority = null;
+		generationPrivacyProjection = null;
+		privacySourceMetadata.clear();
+		seedPrivacy.clear();
+		seedProtectedInputs.clear();
+		privacyInputPruning.clear();
 		physicalGenerationContext = null;
 		allDefinitionContinuity = null;
 		relocationProducts = Map.of();
@@ -226,6 +235,15 @@ final class PlacementRelationClosure {
 	// Base ownership is separate from current derived proofs and scoped to one build.
 	private final Map<CompiledHopKey,CandidateBase> generationBasesByOccurrence = new IdentityHashMap<>();
 	private StaticPrivacyProjection staticPrivacyProjection;
+	private final boolean earlyPrivacyPruning;
+	private boolean privacyAuthorityEstablished;
+	private PlacementPrivacyFacts generationPrivacyAuthority;
+	private StaticPrivacyProjection generationPrivacyProjection;
+	private final Map<DataOp,FederatedSourceMetadata> privacySourceMetadata = new IdentityHashMap<>();
+	private final Map<CompiledHopKey,PlacementPrivacyFacts.PrivacyFact> seedPrivacy = new IdentityHashMap<>();
+	private final Map<CompiledHopKey,Map<Integer,PlacementPrivacyFacts.PrivacyFact>> seedProtectedInputs =
+		new IdentityHashMap<>();
+	private final Map<CompiledHopKey,CandidatePrivacyInputPruning> privacyInputPruning = new IdentityHashMap<>();
 	private PhysicalGenerationContext physicalGenerationContext;
 	private NativePlacementContinuity allDefinitionContinuity;
 	private Map<RelocationProductKey,List<CandidateEmissionRealization>> relocationProducts = Map.of();
@@ -470,13 +488,17 @@ final class PlacementRelationClosure {
 			candidateGenerator.captureConsumerProfileFacts(hop, key, inputShapeFacts,
 				candidateConsumerDomainKeys, candidateConsumerProfileFacts);
 			List<DurableAnchorKey> exactAnchors = occurrenceAnchor == null ? List.of() : List.of(occurrenceAnchor);
+			captureSeedPrivacy(hop, key, value, blockKeys);
+			List<List<FType>> seedDomains = inputDomains(hop, nodesByHop, occurrence, occurrences,
+				cfg.reachingFunctionInputs().get(ordinal), cfg);
+			if(seedPrivacy.containsKey(key))
+				seedDomains = maskInputDomains(seedPrivacy.get(key), seedDomains,
+					seedProtectedInputs.getOrDefault(key, Map.of()));
 			Node node = candidateGenerator.buildNode(hop, key, value, exactAnchors,
 				Collections.unmodifiableList(new ArrayList<>(inputAnchors)),
 				Collections.unmodifiableList(new ArrayList<>(inputAnchorOwners)), shapeFact, abstractShapeFact, singlePartitions,
 				inputShapeFacts,
-				inputDomains(hop, nodesByHop, occurrence, occurrences,
-					cfg.reachingFunctionInputs().get(ordinal), cfg),
-				ruleKeys, ruleFacts);
+				seedDomains, ruleKeys, ruleFacts, generationPrivacy(key));
 			nodes.add(node);
 			nodesByHop.put(hop, node);
 		}
@@ -540,6 +562,32 @@ final class PlacementRelationClosure {
 		addStableOriginConstraints(nodes, constraints);
 		compiledInputEdges = deriveCompiledInputEdges(occurrences, nodes,
 			ordinalsByBlock, shapeFactsByHop);
+		if(earlyPrivacyPruning) {
+			generationPrivacyAuthority = inferPrivacyFacts(nodes, constraints, origins, compiledInputEdges, null);
+			generationPrivacyProjection = staticPrivacyProjection(nodes, compiledInputEdges,
+				origins, generationPrivacyAuthority.asMap());
+			// Every seed gate can omit an emission even when it omits no tuple.
+			// Certify all used seed facts, not only those with a published mask.
+			seedPrivacy.replaceAll((owner, seed) -> canonicalSeedPrivacy(seed));
+			seedProtectedInputs.replaceAll((owner, sources) -> {
+				Map<Integer,PlacementPrivacyFacts.PrivacyFact> canonical = new LinkedHashMap<>();
+				sources.forEach((position, source) -> canonical.put(position, canonicalSeedPrivacy(source)));
+				return Collections.unmodifiableMap(canonical);
+			});
+			for(var entry : new ArrayList<>(privacyInputPruning.entrySet())) {
+				CandidatePrivacyInputPruning prior = entry.getValue();
+				var consumer = canonicalSeedPrivacy(prior.consumer());
+				Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources = new LinkedHashMap<>();
+				prior.protectedInputs().forEach((position, source) ->
+					sources.put(position, canonicalSeedPrivacy(source)));
+				privacyInputPruning.put(entry.getKey(), new CandidatePrivacyInputPruning(consumer,
+					prior.originalDomains().stream().map(domain -> domain.stream()
+						.map(CandidateInputState::fType).toList()).toList(), sources));
+			}
+			// Boundary identities are complete now; an initial PUBLIC seed was not authority.
+			// Do not run the whole physical privacy closure or mark it completed here.
+			ruleFacts = suppressKnownPrivateEmissions(ruleFacts);
+		}
 		physicalGenerationContext = new PhysicalGenerationContext(List.copyOf(constraints), scopes);
 		singlePartitions = singlePartitions.closeOccurrences(nodes, origins, compiledInputEdges, constraints);
 		List<Integer> cardinalityReplayOrdinals =
@@ -656,7 +704,8 @@ final class PlacementRelationClosure {
 		prePrivacyCandidateRuleFacts = PlannerCandidateSpaceAudit.isEnabled()
 			? List.copyOf(ruleFacts) : List.of();
 		PrivacyClosure privacyClosure = closePrivacyDomains(nodes, ruleFacts,
-			constraints, origins, compiledInputEdges);
+			constraints, origins, compiledInputEdges, generationPrivacyAuthority);
+		privacyAuthorityEstablished = true;
 		nodes = privacyClosure.nodes();
 		ruleFacts = privacyClosure.ruleFacts();
 		ruleFacts = bindExactCandidateEmissionRealizations(ruleFacts, nodes, origins, shapeFactsByHop);
@@ -682,6 +731,8 @@ final class PlacementRelationClosure {
 		privacyFacts = privacyClosure.privacyFacts();
 		staticPrivacyProjection = staticPrivacyProjection(nodes, compiledInputEdges,
 			origins, privacyFacts.asMap());
+		generationPrivacyAuthority = privacyFacts;
+		generationPrivacyProjection = staticPrivacyProjection;
 		ruleFacts = bindExactCandidateEmissionRealizations(ruleFacts, nodes, origins, shapeFactsByHop);
 		ruleFacts = bindExactDerivedFoutAuthorities(ruleFacts, scopes, nodes, origins);
 		ruleFacts = bindDerivedFoutRealizations(ruleFacts, origins, shapeFactsByHop);
@@ -809,13 +860,8 @@ final class PlacementRelationClosure {
 
 			// Withdraw dangling support transitively, without replaying the whole
 			// program between each deletion wave.
-			while(true) {
-				List<CandidateRuleFact> pruned = pruneUnsupportedRealizations(
-					ruleFacts, null, completeLogicalTransientInputs, requiredTransientWriters);
-				if(pruned.equals(ruleFacts))
-					break;
-				ruleFacts = pruned;
-			}
+			ruleFacts = pruneSupportWithWork(
+				ruleFacts, null, completeLogicalTransientInputs, requiredTransientWriters);
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "source-prune", nodes, ruleFacts);
 			ExecutableNodeProjection projection = projectCandidateNodesToExecutableStates(
@@ -850,13 +896,8 @@ final class PlacementRelationClosure {
 			Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> finalActionIndex = new LinkedHashMap<>();
 			for(NeutralPlacementGraph.RelocationAction action : publishedActions)
 				finalActionIndex.put(action.key(), action);
-			while(true) {
-				List<CandidateRuleFact> pruned = pruneUnsupportedRealizations(
-					ruleFacts, finalActionIndex, completeLogicalTransientInputs, requiredTransientWriters);
-				if(pruned.equals(ruleFacts))
-					break;
-				ruleFacts = pruned;
-			}
+			ruleFacts = pruneSupportWithWork(
+				ruleFacts, finalActionIndex, completeLogicalTransientInputs, requiredTransientWriters);
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "final-action-prune", nodes, ruleFacts);
 			ExecutableNodeProjection finalProjection = projectCandidateNodesToExecutableStates(
@@ -915,6 +956,16 @@ final class PlacementRelationClosure {
 	}
 
 	/** Apply only the four fields carried by a complete transfer; actions and pending work keep their owners. */
+	private List<CandidateRuleFact> pruneSupportWithWork(List<CandidateRuleFact> facts,
+		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
+		List<LogicalTransientInputFact> completeInputs, Map<CompiledHopKey,List<CompiledHopKey>> writers) {
+		var result = PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPointWithWork(
+			facts, actions, completeInputs, writers);
+		if(complexityMetrics != null)
+			complexityMetrics.recordSupportDeletionWork(result.work());
+		return result.facts();
+	}
+
 	private void applyUpdate(ClosureUpdate update) {
 		nodes = update.nodes();
 		ruleKeys = update.domainKeys();
@@ -1008,7 +1059,8 @@ final class PlacementRelationClosure {
 			compiledInputEdges, transientBindings, privacyFacts,
 			privacyEvidenceMode == PrivacyEvidenceMode.CAPTURE
 				? new CandidatePrivacyClosureEvidence(candidatePrivacyEvidence) : null,
-			functionExpansion.logicalInlinedFunctionInputs(), programStructureGuard);
+			functionExpansion.logicalInlinedFunctionInputs(), programStructureGuard,
+			nodes.stream().map(node -> privacyInputPruning.get(node.key())).filter(Objects::nonNull).toList());
 		PlannerCandidateSpaceAudit.record(analysis, prePrivacyNodes, prePrivacyCandidateRuleFacts);
 		}
 		finally {
@@ -1056,10 +1108,12 @@ final class PlacementRelationClosure {
 		}
 	}
 
-	private PrivacyClosure closePrivacyDomainsMeasured(List<Node> nodes,
-		List<CandidateRuleFact> ruleFacts, Set<Constraint> constraints,
+	/** Only value/CFG/function dataflow; no candidate availability or physical-state assumptions. */
+	private PlacementPrivacyFacts inferPrivacyFacts(List<Node> nodes, Set<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges,
 		PlacementPrivacyFacts fixedPrivacy) {
+		if(fixedPrivacy != null)
+			return new PlacementPrivacyFacts(nodes, fixedPrivacy.orderedFacts(), fixedPrivacy.numWorkers());
 		Map<CompiledHopKey,List<CompiledHopKey>> predecessors = new IdentityHashMap<>();
 		for(Node node : nodes) {
 			predecessors.put(node.key(), new ArrayList<>());
@@ -1088,12 +1142,11 @@ final class PlacementRelationClosure {
 		for(List<CompiledHopKey> inputs : predecessors.values())
 			inputs.sort(null);
 
-		Map<DataOp,FederatedSourceMetadata> sourceMetadata = new IdentityHashMap<>();
+		Map<DataOp,FederatedSourceMetadata> sourceMetadata = privacySourceMetadata;
+		Set<DataOp> visitedSources = Collections.newSetFromMap(new IdentityHashMap<>());
 		List<Pair<FederatedRange,FederatedData>> allPartitions = new ArrayList<>();
 		Map<CompiledHopKey,Privacy> effective = new IdentityHashMap<>();
-		if(fixedPrivacy != null)
-			effective.putAll(fixedPrivacy.asMap());
-		else for(Node node : nodes) {
+		for(Node node : nodes) {
 			Hop hop = origins.get(node.key());
 			if(hop == null)
 				throw new IllegalStateException("Privacy occurrence has no compiled Hop origin");
@@ -1103,8 +1156,9 @@ final class PlacementRelationClosure {
 				if(metadata == null) {
 					metadata = FederatedPlannerUtils.resolveFederatedSourceMetadata(source);
 					sourceMetadata.put(source, metadata);
-					allPartitions.addAll(metadata.partitions());
 				}
+				if(visitedSources.add(source))
+					allPartitions.addAll(metadata.partitions());
 				effective.put(node.key(), metadata.privacy());
 			}
 			else
@@ -1112,52 +1166,73 @@ final class PlacementRelationClosure {
 		}
 
 		// Authorization is output- and spec-specific, captured once for this snapshot.
-		if(fixedPrivacy == null) {
-			Set<Hop> publicRecodeMetadata = Collections.newSetFromMap(new IdentityHashMap<>());
-			for(Hop hop : origins.values())
-				if(isAuthorizedRecodeMetadataOutput(hop))
-					publicRecodeMetadata.add(hop);
-
-			boolean changed;
-			int pass = 0;
-			int maxPasses = Math.max(1, nodes.size() * (Privacy.values().length + 1));
-			do {
-			changed = false;
-			for(Node node : nodes) {
-				Hop hop = origins.get(node.key());
-				Privacy derived;
-				if(isFederatedSource(hop))
-					derived = sourceMetadata.get((DataOp) hop).privacy();
-				else {
-					List<Privacy> inputPrivacy = predecessors.get(node.key()).stream()
-						.map(effective::get).toList();
-					derived = node.kind() == NodeKind.FUNCTION_INPUT
-						|| node.kind() == NodeKind.FUNCTION_OUTPUT
-						? strongestPrivacy(inputPrivacy)
-						: FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
-					// Released aggregate values are coordinator-readable, but the
-					// provenance remains part of the shared legality proof downstream.
-					if(derived == Privacy.PUBLIC
-						&& inputPrivacy.contains(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC))
-						derived = Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-				}
-				// A declared dictionary release is not a release of the primary encoded
-				// matrix. Strict PRIVATE inputs still dominate this limited authorization.
-				if(derived == Privacy.PRIVATE_AGGREGATE && publicRecodeMetadata.contains(hop))
-					derived = Privacy.PUBLIC;
-				Privacy prior = effective.get(node.key());
-				Privacy next = FederatedPlannerUtils.joinPrivacy(prior, derived);
-				if(next != prior) {
-					effective.put(node.key(), next);
-					changed = true;
-				}
+		Set<Hop> publicRecodeMetadata = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop hop : origins.values())
+			if(isAuthorizedRecodeMetadataOutput(hop))
+				publicRecodeMetadata.add(hop);
+		Map<CompiledHopKey,List<Node>> dependents = new IdentityHashMap<>();
+		for(Node node : nodes)
+			for(CompiledHopKey predecessor : predecessors.get(node.key()))
+				dependents.computeIfAbsent(predecessor, ignored -> new ArrayList<>()).add(node);
+		java.util.ArrayDeque<Node> pending = new java.util.ArrayDeque<>(nodes);
+		Set<CompiledHopKey> queued = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Node node : nodes)
+			queued.add(node.key());
+		long changes = 0;
+		long maxChanges = (long) nodes.size() * Privacy.values().length;
+		while(!pending.isEmpty()) {
+			Node node = pending.removeFirst();
+			queued.remove(node.key());
+			if(complexityMetrics != null)
+				complexityMetrics.recordPrivacyTransferVisit();
+			Hop hop = origins.get(node.key());
+			Privacy derived;
+			if(isFederatedSource(hop))
+				derived = sourceMetadata.get((DataOp) hop).privacy();
+			else {
+				List<Privacy> inputPrivacy = predecessors.get(node.key()).stream()
+					.map(effective::get).toList();
+				derived = node.kind() == NodeKind.FUNCTION_INPUT
+					|| node.kind() == NodeKind.FUNCTION_OUTPUT
+					? strongestPrivacy(inputPrivacy)
+					: FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
+				// Released aggregate values are coordinator-readable, but the
+				// provenance remains part of the shared legality proof downstream.
+				if(derived == Privacy.PUBLIC
+					&& inputPrivacy.contains(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC))
+					derived = Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 			}
-				pass++;
+			// A declared dictionary release is not a release of the primary encoded
+			// matrix. Strict PRIVATE inputs still dominate this limited authorization.
+			if(derived == Privacy.PRIVATE_AGGREGATE && publicRecodeMetadata.contains(hop))
+				derived = Privacy.PUBLIC;
+			Privacy prior = effective.get(node.key());
+			Privacy next = FederatedPlannerUtils.joinPrivacy(prior, derived);
+			if(next != prior) {
+				effective.put(node.key(), next);
+				if(++changes > maxChanges)
+					throw new IllegalStateException("Whole-program privacy propagation did not converge");
+				for(Node dependent : dependents.getOrDefault(node.key(), List.of()))
+					if(queued.add(dependent.key()))
+						pending.addLast(dependent);
 			}
-			while(changed && pass < maxPasses);
-			if(changed)
-				throw new IllegalStateException("Whole-program privacy propagation did not converge");
 		}
+
+		List<PlacementPrivacyFacts.PrivacyFact> facts = new ArrayList<>(nodes.size());
+		for(Node node : nodes)
+			facts.add(new PlacementPrivacyFacts.PrivacyFact(node.key(), node.valueVersion(),
+				effective.get(node.key()), predecessors.get(node.key())));
+		return new PlacementPrivacyFacts(nodes, facts,
+			FederatedWorkerUtils.countDistinctWorkers(allPartitions));
+	}
+
+	private PrivacyClosure closePrivacyDomainsMeasured(List<Node> nodes,
+		List<CandidateRuleFact> ruleFacts, Set<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins, List<CompiledInputEdgeFact> compiledInputEdges,
+		PlacementPrivacyFacts fixedPrivacy) {
+		PlacementPrivacyFacts authority = inferPrivacyFacts(nodes, constraints, origins,
+			compiledInputEdges, fixedPrivacy);
+		Map<CompiledHopKey,Privacy> effective = authority.asMap();
 
 		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> protectedPayloadInputs =
 			protectedPayloadInputs(nodes, compiledInputEdges, origins, effective);
@@ -1232,13 +1307,7 @@ final class PlacementRelationClosure {
 			filteredNodes.add(filteredNode);
 		}
 
-		List<PlacementPrivacyFacts.PrivacyFact> privacyFacts = new ArrayList<>(filteredNodes.size());
-		for(Node node : filteredNodes)
-			privacyFacts.add(new PlacementPrivacyFacts.PrivacyFact(node.key(), node.valueVersion(),
-				effective.get(node.key()), predecessors.get(node.key())));
-		PlacementPrivacyFacts authority = new PlacementPrivacyFacts(filteredNodes, privacyFacts,
-			fixedPrivacy == null ? FederatedWorkerUtils.countDistinctWorkers(allPartitions)
-				: fixedPrivacy.numWorkers());
+
 		return new PrivacyClosure(List.copyOf(filteredNodes), List.copyOf(filteredFacts), authority);
 	}
 
@@ -1334,6 +1403,126 @@ final class PlacementRelationClosure {
 		}
 		return new Node(node.key(), node.kind(), node.valueVersion(), !legal.isEmpty(), legal,
 			new ArrayList<>(exclusions.values()), node.anchors());
+	}
+
+	private List<CandidateRuleFact> suppressKnownPrivateEmissions(List<CandidateRuleFact> facts) {
+		List<CandidateRuleFact> filtered = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
+				filtered.add(fact);
+				continue;
+			}
+			CompiledHopKey owner = fact.key().parentOccurrence();
+			// Knowing a value's privacy does not close its physical CFG/function
+			// sources. Preserve provisional loop writers until the ordinary closure;
+			// only complete same-block seeds can be suppressed before that boundary.
+			if(!privacyAuthorityEstablished && !seedPrivacy.containsKey(owner)) {
+				filtered.add(fact);
+				continue;
+			}
+			Privacy privacy = generationPrivacyAuthority.requirePrivacy(owner);
+			List<CandidateEmissionFact> emissions = privacyAllowedCandidateEmissions(fact, origins.get(owner),
+				privacy, generationPrivacyProjection.protectedPayloadInputs());
+			if(complexityMetrics != null)
+				for(int i = emissions.size(); i < fact.allowedEmissionFacts().size(); i++)
+					complexityMetrics.recordPrivacyEmissionSuppressed();
+			filtered.add(emissions.isEmpty() ? new CandidateRuleFact(fact.key(),
+				CandidateEvaluationStatus.PRIVACY_EXCLUDED, fact.capability(), fact.shapeProof(), fact.profile(),
+				List.of(), "PRIVACY:" + privacy.name()) : retainUnchangedPrivacyFact(fact, emissions));
+		}
+		return List.copyOf(filtered);
+	}
+
+	/** Acyclic, same-block seed facts only. Function/CFG carriers remain UNKNOWN. */
+	private void captureSeedPrivacy(Hop hop, CompiledHopKey owner, ValueVersionKey value,
+		Map<Hop,CompiledHopKey> blockKeys) {
+		if(!earlyPrivacyPruning || isTransientRead(hop) || isTransientWrite(hop)
+			|| PlacementProgramFacts.isFunctionOutput(hop) || hop instanceof FunctionOp || isMultiReturnBuiltinOutputCarrier(hop))
+			return;
+		List<PlacementPrivacyFacts.PrivacyFact> inputs = new ArrayList<>();
+		for(Hop input : hop.getInput()) {
+			PlacementPrivacyFacts.PrivacyFact fact = seedPrivacy.get(blockKeys.get(input));
+			if(fact == null)
+				return; // no initial PUBLIC assumption for an incomplete predecessor
+			inputs.add(fact);
+		}
+		Privacy privacy;
+		if(isFederatedSource(hop))
+			privacy = privacySourceMetadata.computeIfAbsent((DataOp) hop,
+				FederatedPlannerUtils::resolveFederatedSourceMetadata).privacy();
+		else {
+			List<Privacy> inputPrivacy = inputs.stream().map(PlacementPrivacyFacts.PrivacyFact::privacy).toList();
+			privacy = FederatedPlannerUtils.derivePrivacyConstraint(hop, inputPrivacy);
+			if(privacy == Privacy.PUBLIC && inputPrivacy.contains(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC))
+				privacy = Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+			if(privacy == Privacy.PRIVATE_AGGREGATE && isAuthorizedRecodeMetadataOutput(hop))
+				privacy = Privacy.PUBLIC;
+		}
+		seedPrivacy.put(owner, new PlacementPrivacyFacts.PrivacyFact(owner, value, privacy,
+			inputs.stream().map(PlacementPrivacyFacts.PrivacyFact::occurrence).distinct().sorted().toList()));
+		Map<Integer,PlacementPrivacyFacts.PrivacyFact> protectedInputs = new LinkedHashMap<>();
+		for(int position = 0; position < inputs.size(); position++)
+			if(ExecPlacementPolicy.requiresOriginResidency(inputs.get(position).privacy())
+				&& PlacementAnalysis.coordinatorInputAccess(hop.getInput(position), hop, position)
+					== PlacementAnalysis.CoordinatorInputAccess.PAYLOAD)
+				protectedInputs.put(position, inputs.get(position));
+		seedProtectedInputs.put(owner, Collections.unmodifiableMap(protectedInputs));
+	}
+
+	private PlacementPrivacyFacts.PrivacyFact canonicalSeedPrivacy(PlacementPrivacyFacts.PrivacyFact seed) {
+		var fixed = generationPrivacyAuthority.requireExact(seed.occurrence());
+		if(fixed.privacy() != seed.privacy() || !fixed.valueVersion().equals(seed.valueVersion())
+			|| !fixed.predecessors().equals(seed.predecessors()))
+			throw new IllegalStateException("Seed privacy/value meaning changed at the structural boundary");
+		return fixed;
+	}
+
+	private List<List<FType>> privacyMaskedInputDomains(Hop hop, Node consumer, List<List<FType>> domains) {
+		privacyInputPruning.remove(consumer.key());
+		// Virtual CFG/formal/prototype inputs use distinct authority. Do not mistake
+		// them for compiled payload operands or prune a temporary bottom domain.
+		if(!earlyPrivacyPruning || isTransientRead(hop) || isTransientWrite(hop) || hop instanceof FunctionOp
+			|| domains.size() != hop.getInput().size())
+			return domains;
+		if(!privacyAuthorityEstablished) {
+			var seed = seedPrivacy.get(consumer.key());
+			return seed == null ? domains : maskInputDomains(seed, domains,
+				seedProtectedInputs.getOrDefault(consumer.key(), Map.of()));
+		}
+		Map<Integer,CompiledHopKey> protectedSources = generationPrivacyProjection.protectedPayloadInputs()
+			.getOrDefault(consumer.key(), Map.of());
+		Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources = new LinkedHashMap<>();
+		protectedSources.forEach((position, source) ->
+			sources.put(position, generationPrivacyAuthority.requireExact(source)));
+		return maskInputDomains(generationPrivacyAuthority.requireExact(consumer.key()), domains, sources);
+	}
+
+	private List<List<FType>> maskInputDomains(PlacementPrivacyFacts.PrivacyFact consumer,
+		List<List<FType>> domains, Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources) {
+		if(sources.isEmpty() || domains.stream().anyMatch(List::isEmpty))
+			return domains;
+		CandidatePrivacyInputPruning evidence = new CandidatePrivacyInputPruning(consumer, domains, sources);
+		if(evidence.rejectedTupleCount().signum() == 0 || evidence.generatedTupleCount().signum() == 0)
+			return domains;
+		privacyInputPruning.put(consumer.occurrence(), evidence);
+		if(complexityMetrics != null)
+			complexityMetrics.recordPrivacyInputMask(evidence.rejectedTupleCount());
+		return evidence.maskedDomains();
+	}
+
+	private PlacementCandidateGenerator.GenerationPrivacy generationPrivacy(CompiledHopKey owner) {
+		if(!earlyPrivacyPruning)
+			return null;
+		if(!privacyAuthorityEstablished) {
+			var seed = seedPrivacy.get(owner);
+			return seed == null ? null : new PlacementCandidateGenerator.GenerationPrivacy(seed.privacy(),
+				seedProtectedInputs.getOrDefault(owner, Map.of()).keySet());
+		}
+		Privacy privacy = generationPrivacyProjection.effective().get(owner);
+		if(privacy == null)
+			return null;
+		return new PlacementCandidateGenerator.GenerationPrivacy(privacy,
+			generationPrivacyProjection.protectedPayloadInputs().getOrDefault(owner, Map.of()).keySet());
 	}
 
 	private CandidateBase projectFreshBasePrivacy(Node node, List<CandidateRuleKey> keys,
@@ -2660,8 +2849,8 @@ final class PlacementRelationClosure {
 		List<CandidateRuleFact> directTemplates = boundFacts;
 		ClosureUpdate current = new ClosureUpdate(List.copyOf(nodes), List.copyOf(domainKeys),
 			boundFacts, List.copyOf(logicalInputs), List.of());
-		boolean privacyAlreadyClosed = current.facts().stream()
-			.anyMatch(fact -> fact.status() == CandidateEvaluationStatus.PRIVACY_EXCLUDED);
+		// An early rejected row is not evidence that boundary privacy closure finished.
+		boolean privacyAlreadyClosed = privacyAuthorityEstablished;
 		PlacementPrivacyFacts fixedClosurePrivacy = null;
 		Set<Constraint> closurePrivacyConstraints = privacyAlreadyClosed
 			? new LinkedHashSet<>(constraints) : Set.of();
@@ -4926,10 +5115,11 @@ final class PlacementRelationClosure {
 					: inheritableDurableAnchor(hop, current.key().normalizedSignature(), outputShape,
 						inputShapes, inputAnchors);
 				List<DurableAnchorKey> outputAnchors = outputAnchor == null ? List.of() : List.of(outputAnchor);
+				List<List<FType>> generatedInputDomains = privacyMaskedInputDomains(hop, current, exactInputDomains);
 				Node replacement = candidateGenerator.buildNode(hop, current.key(), current.valueVersion(), outputAnchors,
 					inputAnchors, Collections.unmodifiableList(inputAnchorOwners),
 					outputShape, abstractFactsByHop.get(hop), singlePartitions, List.copyOf(inputShapes),
-					exactInputDomains, replacementKeys, replacementFacts);
+					generatedInputDomains, replacementKeys, replacementFacts, generationPrivacy(current.key()));
 				if(compiledInputEdges != null && sourceCompiledFactsByHop != null
 					&& isPotentialLatentWdivmmOwner(hop)) {
 					List<Node> proofNodes = new ArrayList<>(nodes);
@@ -5516,7 +5706,7 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> exactFacts = new ArrayList<>();
 			Node replacement = candidateGenerator.buildNode(readHop, current.key(), current.valueVersion(), current.anchors(),
 				List.of(), List.of(), readShape, abstractFactsByHop.get(readHop), singlePartitions, List.of(),
-				List.of(exactDomain), exactKeys, exactFacts);
+				List.of(exactDomain), exactKeys, exactFacts, generationPrivacy(current.key()));
 			List<Integer> priorSlots = candidateSlots.getOrDefault(current.key(), List.of());
 			if(priorSlots.isEmpty())
 				throw new IllegalStateException("Function input replay target has no original candidate domain");
@@ -7119,6 +7309,21 @@ final class PlacementRelationClosure {
 		int ordinal, List<CandidateRealizationInputBinding> current,
 		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer,
 		SearchSpaceMetrics metrics) {
+		Map<CompiledHopKey,CandidateRealizationReference> selected = new IdentityHashMap<>();
+		for(CandidateRealizationInputBinding binding : current) {
+			CandidateRealizationReference prior = selected.putIfAbsent(
+				binding.source().rule().parentOccurrence(), binding.source());
+			if(prior != null && !prior.equals(binding.source()))
+				return;
+		}
+		enumerateBindingAssignments(choices, ordinal, current, selected, consumer, metrics);
+	}
+
+	private static void enumerateBindingAssignments(List<List<CandidateRealizationInputBinding>> choices,
+		int ordinal, List<CandidateRealizationInputBinding> current,
+		Map<CompiledHopKey,CandidateRealizationReference> selected,
+		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer,
+		SearchSpaceMetrics metrics) {
 		if(metrics != null)
 			metrics.recordRelocationPrefix(ordinal);
 		if(ordinal == choices.size()) {
@@ -7128,12 +7333,26 @@ final class PlacementRelationClosure {
 			return;
 		}
 		for(CandidateRealizationInputBinding binding : choices.get(ordinal)) {
+			CompiledHopKey owner = binding.source().rule().parentOccurrence();
+			CandidateRealizationReference prior = selected.get(owner);
+			// One physical decision owner selects one exact source realization. This
+			// is the same hard constraint used by NativePlacementContinuity and Exact,
+			// independent of cross-owner worker endpoint or partition geometry.
+			if(prior != null && !prior.equals(binding.source())) {
+				if(metrics != null)
+					metrics.recordRelocationConflictPrefix();
+				continue;
+			}
+			if(prior == null)
+				selected.put(owner, binding.source());
 			current.add(binding);
 			try {
-				enumerateBindingAssignments(choices, ordinal + 1, current, consumer, metrics);
+				enumerateBindingAssignments(choices, ordinal + 1, current, selected, consumer, metrics);
 			}
 			finally {
 				current.remove(current.size() - 1);
+				if(prior == null)
+					selected.remove(owner);
 			}
 		}
 	}

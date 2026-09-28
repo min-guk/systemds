@@ -132,8 +132,14 @@ public final class ExecPlacementPolicy {
 			? emission.emissionState().placementState().fType() : emission.executionFType();
 		Decision decision = decide(hop, privacy, logicalFType,
 			capability.nativeExec(), capability.nativeOutput());
-		ExecType exec = emission.emissionState().placementState().execType();
-		FederatedOutput output = emission.emissionState().placementState().output();
+		return allowsCandidateEmission(decision, emission.emissionState().placementState().execType(),
+			emission.emissionState().placementState().output(), emission.emissionState().derivedFedFout());
+	}
+
+	/** The same emission gate, usable before allocating an emission or derived action. */
+	public static boolean allowsCandidateEmission(Decision decision, ExecType exec,
+		FederatedOutput output, boolean derivedFedFout) {
+		Objects.requireNonNull(decision, "decision");
 		if(exec == ExecType.CP && output == FederatedOutput.LOUT)
 			return decision.allowCP_LOUT;
 		if(exec == ExecType.CP && output == FederatedOutput.FOUT)
@@ -141,8 +147,7 @@ public final class ExecPlacementPolicy {
 		if(exec == ExecType.FED && output == FederatedOutput.LOUT)
 			return decision.allowFED_LOUT;
 		if(exec == ExecType.FED && output == FederatedOutput.FOUT)
-			return decision.allowFED_FOUT || emission.emissionState().derivedFedFout()
-				&& decision.allowFED_LOUT;
+			return decision.allowFED_FOUT || derivedFedFout && decision.allowFED_LOUT;
 		return false;
 	}
 

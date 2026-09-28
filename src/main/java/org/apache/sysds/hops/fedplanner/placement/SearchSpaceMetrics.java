@@ -127,6 +127,45 @@ public final class SearchSpaceMetrics {
 	private long relocationLeaves;
 	private long relocationPeakDepth;
 	private long relocationPeakPendingAssignments;
+	private long privacyEmissionAllocationsAvoided;
+	private long privacyTransferVisits;
+	private long relocationConflictPrefixes;
+	private long supportDeletionEpochs;
+	private long supportIndexedRealizations;
+	private long supportIndexedClauses;
+	private long supportReverseIncidences;
+	private long supportQueueVisits;
+	void recordPrivacyEmissionAllocationAvoided() {
+		privacyEmissionsSuppressed++;
+		privacyEmissionAllocationsAvoided++;
+	}
+	void recordPrivacyTransferVisit() { privacyTransferVisits++; }
+	void recordRelocationConflictPrefix() { relocationConflictPrefixes++; }
+	void recordSupportDeletionWork(PlacementSupportRelations.WorklistWork work) {
+		supportDeletionEpochs++;
+		supportIndexedRealizations += work.indexedRealizations();
+		supportIndexedClauses += work.indexedClauses();
+		supportReverseIncidences += work.reverseIncidences();
+		supportQueueVisits += work.queueVisits();
+	}
+	private long candidateOracleCalls;
+	private long privacyEmissionsSuppressed;
+	private long privacyMaskedDomains;
+	private java.math.BigInteger privacyAvoidedTuples = java.math.BigInteger.ZERO;
+
+	void recordCandidateOracleCall() { candidateOracleCalls++; }
+	void recordPrivacyEmissionSuppressed() { privacyEmissionsSuppressed++; }
+	void recordPrivacyInputMask(java.math.BigInteger avoided) {
+		privacyMaskedDomains++;
+		privacyAvoidedTuples = privacyAvoidedTuples.add(avoided);
+	}
+	public record PrivacyPruningSnapshot(long oracleCalls, long emissionsSuppressed,
+		long maskedDomains, java.math.BigInteger avoidedTuples) { }
+	public PrivacyPruningSnapshot privacyPruningSnapshot() {
+		return new PrivacyPruningSnapshot(candidateOracleCalls, privacyEmissionsSuppressed,
+			privacyMaskedDomains, privacyAvoidedTuples);
+	}
+
 	private long inputPrefixes;
 	private long inputLeaves;
 	private long inputPeakDepth;
@@ -206,6 +245,11 @@ public final class SearchSpaceMetrics {
 	void reset() {
 		if(!phaseStack.isEmpty())
 			throw new IllegalStateException("SEARCH_SPACE_PHASE_RESET_WHILE_ACTIVE");
+		candidateOracleCalls = privacyEmissionsSuppressed = privacyMaskedDomains = 0;
+		privacyAvoidedTuples = java.math.BigInteger.ZERO;
+		privacyEmissionAllocationsAvoided = privacyTransferVisits = relocationConflictPrefixes = 0;
+		supportDeletionEpochs = supportIndexedRealizations = supportIndexedClauses = 0;
+		supportReverseIncidences = supportQueueVisits = 0;
 		fixedPointPasses = cfgRefinementPasses = functionBoundaryPasses = semanticPasses = 0;
 		publicationPasses = proofQueries = exactContextUniqueQueries = exactContextRepeatedQueries = 0;
 		directClosurePasses = directClosureStablePasses = directClosureFullPasses = 0;
@@ -628,7 +672,11 @@ public final class SearchSpaceMetrics {
 			structuralHandleIdentityHits, structuralHandleStructuralHits,
 			receiptRelationSlots, candidateReceiptsCreated, receiptRankKeyChars,
 			structuralArenaOverflows, topologyCacheEvictions, topologyCacheBypasses,
-			topologyCacheEntries, topologyCacheRetainedRows, contextObserverHashCollisions);
+			topologyCacheEntries, topologyCacheRetainedRows, contextObserverHashCollisions,
+			candidateOracleCalls, privacyEmissionsSuppressed, privacyEmissionAllocationsAvoided,
+			privacyMaskedDomains, privacyAvoidedTuples, privacyTransferVisits, relocationConflictPrefixes,
+			supportDeletionEpochs, supportIndexedRealizations, supportIndexedClauses,
+			supportReverseIncidences, supportQueueVisits);
 	}
 
 	public AttributionSnapshot attributionSnapshot() {
@@ -690,7 +738,11 @@ public final class SearchSpaceMetrics {
 		long candidateReceiptsCreated, long receiptRankKeyChars,
 		long structuralArenaOverflows, long topologyCacheEvictions,
 		long topologyCacheBypasses, long topologyCacheEntries,
-		long topologyCacheRetainedRows, long contextObserverHashCollisions) { }
+		long topologyCacheRetainedRows, long contextObserverHashCollisions,
+		long candidateOracleCalls, long privacyEmissionsSuppressed, long privacyEmissionAllocationsAvoided,
+		long privacyMaskedDomains, java.math.BigInteger privacyAvoidedTuples, long privacyTransferVisits,
+		long relocationConflictPrefixes, long supportDeletionEpochs, long supportIndexedRealizations,
+		long supportIndexedClauses, long supportReverseIncidences, long supportQueueVisits) { }
 
 	public record PhaseMeasurement(String phase, long calls, long inclusiveWallNanos,
 		long exclusiveWallNanos, long inclusiveCpuNanos, long exclusiveCpuNanos,

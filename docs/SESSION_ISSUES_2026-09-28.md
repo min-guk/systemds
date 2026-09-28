@@ -962,3 +962,102 @@
   canonical survivor 순서 및 실제 생성 counter로 검출한다. 구현/성능 개선은 아직 미검증이다.
 - **진행 중 실험:** 2026-09-28 16:59:37UTC run05는 compile30 passed/16 failed/850 pending,
   runtime0이었다. 이 수치는 기존60초 baseline이고 새 pruning 결과가 아니다. 측정은 그대로 계속한다.
+
+## 조기 privacy pruning 구현 — 진행 중 (baseline 동결/회귀 고정 완료)
+
+- **요청/상태:** 계획대로 구현·검증 요청을 받아 P0–P3를 구현 중이다. 앞 절의 ‘미구현/측정 계속’은
+  계획 시점 기록이며, 현재 baseline run05는 아래와 같이 안전하게 종료했다.
+- **baseline 보존:** driver PID/argv 소유권을 확인하고 timed child가 종료·정리되도록 Python driver에만
+  SIGINT를 보냈다. 2026-09-28 17:26:55 UTC exact-owned container 6개 부재와 host lease 8개 해제를 확인.
+  최종 59 passed / 16 자연 60초 timeout / 1 사용자 지시 전환 중단 / 820 pending, runtime0이다.
+  전환 중단은 planner 자체 실패와 구분한다. 증거: run05/privacy-pruning-transition.json.
+- **재현/증거 루트:** `/grid/3/cofee-lm-sweep-mchoi-20260914/early-privacy-pruning-evidence`.
+  baseline11개 Java suite 통과 후 새 protected corpus4개에서 AVAILABLE rule/emission/realization/
+  OR support/binding/action/노드 합법 상태 전체의 canonical SHA를 고정했다. 동일 script를 다시
+  compile하여 process-global Hop ID를 배제했는지도 확인했다. 기존 raw cost/완전 계획 검증도 후속 유지한다.
+- **확인된 원인/수정:**
+  1. `PRIVACY_EXCLUDED` row 유무가 privacy 완료 단계를 대신하던 코드를 명시적인 완료 상태로 분리.
+  2. CFG value version·function boundary·compiled input edge가 완성되는 첫 지점에서 privacy **값 분석만**
+     분리해 실행한다. 전체 privacy closure의 temporary-bottom 실패 검사는 당기지 않는다.
+     초기 PUBLIC seed는 authority로 재사용하지 않으며, worker metadata는 build 내 캐시로 중복 취득하지 않는다.
+  3. 실제 Oracle capability/profile을 보존하는 emission suppression을 후속 support 확장 앞으로 이동.
+     generator는 같은 ExecPlacementPolicy kernel을 사용하고 derived FOUT의 같은-row source도 요구한다.
+  4. certified protected-payload operand의 local tuple을 product 전에 제외하는 좁은 불변 증거를 추가 중.
+     미생성 tuple에 가짜 capability를 만들지 않으며 original domain revision/count/typed lookup/audit를 검증한다.
+  5. relocation binding product는 같은 owner의 상충하는 exact source만 prefix에서 거절한다.
+     서로 다른 owner의 geometry를 임의로 같게 요구하지 않는다.
+  6. action rebind 후 삭제 전용 snapshot에서 reverse support index/worklist로 연쇄 삭제한다.
+     OR sibling과 모든 reaching writer, duplicate-reference live count, canonical survivor 순서를 유지한다.
+- **검증(중간):** P1/P3 첫 단계47개 통과, 이어 earliest structural authority 적용 후49개 통과.
+  old-engine golden4개 불변. Worklist는 기존 full-pass 고정점과 32 seed ×24 row 무작위 graph 및
+  cascade/cycle/action/all-writer/duplicate reference differential7개 통과. Prefix3개 통과.
+  추가 P2 coverage/실제 Oracle·tuple 감소 테스트는 현재 실행/확장 중이며 아직 완료로 주장하지 않는다.
+- **남은 작업/회귀 위험:** P2 domain completeness/foreign·stale evidence와 generation metric 감소,
+  광범위 privacy/CFG/plan-space/cost 회귀, 독립 diff review, package 및 새 Docker root 검증이 남았다.
+  최종 합법 plan 공간을 줄이지 않고 중간 불법 작업을 제거하는 변경이다. 60초 timeout 해결은 미확정.
+  기존 성공 결과를 새 엔진 결과로 합산하지 않으며 896 compile 통과 전 runtime은 시작하지 않는다.
+- **규칙 근거:** 기존 privacy policy와 exact selected-source/global legality만 앞당긴다.
+  top-K/임의 cap/플래너 선호 기반 후보 삭제/TR·TW 완화/runtime fallback은 도입하지 않았다.
+
+### 확장 회귀에서 발견한 비용 receipt/loop seed 차이 — 원인 분리 중
+
+- **상태/증상:** focused48개 통과 후61개 class395개 테스트로 넓히자 failure2/error2/skipped10을 발견했다.
+  `ExactNativeLocalAnchorFanoutCostTest`의 contribution fingerprint가 달라지고,
+  `FedFirstRemoteInputPreferenceTest`의 StepLm에서 loop TRead X_global이 모든 reaching writer를
+  유지하지 못했다. 최종 합법 공간·비용 보존을 입증하기 전에는 구현 완료로 취급하지 않는다.
+- **baseline 분리:** 기존 JAR SHA `0b4cfe5dbc41c502f70fa65774f77c6b53eb6d6064e82f78a928e392c3f7152b`로
+  실패4개 class12개 테스트를 다시 실행했다. 비용 fingerprint와 StepLm은 baseline에서 통과했으므로
+  새 회귀다. 반면 `ProductionDecodedPlanSpaceCompletenessTest`의1344대208과
+  `GlmPrivateAggregatePlanningContractTest`의 post-CFG non-monotone 오류는 baseline에서도 재현됐다.
+  기존 실패를 새 pruning의 회귀와 혼동하지 않고 별도 추적한다.
+- **원인/해결 계획:** 비용 receipt가 진단상 excluded row 변화에 결합되는지와 실제 factor 구조/raw
+  double bits가 바뀌었는지를 분리한다. StepLm은 초기 후보 suppression과 loop seed의 temporary-bottom
+  계약을 조사한다. 기대값을 단순 갱신하거나 후보를 임의로 삭제하는 방식으로 통과시키지 않는다.
+- **검증/증거:** evidence root의 `regression.log`, `regression-xml/`, `baseline-four-failures.log`,
+  `baseline-junit-classpath.txt` 및 `current-junit-classpath.txt`. 최신 certificate6개 테스트는 통과했다.
+- **잔여/회귀 위험:** 두 새 회귀의 수정과 동일 광범위 회귀 재실행 전 package/commit/새 Docker 실행은
+  보류한다. timeout60초, runtime896 compile gate, TR/TW와 no-fallback 계약은 유지한다.
+
+### 확장 회귀 원인 확인 및 seed-scope 교정
+
+- **StepLm 해결:** privacy 값 관계가 확정되는 것과 loop/function의 물리 후보·reaching writer가 닫히는
+  것은 다르다. 전역 privacy projection의 존재만으로 pre-closure 후보를 차단한 것이 원인이었다.
+  실제 privacy closure 전에는 complete same-block seed에만 emission suppression/input mask를
+  허용하며, 그 이후에 전역 authority를 사용한다. 두 seed map의 fact는 structural boundary에서
+  canonical identity로 다시 연결해 이후 replay의 certificate가 stale 객체를 갖지 않도록 했다.
+- **검증:** 기존 엔진/early-off/seed-scope-only overlay의 StepLm 통과, 원래 변경본의 실패를 확인했다.
+  최종 소스에서 StepLm과 privacy5개 class32개 테스트가 모두 통과했고 tuple/Oracle26→24 감소는 유지된다.
+  증거 `steplm-seedscope-probe/`, `seed-scope-repair.log`, `seed-scope-repair-xml/`.
+- **비용 receipt 원인 확정:** `cost-probe/`에서 old JAR와 현재 class의 code source를 각각 확인하고
+  세 hash와 전체 candidate signature를 비교했다. analysis fingerprint, factor structure SHA
+  `6eabb96f81f1c831a67ee82f76775d1f8ea8e64dd7b7cd0776a09f7cb674c4d3`, raw double-bits SHA
+  `f949de6c7f44f5bc770ab2e3ec0966f3f94a0c6d2be74e7e898c92b02444909d`가 모두 동일하다.
+  유일한 fact 차이는 sum 입력 ABSENT_LOCAL의 기존 PRIVACY_EXCLUDED row 한 개가 certified mask로
+  미생성되는 것이다. 모든 row에 결합된 optimization receipt fingerprint는 의도적으로 달라져야 하며,
+  실제 비용/합법 대안 변경은 아니다. 비용 raw bits·구조 기준값은 변경하지 않는다.
+- **기존 completeness 테스트 진단:**1344는 독립적인 합법8개 계획 수가 아니라 과거 proof-clause
+  multiplicity(X2,Y2,U4,V4,D21)의 Cartesian 크기였다. 기존 엔진도 현재 canonical support
+  X2,Y2,U2,V2,D13=208을 생성한다. 해당 숫자 assertion만 제거한 isolated overlay에서 나머지
+  모든 raw receipt/assignment 분류, 독립 literal8계획 equality, source/geometry 각각 제거 시
+  정확히4계획 누락 mutation이 통과했다. 따라서1344를208로 바꿔 고정하지 않고 숫자는 진단으로
+  내리며 실제 완전성·mutation 검증은 그대로 유지한다. 증거 `decoded-support-probe/`.
+- **잔여 이슈:** 기존 GLM 오류는 별도 원인 분석 중이며 아직 해결/전체 green으로 주장하지 않는다.
+  최신 matrix harness83/83 회귀도 통과했으며 workload timeout 정책은 변경하지 않았다.
+
+### P0–P3 최종 코드 검토·package 및 남은 GLM 경계
+
+- **최종 검증:**61개 class395개에서384 통과/1 GLM 오류/10 기존 skip. 새 StepLm 회귀와 비용 receipt
+  차이는 해소됐고, 마지막 fixture-local certificate 보강 후 비용·전체계획2개 class8개도 통과했다.
+  matrix Python83개, `bash -n`, `py_compile`, `git diff --check` 통과. 독립 reviewer는 seed-scope,
+  certificate/receipt, 의미적 completeness 변경을 검토했으며 마지막 scoped diff APPROVE/findings0이다.
+- **package:** `mvn -q -DskipTests package` 성공(exit0). 이는 전체 테스트 green이라는 의미가 아니다.
+  새 JAR SHA `100628da2bb3a489a43247d7d887d24aca81f41faa18ba98394e072a246d4dd2`.
+  기존 baseline JAR는 evidence root의 `baseline-SystemDS.jar`로 보존했다.
+- **GLM 미해결:** baseline에도 실패했던 worker1 private-aggregate GLM은 이제 binomial cbind
+  `glm.dml:916`의 privacy-safe 후보 부재에서 중단한다. read-only 진단은 shared 함수 formal의
+  endpoint/cardinality join에서 하나의 UNKNOWN call argument가 FULL single-partition 증명을
+  없애는 경계를 추적 중이다. 전역 worker1을 exact 후보의 single-partition 증명으로 대신하거나,
+  CP 수집을 허용하지 않는다. 해당 테스트를 ignore/삭제하지 않았으며 별도 남은 correctness gap이다.
+- **후속:** 구현 보고서는 `FEDPLANNER_EARLY_PRIVACY_PRUNING_IMPLEMENTATION_2026-09-28_KO.md`.
+  새 엔진 Docker compile smoke와896 compile survey를 새 root에서 실행하되 성공으로 섞지 않는다.
+  전체 compile gate가 거짓인 동안 runtime은0으로 유지한다.
