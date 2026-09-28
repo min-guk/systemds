@@ -844,3 +844,22 @@
 - **잔여:** 과거 별도 certificate cap/GLM heap/fixture expectation/외부 provenance 테스트 gap은
   이 green 집합에 포함하지 않았다. W3 실제 compile 성공과 full896/runtime 성공은 아직 미확인이다.
   새 package 후 새 `run04`에서 JFR/trace 없이 고정900초 W3/LAN을 먼저 검증한다.
+
+## run04 W3/LAN production compile 회귀 통과 — 전체 행렬 실행 중
+
+- **빌드/실행:** commit `ca7d8eb67fcffe4e576c4a1cd935dd24e4969d12`와 package exit0,
+  JAR SHA `0b4cfe5dbc41c502f70fa65774f77c6b53eb6d6064e82f78a928e392c3f7152b`를 동결했다.
+  새 `w1357-policy-matrix-20260928-run04`의 DP/logreg/W3/LAN을 원래900초·자원·입력·network로
+  JFR/상세 trace/진단 옵션 없이 실행했다. attempt `01790607659896617038-a16591d3`.
+- **결과:** compile77.969562초, shared search-space12.047577초,
+  selection/adapter62.934620초, full-initial-planning77.967181초로 통과했다.
+  이전900초 timeout 대비 이 조건이 해결됐음을 증명하지만 검열된 이전 시간을 정확한 speedup 분모로 쓰지 않는다.
+- **검증:** RuntimeProgram 생성, 실제 compile-only flag, workload start/complete=false,
+  execution/run/Spark/runtime-instruction/federated-dispatch/worker-fragment0을 확인했다.
+  planned/lowered physical Hops204/204, missing/mismatch0, synthetic4건 모두 lowering 일치다.
+  정확한 container ID/name cleanup과 첫 실행의8개 lease 해제를 확인했다. OOM0이다.
+  `run04/regression-verification.json`에 결과 SHA와 health/audit를 보존했다.
+- **진행 상태:** 동일 engine/root로 `--phase all`을 이어서 실행한다. 이 시점의 성공은1/896뿐이며,
+  다른 엔진·diagnostic의 성공을 합산하지 않는다. full896 compile gate 이전 runtime은 계속 차단한다.
+- **범위 확정:** 사용자가 지연 도착한 질의 응답에서 SliceLine을 기존 기본 ADULT·COVTYPE로
+  명시했다. 이미 실행 중인896조건과 일치하므로 matrix/manifest/engine을 바꾸거나 재시작하지 않는다.
