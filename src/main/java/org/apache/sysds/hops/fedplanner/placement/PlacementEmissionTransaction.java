@@ -882,8 +882,11 @@ public final class PlacementEmissionTransaction {
 			List<ObligationKey> activeObligations = selectedRelocation.obligations();
 			if(activeObligations.isEmpty())
 				throw new PlacementEmissionException("Selected relocation has no active exact obligation");
-			HopOccurrenceProjection anchor = resolveAnchor(analysis, occurrences, key);
+			// exactRelocations already resolved a canonical graph-owned action, so its
+			// concrete runtime key is authoritative. A missing exact Hop is only a -1
+			// planned-metadata hint, not permission for runtime fallback or repair.
 			String anchorKey = ExactPlacementRegistration.runtimeAnchorKey(key.durableAnchor());
+			long anchorHopId = exactAnchorHopHint(analysis, occurrences, key);
 			// A relocation action owns one exact PRESENT input of a FED consumer. Its
 			// targetPlacement is the consumer's output placement, not the direction of
 			// the source transfer. Consequently FED/LOUT and FED/FOUT consumers both
@@ -899,7 +902,7 @@ public final class PlacementEmissionTransaction {
 				consumerInputs.add(new ConsumerInputSpec(physical.consumerHopId(), physical.inputPosition()));
 			}
 			RegistryWrite write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(),
-				anchor.hop().getHopID(), anchorKey, key.materializationFType().name(), consumerInputs,
+				anchorHopId, anchorKey, key.materializationFType().name(), consumerInputs,
 				key.normalizedSignature(), requiresLocalMaterialization);
 			addRelocationRegistryWrite(writesBySlot, write);
 		}
@@ -1139,15 +1142,13 @@ public final class PlacementEmissionTransaction {
 			incoming.slot().hopId(), merged));
 	}
 
-	private static HopOccurrenceProjection resolveAnchor(PlacementAnalysis analysis,
+	private static long exactAnchorHopHint(PlacementAnalysis analysis,
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, RelocationActionKey relocation) {
-		List<HopOccurrenceProjection> anchors = analysis.graph().nodes().stream()
+		return analysis.graph().nodes().stream()
 			.filter(node -> node.anchors().contains(relocation.durableAnchor()))
 			.map(Node::key).map(occurrences::get).filter(Objects::nonNull)
-			.sorted(Comparator.comparing(HopOccurrenceProjection::normalizedSignature)).toList();
-		if(anchors.isEmpty())
-			throw new PlacementEmissionException("Relocation has no durable analysis-owned anchor");
-		return anchors.get(0);
+			.sorted(Comparator.comparing(HopOccurrenceProjection::normalizedSignature))
+			.mapToLong(anchor -> anchor.hop().getHopID()).findFirst().orElse(-1L);
 	}
 
 	private static Map<Hop, HopSnapshot> snapshotHops(List<HopWrite> writes) {

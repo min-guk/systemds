@@ -821,3 +821,26 @@
   exact hint 유지, owned-action/no-live-hint lowering, foreign/inactive/altered obligation의 비변경 실패,
   malformed key, FULL/BROADCAST geometry, registry roundtrip/rollback/live-key conflict를 회귀로 고정한다.
   독립 architecture는 bounded 설계만 승인했으며 W3 해결 여부는 이후 실제 compile로 판정한다.
+
+### REFED durable metadata emission 구현 및 결합 회귀
+
+- `PlacementEmissionTransaction`의 REFED 경로가 canonical action key를 먼저 직렬화한 뒤
+  private `exactAnchorHopHint`에서 기존 exact-record occurrence의 deterministic Hop ID 또는 -1을
+  반환한다. consumer/source/action signature/materialization FType는 그대로이고 alias 검색은 없다.
+  기존 `exactRelocations` 권한·privacy·obligation 검증, derived-FOUT owner 계약, DAG live/key 충돌
+  검사 및 rollback은 변경하지 않았다.
+- 새 회귀는 canonical graph action을 유지하면서 exact node-anchor 중복만 제거하고,
+  같은 worker의 다른 geometry FULL decoy를 둔다. 실제 `Dag.getJobs`까지 실행해 -1 hint,
+  action key, FType/signature/exact consumer bindings와 concrete `fed_refed`를 확인한다.
+  기존 exact hint의 선택 순서도 검증한다. intended RED는 기존 missing-anchor 예외로 실패했다.
+- malformed/unsupported metadata 검사는 constructor/직렬화 경계의 거절을 검증한다.
+  이 검사 자체가 `emit` 전체 atomicity를 증명하는 것은 아니며, 기존 foreign/stale 및 injected-failure
+  transaction 회귀와 production prevalidation 순서가 별도로 이를 검증한다.
+- **검증:** emission16/16, 기존 live/key conflict1/1 통과; 독립 실제 diff review APPROVE.
+  local compact 변경까지 같은 source에서 결합한31개 클래스237/237(실패/오류/skip0),
+  Python matrix77/77, bash syntax/diff-check가 통과했다. 원본/XML/command/count는
+  `emission-durable-metadata-evidence`에 보존했다. 최초 fixture normalization/structure-guard 오류도
+  intended engine RED와 구분해 보존했다.
+- **잔여:** 과거 별도 certificate cap/GLM heap/fixture expectation/외부 provenance 테스트 gap은
+  이 green 집합에 포함하지 않았다. W3 실제 compile 성공과 full896/runtime 성공은 아직 미확인이다.
+  새 package 후 새 `run04`에서 JFR/trace 없이 고정900초 W3/LAN을 먼저 검증한다.

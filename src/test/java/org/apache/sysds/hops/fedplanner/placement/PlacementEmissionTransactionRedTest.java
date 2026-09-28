@@ -9,6 +9,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,8 +31,10 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
@@ -169,6 +172,68 @@ public class PlacementEmissionTransactionRedTest {
 			spec.getConsumerInputs().stream().noneMatch(ConsumerInputSpec::allInputs));
 		Assert.assertEquals("G007_REFED_REGISTRY_PRESERVES_EXACT_MATERIALIZATION_FTYPE",
 			upload.key().materializationFType(), spec.getMaterializationFType());
+		long expectedHint = fixture.analysis().graph().nodes().stream()
+			.filter(node -> node.anchors().contains(upload.key().durableAnchor()))
+			.map(NeutralPlacementGraph.Node::key)
+			.map(key -> fixture.analysis().occurrences().stream()
+				.filter(occurrence -> occurrence.key() == key).findFirst().orElseThrow())
+			.sorted(java.util.Comparator.comparing(
+				PlacementAnalysis.HopOccurrenceProjection::normalizedSignature))
+			.mapToLong(occurrence -> occurrence.hop().getHopID()).findFirst().orElseThrow();
+		Assert.assertEquals("G007_EXISTING_EXACT_RECORD_HINT_IS_RETAINED",
+			expectedHint, spec.getAnchorHopId());
+	}
+
+	@Test
+	public void validatedActionMetadataEmitsWithoutAnExactLiveAnchorRecord() throws Exception {
+		Fixture metadataOnly = relocationFixtureWithoutExactRecordAnchor();
+		RelocationAction action = selectedRelocation(metadataOnly);
+		StateSnapshot before = snapshot(metadataOnly.analysis());
+
+		PlacementEmissionReceipt receipt = PlacementEmissionTransaction.emit(
+			metadataOnly.program(), metadataOnly.plan(), FailureInjector.none());
+
+		Assert.assertTrue("validated metadata-owned relocation must emit", receipt.applied());
+		NeutralPlacementGraph.Node source = selectedRelocationSource(metadataOnly, action);
+		long scope = metadataOnly.analysis().occurrences().stream()
+			.filter(occurrence -> occurrence.key() == source.key()).findFirst().orElseThrow().scopeId();
+		long sourceHop = metadataOnly.analysis().hop(source.key()).orElseThrow().getHopID();
+		FederatedRefedRegistry.AnchorSpec spec =
+			FederatedRefedRegistry.snapshot(scope).get(sourceHop);
+		Assert.assertNotNull("metadata-owned relocation registry write", spec);
+		Assert.assertEquals("missing exact record is represented by the supported optional hint",
+			-1L, spec.getAnchorHopId());
+		Assert.assertEquals("action durable key remains authoritative",
+			ExactPlacementRegistration.runtimeAnchorKey(action.key().durableAnchor()),
+			spec.getAnchorKey());
+		Assert.assertEquals(action.key().materializationFType(), spec.getMaterializationFType());
+		Assert.assertEquals(action.key().normalizedSignature(),
+			spec.getAuthorities().get(0).getPlannerActionKey());
+		List<ConsumerInputSpec> expectedConsumers = action.obligations().stream()
+			.map(obligation -> new ConsumerInputSpec(
+				metadataOnly.analysis().hop(obligation.consumer()).orElseThrow().getHopID(),
+				obligation.inputPosition())).distinct().sorted().toList();
+		Assert.assertEquals("exact consumer binding survives optional hint",
+			expectedConsumers, spec.getConsumerInputs());
+		List<DurableAnchorKey> samePoolDifferentGeometry = metadataOnly.analysis().graph().nodes().stream()
+			.flatMap(node -> node.anchors().stream())
+			.filter(anchor -> !anchor.equals(action.key().durableAnchor()))
+			.filter(anchor -> anchor.partitions().stream().map(AnchorPartition::workerId).toList()
+				.equals(action.key().durableAnchor().partitions().stream()
+					.map(AnchorPartition::workerId).toList()))
+			.toList();
+		Assert.assertFalse("fixture requires a same-pool, different-geometry non-authoritative anchor",
+			samePoolDifferentGeometry.isEmpty());
+		Assert.assertTrue("same-pool geometry must not replace the action runtime key",
+			samePoolDifferentGeometry.stream().allMatch(anchor ->
+				!ExactPlacementRegistration.runtimeAnchorKey(anchor).equals(spec.getAnchorKey())));
+		List<String> refedInstructions = instructionStringsFromProgram(metadataOnly.program()).stream()
+			.filter(instruction -> instruction.contains("fed_refed")).toList();
+		Assert.assertFalse("optional Hop hint must still lower through Dag.getJobs", refedInstructions.isEmpty());
+		Assert.assertTrue("lowered REFED instruction must use the authoritative action key",
+			refedInstructions.stream().anyMatch(instruction -> instruction.contains(spec.getAnchorKey())));
+		Assert.assertNotEquals("successful transaction must apply only after full prevalidation",
+			before, snapshot(metadataOnly.analysis()));
 	}
 
 	@Test
@@ -242,6 +307,29 @@ public class PlacementEmissionTransactionRedTest {
 			Assert.assertEquals("G007_RUNTIME_ANCHOR_ROW_END_ROUND_TRIP",
 				partition.end().get(0).longValue(), ranges[i].getEndDims()[0]);
 		}
+	}
+
+	@Test
+	public void malformedOrUnsupportedActionMetadataFailsWithoutMutation() throws Exception {
+		RelocationAction selected = selectedRelocation(fixture);
+		StateSnapshot before = snapshot(fixture.analysis());
+		DurableAnchorKey unsupported = new DurableAnchorKey("unsupported-action-anchor", FType.OTHER,
+			selected.key().durableAnchor().partitions());
+		expectFailure(() -> new RelocationActionKey(selected.key().sourceValueVersion(),
+			selected.key().targetPlacement(), FType.OTHER, unsupported,
+			selected.key().statementBlockScope(), selected.key().compatibleConsumers()));
+
+		AnchorPartition partition = selected.key().durableAnchor().partitions().get(0);
+		DurableAnchorKey malformed = new DurableAnchorKey("malformed-action-anchor", FType.FULL,
+			List.of(new AnchorPartition(partition.workerId(), List.of(0L, 0L, 0L),
+				List.of(1L, 1L, 1L))));
+		RelocationActionKey malformedAction = new RelocationActionKey(
+			selected.key().sourceValueVersion(), selected.key().targetPlacement(), FType.FULL,
+			malformed, selected.key().statementBlockScope(), selected.key().compatibleConsumers());
+		expectFailure(() -> ExactPlacementRegistration.runtimeAnchorKey(malformedAction.durableAnchor()));
+
+		Assert.assertEquals("invalid action metadata must fail before any owned mutation",
+			before, snapshot(fixture.analysis()));
 	}
 
 	@Test
@@ -410,6 +498,14 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	private static Fixture relocationFixture() throws Exception {
+		return relocationFixture(true);
+	}
+
+	private static Fixture relocationFixtureWithoutExactRecordAnchor() throws Exception {
+		return relocationFixture(false);
+	}
+
+	private static Fixture relocationFixture(boolean retainExactAnchorRecord) throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileRelocationProgram());
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis baseline = new NeutralPlacementGraphBuilder().buildAnalysis(program);
@@ -497,8 +593,54 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_EXACT_FORCED_RELOCATION_SELECTION",
 			plan.selectedRelocations().contains(upload.key()));
 		Assert.assertFalse("P4_FIXTURE_REQUIRES_DECISIONS", plan.selectedStates().isEmpty());
-		program.install(baseline);
-		return new Fixture(program, baseline, plan);
+		if(retainExactAnchorRecord) {
+			program.install(baseline);
+			return new Fixture(program, baseline, plan);
+		}
+		DurableAnchorKey decoyAnchor = samePoolDifferentGeometry(upload.key().durableAnchor());
+		List<NeutralPlacementGraph.Node> nodes = baseline.graph().nodes().stream()
+			.map(node -> new NeutralPlacementGraph.Node(node.key(), node.kind(), node.valueVersion(),
+				node.emittedWork(), node.legalAlternatives(), node.exclusions(), node.anchors().stream()
+					.map(anchorKey -> anchorKey.equals(upload.key().durableAnchor()) ? decoyAnchor : anchorKey)
+					.toList()))
+			.toList();
+		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes,
+			baseline.graph().constraints(), baseline.graph().relocationActions(),
+			baseline.graph().derivedFoutMaterializationActions());
+		Map<CompiledHopKey,PlacementAnalysis.NodeShapeFact> shapes = new LinkedHashMap<>();
+		LinkedHashSet<CompiledHopKey> shapeKeys = new LinkedHashSet<>();
+		for(var occurrence : baseline.occurrences()) {
+			shapeKeys.add(occurrence.key());
+			shapes.put(occurrence.key(), baseline.shapeFact(occurrence.key()).orElseThrow());
+		}
+		PlacementAnalysis metadataOnly = new PlacementAnalysis(graph, baseline.occurrences(),
+			baseline.topLevelStatementBlocks(), program,
+			new PlacementShapeFacts(shapes, shapeKeys), baseline.analysisFingerprint(),
+			baseline.heuristicPolicyFacts(), baseline.candidateRuleDomain().orderedRuleKeys(),
+			baseline.candidateRuleFacts().orderedFacts(),
+			baseline.candidateRuleDomain().orderedConsumerKeys(),
+			baseline.candidateConsumerProfileFacts().orderedFacts(),
+			baseline.detachedConsumerProfileFacts().orderedFacts(),
+			baseline.compiledInputEdgesInCanonicalOrder(),
+			baseline.logicalTransientInputsInCanonicalOrder(), baseline.privacyFactAuthority(),
+			baseline.candidatePrivacyClosureEvidence().orElse(null),
+			baseline.logicalInlinedFunctionInputsInCanonicalOrder(), null);
+		NormalizedPlannerResult metadataPlan = withCanonicalFingerprint(
+			NormalizedPlannerResults.createWithEmissionStatesAndCandidateSelections(
+				metadataOnly, "transaction-fixture-metadata-only", plan.selectedEmissionStates(),
+				plan.selectedCandidateSelections(), plan.selectedRelocationChoices(),
+				"exact-present-relocation-metadata"), metadataOnly);
+		program.install(metadataOnly);
+		return new Fixture(program, metadataOnly, metadataPlan);
+	}
+
+	private static DurableAnchorKey samePoolDifferentGeometry(DurableAnchorKey anchor) {
+		List<AnchorPartition> partitions = anchor.partitions().stream().map(partition -> {
+			List<Long> end = new ArrayList<>(partition.end());
+			end.set(end.size() - 1, end.get(end.size() - 1) + 1L);
+			return new AnchorPartition(partition.workerId(), partition.begin(), end);
+		}).toList();
+		return new DurableAnchorKey(anchor.placementId() + "-different-geometry", anchor.fType(), partitions);
 	}
 
 	private static Fixture localMaterializationFixture() throws Exception {
