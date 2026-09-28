@@ -1061,3 +1061,18 @@
 - **후속:** 구현 보고서는 `FEDPLANNER_EARLY_PRIVACY_PRUNING_IMPLEMENTATION_2026-09-28_KO.md`.
   새 엔진 Docker compile smoke와896 compile survey를 새 root에서 실행하되 성공으로 섞지 않는다.
   전체 compile gate가 거짓인 동안 runtime은0으로 유지한다.
+
+### 새 P0–P3 엔진 Docker smoke 확인
+
+- **상태:** pushed `a9b1ca711e`, JAR100628da…를 clean tree에서 run06으로 동결.
+  DP-local/l2svm/W1/LAN compile11.133612초, search-space6.777721795초,
+  selection-adapter3.153528349초로60초 안에 통과. runtime-program 생성/audit mismatch0,
+  workload runtime0, cleanup 및8개 lease 해제를 확인했다.
+- **비교 한계:** old run05 동일조건11.722002/6.494225690/3.973990369초이며 selected plan hash는 같다.
+  각1회 sample이므로 유의한 속도 개선을 주장하지 않는다. 특히 search-space wall time은 증가했으므로
+  tuple/Oracle counter 감소와 실측 시간 개선을 구분한다.
+- **잔여:** 새 engine896조건 중1성공/895대기, runtime gate=false. 기존 GLM은 UNKNOWN actual의
+  compiled-input/cardinality edge 추적까지 완료됐지만 아직 패치하지 않았다. source/harness는
+  측정 중 동결하고 나머지 compile survey를 계속한다.
+- **증거:** run06/summary.json, compile-comparison.csv; evidence/run06-smoke-verification.json,
+  glm-baseline-diagnosis/. 상세내용은 P0–P3 구현 보고서 참조.

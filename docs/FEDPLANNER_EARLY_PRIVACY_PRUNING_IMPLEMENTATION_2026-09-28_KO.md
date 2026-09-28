@@ -126,3 +126,40 @@ exact-owned container 부재와 stage lease 해제를 확인했으며 이 결과
 - 새 JAR SHA: `100628da2bb3a489a43247d7d887d24aca81f41faa18ba98394e072a246d4dd2`.
 - GLM: shared 함수 formal로 유입되는 UNKNOWN endpoint/cardinality 증거의 원인을 조사 중.
 - 다음: commit/push 및 새 엔진 Docker60초 compile 검증. runtime은 아직 시작하지 않았다.
+
+### 새 엔진 Docker smoke — 통과 (18:24 UTC 기록)
+
+- 코드 commit/push: `a9b1ca711ed5cedb30644abba0d6a9c90a010fe1`.
+- 새 root: `/grid/3/cofee-lm-sweep-mchoi-20260914/w1357-policy-matrix-20260928-run06`.
+- DP-local / l2svm / worker1 / LAN, compile-only, timeout60초 통과.
+- runtime-program 생성 완료, runtime audit mismatch0, 실제 workload 실행0.
+  기존 엔진과 selected plan hash 동일. 컨테이너 cleanup 완료 및8개 host lease 해제 확인.
+
+| 시간(초) | 기존 run05 | 새 run06 |
+|---|---:|---:|
+| 전체 compile | 11.722002 | 11.133612 |
+| search-space 생성 | 6.494226 | 6.777722 |
+| selection adapter planning | 3.973990 | 3.153528 |
+| analysis 이후 전체 planning | 4.184812 | 3.375472 |
+
+**각 엔진1회 관측이며 반복·교차 실행이 아니다.** 전체 compile은 낮았지만 search-space 시간은
+이 표본에서 오히려 증가했다. 따라서 단위 fixture의 작업량 감소를 ML wall-clock 개선으로
+일반화하지 않는다.896조건 결과와 추가 원인 분석이 필요하다.
+
+현재1 통과/0 실패/895 대기, runtime0. 같은 frozen 엔진으로 전체 compile survey를 계속한다.
+증거: evidence root의 `run06-smoke-verification.json`, run06 `compile-comparison.csv`/`summary.json`.
+
+### GLM 별도 원인 분석 결과 — 미해결
+
+기존 JAR와 현재 엔진 모두 GLM worker1의 binomial `cbind`에서 fail-closed한다.
+`FULL` append를 허용하려면 exact single-partition 증명이 필요한데, shared 함수
+`glm_log_likelihood_part.linear_terms`로 들어오는3개 actual 중 pre-loop actual 하나가
+UNKNOWN이다. 이 상태가 `replace/exp`와 binomial formal로 전파되어 FED 후보가 생성되지 않는다.
+privacy에 의한 CP/LOUT 제거 자체는 올바르다.
+
+문제 경계는 `function/.builtinNS::m_glm/body/4/branch-if/1/branch-if/0:root-0/input-0`의
+compiled-input/cardinality 의존성 부재다. 이 occurrence의 producer subtype과 누락 이유가 아직
+확정되지 않아 추측성 패치를 하지 않았다. `deriveCompiledInputEdges`/`SinglePartitionFacts`
+경계를 후속 조사한다. global worker1 가정, cbind 특례, privacy 완화는 해결책으로 채택하지 않는다.
+
+증거: `early-privacy-pruning-evidence/glm-baseline-diagnosis/`.

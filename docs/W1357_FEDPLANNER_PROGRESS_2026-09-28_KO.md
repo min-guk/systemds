@@ -171,3 +171,15 @@ realization/authority proof 재검증, native-local 비용의 target-only 불변
 - 당시 새 기준 **0통과 / 2 timeout 실패 / 894대기**, runtime0. 실패를 성공 시간으로 채우지 않는다.
 - 원본은 `w1357-policy-matrix-20260928-run05/timeout60-verification.json`;
   이후 진행 건수는 같은 root의 `summary.json`/비교 CSV를 따른다.
+
+## 후속: 조기 privacy pruning 새 엔진 검증 (2026-09-28 18:24 UTC)
+
+P0–P3 구현을 `a9b1ca711e`로 커밋·푸시했고 JAR `100628da…`로 run06을 시작했다.
+384개 Java 회귀 통과/기존 GLM 오류1/기존 skip10, 마지막 비용·계획8개/Python83개 통과,
+package 및 독립 scoped review 통과. 전체 green은 아니다.
+
+첫 Docker DP-local/l2svm/W1/LAN compile11.133612초 통과. search-space6.777722초,
+selection-adapter3.153528초다. 기존 엔진과 계획 hash가 같지만 search-space 시간 개선은 아직
+입증하지 못했다. 새 matrix1성공/895대기, runtime0. timeout60초와896 compile gate 유지.
+
+상세: [조기 pruning 구현·검증 보고서](FEDPLANNER_EARLY_PRIVACY_PRUNING_IMPLEMENTATION_2026-09-28_KO.md).
