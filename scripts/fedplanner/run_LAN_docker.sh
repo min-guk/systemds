@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# One-shot Docker-only common search-space validation entrypoint.
+# Docker-only validation/campaign entrypoint.
 #
-# This deliberately delegates to the frozen P5 evidence harness. It does not
-# invoke run_LAN.sh, run Java on the host, execute a workload, resume the paused
-# all14 performance goal, or retry/select a favorable result.
+# Explicit lanes below run the requested Docker validation/campaign. The default
+# still delegates to the frozen P5 evidence harness. Neither lane invokes
+# run_LAN.sh or resumes the unrelated paused all14 performance goal.
 set -euo pipefail
+
+if [[ "${1:-}" == "--campaign" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_matrix_campaign.py" "$@"
+fi
 
 # Explicit repo-owned correctness lane. The historical frozen P5 path below is unchanged.
 if [[ "${1:-}" == "--greedy-validation" ]]; then

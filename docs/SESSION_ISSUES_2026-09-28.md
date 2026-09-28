@@ -251,3 +251,168 @@
   이번 범위 밖이다. 기존 hard legality 검증과 typed fail-before-emission을 유지하여 감지한다.
 - **정리 파일:** `docs/FEDFIRST_AGGLOCAL_IMPLEMENTATION_2026-09-28.md`의 알고리즘·변경 파일·정확한 수치와
   재현 명령을 현재 구현의 기준 문서로 사용한다. 이전 알고리즘/리뷰 파일에는 수정 전 snapshot 표시를 추가했다.
+
+## Four-planner 전체 compile/runtime 캠페인 준비 — 진행중
+
+- **요청/상태:** 후속 사용자 요청으로 구현을 5개 논리 커밋으로 나누어 정상 push 완료.
+  `origin/refactor/w1357-paper-aligned-20260928`와 local HEAD 모두
+  `5205946c768cc48627a227ab1f6cd07ef75b6024`. 이후 전체 896 compile 조건과,
+  전부 성공한 뒤 logreg → l2svm → 나머지 runtime 순서를 별도 캠페인으로 준비했다.
+- **증상/원인:** 기존 P5 wrapper는 search-space-only여서 selector/LOP/runtime-program
+  구성을 검증하지 않는다. 외부 구형 campaign의 run 분기는 선택 필터를 runtime batch에
+  전달하지 않으므로 logreg-first를 보장하지 않는다. 전체 compile이라고 부를 수 없었다.
+- **해결/수정 파일:** `run_LAN_docker.sh --campaign`, `run_matrix_campaign.py`,
+  `MatrixCampaignProbe.java` 추가. production `executeScript` + `-stats` +
+  compile_only XML로 runtime 직전까지 컴파일한다. 각 시도는 새 JVM/worker/container,
+  immutable JAR/probe와 append-only 결과를 사용하며 전역 compile gate 이전 runtime 금지.
+  frozen P5 harness와 별도 paused 성능 goal은 변경하지 않는다.
+- **환경 검증:** 8개 host 모두 동일 stage seal의 2,995개 파일 SHA 재검증 성공.
+  host별 Docker image ID는 달랐으나 normalized content SHA는 전부 동일했다.
+  coordinator/worker 모두 최신 candidate overlay SHA 검증. root disk 2.4 GiB 문제는
+  기존 user-owned `/grid/3/cofee-lm-sweep-mchoi-20260914` evidence 공간으로 회피했고
+  사용자 파일을 삭제하지 않았다.
+- **검토 중 수정:** probe/log timing 대조, 실제 runtime timer/실행 job 수와 audit 요약을 통한
+  compile-only 무실행 검증, search-space commonPreparation/analysis 분리,
+  runtime 실패 시 exit code 및 reference identity 고정 필요성을 확인했다.
+- **잔여 이슈:** 첫 DP/logreg/W1/LAN compile pilot 진행중. 142초 thread dump에서
+  공통 analysis 이후 DP exact-factor dense materialization CPU 작업을 관측하여 원인 조사중.
+  진단 개입이 있으므로 이 pilot은 정상 성능 표본으로 사용하지 않는다.
+- **잠재 회귀 위험/감지:** 예외를 출력만 하는 DMLScript.main의 가짜 성공, stale JAR,
+  다른 seed/network/planner, compile-only 오인, 일부 조건만 통과한 runtime 진입을
+  receipt·SHA·896개 gate·실제 Docker/netem 증거로 차단한다.
+- **의사결정 근거:** 실험 경계를 바로잡으며 Oracle/privacy/runtime 영역은 완화하지 않는다.
+
+## 기존 runtime 수치 comparator/reference 불일치 — 진행중
+
+- **증상/원인:** 외부 `run_trusted_comparison`이 보내는 구형 request에는 최신 comparator가
+  요구하는 host-aware `reference_source`가 없다. 최신 pinned cpref5 전체 상태는 FAILED이며
+  13 workload reference만 있고 P2는 미완료다.
+- **해결 방향/파일:** repo-owned `matrix_runtime_compare.py`에서 현재 request schema와
+  manifest/generation-plan 두 SHA를 검증하도록 연결한다. comparator, 기준값,
+  correctness 정책을 임의로 바꾸지 않는다. P2 없는 기준값을 READY로 승격하지 않는다.
+- **검증:** so007의 cpref5 result SHA
+  `76963e5a6c0cdb0b60b2f42fc4c8bac0fa523cb0fc687f4fde82cb9ed2f89416`, generation-plan SHA
+  `06e15c6b331deab04840dcd3dc1247cf394b5499daf5e9c60d1ba06fa95de641` 읽기 전용 재확인.
+- **원인 확정:** cpref5 P2는 compile 0.801126초 후 runtime cache eviction의 912,440,831-byte 파일을
+  256 MiB `/tmp` tmpfs에 쓰다가 `No space left on device`로 실패했다. rc=0이지만
+  `dmlscript_fatal_marker=true`였다. 엔진 미지원으로 단정하거나 성공 처리하지 않는다.
+- **수정 방향:** 기존 `generate_w1357_references.py`의 P2 selective repair는 attempt-owned
+  host scratch `/scratch`와 5 GiB 가용량 gate를 이미 제공한다. 전체 compile gate가
+  성공한 뒤 P2 runtime 순서에서 이 lane을 wrapper 내부로 호출하고 새 P2 결과 두 개를
+  검증·pin한다. 원본 cpref5 FAILED/13개 reference는 덮어쓰지 않는다.
+- **잔여 이슈/위험:** P2 scratch 수정 후 reference 재생성은 아직 미실행이다.
+  candidate actual output JAR SHA와 sealed reference/decoder JAR SHA를 혼동하면
+  거짓 provenance 또는 정당한 비교 거절이 생긴다. 두 identity와 raw output SHA를 분리 기록한다.
+- **의사결정 근거:** 검증 실패를 runtime 성공으로 덮지 않고, 비교기 계약을 충족한 수치 결과만 성공으로 인정한다.
+
+
+## DP/logreg 첫 전체 compile의 900초 timeout — 수정 검증중
+
+- **조건/증거:** `w1357-policy-matrix-20260928-pilot01`, DP-local/logreg/W1/LAN,
+  최신 push된 frozen engine, 16 GiB JVM/24 GiB Docker. 900초 제한에서 rc=124,
+  process 901.711541초. compile 성공 0/실패 1/미시작 895, runtime 0/896이다.
+- **원인 관측:** 여러 SIGQUIT 표본이 `LocalPhysicalOptimizer → reducedRoot →
+  ExactPhysicalReducedSolver.reduce → ExactCategoricalSolver.materializeInputs`의
+  realization-support factor callback에 머물렀다. 매 factor cell마다 동일 clause의
+  requiredInputSupport distinct/sort/정규화와 canonical receipt/reference 구성이 반복된다.
+  deadlock/worker network 대기가 아니라 DP model factor 동결 단계의 CPU 계산이다.
+- **해결 진행:** `ExactPhysicalModel.addRealizationSupportFactors`에서 immutable support와
+  canonical source reference를 model-local로 계산하고 equality를 동일한 reference handle
+  비교로 재사용한다. domains/scopes/truth tables/candidate 집합/상한은 바꾸지 않는다.
+  변경 전에 old evaluator의 전체 fixture factor truth를 고정하고 after와 대조한다.
+- **검증/정리:** 실패 raw logs/thread dumps와 result.json 보존. ownership-checked Docker
+  cleanup resolved=true, 8개 stage lease release=true, coordinator/worker 컨테이너 없음 확인.
+  진단 개입이 있으므로 timing survey의 정상 표본으로 사용하지 않는다. timeout을 실제
+  compile 시간이나 전역 infeasibility로 기록하지 않는다.
+- **잔여 이슈:** cache 수정 이후 동일 timeout/동일 조건 재검증 대기. 전체 행렬 및 runtime
+  성공으로 확대 보고하지 않는다. PUBLIC-only regression은 적용하지 않고 protected fixture로 검증한다.
+- **잠재 회귀/감지:** canonical 소유자 검증 생략, 두 required reference의 AND를 OR로 바꾸는
+  오류, model 간 cache 누수는 exhaustive truth parity와 기존 exact/DP authority 테스트로 검출한다.
+- **의사결정 근거:** 불변 계산만 재사용한다. 후보 pruning, cap 증가, 다른 planner/runtime fallback은 금지한다.
+
+## DP/logreg 두 번째 compile 파일럿의 rc=137 — 진단 신호 오류로 원인 확정
+
+- **상태/증상:** realization-support 불변 계산 재사용 이후 `pilot02`의 동일 DP/logreg/W1/LAN
+  production compile이 237.811432초에 rc=137로 종료했다. 900초 timeout과 다른 실패이며
+  원인은 아래 진단 신호 오류로 확정했다. 원본 로그/receipt(null)/cleanup/netem을 보존했다.
+- **첫 수정 검증:** protected B11 fixture의 전체 hard-factor truth SHA는 수정 전후 모두
+  `8985c0e88b787efda0f0b62ae357f6374ee555e1a836f466c81e84e91e2faea9`.
+  `dp-realization-cache-final-evidence`의 6개 Surefire XML은 총 40 tests, failures/errors/skips 0이다.
+  별도 확장 실행에서 기존 certificate 60M-cell cap 오류와 GLM default-heap OOM은 남아 있다.
+  GLM OOM은 수정 전 코드에서도 재현되어 이번 수정으로 해결했다고 주장하지 않는다.
+- **추가 관측:** JVM 약206초 thread dump는 realization-support가 아닌
+  `ExactPhysicalModel.inputSatisfied → directFoutSatisfied`에서 전체 relocation action/obligation
+  검색을 factor cell마다 반복함을 보였다. 이 파일럿도 SIGQUIT 개입이 있어 성능 표본이 아니다.
+- **원인 확정:** 진단자가 `MatrixCampaignProbe` 문자열을 가진 첫 PID를 Java로 오인하여 GNU
+  `timeout` wrapper(PID45)에 QUIT를 보냈다. timeout이 Java에 QUIT를 전달해 유효한 thread dump는
+  생성됐지만 `--kill-after=30s`도 발동하여 31.366540초 후 rc137로 종료했다. Docker event에서
+  진단 exec 10:50:15.466193Z → target exec_die 10:50:46.832733Z를 확인했다. 원본 event 증거는
+  `pilot02/diagnostics/rc137-diagnostic-interference.json`에 보존했다. OOM event는 없었고
+  cleanup kill은 이후 10:50:50.419295Z였다. kernel journal은 권한상 읽지 못했으며 근거로 사용하지 않는다.
+- **수정 방향:** 향후 측정은 진단 신호 없이 재실행한다. 필요시 `comm=java`와 `/proc/PID/comm`,
+  cmdline을 모두 검증해야 한다. rc137을 엔진/메모리 문제로 돌리거나 자원 한도를 올리지 않는다.
+  관측한 반복 계산의 matching-action/canonical receipt hoist는 별도 성능 수정이며 assignment별
+  활성화/authority 검증과 factor truth를 유지한다.
+  새 runner는 cleanup 전에 exact container ID의 State, memory limit, OOM events, cgroup counter를 수집한다.
+- **수정 파일:** `ExactPhysicalModel.java`, protected factor regression, `run_matrix_campaign.py`.
+- **정리/잔여:** cleanup resolved=true, stage leases released=true. compile 0/896, runtime 0/896;
+  전역 compile gate는 계속 닫혀 있다. 이 파일럿의 완료/성능 결과는 무효이며 후속 최적화 효과는 재검증한다.
+- **잠재 회귀/감지:** 사전 인덱싱이 다른 candidate/action authority를 섞는 위험은 exact truth parity와
+  ownership 회귀로 검출한다. child JVM만 OOM-kill된 경우 PID1 State만 보면 놓치므로 OOM event도 수집한다.
+- **의사결정 근거:** 후보/제약/한도를 바꾸지 않고 반복 불변 연산과 실패 관측만 수정한다.
+
+## Untimed Docker setup의 안전한 병렬화 — 단위 검증 완료
+
+- **증상/원인:** worker 수에 따라 독립 host의 생성/tc 설정 SSH가 직렬 누적되어 전체 896-cell
+  캠페인 준비 시간이 커진다. 이 시간은 compile/planning timer 밖이다.
+- **해결/파일:** `matrix_lifecycle.py` 및 runner 연결. worker 생성 전부 완료 → coordinator 생성 →
+  tc 설정 전부 완료 → tc 검증 전부 완료 → readiness 순서의 barrier를 유지한다. 각 stage는 최대8개
+  독립 작업만 병렬화하며, 실패해도 이미 실행한 모든 future가 끝난 뒤 cleanup에 진입한다.
+  한 번에 timed workload는 여전히 하나이며 cell마다 새 worker/container/JVM을 유지한다.
+- **검증:** canonical 7-worker plan 형태 7→1→8→8→1 확인, helper mock 5/5 PASS,
+  matrix-pattern Python 회귀 및 cleanup/health 통합 회귀 66/66 PASS. Docker 실측은
+  다음 frozen epoch에서 검증한다. `matrix-harness-lifecycle-health-final.log`에 원본 결과를 보존했다.
+- **잔여 위험/감지:** stage barrier 누락이나 실패 후 늦은 container 생성은 mock ordering/drain 회귀와
+  실제 exact-ID cleanup receipt로 검출한다. helper SHA도 campaign identity에 포함하여 revision을 섞지 않는다.
+- **의사결정 근거:** 측정 대상/자원/입력/네트워크/새 프로세스 조건은 유지하고 준비 시간만 단축한다.
+
+## DP exact input-authority factor의 불변 준비 인덱싱 — 보호 fixture 회귀 통과
+
+- **증상/근거:** 진단용 `pilot02` JVM dump에서 `ExactCategoricalSolver.materializeInputs`의
+  factor cell 평가가 `ExactPhysicalModel.inputSatisfied → directFoutSatisfied`에 머물렀다.
+  기존 evaluator는 동일 consumer alternative에 대해 authority 검색, 전체 relocation-action 필터,
+  obligation 일치, canonical candidate receipt 파생을 factor cell마다 반복했다.
+- **수정:** `ExactPhysicalModel.java`의 model build 범위에서 source value-version별 action을 인덱싱하고,
+  consumer-alternative별 일치 authority·DIRECT_FOUT action·exact-action identity·RELOCATION obligation을
+  한 번 준비했다. canonical receipt는 domain/alternative identity별로 한 번 검증하여
+  factor scope와 value 순서를 그대로 재사용한다. cache는 model-local이며 candidate/action을 제거하지 않는다.
+- **의미 보존:** assignment별 `isRelocationActive`, exact receipt collection, relocation privacy,
+  source output/FType 검사는 factor cell 안에 남겼다. exact action은 구조 동등이 아닌 기존 `==`
+  identity 조건을 유지했고, authority의 source-decision·input-position·placement/FType 필터도 변경하지 않았다.
+  factor scope/순서/비용, 전체 후보 집합, solver limit은 동일하다.
+- **truth 검증:** PUBLIC이 아닌 B-11 `PRIVATE_AGGREGATE` fixture의 전체 hard-factor
+  scope/order/cell truth SHA-256은 수정 전 golden과 동일한
+  `8985c0e88b787efda0f0b62ae357f6374ee555e1a836f466c81e84e91e2faea9`이다.
+  이 fixture는 relocation action, DIRECT_FOUT authority, realization support가 모두 0보다 큼을 검사한다.
+- **회귀 검증:** focused protected test PASS. realization support/reduced solver/regional problem/owner lookup/
+  policy quotient/anchor relocation identity를 포함한 7개 exact 클래스 46 tests, failures/errors/skips 0.
+  증거는 `/grid/3/cofee-lm-sweep-mchoi-20260914/dp-input-authority-index-final-evidence`에 보존했다.
+- **잔여/중단조건:** scope assignment map과 selected-receipt list는 assignment에 의존하므로
+  cell별 구성을 유지했다. 이 수정의 end-to-end compile 속도는 아직 증명하지 않았다.
+  `pilot02` rc137은 timeout wrapper에 잘못 보낸 QUIT으로 유발된 무효 실행이므로 성능 근거가 아니다.
+  후속 검증은 진단 신호 없이 동일 900초 제한으로 실행한다.
+
+## 수정 후 첫 signal-free DP production compile — 단일 조건 통과
+
+- **환경/증거:** `w1357-policy-matrix-20260928-run01`, JAR
+  `2d9dd14bf7787db48f5f0f0469b8f0e299405ea86c76487ab6934c052b0e1d57`,
+  DP/logreg/W1/LAN. `attempts/compile/01790593628154595809-58500dc9/result.json`.
+- **결과:** compile 810.656620초, shared search-space 26.888162초,
+  selection/adapter 781.971015초. runtime timer/실행 job 0, physical lowering198/198,
+  missing/mismatch0, cleanup resolved=true, OOM/health 수집 오류 없음.
+- **검증:** 두 준비 단계 수정의 Java46/46, harness66/66, package 성공 및 독립 review 승인 후 실행했다.
+  진단 신호/JFR은 사용하지 않았다. read-only ps 관측 한 번의 원문은 별도 보존했다.
+- **잔여 이슈:** 단일 조건만 통과했으며 DP optimizer718.349780초/cost surface58.052110초는
+  여전히 큰 비용이다. 896개 행렬 전체 통과나 일반적 성능 향상을 주장하지 않는다.
+  후속 조건은 동일 frozen engine으로 순차 실행하며 실패 시 중지·진단한다.
+- **의사결정 근거:** 기존 cap·후보·privacy·자원·timeout을 그대로 둔 전체 production 컴파일 성공만 채택한다.
