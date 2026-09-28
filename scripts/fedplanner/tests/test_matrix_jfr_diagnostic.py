@@ -46,6 +46,24 @@ class DiagnosticCliContractTest(unittest.TestCase):
         self.assertTrue(contract['diagnostic_jfr'])
         self.assertEqual(list(CAMPAIGN.JFR_OPTIONS), contract['diagnostic_jfr_options'])
 
+    def test_pre_solve_trace_is_diagnostic_only_and_does_not_change_order_policy(self):
+        expected = ['-Dsysds.fedplanner.trace=true',
+                    '-Dsysds.fedplanner.trace.details=false']
+        cell = CAMPAIGN.matrix()[0]
+        diagnostic = CAMPAIGN.coordinator_java(cell, 'compile', True)
+        ordinary = CAMPAIGN.coordinator_java(cell, 'compile', False)
+        for option in expected:
+            self.assertIn(option, diagnostic)
+            self.assertNotIn(option, ordinary)
+            self.assertNotIn(option, CAMPAIGN.JAVA)
+        self.assertEqual(expected,
+                         CAMPAIGN.diagnostic_contract(True)['diagnostic_planner_trace_options'])
+        self.assertEqual([], CAMPAIGN.diagnostic_contract(False)['diagnostic_planner_trace_options'])
+        for option in diagnostic:
+            self.assertFalse(option.startswith(('-Dsysds.fedplanner.exact.fastOrder',
+                                                '-Dsysds.fedplanner.regional.fastBlock',
+                                                '-Dsysds.fedplanner.regional.compact')))
+
 
 class DiagnosticGateAndReportingTest(unittest.TestCase):
     def test_identity_flag_or_individual_diagnostic_row_also_closes_gate(self):

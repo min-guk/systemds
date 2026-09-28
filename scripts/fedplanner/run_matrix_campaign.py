@@ -56,6 +56,8 @@ JFR_OPTIONS = (
     'filename=/workspace/experiments/tmp/compile.jfr,dumponexit=true,maxsize=128m',
     '-XX:FlightRecorderOptions=stackdepth=128',
 )
+DIAGNOSTIC_TRACE_OPTIONS = ('-Dsysds.fedplanner.trace=true',
+                            '-Dsysds.fedplanner.trace.details=false')
 CP = '/candidate/probe/classes:/candidate/SystemDS.jar:/opt/systemds/target/lib/*'
 
 
@@ -118,7 +120,8 @@ def ssh(host, argv, **kwargs):
 
 def diagnostic_contract(enabled):
     return {'diagnostic_jfr': bool(enabled),
-            'diagnostic_jfr_options': list(JFR_OPTIONS) if enabled else []}
+            'diagnostic_jfr_options': list(JFR_OPTIONS) if enabled else [],
+            'diagnostic_planner_trace_options': list(DIAGNOSTIC_TRACE_OPTIONS) if enabled else []}
 
 
 def initialize(root, stage, diagnostic_jfr=False):
@@ -234,6 +237,7 @@ def coordinator_java(cell, phase, diagnostic_jfr=False):
     java = list(JAVA)
     if diagnostic_jfr:
         java.extend(JFR_OPTIONS)
+        java.extend(DIAGNOSTIC_TRACE_OPTIONS)
     if cell['suite'] == 'p2':
         java.append('-Dsysds.privacy.allowPublicRecodeMetadata=true')
     java += ['-cp', CP, PROBE, '--mode', phase, '--script', 'tmp/cell.dml',
@@ -517,7 +521,7 @@ def main(argv=None):
     parser.add_argument('--retry-failed', action='store_true')
     parser.add_argument('--keep-going', action='store_true')
     parser.add_argument('--diagnostic-jfr', action='store_true',
-                        help='single compile-only coordinator JFR diagnostic; never benchmark data')
+                        help='single compile-only coordinator JFR/planner-trace diagnostic; never benchmark data')
     for key, options in (('planner', PLANNERS), ('profile', PROFILES), ('workload', tuple(w for _, w in WORKLOADS))):
         parser.add_argument('--' + key, choices=options)
     parser.add_argument('--workers', type=int, choices=WORKERS)

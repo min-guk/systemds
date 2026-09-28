@@ -193,3 +193,13 @@ review approved the actual diff. These are correctness/integration results,
 not yet evidence that the W3 production timeout is resolved. Run03 will first
 retry W3/LAN signal-free under the unchanged900s limit, then continue the full
 schedule only if that cell passes; runtime stays behind the full896-cell gate.
+
+Run03's W3/LAN regression still hit900s (rc124/process902.363041s), so its
+same-engine coverage is0 passed,1failed,895pending; runtime remains0.
+The correctness-preserving kernel patch alone did not establish timeout
+resolution. New diagnostic-only receipts now expose the existing four-order
+portfolio metrics and selected first-block plan **before** execution. They do
+not alter the comparator/order/costs. Java168/168 and Python74/74 passed,
+with9 additional trace-environment tests and package/review success.
+`diag03` combines these receipts with startup JFR; it is excluded from all
+normal timing/gating. Full compile and ordered runtime are still incomplete.

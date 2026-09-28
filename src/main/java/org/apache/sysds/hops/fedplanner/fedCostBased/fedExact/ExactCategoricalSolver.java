@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
+
 /**
  * Exact deterministic min-sum variable elimination over finite categorical variables.
  *
@@ -912,6 +914,7 @@ public final class ExactCategoricalSolver {
 			PlanOrdering.MIN_SEPARATOR_CELLS,
 			PlanOrdering.MIN_ELIMINATION_ASSIGNMENTS,
 			PlanOrdering.MIN_DEGREE);
+		StringBuilder diagnostic = FederatedPlannerTrace.isEnabled() ? new StringBuilder() : null;
 		ScoredPlan best = null;
 		for(int priority = 0; priority < orderings.size(); priority++) {
 			ScoredPlan candidate;
@@ -921,10 +924,33 @@ public final class ExactCategoricalSolver {
 				Plan plan = eliminationPlan(variables, domains, initialScopes, orderings.get(priority));
 				candidate = new ScoredPlan(plan, planMetrics(plan, domains), priority);
 			}
+			if(diagnostic != null) {
+				if(priority > 0)
+					diagnostic.append("; ");
+				diagnostic.append(orderings.get(priority)).append(':').append(candidate.metrics);
+			}
 			if(best == null || compare(candidate, best) < 0)
 				best = candidate;
 		}
-		return Objects.requireNonNull(best, "best elimination plan").plan;
+		Objects.requireNonNull(best, "best elimination plan");
+		if(diagnostic != null) {
+			// A single receipt binds all already-computed candidates to the selected
+			// ordering. Input cells are separate: PlanMetrics counts intermediate tables.
+			long inputCells = 0L;
+			long maximumInputCells = 0L;
+			for(int[] scope : initialScopes) {
+				long cells = saturatedCells(scope, domains);
+				inputCells = saturatedAdd(inputCells, cells);
+				maximumInputCells = Math.max(maximumInputCells, cells);
+			}
+			FederatedPlannerTrace.logGlobal("Exact-OrderPortfolio",
+				"variables=" + variables.size() + " inputFactors=" + initialScopes.size()
+					+ " inputCells=" + inputCells + " maximumInputCells=" + maximumInputCells
+					+ " candidates=[" + diagnostic + "]"
+					+ " selectedOrdering=" + orderings.get(best.priority)
+					+ " selectedPriority=" + best.priority);
+		}
+		return best.plan;
 	}
 
 	private static int compare(ScoredPlan left, ScoredPlan right) {

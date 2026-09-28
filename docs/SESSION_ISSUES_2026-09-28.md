@@ -649,3 +649,64 @@
   `combined-surefire/`에 원본을 보존했다. 신규 test의 unused import 한 줄만 제거한 후8개를 재실행한다.
 - **최종 빌드:** import-only 정리 뒤 arithmetic8/8 PASS, `mvn -q -Dmaven.test.skip=true package`
   exit0. 최종 source/test/JAR SHA는 `solver-kernel-fixes-evidence/SOURCE_FREEZE.json`에 동결했다.
+
+## run03 W3 재검증 timeout — solver 최적화만으로 미해결
+
+- **상태/환경:** pushed commit `b143c83567e583e0ddd93dbb1ca73ce86b1bcc85`, JAR
+  `13a2a65c523370d0f8008f38d5f6b0875af3dbf1ae520282cd933a78270d365c`의
+  DP/logreg/W3/LAN을 새 immutable root에서 같은900초 제한으로 실행했다.
+- **증상/증거:** `run03/attempts/compile/01790602766846701414-d97bc149`의
+  rc124/process902.363041초, 완료 receipt 없음. analysis 종료 후 planner에 진입했다.
+  cleanup resolved=true,8개 stage lease 해제 성공. full schedule은 첫 회귀 조건 실패로 시작하지 않았다.
+- **해석:**166개 수치/선택/authority 결합 회귀와 소스 수준 중복 연산 제거는 입증됐지만,
+  W3 production timeout 해결은 입증되지 않았다. 이전과 새 실행이 모두900초에서 검열됐으므로
+  속도 향상이 없었다거나 특정 speedup이 있었다는 결론은 내리지 않는다.
+- **다음 분석:** 새 engine profile과 dense solver의 실제 symbolic elimination work/statistics를
+  확보해 전체 열거량과 남은 비용을 분리한다. 이전 profile만으로 추가 미세 최적화를 반복하지 않는다.
+  신규 instrumentation이 필요하면 diagnostic-only identity 아래서만 수행하며 본행렬 조건은 유지한다.
+- **잔여:** run03 compile0/896 통과,1실패,895미시작; runtime0/896. run02의4통과는 다른 엔진의
+  결과로 보존하며 합산하지 않는다. compile gate는 계속 false다.
+- **잠재 회귀/감지:** 다음 수정이 elimination order/수치 grouping/선택 tie/authority에 영향을 주면
+  단순 cache 최적화로 간주하지 않고 별도 설계·parity 검증을 요구한다. 임의 후보 축소나 cap 증가는 하지 않는다.
+
+### Timeout 관측 gap 보완 및 architecture 검토
+
+- **확인된 구조:** DP는 `regionalSeed`의 cheapest hard-conflict repair를 먼저 끝낸 뒤 incremental
+  optimizer의10초 soft budget을 시작한다. seed의 exact VE는 현재 materialization-only limit과
+  memory-first4-order portfolio를 사용하며, assignment 열거량은 통계만 계산하고 hard cap으로 제한하지 않는다.
+  따라서 작은 결과 table과 매우 많은 연산량이 공존할 수 있다. 이것은 코드 구조 확인이며 run03의
+  정량 원인으로 확정한 것은 아니다. 실패 실행 health도 OOM event/cgroup kill0이었다.
+- **기존 관측 부족:** 선택된 실제 VE 통계는 이미 compile 시 존재하지만 주로 완료 후 출력됐다.
+  fast-order trace의0은 default-off의 placeholder이며 실제 선택된 열거량이 아니다.
+- **진단 instrumentation:** `SharedRegionalPreparation`의 첫 성공적으로 준비한 block에 대해
+  `Exact-PreSolveWork`를 solve 전에 출력한다. 기존 `blocks==0`과 기존 trace flag를 재사용하며
+  root/block/input 변수·factor 수, domain 벡터, 실제 선택 order/assignment/cell 통계와 cap을 기록한다.
+  compact 분기의 post-reduction 입력과 compiled 상태를 혼동하지 않도록 input* 필드를 구분한다.
+  `ExactCategoricalSolver`는4개의 이미 계산한 portfolio metrics와 선택 priority를 단일
+  `Exact-OrderPortfolio` receipt에 함께 출력한다. 입력 table cell 수는 intermediate metrics와 별도다.
+  후보/order 재계산, lazy cost 평가, comparator/limit/policy 변경은 없다.
+- **격리:** wrapper의 `--diagnostic-jfr`에만 coordinator trace=true/details=false를 추가하며
+  flag 목록을 manifest identity/measurement에 동결한다. worker와 일반 compile/runtime에는 추가하지 않는다.
+  새 Python contract를 먼저 RED로 확인한 뒤 matrix74/74 PASS. Java trace contract 역시
+  pre-edit7/7 → first-block instrumentation9/9, portfolio-header 미구현 RED를 별도로 보존했다.
+- **독립 architecture 의견:** first-feasible seed는 기존 cheapest-repair 계약과 테스트를 바꾸는
+  정책 변경이므로 임시 우회로 사용하지 않는다. 실제 작업량 확인 후 conditioned exact reduction
+  (root reduction과 다름)을 우선 검토한다. 기존 compact path는 post-conditioning reduction과
+  singleton substitution 둘 다 수행한다. 과거 default-off는 compatibility/ablation이며 이득이 항상
+  있었던 것은 아니다. order/compaction 변경은 equal-cost coupled tie의 선택을 바꿀 수 있으므로
+  objective 동치와 assignment 동치를 혼동하지 않는다. global Exact 정책은 따로 검증해야 한다.
+- **잔여/회귀 위험:** 새 JFR+pre-solve evidence 전까지 어떤 알고리즘 변경도 선택하지 않았다.
+  trace-disabled numeric golden, trace-on/off/출력시점/계산통계/원래후보4개를 검증한 뒤 별도diag03를 실행한다.
+
+- **Portfolio assertion 정정:** 새 trace 테스트의 첫 구현은 이 tiny fixture에서 MIN_SEPARATOR가
+  선택될 것으로 잘못 예상했다. 실제 기존 MIN_FILL도 secondary neighbor-cell 기준으로 같은 order를
+  만들며 네 metrics가 동일해 기존 priority0(MIN_FILL)가 이긴다. comparator 소스와 trace로 이를
+  확인해 신규 진단 assertion만 바로잡았고 실패 원본은 `portfolio-first-attempt.log`에 보존했다.
+  엔진 선택 정책을 테스트에 맞춰 바꾸지 않았다.
+- **진단 변경 결합 검증:** numeric/cost/authority/policy/trace22개 클래스168/168 PASS,
+  Python matrix74/74 PASS, 독립 diagnostic diff review APPROVE. trace test child의 환경변수 상속
+  취약성은 system property true/false를 명시해 제거하고, trace 환경변수가1인 실행으로 추가 검증한다.
+- **최종 진단 빌드:** `SYSDS_FED_PLANNER_TRACE=1` 환경에서도 explicit-off child를 포함한
+  SharedRegionalPreparation9/9 PASS, package exit0. `solver-work-diagnostic-evidence/SOURCE_FREEZE.json`에
+  새 source/JAR/runner/test hash를 기록했다. diag03는 새 immutable root에서300초 관측하며
+  normal matrix timing 또는 compile gate에는 포함하지 않는다.

@@ -16,8 +16,15 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
@@ -204,6 +211,134 @@ public class SharedRegionalPreparationTest {
 			else
 				System.setProperty(SharedRegionalPreparation.FAST_BLOCK_ASSIGNMENTS_PROPERTY, previous);
 		}
+	}
+
+	@Test
+	public void preSolveWorkTraceRespectsExplicitTraceOff() throws Exception {
+		String output = runTraceProbe(false);
+		Assert.assertFalse(output, output.contains("[PlannerTrace][Exact-PreSolveWork]"));
+		Assert.assertFalse(output, output.contains("[PlannerTrace][Exact-OrderPortfolio]"));
+		Assert.assertTrue(output, output.contains("TRACE_PROBE_COMPLETE"));
+	}
+
+	@Test
+	public void preSolveWorkTraceReportsBothBranchesBeforeSolveExactlyOnce() throws Exception {
+		String output = runTraceProbe(true);
+		Assert.assertEquals(output, 2, occurrences(output, "[PlannerTrace][Exact-PreSolveWork]"));
+		List<String> portfolios = output.lines().filter(line ->
+			line.contains("[PlannerTrace][Exact-OrderPortfolio]")).toList();
+		Assert.assertEquals(output, 4, portfolios.size());
+		for(String portfolio : portfolios) {
+			Assert.assertTrue(portfolio, portfolio.contains("variables=2 inputFactors=1 inputCells=6 maximumInputCells=6"));
+			for(String ordering : List.of("MIN_FILL", "MIN_SEPARATOR_CELLS",
+				"MIN_ELIMINATION_ASSIGNMENTS", "MIN_DEGREE"))
+				Assert.assertTrue(portfolio, portfolio.contains(ordering + ":PlanMetrics["));
+			Assert.assertTrue(portfolio, portfolio.contains("MIN_SEPARATOR_CELLS:PlanMetrics[maximumFactorCells=2, "
+				+ "materializedFactorCells=3, maximumEliminationAssignments=6, eliminationAssignments=8]"));
+			Assert.assertTrue(portfolio, portfolio.contains("selectedOrdering=MIN_FILL selectedPriority=0"));
+		}
+		for(boolean compact : new boolean[] {false, true}) {
+			String caller = compact ? "local-shared-compact" : "local-shared";
+			String line = output.lines().filter(value ->
+				value.contains("[PlannerTrace][Exact-PreSolveWork]")
+					&& value.contains("caller=" + caller + " ")).findFirst().orElseThrow();
+			Assert.assertTrue(line, line.contains("compact=" + compact));
+			Assert.assertTrue(line, line.contains("rootDecisionCount=2"));
+			Assert.assertTrue(line, line.contains("rootVariableCount=2"));
+			Assert.assertTrue(line, line.contains("rootFactorCount=1"));
+			Assert.assertTrue(line, line.contains("blockOriginalIndices=[0, 1]"));
+			Assert.assertTrue(line, line.contains("blockOriginalCount=2"));
+			Assert.assertTrue(line, line.contains("inputVariableKeys=[exact-reduced|0|trace-a-"
+				+ compact + ", exact-reduced|1|trace-b-" + compact + "]"));
+			Assert.assertTrue(line, line.contains("inputVariableDomains=[2, 3]"));
+			Assert.assertTrue(line, line.contains("inputFactorCount=1"));
+			Assert.assertTrue(line, line.contains("compiledVariableCount=2"));
+			String compiledPrefix = compact ? "exact-reduced|1|" : "";
+			String compiledSecondPrefix = compact ? "exact-reduced|0|" : "";
+			Assert.assertTrue(line, line.contains("eliminationOrder=[" + compiledPrefix
+				+ "exact-reduced|1|trace-b-" + compact + ", " + compiledSecondPrefix
+				+ "exact-reduced|0|trace-a-" + compact + "]"));
+			Assert.assertTrue(line, line.contains("inducedWidth=1"));
+			Assert.assertTrue(line, line.contains("maximumFactorCells=6"));
+			Assert.assertTrue(line, line.contains("materializedFactorCells=9"));
+			Assert.assertTrue(line, line.contains("maximumEliminationAssignments=6"));
+			Assert.assertTrue(line, line.contains("eliminationAssignments=8"));
+			Assert.assertTrue(line, line.contains("maximumFactorCellsLimit=1000000"));
+			Assert.assertTrue(line, line.contains("maximumMaterializedCellsLimit=10000000"));
+			Assert.assertTrue(line, line.contains("fastOrderConfigured=false"));
+			Assert.assertTrue(line, line.contains("fastOrderSource=legacy-regional"));
+			Assert.assertTrue(line, line.matches(".*plannerElapsedNanos=-?\\d+"));
+			int trace = output.indexOf(line);
+			int beforeSolve = output.indexOf("TRACE_BEFORE_SOLVE compact=" + compact);
+			Assert.assertTrue(output, trace >= 0 && trace < beforeSolve);
+			Assert.assertEquals(output, 1, occurrences(output,
+				"TRACE_BEFORE_SOLVE compact=" + compact));
+			Assert.assertEquals(output, 1, occurrences(output,
+				"TRACE_AFTER_SECOND_PREPARATION compact=" + compact));
+		}
+	}
+
+	private static String runTraceProbe(boolean trace) throws Exception {
+		String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+		List<String> command = new ArrayList<>();
+		command.add(java);
+		command.add("-Dsysds.fedplanner.trace=" + trace);
+		command.add("-Dsysds.fedplanner.trace.details=false");
+		command.add("-cp");
+		command.add(System.getProperty("java.class.path"));
+		command.add(SharedRegionalPreparationTest.class.getName());
+		command.add("trace-probe");
+		Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+		String output;
+		try(BufferedReader reader = new BufferedReader(new InputStreamReader(
+			process.getInputStream(), StandardCharsets.UTF_8))) {
+			output = reader.lines().collect(Collectors.joining("\n"));
+		}
+		Assert.assertEquals(output, 0, process.waitFor());
+		return output;
+	}
+
+	private static int occurrences(String value, String token) {
+		int count = 0;
+		for(int offset = 0; (offset = value.indexOf(token, offset)) >= 0; offset += token.length())
+			count++;
+		return count;
+	}
+
+	public static void main(String[] args) throws Exception {
+		if(args.length != 1 || !"trace-probe".equals(args[0]))
+			throw new IllegalArgumentException("TRACE_PROBE_ARGUMENT_INVALID");
+		String previousTrace = System.getProperty("sysds.fedplanner.trace");
+		PrintStream previousOut = System.out;
+		ByteArrayOutputStream captured = new ByteArrayOutputStream();
+		try(PrintStream output = new PrintStream(captured, true, StandardCharsets.UTF_8)) {
+			System.setOut(output);
+			for(boolean compact : new boolean[] {false, true}) {
+				Variable a = variable("trace-a-" + compact, 2);
+				Variable b = variable("trace-b-" + compact, 3);
+				List<Factor> factors = List.of(Factor.dense(List.of(a, b),
+					0d, 1d, 2d, 3d, 4d, 5d));
+				SharedRegionalPreparation preparation = new SharedRegionalPreparation(
+					RegionalSearchProblem.generic(List.of(a, b), factors), GENEROUS, compact);
+				LocalCategoricalOptimizer.PreparedBlockSolver first =
+					preparation.prepare(new int[] {0, 0}, new int[] {0, 1});
+				System.out.println("TRACE_BEFORE_SOLVE compact=" + compact);
+				first.solve();
+				LocalCategoricalOptimizer.PreparedBlockSolver second =
+					preparation.prepare(new int[] {1, 2}, new int[] {0, 1});
+				System.out.println("TRACE_AFTER_SECOND_PREPARATION compact=" + compact);
+				second.solve();
+			}
+			System.out.println("TRACE_PROBE_COMPLETE");
+		}
+		finally {
+			System.setOut(previousOut);
+			if(previousTrace == null)
+				System.clearProperty("sysds.fedplanner.trace");
+			else
+				System.setProperty("sysds.fedplanner.trace", previousTrace);
+		}
+		previousOut.print(captured.toString(StandardCharsets.UTF_8));
 	}
 
 	private static SharedRegionalPreparation shared(List<Variable> variables, List<Factor> factors) {

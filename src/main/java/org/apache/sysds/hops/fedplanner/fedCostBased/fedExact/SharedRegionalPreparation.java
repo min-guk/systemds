@@ -185,6 +185,8 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 				block.length, variables, factors, limits, orderPolicy, "local-shared-compact");
 			recordOrder(prepared.orderCompilation());
 			LocalCategoricalOptimizer.tracePreparation("encoded-regional-block", prepared.preparationStatistics());
+			tracePreSolveWork(block, variables, factors, prepared.statistics(),
+				prepared.compiledVariableCount(), "local-shared-compact");
 			solver = () -> ExactPhysicalReducedSolver.solve(prepared);
 		}
 		else {
@@ -199,6 +201,9 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			long compileNanos = System.nanoTime() - compileStarted;
 			LocalCategoricalOptimizer.tracePreparation("encoded-regional-block",
 				new ExactPhysicalReducedSolver.PreparationStatistics(0, 0, 0, 0, compileNanos, compileNanos));
+			ExactCategoricalSolver.Statistics statistics = ExactCategoricalSolver.statistics(compiled);
+			tracePreSolveWork(block, variables, factors, statistics,
+				statistics.eliminationOrder().size(), "local-shared");
 			solver = () -> ExactCategoricalSolver.solve(compiled);
 		}
 		blocks++;
@@ -210,6 +215,36 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 				originalValues.add(root.sourceValue(originalBlock[i], solved.assignmentInVariableOrder().get(i)));
 			return new ExactCategoricalSolver.Result(solved.objective(), originalValues, solved.statistics());
 		};
+	}
+
+	private void tracePreSolveWork(int[] block, List<Variable> variables, List<Factor> factors,
+		ExactCategoricalSolver.Statistics statistics, int compiledVariableCount, String caller) {
+		if(!FederatedPlannerTrace.isEnabled() || blocks != 0L)
+			return;
+		FederatedPlannerTrace.logGlobal("Exact-PreSolveWork",
+			"caller=" + caller
+				+ " compact=" + compact
+				+ " rootDecisionCount=" + problem.decisionCount()
+				+ " rootVariableCount=" + root.variables().size()
+				+ " rootFactorCount=" + root.factors().size()
+				+ " blockOriginalIndices=" + Arrays.toString(block)
+				+ " blockOriginalCount=" + block.length
+				+ " inputVariableKeys=" + variables.stream().map(Variable::key).toList()
+				+ " inputVariableDomains=" + variables.stream().map(Variable::domainSize).toList()
+				+ " inputFactorCount=" + factors.size()
+				+ " compiledVariableCount=" + compiledVariableCount
+				+ " eliminationOrder=" + statistics.eliminationOrder()
+				+ " inducedWidth=" + statistics.inducedWidth()
+				+ " maximumFactorCells=" + statistics.maximumFactorCells()
+				+ " materializedFactorCells=" + statistics.materializedFactorCells()
+				+ " maximumEliminationAssignments=" + statistics.maximumEliminationAssignments()
+				+ " eliminationAssignments=" + statistics.eliminationAssignments()
+				+ " maximumFactorCellsLimit=" + limits.maximumFactorCells()
+				+ " maximumMaterializedCellsLimit=" + limits.maximumMaterializedCells()
+				+ " fastOrderConfigured=" + orderPolicy.fastOrder()
+				+ " fastOrderAssignmentsLimit=" + orderPolicy.maximumAssignments()
+				+ " fastOrderSource=" + orderPolicy.source()
+				+ " plannerElapsedNanos=" + FederatedPlannerTrace.plannerElapsedNanos());
 	}
 
 	private void recordOrder(ExactCategoricalSolver.OrderCompilation compilation) {
