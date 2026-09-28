@@ -684,6 +684,10 @@ public final class ExactCategoricalSolver {
 				if(factor.contains(step.variable))
 					bucket.add(factor);
 			active.removeAll(bucket);
+			int[] baseCells = new int[bucket.size()];
+			int[] valueStrides = new int[bucket.size()];
+			for(int index = 0; index < bucket.size(); index++)
+				valueStrides[index] = bucket.get(index).stride(step.variable);
 			int outputCells = checkedCells(step.separator, prepared.domains,
 				"EXACT_VE_FACTOR_CELL_OVERFLOW");
 			double[] output = new double[outputCells];
@@ -693,7 +697,13 @@ public final class ExactCategoricalSolver {
 			int[] separatorValues = new int[step.separator.length];
 			for(int cell = 0; cell < outputCells; cell++) {
 				decode(cell, step.separator, prepared.domains, separatorValues, global);
+				// Every bucket scope is within separator + eliminated variable. Its
+				// separator contribution is invariant across the candidate-value loop.
+				global[step.variable] = 0;
+				for(int index = 0; index < bucket.size(); index++)
+					baseCells[index] = bucket.get(index).cell(global);
 				PreciseCost best = PreciseCost.POSITIVE_INFINITY;
+				double bestRounded = Double.POSITIVE_INFINITY;
 				int bestValue = 0;
 				for(int value = 0; value < prepared.domains[step.variable]; value++) {
 					global[step.variable] = value;
@@ -701,9 +711,15 @@ public final class ExactCategoricalSolver {
 						prepared.variables.get(step.variable), value);
 					if(tieCost < 0)
 						throw new IllegalArgumentException("EXACT_VE_TIE_COST_INVALID");
-					PreciseCost candidate = preciseSum(bucket, global).plusTie(tieCost);
-					if(candidate.compareTo(best) < 0) {
+					PreciseCost candidate = preciseSum(bucket, global,
+						baseCells, valueStrides, value).plusTie(tieCost);
+					// A previous best already rounded successfully. Preserve candidate-first
+					// validation and the same rounded-primary/secondary/first-value ordering.
+					double candidateRounded = candidate.rounded();
+					int byPrimary = Double.compare(candidateRounded, bestRounded);
+					if(byPrimary < 0 || byPrimary == 0 && candidate.tieCost < best.tieCost) {
 						best = candidate;
+						bestRounded = candidateRounded;
 						bestValue = value;
 					}
 				}
@@ -1122,14 +1138,48 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static PreciseCost preciseSum(List<DenseFactor> factors, int[] global) {
-		PreciseCost total = PreciseCost.ZERO;
-		for(DenseFactor factor : factors) {
-			PreciseCost value = factor.value(global);
-			if(value.high == Double.POSITIVE_INFINITY)
-				return value;
-			total = total.plus(value);
+		return preciseSum(factors, global, null, null, 0);
+	}
+
+	/** The optional indexes are solve-local and follow exactly the factor list's order. */
+	private static PreciseCost preciseSum(List<DenseFactor> factors, int[] global,
+		int[] baseCells, int[] valueStrides, int value) {
+		double high = 0d;
+		double low = 0d;
+		long tie = 0L;
+		for(int index = 0; index < factors.size(); index++) {
+			DenseFactor factor = factors.get(index);
+			int cell = baseCells == null ? factor.cell(global)
+				: baseCells[index] + value * valueStrides[index];
+			double valueHigh = factor.values[cell];
+			double valueLow = factor.lowValues == null ? 0d : factor.lowValues[cell];
+			long valueTie = factor.tieCosts == null ? 0L : factor.tieCosts[cell];
+			if(valueHigh == Double.POSITIVE_INFINITY)
+				return new PreciseCost(valueHigh, valueLow, valueTie);
+			// Keep PreciseCost.plus's expression/check order, without two temporary
+			// records per factor. The raw high/low/tie parity is regression-locked.
+			double sum = high + valueHigh;
+			if(!Double.isFinite(sum))
+				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+			double virtual = sum - high;
+			double error = (high - (sum - virtual)) + (valueHigh - virtual);
+			error += low + valueLow;
+			if(!Double.isFinite(error))
+				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+			double normalizedHigh = sum + error;
+			if(!Double.isFinite(normalizedHigh))
+				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+			double normalizedLow = error - (normalizedHigh - sum);
+			try {
+				tie = Math.addExact(tie, valueTie);
+			}
+			catch(ArithmeticException ex) {
+				throw new IllegalArgumentException("EXACT_VE_TIE_COST_OVERFLOW", ex);
+			}
+			high = normalizedHigh;
+			low = normalizedLow;
 		}
-		return total;
+		return new PreciseCost(high, low, tie);
 	}
 
 	private static boolean isExactResourceError(String message) {
@@ -1243,7 +1293,6 @@ public final class ExactCategoricalSolver {
 	 */
 	private record PreciseCost(double high, double low, long tieCost)
 		implements Comparable<PreciseCost> {
-		private static final PreciseCost ZERO = new PreciseCost(0d, 0d, 0L);
 		private static final PreciseCost POSITIVE_INFINITY =
 			new PreciseCost(Double.POSITIVE_INFINITY, 0d, 0L);
 
@@ -1273,6 +1322,8 @@ public final class ExactCategoricalSolver {
 		}
 
 		private PreciseCost plusTie(long extraTieCost) {
+			if(extraTieCost == 0L)
+				return this;
 			try {
 				return new PreciseCost(high, low, Math.addExact(tieCost, extraTieCost));
 			}
@@ -1329,12 +1380,18 @@ public final class ExactCategoricalSolver {
 			return false;
 		}
 
-		private PreciseCost value(int[] global) {
+		private int stride(int variable) {
+			for(int index = 0; index < scope.length; index++)
+				if(scope[index] == variable)
+					return strides[index];
+			throw new IllegalStateException("EXACT_VE_BUCKET_VARIABLE_MISSING");
+		}
+
+		private int cell(int[] global) {
 			int cell = 0;
 			for(int index = 0; index < scope.length; index++)
 				cell += global[scope[index]] * strides[index];
-			return new PreciseCost(values[cell], lowValues == null ? 0d : lowValues[cell],
-				tieCosts == null ? 0L : tieCosts[cell]);
+			return cell;
 		}
 	}
 }

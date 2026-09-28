@@ -571,3 +571,81 @@
   runtime0, exact cleanup 모두 통과했다. 이전900초 timeout을 정확한 speedup 분모로 사용하지 않는다.
 - **상태:** 해당 조건의 timeout은 재검증에서 해소됐으며 full compile schedule을 같은 root/engine으로
   계속 실행한다. 아직 전체896조건·runtime 성공이 아니다. 원래 엔진의 성공2건은 합산하지 않는다.
+
+## run02 multi-worker DP timeout — 원인 진단 중
+
+- **상태/환경:** 동일 frozen JAR `2c1d3f0205d3f88d0a8b67fc919ff05d7f2d6b841d8a0bc083e35b05d566893e`의
+  DP/logreg/W1은 LAN249.018635초, WAN-light227.803576초, WAN-mid209.403378초,
+  WAN-heavy231.739408초에 모두 compile 통과했다. 다음 DP/logreg/W3/LAN은 고정900초에서
+  자연 timeout(rc124/process901.924841초)했다. runtime은 시작하지 않았다.
+- **관측:** `run02/attempts/compile/01790599872711787532-607edb35`에 raw 결과/로그/health가 있다.
+  analysis 약12.835초 후 planner에 진입했지만 완료 receipt는 없다. 네 컨테이너의 cgroup
+  oom/oom_kill은 모두0, Docker OOM event도0이며 coordinator peak13,469,945,856 bytes는
+  24GiB 제한 이내다. 이 증거는 OOM이 아니라 timeout임을 지지하지만 아직 세부 hotspot은 설명하지 않는다.
+- **대응:** `diag02/attempts/compile/01790600967453756312-60f6a893`에서 같은 W3/LAN 조건에
+  startup JFR만 추가하여300초 관측했다. rc124/process301.997346초는 의도한 진단 종료이며
+  일반 matrix timing/성공 표본에 넣지 않는다. JFR16,127,331 bytes, SHA-256
+  `41f1ade7af3b6df3c1a8211aaabf3a0ae8c33032e334f950e136a0db08cfe6c9`를 독립 확인했다.
+  두 실행 모두 exact container ID/name 부재를 확인했고 cleanup 및8개 host stage lease 해제가 성공했다.
+- **원인 분석/변경 계획:** W1 profile을 W3 원인으로 간주하지 않고 이 새 JFR을 full-stack으로
+  offline 분석한다. 이 단계에서는 엔진·후보·비용·privacy·cap·자원·timeout을 변경하지 않았다.
+- **잔여 이슈:** 현재 엔진의 full matrix는 compile4/896 통과,1실패,891미시작이며 runtime0/896이다.
+  전체 compile gate는 닫혀 있다. 기존 엔진의 통과 사례를 합산하지 않는다.
+- **잠재 회귀/감지:** 향후 최적화는 baseline truth/cost fingerprint와 직접 parity 회귀를 먼저 고정하고,
+  같은900초·signal-free Docker 재검증으로 판단한다. timing 실패를 후보 축소나 제한 증가로 덮지 않는다.
+- **의사결정 근거:** 실행 순서 DP→FedFirst→AggLocal→Exact 및 full compile gate를 유지한다.
+
+### W3 JFR 원인 확인 및 semantics-preserving 수정 계획
+
+- **새 증거:** `diag02/jfr-analysis/REPORT.md`, `offline-analysis.txt`, `w3-detail-analysis.txt`.
+  analysis 이후 main-thread25,904 표본 중 dense exact solve22,286(86.033%)이다.
+  `preciseSum` exclusive12,210(47.136%)/inclusive18,385(70.974%),
+  `DenseFactor.value`6,173(23.830%), `PreciseCost.rounded`2,674(10.323%)이며 inclusive 비율은 겹친다.
+  cost surface0.950%로, 앞선 W1 cost-factor 병목을 반복해서 원인으로 삼지 않는다.
+- **호출/시간 경로:** DP의 initial regional seed → local hard-conflict repair → shared reduced block
+  preparation → dense exact solve다. 관측 상대시간 약50.9초 이후부터284.7초까지 같은 solve 경로에
+  표본이 집중되고 incremental optimizer 표본은 없다. 표본만으로 정확한 함수 호출 횟수는 단정하지 않는다.
+- **할당/GC:** PreciseCost allocation sample weight 약1.030TB(89.65%)이며 이는 retained bytes나
+  실제 heap 크기가 아니다. GC pause 합계 약1.058초로, CPU 계산/할당 hot loop를 먼저 수정한다.
+- **계획:** 변경 전 raw high/low/tie, objective bits, 선택 assignment/통계/오류/callback 순서를
+  회귀로 고정한다. (A) factor마다 만드는 임시 PreciseCost를 primitive 누적값으로 대체,
+  (B) 같은 separator cell의 factor base index를 한 번 계산하고 variable stride를 재사용,
+  (C) 이미 비교에 성공한 best의 rounded 값을 재사용하는 순서로 각각 검증한다.
+  double-double 연산 순서·검사 순서·infinity early return·strict tie order·전체 cell·기존 cap은 유지한다.
+- **판정 경계:** 독립 design review는 위 불변조건 하 A/B/C를 승인했다. 아직 production 수정 또는
+  W3 성공을 주장하지 않는다. bounded 계획은 `solver-kernel-fixes-evidence/PLAN.md`에 먼저 기록했다.
+
+### Solver kernel A0/A/B/C 구현 및 단계별 회귀
+
+- **변경 전 고정:** solver source SHA
+  `609f9456a5e8d19e8d2f99c78806346acb88539268f4a1fecad07fb6881667cc`에서 새8개+기존27개,
+  총35 tests를 먼저 통과했다. 64개 heterogeneous 모델의 raw objective/assignment/statistics와
+  지정 elimination-order 결과 SHA는
+  `15479d2899d00720e0e59dca1b695167458c1f631b04a4acb2f532252e448513`,
+  오류/원인 순서 SHA는 `48ffeda9ce34f97e03aa8a8c74c44fa9f1a1924108ff41793720316fa1b5150e`다.
+  raw double-double high/low/tie는 test-local legacy 구현과500개 random sum 및 edge case로 직접 비교한다.
+- **구현:** `ExactCategoricalSolver.java` 한 production 파일에서 (A0) immutable `plusTie(0)`는
+  자신을 반환하고, (A) `preciseSum`은 동일 순서의 primitive high/low/tie를 누적하여 factor마다
+  중간 record를 만들지 않는다. 후보당 최종 immutable record는 유지한다. (B) eliminated-variable
+  stride를 bucket당 한 번, 나머지 separator base index를 separator cell당 한 번 계산한다.
+  (C) 이전 best가 이미 성공한 rounded 값을 재사용한다. generic/indexed 경로는 하나의 합산 body를 공유한다.
+- **보존:** 전체 factor/candidate cell, scope/order, elimination plan, numeric expression/check 순서,
+  first-infinity의 해당 factor low/tie, overflow 오류 선후관계, candidate별 tie callback 순서/횟수,
+  rounded primary→tie cost→첫 후보 우선순위를 유지한다. 새로운 배열은 solve-local이며 persistent
+  compiled problem, immutable boundary message, input factor에는 mutable cache를 추가하지 않는다.
+- **검증:** A0+A, B, C 각 단계마다35/35 PASS, goldens 동일. source/diff/XML/command는
+  `solver-kernel-fixes-evidence`의 after-a/b/c에 보존했다. 독립 actual-diff review는 findings0/APPROVE.
+  Python matrix73/73, bash syntax, py_compile, diff-check PASS. 확대 Java 결합 회귀는 다음 단계다.
+- **잠재 회귀/감지:** primitive 합산과 boundary용 `PreciseCost.plus`가 향후 서로 달라지는 위험은
+  test-local legacy raw-bit parity와 heterogeneous end-to-end golden으로 감지한다. stride 오류는
+  reversed/mixed/singleton scopes와 지정 elimination order를 포함한 결과/callback parity로 감지한다.
+- **잔여:** 아직 새 엔진으로 W3 timeout이 해소됐다는 성능 증거는 없다. 동일900초·자원·입력의
+  signal-free Docker 재검증과 full896 compile gate가 여전히 필요하다.
+
+- **확대 결합 검증 완료:** 기존 protected95개에 solver arithmetic/solver/order/local/shared/
+  boundary-message 회귀를 결합한22개 클래스166 tests가 failures/errors/skips0으로 통과했다.
+  기존 certificate cap, GLM heap, L2SVM expectation/ForcedState fixture 등의 과거 별도 gap을
+  이 통과 집합에 넣어 green으로 가장하지 않았다. `combined-command.txt`, `combined-counts.json`,
+  `combined-surefire/`에 원본을 보존했다. 신규 test의 unused import 한 줄만 제거한 후8개를 재실행한다.
+- **최종 빌드:** import-only 정리 뒤 arithmetic8/8 PASS, `mvn -q -Dmaven.test.skip=true package`
+  exit0. 최종 source/test/JAR SHA는 `solver-kernel-fixes-evidence/SOURCE_FREEZE.json`에 동결했다.

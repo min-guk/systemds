@@ -165,3 +165,31 @@ This successful cell is retained in run02; the complete schedule then resumes
 in the same root/engine, skipping that already-passed cell. Old run01 successes
 are not counted toward the new engine's 896-condition gate. Full matrix and
 runtime are still incomplete.
+
+## Multi-worker status and next measured bottleneck
+
+Run02 completed all four DP/logreg/W1 network cells (compile209–249s), then
+stopped on DP/logreg/W3/LAN at the unchanged900s timeout. Current coverage is
+**4/896 compile passed,1failed,891pending; runtime0/896**. There were no OOM
+cgroup/Docker events; exact cleanup and stage lease release succeeded.
+
+Separate `diag02` startup JFR (300s observation, not a normal result) showed a
+new bottleneck: dense exact solve in DP's initial local hard-conflict repair,
+not physical cost-factor construction. Of25,904 post-analysis main-thread
+samples,86.033% were in dense solve. `preciseSum`/`DenseFactor.value`/rounded
+comparison dominate, with extensive temporary `PreciseCost` allocation.
+The full-stack offline report is under `diag02/jfr-analysis/`.
+
+A bounded solver-kernel plan first locks the legacy raw arithmetic, selected
+assignment, statistics and exceptions, then removes repeated allocation/index
+work without changing cells, factor order, candidate order, caps or rounding.
+Each source/JAR revision starts a new immutable matrix root. The previous
+engine's four successes will not open the new engine's runtime gate.
+
+The solver-kernel repair now passes the unchanged pre-edit arithmetic/result
+fingerprints,35 focused tests after each of three stages, and166 combined
+Java tests across22 classes. Matrix Python tests remain73/73. Independent
+review approved the actual diff. These are correctness/integration results,
+not yet evidence that the W3 production timeout is resolved. Run03 will first
+retry W3/LAN signal-free under the unchanged900s limit, then continue the full
+schedule only if that cell passes; runtime stays behind the full896-cell gate.
