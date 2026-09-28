@@ -43,7 +43,7 @@ import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
-/** First-feasible Heuristic policy owner; plan application remains a separate, explicitly authorized phase. */
+/** Non-backtracking AggLocal policy owner; plan application remains a separate, explicitly authorized phase. */
 public final class FederatedPlannerFedHeuristicSinglePass extends AFederatedPlanner {
 	private final HeuristicPlacementAdapter adapter = new HeuristicPlacementAdapter();
 
@@ -122,7 +122,9 @@ public final class FederatedPlannerFedHeuristicSinglePass extends AFederatedPlan
 		int derivedFoutMaterializations = CandidateSelections.derivedFoutPhysicalEmissionCount(
 			result.selectedCandidateSelections());
 		FederatedPlannerTrace.logGlobal("Heuristic-PolicySummary",
-			"markerCount=" + result.plannerFacts().get("markerCount")
+			"policy=" + result.plannerFacts().get("policy")
+				+ " search=" + result.plannerFacts().get("search")
+				+ " markerCount=" + result.plannerFacts().get("markerCount")
 				+ " localPrefixCount=" + result.plannerFacts().get("localPrefixCount")
 				+ " frontierEdgeCount=" + result.plannerFacts().get("frontierEdgeCount")
 				+ " nativeContinuationCount=" + result.plannerFacts().get("nativeContinuationCount")
@@ -137,7 +139,7 @@ public final class FederatedPlannerFedHeuristicSinglePass extends AFederatedPlan
 				+ " planFingerprint=" + result.normalizedPlanFingerprint());
 		for(var fact : policyFacts.demotions()) {
 			Hop hop = result.analysis().hop(fact.producer()).orElse(null);
-			FederatedPlannerTrace.logLazy(hop, "Heuristic-Demotion", () ->
+			FederatedPlannerTrace.logLazy(hop, "Heuristic-LegacyAnalysisMarker", () ->
 				"producer=" + fact.producer().normalizedSignature()
 					+ " value=" + fact.valueVersion().normalizedSignature());
 		}

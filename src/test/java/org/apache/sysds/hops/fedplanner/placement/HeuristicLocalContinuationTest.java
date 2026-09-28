@@ -289,12 +289,14 @@ public class HeuristicLocalContinuationTest {
 		org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter.Result result) {
 		Assert.assertTrue(CandidateSelections.canStillBeReachable(analysis, result.selectorGraph(),
 			result.selectorGraph().relocationActions(), result.assignment()));
-		var canonical = CandidateSelections.selectMaterializationMaximal(analysis,
-			result.selectorGraph(), result.selectorGraph().relocationActions(), result.assignment());
-		Assert.assertEquals(canonical.candidates().stream().map(candidate -> candidate.normalizedSignature())
-			.collect(Collectors.toCollection(java.util.TreeSet::new)),
-			result.selectedCandidateSelections().stream().map(candidate -> candidate.normalizedSignature())
-				.collect(Collectors.toCollection(java.util.TreeSet::new)));
+		// Policy v4 is not a materialization-maximal optimizer. Validate the selected
+		// owned joint witness, not equality with a different selector's optimum.
+		var canonical = CandidateSelections.resolveAndValidate(analysis, result.selectorGraph(),
+			result.selectorGraph().relocationActions(), result.assignment(), result.selectedCandidateSelections());
+		Assert.assertEquals(canonical, result.selectedCandidateSelections());
+		CandidateSelections.validateRealizationSelections(analysis, result.assignment(),
+			result.selectedCandidateSelections(), result.selectedRelocationChoices());
+
 	}
 
 	private static PlacementAnalysis analyze(Privacy yPrivacy) throws Exception {

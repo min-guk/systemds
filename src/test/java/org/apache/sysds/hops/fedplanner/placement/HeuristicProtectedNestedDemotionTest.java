@@ -14,7 +14,7 @@ import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
-import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelector;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -76,7 +76,7 @@ public class HeuristicProtectedNestedDemotionTest {
 			+ "v=matrix(1,rows=3,cols=1);z=X%*%v;a=f(z);b=f(Y);print(sum(a)+sum(b));\n");
 		var markers = analysis.heuristicPolicyFacts().demotions().stream()
 			.map(fact -> fact.valueVersion()).collect(Collectors.toSet());
-		var result = new HeuristicPlacementAdapter(new PolicyFirstFeasiblePlacementSelector())
+		var result = new HeuristicPlacementAdapter()
 			.select(analysis, markers);
 		for(var occurrence : analysis.compiledHopOccurrences())
 			if(occurrence.hop() instanceof AggBinaryOp) {
@@ -101,11 +101,11 @@ public class HeuristicProtectedNestedDemotionTest {
 			.map(fact -> fact.valueVersion()).collect(Collectors.toSet());
 		Assert.assertTrue("Elementwise input must not fabricate an aggregate-vector marker", markers.isEmpty());
 		var heuristic = new FederatedPlannerFedHeuristicSinglePass().select(analysis, markers);
-		var fedFirst = new PolicyFirstFeasiblePlacementSelector().select(analysis);
+		var fedFirst = new PolicyGreedyPlacementSelector().select(analysis);
 		Assert.assertEquals("Without a demotion, AggLocal retains FedFirst choices",
 			fedFirst.assignment(), heuristic.assignment());
-		Assert.assertEquals("FEDERATED_FIRST", heuristic.plannerFacts().get("stateOrdering"));
-		Assert.assertEquals("FIRST_FEASIBLE", heuristic.plannerFacts().get("search"));
+		Assert.assertEquals("AGG_LOCAL", heuristic.plannerFacts().get("stateOrdering"));
+		Assert.assertEquals("GREEDY_NO_BACKTRACKING", heuristic.plannerFacts().get("search"));
 	}
 
 	private static PlacementAnalysis analyzeProtected(String script) throws Exception {

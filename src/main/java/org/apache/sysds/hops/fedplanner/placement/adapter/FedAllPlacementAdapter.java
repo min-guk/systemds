@@ -48,19 +48,20 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementScore;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
-import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PlacementAnalysisSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelector;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Mutation-free FedAll policy boundary over one supplied placement analysis. */
 public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<FedAllPlacementAdapter.Result> {
 	private static final String COMPONENT_DERIVATION = "independent-component-envelope";
-	private final PolicyFirstFeasiblePlacementSelector selector;
+	private final PlacementAnalysisSelector selector;
 
 	public FedAllPlacementAdapter() {
-		this(new PolicyFirstFeasiblePlacementSelector());
+		this(new PolicyGreedyPlacementSelector());
 	}
 
-	public FedAllPlacementAdapter(PolicyFirstFeasiblePlacementSelector selector) {
+	public FedAllPlacementAdapter(PlacementAnalysisSelector selector) {
 		this.selector = Objects.requireNonNull(selector, "selector");
 	}
 
@@ -91,7 +92,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		Certificate certificate = new Certificate(sha256(analysis.graph().normalizedSignature()),
 			assignmentHash(assignment), explored, pruned, explored + pruned,
 			score, upper, bounds, analysis.graph().nodes().size(), analysis.graph().constraints().size(),
-			structuralComponentCount(analysis.graph()), selection.certificate().boundDerivation(),
+			bounds.size(), selection.certificate().boundDerivation(),
 			selection.certificate().terminationReason().name(), false);
 		Result draft = new Result(analysis, assignment, candidates, choices, relocations, score, certificate,
 			context.analysisFingerprint(), "canonicalization-pending");
@@ -238,28 +239,6 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		return List.copyOf(bounds);
 	}
 
-	private static int structuralComponentCount(NeutralPlacementGraph graph) {
-		Map<CompiledHopKey, Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
-		for(Node node : graph.nodes()) adjacency.put(node.key(), new LinkedHashSet<>());
-		for(Constraint constraint : graph.constraints())
-			if(constraint.kind() == NeutralPlacementGraph.ConstraintKind.DOMINATES) {
-				adjacency.get(constraint.left()).add(constraint.right());
-				adjacency.get(constraint.right()).add(constraint.left());
-			}
-		Set<CompiledHopKey> seen = new LinkedHashSet<>();
-		int components = 0;
-		for(CompiledHopKey start : adjacency.keySet()) {
-			if(!seen.add(start)) continue;
-			components++;
-			ArrayDeque<CompiledHopKey> pending = new ArrayDeque<>();
-			pending.add(start);
-			while(!pending.isEmpty())
-				for(CompiledHopKey adjacent : adjacency.get(pending.removeFirst()))
-					if(seen.add(adjacent)) pending.addLast(adjacent);
-		}
-		return components;
-	}
-
 	private static String assignmentHash(Map<CompiledHopKey, PlacementState> assignment) {
 		List<String> lines = assignment.entrySet().stream().map(entry ->
 			entry.getKey().normalizedSignature() + '=' + entry.getValue().normalizedSignature()).sorted().toList();
@@ -291,7 +270,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		}
 	}
 
-	/** Adapter-facing selector certificate. */
+	/** Adapter-facing certificate. legalUniverseSize is the observed search count, not exhaustive space size. */
 	public record Certificate(String graphFingerprint, String assignmentHash, long exploredCount,
 		long prunedCount, long legalUniverseSize, Score incumbentScore, Score finalUpperBound,
 		List<Bound> boundComponents, int graphNodeCount, int graphConstraintCount,
