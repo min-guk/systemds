@@ -597,7 +597,9 @@ final class LocalCategoricalOptimizer {
 	private LocalCategoricalOptimizer() { }
 
 	static boolean configuredCompaction() {
-		String value = System.getProperty(COMPACT_PROPERTY, "false");
+		// Fixed regional boundaries can expose new unsupported/equivalent values
+		// after root reduction. Reduce that exact conditional model before solving.
+		String value = System.getProperty(COMPACT_PROPERTY, "true");
 		if(!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value))
 			throw new IllegalArgumentException("LOCAL_COMPACT_OPTION_INVALID|" + value);
 		return Boolean.parseBoolean(value);

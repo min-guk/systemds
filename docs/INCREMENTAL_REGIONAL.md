@@ -25,6 +25,10 @@ The former `incremental.enabled=true` setting remains accepted; it is no longer 
 
 The seed uses shared root preparation and bounded conditioned-table reuse. A resource limit or unsupported intermediate seed boundary can require the existing exact hard-repair preparation; this preserves feasibility and does not create a second planner. Global and Local keep the common `sysds.fedplanner.exact.fastOrder` and `fastOrderAssignments` settings.
 
+Local seed blocks default to `sysds.fedplanner.regional.compact=true`: after fixing the boundary, they apply exact support/equivalence reduction and singleton substitution, then restore original-domain values. Root reduction alone does not capture these conditional reductions. Explicit `false` remains available for comparison; Global's separate `sysds.fedplanner.exact.compact` setting is unchanged. Conditional objective and feasibility are preserved, but a different equal-cost repair can change later local choices and the final plan.
+
+The legacy `regional.fastBlockOrder` option applies only to noncompact blocks. With compact mode, use the common `sysds.fedplanner.exact.fastOrder` configuration instead.
+
 ## Timing and limits
 
 `Compile Phase FedPlanner Decision` measures planner-owned model construction, search, certificate refinement and validated selection. Common preparation, post-selection diagnostics, conversion, application and finalization are reported separately. In-search trace work remains in Decision. The existing FedPlanner total is retained; historical totals cannot be relabelled as Decision measurements.

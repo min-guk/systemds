@@ -749,3 +749,75 @@
   gate를 닫는 회귀와 CSV label을 추가한 최종 Python matrix77/77, bash syntax 및 diff-check가 통과했다.
   증거는 `diagnostic-compact-harness-evidence`에 보존한다. 새 production JAR를 만들지 않았고
   위 baseline JAR SHA를 그대로 사용한다.
+
+- **diag03 JFR 교차 확인:** 경계 이후 main-thread25,846 표본 중 exact solve21,549(83.375%)이며
+  상대61.008초부터 기록 종료284.689초까지 bootstrap solve에 머문다. incremental optimizer 표본은0이다.
+  전체 execution 표본의99.996%가 main thread이고 GC pause 합은624.890ms다.
+  primitive kernel의 main sampled allocation weight는531.858GB, PreciseCost는415.320GB이며
+  이 중 infinity early-return record가402.696GB다. 이는 표본 가중치이지 실제 heap/retained bytes가 아니다.
+  이전 진단보다 allocation 표본은 낮아졌지만 두 결과 모두 검열되어 wall-time speedup은 주장하지 않는다.
+  `diag03/jfr-analysis/REPORT.md` SHA
+  `fa9544124660a8049e73ae4d34e7b72cb450658f582572f5ea94615f9884393a`, analyzer 재실행 일치 PASS.
+  방대한 대입 열거 자체를 줄이는 exact preprocessing 비교가 잔여 allocation 미세 최적화보다 우선이다.
+
+## diag04 조건부 reduction 효과 확인 및 후속 emission 실패 — 진행 중
+
+- **환경/재현:** 같은 JAR `0ab951c1…c037`, DP/logreg/W3/LAN,24/16GiB,300초,
+  `run_LAN_docker.sh --campaign --diagnostic-jfr --diagnostic-compact --phase compile --max-cells 1`.
+  root `w1357-policy-matrix-20260928-diag04`, attempt `01790605933585279631-5e135360`.
+  baseline과 source/probe/stage/helpers/limits, 첫 원본 block/변수 key/domain/factor를 동일하게 검증했다.
+- **효과:** 첫 block이70→31 compiled variables, 입력 table49,793,890→1,070,611 cells,
+  VE 대입658,322,977,640→179,697,439로 줄었다(작업량 약3,663.5분의1; wall-time speedup 아님).
+  첫 조건부 전처리는0.354822초, 두 번째0.038034초였다. seed49.684107초 중 exact solve6.170912초로
+  완료됐고 planner56.545382초에 canonical bootstrap 검증을 통과했다.
+- **인증 한계:** incremental 단계는 `RESOURCE_INITIAL`에서 lower0/upper1682.6752882754172/gap∞로
+  종료됐다. 기존8M retained-slot cap을 그대로 지켰고, 이를 목표 gap 달성 또는 최적성 증명으로 부르지 않는다.
+- **새 실패:** PLAN_CONVERSION 이후 `PlacementEmissionTransaction.resolveAnchor:1149`에서
+  `Relocation has no durable analysis-owned anchor`로 rc1, process74.673136초에 종료됐다.
+  따라서 이 실행은 **compile 실패**이며 full896 gate에 들어가지 않는다. anchor 요구를 완화하지 않고
+  selected realization→analysis anchor→emission projection 연결을 추적한다.
+- **검증/보존:** `diag04/compact-comparison.json`에 trace SHA/통계/동일 입력 검증/health를 보존했다.
+  JFR SHA `f3e3739a2f315ef4eaf8afa07c9a818dd5aa06ba063967234337522e4b75c76f`.
+  coordinator peak7,149,244,416 bytes, OOM0, exact cleanup 및8개 lease 해제 모두 확인했다.
+- **수정 계획/근거:** 기존 local compact 경로를 기본 활성화하는 최소 변경을 독립 architect가
+  구현·검증 대상으로 승인했다. 임계치에 따른 새 선택 정책은 도입하지 않는다. global Exact 설정,
+  후보·비용·cheapest repair·cap은 바꾸지 않는다. 새7개 shared 회귀와 기존54개, 총61/61이 통과했고
+  조건을 고정해야만 quotient/singleton이 활성화되는 fixture에서 실제 제거 작업 감소까지 확인했다.
+- **잔여/회귀 위험:** equal-cost 선택이 이후 DP 경로/최종 비용을 바꿀 수 있다. 원래 domain으로의
+  복원·feasibility·conditional optimum을 검증하며 plan identity parity는 주장하지 않는다.
+  shared auxiliary 직접 fixture gap은 남고 reducer auxiliary/hash-collision 회귀가 이를 부분 보완한다.
+  anchor 문제와 기본값 변경을 각각 회귀 검증한 뒤 새 JAR/root의 signal-free900초 실행이 필요하다.
+
+### Local compact 기본값 활성화 — 단위 회귀 통과, E2E 대기
+
+- `LocalCategoricalOptimizer.configuredCompaction`의 unset 기본값만 false→true로 변경했다.
+  explicit false/true(대소문자 무관), invalid option 실패와 property 복원을 유지한다.
+  기존25개 baseline을 통과한 뒤 default-on assertion RED1/6을 기록했고 수정 후 shared/reducer/local/
+  incremental8개 클래스86/86이 통과했다. 새 activation fixture 포함 독립 diff review는 APPROVE다.
+- `ExactPhysicalOptimizer`, reducer, elimination-order policy의 source SHA는 변경 전과 동일하다.
+  global Exact의 별도 설정, 전체 후보·비용·authority·cheapest repair·cap을 유지했다.
+  compact일 때 기존 legacy `regional.fastBlockOrder`는 적용되지 않는 호환성 주의사항을 문서화했다.
+- 증거: `regional-compact-adoption-evidence/{PLAN.md,baseline-xml,default-on-red.xml,green-counts.json}`.
+  전체 frozen 결합 회귀와 실제 compile/runtime 성공은 아직 이 통과 주장에 포함하지 않는다.
+
+### Emission anchor 권한과 live Hop hint의 계약 불일치 — 수정 계획
+
+- **확인된 사실/한계:** 실패는 선택된 action에 exact-record-equal `Node.anchors()` occurrence가
+  없음을 증명한다. details=false 진단이라 해당 action 상세는 출력되지 않아, W3의 구체적인 alias
+  종류나 same-physical-pool occurrence 존재는 아직 증명하지 못했다. 이를 특정 alias 원인으로 단정하지 않는다.
+- **소스 계약:** emission의 `exactRelocations`는 program/analysis/plan hash, candidate realization,
+  graph-owned action, source/active obligation/privacy를 검증하고 canonical graph action을 반환한다.
+  그런데 `resolveAnchor`가 추가로 live Hop occurrence의 record equality를 필수로 요구한다.
+  이미 DAG lowering은 구체적인 durable key를 우선 사용하며 `anchorHopId=-1`을 정식으로 지원한다.
+- **안전한 수정 방향:** REFED에 한해 검증된 action 자신의 runtime anchor key를 먼저 직렬화/검증한다.
+  기존 exact-record Hop hint가 있으면 deterministic하게 유지하고, 없으면 **명시적인 -1 hint와
+  검증된 action metadata**를 전달한다. action key/signature/FType/source/consumer obligation은
+  변경하지 않는다. 권한 또는 key 직렬화 실패를 catch하여 -1로 바꾸지 않는다.
+  derived-FOUT의 별도 owner 계약과 DAG의 live/key conflict 검사는 그대로 둔다.
+- **왜 pool alias를 대신 쓰지 않는가:** `samePhysicalWorkerPool`은 full geometry equality가 아니다.
+  특히 FULL/BROADCAST의 같은 endpoint pool이라도 key가 달라 live/key 충돌을 만들 수 있다.
+  임의 alias anchor를 선택하거나 action key를 교체하지 않고 이미 지원되는 metadata 경로를 사용한다.
+- **원칙/검증 계획:** 이것은 runtime fallback이나 가짜 anchor가 아니라 검증된 계획의 metadata emission이다.
+  exact hint 유지, owned-action/no-live-hint lowering, foreign/inactive/altered obligation의 비변경 실패,
+  malformed key, FULL/BROADCAST geometry, registry roundtrip/rollback/live-key conflict를 회귀로 고정한다.
+  독립 architecture는 bounded 설계만 승인했으며 W3 해결 여부는 이후 실제 compile로 판정한다.

@@ -213,14 +213,16 @@ public class RegionalCompactTest {
 	}
 
 	@Test
-	public void regionalCompactPropertyDefaultsOffRejectsInvalidValuesAndIsRestored() {
+	public void regionalCompactPropertyDefaultsOnRejectsInvalidValuesAndIsRestored() {
 		String key = LocalCategoricalOptimizer.COMPACT_PROPERTY;
 		String previous = System.getProperty(key);
 		try {
 			System.clearProperty(key);
-			Assert.assertFalse(LocalCategoricalOptimizer.configuredCompaction());
+			boolean defaultCompaction = LocalCategoricalOptimizer.configuredCompaction();
+			Assert.assertTrue(defaultCompaction);
 			System.setProperty(key, "TrUe");
 			Assert.assertTrue(LocalCategoricalOptimizer.configuredCompaction());
+			Assert.assertEquals(defaultCompaction, LocalCategoricalOptimizer.configuredCompaction());
 			System.setProperty(key, "FALSE");
 			Assert.assertFalse(LocalCategoricalOptimizer.configuredCompaction());
 			System.setProperty(key, "invalid");
