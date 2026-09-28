@@ -51,6 +51,11 @@ JAVA = ('java', '--add-modules', 'jdk.incubator.vector', '-Xms16g', '-Xmx16g',
         '-Dsysds.fedplanner.structuralArena.maxEntries=262144',
         '-Dsysds.fedplanner.structuralArena.maxIdentityEntries=262144',
         '-Dsysds.fedplanner.signatureCache.maxChars=536870912')
+JFR_OPTIONS = (
+    '-XX:StartFlightRecording=name=matrix_compile,settings=profile,'
+    'filename=/workspace/experiments/tmp/compile.jfr,dumponexit=true,maxsize=128m',
+    '-XX:FlightRecorderOptions=stackdepth=128',
+)
 CP = '/candidate/probe/classes:/candidate/SystemDS.jar:/opt/systemds/target/lib/*'
 
 
@@ -111,7 +116,12 @@ def ssh(host, argv, **kwargs):
                 shlex.join(map(str, argv))], **kwargs)
 
 
-def initialize(root, stage):
+def diagnostic_contract(enabled):
+    return {'diagnostic_jfr': bool(enabled),
+            'diagnostic_jfr_options': list(JFR_OPTIONS) if enabled else []}
+
+
+def initialize(root, stage, diagnostic_jfr=False):
     """Freeze build/probe once. Resumes verify rather than replace artifacts."""
     manifest_path = root / 'manifest.json'
     jar = REPO / 'target/systemds-3.4.0-SNAPSHOT.jar'
@@ -131,7 +141,8 @@ def initialize(root, stage):
                 'runtime_compare_sha256': sha(Path(runtime_compare.__file__)),
                 'lifecycle_sha256': sha(Path(lifecycle.__file__)),
                 'external_sha256': {str(p): sha(p) for p in external},
-                'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json')}
+                'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json'),
+                'diagnostic': diagnostic_contract(diagnostic_jfr)}
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
         if manifest['identity'] != identity:
@@ -160,7 +171,8 @@ def initialize(root, stage):
                     'compile_is_full_production_pipeline': True, 'runtime_audit': True,
                     'parallel_setup_only': True, 'concurrent_timed_cells': 1,
                     'timeout_semantics': 'unresolved failure, not infeasibility',
-                    'runtime_order': [list(x) for x in WORKLOADS]}}
+                    'runtime_order': [list(x) for x in WORKLOADS],
+                    **diagnostic_contract(diagnostic_jfr)}}
     dump(manifest_path, manifest)
     return manifest
 
@@ -206,8 +218,49 @@ def latest(root, phase):
 
 
 def compile_gate(root):
+    manifest_path = Path(root) / 'manifest.json'
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        if (manifest.get('measurement', {}).get('diagnostic_jfr') is True
+                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_jfr') is True):
+            return False
     rows = latest(root, 'compile')
-    return len(rows) == len(matrix()) and all(rows.get(c['id'], {}).get('status') == 'passed' for c in matrix())
+    return len(rows) == len(matrix()) and all(
+        rows.get(c['id'], {}).get('status') == 'passed'
+        and not rows[c['id']].get('diagnostic_only') for c in matrix())
+
+
+def coordinator_java(cell, phase, diagnostic_jfr=False):
+    java = list(JAVA)
+    if diagnostic_jfr:
+        java.extend(JFR_OPTIONS)
+    if cell['suite'] == 'p2':
+        java.append('-Dsysds.privacy.allowPublicRecodeMetadata=true')
+    java += ['-cp', CP, PROBE, '--mode', phase, '--script', 'tmp/cell.dml',
+             '--config', 'tmp/execution.xml', '--planner', cell['planner_enum'],
+             '--receipt', 'tmp/receipt.json', '--seed', '1011081480']
+    return java
+
+
+def collect_diagnostic_jfr(host, remote, local):
+    destination = Path(local) / 'compile.jfr'
+    run(['rsync', '-a', '--', f'{host}:{Path(remote) / "tmp/compile.jfr"}', str(destination)])
+    if not destination.is_file() or destination.stat().st_size <= 0:
+        raise RuntimeError('collected diagnostic JFR is missing or empty')
+    return {'path': str(destination), 'sha256': sha(destination),
+            'size_bytes': destination.stat().st_size}
+
+
+def record_diagnostic_jfr(result, host, remote, local):
+    try:
+        result['diagnostic_jfr'] = collect_diagnostic_jfr(host, remote, local)
+    except Exception as error:
+        message = 'diagnostic JFR collection: ' + str(error)
+        result.setdefault('diagnostic_collection_errors', []).append(message)
+        # Preserve the production failure as the primary error.  A missing JFR
+        # is fatal only when the diagnostic compile itself otherwise succeeded.
+        if not result['errors']:
+            result['errors'].append(message)
 
 
 def timing(log):
@@ -309,6 +362,7 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
     dump(local / 'lifecycle.json', life)
     result = {'schema': 'w1357-matrix-attempt/v1', 'cell': cell, 'phase': phase,
               'attempt': token, 'status': 'failed', 'errors': [], 'remote': str(remote),
+              'diagnostic_only': bool(getattr(args, 'diagnostic_jfr', False)),
               'jar_sha256': manifest['identity']['jar_sha256'], 'timeout_seconds':
               args.compile_timeout if phase == 'compile' else args.runtime_timeout}
     nodes = [spec.coordinator, *spec.workers]
@@ -336,12 +390,7 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
         lifecycle.execute_start(base.build_plan(spec, 'start'), start_command)
         before = base.capture_network_snapshot(spec)
         dump(local / 'netem-before.json', before)
-        java = list(JAVA)
-        if cell['suite'] == 'p2':
-            java.append('-Dsysds.privacy.allowPublicRecodeMetadata=true')
-        java += ['-cp', CP, PROBE, '--mode', phase, '--script', 'tmp/cell.dml',
-                 '--config', 'tmp/execution.xml', '--planner', cell['planner_enum'],
-                 '--receipt', 'tmp/receipt.json', '--seed', '1011081480']
+        java = coordinator_java(cell, phase, getattr(args, 'diagnostic_jfr', False))
         command = ['ssh', '-o', 'BatchMode=yes', '--', spec.coordinator.host,
             shlex.join(['docker', 'exec', spec.container_name(spec.coordinator), 'timeout',
                 '--signal=TERM', '--kill-after=30s', str(result['timeout_seconds']), *java])]
@@ -384,6 +433,8 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
         (local / 'exception.txt').write_text(traceback.format_exc())
     finally:
         if start_attempted:
+            if getattr(args, 'diagnostic_jfr', False):
+                record_diagnostic_jfr(result, spec.coordinator.host, remote, local)
             # Keep this independent of network collection: a failed/terminated
             # container can invalidate netem evidence but still explain a kill.
             for node in nodes:
@@ -433,6 +484,7 @@ def summarize(root):
                           'failed': sum(r['status'] != 'passed' for r in rows.values()),
                           'pending': len(matrix()) - len(rows)}
         columns = ['id', 'planner', 'suite', 'workload', 'workers', 'profile', 'status',
+                   'diagnostic_only',
                    'compile_seconds', 'common_preparation_seconds', 'analysis_seconds',
                    'searchspace_seconds', 'selection_adapter_seconds',
                    'planning_after_analysis_seconds', 'full_initial_planning_seconds',
@@ -442,7 +494,12 @@ def summarize(root):
             writer.writeheader()
             for cell in schedule(phase):
                 row = rows.get(cell['id'], {'status': 'pending'})
-                writer.writerow({k: cell.get(k, row.get(k, '')) for k in columns})
+                values = {k: cell.get(k, row.get(k, '')) for k in columns}
+                if row.get('diagnostic_only'):
+                    for key in columns:
+                        if key.endswith('_seconds'):
+                            values[key] = ''
+                writer.writerow(values)
     summary['compile_gate'] = compile_gate(root)
     dump(root / 'summary.json', summary)
     return summary
@@ -459,11 +516,15 @@ def main(argv=None):
     parser.add_argument('--max-cells', type=int)
     parser.add_argument('--retry-failed', action='store_true')
     parser.add_argument('--keep-going', action='store_true')
+    parser.add_argument('--diagnostic-jfr', action='store_true',
+                        help='single compile-only coordinator JFR diagnostic; never benchmark data')
     for key, options in (('planner', PLANNERS), ('profile', PROFILES), ('workload', tuple(w for _, w in WORKLOADS))):
         parser.add_argument('--' + key, choices=options)
     parser.add_argument('--workers', type=int, choices=WORKERS)
     args = parser.parse_args(argv)
     args.root = args.root.resolve()
+    if args.diagnostic_jfr and (args.phase != 'compile' or args.max_cells != 1):
+        parser.error('--diagnostic-jfr requires --phase compile and --max-cells 1')
     if args.phase == 'summary':
         print(json.dumps(summarize(args.root), indent=2))
         return 0
@@ -472,7 +533,7 @@ def main(argv=None):
     if args.phase in ('runtime', 'all') and any(getattr(args, k) is not None for k in ('planner', 'profile', 'workload', 'workers')):
         parser.error('runtime/all must preserve the complete schedule; filters are compile-only')
     campaign, base, renderer_module = dependencies()
-    manifest = initialize(args.root, args.stage)
+    manifest = initialize(args.root, args.stage, args.diagnostic_jfr)
     if args.phase == 'prepare':
         print(json.dumps({'prepared': True, 'cells': len(matrix()), 'root': str(args.root)}))
         return 0

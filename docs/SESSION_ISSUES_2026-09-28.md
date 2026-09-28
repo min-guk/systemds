@@ -416,3 +416,158 @@
   여전히 큰 비용이다. 896개 행렬 전체 통과나 일반적 성능 향상을 주장하지 않는다.
   후속 조건은 동일 frozen engine으로 순차 실행하며 실패 시 중지·진단한다.
 - **의사결정 근거:** 기존 cap·후보·privacy·자원·timeout을 그대로 둔 전체 production 컴파일 성공만 채택한다.
+
+## signal-free DP/WAN-mid의 compile timeout — 후속 프로파일링 준비
+
+- **상태/환경:** run01 DP/logreg/W1/LAN810.656620초와 WAN-light792.211542초는 통과했으나,
+  세 번째 WAN-mid가 900초 제한에서 rc124로 종료했다. 진단 신호가 없는 자연 timeout이다.
+- **관측/범위:** 공통 analysis 종료 및 planner 진입 marker 후 완료 receipt는 없었다. 첫 성공 사례의
+  optimizer718.349780초만으로 실패 사례의 정확한 hotspot을 단정하지 않는다.
+- **대응:** 명시적인 compile-only JFR 진단 옵션을 추가해 별도 immutable root에서 프로파일을 수집한다.
+  startup recording + 정상 timeout의 JVM 종료 시 dump를 사용하고 live PID에 신호를 보내지 않는다.
+  진단 표본은 정상 timing CSV/전역 compile gate에서 제외한다. 300초 진단 한도는 관측용이며
+  본행렬의 고정 900초 제한, JVM/컨테이너 자원, 후보·Oracle·solver cap은 유지한다.
+- **수정 파일:** `run_matrix_campaign.py`, diagnostic 회귀 테스트. 엔진 후속 수정은 실제 profile 확인 후 결정한다.
+- **잔여:** compile2통과/1실패/893미시작, runtime0/896. 전체 compile gate가 닫혔고 자동 실행도 중지됐다.
+- **잠재 회귀/감지:** 진단 옵션을 일반 캠페인 identity에 섞거나 diagnostic success로 runtime gate를 여는
+  오류는 identity/compile_gate/CLI 회귀로 차단한다. 이전 성공·실패 원본은 삭제하지 않는다.
+- **의사결정 근거:** 실패를 임의 timeout 증가나 다른 플래너 fallback으로 덮지 않고 재현 가능한 profile로 진단한다.
+
+## JFR 진단 및 확장 Python 검증의 외부 binding 경계
+
+- **진단 결과:** `w1357-policy-matrix-20260928-diag01`에서 DP/logreg/W1/WAN-mid의
+  300초 한도 compile-only JFR을 정상 수집했다. rc124/process301.443892초는 관측 종료이며
+  본행렬 성공/실패 추가 표본으로 섞지 않는다. `compile.jfr` 8,964,227 bytes,
+  SHA `9cdab9bb2336c0cdcbd664e4302b1a2cbcbd1b0f28e8eb5276378e4123ee17ca`.
+  cleanup/lease 해제 성공, collection 오류0. startup JFR이므로 PID 신호 오류 위험을 제거했다.
+- **도구 회귀:** matrix-pattern Python73/73 PASS. identity/measurement와 개별 result의
+  diagnostic marker 모두 전역 runtime gate를 닫고 일반 timing CSV는 진단 시간을 비운다.
+- **확장 검증 한계:** 전체 `scripts/fedplanner/tests` 발견 실행은457개 중 setup error1, skip1이었다.
+  실패는 `test_audit_current_scope_library_resolution`이 외부 frozen receipt의 producer 절대경로를
+  검증하는 지점이다. receipt는 `/home/mchoi/systemds-g009-integration/...`에 묶여 있고 현재
+  worktree는 `/home/mchoi/w1357-paper-aligned-refactor/...`이다. producer SHA는 양쪽 모두
+  `8fd304246f526552851a9fd3f8d91160dcd45af3ddfa33c42a29689d92fffe98`이며 초기 push의 파일과도 같다.
+  `matrix-unrelated-library-binding.json`에 별도 증거를 보존했다.
+- **대응/잔여:** 외부 frozen receipt를 현재 경로로 위조하거나 binding 검사를 완화하지 않는다.
+  해당 독립 audit의 fixture portability는 본 캠페인 범위 밖 검증 gap으로 남긴다. 본행렬의
+  stage/image/engine/receipt 검증은 별도 contract와73개 회귀로 유지한다.
+- **의사결정 근거:** 다른 worktree의 provenance를 현재 worktree 성공 증거로 승격하지 않는다.
+
+## JFR로 확인한 validated receipt worker-pool proof 재검증 제거 — 의미 회귀 통과
+
+- **측정 근거:** `diag01` JFR의 analysis 이후 main-thread 12,162 execution sample 중
+  `inputSatisfied` 6,536(53.741%), `isRelocationActive` 4,664(38.349%),
+  `CandidateEmissionRealization.provenWorkerPool` 2,748(22.595%)이었다. 이 비율은
+  wall time이 아닌 execution sample 비율이며, 수정 후 성능 성공을 의미하지 않는다.
+- **원인:** immutable `CandidateSelectionReceipt` 생성자는 emission→realization과
+  realization→support-clause 소유권을 identity로 이미 검증하지만, `provenWorkerPool()`이
+  cell별로 같은 support-clause list를 다시 linear scan했다. graph는 같은 receipt의
+  `provenWorkerPool()`을 한 분기에서 두 번 호출했다.
+- **수정:** receipt의 pool/residency query가 기존 package-local `*ForOwnedClause`를 사용하도록
+  하고, helper 계약에 생성자가 검증한 immutable receipt를 명시했다.
+  `NeutralPlacementGraph.isRelocationActive`는 proven pool을 한 번만 읽고 receipt-owned native residency
+  accessor를 사용한다. record component/shape, public clause-taking API, global cache는 변경하지 않았다.
+- **의미 보존 검증:** durable multi-clause, exact native witness, dynamic native witness,
+  witness 없는 native realization에서 receipt fast path가 기존 guarded query와 동일한 exact object/null을
+  반환함을 검사했다. 구조적으로 같지만 identity가 다른 foreign clause는
+  receipt 생성과 두 public guarded query에서 계속 거절된다.
+- **회귀:** 수정 전 authority+protected truth baseline PASS. 수정 후 focused authority PASS,
+  기존 exact 46 tests + authority/policy-greedy 26 tests = 72 tests,
+  failures/errors/skips 0. B-11 `PRIVATE_AGGREGATE` hard-factor truth golden은
+  `8985c0e88b787efda0f0b62ae357f6374ee555e1a836f466c81e84e91e2faea9`를 그대로 검증했다.
+- **증거/잔여:** `/grid/3/cofee-lm-sweep-mchoi-20260914/validated-receipt-fastpath-evidence`.
+  후보·action·factor scope/order/cost/limit은 바꾸지 않았다. OFF 실측 전에는
+  complexity 감소와 semantics 보존만 주장하고 compile 시간 개선은 주장하지 않는다.
+
+## JFR cost-factor 반복 계산과 fingerprint 문자열 할당 제거 — 보호 baseline 동일
+
+- **실제 실패와 진단 표본 구분:** 사용자 행렬의 실제 실패는 `run01` DP/logreg/W1/WAN-mid가
+  고정 900초에서 자연 timeout된 건이다. `diag01`의 300초 rc124는 이 실패를 분석하기 위한
+  의도적인 compile-only JFR 관측 종료이며 새 성능 표본이나 추가 행렬 실패로 세지 않는다.
+- **측정 근거:** analysis 이후 main-thread 12,162 execution sample 중 native-local physical-cost
+  factor가 2,601(21.386%), fingerprint enumeration이 1,141(9.382%)이었다. sampled allocation
+  weight는 각각 71,433,289,048 bytes(20.993%)와 72,877,836,520 bytes(21.418%)이다.
+  이 값은 JFR sample/weight이며 wall time이나 retained bytes가 아니다.
+- **원인 A와 수정:** native-local binary factor는 모든 producer×consumer cell을 유지하지만,
+  consumer alternative와 고정 edge에만 의존하는 authority/FType/bounded elementwise/mixed-cost
+  계산을 producer alternative마다 반복했다. structural/materialized-cell preflight 뒤
+  `freezeValidatedFactor`가 처음 target cell을 평가할 때 immutable target row
+  `(applicable, baseCost, sourceBytes)`를 construction-local 배열에 한 번 준비한다. 이후 cell은
+  배열 조회와 기존 source-FOUT download, 기존 `weight * cost` 검증만 수행한다. 계산을 factor
+  생성 시 eager 실행하지 않으므로 기존 aggregate budget gate가 ordinary evaluator보다 먼저 실패한다.
+  전체 P×T cell, source별 FOUT 비용, factor scope/order, 후보와 solver limit은 그대로다.
+- **원인 B와 수정:** fingerprint 대상은 이미 frozen dense factor인데도 각 cell을 재귀 decode하고
+  `Factor.cost`로 다시 indexing한 뒤 unsigned-hex `String`과 UTF-8 `byte[]`를 만들었다.
+  기존 dense row-major 배열을 `denseCostAt(cell)`로 한 번 순회하고, writer-local 16-byte buffer로
+  동일한 variable-width lowercase unsigned hex와 comma를 SHA-256에 직접 공급한다. ±0, infinity,
+  NaN payload를 포함한 raw 64-bit 값을 skip/coalesce하지 않는다.
+- **수정 전 고정값/의미 회귀:** `PRIVATE_AGGREGATE` native-local fixture의 full contribution
+  fingerprint `84eb7160f4b4605efb174f37d7705cf4d9fe7828db41b9b4a1b9b5b903b89b0e`,
+  domain/alternative/factor-scope/order SHA
+  `6eabb96f81f1c831a67ee82f76775d1f8ea8e64dd7b7cd0776a09f7cb674c4d3`,
+  모든 contribution cell raw-double-bit SHA
+  `f949de6c7f44f5bc770ab2e3ec0966f3f94a0c6d2be74e7e898c92b02444909d`를 old code에서
+  먼저 고정했고 A/B 뒤 모두 동일하다. fingerprint stream은 edge 값과 seed1011081480의
+  random 100,000개 raw long, 2×3 multidimensional row-major factor를 legacy
+  `Long.toUnsignedString(bits,16)+','` digest와 직접 비교한다.
+- **검증:** A checkpoint native+preflight 10/10 PASS, B checkpoint 12/12 PASS. 최종 소유 범위
+  native/preflight/streaming/trace/sparse/zero-frequency 6개 클래스 23 tests,
+  failures/errors/skips 0. diff-check도 통과했다. 원본 로그/XML/diff/source SHA는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/cost-factor-fixes-evidence`에 보존했다.
+- **별도 기존/동시 범위 실패:** 확장 10-class 실행은 certificate의 기존
+  `71606548 > 60000000` materialized-cell gate와 동시 Placement 변경 범위의 L2SVM relocation,
+  ForcedState fixture assertion 때문에 3건 실패했다. 이 실행을 green 증거로 사용하지 않고 cap을
+  올리거나 본 cost patch에서 Placement 파일을 수정하지 않는다. 해당 두 assertion은 Placement owner가
+  재검증한다.
+- **잔여/중단조건:** 이 변경은 반복 불변 연산과 per-cell 문자열 할당을 제거했지만 실제 compile
+  단축이나 900초 timeout 해결은 아직 주장하지 않는다. root가 모든 동시 변경을 freeze/package한 뒤
+  동일 조건의 signal-free production compile/JFR로만 성능 효과를 판정한다.
+
+### Cost-factor 검증 범위 정정 및 frozen 결합 회귀
+
+- 위의 "동시 Placement 변경 범위" 표현은 부정확하다. receipt fast path 3개 production 파일은
+  cost-factor Maven 실행 전에 이미 freeze되어 있었고, 실행 중 production source 변경은 없었다.
+  확장 실행의 3개 실패 XML/log/test class는
+  `cost-factor-fixes-evidence/exploratory-failures`에 보존했으며 old frozen JAR 비교 결과와 별도로 판정한다.
+- receipt-fastpath의 기존 10개 클래스72 tests와 cost-factor 소유 6개 클래스23 tests를 같은 frozen
+  source에서 새로 결합 실행했다. 총95 tests, failures/errors/skips 0이다. 원본 log/count/XML/hash는
+  `cost-factor-fixes-evidence/final-combined-95*`에 보존했다. known certificate cap test와 위 두 fixture
+  assertion은 이 green 집합에 포함해 성공으로 위장하지 않았다.
+
+### 확장 fixture 두 assertion의 old frozen JAR 재현
+
+- `CampaignBG014ExactL2SvmInternalEmissionCostRedTest`의 Xd relocation assertion(line112)과
+  `ExactPhysicalForcedStateAuditTest`의 coherent-completion assertion(line56)은 run01 immutable old JAR
+  `2d9dd14bf7787db48f5f0f0469b8f0e299405ea86c76487ab6934c052b0e1d57`를 사용한 격리 JUnitCore에서도
+  각각 동일하게 재현됐다(L2SVM 1 test/1 failure, ForcedState 5 tests/1 failure).
+  따라서 이 둘은 receipt fast path나 이번 cost-factor A/B가 만든 회귀가 아니며, 앞 절의
+  "동시 변경 오염" 가능성은 폐기한다. 증거는
+  `/grid/3/cofee-lm-sweep-mchoi-20260914/matrix-cost-expanded-baseline-check`에 보존했다.
+
+- **추가 baseline 확정:** 최초 캠페인 `pilot01`의 수정 전 JAR
+  `4e43606437ff05860434a5c266b9116eee4a517058979ebc066d3849cb63474e`로도 동일한 두 assertion을
+  재현했다(L2SVM1건 중1실패 line112, ForcedState5건 중1실패 line56). 이는 receipt/cost 수정뿐 아니라
+  이번 캠페인의 첫 factor 캐시 수정 이전에도 존재한 검증 gap이다. 격리된 JUnitCore command/log는
+  `matrix-cost-expanded-baseline-check/initial-engine/`에 보존했고 당시 test class/dependency를 동결했다.
+  이 기존 실패를 이번 변경의 통과로 바꾸거나 테스트를 삭제하지 않았다.
+
+## JFR 기반 수정의 통합 재검증 — run02 시작
+
+- **검증:** exact/authority/policy72 + cost23의 Java95/95 (16 classes), Python matrix73/73,
+  package exit0, 독립 receipt/cost diff review 승인. 전체 과거 suite의 위 별도 실패는 남아 있다.
+- **실행:** `w1357-policy-matrix-20260928-run02` 새 immutable root. 기존 실패 조건
+  DP/logreg/W1/WAN-mid를 신호/JFR 없이 900초 제한으로 먼저 재검증한다. 성공하면 동일 root/engine에서
+  나머지 compile을 이어서 실행하고 전역896 조건 성공 후에만 ordered runtime으로 넘어간다.
+  이전 run01의 성공2건을 새 엔진 성공으로 합산하지 않는다.
+- **보존 원칙:** 후보/domain/factor scope·order/비용 raw bits/기여 fingerprint/ownership/privacy/cap/
+  자원·입력·네트워크를 유지한다. 성능 효과와 전체 성공 여부는 새 production 결과로만 판단한다.
+
+## run02 WAN-mid 단일 회귀 조건 통과
+
+- **결과:** 새 JAR `2c1d3f0205d3f88d0a8b67fc919ff05d7f2d6b841d8a0bc083e35b05d566893e`의
+  DP/logreg/W1/WAN-mid compile209.403378초, search-space30.813578초,
+  selection/adapter176.812636초. 동일900초 한도·입력·자원·netem이며 신호/JFR 없는 실행이다.
+- **증거:** run02 `attempts/compile/01790598811446200270-e4a06fdb/result.json`; audit/lowering,
+  runtime0, exact cleanup 모두 통과했다. 이전900초 timeout을 정확한 speedup 분모로 사용하지 않는다.
+- **상태:** 해당 조건의 timeout은 재검증에서 해소됐으며 full compile schedule을 같은 root/engine으로
+  계속 실행한다. 아직 전체896조건·runtime 성공이 아니다. 원래 엔진의 성공2건은 합산하지 않는다.

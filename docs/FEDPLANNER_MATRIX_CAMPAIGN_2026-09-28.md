@@ -129,3 +129,39 @@ matrix or proof of general scalability**. In particular optimizer work is
 remains expensive. The runner continues sequentially and retains the global
 896-cell gate before any runtime. One read-only `ps` observation was recorded;
 no signals, profiler, or diagnostic JVM instrumentation were used in run01.
+
+## WAN-mid timeout diagnosis and successful rerun
+
+Run01 completed LAN (810.656620 s) and WAN-light (792.211542 s), then stopped
+at WAN-mid's natural 900-second timeout. Cleanup and lease release succeeded;
+there were no OOM events. Its full compile gate remained false.
+
+A separate 300-second startup-JFR diagnostic (`diag01`) identified repeated
+receipt proof ownership scans, repeated target-only native-local cost work,
+and per-cell fingerprint allocation. Diagnostic results cannot enter ordinary
+timing CSVs or satisfy the runtime gate. The repairs preserve constructor and
+public-API ownership checks, full candidates/factor cells, raw cost bits,
+contribution fingerprints, limits and runtime rules:
+
+- validated immutable receipt uses the existing owned-clause proof accessor;
+- target-only cost preparation is memoized **after** structural preflight;
+- dense fingerprint cells are streamed in the same row-major order with the
+  same unsigned-hex bytes, without per-cell strings/byte arrays.
+
+Fresh integration: Java 95/95, Python matrix 73/73, package success, and
+independent receipt/cost reviews approved. Separate historical certificate,
+L2SVM-plan expectation and forced-state fixture failures remain documented;
+the latter two also reproduce on the original pilot01 engine. This is not a
+claim that every repository test passes.
+
+`run02` uses JAR
+`2c1d3f0205d3f88d0a8b67fc919ff05d7f2d6b841d8a0bc083e35b05d566893e`.
+The same DP/logreg/W1/WAN-mid condition, signal-free and with the same
+900-second limit, **passed in 209.403378 s** (shared search-space 30.813578 s;
+selection/adapter 176.812636 s). Audit/runtime-zero/cleanup checks passed.
+The timeout is a censored baseline, not an exact measured speedup denominator.
+
+This successful cell is retained in run02; the complete schedule then resumes
+in the same root/engine, skipping that already-passed cell. Old run01 successes
+are not counted toward the new engine's 896-condition gate. Full matrix and
+runtime are still incomplete.
