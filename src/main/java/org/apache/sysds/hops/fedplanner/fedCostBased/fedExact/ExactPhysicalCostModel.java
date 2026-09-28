@@ -451,24 +451,23 @@ public final class ExactPhysicalCostModel {
 						+ "|limit=" + ExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumFactorCells());
 			cells *= variable.domainSize();
 		}
-		appendPhysicalFactorValues(normalized, factor, 0, new int[factor.scope().size()]);
+		int denseCells = Math.toIntExact(cells);
+		for(int cell = 0; cell < denseCells; cell++)
+			normalized.appendUnsignedHexWithComma(
+				Double.doubleToRawLongBits(factor.denseCostAt(cell)));
 	}
 
-	private static void appendPhysicalFactorValues(FingerprintWriter normalized,
-		ExactCategoricalSolver.Factor factor, int position, int[] values) {
-		if(position == values.length) {
-			normalized.append(Long.toUnsignedString(Double.doubleToRawLongBits(factor.cost(values)), 16))
-				.append(',');
-			return;
-		}
-		for(int value = 0; value < factor.scope().get(position).domainSize(); value++) {
-			values[position] = value;
-			appendPhysicalFactorValues(normalized, factor, position + 1, values);
-		}
+	static String physicalFactorValuesFingerprint(ExactCategoricalSolver.Factor factor) {
+		FingerprintWriter normalized = new FingerprintWriter();
+		appendPhysicalFactorValues(normalized, factor);
+		return normalized.finish();
 	}
 
 	private static final class FingerprintWriter {
+		private static final byte[] LOWER_HEX =
+			"0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
 		private final MessageDigest digest;
+		private final byte[] unsignedHexBuffer = new byte[16];
 
 		private FingerprintWriter() {
 			try {
@@ -481,6 +480,18 @@ public final class ExactPhysicalCostModel {
 
 		private FingerprintWriter append(Object value) {
 			digest.update(String.valueOf(value).getBytes(StandardCharsets.UTF_8));
+			return this;
+		}
+
+		private FingerprintWriter appendUnsignedHexWithComma(long value) {
+			int offset = unsignedHexBuffer.length;
+			do {
+				unsignedHexBuffer[--offset] = LOWER_HEX[(int)(value & 0xfL)];
+				value >>>= 4;
+			}
+			while(value != 0L);
+			digest.update(unsignedHexBuffer, offset, unsignedHexBuffer.length - offset);
+			digest.update((byte)',');
 			return this;
 		}
 
@@ -1215,56 +1226,81 @@ public final class ExactPhysicalCostModel {
 			double weight = frequencies.exactForwardingWeight(edge.consumer(), edge.producer());
 			int[] targetWorkerCounts = consumer.alternatives().stream()
 				.mapToInt(target -> nativeLocalInputWorkerCount(target.inputAuthorities(), workers)).toArray();
+			// The closure is evaluated once, serially, by freezeValidatedFactor after the
+			// aggregate structural preflight. The published factor is the resulting dense
+			// table, so these immutable target rows remain construction-local.
+			NativeLocalTargetCost[] targetCosts = new NativeLocalTargetCost[consumer.alternatives().size()];
 			factors.add(ExactCategoricalSolver.Factor.lazy(
 				List.of(producer.variable(), consumer.variable()), values -> {
 					ExactPhysicalModel.Alternative source = producer.alternatives().get(values[0]);
-					ExactPhysicalModel.Alternative target = consumer.alternatives().get(values[1]);
-					if(target.state().execType() != ExecType.FED
-						|| target.inputAuthorities().stream().noneMatch(authority ->
-							authority.inputPosition() == edge.inputPosition()
-								&& authority.kind()
-									== ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
+					int targetIndex = values[1];
+					NativeLocalTargetCost targetCost = targetCosts[targetIndex];
+					if(targetCost == null) {
+						targetCost = nativeLocalTargetCost(analysis, sparseAssignments, edge,
+							consumer, consumerHop, producerHop, bytes, fusedInputPreparationBytes,
+							targetWorkerCounts[targetIndex], targetIndex);
+						targetCosts[targetIndex] = targetCost;
+					}
+					if(!targetCost.applicable())
 						return 0.0;
-					int targetWorkers = targetWorkerCounts[values[1]];
-					CandidateEmissionFact emission = target.captured()
-						? target.candidateEmission() : target.executionEmission();
-					FType executionFType = emission == null ? target.state().fType()
-						: emission.executionFType();
-					PlacementCostSemantics.NativeLocalInputTransferEstimate boundedElementwise =
-						PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
-							analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
-							executionFType, targetWorkers);
-					List<FType> inputFTypes = target.orderedInputs().stream()
-						.map(input -> input.present() ? input.fType() : null).toList();
-					FederatedCostModel.MixedFedLocalCost mixed =
-						PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
-							edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
-							unitLocalCost(analysis, sparseAssignments, edge.consumer(), consumerHop),
-							effectiveOutputBytes(analysis, sparseAssignments,
-								edge.consumer(), consumerHop), targetWorkers);
-					double cost;
-					if(mixed.hasInputPreparation())
-						cost = 0.0;
-					else if(fusedInputPreparationBytes >= 0.0)
-						cost = FederatedCostModel.computeInBandUploadPayloadCost(
-							fusedInputPreparationBytes, FType.BROADCAST, targetWorkers);
-					else if(boundedElementwise != null)
-						cost = boundedElementwise.uploadPayloadCostUpperBound();
-					else
-						cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
-							executionFType, targetWorkers);
+					double cost = targetCost.baseCost();
 					if(source.state().output() == FederatedOutput.FOUT) {
 						FType sourceType = Objects.requireNonNull(source.state().fType(),
 							"FOUT native-local source has no exact FType");
-						double sourceBytes = boundedElementwise == null ? bytes
-							: boundedElementwise.logicalBytesUpperBound();
 						cost += FederatedCostModel.computeReusableMaterializationDownloadCost(
-							sourceBytes, sourceType, workers);
+							targetCost.sourceBytes(), sourceType, workers);
 					}
 					return requireCost(weight * cost,
 						"EXACT_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
 				}));
 		}
+	}
+
+	private static NativeLocalTargetCost nativeLocalTargetCost(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledInputEdgeFact edge,
+		ExactPhysicalModel.DecisionDomain consumer, Hop consumerHop, Hop producerHop,
+		double bytes, double fusedInputPreparationBytes, int targetWorkers, int targetIndex) {
+		ExactPhysicalModel.Alternative target = consumer.alternatives().get(targetIndex);
+		if(target.state().execType() != ExecType.FED
+			|| target.inputAuthorities().stream().noneMatch(authority ->
+				authority.inputPosition() == edge.inputPosition()
+					&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
+			return NativeLocalTargetCost.NOT_APPLICABLE;
+		CandidateEmissionFact emission = target.captured()
+			? target.candidateEmission() : target.executionEmission();
+		FType executionFType = emission == null ? target.state().fType()
+			: emission.executionFType();
+		PlacementCostSemantics.NativeLocalInputTransferEstimate boundedElementwise =
+			PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
+				analysis, edge.producer(), edge.consumer(), edge.inputPosition(),
+				executionFType, targetWorkers);
+		List<FType> inputFTypes = target.orderedInputs().stream()
+			.map(input -> input.present() ? input.fType() : null).toList();
+		FederatedCostModel.MixedFedLocalCost mixed =
+			PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
+				edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
+				unitLocalCost(analysis, sparseAssignments, edge.consumer(), consumerHop),
+				effectiveOutputBytes(analysis, sparseAssignments,
+					edge.consumer(), consumerHop), targetWorkers);
+		double cost;
+		if(mixed.hasInputPreparation())
+			cost = 0.0;
+		else if(fusedInputPreparationBytes >= 0.0)
+			cost = FederatedCostModel.computeInBandUploadPayloadCost(
+				fusedInputPreparationBytes, FType.BROADCAST, targetWorkers);
+		else if(boundedElementwise != null)
+			cost = boundedElementwise.uploadPayloadCostUpperBound();
+		else
+			cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
+				executionFType, targetWorkers);
+		double sourceBytes = boundedElementwise == null ? bytes
+			: boundedElementwise.logicalBytesUpperBound();
+		return new NativeLocalTargetCost(true, cost, sourceBytes);
+	}
+
+	private record NativeLocalTargetCost(boolean applicable, double baseCost, double sourceBytes) {
+		private static final NativeLocalTargetCost NOT_APPLICABLE =
+			new NativeLocalTargetCost(false, 0.0, 0.0);
 	}
 
 	private static String outputLayoutIdentity(ExactPhysicalModel.Alternative alternative) {

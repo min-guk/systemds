@@ -1,9 +1,14 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
@@ -32,6 +37,29 @@ import org.junit.Test;
 
 /** Unrelated graph endpoints must not multiply the selected native FULL upload. */
 public class ExactNativeLocalAnchorFanoutCostTest {
+	private static final String PROTECTED_NATIVE_LOCAL_FINGERPRINT =
+		"84eb7160f4b4605efb174f37d7705cf4d9fe7828db41b9b4a1b9b5b903b89b0e";
+	private static final String PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256 =
+		"6eabb96f81f1c831a67ee82f76775d1f8ea8e64dd7b7cd0776a09f7cb674c4d3";
+	private static final String PROTECTED_NATIVE_LOCAL_BITS_SHA256 =
+		"f949de6c7f44f5bc770ab2e3ec0966f3f94a0c6d2be74e7e898c92b02444909d";
+
+	@Test
+	public void protectedNativeLocalCostSurfaceIsBitAndStructureStable() throws Exception {
+		PlacementAnalysis analysis = analysis(false);
+		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		long nativeLocalAlternatives = model.domains().stream()
+			.flatMap(domain -> domain.alternatives().stream())
+			.filter(alternative -> alternative.inputAuthorities().stream().anyMatch(authority ->
+					authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
+			.count();
+		Assert.assertTrue(nativeLocalAlternatives > 0);
+		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_FINGERPRINT, surface.contributionFingerprint());
+		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256, structureDigest(model, surface));
+		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_BITS_SHA256, contributionBitsDigest(model, surface));
+	}
+
 	@Test
 	public void fullInputUploadDoesNotGrowWithUnrelatedGraphWorkers() throws Exception {
 		double isolated = nativeInputCost(analysis(false));
@@ -201,6 +229,64 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 		}
 		Assert.assertNotNull("Expected an exact-anchor native FULL LIX input factor", expected);
 		return expected;
+	}
+
+	private static String structureDigest(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface) throws Exception {
+		MessageDigest digest = MessageDigest.getInstance("SHA-256");
+		Map<ExactCategoricalSolver.Variable,Integer> positions = new IdentityHashMap<>();
+		for(int index = 0; index < model.variables().size(); index++) {
+			var variable = model.variables().get(index);
+			positions.put(variable, index);
+			update(digest, "variable=" + index + ':' + variable.key() + ':' + variable.domainSize() + '\n');
+		}
+		for(int index = 0; index < model.domains().size(); index++) {
+			var domain = model.domains().get(index);
+			update(digest, "domain=" + index + ':' + domain.node().key().normalizedSignature() + '\n');
+			for(int alternative = 0; alternative < domain.alternatives().size(); alternative++)
+				update(digest, "alternative=" + alternative + ':'
+					+ domain.alternatives().get(alternative).signature() + '\n');
+		}
+		for(int index = 0; index < surface.contributions().size(); index++) {
+			var contribution = surface.contributions().get(index);
+			update(digest, "contribution=" + index + ':' + contribution.id() + "|scope=");
+			for(var variable : contribution.factor().scope())
+				update(digest, positions.get(variable) + ":" + variable.domainSize() + ',');
+			update(digest, "\n");
+		}
+		return HexFormat.of().formatHex(digest.digest());
+	}
+
+	private static String contributionBitsDigest(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface) throws Exception {
+		MessageDigest digest = MessageDigest.getInstance("SHA-256");
+		Map<ExactCategoricalSolver.Variable,Integer> positions = new IdentityHashMap<>();
+		for(int index = 0; index < model.variables().size(); index++)
+			positions.put(model.variables().get(index), index);
+		for(int index = 0; index < surface.contributions().size(); index++) {
+			var factor = surface.contributions().get(index).factor();
+			update(digest, "factor=" + index + "|scope=");
+			for(var variable : factor.scope())
+				update(digest, positions.get(variable) + ":" + variable.domainSize() + ',');
+			int cells = factor.scope().stream().mapToInt(
+				ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
+			int[] values = new int[factor.scope().size()];
+			for(int cell = 0; cell < cells; cell++) {
+				int remainder = cell;
+				for(int position = values.length - 1; position >= 0; position--) {
+					int radix = factor.scope().get(position).domainSize();
+					values[position] = remainder % radix;
+					remainder /= radix;
+				}
+				update(digest, Long.toUnsignedString(Double.doubleToRawLongBits(factor.cost(values))) + ',');
+			}
+			update(digest, "\n");
+		}
+		return HexFormat.of().formatHex(digest.digest());
+	}
+
+	private static void update(MessageDigest digest, String value) {
+		digest.update(value.getBytes(StandardCharsets.UTF_8));
 	}
 
 	private static PlacementAnalysis analysis(boolean unrelatedWorkers) throws Exception {
