@@ -6,5 +6,11 @@
 # all14 performance goal, or retry/select a favorable result.
 set -euo pipefail
 
+# Explicit repo-owned correctness lane. The historical frozen P5 path below is unchanged.
+if [[ "${1:-}" == "--greedy-validation" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/validate_greedy_docker.py" "$@"
+fi
+
 readonly HARNESS=/home/mchoi/w1357-diagnostics/paper-refactor-20260928/perf-harness
 exec python3 "$HARNESS/run_LAN_docker.py" "$@"
