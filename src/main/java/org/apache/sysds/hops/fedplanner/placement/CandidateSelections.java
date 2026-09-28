@@ -1396,7 +1396,7 @@ public final class CandidateSelections {
 			List.copyOf(options));
 	}
 
-	static boolean actionMatchesSelectedCandidate(RelocationAction action,
+	public static boolean actionMatchesSelectedCandidate(RelocationAction action,
 		PlacementIdentity.ObligationKey obligation, CandidateSelectionReceipt selected) {
 		if(!selected.emission().emissionState().placementState()
 			.equals(obligation.requiredPlacement())
@@ -1512,22 +1512,31 @@ public final class CandidateSelections {
 	private static boolean realizationActionsMatch(PlacementAnalysis analysis,
 		Map<CompiledHopKey,PlacementState> assignment, Collection<CandidateSelectionReceipt> receipts,
 		Collection<RelocationChoiceReceipt> choices) {
+		// Identity owner keys preserve the old == contract. Index once, not once per binding.
+		Map<CompiledHopKey,Map<Integer,List<RelocationChoiceReceipt>>> byInput = new IdentityHashMap<>();
+		for(RelocationChoiceReceipt choice : choices)
+			byInput.computeIfAbsent(choice.demand().consumer(), ignored -> new HashMap<>())
+				.computeIfAbsent(choice.demand().inputPosition(), ignored -> new ArrayList<>()).add(choice);
+		Map<RelocationActionKey,List<RelocationAction>> actions = new HashMap<>();
+		for(RelocationAction action : analysis.graph().relocationActions())
+			actions.computeIfAbsent(action.key(), ignored -> new ArrayList<>()).add(action);
+		Map<RelocationActionKey,Boolean> active = new HashMap<>();
 		for(CandidateSelectionReceipt receipt : receipts)
 			for(var binding : receipt.supportClause().inputBindings()) {
 				if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.LOGICAL_TRANSIENT)
 					continue;
-				List<RelocationChoiceReceipt> matching = choices.stream().filter(choice ->
-					choice.demand().consumer() == receipt.rule().parentOccurrence()
-						&& choice.demand().inputPosition() == binding.inputPosition()).toList();
+				List<RelocationChoiceReceipt> matching = byInput.getOrDefault(
+					receipt.rule().parentOccurrence(), Map.of()).getOrDefault(binding.inputPosition(), List.of());
 				if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION) {
 					if(matching.stream().noneMatch(choice -> choice.action().equals(binding.relocationAction())))
 						return false;
 				}
-				else for(RelocationChoiceReceipt choice : matching)
-					for(RelocationAction action : analysis.graph().relocationActions())
-						if(action.key().equals(choice.action())
-							&& analysis.graph().isRelocationActive(action, assignment, receipts))
-							return false;
+				else for(RelocationChoiceReceipt choice : matching) {
+					List<RelocationAction> alternatives = actions.getOrDefault(choice.action(), List.of());
+					if(active.computeIfAbsent(choice.action(), ignored -> alternatives.stream().anyMatch(action ->
+						analysis.graph().isRelocationActive(action, assignment, receipts))))
+						return false;
+				}
 			}
 		return true;
 	}
@@ -1655,10 +1664,50 @@ public final class CandidateSelections {
 		return resolveAndValidatePartial(analysis, analysis.graph(), actionUniverse, assignment, selections);
 	}
 
+	/**
+	 * Validate an already selected complete joint witness without enumerating unselected rows.
+	 * Coverage is the same AVAILABLE-emission contract as feasibleVariants; partial validation
+	 * below retains exact ownership, reachability, materialization and logical-relation checks.
+	 */
+	public static List<CandidateSelectionReceipt> resolveAndValidateSelected(PlacementAnalysis analysis,
+		NeutralPlacementGraph graph, Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> selections) {
+		List<NeutralPlacementGraph.Node> decisions = graph.decisionNodes();
+		Map<CompiledHopKey,PlacementState> exactAssignment = new IdentityHashMap<>(assignment);
+		if(assignment.size() != decisions.size() || decisions.stream().anyMatch(node ->
+			node.legalAlternatives().stream().noneMatch(state -> state == exactAssignment.get(node.key()))))
+			throw new IllegalArgumentException("Complete selected witness requires a total node-owned assignment");
+		Map<CompiledHopKey,List<RelocationAction>> actions = new IdentityHashMap<>();
+		for(RelocationAction action : graph.relocationActions()) {
+			Set<CompiledHopKey> consumers = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(var obligation : action.obligations()) if(consumers.add(obligation.consumer()))
+				actions.computeIfAbsent(obligation.consumer(), ignored -> new ArrayList<>()).add(action);
+		}
+		List<CandidateSelectionReceipt> resolved = validateSelectedRows(analysis, graph,
+			graph.relocationActions(), assignment, selections, false, actions);
+		Set<CompiledHopKey> expected = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
+			if(fact.status() == CandidateEvaluationStatus.AVAILABLE && fact.allowedEmissionFacts().stream()
+				.anyMatch(emission -> emission.emissionState().placementState().equals(assignment.get(fact.key().parentOccurrence()))))
+				expected.add(fact.key().parentOccurrence());
+		Set<CompiledHopKey> actual = Collections.newSetFromMap(new IdentityHashMap<>());
+		resolved.forEach(receipt -> actual.add(receipt.rule().parentOccurrence()));
+		if(!expected.equals(actual))
+			throw new IllegalArgumentException("Candidate selections do not cover every active consumer");
+		return resolved;
+	}
+
 	static List<CandidateSelectionReceipt> resolveAndValidatePartial(PlacementAnalysis analysis,
 		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> selections) {
+		return validateSelectedRows(analysis, authorityGraph, actionUniverse, assignment, selections, true, null);
+	}
+
+	private static List<CandidateSelectionReceipt> validateSelectedRows(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment, Collection<CandidateSelectionReceipt> selections,
+		boolean allowUnassigned, Map<CompiledHopKey,List<RelocationAction>> actionsByConsumer) {
 		// A DP recurrence owns only its current parent/child closure. Validate its
 		// selected rows directly against the immutable analysis-owned candidate domain;
 		// constructing every feasible row for every sibling consumer here rebuilt the
@@ -1680,8 +1729,9 @@ public final class CandidateSelections {
 				&& selectedState != null
 				&& receipt.emission().emissionState().placementState().equals(selectedState);
 			boolean reachable = exactOwnedRow
-				&& foutMaterializationActionReachable(authorityGraph, fact, receipt, assignment, true)
-				&& receiptReachable(analysis, actionUniverse, assignment, receipt, true);
+				&& foutMaterializationActionReachable(authorityGraph, fact, receipt, assignment, allowUnassigned)
+				&& receiptReachable(analysis, actionsByConsumer == null ? actionUniverse
+					: actionsByConsumer.getOrDefault(consumer, List.of()), assignment, receipt, allowUnassigned, false);
 			if(!reachable)
 				throw new IllegalArgumentException("Candidate selection is foreign, inactive, or unreachable: "
 					+ receipt.normalizedSignature()
@@ -1718,10 +1768,16 @@ public final class CandidateSelections {
 	private static boolean receiptReachable(PlacementAnalysis analysis,
 		Collection<RelocationAction> actions, Map<CompiledHopKey,PlacementState> assignment,
 		CandidateSelectionReceipt receipt, boolean allowUnassigned) {
+		return receiptReachable(analysis, actions, assignment, receipt, allowUnassigned, true);
+	}
+
+	private static boolean receiptReachable(PlacementAnalysis analysis,
+		Collection<RelocationAction> actions, Map<CompiledHopKey,PlacementState> assignment,
+		CandidateSelectionReceipt receipt, boolean allowUnassigned, boolean checkRealizations) {
 		// Exact relocation selection binds every materialized input of one FED
 		// consumer to one physical worker-pool layout. Reject a row before any
 		// selector can commit it when its relocation demands have no common pool.
-		if(!realizationsCanStillBeCompatible(analysis, assignment, List.of(receipt)))
+		if(checkRealizations && !realizationsCanStillBeCompatible(analysis, assignment, List.of(receipt)))
 			return false;
 		if(!RelocationSelections.candidateReceiptHasCommonPhysicalAnchor(actions, receipt))
 			return false;

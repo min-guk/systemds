@@ -1371,6 +1371,16 @@ public final class RelocationSelections {
 		Collection<CandidateSelectionReceipt> candidateSelections) {
 		Problem problem = problem(analysis, analysis.graph().relocationActions(), assignment,
 			candidateSelections);
+		return auditDemandOptions(problem);
+	}
+
+	/** Same exact demand domains for graph-only selector contract tests. No action search. */
+	public static List<AuditDemandOptions> auditDemandOptions(NeutralPlacementGraph graph,
+		Map<CompiledHopKey, PlacementState> assignment) {
+		return auditDemandOptions(problem(graph, graph.relocationActions(), assignment));
+	}
+
+	private static List<AuditDemandOptions> auditDemandOptions(Problem problem) {
 		List<AuditDemandOptions> result = new ArrayList<>(problem.demands().size());
 		for(DemandOptions demand : problem.demands())
 			result.add(new AuditDemandOptions(demand.demand(), demand.options().stream()

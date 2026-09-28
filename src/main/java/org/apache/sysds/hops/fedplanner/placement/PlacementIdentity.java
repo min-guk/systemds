@@ -585,6 +585,27 @@ public final class PlacementIdentity {
 		return !leftLayout.isEmpty() && leftLayout.equals(physicalWorkerPoolLayout(right));
 	}
 
+	/** Hashable counterpart of the existing physical-pool predicates, not new placement authority. */
+	public record WorkerPoolIdentity(FType type, List<String> members, DurableAnchorKey identityOnly) {
+		public WorkerPoolIdentity { members = List.copyOf(members); }
+	}
+
+	public static WorkerPoolIdentity physicalWorkerPoolIdentity(DurableAnchorKey anchor) {
+		Objects.requireNonNull(anchor, "anchor");
+		List<String> layout = physicalWorkerPoolLayout(anchor);
+		return anchor.fType() == FType.PART || anchor.fType() == FType.OTHER || layout.isEmpty()
+			? new WorkerPoolIdentity(anchor.fType(), List.of(), anchor)
+			: new WorkerPoolIdentity(anchor.fType(), layout, null);
+	}
+
+	/** Null means that the endpoint predicate cannot prove even self-compatibility. */
+	public static WorkerPoolIdentity physicalWorkerEndpointIdentity(DurableAnchorKey anchor) {
+		Objects.requireNonNull(anchor, "anchor");
+		List<String> endpoints = physicalWorkerEndpoints(anchor);
+		return anchor.fType() == FType.PART || anchor.fType() == FType.OTHER || endpoints.isEmpty()
+			? null : new WorkerPoolIdentity(anchor.fType(), endpoints, null);
+	}
+
 	/**
 	 * Same native worker residency without claiming ROW/COL partition extents are unchanged.
 	 * This is intentionally weaker than {@link #samePhysicalWorkerPool(DurableAnchorKey, DurableAnchorKey)}
