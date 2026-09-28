@@ -1,5 +1,12 @@
 # Session issues — 2026-09-28
 
+## 통합된 C0 correctness 세션 기록
+
+`origin/main`의 `cfab6c8258`에서 추가된 세션 문서는 별도 correctness 작업의
+기록이다. 내용을 빠뜨리지 않도록 [원문 전체](CORRECTNESS_SESSION_ISSUES_2026-09-28.md)를
+그대로 보존했다. 원문의 당시 파일명·검증 경로와 미완료 범위는 역사적 기록이며,
+리팩터링 이후 상태와 검증은 이 문서 및 최종 보고서를 따른다.
+
 ## Paper-aligned refactor in an independent workspace — initial issue
 
 - Problem: the 10k-line search-space builder combines compiler facts, candidate
@@ -72,3 +79,12 @@
 - 잔여 위험: 대표 한 조건의 시간 증가 및 실제 peak heap을 직접 측정하지 못한 한계. GC 경계/종료 시점의 관측 high-water를 정확한 peak로 표시하지 않는다.
 
 - 독립 최종 감사 보완: raw metric 100개 중 identity cache hit -49,045(-0.2476%), structural cache hit +1의 차이는 보존된 구성 횟수와 따로 기록했다. 소스/bytecode 감사에서 중복 pass·OFF 진단 생성·cache 수명 오류는 발견하지 못했다. local→field, 소규모 owner 객체, method/class 분리의 실행 차이는 있지만 OFF 증가의 원인으로 입증되지 않았다.
+
+## origin/main 통합 — 검증 완료
+
+- 요청/조건: 최신 `origin/main`의 `cfab6c8258`을 리팩터링 브랜치에 merge한 뒤 원격 main에 일반 push한다.
+- 증상/원인: 이전 builder에 들어온 C0 수정과 추출된 소유자, loop 회귀의 호출 클래스명, 양쪽에서 추가한 세션 문서가 충돌했다. C0 production 변경은 별도 exact import와 기존 C0 gate로 이미 반영된 상태다.
+- 해결: 190행 공개 builder와 추출된 관계 소유자를 유지한다. Loop 회귀는 원격 파일에서 helper 소유자 두 이름만 치환한 내용과 현재 파일이 정확히 같음을 확인해 assertion을 그대로 보존했다. 원격의 문서 149행은 연결된 `CORRECTNESS_SESSION_ISSUES_2026-09-28.md`에 원문 bytes로 보존했다.
+- 수정 파일: merge 이력과 두 세션 문서. Production·test·POM·실험 script는 merge 전 검증한 tree와 동일하게 유지한다. Oracle/runtime/privacy/TR-TW/recompile 계약을 바꾸지 않는다.
+- 검증: 독립 reviewer가 incoming builder 8개 hunk의 반영을 확인해 승인했다. 관련 6개 클래스 48/48 통과, 실패/오류/skip 0, source/POM 전후 동일. Source·test·POM·script는 이전 최종 검증 tree와 같고 JAR SHA `a2417987edcfea6a87691939f1a4bc57f22480372d228f5581522614cce4447a`도 유지됐다. Unresolved index와 conflict marker가 없고 diff-check가 통과했다. 증거는 `/home/mchoi/w1357-diagnostics/paper-refactor-20260928/evidence/merge-origin-main-20260928/`에 저장한다. 원격 게시 결과는 같은 디렉터리의 별도 receipt로 기록한다.
+- 잔여 위험: 원격 main이 검증 중 갱신되면 일반 push가 거절할 수 있다. 강제 push 없이 다시 통합한다. 기존 OFF 단일 시간 증가와 정적 검사 한계는 최종 보고서 그대로 유지한다.
