@@ -341,3 +341,12 @@
 - **사용자 최종 결정**: 추가 반복 대신 이전 측정 중 가장 좋은 기준선을 고정하고 커밋·푸시하도록 요청했다. 두 조건의 최악 시간/합계가 가장 작은 R33을 선택했다. W3 단독 최저는 R30이며, 단일 표본의 통계적 우위나 전체 workload 최저를 주장하지 않는다. 명시적 중단 요청에 따라 native 20초 goal은 paused이며 complete로 표시하지 않는다.
 - **제외/보존**: R34 binding-only product context는 설계 단계에서 멈췄고 소스 변경이 없다. R35 UTF-8 writer 변경은 13tests PASS/정적 CLEAR지만 Docker 미측정이므로 main에서 제외했다. 덮어쓰기 전 tracked patch/untracked files, R35 source/test를 `final-r33-pin/`에 보존했다. main production/test 전체를 frozen R33과 byte-for-byte 대조했고, 빌드는 원본 증거를 훼손하지 않는 별도 target 사본으로 고정했다.
 - **원칙/잔여 위험**: runtime fallback·후보 임의 축소·privacy/TR-TW/recompile/cap/timer 변경 없음. 사용자 요청에 따른 기준선 고정은 전체 성능 qualification의 대체가 아니다. 알려진 전체 프로젝트의 기존 cap/fixture 실패도 그대로 명시한다. 자세한 비교/재현은 `FEDPLANNER_PINNED_BASELINE_2026-09-30_KO.md` 및 동명 JSON에 기록했다.
+
+## 사용자 요청 추가 확인: 고정 R33 logreg/l2svm W3 LAN (측정 완료)
+
+- **문제 정의/범위**: R33 고정 당시 logreg/l2svm의 Docker 성능 회귀 검증이 없었다. 사용자의 추가 확인 요청에 따라 코드·고정 커밋·JAR를 변경하지 않고 일반 compile-only 세 조건을 각 1회 측정했다. 최적화 반복이나 전체 896 검증을 재개한 것은 아니다.
+- **조건 일치**: R10 기록과 runner/probe/runtime-compare/lifecycle/external dependency SHA, Docker image, stage seal, 60초 watchdog, 비진단 설정 모두 일치한다. 현재 commit `e2f82d68f9281343abb6613a22b74b3285c60491`, JAR `2faab28099fb383d6240f9868a0c870cea14c75defd484300022fffe76b6fa40`.
+- **실측(컴파일+전체 초기 플래닝, runtime 제외)**: logreg W3/DP-local **19.866836466초** (과거 R10 23.715556038초), logreg W3/DP-global **17.842301242초** (28.294900308초), l2svm W3/DP-local **7.276363583초** (8.434775813초). 이번 세 표본은 모두20초 이내다.
+- **검증**: 세 attempt 모두 passed/cleanup resolved, runtime-program construction 완료, workload runtime 및 Spark instruction 실행0, lowering missing/mismatch0. subset evaluator observed3/within20=3/rejected0/missing893으로 전체 판정은 여전히 FAIL이다. source/JAR 변경 없음; 변경 파일은 이 측정 기록뿐이다.
+- **잔여 이슈/회귀 위험**: 과거 기록과의 단일 비교이며 fresh paired 반복으로 입증한 개선율이 아니다. 특히 logreg local은20초까지 여유가 약0.13초뿐이므로 안정적20초 달성을 주장하지 않는다. 다른 worker/network/planner와 전체 주요 workload는 별도 미검증이다. R10과 plan fingerprint가 달라졌으므로 이 시간/audit 검증을 incumbent objective 품질 비교로 대신하지 않는다.
+- **근거/원칙**: `planning-30s-recovery-20260930/r33-logreg-l2svm-w3-check1/`의 세 원본 result/receipt/cleanup과 `r33-logreg-l2svm-validation/{comparison1.json,REPORT.md,subset-evaluation.json}`. `run_LAN_docker.sh --campaign --phase compile`만 사용했고 fallback/후보 축소/타이머 변경은 없다.
