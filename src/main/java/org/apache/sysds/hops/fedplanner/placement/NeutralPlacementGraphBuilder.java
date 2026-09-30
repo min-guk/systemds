@@ -179,6 +179,7 @@ public final class NeutralPlacementGraphBuilder {
 			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.ANALYSIS);
 		PlacementIdentity.resetNormalizedSignatureCache();
 		PlacementIdentity.beginAnalysisScope(complexityMetrics);
+		PlacementAnalysis.CanonicalTextScope canonicalTextScope = PlacementAnalysis.beginCanonicalTextScope();
 		try {
 			FunctionCallGraph fgraph = suppliedFunctionCallGraph != null
 				? suppliedFunctionCallGraph : new FunctionCallGraph(program);
@@ -194,8 +195,13 @@ public final class NeutralPlacementGraphBuilder {
 				PlacementIdentity.endAnalysisScope();
 			}
 			finally {
-				if(complexityMetrics != null)
-					complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.ANALYSIS, analysisStarted);
+				try {
+					canonicalTextScope.close();
+				}
+				finally {
+					if(complexityMetrics != null)
+						complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.ANALYSIS, analysisStarted);
+				}
 			}
 		}
 	}

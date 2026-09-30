@@ -117,19 +117,38 @@ final class PlacementSupportRelations {
 		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
 		List<LogicalTransientInputFact> completeLogicalInputs,
 		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) {
+		return projectInitialSupport(facts, actions, completeLogicalInputs, requiredWriters, false).facts();
+	}
+
+	private static InitialSupportProjection projectInitialSupport(List<CandidateRuleFact> facts,
+		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
+		List<LogicalTransientInputFact> completeLogicalInputs,
+		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters, boolean collectWork) {
 		Set<CandidateRealizationReference> currentReferences = new HashSet<>();
+		long indexedRealizations = 0;
+		long indexedClauses = 0;
 		for(CandidateRuleFact fact : facts)
 			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-					for(CandidateEmissionRealization realization : emission.realizations())
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						if(collectWork) {
+							indexedRealizations++;
+							indexedClauses += realization.supportClauses().size();
+						}
 						if(executableSourceRealization(fact.key(), realization))
 							currentReferences.add(CandidateRealizationReference.of(fact.key(), realization));
+					}
 		Map<CompiledHopKey,List<LogicalTransientInputFact>> logicalInputsByReader = new IdentityHashMap<>();
 		if(completeLogicalInputs != null)
 			for(LogicalTransientInputFact logicalInput : completeLogicalInputs)
 				logicalInputsByReader.computeIfAbsent(logicalInput.targetRead(), ignored -> new ArrayList<>())
 					.add(logicalInput);
 		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
+		Set<CandidateRealizationReference> distinctSources = collectWork ? new HashSet<>() : null;
+		boolean removedInitiallyExecutable = false;
+		long reverseIncidences = 0;
+		long logicalRequirements = 0;
+		long deletedRealizations = 0;
 		for(CandidateRuleFact fact : facts) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
 				result.add(fact);
@@ -139,30 +158,64 @@ final class PlacementSupportRelations {
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				for(CandidateEmissionRealization realization : emission.realizations()) {
-					if(!executableSourceRealization(fact.key(), realization))
+					if(!executableSourceRealization(fact.key(), realization)) {
+						if(collectWork)
+							deletedRealizations++;
 						continue;
+					}
 					CandidateRealizationReference realizationReference =
 						CandidateRealizationReference.of(fact.key(), realization);
-					if(!hasCompleteLogicalTransientSupport(realizationReference, currentReferences,
-						logicalInputsByReader.get(fact.key().parentOccurrence()),
-						requiredWriters == null ? null : requiredWriters.get(fact.key().parentOccurrence())))
+					List<LogicalTransientInputFact> logicalInputs =
+						logicalInputsByReader.get(fact.key().parentOccurrence());
+					List<CompiledHopKey> writers = requiredWriters == null ? null
+						: requiredWriters.get(fact.key().parentOccurrence());
+					boolean logicalSupported;
+					if(collectWork) {
+						LogicalSupportInventory inventory = logicalSupportInventory(realizationReference,
+							currentReferences, logicalInputs, writers, distinctSources);
+						logicalSupported = inventory.supported();
+						reverseIncidences += inventory.reverseIncidences();
+						logicalRequirements += inventory.requirements();
+					}
+					else
+						logicalSupported = hasCompleteLogicalTransientSupport(realizationReference,
+							currentReferences, logicalInputs, writers);
+					if(!collectWork && !logicalSupported)
 						continue;
 					// CFG/direct rebuilding can replace exact source identities while an
 					// old OR clause remains merged into the same output layout. That clause
 					// has no authority in the current domain; keep every supported alternative
 					// and let the surrounding fixed point regenerate bindings, never remap
 					// an expired reference merely because another map has equal geometry.
-					List<CandidateRealizationSupportClause> clauses = realization.supportClauses().stream()
-						.filter(clause -> clause.inputBindings().stream()
-							.allMatch(binding -> currentReferences.contains(binding.source())
-								&& (actions == null || binding.kind() != CandidateInputBindingKind.RELOCATION
-									|| supportsRelocationBinding(actions.get(binding.relocationAction()),
+					List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						boolean supported = true;
+						if(collectWork)
+							distinctSources.clear();
+						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+							if(collectWork)
+								distinctSources.add(binding.source());
+							if(supported && (!currentReferences.contains(binding.source())
+								|| (actions != null && binding.kind() == CandidateInputBindingKind.RELOCATION
+									&& !supportsRelocationBinding(actions.get(binding.relocationAction()),
 										fact.key(), emission.emissionState(), binding))))
-						.toList();
-					if(!clauses.isEmpty())
+								supported = false;
+						}
+						if(supported) {
+							clauses.add(clause);
+							if(collectWork)
+								reverseIncidences += distinctSources.size();
+						}
+					}
+					if(logicalSupported && !clauses.isEmpty())
 						realizations.add(clauses.size() == realization.supportClauses().size()
 							? realization : CandidateEmissionRealization
 								.fromAlreadyCanonicalSupportClauses(realization.key(), clauses));
+					else {
+						removedInitiallyExecutable = true;
+						if(collectWork)
+							deletedRealizations++;
+					}
 				}
 				if(!realizations.isEmpty()) {
 					boolean unchanged = realizations.size() == emission.realizations().size();
@@ -180,8 +233,50 @@ final class PlacementSupportRelations {
 			else
 				result.add(retainUnchangedPrivacyFact(fact, emissions));
 		}
-		return List.copyOf(result);
+		WorklistWork work = collectWork ? new WorklistWork(indexedRealizations, indexedClauses,
+			reverseIncidences, logicalRequirements, 0, deletedRealizations, 0, 0) : null;
+		return new InitialSupportProjection(List.copyOf(result), removedInitiallyExecutable, work);
 	}
+
+	private static LogicalSupportInventory logicalSupportInventory(CandidateRealizationReference reader,
+		Set<CandidateRealizationReference> currentReferences,
+		List<LogicalTransientInputFact> completeLogicalInputs, List<CompiledHopKey> requiredWriters,
+		Set<CandidateRealizationReference> distinctSources) {
+		boolean supported = true;
+		long incidences = 0;
+		long requirements = 0;
+		if(requiredWriters != null)
+			for(CompiledHopKey writer : requiredWriters) {
+				distinctSources.clear();
+				if(completeLogicalInputs != null)
+					for(LogicalTransientInputFact input : completeLogicalInputs)
+						if(input.sourceWrite() == writer)
+							for(TransientPlacementCompatibility edge : input.compatibilityForReader(reader))
+								if(currentReferences.contains(edge.sourceRealization()))
+									distinctSources.add(edge.sourceRealization());
+				requirements++;
+				incidences += distinctSources.size();
+				if(distinctSources.isEmpty())
+					supported = false;
+			}
+		if(completeLogicalInputs != null)
+			for(LogicalTransientInputFact input : completeLogicalInputs) {
+				distinctSources.clear();
+				for(TransientPlacementCompatibility edge : input.compatibilityForReader(reader))
+					if(currentReferences.contains(edge.sourceRealization()))
+						distinctSources.add(edge.sourceRealization());
+				requirements++;
+				incidences += distinctSources.size();
+				if(distinctSources.isEmpty())
+					supported = false;
+			}
+		return new LogicalSupportInventory(supported, incidences, requirements);
+	}
+
+	private record LogicalSupportInventory(boolean supported, long reverseIncidences,
+		long requirements) { }
+	private record InitialSupportProjection(List<CandidateRuleFact> facts,
+		boolean removedInitiallyExecutable, WorklistWork work) { }
 
 	/**
 	 * Computes the same greatest deletion fixed point as repeated invocations of
@@ -220,6 +315,14 @@ final class PlacementSupportRelations {
 		Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> actions,
 		List<LogicalTransientInputFact> completeLogicalInputs,
 		Map<CompiledHopKey,List<CompiledHopKey>> requiredWriters) {
+		InitialSupportProjection initial = projectInitialSupport(facts, actions,
+			completeLogicalInputs, requiredWriters, true);
+		// With no executable deletion the exact reference set is unchanged. Every
+		// remaining predicate depends only on that set and the fixed inventories, so
+		// the one-pass projection is already the greatest deletion fixed point.
+		if(!initial.removedInitiallyExecutable())
+			return new WorklistResult(initial.facts(), initial.work());
+
 		List<FixedPointFact> indexedFacts = new ArrayList<>(facts.size());
 		Map<CandidateRealizationReference,FixedPointReference> references = new LinkedHashMap<>();
 		List<FixedPointRealization> realizations = new ArrayList<>();
@@ -381,7 +484,7 @@ final class PlacementSupportRelations {
 		long deletedRealizations = realizations.stream().filter(slot -> !slot.live).count();
 		return new WorklistResult(List.copyOf(result), new WorklistWork(
 			realizations.size(), indexedClauses, reverseIncidences, logicalRequirements,
-			queueVisits, deletedRealizations, invalidatedClauses));
+			queueVisits, deletedRealizations, invalidatedClauses, reverseIncidences));
 	}
 
 	private static long addLogicalRequirement(FixedPointRealization owner,
@@ -410,9 +513,11 @@ final class PlacementSupportRelations {
 		}
 	}
 
+	/** Logical inventory/outcome plus the subset physically linked into the reverse index. */
 	record WorklistWork(long indexedRealizations, long indexedClauses,
 		long reverseIncidences, long logicalRequirements, long queueVisits,
-		long deletedRealizations, long invalidatedClauses) { }
+		long deletedRealizations, long invalidatedClauses,
+		long materializedReverseIncidences) { }
 
 	record WorklistResult(List<CandidateRuleFact> facts, WorklistWork work) {
 		WorklistResult {
@@ -652,8 +757,23 @@ final class PlacementSupportRelations {
 							+ node.legalAlternatives().stream()
 								.map(PlacementState::normalizedSignature).toList()));
 				DerivedFoutMaterializationActionKey priorAction = emission.derivedFoutAction();
-				PlacementEmissionState reboundEmission = new PlacementEmissionState(target,
-					emission.emissionState().derivedFedFout());
+				PlacementState source = priorAction == null ? null : node.legalAlternatives().stream()
+					.filter(priorAction.sourcePlacement()::equals).findFirst().orElseThrow(() ->
+						new IllegalStateException("Candidate materialization source is absent from final graph node"));
+				// Equality locates the graph authority; identity proves that this immutable
+				// emission and every realization already own that exact authority wrapper.
+				boolean exactEmissionAuthority = target == priorTarget
+					&& emission.realizations().stream().allMatch(realization ->
+						realization.key().emissionState() == emission.emissionState())
+					&& (priorAction == null || source == priorAction.sourcePlacement()
+						&& target == priorAction.targetPlacement());
+				if(exactEmissionAuthority) {
+					emissions.add(emission);
+					continue;
+				}
+				PlacementEmissionState reboundEmission = target == priorTarget
+					? emission.emissionState() : new PlacementEmissionState(target,
+						emission.emissionState().derivedFedFout());
 				List<CandidateEmissionRealization> reboundRealizations = emission.realizations().stream()
 					.map(realization -> rebindRealization(realization, reboundEmission)).toList();
 				if(priorAction == null) {
@@ -661,9 +781,6 @@ final class PlacementSupportRelations {
 						emission.executionFType(), null, reboundRealizations));
 					continue;
 				}
-				PlacementState source = node.legalAlternatives().stream()
-					.filter(priorAction.sourcePlacement()::equals).findFirst().orElseThrow(() ->
-						new IllegalStateException("Candidate materialization source is absent from final graph node"));
 				DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
 					priorAction.producer(), priorAction.producerValueVersion(), priorAction.candidateRule(),
 					source, target, priorAction.durableAnchor(), priorAction.durableAnchorOwner(),
@@ -672,8 +789,7 @@ final class PlacementSupportRelations {
 				emissions.add(new CandidateEmissionFact(reboundEmission,
 					emission.executionFType(), action, reboundRealizations));
 			}
-			bound.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
-				fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
+			bound.add(retainUnchangedPrivacyFact(fact, emissions));
 		}
 		return List.copyOf(bound);
 	}

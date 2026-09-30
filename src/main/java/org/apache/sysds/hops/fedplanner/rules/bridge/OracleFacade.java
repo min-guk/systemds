@@ -1,6 +1,7 @@
 package org.apache.sysds.hops.fedplanner.rules.bridge;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -75,6 +76,7 @@ public final class OracleFacade {
 	public record DecisionEvidence(RulesApi.OpCaps caps, RulesApi.ShapeProof shapeProof) {
 		public boolean shapeDependent() { return !shapeProof.requiredFacts().isEmpty(); }
 	}
+	public record ProfileInference(RulesApi.FTypeProfile profile, boolean reused) { }
   private static final String ATTR_DIRECTION = "direction";
   private static final String ATTR_AGG_OP = "aggOp";
   private static final String ATTR_Q_TYPE = "q.type";
@@ -136,6 +138,16 @@ public final class OracleFacade {
     return new PreparedDecision(Objects.requireNonNull(hop, "hop"));
   }
 
+  /**
+   * Captures one immutable operation signature and memoizes only exact profile
+   * queries made through this preparation object. Callers must scope the object
+   * to a node build or another immutable analysis snapshot.
+   */
+  public PreparedProfile prepareProfile(Hop hop) {
+    Hop required = Objects.requireNonNull(hop, "hop");
+    return new PreparedProfile(required, buildSignature(required));
+  }
+
   public final class PreparedDecision {
     private final Hop hop;
     private final OpSig signature;
@@ -156,6 +168,72 @@ public final class OracleFacade {
       logOracleResult(hop, caps);
       return new DecisionEvidence(caps, effectiveHint.proof());
     }
+
+    /** Shares this prepared operation signature without extending its node-build lifetime. */
+    public PreparedProfile prepareProfile() {
+      return new PreparedProfile(hop, signature);
+    }
+  }
+
+  public final class PreparedProfile {
+    private final Hop hop;
+    private final OpSig signature;
+    private ShapeHint.DiagnosticSnapshot defaultShape;
+    private final Map<ProfileQuery,RulesApi.FTypeProfile> exactResults = new LinkedHashMap<>();
+
+    private PreparedProfile(Hop hop, OpSig signature) {
+      this.hop = hop;
+      this.signature = signature;
+    }
+
+    public RulesApi.FTypeProfile inferProfile(List<List<FType>> inCandidates, ShapeHint hint) {
+      return inferWithEvidence(inCandidates, hint).profile();
+    }
+
+    public ProfileInference inferWithEvidence(List<List<FType>> inCandidates, ShapeHint hint) {
+      return inferWithEvidence("facade", inCandidates, hint);
+    }
+
+    public ProfileInference inferWithEvidence(String queryScope,
+        List<List<FType>> inCandidates, ShapeHint hint) {
+      ShapeHint effectiveHint = hint != null ? hint : shapeHint(defaultShape());
+      ProfileQuery query = new ProfileQuery(Objects.requireNonNull(queryScope, "queryScope"),
+          snapshotDomains(inCandidates),
+          effectiveHint.diagnosticSnapshot());
+      if(exactResults.containsKey(query))
+        return new ProfileInference(exactResults.get(query), true);
+      RulesApi.FTypeProfile inferred = inference.infer(signature, inCandidates, effectiveHint);
+      RulesApi.FTypeProfile result = hop.getDataType() != null && hop.getDataType().isScalar()
+          ? RulesApi.FTypeProfile.empty() : inferred;
+      exactResults.put(query, result);
+      return new ProfileInference(result, false);
+    }
+
+    private ShapeHint.DiagnosticSnapshot defaultShape() {
+      if(defaultShape == null)
+        defaultShape = buildShapeHint(hop, null).diagnosticSnapshot();
+      return defaultShape;
+    }
+  }
+
+  private record ProfileDomain(boolean present, List<FType> values) { }
+  private record ProfileQuery(String queryScope, List<ProfileDomain> domains,
+      ShapeHint.DiagnosticSnapshot shape) { }
+
+  private static List<ProfileDomain> snapshotDomains(List<List<FType>> domains) {
+    if(domains == null)
+      return null;
+    List<ProfileDomain> snapshot = new ArrayList<>(domains.size());
+    for(List<FType> domain : domains)
+      snapshot.add(domain == null
+          ? new ProfileDomain(false, List.of())
+          : new ProfileDomain(true, Collections.unmodifiableList(new ArrayList<>(domain))));
+    return Collections.unmodifiableList(snapshot);
+  }
+
+  private static ShapeHint shapeHint(ShapeHint.DiagnosticSnapshot shape) {
+    return new ShapeHint(shape.rows(), shape.cols(), shape.blockSize(),
+        shape.fullSinglePartition(), shape.rowsA(), shape.colsA(), shape.rowsB(), shape.colsB());
   }
 
   /**
@@ -197,12 +275,7 @@ public final class OracleFacade {
 
   public RulesApi.FTypeProfile inferProfile(
       Hop hop, List<List<FType>> inCandidates, ShapeHint hint) {
-    Objects.requireNonNull(hop, "hop");
-    OpSig sig = buildSignature(hop);
-    ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop, null);
-    RulesApi.FTypeProfile profile = inference.infer(sig, inCandidates, effectiveHint);
-    return hop.getDataType() != null && hop.getDataType().isScalar()
-        ? RulesApi.FTypeProfile.empty() : profile;
+    return prepareProfile(hop).inferProfile(inCandidates, hint);
   }
 
   OpSig describe(Hop hop) {

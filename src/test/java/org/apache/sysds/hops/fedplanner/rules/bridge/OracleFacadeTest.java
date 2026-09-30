@@ -19,8 +19,11 @@ package org.apache.sysds.hops.fedplanner.rules.bridge;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -28,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
@@ -68,6 +72,58 @@ public class OracleFacadeTest {
 
   private final OracleFacade facade =
       new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+
+  @Test
+  public void preparedProfileDefersDefaultShapeCaptureUntilNeeded() throws Exception {
+    Hop hop = binary(matrix("left", 4, 2), matrix("right", 4, 2));
+    OracleFacade.PreparedProfile prepared = facade.prepareProfile(hop);
+    Field defaultShape = prepared.getClass().getDeclaredField("defaultShape");
+    defaultShape.setAccessible(true);
+
+    assertNull(defaultShape.get(prepared));
+    prepared.inferProfile(List.of(List.of(FType.ROW), List.of(FType.ROW)),
+        new ShapeHint(4, 2, 1000));
+    assertNull("An explicit shape hint must not trigger default shape capture",
+        defaultShape.get(prepared));
+    prepared.inferProfile(List.of(List.of(FType.COL), List.of(FType.COL)), null);
+    assertNotNull(defaultShape.get(prepared));
+  }
+
+  @Test
+  public void preparedProfileReusesOnlyExactImmutableQueryKeys() {
+    AtomicInteger profileCalls = new AtomicInteger();
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile profile(
+          OpSig sig, List<List<FType>> inputs, ShapeHint hint) {
+        profileCalls.incrementAndGet();
+        return org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile.ofOutput(List.of(FType.ROW));
+      }
+    });
+    OracleFacade.PreparedProfile prepared =
+        new OracleFacade(registry).prepareProfile(binary(matrix("left", 4, 2), matrix("right", 4, 2)));
+    List<List<FType>> rowAbsent = List.of(List.of(FType.ROW), Arrays.asList((FType) null));
+
+    OracleFacade.ProfileInference first = prepared.inferWithEvidence(rowAbsent, null);
+    OracleFacade.ProfileInference repeated = prepared.inferWithEvidence(
+        List.of(List.of(FType.ROW), Arrays.asList((FType) null)), null);
+    OracleFacade.ProfileInference reordered = prepared.inferWithEvidence(
+        List.of(Arrays.asList((FType) null), List.of(FType.ROW)), null);
+    OracleFacade.ProfileInference concrete = prepared.inferWithEvidence(
+        List.of(List.of(FType.ROW), List.of(FType.FULL)), null);
+    OracleFacade.ProfileInference shaped = prepared.inferWithEvidence(
+        rowAbsent, new ShapeHint(8, 2, 1000));
+
+    assertFalse(first.reused());
+    assertTrue(repeated.reused());
+    assertFalse(reordered.reused());
+    assertFalse(concrete.reused());
+    assertFalse(shaped.reused());
+    assertEquals(first.profile().outputs(), repeated.profile().outputs());
+    assertEquals("only the structurally equal, ordered ABSENT query is reused", 4, profileCalls.get());
+  }
 
   @Test
   public void preparedDecisionRetainsTupleAndUnknownShapeAuthority() {

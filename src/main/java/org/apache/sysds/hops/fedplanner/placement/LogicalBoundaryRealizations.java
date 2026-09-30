@@ -58,6 +58,121 @@ public final class LogicalBoundaryRealizations {
 	private final Map<CompiledHopKey,List<Option>> options = new IdentityHashMap<>();
 	private final List<Relation> relations;
 
+	/** Invocation-local incremental boundary closure over one immutable structural context. */
+	static final class Session {
+		record ClosureResult(List<CandidateRuleFact> facts, Set<CompiledHopKey> changedOwners) { }
+		record Work(long topologyBuilds, long optionFactSlotsVisited, long boundaryFactSlotsVisited) {
+			Work minus(Work before) {
+				return new Work(topologyBuilds - before.topologyBuilds,
+					optionFactSlotsVisited - before.optionFactSlotsVisited,
+					boundaryFactSlotsVisited - before.boundaryFactSlotsVisited);
+			}
+		}
+
+		private final LogicalBoundaryRealizations boundary;
+		private final Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
+		private final Map<CompiledHopKey,Set<CompiledHopKey>> targetsBySource = new IdentityHashMap<>();
+		private final int factCount;
+		private final int maxPasses;
+		private boolean firstClose = true;
+		private long optionFactSlotsVisited;
+		private long boundaryFactSlotsVisited;
+
+		Session(List<Node> nodes, Collection<Constraint> constraints,
+			Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
+			boundary = new LogicalBoundaryRealizations(nodes, constraints, origins, facts);
+			factCount = facts.size();
+			maxPasses = nodes.size();
+			for(int slot = 0; slot < facts.size(); slot++)
+				slots.computeIfAbsent(facts.get(slot).key().parentOccurrence(), ignored -> new ArrayList<>()).add(slot);
+			for(var entry : boundary.sources.entrySet())
+				for(CompiledHopKey source : entry.getValue())
+					targetsBySource.computeIfAbsent(source,
+						ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(entry.getKey());
+			// The cold construction classifies every row once. Subsequent revisions
+			// count only explicitly changed owner slots below.
+			optionFactSlotsVisited = facts.size();
+		}
+
+		ClosureResult close(List<CandidateRuleFact> facts, Set<CompiledHopKey> completeChangedOwners) {
+			if(facts.size() != factCount)
+				throw new IllegalStateException("Logical boundary session changed candidate fact count");
+			List<CandidateRuleFact> input = facts;
+			for(CompiledHopKey owner : completeChangedOwners)
+				refreshOptions(owner, facts);
+			Set<CompiledHopKey> affected = firstClose
+				? identityCopy(boundary.declared) : affectedTargets(completeChangedOwners, true);
+			firstClose = false;
+			List<CandidateRuleFact> current = facts;
+			for(int pass = 0; pass <= maxPasses; pass++) {
+				if(affected.isEmpty())
+					return new ClosureResult(current, changedOwners(input, current));
+				List<CandidateRuleFact> next = boundary.bind(current, affected, slots, this);
+				Set<CompiledHopKey> changed = changedOwners(current, next);
+				if(changed.isEmpty())
+					return new ClosureResult(current, changedOwners(input, current));
+				for(CompiledHopKey owner : changed)
+					refreshOptions(owner, next);
+				affected = affectedTargets(changed, false);
+				current = next;
+			}
+			throw new IllegalStateException("Logical boundary realization closure did not converge");
+		}
+
+		Work work() {
+			return new Work(1, optionFactSlotsVisited, boundaryFactSlotsVisited);
+		}
+
+		private void refreshOptions(CompiledHopKey owner, List<CandidateRuleFact> facts) {
+			List<Integer> ownerSlots = slots.getOrDefault(owner, List.of());
+			List<Option> projected = new ArrayList<>();
+			for(int slot : ownerSlots) {
+				CandidateRuleFact fact = facts.get(slot);
+				if(fact.key().parentOccurrence() != owner)
+					throw new IllegalStateException("Logical boundary session changed candidate owner slot");
+				optionFactSlotsVisited++;
+				addOptions(projected, fact);
+			}
+			if(projected.isEmpty())
+				boundary.options.remove(owner);
+			else
+				boundary.options.put(owner, projected.stream().distinct().toList());
+		}
+
+		private Set<CompiledHopKey> affectedTargets(Set<CompiledHopKey> changed, boolean includeChangedTargets) {
+			Set<CompiledHopKey> result = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CompiledHopKey owner : changed) {
+				if(includeChangedTargets && boundary.declared.contains(owner))
+					result.add(owner);
+				result.addAll(targetsBySource.getOrDefault(owner, Set.of()));
+			}
+			return result;
+		}
+
+		private static Set<CompiledHopKey> changedOwners(List<CandidateRuleFact> before,
+			List<CandidateRuleFact> after) {
+			if(before == after)
+				return Set.of();
+			if(before.size() != after.size())
+				throw new IllegalStateException("Logical boundary session changed candidate fact count");
+			Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(int slot = 0; slot < before.size(); slot++) {
+				CandidateRuleFact oldFact = before.get(slot), newFact = after.get(slot);
+				if(oldFact.key().parentOccurrence() != newFact.key().parentOccurrence())
+					throw new IllegalStateException("Logical boundary session changed candidate owner slot");
+				if(!oldFact.equals(newFact))
+					changed.add(oldFact.key().parentOccurrence());
+			}
+			return changed;
+		}
+
+		private static Set<CompiledHopKey> identityCopy(Collection<CompiledHopKey> values) {
+			Set<CompiledHopKey> result = Collections.newSetFromMap(new IdentityHashMap<>());
+			result.addAll(values);
+			return result;
+		}
+	}
+
 	LogicalBoundaryRealizations(List<Node> nodes, Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
 		Map<CompiledHopKey,Node> byKey = new IdentityHashMap<>();
@@ -112,19 +227,9 @@ public final class LogicalBoundaryRealizations {
 			relevant.addAll(entry.getValue());
 		}
 		for(CandidateRuleFact fact : facts)
-			if(relevant.contains(fact.key().parentOccurrence())
-				&& fact.status() == CandidateEvaluationStatus.AVAILABLE)
-				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-					for(CandidateEmissionRealization realization : emission.realizations())
-						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-							PlacementState state = realization.key().emissionState().placementState();
-							DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
-							if(state.output() == FederatedOutput.FOUT && pool == null)
-								continue; // Staging lineage is not native execution authority.
-							options.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
-								.add(new Option(CandidateRealizationReference.of(fact.key(), realization), state,
-									pool, realization.nativeWorkerPoolLayoutExactForOwnedClause(clause)));
-						}
+			if(relevant.contains(fact.key().parentOccurrence()))
+				addOptions(options.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()), fact);
+		options.entrySet().removeIf(entry -> entry.getValue().isEmpty());
 		options.replaceAll((key, values) -> values.stream().distinct().toList());
 		relations = sources.entrySet().stream()
 			.filter(entry -> options.getOrDefault(entry.getKey(), List.of()).stream()
@@ -132,6 +237,21 @@ public final class LogicalBoundaryRealizations {
 			.flatMap(entry -> entry.getValue().stream().map(source -> new Relation(source, entry.getKey())))
 			.sorted(java.util.Comparator.comparing((Relation relation) -> relation.target().normalizedSignature())
 				.thenComparing(relation -> relation.source().normalizedSignature())).toList();
+	}
+
+	private static void addOptions(List<Option> result, CandidateRuleFact fact) {
+		if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+			return;
+		for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+			for(CandidateEmissionRealization realization : emission.realizations())
+				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					PlacementState state = realization.key().emissionState().placementState();
+					DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
+					if(state.output() == FederatedOutput.FOUT && pool == null)
+						continue; // Staging lineage is not native execution authority.
+					result.add(new Option(CandidateRealizationReference.of(fact.key(), realization), state,
+						pool, realization.nativeWorkerPoolLayoutExactForOwnedClause(clause)));
+				}
 	}
 
 	private static boolean collectSources(CompiledHopKey key, Map<CompiledHopKey,Node> nodes,
@@ -219,15 +339,32 @@ public final class LogicalBoundaryRealizations {
 
 	List<CandidateRuleFact> bind(List<CandidateRuleFact> facts) {
 		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
-		for(CandidateRuleFact fact : facts) {
-			CompiledHopKey target = fact.key().parentOccurrence();
-			if(!declared.contains(target) || fact.status() != CandidateEvaluationStatus.AVAILABLE) {
-				result.add(fact);
-				continue;
+		for(CandidateRuleFact fact : facts)
+			result.add(bind(fact));
+		return List.copyOf(result);
+	}
+
+	private List<CandidateRuleFact> bind(List<CandidateRuleFact> facts, Set<CompiledHopKey> targets,
+		Map<CompiledHopKey,List<Integer>> slots, Session session) {
+		List<CandidateRuleFact> result = new ArrayList<>(facts);
+		for(CompiledHopKey target : targets)
+			for(int slot : slots.getOrDefault(target, List.of())) {
+				CandidateRuleFact fact = facts.get(slot);
+				if(fact.key().parentOccurrence() != target)
+					throw new IllegalStateException("Logical boundary session changed candidate owner slot");
+				session.boundaryFactSlotsVisited++;
+				result.set(slot, bind(fact));
 			}
-			List<CandidateEmissionFact> emissions = new ArrayList<>();
-			boolean unchanged = true;
-			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+		return List.copyOf(result);
+	}
+
+	private CandidateRuleFact bind(CandidateRuleFact fact) {
+		CompiledHopKey target = fact.key().parentOccurrence();
+		if(!declared.contains(target) || fact.status() != CandidateEvaluationStatus.AVAILABLE)
+			return fact;
+		List<CandidateEmissionFact> emissions = new ArrayList<>();
+		boolean unchanged = true;
+		for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				PlacementState state = emission.emissionState().placementState();
 				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
 					|| emission.derivedFoutAction() != null || emission.emissionState().derivedFedFout()) {
@@ -253,11 +390,9 @@ public final class LogicalBoundaryRealizations {
 				emissions.add(realizations.isEmpty()
 					? new CandidateEmissionFact(emission.emissionState(), emission.executionFType())
 					: new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), null, realizations));
-			}
-			result.add(unchanged ? fact : new CandidateRuleFact(fact.key(), fact.status(),
-				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
-		return List.copyOf(result);
+		return unchanged ? fact : new CandidateRuleFact(fact.key(), fact.status(),
+			fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode());
 	}
 
 	void validate(List<CandidateRuleFact> facts) {

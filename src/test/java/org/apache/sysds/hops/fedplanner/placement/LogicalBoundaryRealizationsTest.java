@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
@@ -174,6 +175,151 @@ public class LogicalBoundaryRealizationsTest {
 		Assert.assertEquals(3, indexed.size());
 	}
 
+	@Test
+	public void fixedContextSessionMatchesColdClosureAcrossWithdrawalRestorationAndTargetChange() {
+		Fixture f = new Fixture();
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, f.facts);
+		var first = session.close(f.facts, owners(f.facts));
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts),
+			first.facts());
+		Assert.assertEquals(Set.of(f.reader), first.changedOwners());
+
+		var stableWork = session.work();
+		var stable = session.close(first.facts(), Set.of());
+		Assert.assertSame(first.facts(), stable.facts());
+		Assert.assertTrue(stable.changedOwners().isEmpty());
+		Assert.assertEquals(stableWork, session.work());
+
+		List<CandidateRuleFact> withdrawn = replaceOwner(first.facts(), f.writer,
+			unavailable(fact(first.facts(), f.writer)));
+		var missing = session.close(withdrawn, Set.of(f.writer));
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, withdrawn),
+			missing.facts());
+		Assert.assertEquals(Set.of(f.reader), missing.changedOwners());
+
+		List<CandidateRuleFact> restored = replaceOwner(missing.facts(), f.writer,
+			fact(first.facts(), f.writer));
+		var restoredResult = session.close(restored, Set.of(f.writer));
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, restored),
+			restoredResult.facts());
+		Assert.assertEquals(Set.of(f.reader), restoredResult.changedOwners());
+
+		List<CandidateRuleFact> targetUnavailable = replaceOwner(restoredResult.facts(), f.reader,
+			unavailable(fact(restoredResult.facts(), f.reader)));
+		var targetResult = session.close(targetUnavailable, Set.of(f.reader));
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, targetUnavailable),
+			targetResult.facts());
+		Assert.assertTrue(targetResult.changedOwners().isEmpty());
+	}
+
+	@Test
+	public void sessionReprojectsOnlyChangedOwnerSlotsAndAffectedBoundaryTargets() {
+		Fixture f = new Fixture();
+		CompiledHopKey unrelated = key("session-unrelated");
+		CandidateRuleFact unrelatedFact = new CandidateRuleFact(
+			new CandidateRuleKey(unrelated, List.of()), f.facts.get(0).status(),
+			f.facts.get(0).capability(), f.facts.get(0).shapeProof(), f.facts.get(0).profile(),
+			f.facts.get(0).allowedEmissionFacts(), f.facts.get(0).failureCode());
+		List<CandidateRuleFact> initial = new ArrayList<>(f.facts);
+		initial.add(unrelatedFact);
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, initial);
+		var closed = session.close(initial, owners(initial));
+		var before = session.work();
+
+		List<CandidateRuleFact> withdrawn = replaceOwner(closed.facts(), f.writer,
+			unavailable(fact(closed.facts(), f.writer)));
+		var result = session.close(withdrawn, Set.of(f.writer));
+		var delta = session.work().minus(before);
+		Assert.assertEquals("only the changed source and resulting boundary row are reprojected",
+			2, delta.optionFactSlotsVisited());
+		Assert.assertEquals("only the dependent reader row is rebound", 1, delta.boundaryFactSlotsVisited());
+		Assert.assertEquals(0, delta.topologyBuilds());
+		Assert.assertSame(unrelatedFact, result.facts().get(result.facts().size() - 1));
+	}
+
+	@Test
+	public void sessionUsesSynchronousRoundsForDependentBoundaryCarriers() {
+		ChainedFixture f = new ChainedFixture();
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, f.facts);
+		var result = session.close(f.facts, owners(f.facts));
+		List<CandidateRuleFact> cold = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
+		Assert.assertEquals(cold, result.facts());
+		Assert.assertEquals(Set.of(f.reader, f.downstreamReader), result.changedOwners());
+		Assert.assertEquals("downstream must see the preceding round's completed reader options", 2,
+			fact(result.facts(), f.downstreamReader).allowedEmissionFacts().get(0).realizations().size());
+	}
+
+	@Test
+	public void exactToDynamicSourceRevisionMatchesColdAllSourceOracle() {
+		Fixture f = new Fixture();
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, f.facts);
+		var closed = session.close(f.facts, owners(f.facts));
+		CandidateRuleFact writer = fact(closed.facts(), f.writer);
+		CandidateEmissionFact dynamicEmission = new CandidateEmissionFact(NATIVE, FType.ROW, null,
+			List.of(dynamic(f.writer, POOL_A), durable(f.writer, POOL_B)));
+		CandidateRuleFact dynamicWriter = new CandidateRuleFact(writer.key(), writer.status(), writer.capability(),
+			writer.shapeProof(), writer.profile(), List.of(dynamicEmission), writer.failureCode());
+		List<CandidateRuleFact> revision = replaceOwner(closed.facts(), f.writer, dynamicWriter);
+		var result = session.close(revision, Set.of(f.writer));
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, revision),
+			result.facts());
+		CandidateEmissionRealization poolA = fact(result.facts(), f.reader).allowedEmissionFacts().get(0)
+			.realizations().stream().filter(realization -> {
+				DurableAnchorKey pool = realization.nativeWorkerPoolResidencyWitness(
+					realization.requireSingletonSupportClause());
+				return pool != null && PlacementIdentity.samePhysicalWorkerEndpoints(pool, POOL_A);
+			})
+			.findFirst().orElseThrow();
+		Assert.assertFalse(poolA.nativeWorkerPoolLayoutExact(poolA.requireSingletonSupportClause()));
+	}
+
+	@Test
+	public void cyclicBoundaryTopologyRemainsIncompleteLikeColdOracle() {
+		Fixture f = new Fixture();
+		f.edges.add(new Constraint(ConstraintKind.CONJUNCTIVE, f.boundary, f.boundary, 1,
+			"function-argument:cycle"));
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, f.facts);
+		var result = session.close(f.facts, owners(f.facts));
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts),
+			result.facts());
+		Assert.assertFalse(new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, result.facts())
+			.hasCompleteBoundary(f.reader));
+		Assert.assertTrue(fact(result.facts(), f.reader).allowedEmissionFacts().get(0).realizations().stream()
+			.allMatch(realization -> realization.nativeWorkerPoolResidencyWitness(
+				realization.requireSingletonSupportClause()) == null));
+	}
+
+	private static Set<CompiledHopKey> owners(List<CandidateRuleFact> facts) {
+		Set<CompiledHopKey> result = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CandidateRuleFact fact : facts)
+			result.add(fact.key().parentOccurrence());
+		return result;
+	}
+
+	private static CandidateRuleFact fact(List<CandidateRuleFact> facts, CompiledHopKey owner) {
+		return facts.stream().filter(candidate -> candidate.key().parentOccurrence() == owner)
+			.findFirst().orElseThrow();
+	}
+
+	private static List<CandidateRuleFact> replaceOwner(List<CandidateRuleFact> facts,
+		CompiledHopKey owner, CandidateRuleFact replacement) {
+		List<CandidateRuleFact> result = new ArrayList<>(facts);
+		for(int slot = 0; slot < result.size(); slot++)
+			if(result.get(slot).key().parentOccurrence() == owner)
+				result.set(slot, replacement);
+		return List.copyOf(result);
+	}
+
+	private static CandidateRuleFact unavailable(CandidateRuleFact fact) {
+		return new CandidateRuleFact(fact.key(), CandidateEvaluationStatus.PRIVACY_EXCLUDED,
+			fact.capability(), fact.shapeProof(), fact.profile(), List.of(), "PRIVATE_AGGREGATE");
+	}
+
 	private static CandidateSelectionReceipt receipt(List<CandidateRuleFact> facts,
 		CompiledHopKey key, DurableAnchorKey pool) {
 		CandidateRuleFact fact = facts.stream().filter(candidate -> candidate.key().parentOccurrence() == key).findFirst().orElseThrow();
@@ -212,6 +358,33 @@ public class LogicalBoundaryRealizationsTest {
 		}
 	}
 
+	private static final class ChainedFixture extends Fixture {
+		final CompiledHopKey downstreamBoundary = key("downstream-boundary");
+		final CompiledHopKey downstreamReader = key("downstream-reader");
+		ChainedFixture() {
+			origins.put(downstreamBoundary, new DataOp(downstreamBoundary.emittedHopInstance(), DataType.MATRIX,
+				ValueType.FP64, OpOpData.PERSISTENTREAD, "X", 8, 2, 16, 1000));
+			origins.put(downstreamReader, new DataOp(downstreamReader.emittedHopInstance(), DataType.MATRIX,
+				ValueType.FP64, OpOpData.TRANSIENTREAD, "X", 8, 2, 16, 1000));
+			nodes.add(new Node(downstreamBoundary, NodeKind.FUNCTION_INPUT,
+				new ValueVersionKey("boundary-test", downstreamBoundary.emittedHopInstance(),
+					downstreamBoundary.controlRegion(), nodes.size(), VersionKind.ORDINARY, List.of()),
+				false, List.of(), List.of(), List.of()));
+			nodes.add(new Node(downstreamReader, NodeKind.TRANSIENT_READ,
+				new ValueVersionKey("boundary-test", downstreamReader.emittedHopInstance(),
+					downstreamReader.controlRegion(), nodes.size(), VersionKind.ORDINARY, List.of()),
+				true, List.of(ROW), List.of(), List.of()));
+			CandidateRuleFact source = facts.get(0);
+			facts.add(new CandidateRuleFact(new CandidateRuleKey(downstreamReader, List.of()),
+				CandidateEvaluationStatus.AVAILABLE, source.capability(), source.shapeProof(), source.profile(),
+				List.of(new CandidateEmissionFact(NATIVE, FType.ROW)), ""));
+			edges.add(new Constraint(ConstraintKind.CONJUNCTIVE, reader, downstreamBoundary, 0,
+				"function-argument:X"));
+			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, downstreamBoundary, downstreamReader, 0,
+				"function-formal-input"));
+		}
+	}
+
 	private static CompiledHopKey key(String name) {
 		ControlRegionKey region = new ControlRegionKey("boundary-test", "main", List.of("root"), "call", "compiled");
 		return new CompiledHopKey("boundary-test", "main", "call", "compiled", region, name, name);
@@ -224,5 +397,11 @@ public class LogicalBoundaryRealizationsTest {
 	private static CandidateEmissionRealization durable(CompiledHopKey key, DurableAnchorKey pool) {
 		return CandidateEmissionRealization.durable(NATIVE, pool,
 			List.of(new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR, key, pool.normalizedSignature())), List.of());
+	}
+	private static CandidateEmissionRealization dynamic(CompiledHopKey key, DurableAnchorKey pool) {
+		return CandidateEmissionRealization.nativeLineageDynamicLayout(NATIVE,
+			"dynamic:" + key.normalizedSignature(), pool,
+			List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY, key,
+				pool.normalizedSignature())), List.of());
 	}
 }

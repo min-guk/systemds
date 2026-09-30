@@ -9,6 +9,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -118,6 +119,87 @@ public class RelocationSelectionsPhysicalAnchorTest {
 
 		Assert.assertFalse(PlacementIdentity.samePhysicalWorkerPool(repeated, single));
 		Assert.assertTrue(PlacementIdentity.samePhysicalWorkerEndpoints(repeated, single));
+	}
+
+	@Test
+	public void physicalWorkerNormalizationReusesImmutableListsAndResetsWithSignatureCache() {
+		PlacementIdentity.resetNormalizedSignatureCache();
+		try {
+			DurableAnchorKey anchor = partitionedAnchor("cached-row", FType.ROW, 4);
+			List<String> firstLayout = PlacementIdentity.physicalWorkerPoolIdentity(anchor).members();
+			List<String> firstEndpoints = PlacementIdentity.physicalWorkerEndpointIdentity(anchor).members();
+			Assert.assertSame(firstLayout,
+				PlacementIdentity.physicalWorkerPoolIdentity(anchor).members());
+			Assert.assertSame(firstEndpoints,
+				PlacementIdentity.physicalWorkerEndpointIdentity(anchor).members());
+
+			PlacementIdentity.resetNormalizedSignatureCache();
+			List<String> resetLayout = PlacementIdentity.physicalWorkerPoolIdentity(anchor).members();
+			List<String> resetEndpoints = PlacementIdentity.physicalWorkerEndpointIdentity(anchor).members();
+			Assert.assertEquals(firstLayout, resetLayout);
+			Assert.assertEquals(firstEndpoints, resetEndpoints);
+			Assert.assertNotSame(firstLayout, resetLayout);
+			Assert.assertNotSame(firstEndpoints, resetEndpoints);
+		}
+		finally {
+			PlacementIdentity.resetNormalizedSignatureCache();
+		}
+	}
+
+	@Test
+	public void physicalWorkerNormalizationCacheIsCompilerThreadLocal() throws Exception {
+		PlacementIdentity.resetNormalizedSignatureCache();
+		try {
+			DurableAnchorKey anchor = partitionedAnchor("thread-row", FType.ROW, 4);
+			List<String> mainLayout = PlacementIdentity.physicalWorkerPoolIdentity(anchor).members();
+			AtomicReference<List<String>> otherFirst = new AtomicReference<>();
+			AtomicReference<List<String>> otherSecond = new AtomicReference<>();
+			Thread thread = new Thread(() -> {
+				PlacementIdentity.resetNormalizedSignatureCache();
+				otherFirst.set(PlacementIdentity.physicalWorkerPoolIdentity(anchor).members());
+				otherSecond.set(PlacementIdentity.physicalWorkerPoolIdentity(anchor).members());
+				PlacementIdentity.resetNormalizedSignatureCache();
+			});
+			thread.start();
+			thread.join();
+			Assert.assertSame(otherFirst.get(), otherSecond.get());
+			Assert.assertEquals(mainLayout, otherFirst.get());
+			Assert.assertNotSame(mainLayout, otherFirst.get());
+		}
+		finally {
+			PlacementIdentity.resetNormalizedSignatureCache();
+		}
+	}
+
+	@Test
+	public void physicalWorkerPredicateColdWarmParityCoversLayoutsAndInvalidGeometry() {
+		List<DurableAnchorKey[]> cases = List.of(
+			new DurableAnchorKey[]{
+				partitionedAnchor("row-a", FType.ROW, 4), partitionedAnchor("row-b", FType.ROW, 4)},
+			new DurableAnchorKey[]{
+				partitionedAnchor("row-shifted-a", FType.ROW, 4),
+				partitionedAnchor("row-shifted-b", FType.ROW, 3)},
+			new DurableAnchorKey[]{
+				partitionedAnchor("row", FType.ROW, 4), partitionedAnchor("col", FType.COL, 4)},
+			new DurableAnchorKey[]{
+				new DurableAnchorKey("missing-axis-a", FType.COL, List.of(
+					new AnchorPartition("localhost:1234/path", List.of(0L), List.of(4L)))),
+				new DurableAnchorKey("missing-axis-b", FType.COL, List.of(
+					new AnchorPartition("localhost:1234/other", List.of(0L), List.of(4L))))},
+			new DurableAnchorKey[]{
+				new DurableAnchorKey("part-a", FType.PART, List.of(
+					new AnchorPartition("localhost:1234/path", List.of(0L), List.of(4L)))),
+				new DurableAnchorKey("part-b", FType.PART, List.of(
+					new AnchorPartition("localhost:1234/other", List.of(0L), List.of(4L))))});
+		for(DurableAnchorKey[] pair : cases) {
+			PlacementIdentity.resetNormalizedSignatureCache();
+			boolean coldPool = PlacementIdentity.samePhysicalWorkerPool(pair[0], pair[1]);
+			boolean coldEndpoints = PlacementIdentity.samePhysicalWorkerEndpoints(pair[0], pair[1]);
+			boolean warmPool = PlacementIdentity.samePhysicalWorkerPool(pair[0], pair[1]);
+			boolean warmEndpoints = PlacementIdentity.samePhysicalWorkerEndpoints(pair[0], pair[1]);
+			Assert.assertEquals(coldPool, warmPool);
+			Assert.assertEquals(coldEndpoints, warmEndpoints);
+		}
 	}
 
 	private static void assertShiftedPartitionsRejected(FType axis) {

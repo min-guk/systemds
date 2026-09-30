@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 
@@ -357,7 +358,7 @@ public final class ExactCategoricalSolver {
 	}
 
 	public static Result solve(List<Variable> variables, List<Factor> factors, Limits limits) {
-		return solve(variables, factors, limits, (variable, value) -> 0L);
+		return solve(prepare(variables, factors, limits), factors, null);
 	}
 
 	/**
@@ -448,7 +449,18 @@ public final class ExactCategoricalSolver {
 
 	static Result solve(CompiledProblem compiled) {
 		Objects.requireNonNull(compiled, "compiled");
-		return solve(compiled.prepared, compiled.factors, (variable, value) -> 0L);
+		return solve(compiled.prepared, compiled.factors, null);
+	}
+
+	/** Isolated opt-in integer arithmetic; legacy/local callers never enter this path. */
+	static Result solveDyadic(CompiledProblem compiled, ExactDyadicCosts.Certificate certificate) {
+		Objects.requireNonNull(compiled, "compiled");
+		Objects.requireNonNull(certificate, "certificate");
+		if(!certificate.supported())
+			throw new IllegalArgumentException("EXACT_VE_DYADIC_CERTIFICATE_REJECTED|"
+				+ certificate.reason());
+		certificate.validateCompiledProblem(compiled);
+		return solve(compiled.prepared, compiled.factors, null, null, certificate);
 	}
 
 	static Statistics statistics(CompiledProblem compiled) {
@@ -475,14 +487,16 @@ public final class ExactCategoricalSolver {
 			cells = Math.multiplyExact(cells, variable.domainSize());
 		double[] values = new double[cells];
 		int[] local = new int[factor.scope.size()];
+		int[] domains = factor.scope.stream().mapToInt(Variable::domainSize).toArray();
 		for(int cell = 0; cell < cells; cell++) {
-			int remainder = cell;
-			for(int position = local.length - 1; position >= 0; position--) {
-				local[position] = remainder % factor.scope.get(position).domainSize();
-				remainder /= factor.scope.get(position).domainSize();
-			}
 			values[cell] = factor.evaluator.cost(local);
 			validateCost(values[cell]);
+			// Same last-axis-fastest callback order without divisions at every cell.
+			for(int position = local.length - 1; position >= 0; position--) {
+				if(++local[position] < domains[position])
+					break;
+				local[position] = 0;
+			}
 		}
 		return Factor.denseOwned(factor.scope, values);
 	}
@@ -676,7 +690,34 @@ public final class ExactCategoricalSolver {
 
 	private static Result solve(Prepared prepared, List<Factor> factors,
 		TieCostFunction tieCostFunction) {
+		return solve(prepared, factors, tieCostFunction, null);
+	}
+
+	/** Test-only observation expands small tables without changing production storage. */
+	static Result solveWithStepsForTest(CompiledProblem compiled, TieCostFunction tieCostFunction,
+		Consumer<EliminationSnapshot> observer) {
+		return solve(compiled.prepared, compiled.factors, tieCostFunction,
+			Objects.requireNonNull(observer, "observer"));
+	}
+
+	static record EliminationSnapshot(int variable, int[] scope, double[] high, double[] low,
+		int[] choices, boolean sparse, int storedCells) { }
+
+	private static Result solve(Prepared prepared, List<Factor> factors,
+		TieCostFunction tieCostFunction, Consumer<EliminationSnapshot> observer) {
+		return solve(prepared, factors, tieCostFunction, observer, null);
+	}
+
+	private static Result solve(Prepared prepared, List<Factor> factors,
+		TieCostFunction tieCostFunction, Consumer<EliminationSnapshot> observer,
+		ExactDyadicCosts.Certificate dyadic) {
+		// Only the two no-callback entry points pass null. Caller callbacks remain
+		// observable even for infeasible candidates and therefore retain dense visits.
 		List<DenseFactor> active = materializeInputs(prepared, factors);
+		if(dyadic != null)
+			active = dyadicInputs(prepared.domains, active, dyadic);
+		boolean sparseEligible = tieCostFunction == null
+			&& (dyadic != null || sparseRangeSafe(prepared, active));
 		List<Backpointer> backpointers = new ArrayList<>(prepared.variables.size());
 		int[] global = new int[prepared.variables.size()];
 
@@ -686,12 +727,40 @@ public final class ExactCategoricalSolver {
 				if(factor.contains(step.variable))
 					bucket.add(factor);
 			active.removeAll(bucket);
+			int outputCells = checkedCells(step.separator, prepared.domains,
+				"EXACT_VE_FACTOR_CELL_OVERFLOW");
+			if(sparseEligible) {
+				BucketProjection projection = new BucketProjection(step, prepared.domains, bucket);
+				List<ExactFiniteSupportJoin.Relation> supports = new ArrayList<>();
+				for(DenseFactor factor : bucket) {
+					int[] finite = factor.projectedFiniteCells(projection);
+					if(finite != null)
+						supports.add(new ExactFiniteSupportJoin.Relation(factor.scope, finite));
+				}
+				if(!projection.identity || !supports.isEmpty()
+					|| bucket.stream().anyMatch(factor -> factor.valueMaps != null)) {
+					SparseStep sparse = eliminateSparse(step, bucket, supports, projection, outputCells,
+						dyadic != null);
+					active.add(sparse.factor);
+					backpointers.add(sparse.backpointer);
+					observeStep(observer, sparse.factor, sparse.backpointer, outputCells, prepared.domains);
+					continue;
+				}
+			}
 			int[] baseCells = new int[bucket.size()];
 			int[] valueStrides = new int[bucket.size()];
 			for(int index = 0; index < bucket.size(); index++)
 				valueStrides[index] = bucket.get(index).stride(step.variable);
-			int outputCells = checkedCells(step.separator, prepared.domains,
-				"EXACT_VE_FACTOR_CELL_OVERFLOW");
+			int domain = prepared.domains[step.variable];
+			FiniteRowIndex finiteRows = tieCostFunction == null && !bucket.isEmpty()
+				? FiniteRowIndex.create(bucket.get(0), step.variable, domain) : null;
+			if(finiteRows != null && FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.logGlobal("Exact-FiniteRows", "variableIndex=" + step.variable
+					+ " domain=" + domain + " outputCells=" + outputCells
+					+ " logicalAssignments=" + (long)outputCells * domain
+					+ " indexedCandidates=" + ((long)outputCells * domain
+						- finiteRows.forbiddenCells * (outputCells / finiteRows.rowCount))
+					+ " bitmapWords=" + finiteRows.forbidden.length);
 			double[] output = new double[outputCells];
 			double[] outputLow = null;
 			long[] outputTie = null;
@@ -707,18 +776,23 @@ public final class ExactCategoricalSolver {
 				PreciseCost best = PreciseCost.POSITIVE_INFINITY;
 				double bestRounded = Double.POSITIVE_INFINITY;
 				int bestValue = 0;
-				for(int value = 0; value < prepared.domains[step.variable]; value++) {
+				int finiteRow = finiteRows == null ? 0 : finiteRows.rowOffset(baseCells[0]);
+				for(int value = finiteRows == null ? 0 : finiteRows.next(finiteRow, 0);
+					value < domain;
+					value = finiteRows == null ? value + 1 : finiteRows.next(finiteRow, value + 1)) {
 					global[step.variable] = value;
-					long tieCost = tieCostFunction.cost(
+					long tieCost = tieCostFunction == null ? 0L : tieCostFunction.cost(
 						prepared.variables.get(step.variable), value);
 					if(tieCost < 0)
 						throw new IllegalArgumentException("EXACT_VE_TIE_COST_INVALID");
-					PreciseCost candidate = preciseSum(bucket, global,
-						baseCells, valueStrides, value).plusTie(tieCost);
+					PreciseCost candidate = (dyadic == null
+						? preciseSum(bucket, global, baseCells, valueStrides, value)
+						: dyadicSum(bucket, global, baseCells, valueStrides, value)).plusTie(tieCost);
 					// A previous best already rounded successfully. Preserve candidate-first
 					// validation and the same rounded-primary/secondary/first-value ordering.
-					double candidateRounded = candidate.rounded();
-					int byPrimary = Double.compare(candidateRounded, bestRounded);
+					double candidateRounded = dyadic == null ? candidate.rounded() : 0d;
+					int byPrimary = dyadic == null ? Double.compare(candidateRounded, bestRounded)
+						: compareWords(candidate.high, candidate.low, best.high, best.low);
 					if(byPrimary < 0 || byPrimary == 0 && candidate.tieCost < best.tieCost) {
 						best = candidate;
 						bestRounded = candidateRounded;
@@ -741,19 +815,360 @@ public final class ExactCategoricalSolver {
 			DenseFactor reduced = new DenseFactor(
 				step.separator, prepared.domains, output, outputLow, outputTie);
 			active.add(reduced);
-			backpointers.add(new Backpointer(step.variable, step.separator, choices));
+			Backpointer backpointer = new Backpointer(step.variable, step.separator, choices, null);
+			backpointers.add(backpointer);
+			observeStep(observer, reduced, backpointer, outputCells, prepared.domains);
 		}
 
-		double objective = preciseSum(active, global).rounded();
+		PreciseCost total = dyadic == null ? preciseSum(active, global)
+			: dyadicSum(active, global, null, null, 0);
+		double objective = dyadic == null || total.high == Double.POSITIVE_INFINITY
+			? total.rounded() : Double.longBitsToDouble(ExactDyadicCosts.ofWords(
+				(long)total.high, (long)total.low).toDoubleBits(dyadic.q()));
 		if(objective == Double.POSITIVE_INFINITY)
 			throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
 		for(int index = backpointers.size() - 1; index >= 0; index--) {
 			Backpointer backpointer = backpointers.get(index);
-			int cell = encode(backpointer.separator, prepared.domains, global);
-			global[backpointer.variable] = backpointer.choices[cell];
+			int cell = backpointer.cell(global, prepared.domains);
+			global[backpointer.variable] = backpointer.choice(cell);
 		}
 		List<Integer> assignment = Arrays.stream(global).boxed().toList();
 		return new Result(objective, assignment, prepared.statistics);
+	}
+
+	/**
+	 * A sufficient, deliberately loose range certificate, not a resource limit.
+	 * With F+V <= 2^20 and |input| <= 2^400, total input L1 <= 2^420.
+	 * Each normalized DD addition increases retained L1 by at most (1+2^-53)^5.
+	 * Active messages consume disjoint original factor occurrences, so a selected
+	 * expression contains at most F+V additions: retained L1 < 2^421 and even a
+	 * 16x bound on internal operations is < 2^425. Finite arithmetic cannot overflow.
+	 * Thus later infinities may reject a tuple without hiding an earlier overflow.
+	 * Outside this certificate the original ordered dense arithmetic is retained.
+	 */
+	private static boolean sparseRangeSafe(Prepared prepared, List<DenseFactor> factors) {
+		if((long)prepared.variables.size() + factors.size() > (1L << 20))
+			return false;
+		for(DenseFactor factor : factors) {
+			int finiteCount = 0;
+			for(double value : factor.values) {
+				if(value != Double.POSITIVE_INFINITY && Math.abs(value) > 0x1.0p400)
+					return false;
+				if(value != Double.POSITIVE_INFINITY)
+					finiteCount++;
+			}
+			factor.finiteCount = finiteCount;
+		}
+		return true;
+	}
+
+	private record SparseMinimum(PreciseCost cost, double rounded, int choice) { }
+	private record SparseStep(DenseFactor factor, Backpointer backpointer) { }
+
+	/** Exact value-profile classes, never a change to logical scopes or bucket order. */
+	private static final class BucketProjection {
+		private final int[] originalDomains;
+		private final int[] domains;
+		private final int[] union;
+		private final int[][] classes;
+		private final int[][] representatives;
+		private final int[][] weights;
+		private final long preparationNanos;
+		private final boolean identity;
+
+		private BucketProjection(Step step, int[] originalDomains, List<DenseFactor> bucket) {
+			long started = FederatedPlannerTrace.isEnabled() ? System.nanoTime() : 0L;
+			this.originalDomains = originalDomains;
+			domains = originalDomains.clone();
+			classes = new int[domains.length][];
+			representatives = new int[domains.length][];
+			weights = new int[domains.length][];
+			union = new int[step.separator.length + 1];
+			union[0] = step.variable;
+			System.arraycopy(step.separator, 0, union, 1, step.separator.length);
+			boolean allIdentity = true;
+			for(int variable : union) {
+				int[] common = null;
+				for(DenseFactor factor : bucket) {
+					int axis = factor.axis(variable);
+					if(axis < 0)
+						continue;
+					int[] next = factor.originalValueClasses(axis, originalDomains[variable]);
+					// Each map is first-original-value ordered; borrowing the first
+					// immutable partition avoids two domain-sized temporary arrays.
+					common = common == null ? next : ExactFactorValueClasses.refine(common, next);
+					// Once all original values differ, no later refinement can merge them.
+					if(common[common.length - 1] == common.length - 1)
+						break;
+				}
+				if(common == null)
+					common = new int[originalDomains[variable]];
+				classes[variable] = common;
+				representatives[variable] = ExactFactorValueClasses.representatives(common);
+				domains[variable] = representatives[variable].length;
+				allIdentity &= domains[variable] == originalDomains[variable];
+				weights[variable] = new int[domains[variable]];
+				for(int valueClass : common)
+					weights[variable][valueClass]++;
+			}
+			identity = allIdentity;
+			preparationNanos = started == 0L ? 0L : System.nanoTime() - started;
+		}
+
+		private void lift(int[] quotient, int[] original) {
+			for(int variable : union)
+				original[variable] = representatives[variable][quotient[variable]];
+		}
+
+		private int[][] maps(int[] scope) {
+			boolean identity = true;
+			for(int variable : scope)
+				identity &= domains[variable] == originalDomains[variable];
+			if(identity)
+				return null;
+			int[][] maps = new int[scope.length][];
+			for(int axis = 0; axis < scope.length; axis++)
+				maps[axis] = classes[scope[axis]];
+			return maps;
+		}
+
+		private long logicalFiniteCells(DenseFactor factor) {
+			long count = 0L;
+			for(int stored = 0; stored < factor.values.length; stored++) {
+				if(factor.values[stored] == Double.POSITIVE_INFINITY)
+					continue;
+				int cell = factor.sparseCells == null ? stored : factor.sparseCells[stored];
+				long multiplicity = 1L;
+				for(int axis = 0; axis < factor.scope.length; axis++)
+					multiplicity *= weights[factor.scope[axis]][
+						cell / factor.strides[axis] % factor.dimensions[axis]];
+				count += multiplicity;
+			}
+			return count;
+		}
+	}
+
+	/** Retains all minima, switching only their storage when a message is not sparse. */
+	private static final class SparseAccumulator {
+		private final int outputCells;
+		private final boolean dyadic;
+		private Map<Integer,SparseMinimum> minima = new HashMap<>();
+		private double[] high;
+		private double[] low;
+		private int[] choices;
+		private int finiteOutputs;
+
+		private SparseAccumulator(int outputCells, boolean dyadic) {
+			this.outputCells = outputCells;
+			this.dyadic = dyadic;
+		}
+
+		private void offer(int cell, int value, PreciseCost candidate) {
+			double rounded = dyadic ? candidate.high : candidate.rounded();
+			if(rounded == Double.POSITIVE_INFINITY)
+				return;
+			if(high != null) {
+				double prior = dyadic ? 0d : high[cell] + (low == null ? 0d : low[cell]);
+				int comparison = dyadic ? compareWords(candidate.high, candidate.low,
+					high[cell], low == null ? 0d : low[cell]) : Double.compare(rounded, prior);
+				if(comparison < 0 || comparison == 0 && value < choices[cell]) {
+					if(high[cell] == Double.POSITIVE_INFINITY)
+						finiteOutputs++;
+					store(cell, candidate, value);
+				}
+				return;
+			}
+			SparseMinimum prior = minima.get(cell);
+			int comparison = prior == null ? -1 : dyadic
+				? compareWords(candidate.high, candidate.low, prior.cost.high, prior.cost.low)
+				: Double.compare(rounded, prior.rounded);
+			if(comparison < 0 || comparison == 0 && value < prior.choice)
+				minima.put(cell, new SparseMinimum(candidate, rounded, value));
+			// This is a representation crossover, never a search/candidate limit.
+			// Boxed hash entries cost much more than a dense high/low/choice slot.
+			if(minima.size() >= Math.max(64, outputCells / 16)) {
+				high = new double[outputCells];
+				Arrays.fill(high, Double.POSITIVE_INFINITY);
+				choices = new int[outputCells];
+				for(Map.Entry<Integer,SparseMinimum> entry : minima.entrySet())
+					store(entry.getKey(), entry.getValue().cost, entry.getValue().choice);
+				finiteOutputs = minima.size();
+				minima = null;
+			}
+		}
+
+		private void store(int cell, PreciseCost cost, int value) {
+			high[cell] = cost.high;
+			if(low == null && cost.low != 0d)
+				low = new double[high.length];
+			if(low != null)
+				low[cell] = cost.low != 0d ? cost.low : 0d;
+			choices[cell] = value;
+		}
+
+		private SparseStep finish(Step step, int[] domains) {
+			int[] sparseCells = null;
+			if(high == null) {
+				int[] cells = minima.keySet().stream().mapToInt(Integer::intValue).sorted().toArray();
+				high = new double[cells.length];
+				choices = new int[cells.length];
+				for(int index = 0; index < cells.length; index++) {
+					SparseMinimum minimum = minima.get(cells[index]);
+					store(index, minimum.cost, minimum.choice);
+				}
+				finiteOutputs = cells.length;
+				// Full finite keys are exactly 0..outputCells-1; direct indexing suffices.
+				sparseCells = cells.length == outputCells ? null : cells;
+			}
+			DenseFactor factor = new DenseFactor(step.separator, domains, high, low, null, sparseCells);
+			factor.finiteCount = finiteOutputs;
+			return new SparseStep(factor, new Backpointer(step.variable, step.separator, choices, sparseCells));
+		}
+	}
+
+	private static SparseStep eliminateSparse(Step step, List<DenseFactor> bucket,
+		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection, int logicalOutputCells,
+		boolean dyadic) {
+		int[] domains = projection.domains;
+		int outputCells = checkedCells(step.separator, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
+		long supportRows = 0L;
+		for(ExactFiniteSupportJoin.Relation relation : supports)
+			supportRows += relation.size();
+		long started = FederatedPlannerTrace.isEnabled() ? System.nanoTime() : 0L;
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Exact-SparseJoinBegin", "variableIndex=" + step.variable
+				+ " logicalAssignments=" + (long)logicalOutputCells * projection.originalDomains[step.variable]
+				+ " outputCells=" + logicalOutputCells + " supportRows=" + supportRows
+				+ " quotientAssignments=" + (long)outputCells * domains[step.variable]
+				+ " quotientOutputCells=" + outputCells
+				+ " partitionNanos=" + projection.preparationNanos);
+		SparseAccumulator accumulator = new SparseAccumulator(outputCells, dyadic);
+		ExactFiniteSupportJoin.Work work;
+		if(dyadic && supports.isEmpty())
+			work = eliminateDyadicSeparatorMajor(step, bucket, projection, outputCells, accumulator);
+		else {
+			int[] original = new int[domains.length];
+			work = ExactFiniteSupportJoin.forEach(
+				projection.union, domains, supports, assignment -> {
+				// Support traversal is independent of arithmetic order. Preserve every
+				// original factor, including all-finite costs omitted from the join.
+				int[] selected = assignment;
+				if(!projection.identity) {
+					projection.lift(assignment, original);
+					selected = original;
+				}
+				PreciseCost candidate = dyadic ? dyadicSum(bucket, selected, null, null, 0)
+					: preciseSum(bucket, selected);
+				int cell = encode(step.separator, domains, assignment);
+				accumulator.offer(cell, selected[step.variable], candidate);
+				});
+		}
+		SparseStep stored = accumulator.finish(step, domains);
+		stored.factor.valueMaps = projection.maps(step.separator);
+		Backpointer backpointer = new Backpointer(step.variable, step.separator,
+			stored.backpointer.choices, stored.backpointer.sparseCells,
+			stored.factor.valueMaps, stored.factor.strides);
+		SparseStep result = new SparseStep(stored.factor, backpointer);
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Exact-SparseJoinEnd", "variableIndex=" + step.variable
+				+ " visitedRelationRows=" + work.visitedRelationRows()
+				+ " evaluatedAssignments=" + work.emittedAssignments()
+				+ " finiteOutputCells=" + projection.logicalFiniteCells(result.factor)
+				+ " outputCells=" + logicalOutputCells + " storedFiniteOutputCells=" + accumulator.finiteOutputs
+				+ " quotientOutputCells=" + outputCells
+				+ " elapsedNanos=" + (System.nanoTime() - started));
+		return result;
+	}
+
+	/**
+	 * The empty-support dyadic join is a complete Cartesian product. Traverse it
+	 * separator-major and retain only O(bucket) eliminated-axis metadata; this
+	 * changes neither candidates nor original factor arithmetic order.
+	 */
+	private static ExactFiniteSupportJoin.Work eliminateDyadicSeparatorMajor(Step step,
+		List<DenseFactor> bucket, BucketProjection projection, int outputCells,
+		SparseAccumulator accumulator) {
+		int[] domains = projection.domains;
+		int[] representatives = projection.representatives[step.variable];
+		int[] axes = new int[bucket.size()];
+		int[] strides = new int[bucket.size()];
+		int[] zeroCoordinates = new int[bucket.size()];
+		int firstRepresentative = representatives[0];
+		for(int index = 0; index < bucket.size(); index++) {
+			DenseFactor factor = bucket.get(index);
+			int axis = factor.axis(step.variable);
+			axes[index] = axis;
+			strides[index] = factor.strides[axis];
+			zeroCoordinates[index] = factor.coordinate(axis, firstRepresentative);
+		}
+
+		int[] quotient = new int[domains.length];
+		int[] original = new int[domains.length];
+		int[] separatorValues = new int[step.separator.length];
+		int[] baseCells = new int[bucket.size()];
+		for(int outputCell = 0; outputCell < outputCells; outputCell++) {
+			decode(outputCell, step.separator, domains, separatorValues, quotient);
+			quotient[step.variable] = 0;
+			projection.lift(quotient, original);
+			for(int index = 0; index < bucket.size(); index++)
+				baseCells[index] = bucket.get(index).cell(original);
+			PreciseCost best = PreciseCost.POSITIVE_INFINITY;
+			int bestRepresentative = firstRepresentative;
+			for(int representative : representatives) {
+				PreciseCost candidate = dyadicSeparatorSum(bucket, axes, strides,
+					zeroCoordinates, baseCells, representative);
+				int comparison = compareWords(candidate.high, candidate.low, best.high, best.low);
+				if(comparison < 0 || comparison == 0 && representative < bestRepresentative) {
+					best = candidate;
+					bestRepresentative = representative;
+				}
+			}
+			accumulator.offer(outputCell, bestRepresentative, best);
+		}
+		return new ExactFiniteSupportJoin.Work(0L, (long)outputCells * representatives.length);
+	}
+
+	/** Base-2^53 sum over affine eliminated-axis cells, preserving factor order. */
+	private static PreciseCost dyadicSeparatorSum(List<DenseFactor> bucket, int[] axes,
+		int[] strides, int[] zeroCoordinates, int[] baseCells, int representative) {
+		final long mask = (1L << 53) - 1;
+		long high = 0L;
+		long low = 0L;
+		for(int index = 0; index < bucket.size(); index++) {
+			DenseFactor factor = bucket.get(index);
+			int coordinate = factor.coordinate(axes[index], representative);
+			int logicalCell = baseCells[index]
+				+ (coordinate - zeroCoordinates[index]) * strides[index];
+			int cell = factor.storageCell(logicalCell);
+			if(cell < 0 || factor.values[cell] == Double.POSITIVE_INFINITY)
+				return PreciseCost.POSITIVE_INFINITY;
+			long lowSum = low + (factor.lowValues == null ? 0L : (long)factor.lowValues[cell]);
+			high += (long)factor.values[cell] + (lowSum >>> 53);
+			if(high > mask)
+				throw new IllegalArgumentException("EXACT_VE_DYADIC_WORD_OVERFLOW");
+			low = lowSum & mask;
+		}
+		return new PreciseCost(high, low, 0L);
+	}
+
+	private static void observeStep(Consumer<EliminationSnapshot> observer, DenseFactor factor,
+		Backpointer backpointer, int outputCells, int[] domains) {
+		if(observer == null)
+			return;
+		double[] high = new double[outputCells];
+		double[] low = new double[outputCells];
+		int[] choices = new int[outputCells];
+		int[] global = new int[domains.length];
+		int[] local = new int[factor.scope.length];
+		for(int cell = 0; cell < outputCells; cell++) {
+			decode(cell, factor.scope, domains, local, global);
+			int stored = factor.storageCell(factor.cell(global));
+			high[cell] = stored < 0 ? Double.POSITIVE_INFINITY : factor.values[stored];
+			low[cell] = stored < 0 || factor.lowValues == null ? 0d : factor.lowValues[stored];
+			choices[cell] = backpointer.choice(backpointer.cell(global, domains));
+		}
+		observer.accept(new EliminationSnapshot(backpointer.variable, factor.scope.clone(),
+			high, low, choices, factor.sparseCells != null, factor.values.length));
 	}
 
 	/** Evaluates one complete assignment using the same validation and arithmetic as solve. */
@@ -1138,26 +1553,13 @@ public final class ExactCategoricalSolver {
 	private static List<DenseFactor> materializeInputs(InputDefinition prepared,
 		List<Factor> factors) {
 		List<DenseFactor> result = new ArrayList<>(factors.size());
-		int[] global = new int[prepared.variables.size()];
 		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
 			Factor factor = factors.get(factorIndex);
 			int[] scope = prepared.scopes.get(factorIndex);
-			int cells = checkedCells(scope, prepared.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
-			double[] values;
-			if(factor.evaluator != null) {
-				values = new double[cells];
-				int[] local = new int[scope.length];
-				for(int cell = 0; cell < cells; cell++) {
-					decode(cell, scope, prepared.domains, local, global);
-					values[cell] = factor.evaluator.cost(local);
-					validateCost(values[cell]);
-				}
-			}
-			else {
-				// validateInputs already checked this immutable, defensively-owned table.
-				// DenseFactor only reads it, so solve/freeze need neither copy nor rescan it.
-				values = factor.denseValues;
-			}
+			checkedCells(scope, prepared.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
+			// All input caps and scopes were validated before any callback. Reuse the
+			// same last-axis-fastest freezer; dense owned tables remain shared as before.
+			double[] values = freezeValidatedFactor(factor).denseValues;
 			result.add(new DenseFactor(scope, prepared.domains, values, null, null));
 		}
 		return result;
@@ -1165,6 +1567,67 @@ public final class ExactCategoricalSolver {
 
 	private static PreciseCost preciseSum(List<DenseFactor> factors, int[] global) {
 		return preciseSum(factors, global, null, null, 0);
+	}
+
+	/** Validate the certificate against these exact tables, not just caller-supplied scalars. */
+	private static List<DenseFactor> dyadicInputs(int[] domains, List<DenseFactor> factors,
+		ExactDyadicCosts.Certificate certificate) {
+		List<DenseFactor> converted = new ArrayList<>(factors.size());
+		ExactDyadicCosts maximum = ExactDyadicCosts.ofWords(0, 0);
+		for(DenseFactor factor : factors) {
+			double[] high = new double[factor.values.length];
+			double[] low = null;
+			ExactDyadicCosts factorMaximum = ExactDyadicCosts.ofWords(0, 0);
+			for(int cell = 0; cell < high.length; cell++) {
+				double value = factor.values[cell];
+				if(value == Double.POSITIVE_INFINITY) {
+					high[cell] = value;
+					continue;
+				}
+				ExactDyadicCosts exact = ExactDyadicCosts.fromRawBits(
+					Double.doubleToRawLongBits(value), certificate.q());
+				high[cell] = exact.highWord();
+				if(exact.lowWord() != 0L) {
+					if(low == null)
+						low = new double[high.length];
+					low[cell] = exact.lowWord();
+				}
+				if(exact.compareTo(factorMaximum) > 0)
+					factorMaximum = exact;
+			}
+			maximum = maximum.add(factorMaximum);
+			converted.add(new DenseFactor(factor.scope, domains, high, low, null));
+		}
+		if(maximum.bitLength() > certificate.maximumSumBits())
+			throw new IllegalArgumentException("EXACT_VE_DYADIC_MAXIMUM_BOUND_MISMATCH");
+		return converted;
+	}
+
+	/** Base-2^53 integer words, never double-double residues or individually rounded costs. */
+	private static PreciseCost dyadicSum(List<DenseFactor> factors, int[] global,
+		int[] baseCells, int[] valueStrides, int value) {
+		final long mask = (1L << 53) - 1;
+		long high = 0;
+		long low = 0;
+		for(int index = 0; index < factors.size(); index++) {
+			DenseFactor factor = factors.get(index);
+			int cell = factor.summedCell(global, baseCells, valueStrides, index, value);
+			if(cell < 0 || factor.values[cell] == Double.POSITIVE_INFINITY)
+				return PreciseCost.POSITIVE_INFINITY;
+			// Each word is at most 53 bits, so both long additions below fit exactly.
+			long lowSum = low + (factor.lowValues == null ? 0L : (long)factor.lowValues[cell]);
+			high += (long)factor.values[cell] + (lowSum >>> 53);
+			if(high > mask)
+				throw new IllegalArgumentException("EXACT_VE_DYADIC_WORD_OVERFLOW");
+			low = lowSum & mask;
+		}
+		return new PreciseCost(high, low, 0L);
+	}
+
+	private static int compareWords(double leftHigh, double leftLow,
+		double rightHigh, double rightLow) {
+		int high = Double.compare(leftHigh, rightHigh);
+		return high != 0 ? high : Double.compare(leftLow, rightLow);
 	}
 
 	/** The optional indexes are solve-local and follow exactly the factor list's order. */
@@ -1175,37 +1638,50 @@ public final class ExactCategoricalSolver {
 		long tie = 0L;
 		for(int index = 0; index < factors.size(); index++) {
 			DenseFactor factor = factors.get(index);
-			int cell = baseCells == null ? factor.cell(global)
-				: baseCells[index] + value * valueStrides[index];
+			int cell = factor.summedCell(global, baseCells, valueStrides, index, value);
+			if(cell < 0)
+				return PreciseCost.POSITIVE_INFINITY;
 			double valueHigh = factor.values[cell];
 			double valueLow = factor.lowValues == null ? 0d : factor.lowValues[cell];
 			long valueTie = factor.tieCosts == null ? 0L : factor.tieCosts[cell];
 			if(valueHigh == Double.POSITIVE_INFINITY)
 				return new PreciseCost(valueHigh, valueLow, valueTie);
-			// Keep PreciseCost.plus's expression/check order, without two temporary
-			// records per factor. The raw high/low/tie parity is regression-locked.
-			double sum = high + valueHigh;
-			if(!Double.isFinite(sum))
-				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
-			double virtual = sum - high;
-			double error = (high - (sum - virtual)) + (valueHigh - virtual);
-			error += low + valueLow;
-			if(!Double.isFinite(error))
-				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
-			double normalizedHigh = sum + error;
-			if(!Double.isFinite(normalizedHigh))
-				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
-			double normalizedLow = error - (normalizedHigh - sum);
-			try {
-				tie = Math.addExact(tie, valueTie);
+			if(valueHigh == 0d && valueLow == 0d && low == 0d) {
+				// Hard constraints commonly contribute zero. With no retained residue,
+				// the full normalization below only canonicalizes signed zero; no
+				// objective overflow is possible. Keep secondary overflow in order.
+				high += 0d;
+				low = 0d;
 			}
-			catch(ArithmeticException ex) {
-				throw new IllegalArgumentException("EXACT_VE_TIE_COST_OVERFLOW", ex);
+			else {
+				// Keep PreciseCost.plus's expression/check order, without two temporary
+				// records per factor. The raw high/low/tie parity is regression-locked.
+				double sum = high + valueHigh;
+				if(!Double.isFinite(sum))
+					throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+				double virtual = sum - high;
+				double error = (high - (sum - virtual)) + (valueHigh - virtual);
+				error += low + valueLow;
+				if(!Double.isFinite(error))
+					throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+				double normalizedHigh = sum + error;
+				if(!Double.isFinite(normalizedHigh))
+					throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+				low = error - (normalizedHigh - sum);
+				high = normalizedHigh;
 			}
-			high = normalizedHigh;
-			low = normalizedLow;
+			tie = addTieCost(tie, valueTie);
 		}
 		return new PreciseCost(high, low, tie);
+	}
+
+	private static long addTieCost(long left, long right) {
+		try {
+			return Math.addExact(left, right);
+		}
+		catch(ArithmeticException ex) {
+			throw new IllegalArgumentException("EXACT_VE_TIE_COST_OVERFLOW", ex);
+		}
 	}
 
 	private static boolean isExactResourceError(String message) {
@@ -1309,13 +1785,32 @@ public final class ExactCategoricalSolver {
 		List<Step> steps, Statistics statistics) { }
 	private record InputDefinition(List<Variable> variables, int[] domains, List<int[]> scopes,
 		long inputCells, long maximumInputCells) { }
-	private record Backpointer(int variable, int[] separator, int[] choices) { }
+	private record Backpointer(int variable, int[] separator, int[] choices, int[] sparseCells,
+		int[][] valueMaps, int[] strides) {
+		private Backpointer(int variable, int[] separator, int[] choices, int[] sparseCells) {
+			this(variable, separator, choices, sparseCells, null, null);
+		}
+
+		private int cell(int[] global, int[] domains) {
+			if(valueMaps == null)
+				return encode(separator, domains, global);
+			int cell = 0;
+			for(int axis = 0; axis < separator.length; axis++)
+				cell += valueMaps[axis][global[separator[axis]]] * strides[axis];
+			return cell;
+		}
+
+		private int choice(int cell) {
+			int stored = sparseCells == null ? cell : Arrays.binarySearch(sparseCells, cell);
+			return stored < 0 ? 0 : choices[stored];
+		}
+	}
 
 	/**
-	 * Normalized double-double accumulator.  Reduced factors retain the rounding
-	 * residue instead of collapsing it after every elimination step.  This makes
-	 * the exact min-sum decision independent of where an algebraically identical
-	 * elementary cost is attached in the factor graph.
+	 * Legacy normalized double-double accumulator. Reduced factors retain residues,
+	 * but legacy rounded-primary ties are not a universal exact-sum guarantee.
+	 * The separately certified dyadic kernel reuses this pair only as integer-word
+	 * storage and never invokes its floating-point addition or comparison methods.
 	 */
 	private record PreciseCost(double high, double low, long tieCost)
 		implements Comparable<PreciseCost> {
@@ -1337,25 +1832,14 @@ public final class ExactCategoricalSolver {
 			if(!Double.isFinite(normalizedHigh))
 				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
 			double normalizedLow = error - (normalizedHigh - sum);
-			long combinedTie;
-			try {
-				combinedTie = Math.addExact(tieCost, that.tieCost);
-			}
-			catch(ArithmeticException ex) {
-				throw new IllegalArgumentException("EXACT_VE_TIE_COST_OVERFLOW", ex);
-			}
+			long combinedTie = addTieCost(tieCost, that.tieCost);
 			return new PreciseCost(normalizedHigh, normalizedLow, combinedTie);
 		}
 
 		private PreciseCost plusTie(long extraTieCost) {
 			if(extraTieCost == 0L)
 				return this;
-			try {
-				return new PreciseCost(high, low, Math.addExact(tieCost, extraTieCost));
-			}
-			catch(ArithmeticException ex) {
-				throw new IllegalArgumentException("EXACT_VE_TIE_COST_OVERFLOW", ex);
-			}
+			return new PreciseCost(high, low, addTieCost(tieCost, extraTieCost));
 		}
 
 		private double rounded() {
@@ -1378,25 +1862,302 @@ public final class ExactCategoricalSolver {
 		}
 	}
 
+	/**
+	 * A solve-local index of first-factor infinities. Skipping these values is exact:
+	 * preciseSum would return infinity before performing any arithmetic. A later
+	 * infinity cannot be used this way because an earlier sum may overflow.
+	 */
+	private static final class FiniteRowIndex {
+		private final int domain;
+		private final int stride;
+		private final int rowCount;
+		private final int wordsPerRow;
+		private final long[] forbidden;
+		private final long forbiddenCells;
+
+		private FiniteRowIndex(int domain, int stride, int rowCount, int wordsPerRow,
+			long[] forbidden, long forbiddenCells) {
+			this.domain = domain;
+			this.stride = stride;
+			this.rowCount = rowCount;
+			this.wordsPerRow = wordsPerRow;
+			this.forbidden = forbidden;
+			this.forbiddenCells = forbiddenCells;
+		}
+
+		private static FiniteRowIndex create(DenseFactor first, int variable, int domain) {
+			if(first.finiteCount == first.values.length)
+				return null;
+			int stride = first.stride(variable);
+			int rows = first.values.length / domain;
+			int words = (domain - 1) / Long.SIZE + 1;
+			// words <= domain, so the index cannot exceed the validated input cells.
+			long[] forbidden = null;
+			long count = 0L;
+			for(int cell = 0; cell < first.values.length; cell++) {
+				if(first.values[cell] != Double.POSITIVE_INFINITY)
+					continue;
+				if(forbidden == null)
+					forbidden = new long[rows * words];
+				int row = cell / (stride * domain) * stride + cell % stride;
+				int value = cell / stride % domain;
+				forbidden[row * words + value / Long.SIZE] |= 1L << (value % Long.SIZE);
+				count++;
+			}
+			return forbidden == null ? null
+				: new FiniteRowIndex(domain, stride, rows, words, forbidden, count);
+		}
+
+		private int rowOffset(int baseCell) {
+			return (baseCell / (stride * domain) * stride + baseCell % stride) * wordsPerRow;
+		}
+
+		private int next(int rowOffset, int start) {
+			if(start >= domain)
+				return domain;
+			int word = start / Long.SIZE;
+			long candidates = ~forbidden[rowOffset + word] & (-1L << (start % Long.SIZE));
+			while(true) {
+				if(candidates != 0L)
+					return Math.min(domain, word * Long.SIZE + Long.numberOfTrailingZeros(candidates));
+				if(++word == wordsPerRow)
+					return domain;
+				candidates = ~forbidden[rowOffset + word];
+			}
+		}
+	}
+
+	/** Primitive inverse fibres; absent stored coordinates allocate no per-coordinate objects. */
+	private static final class InverseAxis {
+		private final boolean identity;
+		private final int[] keys;
+		private final int[] heads;
+		private final int[] counts;
+		private final int[] next;
+
+		private InverseAxis(DenseFactor factor, int axis, int[] representatives) {
+			boolean same = representatives.length == factor.dimensions[axis];
+			for(int value = 0; same && value < representatives.length; value++)
+				same = factor.coordinate(axis, representatives[value]) == value;
+			identity = same;
+			if(identity) {
+				keys = heads = counts = next = null;
+				return;
+			}
+			boolean dense = factor.dimensions[axis] <= 2L * representatives.length;
+			int capacity = 2;
+			while(!dense && capacity * 3L / 4 < representatives.length) {
+				if(capacity == 1 << 30) {
+					dense = true;
+					break;
+				}
+				capacity <<= 1;
+			}
+			keys = dense ? null : new int[capacity];
+			if(keys != null)
+				Arrays.fill(keys, -1);
+			heads = new int[dense ? factor.dimensions[axis] : capacity];
+			Arrays.fill(heads, -1);
+			counts = new int[heads.length];
+			next = new int[representatives.length];
+			for(int value = representatives.length - 1; value >= 0; value--) {
+				int coordinate = factor.coordinate(axis, representatives[value]);
+				int slot = slot(coordinate);
+				if(keys != null)
+					keys[slot] = coordinate;
+				next[value] = heads[slot];
+				heads[slot] = value;
+				counts[slot]++;
+			}
+		}
+
+		private int slot(int coordinate) {
+			if(keys == null)
+				return coordinate;
+			int hash = coordinate * 0x9E3779B9;
+			int slot = (hash ^ (hash >>> 16)) & (keys.length - 1);
+			while(keys[slot] != -1 && keys[slot] != coordinate)
+				slot = (slot + 1) & (keys.length - 1);
+			return slot;
+		}
+
+		private int first(int coordinate) { return identity ? coordinate : heads[slot(coordinate)]; }
+		private int size(int coordinate) { return identity ? 1 : counts[slot(coordinate)]; }
+		private int next(int value) { return identity ? -1 : next[value]; }
+	}
+
 	private static final class DenseFactor {
 		private final int[] scope;
 		private final int[] strides;
+		private final int[] dimensions;
 		private final double[] values;
 		private final double[] lowValues;
 		private final long[] tieCosts;
+		private final int[] sparseCells;
+		private int finiteCount = -1;
+		// Maps and response classes are solve-local. Logical scope never shrinks.
+		private int[][] valueMaps;
+		private int[][] responseClasses;
 
 		private DenseFactor(int[] scope, int[] domains, double[] values, double[] lowValues,
 			long[] tieCosts) {
+			this(scope, domains, values, lowValues, tieCosts, null);
+		}
+
+		private DenseFactor(int[] scope, int[] domains, double[] values, double[] lowValues,
+			long[] tieCosts, int[] sparseCells) {
 			this.scope = scope.clone();
 			this.values = values;
 			this.lowValues = lowValues;
 			this.tieCosts = tieCosts;
+			this.sparseCells = sparseCells;
 			this.strides = new int[scope.length];
+			this.dimensions = new int[scope.length];
 			int stride = 1;
 			for(int index = scope.length - 1; index >= 0; index--) {
 				strides[index] = stride;
-				stride = Math.multiplyExact(stride, domains[scope[index]]);
+				dimensions[index] = domains[scope[index]];
+				stride = Math.multiplyExact(stride, dimensions[index]);
 			}
+		}
+
+		private int axis(int variable) {
+			for(int axis = 0; axis < scope.length; axis++)
+				if(scope[axis] == variable)
+					return axis;
+			return -1;
+		}
+
+		private int coordinate(int axis, int originalValue) {
+			return valueMaps == null ? originalValue : valueMaps[axis][originalValue];
+		}
+
+		private int[] originalValueClasses(int axis, int domain) {
+			if(responseClasses == null)
+				responseClasses = new int[scope.length][];
+			if(responseClasses[axis] == null) {
+				if(sparseCells == null)
+					responseClasses[axis] = ExactFactorValueClasses.denseAxisClasses(
+						values, lowValues, dimensions[axis], strides[axis]);
+				else {
+					// Conservative stored-coordinate classes avoid expanding implicit infinities.
+					responseClasses[axis] = new int[dimensions[axis]];
+					if(values.length != 0)
+						for(int value = 0; value < dimensions[axis]; value++)
+							responseClasses[axis][value] = value;
+				}
+			}
+			if(valueMaps == null)
+				return responseClasses[axis];
+			int[] classes = new int[domain];
+			for(int value = 0; value < domain; value++)
+				classes[value] = responseClasses[axis][coordinate(axis, value)];
+			return classes;
+		}
+
+		/** Lift stored finite tuples through the bucket's exact common refinement. */
+		private int[] projectedFiniteCells(BucketProjection projection) {
+			if(values.length == 0)
+				return new int[0];
+			if(sparseCells == null && finiteCount == values.length)
+				return null;
+			boolean identity = true;
+			for(int axis = 0; identity && axis < scope.length; axis++) {
+				int[] representatives = projection.representatives[scope[axis]];
+				identity = representatives.length == dimensions[axis];
+				for(int value = 0; identity && value < representatives.length; value++)
+					identity = coordinate(axis, representatives[value]) == value;
+			}
+			if(identity)
+				return selectiveFiniteCells();
+			int cells = checkedCells(scope, projection.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
+			InverseAxis[] inverse = new InverseAxis[scope.length];
+			int[] quotientStrides = new int[scope.length];
+			int stride = 1;
+			for(int axis = scope.length - 1; axis >= 0; axis--) {
+				int[] representatives = projection.representatives[scope[axis]];
+				inverse[axis] = new InverseAxis(this, axis, representatives);
+				quotientStrides[axis] = stride;
+				stride = Math.multiplyExact(stride, representatives.length);
+			}
+			long finite = 0L;
+			for(int stored = 0; stored < values.length; stored++) {
+				if(values[stored] == Double.POSITIVE_INFINITY)
+					continue;
+				int cell = sparseCells == null ? stored : sparseCells[stored];
+				long multiplicity = 1L;
+				for(int axis = 0; axis < scope.length; axis++)
+					multiplicity *= inverse[axis].size(cell / strides[axis] % dimensions[axis]);
+				finite += multiplicity;
+				if(finite * 2 > cells)
+					return null;
+			}
+			int[] result = new int[(int)finite];
+			int output = 0;
+			int[] first = new int[scope.length];
+			int[] positions = new int[scope.length];
+			for(int stored = 0; stored < values.length; stored++) {
+				if(values[stored] == Double.POSITIVE_INFINITY)
+					continue;
+				int cell = sparseCells == null ? stored : sparseCells[stored];
+				boolean empty = false;
+				for(int axis = 0; axis < scope.length; axis++) {
+					first[axis] = inverse[axis].first(cell / strides[axis] % dimensions[axis]);
+					empty |= first[axis] < 0;
+				}
+				if(empty)
+					continue;
+				System.arraycopy(first, 0, positions, 0, first.length);
+				while(true) {
+					int encoded = 0;
+					for(int axis = 0; axis < scope.length; axis++)
+						encoded += positions[axis] * quotientStrides[axis];
+					result[output++] = encoded;
+					int axis = scope.length - 1;
+					while(axis >= 0 && (positions[axis] = inverse[axis].next(positions[axis])) < 0) {
+						positions[axis] = first[axis];
+						axis--;
+					}
+					if(axis < 0)
+						break;
+				}
+			}
+			Arrays.sort(result);
+			return result;
+		}
+
+		private int storageCell(int logicalCell) {
+			return sparseCells == null ? logicalCell : Arrays.binarySearch(sparseCells, logicalCell);
+		}
+
+		private int summedCell(int[] global, int[] baseCells, int[] valueStrides, int index, int value) {
+			return storageCell(baseCells == null ? cell(global) : baseCells[index] + value * valueStrides[index]);
+		}
+
+		/**
+		 * An optional support index, not a replacement for the original factor.
+		 * Majority-finite dense tables stay in preciseSum without an extra relation:
+		 * materializing their finite IDs and join indexes adds memory with little
+		 * selectivity. Every omitted constraint is still checked in arithmetic order.
+		 */
+		private int[] selectiveFiniteCells() {
+			if(sparseCells != null)
+				return sparseCells;
+			if(finiteCount < 0) {
+				finiteCount = 0;
+				for(double value : values)
+					if(value != Double.POSITIVE_INFINITY)
+						finiteCount++;
+			}
+			int count = finiteCount;
+			if((long)count * 2 > values.length)
+				return null;
+			int[] cells = new int[count];
+			int output = 0;
+			for(int cell = 0; cell < values.length; cell++)
+				if(values[cell] != Double.POSITIVE_INFINITY)
+					cells[output++] = cell;
+			return cells;
 		}
 
 		private boolean contains(int variable) {
@@ -1416,7 +2177,7 @@ public final class ExactCategoricalSolver {
 		private int cell(int[] global) {
 			int cell = 0;
 			for(int index = 0; index < scope.length; index++)
-				cell += global[scope[index]] * strides[index];
+				cell += coordinate(index, global[scope[index]]) * strides[index];
 			return cell;
 		}
 	}

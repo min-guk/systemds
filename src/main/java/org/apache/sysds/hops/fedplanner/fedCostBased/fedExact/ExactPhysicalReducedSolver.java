@@ -124,6 +124,8 @@ final class ExactPhysicalReducedSolver {
 	}
 
 	static final class Prepared {
+		private final List<ExactCategoricalSolver.Variable> sourceVariables;
+		private final List<ExactCategoricalSolver.Factor> sourceFactors;
 		private final int variableCount;
 		private final int[][] representatives;
 		private final int[] reducedToCompiled;
@@ -136,7 +138,11 @@ final class ExactPhysicalReducedSolver {
 			ExactCategoricalSolver.CompiledProblem compiled,
 			ExactCategoricalSolver.Statistics statistics,
 			PreparationStatistics preparationStatistics,
-			ExactCategoricalSolver.OrderCompilation orderCompilation) {
+			ExactCategoricalSolver.OrderCompilation orderCompilation,
+			List<ExactCategoricalSolver.Variable> sourceVariables,
+			List<ExactCategoricalSolver.Factor> sourceFactors) {
+			this.sourceVariables = List.copyOf(sourceVariables);
+			this.sourceFactors = List.copyOf(sourceFactors);
 			this.variableCount = variableCount;
 			this.representatives = representatives;
 			this.reducedToCompiled = reducedToCompiled;
@@ -151,6 +157,22 @@ final class ExactPhysicalReducedSolver {
 		PreparationStatistics preparationStatistics() { return preparationStatistics; }
 		ExactCategoricalSolver.OrderCompilation orderCompilation() { return orderCompilation; }
 		boolean infeasible() { return compiled == null; }
+		ExactCategoricalSolver.CompiledProblem compiledProblem() {
+			if(infeasible())
+				throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
+			return compiled;
+		}
+		void requireSource(List<ExactCategoricalSolver.Variable> variables,
+			List<ExactCategoricalSolver.Factor> factors) {
+			if(variables.size() != sourceVariables.size() || factors.size() != sourceFactors.size())
+				throw new IllegalArgumentException("EXACT_DYADIC_REDUCTION_SOURCE_MISMATCH");
+			for(int index = 0; index < variables.size(); index++)
+				if(variables.get(index) != sourceVariables.get(index))
+					throw new IllegalArgumentException("EXACT_DYADIC_REDUCTION_VARIABLE_MISMATCH");
+			for(int index = 0; index < factors.size(); index++)
+				if(factors.get(index) != sourceFactors.get(index))
+					throw new IllegalArgumentException("EXACT_DYADIC_REDUCTION_FACTOR_MISMATCH");
+		}
 		int compiledVariableCount() {
 			if(reducedToCompiled == null)
 				return variableCount;
@@ -230,14 +252,14 @@ final class ExactPhysicalReducedSolver {
 			ExactCategoricalSolver.CompiledProblem compiled = orderCompilation.compiled();
 			return new Prepared(reduction.variableCount(), reduction.representatives(), null, compiled,
 				ExactCategoricalSolver.statistics(compiled), timer.freeze(compileNanos, 0L),
-				orderCompilation);
+				orderCompilation, variables, factors);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
 				throw failure;
 			return new Prepared(variables.size(), null, null, null,
 				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L),
-				timer.freeze(0L, 0L), null);
+				timer.freeze(0L, 0L), null, variables, factors);
 		}
 	}
 
@@ -288,14 +310,14 @@ final class ExactPhysicalReducedSolver {
 			ExactCategoricalSolver.CompiledProblem compiled = orderCompilation.compiled();
 			return new Prepared(reduction.variableCount(), reduction.representatives(),
 				compact.reducedToCompiled(), compiled, ExactCategoricalSolver.statistics(compiled),
-				timer.freeze(compileNanos, compactNanos), orderCompilation);
+				timer.freeze(compileNanos, compactNanos), orderCompilation, variables, factors);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!"EXACT_VE_NO_FEASIBLE_ASSIGNMENT".equals(failure.getMessage()))
 				throw failure;
 			return new Prepared(variables.size(), null, null, null,
 				new ExactCategoricalSolver.Statistics(List.of(), 0, 0L, 0L, 0L, 0L),
-				timer.freeze(0L, 0L), null);
+				timer.freeze(0L, 0L), null, variables, factors);
 		}
 	}
 
@@ -347,6 +369,17 @@ final class ExactPhysicalReducedSolver {
 		if(prepared.infeasible())
 			throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
 		ExactCategoricalSolver.Result reduced = ExactCategoricalSolver.solve(prepared.compiled);
+		return expand(reduced, prepared.variableCount, prepared.representatives,
+			prepared.reducedToCompiled);
+	}
+
+	static ExactCategoricalSolver.Result solveDyadic(Prepared prepared,
+		ExactDyadicCosts.Certificate certificate) {
+		Objects.requireNonNull(prepared, "prepared");
+		if(prepared.infeasible())
+			throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
+		ExactCategoricalSolver.Result reduced = ExactCategoricalSolver.solveDyadic(
+			prepared.compiled, certificate);
 		return expand(reduced, prepared.variableCount, prepared.representatives,
 			prepared.reducedToCompiled);
 	}

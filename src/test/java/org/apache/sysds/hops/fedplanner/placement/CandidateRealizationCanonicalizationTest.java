@@ -49,6 +49,62 @@ public class CandidateRealizationCanonicalizationTest {
 		List.of(CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW)));
 
 	@Test
+	public void realizationSerializationReusesClauseDescriptorsAndKeepsColdPaths() throws Exception {
+		CandidateEmissionRealization template = fixture().get(0);
+		List<CandidateRealizationSupportClause> clauses = List.of(
+			new CandidateRealizationSupportClause(List.of(proof("reuse-a")), List.of()),
+			new CandidateRealizationSupportClause(List.of(proof("reuse-b")), List.of()));
+		CandidateEmissionRealization retained = new CandidateEmissionRealization(template.key(), clauses);
+		var text = new PlacementAnalysis.NormalizedTextContext().emissionRealization(retained);
+		Set<Object> descendants = canonicalDescendants(text);
+		for(Object descriptor : descriptorSidecar(retained.supportClauses()))
+			Assert.assertTrue("reuse each descriptor already computed by clause sorting",
+				descendants.contains(descriptor));
+		Assert.assertEquals(retained.normalizedSignature(), text.materialize());
+		CandidateEmissionRealization cold = CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+			template.key(), new ArrayList<>(retained.supportClauses()));
+		Assert.assertNull(descriptorSidecarOrNull(cold.supportClauses()));
+		Assert.assertEquals(retained.normalizedSignature(),
+			new PlacementAnalysis.NormalizedTextContext().emissionRealization(cold).materialize());
+		Assert.assertNull("cold serialization must not mutate an immutable descriptor sidecar",
+			descriptorSidecarOrNull(cold.supportClauses()));
+		CandidateRealizationSupportClause singleton = clauses.get(0);
+		Assert.assertNull("singleton constructor must not eagerly build a descriptor",
+			descriptorSidecarOrNull(singleton.proofDependencies()));
+		for(CandidateRealizationSupportClause value : List.of(singleton,
+			new CandidateRealizationSupportClause(List.of(), List.of())))
+			Assert.assertEquals(legacySignature(value),
+				new PlacementAnalysis.NormalizedTextContext().supportClause(value).materialize());
+		CandidateRealizationSupportClause dynamic = new CandidateRealizationSupportClause(
+			List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY, OWNER, "dynamic-a"),
+				proof("dynamic-b")), List.of(), pool("dynamic", 1234), false);
+		Assert.assertEquals(legacySignature(dynamic) + "|nativePoolLayout=dynamic",
+			new PlacementAnalysis.NormalizedTextContext().supportClause(dynamic).materialize());
+	}
+
+	private static Set<Object> canonicalDescendants(PlacementAnalysis.NormalizedText text) throws Exception {
+		Field field = PlacementAnalysis.NormalizedText.class.getDeclaredField("text");
+		field.setAccessible(true);
+		Set<Object> descendants = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		collectCanonicalTextDescendants(field.get(text), descendants);
+		return descendants;
+	}
+
+	@Test
+	public void segmentedRealizationsKeepEveryLegacySignatureByte() {
+		var context = new PlacementAnalysis.NormalizedTextContext();
+		for(var realization : fixture()) {
+			var segmented = context.emissionRealization(realization);
+			String expected = realization.normalizedSignature();
+			List<String> chunks = new ArrayList<>();
+			segmented.appendTo(chunks::add);
+			Assert.assertEquals(expected, String.join("", chunks));
+			Assert.assertEquals(expected.length(), segmented.length());
+			Assert.assertEquals(expected.hashCode(), segmented.hashCode());
+		}
+	}
+
+	@Test
 	public void coldAndWarmSignaturesRetainLegacyBytesAndOrdering() throws Exception {
 		List<CandidateRealizationSupportClause> clauses = fixture().stream()
 			.flatMap(realization -> realization.supportClauses().stream()).toList();
@@ -314,7 +370,7 @@ public class CandidateRealizationCanonicalizationTest {
 				union.supportClauses().stream().filter(a::equals).findFirst().orElseThrow());
 			Assert.assertSame("the earliest exact clause authority wins across the third group", c,
 				union.supportClauses().stream().filter(c::equals).findFirst().orElseThrow());
-			Assert.assertEquals("k-way canonical union uses one explicit adaptive sort",
+			Assert.assertEquals("k-way canonical union uses one adaptive stable sort",
 				1, metrics.snapshot().canonicalSortCalls());
 			Assert.assertEquals(4, metrics.snapshot().canonicalSortElements());
 			Assert.assertEquals(3, metrics.snapshot().realizationMergeInputs());
@@ -416,6 +472,43 @@ public class CandidateRealizationCanonicalizationTest {
 		finally {
 			PlacementIdentity.setActiveMetrics(null);
 		}
+	}
+
+	@Test
+	public void threeWayDescriptorTiePreservesStableAuthorityOrderAndExactDeduplication()
+		throws Exception {
+		CandidateEmissionRealization template = fixture().get(0);
+		CandidateRealizationSupportClause first =
+			new CandidateRealizationSupportClause(List.of(proof("tie-first")), List.of());
+		CandidateRealizationSupportClause second =
+			new CandidateRealizationSupportClause(List.of(proof("tie-second")), List.of());
+		CandidateRealizationSupportClause third =
+			new CandidateRealizationSupportClause(List.of(proof("tie-third")), List.of());
+		CandidateEmissionRealization firstGroup = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(), List.of(first));
+		CandidateEmissionRealization secondGroup = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(), List.of(second));
+		CandidateRealizationSupportClause duplicateFirst = copy(first);
+		CandidateEmissionRealization thirdGroup = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(), List.of(duplicateFirst, third));
+		CandidateEmissionRealization descriptorSource = new CandidateEmissionRealization(
+			template.key(), List.of(first, second));
+		Object tiedDescriptor = descriptorSidecar(descriptorSource.supportClauses())
+			.get(descriptorSource.supportClauses().indexOf(first));
+		setDescriptorSidecar(firstGroup.supportClauses(), List.of(tiedDescriptor));
+		setDescriptorSidecar(secondGroup.supportClauses(), List.of(tiedDescriptor));
+		setDescriptorSidecar(thirdGroup.supportClauses(), List.of(tiedDescriptor, tiedDescriptor));
+
+		CandidateEmissionRealization union = new CandidateEmissionFact(EMISSION, FType.ROW, null,
+			List.of(firstGroup, secondGroup, thirdGroup)).realizations().get(0);
+		Assert.assertEquals(List.of(first, second, third), union.supportClauses());
+		Assert.assertSame("the earliest equal clause remains the exact authority object",
+			first, union.supportClauses().get(0));
+		Assert.assertSame("non-equal comparator ties retain stable group order",
+			second, union.supportClauses().get(1));
+		Assert.assertSame(third, union.supportClauses().get(2));
+		Assert.assertEquals(List.of(tiedDescriptor, tiedDescriptor, tiedDescriptor),
+			descriptorSidecar(union.supportClauses()));
 	}
 
 

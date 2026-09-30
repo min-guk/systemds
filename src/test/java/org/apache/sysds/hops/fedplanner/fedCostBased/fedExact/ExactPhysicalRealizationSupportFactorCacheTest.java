@@ -20,7 +20,7 @@ import org.junit.Test;
 /** Locks the exact hard-factor truth tables for a realization-dependent fixture. */
 public class ExactPhysicalRealizationSupportFactorCacheTest {
 	private static final String EXPECTED_TRUTH_SHA256 =
-		"8985c0e88b787efda0f0b62ae357f6374ee555e1a836f466c81e84e91e2faea9";
+		"982ec0a922e1d52f88b9520d2663ff3f4c2f8f6dda9ac25837242099004feb01";
 
 	@Test
 	public void realizationSupportCachingPreservesEveryHardFactorCell() throws Exception {

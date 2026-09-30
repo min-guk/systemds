@@ -183,6 +183,11 @@ public class NeutralPlacementFixedPointCompositionTest {
 			instrumented.logicalTransientInputsInCanonicalOrder());
 
 		SearchSpaceMetrics.Snapshot first = metrics.snapshot();
+		SearchSpaceMetrics.PreparedProfileSnapshot profileReuse = metrics.preparedProfileSnapshot();
+		Assert.assertTrue(profileReuse.queries() > 0);
+		Assert.assertTrue("same-build exact profile queries must reuse prepared results",
+			profileReuse.hits() > 0);
+		Assert.assertEquals(profileReuse.queries(), profileReuse.hits() + profileReuse.misses());
 		Assert.assertTrue(first.fixedPointPasses() > 0);
 		Assert.assertTrue(first.cfgRefinementPasses() > 0);
 		Assert.assertTrue(first.semanticPasses() > 0);
@@ -220,7 +225,10 @@ public class NeutralPlacementFixedPointCompositionTest {
 
 		PlacementAnalysis repeated = instrumentedBuilder.buildAnalysis(compileProtected(ACTIONS));
 		SearchSpaceMetrics.Snapshot second = metrics.snapshot();
+		SearchSpaceMetrics.PreparedProfileSnapshot secondProfileReuse = metrics.preparedProfileSnapshot();
 		Assert.assertEquals(instrumented.analysisFingerprint(), repeated.analysisFingerprint());
+		Assert.assertEquals("prepared profiles must reset at the immutable build boundary",
+			profileReuse, secondProfileReuse);
 		for(var component : SearchSpaceMetrics.Snapshot.class.getRecordComponents()) {
 			// Identity-cache hits depend on object reuse across analysis invocations;
 			// they are diagnostic, not an analysis-scoped work count.

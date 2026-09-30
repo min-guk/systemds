@@ -64,9 +64,11 @@ final class RegionalSearchProblem {
 				|| surface.exactSolverVariables().get(i) != model.variables().get(i))
 				throw new IllegalArgumentException("REGIONAL_SEARCH_VARIABLE_IDENTITY_MISMATCH");
 		List<Factor> hard = new ArrayList<>(model.hardFactors());
-		if(forced != null)
+		List<Factor> encoded = new ArrayList<>(model.exactSolverHardFactors());
+		if(forced != null) {
 			hard.add(forced.factor());
-		List<Factor> encoded = new ArrayList<>(hard);
+			encoded.add(forced.factor());
+		}
 		encoded.addAll(surface.exactSolverFactors());
 		return new RegionalSearchProblem(surface.exactSolverVariables(), encoded, model.variables().size(),
 			assignment -> Double.isFinite(evaluateFactors(model.variables(), hard, assignment))

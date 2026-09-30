@@ -149,11 +149,23 @@ public final class SearchSpaceMetrics {
 		supportQueueVisits += work.queueVisits();
 	}
 	private long candidateOracleCalls;
+	private long preparedProfileQueries;
+	private long preparedProfileHits;
 	private long privacyEmissionsSuppressed;
 	private long privacyMaskedDomains;
 	private java.math.BigInteger privacyAvoidedTuples = java.math.BigInteger.ZERO;
 
 	void recordCandidateOracleCall() { candidateOracleCalls++; }
+	void recordPreparedProfileQuery(boolean reused) {
+		preparedProfileQueries++;
+		if(reused)
+			preparedProfileHits++;
+	}
+	public record PreparedProfileSnapshot(long queries, long hits, long misses) { }
+	public PreparedProfileSnapshot preparedProfileSnapshot() {
+		return new PreparedProfileSnapshot(preparedProfileQueries, preparedProfileHits,
+			preparedProfileQueries - preparedProfileHits);
+	}
 	void recordPrivacyEmissionSuppressed() { privacyEmissionsSuppressed++; }
 	void recordPrivacyInputMask(java.math.BigInteger avoided) {
 		privacyMaskedDomains++;
@@ -245,7 +257,8 @@ public final class SearchSpaceMetrics {
 	void reset() {
 		if(!phaseStack.isEmpty())
 			throw new IllegalStateException("SEARCH_SPACE_PHASE_RESET_WHILE_ACTIVE");
-		candidateOracleCalls = privacyEmissionsSuppressed = privacyMaskedDomains = 0;
+		candidateOracleCalls = preparedProfileQueries = preparedProfileHits = 0;
+		privacyEmissionsSuppressed = privacyMaskedDomains = 0;
 		privacyAvoidedTuples = java.math.BigInteger.ZERO;
 		privacyEmissionAllocationsAvoided = privacyTransferVisits = relocationConflictPrefixes = 0;
 		supportDeletionEpochs = supportIndexedRealizations = supportIndexedClauses = 0;
@@ -411,6 +424,7 @@ public final class SearchSpaceMetrics {
 			+ "|reused=" + incrementalFactsReused + "|queries=" + proofQueries
 			+ "|graphs=" + proofGraphsBuilt + "|rows=" + proofRowsExamined
 			+ "|memoHits=" + memoHits + "|memoMisses=" + memoMisses
+			+ "|profileQueries=" + preparedProfileQueries + "|profileHits=" + preparedProfileHits
 			+ "|supportPrefixes=" + supportPrefixes + "|supportLeaves=" + supportLeaves
 			+ "|relocationPrefixes=" + relocationPrefixes + "|relocationLeaves=" + relocationLeaves
 			+ "|serializations=" + signatureSerializations + "|serializedChars=" + signatureSerializedChars
@@ -673,7 +687,8 @@ public final class SearchSpaceMetrics {
 			receiptRelationSlots, candidateReceiptsCreated, receiptRankKeyChars,
 			structuralArenaOverflows, topologyCacheEvictions, topologyCacheBypasses,
 			topologyCacheEntries, topologyCacheRetainedRows, contextObserverHashCollisions,
-			candidateOracleCalls, privacyEmissionsSuppressed, privacyEmissionAllocationsAvoided,
+			candidateOracleCalls, preparedProfileQueries, preparedProfileHits,
+			privacyEmissionsSuppressed, privacyEmissionAllocationsAvoided,
 			privacyMaskedDomains, privacyAvoidedTuples, privacyTransferVisits, relocationConflictPrefixes,
 			supportDeletionEpochs, supportIndexedRealizations, supportIndexedClauses,
 			supportReverseIncidences, supportQueueVisits);
@@ -739,7 +754,8 @@ public final class SearchSpaceMetrics {
 		long structuralArenaOverflows, long topologyCacheEvictions,
 		long topologyCacheBypasses, long topologyCacheEntries,
 		long topologyCacheRetainedRows, long contextObserverHashCollisions,
-		long candidateOracleCalls, long privacyEmissionsSuppressed, long privacyEmissionAllocationsAvoided,
+		long candidateOracleCalls, long preparedProfileQueries, long preparedProfileHits,
+		long privacyEmissionsSuppressed, long privacyEmissionAllocationsAvoided,
 		long privacyMaskedDomains, java.math.BigInteger privacyAvoidedTuples, long privacyTransferVisits,
 		long relocationConflictPrefixes, long supportDeletionEpochs, long supportIndexedRealizations,
 		long supportIndexedClauses, long supportReverseIncidences, long supportQueueVisits) { }

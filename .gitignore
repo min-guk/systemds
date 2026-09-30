@@ -48,6 +48,8 @@ maven-eclipse.xml
 
 # Build artifacts
 target/
+# Also ignore a root target symlink used for out-of-tree local builds.
+/target
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup

@@ -49,8 +49,14 @@ public final class PlacementIdentity {
 	 */
 	private static final ThreadLocal<Map<Object,String>> NORMALIZED_SIGNATURES =
 		ThreadLocal.withInitial(WeakHashMap::new);
-	private static final ThreadLocal<WeakIdentitySignatureCache> NORMALIZED_SIGNATURES_BY_IDENTITY =
-		ThreadLocal.withInitial(WeakIdentitySignatureCache::new);
+	private static final ThreadLocal<WeakIdentityCache<String>> NORMALIZED_SIGNATURES_BY_IDENTITY =
+		ThreadLocal.withInitial(WeakIdentityCache::new);
+	private static final ThreadLocal<WeakIdentityCache<List<String>>> PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY =
+		ThreadLocal.withInitial(WeakIdentityCache::new);
+	private static final ThreadLocal<WeakIdentityCache<List<String>>> PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY =
+		ThreadLocal.withInitial(WeakIdentityCache::new);
+	private static final ThreadLocal<WeakIdentityCache<List<CandidateRealizationReference>>>
+		REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY = ThreadLocal.withInitial(WeakIdentityCache::new);
 	private static final long NORMALIZED_SIGNATURE_CACHE_MAX_CHARS = Math.max(0,
 		Long.getLong("sysds.fedplanner.signatureCache.maxChars", 64L * 1024 * 1024));
 	private static final ThreadLocal<long[]> NORMALIZED_SIGNATURE_CHARS =
@@ -144,22 +150,22 @@ public final class PlacementIdentity {
 	}
 
 	/**
-	 * Weak identity lookup avoids invoking a recursively nested record hash on every
-	 * hot signature-cache probe. The structural weak map remains the cold fallback so
-	 * equal immutable copies retain the legacy shared-string behavior.
+	 * Weak identity lookup avoids invoking a recursively nested record hash on hot
+	 * immutable-object cache probes. Signature lookup keeps its structural weak-map
+	 * fallback so equal immutable copies retain the legacy shared-string behavior.
 	 */
-	private static final class WeakIdentitySignatureCache {
+	private static final class WeakIdentityCache<V> {
 		private final ReferenceQueue<Object> queue = new ReferenceQueue<>();
-		private final Map<IdentityWeakReference,String> values = new java.util.HashMap<>();
+		private final Map<IdentityWeakReference,V> values = new java.util.HashMap<>();
 
-		private String get(Object identity) {
+		private V get(Object identity) {
 			expunge();
 			return values.get(new IdentityWeakReference(identity, null));
 		}
 
-		private void put(Object identity, String signature) {
+		private void put(Object identity, V value) {
 			expunge();
-			values.put(new IdentityWeakReference(identity, queue), signature);
+			values.put(new IdentityWeakReference(identity, queue), value);
 		}
 
 		private void expunge() {
@@ -620,6 +626,20 @@ public final class PlacementIdentity {
 		return !leftEndpoints.isEmpty() && leftEndpoints.equals(physicalWorkerEndpoints(right));
 	}
 
+	/** Exact endpoint comparison under a relocation action's materialization type. */
+	static boolean sameWorkerEndpointsForMaterialization(DurableAnchorKey residency,
+		DurableAnchorKey durableAnchor, FType materializationFType) {
+		Objects.requireNonNull(residency, "residency anchor");
+		Objects.requireNonNull(durableAnchor, "durable anchor");
+		Objects.requireNonNull(materializationFType, "materialization FType");
+		if(residency.fType() != materializationFType || materializationFType == FType.PART
+			|| materializationFType == FType.OTHER)
+			return false;
+		List<String> residencyEndpoints = physicalWorkerEndpoints(residency);
+		return !residencyEndpoints.isEmpty()
+			&& residencyEndpoints.equals(physicalWorkerEndpoints(durableAnchor));
+	}
+
 	/**
 	 * Exact counterpart of the runtime {@code FederationMap.isAligned(..., COL_T)}
 	 * check used by aggregate-binary matrix multiplication. The COL partition
@@ -652,33 +672,50 @@ public final class PlacementIdentity {
 	}
 
 	private static List<String> physicalWorkerEndpoints(DurableAnchorKey anchor) {
-		List<String> endpoints = new ArrayList<>(anchor.partitions().size());
-		for(AnchorPartition partition : anchor.partitions()) {
-			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
-			if(worker == null || worker.isBlank())
-				return List.of();
-			endpoints.add(worker);
-		}
-		return endpoints.stream().distinct().sorted().toList();
+		List<String> cached = PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY.get().get(anchor);
+		if(cached != null)
+			return cached;
+		cachePhysicalWorkerNormalization(anchor);
+		return PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY.get().get(anchor);
 	}
 
 	private static List<String> physicalWorkerPoolLayout(DurableAnchorKey anchor) {
+		List<String> cached = PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY.get().get(anchor);
+		if(cached != null)
+			return cached;
+		cachePhysicalWorkerNormalization(anchor);
+		return PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY.get().get(anchor);
+	}
+
+	private static void cachePhysicalWorkerNormalization(DurableAnchorKey anchor) {
 		List<String> layout = new ArrayList<>(anchor.partitions().size());
+		List<String> endpoints = new ArrayList<>(anchor.partitions().size());
+		boolean layoutValid = true;
 		for(AnchorPartition partition : anchor.partitions()) {
 			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
-			if(worker == null || worker.isBlank())
-				return List.of();
+			if(worker == null || worker.isBlank()) {
+				PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY.get().put(anchor, List.of());
+				PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY.get().put(anchor, List.of());
+				return;
+			}
+			endpoints.add(worker);
 			if(anchor.fType() == FType.ROW || anchor.fType() == FType.COL) {
 				int axis = anchor.fType() == FType.ROW ? 0 : 1;
 				if(partition.begin().size() <= axis)
-					return List.of();
-				layout.add(worker + '|' + partition.begin().get(axis) + ':' + partition.end().get(axis));
+					layoutValid = false;
+				else if(layoutValid)
+					layout.add(worker + '|' + partition.begin().get(axis) + ':' + partition.end().get(axis));
 			}
-			else
+			else if(layoutValid)
 				layout.add(worker);
 		}
-		Collections.sort(layout);
-		return List.copyOf(layout);
+		if(layoutValid)
+			Collections.sort(layout);
+		List<String> normalizedLayout = layoutValid ? List.copyOf(layout) : List.of();
+		List<String> normalizedEndpoints = List.copyOf(
+			endpoints.stream().distinct().sorted().toList());
+		PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY.get().put(anchor, normalizedLayout);
+		PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY.get().put(anchor, normalizedEndpoints);
 	}
 
 	public record RelocationActionKey(ValueVersionKey sourceValueVersion,
@@ -924,7 +961,7 @@ public final class PlacementIdentity {
 			Objects.requireNonNull(supportClause, "supportClause");
 			if(emission.realizations().stream().noneMatch(candidate -> candidate == realization))
 				throw new IllegalArgumentException("Candidate receipt realization is not owned by its emission");
-			if(realization.supportClauses().stream().noneMatch(candidate -> candidate == supportClause))
+			if(!realization.ownsSupportClauseIdentity(supportClause))
 				throw new IllegalArgumentException("Candidate receipt support clause is not owned by its realization");
 			fallbackMaterializations = sorted(fallbackMaterializations, "fallbackMaterializations");
 			if(!fallbackMaterializations.isEmpty())
@@ -1070,10 +1107,27 @@ public final class PlacementIdentity {
 		return signature;
 	}
 
+	static List<CandidateRealizationReference> cachedRequiredInputSupport(
+		CandidateRealizationSupportClause clause) {
+		return REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.get().get(
+			Objects.requireNonNull(clause, "support clause"));
+	}
+
+	static List<CandidateRealizationReference> rememberRequiredInputSupport(
+		CandidateRealizationSupportClause clause, List<CandidateRealizationReference> support) {
+		REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.get().put(
+			Objects.requireNonNull(clause, "support clause"),
+			Objects.requireNonNull(support, "required input support"));
+		return support;
+	}
+
 	/** Starts a new compiler analysis with an empty, bounded serialization cache. */
 	static void resetNormalizedSignatureCache() {
 		NORMALIZED_SIGNATURES.remove();
 		NORMALIZED_SIGNATURES_BY_IDENTITY.remove();
+		PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY.remove();
+		PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY.remove();
+		REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.remove();
 		NORMALIZED_SIGNATURE_CHARS.remove();
 	}
 

@@ -88,7 +88,6 @@ final class NativePlacementContinuity {
 	private final StructuralContext structuralContext;
 	private final Map<CompiledHopKey,Node> nodesByKey;
 	private final Map<CompiledHopKey,Hop> originsByKey;
-	private final List<CandidateRuleFact> candidateFacts;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
@@ -137,6 +136,23 @@ final class NativePlacementContinuity {
 	private final long acyclicComponentMaxAlternatives;
 	private long acyclicComponentRetainedStates;
 	private long acyclicComponentRetainedAlternatives;
+	private RevisionComparisonSnapshot revisionComparison = RevisionComparisonSnapshot.EMPTY;
+
+	record RevisionComparisonSnapshot(long hintedOwnersBypassed, long ownersCompared,
+		long continuityProjectionsCompared) {
+		private static final RevisionComparisonSnapshot EMPTY =
+			new RevisionComparisonSnapshot(0, 0, 0);
+	}
+
+	private static final class RevisionComparisonWork {
+		private long hintedOwnersBypassed;
+		private long ownersCompared;
+		private long continuityProjectionsCompared;
+		private RevisionComparisonSnapshot snapshot() {
+			return new RevisionComparisonSnapshot(hintedOwnersBypassed, ownersCompared,
+				continuityProjectionsCompared);
+		}
+	}
 
 	NativePlacementContinuity(Map<CompiledHopKey,Node> nodesByKey,
 		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
@@ -210,6 +226,13 @@ final class NativePlacementContinuity {
 	private NativePlacementContinuity(StructuralContext structuralContext,
 		List<CandidateRuleFact> candidateFacts, SearchSpaceMetrics metrics,
 		int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes) {
+		this(structuralContext, indexCandidateFacts(candidateFacts), metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+	}
+
+	private NativePlacementContinuity(StructuralContext structuralContext,
+		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey, SearchSpaceMetrics metrics,
+		int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes, boolean ownerIndexed) {
 		this.structuralContext = Objects.requireNonNull(structuralContext, "structuralContext");
 		nodesByKey = structuralContext.nodesByKey;
 		originsByKey = structuralContext.originsByKey;
@@ -248,17 +271,63 @@ final class NativePlacementContinuity {
 		completedSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		acyclicRootSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		acyclicComponentMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
-		this.candidateFacts = List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts"));
-		candidateFactsByKey = new IdentityHashMap<>();
-		for(CandidateRuleFact fact : this.candidateFacts)
-			candidateFactsByKey.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
-		candidateFactsByKey.replaceAll((ignored, facts) -> List.copyOf(facts));
+		this.candidateFactsByKey = immutableIdentityLists(candidateFactsByKey, "candidateFactsByKey");
+	}
+
+	private static Map<CompiledHopKey,List<CandidateRuleFact>> indexCandidateFacts(
+		List<CandidateRuleFact> candidateFacts) {
+		Map<CompiledHopKey,List<CandidateRuleFact>> indexed = new IdentityHashMap<>();
+		for(CandidateRuleFact fact : List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts")))
+			indexed.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+		return indexed;
 	}
 
 	/** Returns an exact resolver with no query-local history. */
 	NativePlacementContinuity freshQueryState() {
-		return new NativePlacementContinuity(structuralContext, candidateFacts, metrics,
-			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+		return new NativePlacementContinuity(structuralContext, candidateFactsByKey, metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+	}
+
+	NativePlacementContinuity nextOwnerRevision(CompiledHopKey expectedOwner,
+		List<CandidateRuleFact> replacementFacts) {
+		Objects.requireNonNull(expectedOwner, "expectedOwner");
+		List<CandidateRuleFact> replacement = List.copyOf(replacementFacts);
+		for(CandidateRuleFact fact : replacement)
+			if(fact.key().parentOccurrence() != expectedOwner)
+				throw new IllegalArgumentException("Candidate owner delta contains a foreign fact");
+		if(!nodesByKey.containsKey(expectedOwner))
+			throw new IllegalArgumentException("Candidate owner delta has a foreign owner identity");
+		Map<CompiledHopKey,List<CandidateRuleFact>> revised = new IdentityHashMap<>(candidateFactsByKey);
+		if(replacement.isEmpty())
+			revised.remove(expectedOwner);
+		else
+			revised.put(expectedOwner, replacement);
+		NativePlacementContinuity next = new NativePlacementContinuity(structuralContext, revised, metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+		return next;
+	}
+
+	NativePlacementContinuity nextNodeAuthorityRevision(Node replacementNode,
+		List<CandidateRuleFact> replacementFacts) {
+		Objects.requireNonNull(replacementNode, "replacementNode");
+		CompiledHopKey owner = replacementNode.key();
+		Node previous = nodesByKey.get(owner);
+		if(previous == null || previous.key() != owner || previous.kind() != replacementNode.kind()
+			|| !previous.valueVersion().equals(replacementNode.valueVersion()))
+			throw new IllegalArgumentException("Node-authority delta changed key, kind, or value version");
+		List<CandidateRuleFact> replacement = List.copyOf(replacementFacts);
+		for(CandidateRuleFact fact : replacement)
+			if(fact.key().parentOccurrence() != owner)
+				throw new IllegalArgumentException("Node-authority delta contains a foreign fact");
+		Map<CompiledHopKey,List<CandidateRuleFact>> revisedFacts = new IdentityHashMap<>(candidateFactsByKey);
+		if(replacement.isEmpty())
+			revisedFacts.remove(owner);
+		else
+			revisedFacts.put(owner, replacement);
+		NativePlacementContinuity next = new NativePlacementContinuity(
+			structuralContext.withNodeAuthority(replacementNode), revisedFacts, metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+		return next;
 	}
 
 	/**
@@ -267,16 +336,74 @@ final class NativePlacementContinuity {
 	 * proof dependencies do not change this private execution relation.
 	 */
 	NativePlacementContinuity nextRevision(List<CandidateRuleFact> candidateFacts) {
+		return nextRevisionInternal(candidateFacts, null);
+	}
+
+	/** Rebuilds all structural authority while retaining only an exactly unchanged SCC index. */
+	NativePlacementContinuity structuralRevision(Map<CompiledHopKey,Node> nodesByKey,
+		Map<CompiledHopKey,Hop> originsByKey, List<CandidateRuleFact> candidateFacts,
+		List<CompiledInputEdgeFact> compiledEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions,
+		Set<CompiledHopKey> incompleteSources, Map<CompiledHopKey,Privacy> privacyByKey) {
+		StructuralContext nextContext = new StructuralContext(nodesByKey, originsByKey, compiledEdges,
+			reachingDefinitions, incompleteSources, privacyByKey, structuralContext);
+		return new NativePlacementContinuity(nextContext, candidateFacts, metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+	}
+
+	boolean sharesOccurrenceComponentsWith(NativePlacementContinuity that) {
+		return that != null && occurrenceComponents == that.occurrenceComponents;
+	}
+
+	/**
+	 * Starts a revision using the complete exact before/after canonical-owner delta.
+	 * This bounded hint is valid only while the structural context and every non-candidate input
+	 * remain the same. Owners in the set are still compared by their complete continuity projection;
+	 * only owners proven absent from the set bypass that deep comparison. The caller must supply every
+	 * changed owner; validating completeness would require the deep comparison this path avoids.
+	 */
+	NativePlacementContinuity nextRevisionWithCompleteCandidateDelta(List<CandidateRuleFact> candidateFacts,
+		Set<CompiledHopKey> completeChangedOccurrences) {
+		Objects.requireNonNull(completeChangedOccurrences, "completeChangedOccurrences");
+		return nextRevisionInternal(candidateFacts, completeChangedOccurrences);
+	}
+
+	private NativePlacementContinuity nextRevisionInternal(List<CandidateRuleFact> candidateFacts,
+		Set<CompiledHopKey> completeChangedOccurrences) {
 		NativePlacementContinuity next = new NativePlacementContinuity(structuralContext,
 			candidateFacts, metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+		return reuseRevisionCaches(next, completeChangedOccurrences);
+	}
+
+	private NativePlacementContinuity reuseRevisionCaches(NativePlacementContinuity next,
+		Set<CompiledHopKey> completeChangedOccurrences) {
+		final Set<CompiledHopKey> changedOccurrences;
+		if(completeChangedOccurrences == null)
+			changedOccurrences = null;
+		else {
+			Set<CompiledHopKey> knownOwners = Collections.newSetFromMap(new IdentityHashMap<>());
+			knownOwners.addAll(candidateFactsByKey.keySet());
+			knownOwners.addAll(next.candidateFactsByKey.keySet());
+			Set<CompiledHopKey> identitySnapshot = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CompiledHopKey occurrence : completeChangedOccurrences) {
+				if(occurrence == null || !knownOwners.contains(occurrence))
+					throw new IllegalArgumentException(
+						"Candidate delta contains a null or foreign owner identity");
+				identitySnapshot.add(occurrence);
+			}
+			changedOccurrences = identitySnapshot;
+		}
 		// Reuse is governed by the complete private execution projection, so
 		// proof-history-only changes do not force recomputation while any changed
 		// execution row still invalidates its cached supports.
 		Map<CompiledHopKey,Boolean> unchangedRows = new IdentityHashMap<>();
+		Map<CompiledHopKey,Boolean> unchangedGeneratedRoots = new IdentityHashMap<>();
+		RevisionComparisonWork comparisonWork = new RevisionComparisonWork();
 		long reused = 0;
 		for(var entry : candidateTopologies.entrySet()) {
 			CompiledHopKey occurrence = entry.getKey().occurrence;
-			if(!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)))
+			if(!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
+				next, key, changedOccurrences, comparisonWork)))
 				continue;
 			if(next.cacheTopology(entry.getKey(), next.reindexTopology(entry.getValue())))
 				reused++;
@@ -284,8 +411,20 @@ final class NativePlacementContinuity {
 		long supportReused = 0;
 		for(var entry : completedSupportMemo.entrySet()) {
 			SupportMemoEntry support = entry.getValue();
+			CompiledHopKey root = support.root.rule().parentOccurrence();
+			// A generated root reads primitive row/emission authority, not its own
+			// published support history. Acyclicity prevents that history being read
+			// again as a descendant. Keep this weaker comparison out of unchangedRows:
+			// ordinary queries and public dynamic-layout results still need full facts.
+			boolean generatedAcyclicRoot = entry.getKey().generated
+				&& nodesByKey.containsKey(root)
+				&& !occurrenceComponents.componentOf(root).cyclic();
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
-				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+				!(generatedAcyclicRoot && occurrence == root
+					? unchangedGeneratedRoots.computeIfAbsent(root, key -> unchangedGeneratedRootFacts(
+						next, key, changedOccurrences, comparisonWork))
+					: unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
+						next, key, changedOccurrences, comparisonWork))));
 			if(!unchanged)
 				continue;
 			CandidateSupportQueryKey nextKey = next.candidateSupportQueryKey(
@@ -297,21 +436,24 @@ final class NativePlacementContinuity {
 		for(var entry : acyclicRootSupportMemo.entrySet()) {
 			SupportMemoEntry support = entry.getValue();
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
-				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+				!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
+					next, key, changedOccurrences, comparisonWork)));
 			if(unchanged)
 				next.cacheAcyclicRootSupport(entry.getKey(), support);
 		}
 		for(var entry : completedProofMemo.entrySet()) {
 			MemoEntry proof = entry.getValue();
 			boolean unchanged = proof.occurrences().stream().noneMatch(occurrence ->
-				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+				!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
+					next, key, changedOccurrences, comparisonWork)));
 			if(unchanged)
 				next.cacheCompletedProofs(entry.getKey(), proof);
 		}
 		for(var entry : acyclicComponentMemo.entrySet()) {
 			AcyclicComponentSummary summary = entry.getValue();
 			boolean unchanged = summary.occurrences.stream().noneMatch(occurrence ->
-				!unchangedRows.computeIfAbsent(occurrence, key -> sameContinuityFacts(next, key)));
+				!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
+					next, key, changedOccurrences, comparisonWork)));
 			if(!unchanged)
 				continue;
 			CandidateProofState state = entry.getKey();
@@ -323,7 +465,12 @@ final class NativePlacementContinuity {
 			metrics.recordTopologyRevisionReuse(reused);
 			metrics.recordSupportMemoRevisionReuse(supportReused);
 		}
+		next.revisionComparison = comparisonWork.snapshot();
 		return next;
+	}
+
+	RevisionComparisonSnapshot revisionComparisonSnapshot() {
+		return revisionComparison;
 	}
 
 	/**
@@ -338,19 +485,46 @@ final class NativePlacementContinuity {
 		return structuralContext.matches(nodes, origins, edges, reaching, incomplete, privacy);
 	}
 
-	private boolean sameContinuityFacts(NativePlacementContinuity next, CompiledHopKey occurrence) {
+	private boolean unchangedContinuityFacts(NativePlacementContinuity next, CompiledHopKey occurrence,
+		Set<CompiledHopKey> completeChangedOccurrences, RevisionComparisonWork comparisonWork) {
+		if(completeChangedOccurrences != null && !completeChangedOccurrences.contains(occurrence)) {
+			comparisonWork.hintedOwnersBypassed++;
+			return true;
+		}
+		comparisonWork.ownersCompared++;
 		List<CandidateRuleFact> before = candidateFactsByKey.getOrDefault(occurrence, List.of());
 		List<CandidateRuleFact> after = next.candidateFactsByKey.getOrDefault(occurrence, List.of());
-		return before.equals(after) || continuityProjection(before).equals(continuityProjection(after));
+		if(before.equals(after))
+			return true;
+		comparisonWork.continuityProjectionsCompared++;
+		return continuityProjection(before).equals(continuityProjection(after));
 	}
 
 	private static Set<ContinuityFactProjection> continuityProjection(List<CandidateRuleFact> facts) {
+		return continuityProjection(facts, true);
+	}
+
+	private boolean unchangedGeneratedRootFacts(NativePlacementContinuity next, CompiledHopKey root,
+		Set<CompiledHopKey> completeChangedOccurrences, RevisionComparisonWork comparisonWork) {
+		if(completeChangedOccurrences != null && !completeChangedOccurrences.contains(root)) {
+			comparisonWork.hintedOwnersBypassed++;
+			return true;
+		}
+		comparisonWork.ownersCompared++;
+		comparisonWork.continuityProjectionsCompared++;
+		return continuityProjection(candidateFactsByKey.getOrDefault(root, List.of()), false)
+			.equals(continuityProjection(next.candidateFactsByKey.getOrDefault(root, List.of()), false));
+	}
+
+	private static Set<ContinuityFactProjection> continuityProjection(List<CandidateRuleFact> facts,
+		boolean includePublishedRealizations) {
 		Set<ContinuityFactProjection> projected = new java.util.HashSet<>();
 		for(CandidateRuleFact fact : facts) {
 			Set<ContinuityEmissionProjection> emissions = new java.util.HashSet<>();
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				Set<ContinuityRealizationProjection> realizations = new java.util.HashSet<>();
-				for(CandidateEmissionRealization realization : emission.realizations()) {
+				for(CandidateEmissionRealization realization : includePublishedRealizations
+					? emission.realizations() : List.<CandidateEmissionRealization>of()) {
 					Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						List<ContinuityBindingProjection> bindings = clause.inputBindings().stream()
@@ -409,11 +583,42 @@ final class NativePlacementContinuity {
 		private final Set<CompiledHopKey> incompleteSources;
 		private final Map<CompiledHopKey,Privacy> privacyByKey;
 		private final PlacementDependencyComponents occurrenceComponents;
+		private final ComponentReadSet componentReadSet;
+
+		private StructuralContext(StructuralContext source, Map<CompiledHopKey,Node> nodesByKey) {
+			this.nodesByKey = Collections.unmodifiableMap(nodesByKey);
+			originsByKey = source.originsByKey;
+			edgesByConsumer = source.edgesByConsumer;
+			reachingDefinitions = source.reachingDefinitions;
+			incompleteSources = source.incompleteSources;
+			privacyByKey = source.privacyByKey;
+			occurrenceComponents = source.occurrenceComponents;
+			componentReadSet = source.componentReadSet;
+		}
+
+		private StructuralContext withNodeAuthority(Node replacement) {
+			CompiledHopKey owner = replacement.key();
+			Node previous = nodesByKey.get(owner);
+			if(previous == null || previous.key() != owner)
+				throw new IllegalArgumentException("Node-authority delta has a foreign owner identity");
+			Map<CompiledHopKey,Node> revised = new IdentityHashMap<>(nodesByKey);
+			revised.put(owner, replacement);
+			return new StructuralContext(this, revised);
+		}
 
 		private StructuralContext(Map<CompiledHopKey,Node> nodesByKey,
 			Map<CompiledHopKey,Hop> originsByKey, List<CompiledInputEdgeFact> compiledEdges,
 			Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions,
 			Set<CompiledHopKey> incompleteSources, Map<CompiledHopKey,Privacy> privacyByKey) {
+			this(nodesByKey, originsByKey, compiledEdges, reachingDefinitions,
+				incompleteSources, privacyByKey, null);
+		}
+
+		private StructuralContext(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Hop> originsByKey, List<CompiledInputEdgeFact> compiledEdges,
+			Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions,
+			Set<CompiledHopKey> incompleteSources, Map<CompiledHopKey,Privacy> privacyByKey,
+			StructuralContext reusableComponents) {
 			this.nodesByKey = immutableIdentityMap(nodesByKey, "nodesByKey");
 			this.originsByKey = immutableIdentityMap(originsByKey, "originsByKey");
 			this.privacyByKey = immutableIdentityMap(privacyByKey, "privacyByKey");
@@ -452,8 +657,12 @@ final class NativePlacementContinuity {
 						producer, entry.getKey()));
 				}
 			}
-			occurrenceComponents = new PlacementDependencyComponents(
-				List.copyOf(owners), dependencies, List.of());
+			componentReadSet = new ComponentReadSet(List.copyOf(owners), dependencies);
+			occurrenceComponents = reusableComponents != null
+				&& componentReadSet.matches(reusableComponents.componentReadSet)
+				? reusableComponents.occurrenceComponents
+				: new PlacementDependencyComponents(componentReadSet.owners(),
+					componentReadSet.dependencies(), List.of());
 		}
 
 		private boolean matches(Map<CompiledHopKey,Node> nodes,
@@ -539,6 +748,42 @@ final class NativePlacementContinuity {
 			Set<CompiledHopKey> afterKeys = Collections.newSetFromMap(new IdentityHashMap<>());
 			afterKeys.addAll(after);
 			return afterKeys.size() == after.size() && before.stream().allMatch(afterKeys::contains);
+		}
+	}
+
+	/** Complete identity-ordered input of the native occurrence SCC/index. */
+	private static final class ComponentReadSet {
+		private final List<CompiledHopKey> owners;
+		private final List<PlacementDependencyComponents.SemanticDependency> dependencies;
+
+		private ComponentReadSet(List<CompiledHopKey> owners,
+			List<PlacementDependencyComponents.SemanticDependency> dependencies) {
+			this.owners = List.copyOf(owners);
+			this.dependencies = List.copyOf(dependencies);
+		}
+
+		private List<CompiledHopKey> owners() {
+			return owners;
+		}
+
+		private List<PlacementDependencyComponents.SemanticDependency> dependencies() {
+			return dependencies;
+		}
+
+		private boolean matches(ComponentReadSet that) {
+			if(that == null || owners.size() != that.owners.size()
+				|| dependencies.size() != that.dependencies.size())
+				return false;
+			for(int index = 0; index < owners.size(); index++)
+				if(owners.get(index) != that.owners.get(index))
+					return false;
+			for(int index = 0; index < dependencies.size(); index++) {
+				PlacementDependencyComponents.SemanticDependency left = dependencies.get(index);
+				PlacementDependencyComponents.SemanticDependency right = that.dependencies.get(index);
+				if(left.producer() != right.producer() || left.consumer() != right.consumer())
+					return false;
+			}
+			return true;
 		}
 	}
 
@@ -762,6 +1007,12 @@ final class NativePlacementContinuity {
 	private CandidateSupportQueryKey candidateSupportQueryKey(
 		CandidateRealizationReference source, NativePoolWitness witness, boolean generated) {
 		int sourceHandle = candidateHandle(source);
+		// A generated root uses the trusted base row, not its previously published
+		// topology. Keep its full source identity instead of building that topology
+		// merely to choose a memo bucket. This refines absent-row groups; it cannot
+		// make two previously distinct queries share a support result.
+		if(generated)
+			return new CandidateSupportQueryKey(source, sourceHandle, witness, true, true);
 		CandidateTopology topology = candidateTopology(source.rule().parentOccurrence(), witness);
 		boolean exactTopologyRow = topology.rowsByHandle.containsKey(sourceHandle);
 		return new CandidateSupportQueryKey(source, sourceHandle, witness, exactTopologyRow, generated);
@@ -1832,6 +2083,12 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation) {
 		CandidateRuleFact fact = generation.trustedBase();
 		CandidateEmissionFact emission = generation.baseEmission();
+		if(metrics != null) {
+			// The prospective fact/emission are still examined even when a generated
+			// support key no longer expands the unrelated published root topology.
+			metrics.recordProofRowExamined();
+			metrics.recordProofRowExamined();
+		}
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		PlacementState state = emission.emissionState().placementState();
@@ -3194,6 +3451,9 @@ final class NativePlacementContinuity {
 		private final boolean exactPartitionRanges;
 		private final int hashCode;
 		private NativePoolWitness dynamicPartitionRangesWitness;
+		private NativePoolWitness exactPartitionRangesWitness;
+		private NativePoolWitness[] retypedWitnesses;
+		private NativePoolWitness[] residencyWitnesses;
 
 		private NativePoolWitness(FType fType, List<String> endpoints,
 			List<AxisInterval> partitionAxisIntervals, boolean exactPartitionRanges) {
@@ -3248,15 +3508,23 @@ final class NativePlacementContinuity {
 				return this;
 			if(fType != FType.ROW && fType != FType.COL && fType != FType.FULL)
 				return this;
-			if(dynamicPartitionRangesWitness == null)
+			if(dynamicPartitionRangesWitness == null) {
 				dynamicPartitionRangesWitness = new NativePoolWitness(fType, endpoints, partitionAxisIntervals, false);
+				dynamicPartitionRangesWitness.exactPartitionRangesWitness = this;
+				linkKnownRetypedSiblings(this, dynamicPartitionRangesWitness);
+			}
 			return dynamicPartitionRangesWitness;
 		}
 
 		private NativePoolWitness withExactPartitionRanges() {
 			if(exactPartitionRanges)
 				return this;
-			return new NativePoolWitness(fType, endpoints, partitionAxisIntervals, true);
+			if(exactPartitionRangesWitness == null) {
+				exactPartitionRangesWitness = new NativePoolWitness(fType, endpoints, partitionAxisIntervals, true);
+				exactPartitionRangesWitness.dynamicPartitionRangesWitness = this;
+				linkKnownRetypedSiblings(exactPartitionRangesWitness, this);
+			}
+			return exactPartitionRangesWitness;
 		}
 
 		private boolean matches(NativePoolWitness candidate, boolean anchorLayoutExact) {
@@ -3279,8 +3547,28 @@ final class NativePlacementContinuity {
 			if(target == FType.BROADCAST || fType == FType.BROADCAST)
 				return null;
 			if((fType == FType.ROW && target == FType.COL)
-				|| (fType == FType.COL && target == FType.ROW))
-				return new NativePoolWitness(target, endpoints, partitionAxisIntervals, exactPartitionRanges);
+				|| (fType == FType.COL && target == FType.ROW)) {
+				NativePoolWitness cached = retypedWitness(target);
+				if(cached != null)
+					return cached;
+				NativePoolWitness transformed = new NativePoolWitness(
+					target, endpoints, partitionAxisIntervals, exactPartitionRanges);
+				cacheRetypedWitness(target, transformed);
+				transformed.cacheRetypedWitness(fType, this);
+				if(exactPartitionRanges && dynamicPartitionRangesWitness != null) {
+					NativePoolWitness dynamicTransformed = dynamicPartitionRangesWitness.retyped(target);
+					transformed.dynamicPartitionRangesWitness = dynamicTransformed;
+					if(dynamicTransformed != null)
+						dynamicTransformed.exactPartitionRangesWitness = transformed;
+				}
+				else if(!exactPartitionRanges && exactPartitionRangesWitness != null) {
+					NativePoolWitness exactTransformed = exactPartitionRangesWitness.retyped(target);
+					transformed.exactPartitionRangesWitness = exactTransformed;
+					if(exactTransformed != null)
+						exactTransformed.dynamicPartitionRangesWitness = transformed;
+				}
+				return transformed;
+			}
 			return null;
 		}
 
@@ -3291,11 +3579,57 @@ final class NativePlacementContinuity {
 			if(target == null || target == FType.PART || target == FType.OTHER
 				|| target == FType.BROADCAST || fType == FType.BROADCAST || !singleEndpoint())
 				return null;
-			if(fType == FType.FULL && (target == FType.ROW || target == FType.COL))
-				return new NativePoolWitness(target, endpoints, List.of(), false);
-			if(target == FType.FULL && (fType == FType.ROW || fType == FType.COL))
-				return new NativePoolWitness(FType.FULL, endpoints, List.of(), true);
+			if((fType == FType.FULL && (target == FType.ROW || target == FType.COL))
+				|| (target == FType.FULL && (fType == FType.ROW || fType == FType.COL))) {
+				NativePoolWitness cached = residencyWitness(target);
+				if(cached != null)
+					return cached;
+				NativePoolWitness transformed = fType == FType.FULL
+					? new NativePoolWitness(target, endpoints, List.of(), false)
+					: new NativePoolWitness(FType.FULL, endpoints, List.of(), true);
+				cacheResidencyWitness(target, transformed);
+				return transformed;
+			}
 			return null;
+		}
+
+		private NativePoolWitness retypedWitness(FType target) {
+			return retypedWitnesses == null ? null : retypedWitnesses[target.ordinal()];
+		}
+
+		private static void linkKnownRetypedSiblings(NativePoolWitness exact, NativePoolWitness dynamic) {
+			for(FType target : FType.values()) {
+				NativePoolWitness exactRetyped = exact.retypedWitness(target);
+				NativePoolWitness dynamicRetyped = dynamic.retypedWitness(target);
+				if(exactRetyped == null && dynamicRetyped != null)
+					exactRetyped = dynamicRetyped.exactPartitionRangesWitness;
+				if(dynamicRetyped == null && exactRetyped != null)
+					dynamicRetyped = exactRetyped.dynamicPartitionRangesWitness;
+				if(exactRetyped == null || dynamicRetyped == null)
+					continue;
+				exact.cacheRetypedWitness(target, exactRetyped);
+				exactRetyped.cacheRetypedWitness(exact.fType, exact);
+				dynamic.cacheRetypedWitness(target, dynamicRetyped);
+				dynamicRetyped.cacheRetypedWitness(dynamic.fType, dynamic);
+				exactRetyped.dynamicPartitionRangesWitness = dynamicRetyped;
+				dynamicRetyped.exactPartitionRangesWitness = exactRetyped;
+			}
+		}
+
+		private void cacheRetypedWitness(FType target, NativePoolWitness witness) {
+			if(retypedWitnesses == null)
+				retypedWitnesses = new NativePoolWitness[FType.values().length];
+			retypedWitnesses[target.ordinal()] = witness;
+		}
+
+		private NativePoolWitness residencyWitness(FType target) {
+			return residencyWitnesses == null ? null : residencyWitnesses[target.ordinal()];
+		}
+
+		private void cacheResidencyWitness(FType target, NativePoolWitness witness) {
+			if(residencyWitnesses == null)
+				residencyWitnesses = new NativePoolWitness[FType.values().length];
+			residencyWitnesses[target.ordinal()] = witness;
 		}
 
 		private DurableAnchorKey asAnchor(String placementId) {

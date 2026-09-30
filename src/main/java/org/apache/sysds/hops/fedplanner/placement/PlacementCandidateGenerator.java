@@ -63,16 +63,35 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.DecisionEvidence;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.PreparedProfile;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.ProfileInference;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Generates local placement alternatives from one exact input-domain snapshot. */
 final class PlacementCandidateGenerator {
 	private final OracleFacade oracle;
 	private final SearchSpaceMetrics complexityMetrics;
+	private final Map<Hop,OracleFacade.PreparedDecision> preparedDecisions = new java.util.IdentityHashMap<>();
+	private final Map<Hop,PreparedProfile> preparedProfiles = new java.util.IdentityHashMap<>();
 
 	PlacementCandidateGenerator(OracleFacade oracle, SearchSpaceMetrics complexityMetrics) {
 		this.oracle = Objects.requireNonNull(oracle, "oracle");
 		this.complexityMetrics = complexityMetrics;
+	}
+
+	/** Build/snapshot boundary: prepared signatures and exact queries never survive it. */
+	void resetPreparedOracleState() {
+		preparedProfiles.clear();
+		preparedDecisions.clear();
+	}
+
+	private OracleFacade.PreparedDecision preparedDecision(Hop hop) {
+		return preparedDecisions.computeIfAbsent(hop, oracle::prepareDecision);
+	}
+
+	private PreparedProfile preparedProfile(Hop hop) {
+		return preparedProfiles.computeIfAbsent(hop,
+			key -> preparedDecision(key).prepareProfile());
 	}
 
 	/** UNKNOWN is represented by no gate, never by a provisional PUBLIC seed. */
@@ -137,8 +156,10 @@ final class PlacementCandidateGenerator {
 		}
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		OracleFacade.PreparedDecision preparedOracle;
+		PreparedProfile preparedProfile;
 		try {
-			preparedOracle = oracle.prepareDecision(hop);
+			preparedOracle = preparedDecision(hop);
+			preparedProfile = preparedProfile(hop);
 		}
 		catch(RuntimeException e) {
 			throw oracleRuntimeFailure("oracle preparation", key.normalizedSignature(), hop, List.of(), e);
@@ -242,7 +263,7 @@ final class PlacementCandidateGenerator {
 					}
 			}
 			ruleFacts.add(candidateRuleFact(hop, candidateKey, inputShapeFacts, inputs, caps,
-				evidence, exactRightIndex, exactEmissionFacts, privacy));
+				evidence, exactRightIndex, exactEmissionFacts, privacy, preparedProfile));
 		}, complexityMetrics);
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
@@ -275,7 +296,7 @@ final class PlacementCandidateGenerator {
 	boolean oracleConfirmsAnchorDomain(Hop hop, String occurrence, List<List<FType>> domains,
 		DurableAnchorKey anchor) {
 		try {
-			FTypeProfile profile = oracle.inferProfile(hop, domains, null);
+			FTypeProfile profile = inferProfile("anchor profile", preparedProfile(hop), domains, null);
 			return profile != null && profile.outputs() != null && profile.outputs().contains(anchor.fType());
 		}
 		catch(RuntimeException e) {
@@ -286,11 +307,12 @@ final class PlacementCandidateGenerator {
 	void captureConsumerProfileFacts(Hop consumer, CompiledHopKey consumerKey,
 		List<NodeShapeFact> inputShapeFacts, List<CandidateConsumerProfileKey> domainKeys,
 		List<CandidateConsumerProfileFact> facts) {
+		PreparedProfile preparedProfile = preparedProfile(consumer);
 		for(int inputPosition = 0; inputPosition < inputShapeFacts.size(); inputPosition++) {
 			CandidateConsumerProfileKey key = new CandidateConsumerProfileKey(consumerKey, inputPosition);
 			domainKeys.add(key);
 			ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(consumer,
-				consumerKey.normalizedSignature(), inputShapeFacts, List.of(inputPosition));
+				consumerKey.normalizedSignature(), inputShapeFacts, List.of(inputPosition), preparedProfile);
 			facts.add(new CandidateConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
 				evaluation.failureCode()));
 		}
@@ -326,8 +348,9 @@ final class PlacementCandidateGenerator {
 					continue;
 				DetachedConsumerProfileKey key = new DetachedConsumerProfileKey(producerKey, parentOrdinal,
 					PlacementGraphFingerprint.semanticStructuralKey(parent), producerInputPositions);
+				PreparedProfile preparedProfile = preparedProfile(parent);
 				ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(parent, key.toString(), inputShapeFacts,
-					producerInputPositions);
+					producerInputPositions, preparedProfile);
 				facts.add(new DetachedConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
 					evaluation.failureCode()));
 			}
@@ -335,13 +358,13 @@ final class PlacementCandidateGenerator {
 	}
 
 	private ConsumerProfileEvaluation evaluateConsumerProfile(Hop consumer, String occurrence,
-		List<NodeShapeFact> inputShapeFacts, List<Integer> targetPositions) {
+		List<NodeShapeFact> inputShapeFacts, List<Integer> targetPositions, PreparedProfile preparedProfile) {
 		List<FType> allowed = new ArrayList<>();
 		for(FType candidate : PlacementCandidateRuleResolver.matrixFTypeCandidates()) {
 			List<List<FType>> inputLayouts =
 				consumerProfileInputDomains(inputShapeFacts, targetPositions, candidate);
 			try {
-				FTypeProfile profile = oracle.inferProfile(consumer, inputLayouts, null);
+				FTypeProfile profile = inferProfile("consumer profile", preparedProfile, inputLayouts, null);
 				if(profile != null && profile.outputs() != null && !profile.outputs().isEmpty())
 					allowed.add(candidate);
 			}
@@ -355,7 +378,7 @@ final class PlacementCandidateGenerator {
 	private CandidateRuleFact candidateRuleFact(Hop hop, CandidateRuleKey key,
 		List<NodeShapeFact> inputShapeFacts, List<FType> inputs, OpCaps caps, DecisionEvidence evidence,
 		ExactRightIndexRuntimeFact exactRightIndex, Set<CandidateEmissionFact> exactEmissionFacts,
-		GenerationPrivacy privacy) {
+		GenerationPrivacy privacy, PreparedProfile preparedProfile) {
 		List<CandidateRuleNote> notes = caps.notes().stream()
 			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
 		FType nativeFoutFType = exactRightIndex == null
@@ -388,7 +411,7 @@ final class PlacementCandidateGenerator {
 			if(exactRightIndex != null)
 				profile = new CandidateProfileFact(List.of(exactRightIndex.outputFType()), "");
 			else {
-				FTypeProfile inferred = oracle.inferProfile(hop, profileInputs, null);
+				FTypeProfile inferred = inferProfile("candidate profile", preparedProfile, profileInputs, null);
 				profile = new CandidateProfileFact(inferred == null ? List.of() : inferred.outputs(), "");
 			}
 		}
@@ -404,6 +427,14 @@ final class PlacementCandidateGenerator {
 		return new CandidateRuleFact(key, status, capability, shapeProof, profile,
 			status == CandidateEvaluationStatus.AVAILABLE ? List.copyOf(exactEmissionFacts) : List.of(),
 			profile.evaluationFailure());
+	}
+
+	private FTypeProfile inferProfile(String queryScope, PreparedProfile preparedProfile,
+		List<List<FType>> inputDomains, ShapeHint hint) {
+		ProfileInference inference = preparedProfile.inferWithEvidence(queryScope, inputDomains, hint);
+		if(complexityMetrics != null)
+			complexityMetrics.recordPreparedProfileQuery(inference.reused());
+		return inference.profile();
 	}
 
 	private static ExactRightIndexRuntimeFact exactRightIndexRuntimeFact(Hop hop, List<FType> inputs,

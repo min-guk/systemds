@@ -227,6 +227,12 @@ public class NativePlacementContinuityTest {
 		intervalConstructor.setAccessible(true);
 		Method withDynamicPartitionRanges = witnessClass.getDeclaredMethod("withDynamicPartitionRanges");
 		withDynamicPartitionRanges.setAccessible(true);
+		Method withExactPartitionRanges = witnessClass.getDeclaredMethod("withExactPartitionRanges");
+		withExactPartitionRanges.setAccessible(true);
+		Method retyped = witnessClass.getDeclaredMethod("retyped", FType.class);
+		retyped.setAccessible(true);
+		Method retypedForResidency = witnessClass.getDeclaredMethod("retypedForResidency", FType.class);
+		retypedForResidency.setAccessible(true);
 		Method matches = witnessClass.getDeclaredMethod("matches", witnessClass, boolean.class);
 		matches.setAccessible(true);
 		Field fTypeField = accessibleField(witnessClass, "fType");
@@ -250,6 +256,10 @@ public class NativePlacementContinuityTest {
 				firstDynamic, repeatedDynamic);
 			Assert.assertSame("A dynamic witness conversion must be idempotent", firstDynamic,
 				withDynamicPartitionRanges.invoke(firstDynamic));
+			Assert.assertSame("Exact and dynamic siblings must round-trip without allocation", exact,
+				withExactPartitionRanges.invoke(firstDynamic));
+			Assert.assertSame("Repeated exact conversion must reuse the dynamic witness's exact sibling", exact,
+				withExactPartitionRanges.invoke(firstDynamic));
 			Assert.assertEquals(fType, fTypeField.get(firstDynamic));
 			Assert.assertEquals(endpoints, endpointsField.get(firstDynamic));
 			Assert.assertEquals(intervals, intervalsField.get(firstDynamic));
@@ -266,6 +276,72 @@ public class NativePlacementContinuityTest {
 						matches.invoke(firstDynamic, candidate, anchorLayoutExact));
 			}
 		}
+		Object exactRow = constructor.newInstance(FType.ROW, List.of("worker1:8001"),
+			List.of(intervalConstructor.newInstance("worker1:8001", 0L, 10L)), true);
+		Object firstCol = retyped.invoke(exactRow, FType.COL);
+		Assert.assertSame("Repeated exact retyping must reuse its equal transformed witness", firstCol,
+			retyped.invoke(exactRow, FType.COL));
+		Assert.assertSame("Exact ROW/COL retyping must preserve a symmetric sibling", exactRow,
+			retyped.invoke(firstCol, FType.ROW));
+		Assert.assertSame("Range relaxation and ROW/COL retyping must share the same transformed witness",
+			withDynamicPartitionRanges.invoke(firstCol),
+			retyped.invoke(withDynamicPartitionRanges.invoke(exactRow), FType.COL));
+		for(FType dynamicSourceType : List.of(FType.ROW, FType.COL)) {
+			FType dynamicTargetType = dynamicSourceType == FType.ROW ? FType.COL : FType.ROW;
+			Object dynamicSource = constructor.newInstance(dynamicSourceType, List.of("worker1:8001"),
+				List.of(intervalConstructor.newInstance("worker1:8001", 0L, 10L)), false);
+			Object dynamicTarget = retyped.invoke(dynamicSource, dynamicTargetType);
+			Object exactTargetFirst = withExactPartitionRanges.invoke(dynamicTarget);
+			Object exactSourceSecond = withExactPartitionRanges.invoke(dynamicSource);
+			Assert.assertSame("Dynamic-first exact/retype permutations must converge on one exact witness",
+				exactTargetFirst, retyped.invoke(exactSourceSecond, dynamicTargetType));
+			Assert.assertSame("Dynamic-first links must retain the original exact sibling",
+				exactTargetFirst, withExactPartitionRanges.invoke(dynamicTarget));
+			Assert.assertSame("Dynamic-first reverse retyping must converge on the exact source sibling",
+				exactSourceSecond, retyped.invoke(exactTargetFirst, dynamicSourceType));
+			Assert.assertSame("Dynamic-first exact siblings must retain their original dynamic witnesses",
+				dynamicSource, withDynamicPartitionRanges.invoke(exactSourceSecond));
+		}
+		Object exactFull = constructor.newInstance(FType.FULL, List.of("worker1:8001"), List.of(), true);
+		Object residentRow = retypedForResidency.invoke(exactFull, FType.ROW);
+		Assert.assertSame("Repeated residency retyping must reuse its equal transformed witness", residentRow,
+			retypedForResidency.invoke(exactFull, FType.ROW));
+		Object fullRoundTrip = retypedForResidency.invoke(residentRow, FType.FULL);
+		Assert.assertEquals("FULL residency round-trip must preserve value semantics", exactFull, fullRoundTrip);
+		Assert.assertNotSame("Residency conversion is not generally invertible and must not install reverse aliases",
+			exactFull, fullRoundTrip);
+		Object fullFromExactRow = retypedForResidency.invoke(exactRow, FType.FULL);
+		Object rowAfterLossyRoundTrip = retypedForResidency.invoke(fullFromExactRow, FType.ROW);
+		Object expectedRowAfterLoss = constructor.newInstance(
+			FType.ROW, List.of("worker1:8001"), List.of(), false);
+		Assert.assertEquals("ROW -> FULL -> ROW must retain the documented lossy residency shape",
+			expectedRowAfterLoss, rowAfterLossyRoundTrip);
+		Assert.assertNotEquals("A lossy residency round-trip must not resurrect exact partition intervals",
+			exactRow, rowAfterLossyRoundTrip);
+		for(FType sourceType : List.of(FType.ROW, FType.COL, FType.FULL))
+			for(boolean exactRanges : List.of(false, true)) {
+				List<Object> sourceIntervals = sourceType == FType.FULL ? List.of()
+					: List.of(intervalConstructor.newInstance("worker1:8001", 2L, 9L));
+				Object source = constructor.newInstance(
+					sourceType, List.of("worker1:8001"), sourceIntervals, exactRanges);
+				for(FType target : FType.values()) {
+					Object expected = referenceResidency(constructor, fTypeField, endpointsField,
+						intervalsField, exactField, source, target);
+					Object actual = retypedForResidency.invoke(source, target);
+					Assert.assertEquals("one-step residency parity for " + sourceType + '/' + exactRanges
+						+ " -> " + target, expected, actual);
+					if(actual == null)
+						continue;
+					Assert.assertSame("directional residency memo must reuse only the exact same query",
+						actual, retypedForResidency.invoke(source, target));
+					for(FType secondTarget : FType.values())
+						Assert.assertEquals("two-step residency parity for " + sourceType + '/' + exactRanges
+							+ " -> " + target + " -> " + secondTarget,
+							referenceResidency(constructor, fTypeField, endpointsField,
+								intervalsField, exactField, actual, secondTarget),
+							retypedForResidency.invoke(actual, secondTarget));
+				}
+			}
 		for(FType unsupported : List.of(FType.BROADCAST, FType.PART, FType.OTHER)) {
 			Object witness = constructor.newInstance(unsupported, List.of("worker1:8001"), List.of(), true);
 			Assert.assertSame("Unsupported witness types must not be transformed", witness,
@@ -277,6 +353,32 @@ public class NativePlacementContinuityTest {
 		Field field = owner.getDeclaredField(name);
 		field.setAccessible(true);
 		return field;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Object referenceResidency(Constructor<?> constructor, Field fTypeField,
+		Field endpointsField, Field intervalsField, Field exactField, Object source, FType target)
+		throws ReflectiveOperationException {
+		FType sourceType = (FType) fTypeField.get(source);
+		List<String> endpoints = (List<String>) endpointsField.get(source);
+		List<Object> intervals = (List<Object>) intervalsField.get(source);
+		boolean exact = exactField.getBoolean(source);
+		if(target == null || target == FType.PART || target == FType.OTHER)
+			return null;
+		if(target == sourceType)
+			return source;
+		if(target == FType.BROADCAST || sourceType == FType.BROADCAST)
+			return null;
+		if((sourceType == FType.ROW && target == FType.COL)
+			|| (sourceType == FType.COL && target == FType.ROW))
+			return constructor.newInstance(target, endpoints, intervals, exact);
+		if(endpoints.size() != 1)
+			return null;
+		if(sourceType == FType.FULL && (target == FType.ROW || target == FType.COL))
+			return constructor.newInstance(target, endpoints, List.of(), false);
+		if(target == FType.FULL && (sourceType == FType.ROW || sourceType == FType.COL))
+			return constructor.newInstance(FType.FULL, endpoints, List.of(), true);
+		return null;
 	}
 
 	@Test
@@ -629,13 +731,22 @@ public class NativePlacementContinuityTest {
 		Assert.assertSame(metrics, accessibleField(NativePlacementContinuity.class, "metrics").get(fresh));
 
 		@SuppressWarnings("unchecked")
-		List<CandidateRuleFact> retainedFacts = (List<CandidateRuleFact>)accessibleField(
-			NativePlacementContinuity.class, "candidateFacts").get(fresh);
-		Assert.assertEquals(expectedFacts.size(), retainedFacts.size());
-		for(int index = 0; index < expectedFacts.size(); index++)
-			Assert.assertSame("fact order and authority must be retained",
-				expectedFacts.get(index), retainedFacts.get(index));
-		Assert.assertThrows(UnsupportedOperationException.class, () -> retainedFacts.add(expectedFacts.get(0)));
+		Map<CompiledHopKey,List<CandidateRuleFact>> retainedFacts =
+			(Map<CompiledHopKey,List<CandidateRuleFact>>)accessibleField(
+				NativePlacementContinuity.class, "candidateFactsByKey").get(fresh);
+		Map<CompiledHopKey,List<CandidateRuleFact>> expectedByOwner = new IdentityHashMap<>();
+		for(CandidateRuleFact fact : expectedFacts)
+			expectedByOwner.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+		Assert.assertEquals(expectedByOwner.size(), retainedFacts.size());
+		for(var entry : expectedByOwner.entrySet()) {
+			List<CandidateRuleFact> retained = retainedFacts.get(entry.getKey());
+			Assert.assertEquals(entry.getValue().size(), retained.size());
+			for(int index = 0; index < retained.size(); index++)
+				Assert.assertSame("owner-slice order and authority must be retained",
+					entry.getValue().get(index), retained.get(index));
+			Assert.assertThrows(UnsupportedOperationException.class,
+				() -> retained.add(entry.getValue().get(0)));
+		}
 		Assert.assertNotSame(accessibleField(NativePlacementContinuity.class,
 			"candidateFactsByKey").get(populated), accessibleField(NativePlacementContinuity.class,
 			"candidateFactsByKey").get(fresh));
@@ -888,10 +999,23 @@ public class NativePlacementContinuityTest {
 		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
 		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
 
-		NativePlacementContinuity nextRevision = firstRevision.nextRevision(
-			List.copyOf(full.candidates));
+		List<CandidateRuleFact> equalNewFacts = List.copyOf(full.candidates);
+		NativePlacementContinuity conservativeRevision = firstRevision.nextRevision(equalNewFacts);
+		NativePlacementContinuity nextRevision = firstRevision
+			.nextRevisionWithCompleteCandidateDelta(equalNewFacts, Set.of());
 		Assert.assertSame("unchanged semantic and seed authority reuse the published proof",
 			expected, nextRevision.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals("hinted and conservative revisions must publish identical ordered proofs",
+			conservativeRevision.proveCandidateAlternatives(reference, seed.anchor),
+			nextRevision.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertTrue("the complete unchanged-owner hint must bypass deep owner comparison",
+			nextRevision.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+		Assert.assertEquals(0, nextRevision.revisionComparisonSnapshot().ownersCompared());
+		Assert.assertTrue("the conservative reference must still compare cached owners",
+			conservativeRevision.revisionComparisonSnapshot().ownersCompared() > 0);
+		Assert.assertEquals("the complete hint must replace every conservative owner comparison",
+			conservativeRevision.revisionComparisonSnapshot().ownersCompared(),
+			nextRevision.revisionComparisonSnapshot().hintedOwnersBypassed());
 		Assert.assertEquals("the complete support relation is reused across the revision",
 			graphBuilds, metrics.snapshot().proofGraphsBuilt());
 		Assert.assertTrue(metrics.snapshot().memoHits() > 0);
@@ -921,10 +1045,49 @@ public class NativePlacementContinuityTest {
 			original.capability(), original.shapeProof(), original.profile(), List.of(changedEmission),
 			original.failureCode()));
 		long beforeChangedRevision = metrics.snapshot().proofGraphsBuilt();
-		NativePlacementContinuity changedRevision = firstRevision.nextRevision(changedFacts);
-		changedRevision.proveCandidateAlternatives(reference, seed.anchor);
+		NativePlacementContinuity changedRevision = firstRevision.nextRevisionWithCompleteCandidateDelta(
+			changedFacts, identitySet(source.key));
+		List<NativePlacementContinuity.NativeContinuityProof> changedActual =
+			changedRevision.proveCandidateAlternatives(reference, seed.anchor);
+		List<NativePlacementContinuity.NativeContinuityProof> changedConservative =
+			firstRevision.nextRevision(changedFacts)
+				.proveCandidateAlternatives(reference, seed.anchor);
+		List<NativePlacementContinuity.NativeContinuityProof> changedFresh =
+			new NativePlacementContinuity(full.nodes, full.origins, changedFacts,
+				full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertEquals(changedConservative, changedActual);
+		Assert.assertEquals(changedFresh, changedActual);
+		Assert.assertTrue(changedRevision.revisionComparisonSnapshot().ownersCompared() > 0);
+		Assert.assertTrue("unchanged owners in the affected proof footprint still bypass comparison",
+			changedRevision.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+		Assert.assertTrue(changedRevision.revisionComparisonSnapshot()
+			.continuityProjectionsCompared() > 0);
 		Assert.assertTrue("changed rows cannot reuse a stale support",
 			metrics.snapshot().proofGraphsBuilt() > beforeChangedRevision);
+	}
+
+	@Test
+	public void completeCandidateDeltaRejectsNullAndForeignOwnerIdentities() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		NativePlacementContinuity first = full.resolver();
+		List<CandidateRuleFact> facts = List.copyOf(full.candidates);
+
+		Assert.assertThrows(NullPointerException.class,
+			() -> first.nextRevisionWithCompleteCandidateDelta(facts, null));
+		Set<CompiledHopKey> nullOwner = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		nullOwner.add(null);
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> first.nextRevisionWithCompleteCandidateDelta(facts, nullOwner));
+		CompiledHopKey foreign = new CompiledHopKey(source.key.programFingerprint(),
+			source.key.functionNamespace(), source.key.callSitePath(), source.key.recompileContext(),
+			source.key.controlRegion(), source.key.emittedHopInstance(), source.key.canonicalSourceOrigin());
+		Assert.assertEquals(source.key, foreign);
+		Assert.assertNotSame(source.key, foreign);
+		Assert.assertThrows(IllegalArgumentException.class,
+			() -> first.nextRevisionWithCompleteCandidateDelta(facts, Set.of(foreign)));
 	}
 
 	@Test
@@ -1116,6 +1279,58 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void structuralRevisionReusesOnlyTheExactOrderedComponentReadSet() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		full.reaching.put(source.key, List.of(seed.key));
+		NativePlacementContinuity initial = full.resolver();
+
+		// The certificate includes owner iteration order. IdentityHashMap's
+		// size-specific copy can reorder colliding identities; change only payload.
+		Map<CompiledHopKey,Node> changedNodes = new java.util.LinkedHashMap<>();
+		full.nodes.forEach(changedNodes::put);
+		Node prior = changedNodes.get(source.key);
+		changedNodes.put(source.key, new Node(prior.key(), prior.kind(), prior.valueVersion(),
+			prior.emittedWork(), prior.legalAlternatives(), prior.exclusions(), List.of(seed.anchor)));
+		NativePlacementContinuity nodeRevision = initial.structuralRevision(changedNodes,
+			full.origins, full.candidates, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertTrue("node payload changes do not alter the SCC read set",
+			initial.sharesOccurrenceComponentsWith(nodeRevision));
+		Assert.assertEquals("SCC reuse must match a forced fresh resolver",
+			new NativePlacementContinuity(changedNodes, full.origins, full.candidates, full.edges,
+				full.reaching, Set.of(), full.privacy).proves(List.of(source.key), seed.anchor),
+			nodeRevision.proves(List.of(source.key), seed.anchor));
+
+		List<CompiledInputEdgeFact> reversedEdges = List.of(
+			new CompiledInputEdgeFact(source.key, seed.key, 0));
+		NativePlacementContinuity edgeRevision = initial.structuralRevision(full.nodes,
+			full.origins, full.candidates, reversedEdges, full.reaching, Set.of(), full.privacy);
+		Assert.assertFalse("a changed directed dependency must rebuild the SCC index",
+			initial.sharesOccurrenceComponentsWith(edgeRevision));
+
+		Map<CompiledHopKey,List<CompiledHopKey>> changedReaching = new IdentityHashMap<>();
+		changedReaching.put(source.key, List.of(source.key));
+		NativePlacementContinuity reachingRevision = initial.structuralRevision(full.nodes,
+			full.origins, full.candidates, full.edges, changedReaching, Set.of(), full.privacy);
+		Assert.assertFalse("a changed reaching dependency must rebuild the SCC index",
+			initial.sharesOccurrenceComponentsWith(reachingRevision));
+
+		CompiledHopKey equalButDistinct = new CompiledHopKey(seed.key.programFingerprint(),
+			seed.key.functionNamespace(), seed.key.callSitePath(), seed.key.recompileContext(),
+			seed.key.controlRegion(), seed.key.emittedHopInstance(), seed.key.canonicalSourceOrigin());
+		Map<CompiledHopKey,Node> replacedIdentityNodes = new IdentityHashMap<>(full.nodes);
+		Node seedNode = replacedIdentityNodes.remove(seed.key);
+		replacedIdentityNodes.put(equalButDistinct, new Node(equalButDistinct, seedNode.kind(),
+			seedNode.valueVersion(), seedNode.emittedWork(), seedNode.legalAlternatives(),
+			seedNode.exclusions(), seedNode.anchors()));
+		NativePlacementContinuity identityRevision = initial.structuralRevision(replacedIdentityNodes,
+			full.origins, full.candidates, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertFalse("value-equal owner identities are not the same SCC authority",
+			initial.sharesOccurrenceComponentsWith(identityRevision));
+	}
+
+	@Test
 	public void equalNewFactObjectsUseRevisionGeneratedApiAndMatchFreshResolver() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -1139,15 +1354,23 @@ public class NativePlacementContinuityTest {
 			List.of(copiedEmission), original.failureCode());
 		List<CandidateRuleFact> revisedFacts = new ArrayList<>(full.candidates);
 		revisedFacts.set(revisedFacts.indexOf(original), copied);
-		NativePlacementContinuity revised = first.nextRevision(revisedFacts);
+		NativePlacementContinuity conservative = first.nextRevision(revisedFacts);
+		NativePlacementContinuity revised = first
+			.nextRevisionWithCompleteCandidateDelta(revisedFacts, Set.of());
 		List<NativePlacementContinuity.NativeContinuityProof> actual = revised
+			.proveGeneratedCandidateAlternatives(copied, copiedEmission, proposed, seed.anchor);
+		List<NativePlacementContinuity.NativeContinuityProof> conservativeResult = conservative
 			.proveGeneratedCandidateAlternatives(copied, copiedEmission, proposed, seed.anchor);
 		NativePlacementContinuity fresh = new NativePlacementContinuity(full.nodes, full.origins,
 			revisedFacts, full.edges, full.reaching, Set.of(), full.privacy);
 		List<NativePlacementContinuity.NativeContinuityProof> expected = fresh
 			.proveGeneratedCandidateAlternatives(copied, copiedEmission, proposed, seed.anchor);
 		Assert.assertFalse("equal new current fact/emission identities remain valid", actual.isEmpty());
+		Assert.assertEquals("hinted revision must retain exact current generated-root authority",
+			conservativeResult, actual);
 		Assert.assertEquals("revision reuse must agree with a fresh exact-context resolver", expected, actual);
+		Assert.assertTrue(revised.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+		Assert.assertEquals(0, revised.revisionComparisonSnapshot().ownersCompared());
 	}
 
 	@Test
@@ -1357,9 +1580,20 @@ public class NativePlacementContinuityTest {
 		List<CandidateRuleFact> historyFacts = new ArrayList<>(full.candidates);
 		historyFacts.set(historyFacts.indexOf(original), changedFact);
 		Assert.assertNotEquals(original, changedFact);
-		NativePlacementContinuity historyRevision = first.nextRevision(historyFacts);
+		NativePlacementContinuity conservativeHistory = first.nextRevision(historyFacts);
+		NativePlacementContinuity historyRevision = first.nextRevisionWithCompleteCandidateDelta(
+			historyFacts, identitySet(source.key));
 		Assert.assertSame("proof history does not change the private support relation", expected,
 			historyRevision.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals(conservativeHistory.proveCandidateAlternatives(reference, seed.anchor),
+			historyRevision.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertEquals(new NativePlacementContinuity(full.nodes, full.origins,
+			historyFacts, full.edges, full.reaching, Set.of(), full.privacy)
+			.proveCandidateAlternatives(reference, seed.anchor),
+			historyRevision.proveCandidateAlternatives(reference, seed.anchor));
+		Assert.assertTrue(historyRevision.revisionComparisonSnapshot().ownersCompared() > 0);
+		Assert.assertTrue("proof-only row replacement must compare its execution projection",
+			historyRevision.revisionComparisonSnapshot().continuityProjectionsCompared() > 0);
 		Assert.assertEquals(built, metrics.snapshot().proofGraphsBuilt());
 
 		CandidateRealizationReference seedReference = new CandidateRealizationReference(
@@ -1377,9 +1611,15 @@ public class NativePlacementContinuityTest {
 		changedBindingFacts.set(historyFacts.indexOf(changedFact), new CandidateRuleFact(
 			original.key(), original.status(), original.capability(), original.shapeProof(),
 			original.profile(), List.of(reboundEmission), original.failureCode()));
-		NativePlacementContinuity changedBinding = historyRevision.nextRevision(
-			changedBindingFacts);
-		changedBinding.proveCandidateAlternatives(reference, seed.anchor);
+		NativePlacementContinuity changedBinding = historyRevision.nextRevisionWithCompleteCandidateDelta(
+			changedBindingFacts, identitySet(source.key));
+		List<NativePlacementContinuity.NativeContinuityProof> changedActual =
+			changedBinding.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertEquals(historyRevision.nextRevision(changedBindingFacts)
+			.proveCandidateAlternatives(reference, seed.anchor), changedActual);
+		Assert.assertEquals(new NativePlacementContinuity(full.nodes, full.origins,
+			changedBindingFacts, full.edges, full.reaching, Set.of(), full.privacy)
+			.proveCandidateAlternatives(reference, seed.anchor), changedActual);
 		Assert.assertTrue("an exact input binding changes the private relation",
 			metrics.snapshot().proofGraphsBuilt() > built);
 	}
@@ -1407,10 +1647,18 @@ public class NativePlacementContinuityTest {
 		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
 
 		full.candidateLogicalRead(dead);
-		NativePlacementContinuity invalidated = firstRevision.nextRevision(
-			List.copyOf(full.candidates));
+		List<CandidateRuleFact> changedFacts = List.copyOf(full.candidates);
+		NativePlacementContinuity invalidated = firstRevision.nextRevisionWithCompleteCandidateDelta(
+			changedFacts, identitySet(dead.key));
+		List<NativePlacementContinuity.NativeContinuityProof> actual =
+			invalidated.proveCandidateAlternatives(reference, ground.anchor);
 		Assert.assertEquals("dead side-branch invalidation cannot change the surviving proof",
-			expected, invalidated.proveCandidateAlternatives(reference, ground.anchor));
+			expected, actual);
+		Assert.assertEquals(firstRevision.nextRevision(changedFacts)
+			.proveCandidateAlternatives(reference, ground.anchor), actual);
+		Assert.assertEquals(new NativePlacementContinuity(full.nodes, full.origins,
+			changedFacts, full.edges, full.reaching, Set.of(), full.privacy)
+			.proveCandidateAlternatives(reference, ground.anchor), actual);
 		Assert.assertTrue("pruning must retain the dead occurrence in the memo footprint",
 			metrics.snapshot().proofGraphsBuilt() > graphBuilds);
 	}
@@ -1459,6 +1707,37 @@ public class NativePlacementContinuityTest {
 
 		Assert.assertNull("one grounded sibling cannot discharge an independent ungrounded SCC",
 			full.resolver().proveCandidate(full.reference(product, selected), seed.anchor));
+	}
+
+	@Test
+	public void unchangedOwnerHintPreservesAliasCycleRejectionAgainstBothReferences() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref cycleA = full.logicalRead("cycleA");
+		Ref cycleB = full.logicalRead("cycleB");
+		full.reaching.put(cycleA.key, List.of(cycleB.key));
+		full.reaching.put(cycleB.key, List.of(cycleA.key));
+		Ref product = full.binaryWithoutCandidate("product", OpOp2.PLUS, seed, cycleA);
+		List<CandidateInputState> selected = List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.FULL));
+		full.additionalCandidate(product, selected);
+		CandidateRealizationReference reference = full.reference(product, selected);
+		NativePlacementContinuity first = full.resolver();
+		Assert.assertTrue(first.proveCandidateAlternatives(reference, seed.anchor).isEmpty());
+
+		List<CandidateRuleFact> equalNewFacts = List.copyOf(full.candidates);
+		NativePlacementContinuity hinted = first
+			.nextRevisionWithCompleteCandidateDelta(equalNewFacts, Set.of());
+		NativePlacementContinuity conservative = first.nextRevision(equalNewFacts);
+		NativePlacementContinuity fresh = new NativePlacementContinuity(full.nodes, full.origins,
+			equalNewFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		List<NativePlacementContinuity.NativeContinuityProof> actual =
+			hinted.proveCandidateAlternatives(reference, seed.anchor);
+		Assert.assertEquals(conservative.proveCandidateAlternatives(reference, seed.anchor), actual);
+		Assert.assertEquals(fresh.proveCandidateAlternatives(reference, seed.anchor), actual);
+		Assert.assertTrue(actual.isEmpty());
+		Assert.assertTrue(hinted.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+		Assert.assertEquals(0, hinted.revisionComparisonSnapshot().ownersCompared());
 	}
 
 	@Test
@@ -1685,6 +1964,98 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void generatedSupportKeyDoesNotExpandPublishedRootTopology() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		full.privacy(root, Privacy.PRIVATE_AGGREGATE);
+		CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference declared = CandidateRealizationReference.of(base.key(),
+			emission.realizations().get(0));
+		CandidateRealizationReference proposed = new CandidateRealizationReference(base.key(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(emission.emissionState(),
+				"unpublished-generated-root"));
+		String property = "sysds.fedplanner.continuityTopology.maxEntries";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, "0");
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = full.resolver(metrics, 8, 128);
+			for(CandidateRealizationReference source : List.of(declared, proposed))
+				for(int query = 0; query < 3; query++)
+					supportKey(resolver, source, seed.anchor, true);
+			Assert.assertEquals("generated lookup must not expand a published topology it does not use",
+				0, metrics.snapshot().topologyExpansionBuilds());
+			supportKey(resolver, declared, seed.anchor, false);
+			Assert.assertEquals("declared validation keeps the original exact-row classification",
+				1, metrics.snapshot().topologyExpansionBuilds());
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
+	public void generatedSupportKeyRefinesProspectiveRootGroups() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		full.privacy(root, Privacy.PRIVATE_AGGREGATE);
+		CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference first = new CandidateRealizationReference(base.key(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(emission.emissionState(), "first"));
+		CandidateRealizationReference second = new CandidateRealizationReference(base.key(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(emission.emissionState(), "second"));
+		NativePlacementContinuity resolver = full.resolver();
+		Object firstKey = supportKey(resolver, first, seed.anchor, true);
+		Assert.assertNotEquals("skipping classification must refine, not coarsen, source identity",
+			firstKey, supportKey(resolver, second, seed.anchor, true));
+		CandidateRealizationReference equalClone = new CandidateRealizationReference(
+			new CandidateRuleKey(root.key, base.key().orderedInputs()), first.realization());
+		Object cloneKey = supportKey(resolver, equalClone, seed.anchor, true);
+		Assert.assertEquals(firstKey, cloneKey);
+		Assert.assertEquals(firstKey.hashCode(), cloneKey.hashCode());
+		Assert.assertNotEquals("validation and generation must never share a memo entry", firstKey,
+			supportKey(resolver, first, seed.anchor, false));
+		Assert.assertNotEquals("a different worker witness must remain distinct", firstKey,
+			supportKey(resolver, first, anchor(FType.FULL, "worker2:8001", 0, 50), true));
+		Fixture foreign = new Fixture(FType.FULL);
+		Ref foreignSeed = foreign.source("seed", seed.anchor);
+		Ref foreignRoot = foreign.unary("root", OpOp1.LOG, foreignSeed, false);
+		CandidateRuleFact foreignBase = foreign.fact(foreignRoot,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CandidateRealizationReference foreignSource = new CandidateRealizationReference(
+			foreignBase.key(), first.realization());
+		Assert.assertNotEquals("equal-looking foreign owner authority cannot collide", firstKey,
+			supportKey(resolver, foreignSource, seed.anchor, true));
+		Assert.assertEquals("a refined memo must preserve exact generated proofs", full.resolver(null, 0, 0)
+			.proveGeneratedCandidateAlternatives(base, emission, first, seed.anchor),
+			resolver.proveGeneratedCandidateAlternatives(base, emission, first, seed.anchor));
+		Assert.assertEquals(full.resolver(null, 0, 0)
+			.proveGeneratedCandidateAlternatives(base, emission, second, seed.anchor),
+			resolver.proveGeneratedCandidateAlternatives(base, emission, second, seed.anchor));
+	}
+
+	private static Object supportKey(NativePlacementContinuity resolver,
+		CandidateRealizationReference source, DurableAnchorKey anchor, boolean generated) throws Exception {
+		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		nativeWitness.setAccessible(true);
+		Object witness = nativeWitness.invoke(resolver, anchor);
+		Method queryKey = NativePlacementContinuity.class.getDeclaredMethod("candidateSupportQueryKey",
+			CandidateRealizationReference.class, witness.getClass(), boolean.class);
+		queryKey.setAccessible(true);
+		return queryKey.invoke(resolver, source, witness, generated);
+	}
+
+	@Test
 	public void generatedRootProofIsIndependentOfDeclaredSupportHistory() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref leftSeed = full.source("leftSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -1705,11 +2076,18 @@ public class NativePlacementContinuityTest {
 			absentEmission.emissionState(), "generated-root", List.of(), List.of());
 		CandidateRealizationReference proposed = CandidateRealizationReference.of(
 			absentBase.key(), proposedRealization);
-		NativePlacementContinuity absentResolver = full.resolver();
+		for(Ref protectedRef : List.of(leftSeed, rightSeed, left, right, root))
+			full.privacy(protectedRef, Privacy.PRIVATE_AGGREGATE);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity absentResolver = full.resolver(metrics, 128, 1024);
 		List<NativePlacementContinuity.NativeContinuityProof> absent = absentResolver
 			.proveGeneratedCandidateAlternatives(absentBase, absentEmission, proposed, leftSeed.anchor);
 		Assert.assertFalse(absent.isEmpty());
 		Assert.assertTrue(absent.stream().allMatch(proof -> proof.immediateBindings().size() == 2));
+
+		long built = metrics.snapshot().proofGraphsBuilt();
+		Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
+			absentBase, absentEmission, proposed, leftSeed.anchor), absent);
 
 		CandidateRuleFact stagingBase = replaceRootRealization(
 			full, absentBase, absentEmission, proposedRealization);
@@ -1717,6 +2095,13 @@ public class NativePlacementContinuityTest {
 		CandidateEmissionFact stagingEmission = stagingBase.allowedEmissionFacts().get(0);
 		List<NativePlacementContinuity.NativeContinuityProof> staging = stagingResolver
 			.proveGeneratedCandidateAlternatives(stagingBase, stagingEmission, proposed, leftSeed.anchor);
+
+		Assert.assertEquals("root publication must reuse private generated support templates",
+			built, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertTrue("old base identity remains unauthorized after support reuse", stagingResolver
+			.proveGeneratedCandidateAlternatives(absentBase, absentEmission, proposed, leftSeed.anchor).isEmpty());
+		Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
+			stagingBase, stagingEmission, proposed, leftSeed.anchor), staging);
 
 		CandidateRealizationSupportClause partialClause = new CandidateRealizationSupportClause(
 			List.of(), List.of(CandidateRealizationInputBinding.direct(0, leftReference)));
@@ -1729,8 +2114,101 @@ public class NativePlacementContinuityTest {
 			.proveGeneratedCandidateAlternatives(partialBase,
 				partialBase.allowedEmissionFacts().get(0), proposed, leftSeed.anchor);
 
+		Assert.assertEquals("partial old root support must not rebuild generated proof graphs",
+			built, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
+			partialBase, partialBase.allowedEmissionFacts().get(0), proposed, leftSeed.anchor), partialProofs);
+
 		Assert.assertEquals("staging history must not change the generator-root relation", absent, staging);
 		Assert.assertEquals("an old exact support subset must not constrain generation", absent, partialProofs);
+	}
+
+	@Test
+	public void generatedRootHistoryKeepsCyclicAndZeroBudgetColdPaths() throws Exception {
+		for(boolean cyclic : List.of(false, true))
+			for(int budget : List.of(0, 128)) {
+				Fixture full = new Fixture(FType.FULL);
+				Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+				Ref input = cyclic ? full.logicalRead("loop") : seed;
+				Ref root = full.unary("root", OpOp1.LOG, input, false);
+				if(cyclic)
+					full.reaching.put(input.key, List.of(seed.key, root.key));
+				for(Ref protectedRef : List.of(seed, input, root))
+					full.privacy(protectedRef, Privacy.PRIVATE_AGGREGATE);
+				CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.FULL)));
+				CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+				CandidateEmissionRealization publication = CandidateEmissionRealization.nativeLineage(
+					emission.emissionState(), "publication", List.of(), List.of());
+				CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(), publication);
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity first = full.resolver(metrics, budget, budget * 16L);
+				PlacementDependencyComponents components = (PlacementDependencyComponents)
+					accessibleField(NativePlacementContinuity.class, "occurrenceComponents").get(first);
+				Assert.assertEquals(cyclic, components.componentOf(root.key).cyclic());
+				first.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor);
+				long built = metrics.snapshot().proofGraphsBuilt();
+				CandidateRuleFact published = replaceRootRealization(full, base, emission, publication);
+				NativePlacementContinuity next = first.nextRevisionWithCompleteCandidateDelta(
+					List.copyOf(full.candidates), identitySet(root.key));
+				var actual = next.proveGeneratedCandidateAlternatives(published,
+					published.allowedEmissionFacts().get(0), proposed, seed.anchor);
+				Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
+					published, published.allowedEmissionFacts().get(0), proposed, seed.anchor), actual);
+				if(cyclic || budget == 0)
+					Assert.assertTrue("cyclic roots and disabled caches must keep the cold path",
+						metrics.snapshot().proofGraphsBuilt() > built);
+				else
+					Assert.assertEquals(built, metrics.snapshot().proofGraphsBuilt());
+			}
+	}
+
+	@Test
+	public void generatedRootPrimitiveInputChangeDoesNotReusePublishedHistorySupport() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		full.privacy(root, Privacy.PRIVATE_AGGREGATE);
+		CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization publication = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), "primitive-change", List.of(), List.of());
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(), publication);
+		NativePlacementContinuity first = full.resolver();
+		Assert.assertFalse(first.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor).isEmpty());
+		CandidateRuleKey changedKey = new CandidateRuleKey(root.key, List.of(CandidateInputState.absentLocal()));
+		CandidateRuleFact changed = new CandidateRuleFact(changedKey, base.status(), base.capability(),
+			base.shapeProof(), base.profile(), base.allowedEmissionFacts(), base.failureCode());
+		full.candidates.set(full.candidates.indexOf(base), changed);
+		NativePlacementContinuity next = first.nextRevision(List.copyOf(full.candidates));
+		Assert.assertTrue("changing the primitive input inventory must invalidate generated supports",
+			((Map<?,?>)accessibleField(NativePlacementContinuity.class, "completedSupportMemo").get(next)).isEmpty());
+		CandidateRealizationReference changedProposal = CandidateRealizationReference.of(changedKey, publication);
+		Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
+			changed, emission, changedProposal, seed.anchor), next.proveGeneratedCandidateAlternatives(
+			changed, emission, changedProposal, seed.anchor));
+	}
+
+	@Test
+	public void generatedMissingNodeNegativeSupportStillMigratesWithoutSccLookup() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("missing", OpOp1.LOG, seed, false);
+		CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(emission.emissionState(), "missing", List.of(), List.of()));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		full.privacy(root, Privacy.PRIVATE_AGGREGATE);
+		full.nodes.remove(root.key);
+		full.origins.remove(root.key);
+		full.edges.clear();
+		NativePlacementContinuity first = full.resolver();
+		Assert.assertTrue(first.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor).isEmpty());
+		NativePlacementContinuity next = first.nextRevision(List.copyOf(full.candidates));
+		Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
+			base, emission, proposed, seed.anchor), next.proveGeneratedCandidateAlternatives(
+			base, emission, proposed, seed.anchor));
 	}
 
 	@Test
@@ -1880,16 +2358,32 @@ public class NativePlacementContinuityTest {
 		Assert.assertFalse(expected.isEmpty());
 
 		full.candidates.remove(producerFact);
-		NativePlacementContinuity withdrawn = initial.nextRevision(List.copyOf(full.candidates));
+		List<CandidateRuleFact> withdrawnFacts = List.copyOf(full.candidates);
+		NativePlacementContinuity withdrawn = initial.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, identitySet(producer.key));
+		List<NativePlacementContinuity.NativeContinuityProof> withdrawnActual = withdrawn
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor);
 		Assert.assertTrue("old root support cannot survive withdrawal of its exact source row",
-			withdrawn.proveGeneratedCandidateAlternatives(
-				base, emission, proposed, seed.anchor).isEmpty());
+			withdrawnActual.isEmpty());
+		Assert.assertEquals(initial.nextRevision(withdrawnFacts)
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor), withdrawnActual);
+		Assert.assertEquals(new NativePlacementContinuity(full.nodes, full.origins,
+			withdrawnFacts, full.edges, full.reaching, Set.of(), full.privacy)
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor), withdrawnActual);
 
 		full.candidates.add(producerFact);
-		NativePlacementContinuity restored = withdrawn.nextRevision(List.copyOf(full.candidates));
+		List<CandidateRuleFact> restoredFacts = List.copyOf(full.candidates);
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			restoredFacts, identitySet(producer.key));
+		List<NativePlacementContinuity.NativeContinuityProof> restoredActual = restored
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor);
 		Assert.assertEquals("restoring the exact source row restores the generated proof relation",
-			expected, restored.proveGeneratedCandidateAlternatives(
-				base, emission, proposed, seed.anchor));
+			expected, restoredActual);
+		Assert.assertEquals(withdrawn.nextRevision(restoredFacts)
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor), restoredActual);
+		Assert.assertEquals(new NativePlacementContinuity(full.nodes, full.origins,
+			restoredFacts, full.edges, full.reaching, Set.of(), full.privacy)
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor), restoredActual);
 	}
 
 	private static CandidateRuleFact replaceRootRealization(Fixture fixture,

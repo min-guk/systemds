@@ -1,0 +1,182 @@
+{
+  "candidate": "R33",
+  "date": "2026-09-30",
+  "status": "pinned_by_user_request_not_full_performance_qualification",
+  "jar_sha256": "2faab28099fb383d6240f9868a0c870cea14c75defd484300022fffe76b6fa40",
+  "source_manifest_sha256": "b99465f23c63c6fa16a712adc18d570cb4c490f903990f00580740b9bbc7a5cf",
+  "test_manifest_sha256": "3d1895ea1f9312d031f7e953b858347d5b30653b4373f25dc7cc9065f400d5ff",
+  "compile_only": true,
+  "watchdog_seconds": 60,
+  "goal_seconds": 20,
+  "goal_achieved": false,
+  "canonical_cells": 896,
+  "full_matrix_completed": false,
+  "three_fresh_paired_controls_completed": false,
+  "ordinary_docker_results": [
+    {
+      "root": "/grid/3/cofee-lm-sweep-mchoi-20260914/planning-30s-recovery-20260930/r33-glm-w1-global-candidate1",
+      "attempt": "01790765727757208770-c2c742e4",
+      "cell": "ml|glm|lan|w1|DP-global",
+      "status": "passed",
+      "compile_seconds": 45.86505433,
+      "common_seconds": 23.913064033,
+      "model_seconds": 3.681282067,
+      "cost_seconds": 4.869555649,
+      "optimizer_seconds": 9.953944164,
+      "adapter_seconds": 19.23734304,
+      "plan": "39456011a818ebeee2d754b3c9c1e32f58b9823e9b3633fe3a2da1628d8098f1",
+      "cleanup_resolved": true,
+      "runtime_execution": false,
+      "jar": "2faab28099fb383d6240f9868a0c870cea14c75defd484300022fffe76b6fa40"
+    },
+    {
+      "root": "/grid/3/cofee-lm-sweep-mchoi-20260914/planning-30s-recovery-20260930/r33-glm-w3-global-candidate1",
+      "attempt": "01790765862954176129-c2513d62",
+      "cell": "ml|glm|lan|w3|DP-global",
+      "status": "passed",
+      "compile_seconds": 30.732476831,
+      "common_seconds": 16.474496805,
+      "model_seconds": 2.047858939,
+      "cost_seconds": 2.683429676,
+      "optimizer_seconds": 5.8433938,
+      "adapter_seconds": 11.187772025,
+      "plan": "a8f7863fb5017d7324dc421bd3f612c08894417d1c0a8570945f39f5f1bdfc76",
+      "cleanup_resolved": true,
+      "runtime_execution": false,
+      "jar": "2faab28099fb383d6240f9868a0c870cea14c75defd484300022fffe76b6fa40"
+    }
+  ],
+  "build_validation": {
+    "maven_classes": 64,
+    "tests": 581,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "jar_sha256": "2faab28099fb383d6240f9868a0c870cea14c75defd484300022fffe76b6fa40",
+    "actual_jar_result": [
+      "OK (533 tests)",
+      ""
+    ]
+  },
+  "maven_test_classes": [
+    "ExactPhysicalDyadicCertificateTest",
+    "ExactDyadicCostsTest",
+    "ExactDyadicSolverTest",
+    "ExactCertifiedSharedSourceOptimizerTest",
+    "ExactPhysicalSharedSourceEncodingTest",
+    "ExactSharedSourceDefaultRoutingTest",
+    "ExactPhysicalReducedSolverTest",
+    "ExactCategoricalSolverArithmeticParityTest",
+    "ExactFactorFreezeOrderTest",
+    "ExactFactorValueClassesTest",
+    "ExactSparseMessageParityTest",
+    "ExactPhysicalCostFingerprintStreamingTest",
+    "ExactActivationClassFactorDecompositionTest",
+    "ExactActivationIndependentOracleTest",
+    "ExactNativeLocalSourceProjectionTest",
+    "ExactInputAuthorityOptimizationTest",
+    "ExactPhysicalDyadicCampaignScaleTest",
+    "ExactDyadicZeroElisionTest",
+    "LogicalBoundaryRealizationsTest",
+    "DirectedDirectClosureDirtyConeTest",
+    "LogicalBoundaryComponentClosureTest",
+    "RelocationProofReuseTest",
+    "NativePlacementContinuityTest",
+    "NeutralPlacementFixedPointCompositionTest",
+    "MaterializationProofInventoryTest",
+    "PhysicalGenerationEnvelopeTest",
+    "RelocationSelectionsPhysicalAnchorTest",
+    "LoopSeedProofSnapshotTest",
+    "ExactDyadicOrderedResidualTest",
+    "ExactDyadicOrderedResidualBoundaryTest",
+    "CanonicalTextScopedCacheTest",
+    "CanonicalTextChunkComparisonTest",
+    "PlacementAnalysisNormalizedTextTest",
+    "CandidateRealizationCanonicalizationTest",
+    "DirectSupportUnionScheduleTest",
+    "SharedCanonicalClauseOwnershipTest",
+    "ExactSharedSourceOrdinalReuseTest",
+    "ExactSharedSourceOrdinalLifecycleTest",
+    "SharedCanonicalListHashTest",
+    "PlacementRealizationAuthorityTest",
+    "SharedRegionalPreparationTest",
+    "SharedRegionalCompactionParityTest",
+    "IncrementalBoundaryMessageTest",
+    "ExactFiniteRowIndexTest",
+    "ExactInputAuthorityObservationProjectionTest",
+    "ExactEmissionBindingIdentityTest",
+    "PublicationSupportClosureTest",
+    "CandidateIncomingSupportCompletenessTest",
+    "PlacementEmissionTransactionRedTest",
+    "PlacementEmissionDerivedAuthorityRedTest",
+    "PlacementEmissionSameHopOccurrenceRedTest",
+    "WorkerPoolRealizationTraversalTest",
+    "PlacementSupportDeletionWorklistTest",
+    "ExactHardFactorObservationDecompositionTest",
+    "DerivedFoutNormalizationTest",
+    "ExactDyadicSeparatorMajorParityTest",
+    "NormalizedTextAppendSessionTest",
+    "ExactFiniteSupportJoinTest",
+    "ExactInputAuthoritySourceReceiptProjectionTest",
+    "CanonicalTextDagCacheTest",
+    "RequiredInputSupportMemoTest",
+    "RelocationProductMemoTest",
+    "DerivedFoutRelocationCanonicalizationTest",
+    "ExactSharedSourceLinearPreparationTest"
+  ],
+  "known_preexisting_full_suite_failures": [
+    "ExactPhysicalModelCertificateTest.sevenWorkloads (canonical factor cell cap; reproduced on older baseline)",
+    "ExactPhysicalForcedStateAuditTest.forcedPublishedState (fixture assertion; reproduced on older baseline)"
+  ],
+  "excluded_experiments": [
+    "R34 binding product context: design-only",
+    "R35 buffered UTF-8 fingerprint writer: tested in isolation, not Docker-measured; removed from pinned source"
+  ],
+  "evidence_root": "/grid/3/cofee-lm-sweep-mchoi-20260914/planning-30s-recovery-20260930",
+  "installation": {
+    "selected": "R33",
+    "source": "/grid/3/cofee-lm-sweep-mchoi-20260914/planning-30s-recovery-20260930/candidate-r33-linear-preparation-source",
+    "previous_target": "/grid/3/cofee-lm-sweep-mchoi-20260914/planning-30s-recovery-20260930/preserved-main-target-before-r18",
+    "installed_target": "/grid/3/cofee-lm-sweep-mchoi-20260914/planning-30s-recovery-20260930/pinned-main-target-r33-20260930",
+    "jar_sha256": "2faab28099fb383d6240f9868a0c870cea14c75defd484300022fffe76b6fa40",
+    "main_and_test_source_exactly_match": true,
+    "r35_preserved_not_committed": true,
+    "native_goal": "paused by user;20s notachieved",
+    "test_formatting_exception": {
+      "changed_test": "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCampaignScaleTest.java",
+      "changed_lines": [
+        93,
+        99,
+        106
+      ],
+      "change": "remove whitespace-only blank lines inside Java text block",
+      "independently_compiled_class_sha256_equal": true,
+      "class_files": {
+        "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCampaignScaleTest.class": "dee69fa494bab13481ca5bf3b774ab07557abd23658d88f131ff4865da0667ac"
+      }
+    }
+  },
+  "post_pin_validation": {
+    "actual_jar_tests": 533,
+    "actual_jar_failures": 0,
+    "evaluator_unit_tests": 10,
+    "python_syntax": "pass",
+    "shell_syntax": "pass",
+    "git_diff_check": "pass",
+    "performance_evaluator": "FAIL:20s exceeded;missing895 on W1 campaign root",
+    "whitespace_cleanup": {
+      "changed_test": "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCampaignScaleTest.java",
+      "changed_lines": [
+        93,
+        99,
+        106
+      ],
+      "change": "remove whitespace-only blank lines inside Java text block",
+      "independently_compiled_class_sha256_equal": true,
+      "class_files": {
+        "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCampaignScaleTest.class": "dee69fa494bab13481ca5bf3b774ab07557abd23658d88f131ff4865da0667ac"
+      }
+    }
+  },
+  "pinned_test_manifest_sha256": "9cdbf53a89296b18525ba3f596977bdee6375d492f4f05695c3e841fbfc21f1f"
+}

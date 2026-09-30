@@ -125,6 +125,28 @@ public class ExactCategoricalSolverArithmeticParityTest {
 	}
 
 	@Test
+	public void zeroContributionsPreserveRawResiduesAndSecondaryErrors() throws Exception {
+		int[] domains = {1};
+		Random random = new Random(0x20C057L);
+		for(int trial = 0; trial < 500; trial++) {
+			List<LegacyFactor> factors = new ArrayList<>();
+			for(int index = 0; index < 12; index++) {
+				double high = randomFinite(random);
+				double low = index % 3 == 0 ? 0d : randomFinite(random) * 0x1.0p-48;
+				factors.add(factor(domains, high, low, random.nextInt(10)));
+				// Zero factors before/after non-normalized input residues must retain
+				// the legacy normalization, signed-zero and additive tie behavior.
+				for(double zeroHigh : new double[] {0d, -0d})
+					for(double zeroLow : new double[] {0d, -0d})
+						factors.add(factor(domains, zeroHigh, zeroLow, random.nextInt(10)));
+			}
+			assertReflectionParity(factors, new int[] {0});
+		}
+		assertPreciseSumError(List.of(factor(domains, 9d, 0d, Long.MAX_VALUE),
+			factor(domains, -0d, -0d, 1L)), "EXACT_VE_TIE_COST_OVERFLOW");
+	}
+
+	@Test
 	public void solveInvokesTieCallbackOnceForEveryEliminationCellValue() {
 		var a = new ExactCategoricalSolver.Variable("callback-a", 2);
 		var b = new ExactCategoricalSolver.Variable("callback-b", 3);

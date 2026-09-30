@@ -290,9 +290,49 @@ public final class NeutralPlacementGraph {
 		Objects.requireNonNull(action, "action");
 		Objects.requireNonNull(assignment, "assignment");
 		Objects.requireNonNull(selectedCandidates, "selectedCandidates");
+		List<CandidateSelectionReceipt> orderedCandidates = orderedCandidates(selectedCandidates);
+		return isRelocationActive(action, new RelocationEvaluationView() {
+			@Override
+			public PlacementState state(CompiledHopKey decision) {
+				return assignment.get(decision);
+			}
+
+			@Override
+			public int candidateSlotCount() {
+				return orderedCandidates.size();
+			}
+
+			@Override
+			public CandidateSelectionReceipt candidateAt(int slot) {
+				return orderedCandidates.get(slot);
+			}
+		});
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateSelectionReceipt> orderedCandidates(
+		Collection<CandidateSelectionReceipt> selectedCandidates) {
+		return selectedCandidates instanceof List<?>
+			? (List<CandidateSelectionReceipt>) selectedCandidates : List.copyOf(selectedCandidates);
+	}
+
+	/**
+	 * Allocation-free relocation lookup used by prepared exact factors. Candidate slots
+	 * retain canonical iteration order and may be null when a selected alternative has
+	 * no candidate receipt.
+	 */
+	public interface RelocationEvaluationView {
+		PlacementState state(CompiledHopKey decision);
+		int candidateSlotCount();
+		CandidateSelectionReceipt candidateAt(int slot);
+	}
+
+	public boolean isRelocationActive(RelocationAction action, RelocationEvaluationView view) {
+		Objects.requireNonNull(action, "action");
+		Objects.requireNonNull(view, "view");
 		boolean requiredByConsumer = false;
 		for(ObligationKey obligation : action.obligations())
-			if(obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))) {
+			if(obligation.requiredPlacement().equals(view.state(obligation.consumer()))) {
 				requiredByConsumer = true;
 				break;
 			}
@@ -300,22 +340,28 @@ public final class NeutralPlacementGraph {
 			return false;
 		// A realization explicitly built from this relocation cannot subsequently
 		// treat its source's coarse FType as evidence that the movement vanished.
-		for(CandidateSelectionReceipt selected : selectedCandidates)
+		for(int selectedIndex = 0; selectedIndex < view.candidateSlotCount(); selectedIndex++) {
+			CandidateSelectionReceipt selected = view.candidateAt(selectedIndex);
+			if(selected == null)
+				continue;
 			for(var binding : selected.supportClause().inputBindings())
 				if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION
 					&& binding.relocationAction().equals(action.key())
-					&& action.obligations().stream().anyMatch(obligation ->
-						obligation.consumer() == selected.rule().parentOccurrence()
-							&& obligation.inputPosition() == binding.inputPosition()
-							&& obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))))
+					&& relocationBindingRequired(action, selected, binding.inputPosition(), view))
 					return true;
+		}
 		for(Node source : nodesByValueVersion.getOrDefault(
 			action.key().sourceValueVersion(), List.of())) {
-			PlacementState sourceState = assignment.get(source.key());
+			PlacementState sourceState = view.state(source.key());
 			if(sourceState != null && action.directSourcePlacements().contains(sourceState)) {
-				CandidateSelectionReceipt selectedSource = selectedCandidates.stream()
-					.filter(selected -> selected.rule().parentOccurrence() == source.key())
-					.findFirst().orElse(null);
+				CandidateSelectionReceipt selectedSource = null;
+				for(int selectedIndex = 0; selectedIndex < view.candidateSlotCount(); selectedIndex++) {
+					CandidateSelectionReceipt selected = view.candidateAt(selectedIndex);
+					if(selected != null && selected.rule().parentOccurrence() == source.key()) {
+						selectedSource = selected;
+						break;
+					}
+				}
 				// Coarse residency was sufficient before one state could carry several
 				// maps. An exact selected map must agree with the action's target pool.
 				DurableAnchorKey provenWorkerPool = selectedSource == null
@@ -326,17 +372,22 @@ public final class NeutralPlacementGraph {
 					return false;
 				if(selectedSource != null) {
 					DurableAnchorKey residency = selectedSource.nativeWorkerPoolResidencyWitness();
-					boolean selectedDirectConsumer = selectedCandidates.stream().anyMatch(selected ->
-						action.obligations().stream().anyMatch(obligation ->
-							obligation.consumer() == selected.rule().parentOccurrence()
-								&& obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))
-								&& selected.supportClause().inputBindings().stream().anyMatch(binding ->
-									binding.inputPosition() == obligation.inputPosition()
-										&& binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT
-										&& CandidateSelections.matchesRealization(binding.source(), selectedSource))));
+					boolean selectedDirectConsumer = false;
+					for(int selectedIndex = 0; selectedIndex < view.candidateSlotCount()
+						&& !selectedDirectConsumer; selectedIndex++) {
+						CandidateSelectionReceipt selected = view.candidateAt(selectedIndex);
+						if(selected == null)
+							continue;
+						for(ObligationKey obligation : action.obligations())
+							if(obligation.consumer() == selected.rule().parentOccurrence()
+								&& obligation.requiredPlacement().equals(view.state(obligation.consumer()))
+								&& hasDirectBinding(selected, obligation.inputPosition(), selectedSource)) {
+								selectedDirectConsumer = true;
+								break;
+							}
+					}
 					boolean sameDirectResidency = residency != null
-						&& (PlacementIdentity.samePhysicalWorkerEndpoints(
-							residency, action.key().durableAnchor())
+						&& (sameMaterializationWorkerEndpoints(residency, action)
 							|| action.key().materializationFType() == FType.COL
 								&& residency.fType() == FType.COL
 								&& action.key().durableAnchor().fType() == FType.ROW
@@ -348,10 +399,13 @@ public final class NeutralPlacementGraph {
 			}
 			if(sourceState == null)
 				continue;
-			for(CandidateSelectionReceipt selected : selectedCandidates) {
+			for(int selectedIndex = 0; selectedIndex < view.candidateSlotCount(); selectedIndex++) {
+				CandidateSelectionReceipt selected = view.candidateAt(selectedIndex);
+				if(selected == null)
+					continue;
 				DerivedFoutMaterializationActionKey derived = selected.emission().derivedFoutAction();
 				if(derived == null || derived.producerValueVersion() != source.valueVersion()
-					|| derived.producer() != source.key() || assignment.get(source.key()) != derived.targetPlacement()
+					|| derived.producer() != source.key() || view.state(source.key()) != derived.targetPlacement()
 					|| derived.materializationFType() != action.key().materializationFType()
 					|| !PlacementIdentity.samePhysicalWorkerPool(
 						derived.durableAnchor(), action.key().durableAnchor()))
@@ -362,6 +416,32 @@ public final class NeutralPlacementGraph {
 			}
 		}
 		return true;
+	}
+
+	private boolean sameMaterializationWorkerEndpoints(DurableAnchorKey residency,
+		RelocationAction action) {
+		return PlacementIdentity.sameWorkerEndpointsForMaterialization(residency,
+			action.key().durableAnchor(), action.key().materializationFType());
+	}
+
+	private static boolean relocationBindingRequired(RelocationAction action,
+		CandidateSelectionReceipt selected, int inputPosition, RelocationEvaluationView view) {
+		for(ObligationKey obligation : action.obligations())
+			if(obligation.consumer() == selected.rule().parentOccurrence()
+				&& obligation.inputPosition() == inputPosition
+				&& obligation.requiredPlacement().equals(view.state(obligation.consumer())))
+				return true;
+		return false;
+	}
+
+	private static boolean hasDirectBinding(CandidateSelectionReceipt selected, int inputPosition,
+		CandidateSelectionReceipt selectedSource) {
+		for(var binding : selected.supportClause().inputBindings())
+			if(binding.inputPosition() == inputPosition
+				&& binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT
+				&& CandidateSelections.matchesRealization(binding.source(), selectedSource))
+				return true;
+		return false;
 	}
 
 	private static Map<ValueVersionKey,List<Node>> indexNodesByValueVersion(List<Node> nodes) {

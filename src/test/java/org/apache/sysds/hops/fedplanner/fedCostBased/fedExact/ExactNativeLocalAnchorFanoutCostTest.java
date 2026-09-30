@@ -30,6 +30,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -45,9 +46,37 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 		"f949de6c7f44f5bc770ab2e3ec0966f3f94a0c6d2be74e7e898c92b02444909d";
 
 	@Test
+	public void buildScopedWorkerCountMemoPreservesLegacyInvalidAddressCardinality() {
+		DurableAnchorKey mixed = new DurableAnchorKey("mixed-invalid", FType.ROW, List.of(
+			new AnchorPartition("worker:not-a-port", List.of(0L, 0L), List.of(2L, 2L)),
+			new AnchorPartition("other:not-a-port", List.of(2L, 0L), List.of(4L, 2L)),
+			new AnchorPartition("worker:1234/path-a", List.of(4L, 0L), List.of(6L, 2L)),
+			new AnchorPartition("worker:1234/path-b", List.of(6L, 0L), List.of(8L, 2L))));
+		DurableAnchorKey equalButDistinct = new DurableAnchorKey(
+			mixed.placementId(), mixed.fType(), mixed.partitions());
+		var probe = ExactPhysicalCostModel.physicalWorkerCountCacheProbeForTest(
+			List.of(mixed, mixed, equalButDistinct));
+		int legacy = legacyPhysicalWorkerCount(mixed);
+		Assert.assertEquals("invalid canonical addresses must retain the old null set member", 2, legacy);
+		Assert.assertEquals(List.of(legacy, legacy, legacy), probe.counts());
+		Assert.assertEquals("same anchor identity must compute once; equal foreign identity remains separate",
+			2, probe.computations());
+	}
+
+	private static int legacyPhysicalWorkerCount(DurableAnchorKey anchor) {
+		var workers = new java.util.LinkedHashSet<String>();
+		for(var partition : anchor.partitions())
+			workers.add(FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()));
+		return workers.size();
+	}
+
+	@Test
 	public void protectedNativeLocalCostSurfaceIsBitAndStructureStable() throws Exception {
 		PlacementAnalysis analysis = analysis(false);
-		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		// Retain the historical full-product golden unchanged. The production domain
+		// now omits independently-proven privacy-illegal relocation rows; its surviving
+		// costs are compared to this reference in the next test, not re-blessed by SHA.
+		ExactPhysicalModel model = ExactPhysicalModel.buildWithLegacyInputAuthorityProductsForTest(analysis);
 		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		long nativeLocalAlternatives = model.domains().stream()
 			.flatMap(domain -> domain.alternatives().stream())
@@ -69,6 +98,72 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 			() -> analysis.candidateRuleFacts().requireExact(omittedAggregate.consumer().occurrence(), localTuple));
 		Assert.assertEquals(PlacementAnalysis.CandidateLookupFailure.PRIVACY_EXCLUDED, lookup.failure());
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_FINGERPRINT, surface.contributionFingerprint());
+	}
+
+	@Test
+	public void privacySurvivorCostsMatchEveryCorrespondingHistoricalProductCell() throws Exception {
+		PlacementAnalysis analysis = analysis(false);
+		var legacy = ExactPhysicalModel.buildWithLegacyInputAuthorityProductsForTest(analysis);
+		var current = ExactPhysicalModel.build(analysis);
+		var oldSurface = ExactPhysicalCostModel.physicalCostSurface(analysis, legacy);
+		var newSurface = ExactPhysicalCostModel.physicalCostSurface(analysis, current);
+		Map<ExactCategoricalSolver.Variable,int[]> originalOrdinals = new IdentityHashMap<>();
+		int removed = 0;
+		for(int d = 0; d < current.domains().size(); d++) {
+			var oldDomain = legacy.domains().get(d);
+			var newDomain = current.domains().get(d);
+			Assert.assertSame(oldDomain.node(), newDomain.node());
+			int[] map = new int[newDomain.alternatives().size()];
+			for(int value = 0; value < map.length; value++) {
+				String signature = newDomain.alternatives().get(value).signature();
+				int matched = -1;
+				for(int old = 0; old < oldDomain.alternatives().size(); old++)
+					if(oldDomain.alternatives().get(old).signature().equals(signature)) {
+						Assert.assertEquals("ambiguous historical authority", -1, matched);
+						matched = old;
+					}
+				Assert.assertTrue("missing historical authority", matched >= 0);
+				map[value] = matched;
+			}
+			removed += oldDomain.alternatives().size() - map.length;
+			originalOrdinals.put(newDomain.variable(), map);
+		}
+		Assert.assertTrue("fixture must exercise privacy product removal", removed > 0);
+		// A transfer demanded only by deleted illegal rows may disappear. It must be
+		// identically +0 on every surviving Cartesian cell; all other contributions
+		// retain their original order, scope, and every raw numeric bit.
+		Assert.assertEquals(mappedCostTables(oldSurface, current, originalOrdinals),
+			mappedCostTables(newSurface, current, null));
+	}
+
+	private record CostTable(List<String> scope, List<Long> rawBits) { }
+
+	private static List<CostTable> mappedCostTables(ExactPhysicalCostModel.PhysicalCostSurface surface,
+		ExactPhysicalModel current, Map<ExactCategoricalSolver.Variable,int[]> originalOrdinals) {
+		Map<String,ExactCategoricalSolver.Variable> variables = new HashMap<>();
+		for(var variable : current.variables())
+			variables.put(variable.key(), variable);
+		List<CostTable> tables = new ArrayList<>();
+		for(var contribution : surface.contributions()) {
+			var factor = contribution.factor();
+			var currentScope = factor.scope().stream().map(v -> variables.get(v.key())).toList();
+			int cells = currentScope.stream().mapToInt(ExactCategoricalSolver.Variable::domainSize)
+				.reduce(1, Math::multiplyExact);
+			List<Long> bits = new ArrayList<>(cells);
+			int[] values = new int[currentScope.size()];
+			for(int cell = 0; cell < cells; cell++) {
+				int remaining = cell;
+				for(int p = values.length - 1; p >= 0; p--) {
+					int value = remaining % currentScope.get(p).domainSize();
+					remaining /= currentScope.get(p).domainSize();
+					values[p] = originalOrdinals == null ? value : originalOrdinals.get(currentScope.get(p))[value];
+				}
+				bits.add(Double.doubleToRawLongBits(factor.cost(values)));
+			}
+			if(bits.stream().anyMatch(value -> value != 0L))
+				tables.add(new CostTable(currentScope.stream().map(ExactCategoricalSolver.Variable::key).toList(), bits));
+		}
+		return tables;
 	}
 
 	@Test
@@ -300,7 +395,7 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 		digest.update(value.getBytes(StandardCharsets.UTF_8));
 	}
 
-	private static PlacementAnalysis analysis(boolean unrelatedWorkers) throws Exception {
+	static PlacementAnalysis analysis(boolean unrelatedWorkers) throws Exception {
 		String script = "Z=matrix(1,rows=4,cols=2);\n"
 			+ "R=federated(addresses=list(\"localhost:1234/R\"),ranges=list(list(0,0),list(4,1)));\n"
 			+ "O=Z;O[1:4,1]=R;print(sum(O));\n"

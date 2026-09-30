@@ -16,6 +16,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -64,10 +65,12 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 public final class PlacementAnalysis {
 	private static final class SharedCanonicalList<T> extends java.util.AbstractList<T>
 		implements java.util.RandomAccess {
+		private static final int IDENTITY_INDEX_MIN_SIZE = 16;
 		private final List<T> values;
 		private final List<CanonicalText> orderingKeys;
 		private int cachedHash;
 		private volatile boolean hashComputed;
+		private volatile IdentityHashMap<T,Integer> identityFirstOrdinals;
 		private SharedCanonicalList(List<T> values) { this(values, null); }
 		private SharedCanonicalList(List<T> values, List<CanonicalText> orderingKeys) {
 			this.values = values;
@@ -77,6 +80,27 @@ public final class PlacementAnalysis {
 		}
 		@Override public T get(int index) { return values.get(index); }
 		@Override public int size() { return values.size(); }
+		private int firstIdentityOrdinal(Object value) {
+			if(values.size() < IDENTITY_INDEX_MIN_SIZE) {
+				for(int index = 0; index < values.size(); index++)
+					if(values.get(index) == value)
+						return index;
+				return -1;
+			}
+			IdentityHashMap<T,Integer> ordinals = identityFirstOrdinals;
+			if(ordinals == null)
+				synchronized(this) {
+					ordinals = identityFirstOrdinals;
+					if(ordinals == null) {
+						ordinals = new IdentityHashMap<>();
+						for(int index = 0; index < values.size(); index++)
+							ordinals.putIfAbsent(values.get(index), index);
+						identityFirstOrdinals = ordinals;
+					}
+				}
+			Integer ordinal = ordinals.get(value);
+			return ordinal == null ? -1 : ordinal;
+		}
 		@Override public List<T> subList(int fromIndex, int toIndex) {
 			return new SharedCanonicalList<>(List.copyOf(values.subList(fromIndex, toIndex)),
 				orderingKeys == null ? null : List.copyOf(orderingKeys.subList(fromIndex, toIndex)));
@@ -126,10 +150,11 @@ public final class PlacementAnalysis {
 		// Do not ask Comparable for the same recursively serialized signature O(log n)
 		// times.  The legacy lexical bytes remain the ordering contract, but each
 		// value materializes them at most once for this canonicalization boundary.
+		CanonicalTextComparison comparison = new CanonicalTextComparison();
 		decorated.sort((left, right) -> {
 			if(metrics != null)
 				metrics.recordCanonicalComparison();
-			return left.orderingKey().compareTo(right.orderingKey());
+			return comparison.compare(left.orderingKey(), right.orderingKey());
 		});
 		List<T> canonical = new ArrayList<>(decorated.size());
 		List<CanonicalText> orderingKeys = retainOrderingKeys
@@ -154,26 +179,110 @@ public final class PlacementAnalysis {
 	 * recursively concatenated clause/realization string on an intermediate sort.
 	 */
 	private static final class CanonicalText implements Comparable<CanonicalText> {
+		private static final long NODE_AND_LIST_OVERHEAD = 64;
+		private static final long PIECE_REFERENCE_OVERHEAD = 8;
+		private static final long LITERAL_OVERHEAD = 40;
 		private final List<Object> pieces;
 		private final int length;
+		private final long retainedWeight;
+		private int stringHash;
+		private int hashPower;
+		private volatile boolean hashComputed;
 
 		private CanonicalText(List<Object> pieces) {
 			this.pieces = List.copyOf(pieces);
 			long total = 0;
-			for(Object piece : pieces)
+			long weight = saturatedAdd(NODE_AND_LIST_OVERHEAD,
+				PIECE_REFERENCE_OVERHEAD * pieces.size());
+			for(Object piece : pieces) {
 				total += piece instanceof String text ? text.length() : ((CanonicalText) piece).length;
+				weight = saturatedAdd(weight, piece instanceof String text
+					? saturatedAdd(LITERAL_OVERHEAD, 2L * text.length())
+					: ((CanonicalText)piece).retainedWeight);
+			}
 			if(total > Integer.MAX_VALUE)
 				throw new IllegalArgumentException("Canonical ordering text exceeds JVM string length");
 			length = (int) total;
+			retainedWeight = weight;
+		}
+
+		private static long saturatedAdd(long left, long right) {
+			return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
 		}
 
 		private static CanonicalText literal(String value) {
 			return new CanonicalText(value.isEmpty() ? List.of() : List.of(value));
 		}
 
+		private int stringHash() {
+			if(hashComputed)
+				return stringHash;
+			// Exact String hash composition: h(a+b) = h(a)*31^length(b)+h(b).
+			// Iterative postorder hashes shared child text once, without flattening
+			// or recursively traversing deeply nested proof/receipt signatures.
+			ArrayDeque<TextHashFrame> pending = new ArrayDeque<>();
+			pending.addLast(new TextHashFrame(this));
+			while(!pending.isEmpty()) {
+				TextHashFrame frame = pending.getLast();
+				CanonicalText text = frame.text;
+				if(text.hashComputed) {
+					pending.removeLast();
+					continue;
+				}
+				if(frame.index == text.pieces.size()) {
+					text.stringHash = frame.hash;
+					text.hashPower = frame.power;
+					// Publish both integers together; concurrent redundant computation
+					// can only write the same immutable-text result.
+					text.hashComputed = true;
+					pending.removeLast();
+					continue;
+				}
+				Object piece = text.pieces.get(frame.index);
+				int hash;
+				int power;
+				if(piece instanceof String literal) {
+					hash = literal.hashCode();
+					power = hashPower(literal.length());
+				}
+				else {
+					CanonicalText child = (CanonicalText)piece;
+					if(!child.hashComputed) {
+						pending.addLast(new TextHashFrame(child));
+						continue;
+					}
+					hash = child.stringHash;
+					power = child.hashPower;
+				}
+				frame.hash = frame.hash * power + hash;
+				frame.power *= power;
+				frame.index++;
+			}
+			return stringHash;
+		}
+
+		private static int hashPower(int length) {
+			int result = 1;
+			int power = 31;
+			for(int remaining = length; remaining != 0; remaining >>>= 1) {
+				if((remaining & 1) != 0)
+					result *= power;
+				power *= power;
+			}
+			return result;
+		}
+
 		@Override public int compareTo(CanonicalText that) {
 			return this == that ? 0 : new CanonicalTextComparison().compare(this, that);
 		}
+	}
+
+	private static final class TextHashFrame {
+		private final CanonicalText text;
+		private int index;
+		private int hash;
+		private int power = 1;
+		private TextHashFrame(CanonicalText text) { this.text = text; }
 	}
 
 	/** Reusable only inside one canonical sort invocation; ordinary comparisons create a fresh instance. */
@@ -390,10 +499,336 @@ public final class PlacementAnalysis {
 
 	private static final class CanonicalTextContext {
 		private final IdentityHashMap<Object,CanonicalText> values = new IdentityHashMap<>();
-		private CanonicalText get(Object key) { return values.get(key); }
+		private CanonicalText get(Object key) {
+			CanonicalText value = values.get(key);
+			if(value != null)
+				return value;
+			ScopedCanonicalTextCache active = ACTIVE_CANONICAL_TEXT_CACHE.get();
+			value = active == null ? null : active.get(key);
+			if(value != null)
+				values.put(key, value);
+			return value;
+		}
 		private CanonicalText put(Object key, CanonicalText value) {
 			values.put(key, value);
+			ScopedCanonicalTextCache active = ACTIVE_CANONICAL_TEXT_CACHE.get();
+			if(active != null)
+				active.retain(key, value);
 			return value;
+		}
+	}
+
+	private static final int ANALYSIS_CANONICAL_TEXT_MAX_ENTRIES = 131_072;
+	private static final long ANALYSIS_CANONICAL_TEXT_MAX_WEIGHT = 64L * 1024 * 1024;
+	private static final ThreadLocal<ScopedCanonicalTextCache> ACTIVE_CANONICAL_TEXT_CACHE = new ThreadLocal<>();
+
+	private static final class ScopedCanonicalTextCache {
+		private static final long ENTRY_OVERHEAD = 64;
+		private static final long LEDGER_BASE_OVERHEAD = 256;
+		private static final long LEDGER_IDENTITY_OVERHEAD = 128;
+		private final IdentityHashMap<Object,CanonicalText> values = new IdentityHashMap<>();
+		private final IdentityHashMap<Object,Boolean> retainedDescriptors = new IdentityHashMap<>();
+		private final int maxEntries;
+		private final long maxWeight;
+		private long retainedWeight;
+
+		private ScopedCanonicalTextCache(int maxEntries, long maxWeight) {
+			if(maxEntries < 0 || maxWeight < 0)
+				throw new IllegalArgumentException("Canonical text cache budget is negative");
+			this.maxEntries = maxEntries;
+			this.maxWeight = maxWeight;
+		}
+
+		private CanonicalText get(Object key) {
+			return cacheableCanonicalType(key) ? values.get(key) : null;
+		}
+
+		private void retain(Object key, CanonicalText value) {
+			if(!cacheableCanonicalType(key) || values.containsKey(key)
+				|| values.size() >= maxEntries)
+				return;
+			long remaining = maxWeight - retainedWeight;
+			long weight = ENTRY_OVERHEAD + (values.isEmpty() ? LEDGER_BASE_OVERHEAD : 0);
+			if(weight > remaining)
+				return;
+			// A retained parent already paid for every descriptor reachable from it.
+			// The recursive tree weight counts shared children repeatedly; this ledger
+			// instead charges their identity union without interning any authority.
+			if(!retainedDescriptors.containsKey(value)) {
+				if(descriptorWeight(value) > remaining - weight)
+					return;
+				IdentityHashMap<Object,Boolean> staged = new IdentityHashMap<>();
+				ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
+				Object next = value;
+				while(true) {
+					if(!retainedDescriptors.containsKey(next) && !staged.containsKey(next)) {
+						long additional = descriptorWeight(next);
+						if(additional > remaining - weight)
+							return; // Failed admission must not leave a partial retained ledger.
+						weight += additional;
+						staged.put(next, Boolean.TRUE);
+						if(next instanceof CanonicalText text && !text.pieces.isEmpty())
+							pending.addLast(text.pieces.iterator());
+					}
+					while(!pending.isEmpty() && !pending.getLast().hasNext())
+						pending.removeLast();
+					if(pending.isEmpty())
+						break;
+					next = pending.getLast().next();
+				}
+				retainedDescriptors.putAll(staged);
+			}
+			values.put(key, value);
+			retainedWeight += weight;
+		}
+
+		/**
+		 * Conservative descriptor model, not an exact heap bound: charge the node,
+		 * list/piece references or UTF-16 literal, plus ledger/staging table slack
+		 * and traversal overhead. Authority-key graphs and pre-existing scope/map
+		 * objects remain outside this estimate. Recursive append-session accounting
+		 * still uses CanonicalText.retainedWeight unchanged.
+		 */
+		private static long descriptorWeight(Object descriptor) {
+			if(descriptor instanceof String literal)
+				return LEDGER_IDENTITY_OVERHEAD + CanonicalText.LITERAL_OVERHEAD + 2L * literal.length();
+			CanonicalText text = (CanonicalText)descriptor;
+			return LEDGER_IDENTITY_OVERHEAD + CanonicalText.NODE_AND_LIST_OVERHEAD
+				+ CanonicalText.PIECE_REFERENCE_OVERHEAD * text.pieces.size();
+		}
+
+		private void clear() {
+			values.clear();
+			retainedDescriptors.clear();
+			retainedWeight = 0;
+		}
+	}
+
+	static final class CanonicalTextScope implements AutoCloseable {
+		private ScopedCanonicalTextCache parent;
+		private final ScopedCanonicalTextCache cache;
+		private boolean closed;
+
+		private CanonicalTextScope(int maxEntries, long maxWeight) {
+			parent = ACTIVE_CANONICAL_TEXT_CACHE.get();
+			cache = new ScopedCanonicalTextCache(maxEntries, maxWeight);
+			ACTIVE_CANONICAL_TEXT_CACHE.set(cache);
+		}
+
+		int retainedEntries() { return cache.values.size(); }
+		long retainedWeight() { return cache.retainedWeight; }
+
+		@Override public void close() {
+			if(closed)
+				return;
+			if(ACTIVE_CANONICAL_TEXT_CACHE.get() != cache)
+				throw new IllegalStateException("Canonical text scopes closed out of order");
+			closed = true;
+			ScopedCanonicalTextCache restored = parent;
+			parent = null;
+			if(restored == null)
+				ACTIVE_CANONICAL_TEXT_CACHE.remove();
+			else
+				ACTIVE_CANONICAL_TEXT_CACHE.set(restored);
+			cache.clear();
+		}
+	}
+
+	static CanonicalTextScope beginCanonicalTextScope() {
+		return beginCanonicalTextScope(
+			ANALYSIS_CANONICAL_TEXT_MAX_ENTRIES, ANALYSIS_CANONICAL_TEXT_MAX_WEIGHT);
+	}
+
+	static CanonicalTextScope beginCanonicalTextScope(int maxEntries, long maxWeight) {
+		return new CanonicalTextScope(maxEntries, maxWeight);
+	}
+
+	static boolean canonicalTextScopeActive() {
+		return ACTIVE_CANONICAL_TEXT_CACHE.get() != null;
+	}
+
+	private static boolean cacheableCanonicalType(Object value) {
+		return genericCanonicalType(value)
+			|| value instanceof CandidateRuleKey
+			|| value instanceof PlacementEmissionState
+			|| value instanceof RelocationActionKey;
+	}
+
+	private static boolean genericCanonicalType(Object value) {
+		return value instanceof PlacementProofKey
+			|| value instanceof CandidateRealizationReference
+			|| value instanceof CandidateRealizationInputBinding
+			|| value instanceof PlacementRealizationKey
+			|| value instanceof CandidateRealizationSupportClause
+			|| value instanceof CandidateEmissionRealization
+			|| value instanceof TransientCompatibilityProof
+			|| value instanceof TransientPlacementCompatibility;
+	}
+
+	/** Public immutable facade over the canonical segmented UTF-16 representation. */
+	public static final class NormalizedText implements Comparable<NormalizedText> {
+		private final CanonicalText text;
+		private volatile String materialized;
+
+		private NormalizedText(CanonicalText text) { this.text = text; }
+
+		public static NormalizedText literal(String value) {
+			return new NormalizedText(CanonicalText.literal(Objects.requireNonNull(value, "value")));
+		}
+
+		public int length() { return text.length; }
+
+		public boolean isBlank() {
+			CanonicalTextCursor cursor = new CanonicalTextCursor();
+			cursor.reset(text);
+			while(cursor.text() != null) {
+				String literal = cursor.text();
+				for(int index = cursor.offset(); index < literal.length(); index++)
+					if(!Character.isWhitespace(literal.charAt(index)))
+						return false;
+				cursor.skipText();
+			}
+			return true;
+		}
+
+		public void appendTo(java.util.function.Consumer<String> consumer) {
+			Objects.requireNonNull(consumer, "consumer");
+			CanonicalTextCursor cursor = new CanonicalTextCursor();
+			cursor.reset(text);
+			while(cursor.text() != null) {
+				String literal = cursor.text();
+				consumer.accept(cursor.offset() == 0 ? literal : literal.substring(cursor.offset()));
+				cursor.skipText();
+			}
+		}
+
+		public String materialize() {
+			String value = materialized;
+			if(value != null)
+				return value;
+			StringBuilder builder = new StringBuilder(text.length);
+			appendTo(builder::append);
+			value = builder.toString();
+			materialized = value;
+			return value;
+		}
+
+		@Override public int compareTo(NormalizedText that) {
+			return text.compareTo(Objects.requireNonNull(that, "that").text);
+		}
+
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof NormalizedText that
+				&& text.length == that.text.length && compareTo(that) == 0;
+		}
+
+		@Override public int hashCode() {
+			return text.stringHash();
+		}
+
+		@Override public String toString() { return materialize(); }
+	}
+
+	/**
+	 * Opt-in, invocation-local replay of small immutable signature subtrees.
+	 * Only consumers insensitive to UTF-16 chunk boundaries may use this session;
+	 * ordinary appendTo and canonical comparisons keep their existing traversal.
+	 * Admission limits retention, never the accepted text. The byte charge is a
+	 * conservative descriptor estimate, not a measurement of JVM heap occupancy.
+	 * Sessions are thread-confined; they do support same-thread consumer reentry.
+	 */
+	public static final class NormalizedTextAppendSession {
+		private final Map<CanonicalText,String> chunks = new IdentityHashMap<>();
+		private final int maximumEntryCharacters;
+		private final int maximumEntries;
+		private final long maximumRetainedBytes;
+		private long retainedBytes;
+
+		public NormalizedTextAppendSession(int maximumEntryCharacters, int maximumEntries,
+			long maximumRetainedBytes) {
+			if(maximumEntryCharacters < 0 || maximumEntries < 0 || maximumRetainedBytes < 0)
+				throw new IllegalArgumentException("Normalized text replay limits must be nonnegative");
+			this.maximumEntryCharacters = maximumEntryCharacters;
+			this.maximumEntries = maximumEntries;
+			this.maximumRetainedBytes = maximumRetainedBytes;
+		}
+
+		public void appendTo(NormalizedText value, java.util.function.Consumer<String> consumer) {
+			Objects.requireNonNull(value, "value");
+			Objects.requireNonNull(consumer, "consumer");
+			// Do not spend the cache on one-shot top-level alternatives. Local frames
+			// also keep deep ropes stack-safe and permit consumer reentry/exceptions.
+			ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
+			pending.addLast(value.text.pieces.iterator());
+			while(!pending.isEmpty()) {
+				var pieces = pending.getLast();
+				if(!pieces.hasNext()) {
+					pending.removeLast();
+					continue;
+				}
+				Object piece = pieces.next();
+				if(piece instanceof String literal)
+					consumer.accept(literal);
+				else {
+					CanonicalText child = (CanonicalText)piece;
+					String replay = chunk(child);
+					if(replay != null)
+						consumer.accept(replay);
+					else
+						pending.addLast(child.pieces.iterator());
+				}
+			}
+		}
+
+		private String chunk(CanonicalText text) {
+			String cached = chunks.get(text);
+			if(cached != null)
+				return cached;
+			long weight = CanonicalText.saturatedAdd(text.retainedWeight, 64L + 2L * text.length);
+			if(text.length == 0 || text.length > maximumEntryCharacters
+				|| chunks.size() >= maximumEntries || weight > maximumRetainedBytes - retainedBytes)
+				return null;
+			StringBuilder flattened = new StringBuilder(text.length);
+			new NormalizedText(text).appendTo(flattened::append);
+			String result = flattened.toString();
+			chunks.put(text, result);
+			retainedBytes += weight;
+			return result;
+		}
+	}
+
+	/** Builder for normalized text that retains shared child segments by identity. */
+	public static final class NormalizedTextBuilder {
+		private final CanonicalTextBuilder builder = new CanonicalTextBuilder();
+		public NormalizedTextBuilder append(String value) {
+			builder.append(Objects.requireNonNull(value, "value"));
+			return this;
+		}
+		public NormalizedTextBuilder append(NormalizedText value) {
+			builder.append(Objects.requireNonNull(value, "value").text);
+			return this;
+		}
+		public NormalizedText build() { return new NormalizedText(builder.build()); }
+	}
+
+	/** Identity-scoped adapter for existing canonical placement signature ropes. */
+	public static final class NormalizedTextContext {
+		private final CanonicalTextContext context = new CanonicalTextContext();
+		public NormalizedText candidateRule(CandidateRuleKey value) {
+			return new NormalizedText(canonicalRuleOrderingText(
+				Objects.requireNonNull(value, "value"), context));
+		}
+		public NormalizedText realizationKey(PlacementRealizationKey value) {
+			return new NormalizedText(canonicalOrderingKey(
+				Objects.requireNonNull(value, "value"), context));
+		}
+		public NormalizedText supportClause(CandidateRealizationSupportClause value) {
+			return new NormalizedText(canonicalOrderingKey(
+				Objects.requireNonNull(value, "value"), context));
+		}
+		public NormalizedText emissionRealization(CandidateEmissionRealization value) {
+			return new NormalizedText(canonicalOrderingKey(
+				Objects.requireNonNull(value, "value"), context));
 		}
 	}
 
@@ -415,6 +850,9 @@ public final class PlacementAnalysis {
 	}
 
 	private static CanonicalText canonicalOrderingKey(Object value, CanonicalTextContext context) {
+		if(!genericCanonicalType(value))
+			throw new IllegalArgumentException("Unsupported canonical comparable type "
+				+ value.getClass().getName());
 		CanonicalText cached = context.get(value);
 		if(cached != null)
 			return cached;
@@ -451,8 +889,9 @@ public final class PlacementAnalysis {
 	/** One sort-scoped rope cache; avoids rebuilding structural text on every comparator call. */
 	static <T> java.util.Comparator<T> canonicalComparator() {
 		CanonicalTextContext context = new CanonicalTextContext();
-		return (left, right) -> canonicalOrderingKey(
-			Objects.requireNonNull(left, "left canonical value"), context).compareTo(canonicalOrderingKey(
+		CanonicalTextComparison comparison = new CanonicalTextComparison();
+		return (left, right) -> comparison.compare(canonicalOrderingKey(
+			Objects.requireNonNull(left, "left canonical value"), context), canonicalOrderingKey(
 				Objects.requireNonNull(right, "right canonical value"), context));
 	}
 
@@ -488,9 +927,13 @@ public final class PlacementAnalysis {
 		CandidateEmissionRealization realization, CanonicalTextContext context) {
 		CanonicalTextBuilder text = new CanonicalTextBuilder()
 			.append(canonicalOrderingKey(realization.key(), context)).append("|support=[");
+		List<CanonicalText> retained = retainedCanonicalOrderingKeys(realization.supportClauses());
 		for(int index = 0; index < realization.supportClauses().size(); index++) {
 			if(index > 0) text.append(", ");
-			text.append(canonicalOrderingKey(realization.supportClauses().get(index), context));
+			// Reuse descriptors already owned by this immutable canonical list.
+			// Singleton/trusted lists without descriptors retain the cold path.
+			text.append(retained == null
+				? canonicalOrderingKey(realization.supportClauses().get(index), context) : retained.get(index));
 		}
 		return text.append("]").build();
 	}
@@ -874,8 +1317,11 @@ public final class PlacementAnalysis {
 					"Native worker-pool witness requires owned native-continuity proof");
 		}
 		public List<CandidateRealizationReference> requiredInputSupport() {
-			return inputBindings.stream().map(CandidateRealizationInputBinding::source)
-				.distinct().sorted().toList();
+			List<CandidateRealizationReference> cached =
+				PlacementIdentity.cachedRequiredInputSupport(this);
+			return cached != null ? cached : PlacementIdentity.rememberRequiredInputSupport(this,
+				inputBindings.stream().map(CandidateRealizationInputBinding::source)
+					.distinct().sorted().toList());
 		}
 		public String normalizedSignature() {
 			String cached = PlacementIdentity.cachedSignature(this);
@@ -1023,6 +1469,17 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Support clause is not owned by realization");
 			return key.durableAnchor() != null || clause.nativeWorkerPoolLayoutExact();
 		}
+		public boolean ownsSupportClauseIdentity(CandidateRealizationSupportClause clause) {
+			return supportClauseIdentityOrdinal(clause) >= 0;
+		}
+		int supportClauseIdentityOrdinal(CandidateRealizationSupportClause clause) {
+			if(supportClauses instanceof SharedCanonicalList<?> shared)
+				return shared.firstIdentityOrdinal(clause);
+			for(int index = 0; index < supportClauses.size(); index++)
+				if(supportClauses.get(index) == clause)
+					return index;
+			return -1;
+		}
 		/** Linear bulk query used instead of repeating the public identity guard for every owned clause. */
 		boolean allOwnedSupportClausesHaveExactNativeLayout() {
 			return key.durableAnchor() != null
@@ -1158,11 +1615,13 @@ public final class PlacementAnalysis {
 				boolean ambiguousOrderingTie = false;
 				int uniqueClauses = 0, duplicateClauses = 0, comparisons = 0;
 				int leftIndex = 0, rightIndex = 0;
+				CanonicalTextComparison comparison = new CanonicalTextComparison();
 				while(leftIndex < leftClauses.size() && rightIndex < rightClauses.size()) {
 					CandidateRealizationSupportClause leftClause = leftClauses.get(leftIndex);
 					CandidateRealizationSupportClause rightClause = rightClauses.get(rightIndex);
 					comparisons++;
-					int order = leftOrderingKeys.get(leftIndex).compareTo(rightOrderingKeys.get(rightIndex));
+					int order = comparison.compare(leftOrderingKeys.get(leftIndex),
+						rightOrderingKeys.get(rightIndex));
 					if(order < 0) {
 						union.add(leftClause);
 						unionOrderingKeys.add(leftOrderingKeys.get(leftIndex));
@@ -1264,6 +1723,7 @@ public final class PlacementAnalysis {
 			if(metrics != null)
 				metrics.recordCanonicalSort(realizations.size());
 			CanonicalTextContext context = new CanonicalTextContext();
+			CanonicalTextComparison comparison = new CanonicalTextComparison();
 			List<RealizationOrderingEntry> decorated = new ArrayList<>(realizations.size());
 			for(CandidateEmissionRealization realization : realizations) {
 				if(metrics != null)
@@ -1276,10 +1736,10 @@ public final class PlacementAnalysis {
 			decorated.sort((left, right) -> {
 				if(metrics != null)
 					metrics.recordCanonicalComparison();
-				int keyOrder = left.keyText().compareTo(right.keyText());
+				int keyOrder = comparison.compare(left.keyText(), right.keyText());
 				return keyOrder != 0 ? keyOrder
-					: canonicalOrderingKey(left.value(), context)
-						.compareTo(canonicalOrderingKey(right.value(), context));
+					: comparison.compare(canonicalOrderingKey(left.value(), context),
+						canonicalOrderingKey(right.value(), context));
 			});
 			List<CandidateEmissionRealization> canonical = new ArrayList<>(decorated.size());
 			for(RealizationOrderingEntry entry : decorated)
@@ -1328,31 +1788,10 @@ public final class PlacementAnalysis {
 				keysByGroup.add(keys);
 			}
 
-			Map<CandidateRealizationSupportClause,CanonicalText> descriptorsByClause =
-				new java.util.LinkedHashMap<>(totalClauses);
-			for(int groupIndex = 0; groupIndex < group.size(); groupIndex++) {
-				List<CandidateRealizationSupportClause> clauses = clausesByGroup.get(groupIndex);
-				List<CanonicalText> keys = keysByGroup.get(groupIndex);
-				for(int position = 0; position < clauses.size(); position++) {
-					boolean unique = descriptorsByClause.putIfAbsent(
-						clauses.get(position), keys.get(position)) == null;
-					if(metrics != null)
-						metrics.recordRealizationMergeClause(unique);
-				}
-			}
-			List<Map.Entry<CandidateRealizationSupportClause,CanonicalText>> ordered =
-				new ArrayList<>(descriptorsByClause.entrySet());
-			if(metrics != null)
-				metrics.recordCanonicalSort(ordered.size());
-			CanonicalTextComparison comparison = new CanonicalTextComparison();
-			ordered.sort((left, right) ->
-				compareCanonicalText(left.getValue(), right.getValue(), metrics, comparison));
-			List<CandidateRealizationSupportClause> union = new ArrayList<>(ordered.size());
-			List<CanonicalText> unionKeys = new ArrayList<>(ordered.size());
-			for(Map.Entry<CandidateRealizationSupportClause,CanonicalText> entry : ordered) {
-				union.add(entry.getKey());
-				unionKeys.add(entry.getValue());
-			}
+			MergedClauseRuns mergedRuns = mergeCanonicalClauseRuns(
+				clausesByGroup, keysByGroup, totalClauses, metrics);
+			List<CandidateRealizationSupportClause> union = mergedRuns.clauses();
+			List<CanonicalText> unionKeys = mergedRuns.keys();
 			if(firstClauses.equals(union)) {
 				if(metrics != null)
 					metrics.recordRealizationMergeReuse();
@@ -1360,6 +1799,57 @@ public final class PlacementAnalysis {
 			}
 			return CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(first.key(),
 				new SharedCanonicalList<>(List.copyOf(union), List.copyOf(unionKeys)));
+		}
+
+		private record ClauseRunEntry(CandidateRealizationSupportClause clause,
+			CanonicalText key) { }
+
+		private record MergedClauseRuns(List<CandidateRealizationSupportClause> clauses,
+			List<CanonicalText> keys) { }
+
+		/** Stable exact union of already-canonical runs without recursively hashing every clause. */
+		private static MergedClauseRuns mergeCanonicalClauseRuns(
+			List<List<CandidateRealizationSupportClause>> clausesByGroup,
+			List<List<CanonicalText>> keysByGroup, int totalClauses, SearchSpaceMetrics metrics) {
+			CanonicalTextComparison comparison = new CanonicalTextComparison();
+			List<ClauseRunEntry> ordered = new ArrayList<>(totalClauses);
+			for(int group = 0; group < clausesByGroup.size(); group++)
+				for(int position = 0; position < clausesByGroup.get(group).size(); position++)
+					ordered.add(new ClauseRunEntry(clausesByGroup.get(group).get(position),
+						keysByGroup.get(group).get(position)));
+			// The input is a concatenation of sorted runs. The stable JDK sort keeps
+			// original group order for descriptor ties and exploits those runs.
+			ordered.sort((left, right) ->
+				compareCanonicalText(left.key(), right.key(), metrics, comparison));
+
+			List<CandidateRealizationSupportClause> union = new ArrayList<>(totalClauses);
+			List<CanonicalText> unionKeys = new ArrayList<>(totalClauses);
+			List<CandidateRealizationSupportClause> equalKeyAuthorities = new ArrayList<>();
+			CanonicalText equalKey = null;
+			for(ClauseRunEntry current : ordered) {
+				if(equalKey == null || compareCanonicalText(
+					equalKey, current.key(), metrics, comparison) != 0) {
+					equalKey = current.key();
+					equalKeyAuthorities.clear();
+				}
+				CandidateRealizationSupportClause clause = current.clause();
+				boolean unique = true;
+				for(CandidateRealizationSupportClause retained : equalKeyAuthorities)
+					if(clause.equals(retained)) {
+						unique = false;
+						break;
+					}
+				if(metrics != null)
+					metrics.recordRealizationMergeClause(unique);
+				if(unique) {
+					equalKeyAuthorities.add(clause);
+					union.add(clause);
+					unionKeys.add(current.key());
+				}
+			}
+			if(metrics != null)
+				metrics.recordCanonicalSort(union.size());
+			return new MergedClauseRuns(List.copyOf(union), List.copyOf(unionKeys));
 		}
 
 		private static int compareCanonicalText(
@@ -1567,9 +2057,9 @@ public final class PlacementAnalysis {
 			}
 
 			private int ownedClauseIndex(CandidateRealizationSupportClause clause) {
-				for(int index = 0; index < clauses.size(); index++)
-					if(clauses.get(index) == clause)
-						return index;
+				int index = realization.supportClauseIdentityOrdinal(clause);
+				if(index >= 0)
+					return index;
 				throw new IllegalArgumentException(
 					"Candidate support clause is outside the analysis-owned receipt domain");
 			}

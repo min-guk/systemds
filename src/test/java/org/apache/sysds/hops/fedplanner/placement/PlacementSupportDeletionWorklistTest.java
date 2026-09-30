@@ -51,7 +51,7 @@ public class PlacementSupportDeletionWorklistTest {
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
 
 	@Test
-	public void cascadingDeletionMatchesRepeatedFullPasses() {
+	public void cascadingDeletionMatchesRepeatedFullPasses() throws Exception {
 		CandidateRuleKey a = rule("cascade-a"), b = rule("cascade-b"), c = rule("cascade-c");
 		CandidateEmissionRealization invalid = CandidateEmissionRealization.nativeLineage(
 			ROW, "missing-worker-pool", List.of(), List.of());
@@ -61,12 +61,18 @@ public class PlacementSupportDeletionWorklistTest {
 			fact(b, LOCAL, List.of(rb)), fact(c, LOCAL, List.of(rc)));
 
 		assertSameClosure(facts, null, null, null);
-		Assert.assertTrue(fixed(facts, null, null, null).stream()
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+		Assert.assertTrue(measured.facts().stream()
 			.allMatch(fact -> fact.status() == CandidateEvaluationStatus.PROFILE_ERROR));
+		Assert.assertTrue("deletion seed must use the original propagation worklist",
+			workMetric(measured.work(), "materializedReverseIncidences") > 0);
+		Assert.assertEquals(measured.work().reverseIncidences(),
+			workMetric(measured.work(), "materializedReverseIncidences"));
 	}
 
 	@Test
-	public void supportedCycleSurvivesAsGreatestDeletionFixedPoint() {
+	public void supportedCycleSurvivesAsGreatestDeletionFixedPoint() throws Exception {
 		CandidateRuleKey a = rule("cycle-a"), b = rule("cycle-b");
 		CandidateEmissionRealization keyA = CandidateEmissionRealization.local(LOCAL);
 		CandidateEmissionRealization keyB = CandidateEmissionRealization.local(LOCAL);
@@ -78,10 +84,14 @@ public class PlacementSupportDeletionWorklistTest {
 		Assert.assertEquals(repeated(facts, null, null, null), result);
 		Assert.assertSame(facts.get(0), result.get(0));
 		Assert.assertSame(facts.get(1), result.get(1));
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+		Assert.assertEquals(0,
+			workMetric(measured.work(), "materializedReverseIncidences"));
 	}
 
 	@Test
-	public void expiredOrSiblingAndActionDoNotRemoveLiveAlternative() {
+	public void expiredOrSiblingAndActionDoNotRemoveLiveAlternative() throws Exception {
 		CandidateRuleKey sourceRule = rule("or-source"), consumer = rule("or-consumer");
 		CandidateEmissionRealization source = durable("or-live");
 		CandidateRealizationReference sourceRef = ref(sourceRule, source);
@@ -104,10 +114,22 @@ public class PlacementSupportDeletionWorklistTest {
 			.realizations().get(0).supportClauses();
 		Assert.assertEquals(alternatives.supportClauses().stream()
 			.filter(clause -> !clause.equals(expired)).toList(), survivors);
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(
+				facts, Map.of(liveAction.key(), liveAction), null, null);
+		Assert.assertEquals("invalid OR sibling is not a realization deletion seed", 0,
+			workMetric(measured.work(), "materializedReverseIncidences"));
+		List<CandidateRealizationSupportClause> measuredSurvivors = measured.facts().get(1)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses();
+		List<CandidateRealizationSupportClause> expectedSurvivors = alternatives.supportClauses().stream()
+			.filter(clause -> clause != expired).toList();
+		Assert.assertEquals(expectedSurvivors.size(), measuredSurvivors.size());
+		for(int index = 0; index < expectedSurvivors.size(); index++)
+			Assert.assertSame(expectedSurvivors.get(index), measuredSurvivors.get(index));
 	}
 
 	@Test
-	public void everyReachingWriterRemainsMandatory() {
+	public void everyReachingWriterRemainsMandatory() throws Exception {
 		CandidateRuleKey writerA = rule("writer-a"), writerB = rule("writer-b"), reader = rule("reader");
 		CandidateEmissionRealization sourceA = durable("writer-a-live");
 		CandidateEmissionRealization sourceB = durable("writer-b-live");
@@ -125,10 +147,17 @@ public class PlacementSupportDeletionWorklistTest {
 		List<CandidateRuleFact> result = fixed(facts, null, logical, required);
 		Assert.assertEquals(repeated(facts, null, logical, required), result);
 		Assert.assertEquals(List.of(supported), result.get(2).allowedEmissionFacts().get(0).realizations());
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, logical, required);
+		Assert.assertEquals(8, measured.work().logicalRequirements());
+		Assert.assertEquals(6, measured.work().reverseIncidences());
+		Assert.assertTrue(workMetric(measured.work(), "materializedReverseIncidences") > 0);
+		Assert.assertEquals(measured.work().reverseIncidences(),
+			workMetric(measured.work(), "materializedReverseIncidences"));
 	}
 
 	@Test
-	public void duplicateReferenceStaysLiveUntilItsLastSlotIsDeleted() {
+	public void duplicateReferenceStaysLiveUntilItsLastSlotIsDeleted() throws Exception {
 		CandidateRuleKey sourceRule = rule("duplicate-source"), consumer = rule("duplicate-consumer");
 		CandidateEmissionRealization key = CandidateEmissionRealization.local(LOCAL);
 		CandidateEmissionRealization live = CandidateEmissionRealization.local(LOCAL);
@@ -144,6 +173,34 @@ public class PlacementSupportDeletionWorklistTest {
 		Assert.assertEquals(CandidateEvaluationStatus.PROFILE_ERROR, result.get(0).status());
 		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, result.get(1).status());
 		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, result.get(2).status());
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+		Assert.assertTrue("initial executable slot loss conservatively falls back",
+			workMetric(measured.work(), "materializedReverseIncidences") > 0);
+	}
+
+	@Test
+	public void unrelatedInitiallyNonExecutableSlotDoesNotSeedPropagation() throws Exception {
+		CandidateRuleKey sourceRule = rule("nonexec-source"), consumer = rule("nonexec-consumer");
+		CandidateEmissionRealization invalid = CandidateEmissionRealization.nativeLineage(
+			ROW, "missing-worker-pool", List.of(), List.of());
+		CandidateEmissionRealization live = durable("nonexec-live");
+		CandidateEmissionRealization dependent = dependent(consumer, ref(sourceRule, live));
+		List<CandidateRuleFact> facts = List.of(
+			fact(sourceRule, ROW, List.of(invalid, live)), fact(consumer, LOCAL, List.of(dependent)));
+
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+		Assert.assertEquals(repeated(facts, null, null, null), measured.facts());
+		Assert.assertEquals(List.of(live), measured.facts().get(0).allowedEmissionFacts()
+			.get(0).realizations());
+		Assert.assertSame(facts.get(1), measured.facts().get(1));
+		Assert.assertEquals(3, measured.work().indexedRealizations());
+		Assert.assertEquals(3, measured.work().indexedClauses());
+		Assert.assertEquals(1, measured.work().deletedRealizations());
+		Assert.assertEquals(1, measured.work().reverseIncidences());
+		Assert.assertEquals(0,
+			workMetric(measured.work(), "materializedReverseIncidences"));
 	}
 
 	@Test
@@ -174,7 +231,42 @@ public class PlacementSupportDeletionWorklistTest {
 	}
 
 	@Test
-	public void workCountersAreDeterministicAndDoNotChangeTheResult() {
+	public void equalButDistinctRelocationConsumerIsRejectedByIdentity() {
+		CandidateRuleKey actual = rule("foreign-consumer");
+		CandidateRuleKey equalForeign = rule("foreign-consumer");
+		Assert.assertEquals(actual.parentOccurrence(), equalForeign.parentOccurrence());
+		Assert.assertNotSame(actual.parentOccurrence(), equalForeign.parentOccurrence());
+		CandidateEmissionRealization source = durable("foreign-source");
+		NeutralPlacementGraph.RelocationAction action = action("foreign-action", equalForeign, 0);
+		CandidateRealizationInputBinding binding = CandidateRealizationInputBinding.relocation(
+			0, ref(rule("foreign-source-rule"), source), action.key());
+		Assert.assertFalse(PlacementSupportRelations.supportsRelocationBinding(
+			action, actual, LOCAL, binding));
+	}
+
+	@Test
+	public void duplicateSourceBindingsCountOneLogicalClauseIncidenceWithoutMaterialization()
+		throws Exception {
+		CandidateRuleKey sourceRule = rule("incidence-source"), consumer = rule("incidence-consumer");
+		CandidateEmissionRealization source = durable("incidence-live");
+		CandidateRealizationReference reference = ref(sourceRule, source);
+		CandidateEmissionRealization dependent = CandidateEmissionRealization.local(LOCAL, List.of(),
+			List.of(CandidateRealizationInputBinding.direct(0, reference),
+				CandidateRealizationInputBinding.direct(1, reference)));
+		List<CandidateRuleFact> facts = List.of(fact(sourceRule, ROW, List.of(source)),
+			fact(consumer, LOCAL, List.of(dependent)));
+
+		PlacementSupportRelations.WorklistResult measured = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+		Assert.assertEquals(1, measured.work().reverseIncidences());
+		Assert.assertEquals(0,
+			workMetric(measured.work(), "materializedReverseIncidences"));
+		Assert.assertSame(facts.get(0), measured.facts().get(0));
+		Assert.assertSame(facts.get(1), measured.facts().get(1));
+	}
+
+	@Test
+	public void workCountersAreDeterministicAndDoNotChangeTheResult() throws Exception {
 		CandidateRuleKey sourceRule = rule("count-source"), consumer = rule("count-consumer");
 		CandidateEmissionRealization source = durable("count-live");
 		CandidateEmissionRealization dependent = dependent(consumer, ref(sourceRule, source));
@@ -188,9 +280,22 @@ public class PlacementSupportDeletionWorklistTest {
 		Assert.assertEquals(first, second);
 		Assert.assertEquals(2, first.work().indexedRealizations());
 		Assert.assertEquals(2, first.work().indexedClauses());
-		Assert.assertEquals(1, first.work().reverseIncidences());
+		Assert.assertEquals("logical inventory remains visible without allocation",
+			1, first.work().reverseIncidences());
+		Assert.assertEquals(0,
+			workMetric(first.work(), "materializedReverseIncidences"));
 		Assert.assertEquals(0, first.work().deletedRealizations());
 		Assert.assertEquals(facts, first.facts());
+	}
+
+	private static long workMetric(Object work, String name) throws Exception {
+		try {
+			return ((Number) work.getClass().getDeclaredMethod(name).invoke(work)).longValue();
+		}
+		catch(NoSuchMethodException missing) {
+			Assert.fail("missing work diagnostic: " + name);
+			return -1;
+		}
 	}
 
 	private static void assertSameClosure(List<CandidateRuleFact> facts,

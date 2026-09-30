@@ -177,6 +177,7 @@ final class PlacementRelationClosure {
 	}
 
 	void clearBuildState() {
+		candidateGenerator.resetPreparedOracleState();
 		generationBasesByOccurrence.clear();
 		staticPrivacyProjection = null;
 		privacyAuthorityEstablished = false;
@@ -2360,6 +2361,39 @@ final class PlacementRelationClosure {
 		List<String> compiledEdges, List<Constraint> constraints,
 		List<NeutralPlacementGraph.RelocationAction> actionAuthority, boolean privacyClosed,
 		boolean materializationEnabled) { }
+
+	/** One immutable proof-list snapshot shared by all eligible reads of one invocation. */
+	private static final class LoopSeedProofSnapshot<T> extends java.util.AbstractList<T>
+		implements java.util.RandomAccess {
+		private final List<T> values;
+		private int cachedHash;
+		private volatile boolean hashComputed;
+
+		private LoopSeedProofSnapshot(List<T> values) {
+			this.values = List.copyOf(values);
+		}
+
+		@Override public T get(int index) { return values.get(index); }
+		@Override public int size() { return values.size(); }
+		@Override public boolean equals(Object other) {
+			return this == other || values.equals(other instanceof LoopSeedProofSnapshot<?> snapshot
+				? snapshot.values : other);
+		}
+		@Override public int hashCode() {
+			// Preserve the complete List/record hash, including zero. Unlike a size-only
+			// partition this neither changes buckets nor adds collisions to the ledger.
+			if(!hashComputed) {
+				cachedHash = values.hashCode();
+				hashComputed = true;
+			}
+			return cachedHash;
+		}
+	}
+
+	private static <T> List<T> loopSeedProofSnapshot(List<T> values) {
+		return new LoopSeedProofSnapshot<>(values);
+	}
+
 	private record LoopSeedLedger(Map<LoopSeedRevision,ClosureUpdate> completedTransfers) {
 		private LoopSeedLedger {
 			Objects.requireNonNull(completedTransfers, "completedTransfers");
@@ -2551,16 +2585,29 @@ final class PlacementRelationClosure {
 		List<LogicalTransientInputFact> proofLogicalInputs = logicalInputs.stream().sorted().toList();
 		List<String> proofCompiledEdges = loopSeedCompiledEdges(compiledEdges);
 		List<Constraint> proofConstraints = constraints.stream().sorted().toList();
+		List<CandidateRuleKey> proofDomainKeys = null;
+		List<NeutralPlacementGraph.RelocationAction> proofActionAuthority = null;
 		Map<CompiledHopKey,LoopSeedRevision> eligible = new IdentityHashMap<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			if(!isTransientRead(occurrences.get(ordinal).hop())
 				|| cfg.reachingFunctionInputs().get(ordinal)
 				|| cfg.reachingDefinitions().get(ordinal).size() <= 1)
 				continue;
+			if(proofDomainKeys == null) {
+				// No new domain/action copies on the zero-eligible path. Each complete
+				// list is hashed at most once for this invocation, not once per read key.
+				proofNodes = loopSeedProofSnapshot(proofNodes);
+				proofDomainKeys = loopSeedProofSnapshot(domainKeys);
+				proofFacts = loopSeedProofSnapshot(proofFacts);
+				proofLogicalInputs = loopSeedProofSnapshot(proofLogicalInputs);
+				proofCompiledEdges = loopSeedProofSnapshot(proofCompiledEdges);
+				proofConstraints = loopSeedProofSnapshot(proofConstraints);
+				proofActionAuthority = loopSeedProofSnapshot(actionAuthority);
+			}
 			LoopSeedRevision revision = new LoopSeedRevision(
-				nodes.get(ordinal).key().normalizedSignature(), proofNodes, List.copyOf(domainKeys), proofFacts,
+				nodes.get(ordinal).key().normalizedSignature(), proofNodes, proofDomainKeys, proofFacts,
 				proofLogicalInputs, proofCompiledEdges, proofConstraints,
-				List.copyOf(actionAuthority), privacyClosed, materializationEnabled);
+				proofActionAuthority, privacyClosed, materializationEnabled);
 			eligible.put(nodes.get(ordinal).key(), revision);
 		}
 		return Collections.unmodifiableMap(eligible);
@@ -2824,8 +2871,10 @@ final class PlacementRelationClosure {
 				nativeContextHits++;
 		}
 		else {
-			allDefinitionContinuity = new NativePlacementContinuity(
-				nodes, origins, facts, edges, reaching, complexityMetrics);
+			allDefinitionContinuity = allDefinitionContinuity == null
+				? new NativePlacementContinuity(nodes, origins, facts, edges, reaching, complexityMetrics)
+				: allDefinitionContinuity.structuralRevision(nodes, origins, facts, edges, reaching,
+					Set.of(), Map.of());
 			if(complexityMetrics != null)
 				nativeContextMisses++;
 		}
@@ -3076,9 +3125,10 @@ final class PlacementRelationClosure {
 				for(CompiledHopKey peer : entry.getValue())
 					if(peer != entry.getKey())
 						aliasEdges.add(new PlacementDependencyComponents.InvalidationAdjacency(entry.getKey(), peer));
-		DirectSupportIndex supportIndex = new DirectSupportIndex(slots, initialFacts);
+		DirectSupportIndex supportIndex = new DirectSupportIndex(slots, initialFacts, potential);
 		Map<CompiledHopKey,Set<CompiledHopKey>> support = supportIndex.consumersBySource;
 		PlacementDependencyComponents components = directComponentSchedule(owners, potential, support, aliasEdges);
+		LogicalBoundaryRealizations.Session boundarySession = null;
 		Set<CompiledHopKey> pending = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(var component : components.initialDirtyComponents(
 			initialDirty == null ? owners : List.copyOf(initialDirty)))
@@ -3104,7 +3154,10 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> merged = new ArrayList<>(facts);
 			for(int offset = 0; offset < selectedSlots.size(); offset++)
 				merged.set(selectedSlots.get(offset), rebound.get(offset));
-			merged = LogicalBoundaryRealizations.close(nodes, constraints, origins, merged);
+			Set<CompiledHopKey> directChanged = changedCandidateOccurrences(facts, merged);
+			if(boundarySession == null)
+				boundarySession = new LogicalBoundaryRealizations.Session(nodes, constraints, origins, facts);
+			merged = boundarySession.close(merged, directChanged).facts();
 			Set<CompiledHopKey> changed = changedCandidateOccurrences(facts, merged);
 			if(complexityMetrics != null) {
 				complexityMetrics.recordDirectClosurePass(changed.isEmpty(), wave == 0 && initialDirty == null);
@@ -3133,11 +3186,15 @@ final class PlacementRelationClosure {
 				for(var component : dirty)
 					if(component.owners().stream().anyMatch(pending::contains))
 						pending.addAll(component.owners());
-				components = directComponentSchedule(owners, potential, support, aliasEdges);
+				if(supportUpdate.dependencyUnionChanged())
+					components = directComponentSchedule(owners, potential, support, aliasEdges);
 			}
 			facts = List.copyOf(merged);
 			index.sources().nextRevision(facts, changed);
-			continuity = continuity.nextRevision(facts);
+			// This private loop keeps the complete structural context, shapes and privacy
+			// fixed. The exact before/after owner delta above therefore proves every owner
+			// that can bypass a deep candidate-continuity comparison for this revision.
+			continuity = continuity.nextRevisionWithCompleteCandidateDelta(facts, changed);
 		}
 		if(!pending.isEmpty())
 			throw new IllegalStateException("Direct component relation did not converge");
@@ -3860,20 +3917,27 @@ final class PlacementRelationClosure {
 		return membersByKey;
 	}
 
-	private record DirectSupportUpdate(boolean changed,
+	private record DirectSupportUpdate(boolean changed, boolean dependencyUnionChanged,
 		Map<CompiledHopKey,Set<CompiledHopKey>> removed) { }
 
 	/** Owner-local dependency projection; never owns or changes candidate proof authority. */
 	private static final class DirectSupportIndex {
 		private final Map<CompiledHopKey,List<Integer>> slots;
+		private final Map<CompiledHopKey,Set<CompiledHopKey>> potential;
 		private final List<CandidateRuleKey> rowKeys;
 		private final Map<CompiledHopKey,Set<CompiledHopKey>> sourcesByConsumer = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<CompiledHopKey>> consumersBySource = new IdentityHashMap<>();
 
-		private DirectSupportIndex(Map<CompiledHopKey,List<Integer>> slots, List<CandidateRuleFact> facts) {
+		private DirectSupportIndex(Map<CompiledHopKey,List<Integer>> slots, List<CandidateRuleFact> facts,
+			Map<CompiledHopKey,Set<CompiledHopKey>> potential) {
 			this.slots = slots;
+			this.potential = potential;
 			rowKeys = facts.stream().map(CandidateRuleFact::key).toList();
 			update(slots.keySet(), facts);
+		}
+
+		private DirectSupportIndex(Map<CompiledHopKey,List<Integer>> slots, List<CandidateRuleFact> facts) {
+			this(slots, facts, Map.of());
 		}
 
 		private DirectSupportUpdate update(Set<CompiledHopKey> changed, List<CandidateRuleFact> facts) {
@@ -3881,6 +3945,9 @@ final class PlacementRelationClosure {
 				throw new IllegalStateException("Direct closure changed its candidate row inventory");
 			Map<CompiledHopKey,Set<CompiledHopKey>> removed = new IdentityHashMap<>();
 			boolean adjacencyChanged = false;
+			// P is fixed for this invocation. Therefore (P union S_old) xor
+			// (P union S_new) is exactly the changed support pairs absent from P.
+			boolean dependencyUnionChanged = false;
 			// Include every post-boundary changed owner, not just this wave's selected owners.
 			for(CompiledHopKey owner : changed) {
 				List<Integer> ownerSlots = slots.get(owner);
@@ -3906,11 +3973,13 @@ final class PlacementRelationClosure {
 							consumersBySource.remove(source);
 						addIdentityDependency(removed, source, owner);
 						adjacencyChanged = true;
+						dependencyUnionChanged |= !potential.getOrDefault(source, Set.of()).contains(owner);
 					}
 				for(CompiledHopKey source : sources)
 					if(!previous.contains(source)) {
 						addIdentityDependency(consumersBySource, source, owner);
 						adjacencyChanged = true;
+						dependencyUnionChanged |= !potential.getOrDefault(source, Set.of()).contains(owner);
 					}
 				if(sources.isEmpty())
 					sourcesByConsumer.remove(owner);
@@ -3918,7 +3987,7 @@ final class PlacementRelationClosure {
 					sourcesByConsumer.put(owner, sources);
 			}
 			// new support + removed old pairs is precisely the old/new invalidation union.
-			return new DirectSupportUpdate(adjacencyChanged, removed);
+			return new DirectSupportUpdate(adjacencyChanged, dependencyUnionChanged, removed);
 		}
 	}
 
@@ -4994,11 +5063,13 @@ final class PlacementRelationClosure {
 
 		private void commit(int ordinal, Hop hop, Node replacement, List<CandidateRuleKey> keys,
 			List<CandidateRuleFact> facts, Map<Hop,Node> exactBlockNodes) {
+			if(proofInventory != null)
+				proofInventory = proofInventory.replaceOwner(ordinal, nodes.get(ordinal).key(),
+					replacement, facts);
 			nodes.set(ordinal, replacement);
 			exactBlockNodes.put(hop, replacement);
 			keysByOrdinal.set(ordinal, List.copyOf(keys));
 			factsByOrdinal.set(ordinal, List.copyOf(facts));
-			proofInventory = null;
 		}
 	}
 
@@ -5092,14 +5163,11 @@ final class PlacementRelationClosure {
 					}).collect(java.util.stream.Collectors.toCollection(ArrayList::new));
 				if(physicalState.proofInventory == null && physicalGenerationContext != null
 					&& compiledInputEdges != null) {
-					List<CandidateRuleFact> proofFacts = new ArrayList<>();
-					for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
-						proofFacts.addAll(ownerFacts);
 					// One lazy index belongs to this committed authority revision. The local-input
 					// boundary and materialization closure must query the same inventory.
-					physicalState.proofInventory = new CommittedProofInventory(nodes, proofFacts,
+					physicalState.proofInventory = new CommittedProofInventory(nodes, factsByOrdinal,
 						compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
-						origins, shapeFactsByHop);
+						origins, shapeFactsByHop, true);
 				}
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
@@ -7190,12 +7258,17 @@ final class PlacementRelationClosure {
 		DurableAnchorKey outputAnchor, boolean recomputesRanges, DurableAnchorKey dynamicOutputPool,
 		SearchSpaceMetrics metrics) {
 		List<CandidateEmissionRealization> generated = new ArrayList<>();
+		// The owner is fixed for this invocation and relocation actions are immutable value keys.
+		// Reuse only the corresponding immutable proof node; every assignment, clause and
+		// realization is still constructed and canonicalized by the existing path below.
+		Map<RelocationActionKey,PlacementProofKey> relocationProofs = new java.util.HashMap<>();
 		enumerateBindingAssignments(choices, 0, new ArrayList<>(), assignment -> {
 			List<PlacementProofKey> proofs = assignment.stream()
 				.filter(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION)
 				.map(CandidateRealizationInputBinding::relocationAction).distinct().sorted()
-				.map(action -> new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
-					owner, "relocation:" + action.normalizedSignature())).toList();
+				.map(action -> relocationProofs.computeIfAbsent(action,
+					key -> new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+						owner, "relocation:" + key.normalizedSignature()))).toList();
 			if(emission.derivedFoutAction() != null && !assignment.isEmpty())
 				generated.addAll(canonicalDerivedFoutRealizations(owner, emission, assignment));
 			else if(!proofs.isEmpty() || emission.emissionState().placementState().execType() == ExecType.FED
@@ -7375,11 +7448,19 @@ final class PlacementRelationClosure {
 			}
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-				List<CandidateEmissionRealization> realizations = new ArrayList<>(emission.realizations());
 				PlacementState state = emission.emissionState().placementState();
 				boolean literalFederatedSource = origin instanceof DataOp data
 					&& data.getOp() == OpOpData.FEDERATED;
-				if(literalFederatedSource && state.output() == FederatedOutput.FOUT && state.fType() != null) {
+				boolean mayBindLiteralAnchor = literalFederatedSource
+					&& state.output() == FederatedOutput.FOUT && state.fType() != null;
+				// The exact complement cannot enter durable-anchor generation below.
+				// Preserve its already canonical emission instead of rewrapping it.
+				if(!mayBindLiteralAnchor) {
+					emissions.add(emission);
+					continue;
+				}
+				List<CandidateEmissionRealization> realizations = new ArrayList<>(emission.realizations());
+				if(mayBindLiteralAnchor) {
 					boolean boundLiteralAnchor = false;
 					for(DurableAnchorKey anchor : node.anchors()) {
 						if(anchor.fType() != state.fType() || !outputGeometryCompatible(shape, anchor))
@@ -7400,8 +7481,7 @@ final class PlacementRelationClosure {
 				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
 					emission.derivedFoutAction(), realizations));
 			}
-			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
-				fact.profile(), emissions, fact.failureCode()));
+			result.add(retainUnchangedPrivacyFact(fact, emissions));
 		}
 		return List.copyOf(result);
 	}
@@ -8081,6 +8161,7 @@ final class PlacementRelationClosure {
 		return result;
 	}
 
+
 	private static void addRelocationUsesFromExactCandidateFact(CandidateRuleFact fact,
 		Map<CompiledHopKey,Node> nodesByKey,
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
@@ -8297,10 +8378,14 @@ final class PlacementRelationClosure {
 		return true;
 	}
 
-	/** One committed inventory; indexes survive only until the next worklist commit. */
+	/** One immutable committed inventory with copy-on-write owner revisions. */
 	private static final class CommittedProofInventory {
 		private final List<Node> nodes;
+		// Retained only for cold-constructor compatibility; owner revisions never flatten facts.
 		private final List<CandidateRuleFact> facts;
+		private final List<CompiledHopKey> ownerByOrdinal;
+		private final Map<CompiledHopKey,Integer> ordinalByOwner;
+		private final List<List<CandidateRuleFact>> factsByOrdinal;
 		private final List<CompiledInputEdgeFact> compiledInputEdges;
 		private final List<LogicalTransientInputFact> logicalInputs;
 		private final java.util.Collection<Constraint> constraints;
@@ -8309,6 +8394,11 @@ final class PlacementRelationClosure {
 		private Map<CompiledHopKey,Node> nodesByKey;
 		private Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer;
 		private WorkerPoolAnchorResolver resolver;
+		private final RevisionWork revisionWork;
+		private final boolean ownerDeltaSupported;
+
+		private record RevisionWork(long changedOwnerFactsScanned,
+			long unchangedOwnerFactsScanned, long staticIndexesBuilt) { }
 
 		private CommittedProofInventory(List<Node> nodes, List<CandidateRuleFact> facts,
 			List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> logicalInputs,
@@ -8316,23 +8406,138 @@ final class PlacementRelationClosure {
 			Map<Hop,NodeShapeFact> shapeFactsByHop) {
 			this.nodes = List.copyOf(nodes);
 			this.facts = List.copyOf(facts);
+			ownerByOrdinal = this.nodes.stream().map(Node::key).toList();
+			Map<CompiledHopKey,Integer> ordinals = new IdentityHashMap<>();
+			List<List<CandidateRuleFact>> slices = new ArrayList<>(this.nodes.size());
+			for(int ordinal = 0; ordinal < this.nodes.size(); ordinal++) {
+				ordinals.put(ownerByOrdinal.get(ordinal), ordinal);
+				slices.add(new ArrayList<>());
+			}
+			for(CandidateRuleFact fact : this.facts) {
+				Integer ordinal = ordinals.get(fact.key().parentOccurrence());
+				if(ordinal == null)
+					throw new IllegalArgumentException("Candidate fact has no inventory owner identity");
+				slices.get(ordinal).add(fact);
+			}
+			factsByOrdinal = slices.stream().map(List::copyOf).toList();
+			ordinalByOwner = Collections.unmodifiableMap(ordinals);
 			this.compiledInputEdges = compiledInputEdges;
 			this.logicalInputs = logicalInputs;
 			this.constraints = constraints;
 			this.origins = origins;
 			this.shapeFactsByHop = shapeFactsByHop;
+			revisionWork = new RevisionWork(this.facts.size(), 0, 0);
+			ownerDeltaSupported = false;
+		}
+
+		private CommittedProofInventory(List<Node> nodes,
+			List<List<CandidateRuleFact>> factsByOrdinal,
+			List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> logicalInputs,
+			java.util.Collection<Constraint> constraints, Map<CompiledHopKey,Hop> origins,
+			Map<Hop,NodeShapeFact> shapeFactsByHop, boolean ownerIndexed) {
+			this.nodes = List.copyOf(nodes);
+			facts = null;
+			ownerByOrdinal = this.nodes.stream().map(Node::key).toList();
+			if(factsByOrdinal.size() > this.nodes.size())
+				throw new IllegalArgumentException("Candidate owner slice count differs from node count");
+			Map<CompiledHopKey,Integer> ordinals = new IdentityHashMap<>();
+			List<List<CandidateRuleFact>> slices = new ArrayList<>(this.nodes.size());
+			long scanned = 0;
+			for(int ordinal = 0; ordinal < this.nodes.size(); ordinal++) {
+				CompiledHopKey owner = ownerByOrdinal.get(ordinal);
+				ordinals.put(owner, ordinal);
+				List<CandidateRuleFact> slice = ordinal < factsByOrdinal.size()
+					? List.copyOf(factsByOrdinal.get(ordinal)) : List.of();
+				for(CandidateRuleFact fact : slice)
+					if(fact.key().parentOccurrence() != owner)
+						throw new IllegalArgumentException("Candidate owner slice contains a foreign fact");
+				scanned += slice.size();
+				slices.add(slice);
+			}
+			this.factsByOrdinal = List.copyOf(slices);
+			ordinalByOwner = Collections.unmodifiableMap(ordinals);
+			this.compiledInputEdges = compiledInputEdges;
+			this.logicalInputs = logicalInputs;
+			this.constraints = constraints;
+			this.origins = origins;
+			this.shapeFactsByHop = shapeFactsByHop;
+			revisionWork = new RevisionWork(scanned, 0, 0);
+			ownerDeltaSupported = true;
+		}
+
+		private CommittedProofInventory(CommittedProofInventory previous, List<Node> nodes,
+			List<List<CandidateRuleFact>> factsByOrdinal, WorkerPoolAnchorResolver resolver,
+			Map<CompiledHopKey,Node> nodesByKey, RevisionWork revisionWork) {
+			this.nodes = List.copyOf(nodes);
+			facts = null;
+			ownerByOrdinal = previous.ownerByOrdinal;
+			ordinalByOwner = previous.ordinalByOwner;
+			this.factsByOrdinal = List.copyOf(factsByOrdinal);
+			compiledInputEdges = previous.compiledInputEdges;
+			logicalInputs = previous.logicalInputs;
+			constraints = previous.constraints;
+			origins = previous.origins;
+			shapeFactsByHop = previous.shapeFactsByHop;
+			this.nodesByKey = nodesByKey;
+			matrixEdgesByConsumer = previous.matrixEdgesByConsumer;
+			this.resolver = resolver;
+			this.revisionWork = revisionWork;
+			ownerDeltaSupported = previous.ownerDeltaSupported;
+		}
+
+		private CommittedProofInventory replaceOwner(int ordinal, CompiledHopKey expectedOwner,
+			Node replacementNode, List<CandidateRuleFact> replacementFacts) {
+			Objects.requireNonNull(expectedOwner, "expectedOwner");
+			Objects.requireNonNull(replacementNode, "replacementNode");
+			if(!ownerDeltaSupported)
+				throw new IllegalStateException(
+					"Cold flat proof inventory cannot enter the owner-delta revision path");
+			if(ordinal < 0 || ordinal >= ownerByOrdinal.size()
+				|| ownerByOrdinal.get(ordinal) != expectedOwner
+				|| replacementNode.key() != expectedOwner
+				|| ordinalByOwner.get(expectedOwner) == null)
+				throw new IllegalArgumentException("Owner delta does not match the fixed owner identity");
+			List<CandidateRuleFact> replacement = List.copyOf(replacementFacts);
+			for(CandidateRuleFact fact : replacement)
+				if(fact.key().parentOccurrence() != replacementNode.key())
+					throw new IllegalArgumentException("Owner delta contains a foreign fact");
+			Node previousNode = nodes.get(ordinal);
+			boolean candidateOnly = replacementNode.equals(previousNode);
+			boolean boundedNodeAuthority = !candidateOnly
+				&& previousNode.key() == replacementNode.key()
+				&& previousNode.kind() == replacementNode.kind()
+				&& previousNode.valueVersion().equals(replacementNode.valueVersion());
+			List<Node> revisedNodes = new ArrayList<>(nodes);
+			revisedNodes.set(ordinal, replacementNode);
+			List<List<CandidateRuleFact>> revisedFacts = new ArrayList<>(factsByOrdinal);
+			revisedFacts.set(ordinal, replacement);
+			if(!candidateOnly && !boundedNodeAuthority)
+				return new CommittedProofInventory(revisedNodes, revisedFacts, compiledInputEdges,
+					logicalInputs, constraints, origins, shapeFactsByHop, true);
+			Map<CompiledHopKey,Node> revisedNodeIndex = nodesByKey;
+			if(nodesByKey != null && !candidateOnly) {
+				revisedNodeIndex = new IdentityHashMap<>(nodesByKey);
+				revisedNodeIndex.put(expectedOwner, replacementNode);
+			}
+			WorkerPoolAnchorResolver revisedResolver = resolver == null ? null
+				: resolver.replaceOwner(ordinal, expectedOwner, replacementNode, replacement,
+					boundedNodeAuthority);
+			return new CommittedProofInventory(this, revisedNodes, revisedFacts, revisedResolver,
+				revisedNodeIndex, new RevisionWork(replacement.size(), 0, 0));
 		}
 
 		private WorkerPoolAnchorResolver resolverForQuery() {
 			if(resolver == null) {
 				Map<CompiledHopKey,Node> currentNodes = nodesByKey();
 				Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edges = matrixEdgesByConsumer();
-				WorkerPoolAnchorResolver next = new WorkerPoolAnchorResolver(currentNodes, edges,
-					facts, logicalInputs, constraints, origins, shapeFactsByHop);
+				WorkerPoolAnchorResolver next = facts == null
+					? new WorkerPoolAnchorResolver(currentNodes, edges, ownerByOrdinal, factsByOrdinal,
+						logicalInputs, constraints, origins, shapeFactsByHop)
+					: new WorkerPoolAnchorResolver(currentNodes, edges, facts, logicalInputs,
+						constraints, origins, shapeFactsByHop);
 				resolver = next;
 			}
-			else
-				resolver.resetQueryState();
+			resolver.beginQuery();
 			return resolver;
 		}
 
@@ -8374,35 +8579,81 @@ final class PlacementRelationClosure {
 	private static final class WorkerPoolAnchorResolver {
 		private final Map<CompiledHopKey,Node> nodesByKey;
 		private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer;
-		private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByProducer = new IdentityHashMap<>();
-		private final Map<String,CandidateEmissionRealization> realizationsByReference = new java.util.TreeMap<>();
-		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead =
-			new IdentityHashMap<>();
-		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead = new IdentityHashMap<>();
-		private final Set<CompiledHopKey> declaredFunctionInputs =
-			Collections.newSetFromMap(new IdentityHashMap<>());
-		private final Map<CompiledHopKey,List<CompiledHopKey>> functionOutputSourcesByAlias =
-			new IdentityHashMap<>();
-		private final Map<String,List<CompiledHopKey>> cfgDefinitionSourcesByReference = new LinkedHashMap<>();
+		private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByProducer;
+		private final Map<String,List<RealizationSlot>> realizationSlotsByReference;
+		// Authoritative normalized lookup; collision slots update only touched signatures.
+		private final Map<String,CandidateEmissionRealization> realizationsByReference;
+		private final Map<CompiledHopKey,Set<String>> referenceSignaturesByOwner;
+		private final Map<CompiledHopKey,Integer> slotOrdinalByOwner;
+		private final boolean ownerDeltaSupported;
+		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead;
+		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead;
+		private final Set<CompiledHopKey> declaredFunctionInputs;
+		private final Map<CompiledHopKey,List<CompiledHopKey>> functionOutputSourcesByAlias;
+		private final Map<String,List<CompiledHopKey>> cfgDefinitionSourcesByReference;
 		private NativePlacementContinuity nativeContinuity;
 		private final Map<CompiledHopKey,Hop> origins;
 		private final Map<Hop,NodeShapeFact> shapeFactsByHop;
 		private final Map<CompiledHopKey,Map<FType,Set<DurableAnchorKey>>> memo = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<FType>> active = new IdentityHashMap<>();
+		private boolean queried;
 
-		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
-			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
-			List<CandidateRuleFact> ruleFacts,
-			List<LogicalTransientInputFact> transientBindings,
-			java.util.Collection<Constraint> constraints,
-			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapeFactsByHop) {
-			this(nodesByKey, matrixEdgesByConsumer, ruleFacts, transientBindings,
-				constraints, origins, shapeFactsByHop, Map.of());
+		private record RealizationSlot(int ownerOrdinal, int factOrdinal, int emissionOrdinal,
+			int realizationOrdinal, CompiledHopKey owner,
+			CandidateEmissionRealization realization) implements Comparable<RealizationSlot> {
+			@Override public int compareTo(RealizationSlot that) {
+				int compared = Integer.compare(ownerOrdinal, that.ownerOrdinal);
+				if(compared == 0) compared = Integer.compare(factOrdinal, that.factOrdinal);
+				if(compared == 0) compared = Integer.compare(emissionOrdinal, that.emissionOrdinal);
+				return compared == 0 ? Integer.compare(realizationOrdinal, that.realizationOrdinal) : compared;
+			}
 		}
 
 		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
 			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
-			List<CandidateRuleFact> ruleFacts,
+			List<CompiledHopKey> ownerByOrdinal, List<List<CandidateRuleFact>> factsByOrdinal,
+			List<LogicalTransientInputFact> transientBindings,
+			java.util.Collection<Constraint> constraints,
+			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapeFactsByHop) {
+			this(nodesByKey, matrixEdgesByConsumer, ownerByOrdinal, factsByOrdinal, null,
+				transientBindings, constraints, origins, shapeFactsByHop, Map.of());
+		}
+
+		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
+			List<CompiledHopKey> ownerByOrdinal, List<List<CandidateRuleFact>> factsByOrdinal,
+			List<LogicalTransientInputFact> transientBindings,
+			java.util.Collection<Constraint> constraints,
+			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapeFactsByHop,
+			Map<CompiledHopKey,Privacy> privacyByKey) {
+			this(nodesByKey, matrixEdgesByConsumer, ownerByOrdinal, factsByOrdinal, null,
+				transientBindings, constraints, origins, shapeFactsByHop, privacyByKey);
+		}
+
+		/** Cold compatibility path: retain the caller's exact global fact traversal order. */
+		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
+			List<CandidateRuleFact> ruleFacts, List<LogicalTransientInputFact> transientBindings,
+			java.util.Collection<Constraint> constraints, Map<CompiledHopKey,Hop> origins,
+			Map<Hop,NodeShapeFact> shapeFactsByHop) {
+			this(nodesByKey, matrixEdgesByConsumer, List.of(), List.of(), List.copyOf(ruleFacts),
+				transientBindings, constraints, origins, shapeFactsByHop, Map.of());
+		}
+
+		/** Cold compatibility path with privacy authority. */
+		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
+			List<CandidateRuleFact> ruleFacts, List<LogicalTransientInputFact> transientBindings,
+			java.util.Collection<Constraint> constraints, Map<CompiledHopKey,Hop> origins,
+			Map<Hop,NodeShapeFact> shapeFactsByHop, Map<CompiledHopKey,Privacy> privacyByKey) {
+			this(nodesByKey, matrixEdgesByConsumer, List.of(), List.of(), List.copyOf(ruleFacts),
+				transientBindings, constraints, origins, shapeFactsByHop, privacyByKey);
+		}
+
+		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
+			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
+			List<CompiledHopKey> ownerByOrdinal, List<List<CandidateRuleFact>> factsByOrdinal,
+			List<CandidateRuleFact> globalRuleFacts,
 			List<LogicalTransientInputFact> transientBindings,
 			java.util.Collection<Constraint> constraints,
 			Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapeFactsByHop,
@@ -8411,21 +8662,51 @@ final class PlacementRelationClosure {
 			this.matrixEdgesByConsumer = matrixEdgesByConsumer;
 			this.origins = origins;
 			this.shapeFactsByHop = shapeFactsByHop;
+			candidateFactsByProducer = new IdentityHashMap<>();
+			realizationSlotsByReference = new java.util.TreeMap<>();
+			realizationsByReference = new java.util.TreeMap<>();
+			referenceSignaturesByOwner = new IdentityHashMap<>();
+			slotOrdinalByOwner = new IdentityHashMap<>();
+			ownerDeltaSupported = globalRuleFacts == null;
+			logicalTransientInputsByRead = new IdentityHashMap<>();
+			functionInputsByRead = new IdentityHashMap<>();
+			declaredFunctionInputs = Collections.newSetFromMap(new IdentityHashMap<>());
+			functionOutputSourcesByAlias = new IdentityHashMap<>();
+			cfgDefinitionSourcesByReference = new LinkedHashMap<>();
 			for(Node node : nodesByKey.values())
 				cfgDefinitionSourcesByReference.computeIfAbsent(
 					node.valueVersion().cfgReferenceSignature(), ignored -> new ArrayList<>()).add(node.key());
 			cfgDefinitionSourcesByReference.values().forEach(keys -> keys.sort(null));
-			for(CandidateRuleFact fact : ruleFacts) {
-				candidateFactsByProducer.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
-					.add(fact);
-				if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
-					for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-						for(CandidateEmissionRealization realization : emission.realizations()) {
-							CandidateRealizationReference reference = CandidateRealizationReference.of(
-								fact.key(), realization);
-							realizationsByReference.put(reference.normalizedSignature(), realization);
-						}
+			if(globalRuleFacts == null) {
+				for(int ownerOrdinal = 0; ownerOrdinal < factsByOrdinal.size(); ownerOrdinal++) {
+					CompiledHopKey owner = ownerByOrdinal.get(ownerOrdinal);
+					slotOrdinalByOwner.put(owner, ownerOrdinal);
+					List<CandidateRuleFact> ownerFacts = factsByOrdinal.get(ownerOrdinal);
+					candidateFactsByProducer.put(owner, ownerFacts);
+					Set<String> signatures = new java.util.TreeSet<>();
+					indexRealizations(realizationSlotsByReference, signatures, ownerOrdinal, owner, ownerFacts);
+					referenceSignaturesByOwner.put(owner, Collections.unmodifiableSet(signatures));
+				}
 			}
+			else {
+				for(int factOrdinal = 0; factOrdinal < globalRuleFacts.size(); factOrdinal++) {
+					CandidateRuleFact fact = globalRuleFacts.get(factOrdinal);
+					CompiledHopKey owner = fact.key().parentOccurrence();
+					candidateFactsByProducer.computeIfAbsent(owner, ignored -> new ArrayList<>()).add(fact);
+					Set<String> signatures = new java.util.TreeSet<>(
+						referenceSignaturesByOwner.getOrDefault(owner, Set.of()));
+					indexRealizations(realizationSlotsByReference, signatures, 0, owner,
+						List.of(fact), factOrdinal);
+					referenceSignaturesByOwner.put(owner, Collections.unmodifiableSet(signatures));
+				}
+				candidateFactsByProducer.replaceAll((ignored, ownerFacts) -> List.copyOf(ownerFacts));
+			}
+			realizationSlotsByReference.replaceAll((ignored, slots) -> {
+				slots.sort(null);
+				return List.copyOf(slots);
+			});
+			realizationSlotsByReference.forEach((signature, slots) ->
+				realizationsByReference.put(signature, slots.get(slots.size() - 1).realization()));
 			for(LogicalTransientInputFact fact : transientBindings)
 				for(FType type : fact.compatibility().stream()
 					.map(TransientPlacementCompatibility::readerInput).filter(CandidateInputState::present)
@@ -8515,8 +8796,107 @@ final class PlacementRelationClosure {
 			}
 			List<CompiledInputEdgeFact> compiledEdges = matrixEdgesByConsumer.values().stream()
 				.flatMap(edges -> edges.values().stream()).toList();
+			List<CandidateRuleFact> nativeFacts = globalRuleFacts == null
+				? factsByOrdinal.stream().flatMap(List::stream).toList() : globalRuleFacts;
 			nativeContinuity = new NativePlacementContinuity(nodesByKey, origins,
-				ruleFacts, compiledEdges, continuitySources, incompleteContinuitySources, privacyByKey);
+				nativeFacts, compiledEdges,
+				continuitySources, incompleteContinuitySources, privacyByKey);
+		}
+
+		private WorkerPoolAnchorResolver(WorkerPoolAnchorResolver previous, int ownerOrdinal,
+			CompiledHopKey owner, Node replacementNode, List<CandidateRuleFact> replacementFacts,
+			boolean nodeAuthority) {
+			Map<CompiledHopKey,Node> revisedNodes = previous.nodesByKey;
+			if(nodeAuthority) {
+				revisedNodes = new IdentityHashMap<>(previous.nodesByKey);
+				revisedNodes.put(owner, replacementNode);
+			}
+			nodesByKey = revisedNodes;
+			matrixEdgesByConsumer = previous.matrixEdgesByConsumer;
+			origins = previous.origins;
+			shapeFactsByHop = previous.shapeFactsByHop;
+			logicalTransientInputsByRead = previous.logicalTransientInputsByRead;
+			functionInputsByRead = previous.functionInputsByRead;
+			declaredFunctionInputs = previous.declaredFunctionInputs;
+			functionOutputSourcesByAlias = previous.functionOutputSourcesByAlias;
+			cfgDefinitionSourcesByReference = previous.cfgDefinitionSourcesByReference;
+			slotOrdinalByOwner = previous.slotOrdinalByOwner;
+			ownerDeltaSupported = true;
+			candidateFactsByProducer = new IdentityHashMap<>(previous.candidateFactsByProducer);
+			candidateFactsByProducer.put(owner, replacementFacts);
+			realizationSlotsByReference = new java.util.TreeMap<>(previous.realizationSlotsByReference);
+			realizationsByReference = new java.util.TreeMap<>(previous.realizationsByReference);
+			for(String signature : previous.referenceSignaturesByOwner.getOrDefault(owner, Set.of())) {
+				List<RealizationSlot> retained = previous.realizationSlotsByReference
+					.getOrDefault(signature, List.of()).stream()
+					.filter(slot -> slot.owner() != owner).toList();
+				if(retained.isEmpty()) {
+					realizationSlotsByReference.remove(signature);
+					realizationsByReference.remove(signature);
+				}
+				else {
+					realizationSlotsByReference.put(signature, retained);
+					realizationsByReference.put(signature,
+						retained.get(retained.size() - 1).realization());
+				}
+			}
+			Set<String> revisedSignatures = new java.util.TreeSet<>();
+			Integer stableOwnerOrdinal = slotOrdinalByOwner.get(owner);
+			if(stableOwnerOrdinal == null)
+				throw new IllegalArgumentException("Resolver owner delta has a foreign owner identity");
+			indexRealizations(realizationSlotsByReference, revisedSignatures, stableOwnerOrdinal, owner,
+				replacementFacts);
+			for(String signature : revisedSignatures) {
+				List<RealizationSlot> sorted = new ArrayList<>(realizationSlotsByReference.get(signature));
+				sorted.sort(null);
+				realizationSlotsByReference.put(signature, List.copyOf(sorted));
+				realizationsByReference.put(signature,
+					sorted.get(sorted.size() - 1).realization());
+			}
+			referenceSignaturesByOwner = new IdentityHashMap<>(previous.referenceSignaturesByOwner);
+			referenceSignaturesByOwner.put(owner, Collections.unmodifiableSet(revisedSignatures));
+			nativeContinuity = nodeAuthority
+				? previous.nativeContinuity.nextNodeAuthorityRevision(replacementNode, replacementFacts)
+				: previous.nativeContinuity.nextOwnerRevision(owner, replacementFacts);
+		}
+
+		private WorkerPoolAnchorResolver replaceOwner(int ownerOrdinal, CompiledHopKey owner,
+			Node replacementNode, List<CandidateRuleFact> replacementFacts, boolean nodeAuthority) {
+			requireInactive();
+			if(!ownerDeltaSupported)
+				throw new IllegalStateException(
+					"Cold flat resolver cannot enter the owner-delta revision path");
+			return new WorkerPoolAnchorResolver(this, ownerOrdinal, owner, replacementNode,
+				replacementFacts, nodeAuthority);
+		}
+
+		private static void indexRealizations(Map<String,List<RealizationSlot>> index,
+			Set<String> ownerSignatures, int ownerOrdinal, CompiledHopKey owner,
+			List<CandidateRuleFact> ownerFacts) {
+			indexRealizations(index, ownerSignatures, ownerOrdinal, owner, ownerFacts, 0);
+		}
+
+		private static void indexRealizations(Map<String,List<RealizationSlot>> index,
+			Set<String> ownerSignatures, int ownerOrdinal, CompiledHopKey owner,
+			List<CandidateRuleFact> ownerFacts, int factOrdinalBase) {
+			for(int factOrdinal = 0; factOrdinal < ownerFacts.size(); factOrdinal++) {
+				CandidateRuleFact fact = ownerFacts.get(factOrdinal);
+				if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+					continue;
+				for(int emissionOrdinal = 0; emissionOrdinal < fact.allowedEmissionFacts().size(); emissionOrdinal++) {
+					CandidateEmissionFact emission = fact.allowedEmissionFacts().get(emissionOrdinal);
+					for(int realizationOrdinal = 0; realizationOrdinal < emission.realizations().size(); realizationOrdinal++) {
+						CandidateEmissionRealization realization = emission.realizations().get(realizationOrdinal);
+						String signature = CandidateRealizationReference.of(fact.key(), realization)
+							.normalizedSignature();
+						ownerSignatures.add(signature);
+						List<RealizationSlot> slots = new ArrayList<>(index.getOrDefault(signature, List.of()));
+						slots.add(new RealizationSlot(ownerOrdinal, factOrdinalBase + factOrdinal, emissionOrdinal,
+							realizationOrdinal, owner, realization));
+						index.put(signature, slots);
+					}
+				}
+			}
 		}
 
 		private void requireInactive() {
@@ -8528,6 +8908,12 @@ final class PlacementRelationClosure {
 			requireInactive();
 			memo.clear();
 			nativeContinuity = nativeContinuity.freshQueryState();
+		}
+
+		private void beginQuery() {
+			if(queried)
+				resetQueryState();
+			queried = true;
 		}
 
 		private Set<DurableAnchorKey> resolve(CompiledHopKey producer, FType fType) {

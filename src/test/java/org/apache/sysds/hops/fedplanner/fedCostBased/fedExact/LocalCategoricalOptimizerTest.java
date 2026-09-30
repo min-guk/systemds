@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -64,12 +65,22 @@ public class LocalCategoricalOptimizerTest {
 
 		LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
 			variables, hard, cost, variables, List.of(), (v, value) -> value);
+		LocalCategoricalOptimizer.Result normalized = LocalCategoricalOptimizer.optimize(
+			variables, hard, cost, variables, List.of(),
+			(v, value) -> NormalizedText.literal(Integer.toString(value)));
 
 		Assert.assertEquals(List.of(1, 0, 1), result.assignmentInVariableOrder());
 		Assert.assertTrue(result.statistics().initialHardViolations() > 0);
 		Assert.assertEquals(0, result.statistics().finalHardViolations());
 		Assert.assertTrue(result.statistics().conflictBlocksSolved() > 0);
 		Assert.assertEquals(2d, result.objective(), 0d);
+		Assert.assertEquals("normalized state keys changed repaired assignment",
+			result.assignmentInVariableOrder(), normalized.assignmentInVariableOrder());
+		Assert.assertEquals("normalized state keys changed repaired objective bits",
+			Double.doubleToRawLongBits(result.objective()),
+			Double.doubleToRawLongBits(normalized.objective()));
+		Assert.assertEquals("normalized state keys changed seed/repair trace",
+			withoutTimings(result.statistics()), withoutTimings(normalized.statistics()));
 	}
 
 	@Test

@@ -197,7 +197,7 @@ public class PhysicalGenerationEnvelopeTest {
 	}
 
 	@Test
-	public void committedInputDomainChangeInvalidatesInventoryBeforeDownstreamOwner() throws Exception {
+	public void committedInputDomainChangeUpdatesAuthorityWithoutRebuildingEdges() throws Exception {
 		PhysicalClosureFixture fixture = new PhysicalClosureFixture(true);
 		ReplayState settled = fixture.settle(fixture.initial(fixture.pool("pool-a", "worker-a")));
 		List<CandidateRuleFact> priorFirstFacts = fixture.ownedFacts(settled, fixture.firstKey);
@@ -222,8 +222,8 @@ public class PhysicalGenerationEnvelopeTest {
 		Assert.assertTrue("the downstream owner must consume the committed ROW domain",
 			downstreamFacts.stream().allMatch(fact -> fact.key().orderedInputs()
 				.equals(List.of(CandidateInputState.present(FType.ROW)))));
-		Assert.assertEquals("the intermediate commit must invalidate before downstream normalization",
-			2, edges.completedTraversals());
+		Assert.assertEquals("the validated static edge index is shared across the owner commit",
+			1, edges.completedTraversals());
 	}
 
 	@Test

@@ -38,10 +38,32 @@ final class ExactPhysicalOptimizer {
 			if(surface.variables().get(index) != modelVariables.get(index))
 				throw new IllegalArgumentException("EXACT_PHYSICAL_COST_VARIABLE_IDENTITY_MISMATCH");
 
-		List<ExactCategoricalSolver.Factor> factors =
-			new java.util.ArrayList<>(model.hardFactors());
 		ExactPhysicalForcedStateAudit.Constraint forced =
 			ExactPhysicalForcedStateAudit.prepare(model);
+		if(forced == null) {
+			long started = System.nanoTime();
+			var certificate = ExactDyadicCosts.certify(surface);
+			String legacyReason = certificate.reason();
+			if(certificate.supported()) {
+				var encoding = ExactPhysicalSharedSourceEncoding.prepare(model, surface, List.of(), limits);
+				if(encoding.statistics().transformed())
+					return optimizePreparedSharedSource(model, surface, limits, certificate, encoding, null, started);
+				legacyReason = encoding.statistics().reason();
+			}
+			if(FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.logGlobal("Exact-Representation", "sharedSource=false reason="
+					+ legacyReason + " numericQ=" + certificate.q()
+					+ " numericMaxBits=" + certificate.maximumSumBits()
+					+ " canonicalContributions=" + certificate.canonicalContributionCount()
+					+ " accumulationContributions=" + certificate.accumulationContributionCount()
+					+ " numericHeadroom=" + certificate.bitsWithAccumulationHeadroom()
+					+ " numericResidualUnits=" + certificate.maximumResidualUnits()
+					+ " eligibilityNanos=" + (System.nanoTime() - started));
+		}
+		// Unsupported representation/numeric eligibility retains the complete original
+		// exact problem. Solver or canonical-audit failures never select this branch.
+		List<ExactCategoricalSolver.Factor> factors =
+			new java.util.ArrayList<>(model.exactSolverHardFactors());
 		if(forced != null)
 			factors.add(forced.factor());
 		factors.addAll(surface.exactSolverFactors());
@@ -74,9 +96,85 @@ final class ExactPhysicalOptimizer {
 			ExactPhysicalForcedStateAudit.recordSolverFailure(model, forced, failure);
 			throw failure;
 		}
+		return verifyResult(model, surface, forced, solved);
+	}
+
+	/**
+	 * Strict certified composition used to validate the production representation choice.
+	 * Unlike the default entry, unsupported eligibility here is an explicit error.
+	 */
+	static Result optimizeSharedSource(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, ExactCategoricalSolver.Limits limits,
+		ExactDyadicCosts.Certificate certificate) {
+		Objects.requireNonNull(model, "model");
+		Objects.requireNonNull(certificate, "certificate");
+		certificate.validateSurface(surface);
+		certificate.validateSourceFactors(surface.exactSolverFactors());
+		if(!certificate.supported())
+			throw new IllegalArgumentException("EXACT_SHARED_SOURCE_NUMERIC_UNSUPPORTED|" + certificate.reason());
+		ExactPhysicalForcedStateAudit.Constraint forced = ExactPhysicalForcedStateAudit.prepare(model);
+		long started = System.nanoTime();
+		var encoding = ExactPhysicalSharedSourceEncoding.prepare(model, surface,
+			forced == null ? List.of() : List.of(forced.factor()), limits);
+		if(!encoding.statistics().transformed())
+			throw new IllegalArgumentException("EXACT_SHARED_SOURCE_ENCODING_UNSUPPORTED|"
+				+ encoding.statistics().reason());
+		return optimizePreparedSharedSource(model, surface, limits, certificate, encoding, forced, started);
+	}
+
+	private static Result optimizePreparedSharedSource(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, ExactCategoricalSolver.Limits limits,
+		ExactDyadicCosts.Certificate certificate, ExactPhysicalSharedSourceEncoding.Encoding encoding,
+		ExactPhysicalForcedStateAudit.Constraint forced, long started) {
+		ExactCategoricalSolver.Result decoded;
+		try {
+			boolean compact = configuredCompaction();
+			var orderPolicy = ExactEliminationOrderPolicy.globalConfigured();
+			// Only this exact encoding of the already validated surface can supply the
+			// private preparation below. No caller-supplied replacement factor list is accepted.
+			var prepared = compact ? ExactPhysicalReducedSolver.prepareCompacted(
+				encoding.decisionPrefixCount(), encoding.variables(), encoding.factors(), limits,
+				orderPolicy, "global-shared-compact") : ExactPhysicalReducedSolver.prepare(
+				encoding.decisionPrefixCount(), encoding.variables(), encoding.factors(), limits,
+				orderPolicy, "global-shared");
+			if(FederatedPlannerTrace.isEnabled())
+				FederatedPlannerTrace.logGlobal("Exact-SharedSourcePreparation", "compact=" + compact
+					+ " numericQ=" + certificate.q() + " numericMaxBits=" + certificate.maximumSumBits()
+					+ " canonicalContributions=" + certificate.canonicalContributionCount()
+					+ " accumulationContributions=" + certificate.accumulationContributionCount()
+					+ " numericHeadroom=" + certificate.bitsWithAccumulationHeadroom()
+					+ " numericResidualUnits=" + certificate.maximumResidualUnits()
+					+ " originalRows=" + encoding.statistics().originalRows()
+					+ " headerValues=" + encoding.statistics().headerValues()
+					+ " encodedVariables=" + encoding.variables().size()
+					+ " compiledVariables=" + prepared.compiledVariableCount()
+					+ " factorLimit=" + limits.maximumFactorCells()
+					+ " totalCellLimit=" + limits.maximumMaterializedCells()
+					+ orderTrace(orderPolicy, prepared)
+					+ " preparationNanos=" + (System.nanoTime() - started));
+			LocalCategoricalOptimizer.tracePreparation("global-shared", prepared.preparationStatistics());
+			var solved = ExactPhysicalReducedSolver.solveDyadic(prepared,
+				certificate.bindDerived(encoding, prepared));
+			decoded = new ExactCategoricalSolver.Result(solved.objective(),
+				encoding.decode(solved.assignmentInVariableOrder()), solved.statistics());
+		}
+		catch(IllegalArgumentException failure) {
+			ExactPhysicalForcedStateAudit.recordSolverFailure(model, forced, failure);
+			throw failure;
+		}
+		return verifyResult(model, surface, forced, decoded);
+	}
+
+	private static Result verifyResult(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface,
+		ExactPhysicalForcedStateAudit.Constraint forced, ExactCategoricalSolver.Result solved) {
+		List<ExactCategoricalSolver.Variable> modelVariables = model.variables();
 		ExactCategoricalSolver.Result decisionResult = new ExactCategoricalSolver.Result(
 			solved.objective(), solved.assignmentInVariableOrder().subList(0, modelVariables.size()),
 			solved.statistics());
+		if(!Double.isFinite(RegionalSearchProblem.evaluateFactors(modelVariables,
+			model.hardFactors(), decisionResult.assignmentInVariableOrder())))
+			throw new IllegalArgumentException("EXACT_PHYSICAL_SOLVER_CANONICAL_HARD_MISMATCH");
 		ExactPhysicalForcedStateAudit.verify(model, forced, decisionResult);
 		long canonicalBits = surface.evaluateCanonical(decisionResult.assignmentInVariableOrder());
 		if(Double.doubleToRawLongBits(decisionResult.objective()) != canonicalBits)

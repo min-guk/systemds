@@ -56,6 +56,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.Expecte
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.LatentWdivmmRuntimeTransferBoundary;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
@@ -115,15 +116,138 @@ public final class ExactPhysicalCostModel {
 		}
 	}
 
+	enum CostTransportKind { IDENTITY, ONE_MONETARY_TABLE, ZERO }
+
+	sealed interface CostTransportDeclaration {
+		record Identity(ExactCategoricalSolver.Factor factor) implements CostTransportDeclaration {
+			public Identity { Objects.requireNonNull(factor, "factor"); }
+		}
+		record OneMonetaryTable(ExactCategoricalSolver.Factor factor)
+			implements CostTransportDeclaration {
+			public OneMonetaryTable { Objects.requireNonNull(factor, "factor"); }
+		}
+	}
+	private static final class ZeroCostTransport implements CostTransportDeclaration {
+		private static final ZeroCostTransport INSTANCE = new ZeroCostTransport();
+		private ZeroCostTransport() { }
+	}
+
 	static record SolverFactorization(
 		List<ExactCategoricalSolver.Variable> auxiliaryVariables,
-		List<ExactCategoricalSolver.Factor> factors, String semanticDescriptor) {
+		List<ExactCategoricalSolver.Factor> factors, String semanticDescriptor,
+		List<ExactCategoricalSolver.Factor> ordinaryFactors, int[] nativeLocalSourceClasses,
+		CostTransportDeclaration costTransport) {
+
 		SolverFactorization {
 			auxiliaryVariables = List.copyOf(auxiliaryVariables);
 			factors = List.copyOf(factors);
+			ordinaryFactors = List.copyOf(ordinaryFactors);
+			nativeLocalSourceClasses = nativeLocalSourceClasses == null ? null : nativeLocalSourceClasses.clone();
+			Objects.requireNonNull(costTransport, "costTransport");
 			if(semanticDescriptor == null || semanticDescriptor.isBlank())
 				throw new IllegalArgumentException("EXACT_PHYSICAL_FACTOR_DESCRIPTOR_INVALID");
 		}
+
+		@Override
+		public int[] nativeLocalSourceClasses() {
+			return nativeLocalSourceClasses == null ? null : nativeLocalSourceClasses.clone();
+		}
+
+		CostTransportKind costTransportKind() {
+			if(costTransport instanceof CostTransportDeclaration.Identity)
+				return CostTransportKind.IDENTITY;
+			if(costTransport instanceof CostTransportDeclaration.OneMonetaryTable)
+				return CostTransportKind.ONE_MONETARY_TABLE;
+			return CostTransportKind.ZERO;
+		}
+
+		ExactCategoricalSolver.Factor canonicalFactorAfterFreeze(ExactCategoricalSolver.Factor original,
+			IdentityHashMap<ExactCategoricalSolver.Factor,ExactCategoricalSolver.Factor> frozenByOriginal) {
+			if(nativeLocalSourceClasses == null)
+				return frozenByOriginal.getOrDefault(original, original);
+			var prices = Objects.requireNonNull(frozenByOriginal.get(ordinaryFactors.get(0)),
+				"projected prices must be frozen after preflight");
+			int targets = original.scope().get(1).domainSize();
+			// Preserve the cost snapshot, not the live cost-estimator callback. Otherwise
+			// changing global network parameters after construction could change policy
+			// costs while the exact kernel still reads its frozen numeric table.
+			return ExactCategoricalSolver.Factor.lazy(original.scope(), values ->
+				prices.denseCostAt(nativeLocalSourceClasses[values[0]] * targets + values[1]));
+		}
+	}
+
+	sealed interface FrozenCostTransport {
+		record Identity(ExactCategoricalSolver.Factor factor, int solverFactorOrdinal)
+			implements FrozenCostTransport { }
+		record OneMonetaryTable(ExactCategoricalSolver.Factor factor, int solverFactorOrdinal)
+			implements FrozenCostTransport { }
+		enum Zero implements FrozenCostTransport { INSTANCE }
+	}
+
+	static record ContributionEncoding(int canonicalOrdinal, PhysicalContribution contribution,
+		FrozenCostTransport transport) { }
+
+	static final class FrozenDyadicCostTransport {
+		private final PlacementAnalysis owner;
+		private final String ownerFingerprint;
+		private final String contributionFingerprint;
+		private final List<ExactCategoricalSolver.Factor> solverFactorsInOrder;
+		private final List<ContributionEncoding> canonical;
+		private PhysicalCostSurface boundSurface;
+
+		private FrozenDyadicCostTransport(PlacementAnalysis owner, String ownerFingerprint,
+			String contributionFingerprint,
+			List<ExactCategoricalSolver.Factor> solverFactorsInOrder,
+			List<ContributionEncoding> canonical) {
+			this.owner = Objects.requireNonNull(owner, "owner");
+			this.ownerFingerprint = Objects.requireNonNull(ownerFingerprint, "ownerFingerprint");
+			this.contributionFingerprint = Objects.requireNonNull(
+				contributionFingerprint, "contributionFingerprint");
+			this.solverFactorsInOrder = List.copyOf(solverFactorsInOrder);
+			this.canonical = List.copyOf(canonical);
+		}
+
+		void validate(PhysicalCostSurface surface) {
+			if(surface != boundSurface || surface.owner() != owner
+				|| !surface.ownerFingerprint().equals(ownerFingerprint)
+				|| !owner.analysisFingerprint().equals(ownerFingerprint)
+				|| !surface.contributionFingerprint().equals(contributionFingerprint)
+				|| surface.contributions().size() != canonical.size()
+				|| surface.exactSolverFactors().size() != solverFactorsInOrder.size())
+				throw new IllegalArgumentException("EXACT_DYADIC_TRANSPORT_SURFACE_MISMATCH");
+			owner.assertProgramStructureUnchanged();
+			for(int ordinal = 0; ordinal < canonical.size(); ordinal++) {
+				ContributionEncoding encoding = canonical.get(ordinal);
+				if(encoding.canonicalOrdinal() != ordinal
+					|| encoding.contribution() != surface.contributions().get(ordinal))
+					throw new IllegalArgumentException("EXACT_DYADIC_TRANSPORT_ORDINAL_MISMATCH");
+				if(encoding.transport() instanceof FrozenCostTransport.Identity identity
+					&& (identity.factor() != encoding.contribution().factor()
+						|| solverFactorsInOrder.get(identity.solverFactorOrdinal()) != identity.factor()))
+					throw new IllegalArgumentException("EXACT_DYADIC_TRANSPORT_IDENTITY_MISMATCH");
+				if(encoding.transport() instanceof FrozenCostTransport.OneMonetaryTable one
+					&& solverFactorsInOrder.get(one.solverFactorOrdinal()) != one.factor())
+					throw new IllegalArgumentException("EXACT_DYADIC_TRANSPORT_MONETARY_MISMATCH");
+			}
+			validateSolverFactors(surface.exactSolverFactors());
+		}
+
+		void validateSolverFactors(List<ExactCategoricalSolver.Factor> factors) {
+			if(factors.size() != solverFactorsInOrder.size())
+				throw new IllegalArgumentException("EXACT_DYADIC_TRANSPORT_FACTOR_COUNT_MISMATCH");
+			for(int ordinal = 0; ordinal < factors.size(); ordinal++)
+				if(factors.get(ordinal) != solverFactorsInOrder.get(ordinal))
+					throw new IllegalArgumentException("EXACT_DYADIC_TRANSPORT_FACTOR_IDENTITY_MISMATCH");
+		}
+
+		List<ContributionEncoding> canonical() { return canonical; }
+
+		private void bind(PhysicalCostSurface surface) {
+			if(boundSurface != null)
+				throw new IllegalStateException("EXACT_DYADIC_TRANSPORT_ALREADY_BOUND");
+			boundSurface = Objects.requireNonNull(surface, "surface");
+		}
+
 	}
 
 	static record PhysicalCostSurface(PlacementAnalysis owner, String ownerFingerprint,
@@ -131,7 +255,8 @@ public final class ExactPhysicalCostModel {
 		List<PhysicalContribution> contributions, List<PhysicalTransferKey> transferKeys,
 		String contributionFingerprint,
 		List<ExactCategoricalSolver.Variable> exactSolverVariables,
-		List<ExactCategoricalSolver.Factor> exactSolverFactors) {
+		List<ExactCategoricalSolver.Factor> exactSolverFactors,
+		FrozenDyadicCostTransport dyadicCostTransport) {
 		PhysicalCostSurface {
 			Objects.requireNonNull(owner, "owner");
 			if(ownerFingerprint == null || ownerFingerprint.isBlank()
@@ -144,6 +269,7 @@ public final class ExactPhysicalCostModel {
 				throw new IllegalArgumentException("EXACT_PHYSICAL_COST_FINGERPRINT_INVALID");
 			exactSolverVariables = List.copyOf(exactSolverVariables);
 			exactSolverFactors = List.copyOf(exactSolverFactors);
+			Objects.requireNonNull(dyadicCostTransport, "dyadicCostTransport");
 			if(exactSolverVariables.size() < variables.size())
 				throw new IllegalArgumentException("EXACT_PHYSICAL_SOLVER_VARIABLE_PREFIX_INVALID");
 			for(int index = 0; index < variables.size(); index++)
@@ -304,6 +430,7 @@ public final class ExactPhysicalCostModel {
 		if(!frequencies.exactFunctionContextsProven())
 			throw new IllegalArgumentException("EXACT_GUARDED_FUNCTION_ROOTS_REQUIRED");
 		int workers = workerCount(analysis.graph());
+		PhysicalWorkerCounts physicalWorkerCounts = new PhysicalWorkerCounts();
 		ExpectedSparseAssignmentEstimates sparseAssignments =
 			PlacementCostSemantics.expectedSparseAssignmentEstimates(analysis);
 		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
@@ -324,18 +451,19 @@ public final class ExactPhysicalCostModel {
 				.latentWdivmmRuntimeTransferBoundaries(analysis));
 		List<EffectiveLogicalFunctionInput> logicalInputs = effectiveLogicalFunctionInputs(analysis);
 		addPhysicalCompiledTransferFactors(analysis, sparseAssignments, model.domains(),
-			domains, workers, frequencies, logicalInputs, latentRuntimeBoundaries,
+			domains, workers, physicalWorkerCounts, frequencies, logicalInputs, latentRuntimeBoundaries,
 			factors, factorizations, transferKeys);
 		addPhysicalLatentWdivmmRuntimeInputFactors(analysis, sparseAssignments,
 			model.domains(), domains, workers, frequencies, factors, factorKinds,
 			factorizations, transferKeys);
 		addPhysicalNativeLocalInputTransferFactors(analysis, sparseAssignments, domains,
-			workers, frequencies, latentRuntimeBoundaries, factors);
+			workers, physicalWorkerCounts, frequencies, latentRuntimeBoundaries, factors, factorizations);
 		addPhysicalLogicalFunctionFactors(analysis, sparseAssignments, domains, workers,
-			frequencies, latentRuntimeBoundaries, factors, transferKeys);
+			physicalWorkerCounts, frequencies, latentRuntimeBoundaries, factors, transferKeys);
 		List<PhysicalContribution> contributions = new ArrayList<>(factors.size());
 		List<ExactCategoricalSolver.Variable> exactSolverVariables =
 			new ArrayList<>(model.variables());
+		exactSolverVariables.addAll(model.exactSolverAuxiliaryVariables());
 		List<ExactCategoricalSolver.Factor> provisionalSolverFactors = new ArrayList<>();
 		List<ExactCategoricalSolver.Factor> ordinaryFactors = new ArrayList<>();
 		for(ExactCategoricalSolver.Factor factor : factors) {
@@ -347,10 +475,11 @@ public final class ExactPhysicalCostModel {
 			else {
 				exactSolverVariables.addAll(factorization.auxiliaryVariables());
 				provisionalSolverFactors.addAll(factorization.factors());
+				ordinaryFactors.addAll(factorization.ordinaryFactors());
 			}
 		}
 		List<ExactCategoricalSolver.Factor> frozenOrdinary =
-			freezeOrdinaryFactorsAfterPreflight(exactSolverVariables, model.hardFactors(),
+			freezeOrdinaryFactorsAfterPreflight(exactSolverVariables, model.exactSolverHardFactors(),
 				provisionalSolverFactors, ordinaryFactors, limits, ordinaryEvaluationObserver);
 		IdentityHashMap<ExactCategoricalSolver.Factor,ExactCategoricalSolver.Factor> frozenByOriginal =
 			new IdentityHashMap<>();
@@ -366,13 +495,18 @@ public final class ExactPhysicalCostModel {
 		// a changed numeric factor table must therefore produce a different certificate
 		// even when a reconstructed analysis reuses the old structural fingerprint.
 		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
-			normalized.append("|candidate:").append(physicalCandidateFactSignature(fact));
+			appendPhysicalCandidateFact(normalized, fact);
 		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
 			normalized.append("|domain:").append(domain.node().key().normalizedSignature());
-			for(ExactPhysicalModel.Alternative alternative : domain.alternatives())
-				normalized.append("|alternative:").append(alternative.signature());
+			for(ExactPhysicalModel.Alternative alternative : domain.alternatives()) {
+				normalized.append("|alternative:");
+				normalized.appendSignature(alternative.normalizedSignature());
+			}
 		}
+		for(String descriptor : model.exactSolverHardFactorDescriptors())
+			normalized.append("|hard-encoding:").append(descriptor);
 		List<ExactCategoricalSolver.Factor> exactSolverFactors = new ArrayList<>();
+		List<ContributionEncoding> dyadicEncodings = new ArrayList<>();
 		for(int index = 0; index < factors.size(); index++) {
 			ExactCategoricalSolver.Factor factor = factors.get(index);
 			String id = String.format("%08d", index) + '|'
@@ -382,21 +516,78 @@ public final class ExactPhysicalCostModel {
 			SolverFactorization factorization = factorizations.get(factor);
 			if(factorization == null) {
 				ExactCategoricalSolver.Factor frozen = frozenByOriginal.get(factor);
-				contributions.add(new PhysicalContribution(id, frozen));
+				PhysicalContribution contribution = new PhysicalContribution(id, frozen);
+				contributions.add(contribution);
 				normalized.append("|values=");
 				appendPhysicalFactorValues(normalized, frozen);
 				exactSolverFactors.add(frozen);
+				dyadicEncodings.add(new ContributionEncoding(index, contribution,
+					new FrozenCostTransport.Identity(frozen, exactSolverFactors.size() - 1)));
 			}
 			else {
-				contributions.add(new PhysicalContribution(id, factor));
+				PhysicalContribution contribution = new PhysicalContribution(id,
+					factorization.canonicalFactorAfterFreeze(factor, frozenByOriginal));
+				contributions.add(contribution);
 				normalized.append("|structured=").append(factorization.semanticDescriptor());
-				exactSolverFactors.addAll(factorization.factors());
+				for(var encoded : factorization.factors()) {
+					var frozen = frozenByOriginal.get(encoded);
+					exactSolverFactors.add(frozen == null ? encoded : frozen);
+					if(frozen != null) {
+						normalized.append("|encodedScope=").append(encoded.scope())
+							.append("|values=");
+						appendPhysicalFactorValues(normalized, frozen);
+					}
+				}
+				dyadicEncodings.add(new ContributionEncoding(index, contribution,
+					freezeCostTransport(factorization.costTransport(), frozenByOriginal,
+						exactSolverFactors)));
 			}
 		}
 		for(PhysicalTransferKey key : transferKeys)
 			normalized.append("|transfer:").append(key);
-		return new PhysicalCostSurface(analysis, analysis.analysisFingerprint(), model.variables(), contributions,
-			transferKeys, normalized.finish(), exactSolverVariables, exactSolverFactors);
+		String contributionFingerprint = normalized.finish();
+		FrozenDyadicCostTransport dyadicTransport = new FrozenDyadicCostTransport(analysis,
+			analysis.analysisFingerprint(), contributionFingerprint, exactSolverFactors, dyadicEncodings);
+		PhysicalCostSurface surface = new PhysicalCostSurface(analysis, analysis.analysisFingerprint(),
+			model.variables(), contributions, transferKeys, contributionFingerprint,
+			exactSolverVariables, exactSolverFactors, dyadicTransport);
+		dyadicTransport.bind(surface);
+		return surface;
+	}
+
+	private static FrozenCostTransport freezeCostTransport(CostTransportDeclaration declaration,
+		IdentityHashMap<ExactCategoricalSolver.Factor,ExactCategoricalSolver.Factor> frozenByOriginal,
+		List<ExactCategoricalSolver.Factor> solverFactors) {
+		if(declaration instanceof CostTransportDeclaration.Identity identity) {
+			ExactCategoricalSolver.Factor frozen = frozenByOriginal.get(identity.factor());
+			if(frozen == null)
+				throw new IllegalArgumentException("EXACT_DYADIC_IDENTITY_FACTOR_NOT_FROZEN");
+			return new FrozenCostTransport.Identity(frozen, uniqueIdentityOrdinal(solverFactors, frozen));
+		}
+		if(declaration instanceof CostTransportDeclaration.OneMonetaryTable one) {
+			ExactCategoricalSolver.Factor frozen = frozenByOriginal.get(one.factor());
+			if(frozen == null)
+				throw new IllegalArgumentException("EXACT_DYADIC_MONETARY_FACTOR_NOT_FROZEN");
+			return new FrozenCostTransport.OneMonetaryTable(frozen,
+				uniqueIdentityOrdinal(solverFactors, frozen));
+		}
+		if(declaration == ZeroCostTransport.INSTANCE)
+			return FrozenCostTransport.Zero.INSTANCE;
+		throw new IllegalArgumentException("EXACT_DYADIC_COST_TRANSPORT_MISSING");
+	}
+
+	private static int uniqueIdentityOrdinal(List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Factor target) {
+		int found = -1;
+		for(int ordinal = 0; ordinal < factors.size(); ordinal++)
+			if(factors.get(ordinal) == target) {
+				if(found >= 0)
+					throw new IllegalArgumentException("EXACT_DYADIC_MONETARY_FACTOR_DUPLICATED");
+				found = ordinal;
+			}
+		if(found < 0)
+			throw new IllegalArgumentException("EXACT_DYADIC_MONETARY_FACTOR_MISSING");
+		return found;
 	}
 
 	static List<ExactCategoricalSolver.Factor> freezeOrdinaryFactorsAfterPreflight(
@@ -433,12 +624,54 @@ public final class ExactPhysicalCostModel {
 		return physicalCostSurface(analysis, model).contributionFingerprint();
 	}
 
-	private static String physicalCandidateFactSignature(CandidateRuleFact fact) {
-		return fact.key().normalizedSignature() + "|status=" + fact.status()
-			+ "|capability=" + fact.capability() + "|shape=" + fact.shapeProof()
-			+ "|profile=" + fact.profile() + "|emissions="
-			+ fact.allowedEmissionFacts().stream().map(CandidateEmissionFact::normalizedSignature).toList()
-			+ "|failure=" + fact.failureCode();
+	private static void appendPhysicalCandidateFact(FingerprintWriter normalized,
+		CandidateRuleFact fact) {
+		normalized.append("|candidate:").append(fact.key().normalizedSignature())
+			.append("|status=").append(fact.status())
+			.append("|capability=").append(fact.capability())
+			.append("|shape=").append(fact.shapeProof())
+			.append("|profile=").append(fact.profile())
+			.append("|emissions=[");
+		for(int index = 0; index < fact.allowedEmissionFacts().size(); index++) {
+			if(index > 0)
+				normalized.append(", ");
+			appendPhysicalCandidateEmission(normalized, fact.allowedEmissionFacts().get(index));
+		}
+		normalized.append("]|failure=").append(fact.failureCode());
+	}
+
+	private static void appendPhysicalCandidateEmission(FingerprintWriter normalized,
+		CandidateEmissionFact emission) {
+		normalized.append(emission.selectionSignature()).append("|realizations=[");
+		for(int index = 0; index < emission.realizations().size(); index++) {
+			if(index > 0)
+				normalized.append(", ");
+			normalized.appendSignature(normalized.candidateText.emissionRealization(
+				emission.realizations().get(index)));
+		}
+		normalized.append(']');
+	}
+
+	static String physicalCandidateFactsFingerprintForTest(
+		List<CandidateRuleFact> facts) {
+		FingerprintWriter normalized = new FingerprintWriter();
+		for(CandidateRuleFact fact : facts)
+			appendPhysicalCandidateFact(normalized, fact);
+		return normalized.finish();
+	}
+
+	static String fingerprintTextChunksForTest(List<?> chunks) {
+		FingerprintWriter normalized = new FingerprintWriter();
+		for(Object chunk : chunks)
+			normalized.append(chunk);
+		return normalized.finish();
+	}
+
+	static String physicalAlternativeSignatureFingerprintForTest(
+		ExactPhysicalModel.Alternative alternative) {
+		FingerprintWriter normalized = new FingerprintWriter();
+		normalized.appendSignature(alternative.normalizedSignature());
+		return normalized.finish();
 	}
 
 	private static void appendPhysicalFactorValues(FingerprintWriter normalized,
@@ -469,7 +702,17 @@ public final class ExactPhysicalCostModel {
 		private static final byte[] LOWER_HEX =
 			"0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
 		private final MessageDigest digest;
-		private final byte[] unsignedHexBuffer = new byte[16];
+		// Share immutable nested signature segments only within this fingerprint.
+		private final PlacementAnalysis.NormalizedTextContext candidateText =
+			new PlacementAnalysis.NormalizedTextContext();
+		private final PlacementAnalysis.NormalizedTextAppendSession signatureReplay =
+			new PlacementAnalysis.NormalizedTextAppendSession(4096, 32768, 64L * 1024 * 1024);
+		private final byte[] unsignedHexBuffer = new byte[17];
+		private final byte[] digestBuffer = new byte[8192];
+		private int buffered;
+		private int hexOffset = unsignedHexBuffer.length;
+		private long lastBits;
+		private char pendingHighSurrogate;
 
 		private FingerprintWriter() {
 			try {
@@ -481,23 +724,86 @@ public final class ExactPhysicalCostModel {
 		}
 
 		private FingerprintWriter append(Object value) {
-			digest.update(String.valueOf(value).getBytes(StandardCharsets.UTF_8));
+			flush();
+			appendUtf8(String.valueOf(value));
 			return this;
+		}
+
+		private void appendSignatureChunk(String value) {
+			append(value);
+		}
+
+		private void appendSignature(PlacementAnalysis.NormalizedText value) {
+			signatureReplay.appendTo(value, this::appendSignatureChunk);
+		}
+
+		private void appendUtf8(String value) {
+			if(value.isEmpty())
+				return;
+			int start = 0;
+			if(pendingHighSurrogate != 0) {
+				if(Character.isLowSurrogate(value.charAt(0))) {
+					int codePoint = Character.toCodePoint(pendingHighSurrogate, value.charAt(0));
+					digest.update((byte)(0xf0 | (codePoint >>> 18)));
+					digest.update((byte)(0x80 | ((codePoint >>> 12) & 0x3f)));
+					digest.update((byte)(0x80 | ((codePoint >>> 6) & 0x3f)));
+					digest.update((byte)(0x80 | (codePoint & 0x3f)));
+					start = 1;
+				}
+				else
+					digest.update(String.valueOf(pendingHighSurrogate)
+						.getBytes(StandardCharsets.UTF_8));
+				pendingHighSurrogate = 0;
+			}
+			if(start == value.length())
+				return;
+			int end = value.length();
+			if(Character.isHighSurrogate(value.charAt(end - 1)))
+				pendingHighSurrogate = value.charAt(--end);
+			if(start < end) {
+				String complete = start == 0 && end == value.length()
+					? value : value.substring(start, end);
+				digest.update(complete.getBytes(StandardCharsets.UTF_8));
+			}
 		}
 
 		private FingerprintWriter appendUnsignedHexWithComma(long value) {
-			int offset = unsignedHexBuffer.length;
-			do {
-				unsignedHexBuffer[--offset] = LOWER_HEX[(int)(value & 0xfL)];
-				value >>>= 4;
+			flushPendingHighSurrogate();
+			if(hexOffset == unsignedHexBuffer.length || lastBits != value) {
+				lastBits = value;
+				hexOffset = unsignedHexBuffer.length - 1;
+				unsignedHexBuffer[hexOffset] = ',';
+				do {
+					unsignedHexBuffer[--hexOffset] = LOWER_HEX[(int)(value & 0xfL)];
+					value >>>= 4;
+				}
+				while(value != 0L);
 			}
-			while(value != 0L);
-			digest.update(unsignedHexBuffer, offset, unsignedHexBuffer.length - offset);
-			digest.update((byte)',');
+			int length = unsignedHexBuffer.length - hexOffset;
+			if(buffered + length > digestBuffer.length)
+				flush();
+			System.arraycopy(unsignedHexBuffer, hexOffset, digestBuffer, buffered, length);
+			buffered += length;
 			return this;
 		}
 
+		private void flush() {
+			if(buffered == 0)
+				return;
+			digest.update(digestBuffer, 0, buffered);
+			buffered = 0;
+		}
+
+		private void flushPendingHighSurrogate() {
+			if(pendingHighSurrogate == 0)
+				return;
+			digest.update(String.valueOf(pendingHighSurrogate).getBytes(StandardCharsets.UTF_8));
+			pendingHighSurrogate = 0;
+		}
+
 		private String finish() {
+			flush();
+			flushPendingHighSurrogate();
 			StringBuilder hex = new StringBuilder(64);
 			for(byte octet : digest.digest())
 				hex.append(String.format("%02x", octet));
@@ -522,6 +828,11 @@ public final class ExactPhysicalCostModel {
 		double[] outputMaterialization = new double[execution.length];
 		double[] nativeFedDownload = new double[execution.length];
 		double[] nativeCpUpload = new double[execution.length];
+		record ProjectionKey(List<CandidateInputState> inputs, FType executionType) { }
+		// Receipt/support variants do not change this unary observation. The owning
+		// analysis, Hop, estimates, workers and weight are fixed within this loop;
+		// retain only successfully computed projections, never a cross-build result.
+		Map<ProjectionKey,FedCostProjection> projections = new LinkedHashMap<>();
 		for(int value = 0; value < execution.length; value++) {
 			ExactPhysicalModel.Alternative alternative = domain.alternatives().get(value);
 			PlacementState state = alternative.state();
@@ -536,11 +847,16 @@ public final class ExactPhysicalCostModel {
 			CandidateEmissionFact emission = alternative.captured()
 				? alternative.candidateEmission() : alternative.executionEmission();
 			FType executionFType = emission == null ? state.fType() : emission.executionFType();
-			boolean federatedSource = hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED;
-			List<FType> inputFTypes = federatedSource ? List.of() : alternative.orderedInputs().stream()
-				.map(input -> input.present() ? input.fType() : null).toList();
-			FedCostProjection projection = fedCostProjection(analysis, sparseAssignments,
-				domain.node().key(), hop, inputFTypes, executionFType, workers, weight);
+			ProjectionKey observation = new ProjectionKey(alternative.orderedInputs(), executionFType);
+			FedCostProjection projection = projections.get(observation);
+			if(projection == null) {
+				boolean federatedSource = hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED;
+				List<FType> inputFTypes = federatedSource ? List.of() : alternative.orderedInputs().stream()
+					.map(input -> input.present() ? input.fType() : null).toList();
+				projection = fedCostProjection(analysis, sparseAssignments,
+					domain.node().key(), hop, inputFTypes, executionFType, workers, weight);
+				projections.put(observation, projection);
+			}
 			boolean derivedFout = state.output() == FederatedOutput.FOUT && emission != null
 				&& emission.emissionState().derivedFedFout();
 			execution[value] = derivedFout
@@ -574,7 +890,8 @@ public final class ExactPhysicalCostModel {
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
-		int workers, OccurrenceExecutionFrequencyFacts frequencies,
+		int workers, PhysicalWorkerCounts physicalWorkerCounts,
+		OccurrenceExecutionFrequencyFacts frequencies,
 		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs,
 		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries,
 		List<ExactCategoricalSolver.Factor> factors,
@@ -648,7 +965,8 @@ public final class ExactPhysicalCostModel {
 				for(int value = 0; value < activeSource.length; value++) {
 					var alternative = producer.alternatives().get(value);
 					PlacementState state = alternative.state();
-					int sourceWorkers = realizationWorkerCount(analysis, alternative, workers);
+					int sourceWorkers = realizationWorkerCount(
+						analysis, alternative, workers, physicalWorkerCounts);
 					activeSource[value] = key.direction() == Direction.UPLOAD
 						|| state.output() == FederatedOutput.FOUT && state.fType() == key.type()
 							&& outputLayoutIdentity(alternative).equals(key.physicalEmissionIdentity());
@@ -811,7 +1129,8 @@ public final class ExactPhysicalCostModel {
 			});
 			factors.add(canonical);
 			factorizations.put(canonical, new SolverFactorization(List.of(), List.of(canonical),
-				descriptor + "|encoding=CONSERVATIVE_CAPPED_ACTIVATION_UNION"));
+				descriptor + "|encoding=CONSERVATIVE_CAPPED_ACTIVATION_UNION", List.of(canonical), null,
+				new CostTransportDeclaration.Identity(canonical)));
 			if(factorKinds != null)
 				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|CONSERVATIVE_UNION");
 			return;
@@ -862,8 +1181,12 @@ public final class ExactPhysicalCostModel {
 			auxiliaries.addAll(decomposition.auxiliaryVariables());
 			solverFactors.addAll(decomposition.solverFactors());
 			factors.add(canonical);
+			ExactCategoricalSolver.Factor monetary = decomposition.monetaryFactor();
 			factorizations.put(canonical, new SolverFactorization(auxiliaries, solverFactors,
-				descriptor + "|class=" + activationClass + '|' + decomposition.semanticDescriptor()));
+				descriptor + "|class=" + activationClass + '|' + decomposition.semanticDescriptor(),
+				monetary == null ? List.of() : List.of(monetary), null,
+				monetary == null ? ZeroCostTransport.INSTANCE
+					: new CostTransportDeclaration.OneMonetaryTable(monetary)));
 			if(factorKinds != null)
 				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|ACTIVATION_CLASS");
 		}
@@ -871,7 +1194,8 @@ public final class ExactPhysicalCostModel {
 		if(partition.classes().isEmpty()) {
 			var canonical = ExactCategoricalSolver.Factor.lazy(activationScope(source, demands), values -> 0d);
 			factors.add(canonical);
-			factorizations.put(canonical, new SolverFactorization(List.of(), List.of(), descriptor.toString()));
+			factorizations.put(canonical, new SolverFactorization(List.of(), List.of(),
+				descriptor.toString(), List.of(), null, ZeroCostTransport.INSTANCE));
 			if(factorKinds != null)
 				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|ACTIVATION_CLASS");
 		}
@@ -1196,9 +1520,14 @@ public final class ExactPhysicalCostModel {
 	private static void addPhysicalNativeLocalInputTransferFactors(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
-		int workers, OccurrenceExecutionFrequencyFacts frequencies,
+		int workers, PhysicalWorkerCounts physicalWorkerCounts,
+		OccurrenceExecutionFrequencyFacts frequencies,
 		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries,
-		List<ExactCategoricalSolver.Factor> factors) {
+		List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations) {
+		long logicalCells = 0L;
+		long encodedCells = 0L;
+		int projections = 0;
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(latentRuntimeBoundaries.contains(new LatentWdivmmRuntimeTransferBoundary(
 				edge.producer(), edge.consumer(), edge.inputPosition())))
@@ -1227,12 +1556,14 @@ public final class ExactPhysicalCostModel {
 					analysis, edge.producer(), edge.consumer(), edge.inputPosition());
 			double weight = frequencies.exactForwardingWeight(edge.consumer(), edge.producer());
 			int[] targetWorkerCounts = consumer.alternatives().stream()
-				.mapToInt(target -> nativeLocalInputWorkerCount(target.inputAuthorities(), workers)).toArray();
-			// The closure is evaluated once, serially, by freezeValidatedFactor after the
-			// aggregate structural preflight. The published factor is the resulting dense
-			// table, so these immutable target rows remain construction-local.
+				.mapToInt(target -> nativeLocalInputWorkerCount(
+					target.inputAuthorities(), workers, physicalWorkerCounts)).toArray();
+			// Target facts are evaluated in first-source/target order only after aggregate
+			// structural preflight. Source candidate receipts do not affect this cost:
+			// it observes only LOUT, or the concrete FOUT layout. Preserve the original
+			// policy contribution while giving the exact kernel that smaller observation.
 			NativeLocalTargetCost[] targetCosts = new NativeLocalTargetCost[consumer.alternatives().size()];
-			factors.add(ExactCategoricalSolver.Factor.lazy(
+			var canonical = ExactCategoricalSolver.Factor.lazy(
 				List.of(producer.variable(), consumer.variable()), values -> {
 					ExactPhysicalModel.Alternative source = producer.alternatives().get(values[0]);
 					int targetIndex = values[1];
@@ -1254,8 +1585,88 @@ public final class ExactPhysicalCostModel {
 					}
 					return requireCost(weight * cost,
 						"EXACT_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
-				}));
+				});
+			factors.add(canonical);
+			Map<FType,Integer> sourceClasses = new LinkedHashMap<>();
+			int[] sourceClass = new int[producer.alternatives().size()];
+			for(int value = 0; value < sourceClass.length; value++) {
+				var state = producer.alternatives().get(value).state();
+				FType type = state.output() == FederatedOutput.FOUT
+					? Objects.requireNonNull(state.fType(), "FOUT native-local source has no exact FType") : null;
+				sourceClass[value] = sourceClasses.computeIfAbsent(type, ignored -> sourceClasses.size());
+			}
+			long originalCells = (long) sourceClass.length * consumer.alternatives().size();
+			long projectedCells = (long) sourceClasses.size()
+				* (sourceClass.length + (long) consumer.alternatives().size());
+			logicalCells += originalCells;
+			if(projectedCells < originalCells) {
+				String key = "exact-native-local|" + edge.producer().normalizedSignature() + '|'
+					+ edge.consumer().normalizedSignature() + '|' + edge.inputPosition();
+				factorizations.put(canonical, projectNativeLocalSource(key, canonical, sourceClass));
+				encodedCells += projectedCells;
+				projections++;
+			}
+			else
+				encodedCells += originalCells;
 		}
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Planner-CostProjection", "kind=native-local-source"
+				+ " projections=" + projections + " logicalCells=" + logicalCells
+				+ " encodedCells=" + encodedCells);
+	}
+
+	/**
+	 * Exact, total and single-valued source observation, not a candidate-space quotient.
+	 * The caller proves identical cost rows within each class. Class numbers follow
+	 * first occurrence so first-invalid numeric evaluation keeps its original order.
+	 */
+	static SolverFactorization projectNativeLocalSource(String key,
+		ExactCategoricalSolver.Factor canonical, int[] sourceClass) {
+		if(key == null || key.isBlank() || canonical.scope().size() != 2)
+			throw new IllegalArgumentException("EXACT_NATIVE_LOCAL_PROJECTION_INVALID");
+		var source = canonical.scope().get(0);
+		var target = canonical.scope().get(1);
+		int[] classes = sourceClass.clone();
+		if(classes.length != source.domainSize())
+			throw new IllegalArgumentException("EXACT_NATIVE_LOCAL_PROJECTION_DOMAIN_INVALID");
+		List<Integer> representatives = new ArrayList<>();
+		for(int value = 0; value < classes.length; value++) {
+			int category = classes[value];
+			if(category < 0 || category > representatives.size())
+				throw new IllegalArgumentException("EXACT_NATIVE_LOCAL_PROJECTION_CLASS_INVALID");
+			if(category == representatives.size())
+				representatives.add(value);
+		}
+		var observation = new ExactCategoricalSolver.Variable(key + "|source-class", representatives.size());
+		var binding = ExactCategoricalSolver.Factor.lazy(List.of(source, observation), values ->
+			classes[values[0]] == values[1] ? 0d : Double.POSITIVE_INFINITY);
+		var prices = ExactCategoricalSolver.Factor.lazy(List.of(observation, target), values ->
+			canonical.cost(new int[] {representatives.get(values[0]), values[1]}));
+		long logical = (long) source.domainSize() * target.domainSize();
+		long encoded = (long) observation.domainSize() * (source.domainSize() + (long) target.domainSize());
+		String descriptor = "NATIVE_LOCAL_SOURCE_PROJECTION_V1|" + key
+			+ "|originalScope=" + canonical.scope() + "|sourceClasses=" + java.util.Arrays.toString(classes)
+			+ "|representatives=" + representatives + "|bindingScope=" + binding.scope()
+			+ "|priceScope=" + prices.scope() + "|logicalCells=" + logical + "|encodedCells=" + encoded;
+		return new SolverFactorization(List.of(observation), List.of(binding, prices), descriptor,
+			List.of(prices), classes, new CostTransportDeclaration.OneMonetaryTable(prices));
+	}
+
+	/** The unfrozen production callbacks are an independent numeric reference for projection tests. */
+	static IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization>
+		nativeLocalSourceProjectionsForTest(ExactPhysicalModel model) {
+		var analysis = model.analysis();
+		var domains = new IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain>();
+		for(var domain : model.domains())
+			domains.put(domain.node().key(), domain);
+		var factorizations = new IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization>();
+		addPhysicalNativeLocalInputTransferFactors(analysis,
+			PlacementCostSemantics.expectedSparseAssignmentEstimates(analysis), domains,
+			workerCount(analysis.graph()), new PhysicalWorkerCounts(),
+			analysis.executionFrequencyFacts(),
+			new LinkedHashSet<>(PlacementCostSemantics.latentWdivmmRuntimeTransferBoundaries(analysis)),
+			new ArrayList<>(), factorizations);
+		return factorizations;
 	}
 
 	private static NativeLocalTargetCost nativeLocalTargetCost(PlacementAnalysis analysis,
@@ -1315,10 +1726,18 @@ public final class ExactPhysicalCostModel {
 
 	static int realizationWorkerCount(PlacementAnalysis analysis,
 		ExactPhysicalModel.Alternative alternative, int fallbackWorkers) {
+		return realizationWorkerCount(analysis, alternative, fallbackWorkers,
+			new PhysicalWorkerCounts());
+	}
+
+	private static int realizationWorkerCount(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative alternative, int fallbackWorkers,
+		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(alternative.durableAnchor() != null)
-			return physicalWorkerCount(alternative.durableAnchor());
+			return physicalWorkerCounts.count(alternative.durableAnchor());
 		if(alternative.realization() != null) {
-			int exact = realizationWorkerCount(analysis, alternative.realization(), alternative.supportClause(), new LinkedHashSet<>());
+			int exact = realizationWorkerCount(analysis, alternative.realization(),
+				alternative.supportClause(), new LinkedHashSet<>(), physicalWorkerCounts);
 			if(exact > 0)
 				return exact;
 		}
@@ -1328,15 +1747,16 @@ public final class ExactPhysicalCostModel {
 	private static int realizationWorkerCount(PlacementAnalysis analysis,
 		PlacementAnalysis.CandidateEmissionRealization realization,
 		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
-		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting) {
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting,
+		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(realization.anchor() != null)
-			return physicalWorkerCount(realization.anchor());
+			return physicalWorkerCounts.count(realization.anchor());
 		if(selectedClause.nativeWorkerPoolWitness() != null)
-			return physicalWorkerCount(selectedClause.nativeWorkerPoolWitness());
+			return physicalWorkerCounts.count(selectedClause.nativeWorkerPoolWitness());
 		Set<Integer> counts = new LinkedHashSet<>();
 		for(var binding : selectedClause.inputBindings()) {
 			if(binding.relocationAction() != null) {
-				counts.add(physicalWorkerCount(binding.relocationAction().durableAnchor()));
+				counts.add(physicalWorkerCounts.count(binding.relocationAction().durableAnchor()));
 				continue;
 			}
 			if(binding.source().realization().emissionState().placementState().output() != FederatedOutput.FOUT
@@ -1345,7 +1765,8 @@ public final class ExactPhysicalCostModel {
 			var source = analysis.requireExactCandidateRealization(binding.source());
 			Set<Integer> sourceCounts = new LinkedHashSet<>();
 			for(var clause : source.supportClauses())
-				sourceCounts.add(realizationWorkerCount(analysis, source, clause, visiting));
+				sourceCounts.add(realizationWorkerCount(
+					analysis, source, clause, visiting, physicalWorkerCounts));
 			int count = sourceCounts.size() == 1 ? sourceCounts.iterator().next() : 0;
 			visiting.remove(binding.source());
 			if(count > 0)
@@ -1356,6 +1777,12 @@ public final class ExactPhysicalCostModel {
 
 	static int nativeLocalInputWorkerCount(List<ExactPhysicalModel.InputAuthority> authorities,
 		int fallbackWorkers) {
+		return nativeLocalInputWorkerCount(authorities, fallbackWorkers,
+			new PhysicalWorkerCounts());
+	}
+
+	private static int nativeLocalInputWorkerCount(List<ExactPhysicalModel.InputAuthority> authorities,
+		int fallbackWorkers, PhysicalWorkerCounts physicalWorkerCounts) {
 		DurableAnchorKey anchor = null;
 		for(var authority : authorities) {
 			if(authority.relocationAction() == null)
@@ -1370,14 +1797,36 @@ public final class ExactPhysicalCostModel {
 		// A graph-wide worker union overcharges FULL uploads and smaller worker pools.
 		// Without such authority retain the prior conservative estimate; neither a
 		// worker count nor an output FType invents an input FederationMap.
-		return anchor == null ? Math.max(1, fallbackWorkers) : physicalWorkerCount(anchor);
+		return anchor == null ? Math.max(1, fallbackWorkers) : physicalWorkerCounts.count(anchor);
 	}
 
-	private static int physicalWorkerCount(DurableAnchorKey anchor) {
-		Set<String> workers = new LinkedHashSet<>();
-		for(var partition : anchor.partitions())
-			workers.add(FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()));
-		return workers.size();
+	private static final class PhysicalWorkerCounts {
+		private final IdentityHashMap<DurableAnchorKey,Integer> byAnchor = new IdentityHashMap<>();
+
+		private int count(DurableAnchorKey anchor) {
+			Integer cached = byAnchor.get(Objects.requireNonNull(anchor, "anchor"));
+			if(cached != null)
+				return cached;
+			Set<String> workers = new LinkedHashSet<>();
+			for(var partition : anchor.partitions())
+				workers.add(FederationUtils.canonicalFederatedWorkerAddress(partition.workerId()));
+			int count = workers.size();
+			byAnchor.put(anchor, count);
+			return count;
+		}
+	}
+
+	static record PhysicalWorkerCountCacheProbe(List<Integer> counts, int computations) {
+		PhysicalWorkerCountCacheProbe { counts = List.copyOf(counts); }
+	}
+
+	static PhysicalWorkerCountCacheProbe physicalWorkerCountCacheProbeForTest(
+		List<DurableAnchorKey> anchors) {
+		PhysicalWorkerCounts cache = new PhysicalWorkerCounts();
+		List<Integer> counts = new ArrayList<>(anchors.size());
+		for(DurableAnchorKey anchor : anchors)
+			counts.add(cache.count(anchor));
+		return new PhysicalWorkerCountCacheProbe(counts, cache.byAnchor.size());
 	}
 
 	private static double nativeLocalInputUploadCost(Hop consumer, Hop input, double bytes,
@@ -1402,7 +1851,8 @@ public final class ExactPhysicalCostModel {
 	private static void addPhysicalLogicalFunctionFactors(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
-		int workers, OccurrenceExecutionFrequencyFacts frequencies,
+		int workers, PhysicalWorkerCounts physicalWorkerCounts,
+		OccurrenceExecutionFrequencyFacts frequencies,
 		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries,
 		List<ExactCategoricalSolver.Factor> factors,
 		List<PhysicalTransferKey> transferKeys) {
@@ -1439,7 +1889,8 @@ public final class ExactPhysicalCostModel {
 					if(alternative.state().output() == FederatedOutput.FOUT && alternative.state().fType() == type)
 						costs[index] = requireCost(callWeight
 							* FederatedCostModel.computeReusableMaterializationDownloadCost(bytes, type,
-								realizationWorkerCount(analysis, alternative, workers)),
+								realizationWorkerCount(
+									analysis, alternative, workers, physicalWorkerCounts)),
 							"EXACT_PHYSICAL_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
 				}
 				factors.add(ExactCategoricalSolver.Factor.lazy(

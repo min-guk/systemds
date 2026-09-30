@@ -42,17 +42,40 @@ final class ExactActivationClassFactorDecomposition {
 		public boolean[] activeConsumerValues() { return activeConsumerValues.clone(); }
 	}
 
-	record Decomposition(ExactCategoricalSolver.Factor canonicalFactor,
-		List<ExactCategoricalSolver.Variable> auxiliaryVariables,
-		List<ExactCategoricalSolver.Factor> solverFactors, String semanticDescriptor) {
-		Decomposition {
-			Objects.requireNonNull(canonicalFactor, "canonicalFactor");
-			auxiliaryVariables = List.copyOf(auxiliaryVariables);
-			solverFactors = List.copyOf(solverFactors);
+	static final class Decomposition {
+		private final ExactCategoricalSolver.Factor canonicalFactor;
+		private final List<ExactCategoricalSolver.Variable> auxiliaryVariables;
+		private final List<ExactCategoricalSolver.Factor> solverFactors;
+		private final ExactCategoricalSolver.Factor monetaryFactor;
+		private final String semanticDescriptor;
+
+		private Decomposition(ExactCategoricalSolver.Factor canonicalFactor,
+			List<ExactCategoricalSolver.Variable> auxiliaryVariables,
+			List<ExactCategoricalSolver.Factor> solverFactors,
+			ExactCategoricalSolver.Factor monetaryFactor, String semanticDescriptor) {
+			this.canonicalFactor = Objects.requireNonNull(canonicalFactor, "canonicalFactor");
+			this.auxiliaryVariables = List.copyOf(auxiliaryVariables);
+			this.solverFactors = List.copyOf(solverFactors);
+			this.monetaryFactor = monetaryFactor;
+			int monetaryOccurrences = 0;
+			for(ExactCategoricalSolver.Factor factor : this.solverFactors)
+				if(factor == monetaryFactor)
+					monetaryOccurrences++;
+			if(monetaryFactor == null && !this.solverFactors.isEmpty()
+				|| monetaryFactor != null && monetaryOccurrences != 1)
+				throw new IllegalArgumentException(
+					"EXACT_ACTIVATION_CLASS_MONETARY_TRANSPORT_INVALID");
 			if(semanticDescriptor == null || semanticDescriptor.isBlank())
 				throw new IllegalArgumentException(
 					"EXACT_ACTIVATION_CLASS_DESCRIPTOR_INVALID");
+			this.semanticDescriptor = semanticDescriptor;
 		}
+
+		ExactCategoricalSolver.Factor canonicalFactor() { return canonicalFactor; }
+		List<ExactCategoricalSolver.Variable> auxiliaryVariables() { return auxiliaryVariables; }
+		List<ExactCategoricalSolver.Factor> solverFactors() { return solverFactors; }
+		ExactCategoricalSolver.Factor monetaryFactor() { return monetaryFactor; }
+		String semanticDescriptor() { return semanticDescriptor; }
 	}
 
 	static Decomposition create(String key, ExactCategoricalSolver.Variable source,
@@ -118,7 +141,7 @@ final class ExactActivationClassFactorDecomposition {
 		boolean identicallyZero = activeConsumers.isEmpty() || !hasActivePositivePrice(
 			activeSource, prices);
 		if(identicallyZero)
-			return new Decomposition(canonical, List.of(), List.of(), descriptor(key, source,
+			return new Decomposition(canonical, List.of(), List.of(), null, descriptor(key, source,
 				activeSource, prices, demands, consumers, mergedMasks, List.of(), List.of())
 				+ "|identicallyZero=true");
 
@@ -147,10 +170,12 @@ final class ExactActivationClassFactorDecomposition {
 			previous = accumulator;
 		}
 		ExactCategoricalSolver.Variable last = previous;
-		solverFactors.add(ExactCategoricalSolver.Factor.lazy(List.of(source, last), values ->
-			activeSource[values[0]] && values[1] != 0 ? prices[values[0]] : 0d));
+		ExactCategoricalSolver.Factor monetary = ExactCategoricalSolver.Factor.lazy(
+			List.of(source, last), values ->
+			activeSource[values[0]] && values[1] != 0 ? prices[values[0]] : 0d);
+		solverFactors.add(monetary);
 
-		return new Decomposition(canonical, auxiliaries, solverFactors, descriptor(key, source,
+		return new Decomposition(canonical, auxiliaries, solverFactors, monetary, descriptor(key, source,
 			activeSource, prices, demands, consumers, mergedMasks, auxiliaries, solverFactors));
 	}
 

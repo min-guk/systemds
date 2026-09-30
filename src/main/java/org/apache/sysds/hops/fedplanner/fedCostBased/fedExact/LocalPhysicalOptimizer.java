@@ -69,7 +69,7 @@ final class LocalPhysicalOptimizer {
 		ExactCategoricalSolver.Limits limits = ExactPhysicalOptimizer.PRODUCTION_LIMITS;
 		SharedRegionalPreparation shared = new SharedRegionalPreparation(problem, limits,
 			LocalCategoricalOptimizer.configuredCompaction());
-		Seed seed = regionalSeed(model, surface, hardFactors, shared);
+		Seed seed = regionalSeed(model, surface, hardFactors, shared, false);
 		LocalCategoricalOptimizer.Result local = seed.local();
 
 		long canonicalBits = surface.evaluateCanonical(local.assignmentInVariableOrder());
@@ -111,7 +111,7 @@ final class LocalPhysicalOptimizer {
 
 	private static Seed regionalSeed(ExactPhysicalModel model,
 		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Factor> hardFactors,
-		SharedRegionalPreparation shared) {
+		SharedRegionalPreparation shared, boolean materializeStateKeys) {
 		long seedStarted = System.nanoTime();
 		boolean regionalCompact = LocalCategoricalOptimizer.configuredCompaction();
 		List<Variable> localOrder = producerBeforeConsumerOrder(model);
@@ -124,7 +124,8 @@ final class LocalPhysicalOptimizer {
 				DecisionDomain domain = domains.get(variable);
 				if(domain == null)
 					throw new IllegalArgumentException("LOCAL_PHYSICAL_STATE_DOMAIN_MISSING");
-				return domain.alternatives().get(value).signature();
+				ExactPhysicalModel.Alternative alternative = domain.alternatives().get(value);
+				return materializeStateKeys ? alternative.signature() : alternative.normalizedSignature();
 			}, 0, regionalCompact, shared);
 		shared.trace();
 		long seedNanos = System.nanoTime() - seedStarted;
@@ -137,6 +138,17 @@ final class LocalPhysicalOptimizer {
 				+ " exactBlockSolveNanos=" + local.statistics().exactBlockSolveNanos()
 				+ " objective=" + local.objective());
 		return new Seed(local, localOrder);
+	}
+
+	/** Legacy flat-string state keys retained only as an R5 regional-seed parity oracle. */
+	static LocalCategoricalOptimizer.Result regionalSeedForTest(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, boolean materializeStateKeys) {
+		validateSharedSurface(model, surface);
+		List<Factor> hardFactors = new ArrayList<>(model.hardFactors());
+		RegionalSearchProblem problem = RegionalSearchProblem.physical(model, surface, null);
+		SharedRegionalPreparation shared = new SharedRegionalPreparation(problem,
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS, LocalCategoricalOptimizer.configuredCompaction());
+		return regionalSeed(model, surface, hardFactors, shared, materializeStateKeys).local();
 	}
 
 	private static void validateSharedSurface(ExactPhysicalModel model,
