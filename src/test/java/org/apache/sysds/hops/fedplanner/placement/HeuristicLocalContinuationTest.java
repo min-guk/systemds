@@ -50,6 +50,10 @@ public class HeuristicLocalContinuationTest {
 		"X=federated(addresses=list(\"localhost:1234/X\"),ranges=list(list(0,0),list(4,3)));\n"
 		+ "Y=federated(addresses=list(\"localhost:1234/Y\"),ranges=list(list(0,0),list(4,1)));\n"
 		+ "v=matrix(1,rows=3,cols=1);z=X%*%v;r=z*Y;t=z+Y;print(sum(r)+sum(t));\n";
+	private static final String NESTED_VECTOR_AGGREGATE_SCRIPT =
+		"X=federated(addresses=list(\"localhost:1234/X\"),ranges=list(list(0,0),list(4,3)));\n"
+		+ "Y=federated(addresses=list(\"localhost:1234/Y\"),ranges=list(list(0,0),list(4,1)));\n"
+		+ "v=matrix(1,rows=3,cols=1);z=X%*%v;r=t(z)%*%Y;print(r);\n";
 	private static final String LM_CORE_SCRIPT = String.join("\n",
 		"X=federated(addresses=list(\"localhost:1234/X\"),ranges=list(list(0,0),list(4,3)));",
 		"y=federated(addresses=list(\"localhost:1234/y\"),ranges=list(list(0,0),list(4,1)));",
@@ -80,6 +84,9 @@ public class HeuristicLocalContinuationTest {
 	@Test
 	public void publicFederatedVectorIsCollectedForLocalVectorContinuation() throws Exception {
 		PlacementAnalysis analysis = analyze(Privacy.PUBLIC);
+		String analysisFingerprint = analysis.analysisFingerprint();
+		String commonGraph = analysis.graph().normalizedSignature();
+		List<String> commonCandidates = analysis.graph().normalizedCandidateUniverse();
 		var markers = analysis.heuristicPolicyFacts().demotions().stream()
 			.map(fact -> fact.valueVersion()).collect(Collectors.toSet());
 		Node z = uniqueNode(analysis, "z", "ba(+*)");
@@ -90,6 +97,8 @@ public class HeuristicLocalContinuationTest {
 
 		Assert.assertEquals("The protected aggregate vector must be released locally",
 			FederatedOutput.LOUT, result.assignment().get(z.key()).output());
+		Assert.assertTrue("The common universe must retain a legal FED alternative for r",
+			r.legalAlternatives().stream().anyMatch(state -> state.execType() == ExecType.FED));
 		Assert.assertEquals("AggLocal must continue the vector-only expression at the coordinator",
 			ExecType.CP, result.assignment().get(r.key()).execType());
 		Assert.assertEquals(FederatedOutput.LOUT, result.assignment().get(r.key()).output());
@@ -107,6 +116,16 @@ public class HeuristicLocalContinuationTest {
 			+ result.selectedRelocations(), result.selectedRelocations().stream().noneMatch(action ->
 				action.sourceValueVersion().equals(z.valueVersion())
 					&& action.compatibleConsumers().contains(r.key())));
+		Assert.assertEquals("LOCAL_VECTOR_CONTINUATION_POLICY_V5",
+			result.plannerFacts().get("policy"));
+		Assert.assertEquals("GREEDY_NO_BACKTRACKING", result.plannerFacts().get("search"));
+		Assert.assertEquals("AGG_LOCAL", result.plannerFacts().get("stateOrdering"));
+		Assert.assertEquals("Policy selection must not rewrite the owned analysis",
+			analysisFingerprint, analysis.analysisFingerprint());
+		Assert.assertEquals("Policy selection must not project the common graph",
+			commonGraph, analysis.graph().normalizedSignature());
+		Assert.assertEquals("Policy selection must retain the common candidate universe",
+			commonCandidates, result.filteredCandidateUniverse());
 		assertCanonicalCandidateLegality(analysis, result);
 	}
 
@@ -122,6 +141,8 @@ public class HeuristicLocalContinuationTest {
 		Assert.assertFalse("A raw PRIVATE_AGGREGATE Y vector cannot be collected for CP multiplication",
 			result.assignment().get(r.key()).execType() == ExecType.CP
 				&& result.assignment().get(r.key()).output() == FederatedOutput.LOUT);
+		Assert.assertEquals("The raw protected worker vector must remain resident",
+			FederatedOutput.FOUT, result.assignment().get(y.key()).output());
 		Assert.assertTrue("The protected Y vector must not acquire a local materialization",
 			result.selectedLocalMaterializations().stream().noneMatch(action ->
 				action.sourceValueVersion().equals(y.valueVersion())));
@@ -224,6 +245,39 @@ public class HeuristicLocalContinuationTest {
 	}
 
 	@Test
+	public void nestedAggregateWithPublicVectorSiblingContinuesInCP() throws Exception {
+		PlacementAnalysis analysis = analyze(NESTED_VECTOR_AGGREGATE_SCRIPT, "Y", Privacy.PUBLIC);
+		var markers = analysis.heuristicPolicyFacts().demotions().stream()
+			.map(fact -> fact.valueVersion()).collect(Collectors.toSet());
+		var result = new FederatedPlannerFedHeuristicSinglePass().select(analysis, markers);
+		Node x = uniqueFederatedSource(analysis, "X");
+		Node y = uniqueFederatedSource(analysis, "Y");
+		Node z = uniqueNode(analysis, "z", "ba(+*)");
+		Node r = uniqueNode(analysis, "r", "ba(+*)");
+
+		Assert.assertTrue("The common universe must retain r's native FED alternative",
+			r.legalAlternatives().stream().anyMatch(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.LOUT));
+		Assert.assertEquals("Protected X must remain resident at its worker",
+			FederatedOutput.FOUT, result.assignment().get(x.key()).output());
+		Assert.assertEquals("The protected aggregate vector must execute at the worker",
+			ExecType.FED, result.assignment().get(z.key()).execType());
+		Assert.assertEquals(FederatedOutput.LOUT, result.assignment().get(z.key()).output());
+		Assert.assertEquals("The all-vector nested aggregate must continue at the coordinator",
+			ExecType.CP, result.assignment().get(r.key()).execType());
+		Assert.assertEquals(FederatedOutput.LOUT, result.assignment().get(r.key()).output());
+		Assert.assertTrue("Public Y must have an explicit local view for the CP aggregate",
+			result.selectedLocalMaterializations().stream().anyMatch(action ->
+				action.sourceValueVersion().equals(y.valueVersion())
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumerOccurrence() == r.key())));
+		Assert.assertTrue("Protected X must never be gathered",
+			result.selectedLocalMaterializations().stream().noneMatch(action ->
+				action.sourceValueVersion().equals(x.valueVersion())));
+		assertCanonicalCandidateLegality(analysis, result);
+	}
+
+	@Test
 	public void functionLoopKeepsLocalVectorTransposeAndLossInCP() throws Exception {
 		PlacementAnalysis analysis = analyzeRewritten(LM_FUNCTION_SCRIPT, "y", Privacy.PUBLIC);
 		var markers = analysis.heuristicPolicyFacts().demotions().stream()
@@ -289,7 +343,7 @@ public class HeuristicLocalContinuationTest {
 		org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter.Result result) {
 		Assert.assertTrue(CandidateSelections.canStillBeReachable(analysis, result.selectorGraph(),
 			result.selectorGraph().relocationActions(), result.assignment()));
-		// Policy v4 is not a materialization-maximal optimizer. Validate the selected
+		// Policy v5 is not a materialization-maximal optimizer. Validate the selected
 		// owned joint witness, not equality with a different selector's optimum.
 		var canonical = CandidateSelections.resolveAndValidate(analysis, result.selectorGraph(),
 			result.selectorGraph().relocationActions(), result.assignment(), result.selectedCandidateSelections());

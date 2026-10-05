@@ -22,6 +22,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -30,6 +31,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicNativeContinuationFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
@@ -112,6 +114,7 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		}
 	}
 	private record PhysicalInput(Domain source, FType required) { }
+	private record LocalContinuation(Domain seed, Domain source, int inputPosition) { }
 	private static final class Domain {
 		final Node node;
 		final List<Row> rows = new ArrayList<>();
@@ -119,6 +122,9 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		final Map<CandidateRealizationReference,Group> references = new LinkedHashMap<>();
 		final Set<Domain> producers = new LinkedHashSet<>();
 		final List<Group> localConsumerOptions = new ArrayList<>();
+		final List<LocalContinuation> localContinuations = new ArrayList<>();
+		final List<HeuristicNativeContinuationFact> nativeContinuations = new ArrayList<>();
+		final Group local = new Group();
 		final Group all = new Group();
 		Row selected;
 		Domain(Node node) { this.node = node; }
@@ -126,6 +132,7 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		void add(Row row) {
 			rows.add(row);
 			all.add(row);
+			if(row.state.output() == FederatedOutput.LOUT) local.add(row);
 			states.computeIfAbsent(row.state, ignored -> new Group()).add(row);
 			if(row.reference != null)
 				references.computeIfAbsent(row.reference, ignored -> new Group()).add(row);
@@ -198,6 +205,7 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 				indexPhysicalInputs();
 				indexTransients();
 				indexBoundaries();
+				if(policy == Policy.AGG_LOCAL) indexLocalContinuations();
 			}
 			propagate();
 			Map<Domain,Set<Domain>> dependencies = new LinkedHashMap<>();
@@ -271,7 +279,83 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 			return policy == Policy.AGG_LOCAL && prefersLocalAggregate(analysis.hop(key).orElse(null),
 				analysis.abstractShapeFact(key).orElse(null), executionType);
 		}
+		void indexLocalContinuations() {
+			// Facts describe exact marker/edge paths, not an unconditional union of
+			// descendants. Keep their premises so a dead local seed cannot bias CP.
+			Set<CompiledHopKey> vectorOnly = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(Domain domain : domains) if(scalarOrVector(domain.node.key())) vectorOnly.add(domain.node.key());
+			for(var edge : analysis.compiledInputEdgesInCanonicalOrder())
+				if(!scalarOrVector(edge.producer())) vectorOnly.remove(edge.consumer());
+			for(var path : analysis.heuristicPolicyFacts().paths()) {
+				Domain seed = byKey.get(path.demotion().producer());
+				if(seed == null) continue;
+				Set<CompiledHopKey> prefix = new LinkedHashSet<>(path.localPrefix());
+				for(var edge : path.edges()) {
+					Domain source = byKey.get(edge.producer()), consumer = byKey.get(edge.consumer());
+					if(source == null || consumer == null || consumer == seed
+						|| !prefix.contains(edge.consumer()) || !vectorOnly.contains(edge.consumer())) continue;
+					var continuation = new LocalContinuation(seed, source, edge.inputPosition());
+					if(!consumer.localContinuations.contains(continuation)) consumer.localContinuations.add(continuation);
+				}
+				for(var fact : path.nativeContinuations()) {
+					Domain consumer = byKey.get(fact.consumer());
+					if(consumer == null) continue;
+					if(!consumer.nativeContinuations.contains(fact)) consumer.nativeContinuations.add(fact);
+					// The old path tracer visits a nested aggregate's native boundary
+					// before CP. Prefer an exact all-vector CP row for a public
+					// sibling, not a fresh release of a protected aggregate sibling.
+					Domain source = byKey.get(fact.localProducer());
+					if(source != null && vectorOnly.contains(fact.consumer())
+						&& analysis.requirePrivacy(fact.siblingProducer()) == Privacy.PUBLIC) {
+						var continuation = new LocalContinuation(seed, source, fact.localInputPosition());
+						if(!consumer.localContinuations.contains(continuation)) consumer.localContinuations.add(continuation);
+					}
+				}
+			}
+		}
+		boolean scalarOrVector(CompiledHopKey key) {
+			var shape = analysis.abstractShapeFact(key).orElse(null);
+			return shape != null && (shape.dataType().isScalar() || shape.provablyVector());
+		}
+		boolean localInputSupported(Row row, Domain source, int position) {
+			if(source == null || source.local.live == 0) return false;
+			var reference = row.inputs.get(source.node.key());
+			if(reference != null) {
+				Group support = source.references.get(reference);
+				if(reference.realization().emissionState().placementState().output() != FederatedOutput.LOUT
+					|| support == null || support.live == 0) return false;
+			}
+			if(row.receipt != null) for(var binding : row.receipt.supportClause().inputBindings())
+				if(binding.inputPosition() == position && (binding.kind() == CandidateInputBindingKind.RELOCATION
+					|| binding.source().realization().emissionState().placementState().output() != FederatedOutput.LOUT))
+					return false;
+			// An unbound legacy row still has the shared physical/transient support
+			// relation. Do not demand a committed producer inside a dependency SCC.
+			return true;
+		}
+		boolean prefersLocalContinuation(Row row) {
+			if(row.state.execType() != ExecType.CP || row.state.output() != FederatedOutput.LOUT) return false;
+			for(var continuation : row.domain.localContinuations)
+				if(continuation.seed().local.live > 0
+					&& localInputSupported(row, continuation.source(), continuation.inputPosition())) return true;
+			return false;
+		}
+		boolean prefersNativeContinuation(Row row) {
+			if(row.receipt == null || row.receipt.emission().derivedFoutAction() != null) return false;
+			for(var fact : row.domain.nativeContinuations) {
+				Domain sibling = byKey.get(fact.siblingProducer());
+				Group support = sibling == null ? null : sibling.states.get(fact.siblingFoutState());
+				if(row.state.equals(fact.consumerState()) && row.receipt.rule().equals(fact.runtimeCandidate().key())
+					&& support != null && support.live > 0
+					&& localInputSupported(row, byKey.get(fact.localProducer()), fact.localInputPosition())) return true;
+			}
+			return false;
+		}
 		int rank(Row row) {
+			if(policy == Policy.AGG_LOCAL) {
+				if(prefersLocalContinuation(row)) return -2;
+				if(prefersNativeContinuation(row)) return -1;
+			}
 			int residentCount = row.residentInputs;
 			for(PhysicalInput input : row.physicalInputs) {
 				Row source = input.source().selected;
@@ -286,9 +370,9 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 			boolean resident = row.receipt == null || residentCount > 0
 				|| row.receipt.rule().orderedInputs().isEmpty();
 			if(fed && resident && nativeOutput) {
-				// If an immediate consumer can only use PRESENT, retaining native
-				// output avoids an otherwise mandatory gather/re-upload. This changes
-				// preference only; it neither removes LOUT nor builds a sticky CP path.
+				// Local continuation has priority above this output-only preference.
+				// Keep a required PRESENT boundary (e.g. a shared protected formal)
+				// resident instead of gathering only to upload the same result again.
 				if(row.preferLocalAggregate && row.domain.localConsumerOptions.stream().noneMatch(g -> g.live == 0))
 					return fout ? 1 : 0;
 				return fout ? 0 : 1;

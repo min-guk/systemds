@@ -31,7 +31,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
-import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelector;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
@@ -60,11 +60,13 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 	@Test
 	public void publicFederatedWorkerYRetainsXdLocalContinuation() throws Exception {
 		try {
-			FederatedPlannerUtils.resetFederatedPlannerRunState();
-			DMLProgram program = compile(l2svmScript(3));
-			setFederatedSourcePrivacy(program, "X", Privacy.PRIVATE_AGGREGATE);
-			setFederatedSourcePrivacy(program, "Y", Privacy.PUBLIC);
-			assertDemotedXdRemainsLocal(3, program, true);
+			for(int workers : List.of(1, 3, 5, 7)) {
+				FederatedPlannerUtils.resetFederatedPlannerRunState();
+				DMLProgram program = compile(l2svmScript(workers, 128));
+				setFederatedSourcePrivacy(program, "X", Privacy.PRIVATE_AGGREGATE);
+				setFederatedSourcePrivacy(program, "Y", Privacy.PUBLIC);
+				assertDemotedXdRemainsLocal(workers, program, true);
+			}
 		}
 		finally {
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
@@ -72,7 +74,12 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 	}
 
 	private static void assertDemotedXdRemainsLocal(int workers) throws Exception {
-		assertDemotedXdRemainsLocal(workers, compile(l2svmScript(workers)), false);
+		DMLProgram program = compile(l2svmScript(workers));
+		// The loop-local Xd chain requires a legal coordinator view of Y. Keep X protected
+		// while making that prerequisite explicit instead of relying on metadata inference.
+		setFederatedSourcePrivacy(program, "X", Privacy.PRIVATE_AGGREGATE);
+		setFederatedSourcePrivacy(program, "Y", Privacy.PUBLIC);
+		assertDemotedXdRemainsLocal(workers, program, false);
 	}
 
 	private static void assertDemotedXdRemainsLocal(int workers, DMLProgram program,
@@ -96,10 +103,20 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		HeuristicInvocationReceipt receipt = (HeuristicInvocationReceipt) captured.get();
 		var analysis = receipt.analysis();
 		if(publicFederatedY) {
+			Node publicY = uniqueFederatedSource(analysis, "Y");
 			Assert.assertEquals(Privacy.PRIVATE_AGGREGATE,
 				analysis.requirePrivacy(uniqueFederatedSource(analysis, "X").key()));
-			Assert.assertEquals(Privacy.PUBLIC,
-				analysis.requirePrivacy(uniqueFederatedSource(analysis, "Y").key()));
+			Assert.assertEquals(Privacy.PUBLIC, analysis.requirePrivacy(publicY.key()));
+			Assert.assertEquals("workers=" + workers + " public Y must remain worker-resident at its source",
+				org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT,
+				receipt.result().assignment().get(publicY.key()).output());
+			var yCollections = receipt.result().selectedLocalMaterializations().stream()
+				.filter(action -> action.sourceValueVersion().equals(publicY.valueVersion())).toList();
+			Assert.assertEquals("workers=" + workers
+				+ " must share one physical coordinator materialization of public Y",
+				1, yCollections.size());
+			Assert.assertFalse("workers=" + workers + " public Y materialization must serve a certified consumer",
+				yCollections.get(0).obligations().isEmpty());
 		}
 		var xdPath = analysis.heuristicPolicyFacts().paths().stream()
 			.filter(path -> {
@@ -108,7 +125,9 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 			})
 			.findFirst().orElseThrow(() -> new AssertionError(
 				"L2SVM Xd demotion marker is missing for workers=" + workers));
-		var nativeRowLout = publicFederatedY
+		FType expectedNativeFType = workers == 1 ? FType.FULL : FType.ROW;
+		boolean expectedShapeDependent = workers == 1;
+		var nativeLout = publicFederatedY
 			? analysis.heuristicPolicyFacts().paths().stream()
 				.flatMap(path -> path.nativeContinuations().stream())
 				.filter(fact -> analysis.hop(fact.consumer()).orElseThrow().getBeginLine() == 124)
@@ -116,16 +135,18 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 					== org.apache.sysds.common.Types.ExecType.FED
 					&& fact.consumerState().output()
 						== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
-					&& fact.consumerState().fType() == FType.ROW
-					&& !fact.consumerState().shapeDependent())
+					&& fact.consumerState().fType() == expectedNativeFType
+					&& fact.consumerState().shapeDependent() == expectedShapeDependent)
 				.findFirst().orElseThrow(() -> new AssertionError(
-					"line-124 must retain its exact native FED/LOUT/ROW continuation"))
+					"line-124 must retain its exact native FED/LOUT/" + expectedNativeFType
+						+ " continuation for workers=" + workers))
 			: null;
-		if(nativeRowLout != null)
-			Assert.assertTrue("The exact candidate must publish the native ROW LOUT state",
-				nativeRowLout.runtimeCandidate().allowedEmissionFacts().stream().anyMatch(emission ->
-					emission.emissionState().placementState().equals(nativeRowLout.consumerState())
-						&& emission.executionFType() == FType.ROW));
+		if(nativeLout != null)
+			Assert.assertTrue("The exact candidate must publish the native " + expectedNativeFType
+				+ " LOUT state", nativeLout.runtimeCandidate().allowedEmissionFacts().stream()
+					.anyMatch(emission -> emission.emissionState().placementState()
+						.equals(nativeLout.consumerState())
+						&& emission.executionFType() == expectedNativeFType));
 
 		Set<CompiledHopKey> xdReads = new LinkedHashSet<>();
 		for(CompiledHopKey key : xdPath.localPrefix()) {
@@ -149,9 +170,11 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
 				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 		var selected = receipt.result();
-		if(nativeRowLout != null)
+		Assert.assertSame("workers=" + workers + " AggLocal must select over the unchanged common graph",
+			analysis.graph(), selected.selectorGraph());
+		if(nativeLout != null)
 			Assert.assertEquals("Policy projection must retain line-124's certified native LOUT state",
-				nativeRowLout.consumerState(), selected.assignment().get(nativeRowLout.consumer()));
+				nativeLout.consumerState(), selected.assignment().get(nativeLout.consumer()));
 		if(publicFederatedY)
 			for(CompiledHopKey key : xdPath.localPrefix())
 				if(selected.assignment().containsKey(key)) {
@@ -163,16 +186,20 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 				}
 		Assert.assertEquals("workers=" + workers + " must consume every analysis-owned marker",
 			markers, receipt.markers());
-		Assert.assertEquals("workers=" + workers + " must use first-feasible policy search",
-			"FIRST_FEASIBLE", selected.plannerFacts().get("search"));
+		Assert.assertEquals("workers=" + workers + " must publish local-vector policy v5",
+			"LOCAL_VECTOR_CONTINUATION_POLICY_V5", selected.plannerFacts().get("policy"));
+		Assert.assertEquals("workers=" + workers + " must use greedy search without backtracking",
+			"GREEDY_NO_BACKTRACKING", selected.plannerFacts().get("search"));
 		Assert.assertEquals("workers=" + workers + " must publish the AggLocal comparator",
-			"FEDERATED_FIRST", selected.plannerFacts().get("stateOrdering"));
-		Assert.assertEquals("workers=" + workers + " must retain FedFirst placement priority under the local-vector policy",
-			"MAX_FED", selected.orderedTieBreaks().get(0));
+			"AGG_LOCAL", selected.plannerFacts().get("stateOrdering"));
+		Assert.assertEquals("workers=" + workers
+			+ " must rank certified local and native continuation before ordinary input residency",
+			List.of("LOCAL_VECTOR_CONTINUATION", "EXACT_NATIVE_CONTINUATION", "INPUT_RESIDENCY"),
+			selected.orderedTieBreaks().subList(0, 3));
 		Assert.assertEquals("workers=" + workers + " must terminate with a certified policy plan",
 			"POLICY_FEASIBLE", selected.certificate().terminationReason());
-		Assert.assertEquals("workers=" + workers + " must use the shared FedFirst certificate",
-			"deterministic-component-first-feasible-with-localized-arc-consistency",
+		Assert.assertEquals("workers=" + workers + " must publish the non-backtracking AggLocal certificate",
+			"monotone-owned-row-greedy-agg_local",
 			selected.certificate().boundDerivation());
 		Assert.assertFalse("workers=" + workers + " must not use planner fallback",
 			selected.certificate().fallbackUsed());
@@ -184,13 +211,13 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Assert.assertTrue("workers=" + workers + " must retain candidate reachability",
 			CandidateSelections.canStillBeReachable(analysis, selected.selectorGraph(),
 				selected.selectorGraph().relocationActions(), selected.assignment()));
-		var canonical = CandidateSelections.selectMaterializationMaximal(analysis,
-			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment());
-		Assert.assertEquals("workers=" + workers + " must retain exact candidate receipts",
-			canonical.candidates().stream().map(candidate -> candidate.normalizedSignature())
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)),
-			selected.selectedCandidateSelections().stream().map(candidate -> candidate.normalizedSignature())
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)));
+		var canonical = CandidateSelections.resolveAndValidate(analysis,
+			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment(),
+			selected.selectedCandidateSelections());
+		Assert.assertEquals("workers=" + workers + " must retain its exact owned candidate witness",
+			canonical, selected.selectedCandidateSelections());
+		CandidateSelections.validateRealizationSelections(analysis, selected.assignment(),
+			selected.selectedCandidateSelections(), selected.selectedRelocationChoices());
 		var xdState = selected.assignment().get(xdPath.demotion().producer());
 		Assert.assertTrue("workers=" + workers + " Xd must use a legal local-result execution",
 			xdState.execType() == org.apache.sysds.common.Types.ExecType.CP
@@ -229,8 +256,8 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 
 		var selected = new FederatedPlannerFedHeuristicSinglePass().select(analysis, markers);
-		var movementFirst = new HeuristicPlacementAdapter(new PolicyFirstFeasiblePlacementSelector(
-			PolicyFirstFeasiblePlacementSelector.StateOrdering.MOVEMENT_FIRST))
+		var fedFirst = new HeuristicPlacementAdapter(new PolicyGreedyPlacementSelector(
+			PolicyGreedyPlacementSelector.Policy.FED_FIRST))
 			.select(analysis, markers);
 
 		Assert.assertEquals("single-pass L2SVM must return a complete policy assignment",
@@ -238,15 +265,15 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Assert.assertTrue("merged single-pass components must remain exact-candidate reachable",
 			CandidateSelections.canStillBeReachable(analysis, selected.selectorGraph(),
 				selected.selectorGraph().relocationActions(), selected.assignment()));
-		var canonical = CandidateSelections.selectMaterializationMaximal(analysis,
-			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment());
-		Assert.assertEquals("adapter receipts must equal the exact candidate-row projection",
-			canonical.candidates().stream().map(candidate -> candidate.normalizedSignature())
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)),
-			selected.selectedCandidateSelections().stream().map(candidate -> candidate.normalizedSignature())
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new)));
+		var canonical = CandidateSelections.resolveAndValidate(analysis,
+			selected.selectorGraph(), selected.selectorGraph().relocationActions(), selected.assignment(),
+			selected.selectedCandidateSelections());
+		Assert.assertEquals("adapter receipts must retain the exact selected owned witness",
+			canonical, selected.selectedCandidateSelections());
+		CandidateSelections.validateRealizationSelections(analysis, selected.assignment(),
+			selected.selectedCandidateSelections(), selected.selectedRelocationChoices());
 		Assert.assertNotEquals("selector ordering is part of the immutable policy-view identity",
-			movementFirst.certificate().policyViewFingerprint(),
+			fedFirst.certificate().policyViewFingerprint(),
 			selected.certificate().policyViewFingerprint());
 		Assert.assertTrue("A demoted Xd must not be uploaded again inside either repeated loop: "
 			+ selected.selectedRelocations(),
@@ -311,7 +338,11 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 	}
 
 	private static String l2svmScript(int workers) throws Exception {
-		return federated("X", 50000, 2100, workers) + "\n"
+		return l2svmScript(workers, 2100);
+	}
+
+	private static String l2svmScript(int workers, long cols) throws Exception {
+		return federated("X", 50000, cols, workers) + "\n"
 			+ federated("Y", 50000, 1, workers) + "\n"
 			+ "B=l2svm(X=X,Y=Y,verbose=FALSE,epsilon=1e-22,maxIterations=30);\n"
 			+ "write(B,\"out\",format=\"csv\");\n";

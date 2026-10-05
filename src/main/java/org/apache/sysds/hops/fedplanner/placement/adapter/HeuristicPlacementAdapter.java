@@ -47,7 +47,7 @@ import org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacement
 
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
-/** Local aggregate-output preference over the unchanged common placement analysis. */
+/** Exact local-vector continuation preference over the unchanged common placement analysis. */
 public final class HeuristicPlacementAdapter {
 	private final PlacementAnalysisSelector selector;
 
@@ -63,8 +63,8 @@ public final class HeuristicPlacementAdapter {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(demotionMarkers, "demotionMarkers");
 		NeutralPlacementGraph base = analysis.graph();
-		// Historical markers remain an audited input, not authority to project away
-		// common candidates or to force a coordinator-local downstream prefix.
+		// Markers remain audited inputs, not authority to project away common candidates.
+		// The greedy policy consumes analysis-owned paths and their live exact supports.
 		markerKeys(base, demotionMarkers);
 		NeutralPlacementGraph filtered = base;
 		List<String> exclusions = List.of();
@@ -102,7 +102,8 @@ public final class HeuristicPlacementAdapter {
 				+ CandidateSelections.derivedFoutPhysicalEmissionCount(candidateReceipts));
 		boolean greedy = selector instanceof PolicyGreedyPlacementSelector;
 		String stateOrdering = greedy ? ((PolicyGreedyPlacementSelector) selector).policy().name() : "EXPLICIT_CUSTOM_SELECTOR";
-		List<String> ties = List.of("INPUT_RESIDENCY", "LOCAL_AGGREGATE_OUTPUT_UNLESS_REQUIRED_PRESENT",
+		List<String> ties = List.of("LOCAL_VECTOR_CONTINUATION", "EXACT_NATIVE_CONTINUATION", "INPUT_RESIDENCY",
+			"LOCAL_AGGREGATE_OUTPUT",
 			"NATIVE_FOUT", "FEWER_INPUT_UPLOADS", "CANONICAL_OWNED_ROW_ORDER");
 		List<String> relationships = base.constraints().stream().filter(c -> isTransient(base, c.left())
 			|| isTransient(base, c.right())).map(NeutralPlacementGraph.Constraint::normalizedSignature).sorted().toList();
@@ -115,13 +116,21 @@ public final class HeuristicPlacementAdapter {
 		if(selection.certificate().terminationReason() != TerminationReason.POLICY_FEASIBLE)
 			throw new IllegalStateException("Heuristic selector must return a non-optimal policy feasibility certificate");
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
-			"policy", greedy ? "LOCAL_AGGREGATE_OUTPUT_POLICY_V4" : "EXPLICIT_CUSTOM_POLICY",
+			"policy", greedy ? "LOCAL_VECTOR_CONTINUATION_POLICY_V5" : "EXPLICIT_CUSTOM_POLICY",
 			"markerCount", Integer.toString(demotionMarkers.size()),
-			"localPrefixCount", "0", "downstreamMarkerCount", "0", "frontierEdgeCount", "0",
-			"nativeContinuationCount", "0", "search", greedy ? "GREEDY_NO_BACKTRACKING" : "EXPLICIT_CUSTOM_SELECTOR",
+			"localPrefixCount", Long.toString(analysis.heuristicPolicyFacts().paths().stream()
+				.flatMap(path -> path.localPrefix().stream()).distinct().count()),
+			"downstreamMarkerCount", Long.toString(analysis.heuristicPolicyFacts().demotions().stream()
+				.filter(marker -> assignment.get(marker.producer()) != null
+					&& assignment.get(marker.producer()).execType() == ExecType.CP).count()),
+			"frontierEdgeCount", Long.toString(analysis.heuristicPolicyFacts().paths().stream()
+				.flatMap(path -> path.reentries().stream()).distinct().count()),
+			"nativeContinuationCount", Long.toString(analysis.heuristicPolicyFacts().paths().stream()
+				.flatMap(path -> path.nativeContinuations().stream()).distinct().count()),
+			"search", greedy ? "GREEDY_NO_BACKTRACKING" : "EXPLICIT_CUSTOM_SELECTOR",
 			"stateOrdering", stateOrdering, "shapeProof", "COMMON_OWNED_ABSTRACT_SHAPE_AND_EXACT_ROW")));
 		String assignmentHash = commonAssignmentHash(assignment);
-		String policyFingerprint = sha256(facts.get("policy") + '|' + analysis.analysisFingerprint()
+		String policyFingerprint = sha256(facts.get("policy") + '|' + stateOrdering + '|' + analysis.analysisFingerprint()
 			+ '|' + candidateUniverse);
 		String incumbent = selection.score().normalizedSignature();
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
