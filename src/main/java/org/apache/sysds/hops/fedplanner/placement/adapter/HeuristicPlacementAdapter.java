@@ -71,7 +71,7 @@ public final class HeuristicPlacementAdapter {
 		PlacementSelection selection = selector.select(analysis, base);
 		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
-		validateProjection(analysis, filtered, assignment);
+		validateProjection(analysis, filtered, assignment, occurrenceHopIndex(analysis));
 		List<CandidateSelectionReceipt> candidateReceipts = List.copyOf(selection.selectedCandidateSelections());
 		List<RelocationChoiceReceipt> choices = List.copyOf(selection.selectedRelocationChoices());
 		List<RelocationActionKey> relocations = selection.selectedRelocations().stream().sorted().toList();
@@ -156,10 +156,13 @@ public final class HeuristicPlacementAdapter {
 	}
 
 	private static List<CompiledHopKey> markerKeys(NeutralPlacementGraph graph, Set<ValueVersionKey> markers) {
-		List<CompiledHopKey> keys = new ArrayList<>();
+		if(markers.isEmpty()) return List.of();
+		Map<ValueVersionKey,List<CompiledHopKey>> keysByValue = new LinkedHashMap<>();
+		for(Node node : graph.nodes())
+			keysByValue.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>()).add(node.key());
+		List<CompiledHopKey> keys = new ArrayList<>(markers.size());
 		for(ValueVersionKey marker : markers.stream().sorted().toList()) {
-			List<CompiledHopKey> matches = graph.nodes().stream().filter(n -> n.valueVersion().equals(marker))
-				.map(Node::key).toList();
+			List<CompiledHopKey> matches = keysByValue.getOrDefault(marker, List.of());
 			if(matches.size() != 1) throw new IllegalArgumentException("Unknown or ambiguous demotion marker");
 			keys.add(matches.get(0));
 		}
@@ -171,8 +174,17 @@ public final class HeuristicPlacementAdapter {
 		NodeKind kind = graph.node(key).orElseThrow().kind();
 		return kind == NodeKind.TRANSIENT_READ || kind == NodeKind.TRANSIENT_WRITE;
 	}
+	private static Map<CompiledHopKey,Hop> occurrenceHopIndex(PlacementAnalysis analysis) {
+		Map<CompiledHopKey,Hop> indexed = new LinkedHashMap<>();
+		for(var occurrence : analysis.occurrences())
+			if(indexed.put(occurrence.key(), occurrence.hop()) != null)
+				throw new IllegalStateException("Ambiguous concrete Hop occurrence identity");
+		return indexed;
+	}
+
 	private static void validateProjection(PlacementAnalysis analysis, NeutralPlacementGraph graph,
-		Map<CompiledHopKey, PlacementState> assignment) {
+		Map<CompiledHopKey, PlacementState> assignment,
+		Map<CompiledHopKey,Hop> occurrenceHops) {
 		Set<CompiledHopKey> decisionKeys = graph.decisionNodes().stream().map(Node::key)
 			.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 		if(!assignment.keySet().equals(decisionKeys)) throw new IllegalStateException("Incomplete Heuristic assignment");
@@ -181,7 +193,7 @@ public final class HeuristicPlacementAdapter {
 				.noneMatch(state -> state == entry.getValue()))
 				throw new IllegalStateException("State outside exact filtered node-owned universe");
 			Hop hop = analysis.hop(entry.getKey()).orElseThrow();
-			if(analysis.occurrences().stream().noneMatch(o -> o.key().equals(entry.getKey()) && o.hop() == hop))
+			if(occurrenceHops.get(entry.getKey()) != hop)
 				throw new IllegalStateException("Concrete Hop alias lost");
 		}
 	}

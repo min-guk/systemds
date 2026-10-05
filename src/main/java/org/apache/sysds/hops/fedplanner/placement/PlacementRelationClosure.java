@@ -1754,9 +1754,21 @@ final class PlacementRelationClosure {
 		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> ruleFacts,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg) {
+		return heuristicPolicyFacts(graph, projections, shapeFacts, compiledInputEdges, ruleFacts,
+			occurrences, cfg, null);
+	}
+
+	/** Optional invocation-local work counters; never part of placement authority or policy. */
+	static final class HeuristicPathMetrics {
+		long tracingEpochs, edgeClassifications, pathEdgeVisits, cfgEdgesActivated;
+	}
+
+	static HeuristicPolicyFacts heuristicPolicyFacts(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> ruleFacts,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg,
+		HeuristicPathMetrics metrics) {
 		Map<CompiledHopKey,List<PlacementState>> supported = constraintSupportedPolicyStates(graph);
-		Map<CompiledHopKey,Set<Integer>> localContinuations = exactHeuristicLocalContinuations(
-			graph, shapeFacts, compiledInputEdges, ruleFacts, supported);
 		List<HeuristicPolicyFact> demotions = new ArrayList<>();
 		for(HopOccurrenceProjection projection : projections) {
 			Hop hop = projection.hop();
@@ -1768,9 +1780,13 @@ final class PlacementRelationClosure {
 			if(exactLocalAlternative)
 				demotions.add(new HeuristicPolicyFact(projection.key(), node.valueVersion()));
 		}
+		if(demotions.isEmpty()) return new HeuristicPolicyFacts(List.of(), List.of());
+		Map<CompiledHopKey,Set<Integer>> localContinuations = exactHeuristicLocalContinuations(
+			graph, shapeFacts, compiledInputEdges, ruleFacts, supported);
+		HeuristicPathIndex pathIndex = new HeuristicPathIndex(graph, projections, shapeFacts,
+			compiledInputEdges, ruleFacts, occurrences, cfg, localContinuations, metrics);
 		while(true) {
-			List<HeuristicPathFact> paths = heuristicPaths(graph, projections, shapeFacts, demotions,
-				compiledInputEdges, ruleFacts, occurrences, cfg, localContinuations);
+			List<HeuristicPathFact> paths = pathIndex.trace(demotions);
 			Set<CompiledHopKey> incompatible = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(HeuristicPathFact path : paths)
 				if(path.localPrefix().stream().anyMatch(key -> key != path.demotion().producer()
@@ -1781,7 +1797,9 @@ final class PlacementRelationClosure {
 				return new HeuristicPolicyFacts(demotions, paths);
 			// A base-legal local result may require an upload at a shared formal/TWrite.
 			// The heuristic's no-upload local prefix cannot promise that demotion. Decline
-			// the preference, not the base candidate, and retrace after strict marker removal.
+			// the preference, not the base candidate. Start a fresh least fixed point after
+			// strict marker removal: cyclic phi support must not keep a withdrawn seed alive.
+			// The immutable edge/candidate indexes and exact edge classifications are reused.
 			demotions.removeIf(demotion -> incompatible.contains(demotion.producer()));
 		}
 	}
@@ -1895,142 +1913,171 @@ final class PlacementRelationClosure {
 		return shape != null && (shape.dataType().isScalar() || shape.provablyVector());
 	}
 
-	private static List<HeuristicPathFact> heuristicPaths(NeutralPlacementGraph graph,
-		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
-		List<HeuristicPolicyFact> demotions,
-		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> ruleFacts,
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg,
-		Map<CompiledHopKey,Set<Integer>> localContinuations) {
-		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing = new IdentityHashMap<>();
-		for(CompiledInputEdgeFact edge : compiledInputEdges) {
-			Node producer = graph.node(edge.producer()).orElseThrow();
-			Node consumer = graph.node(edge.consumer()).orElseThrow();
-			outgoing.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(
-				new HeuristicPathEdgeFact(edge.producer(), edge.consumer(), edge.inputPosition(),
-					producer.valueVersion(), consumer.valueVersion(), HeuristicPathEdgeKind.COMPILED_INPUT));
-		}
-		for(HeuristicPathEdgeFact edge : exactCfgHeuristicPathEdges(graph, projections, shapeFacts,
-			occurrences, cfg, Set.of()))
-			outgoing.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge);
-		outgoing.values().forEach(edges -> edges.sort(null));
+	private record HeuristicCfgJoin(List<HeuristicPathEdgeFact> edges, boolean requiresLocalSources) { }
+	private record HeuristicTransition(boolean local, boolean expand,
+		HeuristicPathwiseReentryFact reentry, HeuristicNativeContinuationFact nativeContinuation) { }
 
-		List<HeuristicPathFact> paths = traceHeuristicPaths(graph, shapeFacts, demotions,
-			compiledInputEdges, ruleFacts, outgoing, localContinuations);
-		for(int pass = 0; pass < Math.max(1, occurrences.size()); pass++) {
-			Set<CompiledHopKey> provenLocal = paths.stream().flatMap(path -> path.localPrefix().stream())
-				.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
-			boolean changed = false;
-			for(HeuristicPathEdgeFact edge : exactCfgHeuristicPathEdges(graph, projections, shapeFacts,
-				occurrences, cfg, provenLocal)) {
-				List<HeuristicPathEdgeFact> producerEdges = outgoing.computeIfAbsent(edge.producer(),
-					ignored -> new ArrayList<>());
-				if(!producerEdges.contains(edge)) {
-					producerEdges.add(edge);
-					producerEdges.sort(null);
-					changed = true;
-				}
+	/** Exact edge tests are seed-independent except for the nested-demotion preference. */
+	private static final class HeuristicPathIndex {
+		final NeutralPlacementGraph graph;
+		final Map<CompiledHopKey,List<CompiledInputEdgeFact>> inputs = new IdentityHashMap<>();
+		final Map<CompiledHopKey,List<CandidateRuleFact>> candidates = new IdentityHashMap<>();
+		final Map<ValueVersionKey,List<NeutralPlacementGraph.RelocationAction>> actions = new IdentityHashMap<>();
+		final Map<CompiledHopKey,Set<HeuristicPathEdgeFact>> outgoing = new IdentityHashMap<>();
+		final Set<CompiledHopKey> expandable = Collections.newSetFromMap(new IdentityHashMap<>());
+		final Set<CompiledHopKey> terminal = Collections.newSetFromMap(new IdentityHashMap<>());
+		final Map<CompiledHopKey,Set<Integer>> localContinuations;
+		final List<HeuristicCfgJoin> joins;
+		final Map<HeuristicPathEdgeFact,HeuristicTransition> ordinary = new java.util.HashMap<>();
+		final Map<HeuristicPathEdgeFact,HeuristicTransition> nested = new java.util.HashMap<>();
+		final HeuristicPathMetrics metrics;
+
+		HeuristicPathIndex(NeutralPlacementGraph graph, List<HopOccurrenceProjection> projections,
+			PlacementShapeFacts shapes, List<CompiledInputEdgeFact> edges, List<CandidateRuleFact> rules,
+			List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg,
+			Map<CompiledHopKey,Set<Integer>> localContinuations, HeuristicPathMetrics metrics) {
+			this.graph = graph;
+			this.localContinuations = localContinuations;
+			this.metrics = metrics;
+			for(var edge : edges) {
+				inputs.computeIfAbsent(edge.consumer(), ignored -> new ArrayList<>()).add(edge);
+				outgoing.computeIfAbsent(edge.producer(), ignored -> new LinkedHashSet<>()).add(
+					new HeuristicPathEdgeFact(edge.producer(), edge.consumer(), edge.inputPosition(),
+						graph.node(edge.producer()).orElseThrow().valueVersion(),
+						graph.node(edge.consumer()).orElseThrow().valueVersion(), HeuristicPathEdgeKind.COMPILED_INPUT));
 			}
-			if(!changed)
-				return paths;
-			paths = traceHeuristicPaths(graph, shapeFacts, demotions, compiledInputEdges,
-				ruleFacts, outgoing, localContinuations);
+			for(var rule : rules)
+				candidates.computeIfAbsent(rule.key().parentOccurrence(), ignored -> new ArrayList<>()).add(rule);
+			for(var action : graph.relocationActions())
+				actions.computeIfAbsent(action.key().sourceValueVersion(), ignored -> new ArrayList<>()).add(action);
+			for(Node node : graph.nodes()) {
+				if(supportedLocalPathNode(graph, shapes, node.key())) expandable.add(node.key());
+				if(supportedLocalTerminalNode(graph, node.key())) terminal.add(node.key());
+			}
+			joins = exactCfgHeuristicJoins(graph, projections, shapes, occurrences, cfg);
 		}
-		throw new IllegalStateException("Heuristic CFG local-phi closure did not converge");
+
+		HeuristicTransition transition(HeuristicPathEdgeFact edge, boolean nestedDemotion) {
+			return (nestedDemotion ? nested : ordinary).computeIfAbsent(edge, ignored -> {
+				if(metrics != null) metrics.edgeClassifications++;
+				boolean expand = expandable.contains(edge.consumer());
+				if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT) {
+					var edges = inputs.getOrDefault(edge.consumer(), List.of());
+					var rules = candidates.getOrDefault(edge.consumer(), List.of());
+					// A nested aggregate is an output boundary, not authority to gather its sibling.
+					if(nestedDemotion) {
+						var nativeLocal = exactHeuristicNativeContinuation(graph, edges, rules,
+							edge.producer(), edge.consumer(), edge.inputPosition(), FederatedOutput.LOUT);
+						if(nativeLocal != null) return new HeuristicTransition(false, false, null, nativeLocal);
+					}
+					if(localContinuations.getOrDefault(edge.consumer(), Set.of()).contains(edge.inputPosition()))
+						return new HeuristicTransition(true, expand, null, null);
+					var reentry = exactHeuristicReentry(graph, edges, rules,
+						actions.getOrDefault(edge.sourceValueVersion(), List.of()),
+						edge.producer(), edge.consumer(), edge.inputPosition());
+					if(reentry != null) return new HeuristicTransition(false, false, reentry, null);
+					var nativeFout = exactHeuristicNativeContinuation(graph, edges, rules,
+						edge.producer(), edge.consumer(), edge.inputPosition(), FederatedOutput.FOUT);
+					if(nativeFout != null) return new HeuristicTransition(false, false, null, nativeFout);
+				}
+				return new HeuristicTransition(expand || terminal.contains(edge.consumer()), expand, null, null);
+			});
+		}
+
+		List<HeuristicPathFact> trace(List<HeuristicPolicyFact> demotions) {
+			if(metrics != null) metrics.tracingEpochs++;
+			return new HeuristicPathPropagation(this, demotions).run();
+		}
 	}
 
-	private static List<HeuristicPathFact> traceHeuristicPaths(NeutralPlacementGraph graph,
-		PlacementShapeFacts shapeFacts, List<HeuristicPolicyFact> demotions,
-		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> ruleFacts,
-		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing,
-		Map<CompiledHopKey,Set<Integer>> localContinuations) {
-		Set<CompiledHopKey> demotionProducers = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-		for(HeuristicPolicyFact demotion : demotions)
-			demotionProducers.add(demotion.producer());
-		List<HeuristicPathFact> paths = new ArrayList<>();
-		for(HeuristicPolicyFact demotion : demotions) {
-			Set<CompiledHopKey> localPrefix = new java.util.TreeSet<>();
-			Set<HeuristicPathEdgeFact> usedEdges = new java.util.TreeSet<>();
-			Set<HeuristicPathwiseReentryFact> reentries = new java.util.TreeSet<>();
-			Set<HeuristicNativeContinuationFact> nativeContinuations = new java.util.TreeSet<>();
-			java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>();
-			localPrefix.add(demotion.producer());
-			pending.add(demotion.producer());
+	private static final class HeuristicPathState {
+		final HeuristicPolicyFact seed;
+		final Set<CompiledHopKey> local = new java.util.TreeSet<>();
+		final Set<HeuristicPathEdgeFact> edges = new java.util.TreeSet<>();
+		final Set<HeuristicPathwiseReentryFact> reentries = new java.util.TreeSet<>();
+		final Set<HeuristicNativeContinuationFact> nativeContinuations = new java.util.TreeSet<>();
+		HeuristicPathState(HeuristicPolicyFact seed) { this.seed = seed; }
+		HeuristicPathFact snapshot() {
+			return new HeuristicPathFact(seed, new ArrayList<>(local), new ArrayList<>(edges),
+				new ArrayList<>(reentries), new ArrayList<>(nativeContinuations));
+		}
+	}
+
+	/** One monotone closure per seed set; a newly enabled phi wakes only paths reaching its writers. */
+	private static final class HeuristicPathPropagation {
+		private record Step(HeuristicPathState path, HeuristicPathEdgeFact edge) { }
+		final HeuristicPathIndex index;
+		final List<HeuristicPathState> paths;
+		final Set<CompiledHopKey> seeds = Collections.newSetFromMap(new IdentityHashMap<>());
+		final Set<CompiledHopKey> provenLocal = Collections.newSetFromMap(new IdentityHashMap<>());
+		final Map<CompiledHopKey,Set<HeuristicPathEdgeFact>> outgoing = new IdentityHashMap<>();
+		final Map<CompiledHopKey,List<HeuristicPathState>> expanded = new IdentityHashMap<>();
+		final Map<CompiledHopKey,List<HeuristicCfgJoin>> subscribers = new IdentityHashMap<>();
+		final Map<HeuristicCfgJoin,Integer> missing = new IdentityHashMap<>();
+		final java.util.ArrayDeque<Step> pending = new java.util.ArrayDeque<>();
+
+		HeuristicPathPropagation(HeuristicPathIndex index, List<HeuristicPolicyFact> demotions) {
+			this.index = index;
+			paths = demotions.stream().map(HeuristicPathState::new).toList();
+			demotions.forEach(seed -> seeds.add(seed.producer()));
+			index.outgoing.forEach((key, edges) -> outgoing.put(key, new LinkedHashSet<>(edges)));
+			for(var join : index.joins) {
+				if(!join.requiresLocalSources()) { activate(join); continue; }
+				Set<CompiledHopKey> sources = Collections.newSetFromMap(new IdentityHashMap<>());
+				join.edges().forEach(edge -> sources.add(edge.producer()));
+				missing.put(join, sources.size());
+				for(var source : sources)
+					subscribers.computeIfAbsent(source, ignored -> new ArrayList<>()).add(join);
+			}
+		}
+
+		void activate(HeuristicCfgJoin join) {
+			for(var edge : join.edges())
+				if(outgoing.computeIfAbsent(edge.producer(), ignored -> new LinkedHashSet<>()).add(edge)) {
+					if(index.metrics != null) index.metrics.cfgEdgesActivated++;
+					for(var path : expanded.getOrDefault(edge.producer(), List.of())) pending.addLast(new Step(path, edge));
+				}
+		}
+
+		void addLocal(HeuristicPathState path, CompiledHopKey key, boolean expand) {
+			if(!path.local.add(key)) return;
+			if(provenLocal.add(key))
+				for(var join : subscribers.getOrDefault(key, List.of())) {
+					int remaining = missing.get(join) - 1;
+					missing.put(join, remaining);
+					if(remaining == 0) activate(join);
+				}
+			if(expand) {
+				expanded.computeIfAbsent(key, ignored -> new ArrayList<>()).add(path);
+				for(var edge : outgoing.getOrDefault(key, Set.of())) pending.addLast(new Step(path, edge));
+			}
+		}
+
+		List<HeuristicPathFact> run() {
+			for(var path : paths) addLocal(path, path.seed.producer(), true);
 			while(!pending.isEmpty()) {
-				CompiledHopKey producerKey = pending.removeFirst();
-				for(HeuristicPathEdgeFact edge : outgoing.getOrDefault(producerKey, List.of())) {
-					if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT) {
-						boolean nestedDemotion = demotionProducers.contains(edge.consumer());
-						// A downstream aggregate/vector demotion is an output-placement boundary,
-						// not proof that the operation itself should run in CP. If the exact runtime
-						// candidate can consume this local operand while keeping a federated sibling
-						// resident, prefer that FED/LOUT continuation before extending the CP prefix.
-						if(nestedDemotion) {
-							HeuristicNativeContinuationFact nativeContinuation =
-								exactHeuristicNativeContinuation(graph, compiledInputEdges,
-									ruleFacts, edge.producer(), edge.consumer(), edge.inputPosition(),
-									FederatedOutput.LOUT);
-							if(nativeContinuation != null) {
-								nativeContinuations.add(nativeContinuation);
-								continue;
-							}
-						}
-						// A legal scalar/vector continuation remains local. Only this consumer joins
-						// the prefix; its sibling remains independently placed.
-						if(localContinuations.getOrDefault(edge.consumer(), Set.of()).contains(edge.inputPosition())) {
-							usedEdges.add(edge);
-							if(localPrefix.add(edge.consumer())
-								&& supportedLocalPathNode(graph, shapeFacts, edge.consumer()))
-								pending.addLast(edge.consumer());
-							continue;
-						}
-						HeuristicPathwiseReentryFact reentry = exactHeuristicReentry(graph, compiledInputEdges,
-							ruleFacts, edge.producer(), edge.consumer(), edge.inputPosition());
-						if(reentry != null) {
-							reentries.add(reentry);
-							continue;
-						}
-						HeuristicNativeContinuationFact nativeContinuation =
-							exactHeuristicNativeContinuation(graph, compiledInputEdges,
-								ruleFacts, edge.producer(), edge.consumer(), edge.inputPosition(),
-								FederatedOutput.FOUT);
-						if(nativeContinuation != null) {
-							nativeContinuations.add(nativeContinuation);
-							continue;
-						}
-					}
-					if(!supportedLocalPathNode(graph, shapeFacts, edge.consumer())) {
-						// A dependent consumer that cannot participate in the vector
-						// re-entry analysis is still a local terminal when no exact
-						// frontier was proven. Otherwise FedAll could synthesize an
-						// unapproved upload at that very edge (for example local vector
-						// -> scalar aggregate). Compiler/function boundaries remain
-						// excluded because they require their own explicit path contract.
-						if(supportedLocalTerminalNode(graph, edge.consumer())) {
-							usedEdges.add(edge);
-							localPrefix.add(edge.consumer());
-						}
-						continue;
-					}
-					usedEdges.add(edge);
-					if(localPrefix.add(edge.consumer()))
-						pending.addLast(edge.consumer());
+				Step step = pending.removeFirst();
+				if(index.metrics != null) index.metrics.pathEdgeVisits++;
+				HeuristicTransition next = index.transition(step.edge(), seeds.contains(step.edge().consumer()));
+				if(next.nativeContinuation() != null) step.path().nativeContinuations.add(next.nativeContinuation());
+				else if(next.reentry() != null) step.path().reentries.add(next.reentry());
+				else if(next.local()) {
+					step.path().edges.add(step.edge());
+					addLocal(step.path(), step.edge().consumer(), next.expand());
 				}
 			}
-			paths.add(new HeuristicPathFact(demotion, new ArrayList<>(localPrefix),
-				new ArrayList<>(usedEdges), new ArrayList<>(reentries),
-				new ArrayList<>(nativeContinuations)));
+			return paths.stream().map(HeuristicPathState::snapshot).sorted().toList();
 		}
-		return paths.stream().sorted().toList();
 	}
 
-	private static List<HeuristicPathEdgeFact> exactCfgHeuristicPathEdges(NeutralPlacementGraph graph,
+	private static List<HeuristicCfgJoin> exactCfgHeuristicJoins(NeutralPlacementGraph graph,
 		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences,
-		CfgAnalysis cfg, Set<CompiledHopKey> provenLocal) {
+		CfgAnalysis cfg) {
 		Map<Hop,HopOccurrenceProjection> projectionsByHop = new IdentityHashMap<>();
 		for(HopOccurrenceProjection projection : projections)
 			projectionsByHop.put(projection.hop(), projection);
-		List<HeuristicPathEdgeFact> edges = new ArrayList<>();
+		List<HeuristicCfgJoin> joins = new ArrayList<>();
 		for(int readOrdinal = 0; readOrdinal < occurrences.size(); readOrdinal++) {
 			HopOccurrenceProjection readProjection = projectionsByHop.get(occurrences.get(readOrdinal).hop());
 			Node read = readProjection == null ? null : graph.node(readProjection.key()).orElse(null);
@@ -2066,21 +2113,20 @@ final class PlacementRelationClosure {
 			}
 			if(!exact || sources.isEmpty())
 				continue;
-			// A phi-like TRead is local only when every reaching definition has already
-			// been proven local by a Heuristic demotion path. This fixed-point rule preserves
-			// loop-carried locality without treating one local predecessor as authority for
-			// a potentially federated alternative.
-			if(sources.size() > 1 && sources.stream().anyMatch(source -> !provenLocal.contains(source.key())))
-				continue;
+			// Eligibility is immutable. Multi-definition edges activate only after ALL
+			// writer keys have a local proof; a single predecessor cannot authorize a phi.
+			List<HeuristicPathEdgeFact> edges = new ArrayList<>();
 			for(Node source : sources)
 				edges.add(new HeuristicPathEdgeFact(source.key(), read.key(), 0, source.valueVersion(),
 					read.valueVersion(), HeuristicPathEdgeKind.CFG_TRANSIENT_FORWARD));
+			joins.add(new HeuristicCfgJoin(edges.stream().distinct().sorted().toList(), sources.size() > 1));
 		}
-		return edges.stream().sorted().toList();
+		return List.copyOf(joins);
 	}
 
 	private static HeuristicPathwiseReentryFact exactHeuristicReentry(NeutralPlacementGraph graph,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> ruleFacts,
+		List<NeutralPlacementGraph.RelocationAction> actions,
 		CompiledHopKey localProducer,
 		CompiledHopKey consumer, int inputPosition) {
 		if(!exactHeuristicReentryOccurrence(graph.node(localProducer).orElseThrow())
@@ -2094,7 +2140,7 @@ final class PlacementRelationClosure {
 		if(consumerNode.kind() == NodeKind.FUNCTION_CALL)
 			return null;
 		List<HeuristicPathwiseReentryFact> matches = new ArrayList<>();
-		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions()) {
+		for(NeutralPlacementGraph.RelocationAction action : actions) {
 			if(action.key().sourceValueVersion() != local.valueVersion())
 				continue;
 			for(ObligationKey obligation : action.obligations()) {
