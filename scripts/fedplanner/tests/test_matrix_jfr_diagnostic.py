@@ -103,12 +103,14 @@ class DiagnosticCliContractTest(unittest.TestCase):
             'diagnostic_planner_trace_options': list(CAMPAIGN.DIAGNOSTIC_TRACE_OPTIONS),
             'diagnostic_compact': True,
             'diagnostic_compact_options': [option],
+            'diagnostic_runtime_cell': False,
+            'diagnostic_plan_details': False,
         }, CAMPAIGN.diagnostic_contract(True, True))
 
 
 class DiagnosticGateAndReportingTest(unittest.TestCase):
     def test_compact_manifest_flag_alone_closes_gate(self):
-        passed = {row['id']: {'status': 'passed', 'timeout_seconds': 60} for row in CAMPAIGN.matrix()}
+        passed = {row['id']: {'status': 'passed', 'timeout_seconds': None} for row in CAMPAIGN.matrix()}
         for manifest in ({'measurement': {'diagnostic_compact': True}},
                          {'identity': {'diagnostic': {'diagnostic_compact': True}}}):
             with self.subTest(manifest=manifest), tempfile.TemporaryDirectory() as directory:
@@ -118,7 +120,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
                     self.assertFalse(CAMPAIGN.compile_gate(root))
 
     def test_identity_flag_or_individual_diagnostic_row_also_closes_gate(self):
-        passed = {row['id']: {'status': 'passed', 'timeout_seconds': 60} for row in CAMPAIGN.matrix()}
+        passed = {row['id']: {'status': 'passed', 'timeout_seconds': None} for row in CAMPAIGN.matrix()}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             CAMPAIGN.dump(root / 'manifest.json', {
@@ -131,7 +133,7 @@ class DiagnosticGateAndReportingTest(unittest.TestCase):
                 self.assertFalse(CAMPAIGN.compile_gate(root))
 
     def test_global_gate_rejects_diagnostic_root_even_if_every_cell_passes(self):
-        passed = {row['id']: {'status': 'passed', 'timeout_seconds': 60} for row in CAMPAIGN.matrix()}
+        passed = {row['id']: {'status': 'passed', 'timeout_seconds': None} for row in CAMPAIGN.matrix()}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             CAMPAIGN.dump(root / 'manifest.json', {

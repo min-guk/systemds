@@ -134,6 +134,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransientCom
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransientPlacementCompatibility;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.FunctionStatement;
 import org.apache.sysds.parser.FunctionStatementBlock;
@@ -2510,9 +2511,34 @@ final class PlacementRelationClosure {
 		// instead prove their current output extent; a stable pool alone is weaker.
 		boolean exactAlias = hop instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE
 			&& hop.getInput().size() == 1 && inputAnchors.get(0) != null;
+		// A shared worker pool does not prove cardinality: the same worker can hold multiple
+		// ranges. Supply FULL proof only from every concrete FULL input's own complete map.
+		ShapeHint profileHint =
+			hop instanceof AggBinaryOp mm && mm.isMatrixMultiply()
+				&& fullInputsHaveSinglePartition(domains, inputAnchors)
+				? new ShapeHint(
+					outputShape.rows(), outputShape.cols(), hop.getBlocksize(), true) : null;
 		return (exactAlias || outputGeometryCompatible(outputShape, anchor))
-			&& candidateGenerator.oracleConfirmsAnchorDomain(hop, occurrence, domains, anchor)
+			&& candidateGenerator.oracleConfirmsAnchorDomain(hop, occurrence, domains, anchor, profileHint)
 			? anchor : null;
+	}
+
+	private static boolean fullInputsHaveSinglePartition(List<List<FType>> domains,
+		List<DurableAnchorKey> inputAnchors) {
+		boolean sawFull = false;
+		for(int i = 0; i < domains.size(); i++) {
+			if(!domains.get(i).contains(FType.FULL))
+				continue;
+			sawFull = true;
+			DurableAnchorKey input = inputAnchors.get(i);
+			if(input == null || input.fType() != FType.FULL || input.partitions().size() != 1)
+				return false;
+			AnchorPartition range = input.partitions().get(0);
+			if(!range.begin().equals(List.of(0L, 0L)) || range.end().size() != 2
+				|| range.end().get(0) <= 0 || range.end().get(1) <= 0)
+				return false;
+		}
+		return sawFull;
 	}
 
 	private static boolean knownBroadcastableLocalMatrix(NodeShapeFact shape) {

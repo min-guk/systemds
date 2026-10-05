@@ -938,6 +938,9 @@ public class ExecutionContext {
 	public void cleanupCacheableData(CacheableData<?> mo) {
 		if (DMLScript.JMLC_MEM_STATISTICS)
 			Statistics.removeCPMemObject(System.identityHashCode(mo));
+		boolean hasReferences = getVariables().hasReferences(mo);
+		if (mo instanceof MatrixObject && mo.isCleanupEnabled() && !hasReferences)
+			FederationUtils.retireOwnedRefedReuseMaps((MatrixObject) mo);
 		//early abort w/o scan of symbol table if no cleanup required
 		boolean fileExists = (mo.isHDFSFileExists() && mo.getFileName() != null);
 		boolean isFederated = (mo instanceof MatrixObject) && ((MatrixObject)mo).isFederated();
@@ -946,7 +949,7 @@ public class ExecutionContext {
 		
 		try {
 			//compute ref count only if matrix cleanup actually necessary
-			if ( mo.isCleanupEnabled() && !getVariables().hasReferences(mo) )  {
+			if ( mo.isCleanupEnabled() && !hasReferences )  {
 				mo.clearData(getTID()); //clean cached data
 				if (isFederated)
 					cleanupFederatedData(mo);

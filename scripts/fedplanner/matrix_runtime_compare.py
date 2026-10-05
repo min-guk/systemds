@@ -351,9 +351,9 @@ def _validate_p2_reference(result: Any, plan: Any, provenance: Any) -> None:
 
 
 def prepare_workload_reference(root: Path, stage: Path, cell: dict[str, Any],
-		compile_gate_passed: bool) -> dict[str, Any]:
-	"""Generate and pin the frozen P2 repair only after the global compile gate."""
-	if compile_gate_passed is not True:
+		compile_gate_passed: bool, *, direct_runtime: bool = False) -> dict[str, Any]:
+	"""Pin P2 after the compile gate, or for an explicitly selected direct runtime."""
+	if compile_gate_passed is not True and direct_runtime is not True:
 		raise RuntimeComparisonError("global 896-cell compile gate has not passed")
 	if (cell.get("suite"), cell.get("workload")) != ("p2", "P2_PREP"):
 		raise RuntimeComparisonError("selective reference repair is P2_PREP-only")
@@ -393,6 +393,7 @@ def prepare_workload_reference(root: Path, stage: Path, cell: dict[str, Any],
 		raise RuntimeComparisonError("generated P2 reference JSON is invalid") from exc
 	provenance = {"generator_sha256": _sha256_file(GENERATOR),
 		"reference_builder_sha256": _sha256_file(REFERENCE_BUILDER),
+		"compile_gate_passed": compile_gate_passed, "direct_runtime": direct_runtime,
 		"command": command, "generator_receipt": generated}
 	_validate_p2_reference(result, plan, provenance)
 	pin_root.mkdir(parents=True, exist_ok=False)

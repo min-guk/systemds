@@ -3,6 +3,7 @@
 
 One fresh coordinator JVM and fresh workers per attempt. Immutable inputs/engine,
 append-only attempts, no retries unless explicitly selected, no runtime fallback.
+Explicit direct runtime may omit the separate compile survey, not runtime audits.
 The existing frozen P5 harness is deliberately not imported or modified.
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import matrix_runtime_compare as runtime_compare
 import matrix_lifecycle as lifecycle
+import matrix_continuation as continuation
 
 REPO = Path(__file__).resolve().parents[2]
 EVALUATION = Path('/home/mchoi/cofee-evaluation')
@@ -37,8 +39,9 @@ IMAGE = 'cofee-experiment:content-0861f4ff197c868f42abf6478b66505f650325c267caa8
 PLANNERS = ('DP-local', 'FedFirst', 'AggLocal', 'DP-global')
 PROFILES = ('lan', 'wan_light', 'wan_mid', 'wan_heavy')
 WORKERS = (1, 3, 5, 7)
-# Fixed workload budget for every planner and phase; setup/cleanup are separate.
-WORKLOAD_TIMEOUT_SECONDS = 60
+# User policy: neither compilation nor runtime has a workload deadline.
+# Administrative connection/setup/cleanup waits are separate from computation.
+WORKLOAD_TIMEOUT_SECONDS = None
 WORKLOADS = (('ml', 'logreg'), ('ml', 'l2svm'), ('ml', 'pca'), ('ml', 'als'),
              ('ml', 'kmeans'), ('ml', 'lm'), ('ml', 'steplm'), ('ml', 'glm'),
              ('ml', 'gnmf'), ('ml', 'gmm'), ('p1', 'P1_FULL'), ('p2', 'P2_PREP'),
@@ -60,6 +63,8 @@ JFR_OPTIONS = (
 )
 DIAGNOSTIC_TRACE_OPTIONS = ('-Dsysds.fedplanner.trace=true',
                             '-Dsysds.fedplanner.trace.details=false')
+DIAGNOSTIC_DETAIL_TRACE_OPTIONS = ('-Dsysds.fedplanner.trace=true',
+                                   '-Dsysds.fedplanner.trace.details=true')
 DIAGNOSTIC_COMPACT_OPTIONS = ('-Dsysds.fedplanner.regional.compact=true',)
 CP = '/candidate/probe/classes:/candidate/SystemDS.jar:/opt/systemds/target/lib/*'
 
@@ -121,17 +126,52 @@ def ssh(host, argv, **kwargs):
                 shlex.join(map(str, argv))], **kwargs)
 
 
-def diagnostic_contract(enabled, compact=False):
+def diagnostic_contract(enabled, compact=False, runtime_cell=False, plan_details=False):
+    trace_options = (DIAGNOSTIC_DETAIL_TRACE_OPTIONS if plan_details else
+                     DIAGNOSTIC_TRACE_OPTIONS if enabled else ())
     return {'diagnostic_jfr': bool(enabled),
             'diagnostic_jfr_options': list(JFR_OPTIONS) if enabled else [],
-            'diagnostic_planner_trace_options': list(DIAGNOSTIC_TRACE_OPTIONS) if enabled else [],
+            'diagnostic_planner_trace_options': list(trace_options),
             'diagnostic_compact': bool(enabled and compact),
             'diagnostic_compact_options': list(DIAGNOSTIC_COMPACT_OPTIONS)
-                if enabled and compact else []}
+                if enabled and compact else [],
+            'diagnostic_runtime_cell': bool(runtime_cell),
+            'diagnostic_plan_details': bool(plan_details)}
 
 
-def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
+def read_runtime_selection(path):
+    """Select work, never import historical results or change the canonical matrix."""
+    raw = Path(path).read_bytes()
+    value = json.loads(raw)
+    if not isinstance(value, dict) or value.get('schema') != 'w1357-runtime-selection/v1':
+        raise ValueError('invalid runtime selection schema')
+    ids = value.get('selected_cell_ids')
+    if (not isinstance(ids, list) or not ids or any(not isinstance(x, str) for x in ids)
+            or len(ids) != len(set(ids)) or not set(ids) <= {c['id'] for c in matrix()}):
+        raise ValueError('runtime selection requires nonempty unique canonical cell IDs')
+    return raw, set(ids)
+
+
+def runtime_selection_ids(root, manifest):
+    expected = manifest.get('identity', {}).get('runtime_selection_sha256')
+    if expected is None:
+        return None
+    raw, ids = read_runtime_selection(Path(root) / 'runtime-selection.json')
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise RuntimeError('frozen runtime selection changed')
+    return ids
+
+
+def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, direct_runtime=False,
+               continuation_source=None, diagnostic_runtime_cell=False,
+               diagnostic_plan_details=False, runtime_selection=None):
     """Freeze build/probe once. Resumes verify rather than replace artifacts."""
+    selection_raw = None
+    if runtime_selection is not None:
+        if (not direct_runtime or continuation_source is not None or diagnostic_jfr
+                or diagnostic_compact or diagnostic_runtime_cell or diagnostic_plan_details):
+            raise ValueError('runtime selection requires exclusive direct runtime mode')
+        selection_raw, _ = read_runtime_selection(runtime_selection)
     manifest_path = root / 'manifest.json'
     jar = REPO / 'target/systemds-3.4.0-SNAPSHOT.jar'
     files = sorted(p for p in (REPO / 'src/main').rglob('*') if p.is_file()) + [REPO / 'pom.xml']
@@ -149,16 +189,38 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
                 'probe_source_sha256': sha(PROBE_SOURCE), 'runner_sha256': sha(Path(__file__)),
                 'runtime_compare_sha256': sha(Path(runtime_compare.__file__)),
                 'lifecycle_sha256': sha(Path(lifecycle.__file__)),
+                'continuation_module_sha256': sha(Path(continuation.__file__)),
                 'external_sha256': {str(p): sha(p) for p in external},
                 'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json'),
                 'timeout_seconds': dict.fromkeys(('compile', 'runtime'), WORKLOAD_TIMEOUT_SECONDS),
-                'diagnostic': diagnostic_contract(diagnostic_jfr, diagnostic_compact)}
+                'direct_runtime': bool(direct_runtime),
+                'diagnostic': diagnostic_contract(diagnostic_jfr, diagnostic_compact,
+                                                  diagnostic_runtime_cell,
+                                                  diagnostic_plan_details)}
+    if selection_raw is not None:
+        identity['runtime_selection_sha256'] = hashlib.sha256(selection_raw).hexdigest()
+        identity['runtime_selection_source'] = str(Path(runtime_selection).resolve())
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
+        if 'continuation_sha256' in manifest['identity']:
+            identity['continuation_sha256'] = manifest['identity']['continuation_sha256']
+            continuation.load_rows(root, manifest)
+        if continuation_source is not None:
+            snapshot_path = root / 'continuation.json'
+            if (not snapshot_path.is_file() or Path(json.loads(snapshot_path.read_text())
+                    ['source_root']).resolve() != Path(continuation_source).resolve()):
+                raise RuntimeError('campaign continuation source changed: use a new root')
         if manifest['identity'] != identity:
             raise RuntimeError('campaign identity changed: use a new root, never mix revisions')
+        runtime_selection_ids(root, manifest)
         if manifest.get('measurement', {}).get('timeout_seconds') != identity['timeout_seconds']:
             raise RuntimeError('campaign timeout measurement changed: use a new root, never mix policies')
+        if manifest.get('measurement', {}).get('direct_runtime') is not identity['direct_runtime']:
+            raise RuntimeError('campaign direct runtime measurement changed: use a new root, never mix policies')
+        measurement_diagnostic = {key: manifest.get('measurement', {}).get(key)
+                                  for key in identity['diagnostic']}
+        if measurement_diagnostic != identity['diagnostic']:
+            raise RuntimeError('campaign diagnostic measurement changed: use a new root, never mix policies')
         for name, expected in manifest['overlay_sha256'].items():
             if sha(root / 'overlay' / name) != expected:
                 raise RuntimeError(f'frozen overlay changed: {name}')
@@ -170,7 +232,7 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
     shutil.copyfile(jar, overlay / 'SystemDS.jar')
     command = ['javac', '-encoding', 'UTF-8', '-cp', f'{jar}:{REPO}/target/lib/*',
                '-d', str(classes), str(PROBE_SOURCE)]
-    (root / 'probe-javac.log').write_text(run(command))
+    (root / 'probe-javac.log').write_text(run(command, timeout=None))
     manifest = {'schema': 'w1357-four-planner-campaign/v1', 'identity': identity,
                 'head': run(['git', '-C', str(REPO), 'rev-parse', 'HEAD']).strip(),
                 'git_status': run(['git', '-C', str(REPO), 'status', '--short']),
@@ -181,11 +243,25 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False):
                 'measurement': {'samples_per_cell': 1, 'warmups': 0, 'fresh_jvm': True,
                     'fresh_workers': True, 'detailed_searchspace_metrics': False,
                     'compile_is_full_production_pipeline': True, 'runtime_audit': True,
-                    'parallel_setup_only': True, 'concurrent_timed_cells': 1,
+                    'parallel_setup_only': False, 'parallel_untimed_only': True,
+                    'concurrent_timed_cells': 1,
                     'timeout_seconds': dict(identity['timeout_seconds']),
-                    'timeout_semantics': 'unresolved failure, not infeasibility',
+                    'direct_runtime': identity['direct_runtime'],
+                    'timeout_semantics': 'no workload deadline',
                     'runtime_order': [list(x) for x in WORKLOADS],
-                    **diagnostic_contract(diagnostic_jfr, diagnostic_compact)}}
+                    **diagnostic_contract(diagnostic_jfr, diagnostic_compact,
+                                          diagnostic_runtime_cell,
+                                          diagnostic_plan_details)}}
+    if continuation_source is not None:
+        if Path(continuation_source).resolve() == root.resolve():
+            raise ValueError('continuation source must be a different, stopped campaign root')
+        snapshot = continuation.build_snapshot(continuation_source, manifest, Path(__file__),
+                                               validate_probe_receipt)
+        dump(root / 'continuation.json', snapshot)
+        identity['continuation_sha256'] = sha(root / 'continuation.json')
+    if selection_raw is not None:
+        with (root / 'runtime-selection.json').open('xb') as stream:
+            stream.write(selection_raw)
     dump(manifest_path, manifest)
     return manifest
 
@@ -214,6 +290,7 @@ def config(cell, phase):
     root = ET.Element('root')
     values = {'sysds.native.blas': 'mkl', 'sysds.local.spark': 'true',
               'sysds.federated.planner': cell['planner_enum'],
+              'sysds.federated.timeout': '-1',
               'sysds.benchmark.compile_only': str(phase == 'compile').lower(),
               'sysds.localtmpdir': '/tmp/w1357-systemds/local',
               'sysds.scratch': '/tmp/w1357-systemds/scratch'}
@@ -223,7 +300,7 @@ def config(cell, phase):
 
 
 def latest(root, phase):
-    result = {}
+    result = continuation.load_rows(root) if phase == 'runtime' else {}
     for path in sorted((root / 'attempts' / phase).glob('*/result.json')):
         row = json.loads(path.read_text())
         result[row['cell']['id']] = row
@@ -236,25 +313,32 @@ def compile_gate(root):
         manifest = json.loads(manifest_path.read_text())
         if (manifest.get('measurement', {}).get('diagnostic_jfr') is True
                 or manifest.get('measurement', {}).get('diagnostic_compact') is True
+                or manifest.get('measurement', {}).get('diagnostic_runtime_cell') is True
                 or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_jfr') is True
-                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_compact') is True):
+                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_compact') is True
+                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_runtime_cell') is True):
             return False
     rows = latest(root, 'compile')
     return len(rows) == len(matrix()) and all(
         rows.get(c['id'], {}).get('status') == 'passed'
+        and 'timeout_seconds' in rows[c['id']]
         and rows[c['id']].get('timeout_seconds') == WORKLOAD_TIMEOUT_SECONDS
         and not rows[c['id']].get('diagnostic_only') for c in matrix())
 
 
-def coordinator_java(cell, phase, diagnostic_jfr=False, diagnostic_compact=False):
+def coordinator_java(cell, phase, diagnostic_jfr=False, diagnostic_compact=False,
+                     diagnostic_plan_details=False):
     if diagnostic_compact and not diagnostic_jfr:
         raise ValueError('diagnostic compact requires diagnostic JFR')
     java = list(JAVA)
     if diagnostic_jfr:
         java.extend(JFR_OPTIONS)
-        java.extend(DIAGNOSTIC_TRACE_OPTIONS)
+        java.extend(DIAGNOSTIC_DETAIL_TRACE_OPTIONS if diagnostic_plan_details
+                    else DIAGNOSTIC_TRACE_OPTIONS)
         if diagnostic_compact:
             java.extend(DIAGNOSTIC_COMPACT_OPTIONS)
+    elif diagnostic_plan_details:
+        java.extend(DIAGNOSTIC_DETAIL_TRACE_OPTIONS)
     if cell['suite'] == 'p2':
         java.append('-Dsysds.privacy.allowPublicRecodeMetadata=true')
     java += ['-cp', CP, PROBE, '--mode', phase, '--script', 'tmp/cell.dml',
@@ -357,7 +441,33 @@ def capture_container_health(spec, node):
     return health
 
 
+def collect_node_evidence(local, spec, nodes):
+    """Collect independent untimed host evidence, draining all before cleanup."""
+    def collect(node):
+        evidence = {'errors': [], 'health_collection_errors': [], 'log_collection_errors': []}
+        try:
+            health = capture_container_health(spec, node)
+            dump(local / f'{node.host}-container-health.json', health)
+            if health['state']['OOMKilled'] or health['oom_events']:
+                evidence['errors'].append(f'container OOM observed: {node.host}')
+        except Exception as error:
+            evidence['health_collection_errors'].append(str(error))
+        try:
+            (local / f'{node.host}-container.log').write_text(ssh(node.host,
+                ['docker', 'logs', '--tail', '3000', spec.container_name(node)]))
+        except Exception as error:
+            evidence['log_collection_errors'].append(str(error))
+        return evidence
+
+    merged = {'errors': [], 'health_collection_errors': [], 'log_collection_errors': []}
+    for evidence in lifecycle.prepare_nodes(nodes, collect):
+        for key in merged:
+            merged[key].extend(evidence[key])
+    return merged
+
+
 def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, reference_manifest=None):
+    cell_started = time.monotonic()
     token = f'{time.time_ns():020d}-{uuid.uuid4().hex[:8]}'
     local = root / 'attempts' / phase / token
     local.mkdir(parents=True)
@@ -383,7 +493,10 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
     dump(local / 'lifecycle.json', life)
     result = {'schema': 'w1357-matrix-attempt/v1', 'cell': cell, 'phase': phase,
               'attempt': token, 'status': 'failed', 'errors': [], 'remote': str(remote),
-              'diagnostic_only': bool(getattr(args, 'diagnostic_jfr', False)),
+              'diagnostic_only': bool(getattr(args, 'diagnostic_jfr', False)
+                                      or getattr(args, 'diagnostic_runtime_cell', False)),
+              'diagnostic_runtime_cell': bool(getattr(args, 'diagnostic_runtime_cell', False)),
+              'diagnostic_plan_details': bool(getattr(args, 'diagnostic_plan_details', False)),
               'diagnostic_compact': bool(getattr(args, 'diagnostic_compact', False)),
               'jar_sha256': manifest['identity']['jar_sha256'],
               'timeout_seconds': WORKLOAD_TIMEOUT_SECONDS}
@@ -413,15 +526,16 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
         before = base.capture_network_snapshot(spec)
         dump(local / 'netem-before.json', before)
         java = coordinator_java(cell, phase, getattr(args, 'diagnostic_jfr', False),
-                                getattr(args, 'diagnostic_compact', False))
+                                getattr(args, 'diagnostic_compact', False),
+                                getattr(args, 'diagnostic_plan_details', False))
         command = ['ssh', '-o', 'BatchMode=yes', '--', spec.coordinator.host,
-            shlex.join(['docker', 'exec', spec.container_name(spec.coordinator), 'timeout',
-                '--signal=TERM', '--kill-after=30s', str(result['timeout_seconds']), *java])]
+            shlex.join(['docker', 'exec', spec.container_name(spec.coordinator), *java])]
         dump(local / 'command.json', command)
         started = time.monotonic()
+        result['setup_seconds'] = started - cell_started
         with (local / 'coordinator.log').open('x') as output:
             completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
-                timeout=result['timeout_seconds'] + 90)
+                timeout=None)
         result['process_seconds'] = time.monotonic() - started
         result['returncode'] = completed.returncode
         raw = ssh(spec.coordinator.host, ['bash', '-lc',
@@ -460,14 +574,12 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
                 record_diagnostic_jfr(result, spec.coordinator.host, remote, local)
             # Keep this independent of network collection: a failed/terminated
             # container can invalidate netem evidence but still explain a kill.
-            for node in nodes:
-                try:
-                    health = capture_container_health(spec, node)
-                    dump(local / f'{node.host}-container-health.json', health)
-                    if health['state']['OOMKilled'] or health['oom_events']:
-                        result['errors'].append(f'container OOM observed: {node.host}')
-                except Exception as error:
-                    result.setdefault('health_collection_errors', []).append(str(error))
+            try:
+                for key, errors in collect_node_evidence(local, spec, nodes).items():
+                    if errors:
+                        result.setdefault(key, []).extend(errors)
+            except Exception as error:
+                result['errors'].append('host evidence: ' + str(error))
             try:
                 after = base.capture_network_snapshot(spec)
                 dump(local / 'netem-after.json', after)
@@ -476,12 +588,6 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
                     dump(local / 'netem-validation.json', network)
                     if network.get('valid') is not True:
                         result['errors'].append('network quality invalid')
-                for node in nodes:
-                    try:
-                        (local / f'{node.host}-container.log').write_text(ssh(node.host,
-                            ['docker', 'logs', '--tail', '3000', spec.container_name(node)]))
-                    except Exception as error:
-                        result.setdefault('log_collection_errors', []).append(str(error))
             except Exception as error:
                 result['errors'].append('network evidence: ' + str(error))
             try:
@@ -493,9 +599,14 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
                 result['cleanup_resolved'] = False
         if result['errors']:
             result['status'] = 'failed'
+        result['cell_wall_seconds'] = time.monotonic() - cell_started
+        if 'process_seconds' in result:
+            result['postprocess_seconds'] = (result['cell_wall_seconds']
+                - result['setup_seconds'] - result['process_seconds'])
         dump(local / 'result.json', result)
     print(json.dumps({k: result.get(k) for k in ('cell', 'phase', 'attempt', 'status',
-        'compile_seconds', 'searchspace_seconds', 'selection_adapter_seconds', 'errors')}), flush=True)
+        'compile_seconds', 'searchspace_seconds', 'selection_adapter_seconds', 'runtime_seconds',
+        'setup_seconds', 'process_seconds', 'postprocess_seconds', 'cell_wall_seconds', 'errors')}), flush=True)
     return result
 
 
@@ -503,27 +614,48 @@ def summarize(root):
     summary = {}
     for phase in ('compile', 'runtime'):
         rows = latest(root, phase)
-        summary[phase] = {'passed': sum(r['status'] == 'passed' for r in rows.values()),
-                          'failed': sum(r['status'] != 'passed' for r in rows.values()),
-                          'pending': len(matrix()) - len(rows)}
+        benchmark_rows = {cell_id: row for cell_id, row in rows.items()
+                          if row.get('diagnostic_runtime_cell') is not True}
+        summary[phase] = {'passed': sum(r['status'] == 'passed' for r in benchmark_rows.values()),
+                          'failed': sum(r['status'] != 'passed' for r in benchmark_rows.values()),
+                          'pending': len(matrix()) - len(benchmark_rows)}
         columns = ['id', 'planner', 'suite', 'workload', 'workers', 'profile', 'status',
-                   'diagnostic_only', 'diagnostic_compact', 'timeout_seconds',
+                   'diagnostic_only', 'diagnostic_runtime_cell', 'diagnostic_plan_details',
+                   'diagnostic_compact', 'timeout_seconds',
                    'compile_seconds', 'common_preparation_seconds', 'analysis_seconds',
                    'searchspace_seconds', 'selection_adapter_seconds',
                    'planning_after_analysis_seconds', 'full_initial_planning_seconds',
-                   'runtime_seconds', 'attempt']
+                   'runtime_seconds', 'attempt', 'setup_seconds', 'process_seconds',
+                   'postprocess_seconds', 'cell_wall_seconds', 'origin_root', 'origin_result']
         with (root / f'{phase}-comparison.csv').open('w') as stream:
             writer = csv.DictWriter(stream, fieldnames=columns)
             writer.writeheader()
             for cell in schedule(phase):
-                row = rows.get(cell['id'], {'status': 'pending'})
+                row = benchmark_rows.get(cell['id'], {'status': 'pending'})
                 values = {k: cell.get(k, row.get(k, '')) for k in columns}
+                if row.get('attempt'):
+                    origin = row.get('continuation_origin', {})
+                    values['origin_root'] = origin.get('root', str(root))
+                    values['origin_result'] = origin.get('result_path',
+                        f"attempts/{phase}/{row['attempt']}/result.json")
                 if row.get('diagnostic_only'):
                     for key in columns:
                         if key.endswith('_seconds') and key != 'timeout_seconds':
                             values[key] = ''
                 writer.writerow(values)
     summary['compile_gate'] = compile_gate(root)
+    manifest_path = root / 'manifest.json'
+    summary['direct_runtime'] = (json.loads(manifest_path.read_text()).get('identity', {})
+                                 .get('direct_runtime', False)) if manifest_path.is_file() else False
+    if manifest_path.is_file():
+        ids = runtime_selection_ids(root, json.loads(manifest_path.read_text()))
+        if ids is not None:
+            if not set(benchmark_rows) <= ids:
+                raise RuntimeError('unselected runtime result in partial campaign')
+            summary['runtime_selection'] = {
+                'selected': len(ids), 'passed': summary['runtime']['passed'],
+                'failed': summary['runtime']['failed'], 'pending': len(ids) - len(benchmark_rows),
+                'excluded': len(matrix()) - len(ids)}
     dump(root / 'summary.json', summary)
     return summary
 
@@ -533,43 +665,89 @@ def main(argv=None):
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path, default=STAGE)
     parser.add_argument('--phase', choices=('prepare', 'compile', 'runtime', 'all', 'summary'), default='compile')
-    for phase in ('compile', 'runtime'):
-        parser.add_argument(f'--{phase}-timeout', type=int, default=WORKLOAD_TIMEOUT_SECONDS,
-                            choices=(WORKLOAD_TIMEOUT_SECONDS,), help='fixed workload timeout: 60 seconds')
     parser.add_argument('--reference-manifest', type=Path)
+    parser.add_argument('--continue-runtime-from', type=Path,
+                        help='preserve verified completed results from a stopped compatible campaign; '
+                             'requires explicit direct runtime and a new immutable root')
+    parser.add_argument('--runtime-selection', type=Path,
+                        help='immutable explicit runtime subset; historical coverage is not imported')
     parser.add_argument('--max-cells', type=int)
     parser.add_argument('--retry-failed', action='store_true')
     parser.add_argument('--keep-going', action='store_true')
+    parser.add_argument('--runtime-without-compile-survey', action='store_true',
+                        help='explicit full runtime campaign without a separate compile-only survey; '
+                             'actual compilation, runtime audits and numerical comparison remain required')
     parser.add_argument('--diagnostic-jfr', action='store_true',
                         help='single compile-only coordinator JFR/planner-trace diagnostic; never benchmark data')
     parser.add_argument('--diagnostic-compact', action='store_true',
                         help='diagnostic-only regional compact ablation; never a production default')
+    parser.add_argument('--diagnostic-runtime-cell', action='store_true',
+                        help='single fully selected direct-runtime diagnostic cell; never benchmark data')
+    parser.add_argument('--diagnostic-plan-details', action='store_true',
+                        help='emit detailed planner trace only in an explicit diagnostic lane')
     for key, options in (('planner', PLANNERS), ('profile', PROFILES), ('workload', tuple(w for _, w in WORKLOADS))):
         parser.add_argument('--' + key, choices=options)
     parser.add_argument('--workers', type=int, choices=WORKERS)
     args = parser.parse_args(argv)
     args.root = args.root.resolve()
+    direct_runtime = args.runtime_without_compile_survey
+    if direct_runtime and args.phase != 'runtime':
+        parser.error('--runtime-without-compile-survey requires --phase runtime')
+    if args.continue_runtime_from is not None and not (direct_runtime and args.phase == 'runtime'):
+        parser.error('--continue-runtime-from requires --phase runtime --runtime-without-compile-survey')
     if args.diagnostic_compact and not args.diagnostic_jfr:
         parser.error('--diagnostic-compact requires --diagnostic-jfr')
     if args.diagnostic_jfr and (args.phase != 'compile' or args.max_cells != 1):
         parser.error('--diagnostic-jfr requires --phase compile and --max-cells 1')
+    if args.diagnostic_plan_details and not (args.diagnostic_jfr or args.diagnostic_runtime_cell):
+        parser.error('--diagnostic-plan-details requires --diagnostic-jfr or --diagnostic-runtime-cell')
+    filters = ('planner', 'profile', 'workload', 'workers')
+    if args.runtime_selection is not None:
+        if (args.phase != 'runtime' or not direct_runtime or args.continue_runtime_from is not None
+                or args.retry_failed or args.diagnostic_jfr or args.diagnostic_compact
+                or args.diagnostic_runtime_cell or args.diagnostic_plan_details
+                or any(getattr(args, key) is not None for key in filters)):
+            parser.error('--runtime-selection requires exclusive direct runtime without '
+                         'continuation, diagnostics, filters, or retry-failed')
+        read_runtime_selection(args.runtime_selection)
+    if args.diagnostic_runtime_cell:
+        if (args.phase != 'runtime' or not direct_runtime or args.max_cells != 1
+                or any(getattr(args, key) is None for key in filters)):
+            parser.error('--diagnostic-runtime-cell requires --phase runtime, '
+                         '--runtime-without-compile-survey, --max-cells 1, and all cell filters')
+        if args.continue_runtime_from is not None:
+            parser.error('--diagnostic-runtime-cell cannot use --continue-runtime-from')
+        if args.diagnostic_jfr or args.diagnostic_compact:
+            parser.error('--diagnostic-runtime-cell cannot use JFR/compact diagnostics')
     if args.phase == 'summary':
         print(json.dumps(summarize(args.root), indent=2))
         return 0
-    if min(args.compile_timeout, args.runtime_timeout) <= 0 or (args.max_cells is not None and args.max_cells <= 0):
-        parser.error('timeouts/max-cells must be positive')
-    if args.phase in ('runtime', 'all') and any(getattr(args, k) is not None for k in ('planner', 'profile', 'workload', 'workers')):
+    if args.max_cells is not None and args.max_cells <= 0:
+        parser.error('max-cells must be positive')
+    if (args.phase in ('runtime', 'all') and not args.diagnostic_runtime_cell
+            and any(getattr(args, k) is not None for k in filters)):
         parser.error('runtime/all must preserve the complete schedule; filters are compile-only')
     campaign, base, renderer_module = dependencies()
-    manifest = initialize(args.root, args.stage, args.diagnostic_jfr, args.diagnostic_compact)
+    continuation_options = ({'continuation_source': args.continue_runtime_from.resolve()}
+                            if args.continue_runtime_from is not None else {})
+    if args.diagnostic_runtime_cell:
+        continuation_options['diagnostic_runtime_cell'] = True
+    if args.diagnostic_plan_details:
+        continuation_options['diagnostic_plan_details'] = True
+    if args.runtime_selection is not None:
+        continuation_options['runtime_selection'] = args.runtime_selection.resolve()
+    manifest = initialize(args.root, args.stage, args.diagnostic_jfr, args.diagnostic_compact,
+                          direct_runtime=direct_runtime, **continuation_options)
+    selected_ids = runtime_selection_ids(args.root, manifest)
     if args.phase == 'prepare':
         print(json.dumps({'prepared': True, 'cells': len(matrix()), 'root': str(args.root)}))
         return 0
-    if args.phase == 'runtime' and not compile_gate(args.root):
+    if args.phase == 'runtime' and not direct_runtime and not compile_gate(args.root):
         raise RuntimeError('runtime blocked: full same-engine 896-cell compile gate is not passed')
     hosts = ['so007', 'so002', 'so003', 'so004', 'so005', 'so006', 'so008', 'so009']
     leases = []
     count = 0
+    attempted_failure = False
     with base.RUNTIME_LANE.open('a+') as lane:
         fcntl.flock(lane, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
@@ -581,21 +759,25 @@ def main(argv=None):
             dump(args.root / f'preflight-{time.time_ns()}.json', preflight)
             renderer = renderer_module.Renderer(args.stage)
             for phase in (('compile', 'runtime') if args.phase == 'all' else (args.phase,)):
-                if phase == 'runtime' and not compile_gate(args.root):
+                if phase == 'runtime' and not direct_runtime and not compile_gate(args.root):
                     raise RuntimeError('runtime blocked: all 896 compile conditions must pass first')
-                if phase == 'runtime':
-                    runtime_compare.pin_reference(args.root, args.reference_manifest)
+                phase_reference = (runtime_compare.pin_reference(args.root, args.reference_manifest)
+                                   if phase == 'runtime' else None)
                 previous = latest(args.root, phase)
                 for cell in schedule(phase):
+                    if selected_ids is not None and cell['id'] not in selected_ids:
+                        continue
                     if any(getattr(args, key) is not None and cell[key] != getattr(args, key)
                            for key in ('planner', 'profile', 'workload', 'workers')):
                         continue
                     old = previous.get(cell['id'])
                     if old:
+                        if direct_runtime and old.get('cleanup_resolved') is not True:
+                            raise RuntimeError('previous cleanup unresolved: no subsequent cell may start')
                         if old['status'] == 'passed':
                             continue
                         if not args.retry_failed:
-                            if args.keep_going and phase == 'compile':
+                            if args.keep_going and (phase == 'compile' or direct_runtime):
                                 continue
                             raise RuntimeError('previous failed cell requires diagnosis and --retry-failed: '
                                                + cell['id'])
@@ -614,26 +796,35 @@ def main(argv=None):
                                     raise RuntimeError('P2 reference lease handoff was not proven')
                                 try:
                                     reference = runtime_compare.prepare_workload_reference(
-                                        args.root, args.stage, cell, compile_gate(args.root))
+                                        args.root, args.stage, cell, compile_gate(args.root),
+                                        direct_runtime=direct_runtime)
                                 finally:
                                     leases = campaign.acquire_remote_stage_leases(hosts, args.stage)
                                     dump(args.root / f'post-reference-stage-{time.time_ns()}.json',
                                          campaign.verify_remote_bounded_stage(hosts, args.stage))
                             else:
                                 reference = runtime_compare.prepare_workload_reference(
-                                    args.root, args.stage, cell, compile_gate(args.root))
+                                    args.root, args.stage, cell, compile_gate(args.root),
+                                    direct_runtime=direct_runtime)
                         else:
-                            reference = runtime_compare.pin_reference(args.root, args.reference_manifest)
+                            reference = phase_reference
                         reference_manifest = Path(reference['result_manifest']['local_path'])
+                        if not campaign.remote_stage_leases_alive(leases):
+                            raise RuntimeError('remote stage lease lost during reference preparation')
                     result = execute_cell(args.root, manifest, cell, phase, args, campaign, base,
                                           renderer, reference_manifest)
                     count += 1
+                    attempted_failure |= result['status'] != 'passed'
                     summarize(args.root)
-                    if result.get('cleanup_resolved') is False:
+                    if (result.get('cleanup_resolved') is False
+                            or (direct_runtime and result.get('cleanup_resolved') is not True)):
                         raise RuntimeError('cleanup unresolved: no subsequent cell may start')
-                    if result['status'] != 'passed' and (not args.keep_going or phase == 'runtime'):
+                    if result['status'] != 'passed' and (not args.keep_going
+                            or (phase == 'runtime' and not direct_runtime)):
                         return 1
                     if args.max_cells and count >= args.max_cells:
+                        if direct_runtime and attempted_failure:
+                            return 1
                         return 0 if result['status'] == 'passed' else 1
         finally:
             release = campaign.release_remote_stage_leases(leases) if leases else {'released': True}
@@ -643,7 +834,12 @@ def main(argv=None):
                 raise RuntimeError('remote stage lease release unproven')
     status = summarize(args.root)
     print(json.dumps(status, indent=2))
+    if selected_ids is not None:
+        selected = status['runtime_selection']
+        return 0 if selected['passed'] == selected['selected'] else 1
     runtime_complete = status['runtime'] == {'passed': len(matrix()), 'failed': 0, 'pending': 0}
+    if direct_runtime:
+        return 0 if runtime_complete else 1
     return 0 if status['compile_gate'] and (args.phase == 'compile' or runtime_complete) else 1
 
 

@@ -1876,6 +1876,8 @@ public final class ExactPhysicalCostModel {
 				}
 			}
 			if(!Double.isFinite(bytes) || bytes <= 0.0)
+				bytes = PlacementCostSemantics.boundedDenseOutputBytes(analysis, source.node().key());
+			if(!Double.isFinite(bytes) || bytes <= 0.0)
 				bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
 					analysis.hop(formal.node().key()).orElseThrow(),
 					sourceHop);
@@ -2239,6 +2241,8 @@ public final class ExactPhysicalCostModel {
 		ExactMatrixShape exactShape = exactMatrixShape(analysis, key,
 			Collections.newSetFromMap(new IdentityHashMap<>()));
 		double derived = exactShape == null ? Double.NaN : exactShape.bytes();
+		if(!Double.isFinite(derived) || derived <= 0.0)
+			derived = PlacementCostSemantics.boundedDenseOutputBytes(analysis, key);
 		if((!Double.isFinite(derived) || derived <= 0.0) && hop instanceof DataOp data
 			&& (data.getOp() == OpOpData.TRANSIENTWRITE || data.getOp() == OpOpData.PERSISTENTWRITE)) {
 			CompiledHopKey input = exactCompiledInput(analysis, key, 0);

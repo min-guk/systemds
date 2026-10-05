@@ -25,6 +25,7 @@ import java.util.concurrent.Future;
 
 import org.apache.sysds.hops.fedplanner.FTypes.AlignType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.lops.Lop;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
@@ -49,8 +50,16 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 	}
 
 	protected static BinaryMatrixMatrixFEDInstruction parseInstruction(BinaryMatrixMatrixCPInstruction instr) {
+		String instructionString = instr.getInstructionString();
+		if (instr.isInPlace()) {
+			String suffix = Lop.OPERAND_DELIMITOR + "InPlace";
+			if (!instructionString.endsWith(suffix))
+				throw new DMLRuntimeException("In-place binary instruction is missing its trailing marker: "
+					+ instructionString);
+			instructionString = instructionString.substring(0, instructionString.length() - suffix.length());
+		}
 		return new BinaryMatrixMatrixFEDInstruction(instr.getOperator(), instr.input1, instr.input2, instr.output,
-			instr.getOpcode(), instr.getInstructionString(), FederatedOutput.NONE);
+			instr.getOpcode(), instructionString, FederatedOutput.NONE);
 	}
 
 	protected static BinaryMatrixMatrixFEDInstruction parseInstruction(BinaryMatrixMatrixSPInstruction instr) {

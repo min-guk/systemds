@@ -119,17 +119,17 @@ class MatrixContractTest(unittest.TestCase):
 				(row["suite"], row["workload"]) for row in block})
 
 
-class FixedTimeoutContractTest(unittest.TestCase):
-	def test_cli_defaults_and_explicit_values_are_sixty_for_both_phases(self):
+class UnlimitedWorkloadContractTest(unittest.TestCase):
+	def test_cli_has_no_compile_or_runtime_deadline_options(self):
 		parse_args = CAMPAIGN.argparse.ArgumentParser.parse_args
 
 		def inspect_args(parser, argv):
 			args = parse_args(parser, argv)
-			self.assertEqual(60, args.compile_timeout)
-			self.assertEqual(60, args.runtime_timeout)
+			self.assertFalse(hasattr(args, "compile_timeout"))
+			self.assertFalse(hasattr(args, "runtime_timeout"))
 			return args
 
-		for options in ([], ["--compile-timeout", "60", "--runtime-timeout", "60"]):
+		for options in ([],):
 			with self.subTest(options=options), \
 					mock.patch.object(CAMPAIGN.argparse.ArgumentParser, "parse_args", inspect_args), \
 					mock.patch.object(CAMPAIGN, "dependencies",
@@ -137,9 +137,9 @@ class FixedTimeoutContractTest(unittest.TestCase):
 				with self.assertRaisesRegex(RuntimeError, "REACHED_VALIDATED_ARGUMENTS"):
 					CAMPAIGN.main(["--root", "/tmp/not-used", *options])
 
-	def test_cli_rejects_any_other_timeout_before_external_work(self):
+	def test_cli_rejects_any_workload_timeout_before_external_work(self):
 		for flag in ("--compile-timeout", "--runtime-timeout"):
-			for value in ("0", "59", "61", "900", "3600"):
+			for value in ("0", "59", "60", "61", "900", "3600"):
 				with self.subTest(flag=flag, value=value), \
 						mock.patch.object(CAMPAIGN, "dependencies") as dependencies, \
 						redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
@@ -161,10 +161,13 @@ class FixedTimeoutContractTest(unittest.TestCase):
 			with mock.patch.object(CAMPAIGN, "REPO", repo), \
 					mock.patch.object(CAMPAIGN, "PROBE_SOURCE", probe), \
 					mock.patch.object(CAMPAIGN, "sha", return_value="a" * 64), \
-					mock.patch.object(CAMPAIGN, "run", return_value="mocked"):
+					mock.patch.object(CAMPAIGN, "run", return_value="mocked") as commands:
 				manifest = CAMPAIGN.initialize(root, stage)
+				commands.assert_any_call(["javac", "-encoding", "UTF-8", "-cp",
+					f"{jar}:{repo}/target/lib/*", "-d", str(root / "overlay/probe/classes"),
+					str(probe)], timeout=None)
 				for section in ("identity", "measurement"):
-					self.assertEqual({"compile": 60, "runtime": 60},
+					self.assertEqual({"compile": None, "runtime": None},
 						manifest[section]["timeout_seconds"])
 				self.assertEqual(manifest, CAMPAIGN.initialize(root, stage))
 				for section in ("identity", "measurement"):
@@ -179,12 +182,12 @@ class FixedTimeoutContractTest(unittest.TestCase):
 							with self.assertRaisesRegex(RuntimeError, "campaign .* changed"):
 								CAMPAIGN.initialize(root, stage)
 
-	def test_gate_rejects_missing_or_non_sixty_second_attempt_provenance(self):
-		for timeout in (None, 900, 3600):
-			passed = {row["id"]: {"status": "passed", "timeout_seconds": 60}
+	def test_gate_requires_explicit_unlimited_attempt_provenance(self):
+		for timeout in ("missing", 60, 900, 3600):
+			passed = {row["id"]: {"status": "passed", "timeout_seconds": None}
 				for row in CAMPAIGN.matrix()}
 			row = passed[CAMPAIGN.matrix()[0]["id"]]
-			if timeout is None:
+			if timeout == "missing":
 				del row["timeout_seconds"]
 			else:
 				row["timeout_seconds"] = timeout
@@ -207,7 +210,7 @@ class FixedTimeoutContractTest(unittest.TestCase):
 			self.assertEqual("failed", exported["status"])
 			self.assertEqual("", exported["compile_seconds"])
 
-	def test_actual_commands_use_sixty_and_timeout_still_runs_exact_cleanup(self):
+	def test_actual_commands_have_no_deadline_and_failure_still_runs_exact_cleanup(self):
 		for phase in ("compile", "runtime"):
 			with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
 				root = Path(directory)
@@ -226,7 +229,7 @@ class FixedTimeoutContractTest(unittest.TestCase):
 					remote_resource_preflight=lambda *args: {"passed": True},
 					_strict_experiment_cleanup=cleanup)
 				renderer = SimpleNamespace(render=lambda cell: {"source": "print(1);"})
-				# Even a direct helper call cannot revive the old long budgets.
+				# Stale caller fields cannot accidentally revive any finite budget.
 				args = SimpleNamespace(stage=Path("/stage"), compile_timeout=900,
 					runtime_timeout=3600)
 				with mock.patch.object(CAMPAIGN, "run", return_value=""), \
@@ -236,20 +239,27 @@ class FixedTimeoutContractTest(unittest.TestCase):
 						mock.patch.object(CAMPAIGN, "capture_container_health", return_value={
 							"state": {"OOMKilled": False}, "oom_events": []}), \
 						mock.patch.object(CAMPAIGN.subprocess, "run",
-							return_value=SimpleNamespace(returncode=124)) as process, \
+							return_value=SimpleNamespace(returncode=1)) as process, \
 						mock.patch("sys.stdout", new=io.StringIO()):
 					result = CAMPAIGN.execute_cell(root, {
 						"remote_root": "/remote", "identity": {"jar_sha256": "a" * 64}},
 						CAMPAIGN.matrix()[0], phase, args, campaign, base, renderer)
-				self.assertEqual(60, result["timeout_seconds"])
-				self.assertEqual(124, result["returncode"])
+				self.assertIsNone(result["timeout_seconds"])
+				self.assertEqual(1, result["returncode"])
 				self.assertEqual("failed", result["status"])
 				self.assertNotIn("compile_seconds", result)
 				self.assertTrue(result["cleanup_resolved"])
 				cleanup.assert_called_once_with(base, spec)
 				command = CAMPAIGN.shlex.split(process.call_args.args[0][-1])
-				self.assertEqual("60", command[command.index("--kill-after=30s") + 1])
-				self.assertEqual(150, process.call_args.kwargs["timeout"])
+				self.assertEqual(["docker", "exec", "test-coordinator", "java"], command[:4])
+				self.assertNotIn("timeout", command)
+				self.assertNotIn("--kill-after=30s", command)
+				self.assertIsNone(process.call_args.kwargs.get("timeout"))
+
+	def test_federated_request_read_deadline_is_disabled_for_both_phases(self):
+		for phase in ("compile", "runtime"):
+			xml = CAMPAIGN.ET.fromstring(CAMPAIGN.config(CAMPAIGN.matrix()[0], phase))
+			self.assertEqual("-1", xml.findtext("sysds.federated.timeout"))
 
 
 class TimingContractTest(unittest.TestCase):
@@ -347,7 +357,8 @@ class GateAndResumeContractTest(unittest.TestCase):
 				events.append(("execute", args[-1]))
 				return {"status": "passed", "cleanup_resolved": True}
 
-			def prepare_bound(root_arg, stage, selected, gate):
+			def prepare_bound(root_arg, stage, selected, gate, *, direct_runtime=False):
+				self.assertFalse(direct_runtime)
 				with lane.open("a+") as contender:
 					with self.assertRaises(BlockingIOError):
 						fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -385,7 +396,7 @@ class GateAndResumeContractTest(unittest.TestCase):
 		return outcome, events
 
 	def test_compile_gate_requires_every_latest_cell_to_pass(self):
-		passed = {row["id"]: {"status": "passed", "timeout_seconds": 60}
+		passed = {row["id"]: {"status": "passed", "timeout_seconds": None}
 			for row in CAMPAIGN.matrix()}
 		with mock.patch.object(CAMPAIGN, "latest", return_value=passed):
 			self.assertTrue(CAMPAIGN.compile_gate(Path("unused")))

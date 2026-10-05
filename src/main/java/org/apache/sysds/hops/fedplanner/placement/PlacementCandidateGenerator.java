@@ -295,8 +295,13 @@ final class PlacementCandidateGenerator {
 
 	boolean oracleConfirmsAnchorDomain(Hop hop, String occurrence, List<List<FType>> domains,
 		DurableAnchorKey anchor) {
+		return oracleConfirmsAnchorDomain(hop, occurrence, domains, anchor, null);
+	}
+
+	boolean oracleConfirmsAnchorDomain(Hop hop, String occurrence, List<List<FType>> domains,
+		DurableAnchorKey anchor, ShapeHint hint) {
 		try {
-			FTypeProfile profile = inferProfile("anchor profile", preparedProfile(hop), domains, null);
+			FTypeProfile profile = inferProfile("anchor profile", preparedProfile(hop), domains, hint);
 			return profile != null && profile.outputs() != null && profile.outputs().contains(anchor.fType());
 		}
 		catch(RuntimeException e) {
@@ -412,7 +417,20 @@ final class PlacementCandidateGenerator {
 				profile = new CandidateProfileFact(List.of(exactRightIndex.outputFType()), "");
 			else {
 				FTypeProfile inferred = inferProfile("candidate profile", preparedProfile, profileInputs, null);
-				profile = new CandidateProfileFact(inferred == null ? List.of() : inferred.outputs(), "");
+				Set<FType> outputs = new LinkedHashSet<>(inferred == null ? List.of() : inferred.outputs());
+				if(caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT
+					&& caps.foutFType().orElse(null) == FType.FULL
+					&& "true".equals(proof.consultedFacts().get("fullSinglePartition"))) {
+					// The occurrence proof belongs to this exact tuple, not the broad profile domain
+					// (which can replace an actually local operand with unproved federated layouts).
+					List<List<FType>> exactInputs = inputs.stream()
+						.map(Collections::singletonList).collect(java.util.stream.Collectors.toList());
+					FTypeProfile exact = inferProfile("candidate FULL profile", preparedProfile, exactInputs,
+						new ShapeHint(hop.getDim1(), hop.getDim2(), hop.getBlocksize(), true));
+					if(exact != null && exact.outputs().contains(FType.FULL))
+						outputs.add(FType.FULL);
+				}
+				profile = new CandidateProfileFact(List.copyOf(outputs), "");
 			}
 		}
 		catch(RuntimeException e) {

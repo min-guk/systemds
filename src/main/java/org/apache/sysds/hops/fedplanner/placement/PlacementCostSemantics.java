@@ -461,7 +461,7 @@ public final class PlacementCostSemantics {
 			|| shape.rows().knowledge() != DimensionKnowledge.EXACT
 			|| shape.cols().knowledge() != DimensionKnowledge.EXACT
 			|| shape.rows().value() <= 0 || shape.cols().value() <= 0)
-			return Double.NaN;
+			return boundedDenseOutputBytes(analysis, key);
 		long rows = shape.rows().value();
 		long cols = shape.cols().value();
 		if(hop.getNnz() >= 0) {
@@ -496,7 +496,10 @@ public final class PlacementCostSemantics {
 				&& (!compiledInput.dimsKnown() || compiledInput.getDim1() <= 0
 					|| compiledInput.getDim2() <= 0)) {
 				estimate = analysis.compiledInputEdge(key, position)
-					.map(edge -> analysisAwareDenseOutputBytes(analysis, edge.producer()))
+					.map(edge -> {
+						double exact = analysisAwareDenseOutputBytes(analysis, edge.producer());
+						return Double.isFinite(exact) ? exact : boundedDenseOutputBytes(analysis, edge.producer());
+					})
 					.orElse(Double.NaN);
 			}
 			inputMemEstimates.add(estimate);
@@ -518,6 +521,20 @@ public final class PlacementCostSemantics {
 			|| shape.rows().value() <= 0 || shape.cols().value() <= 0)
 			return Double.NaN;
 		return denseMatrixBytes(shape.rows().value(), shape.cols().value());
+	}
+
+	/** Dense in-memory cost envelope, without promoting upper bounds to exact shapes. */
+	public static double boundedDenseOutputBytes(PlacementAnalysis analysis, CompiledHopKey key) {
+		Hop hop = analysis.hop(key).orElse(null);
+		if(hop == null || !hop.getDataType().isMatrix()) return Double.NaN;
+		var bound = analysis.costSizeBound(key).orElse(null);
+		if(bound == null || bound.rowsUpperBound() <= 0 || bound.colsUpperBound() <= 0)
+			return Double.NaN;
+		try {
+			Math.multiplyExact(bound.rowsUpperBound(), bound.colsUpperBound());
+			return denseMatrixBytes(bound.rowsUpperBound(), bound.colsUpperBound());
+		}
+		catch(ArithmeticException exception) { return Double.NaN; }
 	}
 
 	/**

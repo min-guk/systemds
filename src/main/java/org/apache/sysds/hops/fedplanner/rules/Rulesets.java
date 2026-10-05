@@ -18,6 +18,7 @@
 package org.apache.sysds.hops.fedplanner.rules;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -2897,8 +2898,29 @@ public final class Rulesets {
         outs.add(FType.BROADCAST);
       if (leftHasRow && !(leftHasCol && rightHasRow && alignColT))
         outs.add(FType.ROW);
+      if (supports(sig) && hasCapsBackedFullOutput(sig, left, right, hint))
+        outs.add(FType.FULL);
 
       return profileOf(outs);
+    }
+
+    /**
+     * Propagate FULL only for an input tuple that the concrete capability rule already accepts as
+     * FED/FOUT/FULL. This keeps profile discovery aligned with the existing single-partition proof,
+     * runtime support, and representation guard instead of treating FULL as unconditionally closed.
+     */
+    private boolean hasCapsBackedFullOutput(OpSig sig, List<FType> left, List<FType> right,
+        ShapeHint hint) {
+      for (FType leftType : left) {
+        for (FType rightType : right) {
+          OpCaps candidate = caps(sig, Arrays.asList(leftType, rightType), hint);
+          if (candidate.exec() == ExecType.FED
+              && candidate.placement() == FederatedOutput.FOUT
+              && candidate.foutFType().orElse(null) == FType.FULL)
+            return true;
+        }
+      }
+      return false;
     }
 
     @Override

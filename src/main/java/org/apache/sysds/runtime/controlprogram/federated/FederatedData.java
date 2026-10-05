@@ -668,10 +668,9 @@ public class FederatedData {
 	}
 
 	public static void clearFederatedWorkers() {
-		if(_allFedSites.isEmpty())
-			return;
-
 		try {
+			if(_allFedSites.isEmpty())
+				return;
 			// create and execute clear request on all workers
 			FederatedRequest fr = new FederatedRequest(RequestType.CLEAR);
 			List<Future<FederatedResponse>> ret = new ArrayList<>();
@@ -685,6 +684,9 @@ public class FederatedData {
 			LOG.warn("Failed to execute CLEAR request on existing federated sites.", ex);
 		}
 		finally {
+			// Worker-wide CLEAR is the remote cleanup. Always invalidate local ownership
+			// metadata as well, including failed/empty-site teardown paths.
+			FederationUtils.discardOwnedRefedReuseCache();
 			closePooledConnections();
 			resetFederatedSites();
 		}

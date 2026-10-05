@@ -449,6 +449,11 @@ final class PlacementAbstractShapeAnalysis {
 		if(hop instanceof BinaryOp binary && hop.getDataType() == DataType.MATRIX
 			&& (binary.getOp() == OpOp2.CBIND || binary.getOp() == OpOp2.RBIND))
 			return appendShape(binary, inputs);
+		if(hop instanceof BinaryOp binary && binary.getOp() == OpOp2.SOLVE)
+			// solve(A[m,n], B[m,k]) returns [n,k], not the elementwise broadcast
+			// of A and B. In particular an unknown feature count must not erase k=1.
+			return new AbstractShapeFact(hop.getDataType(), inputShape(inputs, 0).cols(),
+				inputShape(inputs, 1).cols());
 		if(hop instanceof BinaryOp && hop.getDataType() == DataType.MATRIX)
 			return broadcastShape(hop.getDataType(), inputs);
 		if(hop.getDataType() == DataType.MATRIX || hop.getDataType() == DataType.FRAME) {

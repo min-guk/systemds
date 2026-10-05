@@ -42,6 +42,7 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.compress.CompressedMatrixBlock;
 import org.apache.sysds.runtime.controlprogram.caching.LazyWriteBuffer.RPolicy;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysds.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysds.runtime.instructions.cp.Data;
@@ -453,6 +454,8 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	 * @param fedMapping mapping
 	 */
 	public void setFedMapping(FederationMap fedMapping) {
+		if (this instanceof MatrixObject && _fedMapping != fedMapping)
+			FederationUtils.retireOwnedRefedReuseMaps((MatrixObject) this);
 		_fedMapping = fedMapping;
 	}
 	
@@ -699,6 +702,8 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	private synchronized T acquireModifyIntern(T newData) {
 		if (! isAvailableToModify ())
 			throw new DMLRuntimeException("CacheableData not available to modify.");
+		if (this instanceof MatrixObject)
+			FederationUtils.retireOwnedRefedReuseMaps((MatrixObject) this);
 		
 		//clear old data
 		clearData();
@@ -820,6 +825,8 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		if( !isAvailableToModify() )
 			throw new DMLRuntimeException("CacheableData (" + getDebugName() + ") not available to "
 					+ "modify. Status = " + _cacheStatus.name() + ".");
+		if (this instanceof MatrixObject)
+			FederationUtils.retireOwnedRefedReuseMaps((MatrixObject) this);
 		
 		// clear existing WB / FS representation (but prevent unnecessary probes)
 		if( !(isEmpty(true)||(_data!=null && isBelowCachingThreshold()) 

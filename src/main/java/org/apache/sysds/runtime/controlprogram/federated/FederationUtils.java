@@ -30,6 +30,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
@@ -90,8 +91,10 @@ public class FederationUtils {
 		new java.util.concurrent.ConcurrentHashMap<>();
 	private static final java.util.concurrent.ConcurrentHashMap<String, String> _anchorKeys =
 		new java.util.concurrent.ConcurrentHashMap<>();
-	private static final int REFED_REUSE_CACHE_LIMIT = Integer.getInteger(
-		"sysds.fed.refed.reuse.cache.limit", 4096);
+	private static final int REFED_REUSE_CACHE_LIMIT = Math.max(1, Integer.getInteger(
+		"sysds.fed.refed.reuse.cache.limit", 4096));
+	private static final long OWNED_REFED_REUSE_CACHE_BYTES = Math.max(0L, Long.getLong(
+		"sysds.fed.refed.reuse.cache.bytes", 64L * 1024 * 1024));
 	private static final Map<RefedReuseKey, FederationMap> _refedReuseCache = Collections.synchronizedMap(
 		new LinkedHashMap<RefedReuseKey, FederationMap>(256, 0.75f, true) {
 			private static final long serialVersionUID = 1L;
@@ -101,10 +104,215 @@ public class FederationUtils {
 				return size() > REFED_REUSE_CACHE_LIMIT;
 			}
 		});
+	/**
+	 * Canonical worker-side copies owned by the exact local MatrixObject that was materialized.
+	 * This cache is deliberately separate from the legacy non-owning cache above: callers only
+	 * receive fresh worker-side aliases, never the privately owned canonical IDs.
+	 */
+	private static final LinkedHashMap<OwnedRefedReuseKey, OwnedRefedReuseEntry> _ownedRefedReuseCache =
+		new LinkedHashMap<>(256, 0.75f, true);
+	private static long _ownedRefedReuseCacheBytes = 0;
 
 	public static void resetFedDataID() {
+		clearOwnedRefedReuseCache();
 		_idSeq.reset();
 		clearRefedReuseCache();
+	}
+
+	/**
+	 * Return a fresh worker-side alias of a canonical REFED materialization. On a miss, the
+	 * materializer is invoked exactly once while holding the cache lock, and its returned map is
+	 * retained privately. Both hits and misses publish a fresh ID via worker cpvar, so ordinary
+	 * cleanup of the published output cannot delete the cached canonical value.
+	 */
+	public static FederationMap getOrCreateOwnedRefedAlias(MatrixObject owner, long inputMutationVersion,
+		long rows, long cols, long nnz, long tid, String layoutSig, FType outType,
+		Supplier<FederationMap> materializer) {
+		if (owner == null || materializer == null)
+			throw new DMLRuntimeException("Owned REFED reuse requires an owner and materializer");
+		OwnedRefedReuseKey key = new OwnedRefedReuseKey(owner, inputMutationVersion, rows, cols, nnz,
+			tid, normalizeRefedReuseLayoutSig(layoutSig), outType);
+		// Mutation paths lock the MatrixObject before retiring from the global cache. Keep
+		// the same owner -> cache lock order while materializing (which acquires owner data).
+		synchronized (owner) {
+			if (owner.getMutationVersion() != inputMutationVersion)
+				throw new DMLRuntimeException("Owned REFED request used stale local input version "
+					+ inputMutationVersion + "; current version is " + owner.getMutationVersion());
+			synchronized (_ownedRefedReuseCache) {
+				OwnedRefedReuseEntry entry = _ownedRefedReuseCache.get(key);
+				boolean retained = entry != null;
+				if (entry == null) {
+					FederationMap canonical = materializer.get();
+					if (canonical == null || canonical.getMap() == null || canonical.getMap().isEmpty())
+						throw new DMLRuntimeException("Owned REFED materializer returned an empty federation map");
+					if (owner.getMutationVersion() != inputMutationVersion) {
+						canonical.execCleanup(tid, canonical.getID());
+						throw new DMLRuntimeException("Owned REFED materializer changed local input version from "
+							+ inputMutationVersion + " to " + owner.getMutationVersion());
+					}
+					entry = new OwnedRefedReuseEntry(canonical, tid, estimateOwnedRefedBytes(canonical));
+					retained = entry._estimatedBytes <= OWNED_REFED_REUSE_CACHE_BYTES;
+					if (retained) {
+						_ownedRefedReuseCache.put(key, entry);
+						_ownedRefedReuseCacheBytes = saturatedAdd(_ownedRefedReuseCacheBytes,
+							entry._estimatedBytes);
+					}
+				}
+				long aliasID = getNextFedDataID();
+				try {
+					FederationMap alias = entry._canonical.identCopy(tid, aliasID);
+					if (retained)
+						evictOwnedRefedEntries();
+					else
+						cleanupOwnedRefedEntry(entry);
+					return alias;
+				}
+				catch(RuntimeException ex) {
+					if (retained)
+						removeOwnedRefedEntry(key);
+					try {
+						entry._canonical.execCleanup(tid, aliasID);
+					}
+					catch(RuntimeException cleanupEx) {
+						ex.addSuppressed(cleanupEx);
+					}
+					try {
+						cleanupOwnedRefedEntry(entry);
+					}
+					catch(RuntimeException cleanupEx) {
+						ex.addSuppressed(cleanupEx);
+					}
+					throw ex;
+				}
+			}
+		}
+	}
+
+	/** Retire all canonical REFED materializations owned by this exact local object. */
+	public static void retireOwnedRefedReuseMaps(MatrixObject owner) {
+		if (owner == null)
+			return;
+		synchronized (_ownedRefedReuseCache) {
+			RuntimeException failure = null;
+			java.util.Iterator<Map.Entry<OwnedRefedReuseKey, OwnedRefedReuseEntry>> iter =
+				_ownedRefedReuseCache.entrySet().iterator();
+			while (iter.hasNext()) {
+				Map.Entry<OwnedRefedReuseKey, OwnedRefedReuseEntry> cached = iter.next();
+				if (cached.getKey()._owner == owner) {
+					OwnedRefedReuseEntry entry = cached.getValue();
+					iter.remove();
+					_ownedRefedReuseCacheBytes = saturatedSubtract(_ownedRefedReuseCacheBytes,
+						entry._estimatedBytes);
+					try {
+						cleanupOwnedRefedEntry(entry);
+					}
+					catch(RuntimeException ex) {
+						if (failure == null)
+							failure = ex;
+						else
+							failure.addSuppressed(ex);
+					}
+				}
+			}
+			if (failure != null)
+				throw failure;
+		}
+	}
+
+	/** Retire all privately owned canonical REFED materializations. */
+	public static void clearOwnedRefedReuseCache() {
+		synchronized (_ownedRefedReuseCache) {
+			RuntimeException failure = null;
+			for (OwnedRefedReuseEntry entry : _ownedRefedReuseCache.values()) {
+				try {
+					cleanupOwnedRefedEntry(entry);
+				}
+				catch(RuntimeException ex) {
+					if (failure == null)
+						failure = ex;
+					else
+						failure.addSuppressed(ex);
+				}
+			}
+			_ownedRefedReuseCache.clear();
+			_ownedRefedReuseCacheBytes = 0;
+			if (failure != null)
+				throw failure;
+		}
+	}
+
+	/** Forget ownership after a worker-wide CLEAR, which is itself the remote cleanup. */
+	static void discardOwnedRefedReuseCache() {
+		synchronized (_ownedRefedReuseCache) {
+			_ownedRefedReuseCache.clear();
+			_ownedRefedReuseCacheBytes = 0;
+		}
+	}
+
+	private static void evictOwnedRefedEntries() {
+		while (_ownedRefedReuseCache.size() > REFED_REUSE_CACHE_LIMIT
+			|| _ownedRefedReuseCacheBytes > OWNED_REFED_REUSE_CACHE_BYTES) {
+			Map.Entry<OwnedRefedReuseKey, OwnedRefedReuseEntry> eldest =
+				_ownedRefedReuseCache.entrySet().iterator().next();
+			_ownedRefedReuseCache.remove(eldest.getKey());
+			_ownedRefedReuseCacheBytes = saturatedSubtract(_ownedRefedReuseCacheBytes,
+				eldest.getValue()._estimatedBytes);
+			cleanupOwnedRefedEntry(eldest.getValue());
+		}
+	}
+
+	private static OwnedRefedReuseEntry removeOwnedRefedEntry(OwnedRefedReuseKey key) {
+		OwnedRefedReuseEntry removed = _ownedRefedReuseCache.remove(key);
+		if (removed != null)
+			_ownedRefedReuseCacheBytes = saturatedSubtract(_ownedRefedReuseCacheBytes,
+				removed._estimatedBytes);
+		return removed;
+	}
+
+	private static long estimateOwnedRefedBytes(FederationMap map) {
+		long total = 0;
+		if (map == null || map.getMap() == null || map.getMap().isEmpty())
+			return Long.MAX_VALUE;
+		for (Pair<FederatedRange, FederatedData> part : map.getMap()) {
+			if (part == null || part.getKey() == null)
+				return Long.MAX_VALUE;
+			long[] begin = part.getKey().getBeginDims();
+			long[] end = part.getKey().getEndDims();
+			if (begin == null || end == null || begin.length < 2 || end.length < 2)
+				return Long.MAX_VALUE;
+			long rows = end[0] - begin[0];
+			long cols = end[1] - begin[1];
+			if (rows <= 0 || cols <= 0)
+				return Long.MAX_VALUE;
+			long cells = saturatedMultiply(rows, cols);
+			if (cells == Long.MAX_VALUE)
+				return Long.MAX_VALUE;
+			total = saturatedAdd(total, MatrixBlock.estimateSizeDenseInMemory(rows, cols));
+		}
+		return total;
+	}
+
+	private static long saturatedMultiply(long left, long right) {
+		if (left < 0 || right < 0 || (left != 0 && right > Long.MAX_VALUE / left))
+			return Long.MAX_VALUE;
+		return left * right;
+	}
+
+	private static long saturatedAdd(long left, long right) {
+		if (left < 0 || right < 0 || right > Long.MAX_VALUE - left)
+			return Long.MAX_VALUE;
+		return left + right;
+	}
+
+	private static long saturatedSubtract(long left, long right) {
+		if (right == Long.MAX_VALUE || right >= left)
+			return 0;
+		return left - right;
+	}
+
+	private static void cleanupOwnedRefedEntry(OwnedRefedReuseEntry entry) {
+		if (entry != null && entry._canonical != null)
+			entry._canonical.execCleanup(entry._tid, entry._canonical.getID());
 	}
 
 	/**
@@ -1109,6 +1317,71 @@ public class FederationUtils {
 				&& _rows == that._rows
 				&& _cols == that._cols
 				&& _nnz == that._nnz
+				&& Objects.equals(_layoutSig, that._layoutSig)
+				&& _outType == that._outType;
+		}
+	}
+
+	private static final class OwnedRefedReuseEntry {
+		private final FederationMap _canonical;
+		private final long _tid;
+		private final long _estimatedBytes;
+
+		private OwnedRefedReuseEntry(FederationMap canonical, long tid, long estimatedBytes) {
+			_canonical = canonical;
+			_tid = tid;
+			_estimatedBytes = estimatedBytes;
+		}
+	}
+
+	private static final class OwnedRefedReuseKey {
+		private final MatrixObject _owner;
+		private final long _inputMutationVersion;
+		private final long _rows;
+		private final long _cols;
+		private final long _nnz;
+		private final long _tid;
+		private final String _layoutSig;
+		private final FType _outType;
+
+		private OwnedRefedReuseKey(MatrixObject owner, long inputMutationVersion,
+			long rows, long cols, long nnz, long tid, String layoutSig, FType outType) {
+			_owner = owner;
+			_inputMutationVersion = inputMutationVersion;
+			_rows = rows;
+			_cols = cols;
+			_nnz = nnz;
+			_tid = tid;
+			_layoutSig = layoutSig;
+			_outType = outType;
+		}
+
+		@Override
+		public int hashCode() {
+			int result = System.identityHashCode(_owner);
+			result = 31 * result + Long.hashCode(_inputMutationVersion);
+			result = 31 * result + Long.hashCode(_rows);
+			result = 31 * result + Long.hashCode(_cols);
+			result = 31 * result + Long.hashCode(_nnz);
+			result = 31 * result + Long.hashCode(_tid);
+			result = 31 * result + Objects.hashCode(_layoutSig);
+			result = 31 * result + Objects.hashCode(_outType);
+			return result;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof OwnedRefedReuseKey))
+				return false;
+			OwnedRefedReuseKey that = (OwnedRefedReuseKey) obj;
+			return _owner == that._owner
+				&& _inputMutationVersion == that._inputMutationVersion
+				&& _rows == that._rows
+				&& _cols == that._cols
+				&& _nnz == that._nnz
+				&& _tid == that._tid
 				&& Objects.equals(_layoutSig, that._layoutSig)
 				&& _outType == that._outType;
 		}

@@ -2980,6 +2980,7 @@ public final class PlacementAnalysis {
 	private final PlacementPrivacyFacts privacyFacts;
 	private final Optional<CandidatePrivacyClosureEvidence> candidatePrivacyClosureEvidence;
 	private final OccurrenceExecutionFrequencyFacts executionFrequencyFacts;
+	private final PlacementCostSizeBounds costSizeBounds;
 	private final String analysisFingerprint;
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
 	private final CandidateRuleDomain candidateRuleDomain;
@@ -3228,6 +3229,7 @@ public final class PlacementAnalysis {
 		for(CandidatePrivacyInputPruning evidence : privacyPrunedInputs)
 			evidence.validate(this);
 		this.executionFrequencyFacts = OccurrenceExecutionFrequencyFacts.from(this);
+		this.costSizeBounds = PlacementCostSizeBounds.from(this);
 	}
 
 	private void validateHeuristicPaths(Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
@@ -4138,6 +4140,11 @@ public final class PlacementAnalysis {
 
 	public Optional<AbstractShapeFact> abstractShapeFact(CompiledHopKey key) {
 		return shapeFacts.abstractShapeFact(key);
+	}
+
+	/** Cost-only normal-completion bounds; never proof of exact geometry or legality. */
+	public Optional<PlacementCostSizeBounds.Bounds> costSizeBound(CompiledHopKey key) {
+		return costSizeBounds.get(key);
 	}
 
 	public Optional<ScalarLiteralFact> scalarLiteralFact(CompiledHopKey key) {

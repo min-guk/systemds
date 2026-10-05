@@ -23,6 +23,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.context.MatrixObjectFuture;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
@@ -80,6 +81,12 @@ public class FEDRefedInstruction extends FEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
+		// Resolve asynchronous locals before reading dimensions, nnz, or the ownership-version
+		// snapshot. The first MatrixObjectFuture read moves its block via acquireModify.
+		if (in instanceof MatrixObjectFuture) {
+			in.acquireRead();
+			in.release();
+		}
 		FederationMap anchorMap = null;
 		boolean anchorLiteral = !_anchor.isMatrix() || !ec.containsVariable(_anchor.getName());
 		if (!anchorLiteral) {
@@ -196,11 +203,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 			throw new DMLRuntimeException("fed_refed requires known output dimensions: rlen=" + rlen + " clen=" + clen);
 		MatrixObject out = ec.getMatrixObject(_output);
 		long nnz = in.getNnz();
-		long inputUniqueId = in.getUniqueID();
 		long inputMutationVersion = in.getMutationVersion();
-		String inputKey = in.getFileName();
-		if (inputKey == null || inputKey.isEmpty())
-			inputKey = _input.getName();
 		int numWorkers = anchorMap.getSize();
 		long maxRow = anchorMap.getMaxIndexInRange(0);
 		long maxCol = anchorMap.getMaxIndexInRange(1);
@@ -218,8 +221,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 		}
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_refed cachekey in=" + _input.getName()
-				+ " inputKey=" + inputKey
-				+ " uid=" + inputUniqueId
+				+ " uid=" + in.getUniqueID()
 				+ " mut=" + inputMutationVersion
 				+ " dims=" + rlen + "x" + clen
 				+ " nnz=" + nnz
@@ -227,53 +229,39 @@ public class FEDRefedInstruction extends FEDInstruction {
 				+ " layoutSig=" + layoutSig
 				+ " outType=" + cacheMapType);
 		}
-		FederationMap cached = FederationUtils.getRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, layoutSig, cacheMapType);
-		if (cached != null) {
-			out.setFedMapping(cached);
-			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), nnz);
-			if (DEBUG_KMEANS) {
-				System.out.println("[DBG-KMEANS] fed_refed reuse in=" + _input.getName()
-					+ " out=" + _output.getName()
-					+ " dims=" + rlen + "x" + clen
-					+ " anchor=" + _anchor.getName()
-					+ " type=" + anchorMap.getType());
-			}
-			return;
-		}
+		final FederationMap selectedAnchorMap = anchorMap;
+		final long rows = rlen;
+		final long cols = clen;
+		FederationMap published = FederationUtils.getOrCreateOwnedRefedAlias(in, inputMutationVersion,
+			rows, cols, nnz, getTID(), layoutSig, cacheMapType, () -> {
+				if (!preservesAnchorLayout) {
+					FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
+					FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
+					return FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), in, selectedAnchorMap,
+						materializeType, mapType, rows, cols);
+				}
 
-		if (!preservesAnchorLayout) {
-			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
-			FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
-			out.setFedMapping(FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), in, anchorMap,
-				materializeType, mapType, rlen, clen));
-			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-			FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-				rlen, clen, nnz, layoutSig, cacheMapType, out.getFedMapping());
-			return;
-		}
+				long canonicalId;
+				if (fType == FType.ROW || fType == FType.COL) {
+					FederatedRequest[] fr = selectedAnchorMap.broadcastSliced(in, false);
+					if (fr.length == 0)
+						throw new DMLRuntimeException("fed_refed cannot refederate to an empty anchor map");
+					canonicalId = fr[0].getID();
+					selectedAnchorMap.execute(getTID(), true, fr, new FederatedRequest[0]);
+				}
+				else {
+					if (selectedAnchorMap.getSize() == 0)
+						throw new DMLRuntimeException("fed_refed cannot refederate to an empty anchor map");
+					canonicalId = FederationUtils.getNextFedDataID();
+					MatrixBlock block = in.acquireReadAndRelease();
+					FederatedRequest fr = new FederatedRequest(RequestType.PUT_VAR, canonicalId, block);
+					selectedAnchorMap.execute(getTID(), true, fr);
+				}
+				return selectedAnchorMap.copyWithNewID(canonicalId);
+			});
 
-		long outId;
-		if (fType == FType.ROW || fType == FType.COL) {
-			FederatedRequest[] fr = anchorMap.broadcastSliced(in, false);
-			if (fr.length == 0)
-				throw new DMLRuntimeException("fed_refed cannot refederate to an empty anchor map");
-			outId = fr[0].getID();
-			anchorMap.execute(getTID(), true, fr, new FederatedRequest[0]);
-		}
-		else {
-			if (anchorMap.getSize() == 0)
-				throw new DMLRuntimeException("fed_refed cannot refederate to an empty anchor map");
-			outId = FederationUtils.getNextFedDataID();
-			MatrixBlock block = in.acquireReadAndRelease();
-			FederatedRequest fr = new FederatedRequest(RequestType.PUT_VAR, outId, block);
-			anchorMap.execute(getTID(), true, fr);
-		}
-
-		out.setFedMapping(anchorMap.copyWithNewID(outId));
+		out.setFedMapping(published);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-		FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, layoutSig, cacheMapType, out.getFedMapping());
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_refed in=" + _input.getName()
 				+ " out=" + _output.getName()
