@@ -2,7 +2,7 @@
 
 기준 저장소: `/home/mchoi/w1357-paper-aligned-refactor`, HEAD `0b51cc3ef883b9edb284cd4ae0f2b0358a38c592` 및 작업 트리 변경. 설계 기준은 [구현 방안](TW_BINDING_TR_CONVERSION_AND_JV_IMPLEMENTATION_2026-10-06_KO.md)이다.
 
-**현재 상태: `origin/main`과의 통합 구현 후 최종 검증 중.** 최신 작업은 `/home/mchoi/w1357-joint-main-20261006`에서 수행한다. 1∼7절의 Java 306개·Docker 12개 결과 및 병합 전 충돌 분석은 이전 빌드의 기록이다. 최신 통합 결과는 8절에서 별도로 구분한다. 기존 테스트 제외와 지원 한계는 아래에 명시했다. 상세 문제 기록은 [세션 기록](SESSION_ISSUES_2026-10-06.md)에 남긴다.
+**현재 상태: `origin/main` `d57bca99d9`까지 통합 및 검증 완료.** 최종 결과는 Java **379 PASS / 기존 제외 4개 / 실패·오류 0**, Python **18/18**, Docker **12/12 PASS**다. 작업 위치는 `/home/mchoi/w1357-joint-main-20261006`이다. 1∼7절의 Java 306개·Docker 12개 결과 및 병합 전 충돌 분석은 이전 빌드의 기록이며 최신 결과는 8절에 구분했다. 기존 테스트 제외와 지원 한계는 아래에 명시했다. 상세 문제 기록은 [세션 기록](SESSION_ISSUES_2026-10-06.md)에 남긴다.
 
 **병합 전 origin/main 점검 기록:** 최초 결과는 HEAD와 당시 작업 트리의 검증이었다. 당시 전체 dirty snapshot의 격리 병합 검사에서 24개 파일의 충돌이 확인됐고, 최신 main의 비용 회귀를 이전 빌드에 적용하면 6개가 실패했다. 이 문제를 해결하는 실제 통합은 뒤의 8절에 기록한다.
 
@@ -185,6 +185,39 @@ Loop 공간 검사는 raw 32,928행에서 합법 292행, 물리 요약 10개를 
 
 ### 최종 검증 상태
 
-검증 진행 중이다. 첫 집중 회귀는 43개 class 중 42개가 종료했으며 위 loop oracle 실패와 마지막 대규모 증명 검사의 지연을 발견했다. 수정 후 최신 소스로 다시 빌드하고 집중 회귀·비용 회귀 및 12개 Docker 시나리오를 완료한 뒤에만 push한다. 이전 빌드의 성공 기록을 통합 빌드의 성공으로 재사용하지 않는다.
+최종 운영 코드의 재빌드, 집중 회귀·비용 회귀 및 **12개 Docker 시나리오가 모두 통과했다**. 첫 실행의 loop oracle 실패와 대규모 증명 지연을 수정한 뒤 새로 얻은 결과다. 이전 빌드의 성공 기록을 통합 빌드의 성공으로 재사용하지 않았다.
+
+| 검사 | 통합 빌드 결과 |
+|---|---|
+| 전체 main/test compile | PASS, 40.729초 |
+| 집중 Java 회귀 43개 class | 351 PASS, 기존 제외 4개, 실패·오류 0 |
+| 반환 GET·응답 batch 비용 3개 class | 24/24 PASS, C2W=3ms/W2C=7ms |
+| 후속 main golden 1개 class | 4/4 PASS, 추가 전체 compile도 PASS |
+| 합계 | 47개 class, 379 PASS, 기존 제외 4개 |
+| Python harness / Bash 문법 / diff whitespace | 18/18 PASS / PASS / PASS |
+| Docker class SHA256 / 물리 모델 proof | 6/6 일치 / 10/10 PASS |
+| Docker E2E | 12/12 PASS, runtime conversion 위반 0 |
+
+기존 제외 4개는 `PrivacyMovementCertificationTest`의 기존 public fixture다. 새 검사를 꺼서 통과시키지 않았다. 최종 `ExactInputAuthorityOptimizationTest` 8개는 전체 회귀 안에서 122.713초에 종료했으며 전체 43개 class의 wall time은 128.241초였다. 격리 실행과 병렬 suite의 시간은 서로 다른 조건이므로 동일 조건 성능 비교로 주장하지 않는다.
+
+Docker 성공 실행은 `joint-main-20261006-final-stagefix`다. Snap Docker daemon의 `/tmp` mount에서 실행 script가 보이지 않았던 첫 시도는 DML 실행 전 실패로 보존했다. Harness의 기본 staging을 저장소 `target/joint-boundary-e2e-runtime`으로 수정하고 `--stage-root`도 제공한다. 이전 stage는 재사용하지 않으며 전체 source/class/dependency snapshot과 읽기 전용 code mount를 유지한다.
+
+L2SVM 양쪽 결과는 CP/FED 모두 SUM=-0.051876443681957596, NORM2=0.6933312394625315, 3×1이다. 함수 두 호출은 CALL_C=54, CALL_D=132 및 전체 SUM=186, NORM2=20340을 확인했다. Branch upload는 SUM=30, NORM2=56, 8×3으로 일치했고 선택된 이동의 lowering·실행 audit도 통과했다. 상관된 AA/BB는 이동 없이 실행했고, 보호된 불법 결합 세 사례는 예상한 계획 거절을 확인했다.
+
+- [최종 Docker 결과](/grid/3/cofee-lm-sweep-mchoi-20260914/joint-boundary-e2e-20261006/joint-main-20261006-final-stagefix/result.json)
+- [Docker 빌드·입력 manifest](/grid/3/cofee-lm-sweep-mchoi-20260914/joint-boundary-e2e-20261006/joint-main-20261006-final-stagefix/manifest.json)
+- [집중 Java 회귀](/home/mchoi/joint-main-integration-20261006/final-regressions.json), [비용 회귀](/home/mchoi/joint-main-integration-20261006/final-cost-regressions.json), [빌드](/home/mchoi/joint-main-integration-20261006/final-build.json)
+
+위 세 Maven 실행의 전체 Java source manifest SHA256은 `e29c937a479ac13d4273326e9e9af1b777abb75e583c701134026a12ac5a7cdf`다. Docker의 전체 main class inventory digest는 `f33e5e0e1c3fea28d613415f90fb6a7e0937621d951b29f472079ed73d27a4ed`, 전체 main source inventory digest는 `c5005bbebd61d07abc41a9cc0db88090405d3ff98a0a24575bba4a27f5a0be64`다. 두 종류 manifest는 상대 경로 기준이 달라 서로 같은 digest일 필요는 없다.
+
+검증 중 origin/main에 `d57bca99d9`가 추가되어 기능 checkpoint `36faf7fdc2`와 실제 merge로 통합했다. 이 커밋은 운영 코드 변경 없이 unknown-width materialization golden 검사와 세션 기록을 강화한다. 문서의 양쪽 추가 기록을 보존했다. 강화된 exact action identity, worker/range, consumer reference, early-pruning parity 검사와 unknown-width golden은 원문 그대로 통과했다.
+
+Metadata/control-flow golden 두 개는 joint exact/VALUE_MAP 연결 identity에 맞춰 갱신했다. 변경 전후 NODE privacy/placement 목록(각 36개·54개), AVAILABLE owner/input key(34개·52개), outer emission shell, relocation 수(4개·8개)가 동일함을 먼저 확인했다. 내부 support의 정확한 TWrite·VALUE_MAP 참조와 canonical worker endpoint 직렬화가 달라진 것이다. Digest에서 identity나 support를 빼지 않았으며 protected aggregate 및 unknown-width golden은 변경하지 않았다. 이 inventory 감사는 모든 DML의 전역 계획 공간이 동일하다는 증명은 아니다.
+
+Merge 이후 다시 전체 main/test compile을 수행하고 최신 golden class **4/4 PASS**를 확인했다. 해당 빌드와 테스트의 Java source manifest SHA256은 `d004b300ad456570da1625eae2c0a58e84ea2528cf82d3b1c791389ad1b4cc12`다. 앞선 Docker 성공 빌드와 **운영 Java class 3,742개, 전체 main source, 의존성, model-proof class 및 나머지 runtime resource가 동일**함을 비교했다. 추가 compile로 바뀐 것은 위 golden test class와 Maven이 복사한 Python harness/test/cache resource 4개뿐이다. 실제 실행한 host harness의 hash는 Docker 성공 실행과 동일하다. 따라서 `target/classes` 디렉터리 전체가 byte-identical하다고 주장하지 않는다.
+
+- [최신 main golden 감사](/home/mchoi/joint-main-integration-20261006/latest-main-golden/result.json)
+- [Merge 후 compile](/home/mchoi/joint-main-integration-20261006/merged-main-build.json), [Merge 후 golden 회귀](/home/mchoi/joint-main-integration-20261006/merged-main-regressions.json)
+- [최종 운영 빌드와 Docker 빌드 비교](/home/mchoi/joint-main-integration-20261006/final-docker-build-parity.json)
 
 재현 artifact root: `/home/mchoi/joint-main-integration-20261006`. `state.json`에 source/test 통합 범위가 있으며 `merge-inputs/`에는 base/ours/main 원문을 보관했다. `loop-verification/`, `cost-verification/`, `optimization-audit/`는 각 수정의 진단과 격리 검증 근거다.

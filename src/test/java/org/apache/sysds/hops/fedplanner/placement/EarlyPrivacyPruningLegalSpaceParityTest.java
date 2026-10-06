@@ -42,6 +42,12 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -62,15 +68,18 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 		"A=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n";
 
-	// Filled from the clean pre-pruning baseline. A mismatch prints the observed digest.
+	// Pre-pruning baselines, with the audited identity update documented below.
 	private static final String PROTECTED_AGGREGATE_GOLDEN =
 		"09e2e4069fefd2f280f137b7c042182cc6a7e2e994169aca9ccc9c4c77e23ea2";
+	// Joint exact/value-map bindings change realization identities, while preserving the candidate space.
 	private static final String METADATA_AND_HANDLE_GOLDEN =
-		"f8c65fdda8a60cc67ee4a2143f50ab39d3af36fbd424ccbc1be9f254da0e0c3b";
+		"a1a27e283c8d239888a83553492417d0f7288b3590c47f64fc67939e187574c6";
 	private static final String CONTROL_FLOW_GOLDEN =
-		"4744ada268c297e4daad886f6adae367a0070d6fbcff6bcdc2cda97ff5363d28";
+		"45aee9b3f41a20f123e7290a402eada3575d36a62e71d12dfd818acfdb23aafd";
+	// 3d0d683c1b changed only colMean's materialization ID and its consumer reference
+	// versus adaebee9cc. Keep exact action identities and support bindings in the digest.
 	private static final String UNKNOWN_WIDTH_GOLDEN =
-		"2bded4649153d1e1f4542c78d3e5862c19e3fa6fb7c52a00f96fad499050d3d0";
+		"ff0e870b4afd1d7ebb1708ea4b0c21fa99345dd369d91d1b8f5a65d2e68451b7";
 
 	@Test
 	public void protectedPayloadAndPublicAggregateKeepTheFullLegalSpace() throws Exception {
@@ -170,16 +179,26 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 		Assert.assertTrue("fixture must retain unknown source width", mean.hop().getInput(0).getDim2() < 0);
 		assertHasAvailableState(analysis, mean.key(), ExecType.FED, FederatedOutput.LOUT, FType.ROW);
 		assertHasAvailableState(analysis, centered.key(), ExecType.FED, FederatedOutput.FOUT, FType.ROW);
+		assertMeanMaterializationAuthority(analysis, mean.key(), centered.key());
+		assertDerivedEmissionsKeepTheirExactSameRowSource(analysis);
+		PlacementAnalysis unpruned = analysis(script, Privacy.PRIVATE_AGGREGATE, false, true, false);
+		Assert.assertEquals("early pruning must preserve the complete unknown-width legal space",
+			semanticSnapshot(unpruned), semanticSnapshot(analysis));
 		assertGoldenAndRepeatable(UNKNOWN_WIDTH_GOLDEN, analysis, repeated);
 	}
 
 	private static PlacementAnalysis analysis(String script, Privacy privacy, boolean rewrite,
 		boolean unknownSourceWidth) throws Exception {
+		return analysis(script, privacy, rewrite, unknownSourceWidth, true);
+	}
+
+	private static PlacementAnalysis analysis(String script, Privacy privacy, boolean rewrite,
+		boolean unknownSourceWidth, boolean earlyPrivacyPruning) throws Exception {
 		DMLProgram program = compile(script, rewrite);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, privacy);
 		if(unknownSourceWidth)
 			federatedSource(program).setDim2(-1);
-		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		return new NeutralPlacementGraphBuilder(null, null, true, earlyPrivacyPruning).buildAnalysis(program);
 	}
 
 	private static DMLProgram compile(String script, boolean rewrite) throws Exception {
@@ -276,6 +295,51 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 					fact.allowedEmissionFacts().stream().anyMatch(source -> source.derivedFoutAction() == null
 						&& source.emissionState().placementState().equals(exactSource)));
 			}
+		}
+	}
+
+	private static void assertMeanMaterializationAuthority(PlacementAnalysis analysis,
+		CompiledHopKey mean, CompiledHopKey centered) throws Exception {
+		var derived = analysis.candidateRuleFacts().orderedFactsForParent(mean).stream()
+			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.filter(emission -> emission.derivedFoutAction() != null).toList();
+		Assert.assertEquals("colMean must retain its one explicit upload alternative", 1, derived.size());
+		var emission = derived.get(0);
+		var action = emission.derivedFoutAction();
+		Assert.assertSame(mean, action.producer());
+		Assert.assertEquals(FType.ROW, emission.executionFType());
+		Assert.assertEquals("the upload must retain its exact output realization", 1, emission.realizations().size());
+		var realization = emission.realizations().get(0);
+		var anchor = realization.key().durableAnchor();
+		Assert.assertNotNull("the uploaded mean requires a concrete worker layout", anchor);
+		Assert.assertEquals("the output identity must name its exact materialization action",
+			"materialized-output:" + digest(action.normalizedSignature()), anchor.placementId());
+		Assert.assertEquals(FType.BROADCAST, anchor.fType());
+		Assert.assertEquals("both workers must receive the complete 1x2 mean", List.of(
+			new AnchorPartition("localhost:1234/X1", List.of(0L, 0L), List.of(1L, 2L)),
+			new AnchorPartition("localhost:1235/X2", List.of(0L, 0L), List.of(1L, 2L))), anchor.partitions());
+		var proof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR, mean,
+			"derived-fout:" + action.normalizedSignature());
+		Assert.assertTrue("every upload support clause must retain the exact action authority",
+			realization.supportClauses().stream().allMatch(clause -> clause.proofDependencies().contains(proof)));
+
+		var bindings = analysis.candidateRuleFacts().orderedFactsForParent(centered).stream()
+			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(candidate -> candidate.realizations().stream())
+			.flatMap(candidate -> candidate.supportClauses().stream())
+			.flatMap(clause -> clause.inputBindings().stream())
+			.filter(binding -> binding.source().realization().emissionState().derivedFedFout()).toList();
+		Assert.assertFalse("centering must retain a route consuming the uploaded mean", bindings.isEmpty());
+		var expectedSource = CandidateRealizationReference.of(action.candidateRule(), realization);
+		for(var binding : bindings) {
+			Assert.assertEquals("the mean is the right operand of centering", 1, binding.inputPosition());
+			Assert.assertEquals(CandidateInputBindingKind.RELOCATION, binding.kind());
+			Assert.assertEquals("centering must reference the exact uploaded realization",
+				expectedSource, binding.source());
+			Assert.assertEquals(action.producerValueVersion(), binding.relocationAction().sourceValueVersion());
+			Assert.assertEquals(FType.BROADCAST, binding.relocationAction().materializationFType());
 		}
 	}
 
