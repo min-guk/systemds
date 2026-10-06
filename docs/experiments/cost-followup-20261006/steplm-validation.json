@@ -1,0 +1,86 @@
+{
+  "status": "PASS",
+  "base_commit": "d57bca99d9b5947272113680ce17dbb63ab94aed",
+  "branch": "fix/cost-followup-20261006",
+  "artifact_root": "/home/mchoi/cost-followup-20261006/steplm-fix",
+  "production_sha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "8fd091b371ea719abfb51c26ea85044c8efe8f5a0cc200f4ec6419f6f76c46cc",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java": "2189cda759137ea3592b1e02530403b7569d0b3c5246078294e26258f45d4737",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "605bc411442414444f543a504f6b4a5e0764832a92034b6ddc81d710eaca744e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.java": "0437ab295643ca0b7019c16e58e806b9e650496268ea44d6078106cba52938cc",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizer.java": "d4ec825c241c2483c21b8477f66d8a3da2d58e912b01409844538db5fc1cfa64",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparation.java": "340134bcda7893792d7140b00969da28949b66c1450e324c8228377a1f9d9a3d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "04ecd689d64017d256498fa5db86c693ac8aa677ae0aae47f817c2ca591494fb"
+  },
+  "changed_test_source_sha256": {
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizerTest.java": "f8f1cef6b6deedc7f4adba033f2c81d626414b69e2a215591cb843da726519f9",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparationTest.java": "c9ffc1f813d00a76d385bf8b096d36c79a78ffccc9990dc5bebaf8caaee64460",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalCompactionParityTest.java": "c938e2bacd3b0a30af93ba80bfb067a1558b25627e86e9dfc9a059b40ab7a0c5",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolverTest.java": "c97efa9cb49141eb711f7ae3babd2b1d26e56dffcfb57ed12d240c18ca45c463"
+  },
+  "jar_sha256": "0fecd73bfbce6bc9c172b623cf0dc98f64e712daa7866fb4a5c770b876b47027",
+  "source_generation_verified": true,
+  "build": {
+    "argv": [
+      "/home/hadoop/apache-maven-3.9.7/bin/mvn",
+      "-q",
+      "-DskipTests",
+      "-Djacoco.skip=true",
+      "package"
+    ],
+    "returncode": 0,
+    "wall_seconds": 65.3728526905179
+  },
+  "java": {
+    "returncode": 0,
+    "wall_seconds": 170.8883078098297,
+    "classes": 85,
+    "tests": 637,
+    "passed": 637,
+    "failures": 0,
+    "log": "java-final.log",
+    "steplm_test": "FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding",
+    "steplm_expected_values_changed": false
+  },
+  "docker": {
+    "entrypoint": "scripts/fedplanner/run_LAN_docker.sh --function-boundary-compare",
+    "cases": 28,
+    "passed": 28,
+    "runtime_executed": false,
+    "receipt": "docker/results/B/runs.json",
+    "scope": "DP compile/lowering only"
+  },
+  "regressions": {
+    "unsupported_boundary_repair": {
+      "red": "repair/red.log",
+      "repair_only_green": "repair/targeted.log",
+      "repair_only_step_lm_green": "repair/steplm.log",
+      "covers": "real shared model, compact/plain, original-variable expansion, exact objective, no canonical fallback"
+    },
+    "prior_steplm_failure_evidence": "../steplm-diagnosis/final-probe.log",
+    "early_lazy_binary": {
+      "raw_cells": 2500000000,
+      "evaluated_cells": 1
+    },
+    "early_lazy_ternary": {
+      "raw_cells": 5000000000,
+      "evaluated_cells": 2
+    },
+    "exactness": "80 seeded small unary/binary/ternary models compared against unreduced exact solver; source mapping, ties, empty domains, malformed dense inputs, resource limits and duplicate occurrences covered"
+  },
+  "pruning": {
+    "default": "LOCAL_ONLY",
+    "local_prefix_retained": true,
+    "early_reduction": "existing unary/binary finite support",
+    "dominance_added": false,
+    "nary_support_added": false,
+    "global_added": false
+  },
+  "review": "Independent read-only review; dense budget and duplicate occurrence findings fixed and re-reviewed",
+  "limitations": [
+    "No distributed training or latency claim",
+    "Genuine solver resource-limit fallback policy remains; this does not make arbitrary factor graphs polynomial",
+    "Dense raw inputs still obey original caps; only conceptual lazy products may shrink before full materialization"
+  ],
+  "diff_check": "PASS"
+}

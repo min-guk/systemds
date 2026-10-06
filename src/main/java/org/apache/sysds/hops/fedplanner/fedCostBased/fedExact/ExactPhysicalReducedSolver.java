@@ -189,6 +189,8 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.TieCostFunction tieCost) { }
+	private record EarlyReduction(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors, int[][] sourceValues) { }
 	private record Compaction(List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors, int[] reducedToCompiled) { }
 	private static final class PreparationTimer {
@@ -460,44 +462,77 @@ final class ExactPhysicalReducedSolver {
 		PreparationTimer timer) {
 		Objects.requireNonNull(tieCost, "tieCost");
 		Objects.requireNonNull(timer, "timer");
+		Objects.requireNonNull(limits, "limits");
 		if(originalVariableCount < 0 || originalVariableCount > variables.size())
 			throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_PREFIX_INVALID");
 
-		// Validates scopes, domains and both input budgets before evaluating a lazy
-		// factor. Lazy factors are then evaluated exactly once for this solve.
+		// Validate the entire raw model, then materialize only unary/binary support.
+		// This permits hard support to shrink a high-order lazy Cartesian product
+		// before the ordinary bounded full freeze.
 		long phaseStarted = System.nanoTime();
+		ExactCategoricalSolver.validateReductionInputStructure(variables, factors, limits);
+		int variableCount = variables.size();
+		long[][] sourceTieCosts = originalTieCosts(variables, tieCost);
+		List<ExactCategoricalSolver.Factor> unaryFactors = factors.stream()
+			.filter(factor -> factor.scope().size() <= 1).toList();
+		ExactCategoricalSolver.FrozenInputs unary =
+			ExactCategoricalSolver.freezeInputs(variables, unaryFactors, limits);
+		timer.freezeNanos = elapsedNanos(phaseStarted);
+		phaseStarted = System.nanoTime();
+		boolean[][] unaryActive = fullDomains(variables);
+		arcConsistency(unary, unaryActive);
+		timer.supportNanos = elapsedNanos(phaseStarted);
+		phaseStarted = System.nanoTime();
+		EarlyReduction unaryReduced = restrictToSupportedValues(
+			variables, factors, unaryFactors, unary, unaryActive);
+		timer.rebuildNanos = elapsedNanos(phaseStarted);
+
+		phaseStarted = System.nanoTime();
+		List<ExactCategoricalSolver.Factor> binaryFactors = unaryReduced.factors().stream()
+			.filter(factor -> factor.scope().size() <= 2).toList();
+		ExactCategoricalSolver.FrozenInputs binary = ExactCategoricalSolver.freezeInputs(
+			unaryReduced.variables(), binaryFactors, limits);
+		timer.freezeNanos += elapsedNanos(phaseStarted);
+		phaseStarted = System.nanoTime();
+		boolean[][] binaryActive = fullDomains(unaryReduced.variables());
+		arcConsistency(binary, binaryActive);
+		timer.supportNanos += elapsedNanos(phaseStarted);
+		phaseStarted = System.nanoTime();
+		EarlyReduction binaryReduced = restrictToSupportedValues(unaryReduced.variables(),
+			unaryReduced.factors(), binaryFactors, binary, binaryActive);
+		EarlyReduction early = composeSourceValues(unaryReduced, binaryReduced);
+		timer.rebuildNanos += elapsedNanos(phaseStarted);
+
+		phaseStarted = System.nanoTime();
 		ExactCategoricalSolver.FrozenInputs frozen;
 		try {
-			frozen = ExactCategoricalSolver.freezeInputs(variables, factors, limits);
+			frozen = ExactCategoricalSolver.freezeInputs(early.variables(), early.factors(), limits);
 		}
 		finally {
-			timer.freezeNanos = elapsedNanos(phaseStarted);
+			timer.freezeNanos += elapsedNanos(phaseStarted);
 		}
 		phaseStarted = System.nanoTime();
-		int variableCount = variables.size();
 		boolean[][] active = new boolean[variableCount][];
 		long[][] tieCosts = new long[variableCount][];
 		for(int variable = 0; variable < variableCount; variable++) {
 			active[variable] = new boolean[frozen.domainSize(variable)];
 			Arrays.fill(active[variable], true);
 			tieCosts[variable] = new long[frozen.domainSize(variable)];
-			for(int value = 0; value < tieCosts[variable].length; value++) {
-				long cost = tieCost.cost(variables.get(variable), value);
-				if(cost < 0)
-					throw new IllegalArgumentException("EXACT_VE_TIE_COST_INVALID");
-				tieCosts[variable][value] = cost;
-			}
+			for(int value = 0; value < tieCosts[variable].length; value++)
+				tieCosts[variable][value] =
+					sourceTieCosts[variable][early.sourceValues()[variable][value]];
 		}
 		try {
 			arcConsistency(frozen, active);
 		}
 		finally {
-			timer.supportNanos = elapsedNanos(phaseStarted);
+			timer.supportNanos += elapsedNanos(phaseStarted);
 		}
 
 		phaseStarted = System.nanoTime();
 		List<List<Integer>> incident = incidentFactors(frozen, variableCount);
 		int[][][] classValues = new int[variableCount][][];
+		int[][] frozenRepresentatives = new int[variableCount][];
 		int[][] representatives = new int[variableCount][];
 		int[][] sourceToReducedValue = new int[variableCount][];
 		List<ExactCategoricalSolver.Variable> reducedVariables =
@@ -507,13 +542,16 @@ final class ExactPhysicalReducedSolver {
 				? quotientClasses(frozen, variable, active, incident.get(variable),
 					tieCosts[variable], constantObservationHash)
 				: singletonClasses(active[variable]);
-			representatives[variable] = Arrays.stream(classValues[variable])
+			frozenRepresentatives[variable] = Arrays.stream(classValues[variable])
 				.mapToInt(values -> values[0]).toArray();
-			sourceToReducedValue[variable] = new int[frozen.domainSize(variable)];
+			int[] supportedSourceValues = early.sourceValues()[variable];
+			representatives[variable] = Arrays.stream(frozenRepresentatives[variable])
+				.map(value -> supportedSourceValues[value]).toArray();
+			sourceToReducedValue[variable] = new int[variables.get(variable).domainSize()];
 			Arrays.fill(sourceToReducedValue[variable], -1);
 			for(int reducedValue = 0; reducedValue < classValues[variable].length; reducedValue++)
-				for(int sourceValue : classValues[variable][reducedValue])
-					sourceToReducedValue[variable][sourceValue] = reducedValue;
+				for(int frozenValue : classValues[variable][reducedValue])
+					sourceToReducedValue[variable][early.sourceValues()[variable][frozenValue]] = reducedValue;
 			reducedVariables.add(new ExactCategoricalSolver.Variable(
 				"exact-reduced|" + variable + '|' + variables.get(variable).key(),
 					classValues[variable].length));
@@ -530,7 +568,7 @@ final class ExactPhysicalReducedSolver {
 			double[] source = frozen.takeValues(factor);
 			boolean identity = true;
 			for(int variable : scope)
-				if(!identityRepresentatives(representatives[variable],
+				if(!identityRepresentatives(frozenRepresentatives[variable],
 					frozen.domainSize(variable))) {
 					identity = false;
 					break;
@@ -548,7 +586,7 @@ final class ExactPhysicalReducedSolver {
 			for(int cell = 0; cell < cells; cell++) {
 				decode(cell, reducedScope, reducedLocal);
 				for(int position = 0; position < scope.length; position++)
-					originalLocal[position] = representatives[scope[position]][reducedLocal[position]];
+					originalLocal[position] = frozenRepresentatives[scope[position]][reducedLocal[position]];
 				values[cell] = source[encodeOriginal(originalLocal, scope, frozen)];
 			}
 			reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, values));
@@ -562,11 +600,138 @@ final class ExactPhysicalReducedSolver {
 			Integer original = reducedIndexes.get(variable);
 			if(original == null)
 				throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_VARIABLE_UNKNOWN");
-			return tieCosts[original][representatives[original][reducedValue]];
+			return tieCosts[original][frozenRepresentatives[original][reducedValue]];
 		};
-		timer.rebuildNanos = elapsedNanos(phaseStarted);
+		timer.rebuildNanos += elapsedNanos(phaseStarted);
 		return new Reduction(variableCount, representatives, sourceToReducedValue,
 			List.copyOf(reducedVariables), List.copyOf(reducedFactors), reducedTieCost);
+	}
+
+	private static long[][] originalTieCosts(
+		List<ExactCategoricalSolver.Variable> variables,
+		ExactCategoricalSolver.TieCostFunction tieCost) {
+		long[][] tieCosts = new long[variables.size()][];
+		for(int variable = 0; variable < variables.size(); variable++) {
+			tieCosts[variable] = new long[variables.get(variable).domainSize()];
+			for(int value = 0; value < tieCosts[variable].length; value++) {
+				long cost = tieCost.cost(variables.get(variable), value);
+				if(cost < 0)
+					throw new IllegalArgumentException("EXACT_VE_TIE_COST_INVALID");
+				tieCosts[variable][value] = cost;
+			}
+		}
+		return tieCosts;
+	}
+
+	private static boolean[][] fullDomains(List<ExactCategoricalSolver.Variable> variables) {
+		boolean[][] active = new boolean[variables.size()][];
+		for(int variable = 0; variable < variables.size(); variable++) {
+			active[variable] = new boolean[variables.get(variable).domainSize()];
+			Arrays.fill(active[variable], true);
+		}
+		return active;
+	}
+
+	private static EarlyReduction composeSourceValues(EarlyReduction source,
+		EarlyReduction reduced) {
+		int[][] composed = new int[source.sourceValues().length][];
+		for(int variable = 0; variable < composed.length; variable++) {
+			int[] sourceValues = source.sourceValues()[variable];
+			composed[variable] = Arrays.stream(reduced.sourceValues()[variable])
+				.map(value -> sourceValues[value]).toArray();
+		}
+		return new EarlyReduction(reduced.variables(), reduced.factors(), composed);
+	}
+
+	private static EarlyReduction restrictToSupportedValues(
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		List<ExactCategoricalSolver.Factor> supportFactors,
+		ExactCategoricalSolver.FrozenInputs support, boolean[][] active) {
+		int[][] sourceValues = new int[variables.size()][];
+		List<ExactCategoricalSolver.Variable> reducedVariables = new ArrayList<>(variables.size());
+		Map<ExactCategoricalSolver.Variable,Integer> sourceIndexes = new LinkedHashMap<>();
+		for(int variable = 0; variable < variables.size(); variable++) {
+			sourceIndexes.put(variables.get(variable), variable);
+			sourceValues[variable] = activeValues(active[variable]);
+			reducedVariables.add(identityRepresentatives(sourceValues[variable],
+				variables.get(variable).domainSize()) ? variables.get(variable)
+				: new ExactCategoricalSolver.Variable(
+					"exact-supported|" + variable + '|' + variables.get(variable).key(),
+					sourceValues[variable].length));
+		}
+		List<ExactCategoricalSolver.Factor> reducedFactors = new ArrayList<>(factors.size());
+		int supportOrdinal = 0;
+		for(ExactCategoricalSolver.Factor factor : factors) {
+			int[] scope = factor.scope().stream().mapToInt(sourceIndexes::get).toArray();
+			List<ExactCategoricalSolver.Variable> reducedScope = Arrays.stream(scope)
+				.mapToObj(reducedVariables::get).toList();
+			Integer supportIndex = supportOrdinal < supportFactors.size()
+				&& factor == supportFactors.get(supportOrdinal) ? supportOrdinal++ : null;
+			if(supportIndex != null) {
+				double[] source = support.values(supportIndex);
+				boolean identity = true;
+				for(int variable : scope)
+					if(!identityRepresentatives(sourceValues[variable],
+						support.domainSize(variable))) {
+						identity = false;
+						break;
+					}
+				if(identity) {
+					reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, source));
+					continue;
+				}
+				int cells = reducedScope.stream().mapToInt(
+					ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
+				PlannerResourceGuard.checkAdditionalCells(cells, "exact-reduced-factor");
+				double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
+				int[] reducedLocal = new int[scope.length];
+				int[] sourceLocal = new int[scope.length];
+				for(int cell = 0; cell < cells; cell++) {
+					decode(cell, reducedScope, reducedLocal);
+					for(int position = 0; position < scope.length; position++)
+						sourceLocal[position] = sourceValues[scope[position]][reducedLocal[position]];
+					values[cell] = source[encodeOriginal(sourceLocal,
+						support.scope(supportIndex), support)];
+				}
+				reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, values));
+			}
+			else {
+				boolean identity = true;
+				for(int variable : scope)
+					if(!identityRepresentatives(sourceValues[variable],
+						variables.get(variable).domainSize())) {
+						identity = false;
+						break;
+					}
+				if(identity) {
+					reducedFactors.add(factor);
+					continue;
+				}
+				int[] sourceLocal = new int[scope.length];
+				reducedFactors.add(ExactCategoricalSolver.Factor.lazy(reducedScope, reducedLocal -> {
+					for(int position = 0; position < scope.length; position++)
+						sourceLocal[position] = sourceValues[scope[position]][reducedLocal[position]];
+					return factor.cost(sourceLocal);
+				}));
+			}
+		}
+		if(supportOrdinal != supportFactors.size())
+			throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_SUPPORT_ORDER_INVALID");
+		return new EarlyReduction(List.copyOf(reducedVariables),
+			List.copyOf(reducedFactors), sourceValues);
+	}
+
+	private static int[] activeValues(boolean[] active) {
+		int count = 0;
+		for(boolean value : active)
+			if(value)
+				count++;
+		int[] values = new int[count];
+		for(int source = 0, target = 0; source < active.length; source++)
+			if(active[source])
+				values[target++] = source;
+		return values;
 	}
 
 	private static boolean identityRepresentatives(int[] representatives, int domainSize) {

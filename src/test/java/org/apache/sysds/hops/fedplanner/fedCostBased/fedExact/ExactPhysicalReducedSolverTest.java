@@ -83,29 +83,27 @@ public class ExactPhysicalReducedSolverTest {
 				variables.get(2))));
 			// Preserve at least one feasible assignment independently of random infinities.
 			factors.add(ExactCategoricalSolver.Factor.dense(List.of(), 0d));
+			ExactCategoricalSolver.Result expected;
 			try {
-				ExactCategoricalSolver.Result expected = ExactCategoricalSolver.solve(
-					variables, factors, GENEROUS);
-				ExactCategoricalSolver.Result actual = ExactPhysicalReducedSolver.solve(
-					variables.size(), variables, factors, GENEROUS);
-				Assert.assertEquals(Double.doubleToRawLongBits(expected.objective()),
-					Double.doubleToRawLongBits(actual.objective()));
-				Assert.assertEquals(Double.doubleToRawLongBits(actual.objective()),
-					Double.doubleToRawLongBits(ExactCategoricalSolver.evaluate(
-						variables, factors, GENEROUS, actual.assignmentInVariableOrder())));
+				expected = ExactCategoricalSolver.solve(variables, factors, GENEROUS);
 			}
 			catch(IllegalArgumentException failure) {
 				Assert.assertTrue(failure.getMessage(),
 					failure.getMessage().startsWith("EXACT_VE_NO_FEASIBLE_ASSIGNMENT"));
-				try {
-					ExactPhysicalReducedSolver.solve(variables.size(), variables, factors, GENEROUS);
-					Assert.fail("reduced model accepted an infeasible original model");
-				}
-				catch(IllegalArgumentException reducedFailure) {
-					Assert.assertTrue(reducedFailure.getMessage(), reducedFailure.getMessage()
-						.startsWith("EXACT_VE_NO_FEASIBLE_ASSIGNMENT"));
-				}
+				IllegalArgumentException reducedFailure = Assert.assertThrows(IllegalArgumentException.class,
+					() -> ExactPhysicalReducedSolver.solve(
+						variables.size(), variables, factors, GENEROUS));
+				Assert.assertTrue(reducedFailure.getMessage(), reducedFailure.getMessage()
+					.startsWith("EXACT_VE_NO_FEASIBLE_ASSIGNMENT"));
+				continue;
 			}
+			ExactCategoricalSolver.Result actual = ExactPhysicalReducedSolver.solve(
+				variables.size(), variables, factors, GENEROUS);
+			Assert.assertEquals(Double.doubleToRawLongBits(expected.objective()),
+				Double.doubleToRawLongBits(actual.objective()));
+			Assert.assertEquals(Double.doubleToRawLongBits(actual.objective()),
+				Double.doubleToRawLongBits(ExactCategoricalSolver.evaluate(
+					variables, factors, GENEROUS, actual.assignmentInVariableOrder())));
 		}
 	}
 
@@ -338,6 +336,113 @@ public class ExactPhysicalReducedSolverTest {
 	}
 
 	@Test
+	public void unarySupportShrinksOverflowingLazyProductBeforeMaterialization() {
+		var a = variable("overflow-a", 50_000);
+		var b = variable("overflow-b", 50_000);
+		var c = variable("overflow-c", 2);
+		double[] pinA = new double[a.domainSize()];
+		double[] pinB = new double[b.domainSize()];
+		java.util.Arrays.fill(pinA, Double.POSITIVE_INFINITY);
+		java.util.Arrays.fill(pinB, Double.POSITIVE_INFINITY);
+		pinA[49_999] = 0d;
+		pinB[123] = 0d;
+		AtomicInteger binaryEvaluations = new AtomicInteger();
+		AtomicInteger evaluations = new AtomicInteger();
+		var oversizedBinary = ExactCategoricalSolver.Factor.lazy(List.of(a, b), values -> {
+			binaryEvaluations.incrementAndGet();
+			Assert.assertEquals(49_999, values[0]);
+			Assert.assertEquals(123, values[1]);
+			return 2d;
+		});
+		var oversized = ExactCategoricalSolver.Factor.lazy(List.of(a, b, c), values -> {
+			evaluations.incrementAndGet();
+			Assert.assertEquals(49_999, values[0]);
+			Assert.assertEquals(123, values[1]);
+			return values[2] == 1 ? 1d : 3d;
+		});
+		List<ExactCategoricalSolver.Variable> variables = List.of(a, b, c);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(a), pinA),
+			ExactCategoricalSolver.Factor.dense(List.of(b), pinB), oversizedBinary, oversized);
+		ExactCategoricalSolver.Limits reducedLimits =
+			new ExactCategoricalSolver.Limits(100_000, 250_000);
+
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solveCompacted(
+			variables.size(), variables, factors, reducedLimits);
+
+		Assert.assertEquals(List.of(49_999, 123, 1), result.assignmentInVariableOrder());
+		Assert.assertEquals(3d, result.objective(), 0d);
+		Assert.assertEquals("unary support reduces the overflowing binary before evaluation", 1,
+			binaryEvaluations.get());
+		Assert.assertEquals("only supported high-order assignments are evaluated", 2,
+			evaluations.get());
+	}
+
+	@Test
+	public void oversizedDenseInputFailsBeforeAnyLazyEvaluation() {
+		var a = variable("dense-cap-a", 2);
+		var b = variable("dense-cap-b", 2);
+		var c = variable("dense-cap-c", 2);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(a), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		var dense = ExactCategoricalSolver.Factor.dense(List.of(a, b, c),
+			0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d);
+
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.solve(3, List.of(a, b, c),
+				List.of(lazy, dense), new ExactCategoricalSolver.Limits(7, 100)));
+
+		Assert.assertTrue(error.getMessage(),
+			error.getMessage().startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED"));
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
+	public void totalDenseInputBudgetFailsBeforeAnyLazyEvaluation() {
+		var a = variable("dense-total-a", 2);
+		var b = variable("dense-total-b", 2);
+		var c = variable("dense-total-c", 2);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazy = ExactCategoricalSolver.Factor.lazy(List.of(a), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		var first = ExactCategoricalSolver.Factor.dense(List.of(a, b, c),
+			0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d);
+		var second = ExactCategoricalSolver.Factor.dense(List.of(a, b, c),
+			0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d);
+
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.solve(3, List.of(a, b, c),
+				List.of(lazy, first, second), new ExactCategoricalSolver.Limits(8, 15)));
+
+		Assert.assertTrue(error.getMessage(),
+			error.getMessage().startsWith("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED"));
+		Assert.assertEquals(0, evaluations.get());
+	}
+
+	@Test
+	public void repeatedLazyFactorOccurrencesKeepSeparateFrozenSnapshots() {
+		var value = variable("repeated-factor", 2);
+		AtomicInteger evaluations = new AtomicInteger();
+		var repeated = ExactCategoricalSolver.Factor.lazy(List.of(value), values -> {
+			int occurrence = evaluations.getAndIncrement() / value.domainSize();
+			return occurrence == 0 ? (values[0] == 0 ? 0d : 10d)
+				: (values[0] == 0 ? 10d : 0d);
+		});
+
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(1,
+			List.of(value), List.of(repeated, repeated), GENEROUS);
+
+		Assert.assertEquals(List.of(0), result.assignmentInVariableOrder());
+		Assert.assertEquals(10d, result.objective(), 0d);
+		Assert.assertEquals(4, evaluations.get());
+	}
+
+	@Test
 	public void compactPreparationPreservesArityCollapseConstantsAndAllSingletonSolve() {
 		var a = variable("a", 2);
 		var b = variable("b", 2);
@@ -551,6 +656,79 @@ public class ExactPhysicalReducedSolverTest {
 		Assert.assertEquals(List.of(1), result.assignmentInVariableOrder());
 		Assert.assertEquals(Double.doubleToRawLongBits(0d),
 			Double.doubleToRawLongBits(result.objective()));
+	}
+
+	@Test
+	public void reducedTieCostUsesOriginalValueAfterEarlySupportRemoval() {
+		var value = variable("supported-tie", 4);
+		var support = ExactCategoricalSolver.Factor.dense(List.of(value),
+			Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, 0d, 0d);
+
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(1,
+			List.of(value), List.of(support), GENEROUS,
+			(variable, sourceValue) -> new long[] {9L, 8L, 5L, 0L}[sourceValue]);
+
+		Assert.assertEquals(List.of(3), result.assignmentInVariableOrder());
+		Assert.assertEquals(0d, result.objective(), 0d);
+	}
+
+	@Test
+	public void composedUnaryBinaryReductionPreservesSourceMappingsAndTies() {
+		var x = variable("composed-x", 5);
+		var y = variable("composed-y", 4);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x, y);
+		List<ExactCategoricalSolver.Factor> factors = List.of(
+			ExactCategoricalSolver.Factor.dense(List.of(x),
+				Double.POSITIVE_INFINITY, 0d, 0d, 0d, 0d),
+			ExactCategoricalSolver.Factor.dense(List.of(y),
+				Double.POSITIVE_INFINITY, 0d, Double.POSITIVE_INFINITY, 0d),
+			ExactCategoricalSolver.Factor.lazy(List.of(x, y), v ->
+				(v[0] == 1 && v[1] == 1) || (v[0] == 3 && v[1] == 3)
+					|| ((v[0] == 2 || v[0] == 4) && v[1] == 0)
+					? 0d : Double.POSITIVE_INFINITY));
+		ExactPhysicalReducedSolver.CompactModel reduced = ExactPhysicalReducedSolver.reducedModel(
+			2, variables, factors, GENEROUS);
+
+		for(int variable = 0; variable < variables.size(); variable++) {
+			Assert.assertEquals(2, reduced.variables().get(variable).domainSize());
+			for(int value = 0; value < variables.get(variable).domainSize(); value++) {
+				if(value == 1 || value == 3)
+					Assert.assertEquals(value,
+						reduced.sourceValue(variable, reduced.reducedValue(variable, value)));
+				else
+					Assert.assertEquals(-1, reduced.reducedValue(variable, value));
+			}
+		}
+		ExactCategoricalSolver.Result result = ExactPhysicalReducedSolver.solve(
+			2, variables, factors, GENEROUS, (variable, value) -> value == 3 ? 0L : 5L);
+		Assert.assertEquals(List.of(3, 3), result.assignmentInVariableOrder());
+		Assert.assertEquals(0d, result.objective(), 0d);
+	}
+
+	@Test
+	public void removedSourceValueStillRequiresValidTieCost() {
+		var value = variable("removed-invalid-tie", 2);
+		var support = ExactCategoricalSolver.Factor.dense(List.of(value),
+			Double.POSITIVE_INFINITY, 0d);
+
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.solve(1, List.of(value), List.of(support), GENEROUS,
+				(variable, sourceValue) -> sourceValue == 0 ? -1L : 0L));
+
+		Assert.assertEquals("EXACT_VE_TIE_COST_INVALID", error.getMessage());
+	}
+
+	@Test
+	public void emptyEarlySupportStillRequiresValidOriginalTieCost() {
+		var value = variable("empty-invalid-tie", 2);
+		var impossible = ExactCategoricalSolver.Factor.dense(List.of(value),
+			Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY);
+
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.solve(1, List.of(value), List.of(impossible), GENEROUS,
+				(variable, sourceValue) -> sourceValue == 0 ? -1L : 0L));
+
+		Assert.assertEquals("EXACT_VE_TIE_COST_INVALID", error.getMessage());
 	}
 
 	@Test

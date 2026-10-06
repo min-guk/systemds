@@ -32,6 +32,7 @@ import org.junit.Test;
 public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 	@Test
 	public void l2SvmExactCompilesWithMultipleExactInternalEmissions() throws Exception {
+		PlacementEmissionTransaction.resetForTesting();
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
 		boolean oldStatistics = DMLScript.STATISTICS;
@@ -148,6 +149,7 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 			DMLScript.USE_LOCAL_SPARK_CONFIG = oldLocalSpark;
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER = oldParserPath;
 			restoreProperties(oldCostProperties);
+			PlacementEmissionTransaction.resetForTesting();
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			FederatedRefedRegistry.clear();
 			FederatedFoutMaterializeRegistry.clear();

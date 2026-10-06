@@ -53,6 +53,7 @@ import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.FederatedExecutionLayout;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.InputLayout;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -620,9 +621,11 @@ public final class FederatedCostModel {
 	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
 			List<Double> inputMemEstimates, List<FType> inputFTypes, FType logicalFType,
 			double baseSelfCost, double outputMemEstimate, int numWorkers, FederatedExecutionLayout layout) {
+		double auxiliaryCost = computeAuxiliaryStageCost(hop, inputHops, inputMemEstimates,
+			inputFTypes, logicalFType, outputMemEstimate, numWorkers, layout);
 		if (requiresFederatedAggUnaryLocalAggregation(hop)) {
 			return computeAggregateUnaryLocalAggregationCost("agg-unary-local-aggregation",
-				(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, 0.0);
+				(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, auxiliaryCost);
 		}
 		double wdivmmInputPreparationCost =
 			computeWdivmmInputPreparationCost(hop, inputHops, inputMemEstimates,
@@ -649,7 +652,220 @@ public final class FederatedCostModel {
 			return computePartialAggregationCost("aggbinary-add-aggregation",
 				hop, outputMemEstimate, numWorkers, inputPreparationCost);
 		}
-		return MixedFedLocalCost.none();
+		return auxiliaryCost > 0.0
+			? new MixedFedLocalCost("auxiliary-runtime-stages", auxiliaryCost, 0.0, 0.0)
+			: MixedFedLocalCost.none();
+	}
+
+	/**
+	 * Extra runtime batches, excluding the principal kernel and its result. Each
+	 * execute fanout owns one RTT, irrespective of worker count. Payload and work
+	 * use the same primitives as ordinary kernels, with generated intermediates'
+	 * own shapes rather than the final HOP output size.
+	 */
+	private static double computeAuxiliaryStageCost(Hop hop, List<Hop> inputs,
+			List<Double> inputBytes, List<FType> types, FType executionType, double outputBytes,
+			int numWorkers, FederatedExecutionLayout layout) {
+		int workers = executionType == FType.FULL ? 1 : Math.max(1, numWorkers);
+		double latency = computeRequestResponseLatency();
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.RESHAPE)
+			// Reshape initializes output metadata in a separate PUT batch (no MatrixBlock).
+			return latency;
+		if(hop instanceof AggUnaryOp aggregate && aggregate.getOp() == AggOp.VAR) {
+			double partial = estimateAggregateUnaryResultMemEstimate(aggregate, outputBytes);
+			double multiplier = estimateNativeAggregateUnaryPayloadMultiplier(aggregate, executionType, workers);
+			double share = auxiliaryWorkerShare(types, 0, workers, layout);
+			double bytes = auxiliaryInputBytes(inputs, inputBytes, 0);
+			return latency + computeAggregateUnaryPartialResultDownloadCost(aggregate, executionType, partial, workers)
+				+ computeExecutionCost(null, estimateLogicalCellCount(inputHopAt(inputs, 0), bytes) * share,
+					bytes * share, partial * multiplier / workers);
+		}
+		if(isAlignedCovariance(hop, types)) {
+			boolean weighted = hop instanceof TernaryOp;
+			int stages = weighted ? 3 : 2;
+			double cost = stages * (latency + computeReplicatedWorkerResultDownloadCost(8, workers));
+			for(int i = 0; i < 2; i++) {
+				double bytes = auxiliaryInputBytes(inputs, inputBytes, i);
+				double share = auxiliaryWorkerShare(types, i, workers, layout);
+				double cells = estimateLogicalCellCount(inputHopAt(inputs, i), bytes) * share;
+				if(weighted) {
+					double weights = auxiliaryInputBytes(inputs, inputBytes, 2) * share;
+					double product = cells * 8;
+					cost += computeExecutionCost(null, cells, bytes * share + weights, product)
+						+ computeExecutionCost(null, 4 * cells, product, 8)
+						+ computeExecutionCost(null, 4 * cells, weights, 8)
+						+ computeExecutionCost(null, 1, 16, 8);
+				}
+				else
+					cost += computeExecutionCost(null, cells, bytes * share, 8);
+			}
+			if(weighted) {
+				double bytes = auxiliaryInputBytes(inputs, inputBytes, 2);
+				double share = auxiliaryWorkerShare(types, 0, workers, layout);
+				cost += computeExecutionCost(null, 4 * estimateLogicalCellCount(inputHopAt(inputs, 2), bytes) * share,
+					bytes * share, 8);
+			}
+			// Two global means and the covariance merge: 13 operations per worker,
+			// two mean divisions, and the final degrees-of-freedom adjustment/division.
+			return cost + computeExecutionCost(null, 13.0 * workers + 4, 8.0 * workers * (weighted ? 7 : 5), 8);
+		}
+		if(hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.CTABLE) {
+			inputs = inputs != null ? inputs : hop.getInput();
+			double cost = 0;
+			for(int i = ternary.isSequenceRewriteApplicable(true) ? 1 : 0; i < 2; i++) {
+				Hop input = inputHopAt(inputs, i);
+				if(input == null || !input.getDataType().isMatrix())
+					continue;
+				double bytes = auxiliaryInputBytes(inputs, inputBytes, i);
+				if(typeAt(types, i) == null) {
+					// Local dimension discovery slices then scans every range, without RPC.
+					cost += 2 * computeMemoryAccessCost(bytes)
+						+ computeExecutionCost(null, estimateLogicalCellCount(input, bytes), bytes, 8.0 * workers)
+						+ computeExecutionCost(null, workers, 8.0 * workers, 8);
+					continue;
+				}
+				int responses = layout != null && i < layout.inputs().size() && layout.inputs().get(i).exactRanges()
+					? layout.inputs().get(i).ranges().size() : typeAt(types, i) == FType.FULL ? 1 : workers;
+				double share = auxiliaryWorkerShare(types, i, responses, layout);
+				cost += latency + computeReplicatedWorkerResultDownloadCost(8, responses)
+					+ computeExecutionCost(null, estimateLogicalCellCount(inputHopAt(inputs, i), bytes) * share,
+						bytes * share, 8)
+					+ computeExecutionCost(null, responses, 8.0 * responses, 8);
+			}
+			FederatedExecutionLayout actualLayout = layout != null ? layout
+				: new FederatedExecutionLayout(executionType, workers, java.util.stream.IntStream.range(0, inputs.size())
+					.mapToObj(position -> new InputLayout(typeAt(types, position), List.of(), false)).toList());
+			for(int position = 0; position < Math.min(3, inputs.size()); position++) {
+				if(!PlacementCostSemantics.ctableInputNeedsCollection(hop, actualLayout, position))
+					continue;
+				double bytes = auxiliaryInputBytes(inputs, inputBytes, position);
+				InputLayout primary = actualLayout.inputs().get(actualLayout.inputs().get(0).fType() != null ? 0 : 1);
+				int partitions = primary.exactRanges() ? primary.ranges().size() : workers;
+				// GET/cache activation is owned by the materialization collector. Slicing
+				// and PUT occur on every CTABLE call, including warm/local inputs. A
+				// full, replicated or singleton map broadcasts without copying slices.
+				cost += computeInBandUploadPayloadCost(bytes, primary.fType(), workers);
+				if(primary.fType() != FType.FULL && primary.fType() != FType.BROADCAST && partitions > 1)
+					cost += 2 * computeMemoryAccessCost(bytes);
+				if(position < 2)
+					// isFedOutput scans secondary slices for min/max even for forced LOUT.
+					cost += 2 * computeMemoryAccessCost(bytes)
+						+ computeExecutionCost(null, 2 * estimateLogicalCellCount(inputHopAt(inputs, position), bytes),
+							2 * bytes, 16.0 * workers);
+			}
+			return cost;
+		}
+		if(hop instanceof UnaryOp unary && typeAt(types, 0) == FType.ROW
+			&& (unary.getOp() == OpOp1.CUMSUM || unary.getOp() == OpOp1.CUMPROD
+				|| unary.getOp() == OpOp1.CUMMIN || unary.getOp() == OpOp1.CUMMAX
+				|| unary.getOp() == OpOp1.CUMSUMPROD))
+			return computeRowCumulativeAuxiliaryCost(unary, inputs, inputBytes, types, workers, layout);
+		return 0.0;
+	}
+
+	/**
+	 * Logical input PUT ownership, separate from auxiliary RTT/compute costs.
+	 * A positive preparation cost alone does not prove that an input was uploaded.
+	 */
+	public static boolean modelsNativeInputUpload(Hop hop, List<FType> types, int position) {
+		if(hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.CTABLE)
+			// Specialized CTABLE preparation also accounts for the erased expand marker (zero PUT).
+			return position >= 0 && position < 3;
+		if(hop instanceof QuaternaryOp q && q.getOp() == OpOp4.WDIVMM)
+			return (typeAt(types, 0) == FType.ROW || typeAt(types, 0) == FType.COL
+				|| typeAt(types, 0) == FType.FULL)
+				&& (PlacementCostSemantics.isWdivmmMatrixOperand(hop, position)
+					|| position == 3 && PlacementCostSemantics.hasWdivmmEpsilon(hop));
+		if(!(hop instanceof AggBinaryOp multiply) || !multiply.isMatrixMultiply())
+			return false;
+		if(requiresFederatedAggBinaryRowLeftInputPreparation(hop, types))
+			return position == 1;
+		if(multiply.checkTransposeSelf() != org.apache.sysds.lops.MMTSJ.MMTSJType.NONE)
+			return false;
+		return position == 0 && typeAt(types, 0) == null && typeAt(types, 1) == FType.ROW
+			|| position == 1 && typeAt(types, 0) == FType.COL && typeAt(types, 1) == null;
+	}
+
+	private static double computeRowCumulativeAuxiliaryCost(UnaryOp hop, List<Hop> inputs,
+			List<Double> inputBytes, List<FType> types, int workers, FederatedExecutionLayout layout) {
+		Hop input = inputHopAt(inputs, 0);
+		double bytes = auxiliaryInputBytes(inputs, inputBytes, 0);
+		double cells = estimateLogicalCellCount(input, bytes);
+		double share = auxiliaryWorkerShare(types, 0, workers, layout);
+		boolean sumProduct = hop.getOp() == OpOp1.CUMSUMPROD;
+		double rows = input.getDim1(), cols = input.getDim2();
+		if(layout != null && !layout.inputs().isEmpty() && layout.inputs().get(0).exactRanges()) {
+			if(rows <= 0)
+				rows = layout.inputs().get(0).ranges().stream().mapToLong(range -> range.end().get(0)).max().orElse(0);
+			if(cols <= 0)
+				cols = layout.inputs().get(0).ranges().stream().mapToLong(range -> range.end().get(1)).max().orElse(0);
+		}
+		if(cols <= 0)
+			cols = sumProduct ? 2 : 1;
+		if(rows <= 0)
+			rows = Math.max(1, cells / cols);
+		cells = rows * cols;
+		// The generated correction has only boundary entries for SUM; PROD/MIN/MAX
+		// initialize the entire matrix to a nonzero identity, regardless of input sparsity.
+		double correction = generatedMatrixBytes(rows, cols,
+			hop.getOp() == OpOp1.CUMSUM ? Math.max(0, workers - 1) * cols : cells);
+		double cost = (sumProduct ? 3 : 2) * computeRequestResponseLatency();
+		if(sumProduct) {
+			double firstResult = rows * 8;
+			double products = cells * 8;
+			cost += computeInBandWorkerResultDownloadCost(firstResult, workers, false)
+				+ computeInBandWorkerResultDownloadCost(products, workers, false)
+				+ computeExecutionCost(null, 2 * rows * share, bytes * share, firstResult * share)
+				+ computeExecutionCost(null, cells * share, bytes * share, products * share);
+			correction += generatedMatrixBytes(rows, cols, Math.max(0, workers - 1));
+		}
+		else {
+			double partial = cols * 8;
+			cost += computeReplicatedWorkerResultDownloadCost(partial, workers)
+				+ computeExecutionCost(null, (hop.getOp() == OpOp1.CUMSUM ? 4 : 1) * cells * share,
+					bytes * share, partial);
+		}
+		return cost + computeInBandUploadPayloadCost(correction, FType.ROW, workers)
+			+ computeExecutionCost(null, cells * share, (bytes + correction) * share, cells * 8 * share)
+			+ computeExecutionCost(null, workers * cols * (sumProduct ? 4 : 1),
+				workers * cols * 8, workers * cols * 8)
+			// Create correction matrices, then read/copy their slices for upload.
+			+ 3 * computeMemoryAccessCost(correction);
+	}
+
+	private static double generatedMatrixBytes(double rows, double cols, double nonzeros) {
+		return MatrixBlock.estimateSizeInMemory((long) rows, (long) cols,
+			Math.min(1.0, nonzeros / Math.max(1.0, rows * cols)));
+	}
+
+	private static double auxiliaryInputBytes(List<Hop> inputs, List<Double> estimates, int index) {
+		double bytes = inputMemEstimateAt(estimates, index);
+		return Double.isFinite(bytes) && bytes > 0 ? bytes : getEffectiveOutputMemEstimate(inputHopAt(inputs, index));
+	}
+
+	private static double auxiliaryWorkerShare(List<FType> types, int index, int workers,
+			FederatedExecutionLayout layout) {
+		FType type = typeAt(types, index);
+		if(type == FType.FULL || type == FType.BROADCAST)
+			return 1;
+		if(layout != null && index < layout.inputs().size() && layout.inputs().get(index).exactRanges()) {
+			double total = 0, largest = 0;
+			for(var range : layout.inputs().get(index).ranges()) {
+				double cells = (range.end().get(0) - range.begin().get(0))
+					* (double) (range.end().get(1) - range.begin().get(1));
+				total += cells;
+				largest = Math.max(largest, cells);
+			}
+			if(total > 0)
+				return largest / total;
+		}
+		return 1.0 / workers;
+	}
+
+	private static boolean isAlignedCovariance(Hop hop, List<FType> types) {
+		return (hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV
+			|| hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.COV)
+			&& typeAt(types, 0) != null && typeAt(types, 1) != null;
 	}
 
 	/**
@@ -1873,31 +2089,26 @@ public final class FederatedCostModel {
 
 	public static double computeNativeFederatedLoutResultCost(Hop hop, List<FType> inputFTypes,
 			FType executionType, double bytes, int workers) {
-		boolean inBand = nativeResultIsInBand(hop, inputFTypes);
+		if(isAlignedCovariance(hop, inputFTypes))
+			return computeReplicatedWorkerResultDownloadCost(8, executionType == FType.FULL ? 1 : workers);
+		boolean inBand = nativeResultIsInBand(hop);
 		if(hop instanceof QuaternaryOp quaternary && quaternary.getOp() == OpOp4.WDIVMM)
 			return computeWdivmmLoutResultCost(quaternary.getBaseType(), executionType, bytes, workers);
 		return computeResultGetCost(bytes, executionType, workers, inBand ? 0 : 1);
 	}
 
-	private static boolean nativeResultIsInBand(Hop hop, List<FType> inputFTypes) {
-		// These runtimes return the result in the same EXEC+GET or UDF request batch. Mixed
-		// covariance does too, while aligned federated covariance has auxiliary mean stages
-		// and therefore retains its existing additional-stage estimate.
+	private static boolean nativeResultIsInBand(Hop hop) {
+		// Covariance's main result is in-band; auxiliary mean/weight batches are
+		// charged explicitly by computeAuxiliaryStageCost.
 		return hop instanceof TernaryOp
 			|| hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS
 			|| hop instanceof ParameterizedBuiltinOp parameterized
 				&& parameterized.getOp() == ParamBuiltinOp.CONTAINS
 			|| hop instanceof BinaryOp binary && binary.getOp() == OpOp2.MOMENT
 			|| hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV
-				&& hasExactlyOneFederatedCovarianceInput(inputFTypes)
 			|| hop instanceof QuaternaryOp quaternary
 				&& (quaternary.getOp() == OpOp4.WSLOSS || quaternary.getOp() == OpOp4.WCEMM)
 			|| hop instanceof SpoofFusedOp;
-	}
-
-	private static boolean hasExactlyOneFederatedCovarianceInput(List<FType> inputFTypes) {
-		return inputFTypes != null && inputFTypes.size() >= 2
-			&& (inputFTypes.get(0) != null ^ inputFTypes.get(1) != null);
 	}
 
 	public static double computeNativeFederatedLoutResultCost(Hop hop,
@@ -1907,9 +2118,11 @@ public final class FederatedCostModel {
 
 	public static double computeNativeFederatedLoutResultCost(Hop hop, List<FType> inputFTypes,
 			PlacementCostSemantics.WorkerResponseSummary responses) {
+		if(isAlignedCovariance(hop, inputFTypes))
+			return computeReplicatedWorkerResultDownloadCost(8, responses.responses());
 		double payload = computeGetResponsePayloadCost(responses.totalBytes(), responses.largestBytes(),
 			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
-		return payload + (nativeResultIsInBand(hop, inputFTypes) ? 0.0
+		return payload + (nativeResultIsInBand(hop) ? 0.0
 			: computeRequestResponseLatency(NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C));
 	}
 

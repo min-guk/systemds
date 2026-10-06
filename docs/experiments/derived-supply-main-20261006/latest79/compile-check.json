@@ -1,0 +1,10 @@
+{
+  "command": [
+    "mvn",
+    "-q",
+    "-Djacoco.skip=true",
+    "test-compile"
+  ],
+  "exitCode": 0,
+  "elapsedSeconds": 64.25124192237854
+}

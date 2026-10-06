@@ -1,0 +1,71 @@
+{
+  "base_commit": "d57bca99d9b5947272113680ce17dbb63ab94aed",
+  "branch": "fix/cost-followup-20261006",
+  "artifact_root": "/home/mchoi/cost-followup-20261006/ctable-followup",
+  "production_sha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "8fd091b371ea719abfb51c26ea85044c8efe8f5a0cc200f4ec6419f6f76c46cc",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "04ecd689d64017d256498fa5db86c693ac8aa677ae0aae47f817c2ca591494fb",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "605bc411442414444f543a504f6b4a5e0764832a92034b6ddc81d710eaca744e"
+  },
+  "changed_test_source_sha256": {
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/CtableInputPreparationCostTest.java": "ea08f7d4d422a2ca5ffa37b64fae96ec94fac4f447e23f2701f4c71144a2ae6f",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactAuxiliaryNativeInputUploadTest.java": "8762cf6f334f8bd763f376424bad08781d71587624733022e7994139a4e15cdd",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCtableMaterializationCostTest.java": "888e3eeeef29426c3b677fe1597db371ca9d2ace8855170caad4eb71699307e7",
+    "src/test/java/org/apache/sysds/runtime/instructions/fed/AuxiliaryStageBatchContractTest.java": "35b0520bcfda74eae78704afe748ec8e2d61a8856659ce59141c51fbaa5b2e94"
+  },
+  "jar_sha256": "394a37580283255106419990846ec78fde4c7ca5a581350ca19199897e1873be",
+  "build": {
+    "status": "PASS",
+    "command": "mvn -q -DskipTests -Djacoco.skip=true package",
+    "final_materialization_test_compiled_afterward": "javac against final target/classes; see materialization-compile.log"
+  },
+  "java": {
+    "classes": 68,
+    "tests": 464,
+    "passed": 463,
+    "failures": 1,
+    "runs": [
+      {
+        "log": "java-final.log",
+        "tests": 460,
+        "passed": 459
+      },
+      {
+        "log": "materialization-final.log",
+        "tests": 4,
+        "passed": 4
+      }
+    ],
+    "new_this_round": 17,
+    "new_this_round_passed": 17,
+    "preexisting_failure": "FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding: EXACT_VE_FACTOR_CELL_OVERFLOW",
+    "baseline_failure_evidence_reused": "../root-baseline/steplm-current-base.log"
+  },
+  "negative_controls": {
+    "initial_ctable_preparation": "baseline/ctable-preparation-red.log: 4 of 5 failed before fix",
+    "review_quantities": "baseline/ctable-review-red.log: 2 of 7 failed before singleton/response-count correction",
+    "base_ctable_materialization": "baseline/ctable-materialization-red.log: 3 of 4 fail due to missing secondary GET; CP-demand control passes"
+  },
+  "docker": {
+    "entrypoint": "scripts/fedplanner/run_LAN_docker.sh --function-boundary-compare",
+    "cases": 28,
+    "passed": 28,
+    "scope": "DP compile/lowering; no distributed training runtime or latency measurement",
+    "receipt": "docker/results/B/runs.json"
+  },
+  "resolved": [
+    "CTABLE DIRECT_FOUT secondary cold GET uses existing creation/activation ownership",
+    "CTABLE secondary and nonaligned/local weights PUT priced on every invocation",
+    "Retained input aliases share GET while distinct MatrixObjects do not",
+    "T=1,2,10 preserves one GET and scales invocation cost",
+    "Auxiliary covariance stages no longer suppress native-local ROW weights PUT",
+    "CTABLE singleton slice memory and per-input dimension response counts corrected"
+  ],
+  "unchanged_boundaries": [
+    "Candidate/privacy/runtime rules unchanged",
+    "No selected CTABLE relocation or native-FOUT witness in inspected fixtures; no claim of validating dormant post-slice runtime branch",
+    "Cache eviction and unknown geometry remain existing cost-model assumptions",
+    "Existing StepLM factor-cell overflow remains"
+  ],
+  "diff_check": "PASS"
+}

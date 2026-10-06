@@ -51,10 +51,16 @@ public class NativeResultBatchOwnershipCostTest {
 	}
 
 	@Test
-	public void alignedCovarianceRetainsItsExistingAdditionalStageEstimate() {
+	public void alignedCovarianceReturnsOneScalarPerWorkerInsideTheMainBatch() {
 		BinaryOp covariance = new BinaryOp("cov", DataType.SCALAR, ValueType.FP64,
 			OpOp2.COV, matrix("X"), matrix("Y"));
-		assertSeparateBatch(covariance, List.of(FType.ROW, FType.ROW));
+		List<FType> types = List.of(FType.ROW, FType.ROW);
+		double expected = FederatedCostModel.computeDownloadNetworkCost(BYTES, FType.PART, WORKERS)
+			- FederatedCostModel.computeRequestResponseLatency();
+		Assert.assertEquals(expected, FederatedCostModel.computeNativeFederatedLoutResultCost(
+			covariance, types, FType.ROW, BYTES, WORKERS), 1e-12);
+		Assert.assertEquals(expected, FederatedCostModel.computeNativeFederatedLoutResultCost(
+			covariance, types, new WorkerResponseSummary(BYTES, BYTES / WORKERS, WORKERS)), 1e-12);
 	}
 
 	@Test

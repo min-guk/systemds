@@ -37,11 +37,15 @@ import java.util.function.Consumer;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
@@ -1502,12 +1506,14 @@ public final class ExactPhysicalCostModel {
 								== ExactPhysicalNativeSupplyRepresentation.SupplyActionKind.NATIVE_LOCAL);
 					boolean runtimeCollect = false;
 					if(!cp && (PlacementCostSemantics.isWdivmmMatrixOperand(consumerHop, edge.inputPosition())
-						|| edge.inputPosition() == 3 && PlacementCostSemantics.hasWdivmmEpsilon(consumerHop))) {
+						|| edge.inputPosition() == 3 && PlacementCostSemantics.hasWdivmmEpsilon(consumerHop)
+						|| PlacementCostSemantics.isCtableMatrixInput(consumerHop, edge.inputPosition()))) {
 						var layout = executionLayouts.computeIfAbsent(selected, a -> executionLayout(analysis, a,
 							executionFType(a), executionWorkerCount(analysis, a, workers,
 								physicalWorkerCounts, executionCounts), inputLayouts));
 						runtimeCollect = PlacementCostSemantics.wdivmmInputNeedsCollection(
-							consumerHop, layout, edge.inputPosition());
+							consumerHop, layout, edge.inputPosition())
+							|| PlacementCostSemantics.ctableInputNeedsCollection(consumerHop, layout, edge.inputPosition());
 						if(relocation && runtimeCollect) {
 							var action = (RelocationAction)relocationSupply.action();
 							var key = new Key(Direction.DOWNLOAD, action.key().materializationFType(),
@@ -2725,14 +2731,8 @@ public final class ExactPhysicalCostModel {
 				executionFType, targetWorkers);
 		List<FType> inputFTypes = target.orderedInputs().stream()
 			.map(input -> input.present() ? input.fType() : null).toList();
-		FederatedCostModel.MixedFedLocalCost mixed =
-			PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
-				edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
-				0.0, // This projection prices transfers only; kernel work is prepared once per occurrence.
-				effectiveOutputBytes(analysis, sparseAssignments,
-					edge.consumer(), consumerHop), targetWorkers);
 		double cost;
-		if(mixed.hasInputPreparation())
+		if(FederatedCostModel.modelsNativeInputUpload(consumerHop, inputFTypes, edge.inputPosition()))
 			cost = 0.0;
 		else if(fusedInputPreparationBytes >= 0.0)
 			cost = FederatedCostModel.computeInBandUploadPayloadCost(
@@ -2976,6 +2976,14 @@ public final class ExactPhysicalCostModel {
 
 	private static FType nativeLocalInputTransferType(Hop consumer, Hop input,
 		FType executionFType) {
+		// Covariance's scalar result shape does not describe the rows sent as local
+		// counterparts/weights. ROW execution slices these matrix inputs by worker.
+		if(executionFType == FType.ROW
+			&& (consumer instanceof BinaryOp binary
+				&& binary.getOp() == OpOp2.COV
+				|| consumer instanceof TernaryOp ternary
+					&& ternary.getOp() == OpOp3.COV))
+			return FType.ROW;
 		// ROW/COL runtime instructions can sliced-broadcast an equally shaped matrix, so
 		// total payload is one logical input. Shape-broadcast operands and FULL/PART worker
 		// branches use a replicated broadcast to every participating worker.
@@ -3179,10 +3187,8 @@ public final class ExactPhysicalCostModel {
 				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
 				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers, layout);
 		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
-		double auxiliaryNetwork = executionWeight * PlacementCostSemantics.analysisAwareAuxiliaryNetworkCost(
-			analysis, key, inputFTypes, outputBytes, workers);
 		double fedCost = requireCost(fedCompute + fedInstructionLatency
-			+ fedInputPreparation + auxiliaryNetwork, "EXACT_FED_COST_UNPROVEN");
+			+ fedInputPreparation, "EXACT_FED_COST_UNPROVEN");
 
 		double resultDownloadUnit = responses != null
 			&& !(hop instanceof org.apache.sysds.hops.AggUnaryOp)

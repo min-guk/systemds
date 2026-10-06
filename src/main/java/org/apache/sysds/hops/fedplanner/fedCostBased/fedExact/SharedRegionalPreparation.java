@@ -9,6 +9,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
@@ -42,6 +43,10 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	private long fastBlockOrderAccepted;
 	private long fastBlockOrderFallbacks;
 	private long maximumFastBlockOrderAssignments;
+	private long originalDomainValues;
+	private long supportedDomainValues;
+	private long unsupportedBoundaryBatches;
+	private long unsupportedBoundaryValues;
 	private String lastFallbackReason;
 
 	/** One entry per source factor: cache cells can never exceed root input cells. */
@@ -107,6 +112,38 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			scopes.add(scope);
 		}
 		cache = new Conditioned[scopes.size()];
+	}
+
+	@Override
+	public int[][] unconditionalDomains(List<Variable> originalVariables) {
+		if(originalVariables.size() != problem.decisionCount())
+			throw new IllegalArgumentException("REGIONAL_SHARED_DECISION_COUNT_MISMATCH");
+		for(int i = 0; i < originalVariables.size(); i++)
+			if(originalVariables.get(i) != problem.variables().get(i))
+				throw new IllegalArgumentException("REGIONAL_SHARED_VARIABLE_IDENTITY_MISMATCH");
+		try {
+			initialize();
+		}
+		catch(IllegalArgumentException failure) {
+			if(!RegionalSearchProblem.isResourceLimit(failure))
+				throw failure;
+			fallbacks++;
+			return null;
+		}
+		// The root uses only this immutable problem's factors, never a repair boundary.
+		// A quotient alias is still supported; do not confuse it with a removed value.
+		int[][] domains = new int[originalVariables.size()][];
+		originalDomainValues = 0L;
+		supportedDomainValues = 0L;
+		for(int i = 0; i < domains.length; i++) {
+			int original = i;
+			int size = originalVariables.get(i).domainSize();
+			domains[i] = java.util.stream.IntStream.range(0, size)
+				.filter(value -> root.reducedValue(original, value) >= 0).toArray();
+			originalDomainValues += size;
+			supportedDomainValues += domains[i].length;
+		}
+		return domains;
 	}
 
 	@Override
@@ -195,6 +232,25 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 					}
 			}
 		}
+		// Validate every boundary before building any conditioned table. Expansion
+		// always restarts from the unconditional root, not a previously pruned slice.
+		int[] fixedValues = new int[decisions];
+		Arrays.fill(fixedValues, -1);
+		LinkedHashSet<Integer> unsupported = new LinkedHashSet<>();
+		for(int factor = 0; factor < selected.length; factor++)
+			if(selected[factor])
+				for(int variable : scopes.get(factor))
+					if(!free[variable] && fixedValues[variable] < 0) {
+						fixedValues[variable] = root.reducedValue(variable, assignment[variable]);
+						if(fixedValues[variable] < 0)
+							unsupported.add(variable);
+					}
+		if(!unsupported.isEmpty()) {
+			unsupportedBoundaryBatches++;
+			unsupportedBoundaryValues += unsupported.size();
+			throw new LocalCategoricalOptimizer.UnsupportedBoundaryException(
+				unsupported.stream().mapToInt(Integer::intValue).sorted().toArray());
+		}
 		List<Integer> indexes = new ArrayList<>();
 		for(int original : block)
 			indexes.add(original);
@@ -213,18 +269,9 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			boolean allFree = true;
 			for(int i = 0; i < scope.length; i++) {
 				int variable = scope[i];
-				boundary[i] = free[variable] ? -1 : root.reducedValue(variable, assignment[variable]);
-				if(!free[variable]) {
+				boundary[i] = free[variable] ? -1 : fixedValues[variable];
+				if(!free[variable])
 					allFree = false;
-					if(boundary[i] < 0) {
-						// A hard-repair intermediate can use an unsupported original value.
-						// Preserve the old conditional repair/expansion semantics in that case.
-						fallbacks++;
-						lastFallbackReason = "UNSUPPORTED_INCUMBENT_BOUNDARY";
-						conditionNanos += System.nanoTime() - conditionStarted;
-						return null;
-					}
-				}
 			}
 			Factor source = root.factors().get(factor);
 			if(allFree) {
@@ -245,6 +292,8 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		conditionNanos += System.nanoTime() - conditionStarted;
 		LocalCategoricalOptimizer.PreparedBlockSolver solver;
 		if(compact) {
+			// This additional reduction is conditional and belongs only to this solver.
+			// Neither its domains nor its quotient are written back into the root/cache.
 			ExactPhysicalReducedSolver.Prepared prepared = ExactPhysicalReducedSolver.prepareCompacted(
 				block.length, variables, factors, solveLimits, orderPolicy, "local-shared-compact");
 			recordOrder(prepared.orderCompilation());
@@ -423,6 +472,11 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 					+ " blocks=" + blocks + " unchangedTables=" + unchangedTables
 					+ " conditionedTableBuilds=" + tableBuilds + " conditionedTableHits=" + cacheHits
 					+ " resourceOrUnsupportedBoundaryFallbacks=" + fallbacks
+					+ " originalDomainValues=" + originalDomainValues
+					+ " supportedDomainValues=" + supportedDomainValues
+					+ " unconditionalValuesRemoved=" + (originalDomainValues - supportedDomainValues)
+					+ " unsupportedBoundaryBatches=" + unsupportedBoundaryBatches
+					+ " unsupportedBoundaryValues=" + unsupportedBoundaryValues
 					+ " fastOrderConfigured=" + orderPolicy.fastOrder()
 					+ " fastOrderAssignmentsLimit=" + orderPolicy.maximumAssignments()
 					+ " fastOrderSource=" + orderPolicy.source()

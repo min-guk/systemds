@@ -63,9 +63,9 @@ public class ExactNativeResultBatchCostTest {
 			hop -> hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV,
 			true, false, Arrays.asList(FType.ROW, null));
 	}
-	@Test public void alignedCovarianceRetainsItsAuxiliaryStageEstimate() throws Exception {
+	@Test public void alignedCovarianceMainResultSharesExecutionBatch() throws Exception {
 		assertResult("C=cov(X,X);Y=matrix(C,rows=1,cols=1);",
-			hop -> hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV, false);
+			hop -> hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV, true);
 	}
 
 	@Test public void exactIndexSliceGetsOnlyItsOverlappingWorkerResponse() throws Exception {
@@ -118,8 +118,11 @@ public class ExactNativeResultBatchCostTest {
 		Method result = projection.getClass().getDeclaredMethod("resultDownloadCost");
 		result.setAccessible(true);
 		double actual = (double)result.invoke(projection);
+		boolean alignedCovariance = hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV
+			&& inputs.get(0) != null && inputs.get(1) != null;
 		double expected = FederatedCostModel.computeDownloadNetworkCost(
-			FederatedCostModel.getEffectiveUploadMemEstimate(hop), exactSlice ? FType.FULL : FType.ROW, exactSlice ? 1 : 3);
+			FederatedCostModel.getEffectiveUploadMemEstimate(hop),
+			alignedCovariance ? FType.PART : exactSlice ? FType.FULL : FType.ROW, exactSlice ? 1 : 3);
 		if(inBand) expected -= FederatedCostModel.computeRequestResponseLatency();
 		Assert.assertEquals("Production projection must own exactly the runtime's additional GET batches",
 			expected, actual, 1e-9);

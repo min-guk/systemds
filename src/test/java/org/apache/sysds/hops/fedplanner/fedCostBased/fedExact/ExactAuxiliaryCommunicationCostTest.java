@@ -30,23 +30,20 @@ import org.junit.Test;
 public class ExactAuxiliaryCommunicationCostTest {
 	@Test public void reshapeChargesMetadataAndExecutionPerInvocation() throws Exception {
 		assertDispatch("Y=matrix(X,rows=10,cols=10);print(sum(Y));",
-			h -> h instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.RESHAPE, 2, 0);
+			h -> h instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.RESHAPE);
 	}
 
 	@Test public void ordinaryTransposeStillChargesOneExecutionBatch() throws Exception {
 		assertDispatch("Y=t(X);print(sum(Y));",
-			h -> h instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS, 1, 0);
+			h -> h instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS);
 	}
 
-	@Test public void alignedCovarianceChargesTwoMeanPayloadsAndTheUnownedBatch() throws Exception {
-		// Base execute + generic result term already account for two batches. The
-		// execution component must own exactly one additional batch and two means.
+	@Test public void alignedCovarianceChargesItsFullAuxiliaryStagesExactlyOnce() throws Exception {
 		assertDispatch("Y=cov(X,X);print(Y);",
-			h -> h instanceof BinaryOp binary && binary.getOp() == OpOp2.COV, 2, 2);
+			h -> h instanceof BinaryOp binary && binary.getOp() == OpOp2.COV);
 	}
 
-	private static void assertDispatch(String expression, Predicate<Hop> match,
-		int executionBatches, int scalarPayloads) throws Exception {
+	private static void assertDispatch(String expression, Predicate<Hop> match) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			"X=rand(rows=100,cols=1,seed=7);" + expression, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
@@ -72,12 +69,12 @@ public class ExactAuxiliaryCommunicationCostTest {
 		Object projection = project.invoke(null, analysis, sparse, key, hop, types, FType.ROW, workers, frequency);
 		Method unary = projection.getClass().getDeclaredMethod("fedUnaryCost");
 		unary.setAccessible(true);
-		Method payload = FederatedCostModel.class.getDeclaredMethod(
-			"computeReplicatedWorkerResultDownloadCost", double.class, int.class);
-		payload.setAccessible(true);
-		double expected = frequency * (compute + executionBatches * FederatedCostModel.computeRequestResponseLatency()
-			+ scalarPayloads * (double) payload.invoke(null, 8.0, workers));
-		Assert.assertEquals("Actual production cost must follow the runtime batch count and invocation count",
+		double outputBytes = sparse.memEstimate(key);
+		var mixed = PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis, key,
+			hop.getInput(), types, FType.ROW, 0, outputBytes, workers, layout);
+		double expected = frequency * (compute + FederatedCostModel.computeRequestResponseLatency()
+			+ mixed.getInputPreparationCost());
+		Assert.assertEquals("Actual production cost must own every auxiliary stage exactly once",
 			expected, (double) unary.invoke(projection), 1e-9);
 	}
 }

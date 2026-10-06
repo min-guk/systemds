@@ -1,0 +1,83 @@
+{
+  "allPlanningPassed": true,
+  "campaignExitCode": 0,
+  "conclusion": "Adopted repair-only reuse preserves all measured workload outcomes and work counters. Its repair reduction is proven by focused regression, but these eight representative cases show no work-count reduction; no latency improvement is claimed.",
+  "focusedRegressionEvidence": {
+    "contract": "preserves full-domain seed while restricting later repair and unsupported-value callbacks",
+    "resultPath": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/validation/regression-result.json",
+    "suite": "86 classes / 645 tests, exit 0",
+    "test": "LocalCategoricalOptimizerTest.sharedSupportRestrictsRepairWithoutChangingSeedOrDroppingEquivalentValues"
+  },
+  "implementation": "repair-only-reuse-preserving-seed",
+  "incrementalTerminalParity": {
+    "assignments": true,
+    "clusters": true,
+    "improvements": true,
+    "internalDecisions": true,
+    "lower": true,
+    "merges": true,
+    "phase": true,
+    "relativeGap": true,
+    "resourceRejected": true,
+    "retainedSlots": true,
+    "upper": true
+  },
+  "latencyClaim": false,
+  "localCounterParity": {
+    "blockAssignments": true,
+    "blockExpansions": true,
+    "conflictBlocks": true,
+    "factorizedCompilations": true,
+    "factorizedSolves": true,
+    "factorwiseAssignments": true,
+    "factorwiseSkips": true,
+    "initialConflicts": true,
+    "localBlocks": true,
+    "localImprovements": true,
+    "localRevisits": true,
+    "maxBlockAssignments": true,
+    "maxBlockVariables": true,
+    "prunedRepresentatives": true,
+    "rawStates": true,
+    "retainedStates": true
+  },
+  "rejectedTrialArchive": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/seed-reduced-rejected/measurement",
+  "representativeWorkCount": {
+    "rawLocalAlternativesA": 757506,
+    "rawLocalAlternativesB": 757506,
+    "repairCases": [
+      "steplm_w3",
+      "logreg_w3"
+    ],
+    "result": "no reduction in representative campaign counters",
+    "sampledPreSolveComparableCases": [
+      "steplm_w3",
+      "logreg_w3"
+    ],
+    "sampledPreSolveExactParity": true
+  },
+  "runsComplete": 16,
+  "runsExpected": 16,
+  "runtimeExecuted": false,
+  "sameObjectiveCertificateCases": 8,
+  "sameSelectedStatesCases": 8,
+  "schema": "shared-repair-reuse-final-verdict-v1",
+  "sharedSupport": {
+    "originalDomainValues": 757506,
+    "supportedDomainValues": 748963,
+    "unconditionalValuesRemoved": 8543,
+    "unsupportedBoundaryBatches": 0,
+    "unsupportedBoundaryValues": 0
+  },
+  "terminalPhases": {
+    "RESOURCE": 3,
+    "RESOURCE_INITIAL": 3,
+    "TARGET_REACHED": 2
+  },
+  "traceInterpretation": {
+    "blockAssignmentsMeaning": "solver-reported symbolic/elimination assignment count, not wall-time operations",
+    "rootBuildsMeaning": "shared trace timing relocation; RegionalSearchProblem caches the same mandatory reduced root before incremental optimization",
+    "rootBuildsMovedFrom0To1WithoutRepairCases": 6,
+    "sampledPreSolveMeaning": "first matching phase sample only; compared only when caller matches"
+  }
+}

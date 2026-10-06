@@ -37,6 +37,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
@@ -51,6 +52,7 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
@@ -61,6 +63,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartit
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.lops.MapMultChain.ChainType;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
@@ -188,11 +191,7 @@ public final class PlacementCostSemantics {
 		if(position == 2 && weights.fType() == FType.COL)
 			return alignedAxis(weights, factor, 1, 1) || alignedAxis(weights, factor, 1, 0);
 		if(position == 3 && (weights.fType() == FType.ROW || weights.fType() == FType.COL || weights.fType() == FType.FULL))
-			return weights.ranges().stream().allMatch(w -> {
-				var matches = factor.ranges().stream().filter(f ->
-					w.begin().equals(f.begin()) && w.end().equals(f.end())).toList();
-				return !matches.isEmpty() && matches.stream().allMatch(f -> w.workerId().equals(f.workerId()));
-			});
+			return alignedFull(weights, factor);
 		return false;
 	}
 
@@ -217,6 +216,41 @@ public final class PlacementCostSemantics {
 		InputLayout weights = layout == null || layout.inputs().isEmpty() ? null : layout.inputs().get(0);
 		InputLayout factor = layout == null || position >= layout.inputs().size() ? null : layout.inputs().get(position);
 		return !reusesWdivmmFactor(weights, factor, position, false);
+	}
+
+	/** Ordinary CTABLE operands; ctableexpand's sequence is a compiler marker, not a matrix read. */
+	public static boolean isCtableMatrixInput(Hop hop, int position) {
+		return hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.CTABLE
+			&& !ternary.isSequenceRewriteApplicable(true) && position >= 0 && position < 3
+			&& position < hop.getInput().size() && hop.getInput(position).getDataType().isMatrix();
+	}
+
+	/**
+	 * Mirrors CTABLE's acquireRead/broadcastSliced path. The secondary matrix is
+	 * always read locally; only fully aligned remote weights can be reused in place.
+	 * This is a runtime read demand, not permission to change the input authority.
+	 */
+	public static boolean ctableInputNeedsCollection(Hop hop, FederatedExecutionLayout layout, int position) {
+		if(!isCtableMatrixInput(hop, position) || layout == null || layout.inputs().size() < 2)
+			return false;
+		int primary = layout.inputs().get(0).fType() != null ? 0
+			: layout.inputs().get(1).fType() != null ? 1 : -1;
+		if(primary < 0)
+			return false;
+		if(position < 2)
+			return position != primary;
+		InputLayout anchor = layout.inputs().get(primary);
+		InputLayout weights = layout.inputs().size() > 2 ? layout.inputs().get(2) : null;
+		return weights == null || weights.fType() == null || anchor.fType() == FType.BROADCAST
+			|| !anchor.exactRanges() || !weights.exactRanges() || !alignedFull(anchor, weights);
+	}
+
+	private static boolean alignedFull(InputLayout anchor, InputLayout input) {
+		return anchor.ranges().stream().allMatch(a -> {
+			var matches = input.ranges().stream().filter(i ->
+				a.begin().equals(i.begin()) && a.end().equals(i.end())).toList();
+			return !matches.isEmpty() && matches.stream().allMatch(i -> a.workerId().equals(i.workerId()));
+		});
 	}
 
 	private static boolean alignedAxis(InputLayout weights, InputLayout factor, int axis, int factorAxis) {
@@ -928,22 +962,22 @@ public final class PlacementCostSemantics {
 	public static PreparedExecutionCost prepareExecutionCost(PlacementAnalysis analysis,
 			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key) {
 		return prepareExecutionCost(analysis, sparseAssignments, key,
-			runtimeRemovedIntermediates(analysis));
+			runtimeOwnership(analysis));
 	}
 
 	/** Prepare all occurrence kernels with one shared runtime-ownership analysis. */
 	public static Map<CompiledHopKey,PreparedExecutionCost> prepareExecutionCosts(
 			PlacementAnalysis analysis, ExpectedSparseAssignmentEstimates sparseAssignments) {
-		Set<CompiledHopKey> removed = runtimeRemovedIntermediates(analysis);
+		RuntimeOwnership ownership = runtimeOwnership(analysis);
 		Map<CompiledHopKey,PreparedExecutionCost> costs = new IdentityHashMap<>();
 		for(var node : analysis.graph().nodes())
-			costs.put(node.key(), prepareExecutionCost(analysis, sparseAssignments, node.key(), removed));
+			costs.put(node.key(), prepareExecutionCost(analysis, sparseAssignments, node.key(), ownership));
 		return Collections.unmodifiableMap(costs);
 	}
 
 	private static PreparedExecutionCost prepareExecutionCost(PlacementAnalysis analysis,
 			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key,
-			Set<CompiledHopKey> removed) {
+			RuntimeOwnership ownership) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(key, "key");
 		if(sparseAssignments != null && sparseAssignments.analysis != analysis)
@@ -958,20 +992,28 @@ public final class PlacementCostSemantics {
 			inputs.add(operandQuantity(analysis, sparseAssignments, producer, input));
 		}
 		OperandQuantity output = operandQuantity(analysis, sparseAssignments, key, hop);
-		boolean removedKernel = removed.contains(key);
+		boolean removedKernel = ownership.removed().contains(key);
 		boolean metadata = hop instanceof DataOp && (((DataOp)hop).getOp() == OpOpData.TRANSIENTREAD
 			|| ((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE);
 		boolean zeroExecution = analysis.isDmlFunctionCallBoundary(key) || removedKernel || metadata
 			|| BranchPlacementNormalization.isPlacementAlias(hop);
 		RuntimeWdivmmKernel runtimeWdivmm = zeroExecution ? null
 			: runtimeWdivmmKernel(analysis, sparseAssignments, key, hop, inputs);
+		LocalMMChainKernel runtimeMMChain = zeroExecution ? null : ownership.mmChains().get(key);
 		if(runtimeWdivmm != null && runtimeWdivmm.fusedWeights() != null)
 			output = withKernelDimensions(output, hop,
 				runtimeWdivmm.baseType() == 1 ? runtimeWdivmm.weights().cols() : runtimeWdivmm.weights().rows(),
 				runtimeWdivmm.factors().get(0).cols());
 		double flops = zeroExecution ? 0.0 : runtimeWdivmm != null
-			? runtimeWdivmm.flops() : analysisAwareComputeFlops(analysis, key, hop);
+			? runtimeWdivmm.flops() : runtimeMMChain != null
+				? runtimeMMChain.computeNodes().stream().mapToDouble(node ->
+					analysisAwareComputeFlops(analysis, node,
+						analysis.hop(node).orElseThrow())).sum()
+				: analysisAwareComputeFlops(analysis, key, hop);
 		double inputBytes = runtimeWdivmm != null ? runtimeWdivmm.readBytes()
+			: runtimeMMChain != null ? runtimeMMChain.runtimeInputs().stream().mapToDouble(input ->
+				operandQuantity(analysis, sparseAssignments, input,
+					analysis.hop(input).orElseThrow()).bytes()).sum()
 			: inputs.stream().mapToDouble(OperandQuantity::bytes).sum();
 		double local = zeroExecution ? 0.0 : FederatedCostModel.computeExecutionCost(
 			runtimeWdivmm == null ? hop : null, flops, inputBytes, output.bytes());
@@ -1481,7 +1523,7 @@ public final class PlacementCostSemantics {
 					new LatentWdivmmRuntimeTransferBoundary(edge.producer(), weightedKey, 1)));
 			}
 		}
-		Set<CompiledHopKey> removed = runtimeRemovedIntermediates(analysis);
+		Set<CompiledHopKey> removed = wdivmmRuntimeRemovedIntermediates(analysis);
 		for(var edge : analysis.compiledInputEdgesInCanonicalOrder())
 			if(removed.contains(edge.consumer()))
 				boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
@@ -1715,7 +1757,155 @@ public final class PlacementCostSemantics {
 			runtimeInputFType == FType.COL);
 	}
 
-	private static Set<CompiledHopKey> runtimeRemovedIntermediates(PlacementAnalysis analysis) {
+	private record LocalMMChainKernel(List<CompiledHopKey> runtimeInputs,
+		List<CompiledHopKey> computeNodes, List<CompiledHopKey> fusedIntermediates) {
+		private LocalMMChainKernel {
+			runtimeInputs = List.copyOf(runtimeInputs);
+			computeNodes = List.copyOf(computeNodes);
+			fusedIntermediates = List.copyOf(fusedIntermediates);
+		}
+	}
+
+	private record RuntimeOwnership(Set<CompiledHopKey> removed,
+		Map<CompiledHopKey,LocalMMChainKernel> mmChains) { }
+
+	private static RuntimeOwnership runtimeOwnership(PlacementAnalysis analysis) {
+		Set<CompiledHopKey> removed = wdivmmRuntimeRemovedIntermediates(analysis);
+		Map<CompiledHopKey,LocalMMChainKernel> mmChains = new IdentityHashMap<>();
+		for(var node : analysis.graph().nodes()) {
+			LocalMMChainKernel kernel = localMMChainKernel(analysis, node.key());
+			if(kernel == null)
+				continue;
+			mmChains.put(node.key(), kernel);
+			removed.addAll(exclusivelyFusedMMChainIntermediates(analysis, node.key(), kernel));
+		}
+		return new RuntimeOwnership(removed, mmChains);
+	}
+
+	/**
+	 * A local MMChain is assignment invariant only when every participating planner node
+	 * is CP/LOUT and the runtime inputs have no federated source.  This deliberately
+	 * excludes FED, direct-FOUT, relocation and local-materialization plans: those plans
+	 * retain explicit Lop boundaries and therefore retain their source-kernel costs.
+	 */
+	private static LocalMMChainKernel localMMChainKernel(PlacementAnalysis analysis,
+		CompiledHopKey ownerKey) {
+		Hop hop = analysis.hop(ownerKey).orElse(null);
+		if(!OptimizerUtils.ALLOW_SUM_PRODUCT_REWRITES || !(hop instanceof AggBinaryOp owner)
+			|| !owner.isMatrixMultiply() || owner.getInput().size() != 2
+			|| owner.getInput(1).getDim2() != 1)
+			return null;
+		ChainType runtimeChain = owner.checkMapMultChain();
+		if(runtimeChain == ChainType.NONE)
+			return null;
+		ExactInput transpose = findExactInput(analysis, ownerKey, 0);
+		ExactInput right = findExactInput(analysis, ownerKey, 1);
+		if(transpose == null || right == null || !(transpose.hop() instanceof ReorgOp reorg)
+			|| reorg.getOp() != ReOrgOp.TRANS)
+			return null;
+		ExactInput x = findExactInput(analysis, transpose.key(), 0);
+		if(x == null)
+			return null;
+
+		ChainType chain;
+		ExactInput inner;
+		ExactInput extra = null;
+		List<CompiledHopKey> fused = new ArrayList<>();
+		fused.add(transpose.key());
+		if(right.hop() instanceof AggBinaryOp) {
+			chain = ChainType.XtXv;
+			inner = right;
+		}
+		else if(right.hop() instanceof BinaryOp binary && binary.getOp() == OpOp2.MULT) {
+			chain = ChainType.XtwXv;
+			extra = findExactInput(analysis, right.key(), 0);
+			inner = findExactInput(analysis, right.key(), 1);
+			fused.add(right.key());
+		}
+		else if(right.hop() instanceof BinaryOp binary && binary.getOp() == OpOp2.MINUS) {
+			chain = ChainType.XtXvy;
+			inner = findExactInput(analysis, right.key(), 0);
+			extra = findExactInput(analysis, right.key(), 1);
+			fused.add(right.key());
+		}
+		else
+			return null;
+		if(chain != runtimeChain || inner == null || chain != ChainType.XtXv && extra == null
+			|| !(inner.hop() instanceof AggBinaryOp innerMM)
+			|| !innerMM.isMatrixMultiply())
+			return null;
+		ExactInput innerX = findExactInput(analysis, inner.key(), 0);
+		ExactInput v = findExactInput(analysis, inner.key(), 1);
+		if(innerX == null || v == null || innerX.hop() != x.hop())
+			return null;
+		fused.add(inner.key());
+
+		List<CompiledHopKey> runtimeInputs = new ArrayList<>(List.of(x.key(), x.key(), v.key()));
+		if(extra != null)
+			runtimeInputs.add(extra.key());
+		List<CompiledHopKey> participants = new ArrayList<>(fused);
+		participants.add(ownerKey);
+		if(participants.stream().anyMatch(key -> !onlyLocalLout(analysis, key))
+			|| runtimeInputs.stream().anyMatch(key -> !onlyLocalLout(analysis, key))
+			|| containsFederatedSource(owner))
+			return null;
+		List<CompiledHopKey> computeNodes = new ArrayList<>();
+		computeNodes.add(inner.key());
+		if(chain != ChainType.XtXv)
+			computeNodes.add(right.key());
+		computeNodes.add(ownerKey);
+		return new LocalMMChainKernel(runtimeInputs, computeNodes, fused);
+	}
+
+	private static boolean onlyLocalLout(PlacementAnalysis analysis, CompiledHopKey key) {
+		var node = analysis.graph().node(key).orElse(null);
+		return node != null && !node.legalAlternatives().isEmpty()
+			&& node.legalAlternatives().stream().allMatch(state -> state.execType() == ExecType.CP
+				&& state.output() == FederatedOutput.LOUT);
+	}
+
+	private static boolean containsFederatedSource(Hop root) {
+		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		List<Hop> pending = new ArrayList<>(List.of(root));
+		for(int index = 0; index < pending.size(); index++) {
+			Hop current = pending.get(index);
+			if(!visited.add(current))
+				continue;
+			if(current instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
+				return true;
+			pending.addAll(current.getInput());
+		}
+		return false;
+	}
+
+	private static Set<CompiledHopKey> exclusivelyFusedMMChainIntermediates(
+		PlacementAnalysis analysis, CompiledHopKey owner, LocalMMChainKernel kernel) {
+		Set<CompiledHopKey> fused = Collections.newSetFromMap(new IdentityHashMap<>());
+		fused.addAll(kernel.fusedIntermediates());
+		Map<CompiledHopKey,List<CompiledHopKey>> consumers = new IdentityHashMap<>();
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder())
+			consumers.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge.consumer());
+		Set<CompiledHopKey> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CompiledHopKey intermediate : fused)
+			if(consumers.getOrDefault(intermediate, List.of()).stream()
+				.anyMatch(consumer -> consumer != owner && !fused.contains(consumer)))
+				retained.add(intermediate);
+		List<CompiledHopKey> pending = new ArrayList<>(retained);
+		for(int index = 0; index < pending.size(); index++) {
+			CompiledHopKey retainedNode = pending.get(index);
+			Hop retainedHop = analysis.hop(retainedNode).orElseThrow();
+			for(int position = 0; position < retainedHop.getInput().size(); position++) {
+				CompiledHopKey input = analysis.compiledInputEdge(retainedNode, position)
+					.map(PlacementAnalysis.CompiledInputEdgeFact::producer).orElse(null);
+				if(input != null && fused.contains(input) && retained.add(input))
+					pending.add(input);
+			}
+		}
+		fused.removeAll(retained);
+		return fused;
+	}
+
+	private static Set<CompiledHopKey> wdivmmRuntimeRemovedIntermediates(PlacementAnalysis analysis) {
 		Set<CompiledHopKey> removed = Collections.newSetFromMap(new IdentityHashMap<>());
 		Map<CompiledHopKey,List<CompiledHopKey>> consumers = new IdentityHashMap<>();
 		for(var edge : analysis.compiledInputEdgesInCanonicalOrder())

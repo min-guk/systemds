@@ -1,0 +1,644 @@
+{
+  "classes": 79,
+  "totals": {
+    "tests": 708,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 5
+  },
+  "suites": [
+    {
+      "class": "ExactPhysicalNativeSupplyRepresentationTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.373
+    },
+    {
+      "class": "ExactCompiledSupplySharingTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.566
+    },
+    {
+      "class": "ExactDerivedSupplySharingTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.107
+    },
+    {
+      "class": "ExactStagedSupplyCanonicalCostTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 6.311
+    },
+    {
+      "class": "ExactFunctionAliasGetCostTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 16.533
+    },
+    {
+      "class": "ExactActivationMaterializationCostTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.433
+    },
+    {
+      "class": "ExactCompiledMaterializationScopeTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.804
+    },
+    {
+      "class": "ExactPhysicalSharedSourceEncodingTest",
+      "tests": 25,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.912
+    },
+    {
+      "class": "ExactPhysicalUnaryPreparationTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 9.263
+    },
+    {
+      "class": "DerivedFoutMaterializationAuthorityTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.632
+    },
+    {
+      "class": "JointBoundaryPhysicalModelProofTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 24.671
+    },
+    {
+      "class": "ExactExecutionOwnershipCostTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.281
+    },
+    {
+      "class": "ExactCanonicalCostTraceTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.079
+    },
+    {
+      "class": "ExactNativeLocalAnchorFanoutCostTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.105
+    },
+    {
+      "class": "ExactNativeResultBatchCostTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.425
+    },
+    {
+      "class": "ExactFusedFactorReuseCostTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 7.949
+    },
+    {
+      "class": "ExactFusedKernelLayoutCostTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.129
+    },
+    {
+      "class": "ExactFunctionGetSharingTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.041
+    },
+    {
+      "class": "ExactFunctionAliasActivationEncodingTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.385
+    },
+    {
+      "class": "ExactActivationClassFactorDecompositionTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.201
+    },
+    {
+      "class": "ExactActivationIndependentOracleTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.382
+    },
+    {
+      "class": "ExactPhysicalCostFingerprintPreflightTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.661
+    },
+    {
+      "class": "ExactPhysicalCostFingerprintStreamingTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.085
+    },
+    {
+      "class": "LocalPhysicalOptimizerIncrementalTraceTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.014
+    },
+    {
+      "class": "FederatedPlanLocalCostIntegrationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.413
+    },
+    {
+      "class": "LoopEntryMaterializationTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 17.007
+    },
+    {
+      "class": "LoopEntryCompletePlacementSpaceTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.993
+    },
+    {
+      "class": "CandidateReceiptAssignmentCompletenessTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.523
+    },
+    {
+      "class": "PlacementEmissionTransactionRedTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.889
+    },
+    {
+      "class": "PlannerRuntimePlacementAuditTest",
+      "tests": 79,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.265
+    },
+    {
+      "class": "PrivacyMovementCertificationTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 4,
+      "seconds": 3.603
+    },
+    {
+      "class": "PrefetchCPInstructionPlannerMaterializationTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.338
+    },
+    {
+      "class": "FederationUtilsRefedReuseLayoutTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.369
+    },
+    {
+      "class": "FEDFoutInstructionBroadcastFallbackTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.356
+    },
+    {
+      "class": "FederatedDagExactRefedInputProjectionTest",
+      "tests": 26,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.512
+    },
+    {
+      "class": "OwnedRefedReuseTest",
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.542
+    },
+    {
+      "class": "FederatedSourceCacheIdentityTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.766
+    },
+    {
+      "class": "ExactSharedSourceDefaultRoutingTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.666
+    },
+    {
+      "class": "IndependentCompletePlacementSpaceTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 27.647
+    },
+    {
+      "class": "NativeOutputGeometryTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.012
+    },
+    {
+      "class": "DynamicNativeLayoutCompositionTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.75
+    },
+    {
+      "class": "TransparentCarrierCostAuthorityTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 13.854
+    },
+    {
+      "class": "ExactAuxiliaryCommunicationCostTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.19
+    },
+    {
+      "class": "FederatedAuxiliaryNetworkCostTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.585
+    },
+    {
+      "class": "BranchExitPlacementNormalizationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.602
+    },
+    {
+      "class": "ExactRepeatedFunctionInputFeasibilityTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.894
+    },
+    {
+      "class": "FunctionBoundaryOccurrenceIdentityTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.652
+    },
+    {
+      "class": "PlacementJointInputEnvironmentTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.05
+    },
+    {
+      "class": "PhysicalCandidateRefinementTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.138
+    },
+    {
+      "class": "DirectSupportUnionScheduleTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.215
+    },
+    {
+      "class": "FederatedBranchExitNormalizerTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.589
+    },
+    {
+      "class": "ReorgFEDInstructionFullTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.645
+    },
+    {
+      "class": "ExactCategoricalSolverTest",
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.335
+    },
+    {
+      "class": "ExactReductionMemoryTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.629
+    },
+    {
+      "class": "GlobalExactCompletionTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.372
+    },
+    {
+      "class": "IncrementalBoundaryMessageTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.12
+    },
+    {
+      "class": "IncrementalRegionalConfigurationTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.036
+    },
+    {
+      "class": "IncrementalRegionalOptimizerTest",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.574
+    },
+    {
+      "class": "PlannerResourceGuardTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.029
+    },
+    {
+      "class": "SharedRegionalPreparationTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.56
+    },
+    {
+      "class": "NativePlacementContinuityTest",
+      "tests": 79,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "seconds": 0.803
+    },
+    {
+      "class": "ExactDownloadAuthorityAmbiguityRedTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 11.763
+    },
+    {
+      "class": "AuxiliaryFederatedQuantityCostTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.159
+    },
+    {
+      "class": "AuxiliaryFederatedStageCostTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.196
+    },
+    {
+      "class": "CtableInputPreparationCostTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.182
+    },
+    {
+      "class": "NativeResultBatchOwnershipCostTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.153
+    },
+    {
+      "class": "ExactAuxiliaryNativeInputUploadTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.46
+    },
+    {
+      "class": "ExactCtableMaterializationCostTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.729
+    },
+    {
+      "class": "ExactPhysicalDyadicCertificateTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.798
+    },
+    {
+      "class": "ExactPhysicalReducedSolverTest",
+      "tests": 35,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.45
+    },
+    {
+      "class": "LocalCategoricalOptimizerTest",
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.252
+    },
+    {
+      "class": "MMChainCostOwnershipTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.901
+    },
+    {
+      "class": "SharedReductionRepairTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.221
+    },
+    {
+      "class": "SharedRegionalCompactionParityTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.306
+    },
+    {
+      "class": "AggregateAuxiliaryBatchContractTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.44
+    },
+    {
+      "class": "AuxiliaryStageBatchContractTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.528
+    },
+    {
+      "class": "NativeResultBatchContractTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.369
+    },
+    {
+      "class": "CtableFEDInstructionOutputContractTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.153
+    },
+    {
+      "class": "ReshapeFEDInstructionNoFallbackTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.489
+    }
+  ],
+  "problems": []
+}

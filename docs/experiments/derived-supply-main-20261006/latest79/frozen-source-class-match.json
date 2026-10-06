@@ -1,0 +1,26 @@
+{
+  "mainClasses": {
+    "matched": true,
+    "currentFiles": 3770,
+    "frozenFiles": 3770,
+    "mismatches": []
+  },
+  "testClasses": {
+    "matched": true,
+    "currentFiles": 2783,
+    "frozenFiles": 2783,
+    "mismatches": []
+  },
+  "mainSources": {
+    "matched": true,
+    "currentFiles": 1642,
+    "frozenFiles": 1642,
+    "mismatches": []
+  },
+  "testSources": {
+    "matched": true,
+    "currentFiles": 1924,
+    "frozenFiles": 1924,
+    "mismatches": []
+  }
+}

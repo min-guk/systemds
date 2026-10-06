@@ -1,0 +1,227 @@
+{
+  "artifactFileCounts": {
+    "dependencies": 316,
+    "mainClasses": 4333,
+    "mainSources": 1651,
+    "testClasses": 2799,
+    "testSources": 1926
+  },
+  "artifactInventoryDigests": {
+    "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+    "mainClasses": "32f17e390b597bacb0387239ac7479805805b86eb69d5b47556a3c30057e6ba1",
+    "mainSources": "0d0207b2142c1defcbb78dfbc433ad58898ee4e78c8c6af65a8f0b1a24e4e17f",
+    "testClasses": "81989a29d6a6f61b26928685bd13066762a07ffa8c1b3cbe1fc33e21284a54d1",
+    "testSources": "ce1e39e5d525a9be9b29b4107c80cc5f899315747d421ddb9dfaf8c289d4f2d2"
+  },
+  "buildReady": true,
+  "caseTimeoutSeconds": 300,
+  "classPreflightExpected": {
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class": {
+      "hostPath": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "sha256": "9c93a335ed6af20706f515bf5a1df30246c4aca163441baafee01cf34a2aa489",
+      "size": 249150
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class": {
+      "hostPath": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
+      "sha256": "b6bb5a5e59a4633b5fb34b65ae76c26d11f4289c25d65d67a8d379e1f69aa983",
+      "size": 38060
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class": {
+      "hostPath": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
+      "sha256": "3fab1ec1415c6f43f7a520c28aaabe59f332dac26099ab5bd001ac9a1222b6c5",
+      "size": 23286
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class": {
+      "hostPath": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+      "sha256": "725a4acb247c0de1a9b749c1de0d8f527dec57874800eae7a1228142c516b5bd",
+      "size": 606235
+    },
+    "/engine/classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class": {
+      "hostPath": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/main-classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
+      "sha256": "43ea9743c3711f03437190974c45687b7b8a6157cadd13e468f16addcf1d9a4e",
+      "size": 47317
+    },
+    "/engine/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/InvariantFoutSharingDockerProof.class": {
+      "hostPath": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/InvariantFoutSharingDockerProof.class",
+      "kind": "test",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/InvariantFoutSharingDockerProof.class",
+      "sha256": "067198f9e56ed54ab6211aac5931a45c40f1149f0885bd3545a353552cb78930",
+      "size": 1062
+    }
+  },
+  "classes": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/classes",
+  "container": "systemds-joint-boundary-84717fea955b4e32",
+  "containerScriptSha256": "597f0bf98c21c18573205cf76b3a7c378f8307cf9c452f8ebeadab1d0551a982",
+  "containerStage": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2",
+  "debugFedreq": false,
+  "dependencies": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/lib",
+  "dockerArgv": [
+    "docker",
+    "run",
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "none",
+    "--name",
+    "systemds-joint-boundary-84717fea955b4e32",
+    "--cpus",
+    "4",
+    "--memory",
+    "8g",
+    "--user",
+    "10041:5500",
+    "--volume",
+    "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2:/evidence:rw",
+    "--volume",
+    "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/main-classes:/engine/classes:ro",
+    "--volume",
+    "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/test-classes:/engine/test-classes:ro",
+    "--volume",
+    "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e/invariant-fout-sharing-main-r2/frozen-inputs/dependencies:/deps:ro",
+    "--entrypoint",
+    "bash",
+    "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "/evidence/container-run.sh"
+  ],
+  "dryRun": false,
+  "fixtureSha256": {
+    "config": {
+      "sha256": "0593f01a6400b1f69b53f16fa07eaf0df46dc12fe5ec74cbddbf71c4c5f6f0a7"
+    },
+    "joint_branch_upload": {
+      "cp": "6287a82688703593f7f368adebee9872a80f92d40f4fbf7b6ce13f608d8628b8",
+      "fed": "327df812201ec9e9634fd7d3e8aa5637f565a3ff11fa122f4084c2a8ed6ec09d"
+    },
+    "joint_correlated_aa": {
+      "cp": "56fbadb0cbe8b427ccc2b127c261605f803ee3ea70a91b89e054e285055cd55a",
+      "fed": "2243648c4b6e57269ffe0649c4c9461a4b01ec17dceadcb0d7e8acc2cb7ff1b0"
+    },
+    "joint_correlated_bb": {
+      "cp": "9745b2f71a04b6f4a3c175e8bdf8f1199088037e3b2781b2b4d0fc76eb1f23ec",
+      "fed": "e5f26b218024951dfb98352fdc2645f7890c508d1ddf087a1188d9b42785f1d3"
+    },
+    "joint_dynamic_reverse": {
+      "cp": "59ef0d4d266579e5f7f3334379f92aaa8ad87f388c89ac598551482daa371f31",
+      "fed": "a36b1ca86a9f9a22e537a385a591f07a3ead368f03470120f178c8eb97d8274d"
+    },
+    "joint_function_calls": {
+      "cp": "69b708f02aef8f45ad0e91bf2333cce2d65d3604e7c720d18fcf308cb6be4635",
+      "fed": "47ef015019acf1c618fb3d5cd03a33dad70e1f32542ba59d5b991d356f523d08"
+    },
+    "joint_function_private_mix_negative": {
+      "cp": "697a278771554d4d4ff00741c49f0217786ceb29e695945061dd3a93ef18319d",
+      "fed": "502207f53d7aa46326c71efd30bca9b3aef86dc928540ee8cd440ab42c44bb7b"
+    },
+    "joint_independent_ab": {
+      "cp": "3ddbb0035a1bfb6ed582f96ff8dbb5b2ef4685152a63c3598bb2bc84a79998de",
+      "fed": "e710688b11cbc0c933c37e4219dec388c305adbb1d6739260c5d7030c89bb4cc"
+    },
+    "joint_independent_ba": {
+      "cp": "269881b435a2c435cfd33064e02757c7bb887345df38726b1e1adeeebf54f895",
+      "fed": "04d297ee81276e1febf61c7c6cb60848b485bada3b21788df9926af2a3324a96"
+    },
+    "joint_independent_private_ab_negative": {
+      "cp": "3ddbb0035a1bfb6ed582f96ff8dbb5b2ef4685152a63c3598bb2bc84a79998de",
+      "fed": "144078fd1e0d600152453ed6456bc3e646f21e7c78b38b00d1b8ccb87cb99b92"
+    },
+    "joint_loop_toggle": {
+      "cp": "e8640c569f302c320c71505ea66d66da7c38d074afe04eb27ff707357819dfdb",
+      "fed": "a2aa5b7f9b9eae8ff436d0b4915358994d64ddb98e1bb913842449b571ef73b1"
+    },
+    "l2svm_false_m11": {
+      "cp": "005f7055307133ae764b12aa082717b8b78e5fcda983beb3ce6986a72bcc163f",
+      "fed": "7d1a5945cc520f7af5754fd97cd0d729238fd8dce859562f17dc7d9d4ab80372"
+    },
+    "l2svm_protected_y_negative": {
+      "cp": "c7b237252716f54f2880d9a0a0ed19a77a14930f5665d79245582f63c07bf9d9",
+      "fed": "58107d66c60ea3c65050565dacf176181a5792d7ba81eec62cab3ebb5437e4f6"
+    },
+    "l2svm_true_01": {
+      "cp": "77762c1e688acdaf7fe66afa4f39dc506a1a283fd71f1ab51c000192df9da549",
+      "fed": "0b4af5aa62e35ad4d4b7d78b2e21c6b5a594c868d4ef64acc2c901408e1fe503"
+    }
+  },
+  "frozenClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r2/frozen-inputs/main-classes",
+  "frozenDependencies": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r2/frozen-inputs/dependencies",
+  "frozenMainSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r2/frozen-inputs/main-sources",
+  "frozenTestClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r2/frozen-inputs/test-classes",
+  "frozenTestSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r2/frozen-inputs/test-sources",
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "inputSha256": {
+    "data/A1.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A1_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/A2.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A2_PUBLIC.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B1.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B1_PUBLIC.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B2.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B2_PUBLIC.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/X.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/X_BOTTOM.csv": "6d0920fbf85d3ed4712d7d3ac0cb65e24e8944c567db59fd579deec548e4aa78",
+    "data/X_BOTTOM.csv.mtd": "c07353a18ae428b61b41bc1b9ba600d9e6b458dd013e6f602cf91bd0579fcc7e",
+    "data/X_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/X_TOP.csv": "7284c84ca7a704a9d24fba576ba33104dfc5cf04a2f850ed6160cf5c85d6e412",
+    "data/X_TOP.csv.mtd": "c07353a18ae428b61b41bc1b9ba600d9e6b458dd013e6f602cf91bd0579fcc7e",
+    "data/Y_PROTECTED.csv": "5848a0f003469527d09ccc5f5d9483bd2f0372a890cc7425f2b6d0f7e5243c72",
+    "data/Y_PROTECTED.csv.mtd": "0096dd9082c1fa21ead09d5b5a1da8f34124bead31f6c093355681bc04ceec5f",
+    "data/Y_PROTECTED_PUBLIC.csv": "5848a0f003469527d09ccc5f5d9483bd2f0372a890cc7425f2b6d0f7e5243c72",
+    "data/Y_PROTECTED_PUBLIC.csv.mtd": "985963fe2d731d2dff66344f063bb2953cd47a1c92f61dd144c0e6028e139c43",
+    "data/Y_l2svm_false_m11.csv": "95046ace8827e21017dcd7e1873962e38f0a8a51dc8d1a1cc7f6d2eb5dcf6db7",
+    "data/Y_l2svm_false_m11.csv.mtd": "985963fe2d731d2dff66344f063bb2953cd47a1c92f61dd144c0e6028e139c43",
+    "data/Y_l2svm_false_m11_PUBLIC.csv": "95046ace8827e21017dcd7e1873962e38f0a8a51dc8d1a1cc7f6d2eb5dcf6db7",
+    "data/Y_l2svm_false_m11_PUBLIC.csv.mtd": "985963fe2d731d2dff66344f063bb2953cd47a1c92f61dd144c0e6028e139c43",
+    "data/Y_l2svm_true_01.csv": "5848a0f003469527d09ccc5f5d9483bd2f0372a890cc7425f2b6d0f7e5243c72",
+    "data/Y_l2svm_true_01.csv.mtd": "985963fe2d731d2dff66344f063bb2953cd47a1c92f61dd144c0e6028e139c43",
+    "data/Y_l2svm_true_01_PUBLIC.csv": "5848a0f003469527d09ccc5f5d9483bd2f0372a890cc7425f2b6d0f7e5243c72",
+    "data/Y_l2svm_true_01_PUBLIC.csv.mtd": "985963fe2d731d2dff66344f063bb2953cd47a1c92f61dd144c0e6028e139c43"
+  },
+  "mainSources": "/home/mchoi/w1357-derived-supply-sharing-20261006/src/main/java",
+  "modelProofClass": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.InvariantFoutSharingDockerProof",
+  "network": "none (worker and coordinator use container loopback)",
+  "noFedRuntimeConversion": true,
+  "planner": "COMPILE_COST_BASED",
+  "requestedCases": [
+    "l2svm_true_01",
+    "l2svm_false_m11",
+    "joint_correlated_aa",
+    "joint_correlated_bb",
+    "joint_independent_ab",
+    "joint_independent_ba",
+    "joint_independent_private_ab_negative",
+    "joint_loop_toggle",
+    "joint_function_calls",
+    "joint_dynamic_reverse",
+    "joint_function_private_mix_negative",
+    "joint_branch_upload",
+    "l2svm_protected_y_negative"
+  ],
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r2",
+  "schema": "systemds-joint-boundary-e2e-input-v1",
+  "sourceSha256": {
+    "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+    "runner": "837a09e293d8c1761801989ee149d00f6fcd892f688a81e83603261c9ed70885"
+  },
+  "testClasses": "/home/mchoi/w1357-derived-supply-sharing-20261006/target/test-classes",
+  "testSources": "/home/mchoi/w1357-derived-supply-sharing-20261006/src/test/java"
+}

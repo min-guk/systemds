@@ -84,6 +84,146 @@ public class LocalCategoricalOptimizerTest {
 	}
 
 	@Test
+	public void sharedSupportRestrictsRepairWithoutChangingSeedOrDroppingEquivalentValues() {
+		for(boolean compact : new boolean[] {false, true}) {
+			Variable x = new Variable("supported-x", 4);
+			Variable y = new Variable("supported-y", 3);
+			Variable free = new Variable("supported-free", 2);
+			List<Variable> variables = List.of(x, y, free);
+			List<Factor> hard = List.of(
+				Factor.dense(List.of(y), Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, 0d),
+				Factor.lazy(List.of(x, y), v -> (v[0] % 2 == 1 && v[1] == 2)
+					|| (v[0] % 2 == 0 && v[1] == 0) ? 0d : Double.POSITIVE_INFINITY));
+			AtomicInteger impossibleCostEvaluations = new AtomicInteger();
+			List<Factor> cost = List.of(Factor.lazy(List.of(x), v -> {
+				if(v[0] % 2 == 0)
+					impossibleCostEvaluations.incrementAndGet();
+				return v[0] % 2;
+			}), Factor.dense(List.of(free), 0d, 2d));
+			List<Factor> factors = new ArrayList<>(hard);
+			factors.addAll(cost);
+			RegionalSearchProblem problem = RegionalSearchProblem.generic(variables, factors);
+			var root = problem.reducedRoot(ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			Assert.assertEquals(root.reducedValue(0, 1), root.reducedValue(0, 3));
+			var oracle = ExactCategoricalSolver.solve(variables, factors,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			SharedRegionalPreparation shared = new SharedRegionalPreparation(problem,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS, compact);
+			impossibleCostEvaluations.set(0);
+			// A method reference exposes preparation without the shared-domain API.
+			var broader = LocalCategoricalOptimizer.optimize(
+				variables, hard, cost, variables, List.of(List.of(x, free)), ignored -> List.of(),
+				(v, value) -> value, 0, compact, shared::prepare);
+			int broaderImpossibleEvaluations = impossibleCostEvaluations.get();
+			impossibleCostEvaluations.set(0);
+
+			LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+				variables, hard, cost, variables, List.of(List.of(x, free)), ignored -> List.of(),
+				(v, value) -> value, 0, compact, shared);
+
+			Assert.assertEquals(oracle.objective(), result.objective(), 0d);
+			Assert.assertEquals(List.of(1, 2, 0), result.assignmentInVariableOrder());
+			Assert.assertEquals(broader.assignmentInVariableOrder(), result.assignmentInVariableOrder());
+			Assert.assertArrayEquals(new int[] {1, 3}, shared.unconditionalDomains(variables)[0]);
+			Assert.assertEquals("preserve the original greedy seed search", 9L,
+				result.statistics().rawLocalAlternatives());
+			Assert.assertEquals("only the seed may evaluate unsupported x=0 and x=2", 2,
+				impossibleCostEvaluations.get());
+			Assert.assertTrue(broaderImpossibleEvaluations > impossibleCostEvaluations.get());
+			Assert.assertTrue("shared support should avoid unnecessary block assignments",
+				result.statistics().blockAssignments() < broader.statistics().blockAssignments());
+			Assert.assertEquals(broader.statistics().initialHardViolations(),
+				result.statistics().initialHardViolations());
+			Assert.assertTrue(result.statistics().initialHardViolations() > 0);
+		}
+	}
+
+	@Test
+	public void originalFactorRetryKeepsSharedSupportAndProjectsOriginalValues() {
+		for(boolean compact : new boolean[] {false, true}) {
+			Variable x = new Variable("retry-x", 4);
+			Variable a = new Variable("retry-a", 2);
+			Variable b = new Variable("retry-b", 2);
+			List<Variable> variables = List.of(x, a, b);
+			List<Factor> hard = List.of(
+				Factor.dense(List.of(x), Double.POSITIVE_INFINITY, 0d, Double.POSITIVE_INFINITY, 0d),
+				Factor.lazy(List.of(x, b), v -> (v[0] == 1 && v[1] == 0)
+					|| (v[0] == 3 && v[1] == 1) ? 0d : Double.POSITIVE_INFINITY),
+				Factor.lazy(List.of(a, b), v -> v[0] != v[1] ? 0d : Double.POSITIVE_INFINITY));
+			List<Factor> cost = List.of(Factor.dense(List.of(x), 0d, 0d, 0d, 2d),
+				Factor.dense(List.of(x, a), 0d, 0d, 0d, 10d, 0d, 0d, 0d, 0d));
+			List<Factor> factors = new ArrayList<>(hard);
+			factors.addAll(cost);
+			SharedRegionalPreparation shared = new SharedRegionalPreparation(
+				RegionalSearchProblem.generic(variables, factors),
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS, compact);
+			// Model the existing resource retry: root support remains available, but
+			// the block must be prepared from original factors with smaller domains.
+			LocalCategoricalOptimizer.BlockPreparation retry = new LocalCategoricalOptimizer.BlockPreparation() {
+				@Override
+				public int[][] unconditionalDomains(List<Variable> originals) {
+					return shared.unconditionalDomains(originals);
+				}
+				@Override
+				public LocalCategoricalOptimizer.PreparedBlockSolver prepare(int[] assignment, int[] block) {
+					return null;
+				}
+			};
+			var result = LocalCategoricalOptimizer.optimize(variables, hard, cost, variables,
+				List.of(), ignored -> List.of(), (v, value) -> value, 0, compact, retry);
+			var oracle = ExactCategoricalSolver.solve(variables, factors,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+			Assert.assertEquals(List.of(3, 0, 1), result.assignmentInVariableOrder());
+			Assert.assertEquals(oracle.objective(), result.objective(), 0d);
+			Assert.assertTrue(result.statistics().initialHardViolations() > 0);
+			Assert.assertEquals(0, result.statistics().finalHardViolations());
+		}
+	}
+
+	@Test
+	public void hardRepairReleasesUnsupportedCostBoundaryWithoutCanonicalFallback() {
+		for(boolean compact : new boolean[] {false, true}) {
+			Variable x = new Variable("repair-x", 2);
+			Variable a = new Variable("repair-a", 2);
+			Variable b = new Variable("repair-b", 2);
+			Variable z = new Variable("repair-z", 2);
+			Variable c = new Variable("repair-c", 2);
+			Variable d = new Variable("repair-d", 2);
+			List<Variable> variables = List.of(x, a, b, z, c, d);
+			List<Factor> hard = List.of(
+				Factor.lazy(List.of(x, b), v -> v[0] == v[1] ? 0d : Double.POSITIVE_INFINITY),
+				Factor.lazy(List.of(a, b), v -> v[0] != v[1] ? 0d : Double.POSITIVE_INFINITY),
+				Factor.lazy(List.of(z, d), v -> v[0] == v[1] ? 0d : Double.POSITIVE_INFINITY),
+				Factor.dense(List.of(d), Double.POSITIVE_INFINITY, 0d),
+				Factor.lazy(List.of(c, d), v -> v[0] != v[1] ? 0d : Double.POSITIVE_INFINITY));
+			List<Factor> cost = List.of(
+				Factor.dense(List.of(x, z), 0d, 4d, 2d, 6d),
+				Factor.dense(List.of(x, a), 0d, 10d, 0d, 0d));
+			List<Factor> factors = new ArrayList<>(hard);
+			factors.addAll(cost);
+			SharedRegionalPreparation shared = new SharedRegionalPreparation(
+				RegionalSearchProblem.generic(variables, factors),
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS, compact);
+
+			// The greedy pass creates two hard-conflict components. Repairing x/a/b
+			// sees z=0 through a cost factor, although global support has removed z=0.
+			// Release z and include its hard relationship to d before solving the block.
+			LocalCategoricalOptimizer.Result result = LocalCategoricalOptimizer.optimize(
+				variables, hard, cost, variables, List.of(), ignored -> List.of(),
+				(v, value) -> value, 0, compact, shared);
+			ExactCategoricalSolver.Result oracle = ExactCategoricalSolver.solve(
+				variables, factors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+
+			Assert.assertEquals(List.of(1, 0, 1, 1, 0, 1), result.assignmentInVariableOrder());
+			Assert.assertEquals(oracle.objective(), result.objective(), 0d);
+			Assert.assertTrue(result.statistics().initialHardViolations() > 0);
+			Assert.assertEquals(0, result.statistics().finalHardViolations());
+			Assert.assertTrue(result.statistics().conflictBlockExpansions() > 0);
+			Assert.assertEquals("unsupported boundary discarded shared factorization", 0L, shared.fallbacks());
+		}
+	}
+
+	@Test
 	public void sharedProducerBlockOptimizesProducerAndBothParentsTogether() {
 		Variable x = new Variable("x", 2);
 		Variable a = new Variable("a", 2);
