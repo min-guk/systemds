@@ -656,8 +656,10 @@ public class FederatedPlannerUtils {
 		// fallback is disabled for synthetic anchors.
 		if (hop.getBeginLine() <= 0)
 			return null;
+		String branchKey = hop instanceof DataOp data && data.isPlannerBranchNormalization()
+			? "|branch-exit=" + data.getPlannerBranchNormalizationKey() : "";
 		return hop.getClass().getName() + "|" + op + "|" + hop.getBeginLine() + ":"
-			+ hop.getBeginColumn() + ":" + hop.getEndLine() + ":" + hop.getEndColumn();
+			+ hop.getBeginColumn() + ":" + hop.getEndLine() + ":" + hop.getEndColumn() + branchKey;
 	}
 
 	public static void registerPlannerRecompileState(

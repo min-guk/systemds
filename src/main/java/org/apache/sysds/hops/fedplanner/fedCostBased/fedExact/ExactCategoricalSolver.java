@@ -61,8 +61,12 @@ public final class ExactCategoricalSolver {
 		private Factor(List<Variable> scope, double[] denseValues, CostFunction evaluator,
 			boolean copyDenseValues) {
 			this.scope = List.copyOf(Objects.requireNonNull(scope, "scope"));
-			this.denseValues = denseValues == null || !copyDenseValues
-				? denseValues : denseValues.clone();
+			if(denseValues != null && copyDenseValues) {
+				this.denseValues = PlannerResourceGuard.allocateDoubles(denseValues.length, "factor-copy");
+				System.arraycopy(denseValues, 0, this.denseValues, 0, denseValues.length);
+			}
+			else
+				this.denseValues = denseValues;
 			this.evaluator = evaluator;
 			if((denseValues == null) == (evaluator == null))
 				throw new IllegalArgumentException("EXACT_VE_FACTOR_REPRESENTATION_INVALID");
@@ -167,12 +171,16 @@ public final class ExactCategoricalSolver {
 			// copying every dense table once more between materialization and reduction.
 			domains = definition.domains;
 			scopes = definition.scopes;
-			values = factors.stream().map(factor -> factor.values).toList();
+			values = new ArrayList<>(factors.size());
+			for(DenseFactor factor : factors)
+				values.add(factor.values);
 		}
 
 		int domainSize(int variable) { return domains[variable]; }
 		int[] scope(int factor) { return scopes.get(factor); }
 		double[] values(int factor) { return values.get(factor); }
+		/** After support/quotient analysis, transfer each table to its reduced replacement. */
+		double[] takeValues(int factor) { return values.set(factor, null); }
 		int factorCount() { return scopes.size(); }
 	}
 
@@ -281,7 +289,7 @@ public final class ExactCategoricalSolver {
 				if(candidate.compareTo(minima[value]) < 0)
 					minima[value] = candidate;
 			}
-			double[] result = new double[minima.length];
+			double[] result = PlannerResourceGuard.allocateDoubles(minima.length, "exact-numeric");
 			for(int value = 0; value < result.length; value++)
 				result[value] = minima[value].rounded();
 			return result;
@@ -311,6 +319,14 @@ public final class ExactCategoricalSolver {
 			if(!variables.equals(allVariables))
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_VARIABLE_UNIVERSE_MISMATCH");
 			decodeInto(assignment);
+		}
+
+		double valueForAssignment(int[] assignment, List<Variable> allVariables) {
+			if(assignment == null || assignment.length != variables.size())
+				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_ASSIGNMENT_SIZE_INVALID");
+			if(!variables.equals(allVariables))
+				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_VARIABLE_UNIVERSE_MISMATCH");
+			return value(assignment).rounded();
 		}
 
 		private void decodeInto(int[] assignment) {
@@ -420,6 +436,23 @@ public final class ExactCategoricalSolver {
 			maximumAssignments, "EXACT_VE_FAST_ORDER_WORK_INVALID");
 	}
 
+	/**
+	 * Selects the ordinary exact portfolio order subject to a caller's per-step
+	 * elimination-work limit. A lower-memory order that exceeds the work limit must
+	 * not hide another exact portfolio order that fits both declared budgets.
+	 */
+	static CompiledProblem compileWithinMaximumEliminationAssignments(
+		List<Variable> variables, List<Factor> factors, Limits limits,
+		long maximumEliminationAssignments) {
+		if(maximumEliminationAssignments <= 0)
+			throw new IllegalArgumentException("EXACT_VE_ASSIGNMENT_LIMIT_INVALID|value="
+				+ maximumEliminationAssignments);
+		InputDefinition input = validateInputs(variables,factors,limits);
+		Plan selected = minimumMaterializationPlan(input.variables,input.domains,input.scopes,
+			null,limits,maximumEliminationAssignments);
+		return new CompiledProblem(prepare(input,limits,selected),factors);
+	}
+
 	private static OrderCompilation compileWithFastOrder(List<Variable> variables,
 		List<Factor> factors, Limits limits, boolean fastOrder, long maximumAssignments,
 		String invalidLimit) {
@@ -496,7 +529,8 @@ public final class ExactCategoricalSolver {
 		int cells = 1;
 		for(Variable variable : factor.scope)
 			cells = Math.multiplyExact(cells, variable.domainSize());
-		double[] values = new double[cells];
+		PlannerResourceGuard.checkAdditionalCells(cells, "freeze-lazy-factor");
+		double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
 		int[] local = new int[factor.scope.size()];
 		int[] domains = factor.scope.stream().mapToInt(Variable::domainSize).toArray();
 		for(int cell = 0; cell < cells; cell++) {
@@ -515,6 +549,22 @@ public final class ExactCategoricalSolver {
 	static BoundaryMessage boundaryLeaf(List<Variable> allVariables, Factor factor,
 		Limits limits) {
 		return boundaryLeaves(allVariables, List.of(factor), limits).get(0);
+	}
+
+	/**
+	 * Additional Regional numeric storage owned by one leaf. Source-owned dense
+	 * tables are borrowed and remain governed by the exact input limits; this is
+	 * not an estimate or cap for total JVM/model memory. Lazy tables allocate
+	 * solve-local arrays and therefore report their full frozen size.
+	 */
+	static long boundaryLeafRetainedCells(Factor factor) {
+		Objects.requireNonNull(factor, "factor");
+		if(factor.denseValues != null)
+			return 0L;
+		long cells = 1L;
+		for(Variable variable : factor.scope)
+			cells = saturatedMultiply(cells, variable.domainSize());
+		return cells;
 	}
 
 	static List<BoundaryMessage> boundaryLeaves(List<Variable> allVariables,
@@ -538,15 +588,16 @@ public final class ExactCategoricalSolver {
 		List<DenseFactor> denseFactors = materializeInputs(input, factors);
 		List<BoundaryMessage> leaves = new ArrayList<>(factors.size());
 		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
+			Factor factor = factors.get(factorIndex);
 			DenseFactor dense = denseFactors.get(factorIndex);
 			for(double value : dense.values)
 				if(value < 0d)
 					throw new IllegalArgumentException(
 						"INCREMENTAL_MESSAGE_COST_INVALID|value=" + value);
 			leaves.add(new BoundaryMessage(input.variables, input.domains,
-				factors.get(factorIndex).scope, input.scopes.get(factorIndex), dense.values,
+				factor.scope, input.scopes.get(factorIndex), dense.values,
 				null, dense.values, List.of(), null, null,
-				dense.values.length, dense.values.length));
+				boundaryLeafRetainedCells(factor), dense.values.length));
 		}
 		return List.copyOf(leaves);
 	}
@@ -590,19 +641,39 @@ public final class ExactCategoricalSolver {
 
 	static BoundaryMessage mergeBoundary(List<BoundaryMessage> inputMessages,
 		List<Variable> outputBoundary, Limits limits, long maximumAssignments) {
-		return mergeBoundary(inputMessages, outputBoundary, limits, maximumAssignments, null);
+		if(maximumAssignments <= 0)
+			throw incrementalResource("merge", "assignment-limit", maximumAssignments);
+		return mergeBoundaryInternal(inputMessages, outputBoundary, limits, maximumAssignments, null);
 	}
 
 	static BoundaryMessage mergeBoundary(List<BoundaryMessage> inputMessages,
 		List<Variable> outputBoundary, Limits limits, long maximumAssignments,
+		BoundaryMergeCounters counters) {
+		if(maximumAssignments <= 0)
+			throw incrementalResource("merge", "assignment-limit", maximumAssignments);
+		return mergeBoundaryInternal(inputMessages, outputBoundary, limits, maximumAssignments, counters);
+	}
+
+	/** Production merging has no elapsed-time or assignment-count cutoff. */
+	static BoundaryMessage mergeBoundary(List<BoundaryMessage> inputMessages,
+		List<Variable> outputBoundary, Limits limits) {
+		return mergeBoundaryInternal(inputMessages, outputBoundary, limits, null, null);
+	}
+
+	/** Production merging with optional pruning diagnostics and no fixed work cutoff. */
+	static BoundaryMessage mergeBoundary(List<BoundaryMessage> inputMessages,
+		List<Variable> outputBoundary, Limits limits, BoundaryMergeCounters counters) {
+		return mergeBoundaryInternal(inputMessages, outputBoundary, limits, null, counters);
+	}
+
+	private static BoundaryMessage mergeBoundaryInternal(List<BoundaryMessage> inputMessages,
+		List<Variable> outputBoundary, Limits limits, Long maximumAssignments,
 		BoundaryMergeCounters counters) {
 		Objects.requireNonNull(inputMessages, "inputMessages");
 		Objects.requireNonNull(outputBoundary, "outputBoundary");
 		Objects.requireNonNull(limits, "limits");
 		if(inputMessages.isEmpty())
 			throw new IllegalArgumentException("INCREMENTAL_MESSAGE_INPUT_EMPTY");
-		if(maximumAssignments <= 0)
-			throw incrementalResource("merge", "assignment-limit", maximumAssignments);
 		BoundaryMessage first = Objects.requireNonNull(inputMessages.get(0), "input message");
 		long combinedLength = 0L;
 		for(BoundaryMessage message : inputMessages) {
@@ -650,7 +721,7 @@ public final class ExactCategoricalSolver {
 		long outputCells = boundaryCells(outputScope, first.domains, "merge", "output-cells");
 		long internalCells = boundaryCells(internalScope, first.domains,
 			"merge", "internal-cells");
-		if(unionCells > maximumAssignments)
+		if(maximumAssignments != null && unionCells > maximumAssignments)
 			throw incrementalResource("merge", "assignments", unionCells);
 		if(outputCells > limits.maximumFactorCells())
 			throw incrementalResource("merge", "factor-cells", outputCells);
@@ -662,12 +733,16 @@ public final class ExactCategoricalSolver {
 		boolean localPrefixCuts = PruningAblation.current().local();
 		boolean localCostCut = localPrefixCuts && inputMessages.size() > 1 && internalCells > 1
 			&& exactNonnegativeBoundarySum(inputMessages);
+		// Three double arrays and one int backpointer array; borrowed inputs are
+		// already reflected in the JVM's used heap, not charged a second time.
+		PlannerResourceGuard.checkAdditionalBytes(outputCells * (3L * Double.BYTES + Integer.BYTES),
+			"regional-merge");
 
 		int cells = (int)outputCells;
-		double[] values = new double[cells];
-		double[] lowValues = new double[cells];
-		double[] lowerValues = new double[cells];
-		int[] choices = new int[cells];
+		double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
+		double[] lowValues = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
+		double[] lowerValues = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
+		int[] choices = PlannerResourceGuard.allocateInts(cells, "exact-backpointer");
 		Arrays.fill(choices, -1);
 		int[] assignment = new int[first.variables.size()];
 		int[] outputLocal = new int[outputScope.length];
@@ -689,8 +764,7 @@ public final class ExactCategoricalSolver {
 				boolean cut = false;
 				// Both infinities are absorbing; no unread child can restore feasibility.
 				if(localPrefixCuts && inputMessages.size() > 1
-					&& candidate.high == Double.POSITIVE_INFINITY
-					&& candidateLower == Double.POSITIVE_INFINITY) {
+					&& absorbingBoundaryInfinity(candidate.high, candidateLower)) {
 					if(counters != null)
 						counters.infeasibleCuts++;
 					continue;
@@ -713,8 +787,7 @@ public final class ExactCategoricalSolver {
 					// Apply the same absorbing-infinity and exact nonnegative-prefix proofs
 					// after each canonical child, but only when a suffix remains unread.
 					if(localPrefixCuts && messageIndex + 1 < inputMessages.size()
-						&& candidate.high == Double.POSITIVE_INFINITY
-						&& candidateLower == Double.POSITIVE_INFINITY) {
+						&& absorbingBoundaryInfinity(candidate.high, candidateLower)) {
 						if(counters != null)
 							counters.infeasibleCuts++;
 						cut = true;
@@ -777,6 +850,12 @@ public final class ExactCategoricalSolver {
 		long childEvaluations() { return childEvaluations; }
 		long infeasibleCuts() { return infeasibleCuts; }
 		long costCuts() { return costCuts; }
+	}
+
+	/** Both exact cost and lower bound are absorbing; later nonnegative terms cannot change either. */
+	static boolean absorbingBoundaryInfinity(double exactCost, double lowerBound) {
+		return exactCost == Double.POSITIVE_INFINITY
+			&& lowerBound == Double.POSITIVE_INFINITY;
 	}
 
 	private static Result solve(Prepared prepared, List<Factor> factors,
@@ -852,10 +931,12 @@ public final class ExactCategoricalSolver {
 					+ " indexedCandidates=" + ((long)outputCells * domain
 						- finiteRows.forbiddenCells * (outputCells / finiteRows.rowCount))
 					+ " bitmapWords=" + finiteRows.forbidden.length);
-			double[] output = new double[outputCells];
+			PlannerResourceGuard.checkAdditionalBytes((long)outputCells * (Double.BYTES + Integer.BYTES),
+				"exact-elimination-output");
+			double[] output = PlannerResourceGuard.allocateDoubles(outputCells, "exact-numeric");
 			double[] outputLow = null;
 			long[] outputTie = null;
-			int[] choices = new int[outputCells];
+			int[] choices = PlannerResourceGuard.allocateInts(outputCells, "exact-backpointer");
 			int[] separatorValues = new int[step.separator.length];
 			for(int cell = 0; cell < outputCells; cell++) {
 				decode(cell, step.separator, prepared.domains, separatorValues, global);
@@ -892,13 +973,17 @@ public final class ExactCategoricalSolver {
 				}
 				output[cell] = best.high;
 				if(best.low != 0d) {
-					if(outputLow == null)
-						outputLow = new double[outputCells];
+					if(outputLow == null) {
+						PlannerResourceGuard.checkAdditionalCells(outputCells, "exact-elimination-low");
+						outputLow = PlannerResourceGuard.allocateDoubles(outputCells, "exact-numeric");
+					}
 					outputLow[cell] = best.low;
 				}
 				if(best.tieCost != 0L) {
-					if(outputTie == null)
-						outputTie = new long[outputCells];
+					if(outputTie == null) {
+						PlannerResourceGuard.checkAdditionalCells(outputCells, "exact-elimination-tie");
+						outputTie = PlannerResourceGuard.allocateLongs(outputCells, "exact-tie");
+					}
 					outputTie[cell] = best.tieCost;
 				}
 				choices[cell] = bestValue;
@@ -1078,9 +1163,11 @@ public final class ExactCategoricalSolver {
 			// This is a representation crossover, never a search/candidate limit.
 			// Boxed hash entries cost much more than a dense high/low/choice slot.
 			if(minima.size() >= Math.max(64, outputCells / 16)) {
-				high = new double[outputCells];
+				PlannerResourceGuard.checkAdditionalBytes((long)outputCells * (Double.BYTES + Integer.BYTES),
+					"exact-sparse-dense-conversion");
+				high = PlannerResourceGuard.allocateDoubles(outputCells, "exact-numeric");
 				Arrays.fill(high, Double.POSITIVE_INFINITY);
-				choices = new int[outputCells];
+				choices = PlannerResourceGuard.allocateInts(outputCells, "exact-backpointer");
 				for(Map.Entry<Integer,SparseMinimum> entry : minima.entrySet())
 					store(entry.getKey(), entry.getValue().cost, entry.getValue().choice);
 				finiteOutputs = minima.size();
@@ -1090,8 +1177,10 @@ public final class ExactCategoricalSolver {
 
 		private void store(int cell, PreciseCost cost, int value) {
 			high[cell] = cost.high;
-			if(low == null && cost.low != 0d)
-				low = new double[high.length];
+			if(low == null && cost.low != 0d) {
+				PlannerResourceGuard.checkAdditionalCells(high.length, "exact-sparse-low");
+				low = PlannerResourceGuard.allocateDoubles(high.length, "exact-numeric");
+			}
 			if(low != null)
 				low[cell] = cost.low != 0d ? cost.low : 0d;
 			choices[cell] = value;
@@ -1100,9 +1189,11 @@ public final class ExactCategoricalSolver {
 		private SparseStep finish(Step step, int[] domains) {
 			int[] sparseCells = null;
 			if(high == null) {
+				PlannerResourceGuard.checkAdditionalBytes((long)minima.size() * (Double.BYTES + 2L * Integer.BYTES),
+					"exact-sparse-output");
 				int[] cells = minima.keySet().stream().mapToInt(Integer::intValue).sorted().toArray();
-				high = new double[cells.length];
-				choices = new int[cells.length];
+				high = PlannerResourceGuard.allocateDoubles(cells.length, "exact-numeric");
+				choices = PlannerResourceGuard.allocateInts(cells.length, "exact-backpointer");
 				for(int index = 0; index < cells.length; index++) {
 					SparseMinimum minimum = minima.get(cells[index]);
 					store(index, minimum.cost, minimum.choice);
@@ -1246,9 +1337,9 @@ public final class ExactCategoricalSolver {
 		Backpointer backpointer, int outputCells, int[] domains) {
 		if(observer == null)
 			return;
-		double[] high = new double[outputCells];
-		double[] low = new double[outputCells];
-		int[] choices = new int[outputCells];
+		double[] high = PlannerResourceGuard.allocateDoubles(outputCells, "exact-numeric");
+		double[] low = PlannerResourceGuard.allocateDoubles(outputCells, "exact-numeric");
+		int[] choices = PlannerResourceGuard.allocateInts(outputCells, "exact-backpointer");
 		int[] global = new int[domains.length];
 		int[] local = new int[factor.scope.length];
 		for(int cell = 0; cell < outputCells; cell++) {
@@ -1410,18 +1501,29 @@ public final class ExactCategoricalSolver {
 	 */
 	private static Plan minimumMaterializationPlan(List<Variable> variables, int[] domains,
 		List<int[]> initialScopes) {
-		return minimumMaterializationPlan(variables, domains, initialScopes, null);
+		return minimumMaterializationPlan(variables, domains, initialScopes, null, null,
+			Long.MAX_VALUE);
 	}
 
 	private static Plan minimumMaterializationPlan(List<Variable> variables, int[] domains,
 		List<int[]> initialScopes, ScoredPlan precomputed) {
+		return minimumMaterializationPlan(variables,domains,initialScopes,precomputed,null,
+			Long.MAX_VALUE);
+	}
+
+	private static Plan minimumMaterializationPlan(List<Variable> variables, int[] domains,
+		List<int[]> initialScopes, ScoredPlan precomputed, Limits limits,
+		long maximumEliminationAssignments) {
 		List<PlanOrdering> orderings = List.of(
 			PlanOrdering.MIN_FILL,
 			PlanOrdering.MIN_SEPARATOR_CELLS,
 			PlanOrdering.MIN_ELIMINATION_ASSIGNMENTS,
 			PlanOrdering.MIN_DEGREE);
 		StringBuilder diagnostic = FederatedPlannerTrace.isEnabled() ? new StringBuilder() : null;
+		InputDefinition boundedInput = limits == null ? null : new InputDefinition(variables,domains,
+			initialScopes,inputCells(initialScopes,domains),maximumInputCells(initialScopes,domains));
 		ScoredPlan best = null;
+		ScoredPlan ordinaryBest = null;
 		for(int priority = 0; priority < orderings.size(); priority++) {
 			ScoredPlan candidate;
 			if(precomputed != null && precomputed.priority == priority)
@@ -1435,10 +1537,22 @@ public final class ExactCategoricalSolver {
 					diagnostic.append("; ");
 				diagnostic.append(orderings.get(priority)).append(':').append(candidate.metrics);
 			}
-			if(best == null || compare(candidate, best) < 0)
+			if(ordinaryBest == null || compare(candidate,ordinaryBest) < 0)
+				ordinaryBest = candidate;
+			boolean eligible = candidate.metrics.maximumEliminationAssignments
+				<= maximumEliminationAssignments
+				&& (limits == null || planFitsLimits(boundedInput,candidate.metrics,limits));
+			if(eligible && (best == null || compare(candidate, best) < 0))
 				best = candidate;
 		}
-		Objects.requireNonNull(best, "best elimination plan");
+		if(best == null) {
+			Objects.requireNonNull(ordinaryBest,"best elimination plan");
+			if(limits != null && !planFitsLimits(boundedInput,ordinaryBest.metrics,limits))
+				prepare(boundedInput,limits,ordinaryBest.plan);
+			throw new IllegalArgumentException("EXACT_VE_ASSIGNMENT_LIMIT_EXCEEDED"
+				+ "|assignments=" + ordinaryBest.metrics.maximumEliminationAssignments
+				+ "|limit=" + maximumEliminationAssignments);
+		}
 		if(diagnostic != null) {
 			// A single receipt binds all already-computed candidates to the selected
 			// ordering. Input cells are separate: PlanMetrics counts intermediate tables.
@@ -1457,6 +1571,20 @@ public final class ExactCategoricalSolver {
 					+ " selectedPriority=" + best.priority);
 		}
 		return best.plan;
+	}
+
+	private static long inputCells(List<int[]> scopes, int[] domains) {
+		long cells = 0L;
+		for(int[] scope : scopes)
+			cells = saturatedAdd(cells,saturatedCells(scope,domains));
+		return cells;
+	}
+
+	private static long maximumInputCells(List<int[]> scopes, int[] domains) {
+		long maximum = 0L;
+		for(int[] scope : scopes)
+			maximum = Math.max(maximum,saturatedCells(scope,domains));
+		return maximum;
 	}
 
 	private static int compare(ScoredPlan left, ScoredPlan right) {
@@ -1666,6 +1794,7 @@ public final class ExactCategoricalSolver {
 		List<DenseFactor> converted = new ArrayList<>(factors.size());
 		ExactDyadicCosts maximum = ExactDyadicCosts.ofWords(0, 0);
 		for(DenseFactor factor : factors) {
+			PlannerResourceGuard.checkAdditionalCells(factor.values.length, "exact-dyadic-input");
 			double[] high = new double[factor.values.length];
 			double[] low = null;
 			ExactDyadicCosts factorMaximum = ExactDyadicCosts.ofWords(0, 0);
@@ -1679,8 +1808,10 @@ public final class ExactCategoricalSolver {
 					Double.doubleToRawLongBits(value), certificate.q());
 				high[cell] = exact.highWord();
 				if(exact.lowWord() != 0L) {
-					if(low == null)
-						low = new double[high.length];
+					if(low == null) {
+						PlannerResourceGuard.checkAdditionalCells(high.length, "exact-dyadic-low");
+						low = PlannerResourceGuard.allocateDoubles(high.length, "exact-numeric");
+					}
 					low[cell] = exact.lowWord();
 				}
 				if(exact.compareTo(factorMaximum) > 0)

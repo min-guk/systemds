@@ -1,0 +1,24 @@
+{
+  "productionSourceManifestUnchanged": true,
+  "jarSha256": "1d8955a9949e6e14515f1e295851180037a222eda09e772f3eb8d66942ee591a",
+  "scope": "compile-only diagnostics before physical emission; no production changes",
+  "glmWitness": {
+    "selectedMs": 46212.5216437004,
+    "feasibleMs": 21977.116964792665,
+    "hardFactors": 3458,
+    "hardViolations": 0,
+    "stop": "RESOURCE_INITIAL"
+  },
+  "l2svm": {
+    "selectedCurrentMs": 9014.97937972805,
+    "sameCostWithoutNormalizerMs": 7198.293375716696,
+    "oldCoarseConditionalExactMs": 27412.4503941931,
+    "pinnedMatchedStates": 191,
+    "freeNewCarriers": 4,
+    "conditionalHardCost": 0,
+    "conditionalStop": "EXACT",
+    "unrestrictedLowerMs": 3358.0472706272108,
+    "unrestrictedStop": "RESOURCE",
+    "globalOptimumProven": false
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "case": "glm_w1",
+  "selectedObjectiveMillis": 20956.641086880732,
+  "knownFeasibleWitnessMillis": 21977.116964792665,
+  "compileStatus": "passed",
+  "coreStateChanges": [
+    {
+      "index": 758,
+      "origin": "983:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp",
+      "before": "FED/LOUT/BROADCAST/SHAPE_DEPENDENT",
+      "after": "FED/LOUT/FULL/SHAPE_DEPENDENT"
+    },
+    {
+      "index": 759,
+      "origin": "983:35:org.apache.sysds.hops.ReorgOp:r(r'):compiler-temp",
+      "before": "FED/FOUT/FULL/SHAPE_INDEPENDENT",
+      "after": "CP/LOUT/-/SHAPE_INDEPENDENT"
+    },
+    {
+      "index": 760,
+      "origin": "983:35:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp",
+      "before": "FED/FOUT/FULL/SHAPE_DEPENDENT",
+      "after": "CP/LOUT/-/SHAPE_INDEPENDENT"
+    },
+    {
+      "index": 762,
+      "origin": "983:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp",
+      "before": "FED/FOUT/FULL/SHAPE_DEPENDENT",
+      "after": "FED/LOUT/FULL/SHAPE_DEPENDENT"
+    }
+  ],
+  "checkpoints": [
+    "[PlannerTrace][DP-IncrementalRegional] phase=RESOURCE_COVER merges=10311 clusters=12303 lower=12645.745247722609 upper=46202.63157607475 relativeGap=2.6536108130436573 elapsedNanos=7560857918 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=71990814 assignments=366978679 retainedSlots=7986400 improvements=1 resourceRejected=6584 internalDecisions=51 conditionalAttempts=0 conditionalImprovements=0 plannerElapsedNanos=137392848811 separateGlobalCalls=0 scope=encoded-model",
+    "[PlannerTrace][DP-IncrementalRegional] phase=CONDITIONAL merges=10311 clusters=0 lower=12645.745247722609 upper=46202.63157607475 relativeGap=2.6536108130436573 elapsedNanos=8124327373 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=71990814 assignments=366978679 retainedSlots=0 improvements=1 resourceRejected=6584 internalDecisions=51 conditionalAttempts=1 conditionalImprovements=0 plannerElapsedNanos=137956320239 separateGlobalCalls=0 scope=encoded-model",
+    "[PlannerTrace][DP-IncrementalRegional] phase=CONDITIONAL merges=10311 clusters=0 lower=12645.745247722609 upper=21967.226897167024 relativeGap=0.7371239469752198 elapsedNanos=8599982658 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=100485012 assignments=366978679 retainedSlots=0 improvements=2 resourceRejected=6584 internalDecisions=51 conditionalAttempts=2 conditionalImprovements=1 plannerElapsedNanos=138431973851 separateGlobalCalls=0 scope=encoded-model",
+    "[PlannerTrace][DP-IncrementalRegional] phase=CONDITIONAL merges=10311 clusters=0 lower=12645.745247722609 upper=21967.226897167024 relativeGap=0.7371239469752198 elapsedNanos=8967423525 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=100485012 assignments=366978679 retainedSlots=0 improvements=2 resourceRejected=6584 internalDecisions=51 conditionalAttempts=3 conditionalImprovements=1 plannerElapsedNanos=138799416862 separateGlobalCalls=0 scope=encoded-model",
+    "[PlannerTrace][DP-IncrementalRegional] phase=CONDITIONAL merges=10311 clusters=0 lower=12645.745247722609 upper=21714.135694380733 relativeGap=0.7171100056986572 elapsedNanos=9476431308 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=124907119 assignments=366978679 retainedSlots=0 improvements=3 resourceRejected=6584 internalDecisions=51 conditionalAttempts=4 conditionalImprovements=2 plannerElapsedNanos=139308422972 separateGlobalCalls=0 scope=encoded-model",
+    "[PlannerTrace][DP-IncrementalRegional] phase=CONDITIONAL merges=10311 clusters=0 lower=12645.745247722609 upper=20956.641086880732 relativeGap=0.6572088616647443 elapsedNanos=10032421253 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=153565934 assignments=366978679 retainedSlots=0 improvements=4 resourceRejected=6584 internalDecisions=51 conditionalAttempts=5 conditionalImprovements=3 plannerElapsedNanos=139864412506 separateGlobalCalls=0 scope=encoded-model",
+    "[PlannerTrace][DP-IncrementalRegional] phase=RESOURCE merges=10311 clusters=0 lower=12645.745247722609 upper=20956.641086880732 relativeGap=0.6572088616647443 elapsedNanos=10032516000 dpNanos=2927085823 scoringNanos=3576097624 validationNanos=153565934 assignments=366978679 retainedSlots=0 improvements=4 resourceRejected=6584 internalDecisions=51 conditionalAttempts=5 conditionalImprovements=3 plannerElapsedNanos=139864503887 separateGlobalCalls=0 scope=encoded-model"
+  ]
+}

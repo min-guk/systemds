@@ -1,0 +1,14 @@
+[
+  "bash",
+  "scripts/fedplanner/run_LAN_docker.sh",
+  "--function-boundary-compare",
+  "--artifact-root",
+  "/home/mchoi/fedplanner-search-boundary-fix-20261006/all14",
+  "--variant",
+  "B",
+  "--cases",
+  "glm_w1",
+  "l2svm_w3",
+  "--jobs",
+  "2"
+]

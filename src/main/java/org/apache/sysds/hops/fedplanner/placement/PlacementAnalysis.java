@@ -4504,6 +4504,25 @@ public final class PlacementAnalysis {
 		return facts.get(0);
 	}
 
+	/** Resolves one call occurrence when equal actual/formal identities occur at multiple call sites. */
+	public LogicalFunctionInputFact requireExactLogicalFunctionInput(CompiledHopKey sourceArgument,
+		CompiledHopKey boundary, CompiledHopKey targetRead, int callInputPosition, int logicalPosition) {
+		Objects.requireNonNull(boundary, "boundary");
+		Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>> byRead =
+			logicalFunctionInputsByIdentity.get(Objects.requireNonNull(sourceArgument, "sourceArgument"));
+		Map<Integer,List<LogicalFunctionInputFact>> byPosition = byRead == null ? null
+			: byRead.get(Objects.requireNonNull(targetRead, "targetRead"));
+		List<LogicalFunctionInputFact> facts = byPosition == null ? null : byPosition.get(logicalPosition);
+		List<LogicalFunctionInputFact> matches = facts == null ? List.of() : facts.stream()
+			.filter(fact -> fact.boundary().equals(boundary)
+				&& fact.callInputPosition() == callInputPosition)
+			.toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException(
+				"Exact logical function input occurrence is missing or ambiguous");
+		return matches.get(0);
+	}
+
 	/**
 	 * Resolves the physical DML {@link FunctionOp} input that carries one exact logical
 	 * caller-argument/formal binding. Matrix and frame arguments additionally require the frozen
@@ -4514,7 +4533,8 @@ public final class PlacementAnalysis {
 	public CompiledHopKey requireExactPhysicalFunctionInputConsumer(LogicalFunctionInputFact supplied) {
 		Objects.requireNonNull(supplied, "logical function input fact");
 		LogicalFunctionInputFact fact = requireExactLogicalFunctionInput(
-			supplied.sourceArgument(), supplied.targetRead(), supplied.logicalPosition());
+			supplied.sourceArgument(), supplied.boundary(), supplied.targetRead(),
+			supplied.callInputPosition(), supplied.logicalPosition());
 		if(fact != supplied)
 			throw new IllegalArgumentException("Logical function input fact is not analysis-owned");
 		List<Constraint> owners = graph.constraints().stream().filter(constraint ->

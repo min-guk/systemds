@@ -1017,8 +1017,15 @@ final class ExactPhysicalModel {
 		}
 		for(var input : analysis.logicalFunctionInputsInCanonicalOrder()) {
 			Node source = analysis.graph().node(input.sourceArgument()).orElseThrow();
-			incoming.computeIfAbsent(input.targetRead(), ignored -> new ArrayList<>())
-				.add(new Link(source, input.targetRead(), input.logicalPosition(),
+			List<Link> links = incoming.computeIfAbsent(input.targetRead(), ignored -> new ArrayList<>());
+			// One compiled formal is shared by every invocation. Repeated calls with the
+			// same immutable actual therefore prove the same static placement authority;
+			// call frequency and lifetime remain occurrence-specific in the boundary facts.
+			boolean alreadyLinked = links.stream().anyMatch(link ->
+				link.kind == LinkKind.LOGICAL_FUNCTION && link.sourceNode == source
+					&& link.position == input.logicalPosition());
+			if(!alreadyLinked)
+				links.add(new Link(source, input.targetRead(), input.logicalPosition(),
 					LinkKind.LOGICAL_FUNCTION));
 		}
 		return incoming;

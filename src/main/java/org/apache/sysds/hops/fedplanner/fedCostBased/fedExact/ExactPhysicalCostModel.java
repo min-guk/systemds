@@ -1208,6 +1208,8 @@ public final class ExactPhysicalCostModel {
 			String physicalEmissionIdentity, int targetWorkers, double bytes) { }
 		record CreationScope(CompiledHopKey origin,
 			OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact profile, long contextOrdinal) { }
+		record AliasCreation(CreationScope creation,
+			OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact activationProfile) { }
 		record DownloadKey(CreationScope creation, InputLayout layout, String privateIdentity, double unit) { }
 		record DownloadGroup(ExactPhysicalModel.DecisionDomain representative,
 			List<ActivationDemand> demands, List<PhysicalTransferEndpoint> endpoints) { }
@@ -1397,7 +1399,22 @@ public final class ExactPhysicalCostModel {
 					// REFED's cached worker payload is published through a fresh MatrixObject
 					// alias in this read's block. Its subsequent GET cannot inherit the
 					// original value's longer lifetime; same-emission consumers still union.
-					var aliasCreation = new CreationScope(origin, readProfile, readProfile.contextOrdinal());
+					var aliasCreations = new ArrayList<AliasCreation>();
+					for(RuntimeMaterializationSource source : creationSources) {
+						var profiles = exactOccurrenceProfiles(frequencies, source.occurrence());
+						var aliasProfile = materializationCreationProfile(profiles,
+							readProfile.contextOrdinal(), callerContexts, source,
+							functionOutputs.calleeContextsByBoundary());
+						if(aliasProfile != null) {
+							var creationScope = new CreationScope(source.occurrence(), aliasProfile,
+								aliasProfile.contextOrdinal());
+							var activationProfile = guardedCreationProfile(frequencies, source,
+								aliasProfile, readProfile.contextOrdinal());
+							if(activationProfile != null) {
+								aliasCreations.add(new AliasCreation(creationScope, activationProfile));
+							}
+						}
+					}
 					if(creationSources.size() == 1 && key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT) {
 						CompiledHopKey candidate = creationSources.get(0).occurrence();
 						var profiles = exactOccurrenceProfiles(frequencies, candidate);
@@ -1407,15 +1424,13 @@ public final class ExactPhysicalCostModel {
 							&& profiles.size() == 1)
 							matched = profiles.get(0);
 						if(matched != null) { origin = candidate; sourceProfile = matched; }
-						var aliasProfile = materializationCreationProfile(profiles,
-							readProfile.contextOrdinal(), callerContexts, creationSources.get(0),
-							functionOutputs.calleeContextsByBoundary());
-						if(aliasProfile != null)
-							aliasCreation = new CreationScope(candidate, aliasProfile, aliasProfile.contextOrdinal());
 					}
 					var creation = new CreationScope(origin, sourceProfile, readProfile.contextOrdinal());
 					// Fresh outputs retain the existing lifetime calculation. Only proven
 					// retained aliases use the ancestor object's activation and creation cap.
+					boolean transparentAliasSources = creationSources.size() == 1
+						|| creationSources.size() > 1 && creationSources.stream()
+							.allMatch(source -> !source.reachabilityGuards().isEmpty());
 					java.util.function.Function<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact,
 						List<ActivationDemand>> activationsForCreation = profile -> {
 						List<ActivationDemand> activations = new ArrayList<>();
@@ -1441,7 +1456,8 @@ public final class ExactPhysicalCostModel {
 						return activations;
 					};
 					if(sourceDownload) {
-						Map<DownloadKey,boolean[]> observations = new LinkedHashMap<>();
+						Map<DownloadKey,Map<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact,
+							boolean[]>> observations = new LinkedHashMap<>();
 						for(int value = 0; value < activeSource.length; value++) {
 							if(!activeSource[value]) continue;
 							var selected = producer.alternatives().get(value);
@@ -1451,7 +1467,8 @@ public final class ExactPhysicalCostModel {
 							// the same retained MatrixObject across its initializer, TWrite/TRead
 							// aliases and function formals. Fresh relocation/derived outputs and
 							// runtime-relocated boundaries retain a private identity.
-							boolean alias = creationSources.size() == 1
+							boolean alias = transparentAliasSources
+								&& aliasCreations.size() == creationSources.size()
 								&& key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT
 								&& layout.exactRanges() && !layout.ranges().isEmpty()
 								&& selected.state().execType() == ExecType.FED && selected.relocationAction() == null
@@ -1462,18 +1479,26 @@ public final class ExactPhysicalCostModel {
 							// Function arguments retain the caller's MatrixObject and its local
 							// cache. Charge a proven alias in that object's creation context,
 							// while fresh/relocated outputs keep their read-context discriminator.
-							var downloadCreation = alias ? aliasCreation : creation;
-							var observation = new DownloadKey(downloadCreation, layout, privateIdentity, unitPrices[value]);
-							observations.computeIfAbsent(observation, ignored -> new boolean[activeSource.length])[value] = true;
+							List<AliasCreation> downloadCreations = alias ? aliasCreations
+								: List.of(new AliasCreation(creation, creation.profile()));
+							for(AliasCreation downloadCreation : downloadCreations) {
+								var observation = new DownloadKey(downloadCreation.creation(), layout,
+									privateIdentity, unitPrices[value]);
+								observations.computeIfAbsent(observation, ignored -> new LinkedHashMap<>())
+									.computeIfAbsent(downloadCreation.activationProfile(),
+										ignored -> new boolean[activeSource.length])[value] = true;
+							}
 						}
 						for(var observation : observations.entrySet()) {
 							var group = downloads.computeIfAbsent(observation.getKey(), ignored ->
 								new DownloadGroup(producer, new ArrayList<>(), new ArrayList<>()));
-							for(var activation : activationsForCreation.apply(observation.getKey().creation().profile())) {
-								List<ExactCategoricalSolver.Variable> vars = new ArrayList<>(activation.variables());
-								List<boolean[]> masks = new ArrayList<>(activation.observations());
-								vars.add(producer.variable()); masks.add(observation.getValue());
-								group.demands().add(new ActivationDemand(vars, masks, activation.event()));
+							for(var activationObservation : observation.getValue().entrySet()) {
+								for(var activation : activationsForCreation.apply(activationObservation.getKey())) {
+									List<ExactCategoricalSolver.Variable> vars = new ArrayList<>(activation.variables());
+									List<boolean[]> masks = new ArrayList<>(activation.observations());
+									vars.add(producer.variable()); masks.add(activationObservation.getValue());
+									group.demands().add(new ActivationDemand(vars, masks, activation.event()));
+								}
 							}
 							for(var demand : demands)
 								if(!group.endpoints().contains(demand.edge())) group.endpoints().add(demand.edge());
@@ -1530,6 +1555,41 @@ public final class ExactPhysicalCostModel {
 		return null;
 	}
 
+	/**
+	 * Keep the lifetime of the object that owns the cache, while retaining the branch
+	 * predicates under which a transparent carrier selected that object at the join.
+	 */
+	private static OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact guardedCreationProfile(
+		OccurrenceExecutionFrequencyFacts frequencies, RuntimeMaterializationSource source,
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact creation, long readContext) {
+		double expected = creation.expectedExecutions();
+		Set<Long> creationLoops = creation.loopContext().stream().map(Pair::getLeft)
+			.collect(java.util.stream.Collectors.toSet());
+		Map<String,OccurrenceExecutionFrequencyFacts.BranchActivationFact> conditions =
+			new LinkedHashMap<>();
+		for(var condition : creation.activationConditions())
+			conditions.put(condition.decisionKey(), condition);
+		for(CompiledHopKey guard : source.reachabilityGuards()) {
+			List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> profiles =
+				exactOccurrenceProfiles(frequencies, guard);
+			var profile = profiles.stream().filter(candidate ->
+				candidate.contextOrdinal() == readContext).findFirst().orElse(null);
+			if(profile == null && profiles.size() == 1)
+				profile = profiles.get(0);
+			if(profile == null)
+				return null;
+			for(var condition : profile.activationConditions()) {
+				var previous = conditions.putIfAbsent(condition.decisionKey(), condition);
+				if(previous != null && previous.ifArm() != condition.ifArm())
+					return null;
+				if(previous == null && creationLoops.containsAll(condition.enclosingLoopIds()))
+					expected *= condition.probability();
+			}
+		}
+		return new OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact(expected,
+			creation.loopContext(), creation.contextOrdinal(), List.copyOf(conditions.values()));
+	}
+
 	private static FType executionFType(ExactPhysicalModel.Alternative selected) {
 		CandidateEmissionFact emission = selected.captured() ? selected.candidateEmission() : selected.executionEmission();
 		return emission == null ? selected.state().fType() : emission.executionFType();
@@ -1582,10 +1642,11 @@ public final class ExactPhysicalCostModel {
 	}
 
 	/**
-	 * Project a demand onto one source creation lifetime. Conditions outside repeated
-	 * consumer-only loops retain their conditional compiler weight. Inside such loops,
-	 * opposite arms can both occur during one copy lifetime: their existence events are
-	 * unresolved, not mutually exclusive. Raw occurrence counts give a union upper bound.
+	 * Project a demand onto one source creation lifetime. Source conditions include
+	 * reaching-path guards from transparent aliases; retaining them lets mutually
+	 * exclusive branch origins form an exact union. Conditions inside loops that do not
+	 * create the source can occur on both arms during one cache lifetime, so they receive
+	 * distinct repeated-event identities instead of a false exclusivity proof.
 	 */
 	static ExactMaterializationActivation.Event materializationActivation(
 		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact source,
@@ -1594,13 +1655,24 @@ public final class ExactPhysicalCostModel {
 			.collect(java.util.stream.Collectors.toSet());
 		double cap = source.expectedExecutions();
 		List<BranchLiteral> conditions = new ArrayList<>();
+		for(var condition : source.activationConditions()) {
+			boolean repeated = !sourceLoops.containsAll(condition.enclosingLoopIds());
+			conditions.add(repeated
+				? new BranchLiteral(condition.decisionKey()
+					+ "|repeated-arm=" + condition.ifArm(), true)
+				: new BranchLiteral(condition.decisionKey(), condition.ifArm()));
+		}
 		for(var condition : consumer.activationConditions()) {
 			var sourceCondition = source.activationConditions().stream()
 				.filter(candidate -> candidate.decisionKey().equals(condition.decisionKey()))
 				.findFirst().orElse(null);
 			if(sourceCondition != null) {
-				if(sourceCondition.ifArm() != condition.ifArm())
+				boolean repeated = !sourceLoops.containsAll(condition.enclosingLoopIds());
+				if(sourceCondition.ifArm() != condition.ifArm() && !repeated)
 					return new ExactMaterializationActivation.Event(0d, List.of());
+				if(sourceCondition.ifArm() != condition.ifArm())
+					conditions.add(new BranchLiteral(condition.decisionKey()
+						+ "|repeated-arm=" + condition.ifArm(), true));
 				continue;
 			}
 			boolean repeated = !sourceLoops.containsAll(condition.enclosingLoopIds());
@@ -1995,9 +2067,11 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private record RuntimeMaterializationSource(CompiledHopKey occurrence,
-		ValueVersionKey valueVersion, List<CompiledHopKey> returnBoundaries) {
+		ValueVersionKey valueVersion, List<CompiledHopKey> returnBoundaries,
+		List<CompiledHopKey> reachabilityGuards) {
 		private RuntimeMaterializationSource {
 			returnBoundaries = List.copyOf(returnBoundaries);
+			reachabilityGuards = List.copyOf(reachabilityGuards);
 		}
 	}
 	private record FunctionOutputAliases(
@@ -2095,7 +2169,7 @@ public final class ExactPhysicalCostModel {
 					sameContextFunctionOutputs, visiting);
 			if(direct.isEmpty()) {
 				ValueVersionKey value = analysis.graph().node(read).orElseThrow().valueVersion();
-				return List.of(new RuntimeMaterializationSource(read, value, List.of()));
+				return List.of(new RuntimeMaterializationSource(read, value, List.of(), List.of()));
 			}
 			Map<String,RuntimeMaterializationSource> resolved = new LinkedHashMap<>();
 			for(CompiledHopKey source : direct.stream().distinct().sorted().toList()) {
@@ -2114,18 +2188,29 @@ public final class ExactPhysicalCostModel {
 				}
 				for(RuntimeMaterializationSource authority : authorities) {
 					List<CompiledHopKey> returnBoundaries = authority.returnBoundaries();
+					List<CompiledHopKey> reachabilityGuards = authority.reachabilityGuards();
 					if(analysis.graph().node(read).orElseThrow().kind() == NodeKind.FUNCTION_OUTPUT
 						&& !sameContextFunctionOutputs.contains(read)) {
 						returnBoundaries = new ArrayList<>(returnBoundaries.size() + 1);
 						returnBoundaries.add(read);
 						returnBoundaries.addAll(authority.returnBoundaries());
 					}
+					if(analysis.hop(read).orElse(null) instanceof DataOp data
+						&& data.getOp() == OpOpData.TRANSIENTREAD
+						&& data.isPlannerBranchNormalization()) {
+						reachabilityGuards = new ArrayList<>(reachabilityGuards.size() + 1);
+						reachabilityGuards.add(read);
+						reachabilityGuards.addAll(authority.reachabilityGuards());
+					}
 					var resolvedAuthority = new RuntimeMaterializationSource(authority.occurrence(),
-						authority.valueVersion(), returnBoundaries);
+						authority.valueVersion(), returnBoundaries, reachabilityGuards);
 					String returnPath = returnBoundaries.stream()
 						.map(CompiledHopKey::normalizedSignature).collect(java.util.stream.Collectors.joining("->"));
+					String guardPath = reachabilityGuards.stream()
+						.map(CompiledHopKey::normalizedSignature).collect(java.util.stream.Collectors.joining("->"));
 					resolved.putIfAbsent(authority.occurrence().normalizedSignature() + '|'
-						+ authority.valueVersion().normalizedSignature() + "|returns=" + returnPath,
+						+ authority.valueVersion().normalizedSignature() + "|returns=" + returnPath
+						+ "|guards=" + guardPath,
 						resolvedAuthority);
 				}
 			}
@@ -2778,8 +2863,10 @@ public final class ExactPhysicalCostModel {
 				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
 				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers, layout);
 		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
+		double auxiliaryNetwork = executionWeight * PlacementCostSemantics.analysisAwareAuxiliaryNetworkCost(
+			analysis, key, inputFTypes, outputBytes, workers);
 		double fedCost = requireCost(fedCompute + fedInstructionLatency
-			+ fedInputPreparation, "EXACT_FED_COST_UNPROVEN");
+			+ fedInputPreparation + auxiliaryNetwork, "EXACT_FED_COST_UNPROVEN");
 
 		double resultDownloadUnit = responses != null
 			&& !(hop instanceof org.apache.sysds.hops.AggUnaryOp)
@@ -2852,8 +2939,8 @@ public final class ExactPhysicalCostModel {
 		List<EffectiveLogicalFunctionInput> result = new ArrayList<>();
 		List<LogicalFunctionInputFact> direct = analysis.logicalFunctionInputsInCanonicalOrder();
 		for(LogicalFunctionInputFact fact : direct) {
-			if(analysis.requireExactLogicalFunctionInput(fact.sourceArgument(), fact.targetRead(),
-				fact.logicalPosition()) != fact)
+			if(analysis.requireExactLogicalFunctionInput(fact.sourceArgument(), fact.boundary(), fact.targetRead(),
+				fact.callInputPosition(), fact.logicalPosition()) != fact)
 				throw new IllegalArgumentException("EXACT_LOGICAL_FUNCTION_INPUT_FOREIGN");
 			result.add(new EffectiveLogicalFunctionInput(fact, null, fact.targetRead()));
 		}

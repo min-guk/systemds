@@ -11,6 +11,11 @@ if [[ "${1:-}" == "--pruning-ablation" ]]; then
     exec python3 "$(dirname "$0")/run_pruning_ablation.py" "$@"
 fi
 
+if [[ "${1:-}" == "--cost-runtime-validation" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/validate_cost_runtime_docker.py" "$@"
+fi
+
 if [[ "${1:-}" == "--function-boundary-compare" ]]; then
     shift
     exec python3 "$(dirname "$0")/check_function_boundary_plans.py" "$@"

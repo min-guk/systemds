@@ -2,6 +2,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -124,6 +125,40 @@ public class ExactCategoricalSolverTest {
 		Assert.assertEquals(portfolioResult.objective(), fastResult.objective(), 0d);
 		Assert.assertEquals(portfolioResult.assignmentInVariableOrder(),
 			fastResult.assignmentInVariableOrder());
+	}
+
+	@Test
+	public void boundedPortfolioUsesExactOrderThatFitsPerStepWorkLimit() {
+		int[] domains = {9,4,5,2,6,4,2,9};
+		List<ExactCategoricalSolver.Variable> variables = new ArrayList<>();
+		for(int index=0; index<domains.length; index++)
+			variables.add(variable("bounded-order-" + index,domains[index]));
+		int[][] scopes = {{1},{1,2,3,5},{0,2,6},{2,4},{0,3,5},{2,4,7},{5},{3},
+			{3,4,7},{7},{4,6},{1},{0,1,4,5},{2,6,7},{0,3,6},{7},{0,2,5,6},
+			{0,3,5},{3,4,7}};
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
+		for(int[] scope : scopes) {
+			List<ExactCategoricalSolver.Variable> factorVariables = Arrays.stream(scope)
+				.mapToObj(variables::get).toList();
+			int cells = factorVariables.stream().mapToInt(
+				ExactCategoricalSolver.Variable::domainSize).reduce(1,(left,right) -> left*right);
+			factors.add(ExactCategoricalSolver.Factor.dense(factorVariables,new double[cells]));
+		}
+		ExactCategoricalSolver.CompiledProblem ordinary =
+			ExactCategoricalSolver.compile(variables,factors,GENEROUS);
+		ExactCategoricalSolver.CompiledProblem bounded =
+			ExactCategoricalSolver.compileWithinMaximumEliminationAssignments(
+				variables,factors,GENEROUS,16_384L);
+
+		Assert.assertEquals(17_280L,
+			ExactCategoricalSolver.statistics(ordinary).maximumEliminationAssignments());
+		Assert.assertEquals(8_640L,
+			ExactCategoricalSolver.statistics(bounded).maximumEliminationAssignments());
+		ExactCategoricalSolver.Result ordinaryResult = ExactCategoricalSolver.solve(ordinary);
+		ExactCategoricalSolver.Result boundedResult = ExactCategoricalSolver.solve(bounded);
+		Assert.assertEquals(ordinaryResult.objective(),boundedResult.objective(),0d);
+		Assert.assertEquals(ordinaryResult.assignmentInVariableOrder(),
+			boundedResult.assignmentInVariableOrder());
 	}
 
 	@Test

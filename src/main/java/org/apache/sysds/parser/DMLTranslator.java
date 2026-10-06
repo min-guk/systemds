@@ -533,6 +533,7 @@ public class DMLTranslator
 		ProgramRewriter physicalNormalizer = new ProgramRewriter(
 			new RewriteFederatedPlannerPhysicalNormalization());
 		physicalNormalizer.rewriteProgramHopDAGs(dmlp, false);
+		org.apache.sysds.hops.rewrite.FederatedBranchExitNormalizer.normalize(dmlp);
 		resetHopsDAGVisitStatus(dmlp);
 		refreshMemEstimates(dmlp);
 		resetHopsDAGVisitStatus(dmlp);

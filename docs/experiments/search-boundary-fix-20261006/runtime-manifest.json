@@ -1,0 +1,30 @@
+{
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "jarSha256": "577237277f51370e7874e5c22448a0d4ef0225d982edf3900be3528007a035d0",
+  "probeSha256": "313faf0d4735591dcf95e5cb80e99feaa59d8a16a2aceac397ab85ac560675a7",
+  "sourcePrivacy": "mixed private-aggregate X and public P",
+  "workers": 2,
+  "workerPorts": [
+    13000,
+    13001
+  ],
+  "cpus": 4,
+  "memory": "8g",
+  "network": "none (container loopback only)",
+  "planner": "DP-LocalConflict / compile_cost_based",
+  "seed": 2026072701,
+  "purpose": "correctness and runtime evidence; modeled objective is not measured wall time",
+  "costEnvironment": {
+    "SYSDS_FED_COST_AGGBINARY_FLOPS": "40570933071.960854",
+    "SYSDS_FED_COST_FLOPS": "25304022642.751137",
+    "SYSDS_FED_COST_MEM_BW": "20553.179439716172",
+    "SYSDS_FED_COST_NET_BW_C2W": "4.8308051614433403",
+    "SYSDS_FED_COST_NET_BW_COORD_C2W": "4.8346751994493884",
+    "SYSDS_FED_COST_NET_BW_COORD_W2C": "4.8041805498726937",
+    "SYSDS_FED_COST_NET_BW_W2C": "4.7975053356055275",
+    "SYSDS_FED_COST_NET_LATENCY_C2W": "0.050499640499999998",
+    "SYSDS_FED_COST_NET_LATENCY_W2C": "0.050499640499999998",
+    "SYSDS_FED_COST_NET_SERDES_BW_C2W": "222.53055685295507",
+    "SYSDS_FED_COST_NET_SERDES_BW_W2C": "227.64413320306207"
+  }
+}

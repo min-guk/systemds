@@ -3639,15 +3639,7 @@ final class PlacementRelationClosure {
 					: templateEmission.realizations();
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(recomputeNative)
-					for(CandidateEmissionRealization candidate : emission.realizations()) {
-						List<CandidateRealizationSupportClause> relocationClauses = candidate.supportClauses().stream()
-							.filter(clause -> clause.inputBindings().stream()
-								.anyMatch(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION))
-							.toList();
-						if(!relocationClauses.isEmpty())
-							realizations.add(CandidateEmissionRealization
-								.fromAlreadyCanonicalSupportClauses(candidate.key(), relocationClauses));
-					}
+					realizations.addAll(retainPreviouslyGroundedNativeSupport(emission));
 				for(CandidateEmissionRealization realization : templatesForEmission) {
 					if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
 						|| realization.supportClauses().stream().anyMatch(clause -> !clause.inputBindings().isEmpty())
@@ -3863,6 +3855,27 @@ final class PlacementRelationClosure {
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(rebound);
+	}
+
+	/**
+	 * A direct proof is one alternative support clause, not a replaceable snapshot of
+	 * the current replay frontier.  Preserve every previously grounded clause while a
+	 * dirty owner is rebound; the enclosing support fixed point removes clauses whose
+	 * exact source or relocation action is no longer executable.  Dropping DIRECT
+	 * clauses here made CFG replay alternate between independently proved worker-pool
+	 * layouts instead of reaching their union.
+	 */
+	private static List<CandidateEmissionRealization> retainPreviouslyGroundedNativeSupport(
+		CandidateEmissionFact emission) {
+		List<CandidateEmissionRealization> retained = new ArrayList<>();
+		for(CandidateEmissionRealization candidate : emission.realizations()) {
+			List<CandidateRealizationSupportClause> grounded = candidate.supportClauses().stream()
+				.filter(clause -> !clause.inputBindings().isEmpty()).toList();
+			if(!grounded.isEmpty())
+				retained.add(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+					candidate.key(), grounded));
+		}
+		return List.copyOf(retained);
 	}
 
 	private static Set<CompiledHopKey> changedCandidateOccurrences(List<CandidateRuleFact> before,
@@ -7072,6 +7085,10 @@ final class PlacementRelationClosure {
 	 */
 	private static boolean isTransparentFunctionInputBinding(Hop input, Hop consumer,
 		int inputPosition, Node inputNode, Node consumerNode) {
+		// Unlike entry binding, an explicit branch-exit assignment owns an executable
+		// input edge on which the planner can select and cost LOCAL/REFED.
+		if(consumer instanceof DataOp data && data.isPlannerBranchNormalization())
+			return false;
 		if(inputPosition != 0 || inputNode == null || consumerNode == null
 			|| inputNode.valueVersion().versionKind() != VersionKind.FUNCTION_INPUT
 			|| inputNode.kind() != NodeKind.TRANSIENT_READ

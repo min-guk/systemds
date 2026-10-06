@@ -1,0 +1,254 @@
+[
+  {
+    "case": "ADULT_w1",
+    "container_name": "codex-function-boundary-b-adult_w1-6b7e2120ab5e",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 18.655196391046047
+  },
+  {
+    "case": "ADULT_w3",
+    "container_name": "codex-function-boundary-b-adult_w3-52254f6750da",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 10.050484761595726
+  },
+  {
+    "case": "COVTYPE_w1",
+    "container_name": "codex-function-boundary-b-covtype_w1-5bef0fb70fce",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 19.98443990200758
+  },
+  {
+    "case": "COVTYPE_w3",
+    "container_name": "codex-function-boundary-b-covtype_w3-f23c8dbf34d8",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 10.34669291973114
+  },
+  {
+    "case": "P1_FULL_w1",
+    "container_name": "codex-function-boundary-b-p1_full_w1-7c6c860d4bec",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 29.116016387939453
+  },
+  {
+    "case": "P1_FULL_w3",
+    "container_name": "codex-function-boundary-b-p1_full_w3-f3097a77e853",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 22.31455983966589
+  },
+  {
+    "case": "P2_PREP_w1",
+    "container_name": "codex-function-boundary-b-p2_prep_w1-f79c535f533a",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 4.5797282084822655
+  },
+  {
+    "case": "P2_PREP_w3",
+    "container_name": "codex-function-boundary-b-p2_prep_w3-ab2edadbf5fd",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 4.389031954109669
+  },
+  {
+    "case": "als_w1",
+    "container_name": "codex-function-boundary-b-als_w1-1d468eebd0ba",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 5.250478595495224
+  },
+  {
+    "case": "als_w3",
+    "container_name": "codex-function-boundary-b-als_w3-baf83a30bc44",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 6.048923455178738
+  },
+  {
+    "case": "glm_w1",
+    "container_name": "codex-function-boundary-b-glm_w1-8c07264c3ec2",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 245.90691022574902
+  },
+  {
+    "case": "glm_w3",
+    "container_name": "codex-function-boundary-b-glm_w3-1e023f9f48bf",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 116.77573431283236
+  },
+  {
+    "case": "gmm_w1",
+    "container_name": "codex-function-boundary-b-gmm_w1-58d312aa2c7c",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 12.126357205212116
+  },
+  {
+    "case": "gmm_w3",
+    "container_name": "codex-function-boundary-b-gmm_w3-b913ce231de8",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 7.361555233597755
+  },
+  {
+    "case": "gnmf_w1",
+    "container_name": "codex-function-boundary-b-gnmf_w1-6a27b07581d7",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 24.82007736712694
+  },
+  {
+    "case": "gnmf_w3",
+    "container_name": "codex-function-boundary-b-gnmf_w3-8f725aaf28ba",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 4.5700396075844765
+  },
+  {
+    "case": "kmeans_w1",
+    "container_name": "codex-function-boundary-b-kmeans_w1-9b5bbf3bd129",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 10.5570332929492
+  },
+  {
+    "case": "kmeans_w3",
+    "container_name": "codex-function-boundary-b-kmeans_w3-91a14131c14c",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 10.146383628249168
+  },
+  {
+    "case": "l2svm_w1",
+    "container_name": "codex-function-boundary-b-l2svm_w1-905e4aefb038",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 227.89416328072548
+  },
+  {
+    "case": "l2svm_w3",
+    "container_name": "codex-function-boundary-b-l2svm_w3-62a8aeb056c1",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 81.26933860778809
+  },
+  {
+    "case": "lm_w1",
+    "container_name": "codex-function-boundary-b-lm_w1-9b6037e44b1d",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 3.703699514269829
+  },
+  {
+    "case": "lm_w3",
+    "container_name": "codex-function-boundary-b-lm_w3-1176a8fe973f",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 3.6927433386445045
+  },
+  {
+    "case": "logreg_w1",
+    "container_name": "codex-function-boundary-b-logreg_w1-e5e18b48240f",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 260.1193296313286
+  },
+  {
+    "case": "logreg_w3",
+    "container_name": "codex-function-boundary-b-logreg_w3-8121e3464941",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 116.67983771115541
+  },
+  {
+    "case": "pca_w1",
+    "container_name": "codex-function-boundary-b-pca_w1-e2c1e9e13480",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 6.024845831096172
+  },
+  {
+    "case": "pca_w3",
+    "container_name": "codex-function-boundary-b-pca_w3-455bfc1f79f2",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 4.955840557813644
+  },
+  {
+    "case": "steplm_w1",
+    "container_name": "codex-function-boundary-b-steplm_w1-427f7e7b9a4d",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 57.755494356155396
+  },
+  {
+    "case": "steplm_w3",
+    "container_name": "codex-function-boundary-b-steplm_w3-095c91238d19",
+    "output_present": true,
+    "returncode": 0,
+    "status": "COMPLETE",
+    "variant": "B",
+    "wall_seconds": 11.411752447485924
+  }
+]
