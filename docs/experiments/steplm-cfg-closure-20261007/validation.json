@@ -1,0 +1,301 @@
+{
+  "schema": "systemds-steplm-cfg-closure-v1",
+  "status": "REPORTED_CFG_2_CYCLE_FIXED_END_TO_END_INCOMPLETE",
+  "baselineCommit": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+  "worktree": "/home/mchoi/steplm-cfg-closure-20261007",
+  "branch": "fix/steplm-cfg-closure-20261007",
+  "productionChange": "Keep certified entry seeds active until composed closure stabilizes, then require unseeded all-definition stability; install new seeds only at first replay.",
+  "canonicalRegression": {
+    "method": "LoopIdentityBackedgeClosureTest.smallBuiltinStepLmCompletesCanonicalCommonClosure",
+    "rows": 20,
+    "columns": 5,
+    "maxIterations": 20,
+    "baseline": {
+      "baseline": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+      "elapsedSeconds": 264.837,
+      "status": "EXPECTED_FAILURE",
+      "error": "CFG transient candidate closure did not converge",
+      "errorObserved": true,
+      "fixture": "20x5 builtin StepLM, both X/Y FED, maxi=20, common canonical closure",
+      "hashes": {
+        "baselineClosureSource": {
+          "path": "/home/mchoi/heuristic-main-publication-20261007/src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java",
+          "sha256": "ffe07bb942fb06b1941632c9aebb7b2d2206261bfc74f370c060375297c59b2a"
+        },
+        "baselineClosureClass": {
+          "path": "/home/mchoi/heuristic-main-publication-20261007/target/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+          "sha256": "af76bb15545a30b89ef76105cf25ceed23167155060edaea48ac3a3cb47bbafd"
+        },
+        "newRegressionSource": {
+          "path": "/home/mchoi/steplm-cfg-closure-20261007/src/test/java/org/apache/sysds/hops/fedplanner/placement/LoopIdentityBackedgeClosureTest.java",
+          "sha256": "8226cf04fffbdac383979bae1768d356ad6a57d8cd10c9b99e7f05d0bddac7b8"
+        },
+        "baselineRegressionClass": {
+          "path": "/home/mchoi/steplm-cfg-closure-20261007/target/steplm-evidence/test-classes/org/apache/sysds/hops/fedplanner/placement/LoopIdentityBackedgeClosureTest.class",
+          "sha256": "bfca1f06641445239896c47522390aa25aae954ff42c48d023143b3bf55d2c54"
+        }
+      }
+    },
+    "candidateStatus": "PASS",
+    "candidateSeconds": 30.419,
+    "allReachingWritersAndExactFullReaderPreserved": true
+  },
+  "javaValidation": {
+    "classes": 12,
+    "passed": 52,
+    "skipped": 5,
+    "failures": 0,
+    "errors": 0,
+    "newTestsPassed": 4,
+    "newTestsSeconds": 41.475,
+    "buildSuccess": true,
+    "suites": [
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "6.479"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest",
+        "tests": "5",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "5.158"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.EarlyPrivacyPruningLegalSpaceParityTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.952"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryOccurrenceIdentityTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "1.629"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.LogregProtectedLoopSliceTest",
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "45.627"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.LoopIdentityBackedgeClosureTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "41.475"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.LoopSeedReplayWideningTest",
+        "tests": "5",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "31.892"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.NeutralPlacementFixedPointCompositionTest",
+        "tests": "12",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "45.632"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest",
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.162"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.StepLmDynamicLoopPlacementTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.432"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.StepLmNegatedTransposePlacementTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "2.054"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.TransientPlacementAlternativesTest",
+        "tests": "7",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "5",
+        "time": "3.685"
+      }
+    ]
+  },
+  "pythonValidation": {
+    "passed": 28,
+    "pyCompile": true
+  },
+  "staticValidation": {
+    "diffCheck": true,
+    "javaCompilation": true,
+    "separateFullCheckstyleOrRat": false
+  },
+  "fullDpCompile": {
+    "method": "FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding",
+    "status": "FAILED_AFTER_CLOSURE",
+    "seconds": 38.065,
+    "error": "EXACT_VE_FACTOR_CELL_OVERFLOW",
+    "location": "ExactCategoricalSolver.checkedCells -> validateInputStructure -> ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight",
+    "log": "/home/mchoi/steplm-cfg-closure-20261007/target/steplm-evidence/final-step-full-compile.log"
+  },
+  "docker": {
+    "matchedInputsAndConfiguration": {
+      "image": true,
+      "inputSha256": true,
+      "fixtureSha256": true,
+      "sourceSha256": true,
+      "caseTimeoutSeconds": true,
+      "dependencies": true
+    },
+    "runs": [
+      {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-closure-20261007/steplm-closure-baseline-02",
+        "status": "FAILED",
+        "cpReturncode": 0,
+        "fedReturncode": 124,
+        "limitSeconds": 360,
+        "timeoutPhase": "common analysis",
+        "analysisBegin": true,
+        "analysisEnd": false,
+        "cpStatistics": {
+          "compilationSeconds": 5.38722,
+          "executionSeconds": 0.613
+        },
+        "fedStatistics": {},
+        "cpSelection": [
+          3,
+          1,
+          5
+        ],
+        "cpCoefficients": [
+          1.7501226560811862,
+          0.0,
+          -1.9992559367277976,
+          0.0,
+          0.6466227006735858
+        ],
+        "fedOutputsExist": false,
+        "plannerCheckpointCount": 0,
+        "runtimeAuditRows": 0,
+        "runtimeValidationExercised": false,
+        "classPreflightPassed": true,
+        "physicalModelProofPassed": true,
+        "physicalModelProofTests": 10,
+        "manifestSha256": "636d5f3012d5bd0c8d25d7981fca152f8492e479595abecc6247abe66d518e15",
+        "resultSha256": "3c2f726d943191c13f70846e97fdb87b8edff3f23f047fb8f39a824d15fed63a"
+      },
+      {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-closure-20261007/steplm-closure-fixed-01",
+        "status": "FAILED",
+        "cpReturncode": 0,
+        "fedReturncode": 124,
+        "limitSeconds": 360,
+        "timeoutPhase": "common analysis",
+        "analysisBegin": true,
+        "analysisEnd": false,
+        "cpStatistics": {
+          "compilationSeconds": 6.420474,
+          "executionSeconds": 0.673
+        },
+        "fedStatistics": {},
+        "cpSelection": [
+          3,
+          1,
+          5
+        ],
+        "cpCoefficients": [
+          1.7501226560811862,
+          0.0,
+          -1.9992559367277976,
+          0.0,
+          0.6466227006735858
+        ],
+        "fedOutputsExist": false,
+        "plannerCheckpointCount": 0,
+        "runtimeAuditRows": 0,
+        "runtimeValidationExercised": false,
+        "classPreflightPassed": true,
+        "physicalModelProofPassed": true,
+        "physicalModelProofTests": 10,
+        "manifestSha256": "eb363a78b95fc20b5e635faaea9b2e94bc1d66bb70e93f3de702b41255030a91",
+        "resultSha256": "69321f9d115728933dc608a7c29704415d979922b5463fb311eb6e09a2cdec24"
+      }
+    ],
+    "speedupClaimed": false,
+    "fedCoefficientsSelectionCostOrRuntimeComparisonAvailable": false,
+    "earlierLocalYFixture": {
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-closure-20261007/steplm-closure-baseline-01",
+      "baselineOnly": true,
+      "error": "Final publication has an ungrounded relocation realization: actionPresent=false|sourceLive=true",
+      "owner": "builtin lmCG.dml:129 matrix multiply",
+      "usedAsABEvidence": false
+    }
+  },
+  "sourceAndBuildProvenance": {
+    "frozenCandidateMatchesCurrentBuild": {
+      "mainSources": true,
+      "mainClasses": true,
+      "testSources": true,
+      "testClasses": true,
+      "dependencies": true
+    },
+    "frozenArtifactCounts": {
+      "dependencies": 316,
+      "mainClasses": 4353,
+      "mainSources": 1651,
+      "testClasses": 2820,
+      "testSources": 1936
+    },
+    "javaSourceChangesDuringFinalBuild": [],
+    "pythonHarnessUpdatedAfterBuildStartAndRetested": true,
+    "changedSourceSha256": {
+      "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "7a45d78c0929df6389d822cb6fb572f786f5f9515eede71e2d381edbd5994b54",
+      "src/test/java/org/apache/sysds/hops/fedplanner/placement/LoopIdentityBackedgeClosureTest.java": "8226cf04fffbdac383979bae1768d356ad6a57d8cd10c9b99e7f05d0bddac7b8",
+      "scripts/fedplanner/run_joint_boundary_e2e.py": "9031435cd795e9719dff8efb300beb6da0ccc748cb7bc246fa354242efcfe39d",
+      "scripts/fedplanner/tests/test_run_joint_boundary_e2e.py": "6e13d5ae92631bc186c37c95a70ee2642e13dc9203fb3d8493b70fd7374c6ac5"
+    }
+  },
+  "scopeDeviation": {
+    "initialRunIncludedOneLargeMetadataOnlyTest": "LoopSeedReplayWideningTest.l2svmMemoReplayRebindsCurrentRelocationActionAuthority",
+    "metadataShape": [
+      50000,
+      2100
+    ],
+    "actualLargeTrainingRun": false,
+    "excludedFromFinalRun": true
+  },
+  "remainingIssues": [
+    "Full DP compilation factor cell overflow",
+    "CSV FED common analysis timeout: sampled outer-pass canonicalization/equality and relocation binding generation; baseline hotspot not measured",
+    "Baseline-only local-Y CSV publication lacks relocation action"
+  ],
+  "evidenceRoot": "/home/mchoi/steplm-cfg-closure-20261007/target/steplm-evidence",
+  "report": "/home/mchoi/steplm-cfg-closure-20261007/docs/STEPLM_CFG_CLOSURE_2026-10-07.md"
+}

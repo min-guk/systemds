@@ -3539,6 +3539,9 @@ final class PlacementRelationClosure {
 			return memoized;
 		Set<CompiledHopKey> eligibleLoopSeeds = eligibleLoopSeedRevisions.keySet();
 		Set<CompiledHopKey> installedLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
+		// Installation is one-shot per revision; provisional authority lasts until its
+		// complete transient/physical cone is stable, including nested identity paths.
+		Map<CompiledHopKey,ActiveLoopSeed> activeLoopSeeds = new IdentityHashMap<>();
 		int maxPasses = Math.max(1, occurrences.size() + domainKeys.size() + logicalInputs.size() + 1);
 		List<String> closureTrace = new ArrayList<>();
 		List<Node> lastDirectNodes = null;
@@ -3564,8 +3567,13 @@ final class PlacementRelationClosure {
 						.stream().sorted().map(source -> passNodes.get(source).key()).toList());
 			List<CompiledInputEdgeFact> compiledEdges = deriveCompiledInputEdges(
 				occurrences, current.nodes(), ordinalsByBlock, shapeFactsByHop);
-			NativePlacementContinuity nativePools = continuityForAllDefinitions(nodesByKey, origins,
-				current.facts(), compiledEdges, reachingSources);
+			Map<CompiledHopKey,List<CompiledHopKey>> directReachingSources = new IdentityHashMap<>(reachingSources);
+			activeLoopSeeds.forEach((read, seed) -> directReachingSources.put(read,
+				seed.definitions().stream().map(source -> passNodes.get(source).key()).toList()));
+			NativePlacementContinuity nativePools = activeLoopSeeds.isEmpty()
+				? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
+				: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
+					compiledEdges, directReachingSources, complexityMetrics);
 			DirectBindingIndex directIndex = directBindingIndex(directTemplates, current.nodes(), compiledEdges,
 				current.facts());
 			// The preceding composed pass already grounded a complete direct frontier.
@@ -3574,9 +3582,9 @@ final class PlacementRelationClosure {
 			Set<CompiledHopKey> directDirty = incrementalDirectClosure && lastDirectNodes != null
 				? initialPostPhysicalDirectDirty(lastDirectNodes, lastDirectFacts, lastDirectEdges,
 					lastDirectReaching, current.nodes(), current.facts(), compiledEdges,
-					reachingSources, Set.of()) : null;
+					directReachingSources, Set.of()) : null;
 			DirectClosureResult direct = closeDirectComponents(directIndex, current.facts(), current.nodes(),
-				compiledEdges, reachingSources, constraints, origins, shapeFactsByHop, nativePools, directDirty);
+				compiledEdges, directReachingSources, constraints, origins, shapeFactsByHop, nativePools, directDirty);
 			current = new ClosureUpdate(current.nodes(), current.domainKeys(), direct.facts(),
 				current.logicalInputs(), current.changedOrdinals());
 			nativePools = direct.continuity();
@@ -3598,15 +3606,18 @@ final class PlacementRelationClosure {
 				nodesByKey.clear();
 				for(Node node : current.nodes())
 					nodesByKey.put(node.key(), node);
-				nativePools = continuityForAllDefinitions(nodesByKey, origins,
-					current.facts(), compiledEdges, reachingSources);
+				nativePools = activeLoopSeeds.isEmpty()
+					? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
+					: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
+						compiledEdges, directReachingSources, complexityMetrics);
 			}
-			allDefinitionContinuity = nativePools;
+			if(activeLoopSeeds.isEmpty())
+				allDefinitionContinuity = nativePools;
 			Set<CompiledHopKey> priorLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
 			priorLoopSeeds.addAll(installedLoopSeeds);
 			ClosureUpdate replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
 				shapeFactsByHop, current.domainKeys(), current.facts(), current.logicalInputs(), baseline, nativePools,
-				eligibleLoopSeeds, installedLoopSeeds);
+				eligibleLoopSeeds, installedLoopSeeds, activeLoopSeeds);
 			Map<CompiledHopKey,List<CompiledHopKey>> newlyInstalledLoopSeeds = new IdentityHashMap<>();
 			for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 				CompiledHopKey readKey = current.nodes().get(ordinal).key();
@@ -3620,6 +3631,7 @@ final class PlacementRelationClosure {
 						definitions, occurrences, current.nodes(), shapeFactsByHop) : List.of(sourceOrdinal);
 				if(sourceOrdinals == null)
 					throw new IllegalStateException("Installed loop seed has no exact source");
+				activeLoopSeeds.put(readKey, new ActiveLoopSeed(List.copyOf(sourceOrdinals), sourceOrdinal != null));
 				List<Node> seedNodes = current.nodes();
 				newlyInstalledLoopSeeds.put(readKey, sourceOrdinals.stream().map(source -> seedNodes.get(source).key()).toList());
 			}
@@ -3640,6 +3652,11 @@ final class PlacementRelationClosure {
 					if(newlyInstalledLoopSeeds.containsKey(current.nodes().get(ordinal).key()))
 						pendingPhysicalRebuildOrdinals.add(ordinal);
 			if(pendingPhysicalRebuildOrdinals.isEmpty()) {
+				if(!activeLoopSeeds.isEmpty()) {
+					activeLoopSeeds.clear();
+					current = replayed;
+					continue; // Mandatory all-definition validation follows seeded stability.
+				}
 				recordCompletedLoopSeedRevisions(eligibleLoopSeedRevisions,
 					installedLoopSeeds, cfg, replayed.nodes(), replayed.facts(),
 					replayed.logicalInputs(),
@@ -3698,10 +3715,11 @@ final class PlacementRelationClosure {
 						cfg.reachingDefinitions().get(ordinal).stream().sorted()
 							.map(source -> physicalNodes.get(source).key()).toList());
 			Map<CompiledHopKey,List<CompiledHopKey>> seedReachingSources = new IdentityHashMap<>(physicalReachingSources);
-			seedReachingSources.putAll(newlyInstalledLoopSeeds);
+			activeLoopSeeds.forEach((read, seed) -> seedReachingSources.put(read,
+				seed.definitions().stream().map(source -> physicalNodes.get(source).key()).toList()));
 			// A provisional seed excludes backedges. It is a separate proof context,
 			// never the all-definition resolver used to validate the completed loop.
-			boolean provisionalSeedContext = !newlyInstalledLoopSeeds.isEmpty();
+			boolean provisionalSeedContext = !activeLoopSeeds.isEmpty();
 			NativePlacementContinuity physicalPools = provisionalSeedContext
 				? new NativePlacementContinuity(physicalNodesByKey, origins, physicallyClosed.facts(),
 					physicalEdges, seedReachingSources, complexityMetrics)
@@ -3743,12 +3761,18 @@ final class PlacementRelationClosure {
 			// Direct grounding can replace normalized realization identities. Re-run the
 			// exact CFG replay authority so transient compatibility edges name the current
 			// source/reader realizations instead of merely filtering stale signatures.
-			NativePlacementContinuity allDefinitionPools = continuityForAllDefinitions(physicalNodesByKey,
-				origins, physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+			// New seeds are installed only by the first replay, where their active source
+			// and pending physical cone are registered together. Newly grounded entry
+			// evidence here remains eligible for installation at the next pass start.
+			NativePlacementContinuity replayPools = provisionalSeedContext
+				? new NativePlacementContinuity(physicalNodesByKey, origins, physicallyClosed.facts(),
+					physicalEdges, seedReachingSources, complexityMetrics)
+				: continuityForAllDefinitions(physicalNodesByKey, origins,
+					physicallyClosed.facts(), physicalEdges, physicalReachingSources);
 			ClosureUpdate relationClosed = replayUniqueCfgTransientForwards(occurrences,
 				physicallyClosed.nodes(), cfg, shapeFactsByHop, physicallyClosed.domainKeys(),
-				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, allDefinitionPools,
-				eligibleLoopSeeds, installedLoopSeeds);
+				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, replayPools,
+				Set.of(), installedLoopSeeds, activeLoopSeeds);
 			if(this.constraints != null) {
 				List<Node> beforeValueMapNodes = relationClosed.nodes();
 				List<CandidateRuleFact> beforeValueMapFacts = relationClosed.facts();
@@ -3823,6 +3847,11 @@ final class PlacementRelationClosure {
 			// Replay, physical rebuilding, direct proof grounding, and exact relation
 			// regeneration are one composed transfer. Compare only that completed state.
 			if(composedStable) {
+				if(!activeLoopSeeds.isEmpty()) {
+					activeLoopSeeds.clear();
+					current = relationClosed;
+					continue; // A seeded fixed point is not an executable loop proof.
+				}
 				recordCompletedLoopSeedRevisions(eligibleLoopSeedRevisions,
 					installedLoopSeeds, cfg, relationClosed.nodes(), relationClosed.facts(),
 					relationClosed.logicalInputs(),
@@ -3834,6 +3863,8 @@ final class PlacementRelationClosure {
 		}
 		throw new IllegalStateException("CFG transient candidate closure did not converge: " + closureTrace);
 	}
+
+	private record ActiveLoopSeed(List<Integer> definitions, boolean retainExactGeometry) { }
 
 	private record DirectClosureResult(List<CandidateRuleFact> facts,
 		NativePlacementContinuity continuity) { }
@@ -5043,12 +5074,24 @@ final class PlacementRelationClosure {
 		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
 		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
 		Set<CompiledHopKey> eligibleLoopSeeds, Set<CompiledHopKey> installedLoopSeeds) {
+		return replayUniqueCfgTransientForwards(occurrences, nodes, cfg, shapeFactsByHop,
+			domainKeys, facts, existingLogicalInputs, baseline, nativePools,
+			eligibleLoopSeeds, installedLoopSeeds, Map.of());
+	}
+
+	private ClosureUpdate replayUniqueCfgTransientForwards(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> shapeFactsByHop, List<CandidateRuleKey> domainKeys,
+		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
+		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
+		Set<CompiledHopKey> eligibleLoopSeeds, Set<CompiledHopKey> installedLoopSeeds,
+		Map<CompiledHopKey,ActiveLoopSeed> activeLoopSeeds) {
 		SearchSpaceMetrics.PhaseToken started = complexityMetrics == null ? null
 			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.CFG_REPLAY);
 		try {
 			return replayUniqueCfgTransientForwardsMeasured(occurrences, nodes, cfg, shapeFactsByHop,
 				domainKeys, facts, existingLogicalInputs, baseline, nativePools,
-				eligibleLoopSeeds, installedLoopSeeds);
+				eligibleLoopSeeds, installedLoopSeeds, activeLoopSeeds);
 		}
 		finally {
 			if(complexityMetrics != null)
@@ -5061,7 +5104,8 @@ final class PlacementRelationClosure {
 		Map<Hop,NodeShapeFact> shapeFactsByHop, List<CandidateRuleKey> domainKeys,
 		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> existingLogicalInputs,
 		CfgReplayBaseline baseline, NativePlacementContinuity nativePools,
-		Set<CompiledHopKey> eligibleLoopSeeds, Set<CompiledHopKey> installedLoopSeeds) {
+		Set<CompiledHopKey> eligibleLoopSeeds, Set<CompiledHopKey> installedLoopSeeds,
+		Map<CompiledHopKey,ActiveLoopSeed> activeLoopSeeds) {
 		if(domainKeys.size() != facts.size())
 			throw new IllegalStateException("Candidate rule fact/domain count differs before CFG replay");
 		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
@@ -5099,7 +5143,7 @@ final class PlacementRelationClosure {
 				// widening can expose the native source, so seed once per read in this
 				// closure invocation and then publish the all-definition replay below.
 				eligibleLoopSeeds.contains(node.key()) && !installedLoopSeeds.contains(node.key()),
-				nativePools, installedLoopSeeds);
+				nativePools, installedLoopSeeds, activeLoopSeeds.get(node.key()));
 			boolean replayedParent = replayed != node;
 			if(hadPriorReplay && !replayedParent) {
 				Node original = baseline.nodes().get(node.key());
@@ -5185,7 +5229,7 @@ final class PlacementRelationClosure {
 		List<CandidateRuleKey> replayedKeys, List<CandidateRuleFact> replayedFacts,
 		List<LogicalTransientInputFact> logicalInputs,
 		boolean allowLoopPlacementSeed, NativePlacementContinuity nativePools,
-		Set<CompiledHopKey> installedLoopSeeds) {
+		Set<CompiledHopKey> installedLoopSeeds, ActiveLoopSeed activeSeed) {
 		if(!PlacementAnalysis.isCompiledTransientAccess(readOccurrence.hop(), read, OpOpData.TRANSIENTREAD))
 			return read;
 		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
@@ -5207,13 +5251,15 @@ final class PlacementRelationClosure {
 			&& loopPassThroughSource == null && definitions.size() > 1
 			? exactLoopPlacementSeed(readOccurrence, read, definitions, occurrences, nodes, shapeFactsByHop)
 			: null;
-		List<Integer> exactDefinitions = loopPassThroughSource != null
-			? List.of(loopPassThroughSource) : loopPlacementSeed != null
-				? loopPlacementSeed : definitions.stream().sorted().toList();
+		List<Integer> exactDefinitions = activeSeed != null ? activeSeed.definitions()
+			: loopPassThroughSource != null ? List.of(loopPassThroughSource)
+				: loopPlacementSeed != null ? loopPlacementSeed : definitions.stream().sorted().toList();
 
 		boolean allowValueMap = isValueMapDependency(ordinal, occurrences, cfg);
+		boolean mayRetainExactGeometry = activeSeed == null ? loopPlacementSeed == null
+			: activeSeed.retainExactGeometry();
 		ExactTransientReplayResult result = exactTransientReplay(readOccurrence, read, exactDefinitions,
-			occurrences, nodes, shapeFactsByHop, currentFacts, nativePools, loopPlacementSeed == null,
+			occurrences, nodes, shapeFactsByHop, currentFacts, nativePools, mayRetainExactGeometry,
 			allowValueMap);
 		if(result.replay() == null) {
 			traceTransientReplay(readOccurrence, result.rejection() + "|allowValueMap=" + allowValueMap
@@ -5223,10 +5269,9 @@ final class PlacementRelationClosure {
 		}
 		Node replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, result.replay(),
 			replayedKeys, replayedFacts, logicalInputs);
-		// A loop pass-through or placement seed is provisional authority for the
-		// first closure pass only. Physical closure must ground the carried writer;
-		// every later pass then replays all reaching definitions so the published
-		// compatibility relation cannot permanently omit the loop backedge.
+		// Seed authority is provisional until the composed transient/physical cone
+		// is stable. The caller must then replay every reaching definition before
+		// recording completion, so no backedge can be omitted from publication.
 		if(loopPassThroughSource != null || loopPlacementSeed != null) {
 			installedLoopSeeds.add(read.key());
 			if(FederatedPlannerTrace.shouldTrace(readOccurrence.hop()))

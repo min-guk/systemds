@@ -101,6 +101,7 @@ def cases() -> tuple[Case, ...]:
         Case("ml_logreg", "ml_logreg", training=True, default_selected=False),
         Case("ml_l2svm", "ml_l2svm", training=True, default_selected=False),
         Case("ml_lm", "ml_lm", training=True, default_selected=False),
+        Case("ml_steplm", "ml_steplm", training=True, default_selected=False),
         Case("ml_logreg_gd", "ml_logreg_gd", training=True,
              requires_loss_progress=True, default_selected=False),
         Case("ml_l2svm_gd", "ml_l2svm_gd", training=True,
@@ -264,6 +265,15 @@ def training_x_read(federated: bool) -> str:
         'list(128,0),list(192,8)));\n')
 
 
+def steplm_read(federated: bool, variable: str, columns: int) -> str:
+    source = f"{variable}_STEPLM_PUBLIC"
+    if not federated:
+        return local_read(source) + f"{variable}={source};\n"
+    return (
+        f'{variable}=federated(addresses=list("localhost:{WORKER_PORT}//evidence/data/'
+        f'{source}.csv"),ranges=list(list(0,0),list(20,{columns})));\n')
+
+
 def model_output() -> str:
     return (fingerprint("m")
             + 'write(m,$MODEL_OUTPUT,format="csv");\n')
@@ -288,7 +298,8 @@ def pool_prefix(federated: bool, public_second_inputs: bool = False) -> str:
 
 def program(case: Case, federated: bool) -> str:
     if case.training:
-        prefix = training_x_read(federated)
+        prefix = (steplm_read(federated, "X", 5) if case.kind == "ml_steplm"
+                  else training_x_read(federated))
         if case.kind == "ml_logreg":
             body = (local_read("Y_ML_LOGREG") + "Y=Y_ML_LOGREG;\n"
                     "m=multiLogReg(X=X,Y=Y,icpt=0,tol=1e-7,reg=1e-4,maxi=10,maxii=5,"
@@ -300,6 +311,11 @@ def program(case: Case, federated: bool) -> str:
         elif case.kind == "ml_lm":
             body = (local_read("Y_ML_LM") + "Y=Y_ML_LM;\n"
                     "m=lmCG(X=X,y=Y,icpt=0,reg=1e-4,tol=1e-9,maxi=10,verbose=FALSE);\n")
+        elif case.kind == "ml_steplm":
+            body = (steplm_read(federated, "Y", 1) +
+                    "[m,s]=steplm(X=X,y=Y,icpt=0,reg=1e-7,tol=1e-7,maxi=20,"
+                    "verbose=FALSE);\n"
+                    'write(s,$SELECTION_OUTPUT,format="csv");\n')
         elif case.kind == "ml_logreg_gd":
             body = (local_read("Y_ML_SVM") + "Y=(Y_ML_SVM+1)/2;\n"
                     "m=matrix(0,rows=8,cols=1);p=1/(1+exp(-(X%*%m)));\n"
@@ -423,6 +439,22 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
         for name, values in (("Y_ML_LOGREG", logreg), ("Y_ML_SVM", svm), ("Y_ML_LM", lm)):
             texts[name] = ("\n".join(f"{value:.17g}" for value in values) + "\n",
                            192, 1, "public")
+    if any(case.kind == "ml_steplm" for case in selected_cases):
+        steplm_x = tuple((
+            (row - 9.5) / 10.0,
+            ((row * row) % 17 - 8) / 7.0,
+            ((row * 5 + 3) % 19 - 9) / 6.0,
+            (row % 4) - 1.5,
+            ((row * 7 + row // 3) % 23 - 11) / 8.0,
+        ) for row in range(20))
+        steplm_y = tuple(1.75 * row[0] - 2.0 * row[2] + 0.65 * row[4]
+                         + ((index % 3) - 1) / 100.0
+                         for index, row in enumerate(steplm_x))
+        x_payload = "\n".join(",".join(f"{value:.17g}" for value in row)
+                              for row in steplm_x) + "\n"
+        y_payload = "\n".join(f"{value:.17g}" for value in steplm_y) + "\n"
+        texts["X_STEPLM_PUBLIC"] = (x_payload, 20, 5, "public")
+        texts["Y_STEPLM_PUBLIC"] = (y_payload, 20, 1, "public")
     if any(case.kind == "dynamic_reverse" for case in selected_cases):
         for name, values in (("X_TOP", x[:4]), ("X_BOTTOM", x[4:])):
             payload = "\n".join(",".join(map(str, row)) for row in values) + "\n"
@@ -492,6 +524,9 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300) -> str:
         properties += " -Dsysds.fedplanner.trace=true -Dsysds.fedplanner.trace.details=false"
     output_argument = (f' -nvargs MODEL_OUTPUT=/evidence/cases/{case.name}/{mode}-model.csv'
                        if case.training else "")
+    if case.kind == "ml_steplm":
+        output_argument += (f' SELECTION_OUTPUT=/evidence/cases/{case.name}/'
+                            f'{mode}-selection.csv')
     return (f'timeout {case_timeout_seconds} java --add-modules jdk.incubator.vector -Xmx3g '
             f'-XX:ActiveProcessorCount=4 {properties} -cp "$CP" '
             f'org.apache.sysds.api.DMLScript -f /evidence/cases/{case.name}/{mode}.dml '
@@ -589,42 +624,95 @@ def close_markers(reference: dict[str, float], actual: dict[str, float]) -> bool
         math.isclose(reference[key], actual[key], rel_tol=1e-8, abs_tol=1e-9) for key in reference)
 
 
-def read_model(path: Path) -> tuple[list[float], list[str]]:
-    values: list[float] = []
+def read_matrix(path: Path) -> tuple[list[list[float]], list[str]]:
+    rows: list[list[float]] = []
     errors: list[str] = []
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
-        return values, [str(exc)]
+        return rows, [str(exc)]
     for line_number, line in enumerate(lines, 1):
+        row: list[float] = []
         for token in line.split(","):
             try:
                 value = float(token.strip())
                 if not math.isfinite(value):
                     raise ValueError("non-finite value")
-                values.append(value)
+                row.append(value)
             except ValueError as exc:
                 errors.append(f"{path}:{line_number}: {token!r}: {exc}")
-    if not values:
+        rows.append(row)
+    if not rows or not any(rows):
         errors.append(f"{path}: empty model")
-    return values, errors
+    widths = {len(row) for row in rows}
+    if len(widths) > 1:
+        errors.append(f"{path}: ragged matrix rows: {sorted(widths)}")
+    return rows, errors
 
 
-def compare_models(reference_path: Path, actual_path: Path) -> dict[str, object]:
-    reference, reference_errors = read_model(reference_path)
-    actual, actual_errors = read_model(actual_path)
+def read_model(path: Path) -> tuple[list[float], list[str]]:
+    rows, errors = read_matrix(path)
+    return [value for row in rows for value in row], errors
+
+
+def compare_models(reference_path: Path, actual_path: Path,
+                   expected_shape: tuple[int, int] | None = None) -> dict[str, object]:
+    reference_rows, reference_errors = read_matrix(reference_path)
+    actual_rows, actual_errors = read_matrix(actual_path)
+    reference = [value for row in reference_rows for value in row]
+    actual = [value for row in actual_rows for value in row]
+    reference_shape = (len(reference_rows), len(reference_rows[0]) if reference_rows else 0)
+    actual_shape = (len(actual_rows), len(actual_rows[0]) if actual_rows else 0)
+    shape_matched = (reference_shape == actual_shape
+                     and (expected_shape is None or reference_shape == expected_shape))
     same_size = len(reference) == len(actual) and bool(reference)
     differences = [abs(left - right) for left, right in zip(reference, actual)]
-    matched = (same_size and not reference_errors and not actual_errors
+    matched = (same_size and shape_matched and not reference_errors and not actual_errors
                and all(math.isclose(left, right, rel_tol=1e-7, abs_tol=1e-7)
                        for left, right in zip(reference, actual)))
     return {
         "matched": matched,
         "entries": len(reference),
         "actualEntries": len(actual),
+        "referenceShape": list(reference_shape),
+        "actualShape": list(actual_shape),
+        "expectedShape": list(expected_shape) if expected_shape is not None else None,
+        "shapeMatched": shape_matched,
         "finite": not reference_errors and not actual_errors,
         "nonzero": any(abs(value) > 1e-12 for value in reference),
         "maxAbsDifference": max(differences, default=None),
+        "errors": reference_errors + actual_errors,
+    }
+
+
+def compare_selections(reference_path: Path, actual_path: Path,
+                       feature_count: int) -> dict[str, object]:
+    reference, reference_errors = read_matrix(reference_path)
+    actual, actual_errors = read_matrix(actual_path)
+    reference_shape = (len(reference), len(reference[0]) if reference else 0)
+    actual_shape = (len(actual), len(actual[0]) if actual else 0)
+    reference_values = reference[0] if reference_shape[0] == 1 else []
+    actual_values = actual[0] if actual_shape[0] == 1 else []
+    integral = (all(value.is_integer() for value in reference_values)
+                and all(value.is_integer() for value in actual_values))
+    reference_ints = [int(value) for value in reference_values] if integral else []
+    actual_ints = [int(value) for value in actual_values] if integral else []
+    valid_reference = (reference_ints == [0] or
+                       (bool(reference_ints) and len(set(reference_ints)) == len(reference_ints)
+                        and all(1 <= value <= feature_count for value in reference_ints)))
+    shape_matched = (reference_shape == actual_shape and reference_shape[0] == 1
+                     and reference_shape[1] >= 1)
+    matched = (not reference_errors and not actual_errors and integral and valid_reference
+               and shape_matched and reference_ints == actual_ints)
+    return {
+        "matched": matched,
+        "referenceShape": list(reference_shape),
+        "actualShape": list(actual_shape),
+        "shapeMatched": shape_matched,
+        "integral": integral,
+        "validReference": valid_reference,
+        "reference": reference_ints,
+        "actual": actual_ints,
         "errors": reference_errors + actual_errors,
     }
 
@@ -751,7 +839,13 @@ def evaluate(run: Path, container_returncode: int,
                     for opcode in ("rev", "exp")))
             model_comparison = (compare_models(
                 run / "cases" / case.name / "cp-model.csv",
-                run / "cases" / case.name / "fed-model.csv") if case.training else None)
+                run / "cases" / case.name / "fed-model.csv",
+                (5, 1) if case.kind == "ml_steplm" else None)
+                if case.training else None)
+            selection_comparison = (compare_selections(
+                run / "cases" / case.name / "cp-selection.csv",
+                run / "cases" / case.name / "fed-selection.csv", 5)
+                if case.kind == "ml_steplm" else None)
             checkpoints = planner_checkpoints(text) if case.training else []
             checkpoint_phases = {str(item.get("phase")) for item in checkpoints}
             trace_complete = (not case.training or
@@ -783,6 +877,8 @@ def evaluate(run: Path, container_returncode: int,
                       and not audit_violations
                       and (not case.training or bool(model_comparison and
                            model_comparison["matched"] and model_comparison["nonzero"]))
+                      and (case.kind != "ml_steplm" or bool(
+                           selection_comparison and selection_comparison["matched"]))
                       and (not case.requires_loss_progress or bool(
                            loss_progress and loss_progress["decreased"]))
                       and trace_complete
@@ -794,6 +890,7 @@ def evaluate(run: Path, container_returncode: int,
                       "auditErrors": audit_errors, "actionDiagnostics": actions,
                       "runtimeAuditViolations": audit_violations,
                       "modelComparison": model_comparison,
+                      "selectionComparison": selection_comparison,
                       "plannerCheckpoints": checkpoints,
                       "plannerCheckpointSummary": checkpoint_summary,
                       "plannerTraceComplete": trace_complete,
