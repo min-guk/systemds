@@ -1693,29 +1693,31 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void candidateSpecificProofRequiresEveryAndDependencyToBeGrounded() {
+	public void candidateSpecificProofRequiresEveryAndDependencyToBeCompatible() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref cycleA = full.logicalRead("cycleA");
 		Ref cycleB = full.logicalRead("cycleB");
-		full.reaching.put(cycleA.key, List.of(cycleB.key));
+		Ref otherEntry = full.source("otherEntry", anchor(FType.FULL, "worker2:8002", 0, 50));
+		full.reaching.put(cycleA.key, List.of(otherEntry.key, cycleB.key));
 		full.reaching.put(cycleB.key, List.of(cycleA.key));
 		Ref product = full.binaryWithoutCandidate("product", OpOp2.PLUS, seed, cycleA);
 		List<CandidateInputState> selected = List.of(CandidateInputState.present(FType.FULL),
 			CandidateInputState.present(FType.FULL));
 		full.additionalCandidate(product, selected);
 
-		Assert.assertNull("one grounded sibling cannot discharge an independent ungrounded SCC",
+		Assert.assertNull("one compatible sibling cannot discharge an incompatible loop entry",
 			full.resolver().proveCandidate(full.reference(product, selected), seed.anchor));
 	}
 
 	@Test
-	public void unchangedOwnerHintPreservesAliasCycleRejectionAgainstBothReferences() {
+	public void unchangedOwnerHintPreservesIncompatibleLoopEntryRejectionAgainstBothReferences() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref cycleA = full.logicalRead("cycleA");
 		Ref cycleB = full.logicalRead("cycleB");
-		full.reaching.put(cycleA.key, List.of(cycleB.key));
+		Ref otherEntry = full.source("otherEntry", anchor(FType.FULL, "worker2:8002", 0, 50));
+		full.reaching.put(cycleA.key, List.of(otherEntry.key, cycleB.key));
 		full.reaching.put(cycleB.key, List.of(cycleA.key));
 		Ref product = full.binaryWithoutCandidate("product", OpOp2.PLUS, seed, cycleA);
 		List<CandidateInputState> selected = List.of(CandidateInputState.present(FType.FULL),
@@ -2212,7 +2214,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void generatedRootRejectsStalePrivateAndUngroundedAuthority() {
+	public void generatedRootRejectsStaleAndPrivateAuthority() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref root = full.unary("root", OpOp1.LOG, seed, false);
@@ -2242,19 +2244,6 @@ public class NativePlacementContinuityTest {
 		Assert.assertFalse("origin-resident private native operations remain legal", full.resolver()
 			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor).isEmpty());
 
-		Fixture ungrounded = new Fixture(FType.FULL);
-		Ref loopRead = ungrounded.logicalRead("loopRead");
-		Ref ungroundedRoot = ungrounded.unary("root", OpOp1.LOG, loopRead, false);
-		Ref loopWrite = ungrounded.write("loopWrite", ungroundedRoot, NodeKind.LOOP_PHI, false);
-		ungrounded.reaching.put(loopRead.key, List.of(loopWrite.key));
-		CandidateRuleFact ungroundedBase = ungrounded.fact(ungroundedRoot, inputs);
-		CandidateEmissionFact ungroundedEmission = ungroundedBase.allowedEmissionFacts().get(0);
-		CandidateRealizationReference ungroundedOutput = CandidateRealizationReference.of(
-			ungroundedBase.key(), CandidateEmissionRealization.nativeLineage(
-				ungroundedEmission.emissionState(), "generated-ungrounded", List.of(), List.of()));
-		Assert.assertTrue("a dependency cycle without an external ground cannot generate continuity",
-			ungrounded.resolver().proveGeneratedCandidateAlternatives(ungroundedBase,
-				ungroundedEmission, ungroundedOutput, seed.anchor).isEmpty());
 	}
 
 	@Test
@@ -2482,8 +2471,8 @@ public class NativePlacementContinuityTest {
 			new CandidateRealizationSupportClause(List.of(),
 				List.of(CandidateRealizationInputBinding.direct(0, b)))));
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		Assert.assertTrue("a pure self-cycle cannot gain ground from deduplication",
-			full.resolver(metrics, 0, 0).proveCandidateAlternatives(selected, seed.anchor).isEmpty());
+		// This synthetic overlay tests root-pin deduplication, not program validity.
+		full.resolver(metrics, 0, 0).proveCandidateAlternatives(selected, seed.anchor);
 		Assert.assertEquals("different static clause pins must remain distinct", 0,
 			metrics.snapshot().topologyRowsCollapsed());
 		Assert.assertTrue("root pin makes the two effective private backedges identical",
@@ -2551,48 +2540,88 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void candidateSccGroundingCannotBorrowGroundFromIncompleteAlternative() {
+	public void fixedLoopEntryMakesCandidateGroundingRedundant() {
 		Fixture full = new Fixture(FType.FULL);
-		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref ungrounded = full.logicalRead("ungrounded");
-		full.reaching.put(ungrounded.key, List.of(ungrounded.key));
-		Ref a = full.naryWithoutCandidate("A", OpOpN.MULT, ground, ground, ground);
-		Ref b = full.naryWithoutCandidate("B", OpOpN.MULT, ground, ground);
-		full.edges.add(new CompiledInputEdgeFact(a.key, a.key, 0));
-		full.edges.add(new CompiledInputEdgeFact(b.key, a.key, 1));
-		full.edges.add(new CompiledInputEdgeFact(ungrounded.key, a.key, 2));
-		full.edges.add(new CompiledInputEdgeFact(a.key, b.key, 0));
-		full.edges.add(new CompiledInputEdgeFact(ground.key, b.key, 1));
-		full.additionalCandidate(a, List.of(CandidateInputState.present(FType.FULL),
-			CandidateInputState.absentLocal(), CandidateInputState.absentLocal()));
-		full.additionalCandidate(a, List.of(CandidateInputState.absentLocal(),
-			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)));
-		List<CandidateInputState> bInputs = List.of(
-			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
-		full.additionalCandidate(b, bInputs);
-
-		Assert.assertNull("A->A OR A->{B,U} cannot let B->{A,G} lend G through the unusable AND branch",
-			full.resolver().proveCandidate(full.reference(b, bInputs), ground.anchor));
-	}
-
-	@Test
-	public void candidateSingletonSccRejectsPureSelfCycleWithoutRefinementScan() {
-		Fixture full = new Fixture(FType.FULL);
-		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
-		Ref loop = full.logicalRead("loop");
-		full.reaching.put(loop.key, List.of(loop.key));
-		Ref root = full.unary("root", OpOp1.ABS, loop, false);
+		Ref entry = full.source("entry", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref read = full.logicalRead("read");
+		Ref body = full.unary("body", OpOp1.LOG, read, false);
+		Ref write = full.write("write", body, NodeKind.LOOP_PHI, false);
+		full.reaching.put(read.key, List.of(entry.key, write.key));
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
 
-		Assert.assertNull("a singleton self-cycle without an external ground path must remain rejected",
-			full.resolver(metrics, 0, 0).proveCandidate(full.reference(root,
-				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
-		Assert.assertEquals("singleton components must bypass their refined Tarjan scans", 2,
+		Assert.assertNotNull(resolver.proveCandidate(full.reference(body,
+			List.of(CandidateInputState.present(FType.FULL))), entry.anchor));
+		Assert.assertTrue("the recurrence must really be present", metrics.snapshot().cyclicProofGraphs() > 0);
+		Assert.assertEquals("fixed entry/input relations make candidate SCC grounding redundant", 0,
 			metrics.snapshot().sccInvocations());
+		Assert.assertEquals("no source-grounding phase on the initialized loop", 0,
+			metrics.attributionSnapshot().phase(SearchSpaceMetrics.Phase.PROOF_GROUNDING).calls());
 	}
 
 	@Test
-	public void candidateSccGroundingPreservesExternallyGroundedLoop() {
+	public void nestedLoopCandidateSupportsAreIndependentOfMemoization() throws Exception {
+		for(FType type : List.of(FType.ROW, FType.COL, FType.FULL)) {
+			Fixture fixture = new Fixture(type);
+			Ref entry = fixture.source("entry", anchor(type, "worker1:8001", 0, 50));
+			Ref outer = fixture.logicalRead("outer");
+			Ref inner = fixture.logicalRead("inner");
+			Ref body = fixture.unary("body", OpOp1.LOG, inner, false);
+			Ref innerWrite = fixture.write("innerWrite", body, NodeKind.LOOP_PHI, false);
+			Ref outerWrite = fixture.write("outerWrite", innerWrite, NodeKind.LOOP_PHI, false);
+			fixture.reaching.put(outer.key, List.of(entry.key, outerWrite.key));
+			fixture.reaching.put(inner.key, List.of(outer.key, innerWrite.key));
+			SearchSpaceMetrics fastMetrics = new SearchSpaceMetrics();
+			SearchSpaceMetrics referenceMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity fast = fixture.resolver(fastMetrics, 256, 4096);
+			NativePlacementContinuity reference = fixture.resolver(referenceMetrics, 0, 0);
+			int checked = 0;
+			for(CandidateRuleFact fact : fixture.candidates)
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						CandidateRealizationReference candidate = CandidateRealizationReference.of(fact.key(), realization);
+						Assert.assertEquals("complete support relation for " + type + ':' + fact.key(),
+							reference.proveCandidateAlternatives(candidate, entry.anchor),
+							fast.proveCandidateAlternatives(candidate, entry.anchor));
+						checked++;
+					}
+			Assert.assertTrue(checked > 0);
+			Assert.assertTrue("the fixture must exercise loop recurrences",
+				referenceMetrics.snapshot().cyclicProofGraphs() > 0);
+			Assert.assertEquals(0, referenceMetrics.snapshot().sccInvocations());
+			Assert.assertEquals(0, fastMetrics.snapshot().sccInvocations());
+			Assert.assertEquals(0,
+				fastMetrics.attributionSnapshot().phase(SearchSpaceMetrics.Phase.PROOF_GROUNDING).calls());
+		}
+	}
+
+	@Test
+	public void structuralRevisionCannotReuseAnIncompatibleLoopEntry() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref entry = full.source("entry", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref read = full.logicalRead("read");
+		Ref body = full.unary("body", OpOp1.LOG, read, false);
+		Ref write = full.write("write", body, NodeKind.LOOP_PHI, false);
+		full.reaching.put(read.key, List.of(entry.key, write.key));
+		CandidateRealizationReference candidate = full.reference(body,
+			List.of(CandidateInputState.present(FType.FULL)));
+		NativePlacementContinuity first = full.resolver();
+		Assert.assertNotNull(first.proveCandidate(candidate, entry.anchor));
+		Ref incompatibleEntry = full.source("incompatibleEntry", anchor(FType.FULL, "worker2:8002", 0, 50));
+		full.reaching.put(read.key, List.of(incompatibleEntry.key, write.key));
+		NativePlacementContinuity revised = first.structuralRevision(full.nodes, full.origins,
+			full.candidates, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertNull(revised.proveCandidate(candidate, entry.anchor));
+		Assert.assertFalse(revised.proves(List.of(read.key), entry.anchor));
+		full.reaching.put(read.key, List.of(entry.key, write.key));
+		NativePlacementContinuity restored = revised.structuralRevision(full.nodes, full.origins,
+			full.candidates, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(first.proveCandidateAlternatives(candidate, entry.anchor),
+			restored.proveCandidateAlternatives(candidate, entry.anchor));
+	}
+
+	@Test
+	public void candidatePhysicalViabilityPreservesInitializedLoop() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref loop = full.logicalRead("loop");
@@ -2603,14 +2632,14 @@ public class NativePlacementContinuityTest {
 		Assert.assertNotNull("A cycle remains grounded when one complete AND alternative reaches direct ground",
 			full.resolver(metrics, 0, 0).proveCandidate(full.reference(root,
 				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
-		Assert.assertTrue("a self-loop must keep the cyclic SCC fallback",
+		Assert.assertTrue("the self-loop remains in the candidate graph",
 			metrics.snapshot().cyclicProofGraphs() > 0);
-		Assert.assertEquals("grounded singleton components must bypass their refined Tarjan scans", 2,
+		Assert.assertEquals("the mandatory entry makes every SCC grounding scan redundant", 0,
 			metrics.snapshot().sccInvocations());
 	}
 
 	@Test
-	public void candidateSingletonSccRejectsIncompleteAndWithoutRefinementScan() {
+	public void candidateDeadPruningRejectsIncompleteAnd() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref ground = full.source("ground", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref unknown = full.read("unknown");
@@ -2626,7 +2655,7 @@ public class NativePlacementContinuityTest {
 
 		Assert.assertNull("direct ground cannot discharge an incomplete AND alternative",
 			full.resolver(metrics, 0, 0).proveCandidate(full.reference(product, inputs), ground.anchor));
-		Assert.assertEquals("singleton SCCs should need only the maximal-component scan", 1,
+		Assert.assertEquals("physical dead pruning requires no grounding scan", 0,
 			metrics.snapshot().sccInvocations());
 	}
 
@@ -2648,6 +2677,8 @@ public class NativePlacementContinuityTest {
 			metrics.snapshot().acyclicProofGraphs() > 0);
 		Assert.assertEquals("the acyclic chain must not invoke the SCC fallback", 0,
 			metrics.snapshot().cyclicProofGraphs());
+		Assert.assertEquals("dead pruning already establishes acyclic source support", 0,
+			metrics.attributionSnapshot().phase(SearchSpaceMetrics.Phase.PROOF_GROUNDING).calls());
 	}
 
 	@Test
@@ -2703,9 +2734,10 @@ public class NativePlacementContinuityTest {
 		Ref cycleA = unanchored.read("cycleA");
 		Ref cycleB = unanchored.read("cycleB");
 		unanchored.reaching.put(join.key, List.of(good.key, cycleA.key));
-		unanchored.reaching.put(cycleA.key, List.of(cycleB.key));
+		Ref otherEntry = unanchored.source("otherEntry", anchor(FType.ROW, "worker2:8002", 0, 4));
+		unanchored.reaching.put(cycleA.key, List.of(otherEntry.key, cycleB.key));
 		unanchored.reaching.put(cycleB.key, List.of(cycleA.key));
-		Assert.assertFalse("Every reaching source must ultimately be grounded",
+		Assert.assertFalse("Every reaching source must have a compatible worker pool",
 			unanchored.resolver().proves(List.of(join.key), good.anchor));
 
 		Fixture multi = new Fixture(FType.FULL);
@@ -2864,10 +2896,11 @@ public class NativePlacementContinuityTest {
 		Ref cycleSeed = cycle.source("cycleSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref cycleA = cycle.read("cycleA");
 		Ref cycleB = cycle.read("cycleB");
-		cycle.reaching.put(cycleA.key, List.of(cycleB.key));
+		Ref otherEntry = cycle.source("otherEntry", anchor(FType.FULL, "worker2:8002", 0, 50));
+		cycle.reaching.put(cycleA.key, List.of(otherEntry.key, cycleB.key));
 		cycle.reaching.put(cycleB.key, List.of(cycleA.key));
 		Ref cyclicBinary = cycle.binary("cyclicBinary", OpOp2.PLUS, cycleSeed, cycleA, false);
-		Assert.assertFalse("A matching branch cannot ground an independent binary-input cycle",
+		Assert.assertFalse("A matching branch cannot make another loop entry physically compatible",
 			cycle.resolver().proves(List.of(cyclicBinary.key), cycleSeed.anchor));
 	}
 
@@ -2891,10 +2924,11 @@ public class NativePlacementContinuityTest {
 		Ref cycleSeed = cycle.source("cycleSeed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref cycleA = cycle.read("cycleA");
 		Ref cycleB = cycle.read("cycleB");
-		cycle.reaching.put(cycleA.key, List.of(cycleB.key));
+		Ref otherEntry = cycle.source("otherEntry", anchor(FType.FULL, "worker2:8002", 0, 50));
+		cycle.reaching.put(cycleA.key, List.of(otherEntry.key, cycleB.key));
 		cycle.reaching.put(cycleB.key, List.of(cycleA.key));
 		Ref cyclicProduct = cycle.nary("cyclicProduct", OpOpN.MULT, false, cycleSeed, cycleA);
-		Assert.assertFalse("A good branch must not ground an independent reaching-definition cycle",
+		Assert.assertFalse("Every loop entry must have a compatible pool, including other AND inputs",
 			cycle.resolver().proves(List.of(cyclicProduct.key), cycleSeed.anchor));
 
 		Fixture evidence = new Fixture(FType.FULL);
