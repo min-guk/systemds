@@ -582,3 +582,18 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **게시 전 최신 main 통합**: 원격 `7b0656c29c`로 rebase했다. `547f4799cd`가 동일 endpoint certificate를 deduplicate하므로, 최신 기대값은 certificate 1개다. 선택 입력별 native proof 2/3/2개와 identity 안정성 검증은 유지한다. 앞선 multiplicity 설명은 `eb64f9c939` 기준 기록이며 최신 게시 계약은 이 항목으로 갱신한다. Production 변경을 되돌리지 않고 문서 양쪽 append를 보존했다.
 
 - **최신 main 게시 검증 완료**: `7b0656c29c` 위에서 동일 8개 클래스 재실행 123 PASS / 기존 skip 1 / 실패·오류 0. Docker `main-publication`에서도 수정 oracle 6 tests 및 loop/function 2 cases PASS, class hash 일치, runtime conversion 위반·audit error 0. 근거 `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/main-publication/result.json`. 최종 변경은 테스트 2개와 문서 2개다.
+
+
+## 8x2 native 출력 witness 폭 1 — 수정 및 회귀 검증 완료
+
+- **범위**: 사용자 지정 후속 항목 1. `8f6bb285e5` 기준으로 원래 다중 열 fixture를 복원하며 다른 통합 실패는 별도 기록한다.
+- **재현**: 8x2 ROW source → VALUE_MAP TRead → native `+1`에서 열 끝 좌표가 2 대신 1. 신규 `nativeMapsFromValueInputsPreserveFullGeometry`가 production 수정 전에 실패했다. `.omx/native-map-geometry-evidence/red.log`.
+- **원인**: `NativePoolWitness`는 compatibility/cache용 partition-axis 추상화이며 `asAnchor`는 나머지 축을 1로 채운다. Closure가 VALUE_MAP 입력 때문에 durable 대신 native lineage를 게시할 때, 이미 계산한 전체 outputAnchor 대신 이 추상 witness를 정확한 출력 범위로 사용했다. Parser/HOP 크기 지정의 문제가 아니다.
+- **수정/근거**: exact proof와 완전한 outputAnchor가 있는 native publication에서 canonical worker endpoint와 전체 출력 범위를 보존한다. Axis-only continuity·memo, VALUE_MAP과 DURABLE 구별, 기존 dynamic/unknown-shape 동작을 유지한다. 후보 삭제나 source-grounding 연산을 추가하지 않는다.
+- **초기 검증**: 8x2 complete-space 클래스 7 tests 및 lineage normalization 테스트 PASS. ROW/COL·append·transpose 및 전체 인접 회귀를 확장 검증한다.
+- **별도 기존 오류**: `DynamicNativeLayoutCompositionTest.transientReplayPreservesDynamicReverseAuthority`는 `One realization cannot mix unproven or physically distinct native worker pools`로 실패한다. 수정 전 `8f6bb285e5`에 해당하는 frozen publication main classes로 같은 테스트를 실행해 동일 오류·stack을 재현했다. 다른 dynamic 테스트 4개는 양쪽에서 PASS. 로그 `dynamic-stack.log`, `dynamic-baseline.log`; baseline classes는 `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/main-publication/frozen-inputs/main-classes`.
+- **잔여 한계/회귀 위험**: unknown shape의 placeholder 의미를 전역 변경하는 수정은 아니다. 이미 알려진 output map을 잃는 오류만 고친다. Dynamic predecessor를 stale durable geometry로 승격시키거나 axis-only compatibility를 좁히지 않는지 기존 회귀로 확인한다.
+
+- **최종 Java 검증**: 원래 8x2 fixture 7 tests PASS, COL8x4 행 높이 보존과 CBIND8x2→8x4 확장 2 tests PASS. 같은 새 COL/CBIND 테스트를 frozen baseline main classes로 실행하면 높이/폭 1로 각각 실패한다. 최종 인접 결과 집계 147 tests: 145 PASS, 기존 skip 1, baseline에서도 재현한 dynamic-reverse 오류 1. 최종 production 소스는 동일하며 별도 run 결과를 합친 집계다. 전체 suite가 all-green이라고 주장하지 않는다.
+- **변경/검토**: production `PlacementRelationClosure` 5줄, 8x2 complete-space 테스트 복원 및 새 `NativeOutputGeometryTest`. 독립 read-only review CLEAR, diff whitespace PASS. 알려진 outputAnchor geometry만 복원하므로 memo/axis compatibility 또는 dynamic predecessor를 변경하지 않는다. 상세 보고서 `NATIVE_OUTPUT_GEOMETRY_2026-10-06.md`.
+- **Docker 최종 검증**: frozen class hash PASS, 복원된 8x2 oracle 7 tests PASS, loop/function 2 cases PASS. Loop의 8x3·sum54·norm2 140 및 function fingerprint가 CP와 일치하고 runtime conversion 위반·audit error 0. 결과 `/grid/3/cofee-lm-sweep-mchoi-20260914/native-output-geometry-20261006/native-output-geometry/result.json`. 최종 source SHA와 Java 검증 manifest 일치.

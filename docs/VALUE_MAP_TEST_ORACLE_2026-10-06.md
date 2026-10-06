@@ -77,3 +77,8 @@ Integrated publication validation on `7b0656c29c`:
 - Same Docker command with `--run-id main-publication`: **PASSED**, six oracle tests and both loop/function cases passed, class hashes matched, no runtime conversion violations or audit errors.
 - Docker receipt: `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/main-publication/result.json`.
 - Final diff against integrated main contains only the two test classes and two documentation files.
+
+
+## Follow-up: original multi-column fixture restored
+
+The subsequent [native output geometry repair](NATIVE_OUTPUT_GEOMETRY_2026-10-06.md) identifies the width-1 value as padding from an axis-only continuity witness, not failed HOP dimension inference. Native publication now retains its already-known complete output map. The fixture has been restored to 8x2 and passes the independent complete-space checks. The earlier 8x1 limitation above describes the original publication, not the repaired fixture.

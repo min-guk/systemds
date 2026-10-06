@@ -4374,6 +4374,11 @@ final class PlacementRelationClosure {
 											appendProof(clause.proofDependencies(), continuityProof), bindings));
 								else {
 									DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
+									// The continuity witness retains only the partition axis; its other
+									// extent is a placeholder. Publish the complete proved output map
+									// when available, including for selected VALUE_MAP inputs.
+									if(proof.exactPartitionRanges() && outputAnchor != null)
+										outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
 									// Keep the proved output FType and worker endpoints even when the
 									// runtime recomputes partition extents or changes the partition axis.
 									bound.add(proof.exactPartitionRanges()

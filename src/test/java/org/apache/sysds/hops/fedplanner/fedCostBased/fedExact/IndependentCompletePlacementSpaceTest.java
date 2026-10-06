@@ -55,20 +55,37 @@ public class IndependentCompletePlacementSpaceTest {
 	private static final PlacementState LOCAL =
 		new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 	private static final String ROW_GEOMETRY =
-		"ROW:localhost:5334/A1|0,0:4,1,localhost:5335/A2|4,0:8,1";
+		"ROW:localhost:5334/A1|0,0:4,2,localhost:5335/A2|4,0:8,2";
 	private static final String NATIVE_ROW_GEOMETRY =
-		"ROW:localhost:5334|0,0:4,1,localhost:5335|4,0:8,1";
+		"ROW:localhost:5334|0,0:4,2,localhost:5335|4,0:8,2";
 	private static final List<String> ROLES = List.of(
 		"branch-if-operation", "branch-if-read", "branch-else-operation",
 		"branch-else-read", "function-operation", "joined-read");
-	// A column vector keeps literal and native output geometry equal without shape rewrites
-	// that would change the branch/loop topology of this bounded fixture.
+	// Keep both dimensions: a partition-axis continuity proof must not publish a width-1 map.
+	// Avoid rewrites that would change the branch/loop topology of this bounded fixture.
 	private static final String SCRIPT =
 		"f=function(matrix[double] X) return (matrix[double] Y){Y=X+1;}"
 			+ "A=federated(addresses=list(\"localhost:5334/A1\",\"localhost:5335/A2\"),"
-			+ "ranges=list(list(0,0),list(4,1),list(4,0),list(8,1)));"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));"
 			+ "D=A;i=1;while(i<=2){if(i>0){D=A+1;}else{D=A-1;}i=i+1;}"
 			+ "C=f(D);E=C+1;";
+
+	@Test
+	public void nativeMapsFromValueInputsPreserveFullGeometry() throws Exception {
+		Fixture fixture = fixture(Privacy.PRIVATE_AGGREGATE);
+		for(String role : List.of("branch-if-operation", "branch-else-operation", "function-operation")) {
+			List<CandidateSelectionReceipt> nativeOutputs = fixture.domains().get(role).alternatives().stream()
+				.filter(alternative -> alternative.realization().key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+					&& alternative.supportClause().inputBindings().stream().anyMatch(binding ->
+						binding.kind() == CandidateInputBindingKind.DIRECT
+							&& binding.source().realization().layoutKind() == PlacementLayoutKind.VALUE_MAP))
+				.map(IndependentCompletePlacementSpaceTest::receipt).toList();
+			Assert.assertFalse("fixture must exercise native output from VALUE_MAP: " + role, nativeOutputs.isEmpty());
+			for(CandidateSelectionReceipt output : nativeOutputs)
+				Assert.assertEquals("native output must retain the full 8x2 map: " + role,
+					NATIVE_ROW_GEOMETRY, geometry(output.provenWorkerPool()));
+		}
+	}
 
 	@Test
 	public void privateExactHardModelMatchesIndependentCompleteUniverse() throws Exception {
