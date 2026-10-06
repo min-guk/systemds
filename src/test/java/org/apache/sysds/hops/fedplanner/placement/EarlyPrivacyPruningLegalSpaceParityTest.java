@@ -71,10 +71,11 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 	// Pre-pruning baselines, with the audited identity update documented below.
 	private static final String PROTECTED_AGGREGATE_GOLDEN =
 		"09e2e4069fefd2f280f137b7c042182cc6a7e2e994169aca9ccc9c4c77e23ea2";
+	// Joint exact/value-map bindings change realization identities, while preserving the candidate space.
 	private static final String METADATA_AND_HANDLE_GOLDEN =
-		"f8c65fdda8a60cc67ee4a2143f50ab39d3af36fbd424ccbc1be9f254da0e0c3b";
+		"a1a27e283c8d239888a83553492417d0f7288b3590c47f64fc67939e187574c6";
 	private static final String CONTROL_FLOW_GOLDEN =
-		"4744ada268c297e4daad886f6adae367a0070d6fbcff6bcdc2cda97ff5363d28";
+		"45aee9b3f41a20f123e7290a402eada3575d36a62e71d12dfd818acfdb23aafd";
 	// 3d0d683c1b changed only colMean's materialization ID and its consumer reference
 	// versus adaebee9cc. Keep exact action identities and support bindings in the digest.
 	private static final String UNKNOWN_WIDTH_GOLDEN =

@@ -311,6 +311,7 @@ public final class PolicyFirstFeasiblePlacementSelector
 	private static boolean isLegalityConstraint(Constraint constraint) {
 		return constraint.kind() == ConstraintKind.SAME_PLACEMENT
 			|| constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+			|| constraint.kind() == ConstraintKind.FUNCTION_INPUT_TRANSFER
 			|| constraint.kind() == ConstraintKind.SAME_FTYPE
 			|| constraint.kind() == ConstraintKind.CONJUNCTIVE;
 	}

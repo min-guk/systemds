@@ -404,6 +404,8 @@ final class PlacementClosureDiagnostics {
 			for(CandidateEmissionFact current : after.allowedEmissionFacts().stream().limit(6).toList()) {
 				CandidateEmissionFact prior = before.allowedEmissionFacts().stream()
 					.filter(candidate -> candidate.emissionState().equals(current.emissionState()))
+					.filter(candidate -> Objects.equals(candidate.derivedFoutAction(),
+						current.derivedFoutAction()))
 					.findFirst().orElse(null);
 				if(prior == null) {
 					deltas.add("added:" + realizationKeys(current));

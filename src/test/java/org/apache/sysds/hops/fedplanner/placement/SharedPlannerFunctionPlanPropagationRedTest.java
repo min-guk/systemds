@@ -6,6 +6,7 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,12 +27,15 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
+import org.apache.sysds.hops.fedplanner.placement.selector.PolicyFirstFeasiblePlacementSelector;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
@@ -218,9 +222,9 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 	}
 
 	@Test
-	public void functionInputAliasRejectsFoutSourceWithLocalFormal() throws Exception {
+	public void functionInputLocalTransferRequiresCanonicalActionAndRejectsOmission() throws Exception {
 		DMLProgram program = compile(SMALL_FUNCTION_SCRIPT);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		PlacementAnalysis.LogicalFunctionInputFact fact = analysis.logicalFunctionInputsInCanonicalOrder().stream()
 			.filter(candidate -> analysis.hop(candidate.sourceArgument()).orElseThrow()
 				.getDataType().isMatrix()).findFirst().orElseThrow();
@@ -230,8 +234,8 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 		PlacementState federatedArgument = argument.legalAlternatives().stream()
 			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT)
 			.findFirst().orElseThrow();
-		NeutralPlacementGraph.Constraint alias = analysis.graph().constraints().stream()
-			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
+		NeutralPlacementGraph.Constraint transfer = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.FUNCTION_INPUT_TRANSFER)
 			.filter(constraint -> constraint.left() == fact.sourceArgument()
 				&& constraint.right() == fact.boundary())
 			.findFirst().orElseThrow();
@@ -241,12 +245,79 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 				&& constraint.right() == fact.targetRead())
 			.findFirst().orElseThrow();
 
-		Assert.assertNotNull(alias);
+		Assert.assertNotNull(transfer);
 		Assert.assertNotNull(federatedArgument);
-		Assert.assertTrue("A runtime function binding cannot own an implicit FOUT-to-LOUT GET",
-			boundary.legalAlternatives().stream().noneMatch(state -> state.output() == FederatedOutput.LOUT));
-		Assert.assertTrue("The formal read must retain the same alias-only FOUT domain",
-			formal.legalAlternatives().stream().noneMatch(state -> state.output() == FederatedOutput.LOUT));
+		PlacementState localBoundary = boundary.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow();
+		PlacementState localFormal = formal.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow();
+
+		List<NeutralPlacementGraph.Constraint> pinnedConstraints =
+			new ArrayList<>(analysis.graph().constraints());
+		for(Map.Entry<NeutralPlacementGraph.Node,PlacementState> pin : Map.of(
+			argument, federatedArgument, boundary, localBoundary, formal, localFormal).entrySet())
+			for(PlacementState rejected : pin.getKey().legalAlternatives())
+				if(!rejected.equals(pin.getValue()))
+					pinnedConstraints.add(new NeutralPlacementGraph.Constraint(ConstraintKind.CONJUNCTIVE,
+						pin.getKey().key(), pin.getKey().key(), -1, "forbid-pair:"
+							+ rejected.normalizedSignature() + "=>" + rejected.normalizedSignature()));
+		NeutralPlacementGraph pinned = new NeutralPlacementGraph(analysis.graph().nodes(), pinnedConstraints,
+			analysis.graph().relocationActions(), analysis.graph().derivedFoutMaterializationActions());
+		var selected = new PolicyFirstFeasiblePlacementSelector().select(analysis, pinned);
+		Assert.assertEquals("movement-first fixture must retain the physical FOUT actual",
+			federatedArgument, selected.assignment().get(argument.key()));
+		Assert.assertEquals(localBoundary, selected.assignment().get(boundary.key()));
+		Assert.assertEquals(localFormal, selected.assignment().get(formal.key()));
+		Map<CompiledHopKey,PlacementEmissionState> emissions = NormalizedPlannerResults.exactEmissionStates(
+			analysis, selected.assignment(), selected.selectedCandidateSelections());
+		NormalizedPlannerResult normalized = NormalizedPlannerResults
+			.createWithEmissionStatesAndCandidateSelections(analysis, "forced-function-local", emissions,
+				selected.selectedCandidateSelections(), selected.selectedRelocationChoices(), "fixture");
+		List<LocalMaterializationActionKey> locals = normalized.selectedLocalMaterializations();
+		Assert.assertTrue("selected LOCAL function delivery must retain the original actual operand",
+			locals.stream().anyMatch(action -> action.sourceOccurrence() == fact.sourceArgument()
+				&& action.obligations().stream().anyMatch(obligation ->
+					obligation.inputPosition() == fact.callInputPosition())));
+
+		NormalizedPlannerResult unhashedOmission = withoutLocalMaterializations(normalized, "pending");
+		NormalizedPlannerResult omitted = withoutLocalMaterializations(normalized,
+			PlacementEmissionTransaction.canonicalPlanHash(unhashedOmission));
+		IllegalStateException failure = Assert.assertThrows(IllegalStateException.class,
+			() -> PlacementEmissionTransaction.emit(program, omitted,
+				PlacementEmissionTransaction.FailureInjector.none()));
+		Assert.assertTrue("omitting the selected LOCAL action must fail exact emission validation: "
+			+ failure.getMessage(), failure.getMessage().contains("LOCAL materializations differ"));
+	}
+
+	private static NormalizedPlannerResult withoutLocalMaterializations(
+		NormalizedPlannerResult source, String fingerprint) {
+		return new NormalizedPlannerResult() {
+			@Override public PlacementAnalysis analysis() { return source.analysis(); }
+			@Override public String plannerId() { return source.plannerId(); }
+			@Override public String analysisFingerprint() { return source.analysisFingerprint(); }
+			@Override public Map<CompiledHopKey, PlacementState> selectedStates() {
+				return source.selectedStates();
+			}
+			@Override public Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates() {
+				return source.selectedEmissionStates();
+			}
+			@Override public List<PlacementIdentity.RelocationActionKey> selectedRelocations() {
+				return source.selectedRelocations();
+			}
+			@Override public List<PlacementIdentity.CandidateSelectionReceipt> selectedCandidateSelections() {
+				return source.selectedCandidateSelections();
+			}
+			@Override public List<PlacementIdentity.RelocationChoiceReceipt> selectedRelocationChoices() {
+				return source.selectedRelocationChoices();
+			}
+			@Override public List<LocalMaterializationActionKey> selectedLocalMaterializations() {
+				return List.of();
+			}
+			@Override public String objectiveCertificate() { return source.objectiveCertificate(); }
+			@Override public String normalizedPlanFingerprint() { return fingerprint; }
+		};
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

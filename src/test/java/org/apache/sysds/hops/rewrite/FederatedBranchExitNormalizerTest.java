@@ -65,6 +65,10 @@ public class FederatedBranchExitNormalizerTest {
 			elseRead.getPlannerBranchNormalizationKey()));
 		Assert.assertFalse(FederatedPlannerUtils.plannerRecompileSignature(thenRead).equals(
 			FederatedPlannerUtils.plannerRecompileSignature(elseRead)));
+		Hop thenTransfer = branch.getIfBody().get(branch.getIfBody().size() - 1).getHops().get(0).getInput(0);
+		Hop elseTransfer = branch.getElseBody().get(branch.getElseBody().size() - 1).getHops().get(0).getInput(0);
+		Assert.assertNotEquals(FederatedPlannerUtils.plannerRecompileSignature(thenTransfer),
+			FederatedPlannerUtils.plannerRecompileSignature(elseTransfer));
 		int thenSize = branch.getIfBody().size();
 		int elseSize = branch.getElseBody().size();
 
@@ -150,8 +154,9 @@ public class FederatedBranchExitNormalizerTest {
 		Assert.assertEquals(rows, write.getDim1());
 		Assert.assertEquals(columns, write.getDim2());
 		Assert.assertEquals(1, write.getInput().size());
-		Assert.assertTrue(write.getInput(0) instanceof DataOp);
-		DataOp read = (DataOp) write.getInput(0);
+		Assert.assertTrue(org.apache.sysds.hops.fedplanner.placement.BranchPlacementNormalization
+			.isPlacementAlias(write.getInput(0)));
+		DataOp read = (DataOp) write.getInput(0).getInput(0);
 		Assert.assertEquals(OpOpData.TRANSIENTREAD, read.getOp());
 		Assert.assertTrue(read.isPlannerBranchNormalization());
 		Assert.assertEquals(write.getPlannerBranchNormalizationKey(),
@@ -161,7 +166,7 @@ public class FederatedBranchExitNormalizerTest {
 
 	private static DataOp carrierRead(ArrayList<StatementBlock> body) {
 		DataOp write = (DataOp) body.get(body.size() - 1).getHops().get(0);
-		return (DataOp) write.getInput(0);
+		return (DataOp) write.getInput(0).getInput(0);
 	}
 
 	private static boolean hasCarrier(ArrayList<StatementBlock> body, String name) {

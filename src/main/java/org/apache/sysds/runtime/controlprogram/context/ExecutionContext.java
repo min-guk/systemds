@@ -913,7 +913,7 @@ public class ExecutionContext {
 	}
 
 	protected boolean hasFederatedDataIDReference(long fedDataID) {
-		if (fedDataID <= 0)
+		if (fedDataID < 0)
 			return false;
 		for (String var : _variables.keySet()) {
 			Data dat = _variables.get(var);

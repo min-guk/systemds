@@ -321,6 +321,15 @@ public final class ExactCategoricalSolver {
 			decodeInto(assignment);
 		}
 
+		/** Keep the incumbent on a local DP tie; only a strict subtree improvement needs backtracing. */
+		boolean improvesBacktrace(int[] assignment, List<Variable> allVariables) {
+			if(assignment == null || assignment.length != variables.size())
+				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_ASSIGNMENT_SIZE_INVALID");
+			if(!variables.equals(allVariables))
+				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_VARIABLE_UNIVERSE_MISMATCH");
+			return !children.isEmpty() && value(assignment).compareTo(childCost(assignment)) < 0;
+		}
+
 		double valueForAssignment(int[] assignment, List<Variable> allVariables) {
 			if(assignment == null || assignment.length != variables.size())
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_ASSIGNMENT_SIZE_INVALID");
@@ -369,6 +378,13 @@ public final class ExactCategoricalSolver {
 
 		private PreciseCost value(int[] assignment) {
 			return valueAt(boundaryCell(assignment));
+		}
+
+		private PreciseCost childCost(int[] assignment) {
+			PreciseCost total = PreciseCost.ZERO;
+			for(BoundaryMessage child : children)
+				total = total.plus(child.value(assignment));
+			return total;
 		}
 
 		private PreciseCost valueAt(int cell) {
@@ -2036,6 +2052,7 @@ public final class ExactCategoricalSolver {
 	 */
 	private record PreciseCost(double high, double low, long tieCost)
 		implements Comparable<PreciseCost> {
+		private static final PreciseCost ZERO = new PreciseCost(0d, 0d, 0L);
 		private static final PreciseCost POSITIVE_INFINITY =
 			new PreciseCost(Double.POSITIVE_INFINITY, 0d, 0L);
 

@@ -89,7 +89,7 @@ public class DMLProgram
 			throw new IllegalArgumentException("Placement analysis is not the canonical program owner");
 	}
 
-	void requirePlacementAnalysisUnboundForHopRewrite() {
+	public void requirePlacementAnalysisUnboundForHopRewrite() {
 		if(_placementAnalysisAuthority.get() != null)
 			throw new IllegalStateException("Compiled Hop structure cannot be rewritten after placement authority binding");
 	}

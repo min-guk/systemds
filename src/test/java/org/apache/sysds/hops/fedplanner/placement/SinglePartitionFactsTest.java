@@ -250,7 +250,7 @@ public class SinglePartitionFactsTest {
 	}
 
 	@Test
-	public void lateConflictingDefinitionInvalidatesPreviouslyGroundedMatmul() {
+	public void lateAlternativeWorkerPreservesPerExecutionSinglePartition() {
 		DataOp first = source("first", "localhost:1234/first");
 		DataOp other = source("other", "localhost:1235/other");
 		List<Hop> hops = new ArrayList<>(List.of(first, other));
@@ -270,8 +270,9 @@ public class SinglePartitionFactsTest {
 		hops.addAll(List.of(read, local, product));
 		SinglePartitionFacts facts = new SinglePartitionFacts(hops,
 			Map.of(read, List.of(first, delayed)), Set.of());
-		Assert.assertFalse(facts.isSinglePartition(read));
-		Assert.assertFalse("MM must discard its provisional certificate when its provider widens",
+		Assert.assertTrue("Every alternative has one partition even though its worker differs",
+			facts.isSinglePartition(read));
+		Assert.assertTrue("A legal MM result copies its execution's one-partition provider",
 			facts.isSinglePartition(product));
 	}
 
@@ -433,7 +434,7 @@ public class SinglePartitionFactsTest {
 	}
 
 	@Test
-	public void everyDefinitionMustBeGroundedAndOnTheSameEndpoint() {
+	public void everyDefinitionMustBeGroundedButWorkersMayVaryAcrossExecutions() {
 		DataOp left = source("A", "localhost:1234/A");
 		DataOp right = source("A", "localhost:1235/A");
 		DataOp otherPath = source("A", "localhost:1234/another-file");
@@ -442,9 +443,30 @@ public class SinglePartitionFactsTest {
 			Map.of(same, List.of(left, otherPath), mixed, List.of(left, right),
 				cycle, List.of(cycle), partial, List.of(left, cycle)), Set.of());
 		Assert.assertTrue(facts.isSinglePartition(same));
-		Assert.assertFalse(facts.isSinglePartition(mixed));
+		Assert.assertTrue("Alternative workers do not add simultaneous partitions",
+			facts.isSinglePartition(mixed));
 		Assert.assertFalse(facts.isSinglePartition(cycle));
 		Assert.assertFalse("A grounded sibling cannot hide an ungrounded SCC", facts.isSinglePartition(partial));
+	}
+
+	@Test
+	public void alternativeSinglePartitionInputsKeepFullCardinalityWithoutAlignmentAuthority() {
+		DataOp first = source("first", "localhost:1234/first");
+		DataOp second = source("second", "localhost:1235/second");
+		DataOp multiple = source("multiple", "localhost:1234/a", "localhost:1235/b");
+		DataOp left = read("left"), right = read("right"), mixed = read("mixed");
+		BinaryOp sum = new BinaryOp("sum", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+		SinglePartitionFacts facts = new SinglePartitionFacts(
+			List.of(first, second, multiple, left, right, mixed, sum),
+			Map.of(left, List.of(first, second), right, List.of(second, first),
+				mixed, List.of(first, multiple)), Set.of());
+		Assert.assertEquals("Cardinality permits FULL candidates; joint physical constraints must"
+			+ " separately reject executions on incompatible workers", Optional.of(true),
+			facts.fullInputHint(sum, List.of(FType.FULL, FType.FULL)));
+		Assert.assertTrue("Every legal selected FULL operation copies one input partition",
+			facts.isSinglePartition(sum));
+		Assert.assertFalse("A two-partition alternative still invalidates cardinality",
+			facts.isSinglePartition(mixed));
 	}
 
 	@Test

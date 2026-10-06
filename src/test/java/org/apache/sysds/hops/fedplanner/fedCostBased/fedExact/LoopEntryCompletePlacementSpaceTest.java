@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
@@ -51,7 +52,9 @@ public class LoopEntryCompletePlacementSpaceTest {
 		ExactPhysicalModel model = fixture.model();
 		BigInteger size = ExactPhysicalRawSpaceExporter.size(model);
 		Assert.assertTrue("fixture must remain exhaustible: " + size, size.compareTo(BigInteger.valueOf(100000)) < 0);
+		var surface = ExactPhysicalCostModel.physicalCostSurface(fixture.analysis(), model);
 		Set<String> actual = new LinkedHashSet<>();
+		Map<String,Double> minimumCost = new HashMap<>();
 		int[] admitted = {0};
 		ExactPhysicalRawSpaceExporter.visit(model, BigInteger.ZERO, size, row -> {
 			Assert.assertNotEquals(row.reason(), ExactPhysicalRawSpaceExporter.Status.UNKNOWN, row.status());
@@ -82,19 +85,63 @@ public class LoopEntryCompletePlacementSpaceTest {
 			}
 			Assert.assertEquals("entry write, loop read and back write", 3, states.size());
 			Assert.assertEquals("every reaching version must have the same stored layout", 1, Set.copyOf(states).size());
-			Assert.assertTrue("identity transport needs no per-iteration relocation", selection.emittedRelocations().isEmpty());
-			actual.add(initialState + ">" + states.get(0) + ":entryUploads=" + uploads);
+			Assert.assertTrue("one explicit loop-body normalization is the maximum",
+				selection.emittedRelocations().size() <= 1);
+			for(var action : selection.emittedRelocations()) {
+				Assert.assertEquals("the retained movement must belong to loop-carried p",
+					"p", action.sourceValueVersion().lexicalVariable());
+				Assert.assertEquals("the retained movement must normalize to the stored layout",
+					states.get(0), action.materializationFType().name());
+				Assert.assertTrue("an unrelated X consumer must not satisfy the identity-loop oracle",
+					action.compatibleConsumers().stream().allMatch(consumer ->
+						consumer.callSitePath().contains("loop-body")
+							&& fixture.analysis().hop(consumer).orElseThrow() instanceof DataOp data
+							&& "p".equals(data.getName())));
+			}
+			String summary = initialState + ">" + states.get(0) + ":entryUploads=" + uploads
+				+ ":relocations=" + selection.emittedRelocations().size();
+			actual.add(summary);
+			minimumCost.merge(summary, physicalCost(model, surface, row.values()), Math::min);
 		});
 		// W=2, shape=8x2: local plus ROW, COL and BROADCAST; FULL is not a two-worker map.
-		Set<String> expected = new LinkedHashSet<>(Set.of("LOCAL>LOCAL:entryUploads=0"));
+		Set<String> expected = new LinkedHashSet<>(Set.of("LOCAL>LOCAL:entryUploads=0:relocations=0"));
 		for(String layout : List.of("ROW", "COL", "BROADCAST")) {
-			expected.add(layout + ">" + layout + ":entryUploads=1");
+			expected.add(layout + ">" + layout + ":entryUploads=1:relocations=0");
+			// J_v retains the explicit same-layout normalization as a legal but
+			// dominated physical plan. The direct realization above remains available;
+			// cost, rather than candidate pruning, rejects repeated loop movement.
+			expected.add(layout + ">" + layout + ":entryUploads=1:relocations=1");
 			// A selected producer upload may be gathered by a CP entry writer. It is
 			// unnecessary for this fixture, but remains a valid, more expensive plan.
-			expected.add(layout + ">LOCAL:entryUploads=1");
+			expected.add(layout + ">LOCAL:entryUploads=1:relocations=0");
 		}
 		System.out.println("LOOP_ENTRY_COMPLETE raw=" + size + " admitted=" + admitted[0] + " physical=" + actual.size());
 		Assert.assertEquals("missing or extra complete physical plans", expected, actual);
+		for(String layout : List.of("ROW", "COL", "BROADCAST")) {
+			double direct = minimumCost.get(layout + ">" + layout
+				+ ":entryUploads=1:relocations=0");
+			double normalized = minimumCost.get(layout + ">" + layout
+				+ ":entryUploads=1:relocations=1");
+			Assert.assertTrue("loop-body normalization must carry positive frequency-weighted cost for "
+				+ layout + "|direct=" + direct + "|normalized=" + normalized,
+				Double.isFinite(direct) && Double.isFinite(normalized) && normalized > direct);
+		}
+		ExactPhysicalSelection optimized = ExactPhysicalSelection.create(model,
+			ExactPhysicalOptimizer.optimize(model, surface,
+				ExactPhysicalOptimizer.PRODUCTION_LIMITS));
+		Assert.assertTrue("cost optimization must select the cheaper direct transport",
+			optimized.emittedRelocations().isEmpty());
+	}
+
+	private static double physicalCost(ExactPhysicalModel model,
+		ExactPhysicalCostModel.PhysicalCostSurface surface, List<Integer> assignment) {
+		double cost = 0;
+		for(var factor : surface.factors()) {
+			int[] local = factor.scope().stream()
+				.mapToInt(variable -> assignment.get(model.variables().indexOf(variable))).toArray();
+			cost += factor.cost(local);
+		}
+		return cost;
 	}
 
 	@Test

@@ -58,7 +58,10 @@ public final class SyntheticBoundaryProjection {
 			Boolean expectedDerivedFedFout = null;
 			for(NeutralPlacementGraph.Constraint authority : authorities) {
 				boolean expectedKind = authority.kind()
-					== NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT;
+					== NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
+					|| boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+						&& org.apache.sysds.hops.fedplanner.placement.FunctionInputTransfer
+							.isArgumentConstraint(authority);
 				PlacementEmissionState sourceEmissionState = sourceEmissionStates.get(authority.left());
 				NeutralPlacementGraph.Node source = analysis.graph().node(authority.left()).orElse(null);
 				if(!expectedKind || authority.right() != boundary.key() || source == null
@@ -107,8 +110,7 @@ public final class SyntheticBoundaryProjection {
 		List<NeutralPlacementGraph.Constraint> authorities = analysis.graph().constraints().stream()
 			.filter(constraint -> constraint.right() == boundary.key())
 			.filter(constraint -> boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
-				? constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
-					&& constraint.evidence().startsWith("function-argument:")
+				? org.apache.sysds.hops.fedplanner.placement.FunctionInputTransfer.isArgumentConstraint(constraint)
 				: constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
 					&& (constraint.evidence().startsWith("function-result:")
 						|| constraint.evidence().startsWith("inlined-function-result:")))

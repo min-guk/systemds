@@ -402,6 +402,7 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 					dependency(left, right);
 				if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
 					&& constraint.kind() != ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.kind() != ConstraintKind.FUNCTION_INPUT_TRANSFER
 					&& constraint.kind() != ConstraintKind.SAME_FTYPE
 					&& constraint.kind() != ConstraintKind.CONJUNCTIVE) continue;
 				for(var l : left.states.entrySet()) {

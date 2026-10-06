@@ -401,7 +401,9 @@ public final class PlacementIdentity {
 		LOCAL,
 		SOURCE_LINEAGE,
 		DURABLE_MAP,
-		NATIVE_LINEAGE
+		NATIVE_LINEAGE,
+		/** Runtime value preserves the exact map of the definition selected on this execution path. */
+		VALUE_MAP
 	}
 
 	/** Typed proof dependency carried by a realization or transient compatibility edge. */
@@ -465,6 +467,14 @@ public final class PlacementIdentity {
 					throw new IllegalArgumentException("NATIVE_LINEAGE realization must be an unanchored FOUT emission");
 				nativeLineage = requireText(nativeLineage, "nativeLineage");
 			}
+			if(layoutKind == PlacementLayoutKind.VALUE_MAP) {
+				if(durableAnchor != null || emissionState.placementState().output()
+					!= org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					|| emissionState.placementState().fType() == null)
+					throw new IllegalArgumentException(
+						"VALUE_MAP realization must be an unanchored typed FOUT emission");
+				nativeLineage = requireText(nativeLineage, "value-map relation");
+			}
 		}
 
 		public static PlacementRealizationKey local(PlacementEmissionState emission) {
@@ -485,6 +495,12 @@ public final class PlacementIdentity {
 		public static PlacementRealizationKey nativeLineage(PlacementEmissionState emission,
 			String lineage) {
 			return new PlacementRealizationKey(emission, PlacementLayoutKind.NATIVE_LINEAGE, null, lineage);
+		}
+
+		public static PlacementRealizationKey valueMap(PlacementEmissionState emission,
+			String relation) {
+			return new PlacementRealizationKey(emission, PlacementLayoutKind.VALUE_MAP, null,
+				requireText(relation, "value-map relation"));
 		}
 
 		public String normalizedSignature() {

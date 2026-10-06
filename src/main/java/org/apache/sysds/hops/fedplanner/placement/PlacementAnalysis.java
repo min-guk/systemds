@@ -1430,6 +1430,11 @@ public final class PlacementAnalysis {
 				List.of(new CandidateRealizationSupportClause(
 					proofs, inputBindings, nativeWorkerPoolWitness, false)));
 		}
+		public static CandidateEmissionRealization valueMap(PlacementEmissionState emission,
+			String relation, List<CandidateRealizationSupportClause> supportClauses) {
+			return new CandidateEmissionRealization(
+				PlacementRealizationKey.valueMap(emission, relation), supportClauses);
+		}
 
 		public CandidateRealizationSupportClause requireSingletonSupportClause() {
 			if(supportClauses.size() != 1)
@@ -1482,8 +1487,9 @@ public final class PlacementAnalysis {
 		}
 		/** Linear bulk query used instead of repeating the public identity guard for every owned clause. */
 		boolean allOwnedSupportClausesHaveExactNativeLayout() {
-			return key.durableAnchor() != null
-				|| supportClauses.stream().allMatch(CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact);
+			return key.layoutKind() != PlacementLayoutKind.VALUE_MAP && (key.durableAnchor() != null
+				|| supportClauses.stream().allMatch(
+					CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact));
 		}
 		/**
 		 * Package-internal fast path; the caller must obtain {@code clause} by iterating
@@ -1524,7 +1530,12 @@ public final class PlacementAnalysis {
 		}
 		public CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType,
 			DerivedFoutMaterializationActionKey derivedFoutAction) {
-			this(emissionState, executionFType, derivedFoutAction, defaultRealizations(emissionState));
+			this(emissionState, executionFType, derivedFoutAction,
+				derivedFoutAction == null ? defaultRealizations(emissionState)
+					: List.of(CandidateEmissionRealization.nativeLineage(emissionState,
+						"candidate-emission:" + emissionState.normalizedSignature()
+							+ "|derived-action:" + derivedFoutAction.normalizedSignature(),
+						List.of(), List.of())));
 		}
 		public CandidateEmissionFact {
 			Objects.requireNonNull(emissionState, "emissionState");
@@ -3007,6 +3018,7 @@ public final class PlacementAnalysis {
 		logicalFunctionInputsByIdentity;
 	private final List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputsInCanonicalOrder;
 	private final DMLProgram programOwner;
+	private final Optional<PlacementJointInputAnalysis> jointInputAnalysis;
 	private final Map<String,FunctionStatementBlock> namedFunctionStatementBlocks;
 	private final Runnable programMutationGuard;
 	private final boolean guardedFunctionRoots;
@@ -3135,10 +3147,32 @@ public final class PlacementAnalysis {
 		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
 		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
 		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
+			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
+			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard,
+			privacyPrunedInputs, null);
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
+		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs,
+		PlacementJointInputAnalysis jointInputAnalysis) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
 		this.candidatePrivacyClosureEvidence = Optional.ofNullable(candidatePrivacyClosureEvidence);
 		this.programOwner = programOwner;
+		this.jointInputAnalysis = Optional.ofNullable(jointInputAnalysis);
 		this.programMutationGuard = programMutationGuard == null ? () -> { } : programMutationGuard;
 		this.guardedFunctionRoots = programOwner != null && programMutationGuard != null;
 		Map<String,FunctionStatementBlock> functions = new java.util.TreeMap<>();
@@ -3482,6 +3516,12 @@ public final class PlacementAnalysis {
 								"Published native lineage lacks exact worker-pool authority");
 						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
 							CandidateEmissionRealization source = requireReferencedRealization(binding.source());
+							// Logical transient bindings select a reaching boundary realization. They
+							// are provenance dependencies rather than physical Hop input positions;
+							// synthetic function-return aliases therefore legitimately have no
+							// ordered physical input row to validate here.
+							if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.LOGICAL_TRANSIENT)
+								continue;
 							if(binding.inputPosition() >= fact.key().orderedInputs().size())
 								throw new IllegalArgumentException("Candidate realization input binding position differs");
 							CandidateInputState rowInput = fact.key().orderedInputs().get(binding.inputPosition());
@@ -3562,6 +3602,26 @@ public final class PlacementAnalysis {
 		PlacementLayoutKind readerKind = reader.key().layoutKind();
 		if(sourceKind == PlacementLayoutKind.LOCAL)
 			return;
+		if(readerKind == PlacementLayoutKind.VALUE_MAP) {
+			boolean bound = reader.supportClauses().stream().anyMatch(clause ->
+				clause.inputBindings().stream().anyMatch(binding ->
+					binding.kind() == PlacementIdentity.CandidateInputBindingKind.LOGICAL_TRANSIENT
+						&& binding.source().equals(edge.sourceRealization())));
+			if(!bound)
+				throw new IllegalArgumentException(
+					"Value-map transient compatibility is not owned by a reader support clause");
+			if(sourceKind == PlacementLayoutKind.VALUE_MAP)
+				return; // Acyclic alias replay retains the upstream selected clause authority.
+			if(sourceKind != PlacementLayoutKind.DURABLE_MAP
+				&& sourceKind != PlacementLayoutKind.NATIVE_LINEAGE)
+				throw new IllegalArgumentException(
+					"Value-map transient source lacks grounded exact worker-pool authority");
+			DurableAnchorKey proofWitness = edge.proof().nativeWorkerPoolWitness();
+			if(proofWitness == null || !edge.proof().nativeWorkerPoolLayoutExact())
+				throw new IllegalArgumentException(
+					"Value-map transient compatibility lacks an exact source worker pool");
+			return;
+		}
 		if(sourceKind == PlacementLayoutKind.DURABLE_MAP && readerKind == PlacementLayoutKind.DURABLE_MAP) {
 			if(edge.proof().sourceAnchor() == null
 				|| !PlacementIdentity.samePhysicalLayout(source.key().durableAnchor(), edge.proof().sourceAnchor())
@@ -3689,11 +3749,16 @@ public final class PlacementAnalysis {
 		return Collections.unmodifiableMap(result);
 	}
 
+	/** Joint CFG facts share the canonical compiled occurrence identities of this analysis. */
+	public Optional<PlacementJointInputAnalysis> jointInputAnalysis() {
+		programMutationGuard.run();
+		return jointInputAnalysis;
+	}
+
 	private List<LogicalFunctionInputFact> deriveLogicalFunctionInputs() {
 		Map<CompiledHopKey,List<Constraint>> incomingArguments = new IdentityHashMap<>();
 		for(Constraint constraint : graph.constraints())
-			if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
-				&& constraint.evidence().startsWith("function-argument:"))
+			if(FunctionInputTransfer.isArgumentConstraint(constraint))
 				incomingArguments.computeIfAbsent(constraint.right(), ignored -> new java.util.ArrayList<>())
 					.add(constraint);
 		List<LogicalFunctionInputFact> result = new java.util.ArrayList<>();
@@ -3795,7 +3860,7 @@ public final class PlacementAnalysis {
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
 				throw new IllegalArgumentException("Logical function read has physical inputs");
 			long argumentEdges = graph.constraints().stream().filter(constraint ->
-				constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				FunctionInputTransfer.isArgumentConstraint(constraint)
 					&& constraint.left() == fact.sourceArgument() && constraint.right() == fact.boundary()
 					&& constraint.inputPosition() == fact.callInputPosition()
 					&& constraint.evidence().startsWith("function-argument:")).count();
@@ -4524,6 +4589,20 @@ public final class PlacementAnalysis {
 	}
 
 	/**
+	 * Validates one complete analysis-owned call-site binding. Multiple calls may
+	 * intentionally reuse the same source occurrence, formal read, and logical
+	 * position; their synthetic boundary is the remaining call-site identity.
+	 */
+	public LogicalFunctionInputFact requireExactLogicalFunctionInput(
+		LogicalFunctionInputFact supplied) {
+		Objects.requireNonNull(supplied, "logical function input fact");
+		for(LogicalFunctionInputFact fact : logicalFunctionInputsInCanonicalOrder)
+			if(fact == supplied)
+				return fact;
+		throw new IllegalArgumentException("Logical function input fact is not analysis-owned");
+	}
+
+	/**
 	 * Resolves the physical DML {@link FunctionOp} input that carries one exact logical
 	 * caller-argument/formal binding. Matrix and frame arguments additionally require the frozen
 	 * compiled-input fact used by placement transfers. Scalar/control arguments are
@@ -4531,12 +4610,7 @@ public final class PlacementAnalysis {
 	 * index intentionally excludes non-data operands and no placement transfer exists for them.
 	 */
 	public CompiledHopKey requireExactPhysicalFunctionInputConsumer(LogicalFunctionInputFact supplied) {
-		Objects.requireNonNull(supplied, "logical function input fact");
-		LogicalFunctionInputFact fact = requireExactLogicalFunctionInput(
-			supplied.sourceArgument(), supplied.boundary(), supplied.targetRead(),
-			supplied.callInputPosition(), supplied.logicalPosition());
-		if(fact != supplied)
-			throw new IllegalArgumentException("Logical function input fact is not analysis-owned");
+		LogicalFunctionInputFact fact = requireExactLogicalFunctionInput(supplied);
 		List<Constraint> owners = graph.constraints().stream().filter(constraint ->
 			constraint.kind() == ConstraintKind.DOMINATES
 				&& constraint.right() == fact.boundary()

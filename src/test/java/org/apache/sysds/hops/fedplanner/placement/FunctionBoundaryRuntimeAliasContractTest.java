@@ -14,7 +14,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegio
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
-/** Runtime truth for alias-only value binding across a DML function boundary. */
+/** Runtime truth for explicit value delivery across a DML function boundary. */
 public class FunctionBoundaryRuntimeAliasContractTest {
 	@Test
 	public void functionInputIsAnExactValueAliasLikeTransientBinding() {
@@ -37,6 +37,38 @@ public class FunctionBoundaryRuntimeAliasContractTest {
 			NeutralPlacementGraph.constraintSatisfied(boundary, local, fedFout));
 		assertFalse("A federated alias must preserve its partitioning type",
 			NeutralPlacementGraph.constraintSatisfied(boundary, fedFout, differentFout));
+	}
+
+	@Test
+	public void functionInputSelectsIdentityOrExplicitLocalTransfer() {
+		Constraint boundary = new Constraint(ConstraintKind.FUNCTION_INPUT_TRANSFER, key("actual"), key("formal"),
+			0, "function-argument:X");
+		PlacementState local = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState fedLocal = new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, true);
+		PlacementState cpFout = new PlacementState(ExecType.CP, FederatedOutput.FOUT, FType.ROW, true);
+		PlacementState fedFout = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		PlacementState nonCanonicalLocal = new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, true);
+		PlacementState differentFout = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
+
+		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, local, local));
+		assertTrue("Execution type may differ when both sides expose the same local value",
+			NeutralPlacementGraph.constraintSatisfied(boundary, fedLocal, local));
+		assertTrue("Execution type may differ when both sides expose the same federated value",
+			NeutralPlacementGraph.constraintSatisfied(boundary, cpFout, fedFout));
+		assertTrue("A local formal may select the explicit canonical LOCAL materialization",
+			NeutralPlacementGraph.constraintSatisfied(boundary, fedFout, local));
+		assertTrue(FunctionInputTransfer.accepts(fedFout, local));
+		assertTrue(FunctionInputTransfer.kind(fedFout, local) == FunctionInputTransfer.Kind.LOCAL);
+		assertTrue("A selected CP/FOUT upload retains its local base for the function argument",
+			FunctionInputTransfer.kind(cpFout, local) == FunctionInputTransfer.Kind.LOCAL);
+		assertTrue(FunctionInputTransfer.kind(fedFout, fedFout) == FunctionInputTransfer.Kind.IDENTITY);
+		assertFalse("A function binding cannot hide a LOUT-to-FOUT upload",
+			NeutralPlacementGraph.constraintSatisfied(boundary, local, fedFout));
+		assertFalse("A federated alias must preserve its partitioning type",
+			NeutralPlacementGraph.constraintSatisfied(boundary, fedFout, differentFout));
+		assertFalse("A function input boundary must remain canonical",
+			FunctionInputTransfer.accepts(local, nonCanonicalLocal));
+		assertTrue(FunctionInputTransfer.isArgumentConstraint(boundary));
 	}
 
 	@Test

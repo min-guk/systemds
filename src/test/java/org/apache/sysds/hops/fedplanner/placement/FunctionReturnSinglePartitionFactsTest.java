@@ -13,6 +13,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -21,7 +22,7 @@ import org.apache.sysds.test.component.federated.placement.shadow.ProductionShad
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Exact one-worker cardinality must follow the same CFG-authorized Data object across DML returns. */
+/** Per-execution cardinality follows DML values without inventing a common worker for distinct calls. */
 public class FunctionReturnSinglePartitionFactsTest {
 	private static final String DIRECT = """
 		m_scale = function(Matrix[Double] A, Boolean center=TRUE, Boolean scale=TRUE)
@@ -159,8 +160,14 @@ public class FunctionReturnSinglePartitionFactsTest {
 	}
 
 	@Test
-	public void differentEndpointExitsDoNotCreateSingleEndpointAuthority() throws Exception {
-		assertMainConsumerHasNoFull(CONFLICTING_EXITS, "Y");
+	public void differentEndpointExitsRetainSinglePartitionWithoutFixedWorkerAuthority() throws Exception {
+		DMLProgram program = compile(CONFLICTING_EXITS);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+		List<NeutralPlacementGraph.Node> consumers = consumersOf(analysis, "Y");
+		Assert.assertEquals(1, consumers.size());
+		assertVaryingWorkerFull(consumers.get(0));
+		assertHasValueMap(analysis, consumers.get(0));
 	}
 
 	@Test
@@ -179,8 +186,8 @@ public class FunctionReturnSinglePartitionFactsTest {
 	}
 
 	@Test
-	public void differentEndpointRmemptyCallersDoNotCreateSingleAuthority() throws Exception {
-		assertSharedFunctionRmemptyHasNoFull(DIFFERENT_ENDPOINT_RMEMPTY_CALLERS, "prune");
+	public void differentEndpointRmemptyCallersRetainSinglePartitionWithoutFixedWorkerAuthority() throws Exception {
+		assertSharedFunctionRmemptyHasVaryingWorkerFull(DIFFERENT_ENDPOINT_RMEMPTY_CALLERS, "prune");
 	}
 
 	@Test
@@ -194,7 +201,7 @@ public class FunctionReturnSinglePartitionFactsTest {
 			INLINEABLE_RMEMPTY_CALLERS.replace("Y2 = prune(X2, S)", "Y2 = prune(X1, S)"), "prune");
 	}
 
-	private static void assertSharedFunctionRmemptyHasNoFull(String script, String functionName) throws Exception {
+	private static void assertSharedFunctionRmemptyHasVaryingWorkerFull(String script, String functionName) throws Exception {
 		DMLProgram program = compile(script);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
@@ -204,9 +211,23 @@ public class FunctionReturnSinglePartitionFactsTest {
 				&& builtin.getOp() == ParamBuiltinOp.RMEMPTY)
 			.toList();
 		Assert.assertEquals("Fixture must expose one shared function-body rmempty", 1, rmempty.size());
-		Assert.assertFalse("Different caller endpoints must not ground the shared rmempty occurrence",
-			rmempty.get(0).legalAlternatives().stream().anyMatch(state -> state.execType() == ExecType.FED
+		assertVaryingWorkerFull(rmempty.get(0));
+	}
+
+	private static void assertVaryingWorkerFull(NeutralPlacementGraph.Node node) {
+		Assert.assertTrue("Each execution has one partition, even though its worker varies",
+			node.legalAlternatives().stream().anyMatch(state -> state.execType() == ExecType.FED
 				&& state.output() == FederatedOutput.FOUT && state.fType() == FType.FULL));
+		Assert.assertTrue("Single-partition cardinality must not invent a fixed worker", node.anchors().isEmpty());
+	}
+
+	private static void assertHasValueMap(PlacementAnalysis analysis, NeutralPlacementGraph.Node node) {
+		Assert.assertTrue("The physical proof must preserve the execution-dependent input map",
+			analysis.candidateRuleFacts().orderedFactsForParent(node.key()).stream()
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.filter(emission -> emission.emissionState().placementState().output() == FederatedOutput.FOUT)
+				.flatMap(emission -> emission.realizations().stream())
+				.anyMatch(realization -> realization.key().layoutKind() == PlacementLayoutKind.VALUE_MAP));
 	}
 
 	private static void assertInlineableRmemptyBodyRemainsNonEmitted(String script, String functionName)

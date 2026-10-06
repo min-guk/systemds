@@ -29,8 +29,12 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.rewrite.FederatedBranchExitNormalizer;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -106,6 +110,43 @@ public class TransparentCarrierCostAuthorityTest {
 			+ "if(sum(rand(rows=1,cols=1,seed=8))>0.5){S=S+1;}\n");
 	}
 
+	@Test
+	public void sequentialDerivedOutputAuthorityRejectsAlteredWorkerRange() throws Exception {
+		PlacementAnalysis analysis = branchAnalysis(
+			"if(sum(rand(rows=1,cols=1,seed=7))>0.5){S=S+1;}\n"
+				+ "if(sum(rand(rows=1,cols=1,seed=8))>0.5){S=S+1;}\n");
+		var actionsInGraph = analysis.graph().derivedFoutMaterializationActions();
+		var ownerAction = actionsInGraph.stream().filter(action ->
+			action.exactOutputAuthorities().stream().anyMatch(authority -> actionsInGraph.stream()
+				.anyMatch(dependent -> dependent.key().durableAnchorOwner() == authority.owner()
+					&& PlacementIdentity.samePhysicalWorkerPool(
+						authority.anchor(),dependent.key().durableAnchor())))).findFirst().orElseThrow();
+		var authority = ownerAction.exactOutputAuthorities().stream().filter(candidate ->
+			actionsInGraph.stream().anyMatch(dependent ->
+				dependent.key().durableAnchorOwner() == candidate.owner()
+					&& PlacementIdentity.samePhysicalWorkerPool(
+						candidate.anchor(),dependent.key().durableAnchor()))).findFirst().orElseThrow();
+		DurableAnchorKey anchor = authority.anchor();
+		List<AnchorPartition> changed = new ArrayList<>(anchor.partitions());
+		AnchorPartition first = changed.get(0);
+		List<Long> end = new ArrayList<>(first.end());
+		end.set(end.size()-1,end.get(end.size()-1)+1);
+		changed.set(0,new AnchorPartition(first.workerId(),first.begin(),end));
+		var invalidAuthority = new NeutralPlacementGraph.DerivedFoutOutputAuthority(
+			authority.owner(),new DurableAnchorKey(anchor.placementId(),anchor.fType(),changed));
+		List<NeutralPlacementGraph.DerivedFoutOutputAuthority> altered =
+			new ArrayList<>(ownerAction.exactOutputAuthorities());
+		altered.set(altered.indexOf(authority),invalidAuthority);
+		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> actions =
+			new ArrayList<>(actionsInGraph);
+		actions.set(actions.indexOf(ownerAction),new NeutralPlacementGraph.DerivedFoutMaterializationAction(
+			ownerAction.key(),altered));
+
+		Assert.assertThrows("a forged output range must not ground the following branch upload",
+			IllegalArgumentException.class, () -> new NeutralPlacementGraph(analysis.graph().nodes(),
+				analysis.graph().constraints(),analysis.graph().relocationActions(),actions));
+	}
+
 	private static void assertSameGetLifetime(String branch) throws Exception {
 		CostProbe stable = repeatedReadGetCost("");
 		CostProbe joined = repeatedReadGetCost(branch);
@@ -116,19 +157,7 @@ public class TransparentCarrierCostAuthorityTest {
 	}
 
 	private static CostProbe repeatedReadGetCost(String branch) throws Exception {
-		String script = "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
-			+ "ranges=list(list(0,0),list(4,3),list(4,0),list(8,3)));S=rowSums(X);"
-			+ branch + "for(i in 1:4){print(sum(S));}";
-		DMLProgram program = ParserFactory.createParser().parse(
-			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
-		DMLTranslator translator = new DMLTranslator(program);
-		translator.liveVariableAnalysis(program);
-		translator.validateParseTree(program);
-		translator.constructHops(program);
-		translator.rewriteHopsDAG(program);
-		FederatedBranchExitNormalizer.normalize(program);
-		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+		PlacementAnalysis analysis = branchAnalysis(branch);
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		long carriers = analysis.occurrences().stream().filter(occurrence ->
@@ -160,6 +189,22 @@ public class TransparentCarrierCostAuthorityTest {
 			.mapToDouble(contribution -> surface.evaluateContributionCanonical(
 				contribution, assignment)).sum();
 		return new CostProbe(cost, carriers);
+	}
+
+	private static PlacementAnalysis branchAnalysis(String branch) throws Exception {
+		String script = "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+			+ "ranges=list(list(0,0),list(4,3),list(4,0),list(8,3)));S=rowSums(X);"
+			+ branch + "for(i in 1:4){print(sum(S));}";
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		FederatedBranchExitNormalizer.normalize(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
+		return new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
 	}
 
 	private record CostProbe(double cost, long carriers) { }

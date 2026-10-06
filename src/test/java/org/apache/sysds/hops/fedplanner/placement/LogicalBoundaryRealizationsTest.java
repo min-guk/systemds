@@ -146,6 +146,34 @@ public class LogicalBoundaryRealizationsTest {
 	}
 
 	@Test
+	public void selectedHeterogeneousBoundaryClauseCannotBorrowAnotherClause() {
+		Fixture f = new Fixture();
+		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
+		var relation = new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, closed);
+		CandidateRuleFact reader = fact(closed, f.reader);
+		CandidateEmissionFact emission = reader.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization valueMap = emission.realizations().stream().filter(realization ->
+			realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.VALUE_MAP).findFirst().orElseThrow();
+		Assert.assertEquals("Only AB/BA need a relation; AA/BB retain fixed-map candidates", 2,
+			valueMap.supportClauses().size());
+		CandidateSelectionReceipt argumentA = receipt(closed, f.argument, POOL_A);
+		CandidateSelectionReceipt writerB = receipt(closed, f.writer, POOL_B);
+		var argumentRef = PlacementIdentity.CandidateRealizationReference.of(argumentA.rule(), argumentA.realization());
+		var writerRef = PlacementIdentity.CandidateRealizationReference.of(writerB.rule(), writerB.realization());
+		var clause = valueMap.supportClauses().stream().filter(candidate ->
+			candidate.requiredInputSupport().contains(argumentRef)
+				&& candidate.requiredInputSupport().contains(writerRef)).findFirst().orElseThrow();
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
+		selected.put(f.reader, new CandidateSelectionReceipt(reader.key(), emission, valueMap, clause, List.of()));
+		selected.put(f.argument, argumentA);
+		selected.put(f.writer, writerB);
+		Assert.assertTrue(relation.canStillBeCompatible(Map.of(), selected, Map.of()));
+		selected.put(f.argument, receipt(closed, f.argument, POOL_B));
+		selected.put(f.writer, receipt(closed, f.writer, POOL_A));
+		Assert.assertFalse("An AB receipt cannot use BA's support", relation.canStillBeCompatible(Map.of(), selected, Map.of()));
+	}
+
+	@Test
 	public void missingOneSourceDoesNotAuthorizePublishedNativeReader() {
 		Fixture f = new Fixture();
 		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
@@ -248,8 +276,13 @@ public class LogicalBoundaryRealizationsTest {
 		List<CandidateRuleFact> cold = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
 		Assert.assertEquals(cold, result.facts());
 		Assert.assertEquals(Set.of(f.reader, f.downstreamReader), result.changedOwners());
-		Assert.assertEquals("downstream must see the preceding round's completed reader options", 2,
-			fact(result.facts(), f.downstreamReader).allowedEmissionFacts().get(0).realizations().size());
+		var downstream = fact(result.facts(), f.downstreamReader).allowedEmissionFacts().get(0).realizations();
+		Assert.assertEquals("downstream retains both fixed-map options", 2,
+			downstream.stream().filter(realization -> realization.key().layoutKind()
+				!= PlacementIdentity.PlacementLayoutKind.VALUE_MAP).count());
+		Assert.assertEquals("downstream also retains the heterogeneous source map", 1,
+			downstream.stream().filter(realization -> realization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.VALUE_MAP).count());
 	}
 
 	@Test
@@ -280,7 +313,7 @@ public class LogicalBoundaryRealizationsTest {
 	@Test
 	public void cyclicBoundaryTopologyRemainsIncompleteLikeColdOracle() {
 		Fixture f = new Fixture();
-		f.edges.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, f.boundary, f.boundary, 1,
+		f.edges.add(new Constraint(ConstraintKind.FUNCTION_INPUT_TRANSFER, f.boundary, f.boundary, 1,
 			"function-argument:cycle"));
 		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
 			f.nodes, f.edges, f.origins, f.facts);
@@ -324,8 +357,10 @@ public class LogicalBoundaryRealizationsTest {
 		CompiledHopKey key, DurableAnchorKey pool) {
 		CandidateRuleFact fact = facts.stream().filter(candidate -> candidate.key().parentOccurrence() == key).findFirst().orElseThrow();
 		CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
-		CandidateEmissionRealization value = emission.realizations().stream().filter(candidate ->
-			PlacementIdentity.samePhysicalWorkerPool(candidate.provenWorkerPool(candidate.requireSingletonSupportClause()), pool))
+		CandidateEmissionRealization value = emission.realizations().stream()
+			.filter(candidate -> candidate.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+			.filter(candidate -> PlacementIdentity.samePhysicalWorkerPool(
+				candidate.provenWorkerPool(candidate.requireSingletonSupportClause()), pool))
 			.findFirst().orElseThrow();
 		return new CandidateSelectionReceipt(fact.key(), emission, value, List.of());
 	}
@@ -352,7 +387,7 @@ public class LogicalBoundaryRealizationsTest {
 						FType.ROW, ReasonCode.OK, "fixture", List.of()), new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
 					new CandidateProfileFact(List.of(FType.ROW), ""), List.of(emission), ""));
 			}
-			edges.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, argument, boundary, 0,
+			edges.add(new Constraint(ConstraintKind.FUNCTION_INPUT_TRANSFER, argument, boundary, 0,
 				"function-argument:X"));
 			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, boundary, reader, 0, "function-formal-input"));
 			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, writer, reader, 0, "cfg-transient-value:BRANCH_JOIN_PHI"));
@@ -379,7 +414,7 @@ public class LogicalBoundaryRealizationsTest {
 			facts.add(new CandidateRuleFact(new CandidateRuleKey(downstreamReader, List.of()),
 				CandidateEvaluationStatus.AVAILABLE, source.capability(), source.shapeProof(), source.profile(),
 				List.of(new CandidateEmissionFact(NATIVE, FType.ROW)), ""));
-			edges.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, reader, downstreamBoundary, 0,
+			edges.add(new Constraint(ConstraintKind.FUNCTION_INPUT_TRANSFER, reader, downstreamBoundary, 0,
 				"function-argument:X"));
 			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, downstreamBoundary, downstreamReader, 0,
 				"function-formal-input"));

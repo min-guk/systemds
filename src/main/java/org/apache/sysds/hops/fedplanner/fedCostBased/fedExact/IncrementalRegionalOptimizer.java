@@ -185,7 +185,9 @@ final class IncrementalRegionalOptimizer {
 		while(true) {
 			if(exact()) {
 				int[] candidate = incumbent.clone();
-				for(Node node : sealed) node.message.decodeInto(candidate, variables);
+				for(Node node : sealed)
+					if(node.message.improvesBacktrace(candidate,variables))
+						node.message.decodeInto(candidate,variables);
 				accept(candidate);
 				lower = upper;
 				return finish("EXACT");
@@ -261,10 +263,12 @@ final class IncrementalRegionalOptimizer {
 			assignments = add(assignments, merged.assignments());
 			updateLower();
 			// The new bound may already certify the existing feasible Regional plan.
-			if(!(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap())) {
-				int[] candidateAssignment = incumbent.clone();
-				merged.decodeInto(candidateAssignment, variables);
-				accept(candidateAssignment);
+				if(!(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap())) {
+					int[] candidateAssignment = incumbent.clone();
+				if(merged.improvesBacktrace(candidateAssignment,variables)) {
+					merged.decodeInto(candidateAssignment, variables);
+					accept(candidateAssignment);
+				}
 			}
 			checkpoint("MERGE");
 		}
@@ -551,7 +555,8 @@ final class IncrementalRegionalOptimizer {
 						traceResourceRejection("private-projection",ex);
 						resourceRejected++; continue;
 					}
-					projected.decodeInto(candidate,variables);
+					if(projected.improvesBacktrace(candidate,variables))
+						projected.decodeInto(candidate,variables);
 				}
 				active.set(index,new Node(nextId++,node.owners,projected));
 				merges++; slots = add(slots,projected.retainedCells());

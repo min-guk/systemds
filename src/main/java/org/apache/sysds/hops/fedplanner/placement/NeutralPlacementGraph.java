@@ -66,6 +66,8 @@ public final class NeutralPlacementGraph {
 		 * additionally retain their exact FederationMap layout.
 		 */
 		SAME_VALUE_PLACEMENT,
+		/** Identity or a planner-owned LOCAL action before the actual argument is bound. */
+		FUNCTION_INPUT_TRANSFER,
 		SAME_FTYPE,
 		DOMINATES,
 		CONJUNCTIVE,
@@ -211,12 +213,36 @@ public final class NeutralPlacementGraph {
 	}
 
 	/** Physical output materialization authority; deliberately separate from consumer-input relocation. */
-	public record DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key)
+	public record DerivedFoutOutputAuthority(CompiledHopKey owner, DurableAnchorKey anchor)
+		implements Comparable<DerivedFoutOutputAuthority> {
+		public DerivedFoutOutputAuthority {
+			Objects.requireNonNull(owner,"owner");
+			Objects.requireNonNull(anchor,"anchor");
+		}
+		public String normalizedSignature() {
+			return fields(owner.normalizedSignature(),anchor.normalizedSignature());
+		}
+		@Override public int compareTo(DerivedFoutOutputAuthority that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	public record DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key,
+		List<DerivedFoutOutputAuthority> exactOutputAuthorities)
 		implements Comparable<DerivedFoutMaterializationAction> {
+		public DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key) {
+			this(key,List.of());
+		}
 		public DerivedFoutMaterializationAction {
 			Objects.requireNonNull(key, "key");
+			exactOutputAuthorities = sorted(exactOutputAuthorities,"exactOutputAuthorities");
 		}
-		public String normalizedSignature() { return key.normalizedSignature(); }
+		public String normalizedSignature() {
+			return exactOutputAuthorities.isEmpty() ? key.normalizedSignature()
+				: fields(key.normalizedSignature(),"EXACT_OUTPUT_AUTHORITIES",
+					signatures(exactOutputAuthorities.stream()
+						.map(DerivedFoutOutputAuthority::normalizedSignature).toList()));
+		}
 		@Override public int compareTo(DerivedFoutMaterializationAction that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
 		}
@@ -598,6 +624,8 @@ public final class NeutralPlacementGraph {
 		Objects.requireNonNull(right, "right");
 		if(constraint.kind() == ConstraintKind.SAME_PLACEMENT)
 			return left.equals(right);
+		if(constraint.kind() == ConstraintKind.FUNCTION_INPUT_TRANSFER)
+			return FunctionInputTransfer.accepts(left, right);
 		if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
 			return left.output() == right.output()
 				&& (left.output()
@@ -697,13 +725,27 @@ public final class NeutralPlacementGraph {
 						+ anchorOwner.legalAlternatives().stream()
 							.map(PlacementState::normalizedSignature).toList()
 						+ " anchor=" + key.durableAnchor().normalizedSignature()
-						+ " action=" + key.normalizedSignature());
+							+ " action=" + key.normalizedSignature());
+			String expectedOutputId = "materialized-output:"
+				+ PlacementGraphFingerprint.sha256(key.normalizedSignature());
+			for(DerivedFoutOutputAuthority authority : action.exactOutputAuthorities()) {
+				Node outputOwner = nodesByKey.get(authority.owner());
+				if(outputOwner == null || outputOwner.kind() != NodeKind.TRANSIENT_WRITE)
+					throw new IllegalArgumentException(
+						"Derived FOUT exact output owner is absent or is not a transient write");
+				DurableAnchorKey outputAnchor = authority.anchor();
+				if(outputAnchor.fType() != key.materializationFType()
+					|| !outputAnchor.placementId().equals(expectedOutputId))
+					throw new IllegalArgumentException(
+						"Derived FOUT action has an invalid exact output anchor: action="
+							+ key.normalizedSignature() + " anchor=" + outputAnchor.normalizedSignature());
+			}
 			boolean exactAnchorAuthority = anchorOwner.anchors().stream()
 				.anyMatch(anchor -> PlacementIdentity.samePhysicalWorkerPool(anchor, key.durableAnchor()))
 				|| derivedFoutMaterializationActions.stream().anyMatch(ownerAction ->
-					ownerAction.key().producer() == anchorOwner.key()
-						&& PlacementIdentity.samePhysicalWorkerPool(
-							ownerAction.key().durableAnchor(), key.durableAnchor()))
+					ownerAction.exactOutputAuthorities().stream().anyMatch(authority ->
+						authority.owner() == anchorOwner.key() && PlacementIdentity.samePhysicalLayout(
+							authority.anchor(),key.durableAnchor())))
 				|| relocationActions.stream().anyMatch(relocation ->
 					relocation.key().sourceValueVersion().equals(anchorOwner.valueVersion())
 						&& relocation.key().targetPlacement().output()
@@ -712,7 +754,12 @@ public final class NeutralPlacementGraph {
 							relocation.key().durableAnchor(), key.durableAnchor()));
 			if(!exactAnchorAuthority)
 				throw new IllegalArgumentException(
-					"Derived FOUT anchor owner has no exact graph-owned worker-pool authority");
+					"Derived FOUT anchor owner has no exact graph-owned worker-pool authority: owner="
+						+ anchorOwner.key().normalizedSignature() + " anchors=" + anchorOwner.anchors()
+						+ " outputActions=" + derivedFoutMaterializationActions.stream()
+							.filter(ownerAction -> ownerAction.key().producer() == anchorOwner.key())
+							.map(DerivedFoutMaterializationAction::normalizedSignature).toList()
+						+ " action=" + key.normalizedSignature());
 		}
 	}
 

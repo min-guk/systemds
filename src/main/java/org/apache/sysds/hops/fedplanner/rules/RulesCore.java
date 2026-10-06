@@ -399,6 +399,7 @@ public final class RulesCore {
       rr.register(new Rulesets.SpoofOuterProductRule());
       rr.register(new Rulesets.TsmmRule());
       rr.register(new Rulesets.TransientWriteRule());
+      rr.register(new Rulesets.PlacementAliasRule());
       rr.register(new Rulesets.FunctionOutputRule());
       rr.register(new Rulesets.TransientReadRule());
       rr.register(new Rulesets.BuiltinMKMeansRule());

@@ -32,6 +32,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.LogicalBoundaryRealizations;
+import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
@@ -476,6 +478,7 @@ final class ExactPhysicalModel {
 			hardFactorizations = new IdentityHashMap<>();
 		addNeutralConstraintFactors(analysis.graph(), byDecision, factors);
 		addStrictTransientFactors(analysis, byDecision, factors);
+		addJointFactors(analysis, byDecision, factors, hardFactorizations);
 		addLogicalBoundaryFactors(analysis, byDecision, factors);
 		RealizationSupportPreparationStatistics realizationSupportStatistics =
 			addRealizationSupportFactors(analysis, byDecision, factors, hardFactorizations);
@@ -912,6 +915,16 @@ final class ExactPhysicalModel {
 				if(authorities.isEmpty() && link.kind != LinkKind.COMPILED)
 					authorities.add(new InputAuthority(position, InputAuthorityKind.DIRECT_FOUT,
 						input.fType(), link.sourceNode.key(), null));
+				if(authorities.isEmpty() && hasCompatibleFoutState(link.sourceNode, input.fType())
+					&& supportClause.inputBindings().stream().anyMatch(binding ->
+						binding.inputPosition() == inputPosition
+							&& binding.source().rule().parentOccurrence() == link.sourceNode.key()
+							&& binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT))
+					// The selected realization is the exact authority for this compiled
+					// FOUT edge. This is required for a multi-input VALUE_MAP consumer:
+					// no single fixed relocation anchor exists across control-flow rows.
+					authorities.add(new InputAuthority(position, InputAuthorityKind.DIRECT_FOUT,
+						input.fType(), link.sourceNode.key(), null));
 				if(authorities.isEmpty() && presentPhysicalInputs == 1
 					&& hasCompatibleFoutState(link.sourceNode, input.fType()))
 					// A unary FED instruction executes on its sole matrix input's selected
@@ -1105,6 +1118,7 @@ final class ExactPhysicalModel {
 				continue;
 			if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
 				&& constraint.kind() != ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.kind() != ConstraintKind.FUNCTION_INPUT_TRANSFER
 				&& constraint.kind() != ConstraintKind.SAME_FTYPE
 				&& constraint.kind() != ConstraintKind.CONJUNCTIVE)
 				continue;
@@ -1138,6 +1152,124 @@ final class ExactPhysicalModel {
 						&& CandidateSelections.matchesRealization(edge.readerRealization(), target))
 					? 0.0 : Double.POSITIVE_INFINITY;
 			}));
+		}
+	}
+
+	/** Every correlated execution row must be physically executable under one static selection. */
+	private static void addJointFactors(PlacementAnalysis analysis,
+		Map<CompiledHopKey,DecisionDomain> domains, List<ExactCategoricalSolver.Factor> factors,
+		Map<ExactCategoricalSolver.Factor,ExactHardFactorObservationDecomposition.Result> factorizations) {
+		for(JointValueMapRelations.Relation relation : JointValueMapRelations.from(analysis)) {
+			// Fixed-map relations are already owned by the ordinary input authorities.
+			// An always-zero high-arity factor would still create a solver clique.
+			if(relation.readers().stream().noneMatch(reader -> domains.get(reader).alternatives().stream()
+				.anyMatch(alternative -> alternative.realization() != null
+					&& alternative.realization().key().layoutKind() == PlacementLayoutKind.VALUE_MAP)))
+				continue;
+			DecisionDomain consumer = domains.get(relation.consumer());
+			if(consumer == null)
+				throw new IllegalArgumentException("Joint consumer decision domain missing");
+			List<DecisionDomain> scope = new ArrayList<>();
+			scope.add(consumer);
+			var grounding = new JointValueMapRelations.Grounding(analysis, relation);
+			List<CompiledHopKey> supportOwners = grounding.supportOwners();
+			for(CompiledHopKey owner : supportOwners) {
+				DecisionDomain domain = domains.get(owner);
+				if(domain == null)
+					throw new IllegalArgumentException("Joint support decision domain missing");
+				if(!scope.contains(domain))
+					scope.add(domain);
+			}
+			List<List<CandidateSelectionReceipt>> receipts = new ArrayList<>();
+			List<?>[] observations = new List<?>[scope.size()];
+			for(int position = 0; position < scope.size(); position++) {
+				DecisionDomain domain = scope.get(position);
+				List<CandidateSelectionReceipt> selected = new ArrayList<>();
+				List<Object> keys = new ArrayList<>();
+				for(Alternative alternative : domain.alternatives()) {
+					CandidateSelectionReceipt receipt = candidateReceipt(analysis, alternative);
+					selected.add(receipt);
+					List<Object> key = new ArrayList<>();
+					if(supportOwners.contains(domain.node().key())) {
+						key.add(receipt == null ? null : CandidateRealizationReference.of(
+							receipt.rule(), receipt.realization()));
+						key.add(receipt == null ? null : receipt.supportClause().inputBindings());
+						key.add(receipt == null ? null : receipt.provenWorkerPool());
+						key.add(receipt != null && receipt.realization()
+							.nativeWorkerPoolLayoutExact(receipt.supportClause()));
+					}
+					if(domain == consumer) {
+						key.add(alternative.state().execType());
+						key.add(alternative.state().output());
+						key.add(alternative.orderedInputs());
+						key.add(alternative.inputAuthorities().stream().map(authority ->
+							java.util.Arrays.asList(authority.inputPosition(), authority.kind(),
+								authority.relocationAction() == null ? null
+									: authority.relocationAction().key().durableAnchor())).toList());
+						key.add(alternative.realization() == null ? null
+							: alternative.realization().key().layoutKind());
+					}
+					keys.add(key);
+				}
+				receipts.add(selected);
+				observations[position] = keys;
+			}
+			ExactCategoricalSolver.Factor factor = ExactCategoricalSolver.Factor.lazy(
+				scope.stream().map(DecisionDomain::variable).toList(), values -> {
+					Map<CompiledHopKey,CandidateSelectionReceipt> selectedReceipts = new IdentityHashMap<>();
+					for(int position = 0; position < scope.size(); position++) {
+						CandidateSelectionReceipt receipt = receipts.get(position).get(values[position]);
+						if(receipt != null)
+							selectedReceipts.put(scope.get(position).node().key(), receipt);
+					}
+					boolean valueMapped = false;
+					for(CompiledHopKey reader : relation.readers()) {
+						CandidateSelectionReceipt receipt = selectedReceipts.get(reader);
+						if(receipt != null && receipt.realization().key().layoutKind()
+							== PlacementLayoutKind.VALUE_MAP) {
+							valueMapped = true;
+						}
+					}
+					if(!valueMapped)
+						return 0.0;
+					Alternative selectedConsumer = consumer.alternatives().get(values[0]);
+					if(selectedConsumer.state().execType() == ExecType.CP
+						&& selectedConsumer.state().output() == FederatedOutput.LOUT)
+						return 0.0; // Explicit LOCAL materialization authority owns public collection.
+					if(selectedConsumer.realization() == null)
+						return Double.POSITIVE_INFINITY;
+					Set<Integer> directPositions = new java.util.TreeSet<>();
+					List<DurableAnchorKey> relocatedPools = new ArrayList<>();
+					for(InputAuthority authority : selectedConsumer.inputAuthorities()) {
+						if(authority.kind() == InputAuthorityKind.RELOCATION)
+							relocatedPools.add(authority.relocationAction().key().durableAnchor());
+						else if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
+							directPositions.add(authority.inputPosition());
+					}
+					// LOCAL/broadcast and REFED are explicit, separately costed authorities.
+					// Their source map need not equal the map used by the FED kernel.
+					List<JointValueMapRelations.GroundedLayoutRow> rows =
+						grounding.rows(selectedReceipts, -1, directPositions);
+					if(rows.size() != relation.rows().size())
+						return Double.POSITIVE_INFINITY;
+					for(JointValueMapRelations.GroundedLayoutRow row : rows) {
+						DurableAnchorKey first = null;
+						List<DurableAnchorKey> pools = new ArrayList<>(relocatedPools);
+						row.inputs().forEach(input -> pools.add(input.pool()));
+						for(DurableAnchorKey pool : pools) {
+							if(first == null)
+								first = pool;
+							else if(!PlacementIdentity.samePhysicalWorkerPool(first, pool))
+								return Double.POSITIVE_INFINITY;
+						}
+					}
+					return 0.0;
+				});
+			factors.add(factor);
+			var encoded = ExactHardFactorObservationDecomposition.create(
+				"joint-value-map|consumer=" + relation.consumer().normalizedSignature(), factor, observations);
+			if(encoded != null)
+				factorizations.put(factor, encoded);
 		}
 	}
 
@@ -1409,14 +1541,18 @@ final class ExactPhysicalModel {
 				List<?>[] observations = new List<?>[scope.size()];
 				for(int scopeIndex = 0; scopeIndex < scope.size(); scopeIndex++) {
 					DecisionDomain domain = scope.get(scopeIndex);
-					List<InputAuthorityObservation> keys = new ArrayList<>(domain.alternatives().size());
+					List<Object> keys = new ArrayList<>(domain.alternatives().size());
 					for(int value = 0; value < domain.alternatives().size(); value++) {
 						Alternative alternative = domain.alternatives().get(value);
 						InputAuthorityFactorRow row = scopeIndex == 0 ? preparedRows.get(value) : null;
-						keys.add(inputAuthorityObservation(alternative, receiptTable[scopeIndex][value],
+						InputAuthorityObservation observation = inputAuthorityObservation(alternative,
+							receiptTable[scopeIndex][value],
 							row, scopeIndex == 0 && (alternative.orderedInputs().isEmpty()
 								|| link.position >= alternative.orderedInputs().size()),
-							sourceActions, directBindingPositions, sourceOwners, derivedTargets));
+							sourceActions, directBindingPositions, sourceOwners, derivedTargets);
+						keys.add(link.kind() == LinkKind.LOGICAL_FUNCTION
+							? java.util.Arrays.asList(observation,
+								logicalBoundaryObservation(receiptTable[scopeIndex][value])) : observation);
 					}
 					observations[scopeIndex] = keys;
 				}
@@ -1469,6 +1605,16 @@ final class ExactPhysicalModel {
 				: row.directFoutActions().stream().map(ExactPhysicalModel::identity).toList(),
 			row != null && row.exactDirectFoutActionMatched(),
 			row != null && row.relocationInvariantSatisfied(), unconstrained);
+	}
+
+	/** The logical boundary predicate additionally observes its selected map proof. */
+	private static List<?> logicalBoundaryObservation(CandidateSelectionReceipt receipt) {
+		if(receipt == null) return List.of();
+		return java.util.Arrays.asList(receipt.realization().key(),
+			receipt.nativeWorkerPoolResidencyWitness(),
+			receipt.realization().nativeWorkerPoolLayoutExact(receipt.supportClause()),
+			receipt.supportClause().inputBindings().stream()
+				.map(binding -> binding.source().realization()).toList());
 	}
 
 	private static Map<CompiledHopKey,Set<Integer>> relevantDirectBindingPositions(
@@ -1560,7 +1706,7 @@ final class ExactPhysicalModel {
 		List<InputAuthority> matching = selectedConsumer.inputAuthorities().stream()
 			.filter(candidate -> candidate.inputPosition() == link.position)
 			.filter(candidate -> candidate.kind() == InputAuthorityKind.NATIVE_LOCAL
-				|| candidate.sourceDecision() == link.sourceNode.key()).toList();
+				|| candidate.sourceDecision() == link.sourceNode.key()).distinct().toList();
 		if(matching.size() != 1)
 			return new InputAuthorityFactorRow(null, List.of(), false, false);
 		InputAuthority authority = matching.get(0);
@@ -1700,11 +1846,16 @@ final class ExactPhysicalModel {
 			// legal; its boundary preparation belongs to the canonical cost factors.
 			return inputAuthorityPlacementSatisfied(authority, source.state()) ? 0.0
 				: Double.POSITIVE_INFINITY;
-		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
+		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT) {
+			if(exactDirectReceiptBinding(selectedConsumer, source, link.position,
+				authority.expectedFType()) || exactLogicalFunctionReceiptBinding(link,
+					selectedConsumer, source, authority.expectedFType()))
+				return 0.0;
 			return directFoutSatisfied(graph, link.sourceNode, authority.expectedFType(),
 				authority.relocationAction(), view, prepared.directFoutActions(),
 				prepared.exactDirectFoutActionMatched()) ? 0.0
 				: Double.POSITIVE_INFINITY;
+		}
 		RelocationAction action = authority.relocationAction();
 		if(!prepared.relocationInvariantSatisfied())
 			return Double.POSITIVE_INFINITY;
@@ -1736,11 +1887,16 @@ final class ExactPhysicalModel {
 				: Double.POSITIVE_INFINITY;
 		Map<CompiledHopKey,PlacementState> assignment = selectedStates(scope, values);
 		List<CandidateSelectionReceipt> selectedCandidates = selectedCandidateReceipts(receiptTable, values);
-		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
+		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT) {
+			if(exactDirectReceiptBinding(selectedConsumer, source, link.position,
+				authority.expectedFType()) || exactLogicalFunctionReceiptBinding(link,
+					selectedConsumer, source, authority.expectedFType()))
+				return 0.0;
 			return directFoutSatisfied(analysis.graph(), link.sourceNode, authority.expectedFType(),
 				authority.relocationAction(), assignment, selectedCandidates,
 				prepared.directFoutActions(), prepared.exactDirectFoutActionMatched()) ? 0.0
 				: Double.POSITIVE_INFINITY;
+		}
 		RelocationAction action = authority.relocationAction();
 		if(!prepared.relocationInvariantSatisfied())
 			return Double.POSITIVE_INFINITY;
@@ -1750,6 +1906,41 @@ final class ExactPhysicalModel {
 			return Double.POSITIVE_INFINITY;
 		return source.state().output() == FederatedOutput.LOUT
 			|| source.state().output() == FederatedOutput.FOUT ? 0.0 : Double.POSITIVE_INFINITY;
+	}
+
+	/**
+	 * Formal reads carry a logical-boundary proof, not a compiled HOP input binding.
+	 * Use that exact selected proof for a pure FOUT alias before inferring relocation.
+	 */
+	private static boolean exactLogicalFunctionReceiptBinding(Link link, Alternative consumer,
+		Alternative source, FType expectedFType) {
+		return link.kind() == LinkKind.LOGICAL_FUNCTION
+			&& consumer.state().execType() == ExecType.FED
+			&& consumer.state().output() == FederatedOutput.FOUT
+			&& consumer.state().fType() == expectedFType
+			&& source.state().output() == FederatedOutput.FOUT
+			&& source.state().fType() == expectedFType
+			&& consumer.realization() != null && source.realization() != null
+			&& !consumer.realization().key().emissionState().derivedFedFout()
+			&& LogicalBoundaryRealizations.compatible(consumer.realization(), consumer.supportClause(),
+				source.realization(), source.supportClause());
+	}
+
+	/** Exact selected receipt authority precedes coarse relocation-activity inference. */
+	private static boolean exactDirectReceiptBinding(Alternative consumer, Alternative source,
+		int inputPosition, FType expectedFType) {
+		if(consumer.supportClause() == null || source.realization() == null
+			|| source.state().output() != FederatedOutput.FOUT || source.state().fType() != expectedFType)
+			return false;
+		CandidateRuleFact sourceRule = source.captured() ? source.candidateRule() : source.executionRule();
+		if(sourceRule == null)
+			return false;
+		CandidateRealizationReference selected = CandidateRealizationReference.of(
+			sourceRule.key(), source.realization());
+		return consumer.supportClause().inputBindings().stream().anyMatch(binding ->
+			binding.inputPosition() == inputPosition
+				&& binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT
+				&& binding.source().equals(selected));
 	}
 
 	/**

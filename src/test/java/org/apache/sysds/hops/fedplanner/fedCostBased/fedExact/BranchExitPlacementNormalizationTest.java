@@ -76,7 +76,7 @@ public class BranchExitPlacementNormalizationTest {
 	}
 
 	@Test
-	public void functionBranchCanDownloadOnlyAtTheExitAndRuntimeLowersTheCarrier() throws Exception {
+	public void functionBranchPreservesSelectedDownloadAndCarrierAcrossRecompile() throws Exception {
 		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
 		DMLConfig config = new DMLConfig(oldConfig);
 		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
@@ -98,13 +98,18 @@ public class BranchExitPlacementNormalizationTest {
 					&& data.isPlannerBranchNormalization())
 				.map(occurrence -> occurrence.key()).toList();
 			Assert.assertEquals("one carrier is required on each branch exit", 2, carriers.size());
+			List<CompiledHopKey> transfers = carriers.stream().map(carrier ->
+				exact.analysis().occurrences().stream().filter(occurrence -> occurrence.hop()
+					== exact.analysis().hop(carrier).orElseThrow().getInput(0))
+					.map(occurrence -> occurrence.key()).findFirst().orElseThrow()).toList();
 			for(CompiledHopKey carrier : carriers) {
+				CompiledHopKey transfer = transfers.get(carriers.indexOf(carrier));
 				PlacementState state = exact.normalizedResult().selectedStates().get(carrier);
 				Assert.assertEquals(ExecType.CP, state.execType());
 				Assert.assertEquals(FederatedOutput.LOUT, state.output());
 				Assert.assertTrue("carrier input must remain an executable movement edge",
 					exact.analysis().graph().constraints().stream().anyMatch(constraint ->
-						constraint.right() == carrier && constraint.inputPosition() == 0
+						constraint.right() == transfer && constraint.inputPosition() == 0
 							&& constraint.kind() == ConstraintKind.DOMINATES
 							&& "data-input".equals(constraint.evidence())));
 				Assert.assertTrue("the carrier write must still bind exactly into the branch join",
@@ -118,25 +123,29 @@ public class BranchExitPlacementNormalizationTest {
 				.findFirst().orElseThrow();
 			Hop elseWrite = exact.analysis().hop(elseCarrier).orElseThrow();
 			CompiledHopKey elseRead = exact.analysis().occurrences().stream()
-				.filter(occurrence -> occurrence.hop() == elseWrite.getInput(0))
+				.filter(occurrence -> occurrence.hop() == elseWrite.getInput(0).getInput(0))
 				.map(occurrence -> occurrence.key()).findFirst().orElseThrow();
 			PlacementState source = exact.normalizedResult().selectedStates().get(elseRead);
-			Assert.assertEquals(ExecType.FED, source.execType());
-			Assert.assertEquals(FederatedOutput.FOUT, source.output());
-			Assert.assertEquals(FType.COL, source.fType());
+			// Explicit function-input transfer can now download before the call. The
+			// selected branch source and its runtime input must agree with that plan.
+			boolean branchDownload = source.output() == FederatedOutput.FOUT;
+			Assert.assertEquals(branchDownload ? ExecType.FED : ExecType.CP, source.execType());
+			if(branchDownload)
+				Assert.assertEquals(FType.COL, source.fType());
 
 			@SuppressWarnings("unchecked")
 			List<LocalMaterializationActionKey> locals =
 				(List<LocalMaterializationActionKey>) exact.normalizedResult().selectedLocalMaterializations();
-			Assert.assertTrue("the false branch must own its exit download",
+			Assert.assertFalse("the function result requires an explicit download", locals.isEmpty());
+			Assert.assertEquals("the branch download must match the selected source", branchDownload,
 				locals.stream().flatMap(action -> action.obligations().stream())
-					.anyMatch(obligation -> obligation.consumerOccurrence() == elseCarrier));
+					.anyMatch(obligation -> obligation.consumerOccurrence() == transfers.get(carriers.indexOf(elseCarrier))));
 			Assert.assertTrue("the inverse CP-to-FOUT branch-exit choice must remain available",
 				exact.analysis().graph().relocationActions().stream()
 					.filter(action -> action.key().targetPlacement().execType() == ExecType.FED)
 					.filter(action -> action.key().targetPlacement().output() == FederatedOutput.FOUT)
 					.anyMatch(action -> action.key().compatibleConsumers().stream()
-						.anyMatch(carriers::contains)));
+						.anyMatch(transfers::contains)));
 
 			Program runtime = translator.getRuntimeProgram(program, config);
 			List<LocatedInstruction> instructions = new ArrayList<>();
@@ -145,7 +154,7 @@ public class BranchExitPlacementNormalizationTest {
 			List<String> falseBranch = instructions.stream()
 				.filter(instruction -> instruction.path().contains("branch-else"))
 				.map(instruction -> instruction.instruction().getInstructionString()).toList();
-			Assert.assertTrue(falseBranch.toString(), falseBranch.stream()
+			Assert.assertEquals(falseBranch.toString(), branchDownload, falseBranch.stream()
 				.anyMatch(value -> value.contains("prefetch") && value.contains("Y")));
 			Assert.assertTrue(falseBranch.toString(), falseBranch.stream()
 				.anyMatch(value -> value.contains("mvvar") && value.endsWith("°Y")));
@@ -156,7 +165,12 @@ public class BranchExitPlacementNormalizationTest {
 			MatrixObject runtimeY = new MatrixObject(org.apache.sysds.common.Types.ValueType.FP64,
 				"runtime-Y", new MetaDataFormat(new MatrixCharacteristics(1, 4, 1024),
 					org.apache.sysds.common.Types.FileFormat.BINARY));
-			runtimeY.setFedMapping(new FederationMap(17, List.of(), FType.COL));
+			if(branchDownload)
+				runtimeY.setFedMapping(new FederationMap(17, List.of(), FType.COL));
+			else {
+				runtimeY.acquireModify(new org.apache.sysds.runtime.matrix.data.MatrixBlock(1, 4, 8.0));
+				runtimeY.release();
+			}
 			runtimeInputs.put("Y", runtimeY);
 			runtimeInputs.put("flag", new BooleanObject(false));
 			Recompiler.recompileProgramBlockHierarchy(function.getChildBlocks(), runtimeInputs,
@@ -166,8 +180,8 @@ public class BranchExitPlacementNormalizationTest {
 			List<Instruction> recompiledFalseBranch = instructions.stream()
 				.filter(instruction -> instruction.path().contains("branch-else"))
 				.map(LocatedInstruction::instruction).toList();
-			Assert.assertTrue("phase two must retain the phase-one carrier download: "
-				+ recompiledFalseBranch, recompiledFalseBranch.stream().anyMatch(instruction ->
+			Assert.assertEquals("phase two must preserve the selected carrier download: "
+				+ recompiledFalseBranch, branchDownload, recompiledFalseBranch.stream().anyMatch(instruction ->
 					instruction.getInstructionString().contains("prefetch")
 						&& instruction.getPlannerSyntheticActionKey() != null));
 			Assert.assertTrue("phase two must retain the carrier binding: " + recompiledFalseBranch,

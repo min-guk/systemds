@@ -63,6 +63,23 @@ public class IncrementalRegionalOptimizerTest {
 		assertEquals(List.of(0,0,1,2,3,3),
 			result.checkpoints().stream().map(IncrementalRegionalOptimizer.Checkpoint::internalDecisions).toList());
 	}
+	@Test public void exactLocalTiePreservesCanonicallyCheaperIncumbent() {
+		var x = new Variable("stable-tie-x",2);
+		double wide = 0x1p53;
+		double tiny = 0x1p-53;
+		List<Factor> factors = List.of(
+			Factor.dense(List.of(x),wide,wide),
+			Factor.dense(List.of(),tiny),
+			Factor.dense(List.of(x),0,1),
+			Factor.dense(List.of(),tiny),
+			Factor.dense(List.of(x),1,0));
+		var result = run(List.of(x),factors,List.of(1),100000,1000000,0,false);
+
+		assertEquals("EXACT",result.stopReason());
+		assertEquals(List.of(1),result.assignment());
+		assertEquals(RegionalSearchProblem.evaluateFactors(List.of(x),factors,List.of(1)),
+			result.upper(),0);
+	}
 	@Test public void internalDecisionCountExcludesSingletonsAndCountsPrivateProjection() {
 		var singleton=new Variable("singleton",1); var x=new Variable("x",2); var y=new Variable("y",2);
 		var factors=List.of(Factor.dense(List.of(singleton,x),3,1),Factor.dense(List.of(y),4,2));

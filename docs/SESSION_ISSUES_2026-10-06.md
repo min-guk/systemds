@@ -432,3 +432,86 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **검증 범위**: 95개 클래스의 통합 회귀, 동일 Docker fixture/cost 환경의 Global 28건 및 Local 28건, 실제 worker 6건. Global probe는 `planner=Exact`를 요구하고 whole-program commit 확인 후에만 성공을 기록한다. Lowering 후 별도 domain 재구성은 하지 않는다.
 - **규칙/위험**: 고정 planner budget·runtime fallback·후보 축소를 추가하지 않는다. 실제 JVM/표현 한계 실패를 Global 부분 성공으로 바꾸지 않는다. 원격 변경과의 상호작용은 pruning/regional/kernel/unknown-shape 회귀 및 Docker로 검증한다.
 - **게시 범위**: src/scripts/docs 포함, 이전 임시 `verification/` 로그는 untracked로 보존한다. 원본 근거 `/home/mchoi/fedplanner-global-publish-20261006/`.
+
+## Joint input/boundary 구현과 최신 main 통합 — 해결·검증 완료
+
+- **요청/환경**: 사용자가 병합·문제 수정·`origin/main` push를 명시적으로 요청했다. 원본 dirty 작업 트리 `/home/mchoi/w1357-paper-aligned-refactor`는 보존하고 `integrate/joint-boundary-main-20261006` / `/home/mchoi/w1357-joint-main-20261006`에서 작업한다. 통합 기준 main은 `58145e73667e0a4f43589e9d37199fc90d293ee8`다.
+- **범위 결정**: 구현 시작 시 보관한 490개 main source baseline과 비교해 실제 joint 변경 25개를 추출했다. `_PLACEMENT` 타입·LOP lowering·zero compute 및 federation ID 0 alias 수명 수정, 새 joint source 6개, 관련 테스트와 Docker harness를 추가한다. 기존 physical snapshot export, STEP-LM/lmCG, 캠페인·보정 스크립트의 다른 미커밋 변경은 포함하지 않는다. Main의 반환 GET·RTT·loop-entry·pruning 수정은 유지한다.
+- **병합 방식**: main 위에서 `git merge-file`로 구현 baseline/current/main의 3-way source 통합을 수행했다. 전체 dirty snapshot의 24개 충돌을 임의로 한쪽으로 해소하지 않고, 해당 기능의 delta만 사용했다. 운영 코드 충돌 2개는 `PlacementAnalysis`의 action-aware emission identity 및 `PlacementRelationClosure`의 양쪽 import를 보존하여 해결했다. 함수 alias-only 검사는 별도 순수 alias 회귀로 보존하고 typed transfer의 명시적 action·privacy·omission 거절도 함께 검사한다.
+- **전체 빌드**: 첫 clean build는 병합된 테스트에서 `LocalMaterializationActionKey` import가 빠져 test-compile 실패했다. Import를 복원한 전체 main/test compile r2는 통과했다. 로그 `/home/mchoi/joint-main-integration-20261006/build-r2.log`.
+- **비용 검증**: 반환 GET 11개, native result projection 6개, native batch ownership 7개가 C2W=3ms/W2C=7ms에서 **24/24 PASS**했다. J_hat의 동적 경로 비용과 main의 호출별 lifetime 및 batch RTT 계산을 함께 유지한다. 다중 원본 분기 값을 하나의 cache identity로 합치는 추가 최적화는 증명이 부족하여 채택하지 않았다.
+- **진행 중 회귀**: 43개 관련 Java class를 실행 중이며 `LoopEntryCompletePlacementSpaceTest`의 identity fixture에서 추가 relocation이 나오는 행을 발견했다. 합법적인 추가 계획인지 잘못된 공급 증명인지 분석하며, 기존 main의 entry 이동·TW/TR 배치 보존 목적을 유지해 해결한다. 테스트를 끄거나 후보를 편의상 제거하지 않는다.
+- **검증 경로**: 실제 runtime은 `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e`로만 확인한다. Harness는 이 통합 저장소의 전체 소스·main/test class·의존성을 복사·hash 고정하여 사용한다. 다른 작업 트리 overlay에 의존하지 않도록 바꿨고 Python 17개 테스트 및 Bash 문법 검사를 통과했다.
+- **의사결정 근거/잔여 위험**: 순수 전달의 canonical TW/TR와 privacy는 유지한다. 명시적 이동만 계획·과금·lowering하며 runtime fallback을 사용하지 않는다. 병합 후 동일 최종 빌드의 전체 집중 회귀와 12개 Docker 사례가 완료되기 전에는 push하지 않는다. 변경·실행 증거는 `/home/mchoi/joint-main-integration-20261006`에 보관한다.
+
+### Loop-entry 전체 계획 공간 oracle — 해결
+
+- **증상/원인**: identity loop의 모든 합법 계획에서 relocation이 없어야 한다는 기존 단언이 실패했다. 실제 행의 이동 원본은 `p`, consumer는 `main/1/loop-body/0`의 `TWrite p`였다. 무관한 `sum(X)` 이동이나 잘못된 worker 공급이 아니었다. 공동 VALUE_MAP 증명이 직접 전달과 동일 layout의 명시적 normalization을 각각 보존하면서 후자의 합법적이지만 비싼 계획이 추가됐다.
+- **해결**: `LoopEntryCompletePlacementSpaceTest`가 LOCAL 및 ROW/COL/BROADCAST의 직접 전달과 명시적 normalization을 구별하도록 수정했다. Canonical TW/TR 일치는 계속 요구하며 이동 원본·consumer·layout도 검사한다. 동일 상태에서 normalization 비용이 직접 전달보다 크고 Exact가 이동 없는 계획을 선택하는지 검증한다. 후보를 제거하여 테스트에 맞추지 않는다.
+- **검증**: 격리 실행 2/2 PASS, raw 32,928행 / 합법 292행 / 물리 요약 10개. 추가로 `BranchPlacementNormalizationTest` 12/12 PASS: 서로 다른 concrete worker pool의 같은 FType 업로드가 full action signature로 구별되어 모두 남는다. 근거: `/home/mchoi/joint-main-integration-20261006/loop-verification`.
+- **잔여 위험**: 합법 후보가 늘면 계획 공간 검사의 coarse summary도 달라진다. 후보 수만 고정하지 않고 공급 합법성·비용·최적 선택을 함께 검증한다.
+
+### 큰 함수·loop 그래프의 증명 고정점 성능 — 해결·전체 재검증 통과
+
+- **증상**: 43개 회귀 class 중 42개가 종료한 뒤 `ExactInputAuthorityOptimizationTest.solverHardFactorEncodingsExactlyProjectCanonicalTruth`가 끝나지 않았다. 888초 시점에 증거를 보존하고 이 실행의 마지막 JVM만 SIGTERM으로 종료했다. 회귀 결과를 PASS로 기록하지 않는다.
+- **직접 관측**: 두 thread dump에서 실행 중인 경로가 `closePhysicalDependencies -> exactSinglePartitionRealizationProofs -> TreeMap`이었다. `CandidateRealizationReference` 비교에 필요한 canonical text를 반복 생성했다. 6.6초 동안 hot-thread CPU가 6.23초 증가했고 heap도 증가했다. Deadlock이 아닌 반복 증명 계산·할당 병목이다.
+- **비교 범위**: 앞선 joint 빌드의 해당 method는 303.864초였다. 이번 845초 관측은 그보다 2.78배 길다. 이는 같은 Docker 조건의 workload 성능 실험이 아니라 Java 회귀 병목 진단이다.
+- **수정 원칙**: 후보, FULL 증명, privacy, loop seed 및 joint 관계를 보존하면서 중복 증명·key 계산을 줄인다. 자원 제한을 늘리거나 합법 후보를 삭제하여 숨기지 않는다.
+- **해결**: `PlacementRelationClosure.exactSinglePartitionRealizationProofs`의 내부 lookup을 exact reference의 구조적 equality/hash로 수행한다. 동기식 고정점 계산은 그대로 유지하여 순서에 의존하지 않는다. `PhysicalCandidateState`가 같은 fact revision의 증명 결과를 재사용하고, 모든 owner fact commit에서 이를 무효화한다. 정적 전역 cache나 변경되지 않은 것으로 추정하는 가드를 추가하지 않는다.
+- **격리 검증**: `PhysicalSinglePartitionProofFixedPointTest` 5/5 PASS, `ExactInputAuthorityOptimizationTest` 8/8 PASS(97.52초, wall 98.48초). 후자는 기존 joint 약 313초, 이번 병합 수정 전 888초 중단과 비교한 진단 결과이며 workload 실행 성능 주장에는 사용하지 않는다. Hard-factor 집계 canonical 1,556 / factorized 115 / canonical cells 1,123,863,150 / encoded cells 29,124,985를 유지했다.
+- **잠재 회귀/감지**: facts 변경 후 잘못된 cache 재사용이 위험하다. 모든 쓰기를 `PhysicalCandidateState.commit`에서 무효화하고 entry/backedge 증명 확대·철회 회귀 및 전체 모델 truth 비교를 다시 수행한다.
+- **근거/재현**: `/home/mchoi/joint-main-integration-20261006/optimization-audit/{result.json,thread-1.txt,thread-2.txt,terminated-owned-test.json}`. 전체 r1 결과는 `regressions-r1.json`이다.
+
+### Concrete action과 owner pool의 권한 확인 — 추가 제약 불필요
+
+- **검토 질문**: derived upload의 owner 검사에 worker pool equality를 더 넣어야 하는지 확인했다. 실제 nested branch 두 pool의 16개 derived action 및 B-10∼B-16 지원 fixture에서 같은 owner가 서로 다른 pool을 선택하는 위반 행은 발견되지 않았다.
+- **구현 근거**: exact lowering은 `action.durableAnchor()`를 runtime key로 등록하고, `Dag`는 concrete planner key가 있으면 live anchor를 사용하지 않는다. Runtime은 그 key의 worker/range/FType를 복원한다. Owner는 graph authority·수명 조건이고 action key가 실제 배치의 권한이다. Seed pool의 range를 출력 크기에 맞춰 투영하는 합법적 경우가 있어 owner와 output anchor의 전체 equality는 오히려 잘못된 제약이 된다.
+- **결론/한계**: 이 검사 코드는 base/main/ours가 동일하며 새 guard를 추가하지 않았다. Fixture 조사는 모든 DML에 대한 완전 증명은 아니다. 근거: `/home/mchoi/joint-main-integration-20261006/owner-pool-audit`.
+
+### 최종 재빌드 및 집중 Java 회귀 — 통과
+
+- `mvn -q -Dskip.format=true -DskipTests test-compile`로 최종 main/test 전체를 다시 컴파일했다(40.729초, exit 0).
+- 같은 소스의 43개 class를 다시 실행해 **351 PASS / 4 기존 제외 / 실패·오류 0**을 확인했다(355개 집계, 128.241초). 큰 그래프 증명 검사도 이 실행에 포함되어 종료했다.
+- Build와 regression의 전체 Java source manifest SHA256은 동일한 `e29c937a479ac13d4273326e9e9af1b777abb75e583c701134026a12ac5a7cdf`다. 명령·class별 개수·XML은 artifact root의 `final-build.json`, `final-regressions.json`, `final-regressions-reports/`에 보존한다.
+- Docker 첫 시도 `joint-main-20261006-final`은 DML 실행 전에 `/evidence/container-run.sh`를 찾지 못하여 종료했다. Runtime 성공/실패로 집계하지 않고 실행 경로의 mount 문제를 확인하여 다시 수행한다. 실패 결과와 `container.log`는 지우지 않는다.
+
+### Docker 임시 경로와 최종 비용 검사 — 해결
+
+- **원인/해결**: Docker daemon은 snap 경로 `/var/snap/docker/common/var-lib-docker`를 사용한다. `/tmp` staging 대신 저장소의 `target/joint-boundary-e2e-runtime`을 기본 경로로 사용하며 `--stage-root`로 명시할 수도 있다. 새 경로의 bind가 daemon에 보이고 입력 mount가 읽기 전용임을 확인했다. `exist_ok=False`를 유지하여 이전 실행 디렉터리와 섞지 않는다.
+- **파일/회귀**: `scripts/fedplanner/run_joint_boundary_e2e.py`, `scripts/fedplanner/tests/test_run_joint_boundary_e2e.py`. 기본 경로·override·기존 stage 재사용 거절을 포함한 Python **18/18 PASS**, Bash 문법 통과.
+- **최종 비용 회귀**: 최종 빌드에서도 반환 GET·응답 batch 3개 class **24/24 PASS**, C2W=3ms/W2C=7ms. 앞의 43개 class와 합쳐 **46개 class / 375 PASS / 4 기존 제외 / 실패·오류 0**이다. `final-cost-regressions.json`의 Java source manifest도 전체 빌드와 동일하다.
+- **재실행**: `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e --run-id joint-main-20261006-final-stagefix --timeout-seconds 1800`. 같은 최종 빌드를 새 stage에 고정했으며 class preflight 6개와 model proof 10개는 통과했다. 실제 12개 사례의 최종 결과는 완료 후 아래에 기록한다.
+
+### 통합 빌드 Docker 12개 E2E — 통과
+
+- **결과**: `joint-main-20261006-final-stagefix` **12/12 PASS**. 성공 실행 9개와 privacy/불법 tuple에 따른 계획 거절 3개를 포함한다. Audit 오류 및 runtime conversion 위반은 0개다.
+- **값·호출 확인**: L2SVM true/false SUM=-0.051876443681957596, NORM2=0.6933312394625315, 3×1; 함수 CALL_C=54/CALL_D=132; branch upload SUM=30, NORM2=56, 8×3. CP/FED 결과가 일치했다.
+- **동일 빌드**: main class inventory digest `f33e5e0e1c3fea28d613415f90fb6a7e0937621d951b29f472079ed73d27a4ed`, main source inventory digest `c5005bbebd61d07abc41a9cc0db88090405d3ff98a0a24575bba4a27f5a0be64`. 핵심 class 6개 host/container SHA256 일치, model proof 10개 통과.
+- **근거**: `/grid/3/cofee-lm-sweep-mchoi-20260914/joint-boundary-e2e-20261006/joint-main-20261006-final-stagefix/{result.json,manifest.json,artifact-inventories.json}`.
+- **후속 main**: 검증 중 `d57bca99d9`(unknown-width golden 강화)가 도착했다. 기능 checkpoint `36faf7fdc2`에 실제 merge를 적용했고 세션 기록의 양쪽 추가를 보존했다. 운영 코드 변경이 없는 이 후속 커밋의 새 테스트를 별도로 확인한 뒤 최종 merge commit을 push한다.
+
+### 후속 main golden과 공동 입력 표현의 통합 — 해결
+
+- **증상**: `d57bca99d9`의 원문 테스트 4개를 최종 운영 class에 적용하면 2개가 통과하고 metadata/control-flow의 snapshot digest 2개만 달랐다. 강화된 unknown-width의 exact action ID, worker/range, support authority, consumer reference 및 early-pruning parity 단언은 처음부터 모두 통과했다.
+- **차이 감사**: metadata NODE 36개와 control-flow NODE 54개의 privacy/placement 목록이 각각 동일했다. AVAILABLE owner/input key 34개·52개 및 각 outer emission shell도 같았다. Relocation은 각각 4개·8개로 유지됐다. 차이는 기존 `cfg-native-seed`에서 exact output/reader VALUE_MAP identity로의 전환, canonical worker endpoint, producer 연산 대신 정확한 TWrite 정의를 참조하는 내부 support 직렬화였다. 이는 inventory 비교이며 모든 DML의 전역 계획 공간 동일성을 주장하지 않는다.
+- **해결/의도 보존**: `METADATA_AND_HANDLE_GOLDEN`과 `CONTROL_FLOW_GOLDEN` 두 digest만 갱신하고 이유를 주석으로 남겼다. Protected aggregate와 unknown-width digest, 최신 main의 강화된 authority/범위/parity 단언은 그대로 보존했다. Snapshot의 identity·support 내용을 생략하거나 테스트를 끄지 않았다.
+- **검증/근거**: 격리 javac 통과, 4/4 PASS(6.389초). `/home/mchoi/joint-main-integration-20261006/latest-main-golden/result.json`, `updated-run.log`, main/integration snapshot 및 diff. 최종 Maven compile/test 결과와 운영 class의 Docker frozen build 일치도 별도로 확인한다.
+- **잠재 회귀**: 무근거 golden 갱신은 잘못된 계획 삭제를 숨길 수 있다. 원문 upstream 테스트 결과와 노드·후보·이동 비교를 함께 보존하고, 더 강한 unknown-width 단언은 수정하지 않았다.
+
+### 최종 통합 결과
+
+- **범위/계보**: 구현 checkpoint `36faf7fdc2`는 main `58145e7366` 위에 범위를 한정한 joint 구현을 통합했다. 후속 main `d57bca99d9`는 실제 merge의 다른 parent로 보존한다. 원본 dirty 작업 트리의 다른 실험 변경은 그대로 남긴다.
+- **검증 합계**: Java **47개 class / 379 PASS / 기존 제외 4개 / 실패·오류 0**, Python **18/18**, Docker **12/12 PASS**. 후속 main 반영 후 전체 compile(28.694초) 및 golden 회귀 4개(7.626초)도 통과했다. 추가 source 변경은 golden 테스트뿐이다.
+- **빌드 연결 근거**: 최종 main source·의존성·운영 `.class` 3,742개·Docker model-proof class는 성공한 frozen Docker 빌드와 동일하다. Maven 재복사로 Python harness/test/cache resource 4개가 달라졌으나 실제 host runner의 hash는 같고 해당 파일은 DML/JVM runtime에서 실행하지 않는다. Test class 차이는 `EarlyPrivacyPruningLegalSpaceParityTest.class` 하나다. `final-docker-build-parity.json`에 전체 diff를 명시했다.
+- **마지막 Java source manifest**: `d004b300ad456570da1625eae2c0a58e84ea2528cf82d3b1c791389ad1b4cc12`. Artifact root `/home/mchoi/joint-main-integration-20261006`의 `merged-main-build.json`, `merged-main-regressions.json`, `final-regressions.json`, `final-cost-regressions.json`을 함께 확인한다.
+- **잔여 한계**: 구현은 구조적 공동 도달 관계 `J_hat`이며 임의 predicate의 논리 상관까지 풀지 않는다. 재귀 함수, 모든 operator/layout 조합, 보호된 공유 `rmempty` 반환의 기존 한계는 확장하지 않았다. 16,384개 공동 환경 resource limit 및 보수적인 일부 동적 map 비용은 [구현 검증 보고서](JOINT_BOUNDARY_IMPLEMENTATION_VERIFICATION_2026-10-06_KO.md)의 범위 설명을 따른다. 이번 통합으로 새로 확인된 미해결 기능 회귀는 없다.
+
+
+### origin/main 동시 변경 통합 — 검증 중
+
+- 원격 `49509ab7f8`의 joint-input/명시적 function transfer 변경을 보존해 병합한다. 앞선 `719bedf86c`의 742 tests, Global 26/28, Local 27/28, runtime 6/6 결과는 **병합 전** 근거로 분리했다. Global GLM 두 실패는 실제 10GiB heap/Java factor 표현 한계이며 whole-program commit은 0이었다.
+- Local LogReg W3의 `INCREMENTAL_CONDITIONAL_DP_WORSENED`는 subtree 동률의 backtrace가 전체 compensated 합산 순서에서 기존 해보다 미세하게 비싸지는 문제였다. 동률에서 incumbent를 유지하고 strict subtree 개선만 decode한다. invariant는 유지했다. 작은 음성 회귀, 관련 42 tests 및 원래 Docker LogReg W3의 수정 overlay PASS를 확보했다. pruning baseline에서도 원래 실패하여 prefix pruning 원인설은 폐기했다.
+- 분기 정규화는 원격의 `TR → _PLACEMENT → TW` 하나로 통일한다. 기존 normalizer는 이 구현의 호환 진입점이 된다. 정의되지 않은 arm 변수 읽기 방지, TR/TW의 branch origin marker, `_PLACEMENT`의 고유 recompile signature를 보존한다. 명시적 함수 인자 download가 추가되었으므로 기존 특정 이동 위치 가정은 선택된 source placement/action과 일치하는지를 검사하도록 갱신했다.
+- 연속 분기의 업로드 authority는 앞선 TW가 실제 materialized output map을 전달한다는 증명을 그래프에 보존한다. 입력 anchor와 출력 map을 혼동하지 않고 exact derived-action proof/범위를 검증한다. 앞선 분기 실행 여부만으로 후보를 버리는 제안은 채택하지 않았다. exact runtime은 고정된 worker/range key를 사용하기 때문이다. 관련 positive/forged-range 9건 및 authority/cycle/branch upload 28건 isolated PASS.
+- 확대된 123개 class 통합 회귀에서 ALS/LogReg의 late physical refinement, STEP-LM의 closure/표현 한계도 확인했다. 정상적인 native-domain 증가, exact runtime WDivMM 교정, executable fact가 없는 coarse 잔재를 기존 guard가 거부하는 경우를 구별해 수정한다. 근거 없는 native emission 삭제 검증은 유지한다. 수정 전 마지막 GLM 검사는 새 joint environment 비교가 장시간 반복되어 stack을 보관하고, 이미 소스가 수정된 검증 실행을 종료했다. 이 실행은 전체 PASS로 보고하지 않는다.
+- 최종 source로 compile/unit/Docker를 다시 실행하고 별도 receipt에 기록한다. 원격 자체의 동작과 통합 변경을 구별하기 위한 baseline 재현도 진행한다. 임의 planner budget, 부분 Global 성공, runtime repair는 추가하지 않는다.

@@ -116,13 +116,13 @@ public class ExactDownloadAuthorityAmbiguityRedTest {
 				if(relocation == null)
 					continue;
 				int required = value;
-				List<ExactCategoricalSolver.Factor> factors = new ArrayList<>(model.hardFactors());
-				factors.addAll(surface.factors());
+				List<ExactCategoricalSolver.Factor> factors = new ArrayList<>(model.exactSolverHardFactors());
+				factors.addAll(surface.exactSolverFactors());
 				factors.add(ExactCategoricalSolver.Factor.lazy(List.of(domain.variable()),
 					values -> values[0] == required ? 0.0 : Double.POSITIVE_INFINITY));
 				try {
-					var solved = ExactCategoricalSolver.solve(model.variables(), factors,
-						ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+					var solved = ExactPhysicalReducedSolver.solveCompacted(model.variables().size(),
+						surface.exactSolverVariables(), factors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 					long objective = surface.evaluateCanonical(solved.assignmentInVariableOrder());
 					var selected = ExactPhysicalSelection.create(model,
 						new ExactPhysicalOptimizer.Result(solved, objective,

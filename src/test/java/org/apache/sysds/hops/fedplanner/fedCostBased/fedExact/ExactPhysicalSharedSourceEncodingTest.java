@@ -312,6 +312,52 @@ public class ExactPhysicalSharedSourceEncodingTest {
 	}
 
 	@Test
+	public void productionRefinesCorrelatedHeadersWithoutAddingOrDroppingAssignments() throws Exception {
+		Node seed = syntheticNode("correlated-seed", List.of(LOCAL));
+		Node left = syntheticNode("correlated-left", List.of(LOCAL));
+		Node right = syntheticNode("correlated-right", List.of(LOCAL));
+		Node consumer = syntheticNode("correlated-consumer", List.of(LOCAL));
+		var graph = new NeutralPlacementGraph(List.of(seed, left, right, consumer), List.of(
+			new Constraint(ConstraintKind.DOMINATES, seed.key(), left.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, seed.key(), right.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, left.key(), consumer.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, right.key(), consumer.key(), 1, "data-input")), List.of());
+		var leftA = candidateRule(left, List.of(CandidateInputState.absentLocal()));
+		var leftB = candidateRule(left, List.of(CandidateInputState.present(FType.ROW)));
+		var rightA = candidateRule(right, List.of(CandidateInputState.absentLocal()));
+		var rightB = candidateRule(right, List.of(CandidateInputState.present(FType.ROW)));
+		var consumerRule = candidateRule(consumer,
+			List.of(CandidateInputState.absentLocal(), CandidateInputState.absentLocal()));
+		List<CandidateRuleFact> facts = List.of(candidateFact(candidateRule(seed, List.of()), supportClause()),
+			candidateFact(leftA, supportClause()), candidateFact(leftB, supportClause()),
+			candidateFact(rightA, supportClause()), candidateFact(rightB, supportClause()),
+			candidateFact(consumerRule, List.of(candidateEmission(LOCAL_EMISSION, LOCAL_LAYOUT, List.of(
+				supportClause(CandidateRealizationInputBinding.direct(0,
+					new CandidateRealizationReference(leftA, LOCAL_LAYOUT)),
+					CandidateRealizationInputBinding.direct(1,
+						new CandidateRealizationReference(rightA, LOCAL_LAYOUT))),
+				supportClause(CandidateRealizationInputBinding.direct(0,
+					new CandidateRealizationReference(leftB, LOCAL_LAYOUT)),
+					CandidateRealizationInputBinding.direct(1,
+						new CandidateRealizationReference(rightB, LOCAL_LAYOUT))))))));
+		Class<?> fixtures = Class.forName("org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest");
+		var factory = fixtures.getDeclaredMethod("analysis", NeutralPlacementGraph.class, List.class);
+		factory.setAccessible(true);
+		var analysis = (PlacementAnalysis) factory.invoke(null, graph, facts);
+		var model = ExactPhysicalModel.build(analysis);
+		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		var encoded = ExactPhysicalSharedSourceEncoding.prepare(model, surface, List.of(),
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		assertTrue(encoded.statistics().reason(), encoded.statistics().transformed());
+		List<ExactCategoricalSolver.Factor> original = new ArrayList<>(model.exactSolverHardFactors());
+		original.addAll(surface.exactSolverFactors());
+		var expected = finiteDecisionCosts(surface.exactSolverVariables(), original, model.variables().size(), null);
+		var actual = finiteDecisionCosts(encoded.variables(), encoded.factors(), model.variables().size(), encoded);
+		assertEquals("both correlated rows remain feasible", 2, expected.size());
+		assertEquals("exact decision assignments and raw cost bits, with no crossed rows", expected, actual);
+	}
+
+	@Test
 	public void actualPrepareRejectsCrossedHeaderReferenceAndUsesProjectedLinks() throws Exception {
 		PlacementAnalysis analysis = minimalCrossTupleAnalysis();
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
