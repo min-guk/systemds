@@ -1119,6 +1119,8 @@ final class PlacementRelationClosure {
 				nodes, ruleFacts, transientBindings, publishedActions);
 			relocations = publishedActions;
 			if(stable) {
+				relocations = PlacementSupportRelations.projectRelocationActionsToExecutableSupports(
+					ruleFacts, relocations);
 				verifyPublishedRelocationRealizations(ruleFacts, relocations);
 				publicationConverged = true;
 				break;

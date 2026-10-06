@@ -23,10 +23,50 @@ ALS_COLS = 20
 ALS_RANK = 10
 ALS_ABSOLUTE_TOLERANCE = 1e-8
 ALS_RELATIVE_TOLERANCE = 1e-7
+NUMERIC_ABSOLUTE_TOLERANCE = 1e-8
+NUMERIC_RELATIVE_TOLERANCE = 1e-8
 
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def check_numerical_markers(text, expected, relative_tolerance=None):
+    expected_values = list(expected) if isinstance(expected, (list, tuple)) else [expected]
+    actual_text = [value.strip() for value in re.findall(r"^FEDPOLICY_NUMERIC=([^\r\n]*)$", text, re.MULTILINE)]
+    try:
+        actual_values = [float(value) for value in actual_text]
+    except ValueError:
+        return actual_text, False
+    if relative_tolerance is None:
+        within_tolerance = all(abs(actual - wanted) < NUMERIC_ABSOLUTE_TOLERANCE
+            for actual, wanted in zip(actual_values, expected_values))
+    else:
+        within_tolerance = all(abs(actual - wanted) <= NUMERIC_ABSOLUTE_TOLERANCE
+            + relative_tolerance * max(abs(actual), abs(wanted))
+            for actual, wanted in zip(actual_values, expected_values))
+    passed = (len(actual_values) == len(expected_values)
+        and all(math.isfinite(value) for value in actual_values)
+        and within_tolerance)
+    return actual_text, passed
+
+
+def heuristic_continuation_oracle(mixed_branch):
+    matrix = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0],
+        [7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]
+    response = [1.0, 2.0, 3.0, 4.0]
+    parameters = [0.0, 0.0, 0.0]
+    loss = 0.0
+    for iteration in (1, 2):
+        error = [sum(value * parameter for value, parameter in zip(row, parameters)) - wanted
+            for row, wanted in zip(matrix, response)]
+        z = [max(value, 0.0) for value in error] if iteration % 2 == 1 else (
+            list(response) if mixed_branch else error)
+        gradient = [sum(row[column] * value for row, value in zip(matrix, z))
+            for column in range(3)]
+        loss = sum(value * value for value in z)
+        parameters = [parameter - value / 4.0 for parameter, value in zip(parameters, gradient)]
+    return parameters + [loss]
 
 
 def write_als_fixture(run):
@@ -187,11 +227,128 @@ def run_als_only(args, repo, jar, probe, image, sources):
     return 0 if receipt["status"] == "passed" else 1
 
 
+def run_heuristic_continuation(args, repo, jar, probe, image, sources):
+    if args.baseline_root:
+        raise SystemExit("--heuristic-continuation does not accept --baseline-root")
+    fixture_source = repo / "src/test/java/org/apache/sysds/hops/fedplanner/placement/HeuristicLocalContinuationTest.java"
+    probe_source = repo / "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.java"
+    harness_source = Path(__file__).resolve()
+    if probe.stat().st_mtime_ns < probe_source.stat().st_mtime_ns:
+        raise SystemExit("Probe class predates PolicyGreedyDockerProbe.java; rebuild test classes")
+    root = repo / "target/fedpolicy-greedy-docker"
+    root.mkdir(exist_ok=True)
+    run = Path(tempfile.mkdtemp(prefix="heuristic-continuation-run-", dir=root))
+    (run / "X.csv").write_text("1,2,3\n4,5,6\n7,8,9\n10,11,12\n")
+    (run / "X.csv.mtd").write_text(json.dumps({"data_type": "matrix", "value_type": "double",
+        "rows": 4, "cols": 3, "nnz": 12, "format": "csv", "header": False, "sep": ",",
+        "privacy": "private-aggregate"}) + "\n")
+    (run / "y.csv").write_text("1\n2\n3\n4\n")
+    (run / "y.csv.mtd").write_text(json.dumps({"data_type": "matrix", "value_type": "double",
+        "rows": 4, "cols": 1, "nnz": 4, "format": "csv", "header": False, "sep": ",",
+        "privacy": "public"}) + "\n")
+    source = "\n".join([
+        'X=federated(addresses=list("localhost:13000//evidence/X.csv"),ranges=list(list(0,0),list(4,3)));',
+        'y=federated(addresses=list("localhost:13000//evidence/y.csv"),ranges=list(list(0,0),list(4,1)));',
+        'm_evaluate=function(Matrix[Double] X,Matrix[Double] y,Matrix[Double] p,Boolean do_clip)',
+        '  return(Matrix[Double] grad,Double loss) {',
+        '  pred=X%*%p; err=pred-y;',
+        '  if(do_clip) { z=(err<0)*0+(err>=0)*err; } else { z=err; }',
+        '  grad=t(X)%*%z;',
+        '  loss=sum(z*z);',
+        '}',
+        'p=matrix(0,rows=3,cols=1);',
+        'for(t in 1:2) {',
+        '  [grad,loss]=m_evaluate(X,y,p,t%%2==1);',
+        '  p=p-grad/4;',
+        '}',
+        'print("FEDPOLICY_NUMERIC="+as.scalar(p[1,1]));',
+        'print("FEDPOLICY_NUMERIC="+as.scalar(p[2,1]));',
+        'print("FEDPOLICY_NUMERIC="+as.scalar(p[3,1]));',
+        'print("FEDPOLICY_NUMERIC="+loss);',
+    ]) + "\n"
+    workloads = {
+        "function-loop": (source, heuristic_continuation_oracle(False)),
+        "mixed-branch": (source.replace(
+            "if(do_clip) { z=(err<0)*0+(err>=0)*err; } else { z=err; }",
+            "if(do_clip) { z=(err<0)*0+(err>=0)*err; } else { z=y; }"),
+            heuristic_continuation_oracle(True)),
+    }
+    for name, (script, _) in workloads.items():
+        (run / f"{name}.dml").write_text(script)
+    planner = "COMPILE_FED_HEURISTIC_SINGLE_PASS"
+    (run / "AggLocal.xml").write_text(f"<root><sysds.federated.planner>{planner}</sysds.federated.planner>"
+        "<sysds.localtmpdir>/tmp/systemds</sysds.localtmpdir>"
+        "<sysds.scratch>/tmp/scratch</sysds.scratch></root>\n")
+    commands = ["set -euo pipefail", "cd /evidence",
+        "export JDK_JAVA_OPTIONS='--add-modules=jdk.incubator.vector --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED'",
+        "CP='/probe:/engine/systemds-3.4.0-SNAPSHOT.jar:/engine/lib/*'",
+        "java -Xmx768m -cp \"$CP\" org.apache.sysds.api.DMLScript -w 13000 >worker.log 2>&1 &",
+        "worker=$!", "trap 'kill \"$worker\" 2>/dev/null || true; wait \"$worker\" 2>/dev/null || true' EXIT",
+        "python3 - <<'PY'\nimport socket,time\nfor i in range(120):\n try:\n  s=socket.create_connection(('localhost',13000),0.5);s.close();break\n except OSError: time.sleep(0.5)\nelse: raise SystemExit('worker did not start')\nPY"]
+    for name in workloads:
+        commands.append("timeout 120 java -Xms128m -Xmx1536m -Xss1m -cp \"$CP\" "
+            "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyDockerProbe "
+            f"{name}.dml AggLocal.xml {planner} >{name}.log 2>&1")
+    (run / "run.sh").write_text("\n".join(commands) + "\n")
+    fixture_files = [run / name for name in ("X.csv", "X.csv.mtd", "y.csv", "y.csv.mtd",
+        "function-loop.dml", "mixed-branch.dml", "AggLocal.xml", "run.sh")]
+    manifest = {"image": image, "jarSha256": sha(jar), "probeSha256": sha(probe),
+        "harnessSha256": sha(harness_source), "testFixtureSha256": sha(fixture_source),
+        "probeSourceSha256": sha(probe_source),
+        "sourceSha256": {str(path.relative_to(repo)): sha(path) for path in sources},
+        "fixtureSha256": {path.name: sha(path) for path in fixture_files},
+        "fixture": {"X": {"rows": 4, "cols": 3, "privacy": "private-aggregate"},
+            "y": {"rows": 4, "cols": 1, "privacy": "public"}, "iterations": 2},
+        "oracle": "independent scalar Python evaluation of both loop iterations",
+        "planner": planner, "workloads": {name: expected for name, (_, expected) in workloads.items()},
+        "comparison": {"absoluteTolerance": NUMERIC_ABSOLUTE_TOLERANCE,
+            "relativeTolerance": NUMERIC_RELATIVE_TOLERANCE, "exactMarkerCount": 4},
+        "attempts": 1, "cpus": 2, "memory": "4g", "network": "none (container loopback only)",
+        "runtimeAudit": True}
+    (run / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    argv = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--cpus", "2",
+        "--memory", "4g", "--user", f"{os.getuid()}:{os.getgid()}",
+        "-v", f"{repo / 'target'}:/engine:ro", "-v", f"{repo / 'target/test-classes'}:/probe:ro",
+        "-v", f"{run}:/evidence:rw", "--entrypoint", "bash", image, "/evidence/run.sh"]
+    (run / "command.json").write_text(json.dumps(argv, indent=2) + "\n")
+    print(run, flush=True)
+    with (run / "container.log").open("w") as log:
+        result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=400)
+    checks = []
+    for name, (_, expected) in workloads.items():
+        path = run / f"{name}.log"
+        text = path.read_text() if path.exists() else ""
+        actual, numeric_ok = check_numerical_markers(text, expected, NUMERIC_RELATIVE_TOLERANCE)
+        runtime_ok = "FEDPOLICY_RUNTIME_FALLBACK=0;repair=0" in text
+        audits = [{key: int(value) for key, value in re.findall(r"(\w+)=(\d+)(?=\s|$)", line)}
+            for line in re.findall(r"^\[PlannerRuntimeAudit\]\[Summary\].*$", text, re.MULTILINE)]
+        audit_ok = bool(audits) and all(all(audit.get(key) == 0
+            for key in ("missingPhysicalHops", "missingSynthetic", "mismatches")) for audit in audits)
+        checks.append({"workload": name, "expected": expected, "actual": actual,
+            "runtimeFallbackAndRepairZero": runtime_ok,
+            "runtimeAudits": audits, "runtimeAuditsPassed": audit_ok,
+            "passed": numeric_ok and runtime_ok and audit_ok
+                and f"FEDPOLICY_PROBE_SUCCESS={planner};runtimeAudit=true" in text})
+    runtime_artifacts_match = sha(jar) == manifest["jarSha256"] and sha(probe) == manifest["probeSha256"]
+    passed = result.returncode == 0 and runtime_artifacts_match and all(check["passed"] for check in checks)
+    receipt = {"status": "passed" if passed else "failed", "containerExitCode": result.returncode,
+        "checks": checks, "runtimeArtifactsMatch": runtime_artifacts_match,
+        "manifestSha256": sha(run / "manifest.json"), "commandSha256": sha(run / "command.json"),
+        "logSha256": {path.name: sha(path) for path in [run / "container.log", run / "worker.log",
+            *(run / f"{name}.log" for name in workloads)] if path.is_file()}}
+    (run / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps({"status": receipt["status"], "artifact": str(run), "checks": checks}, indent=2))
+    return 0 if passed else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True, help="Existing local Java 17/Python 3 image; never pulled")
     parser.add_argument("--baseline-root", type=Path, help="Isolated HEAD source build for paired comparison (one warmup + five measured fresh JVMs)")
-    parser.add_argument("--als-only", action="store_true", help="Run the single-worker ALS CP/FedAll correctness comparison only")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--als-only", action="store_true", help="Run the single-worker ALS CP/FedAll correctness comparison only")
+    modes.add_argument("--heuristic-continuation", action="store_true",
+        help="Run the AggLocal function-loop and mixed-branch continuation checks only")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     jar = repo / "target/systemds-3.4.0-SNAPSHOT.jar"
@@ -204,6 +361,8 @@ def main():
     image = subprocess.check_output(["docker", "image", "inspect", args.image, "--format", "{{.Id}}"], text=True).strip()
     if args.als_only:
         return run_als_only(args, repo, jar, probe, image, sources)
+    if args.heuristic_continuation:
+        return run_heuristic_continuation(args, repo, jar, probe, image, sources)
     root = repo / "target/fedpolicy-greedy-docker"
     root.mkdir(exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=root))
@@ -285,8 +444,8 @@ def main():
                 for workload, (_, expected) in workloads.items():
                     path = output / f"{name}-{workload}-{repeat}.log"
                     text = path.read_text() if path.exists() else ""
-                    values = re.findall(r"FEDPOLICY_NUMERIC=([0-9.eE+-]+)", text)
-                    ok = len(values) == 1 and abs(float(values[0]) - expected) < 1e-8 and f"FEDPOLICY_PROBE_SUCCESS={planner};runtimeAudit=true" in text
+                    values, numeric_ok = check_numerical_markers(text, expected)
+                    ok = numeric_ok and f"FEDPOLICY_PROBE_SUCCESS={planner};runtimeAudit=true" in text
                     timing = re.search(r"CandidateE2EReceipt (.+)", text)
                     phases = {k: int(v) for k,v in re.findall(r"(\w+Nanos)=(\d+)", timing.group(1))} if timing else {}
                     compilation = re.findall(r"Total compilation time:\s*([0-9.]+) sec", text)
