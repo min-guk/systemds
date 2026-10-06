@@ -1,0 +1,27 @@
+{
+  "origin-als_exact-result": {
+    "case": "als_exact",
+    "returncode": 1,
+    "wallSeconds": 10.116973876953125
+  },
+  "origin-steplm_exact-result": {
+    "case": "steplm_exact",
+    "returncode": 1,
+    "wallSeconds": 13.11111855506897
+  },
+  "origin-als_policy-result": {
+    "case": "als_policy",
+    "returncode": 1,
+    "wallSeconds": 9.790007591247559
+  },
+  "origin-steplm_closure-result": {
+    "case": "steplm_closure",
+    "returncode": 1,
+    "wallSeconds": 26.750543355941772
+  },
+  "origin-kmeans_relocation-result": {
+    "case": "kmeans_relocation",
+    "returncode": 1,
+    "wallSeconds": 11.31627631187439
+  }
+}

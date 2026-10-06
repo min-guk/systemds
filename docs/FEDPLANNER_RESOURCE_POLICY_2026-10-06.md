@@ -71,3 +71,7 @@ COVTYPE W1과 GLM W1은 모두 TARGET_REACHED였다. GLM W1은 lower≈20,956.04
 최종 근거: [validation](experiments/resource-policy-20261006/validation.json), [case별 비교](experiments/resource-policy-20261006/compile-comparison.json), [단위 테스트](experiments/resource-policy-20261006/regression-results.json), [worker 실행](experiments/resource-policy-20261006/runtime-receipt.json). 외부 원본은 `/home/mchoi/fedplanner-resource-policy-20261006/all14-verified`, `runtime-verified`에 있다. 중간 실패·중단 기록은 최종 PASS 근거에 포함하지 않는다.
 
 이번 요청에서는 commit/push하지 않았다.
+
+## Subsequent origin/main integration
+
+The later joint-boundary integration and its unresolved validation failures are recorded separately in [the main integration verification report](FEDPLANNER_GLOBAL_MAIN_VALIDATION_2026-10-06.md). Earlier pass counts in this document apply to their stated revision, not to the later merged code.
