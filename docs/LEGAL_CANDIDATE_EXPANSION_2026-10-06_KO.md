@@ -78,3 +78,20 @@ scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e \
 ```
 
 새 실행에는 다른 `--run-id`를 사용한다. [검증 집계](experiments/boundary-seed-20261006/legal-prefix-ml-validation.json)에 비교한 source 8개, manifest·입력/image/dependency 대조, phase 시간, 전체 계수 비교, checkpoint 및 factor 작업량이 있다. Raw evidence는 `/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-candidate-01`, build/RED/isolated 로그는 `target/candidate-pruning-evidence/`에 보존했다. 정식 staged campaign의 외부 모듈 부재와 소규모 합성 데이터 한계는 이전 검증과 같다.
+
+### 게시 후 row 분해 타당성 확인
+
+검증된 구현과 최신 main의 LogReg native-proof closure 수정은 `1dc7fbd7ca`로 `origin/main`에 게시했다. 통합 회귀는 Java **356/356 PASS**, 실제 builtin 학습 3종 및 ALS CP/FedAll 전체 출력 비교 PASS다. [최종 게시 기록](experiments/boundary-seed-20261006/main-publication-r2.json)에 결과를 보존했다.
+
+후속으로 production을 그대로 두고 별도 source/class 복사본에 row별 support-owner 진단만 추가했다. 같은 Docker logreg에서 `gs = sum(S * Grad)`의 relation은 12개 row이며, 그중 **row 3·7·11**은 전체 큰 축을 필요로 했다. 원래 domain은 `[57,1,104,38,104,17]`, 기존 observation category는 `[8,1,104,17,104,17]`이다. 큰 축에는 Grad read와 Grad를 보존하는 else의 placement/read/write 연쇄가 함께 포함된다.
+
+| 현재 observation keys를 유지한 표현 | 전체 저장 셀 추정 | 최대 factor 셀 추정 |
+|---|---:|---:|
+| 기존 whole relation | 25,029,616 | 25,006,592 |
+| row별 독립 factor·observation link | 75,142,200 | 25,006,592 |
+
+이는 지원 domain 축소 전 canonical domain과 truth·binary-link 크기로 계산한 표현 비용이다. 실제 peak heap 측정이 아니다. 다른 세 joint relation에서도 같은 방식의 row 분해는 총 저장량을 줄이지 못했다. 따라서 이 분해는 production에 적용하지 않았다. 더 거친 row별 observation, 공유 link, 논리적으로 증명한 pool-query 의존성 분해까지 불가능하다는 결론은 아니다. 다음 표현 개선은 이 loop-back 연쇄의 중복 의존성을 먼저 증명해야 한다.
+
+[진단 결과와 재현 artifact](experiments/boundary-seed-20261006/joint-row-diagnostic.json)에 row scope·크기·source SHA를 보존한다. 진단은 factor/solver 선택을 바꾸지 않았고, 실행 시간에는 추가 grounding·출력 비용이 포함되므로 성능 개선의 근거로 사용하지 않는다.
+
+진단 Docker 학습도 PASS이며 전체 16계수 CP 일치, audit/runtime conversion 위반 0, 게시본과 최종 modeled upper 122.26631334184357 일치를 확인했다. 실제 freezer의 25,006,592셀 및 partial/subtree 작업량도 동일했다.

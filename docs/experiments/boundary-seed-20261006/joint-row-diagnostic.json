@@ -1,0 +1,500 @@
+{
+  "schema": "systemds-joint-row-diagnostic-v1",
+  "publishedBaselineCommit": "1dc7fbd7cadac22c4e9ab270233d7e0766a9fc4d",
+  "instrumentationOnly": true,
+  "frozenArtifactsMatch": {
+    "main-sources": 1651,
+    "main-classes": 4357,
+    "test-sources": 1932,
+    "test-classes": 2815
+  },
+  "sourceOriginalSha256": "2471affd40ccc5c5825e1552dd0bc8a932a4244a148e013dcd88acc90c1a6b26",
+  "sourceInstrumentedSha256": "ea78e8d871ff310f9bfb05224d97d10e4735a8be54532fe55920881d95831b40",
+  "instrumentationPatch": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/joint-row-diagnostic-build/instrumentation.patch",
+  "instrumentationPatchSha256": "66f1798aee9243dd1534f569ff576e480b1ce3dc8f4db3c47c61e07c10da17a4",
+  "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/joint-row-diagnostic-01/result.json",
+  "resultSha256": "ab0d96e206461855af17221ca132ac863736f57dc937fb03884d5a8ae508f9d0",
+  "manifestSha256": "a9b5bdf9ea88cb7c15a2adcf4a4cff13491b930f1aba50083d9c1b608572a3dc",
+  "sameImageAndInput": true,
+  "status": "PASSED",
+  "modelComparison": {
+    "actualEntries": 16,
+    "entries": 16,
+    "errors": [],
+    "finite": true,
+    "matched": true,
+    "maxAbsDifference": 2.220446049250313e-16,
+    "nonzero": true
+  },
+  "runtimeAuditViolations": [],
+  "runtimeConversionViolations": [],
+  "sameFinalModeledUpper": 122.26631334184357,
+  "diagnosticErrors": 0,
+  "relationCount": 4,
+  "relationsWithStrictTotalImprovement": 0,
+  "targetRelation": [
+    {
+      "rows": 12,
+      "wholeCanonicalCells": 398266752,
+      "wholeObservationEncodedCells": 25029616,
+      "wholeSelectedCells": 25029616,
+      "wholeMaxStoredFactorCells": 25006592,
+      "rowTotalSelectedCells": 75142200,
+      "rowMaxStoredFactorCells": 25006592,
+      "strictTotalImprovement": false,
+      "maxStoredNotLarger": true,
+      "everyRowCoversAllNonSingletonAxes": false,
+      "wholeDomains": [
+        57,
+        1,
+        104,
+        38,
+        104,
+        17
+      ],
+      "wholeCategories": [
+        8,
+        1,
+        104,
+        17,
+        104,
+        17
+      ],
+      "consumer": "64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2"
+    }
+  ],
+  "targetRows": [
+    {
+      "row": 0,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=0 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 1,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=1 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 2,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=2 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 3,
+      "canonicalCells": 398266752,
+      "observationEncodedCells": 25029616,
+      "selectedCells": 25029616,
+      "maxStoredFactorCells": 25006592,
+      "rowCoversAllNonSingletonAxes": true,
+      "domains": [
+        57,
+        1,
+        104,
+        38,
+        104,
+        17
+      ],
+      "categories": [
+        8,
+        1,
+        104,
+        17,
+        104,
+        17
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=3 rowCoversAllNonSingletonAxes=true wholeScopePositions=[0, 1, 2, 3, 4, 5] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...y/5/loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|14:root-1/input-0|86:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.UnaryOp:u(_placement):Grad#adfc99f8, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|22:root-1/input-0/input-0|82:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.DataOp:TRead Grad:Grad#c9f9eb50, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...tiLogReg/body/5/loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|6:root-1|83:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.DataOp:TWrite Grad:Grad#6fc27c48] domains=[57, 1, 104, 38, 104, 17] categories=[8, 1, 104, 17, 104, 17] canonicalCells=398266752 observationEncodedCells=25029616 selectedCells=25029616 maxStoredFactorCells=25006592 observationEncodingSelected=true estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 4,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=4 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 5,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=5 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 6,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=6 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 7,
+      "canonicalCells": 398266752,
+      "observationEncodedCells": 25029616,
+      "selectedCells": 25029616,
+      "maxStoredFactorCells": 25006592,
+      "rowCoversAllNonSingletonAxes": true,
+      "domains": [
+        57,
+        1,
+        104,
+        38,
+        104,
+        17
+      ],
+      "categories": [
+        8,
+        1,
+        104,
+        17,
+        104,
+        17
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=7 rowCoversAllNonSingletonAxes=true wholeScopePositions=[0, 1, 2, 3, 4, 5] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...y/5/loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|14:root-1/input-0|86:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.UnaryOp:u(_placement):Grad#adfc99f8, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|22:root-1/input-0/input-0|82:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.DataOp:TRead Grad:Grad#c9f9eb50, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...tiLogReg/body/5/loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|6:root-1|83:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.DataOp:TWrite Grad:Grad#6fc27c48] domains=[57, 1, 104, 38, 104, 17] categories=[8, 1, 104, 17, 104, 17] canonicalCells=398266752 observationEncodedCells=25029616 selectedCells=25029616 maxStoredFactorCells=25006592 observationEncodingSelected=true estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 8,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=8 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 9,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=9 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 10,
+      "canonicalCells": 5928,
+      "observationEncodedCells": 12105,
+      "selectedCells": 5928,
+      "maxStoredFactorCells": 5928,
+      "rowCoversAllNonSingletonAxes": false,
+      "domains": [
+        57,
+        1,
+        104
+      ],
+      "categories": [
+        8,
+        1,
+        104
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=10 rowCoversAllNonSingletonAxes=false wholeScopePositions=[0, 1, 2] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41] domains=[57, 1, 104] categories=[8, 1, 104] canonicalCells=5928 observationEncodedCells=12105 selectedCells=5928 maxStoredFactorCells=5928 observationEncodingSelected=false estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    },
+    {
+      "row": 11,
+      "canonicalCells": 398266752,
+      "observationEncodedCells": 25029616,
+      "selectedCells": 25029616,
+      "maxStoredFactorCells": 25006592,
+      "rowCoversAllNonSingletonAxes": true,
+      "domains": [
+        57,
+        1,
+        104,
+        38,
+        104,
+        17
+      ],
+      "categories": [
+        8,
+        1,
+        104,
+        17,
+        104,
+        17
+      ],
+      "wholeScopePositions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "raw": "[PlannerTrace][Exact-JointRowDiagnostic] consumer=64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2 row=11 rowCoversAllNonSingletonAxes=true wholeScopePositions=[0, 1, 2, 3, 4, 5] ownerKeys=[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...NS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-0|77:scripts/builtin/multiLogReg.dml:237:16:org.apache.sysds.hops.DataOp:TRead S:S#4d49da3d, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|30:root-0/input-0/input-0/input-1|83:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.DataOp:TRead Grad:Grad#b09ccd41, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...y/5/loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|14:root-1/input-0|86:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.UnaryOp:u(_placement):Grad#adfc99f8, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|22:root-1/input-0/input-0|82:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.DataOp:TRead Grad:Grad#c9f9eb50, 64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...tiLogReg/body/5/loop-body/6/branch-else/0|67:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-else/0|9:recompile|6:root-1|83:scripts/builtin/multiLogReg.dml:284:4:org.apache.sysds.hops.DataOp:TWrite Grad:Grad#6fc27c48] domains=[57, 1, 104, 38, 104, 17] categories=[8, 1, 104, 17, 104, 17] canonicalCells=398266752 observationEncodedCells=25029616 selectedCells=25029616 maxStoredFactorCells=25006592 observationEncodingSelected=true estimateBasis=wholeFactorObservationKeys preMaterialization=true"
+    }
+  ],
+  "targetActualFreeze": [
+    {
+      "logicalCells": 25006592,
+      "partialCalls": 2547709,
+      "leafCalls": 0,
+      "zeroCells": 22608192,
+      "forbiddenCells": 2398400,
+      "provenSubtrees": 340,
+      "subtreeCells": 22602112,
+      "elapsedNanos": 22929498549
+    }
+  ],
+  "allRelationSummaries": [
+    {
+      "rows": 12,
+      "wholeCanonicalCells": 398266752,
+      "wholeObservationEncodedCells": 25029616,
+      "wholeSelectedCells": 25029616,
+      "wholeMaxStoredFactorCells": 25006592,
+      "rowTotalSelectedCells": 75142200,
+      "rowMaxStoredFactorCells": 25006592,
+      "strictTotalImprovement": false,
+      "maxStoredNotLarger": true,
+      "everyRowCoversAllNonSingletonAxes": false,
+      "wholeDomains": [
+        57,
+        1,
+        104,
+        38,
+        104,
+        17
+      ],
+      "wholeCategories": [
+        8,
+        1,
+        104,
+        17,
+        104,
+        17
+      ],
+      "consumer": "64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|22:root-0/input-0/input-0|88:scripts/builtin/multiLogReg.dml:235:18:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp#f996a8d2"
+    },
+    {
+      "rows": 8,
+      "wholeCanonicalCells": 120,
+      "wholeObservationEncodedCells": 115,
+      "wholeSelectedCells": 115,
+      "wholeMaxStoredFactorCells": 60,
+      "rowTotalSelectedCells": 920,
+      "rowMaxStoredFactorCells": 60,
+      "strictTotalImprovement": false,
+      "maxStoredNotLarger": true,
+      "everyRowCoversAllNonSingletonAxes": true,
+      "wholeDomains": [
+        20,
+        6,
+        1
+      ],
+      "wholeCategories": [
+        3,
+        6,
+        1
+      ],
+      "consumer": "64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...:m_multiLogReg/body/5/loop-body/1/loop-body/0|9:recompile|62:root-0/input-0/input-0/input-0/input-0/input-0/input-0/input-1|93:scripts/builtin/multiLogReg.dml:197:24:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp#4e7aec12"
+    },
+    {
+      "rows": 3,
+      "wholeCanonicalCells": 16,
+      "wholeObservationEncodedCells": 86,
+      "wholeSelectedCells": 16,
+      "wholeMaxStoredFactorCells": 16,
+      "rowTotalSelectedCells": 48,
+      "rowMaxStoredFactorCells": 16,
+      "strictTotalImprovement": false,
+      "maxStoredNotLarger": true,
+      "everyRowCoversAllNonSingletonAxes": true,
+      "wholeDomains": [
+        2,
+        1,
+        1,
+        8
+      ],
+      "wholeCategories": [
+        2,
+        1,
+        1,
+        8
+      ],
+      "consumer": "64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...1/loop-body/1/branch-if/0|77:function/.builtinNS::m_multiLogReg/body/5/loop-body/1/loop-body/1/branch-if/0|9:recompile|14:root-1/input-0|80:scripts/builtin/multiLogReg.dml:209:12:org.apache.sysds.hops.TernaryOp:t(-*):tmp#9f2bca8"
+    },
+    {
+      "rows": 6,
+      "wholeCanonicalCells": 16,
+      "wholeObservationEncodedCells": 86,
+      "wholeSelectedCells": 16,
+      "wholeMaxStoredFactorCells": 16,
+      "rowTotalSelectedCells": 96,
+      "rowMaxStoredFactorCells": 16,
+      "strictTotalImprovement": false,
+      "maxStoredNotLarger": true,
+      "everyRowCoversAllNonSingletonAxes": true,
+      "wholeDomains": [
+        2,
+        1,
+        1,
+        8
+      ],
+      "wholeCategories": [
+        2,
+        1,
+        1,
+        8
+      ],
+      "consumer": "64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinN...op-body/1/branch-else/2|79:function/.builtinNS::m_multiLogReg/body/5/loop-body/1/loop-body/1/branch-else/2|9:recompile|14:root-1/input-0|80:scripts/builtin/multiLogReg.dml:226:12:org.apache.sysds.hops.TernaryOp:t(-*):tmp#2a251a33"
+    }
+  ],
+  "interpretationLimit": "Storage estimates precede supported-domain reduction and reuse the existing whole-factor observation keys. This diagnoses that specific row projection; it does not prove no other exact representation can shrink the model. Instrumentation times are not a performance comparison."
+}
