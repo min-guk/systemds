@@ -567,3 +567,18 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - 최종 Maven focused 8 classes: 135 tests, 134 PASS, 기존 ignore 1, failure/error 0. `test jar:jar` 성공. 원본 통합본 129 classes의 확대 검증은 1,138 tests 중 1,125 PASS, failure 1, error 7, skip 5였으며, 이번 두 수정의 통과가 나머지 실패까지 해결했다는 뜻은 아니다.
 - 미해결: 함수 입력 domain 호환성(P1), 함수 경계의 derived FOUT authority(GLM), 큰 cost factor 표현(ALS/STEP-LM), 일부 closure/greedy-policy 오류. 원격 baseline 재현이 있는 실패만 upstream에서도 관측됐다고 기록한다. P1/GLM 실패의 upstream/merge 귀속은 아직 미확정이다. 모든 실험 PASS나 publish-ready 품질 인증을 주장하지 않는다.
 - 원문 근거: `/home/mchoi/fedplanner-main-integrated-20261006/build/regression-final-0e44222031.json`, `publication-focused.log`. Docker의 frozen code와 마지막 focused 수정은 최종 보고서에서 구분한다.
+## VALUE_MAP 표현에 뒤처진 테스트 oracle 4개 — 수정 및 검증 완료
+
+- **범위/의사결정 근거**: 사용자가 선택한 잔여 항목 2만 수행했다. production planner/DP/runtime은 수정하지 않고 최신 selected-receipt 계약에 테스트를 맞춘다. 이전 source-grounding 제거와 factor overflow 개선은 이번 변경 범위가 아니다.
+- **증상/원인**: Native continuity 테스트는 endpoint certificate가 하나라고 가정했다. 실제로는 선택된 입력 증명별 projection이 필요하다. complete-space 테스트 3개는 모든 receipt가 직접 worker-map anchor를 가진다고 가정해 VALUE_MAP에서 실패했다.
+- **해결**: native proof의 선택 입력별 identity와 추가·제거·복구 안정성, endpoint certificate projection의 multiplicity를 검사한다. VALUE_MAP은 선택한 support clause의 정확한 입력 owner/reference를 따라 실제 worker/range map을 계산한다. entry/if/else binding을 모두 요구하고, 동일 map의 분기도 생략할 수 없도록 negative mutant를 추가했다. 기대 공간은 literal fixture 입력 관계에서 독립 생성하며 전체 raw 조합 분류·집합 동등성·projection 유일성·계획 삭제/주입 검사를 유지한다.
+- **fixture 한계/잔여 이슈**: 기존 unreduced 8x2 fixture에서 native output 폭 1 witness가 관측됐으며 fixture HOP dimension 지정만으로 해소되지 않았다. 이를 정답으로 고정하지 않고 테스트 입력을 같은 제어 흐름의 8x1 literal vector로 바꿨다. 다중 열 native shape 추론은 별도 미해결 범위로 남기며, 새 52개 계획을 이전 fixture 공간 보존이라고 주장하지 않는다.
+- **수정 파일**: `NativePlacementContinuityTest.java`, `IndependentCompletePlacementSpaceTest.java`, 이 문서 및 `VALUE_MAP_TEST_ORACLE_2026-10-06.md`.
+- **검증**: 관련 8개 클래스 124 tests 중 123 PASS / 기존 skip 1 / 실패·오류 0. PRIVATE와 PRIVATE_AGGREGATE 각각 raw 279,936개를 전수 분류하여 독립 기대 공간 52개와 정확히 일치했고 나머지 279,884개는 REJECTED, UNKNOWN 0이었다. 독립 read-only 리뷰 CLEAR. 최종 명령과 로그는 상세 보고서 및 `.omx/value-map-oracle-evidence/` 참조.
+- **잠재 회귀 위험/감지**: geometry 집합으로 합치면서 동일 배치의 분기를 잃는 위험은 정확한 owner inventory 및 binding 삭제 mutant로 검출한다. 전체 공간이 같은지 확인하므로 단순 개수 변경으로 통과시키지 않는다. fixture는 범용 CFG/shape 정확성 증명이 아니다.
+
+- **Docker 최종 검증**: `run_LAN_docker.sh --joint-boundary-e2e`의 frozen class hash 검증 PASS, 수정 oracle 6 tests PASS, loop/function 2 cases의 FED/CP 수치 fingerprint 일치, runtime conversion 위반·audit error 0. 결과: `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/protected-loop-function/result.json`.
+
+- **게시 전 최신 main 통합**: 원격 `7b0656c29c`로 rebase했다. `547f4799cd`가 동일 endpoint certificate를 deduplicate하므로, 최신 기대값은 certificate 1개다. 선택 입력별 native proof 2/3/2개와 identity 안정성 검증은 유지한다. 앞선 multiplicity 설명은 `eb64f9c939` 기준 기록이며 최신 게시 계약은 이 항목으로 갱신한다. Production 변경을 되돌리지 않고 문서 양쪽 append를 보존했다.
+
+- **최신 main 게시 검증 완료**: `7b0656c29c` 위에서 동일 8개 클래스 재실행 123 PASS / 기존 skip 1 / 실패·오류 0. Docker `main-publication`에서도 수정 oracle 6 tests 및 loop/function 2 cases PASS, class hash 일치, runtime conversion 위반·audit error 0. 근거 `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/main-publication/result.json`. 최종 변경은 테스트 2개와 문서 2개다.
