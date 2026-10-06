@@ -37,6 +37,12 @@ final class JointPhysicalCostRows {
 			return result;
 		}
 	}
+	/** Audit-only enumeration work; neither count is a planner policy input. */
+	record ProductWork(long visitedValues, long emittedRows) { }
+	private static final class MutableProductWork {
+		long visitedValues;
+		long emittedRows;
+	}
 
 	private final PlacementAnalysis analysis;
 	private final Map<CompiledHopKey,JointValueMapRelations.Relation> relations = new IdentityHashMap<>();
@@ -125,23 +131,14 @@ final class JointPhysicalCostRows {
 			inputs.add(pools.stream().map(pool -> new Value(pool, Map.of(), Set.of())).toList());
 		}
 		List<Row> result = new ArrayList<>();
-		product(inputs, 0, new ArrayList<>(), result);
 		if(relations.containsKey(owner.decision()) && dynamic(owner)) {
 			// The joint hard factor proves that every FED input used by this kernel
 			// has an aligned effective pool (after explicit relocations). Cartesian
 			// cross-pool rows cannot be selected and cannot disprove cost invariance.
 			// This filters a cost-proof superset only; no candidate is removed.
-			result.removeIf(row -> {
-				DurableAnchorKey first = null;
-				for(Value value : row.inputs()) {
-					if(value == null) continue;
-					if(first == null) first = value.pool();
-					else if(!org.apache.sysds.hops.fedplanner.placement.PlacementIdentity
-						.samePhysicalWorkerPool(first, value.pool())) return true;
-				}
-				return false;
-			});
+			alignedProduct(inputs, 0, new ArrayList<>(), result, null);
 		}
+		else product(inputs, 0, new ArrayList<>(), result);
 		return List.copyOf(result);
 	}
 
@@ -227,9 +224,8 @@ final class JointPhysicalCostRows {
 			inputs.add(choices);
 		}
 		List<Row> rows = new ArrayList<>();
-		product(inputs, 0, new ArrayList<>(), rows);
-		if(relation != null)
-			rows.removeIf(row -> !matches(relation, row));
+		if(relation == null) product(inputs, 0, new ArrayList<>(), rows);
+		else enumerateMatchingProduct(inputs, relation, rows);
 		return List.copyOf(rows);
 	}
 
@@ -293,9 +289,33 @@ final class JointPhysicalCostRows {
 		finally { visiting.remove(key); }
 	}
 
-	private static boolean matches(JointValueMapRelations.Relation relation, Row row) {
+	/** Enumerates only prefixes that still extend to a row in the exact source relation. */
+	static ProductWork enumerateMatchingProduct(List<List<Value>> choices,
+		JointValueMapRelations.Relation relation, List<Row> output) {
+		MutableProductWork work = new MutableProductWork();
+		matchingProduct(choices, 0, new ArrayList<>(), relation, output, work);
+		return new ProductWork(work.visitedValues, work.emittedRows);
+	}
+
+	private static void matchingProduct(List<List<Value>> choices, int position, List<Value> current,
+		JointValueMapRelations.Relation relation, List<Row> output, MutableProductWork work) {
+		if(position == choices.size()) {
+			output.add(new Row(Collections.unmodifiableList(new ArrayList<>(current))));
+			work.emittedRows++;
+			return;
+		}
+		for(Value value : choices.get(position)) {
+			work.visitedValues++;
+			current.add(value);
+			if(matches(relation, current))
+				matchingProduct(choices, position + 1, current, relation, output, work);
+			current.remove(current.size() - 1);
+		}
+	}
+
+	private static boolean matches(JointValueMapRelations.Relation relation, List<Value> values) {
 		Map<CompiledHopKey,CompiledHopKey> choices = new IdentityHashMap<>();
-		for(Value value : row.inputs()) {
+		for(Value value : values) {
 			if(value == null) continue;
 			for(var entry : value.sources().entrySet()) {
 				var prior = choices.putIfAbsent(entry.getKey(), entry.getValue());
@@ -314,6 +334,24 @@ final class JointPhysicalCostRows {
 		for(Value value : choices.get(position)) {
 			current.add(value);
 			product(choices, position + 1, current, output);
+			current.remove(current.size() - 1);
+		}
+	}
+
+	private static void alignedProduct(List<List<Value>> choices, int position, List<Value> current,
+		List<Row> output, DurableAnchorKey selectedPool) {
+		if(position == choices.size()) {
+			output.add(new Row(Collections.unmodifiableList(new ArrayList<>(current))));
+			return;
+		}
+		for(Value value : choices.get(position)) {
+			if(value != null && selectedPool != null
+				&& !org.apache.sysds.hops.fedplanner.placement.PlacementIdentity
+					.samePhysicalWorkerPool(selectedPool, value.pool()))
+				continue;
+			current.add(value);
+			alignedProduct(choices, position + 1, current, output,
+				selectedPool != null || value == null ? selectedPool : value.pool());
 			current.remove(current.size() - 1);
 		}
 	}

@@ -1466,17 +1466,43 @@ final class PlacementRelationClosure {
 			.distinct().sorted(PlacementAnalysis.<CandidateRealizationReference>canonicalComparator()).toList();
 	}
 
+	static void enumerateReferenceProducts(List<List<CandidateRealizationReference>> choices,
+		int input, List<CandidateRealizationReference> product,
+		List<List<CandidateRealizationReference>> products) {
+		Map<CompiledHopKey,CandidateRealizationReference> selected = new IdentityHashMap<>();
+		for(CandidateRealizationReference reference : product) {
+			CandidateRealizationReference prior = selected.putIfAbsent(
+				reference.rule().parentOccurrence(), reference);
+			if(prior != null && !prior.equals(reference))
+				return;
+		}
+		enumerateReferenceProducts(choices, input, product, selected, products);
+	}
+
 	private static void enumerateReferenceProducts(List<List<CandidateRealizationReference>> choices,
 		int input, List<CandidateRealizationReference> product,
+		Map<CompiledHopKey,CandidateRealizationReference> selected,
 		List<List<CandidateRealizationReference>> products) {
 		if(input == choices.size()) {
 			products.add(List.copyOf(product));
 			return;
 		}
 		for(CandidateRealizationReference choice : choices.get(input)) {
+			CompiledHopKey owner = choice.rule().parentOccurrence();
+			CandidateRealizationReference prior = selected.get(owner);
+			if(prior != null && !prior.equals(choice))
+				continue;
+			if(prior == null)
+				selected.put(owner, choice);
 			product.add(choice);
-			enumerateReferenceProducts(choices, input + 1, product, products);
-			product.remove(product.size() - 1);
+			try {
+				enumerateReferenceProducts(choices, input + 1, product, selected, products);
+			}
+			finally {
+				product.remove(product.size() - 1);
+				if(prior == null)
+					selected.remove(owner);
+			}
 		}
 	}
 
