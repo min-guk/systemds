@@ -71,24 +71,31 @@ public class FederatedFoutMaterialize extends Lop {
 		String anchorOperand = (_anchorKey != null)
 			? InstructionUtils.createLiteralOperand(_anchorKey, ValueType.STRING)
 			: _anchor.prepInputOperand(anchor);
-		return InstructionUtils.concatOperands(
+		return supplyInstruction(InstructionUtils.concatOperands(
 			"FED", "fed_fout",
 			_input.prepInputOperand(input),
 			anchorOperand,
 			prepOutputOperand(output),
-			_fTypeHint);
+			_fTypeHint));
 	}
 
 	@Override
 	public String getInstructions(String input, String output) {
 		if (_anchorKey == null)
 			throw new LopsException("FederatedFoutMaterialize requires an anchor key when only one input is present.");
-		return InstructionUtils.concatOperands(
+		return supplyInstruction(InstructionUtils.concatOperands(
 			"FED", "fed_fout",
 			_input.prepInputOperand(input),
 			InstructionUtils.createLiteralOperand(_anchorKey, ValueType.STRING),
 			prepOutputOperand(output),
-			_fTypeHint);
+			_fTypeHint));
+	}
+
+	private String supplyInstruction(String instruction) {
+		// A derived native output is created once by its producer, then its consumers
+		// share that output's liveness. It is not an opportunistic cross-execution cache.
+		return getPlannerSyntheticActionKey() == null ? instruction
+			: InstructionUtils.concatOperands(instruction, "sharing=single");
 	}
 
 	@Override

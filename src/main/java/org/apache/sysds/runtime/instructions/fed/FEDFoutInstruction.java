@@ -37,26 +37,31 @@ public class FEDFoutInstruction extends FEDInstruction {
 	private final CPOperand _anchor;
 	private final CPOperand _output;
 	private final FType _fTypeHint;
+	private final boolean _plannedSupply;
 	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 
-	private FEDFoutInstruction(CPOperand input, CPOperand anchor, CPOperand output, FType fTypeHint, String opcode,
+	private FEDFoutInstruction(CPOperand input, CPOperand anchor, CPOperand output, FType fTypeHint,
+		boolean plannedSupply, String opcode,
 		String istr) {
 		super(FEDType.Fout, null, opcode, istr, FederatedOutput.FOUT);
 		_input = input;
 		_anchor = anchor;
 		_output = output;
 		_fTypeHint = fTypeHint;
+		_plannedSupply = plannedSupply;
 	}
 
 	public static FEDFoutInstruction parseInstruction(String str) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		if (parts.length != 5)
+		if (parts.length != 5 && parts.length != 6)
 			throw new DMLRuntimeException("Invalid number of operands in federated fout instruction: " + str);
 		CPOperand input = new CPOperand(parts[1]);
 		CPOperand anchor = new CPOperand(parts[2]);
 		CPOperand output = new CPOperand(parts[3]);
 		FType fType = parseFType(parts[4]);
-		return new FEDFoutInstruction(input, anchor, output, fType, parts[0], str);
+		if(parts.length == 6 && !parts[5].equals("sharing=single"))
+			throw new DMLRuntimeException("Invalid planned fed_fout supply lifetime");
+		return new FEDFoutInstruction(input, anchor, output, fType, parts.length == 6, parts[0], str);
 	}
 
 	public FType getMaterializationFType() {
@@ -88,6 +93,8 @@ public class FEDFoutInstruction extends FEDInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		if(getPlannerSyntheticActionKey() != null && !_plannedSupply)
+			throw new DMLRuntimeException("Planner FOUT instruction lost its supply lifetime");
 		MatrixObject in = ec.getMatrixObject(_input);
 		FederationMap anchorMap = null;
 		boolean anchorLiteral = !_anchor.isMatrix() || !ec.containsVariable(_anchor.getName());
@@ -262,7 +269,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 				+ " inputFed=" + in.isFederated()
 				+ " inst=" + instString);
 		}
-		FederationMap cached = FederationUtils.getRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
+		FederationMap cached = _plannedSupply ? null : FederationUtils.getRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
 			rlen, clen, nnz, layoutSig, cacheMapType);
 		if (cached != null) {
 			MatrixObject out = ec.getMatrixObject(_output);
@@ -286,8 +293,9 @@ public class FEDFoutInstruction extends FEDInstruction {
 		MatrixObject out = ec.getMatrixObject(_output);
 		out.setFedMapping(outMap);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-		FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, layoutSig, outMap.getType(), outMap);
+		if(!_plannedSupply)
+			FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
+				rlen, clen, nnz, layoutSig, outMap.getType(), outMap);
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
 				+ " out=" + _output.getName()

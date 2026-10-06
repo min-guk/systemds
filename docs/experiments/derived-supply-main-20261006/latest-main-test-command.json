@@ -1,0 +1,14 @@
+{
+  "command": [
+    "mvn",
+    "-q",
+    "-Djacoco.skip=true",
+    "-Dtest-forkCount=1",
+    "-Dtest-perCoreThreadCount=false",
+    "-Dtest-threadCount=1",
+    "-Dtest=OwnedRefedReuseTest",
+    "test"
+  ],
+  "started": 1791317011.106908,
+  "upstream_commit": "e8e42e93fa6fca0406fab4fcddcad22d4ee92f6f"
+}

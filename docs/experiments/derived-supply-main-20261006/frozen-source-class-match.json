@@ -1,0 +1,31 @@
+{
+  "mainClasses": {
+    "matched": true,
+    "currentFiles": 3766,
+    "frozenFiles": 3766,
+    "mismatches": []
+  },
+  "testClasses": {
+    "matched": false,
+    "currentFiles": 2762,
+    "frozenFiles": 2762,
+    "mismatches": [
+      "org/apache/sysds/runtime/controlprogram/federated/OwnedRefedReuseTest.class"
+    ]
+  },
+  "mainSources": {
+    "matched": true,
+    "currentFiles": 1642,
+    "frozenFiles": 1642,
+    "mismatches": []
+  },
+  "testSources": {
+    "matched": false,
+    "currentFiles": 1915,
+    "frozenFiles": 1915,
+    "mismatches": [
+      "org/apache/sysds/runtime/controlprogram/federated/OwnedRefedReuseTest.java"
+    ]
+  },
+  "explanation": "Only OwnedRefedReuseTest changed after frozen Docker input: upstream f295555610 adds retirement/eviction regressions. Production and Docker proof classes are unchanged; final OwnedRefedReuseTest tested separately."
+}

@@ -1,0 +1,9 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.26/10/06 20:15:56 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+..........INVARIANT_FOUT_SHARING_PROOF stableCost=1.002685546875 executions=3 getVar=1 putVar=1 aliasCleanup=passed numeric=passed
+.INVARIANT_FOUT_SHARING_PROOF updatedCost=3.008056640625 executions=3 getVar=3 putVar=3 aliasCleanup=passed numeric=passed
+
+Time: 23.457
+
+OK (12 tests)

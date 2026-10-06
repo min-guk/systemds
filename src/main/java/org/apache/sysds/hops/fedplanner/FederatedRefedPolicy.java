@@ -1119,13 +1119,14 @@ public final class FederatedRefedPolicy {
 					anchorHopId = liveAnchor.getHopID();
 				restored.add(new RestoredRefedAuthority(anchorHopId, anchorKey,
 					authority.getMaterializationFType(), reachableInputs,
-					authority.getPlannerActionKey(), authority.getRequiresLocalMaterialization()));
+					authority.getPlannerActionKey(), authority.getRequiresLocalMaterialization(),
+					authority.getSupplySharingGroup()));
 			}
 			for (RestoredRefedAuthority authority : restored)
 				FederatedRefedRegistry.registerConsumerInputs(sbId, producer.getHopID(),
 					authority.anchorHopId(), authority.anchorKey(), authority.materializationFType(),
 					authority.consumerInputs(), authority.plannerActionKey(),
-					authority.requiresLocalMaterialization());
+					authority.requiresLocalMaterialization(), authority.supplySharingGroup());
 			for(RestoredRefedAuthority authority : restored)
 				traceRuntimeAuthorityProjection("REFED", "PROJECTED", sbId,
 					selectedProducerHopId, producer, authority.plannerActionKey(),
@@ -1136,7 +1137,7 @@ public final class FederatedRefedPolicy {
 
 	private record RestoredRefedAuthority(long anchorHopId, String anchorKey,
 		FType materializationFType, List<ConsumerInputSpec> consumerInputs,
-		String plannerActionKey, Boolean requiresLocalMaterialization) {
+		String plannerActionKey, Boolean requiresLocalMaterialization, String supplySharingGroup) {
 	}
 
 	/**
@@ -1973,7 +1974,7 @@ public final class FederatedRefedPolicy {
 					FederatedRefedRegistry.registerConsumerInputs(sbId, entry.getKey(), anchorHopId,
 						authority.getAnchorKey(), authority.getMaterializationFType(),
 						authority.getConsumerInputs(), authority.getPlannerActionKey(),
-						authority.getRequiresLocalMaterialization());
+						authority.getRequiresLocalMaterialization(), authority.getSupplySharingGroup());
 				}
 				if(retained.isEmpty())
 					CPFOUT_ANCHOR_CACHE.remove(entry.getKey());

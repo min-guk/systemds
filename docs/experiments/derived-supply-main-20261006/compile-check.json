@@ -1,0 +1,16 @@
+{
+  "command": [
+    "mvn",
+    "-q",
+    "-Djacoco.skip=true",
+    "test-compile"
+  ],
+  "environment": {
+    "JAVA_TOOL_OPTIONS": "-XX:ActiveProcessorCount=2",
+    "MAVEN_OPTS": "-Xmx2g -XX:ActiveProcessorCount=2"
+  },
+  "exitCode": 0,
+  "pythonHarnessTests": 20,
+  "pythonHarnessFailures": 0,
+  "shellSyntaxPassed": true
+}

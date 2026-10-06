@@ -1,0 +1,524 @@
+{
+  "classes": 63,
+  "totals": {
+    "tests": 573,
+    "failures": 0,
+    "errors": 1,
+    "skipped": 5
+  },
+  "suites": [
+    {
+      "class": "ExactPhysicalNativeSupplyRepresentationTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.971
+    },
+    {
+      "class": "ExactCompiledSupplySharingTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.463
+    },
+    {
+      "class": "ExactDerivedSupplySharingTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.091
+    },
+    {
+      "class": "ExactStagedSupplyCanonicalCostTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.525
+    },
+    {
+      "class": "ExactFunctionAliasGetCostTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 12.821
+    },
+    {
+      "class": "ExactActivationMaterializationCostTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.309
+    },
+    {
+      "class": "ExactCompiledMaterializationScopeTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.849
+    },
+    {
+      "class": "ExactPhysicalSharedSourceEncodingTest",
+      "tests": 25,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.364
+    },
+    {
+      "class": "ExactPhysicalUnaryPreparationTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.766
+    },
+    {
+      "class": "DerivedFoutMaterializationAuthorityTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.508
+    },
+    {
+      "class": "JointBoundaryPhysicalModelProofTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 50.682
+    },
+    {
+      "class": "ExactExecutionOwnershipCostTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.422
+    },
+    {
+      "class": "ExactCanonicalCostTraceTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.061
+    },
+    {
+      "class": "ExactNativeLocalAnchorFanoutCostTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.473
+    },
+    {
+      "class": "ExactNativeResultBatchCostTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.14
+    },
+    {
+      "class": "ExactFusedFactorReuseCostTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 6.33
+    },
+    {
+      "class": "ExactFusedKernelLayoutCostTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.897
+    },
+    {
+      "class": "ExactFunctionGetSharingTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.058
+    },
+    {
+      "class": "ExactFunctionAliasActivationEncodingTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.294
+    },
+    {
+      "class": "ExactActivationClassFactorDecompositionTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.199
+    },
+    {
+      "class": "ExactActivationIndependentOracleTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.16
+    },
+    {
+      "class": "ExactPhysicalCostFingerprintPreflightTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.238
+    },
+    {
+      "class": "ExactPhysicalCostFingerprintStreamingTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.553
+    },
+    {
+      "class": "LocalPhysicalOptimizerIncrementalTraceTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.012
+    },
+    {
+      "class": "FederatedPlanLocalCostIntegrationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.1
+    },
+    {
+      "class": "LoopEntryMaterializationTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 12.935
+    },
+    {
+      "class": "LoopEntryCompletePlacementSpaceTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.767
+    },
+    {
+      "class": "CandidateReceiptAssignmentCompletenessTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.001
+    },
+    {
+      "class": "PlacementEmissionTransactionRedTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.807
+    },
+    {
+      "class": "PlannerRuntimePlacementAuditTest",
+      "tests": 79,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 2.205
+    },
+    {
+      "class": "PrivacyMovementCertificationTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 4,
+      "seconds": 2.667
+    },
+    {
+      "class": "PrefetchCPInstructionPlannerMaterializationTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.291
+    },
+    {
+      "class": "FederationUtilsRefedReuseLayoutTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.346
+    },
+    {
+      "class": "FEDFoutInstructionBroadcastFallbackTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.356
+    },
+    {
+      "class": "FederatedDagExactRefedInputProjectionTest",
+      "tests": 26,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.458
+    },
+    {
+      "class": "OwnedRefedReuseTest",
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.458
+    },
+    {
+      "class": "FederatedSourceCacheIdentityTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.494
+    },
+    {
+      "class": "ExactSharedSourceDefaultRoutingTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.491
+    },
+    {
+      "class": "IndependentCompletePlacementSpaceTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 20.503
+    },
+    {
+      "class": "NativeOutputGeometryTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.194
+    },
+    {
+      "class": "DynamicNativeLayoutCompositionTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.271
+    },
+    {
+      "class": "TransparentCarrierCostAuthorityTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 11.036
+    },
+    {
+      "class": "ExactAuxiliaryCommunicationCostTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.19
+    },
+    {
+      "class": "FederatedAuxiliaryNetworkCostTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.423
+    },
+    {
+      "class": "BranchExitPlacementNormalizationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.78
+    },
+    {
+      "class": "ExactRepeatedFunctionInputFeasibilityTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.985
+    },
+    {
+      "class": "FunctionBoundaryOccurrenceIdentityTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.496
+    },
+    {
+      "class": "PlacementJointInputEnvironmentTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.047
+    },
+    {
+      "class": "PhysicalCandidateRefinementTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.1
+    },
+    {
+      "class": "DirectSupportUnionScheduleTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.107
+    },
+    {
+      "class": "FederatedBranchExitNormalizerTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.56
+    },
+    {
+      "class": "ReorgFEDInstructionFullTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.602
+    },
+    {
+      "class": "ExactCategoricalSolverTest",
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.27
+    },
+    {
+      "class": "ExactReductionMemoryTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.496
+    },
+    {
+      "class": "GlobalExactCompletionTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.401
+    },
+    {
+      "class": "IncrementalBoundaryMessageTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.1
+    },
+    {
+      "class": "IncrementalRegionalConfigurationTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.024
+    },
+    {
+      "class": "IncrementalRegionalOptimizerTest",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.557
+    },
+    {
+      "class": "PlannerResourceGuardTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.028
+    },
+    {
+      "class": "SharedRegionalPreparationTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.568
+    },
+    {
+      "class": "NativePlacementContinuityTest",
+      "tests": 79,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "seconds": 0.673
+    },
+    {
+      "class": "OccurrenceExecutionFrequencyFactsConstantBranchTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 1,
+      "skipped": 0,
+      "seconds": 234.557
+    },
+    {
+      "class": "ExactDownloadAuthorityAmbiguityRedTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 10.529
+    }
+  ],
+  "problems": [
+    {
+      "class": "OccurrenceExecutionFrequencyFactsConstantBranchTest",
+      "method": "actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive",
+      "kind": "error",
+      "message": "Derived FOUT anchor owner has no exact graph-owned worker-pool authority: owner=64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|46:root-0/input-0/input-0/input-0/input-1/input-0|69:scripts/builtin/glm.dml:870:21:org.apache.sysds.hops.DataOp:TRead Y:Y anchors=[] outputActions=[] action=570:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|81:scripts/builtin/glm.dml:869:28:org.apache.sysds.hops.UnaryOp:u(abs):compiler-temp|450:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|9:value-442|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|1:0|8:ORDINARY|93:90:input-0:Y#0@function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0:FUNCTION_INPUT|597:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|81:scripts/builtin/glm.dml:869:28:org.apache.sysds.hops.UnaryOp:u(abs):compiler-temp|inputs=[PRESENT:BROADCAST]|27:CP/LOUT/-/SHAPE_INDEPENDENT|35:CP/FOUT/BROADCAST/SHAPE_INDEPENDENT|478:415:native-output:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|17:.builtinNS::m_glm|33:function/.builtinNS::m_glm/body/0|9:recompile|177:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|17:.builtinNS::m_glm|36:33:function/.builtinNS::m_glm/body/0|33:function/.builtinNS::m_glm/body/0|9:recompile|6:root-9|69:scripts/builtin/glm.dml:224:4:org.apache.sysds.hops.DataOp:TWrite Y:Y|9:BROADCAST|43:40:17:localhost:1234/Y1|7:1:0,1:0|7:1:8,1:2|566:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|46:root-0/input-0/input-0/input-0/input-1/input-0|69:scripts/builtin/glm.dml:870:21:org.apache.sysds.hops.DataOp:TRead Y:Y|9:BROADCAST|9:BROADCAST|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled",
+      "stack": "java.lang.IllegalArgumentException: Derived FOUT anchor owner has no exact graph-owned worker-pool authority: owner=64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|46:root-0/input-0/input-0/input-0/input-1/input-0|69:scripts/builtin/glm.dml:870:21:org.apache.sysds.hops.DataOp:TRead Y:Y anchors=[] outputActions=[] action=570:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|81:scripts/builtin/glm.dml:869:28:org.apache.sysds.hops.UnaryOp:u(abs):compiler-temp|450:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|9:value-442|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|1:0|8:ORDINARY|93:90:input-0:Y#0@function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0:FUNCTION_INPUT|597:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|81:scripts/builtin/glm.dml:869:28:org.apache.sysds.hops.UnaryOp:u(abs):compiler-temp|inputs=[PRESENT:BROADCAST]|27:CP/LOUT/-/SHAPE_INDEPENDENT|35:CP/FOUT/BROADCAST/SHAPE_INDEPENDENT|478:415:native-output:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|17:.builtinNS::m_glm|33:function/.builtinNS::m_glm/body/0|9:recompile|177:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|17:.builtinNS::m_glm|36:33:function/.builtinNS::m_glm/body/0|33:function/.builtinNS::m_glm/body/0|9:recompile|6:root-9|69:scripts/builtin/glm.dml:224:4:org.apache.sysds.hops.DataOp:TWrite Y:Y|9:BROADCAST|43:40:17:localhost:1234/Y1|7:1:0,1:0|7:1:8,1:2|566:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled|46:root-0/input-0/input-0/input-0/input-1/input-0|69:scripts/builtin/glm.dml:870:21:org.apache.sysds.hops.DataOp:TRead Y:Y|9:BROADCAST|9:BROADCAST|254:64:834f68e6f80cb9792ff0e1878ed89a17a2a3a704d28a0e3e2940bf705ddda10f|35:.builtinNS::glm_log_likelihood_part|66:63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|63:function/.builtinNS::glm_log_likelihood_part/body/2/branch-if/0|8:compiled\n\tat org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFactsConstantBranchTest.actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive(OccurrenceExecutionFrequencyFactsConstantBranchTest.java:276)\n"
+    }
+  ]
+}

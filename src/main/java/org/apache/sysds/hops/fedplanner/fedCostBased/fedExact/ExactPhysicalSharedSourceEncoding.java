@@ -183,16 +183,16 @@ final class ExactPhysicalSharedSourceEncoding {
 	}
 
 	private record CanonicalRow(int ordinal, int header, int[] selectedValueByOwner) { }
-	private record AuthorityHeader(int position, Object kind, Object expectedFType,
-		IdentityKey source, IdentityKey action) { }
-	private record BindingHeader(Object kind, int position, IdentityKey sourceOwner,
-		IdentityKey action) { }
-	private record AlternativeHeader(IdentityKey decision, IdentityKey state, Object authorityKind,
-		IdentityKey candidateRule, IdentityKey candidateEmission, IdentityKey executionRule,
-		IdentityKey executionEmission, IdentityKey durableAnchor, IdentityKey relocationAction,
-		IdentityKey derivedFoutAction, List<IdentityKey> orderedInputs,
-		List<AuthorityHeader> inputAuthorities, IdentityKey realization,
-		List<BindingHeader> bindings) { }
+	private record SupplyProvenanceHeader(IdentityKey sourceDecision, Object valueVersion,
+		IdentityKey durableAnchor) { }
+	private record SupplyHeader(Object direction, int inputPosition,
+		SupplyProvenanceHeader source, Object actionKind, IdentityKey action,
+		Object targetState, Object targetLayout) { }
+	private record BindingShape(Object kind, int inputPosition,
+		IdentityKey sourceOwner, IdentityKey action) { }
+	private record AlternativeHeader(
+		ExactPhysicalNativeSupplyRepresentation.NativeCandidate nativeCandidate,
+		List<SupplyHeader> supplies, List<BindingShape> bindingShapes) { }
 
 	private static final class DomainView {
 		private final int originalIndex;
@@ -380,7 +380,7 @@ final class ExactPhysicalSharedSourceEncoding {
 		int originalRows = 0;
 		int headerValues = 0;
 		for(int index = 0; index < model.domains().size(); index++) {
-			DomainView view = buildDomain(index, model.domains().get(index), decisionOrder);
+			DomainView view = buildDomain(model, index, model.domains().get(index), decisionOrder);
 			domains.add(view);
 			byVariable.put(view.domain.variable(), view);
 			byDecision.put(view.domain.node().key(), view);
@@ -616,7 +616,8 @@ final class ExactPhysicalSharedSourceEncoding {
 			reconstructor, statistics);
 	}
 
-	private static DomainView buildDomain(int index, ExactPhysicalModel.DecisionDomain domain,
+	private static DomainView buildDomain(ExactPhysicalModel model, int index,
+		ExactPhysicalModel.DecisionDomain domain,
 		IdentityHashMap<CompiledHopKey,Integer> decisionOrder) throws Unsupported {
 		LinkedHashMap<AlternativeHeader,Integer> headerOrdinals = new LinkedHashMap<>();
 		List<AlternativeHeader> headers = new ArrayList<>();
@@ -626,7 +627,7 @@ final class ExactPhysicalSharedSourceEncoding {
 		LinkedHashSet<CompiledHopKey> owners = new LinkedHashSet<>();
 		for(int row = 0; row < domain.alternatives().size(); row++) {
 			ExactPhysicalModel.Alternative alternative = domain.alternatives().get(row);
-			AlternativeHeader header = header(alternative);
+			AlternativeHeader header = header(model, domain, row);
 			Integer headerOrdinal = headerOrdinals.get(header);
 			if(headerOrdinal == null) {
 				headerOrdinal = headers.size();
@@ -705,25 +706,26 @@ final class ExactPhysicalSharedSourceEncoding {
 		return new DomainView(index, domain, headers, headerByRow, orderedOwners, refsByRow);
 	}
 
-	private static AlternativeHeader header(ExactPhysicalModel.Alternative alternative) {
-		List<IdentityKey> inputs = alternative.orderedInputs().stream().map(IdentityKey::new).toList();
-		List<AuthorityHeader> authorities = alternative.inputAuthorities().stream().map(authority ->
-			new AuthorityHeader(authority.inputPosition(), authority.kind(), authority.expectedFType(),
-				new IdentityKey(authority.sourceDecision()),
-				new IdentityKey(authority.relocationAction()))).toList();
-		List<BindingHeader> bindings = new ArrayList<>();
-		if(alternative.supportClause() != null)
-			for(CandidateRealizationInputBinding binding : alternative.supportClause().inputBindings())
-				bindings.add(new BindingHeader(binding.kind(), binding.inputPosition(),
+	private static AlternativeHeader header(ExactPhysicalModel model,
+		ExactPhysicalModel.DecisionDomain authority, int originalOrdinal) {
+		ExactPhysicalNativeSupplyRepresentation.Domain domain =
+			model.nativeSupplyRepresentation().domain(authority.node().key());
+		List<SupplyHeader> supplies = domain.supplies(originalOrdinal).stream().map(supply -> {
+			var source = supply.source();
+			return new SupplyHeader(supply.direction(), supply.inputPosition(),
+				new SupplyProvenanceHeader(new IdentityKey(source == null ? null
+					: source.sourceDecision()), source == null ? null : source.valueVersion(),
+					new IdentityKey(source == null ? null : source.durableAnchor())),
+				supply.actionKind(), new IdentityKey(supply.action()), supply.targetState(),
+				supply.targetLayout());
+		}).toList();
+		ExactPhysicalModel.Alternative alternative = authority.alternatives().get(originalOrdinal);
+		List<BindingShape> bindingShapes = alternative.supportClause() == null ? List.of()
+			: alternative.supportClause().inputBindings().stream().map(binding ->
+				new BindingShape(binding.kind(), binding.inputPosition(),
 					new IdentityKey(binding.source().rule().parentOccurrence()),
-					new IdentityKey(binding.relocationAction())));
-		return new AlternativeHeader(new IdentityKey(alternative.decision()),
-			new IdentityKey(alternative.state()), alternative.authorityKind(),
-			new IdentityKey(alternative.candidateRule()), new IdentityKey(alternative.candidateEmission()),
-			new IdentityKey(alternative.executionRule()), new IdentityKey(alternative.executionEmission()),
-			new IdentityKey(alternative.durableAnchor()), new IdentityKey(alternative.relocationAction()),
-			new IdentityKey(alternative.derivedFoutAction()), inputs, authorities,
-			new IdentityKey(alternative.realization()), List.copyOf(bindings));
+					new IdentityKey(binding.relocationAction()))).toList();
+		return new AlternativeHeader(domain.nativeCandidate(originalOrdinal), supplies, bindingShapes);
 	}
 
 	private static IdentityHashMap<CompiledHopKey,ReferenceView> buildReferences(

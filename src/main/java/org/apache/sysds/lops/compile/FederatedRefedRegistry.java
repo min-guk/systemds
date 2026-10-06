@@ -94,13 +94,21 @@ public final class FederatedRefedRegistry {
 	public static void registerConsumerInputs(long sbId, long hopId, long anchorHopId, String anchorKey,
 		FType materializationFType, List<ConsumerInputSpec> consumerInputs, String plannerActionKey,
 		Boolean requiresLocalMaterialization) {
+		registerConsumerInputs(sbId, hopId, anchorHopId, anchorKey, materializationFType,
+			consumerInputs, plannerActionKey, requiresLocalMaterialization,
+			plannerActionKey == null ? null : "");
+	}
+
+	public static void registerConsumerInputs(long sbId, long hopId, long anchorHopId, String anchorKey,
+		FType materializationFType, List<ConsumerInputSpec> consumerInputs, String plannerActionKey,
+		Boolean requiresLocalMaterialization, String supplySharingGroup) {
 		if(consumerInputs == null || consumerInputs.isEmpty())
 			throw new IllegalArgumentException("fed_refed requires at least one exact selected consumer input");
 		if(consumerInputs.stream().anyMatch(input -> input == null || input.allInputs()))
 			throw new IllegalArgumentException("exact fed_refed registration does not accept null or ALL_INPUTS");
 		register(sbId, hopId,
 			AnchorSpec.forConsumerInputs(anchorHopId, anchorKey, materializationFType,
-				consumerInputs, plannerActionKey, requiresLocalMaterialization));
+				consumerInputs, plannerActionKey, requiresLocalMaterialization, supplySharingGroup));
 	}
 
 	private static void register(long sbId, long hopId, AnchorSpec spec) {
@@ -207,6 +215,8 @@ public final class FederatedRefedRegistry {
 		long sbId, long hopId) {
 		if(!Objects.equals(existing.getPlannerActionKey(), incoming.getPlannerActionKey()))
 			throw incompatibleAuthority(sbId, hopId, existing, incoming);
+		if(!Objects.equals(existing.getSupplySharingGroup(), incoming.getSupplySharingGroup()))
+			throw incompatibleAuthority(sbId, hopId, existing, incoming);
 		long existingAnchorHopId = existing.getAnchorHopId();
 		long incomingAnchorHopId = incoming.getAnchorHopId();
 		String existingAnchorKey = normalizeAnchorKey(existing.getAnchorKey());
@@ -239,7 +249,8 @@ public final class FederatedRefedRegistry {
 		TreeSet<ConsumerInputSpec> mergedConsumers = new TreeSet<>(existing.getConsumerInputs());
 		mergedConsumers.addAll(incoming.getConsumerInputs());
 		return new AuthoritySpec(mergedAnchorHopId, mergedAnchorKey, mergedMaterializationFType,
-			canonicalConsumerInputs(List.copyOf(mergedConsumers)), existing.getPlannerActionKey(), mergedLocal);
+			canonicalConsumerInputs(List.copyOf(mergedConsumers)), existing.getPlannerActionKey(), mergedLocal,
+			existing.getSupplySharingGroup());
 	}
 
 	private static boolean authoritiesOverlap(AuthoritySpec left, AuthoritySpec right) {
@@ -426,8 +437,15 @@ public final class FederatedRefedRegistry {
 		public static AnchorSpec forConsumerInputs(long anchorHopId, String anchorKey,
 			FType materializationFType, List<ConsumerInputSpec> consumerInputs,
 			String plannerActionKey, Boolean requiresLocalMaterialization) {
+			return forConsumerInputs(anchorHopId, anchorKey, materializationFType, consumerInputs,
+				plannerActionKey, requiresLocalMaterialization, plannerActionKey == null ? null : "");
+		}
+
+		public static AnchorSpec forConsumerInputs(long anchorHopId, String anchorKey,
+			FType materializationFType, List<ConsumerInputSpec> consumerInputs,
+			String plannerActionKey, Boolean requiresLocalMaterialization, String supplySharingGroup) {
 			return new AnchorSpec(List.of(new AuthoritySpec(anchorHopId, anchorKey, materializationFType,
-				consumerInputs, plannerActionKey, requiresLocalMaterialization)));
+				consumerInputs, plannerActionKey, requiresLocalMaterialization, supplySharingGroup)));
 		}
 
 		private AnchorSpec(List<AuthoritySpec> authorities) {
@@ -509,10 +527,18 @@ public final class FederatedRefedRegistry {
 		private final List<ConsumerInputSpec> _consumerInputs;
 		private final String _plannerActionKey;
 		private final Boolean _requiresLocalMaterialization;
+		private final String _supplySharingGroup;
 
 		private AuthoritySpec(long anchorHopId, String anchorKey, FType materializationFType,
 			List<ConsumerInputSpec> consumerInputs, String plannerActionKey,
 			Boolean requiresLocalMaterialization) {
+			this(anchorHopId, anchorKey, materializationFType, consumerInputs, plannerActionKey,
+				requiresLocalMaterialization, plannerActionKey == null ? null : "");
+		}
+
+		private AuthoritySpec(long anchorHopId, String anchorKey, FType materializationFType,
+			List<ConsumerInputSpec> consumerInputs, String plannerActionKey,
+			Boolean requiresLocalMaterialization, String supplySharingGroup) {
 			_anchorHopId = anchorHopId;
 			_anchorKey = anchorKey;
 			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
@@ -522,11 +548,14 @@ public final class FederatedRefedRegistry {
 			_consumerInputs = canonicalConsumerInputs(consumerInputs);
 			_plannerActionKey = normalizePlannerActionKey(plannerActionKey);
 			_requiresLocalMaterialization = requiresLocalMaterialization;
+			if(_plannerActionKey != null && supplySharingGroup == null)
+				throw new IllegalArgumentException("planned fed_refed omits its supply lifetime");
+			_supplySharingGroup = supplySharingGroup;
 		}
 
 		private AuthoritySpec copy() {
 			return new AuthoritySpec(_anchorHopId, _anchorKey, _materializationFType,
-				_consumerInputs, _plannerActionKey, _requiresLocalMaterialization);
+				_consumerInputs, _plannerActionKey, _requiresLocalMaterialization, _supplySharingGroup);
 		}
 
 		public long getAnchorHopId() {
@@ -557,11 +586,14 @@ public final class FederatedRefedRegistry {
 			return _requiresLocalMaterialization;
 		}
 
+		public String getSupplySharingGroup() { return _supplySharingGroup; }
+
 		private String normalizedSignature() {
 			return _anchorHopId + "|" + Objects.toString(_anchorKey, "") + "|"
 				+ Objects.toString(_materializationFType, "") + "|" + _consumerInputs + "|"
 				+ Objects.toString(_plannerActionKey, "") + "|"
-				+ Objects.toString(_requiresLocalMaterialization, "");
+				+ Objects.toString(_requiresLocalMaterialization, "")
+				+ (_supplySharingGroup == null ? "" : "|sharing=" + _supplySharingGroup);
 		}
 
 		@Override
@@ -579,20 +611,21 @@ public final class FederatedRefedRegistry {
 				&& _materializationFType == that._materializationFType
 				&& Objects.equals(_consumerInputs, that._consumerInputs)
 				&& Objects.equals(_plannerActionKey, that._plannerActionKey)
-				&& Objects.equals(_requiresLocalMaterialization, that._requiresLocalMaterialization);
+				&& Objects.equals(_requiresLocalMaterialization, that._requiresLocalMaterialization)
+				&& Objects.equals(_supplySharingGroup, that._supplySharingGroup);
 		}
 
 		@Override
 		public int hashCode() {
 			return Objects.hash(_anchorHopId, _anchorKey, _materializationFType,
-				_consumerInputs, _plannerActionKey, _requiresLocalMaterialization);
+				_consumerInputs, _plannerActionKey, _requiresLocalMaterialization, _supplySharingGroup);
 		}
 
 		@Override
 		public String toString() {
 			return "(" + _anchorHopId + "," + _anchorKey + "," + _materializationFType + ","
 				+ _consumerInputs + "," + _plannerActionKey + ","
-				+ _requiresLocalMaterialization + ")";
+				+ _requiresLocalMaterialization + ",sharing=" + _supplySharingGroup + ")";
 		}
 	}
 

@@ -320,7 +320,7 @@ public final class PlannerRuntimePlacementAudit {
 	/**
 	 * Build the runtime proof from the exact prevalidated registry writes that will be committed.
 	 * Relocation selection receipts and emitted registry actions must agree, but the latter are the
-	 * immutable lowering authority and avoid independently re-deriving REFED_LOCAL stage semantics.
+	 * immutable lowering authority and avoid independently re-deriving fused REFED staging semantics.
 	 */
 	static PreparedRegistration prepareRegistration(NormalizedPlannerResult result,
 		PlannerRuntimeActionRegistry.Snapshot committedActions) {
@@ -435,21 +435,19 @@ public final class PlannerRuntimePlacementAudit {
 			entries.add(new PlanEntry(plan, occurrence.hop(), fusedInputBoundaryTokens));
 		}
 		List<PlannedSyntheticAction> syntheticActions = new ArrayList<>();
-		for(RelocationActionKey action : result.selectedRelocations().stream().distinct().sorted().toList()) {
-			String base = action.normalizedSignature();
-			syntheticActions.add(new PlannedSyntheticAction(syntheticActionKey(base, "REFED"), base,
-				"REFED", "fed_refed", ExecType.FED, FederatedOutput.FOUT,
-				action.materializationFType()));
-		}
 		if(committedActions == null) {
+			Set<String> emissions = new java.util.HashSet<>();
 			for(RelocationActionKey action : result.selectedRelocations().stream().distinct().sorted().toList()) {
+				if(!emissions.add(RelocationSelections.physicalEmissionIdentity(action)))
+					continue;
+				String base = action.normalizedSignature();
 				PlacementEmissionState source = selectedSourcePlacement(
 					analysis, selected, action.sourceValueVersion());
-				if(source.placementState().output() == FederatedOutput.FOUT) {
-					String base = action.normalizedSignature();
-					syntheticActions.add(new PlannedSyntheticAction(syntheticActionKey(base, "REFED_LOCAL"), base,
-						"REFED_LOCAL", "prefetch", ExecType.CP, FederatedOutput.LOUT, null));
-				}
+				boolean staged = source.placementState().output() == FederatedOutput.FOUT;
+				String stage = staged ? "REFED_STAGED" : "REFED";
+				syntheticActions.add(new PlannedSyntheticAction(syntheticActionKey(base, stage), base,
+					stage, "fed_refed", ExecType.FED, FederatedOutput.FOUT,
+					action.materializationFType()));
 			}
 		}
 		else {
@@ -463,14 +461,23 @@ public final class PlannerRuntimePlacementAudit {
 						if(base == null || !selectedRelocationKeys.containsKey(base))
 							throw new IllegalArgumentException(
 								"Committed REFED registry contains no selected relocation authority");
+						// Several exact consumer receipts can share one physical movement.
+						// The normalized plan retains every receipt; runtime audits the one
+						// canonical registry authority that actually lowers to an instruction.
 						Boolean localStage = authority.getRequiresLocalMaterialization();
 						if(localStage == null)
 							throw new IllegalArgumentException(
 								"Committed planner REFED authority omits its local materialization stage");
-						if(localStage)
-							syntheticActions.add(new PlannedSyntheticAction(
-								syntheticActionKey(base, "REFED_LOCAL"), base, "REFED_LOCAL",
-								"prefetch", ExecType.CP, FederatedOutput.LOUT, null));
+						RelocationActionKey selectedAction = selectedRelocationKeys.get(base);
+						if(localStage && selectedSourcePlacement(analysis, selected,
+							selectedAction.sourceValueVersion()).placementState().output()
+								!= FederatedOutput.FOUT)
+							throw new IllegalArgumentException(
+								"Committed staged REFED authority does not select a FED/FOUT source");
+						String stage = localStage ? "REFED_STAGED" : "REFED";
+						syntheticActions.add(new PlannedSyntheticAction(syntheticActionKey(base, stage), base,
+							stage, "fed_refed", ExecType.FED, FederatedOutput.FOUT,
+							selectedAction.materializationFType()));
 					}
 		}
 		result.selectedCandidateSelections().stream()
@@ -1228,9 +1235,13 @@ public final class PlannerRuntimePlacementAudit {
 		ExecType actualExec = actualExec(instruction);
 		FederatedOutput actualOutput = actualOutput(instruction);
 		FType actualFType = actualSyntheticFType(instruction);
+		boolean expectedFoutStaging = "REFED_STAGED".equals(action.stage());
+		boolean actualFoutStaging = instruction instanceof FEDRefedInstruction refed
+			&& refed.requiresLocalMaterialization();
 		if(!action.opcode().equals(safeOpcode(instruction))
 			|| action.physicalExec() != actualExec || action.physicalOutput() != actualOutput
-			|| action.physicalFType() != actualFType)
+			|| action.physicalFType() != actualFType
+			|| expectedFoutStaging != actualFoutStaging)
 			throw new IllegalStateException("[PlannerRuntimeAudit] LOWERING_SYNTHETIC_MISMATCH plan="
 				+ authority.planHash + " action=" + shortHash(action.baseActionKey())
 				+ " stage=" + action.stage() + " token=" + shortHash(action.token())

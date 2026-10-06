@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
@@ -50,6 +51,7 @@ final class ExactPhysicalSelection {
 	private final List<CandidateSelectionReceipt> candidateReceipts;
 	private final List<RelocationChoiceReceipt> relocationChoices;
 	private final List<RelocationActionKey> emittedRelocations;
+	private final Set<String> sharedSupplyLifetimes;
 	private final ExactCategoricalSolver.Statistics statistics;
 
 	private ExactPhysicalSelection(PlacementAnalysis analysis, String costSurfaceFingerprint,
@@ -61,6 +63,7 @@ final class ExactPhysicalSelection {
 		List<CandidateSelectionReceipt> candidateReceipts,
 		List<RelocationChoiceReceipt> relocationChoices,
 		List<RelocationActionKey> emittedRelocations,
+		Set<String> sharedSupplyLifetimes,
 		ExactCategoricalSolver.Statistics statistics) {
 		this.analysis = Objects.requireNonNull(analysis, "analysis");
 		this.analysisFingerprint = analysis.analysisFingerprint();
@@ -84,6 +87,7 @@ final class ExactPhysicalSelection {
 		this.candidateReceipts = List.copyOf(candidateReceipts);
 		this.relocationChoices = List.copyOf(relocationChoices);
 		this.emittedRelocations = List.copyOf(emittedRelocations);
+		this.sharedSupplyLifetimes = Set.copyOf(sharedSupplyLifetimes);
 		this.statistics = Objects.requireNonNull(statistics, "statistics");
 	}
 
@@ -140,11 +144,18 @@ final class ExactPhysicalSelection {
 			analysis, physical, selected, candidates);
 		List<RelocationActionKey> emitted = RelocationSelections.emittedActions(
 			analysis, analysis.graph().relocationActions(), selected, candidates, choices);
+		Set<String> emittedIdentities = emitted.stream()
+			.map(RelocationSelections::physicalEmissionIdentity)
+			.collect(java.util.stream.Collectors.toSet());
+		if(!emittedIdentities.containsAll(optimized.sharedSupplyLifetimes())
+			|| optimized.sharedSupplyLifetimes().stream().anyMatch(
+				identity -> identity == null || identity.isBlank()))
+			throw new IllegalArgumentException("EXACT_PHYSICAL_SHARED_SUPPLY_AUTHORITY_MISMATCH");
 		return new ExactPhysicalSelection(analysis, optimized.contributionFingerprint(),
 			optimized.canonicalObjectiveBits(),
 			result.objective(), result.assignmentInVariableOrder(),
 			physical.alternativesInDecisionOrder(), selected, selectedEmissions, candidates, choices,
-			emitted, result.statistics());
+			emitted, optimized.sharedSupplyLifetimes(), result.statistics());
 	}
 
 	private static List<CandidateSelectionReceipt> exactCandidateReceipts(
@@ -285,5 +296,6 @@ final class ExactPhysicalSelection {
 	List<CandidateSelectionReceipt> candidateReceipts() { return candidateReceipts; }
 	List<RelocationChoiceReceipt> relocationChoices() { return relocationChoices; }
 	List<RelocationActionKey> emittedRelocations() { return emittedRelocations; }
+	Set<String> sharedSupplyLifetimes() { return sharedSupplyLifetimes; }
 	ExactCategoricalSolver.Statistics statistics() { return statistics; }
 }

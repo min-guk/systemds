@@ -349,6 +349,7 @@ final class ExactPhysicalModel {
 	private final List<ExactCategoricalSolver.Factor> exactSolverHardFactors;
 	private final HardFactorizationStatistics hardFactorizationStatistics;
 	private final List<HardFactorEncoding> hardFactorEncodings;
+	private final ExactPhysicalNativeSupplyRepresentation nativeSupplyRepresentation;
 
 	private ExactPhysicalModel(PlacementAnalysis analysis, List<DecisionDomain> domains,
 		List<ExactCategoricalSolver.Factor> hardFactors,
@@ -375,6 +376,7 @@ final class ExactPhysicalModel {
 		for(DecisionDomain domain : domains)
 			indexed.put(domain.node().key(), domain);
 		this.byDecision = indexed;
+		this.nativeSupplyRepresentation = ExactPhysicalNativeSupplyRepresentation.build(this);
 	}
 
 	static ExactPhysicalModel build(PlacementAnalysis analysis) {
@@ -567,6 +569,9 @@ final class ExactPhysicalModel {
 	}
 
 	List<DecisionDomain> domains() { return domains; }
+	ExactPhysicalNativeSupplyRepresentation nativeSupplyRepresentation() {
+		return nativeSupplyRepresentation;
+	}
 	PlacementAnalysis analysis() { return analysis; }
 	CandidateRuleLookupStatistics candidateRuleLookupStatistics() {
 		return candidateRuleLookupStatistics;

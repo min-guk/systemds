@@ -1,0 +1,22 @@
+{
+  "baseline_commit": "0146f043e07ca445d9084257759aa78fe14ddf55",
+  "baseline_artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/dynamic-native-composition-20261006/dynamic-native-runtimefix/frozen-inputs",
+  "source_comparison": {
+    "commit": "0146f043e07ca445d9084257759aa78fe14ddf55",
+    "matchedJavaSources": 3549,
+    "missing": [],
+    "mismatch": [],
+    "extraFrozenJavaSources": []
+  },
+  "test_class": "OccurrenceExecutionFrequencyFactsConstantBranchTest",
+  "test_method": "actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive",
+  "same_error_message": true,
+  "error_prefix": "Derived FOUT anchor owner has no exact graph-owned worker-pool authority",
+  "baseline_exit": 1,
+  "timing": [
+    "Command exited with non-zero status 1",
+    "elapsedSeconds=239.33",
+    "maxRssKB=3540420",
+    "exitStatus=1"
+  ]
+}

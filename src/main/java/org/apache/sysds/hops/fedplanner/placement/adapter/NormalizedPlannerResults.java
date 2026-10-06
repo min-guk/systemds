@@ -10,6 +10,7 @@ package org.apache.sysds.hops.fedplanner.placement.adapter;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.LocalMaterializationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -134,6 +135,17 @@ public final class NormalizedPlannerResults {
 		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
 		List<CandidateSelectionReceipt> selectedCandidateSelections,
 		List<RelocationChoiceReceipt> selectedRelocationChoices, String objectiveCertificate) {
+		return createWithEmissionStatesCandidateSelectionsAndSharedSupplyLifetimes(analysis, plannerId,
+			selectedEmissionStates, selectedCandidateSelections, selectedRelocationChoices,
+			Set.of(), objectiveCertificate);
+	}
+
+	public static NormalizedPlannerResult createWithEmissionStatesCandidateSelectionsAndSharedSupplyLifetimes(
+		PlacementAnalysis analysis, String plannerId,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices,
+		Set<String> sharedSupplyLifetimes, String objectiveCertificate) {
 		Objects.requireNonNull(analysis, "analysis");
 		Map<CompiledHopKey, PlacementState> selectedStates = new java.util.LinkedHashMap<>();
 		selectedEmissionStates.forEach((key, state) -> selectedStates.put(key, state.placementState()));
@@ -145,11 +157,19 @@ public final class NormalizedPlannerResults {
 		CandidateSelections.validateRealizationSelections(analysis, selectedStates, candidates, choices);
 		List<RelocationActionKey> relocations = RelocationSelections.emittedActions(
 			analysis, selectedStates, candidates, choices);
+		Set<String> shared = Set.copyOf(Objects.requireNonNull(
+			sharedSupplyLifetimes, "sharedSupplyLifetimes"));
+		Set<String> emittedIdentities = relocations.stream()
+			.map(RelocationSelections::physicalEmissionIdentity)
+			.collect(java.util.stream.Collectors.toSet());
+		if(!emittedIdentities.containsAll(shared)
+			|| shared.stream().anyMatch(identity -> identity == null || identity.isBlank()))
+			throw new IllegalArgumentException("shared supply lifetime has no selected movement");
 		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(
 			analysis, selectedStates, selectedEmissionStates, candidates);
 		NormalizedPlannerResult draft = new Draft(analysis, plannerId, analysis.analysisFingerprint(),
 			Map.copyOf(selectedStates), Map.copyOf(selectedEmissionStates), candidates, choices, relocations, locals,
-			objectiveCertificate);
+			shared, objectiveCertificate);
 		return PlacementPlannerAdapter.normalize(analysis, draft);
 	}
 
@@ -176,6 +196,7 @@ public final class NormalizedPlannerResults {
 		List<RelocationChoiceReceipt> selectedRelocationChoices,
 		List<RelocationActionKey> selectedRelocations,
 		List<LocalMaterializationActionKey> selectedLocalMaterializations,
+		Set<String> sharedSupplyLifetimes,
 		String objectiveCertificate) implements NormalizedPlannerResult {
 		@Override public List<CandidateSelectionReceipt> selectedCandidateSelections() {
 			return selectedCandidateSelections;

@@ -108,6 +108,141 @@ public class OwnedRefedReuseTest {
 			});
 	}
 
+	private static FederationMap planned(MatrixObject owner, String group, String layout, FType type,
+		CountingMap canonical, AtomicInteger materializations) {
+		return FederationUtils.materializePlannedRefed(owner, owner.getMutationVersion(),
+			10, 1, 10, 7, layout, type, group, () -> {
+				materializations.incrementAndGet();
+				return canonical;
+			});
+	}
+
+	@Test
+	public void federatedSourceRemoteVersionAndLayoutArePartOfSharingIdentity() {
+		CountingMap source = new CountingMap(6100);
+		MatrixObject owner = federated("source", source);
+		AtomicInteger creations = new AtomicInteger();
+		planned(owner, "shared", "target", FType.ROW, new CountingMap(6101), creations);
+		planned(owner, "shared", "target", FType.ROW, new CountingMap(6102), creations);
+		assertEquals(1, creations.get());
+		source.getFederatedData()[0].setVarID(6103);
+		planned(owner, "shared", "target", FType.ROW, new CountingMap(6104), creations);
+		assertEquals("Same placement with a different remote value must not reuse", 2, creations.get());
+		source.getFederatedRanges()[0].getEndDims()[0] = 9;
+		planned(owner, "shared", "target", FType.ROW, new CountingMap(6105), creations);
+		source.setType(FType.FULL);
+		planned(owner, "shared", "target", FType.ROW, new CountingMap(6106), creations);
+		assertEquals(4, creations.get());
+	}
+
+	@Test
+	public void federatedSourceChangeDuringCreationRejectsSharedAndSingleUsePublication() {
+		for(String group : List.of("", "shared")) {
+			CountingMap source = new CountingMap(6110);
+			MatrixObject owner = federated("source", source);
+			CountingMap result = new CountingMap(6111);
+			assertThrows(DMLRuntimeException.class, () -> FederationUtils.materializePlannedRefed(owner,
+				owner.getMutationVersion(), 10, 1, 10, 7, "target", FType.ROW, group, () -> {
+					source.getFederatedData()[0].setVarID(6112);
+					return result;
+				}));
+			assertEquals(1, result._cleanups);
+		}
+	}
+
+	@Test
+	public void collectingFederatedNnzMetadataDoesNotCreateANewLogicalVersion() {
+		MatrixObject owner = federated("source", new CountingMap(6120));
+		AtomicInteger creations = new AtomicInteger();
+		FederationUtils.materializePlannedRefed(owner, owner.getMutationVersion(),
+			10, 1, -1, 7, "target", FType.ROW, "shared", () -> {
+				creations.incrementAndGet();
+				return new CountingMap(6121);
+			});
+		planned(owner, "shared", "target", FType.ROW, new CountingMap(6122), creations);
+		assertEquals("Resolved nnz is metadata, not a new FOUT source version", 1, creations.get());
+	}
+
+	@Test
+	public void selectedSingleUsePublishesMovementDirectlyWithoutRetainedCopy() {
+		MatrixObject owner = local("single");
+		CountingMap first = new CountingMap(6000);
+		CountingMap second = new CountingMap(6001);
+		AtomicInteger creations = new AtomicInteger();
+		assertSame(first, planned(owner, "", "layout", FType.ROW, first, creations));
+		assertSame(second, planned(owner, "", "layout", FType.ROW, second, creations));
+		assertEquals(2, creations.get());
+		assertEquals(0, first._aliases);
+		owner.clearData();
+		assertEquals("Single-use output belongs to its output variable, not the source cache", 0, first._cleanups);
+	}
+
+	@Test
+	public void selectedSharingCreatesOnceAndRetiresWithSourceVersion() {
+		MatrixObject owner = local("shared");
+		CountingMap canonical = new CountingMap(6010);
+		AtomicInteger creations = new AtomicInteger();
+		FederationMap first = planned(owner, "source-v1|ROW|scope", "layout", FType.ROW, canonical, creations);
+		FederationMap second = planned(owner, "source-v1|ROW|scope", "layout", FType.ROW, canonical, creations);
+		assertEquals(1, creations.get());
+		assertNotEquals(first.getID(), second.getID());
+		assertEquals(2, canonical._aliases);
+		owner.acquireModify(new MatrixBlock(10, 1, false));
+		owner.release();
+		assertEquals(1, canonical._cleanups);
+		planned(owner, "source-v1|ROW|scope", "layout", FType.ROW, new CountingMap(6011), creations);
+		assertEquals("A new iteration's value cannot reuse the preceding version", 2, creations.get());
+	}
+
+	@Test
+	public void selectedSharingRequiresSameOwnerGroupLayoutAndState() {
+		MatrixObject owner = local("same-file");
+		AtomicInteger creations = new AtomicInteger();
+		planned(owner, "v1", "row-a", FType.ROW, new CountingMap(6020), creations);
+		planned(owner, "v2", "row-a", FType.ROW, new CountingMap(6021), creations);
+		planned(local("same-file"), "v1", "row-a", FType.ROW, new CountingMap(6022), creations);
+		planned(owner, "v1", "row-b", FType.ROW, new CountingMap(6023), creations);
+		planned(owner, "v1", "row-a", FType.FULL, new CountingMap(6024), creations);
+		assertEquals(5, creations.get());
+	}
+
+	@Test
+	public void plannedSharingSurvivesLegacyCacheBudgetUntilSourceCleanup() {
+		MatrixObject owner = local("shared-large");
+		CountingMap canonical = new CountingMap(6030, entries(10_000_000, 1));
+		AtomicInteger creations = new AtomicInteger();
+		planned(owner, "shared", "layout", FType.ROW, canonical, creations);
+		alias(local("legacy"), 8, "legacy", FType.ROW, new CountingMap(6031), new AtomicInteger());
+		planned(owner, "shared", "layout", FType.ROW, canonical, creations);
+		assertEquals("Costed shared creation must not silently rematerialize after LRU eviction", 1, creations.get());
+		assertEquals(0, canonical._cleanups);
+		owner.clearData();
+		assertEquals(1, canonical._cleanups);
+	}
+
+	@Test
+	public void plannedAndLegacyAuthoritiesDoNotReuseEachOthersCopies() {
+		MatrixObject owner = local("Y");
+		AtomicInteger creations = new AtomicInteger();
+		alias(owner, 7, "layout", FType.ROW, new CountingMap(6040), creations);
+		planned(owner, "shared", "layout", FType.ROW, new CountingMap(6041), creations);
+		planned(owner, "", "layout", FType.ROW, new CountingMap(6042), creations);
+		assertEquals(3, creations.get());
+	}
+
+	@Test
+	public void singleUseMovementRejectsSourceMutationDuringCreation() {
+		MatrixObject owner = local("Y");
+		CountingMap canonical = new CountingMap(6050);
+		assertThrows(DMLRuntimeException.class, () -> FederationUtils.materializePlannedRefed(owner,
+			owner.getMutationVersion(), 10, 1, 10, 7, "layout", FType.ROW, "", () -> {
+				owner.acquireModify(new MatrixBlock(10, 1, false));
+				owner.release();
+				return canonical;
+			}));
+		assertEquals(1, canonical._cleanups);
+	}
+
 	@Before
 	public void before() {
 		FederationUtils.clearOwnedRefedReuseCache();

@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
@@ -48,6 +49,7 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 	private final List<CandidateSelectionReceipt> selectedCandidateSelections;
 	private final List<RelocationChoiceReceipt> selectedRelocationChoices;
 	private final List<LocalMaterializationActionKey> selectedLocalMaterializations;
+	private final Set<String> sharedSupplyLifetimes;
 
 	private ImmutableNormalizedPlannerResult(PlannerPlacementContext context, NormalizedPlannerResult draft) {
 		analysis = context.analysis();
@@ -124,6 +126,18 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 			throw new IllegalArgumentException(
 				"planner-supplied local materialization authority differs from the canonical projection");
 		selectedLocalMaterializations = Collections.unmodifiableList(derivedLocals);
+		Set<String> shared = new java.util.TreeSet<>();
+		for(String identity : Objects.requireNonNull(draft.sharedSupplyLifetimes(),
+			"sharedSupplyLifetimes")) {
+			if(identity == null || identity.isBlank() || !shared.add(identity))
+				throw new IllegalArgumentException("invalid shared supply lifetime identity");
+		}
+		Set<String> emittedIdentities = selectedRelocations.stream()
+			.map(RelocationSelections::physicalEmissionIdentity)
+			.collect(java.util.stream.Collectors.toSet());
+		if(!emittedIdentities.containsAll(shared))
+			throw new IllegalArgumentException("shared supply lifetime is not a selected relocation");
+		sharedSupplyLifetimes = Collections.unmodifiableSet(shared);
 		normalizedPlanFingerprint = PlacementEmissionTransaction.canonicalPlanHash(this);
 	}
 
@@ -167,6 +181,7 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 		return selectedRelocationChoices;
 	}
 	@Override public List<LocalMaterializationActionKey> selectedLocalMaterializations() { return selectedLocalMaterializations; }
+	@Override public Set<String> sharedSupplyLifetimes() { return sharedSupplyLifetimes; }
 	@Override public String objectiveCertificate() { return objectiveCertificate; }
 	@Override public String normalizedPlanFingerprint() { return normalizedPlanFingerprint; }
 }

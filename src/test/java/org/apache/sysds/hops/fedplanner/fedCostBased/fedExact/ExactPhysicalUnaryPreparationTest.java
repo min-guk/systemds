@@ -145,9 +145,9 @@ public class ExactPhysicalUnaryPreparationTest {
 					inputs, type, executionWorkers, weight);
 				Object wrongProjection = fed.invoke(null, analysis, sparse, originalDomain.node().key(), hop,
 					inputs, type, 7, weight);
-				double expected = projectionDerivedCost(expectedProjection);
+				double expected = projectionUnaryCost(expectedProjection);
 				if(Double.doubleToRawLongBits(expected)
-					== Double.doubleToRawLongBits(projectionDerivedCost(wrongProjection)))
+					== Double.doubleToRawLongBits(projectionUnaryCost(wrongProjection)))
 					continue;
 
 				DurableAnchorKey output = workerPool(source.state().fType(), 7, "derived-output-only");
@@ -238,12 +238,12 @@ public class ExactPhysicalUnaryPreparationTest {
 					double downloadCost = (double)download.invoke(projection);
 					boolean derived = state.output() == FederatedOutput.FOUT && emission != null
 						&& emission.emissionState().derivedFedFout();
-					expected[0] = derived ? computeCost + downloadCost : computeCost;
+					expected[0] = computeCost;
 					if(derived)
 						expected[1] = (double)upload.invoke(null, analysis, sparse,
 							domain.node().key(), hop, state.fType(),
 							ExactPhysicalCostModel.realizationWorkerCount(analysis, alternative, workers), weight);
-					else if(state.output() == FederatedOutput.LOUT)
+					if(state.output() == FederatedOutput.LOUT || derived)
 						expected[2] = downloadCost;
 					if(!receiptObservations.add(java.util.Arrays.asList(
 						alternative.orderedInputs(), executionType)))
@@ -271,12 +271,6 @@ public class ExactPhysicalUnaryPreparationTest {
 		Method compute = projection.getClass().getDeclaredMethod("fedUnaryCost");
 		compute.setAccessible(true);
 		return (double)compute.invoke(projection);
-	}
-
-	private static double projectionDerivedCost(Object projection) throws Exception {
-		Method download = projection.getClass().getDeclaredMethod("resultDownloadCost");
-		download.setAccessible(true);
-		return projectionUnaryCost(projection) + (double)download.invoke(projection);
 	}
 
 	private static ExactPhysicalModel.Alternative withExecutionPool(

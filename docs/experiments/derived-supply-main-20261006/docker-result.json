@@ -1,0 +1,578 @@
+{
+  "actionDiagnostics": [
+    "joint_branch_upload: Federated prefetch count:\t0.",
+    "joint_branch_upload: plannerSyntheticActionKey=\"359:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:root-0/input-0|93:/evidence/cases/joint_branch_upload/fed.dml:3:0:org.apache.sysds.hops.UnaryOp:u(_placement):Y|276:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|8:value-25|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|1:0|8:ORDINARY|42:39:input-0:Y#1@main/1/branch-if/1:ORDINARY|383:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:ro",
+    "joint_branch_upload: plannerSyntheticActionKey=359:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:root-0/input-0|93:/evidence/cases/joint_branch_upload/fed.dml:3:0:org.apache.sysds.hops.UnaryOp:u(_placement):Y|276:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|8:value-25|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|1:0|8:ORDINARY|42:39:input-0:Y#1@main/1/branch-if/1:ORDINARY|383:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:root-0/input-0|93:/evidence/cases/joint_branch_upload/fed.dml:3:0:org.apache.sysds.hops.UnaryOp:u(_placement):Y|inputs=[ABSENT_LOCAL:-]|27:CP/LOUT/-/SHAPE_INDEPENDENT|30:CP/FOUT/FULL/SHAPE_INDEPENDENT|86:10:fed-init:X|4:FULL|62:59:36:localhost:13000//evidence/data/X.csv|7:1:0,1:0|7:1:8,1:3|310:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|6:main/0|8:compiled|105:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|8:6:main/0|6:main/0|8:compiled|14:root-0/input-0|84:/evidence/cases/joint_branch_upload/fed.dml:1:0:org.apache.sysds.hops.DataOp:Fed X:X|4:FULL|4:FULL|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|stage=FOUT",
+    "joint_correlated_aa: Federated prefetch count:\t0.",
+    "joint_correlated_bb: Federated prefetch count:\t0.",
+    "joint_dynamic_reverse: Federated prefetch count:\t0.",
+    "joint_function_calls: Federated prefetch count:\t0.",
+    "joint_independent_ab: --------CP prefetch V.MATRIX.FP64.false _mVar14.MATRIX.FP64 1",
+    "joint_independent_ab: --------CP prefetch V.MATRIX.FP64.false _mVar16.MATRIX.FP64 1",
+    "joint_independent_ab: 3  prefetch       0.028      1",
+    "joint_independent_ab: Federated prefetch count:\t0.",
+    "joint_independent_ab: [PlannerRuntimeAudit][Execution] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb auditKey=79d1e6a0a30dee58 hop=-1 lop=80 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=e1a0817801b87aa0 actual=CP/LOUT count=1",
+    "joint_independent_ab: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb action=6340affc29d8aad4 stage=LOCAL token=e1a0817801b87aa0 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=6638fd44baa35754",
+    "joint_independent_ab: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb action=6340affc29d8aad4 stage=LOCAL token=e1a0817801b87aa0 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=79d1e6a0a30dee58",
+    "joint_independent_ab: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb action=dfb4ed31441d521a stage=LOCAL token=b405070d2cbb3438 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=1bdabef1132cfcb7",
+    "joint_independent_ba: --------CP prefetch V.MATRIX.FP64.false _mVar14.MATRIX.FP64 1",
+    "joint_independent_ba: --------CP prefetch V.MATRIX.FP64.false _mVar16.MATRIX.FP64 1",
+    "joint_independent_ba: 3  prefetch       0.028      1",
+    "joint_independent_ba: Federated prefetch count:\t0.",
+    "joint_independent_ba: [PlannerRuntimeAudit][Execution] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 auditKey=506ebdf3b1977113 hop=-1 lop=80 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=68b127d6463fb668 actual=CP/LOUT count=1",
+    "joint_independent_ba: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 action=f11e8c7634d3a999 stage=LOCAL token=8d08016dc68d4e66 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=7a43d1a56b01be6a",
+    "joint_independent_ba: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 action=f1545102b0197eff stage=LOCAL token=68b127d6463fb668 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=506ebdf3b1977113",
+    "joint_independent_ba: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 action=f1545102b0197eff stage=LOCAL token=68b127d6463fb668 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=bb19739d8fdb6c48",
+    "joint_loop_toggle: Federated prefetch count:\t0.",
+    "l2svm_false_m11: ------CP prefetch Y_l2svm_false_m11.MATRIX.FP64.false _mVar104.MATRIX.FP64 1",
+    "l2svm_false_m11: 4  prefetch       0.041      1",
+    "l2svm_false_m11: Federated prefetch count:\t0.",
+    "l2svm_false_m11: [PlannerRuntimeAudit][Execution] status=MATCH plan=d64466e0064be3c1f0376c213d2f00595395a8fd349339d1d1c173cde963725b auditKey=9cb48b6d0f5ac876 hop=-1 lop=278 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=7712a55dee9cd1aa actual=CP/LOUT count=1",
+    "l2svm_false_m11: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=d64466e0064be3c1f0376c213d2f00595395a8fd349339d1d1c173cde963725b action=c482b65789b750c4 stage=LOCAL token=7712a55dee9cd1aa opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=9cb48b6d0f5ac876",
+    "l2svm_true_01: ------CP prefetch Y_l2svm_true_01.MATRIX.FP64.false _mVar104.MATRIX.FP64 1",
+    "l2svm_true_01: 4  prefetch       0.144      1",
+    "l2svm_true_01: Federated prefetch count:\t0.",
+    "l2svm_true_01: [PlannerRuntimeAudit][Execution] status=MATCH plan=e42016e72d5d9af64a78e2b79a9886606effe1e5f13af5e8d848200184321835 auditKey=6f0872b73f707010 hop=-1 lop=278 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=a5cfce23b3207210 actual=CP/LOUT count=1",
+    "l2svm_true_01: [PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=e42016e72d5d9af64a78e2b79a9886606effe1e5f13af5e8d848200184321835 action=01ed46a6cf4f6cc9 stage=LOCAL token=a5cfce23b3207210 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=6f0872b73f707010"
+  ],
+  "actionEvidencePresent": true,
+  "cases": [
+    {
+      "actionDiagnostics": [
+        "------CP prefetch Y_l2svm_true_01.MATRIX.FP64.false _mVar104.MATRIX.FP64 1",
+        "4  prefetch       0.144      1",
+        "Federated prefetch count:\t0.",
+        "[PlannerRuntimeAudit][Execution] status=MATCH plan=e42016e72d5d9af64a78e2b79a9886606effe1e5f13af5e8d848200184321835 auditKey=6f0872b73f707010 hop=-1 lop=278 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=a5cfce23b3207210 actual=CP/LOUT count=1",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=e42016e72d5d9af64a78e2b79a9886606effe1e5f13af5e8d848200184321835 action=01ed46a6cf4f6cc9 stage=LOCAL token=a5cfce23b3207210 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=6f0872b73f707010"
+      ],
+      "auditErrors": [],
+      "auditRows": 430,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "l2svm_true_01",
+      "cpFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 0.6933312394625315,
+        "ROWS": 3.0,
+        "SUM": -0.051876443681957596
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 0.6933312394625315,
+        "ROWS": 3.0,
+        "SUM": -0.051876443681957596
+      },
+      "fedNoRelocation": false,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [
+        "------CP prefetch Y_l2svm_false_m11.MATRIX.FP64.false _mVar104.MATRIX.FP64 1",
+        "4  prefetch       0.041      1",
+        "Federated prefetch count:\t0.",
+        "[PlannerRuntimeAudit][Execution] status=MATCH plan=d64466e0064be3c1f0376c213d2f00595395a8fd349339d1d1c173cde963725b auditKey=9cb48b6d0f5ac876 hop=-1 lop=278 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=7712a55dee9cd1aa actual=CP/LOUT count=1",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=d64466e0064be3c1f0376c213d2f00595395a8fd349339d1d1c173cde963725b action=c482b65789b750c4 stage=LOCAL token=7712a55dee9cd1aa opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=9cb48b6d0f5ac876"
+      ],
+      "auditErrors": [],
+      "auditRows": 430,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "l2svm_false_m11",
+      "cpFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 0.6933312394625315,
+        "ROWS": 3.0,
+        "SUM": -0.051876443681957596
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 0.6933312394625315,
+        "ROWS": 3.0,
+        "SUM": -0.051876443681957596
+      },
+      "fedNoRelocation": false,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0."
+      ],
+      "auditErrors": [],
+      "auditRows": 114,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_correlated_aa",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": true
+    },
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0."
+      ],
+      "auditErrors": [],
+      "auditRows": 114,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_correlated_bb",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 800.0,
+        "ROWS": 8.0,
+        "SUM": 132.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 800.0,
+        "ROWS": 8.0,
+        "SUM": 132.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": true
+    },
+    {
+      "actionDiagnostics": [
+        "--------CP prefetch V.MATRIX.FP64.false _mVar14.MATRIX.FP64 1",
+        "--------CP prefetch V.MATRIX.FP64.false _mVar16.MATRIX.FP64 1",
+        "3  prefetch       0.028      1",
+        "Federated prefetch count:\t0.",
+        "[PlannerRuntimeAudit][Execution] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb auditKey=79d1e6a0a30dee58 hop=-1 lop=80 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=e1a0817801b87aa0 actual=CP/LOUT count=1",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb action=6340affc29d8aad4 stage=LOCAL token=e1a0817801b87aa0 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=6638fd44baa35754",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb action=6340affc29d8aad4 stage=LOCAL token=e1a0817801b87aa0 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=79d1e6a0a30dee58",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=52bfdc5516756b965dd0fd7a5b005cd4339d537a507a64c222422b8378be71bb action=dfb4ed31441d521a stage=LOCAL token=b405070d2cbb3438 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=1bdabef1132cfcb7"
+      ],
+      "auditErrors": [],
+      "auditRows": 117,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_independent_ab",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 452.0,
+        "ROWS": 8.0,
+        "SUM": 102.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 452.0,
+        "ROWS": 8.0,
+        "SUM": 102.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [
+        "--------CP prefetch V.MATRIX.FP64.false _mVar14.MATRIX.FP64 1",
+        "--------CP prefetch V.MATRIX.FP64.false _mVar16.MATRIX.FP64 1",
+        "3  prefetch       0.028      1",
+        "Federated prefetch count:\t0.",
+        "[PlannerRuntimeAudit][Execution] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 auditKey=506ebdf3b1977113 hop=-1 lop=80 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=68b127d6463fb668 actual=CP/LOUT count=1",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 action=f11e8c7634d3a999 stage=LOCAL token=8d08016dc68d4e66 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=7a43d1a56b01be6a",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 action=f1545102b0197eff stage=LOCAL token=68b127d6463fb668 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=506ebdf3b1977113",
+        "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=a1a52c8bb6530ba762427d6c4045867ff2e759c441ae2b58b914fc5376e66242 action=f1545102b0197eff stage=LOCAL token=68b127d6463fb668 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=bb19739d8fdb6c48"
+      ],
+      "auditErrors": [],
+      "auditRows": 117,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_independent_ba",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 368.0,
+        "ROWS": 8.0,
+        "SUM": 84.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 368.0,
+        "ROWS": 8.0,
+        "SUM": 84.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [],
+      "auditErrors": [],
+      "auditRows": 94,
+      "auditSchemas": [
+        "fedplanner-candidate-space-v1"
+      ],
+      "case": "joint_independent_private_ab_negative",
+      "expected": "infeasible_private_tuple",
+      "fedReturncode": 0,
+      "passed": true,
+      "rejectionDiagnostic": true
+    },
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0."
+      ],
+      "auditErrors": [],
+      "auditRows": 139,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_loop_toggle",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0."
+      ],
+      "auditErrors": [],
+      "auditRows": 139,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_function_calls",
+      "cpFingerprint": {
+        "CALL_C": 54.0,
+        "CALL_D": 132.0,
+        "COLS": 1.0,
+        "NORM2": 20340.0,
+        "ROWS": 2.0,
+        "SUM": 186.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "CALL_C": 54.0,
+        "CALL_D": 132.0,
+        "COLS": 1.0,
+        "NORM2": 20340.0,
+        "ROWS": 2.0,
+        "SUM": 186.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0."
+      ],
+      "auditErrors": [],
+      "auditRows": 100,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "case": "joint_dynamic_reverse",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 1267.9351982067865,
+        "ROWS": 8.0,
+        "SUM": 124.07728482348034,
+        "WEIGHTED": 571.954806162415
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": true,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 1267.9351982067865,
+        "ROWS": 8.0,
+        "SUM": 124.07728482348034,
+        "WEIGHTED": 571.954806162415
+      },
+      "fedNoRelocation": false,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [],
+      "auditErrors": [],
+      "auditRows": 104,
+      "auditSchemas": [
+        "fedplanner-candidate-space-v1"
+      ],
+      "case": "joint_function_private_mix_negative",
+      "expected": "infeasible_private_tuple",
+      "fedReturncode": 0,
+      "passed": true,
+      "rejectionDiagnostic": true
+    },
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0.",
+        "plannerSyntheticActionKey=\"359:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:root-0/input-0|93:/evidence/cases/joint_branch_upload/fed.dml:3:0:org.apache.sysds.hops.UnaryOp:u(_placement):Y|276:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|8:value-25|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|1:0|8:ORDINARY|42:39:input-0:Y#1@main/1/branch-if/1:ORDINARY|383:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:ro",
+        "plannerSyntheticActionKey=359:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:root-0/input-0|93:/evidence/cases/joint_branch_upload/fed.dml:3:0:org.apache.sysds.hops.UnaryOp:u(_placement):Y|276:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|8:value-25|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|1:0|8:ORDINARY|42:39:input-0:Y#1@main/1/branch-if/1:ORDINARY|383:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|18:main/1/branch-if/1|8:compiled|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|14:root-0/input-0|93:/evidence/cases/joint_branch_upload/fed.dml:3:0:org.apache.sysds.hops.UnaryOp:u(_placement):Y|inputs=[ABSENT_LOCAL:-]|27:CP/LOUT/-/SHAPE_INDEPENDENT|30:CP/FOUT/FULL/SHAPE_INDEPENDENT|86:10:fed-init:X|4:FULL|62:59:36:localhost:13000//evidence/data/X.csv|7:1:0,1:0|7:1:8,1:3|310:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|6:main/0|8:compiled|105:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|8:6:main/0|6:main/0|8:compiled|14:root-0/input-0|84:/evidence/cases/joint_branch_upload/fed.dml:1:0:org.apache.sysds.hops.DataOp:Fed X:X|4:FULL|4:FULL|132:64:791a7cd098b4ecff8fe50468d425b6aec06c5d4287c6c21a4d33291dbbc51ad7|4:main|21:18:main/1/branch-if/1|18:main/1/branch-if/1|8:compiled|stage=FOUT"
+      ],
+      "auditErrors": [],
+      "auditRows": 74,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1",
+        "fedplanner-candidate-space-v1"
+      ],
+      "branchUploadLoweredAndExecuted": true,
+      "case": "joint_branch_upload",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 56.0,
+        "ROWS": 8.0,
+        "SUM": 30.0
+      },
+      "cpReturncode": 0,
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 56.0,
+        "ROWS": 8.0,
+        "SUM": 30.0
+      },
+      "fedNoRelocation": true,
+      "fedReturncode": 0,
+      "passed": true,
+      "requiresBranchUpload": true,
+      "requiresFedNoRelocation": false
+    },
+    {
+      "actionDiagnostics": [],
+      "auditErrors": [],
+      "auditRows": 1,
+      "auditSchemas": [
+        "fedplanner-candidate-space-privacy-failure-v1"
+      ],
+      "case": "l2svm_protected_y_negative",
+      "expected": "privacy_rejection",
+      "fedReturncode": 0,
+      "passed": true,
+      "rejectionDiagnostic": true
+    }
+  ],
+  "classPreflight": {
+    "actual": {
+      "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class": {
+        "actualSha256": "7e91e2a4092362dce478c34c7d8734e0f379e4fd4c6d8f04520f984e968b5f30",
+        "exists": true,
+        "expectedSha256": "7e91e2a4092362dce478c34c7d8734e0f379e4fd4c6d8f04520f984e968b5f30",
+        "matched": true,
+        "size": 249100
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class": {
+        "actualSha256": "b6bb5a5e59a4633b5fb34b65ae76c26d11f4289c25d65d67a8d379e1f69aa983",
+        "exists": true,
+        "expectedSha256": "b6bb5a5e59a4633b5fb34b65ae76c26d11f4289c25d65d67a8d379e1f69aa983",
+        "matched": true,
+        "size": 38060
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class": {
+        "actualSha256": "3fab1ec1415c6f43f7a520c28aaabe59f332dac26099ab5bd001ac9a1222b6c5",
+        "exists": true,
+        "expectedSha256": "3fab1ec1415c6f43f7a520c28aaabe59f332dac26099ab5bd001ac9a1222b6c5",
+        "matched": true,
+        "size": 23286
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class": {
+        "actualSha256": "725a4acb247c0de1a9b749c1de0d8f527dec57874800eae7a1228142c516b5bd",
+        "exists": true,
+        "expectedSha256": "725a4acb247c0de1a9b749c1de0d8f527dec57874800eae7a1228142c516b5bd",
+        "matched": true,
+        "size": 606235
+      },
+      "/engine/classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class": {
+        "actualSha256": "43ea9743c3711f03437190974c45687b7b8a6157cadd13e468f16addcf1d9a4e",
+        "exists": true,
+        "expectedSha256": "43ea9743c3711f03437190974c45687b7b8a6157cadd13e468f16addcf1d9a4e",
+        "matched": true,
+        "size": 47317
+      },
+      "/engine/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/InvariantFoutSharingDockerProof.class": {
+        "actualSha256": "067198f9e56ed54ab6211aac5931a45c40f1149f0885bd3545a353552cb78930",
+        "exists": true,
+        "expectedSha256": "067198f9e56ed54ab6211aac5931a45c40f1149f0885bd3545a353552cb78930",
+        "matched": true,
+        "size": 1062
+      }
+    },
+    "expectedCount": 6,
+    "schema": "systemds-joint-boundary-class-preflight-v1",
+    "status": "PASSED"
+  },
+  "classPreflightPassed": true,
+  "containerReturncode": 0,
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "modelProofPassed": true,
+  "modelProofReturncode": 0,
+  "noFedRuntimeConversion": true,
+  "overlayPreflight": {
+    "actual": {
+      "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class": {
+        "actualSha256": "7e91e2a4092362dce478c34c7d8734e0f379e4fd4c6d8f04520f984e968b5f30",
+        "exists": true,
+        "expectedSha256": "7e91e2a4092362dce478c34c7d8734e0f379e4fd4c6d8f04520f984e968b5f30",
+        "matched": true,
+        "size": 249100
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class": {
+        "actualSha256": "b6bb5a5e59a4633b5fb34b65ae76c26d11f4289c25d65d67a8d379e1f69aa983",
+        "exists": true,
+        "expectedSha256": "b6bb5a5e59a4633b5fb34b65ae76c26d11f4289c25d65d67a8d379e1f69aa983",
+        "matched": true,
+        "size": 38060
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class": {
+        "actualSha256": "3fab1ec1415c6f43f7a520c28aaabe59f332dac26099ab5bd001ac9a1222b6c5",
+        "exists": true,
+        "expectedSha256": "3fab1ec1415c6f43f7a520c28aaabe59f332dac26099ab5bd001ac9a1222b6c5",
+        "matched": true,
+        "size": 23286
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class": {
+        "actualSha256": "725a4acb247c0de1a9b749c1de0d8f527dec57874800eae7a1228142c516b5bd",
+        "exists": true,
+        "expectedSha256": "725a4acb247c0de1a9b749c1de0d8f527dec57874800eae7a1228142c516b5bd",
+        "matched": true,
+        "size": 606235
+      },
+      "/engine/classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class": {
+        "actualSha256": "43ea9743c3711f03437190974c45687b7b8a6157cadd13e468f16addcf1d9a4e",
+        "exists": true,
+        "expectedSha256": "43ea9743c3711f03437190974c45687b7b8a6157cadd13e468f16addcf1d9a4e",
+        "matched": true,
+        "size": 47317
+      },
+      "/engine/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/InvariantFoutSharingDockerProof.class": {
+        "actualSha256": "067198f9e56ed54ab6211aac5931a45c40f1149f0885bd3545a353552cb78930",
+        "exists": true,
+        "expectedSha256": "067198f9e56ed54ab6211aac5931a45c40f1149f0885bd3545a353552cb78930",
+        "matched": true,
+        "size": 1062
+      }
+    },
+    "expectedCount": 6,
+    "schema": "systemds-joint-boundary-class-preflight-v1",
+    "status": "PASSED"
+  },
+  "overlayPreflightPassed": true,
+  "requestedCases": [
+    "l2svm_true_01",
+    "l2svm_false_m11",
+    "joint_correlated_aa",
+    "joint_correlated_bb",
+    "joint_independent_ab",
+    "joint_independent_ba",
+    "joint_independent_private_ab_negative",
+    "joint_loop_toggle",
+    "joint_function_calls",
+    "joint_dynamic_reverse",
+    "joint_function_private_mix_negative",
+    "joint_branch_upload",
+    "l2svm_protected_y_negative"
+  ],
+  "requiredActionCases": {
+    "joint_branch_upload": true,
+    "l2svm_true_01": true
+  },
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/invariant-fout-sharing-main-r1",
+  "runtimeConversionViolations": [],
+  "schema": "systemds-joint-boundary-e2e-v1",
+  "status": "PASSED"
+}

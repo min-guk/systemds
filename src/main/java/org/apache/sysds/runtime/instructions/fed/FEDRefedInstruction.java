@@ -39,26 +39,33 @@ public class FEDRefedInstruction extends FEDInstruction {
 	private final CPOperand _anchor;
 	private final CPOperand _output;
 	private final FType _materializationFType;
+	private final String _supplySharingGroup;
+	private final boolean _requiresLocalMaterialization;
 	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 
 	private FEDRefedInstruction(CPOperand input, CPOperand anchor, CPOperand output,
-		FType materializationFType, String opcode, String istr) {
+		FType materializationFType, String supplySharingGroup, boolean requiresLocalMaterialization,
+		String opcode, String istr) {
 		super(FEDType.Refed, null, opcode, istr, FederatedOutput.FOUT);
 		_input = input;
 		_anchor = anchor;
 		_output = output;
 		_materializationFType = materializationFType;
+		_supplySharingGroup = supplySharingGroup;
+		_requiresLocalMaterialization = requiresLocalMaterialization;
 	}
 
 	public static FEDRefedInstruction parseInstruction(String str) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		if (parts.length != 4 && parts.length != 5)
+		if (parts.length < 4 || parts.length > 7)
 			throw new DMLRuntimeException("Invalid number of operands in federated refed instruction: " + str);
 		CPOperand input = new CPOperand(parts[1]);
 		CPOperand anchor = new CPOperand(parts[2]);
 		CPOperand output = new CPOperand(parts[3]);
 		FType materializationFType = null;
-		if(parts.length == 5) {
+		if(parts.length == 5 && parts[4].equals("AUTO"))
+			throw new DMLRuntimeException("AUTO fed_refed materialization requires planned sharing authority");
+		if(parts.length >= 5 && !parts[4].equals("AUTO")) {
 			try {
 				materializationFType = FType.valueOf(parts[4]);
 			}
@@ -66,8 +73,30 @@ public class FEDRefedInstruction extends FEDInstruction {
 				throw new DMLRuntimeException("Invalid fed_refed materialization type " + parts[4], ex);
 			}
 		}
-		return new FEDRefedInstruction(input, anchor, output, materializationFType, parts[0], str);
+		String sharingGroup = null;
+		if(parts.length >= 6) {
+			if(!parts[5].startsWith("sharing="))
+				throw new DMLRuntimeException("Missing planned fed_refed supply lifetime");
+			try {
+				sharingGroup = new String(java.util.Base64.getUrlDecoder().decode(parts[5].substring(8)),
+					java.nio.charset.StandardCharsets.UTF_8);
+			}
+			catch(IllegalArgumentException failure) {
+				throw new DMLRuntimeException("Invalid planned fed_refed supply lifetime", failure);
+			}
+		}
+		boolean requiresLocalMaterialization = false;
+		if(parts.length == 7) {
+			if(!parts[6].equals("stage=true"))
+				throw new DMLRuntimeException("Invalid planned fed_refed staging marker " + parts[6]);
+			requiresLocalMaterialization = true;
+		}
+		return new FEDRefedInstruction(input, anchor, output, materializationFType,
+			sharingGroup, requiresLocalMaterialization, parts[0], str);
 	}
+
+	public String getSupplySharingGroup() { return _supplySharingGroup; }
+	public boolean requiresLocalMaterialization() { return _requiresLocalMaterialization; }
 
 	public FType getMaterializationFType() {
 		return _materializationFType;
@@ -80,6 +109,11 @@ public class FEDRefedInstruction extends FEDInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		if(getPlannerSyntheticActionKey() != null && _supplySharingGroup == null)
+			throw new DMLRuntimeException("Planner REFED instruction lost its supply lifetime");
+		if(_requiresLocalMaterialization
+			&& (getPlannerSyntheticActionKey() == null || _supplySharingGroup == null))
+			throw new DMLRuntimeException("Staged REFED requires exact planner sharing authority");
 		MatrixObject in = ec.getMatrixObject(_input);
 		// Resolve asynchronous locals before reading dimensions, nnz, or the ownership-version
 		// snapshot. The first MatrixObjectFuture read moves its block via acquireModify.
@@ -87,6 +121,10 @@ public class FEDRefedInstruction extends FEDInstruction {
 			in.acquireRead();
 			in.release();
 		}
+		if(_requiresLocalMaterialization && (!in.isFederated() || in.getFedMapping() == null
+			|| in.getFedMapping().getSize() == 0))
+			throw new DMLRuntimeException("Staged REFED requires its selected FED/FOUT input: "
+				+ _input.getName());
 		FederationMap anchorMap = null;
 		boolean anchorLiteral = !_anchor.isMatrix() || !ec.containsVariable(_anchor.getName());
 		if (!anchorLiteral) {
@@ -134,7 +172,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 
 		long rlen = in.getNumRows();
 		long clen = in.getNumColumns();
-		if (in.isFederated()) {
+		if (in.isFederated() && !_requiresLocalMaterialization) {
 			FederationMap inMap = in.getFedMapping();
 			if (inMap == null || inMap.getSize() == 0)
 				throw new DMLRuntimeException("fed_refed expects a non-empty federated input map: " + _input.getName());
@@ -232,8 +270,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 		final FederationMap selectedAnchorMap = anchorMap;
 		final long rows = rlen;
 		final long cols = clen;
-		FederationMap published = FederationUtils.getOrCreateOwnedRefedAlias(in, inputMutationVersion,
-			rows, cols, nnz, getTID(), layoutSig, cacheMapType, () -> {
+		java.util.function.Supplier<FederationMap> materializer = () -> {
 				if (!preservesAnchorLayout) {
 					FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
 					FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
@@ -258,7 +295,12 @@ public class FEDRefedInstruction extends FEDInstruction {
 					selectedAnchorMap.execute(getTID(), true, fr);
 				}
 				return selectedAnchorMap.copyWithNewID(canonicalId);
-			});
+			};
+		FederationMap published = _supplySharingGroup == null
+			? FederationUtils.getOrCreateOwnedRefedAlias(in, inputMutationVersion,
+				rows, cols, nnz, getTID(), layoutSig, cacheMapType, materializer)
+			: FederationUtils.materializePlannedRefed(in, inputMutationVersion,
+				rows, cols, nnz, getTID(), layoutSig, cacheMapType, _supplySharingGroup, materializer);
 
 		out.setFedMapping(published);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());

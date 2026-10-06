@@ -185,6 +185,48 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	@Test
+	public void consumerSpecificActionsCoalesceOnlyWithinOnePhysicalEmission() {
+		RelocationAction first = selectedRelocation(fixture);
+		var firstObligation = first.obligations().get(0);
+		CompiledHopKey secondConsumer = fixture.analysis().graph().decisionNodes().stream()
+			.map(NeutralPlacementGraph.Node::key)
+			.filter(key -> key != firstObligation.consumer()).findFirst().orElseThrow();
+		RelocationActionKey secondKey = new RelocationActionKey(first.key().sourceValueVersion(),
+			first.key().targetPlacement(), first.key().materializationFType(),
+			first.key().durableAnchor(), first.key().statementBlockScope(), List.of(secondConsumer));
+		var secondObligation = new PlacementIdentity.ObligationKey(secondConsumer,
+			firstObligation.inputPosition(), firstObligation.sourceValueVersion(),
+			firstObligation.requiredPlacement(), secondKey, firstObligation.callRecompileContext());
+		RelocationAction second = new RelocationAction(secondKey, List.of(secondObligation),
+			first.directSourcePlacements());
+
+		var grouped = PlacementEmissionTransaction.coalescePhysicalRelocations(List.of(
+			new PlacementEmissionTransaction.SelectedRelocation(first, first.obligations()),
+			new PlacementEmissionTransaction.SelectedRelocation(second, second.obligations())));
+		Assert.assertEquals("same physical upload emits one runtime authority", 1, grouped.size());
+		Assert.assertEquals("one authority unions both exact consumer demands", 2,
+			grouped.get(0).obligations().size());
+		Assert.assertEquals("canonical representative remains one fully selected action",
+			List.of(first.key(), second.key()).stream().sorted().findFirst().orElseThrow(),
+			grouped.get(0).action().key());
+
+		DurableAnchorKey otherAnchor = samePoolDifferentGeometry(first.key().durableAnchor());
+		RelocationActionKey otherLayoutKey = new RelocationActionKey(first.key().sourceValueVersion(),
+			first.key().targetPlacement(), first.key().materializationFType(), otherAnchor,
+			first.key().statementBlockScope(), List.of(secondConsumer));
+		var otherObligation = new PlacementIdentity.ObligationKey(secondConsumer,
+			firstObligation.inputPosition(), firstObligation.sourceValueVersion(),
+			firstObligation.requiredPlacement(), otherLayoutKey, firstObligation.callRecompileContext());
+		RelocationAction otherLayout = new RelocationAction(otherLayoutKey, List.of(otherObligation),
+			first.directSourcePlacements());
+		Assert.assertEquals("different target layouts retain separate runtime authorities", 2,
+			PlacementEmissionTransaction.coalescePhysicalRelocations(List.of(
+				new PlacementEmissionTransaction.SelectedRelocation(first, first.obligations()),
+				new PlacementEmissionTransaction.SelectedRelocation(otherLayout,
+					otherLayout.obligations()))).size());
+	}
+
+	@Test
 	public void validatedActionMetadataEmitsWithoutAnExactLiveAnchorRecord() throws Exception {
 		Fixture metadataOnly = relocationFixtureWithoutExactRecordAnchor();
 		RelocationAction action = selectedRelocation(metadataOnly);
@@ -456,7 +498,12 @@ public class PlacementEmissionTransactionRedTest {
 				|| (spec.getAnchorKey() != null && instruction.contains(spec.getAnchorKey()))));
 		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTION_PRESERVES_EXACT_MATERIALIZATION_FTYPE: "
 			+ refedInstructions, refedInstructions.stream().allMatch(instruction ->
-				instruction.endsWith("°" + spec.getMaterializationFType().name())));
+				org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction.parseInstruction(instruction)
+					.getMaterializationFType() == spec.getMaterializationFType()));
+		Assert.assertTrue("Planned single-use supplies must carry an explicit non-retained lifetime",
+			refedInstructions.stream().allMatch(instruction -> "".equals(
+				org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction.parseInstruction(instruction)
+					.getSupplySharingGroup())));
 		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTIONS_MUST_NOT_SERIALIZE_NULL_ANCHOR: "
 			+ refedInstructions, refedInstructions.stream().noneMatch(instruction -> instruction.contains("null.UNKNOWN")));
 	}
