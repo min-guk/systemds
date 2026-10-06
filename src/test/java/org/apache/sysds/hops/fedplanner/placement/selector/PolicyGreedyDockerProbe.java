@@ -1,7 +1,9 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.placement.selector;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -20,14 +22,21 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedStatistics;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.utils.Statistics;
 
 /** Docker-only validation entrypoint. No exception-swallowing DMLScript.main success signal. */
 public final class PolicyGreedyDockerProbe {
 	private PolicyGreedyDockerProbe() { }
 	public static void main(String[] args) throws Exception {
+		if(args.length > 0 && args[0].equals("als")) {
+			runAls(args);
+			return;
+		}
 		if(args.length == 1 && args[0].equals("scaling")) {
 			ObjectMapper json = new ObjectMapper();
 			for(int size : new int[] {512, 4096, 16384, 65536}) {
@@ -59,6 +68,66 @@ public final class PolicyGreedyDockerProbe {
 		System.out.println("FEDPOLICY_HEAP_POOL_PEAK_BYTES=" + heapPeaks);
 		System.out.println("FEDPOLICY_PROBE_SUCCESS=" + planner + ";runtimeAudit=true");
 	}
+
+	private static void runAls(String[] args) throws Exception {
+		if(args.length != 5)
+			throw new IllegalArgumentException("als script config expected-planner result-json");
+		Map<String,Object> output = new LinkedHashMap<>();
+		long started = System.nanoTime();
+		try {
+			System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, "true");
+			if(!DMLScript.executeScript(new String[] {"-f", args[1], "-config", args[2], "-exec", "singlenode",
+				"-seed", "2026072701", "-stats", "100"}))
+				throw new IllegalStateException("DML execution returned false");
+			String planner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+			if(!args[3].equals(planner))
+				throw new IllegalStateException("Wrong planner: " + planner);
+			var observability = PlacementEmissionTransaction.observabilitySnapshot();
+			if(observability.runtimeFallbackCount() != 0 || observability.runtimeRepairCount() != 0)
+				throw new IllegalStateException("Runtime fallback/repair is forbidden: " + observability);
+
+			Map<String,Long> allHeavyHitters = new LinkedHashMap<>();
+			Map<String,Long> federatedHeavyHitters = new LinkedHashMap<>();
+			Map<String,Long> federatedComputeHeavyHitters = new LinkedHashMap<>();
+			Statistics.getCPHeavyHitterOpCodes().stream().sorted().forEach(opcode -> {
+				long count = Statistics.getCPHeavyHitterCount(opcode);
+				allHeavyHitters.put(opcode, count);
+				if(opcode.startsWith("fed_")) {
+					federatedHeavyHitters.put(opcode, count);
+					if(!opcode.startsWith("fed_fed"))
+						federatedComputeHeavyHitters.put(opcode, count);
+				}
+			});
+			boolean expectFederated = !"NONE".equals(args[3]);
+			if(!expectFederated && !federatedHeavyHitters.isEmpty())
+				throw new IllegalStateException("CP reference executed FED opcodes: " + federatedHeavyHitters);
+			if(expectFederated && federatedComputeHeavyHitters.isEmpty())
+				throw new IllegalStateException("FedAll execution did not execute a fed_ compute opcode");
+
+			output.put("status", "passed");
+			output.put("planner", planner);
+			output.put("compileNanos", Statistics.getCompileTime());
+			output.put("executionNanos", Statistics.getRunTime());
+			output.put("probeWallNanos", System.nanoTime() - started);
+			output.put("allHeavyHitters", allHeavyHitters);
+			output.put("federatedHeavyHitters", federatedHeavyHitters);
+			output.put("federatedComputeHeavyHitters", federatedComputeHeavyHitters);
+			output.put("federatedRequestCounts", FederatedStatistics.displayFedIOExecStatistics());
+			output.put("networkTraffic", FederatedStatistics.displayNetworkTrafficStatistics());
+			output.put("runtimeAudit", PlannerRuntimePlacementAudit.display());
+			output.put("runtimeFallbackCount", observability.runtimeFallbackCount());
+			output.put("runtimeRepairCount", observability.runtimeRepairCount());
+		}
+		catch(Throwable failure) {
+			output.put("status", "failed");
+			output.put("error", failure.toString());
+			failure.printStackTrace();
+		}
+		new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(Path.of(args[4]).toFile(), output);
+		if(!"passed".equals(output.get("status")))
+			System.exit(1);
+	}
+
 	private static NeutralPlacementGraph graph(int size) {
 		List<Node> nodes = new ArrayList<>();
 		List<Constraint> edges = new ArrayList<>();

@@ -8,6 +8,7 @@ The one worker and coordinator share a Docker loopback LAN (not a multi-host ben
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -17,14 +18,180 @@ import subprocess
 import tempfile
 
 
+ALS_ROWS = 50
+ALS_COLS = 20
+ALS_RANK = 10
+ALS_ABSOLUTE_TOLERANCE = 1e-8
+ALS_RELATIVE_TOLERANCE = 1e-7
+
+
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_als_fixture(run):
+    rows = []
+    nnz = 0
+    for row in range(ALS_ROWS):
+        values = [0.0] * ALS_COLS
+        # Preserve the fixture's sequential MatrixBlock.set semantics, including collisions.
+        values[row % ALS_COLS] = 1.0
+        values[(row * 7 + 3) % ALS_COLS] = 0.5
+        values[(row * 13 + 5) % ALS_COLS] = 0.25
+        rows.append(",".join(format(value, ".17g") for value in values))
+        nnz += sum(value != 0 for value in values)
+    contents = "\n".join(rows) + "\n"
+    local_metadata = {"data_type": "matrix", "value_type": "double", "rows": ALS_ROWS,
+        "cols": ALS_COLS, "nnz": nnz, "format": "csv", "header": False, "sep": ","}
+    for prefix, privacy in (("cp", None), ("fed", "private-aggregate")):
+        (run / f"{prefix}-X.csv").write_text(contents)
+        metadata = dict(local_metadata)
+        if privacy:
+            metadata["privacy"] = privacy
+        (run / f"{prefix}-X.csv.mtd").write_text(json.dumps(metadata) + "\n")
+    call = ("[U,V]=als(X=X,rank=10,regType=\"L2\",reg=0.000001,maxi=2,"
+        "check=FALSE,thr=0.0001,seed=1389632218,verbose=FALSE);\n")
+    (run / "cp-als.dml").write_text(
+        'X=read("/evidence/cp-X.csv");\n' + call + 'write(V,"/evidence/cp-V.csv",format="csv");\n')
+    (run / "fedall-als.dml").write_text(
+        'X=federated(addresses=list("localhost:13000//evidence/fed-X.csv"),'
+        'ranges=list(list(0,0),list(50,20)));\n' + call
+        + 'write(V,"/evidence/fedall-V.csv",format="csv");\n')
+    for name, planner in (("cp", "NONE"), ("fedall", "COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS")):
+        (run / f"{name}.xml").write_text(
+            f"<root><sysds.native.blas>none</sysds.native.blas>"
+            f"<sysds.local.spark>true</sysds.local.spark>"
+            f"<sysds.federated.planner>{planner}</sysds.federated.planner>"
+            f"<sysds.localtmpdir>/evidence/{name}-localtmp</sysds.localtmpdir>"
+            f"<sysds.scratch>/evidence/{name}-scratch</sysds.scratch></root>\n")
+    return nnz
+
+
+def read_csv_matrix(path):
+    if path.is_dir():
+        parts = sorted(item for item in path.iterdir()
+            if item.is_file() and not item.name.startswith(('.', '_')) and not item.name.endswith(".mtd"))
+    else:
+        parts = [path]
+    rows = []
+    for part in parts:
+        for line in part.read_text().splitlines():
+            if line.strip():
+                rows.append([float(value) if value.strip() else 0.0 for value in line.split(",")])
+    return rows, parts
+
+
+def run_als_only(args, repo, jar, probe, image, sources):
+    if args.baseline_root:
+        raise SystemExit("--als-only does not accept --baseline-root")
+    probe_source = repo / "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.java"
+    fixture_source = repo / "src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllAlsSingleWorkerRuntimeRecompileRedTest.java"
+    builtin_sources = [repo / f"scripts/builtin/{name}" for name in ("als.dml", "alsCG.dml", "alsDS.dml")]
+    if probe.stat().st_mtime_ns < probe_source.stat().st_mtime_ns:
+        raise SystemExit("Probe class predates PolicyGreedyDockerProbe.java; rebuild test classes")
+    if jar.stat().st_mtime_ns < max(path.stat().st_mtime_ns for path in builtin_sources):
+        raise SystemExit("JAR predates an ALS builtin source; rebuild it")
+    root = repo / "target/fedpolicy-greedy-docker"
+    root.mkdir(exist_ok=True)
+    run = Path(tempfile.mkdtemp(prefix="als-run-", dir=root))
+    nnz = write_als_fixture(run)
+    frozen_jar = run / "engine/systemds-3.4.0-SNAPSHOT.jar"
+    frozen_probe = run / "probe/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.class"
+    frozen_jar.parent.mkdir()
+    frozen_probe.parent.mkdir(parents=True)
+    shutil.copyfile(jar, frozen_jar)
+    shutil.copyfile(probe, frozen_probe)
+    commands = ["set -euo pipefail", "cd /evidence",
+        "export JDK_JAVA_OPTIONS='--add-modules=jdk.incubator.vector --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED'",
+        "CP='/probe:/engine/systemds-3.4.0-SNAPSHOT.jar:/deps/*'",
+        "java -Xmx768m -cp \"$CP\" org.apache.sysds.api.DMLScript -w 13000 >worker.log 2>&1 &",
+        "worker=$!", "trap 'kill \"$worker\" 2>/dev/null || true; wait \"$worker\" 2>/dev/null || true' EXIT",
+        "python3 - <<'PY'\nimport socket,time\nfor i in range(120):\n try:\n  s=socket.create_connection(('localhost',13000),0.5);s.close();break\n except OSError: time.sleep(0.5)\nelse: raise SystemExit('worker did not start')\nPY",
+        "timeout 600 java -Xms128m -Xmx1536m -Xss1m -cp \"$CP\" "
+        "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyDockerProbe "
+        "als cp-als.dml cp.xml NONE cp-result.json >cp.log 2>&1",
+        "timeout 600 java -Xms128m -Xmx1536m -Xss1m -cp \"$CP\" "
+        "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyDockerProbe "
+        "als fedall-als.dml fedall.xml COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS fedall-result.json >fedall.log 2>&1"]
+    (run / "run.sh").write_text("\n".join(commands) + "\n")
+    source_files = sources + builtin_sources + [Path(__file__).resolve(), probe_source, fixture_source]
+    fixture_files = [run / name for name in ("cp-X.csv", "cp-X.csv.mtd", "fed-X.csv", "fed-X.csv.mtd",
+        "cp-als.dml", "fedall-als.dml", "cp.xml", "fedall.xml", "run.sh")]
+    manifest = {"image": image, "jarSha256": sha(frozen_jar), "probeSha256": sha(frozen_probe),
+        "frozenRuntimeArtifacts": {"jar": str(frozen_jar.relative_to(run)),
+            "probe": str(frozen_probe.relative_to(run))},
+        "sourceSha256": {str(path.relative_to(repo)): sha(path) for path in source_files},
+        "fixtureSha256": {path.name: sha(path) for path in fixture_files},
+        "fixture": {"rows": ALS_ROWS, "cols": ALS_COLS, "nnz": nnz,
+            "construction": "three sequential assignments per row, matching CampaignBG014FedAllAlsSingleWorkerRuntimeRecompileRedTest",
+            "rank": ALS_RANK, "maxi": 2, "reg": 1e-6, "seed": 1389632218},
+        "comparison": {"matrix": "full V", "rows": ALS_RANK, "cols": ALS_COLS,
+            "absoluteTolerance": ALS_ABSOLUTE_TOLERANCE, "relativeTolerance": ALS_RELATIVE_TOLERANCE},
+        "runs": [{"name": "cp", "planner": "NONE", "input": "local CSV"},
+            {"name": "fedall", "planner": "COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS",
+                "input": "single-worker PRIVATE_AGGREGATE federated CSV"}],
+        "freshCoordinatorJvmPerRun": True, "attempts": 1, "cpus": 2, "memory": "4g",
+        "network": "none (container loopback only)", "runtimeAudit": True}
+    (run / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    argv = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--cpus", "2",
+        "--memory", "4g", "--user", f"{os.getuid()}:{os.getgid()}",
+        "-v", f"{run / 'engine'}:/engine:ro", "-v", f"{repo / 'target/lib'}:/deps:ro",
+        "-v", f"{run / 'probe'}:/probe:ro",
+        "-v", f"{run}:/evidence:rw", "--entrypoint", "bash", image, "/evidence/run.sh"]
+    (run / "command.json").write_text(json.dumps(argv, indent=2) + "\n")
+    print(run, flush=True)
+    with (run / "container.log").open("w") as log:
+        result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=1300)
+    runtime_artifacts = {"jarSha256": sha(frozen_jar), "probeSha256": sha(frozen_probe)}
+    runtime_artifacts_match = (runtime_artifacts["jarSha256"] == manifest["jarSha256"]
+        and runtime_artifacts["probeSha256"] == manifest["probeSha256"])
+    receipt = {"status": "failed", "containerExitCode": result.returncode,
+        "manifestSha256": sha(run / "manifest.json"), "commandSha256": sha(run / "command.json"),
+        "runtimeArtifactSha256": runtime_artifacts, "frozenRuntimeArtifactsMatch": runtime_artifacts_match}
+    try:
+        cp_result = json.loads((run / "cp-result.json").read_text())
+        fed_result = json.loads((run / "fedall-result.json").read_text())
+        cp_values, cp_parts = read_csv_matrix(run / "cp-V.csv")
+        fed_values, fed_parts = read_csv_matrix(run / "fedall-V.csv")
+        shape_ok = (len(cp_values) == ALS_RANK and len(fed_values) == ALS_RANK
+            and all(len(row) == ALS_COLS for row in cp_values + fed_values))
+        finite = shape_ok and all(math.isfinite(value)
+            for row in cp_values + fed_values for value in row)
+        differences = [abs(left - right) for cp_row, fed_row in zip(cp_values, fed_values)
+            for left, right in zip(cp_row, fed_row)] if shape_ok else []
+        within_tolerance = shape_ok and all(abs(left - right) <= ALS_ABSOLUTE_TOLERANCE
+            + ALS_RELATIVE_TOLERANCE * max(abs(left), abs(right))
+            for cp_row, fed_row in zip(cp_values, fed_values) for left, right in zip(cp_row, fed_row))
+        cp_fed = cp_result.get("federatedHeavyHitters", {})
+        fed_compute = fed_result.get("federatedComputeHeavyHitters", {})
+        passed = (result.returncode == 0 and runtime_artifacts_match and cp_result.get("status") == "passed"
+            and fed_result.get("status") == "passed" and cp_result.get("runtimeFallbackCount") == 0
+            and cp_result.get("runtimeRepairCount") == 0 and fed_result.get("runtimeFallbackCount") == 0
+            and fed_result.get("runtimeRepairCount") == 0 and not cp_fed and bool(fed_compute)
+            and finite and within_tolerance)
+        receipt.update({"status": "passed" if passed else "failed", "cp": cp_result, "fedall": fed_result,
+            "matrixComparison": {"shape": [ALS_RANK, ALS_COLS], "shapeValid": shape_ok,
+                "allFinite": finite, "entriesCompared": len(differences),
+                "absoluteTolerance": ALS_ABSOLUTE_TOLERANCE, "relativeTolerance": ALS_RELATIVE_TOLERANCE,
+                "maxAbsoluteDifference": max(differences) if differences else None,
+                "withinTolerance": within_tolerance,
+                "cpOutputSha256": {part.name: sha(part) for part in cp_parts},
+                "fedallOutputSha256": {part.name: sha(part) for part in fed_parts}}})
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as failure:
+        receipt["evidenceError"] = str(failure)
+    receipt["logSha256"] = {name: sha(run / name) for name in ("container.log", "worker.log", "cp.log", "fedall.log")
+        if (run / name).is_file()}
+    (run / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps({"status": receipt["status"], "artifact": str(run),
+        "matrixComparison": receipt.get("matrixComparison")}, indent=2))
+    return 0 if receipt["status"] == "passed" else 1
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True, help="Existing local Java 17/Python 3 image; never pulled")
     parser.add_argument("--baseline-root", type=Path, help="Isolated HEAD source build for paired comparison (one warmup + five measured fresh JVMs)")
+    parser.add_argument("--als-only", action="store_true", help="Run the single-worker ALS CP/FedAll correctness comparison only")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     jar = repo / "target/systemds-3.4.0-SNAPSHOT.jar"
@@ -35,6 +202,8 @@ def main():
     if jar.stat().st_mtime_ns < max(p.stat().st_mtime_ns for p in sources):
         raise SystemExit("JAR predates production source; rebuild it")
     image = subprocess.check_output(["docker", "image", "inspect", args.image, "--format", "{{.Id}}"], text=True).strip()
+    if args.als_only:
+        return run_als_only(args, repo, jar, probe, image, sources)
     root = repo / "target/fedpolicy-greedy-docker"
     root.mkdir(exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=root))

@@ -114,6 +114,7 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		}
 	}
 	private record PhysicalInput(Domain source, FType required) { }
+	private record RelocationInput(RelocationActionKey action, int position, PlacementState consumerState) { }
 	private record LocalContinuation(Domain seed, Domain source, int inputPosition) { }
 	private static final class Domain {
 		final Node node;
@@ -148,6 +149,29 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		final Group dependent;
 		int liveSupports;
 		Requirement(Group dependent) { this.dependent = dependent; }
+	}
+	private record InputPair(Domain source, Domain consumer) { }
+	private record InputSupportKey(CandidateRealizationReference own,
+		CandidateRealizationReference required) { }
+	private static final class InputSupports {
+		final Map<InputSupportKey,Group> exact = new HashMap<>();
+		final Map<CandidateRealizationReference,Group> byRequirement = new HashMap<>();
+		InputSupports(Domain source, Domain other) {
+			for(Row row : source.rows) {
+				var required = row.inputs.get(other.node.key());
+				exact.computeIfAbsent(new InputSupportKey(row.reference, required), ignored -> new Group()).add(row);
+				byRequirement.computeIfAbsent(required, ignored -> new Group()).add(row);
+			}
+		}
+		List<Group> compatible(Row row, Domain source) {
+			var required = row.inputs.get(source.node.key());
+			// Both directions must hold for the same row pair. A missing dependency
+			// is a wildcard, not a missing realization; OR clauses remain separate rows.
+			return required == null
+				? java.util.Arrays.asList(byRequirement.get(null), byRequirement.get(row.reference))
+				: java.util.Arrays.asList(exact.get(new InputSupportKey(required, null)),
+					exact.get(new InputSupportKey(required, row.reference)));
+		}
 	}
 	private static final class Pools {
 		final Group nonNative = new Group();
@@ -422,8 +446,8 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 			}
 		}
 		void indexInputs() {
+			Set<InputPair> pairs = new LinkedHashSet<>();
 			for(Domain consumer : domains) {
-				Set<Domain> sources = new LinkedHashSet<>();
 				for(Row row : consumer.rows) if(row.receipt != null) {
 					for(var ref : row.receipt.supportClause().requiredInputSupport()) {
 						Domain source = byKey.get(ref.rule().parentOccurrence());
@@ -438,8 +462,8 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 							continue;
 						}
 						dependency(source, consumer);
-						sources.add(source);
-						require(row.singleton, java.util.Arrays.asList(source.references.get(ref)));
+						if(!pairs.contains(new InputPair(consumer, source)))
+							pairs.add(new InputPair(source, consumer));
 					}
 					var action = row.receipt.emission().derivedFoutAction();
 					if(action != null) {
@@ -455,19 +479,16 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 						}
 					}
 				}
-				// Reverse support is essential: a source cannot commit a ref which every
-				// consumer row rejects. A row without a dependency on that source is a wildcard.
-				for(Domain source : sources) {
-					Group wildcard = new Group();
-					Map<CandidateRealizationReference,Group> uses = new HashMap<>();
-					for(Row row : consumer.rows) {
-						var ref = row.inputs.get(source.node.key());
-						if(ref == null) wildcard.add(row);
-						else uses.computeIfAbsent(ref, ignored -> new Group()).add(row);
-					}
-					source.references.forEach((ref, group) -> require(group,
-						java.util.Arrays.asList(wildcard, uses.get(ref))));
-				}
+			}
+			// Register every row's input references before joining reciprocal edges.
+			// Buckets avoid a Cartesian product of the two owned-row domains.
+			for(InputPair pair : pairs) {
+				var sources = new InputSupports(pair.source(), pair.consumer());
+				var consumers = new InputSupports(pair.consumer(), pair.source());
+				for(Row row : pair.consumer().rows)
+					require(row.singleton, sources.compatible(row, pair.source()));
+				for(Row row : pair.source().rows)
+					require(row.singleton, consumers.compatible(row, pair.consumer()));
 			}
 		}
 		void indexPhysicalInputs() {
@@ -476,9 +497,25 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 			var privacy = RelocationSelections.relocationPrivacyIndex(analysis, graph, graph.relocationActions());
 			Map<Domain,Residencies> indexedPools = new IdentityHashMap<>();
 			Map<CompiledHopKey,Map<Integer,List<NeutralPlacementGraph.RelocationAction>>> actions = new IdentityHashMap<>();
-			for(var action : graph.relocationActions()) for(var obligation : action.obligations())
-				actions.computeIfAbsent(obligation.consumer(), ignored -> new HashMap<>())
-					.computeIfAbsent(obligation.inputPosition(), ignored -> new ArrayList<>()).add(action);
+			Map<CompiledHopKey,Set<RelocationInput>> unsafeRelocations = new IdentityHashMap<>();
+			for(var action : graph.relocationActions()) {
+				boolean unsafe = !privacy.isPrivacySafe(action, true);
+				for(var obligation : action.obligations()) {
+					actions.computeIfAbsent(obligation.consumer(), ignored -> new HashMap<>())
+						.computeIfAbsent(obligation.inputPosition(), ignored -> new ArrayList<>()).add(action);
+					if(unsafe) unsafeRelocations.computeIfAbsent(obligation.consumer(), ignored -> new LinkedHashSet<>())
+						.add(new RelocationInput(action.key(), obligation.inputPosition(), obligation.requiredPlacement()));
+				}
+			}
+			// An exact RELOCATION binding forces emission even if its source also has
+			// the requested FType. Apply the same privacy gate as final relocation
+			// validation before an invalid row can force other greedy commitments.
+			for(Domain consumer : domains) for(Row row : consumer.rows) if(row.receipt != null)
+				for(var binding : row.receipt.supportClause().inputBindings())
+					if(binding.kind() == CandidateInputBindingKind.RELOCATION
+						&& unsafeRelocations.getOrDefault(consumer.node.key(), Set.of()).contains(
+							new RelocationInput(binding.relocationAction(), binding.inputPosition(), row.state)))
+						deletions.add(row);
 			for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(PlacementCostSemantics.isLatentWdivmmTransposePairBoundary(analysis,
 					edge.producer(), edge.consumer(), edge.inputPosition())) continue;
