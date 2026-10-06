@@ -871,6 +871,7 @@ final class PlacementRelationClosure {
 	private void closePrePrivacyValueMaps() {
 		for(int pass = 0; pass <= nodes.size(); pass++) {
 			List<Node> priorNodes = nodes;
+			List<CandidateRuleKey> priorDomain = ruleKeys;
 			List<CandidateRuleFact> priorFacts = ruleFacts;
 			List<LogicalTransientInputFact> priorLogical = transientBindings;
 			ruleFacts = closeValueMapConsumersAndBoundaries(ruleFacts);
@@ -931,7 +932,18 @@ final class PlacementRelationClosure {
 				applyUpdate(physical);
 			}
 			ruleFacts = closeValueMapConsumersAndBoundaries(ruleFacts);
-			if(nodes.equals(priorNodes) && ruleFacts.equals(priorFacts)
+			if(nodes.equals(priorNodes) && ruleKeys.equals(priorDomain) && ruleFacts.equals(priorFacts)
+				&& transientBindings.equals(priorLogical))
+				return;
+			// Physical rebuilding restores Oracle templates. Complete their native
+			// grounding and CFG replay before testing this pre-privacy fixed point;
+			// a map-changing consumer cannot recover through VALUE_MAP aliases alone.
+			ClosureUpdate grounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+				shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+				ruleKeys, ruleFacts, transientBindings, cfgReplayBaseline,
+				origins, constraints, compiledInputEdges, compiledShapeFactsByHop, List.of(), loopSeedLedger);
+			applyUpdate(grounded);
+			if(nodes.equals(priorNodes) && ruleKeys.equals(priorDomain) && ruleFacts.equals(priorFacts)
 				&& transientBindings.equals(priorLogical))
 					return;
 		}
