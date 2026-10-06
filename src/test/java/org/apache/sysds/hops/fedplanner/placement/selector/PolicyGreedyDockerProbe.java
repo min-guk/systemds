@@ -61,6 +61,16 @@ public final class PolicyGreedyDockerProbe {
 			throw new IllegalStateException("DML execution returned false");
 		String planner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 		if(!args[2].equals(planner)) throw new IllegalStateException("Wrong planner: " + planner);
+		var observability = PlacementEmissionTransaction.observabilitySnapshot();
+		if(observability.runtimeFallbackCount() != 0 || observability.runtimeRepairCount() != 0)
+			throw new IllegalStateException("Runtime fallback/repair is forbidden: " + observability);
+		long fedCompute = Statistics.getCPHeavyHitterOpCodes().stream()
+			.filter(opcode -> opcode.startsWith("fed_") && !opcode.startsWith("fed_fed"))
+			.mapToLong(Statistics::getCPHeavyHitterCount).sum();
+		if(!"NONE".equals(planner) && fedCompute == 0)
+			throw new IllegalStateException("Federated validation did not execute a fed_ compute opcode");
+		System.out.println("FEDPOLICY_RUNTIME_FALLBACK=0;repair=0;fedComputeInstructions=" + fedCompute);
+		System.out.println(PlannerRuntimePlacementAudit.display().lines().findFirst().orElseThrow());
 		// Sum of per-pool high-water marks, not a simultaneous total-heap peak.
 		long heapPeaks = java.lang.management.ManagementFactory.getMemoryPoolMXBeans().stream()
 			.filter(pool -> pool.getType() == java.lang.management.MemoryType.HEAP)
