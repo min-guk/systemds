@@ -41,11 +41,13 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.parser.DMLProgram;
@@ -68,14 +70,15 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 		"A=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n";
 
-	// Pre-pruning baselines, with the audited identity update documented below.
+	// Complete legal-space baselines, with audited updates documented below.
 	private static final String PROTECTED_AGGREGATE_GOLDEN =
 		"09e2e4069fefd2f280f137b7c042182cc6a7e2e994169aca9ccc9c4c77e23ea2";
-	// Joint exact/value-map bindings change realization identities, while preserving the candidate space.
+	// d7e88516a1 preserves the full native output geometry; 0146f043e0 includes
+	// layout and exact/dynamic precision in native/transient realization identities.
 	private static final String METADATA_AND_HANDLE_GOLDEN =
-		"a1a27e283c8d239888a83553492417d0f7288b3590c47f64fc67939e187574c6";
+		"811d78e00e9566e9997c39aa8527c9a96d2e50af7575ec42f291f74c705629d6";
 	private static final String CONTROL_FLOW_GOLDEN =
-		"45aee9b3f41a20f123e7290a402eada3575d36a62e71d12dfd818acfdb23aafd";
+		"b9b2d88c077b94dd1df073861fcb4dece09d14c06370585829fe974df24e69cd";
 	// 3d0d683c1b changed only colMean's materialization ID and its consumer reference
 	// versus adaebee9cc. Keep exact action identities and support bindings in the digest.
 	private static final String UNKNOWN_WIDTH_GOLDEN =
@@ -135,6 +138,10 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 			.forEach(node -> Assert.assertTrue("a handle exception must not release formal payload",
 				node.legalAlternatives().stream().allMatch(state -> state.execType() == ExecType.FED
 					&& state.output() == FederatedOutput.FOUT)));
+		assertNativePayloadFlow(analysis, "C", 1);
+		PlacementAnalysis unpruned = analysis(script, Privacy.PRIVATE_AGGREGATE, false, false, false);
+		Assert.assertEquals("early pruning must preserve the complete function/metadata legal space",
+			semanticSnapshot(unpruned), semanticSnapshot(analysis));
 		assertGoldenAndRepeatable(METADATA_AND_HANDLE_GOLDEN, analysis, repeated);
 	}
 
@@ -161,6 +168,11 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 			.forEach(node -> Assert.assertTrue("protected CFG/phi value lost every remote alternative",
 				node.legalAlternatives().stream().anyMatch(state -> state.execType() == ExecType.FED
 					&& state.output() == FederatedOutput.FOUT)));
+		assertNativePayloadFlow(analysis, "D", 2);
+		assertNativePayloadFlow(analysis, "C", 1);
+		PlacementAnalysis unpruned = analysis(script, Privacy.PRIVATE_AGGREGATE, false, false, false);
+		Assert.assertEquals("early pruning must preserve the complete loop/branch/function legal space",
+			semanticSnapshot(unpruned), semanticSnapshot(analysis));
 		assertGoldenAndRepeatable(CONTROL_FLOW_GOLDEN, analysis, repeated);
 	}
 
@@ -295,6 +307,69 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 					fact.allowedEmissionFacts().stream().anyMatch(source -> source.derivedFoutAction() == null
 						&& source.emissionState().placementState().equals(exactSource)));
 			}
+		}
+	}
+
+	private static void assertNativePayloadFlow(PlacementAnalysis analysis, String variable,
+		int expectedWriterCount) {
+		Set<CompiledHopKey> writers = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTWRITE && variable.equals(data.getName()))
+			.map(PlacementAnalysis.HopOccurrenceProjection::key)
+			.collect(java.util.stream.Collectors.toSet());
+		Assert.assertEquals("fixture must retain every writer of " + variable, expectedWriterCount, writers.size());
+		for(CompiledHopKey writer : writers) {
+			assertNativePayloadGeometry(analysis, analysis.compiledInputEdge(writer, 0).orElseThrow().producer());
+			assertNativePayloadGeometry(analysis, writer);
+		}
+		var readers = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTREAD && variable.equals(data.getName())).toList();
+		Assert.assertFalse("fixture must read " + variable, readers.isEmpty());
+		for(var reader : readers) {
+			assertNativePayloadGeometry(analysis, reader.key());
+			var relations = analysis.logicalTransientInputsForReader(reader.key(), 0);
+			Assert.assertEquals("the reader must retain every reaching writer of " + variable, writers,
+				relations.stream().map(relation -> relation.sourceWrite())
+					.collect(java.util.stream.Collectors.toSet()));
+			for(var relation : relations) {
+				var nativeEdges = relation.compatibility().stream()
+					.filter(edge -> edge.sourceRealization().realization().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+						&& edge.readerRealization().realization().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE).toList();
+				Assert.assertFalse("every reaching writer needs native compatibility with its reader", nativeEdges.isEmpty());
+				for(var edge : nativeEdges) {
+					Assert.assertEquals(relation.sourceWrite(), edge.sourceRealization().rule().parentOccurrence());
+					Assert.assertEquals(reader.key(), edge.readerRealization().rule().parentOccurrence());
+					// Resolve the references carried by the boundary, not reconstructed references.
+					assertNativePayloadGeometry(analysis.requireExactCandidateRealization(edge.sourceRealization()));
+					assertNativePayloadGeometry(analysis.requireExactCandidateRealization(edge.readerRealization()));
+				}
+			}
+		}
+	}
+
+	private static void assertNativePayloadGeometry(PlacementAnalysis analysis, CompiledHopKey owner) {
+		var nativeOutputs = analysis.candidateRuleFacts().orderedFactsForParent(owner).stream()
+			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE).toList();
+		Assert.assertFalse("fixture must publish native payload at " + owner, nativeOutputs.isEmpty());
+		for(var realization : nativeOutputs)
+			assertNativePayloadGeometry(realization);
+	}
+
+	private static void assertNativePayloadGeometry(CandidateEmissionRealization realization) {
+		Assert.assertFalse("native output needs support", realization.supportClauses().isEmpty());
+		for(var clause : realization.supportClauses()) {
+			Assert.assertTrue("shape-preserving fixture must retain exact native geometry",
+				realization.nativeWorkerPoolLayoutExact(clause));
+			var witness = realization.nativeWorkerPoolResidencyWitness(clause);
+			Assert.assertNotNull("exact native output needs a worker map", witness);
+			Assert.assertEquals(FType.ROW, witness.fType());
+			Assert.assertEquals("native output must preserve both columns of the 4x2 payload", List.of(
+				new AnchorPartition("localhost:1234", List.of(0L, 0L), List.of(2L, 2L)),
+				new AnchorPartition("localhost:1235", List.of(2L, 0L), List.of(4L, 2L))), witness.partitions());
 		}
 	}
 
