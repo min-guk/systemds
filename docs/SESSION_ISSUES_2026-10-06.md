@@ -515,3 +515,47 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - 연속 분기의 업로드 authority는 앞선 TW가 실제 materialized output map을 전달한다는 증명을 그래프에 보존한다. 입력 anchor와 출력 map을 혼동하지 않고 exact derived-action proof/범위를 검증한다. 앞선 분기 실행 여부만으로 후보를 버리는 제안은 채택하지 않았다. exact runtime은 고정된 worker/range key를 사용하기 때문이다. 관련 positive/forged-range 9건 및 authority/cycle/branch upload 28건 isolated PASS.
 - 확대된 123개 class 통합 회귀에서 ALS/LogReg의 late physical refinement, STEP-LM의 closure/표현 한계도 확인했다. 정상적인 native-domain 증가, exact runtime WDivMM 교정, executable fact가 없는 coarse 잔재를 기존 guard가 거부하는 경우를 구별해 수정한다. 근거 없는 native emission 삭제 검증은 유지한다. 수정 전 마지막 GLM 검사는 새 joint environment 비교가 장시간 반복되어 stack을 보관하고, 이미 소스가 수정된 검증 실행을 종료했다. 이 실행은 전체 PASS로 보고하지 않는다.
 - 최종 source로 compile/unit/Docker를 다시 실행하고 별도 receipt에 기록한다. 원격 자체의 동작과 통합 변경을 구별하기 위한 baseline 재현도 진행한다. 임의 planner budget, 부분 Global 성공, runtime repair는 추가하지 않는다.
+## 구조 인증을 이용한 중간 구현 — 아래 완전 삭제 결정으로 대체됨
+
+- **문제 정의**: 정상 루프는 초기 entry 공급과 모든 reaching writer/input 관계를 강제하지만, native physical candidate 질의마다 다시 source-grounding 및 SCC 정제를 수행했다. 단순히 검사를 삭제하면 PRESENT 입력 부분집합이나 독립적인 source-free AND dependency를 잘못 수용할 수 있다.
+- **해결/의사결정 근거**: immutable StructuralContext에 후보와 무관한 입력 순서를 한 번 계산한다. entry writer 중 하나가 앞서거나 일반 연산의 모든 가능한 placement input이 앞선 경우 순서를 부여하고, 순서 없는 의존성을 가진 상위 노드는 역전파로 제외한다. 이 구조 보장이 있는 cyclic 질의는 기존 dead-dependency propagation만으로 grounding이 따라오며 별도 SCC/source pass를 생략한다. DAG에서는 false empty leaf를 먼저 제거한 뒤 동일하게 추가 grounding pass를 삭제한다. 기존 정확한 worker/range, all-reaching writer, upload authority, selected input 제약은 유지한다.
+- **수정 파일**: `NativePlacementContinuity.java`, `SearchSpaceMetrics.java`; native/real-DML/attribution 회귀 테스트. DP/Exact factor, 변수 및 비용식 변경 없음.
+- **캐시 안전성**: structural revision은 입력 순서를 재생성한다. mutable Hop의 placement-data/alias 분류를 snapshot하여 datatype/op 분류가 달라지면 동일 Hop identity라도 기존 context 재사용을 거부한다. 입력 순서가 없는 loose/recursive cyclic helper는 기존 엄격한 검사를 유지하며 permissive fallback은 추가하지 않는다.
+- **검증**: 수정 전 103 tests(실패/오류 0, 기존 skip 1). 새 loop 검사는 기존 SCC 2회 때문에 수정 전에 실패했으며 수정 후 SCC 및 PROOF_GROUNDING 호출 0. 25개 class의 확대 검증은 245 tests, 실패/오류 0, 기존 skip 8(실제 통과 237). ROW/COL/FULL nested loop의 모든 fixture candidate support를 기존 general cyclic algorithm과 정확히 비교했다. exhaustive fixture는 raw 29,400 / admitted 280 / physical 7 유지, entry upload cost의 T=1/2/10 불변성 유지. 2-worker runtime loop witness 포함. 분기, 함수 중첩 루프, zero-trip exit, entry 제거/복원, datatype 변화, 독립 seedless cycle 회귀 포함.
+- **잠재 회귀 위험/감지**: 후보가 structural graph에 없는 의존성을 만들거나 native dependency builder의 metadata 제외 조건을 바꾸면 입력 순서 증명이 무효가 될 수 있다. 구조/physical dependency builder를 함께 수정하고 nested-loop reference equality 및 negative AND/seedless tests로 감지한다. 기존 graph builder의 alternative object uniqueness를 유지해야 한다.
+- **잔여 범위**: 인증되지 않은 순환 그래프의 기존 grounding과 Greedy selected-value 검사는 유지한다. 모든 DML의 plan-space 완전성을 입증한 것은 아니다. 성능 수치는 동일 Docker 조건의 실제 결과를 확인한 후만 기록한다.
+- **상세 계획/명령/결과**: `docs/STRUCTURAL_GROUNDING_2026-10-06.md`, `.omx/structural-grounding-evidence/`.
+
+- **최종 Docker 확인**: 동일 pinned image/stage/profile/renderer의 logreg W3 WAN-Mid DP-local compile-only 전후 1회씩 모두 PASS. plan fingerprint `a220ac1a567116b566bda9a76a77ab1957aee9018185baa459d6b0098768112b`, objective bits `4682065009762557211`, raw values 35,873, raw factor cells 8,759,394 및 reduced counts 일치. lowering mismatches/missing physical/missing synthetic 모두 0. optimizer는 양쪽 RESOURCE stop이므로 전역 최적성 증거는 아니다. compile 29.371→29.294초, analysis 19.962→21.301초의 단일 cold sample로 속도 향상을 주장하지 않는다. Maven package 및 최종 diff check PASS.
+
+## 재귀 함수 제외: candidate/DP source-grounding 코드 완전 삭제
+
+- **문제/범위 확정**: 사용자가 재귀 함수는 지원 범위 밖이라고 명시했다. 이전에 추가한 구조 인증 및 uncertified fallback은 이 범위에 필요 없으므로 제거했다. 위 중간 구현의 설명·검증은 이력이며 현재 설계는 이 절과 상세 보고서를 따른다.
+- **해결**: NativePlacementContinuity의 candidate SCC grounding/refinement, DAG grounding 및 coarse Boolean source 전파를 삭제했다. 추가했던 orderedInputClosure/inputKinds 인증도 없다. 기존 physical leaf authority, worker/layout, exact input bindings, dead dependency pruning, 최종 entry/input/fn-boundary factors는 유지했다. DP factor/state/비용식 및 runtime 변경 없음. SCC recording 및 mutable counters 삭제; 과거 diagnostic schema 값만 상수 0으로 유지한다.
+- **보장 근거**: 비재귀 프로그램의 entry/입력 관계는 기존 최종 경계 제약이 강제한다. 임시 Native context가 함수 반환 entry를 모두 포함한다고 가정하지 않는다. 함수 반환과 ordinary backedge의 union은 LogicalBoundaryRealizations가 유지한다. Native helper는 완전한 프로그램 유도 가능성 검사가 아니라 조건부 물리 호환성 검사다.
+- **회귀/검증**: 27 classes, 259 tests, failure/error 0, 기존 skip 8(251 pass). 완전히 미정의인 loop 변수/상호 미정의 변수의 frontend 거부, 일반 함수 반환→loop 초기값의 경계 union, branch/nested/zero-trip, finite 29,400→280→7 plan-space oracle, 초기 업로드 비용 불변성 및 2-worker 실제 실행 포함. 일반 함수 반환 테스트는 삭제 전 SHA-검증 JAR에도 PASS. package 및 diff check PASS. 독립 architecture review CLEAR.
+- **시험 과정의 교정**: 한쪽 분기에서만 정의한 변수는 frontend가 반드시 거부하지 않는다. 기존 grounding도 그 보장을 하지 않았으므로 잘못된 시험 가정을 제거했다. source-free 인공 helper cycle 거부는 새 helper 계약 밖이며, 물리적 negative coverage는 초기 entry worker가 불일치하는 유효 loop로 유지했다. private 함수 반환 fixture의 배치 불가를 우회하는 production 변경은 하지 않았다.
+- **잔여 범위/위험**: Greedy(FedAll/Heuristic)의 별도 selected-value 검사는 그대로다. 재귀 함수 및 모든 경로의 definite assignment 보장을 새로 제공하지 않는다. 새 종류의 cyclic 프로그램 표현을 지원하면 entry/boundary 계약을 다시 검토해야 한다. 전체 DML 완전성이나 성능 향상을 주장하지 않는다.
+- **보고서**: `docs/STRUCTURAL_GROUNDING_2026-10-06.md`; 증거 `.omx/structural-grounding-evidence/deletion-*`.
+
+- **완전 삭제본 최종 Docker**: baseline/deleted 모두 PASS, 비코드 manifest identity 전부 동일, 차이는 의도한 production 2파일과 JAR뿐. pruning receipt 전체 일치(plan fingerprint `a220ac1a567116b566bda9a76a77ab1957aee9018185baa459d6b0098768112b`, objective bits `4682065009762557211`, raw 35,873/8,759,394, reduced 25,952/5,742,281). lowering 불일치/누락 모두 0, cleanup 완료. RESOURCE stop 동일. compile 29.371068/29.872102초, analysis 19.962071579/19.693095447초이며 단일 표본으로 속도 향상 주장 없음. 최종 source hash와 실행 manifest 일치. 비교 증거: `deletion-docker-comparison.json`.
+
+### source-grounding 삭제의 origin/main 통합 검증
+
+- **상태/문제**: 사용자 요청으로 `origin/main`에 commit/push하기 전 최신 `49509ab7f8`로 rebase했다. 함수 경계/joint input 구현이 추가되어 기존 baseline과 달라졌다. SESSION 문서는 양쪽 추가 내용을 보존했고 production은 자동 병합됐다. `_PLACEMENT` native 지원, 전체 entry/함수 입력 제약 및 joint physical-map 제약을 유지했다. 독립 interaction review CLEAR.
+- **검증**: 36 classes / 329 tests 중 317 pass, 기존 skip 8, failure 4, error 0. 네 실패를 모두 unmodified `49509ab7f8` production class로 재현했다. Native existential certificate 시험은 expected1/actual2, IndependentCompletePlacementSpace의 세 시험은 VALUE_MAP의 null attached anchor를 `geometry` helper가 거부한다. source-grounding 제거로 생긴 신규 실패는 확인되지 않았다. 기존 시험을 완화/제외하거나 production을 우회하지 않았다.
+- **수정 범위/판단**: source-grounding 변경은 production 2파일, 해당 회귀/보고서뿐이다. 최신 main의 새로운 VALUE_MAP 표현에 맞춘 일반 oracle 수정은 별도 후속 범위로 남긴다. 기존 테스트 실패를 통과로 보고하지 않는다.
+- **새 main 기준 oracle**: loop-entry 32,928 raw / 292 admitted / 10 physical 조합 PASS. 이전 29,400/280/7은 과거 baseline에 대한 기록이다. 함수/joint 경계, 비용, Native, undefined-input 및 실제 loop 실행 회귀 포함. package PASS.
+- **잔여 이슈/잠재 위험**: 위 네 upstream 테스트 기대값 불일치가 남는다. 별도 후속 수정 시 VALUE_MAP의 선택된 입력 binding으로 map을 해석하고 독립 oracle 공간을 갱신해야 하며, null anchor를 임의의 map으로 바꾸어 통과시키면 안 된다. 검증 로그: `.omx/structural-grounding-evidence/main-integration-*`, `main-baseline-*.log`.
+
+### main 통합 중 발견한 pre-privacy replay 인덱스 오류 수정
+
+- **문제/원인**: 최신 unmodified main `49509ab7f8` 및 source-grounding 통합본 모두 logreg Docker compile에서 `closePrePrivacyValueMaps:899`의 `Index 756 out of bounds for length 756` 오류. old fact list 크기로 줄어든 replay fact list를 위치별 접근했다.
+- **해결/근거**: 이미 사용하는 `changedCandidateOccurrences(before, after)`로 변경된 owner를 계산한다. 추가/삭제/재정렬을 의미 기준으로 비교하고 기존 replay.changedOrdinals의 union도 유지한다. 후보를 버리는 guard/fallback 없이 closure 갱신 추적을 바로잡는다.
+- **수정 파일**: `PlacementRelationClosure.java`, `DirectedDirectClosureDirtyConeTest.java`. source-grounding 제거와 별도 커밋으로 구분한다.
+- **검증**: shrink/reorder helper 계약을 포함한 focused class 22 tests PASS, 이어서 관련 16 classes 134/134 PASS(오류/skip 0), 독립 설계 검토 CLEAR. helper 시험만으로 기존 호출부의 red/green을 주장하지 않으며, 실제 Docker compile 재실행으로 확인한다.
+- **잠재 회귀/잔여 문제**: owner identity와 전체 사실 집합의 의미를 보존해야 한다. 기존 네 VALUE_MAP oracle 기대값 불일치는 별도 미해결이며 이 수정으로 완화/제외하지 않는다. baseline Docker 증거 `.omx/structural-grounding-evidence/main-baseline-docker.log`; 수정 전 통합본 `main-integration-docker.log`.
+
+- **수정본 최종 Docker runtime**: `joint_loop_toggle` 및 `joint_function_calls` 모두 PASS, CP/FED 숫자 fingerprint 일치, model-proof preflight PASS, runtime conversion 위반 0. 증거 `/grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006/grounding-main-final-20261006/result.json`. Package PASS. 큰 logreg compile은 인덱스 오류를 넘었으나 이후 cost surface에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. factor 한도나 후보 공간을 변경해 우회하지 않으며 기준 빌드 비교로 귀속을 확인한다.
+
+- **최종 귀속 확인**: 최신 main에 인덱스 수정만 적용한 기준 빌드도 같은 cost-surface 검증 지점에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. 동일 Docker/input/profile, 공통 replay 수정, 차이는 NativePlacementContinuity/SearchSpaceMetrics 두 파일뿐임을 manifest로 확인했다. 기존 인덱스 오류는 양쪽에서 제거됐으며 큰 모델 한계는 upstream 후속 과제로 남긴다. 작은 loop/function Docker runtime 성공과 큰 logreg compile 실패를 구분한다. 컨테이너 cleanup 완료, 최종 source hash 일치. 증거 `main-final-docker-attribution.json`.

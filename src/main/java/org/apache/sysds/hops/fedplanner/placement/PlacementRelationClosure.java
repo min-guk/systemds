@@ -895,9 +895,7 @@ final class PlacementRelationClosure {
 			for(int ordinal : replay.changedOrdinals())
 				if(ordinal >= 0 && ordinal < occurrences.size())
 					changedReaders.add(replay.nodes().get(ordinal).key());
-			for(int slot = 0; slot < ruleFacts.size(); slot++)
-				if(!ruleFacts.get(slot).equals(replay.facts().get(slot)))
-					changedReaders.add(ruleFacts.get(slot).key().parentOccurrence());
+			changedReaders.addAll(changedCandidateOccurrences(ruleFacts, replay.facts()));
 			applyUpdate(replay);
 			if(!changedReaders.isEmpty()) {
 				Map<CompiledHopKey,Integer> ordinalByKey = new IdentityHashMap<>();

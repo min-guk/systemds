@@ -35,6 +35,8 @@ public final class SearchSpaceMetrics {
 		CONTEXT_OBSERVER,
 		PROOF_TOPOLOGY,
 		PROOF_OVERLAY,
+		PROOF_DEPENDENCY_PRUNING,
+		// Retained for historical diagnostic schema compatibility; no execution phase.
 		PROOF_GROUNDING,
 		SUPPORT_PRODUCT_RELATION_MATERIALIZATION,
 		PUBLIC_PROOF_MATERIALIZATION,
@@ -110,11 +112,6 @@ public final class SearchSpaceMetrics {
 	private long dependencyNotifications;
 	private long alternativesRemoved;
 	private long ownerCompactionElementsScanned;
-	private long sccInvocations;
-	private long sccStatesScanned;
-	private long sccAlternativesScanned;
-	private long sccEdgesScanned;
-	private long sccMaxRefinementDepth;
 	private long supportPrefixes;
 	private long supportConflictPrefixes;
 	private long contradictoryClausePins;
@@ -271,8 +268,7 @@ public final class SearchSpaceMetrics {
 		proofAlternativesBuilt = proofDependencyEdgesBuilt = 0;
 		acyclicProofGraphs = cyclicProofGraphs = acyclicAlternativesRemoved = proofRowsExamined = 0;
 		deadStatesQueued = dependencyNotifications = alternativesRemoved = 0;
-		ownerCompactionElementsScanned = sccInvocations = sccStatesScanned = 0;
-		sccAlternativesScanned = sccEdgesScanned = sccMaxRefinementDepth = 0;
+		ownerCompactionElementsScanned = 0;
 		supportPrefixes = supportConflictPrefixes = contradictoryClausePins = 0;
 		supportLeaves = uniqueProofs = duplicateProofs = 0;
 		supportProductDescriptorsExpanded = supportProductDescriptorsReused = 0;
@@ -524,14 +520,6 @@ public final class SearchSpaceMetrics {
 	void recordAlternativeRemoved() { alternativesRemoved++; }
 	void recordOwnerElementsScanned(long count) { ownerCompactionElementsScanned += count; }
 
-	void recordSccScan(long states, long alternatives, long dependencyEdges, int refinementDepth) {
-		sccInvocations++;
-		sccStatesScanned += states;
-		sccMaxRefinementDepth = Math.max(sccMaxRefinementDepth, refinementDepth);
-		sccAlternativesScanned += alternatives;
-		sccEdgesScanned += dependencyEdges;
-	}
-
 	void recordSupportPrefix(int depth) { supportPrefixes++; }
 	void recordSupportConflictPrefix() { supportConflictPrefixes++; }
 	void recordContradictoryClausePin() { contradictoryClausePins++; }
@@ -660,8 +648,8 @@ public final class SearchSpaceMetrics {
 			proofAlternativesBuilt, proofDependencyEdgesBuilt, acyclicProofGraphs,
 			cyclicProofGraphs, acyclicAlternativesRemoved, proofRowsExamined, deadStatesQueued,
 			dependencyNotifications, alternativesRemoved, ownerCompactionElementsScanned,
-			sccInvocations, sccStatesScanned, sccAlternativesScanned, sccEdgesScanned,
-			sccMaxRefinementDepth, supportPrefixes, supportConflictPrefixes,
+			// Historical SCC counters remain zero in the diagnostic schema.
+			0, 0, 0, 0, 0, supportPrefixes, supportConflictPrefixes,
 			contradictoryClausePins, supportLeaves, uniqueProofs, duplicateProofs,
 			supportProductDescriptorsExpanded, supportProductDescriptorsReused,
 			relocationPrefixes, relocationLeaves, relocationPeakDepth,

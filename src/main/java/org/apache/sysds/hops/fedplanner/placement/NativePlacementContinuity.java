@@ -77,7 +77,11 @@ import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
-/** Conservative proof that native FED/FOUT execution preserves one physical worker pool. */
+/**
+ * Conditional physical compatibility for native FED/FOUT candidates in validated
+ * nonrecursive programs. Final entry/input relations retain program dependencies;
+ * this helper does not independently check reachability from program sources.
+ */
 final class NativePlacementContinuity {
 	private static final Set<String> NATIVE_UNARY_ELEMWISE_OPCODES =
 		Set.copyOf(new Rulesets.UnaryElemwiseRule().opcodes());
@@ -128,7 +132,7 @@ final class NativePlacementContinuity {
 	private long supportMemoRetainedTemplates;
 	private long supportMemoRetainedEstimatedBytes;
 	// Acyclic child components retain one immutable exact relation DAG while their
-	// grounded boundary rows provide the fast path. The complete footprint guards
+	// supported boundary rows provide the fast path. The complete footprint guards
 	// the query-local root pin and revision invalidation.
 	private final Map<CandidateProofState,AcyclicComponentSummary> acyclicComponentMemo;
 	private final int acyclicComponentMaxEntries;
@@ -796,25 +800,13 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,ProofNode> proof = new IdentityHashMap<>();
 		for(CompiledHopKey source : sources)
 			buildProof(Objects.requireNonNull(source, "source"), witness, proof);
-		if(proof.values().stream().anyMatch(node -> !node.valid))
+		if(proof.values().stream().anyMatch(node -> !node.valid
+			|| !node.directGround && node.dependencies.isEmpty()))
 			return false;
-
-		Map<CompiledHopKey,Boolean> grounded = new IdentityHashMap<>();
-		proof.forEach((key, node) -> grounded.put(key, node.directGround));
-		boolean changed;
-		do {
-			changed = false;
-			for(var entry : proof.entrySet()) {
-				if(grounded.get(entry.getKey()))
-					continue;
-				if(entry.getValue().dependencies.stream().anyMatch(key -> grounded.getOrDefault(key, false))) {
-					grounded.put(entry.getKey(), true);
-					changed = true;
-				}
-			}
-		}
-		while(changed);
-		return proof.keySet().stream().allMatch(key -> grounded.getOrDefault(key, false));
+		// Validated nonrecursive programs obtain their entry/input obligations from
+		// the final boundary relations. This helper checks physical compatibility;
+		// it does not independently establish complete program derivability.
+		return true;
 	}
 
 	NativeContinuityProof proveCandidate(CandidateRealizationReference source,
@@ -1215,18 +1207,20 @@ final class NativePlacementContinuity {
 			if(metrics != null)
 				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_OVERLAY, overlayStarted);
 		}
-		SearchSpaceMetrics.PhaseToken groundingStarted = metrics == null ? null
-			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_GROUNDING);
+		SearchSpaceMetrics.PhaseToken pruningStarted = metrics == null ? null
+			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_DEPENDENCY_PRUNING);
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable;
-		Set<CandidateProofState> grounded;
+		Set<CandidateProofState> supported;
 		long acyclicRemoved = 0;
 		try {
 			if(traversal.cycleDetected) {
 				Map<CandidateProofState,AcyclicComponentFootprint> independentChildren =
 					rootIndependentChildFootprints(root, graph, traversal);
 				viable = pruneDeadAlternatives(graph);
-				grounded = groundedCandidateStates(viable);
-			cacheAcyclicRootChildren(independentChildren, viable, grounded,
+				// Mandatory entry/input relations are enforced by the final program
+				// boundaries. Only physical dependency viability is needed here.
+				supported = viableCandidateStates(viable);
+			cacheAcyclicRootChildren(independentChildren, viable, supported,
 				generation == null ? null : root.key());
 			}
 			else {
@@ -1236,8 +1230,9 @@ final class NativePlacementContinuity {
 						: acyclicRootChildFootprints(root, graph, traversal);
 				acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder);
 				viable = graph;
-				grounded = groundedAcyclicCandidateStates(viable, traversal.completionOrder);
-			cacheAcyclicRootChildren(childFootprints, viable, grounded,
+				// In a DAG every surviving row reaches a direct leaf after dead pruning.
+				supported = viableCandidateStates(viable);
+			cacheAcyclicRootChildren(childFootprints, viable, supported,
 				generation == null ? null : root.key());
 			}
 			if(metrics != null)
@@ -1245,44 +1240,44 @@ final class NativePlacementContinuity {
 		}
 		finally {
 			if(metrics != null)
-				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_GROUNDING, groundingStarted);
+				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_DEPENDENCY_PRUNING, pruningStarted);
 		}
 		SearchSpaceMetrics.PhaseToken supportStarted = metrics == null ? null
 			: metrics.startPhase(SearchSpaceMetrics.Phase.SUPPORT_PRODUCT_RELATION_MATERIALIZATION);
 		try {
-		Map<CandidateProofState,List<CandidateRealizationReference>> groundedReferences =
+		Map<CandidateProofState,List<CandidateRealizationReference>> supportedReferences =
 			new java.util.HashMap<>();
-		Map<CandidateProofState,Boolean> directlyGrounded = new java.util.HashMap<>();
+		Map<CandidateProofState,Boolean> directlySupported = new java.util.HashMap<>();
 		Set<CandidateSupportTemplate> proofs = new LinkedHashSet<>();
 		Set<List<List<CandidateRealizationInputBinding>>> expandedSupportProducts =
 			new java.util.HashSet<>();
 		long[] rawProofs = metrics == null ? null : new long[] {0};
 		DurableAnchorKey outputWitness = witness.asAnchor(
 			"native-proof-output:" + source.rule().parentOccurrence().normalizedSignature());
-		if(grounded.contains(root))
+		if(supported.contains(root))
 			for(SelectedCandidateProof alternative : viable.getOrDefault(root, List.of())) {
 				if((!alternative.directGround && alternative.dependencies.isEmpty())
-					|| !alternative.dependencies.stream().allMatch(dependency -> grounded.contains(dependency.state())))
+					|| !alternative.dependencies.stream().allMatch(dependency -> supported.contains(dependency.state())))
 					continue;
 				List<List<CandidateRealizationInputBinding>> immediateOptions = new ArrayList<>();
 				boolean complete = true;
 				for(CandidateProofDependency dependency : alternative.dependencies) {
 					if(dependency.inputPosition() < 0)
 						continue;
-					// A query-pinned generated recurrence may prove its SCC, but the
+					// A query-pinned generated recurrence may be physically compatible, but the
 					// proposed output is not an executable premise for its own receipt.
 					if(generation != null && dependency.state().equals(root)) {
 						complete = false;
 						break;
 					}
-					List<CandidateRealizationReference> options = groundedReferences.computeIfAbsent(
+					List<CandidateRealizationReference> options = supportedReferences.computeIfAbsent(
 						dependency.state(), state -> canonicalReferences(viable.getOrDefault(state, List.of()).stream()
 							.filter(option -> option.realization != null)
 							.filter(option -> (option.directGround || !option.dependencies.isEmpty())
-								&& option.dependencies.stream().allMatch(child -> grounded.contains(child.state())))
+								&& option.dependencies.stream().allMatch(child -> supported.contains(child.state())))
 							.map(SelectedCandidateProof::realization).toList()));
 					if(options.isEmpty()) {
-						if(!directlyGrounded.computeIfAbsent(dependency.state(), state -> viable
+						if(!directlySupported.computeIfAbsent(dependency.state(), state -> viable
 							.getOrDefault(state, List.of()).stream().anyMatch(option -> option.directGround))) {
 							complete = false;
 							break;
@@ -1311,7 +1306,7 @@ final class NativePlacementContinuity {
 			}
 		List<CandidateSupportTemplate> distinct = List.copyOf(proofs);
 		if(distinct.isEmpty())
-			traceFailedCandidateSupport(source, root, graph, grounded);
+			traceFailedCandidateSupport(source, root, graph, supported);
 		if(metrics != null)
 			metrics.recordProofResult(rawProofs[0], distinct.size());
 		Set<CompiledHopKey> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -1340,7 +1335,7 @@ final class NativePlacementContinuity {
 
 	private void traceFailedCandidateSupport(CandidateRealizationReference source,
 		CandidateProofState root, Map<CandidateProofState,List<SelectedCandidateProof>> graph,
-		Set<CandidateProofState> grounded) {
+		Set<CandidateProofState> supported) {
 		Hop owner = originsByKey.get(source.rule().parentOccurrence());
 		if(!FederatedPlannerTrace.shouldTrace(owner))
 			return;
@@ -1348,7 +1343,7 @@ final class NativePlacementContinuity {
 			.append(source.rule().parentOccurrence().callSitePath()).append(':')
 			.append(source.rule().parentOccurrence().emittedHopInstance())
 			.append("|opcode=").append(owner.getOpString())
-			.append("|rootGrounded=").append(grounded.contains(root))
+			.append("|rootSupported=").append(supported.contains(root))
 			.append("|rootPinnedHash=").append(source.hashCode())
 			.append("|rootDeclared=").append(declaresExactRealization(
 				source.rule().parentOccurrence(), source)).append("|states=[");
@@ -1356,7 +1351,7 @@ final class NativePlacementContinuity {
 		for(var entry : graph.entrySet()) {
 			CandidateProofState state = entry.getKey();
 			List<SelectedCandidateProof> alternatives = entry.getValue();
-			if(state != root && grounded.contains(state) && !alternatives.isEmpty())
+			if(state != root && supported.contains(state) && !alternatives.isEmpty())
 				continue;
 			if(emitted++ >= 6)
 				break;
@@ -1374,7 +1369,7 @@ final class NativePlacementContinuity {
 				.append("|witness=").append(state.witness().fType).append('/')
 				.append(state.witness().exactPartitionRanges ? "exact" : "dynamic")
 				.append("|legal=").append(node == null ? List.of() : node.legalAlternatives())
-				.append("|grounded=").append(grounded.contains(state))
+				.append("|supported=").append(supported.contains(state))
 				.append("|alternatives=").append(alternatives.size()).append('[');
 			for(int alternativeIndex = 0;
 				alternativeIndex < Math.min(6, alternatives.size()); alternativeIndex++) {
@@ -1433,7 +1428,7 @@ final class NativePlacementContinuity {
 			return graph;
 		// Dense IDs are query-local aliases for the complete state equality, not a
 		// structural quotient. Keep every original key (including dead states) for
-		// downstream SCC grounding and revision invalidation.
+		// support extraction and revision invalidation.
 		Map<CandidateProofState,Integer> stateIds = new java.util.HashMap<>();
 		int slotCount = 0, edgeCount = 0;
 		for(var entry : graph.entrySet()) {
@@ -1573,27 +1568,14 @@ final class NativePlacementContinuity {
 		return removed;
 	}
 
-	private static Set<CandidateProofState> groundedAcyclicCandidateStates(
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		List<CandidateProofState> completionOrder) {
-		Set<CandidateProofState> grounded = new java.util.HashSet<>();
-		for(CandidateProofState state : completionOrder)
-			for(SelectedCandidateProof alternative : viable.getOrDefault(state, List.of())) {
-				boolean supported = true;
-				boolean hasGroundPath = alternative.directGround;
-				for(CandidateProofDependency dependency : alternative.dependencies) {
-					if(!grounded.contains(dependency.state())) {
-						supported = false;
-						break;
-					}
-					hasGroundPath = true;
-				}
-				if(supported && hasGroundPath) {
-					grounded.add(state);
-					break;
-				}
-			}
-		return grounded;
+	private static Set<CandidateProofState> viableCandidateStates(
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable) {
+		Set<CandidateProofState> states = new java.util.HashSet<>();
+		viable.forEach((state, alternatives) -> {
+			if(!alternatives.isEmpty())
+				states.add(state);
+		});
+		return states;
 	}
 
 	private void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
@@ -1636,172 +1618,6 @@ final class NativePlacementContinuity {
 		}
 	}
 
-	private Set<CandidateProofState> groundedCandidateStates(
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable) {
-		List<Set<CandidateProofState>> maximalComponents = new ArrayList<>();
-		Map<CandidateProofState,Integer> indices = new java.util.HashMap<>();
-		Map<CandidateProofState,Integer> lowLinks = new java.util.HashMap<>();
-		java.util.ArrayDeque<CandidateProofState> stack = new java.util.ArrayDeque<>();
-		Set<CandidateProofState> onStack = new java.util.HashSet<>();
-		int[] nextIndex = {0};
-		long[] scan = metrics == null ? null : new long[3];
-		for(CandidateProofState state : viable.keySet())
-			if(!indices.containsKey(state))
-				collectStronglyConnectedComponents(state, viable, indices, lowLinks,
-					stack, onStack, nextIndex, maximalComponents, scan);
-		if(metrics != null)
-			metrics.recordSccScan(scan[0], scan[1], scan[2], 0);
-		Set<CandidateProofState> grounded = new java.util.HashSet<>();
-		// Tarjan closes every owner-to-dependency edge before its owner component,
-		// so this list is dependency-first. A component rejected for an ungrounded
-		// external dependency cannot be revived by a later sibling.
-		for(Set<CandidateProofState> component : maximalComponents)
-			groundEligibleComponents(component, viable, grounded, 1);
-		return grounded;
-	}
-
-	private boolean groundEligibleComponents(Set<CandidateProofState> component,
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		Set<CandidateProofState> grounded, int refinementDepth) {
-		if(component.isEmpty() || grounded.containsAll(component))
-			return false;
-		if(component.size() == 1)
-			return groundEligibleSingleton(component.iterator().next(), viable, grounded);
-		Map<CandidateProofState,List<SelectedCandidateProof>> eligible = new java.util.LinkedHashMap<>();
-		boolean relationUnchanged = true;
-		boolean everyStateSupported = true;
-		boolean hasGroundPath = false;
-		for(CandidateProofState state : component) {
-			List<SelectedCandidateProof> alternatives = viable.getOrDefault(state, List.of());
-			List<SelectedCandidateProof> survivors = null;
-			for(int index = 0; index < alternatives.size(); index++) {
-				SelectedCandidateProof alternative = alternatives.get(index);
-				boolean supported = alternative.directGround || !alternative.dependencies.isEmpty();
-				boolean alternativeHasGroundPath = alternative.directGround;
-				for(CandidateProofDependency dependency : alternative.dependencies) {
-					CandidateProofState dependencyState = dependency.state();
-					if(component.contains(dependencyState))
-						continue;
-					if(!grounded.contains(dependencyState)) {
-						supported = false;
-						break;
-					}
-					alternativeHasGroundPath = true;
-				}
-				if(supported) {
-					if(survivors != null)
-						survivors.add(alternative);
-					// A direct-looking alternative cannot seed the SCC until every AND dependency is eligible.
-					hasGroundPath |= alternativeHasGroundPath;
-				}
-				else {
-					relationUnchanged = false;
-					if(survivors == null)
-						survivors = new ArrayList<>(alternatives.subList(0, index));
-				}
-			}
-			List<SelectedCandidateProof> allowed = survivors == null ? alternatives : List.copyOf(survivors);
-			eligible.put(state, allowed);
-			everyStateSupported &= !allowed.isEmpty();
-		}
-		// Retaining every exact alternative leaves this maximal SCC's induced edge relation unchanged.
-		// Any rejection, even of a redundant edge, still takes the existing refinement path.
-		if(relationUnchanged)
-			return everyStateSupported && hasGroundPath && grounded.addAll(component);
-		List<Set<CandidateProofState>> refined = stronglyConnectedComponents(eligible, refinementDepth);
-		if(refined.size() == 1 && refined.get(0).size() == component.size())
-			return everyStateSupported && hasGroundPath && grounded.addAll(component);
-		boolean changed = false;
-		for(Set<CandidateProofState> subcomponent : refined)
-			changed |= groundEligibleComponents(subcomponent, viable, grounded, refinementDepth + 1);
-		return changed;
-	}
-
-	private static boolean groundEligibleSingleton(CandidateProofState state,
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		Set<CandidateProofState> grounded) {
-		for(SelectedCandidateProof alternative : viable.getOrDefault(state, List.of())) {
-			if(!alternative.directGround && alternative.dependencies.isEmpty())
-				continue;
-			boolean supported = true;
-			boolean hasGroundPath = alternative.directGround;
-			for(CandidateProofDependency dependency : alternative.dependencies) {
-				if(state.equals(dependency.state()))
-					continue;
-				if(!grounded.contains(dependency.state())) {
-					supported = false;
-					break;
-				}
-				hasGroundPath = true;
-			}
-			if(supported && hasGroundPath)
-				return grounded.add(state);
-		}
-		return false;
-	}
-
-	private List<Set<CandidateProofState>> stronglyConnectedComponents(
-		Map<CandidateProofState,List<SelectedCandidateProof>> graph, int refinementDepth) {
-		List<Set<CandidateProofState>> components = new ArrayList<>();
-		Map<CandidateProofState,Integer> indices = new java.util.HashMap<>();
-		Map<CandidateProofState,Integer> lowLinks = new java.util.HashMap<>();
-		java.util.ArrayDeque<CandidateProofState> stack = new java.util.ArrayDeque<>();
-		Set<CandidateProofState> onStack = new java.util.HashSet<>();
-		int[] nextIndex = {0};
-		long[] scan = metrics == null ? null : new long[3];
-		for(CandidateProofState state : graph.keySet())
-			if(!indices.containsKey(state))
-				collectStronglyConnectedComponents(state, graph, indices, lowLinks,
-					stack, onStack, nextIndex, components, scan);
-		if(metrics != null)
-			metrics.recordSccScan(scan[0], scan[1], scan[2], refinementDepth);
-		return components;
-	}
-
-	private static void collectStronglyConnectedComponents(CandidateProofState state,
-		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		Map<CandidateProofState,Integer> indices, Map<CandidateProofState,Integer> lowLinks,
-		java.util.ArrayDeque<CandidateProofState> stack, Set<CandidateProofState> onStack,
-		int[] nextIndex, List<Set<CandidateProofState>> components, long[] scan) {
-		int index = nextIndex[0]++;
-		indices.put(state, index);
-		lowLinks.put(state, index);
-		stack.push(state);
-		onStack.add(state);
-		List<SelectedCandidateProof> alternatives = viable.getOrDefault(state, List.of());
-		if(scan != null) {
-			scan[0]++;
-			scan[1] += alternatives.size();
-		}
-		for(SelectedCandidateProof alternative : alternatives) {
-			if(scan != null)
-				scan[2] += alternative.dependencies.size();
-			for(CandidateProofDependency dependency : alternative.dependencies) {
-				CandidateProofState successor = dependency.state();
-				if(!viable.containsKey(successor))
-					continue;
-				if(!indices.containsKey(successor)) {
-					collectStronglyConnectedComponents(successor, viable, indices, lowLinks,
-						stack, onStack, nextIndex, components, scan);
-					lowLinks.put(state, Math.min(lowLinks.get(state), lowLinks.get(successor)));
-				}
-				else if(onStack.contains(successor))
-					lowLinks.put(state, Math.min(lowLinks.get(state), indices.get(successor)));
-			}
-		}
-		if(!lowLinks.get(state).equals(indices.get(state)))
-			return;
-		Set<CandidateProofState> component = new java.util.LinkedHashSet<>();
-		CandidateProofState member;
-		do {
-			member = stack.pop();
-			onStack.remove(member);
-			component.add(member);
-		}
-		while(!member.equals(state));
-		components.add(component);
-	}
-
 	private void buildCandidateProofGraph(CandidateProofState state, CandidateProofState root,
 		GenerationRoot generation,
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph, CandidateProofTraversal traversal,
@@ -1818,10 +1634,10 @@ final class NativePlacementContinuity {
 		AcyclicComponentSummary shared = generatedRoot
 			? null : reusableAcyclicComponent(state, fixed.keySet());
 		if(shared != null) {
-			graph.put(state, shared.groundedAlternatives);
+			graph.put(state, shared.supportedAlternatives);
 			traversal.reusedComponents.put(state, shared);
 			if(graphWork != null)
-				graphWork[0] += shared.groundedAlternatives.size();
+				graphWork[0] += shared.supportedAlternatives.size();
 			traversal.completionOrder.add(state);
 			return;
 		}
@@ -1830,6 +1646,13 @@ final class NativePlacementContinuity {
 			List<SelectedCandidateProof> alternatives = candidateProofAlternatives(
 				state.key(), state.realization(), state.realizationHandle(), state.witness(),
 				state.templateRoot(), fixed, fixedHandles, generatedRoot ? generation : null);
+			// An empty non-source row supplies nothing. Remove it before dependency
+			// pruning so its consumers cannot survive on a fictitious leaf. This also
+			// covers generated and provisional template rows.
+			if(alternatives.stream().anyMatch(alternative -> !alternative.directGround
+				&& alternative.dependencies.isEmpty()))
+				alternatives = alternatives.stream().filter(alternative -> alternative.directGround
+					|| !alternative.dependencies.isEmpty()).toList();
 			graph.put(state, alternatives);
 			if(graphWork != null) {
 				graphWork[0] += alternatives.size();
@@ -1924,33 +1747,33 @@ final class NativePlacementContinuity {
 	private void cacheAcyclicRootChildren(
 		Map<CandidateProofState,AcyclicComponentFootprint> childFootprints,
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		Set<CandidateProofState> grounded, CompiledHopKey generatedRoot) {
+		Set<CandidateProofState> supported, CompiledHopKey generatedRoot) {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 			|| acyclicComponentMaxAlternatives == 0)
 			return;
 		for(var entry : childFootprints.entrySet())
 			if(generatedRoot == null || !entry.getValue().occurrences.contains(generatedRoot))
-				cacheAcyclicComponent(entry.getKey(), entry.getValue(), viable, grounded);
+				cacheAcyclicComponent(entry.getKey(), entry.getValue(), viable, supported);
 	}
 
 	private void cacheAcyclicComponent(CandidateProofState child, AcyclicComponentFootprint footprint,
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		Set<CandidateProofState> grounded) {
+		Set<CandidateProofState> supported) {
 		long retainedStates = footprint.retainedStates;
 		if(retainedStates > acyclicComponentMaxStates)
 			return;
-		List<SelectedCandidateProof> groundedAlternatives = new ArrayList<>();
-		if(grounded.contains(child))
+		List<SelectedCandidateProof> supportedAlternatives = new ArrayList<>();
+		if(supported.contains(child))
 			for(SelectedCandidateProof alternative : viable.getOrDefault(child, List.of()))
 				if((alternative.directGround || !alternative.dependencies.isEmpty())
 					&& alternative.dependencies.stream().allMatch(dependency ->
-						grounded.contains(dependency.state()))) {
-					if(groundedAlternatives.size() >= acyclicComponentMaxAlternatives)
+						supported.contains(dependency.state()))) {
+					if(supportedAlternatives.size() >= acyclicComponentMaxAlternatives)
 						return; // Oversized boundary: exact recomputation is the safe fallback.
-					groundedAlternatives.add(new SelectedCandidateProof(alternative.realization,
+					supportedAlternatives.add(new SelectedCandidateProof(alternative.realization,
 						List.of(), true, alternative.witness));
 				}
-		AcyclicComponentSummary summary = new AcyclicComponentSummary(groundedAlternatives,
+		AcyclicComponentSummary summary = new AcyclicComponentSummary(supportedAlternatives,
 			footprint.occurrences, retainedStates);
 		cacheAcyclicSummary(child, summary);
 	}
@@ -1959,28 +1782,28 @@ final class NativePlacementContinuity {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 			|| acyclicComponentMaxAlternatives == 0
 			|| summary.retainedStates > acyclicComponentMaxStates
-			|| summary.groundedAlternatives.size() > acyclicComponentMaxAlternatives)
+			|| summary.supportedAlternatives.size() > acyclicComponentMaxAlternatives)
 			return;
 		long retainedStates = summary.retainedStates;
-		List<SelectedCandidateProof> groundedAlternatives = summary.groundedAlternatives;
+		List<SelectedCandidateProof> supportedAlternatives = summary.supportedAlternatives;
 		AcyclicComponentSummary prior = acyclicComponentMemo.remove(child);
 		if(prior != null) {
 			acyclicComponentRetainedStates -= prior.retainedStates;
-			acyclicComponentRetainedAlternatives -= prior.groundedAlternatives.size();
+			acyclicComponentRetainedAlternatives -= prior.supportedAlternatives.size();
 		}
 		while(!acyclicComponentMemo.isEmpty()
 			&& (acyclicComponentMemo.size() >= acyclicComponentMaxEntries
 				|| acyclicComponentRetainedStates + retainedStates > acyclicComponentMaxStates
-				|| acyclicComponentRetainedAlternatives + groundedAlternatives.size()
+				|| acyclicComponentRetainedAlternatives + supportedAlternatives.size()
 					> acyclicComponentMaxAlternatives)) {
 			var oldest = acyclicComponentMemo.entrySet().iterator().next();
 			acyclicComponentRetainedStates -= oldest.getValue().retainedStates;
-			acyclicComponentRetainedAlternatives -= oldest.getValue().groundedAlternatives.size();
+			acyclicComponentRetainedAlternatives -= oldest.getValue().supportedAlternatives.size();
 			acyclicComponentMemo.remove(oldest.getKey());
 		}
 		acyclicComponentMemo.put(child, summary);
 		acyclicComponentRetainedStates += retainedStates;
-		acyclicComponentRetainedAlternatives += groundedAlternatives.size();
+		acyclicComponentRetainedAlternatives += supportedAlternatives.size();
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
@@ -1994,7 +1817,7 @@ final class NativePlacementContinuity {
 		CandidateTopology topology = candidateTopology(key, witness);
 		if(!topology.eligible)
 			return List.of();
-		// A topology owns immutable default edges, not query/grounding results.
+		// A topology owns immutable default edges, not query support results.
 		// Unrelated fixed owners cannot change any immediate dependency, so reuse
 		// the enclosing canonical list too. Synthetic anchors and empty/template
 		// cases intentionally remain on their existing query-local paths below.
@@ -2012,7 +1835,7 @@ final class NativePlacementContinuity {
 		if(pinned == null && topology.nodeDirectGround)
 			alternatives.add(new SelectedCandidateProof(null, List.of(), true, witness));
 		// A staging template is a proof obligation, not publication authority. Keep
-		// its exact input dependencies in recursive loop SCCs; only grounded rows
+		// its exact input dependencies in loop recurrences; only supported rows
 		// with executable bindings are materialized by the caller.
 		// Topology construction already deduplicates defaults by the equivalent edge key.
 		// The first query-local overlay creates the only collision opportunity, so seed
@@ -2904,10 +2727,10 @@ final class NativePlacementContinuity {
 			occurrences = Collections.unmodifiableSet(occurrences);
 		}
 	}
-	private record AcyclicComponentSummary(List<SelectedCandidateProof> groundedAlternatives,
+	private record AcyclicComponentSummary(List<SelectedCandidateProof> supportedAlternatives,
 		Set<CompiledHopKey> occurrences, long retainedStates) {
 		private AcyclicComponentSummary {
-			groundedAlternatives = List.copyOf(groundedAlternatives);
+			supportedAlternatives = List.copyOf(supportedAlternatives);
 			Set<CompiledHopKey> immutableOccurrences =
 				Collections.newSetFromMap(new IdentityHashMap<>());
 			immutableOccurrences.addAll(occurrences);
