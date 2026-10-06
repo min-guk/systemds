@@ -5648,6 +5648,7 @@ final class PlacementRelationClosure {
 				appendProof(commonProofs, new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
 					source, query + "|output-layout=" + nativeCompatibilityLayout(continuity.outputWorkerPoolWitness())
 						+ "|exact=" + continuity.exactPartitionRanges()))))
+			.distinct()
 			.sorted(PlacementAnalysis.<TransientCompatibilityProof>canonicalComparator()).toList();
 	}
 

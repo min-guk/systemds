@@ -123,9 +123,15 @@ public class ExactDownloadAuthorityAmbiguityRedTest {
 				try {
 					var solved = ExactPhysicalReducedSolver.solveCompacted(model.variables().size(),
 						surface.exactSolverVariables(), factors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
-					long objective = surface.evaluateCanonical(solved.assignmentInVariableOrder());
+					var decisions = new ExactCategoricalSolver.Result(solved.objective(),
+						solved.assignmentInVariableOrder().subList(0, model.variables().size()),
+						solved.statistics());
+					Assert.assertTrue("canonical hard constraints must hold after auxiliary projection",
+						Double.isFinite(RegionalSearchProblem.evaluateFactors(model.variables(),
+							model.hardFactors(), decisions.assignmentInVariableOrder())));
+					long objective = surface.evaluateCanonical(decisions.assignmentInVariableOrder());
 					var selected = ExactPhysicalSelection.create(model,
-						new ExactPhysicalOptimizer.Result(solved, objective,
+						new ExactPhysicalOptimizer.Result(decisions, objective,
 							surface.contributionFingerprint()));
 					if(selected.relocationChoices().stream().anyMatch(choice ->
 						choice.action().equals(relocation.relocationAction().key())))

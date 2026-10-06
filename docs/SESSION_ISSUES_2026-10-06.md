@@ -559,3 +559,11 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **수정본 최종 Docker runtime**: `joint_loop_toggle` 및 `joint_function_calls` 모두 PASS, CP/FED 숫자 fingerprint 일치, model-proof preflight PASS, runtime conversion 위반 0. 증거 `/grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006/grounding-main-final-20261006/result.json`. Package PASS. 큰 logreg compile은 인덱스 오류를 넘었으나 이후 cost surface에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. factor 한도나 후보 공간을 변경해 우회하지 않으며 기준 빌드 비교로 귀속을 확인한다.
 
 - **최종 귀속 확인**: 최신 main에 인덱스 수정만 적용한 기준 빌드도 같은 cost-surface 검증 지점에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. 동일 Docker/input/profile, 공통 replay 수정, 차이는 NativePlacementContinuity/SearchSpaceMetrics 두 파일뿐임을 manifest로 확인했다. 기존 인덱스 오류는 양쪽에서 제거됐으며 큰 모델 한계는 upstream 후속 과제로 남긴다. 작은 loop/function Docker runtime 성공과 큰 logreg compile 실패를 구분한다. 컨테이너 cleanup 완료, 최종 source hash 일치. 증거 `main-final-docker-attribution.json`.
+
+### 비용·resource 변경 통합의 마지막 회귀 수정
+
+- `nativeTransientCompatibilityProofs`는 native receipt를 existential certificate로 투영한 뒤 동일한 record만 `distinct()`로 합친다. witness, exactness, dependency 또는 layout이 다른 증명은 유지한다. upstream에서도 확인된 expected 1/actual 2 회귀를 해결했다.
+- relocation 회귀 테스트의 factorized solver 결과에는 auxiliary 변수가 포함된다. production optimizer처럼 원래 decision prefix를 추출한 뒤 canonical hard factor를 검증하고 objective/selection에 전달한다. 테스트의 강제 relocation 조건은 유지한다.
+- 최종 Maven focused 8 classes: 135 tests, 134 PASS, 기존 ignore 1, failure/error 0. `test jar:jar` 성공. 원본 통합본 129 classes의 확대 검증은 1,138 tests 중 1,125 PASS, failure 1, error 7, skip 5였으며, 이번 두 수정의 통과가 나머지 실패까지 해결했다는 뜻은 아니다.
+- 미해결: 함수 입력 domain 호환성(P1), 함수 경계의 derived FOUT authority(GLM), 큰 cost factor 표현(ALS/STEP-LM), 일부 closure/greedy-policy 오류. 원격 baseline 재현이 있는 실패만 upstream에서도 관측됐다고 기록한다. P1/GLM 실패의 upstream/merge 귀속은 아직 미확정이다. 모든 실험 PASS나 publish-ready 품질 인증을 주장하지 않는다.
+- 원문 근거: `/home/mchoi/fedplanner-main-integrated-20261006/build/regression-final-0e44222031.json`, `publication-focused.log`. Docker의 frozen code와 마지막 focused 수정은 최종 보고서에서 구분한다.
