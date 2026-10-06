@@ -539,6 +539,25 @@ public final class PlacementIdentity {
 		}
 	}
 
+	/**
+	 * Physical output identity used when one candidate realization supports a downstream
+	 * candidate. A durable output is independent of the producer's input-supply route once
+	 * the same compiled value owner and exact durable map have been proved. Other realization
+	 * kinds retain the exact candidate rule because their lineage/value relation is route-owned.
+	 */
+	public record CandidateRealizationSupportKey(CompiledHopKey owner,
+		CandidateRuleKey exactRule, PlacementRealizationKey realization) {
+		public CandidateRealizationSupportKey {
+			Objects.requireNonNull(owner, "owner");
+			Objects.requireNonNull(realization, "realization");
+			if((realization.layoutKind() == PlacementLayoutKind.DURABLE_MAP) != (exactRule == null))
+				throw new IllegalArgumentException(
+					"Only durable-map output support may omit the exact candidate rule");
+			if(exactRule != null && exactRule.parentOccurrence() != owner)
+				throw new IllegalArgumentException("Realization support owner and rule differ");
+		}
+	}
+
 	public enum CandidateInputBindingKind {
 		DIRECT,
 		RELOCATION,

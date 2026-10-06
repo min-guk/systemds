@@ -1,0 +1,1951 @@
+{
+  "schema": "derived-supply-e2e-memory-validation-v1",
+  "baseCommit": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+  "workspace": "/home/mchoi/w1357-derived-supply-sharing-20261006",
+  "completedLocalDate": "2026-10-07",
+  "runs": [
+    {
+      "id": "automatic-sharing-final-r7",
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/automatic-sharing-final-r7",
+      "status": "PASSED",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 1,
+        "inner": 16,
+        "iterations": 3,
+        "kinds": [
+          "invariant",
+          "updated"
+        ],
+        "planners": [
+          "local",
+          "global"
+        ],
+        "rows": 16,
+        "usesPerVersion": 3,
+        "width": 8192,
+        "workerHeap": "1g"
+      },
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "classPreflightPassed": true,
+      "javaSourceMatch": {
+        "main-sources": {
+          "files": 1652,
+          "differences": []
+        },
+        "test-sources": {
+          "files": 1928,
+          "differences": []
+        }
+      },
+      "cases": [
+        {
+          "kind": "invariant",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": {
+            "actions": [
+              {
+                "canonicalIds": [
+                  11
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "REFED|64:b283fca126dd7af2d7947a9de79aec04c29f3d36fc027e6ce95f58c3b9d43083|2:S0|133:64:b283fca126dd7af2d7947a9de79aec04c29f3d36fc027e6ce95f58c3b9d43083|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S0#1@main/0:ORDINARY|FULL|11:fed-init:LB|4:FULL|65:62:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|9:2:16,2:16|64:b283fca126dd7af2d7947a9de79aec04c29f3d36fc027e6ce95f58c3b9d43083|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile",
+                "shared": true,
+                "source": "S0"
+              }
+            ],
+            "expectedActionCount": 1,
+            "expectedSources": [
+              "S0"
+            ],
+            "passed": true
+          },
+          "transport": {
+            "actions": [
+              {
+                "actionKeyDigest": "22aeb9e65f6cfde1",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S0",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              }
+            ],
+            "passed": true
+          },
+          "cleanup": {
+            "cleanupFailures": 0,
+            "confirmedRemoteCleanupCount": 1,
+            "currentCanonicalCount": 0,
+            "currentEstimatedBytes": 0,
+            "logicalRetirementOnly": false,
+            "passed": true,
+            "remoteCleanupConfirmed": true,
+            "retirementReasons": [
+              "WORKER_RESET"
+            ],
+            "workerClearFailureDetected": false
+          },
+          "canonicalProof": {
+            "certificateObjectiveBits": "4631730949725761302",
+            "canonicalObjectiveBits": "4631730949725761302",
+            "canonicalObjectiveMillis": 46.42780322869491,
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true,
+            "reconstructedCostSurfaceFingerprint": "2804d6cf82e41c584d2503e42e75f1e16d55bbb7248eb5257af4c24355fc209b",
+            "assignment": [
+              2,
+              0,
+              0,
+              0,
+              2,
+              0,
+              0,
+              0,
+              43,
+              24,
+              0,
+              43,
+              24,
+              46,
+              11,
+              1,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "compileSeconds": 7.125864648,
+          "executionSeconds": 1.914554988,
+          "sampledRssPeakBytes": {
+            "coordinator": 582275072,
+            "worker-13001": 196378624,
+            "worker-13002": 197046272
+          },
+          "refedCounters": {
+            "enabled": true,
+            "creationAttempts": 1,
+            "creationSuccesses": 1,
+            "creationFailures": 0,
+            "hits": 2,
+            "aliases": 3,
+            "currentCanonicalCount": 0,
+            "peakCanonicalCount": 1,
+            "currentEstimatedBytes": 0,
+            "peakEstimatedBytes": 1048728,
+            "eventCapacity": 4096,
+            "droppedEvents": 0,
+            "droppedLifecycleEvents": 0,
+            "droppedSupplyEvents": 0,
+            "loggingFailures": 0,
+            "modes": [
+              {
+                "mode": "PLANNED",
+                "creationAttempts": 1,
+                "creationSuccesses": 1,
+                "creationFailures": 0,
+                "hits": 2,
+                "aliases": 3,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 1,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 1048728
+              },
+              {
+                "mode": "LEGACY",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              },
+              {
+                "mode": "SINGLE_USE",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              }
+            ]
+          },
+          "workerObservations": [
+            {
+              "address": "localhost/127.0.0.1:13001",
+              "processId": 37,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 46676032,
+              "heapCommittedBytes": 88080384,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 9,
+              "gcMillis": 44
+            },
+            {
+              "address": "localhost/127.0.0.1:13002",
+              "processId": 38,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 59418496,
+              "heapCommittedBytes": 83886080,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 8,
+              "gcMillis": 46
+            }
+          ],
+          "lifetimes": [
+            {
+              "canonicalRemoteId": 11,
+              "retainedMillis": 545.646318,
+              "lastAliasPublicationToRetirementMillis": 100.103539,
+              "retirementReason": "WORKER_RESET"
+            }
+          ],
+          "probeSha256": "538cfcf1b17dfe6899d0a3130c587cba465b8bbda4599d7cd6a2b17548af0715"
+        },
+        {
+          "kind": "invariant",
+          "planner": "global",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": {
+            "actions": [
+              {
+                "canonicalIds": [
+                  11
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "REFED|64:62a448a0906bd2b73a97e477288653d3845a3cd8884d60278ddbb1a5a0c64eae|2:S0|133:64:62a448a0906bd2b73a97e477288653d3845a3cd8884d60278ddbb1a5a0c64eae|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S0#1@main/0:ORDINARY|FULL|11:fed-init:LB|4:FULL|65:62:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|9:2:16,2:16|64:62a448a0906bd2b73a97e477288653d3845a3cd8884d60278ddbb1a5a0c64eae|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile",
+                "shared": true,
+                "source": "S0"
+              }
+            ],
+            "expectedActionCount": 1,
+            "expectedSources": [
+              "S0"
+            ],
+            "passed": true
+          },
+          "transport": {
+            "actions": [
+              {
+                "actionKeyDigest": "997215af42bf05bc",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S0",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              }
+            ],
+            "passed": true
+          },
+          "cleanup": {
+            "cleanupFailures": 0,
+            "confirmedRemoteCleanupCount": 1,
+            "currentCanonicalCount": 0,
+            "currentEstimatedBytes": 0,
+            "logicalRetirementOnly": false,
+            "passed": true,
+            "remoteCleanupConfirmed": true,
+            "retirementReasons": [
+              "WORKER_RESET"
+            ],
+            "workerClearFailureDetected": false
+          },
+          "canonicalProof": {
+            "certificateObjectiveBits": "4631730949725761302",
+            "canonicalObjectiveBits": "4631730949725761302",
+            "canonicalObjectiveMillis": 46.42780322869491,
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true,
+            "reconstructedCostSurfaceFingerprint": "c4b2af1b0a493477a113deea1ba0667cf7dceb2e79a9a97c701bbd7159f894b9",
+            "assignment": [
+              2,
+              0,
+              0,
+              0,
+              2,
+              0,
+              0,
+              0,
+              43,
+              24,
+              0,
+              43,
+              24,
+              46,
+              11,
+              1,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "compileSeconds": 5.703645399,
+          "executionSeconds": 2.157764037,
+          "sampledRssPeakBytes": {
+            "coordinator": 352419840,
+            "worker-13001": 205021184,
+            "worker-13002": 204132352
+          },
+          "refedCounters": {
+            "enabled": true,
+            "creationAttempts": 1,
+            "creationSuccesses": 1,
+            "creationFailures": 0,
+            "hits": 2,
+            "aliases": 3,
+            "currentCanonicalCount": 0,
+            "peakCanonicalCount": 1,
+            "currentEstimatedBytes": 0,
+            "peakEstimatedBytes": 1048728,
+            "eventCapacity": 4096,
+            "droppedEvents": 0,
+            "droppedLifecycleEvents": 0,
+            "droppedSupplyEvents": 0,
+            "loggingFailures": 0,
+            "modes": [
+              {
+                "mode": "PLANNED",
+                "creationAttempts": 1,
+                "creationSuccesses": 1,
+                "creationFailures": 0,
+                "hits": 2,
+                "aliases": 3,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 1,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 1048728
+              },
+              {
+                "mode": "LEGACY",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              },
+              {
+                "mode": "SINGLE_USE",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              }
+            ]
+          },
+          "workerObservations": [
+            {
+              "address": "localhost/127.0.0.1:13001",
+              "processId": 183,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 43503568,
+              "heapCommittedBytes": 83886080,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 10,
+              "gcMillis": 51
+            },
+            {
+              "address": "localhost/127.0.0.1:13002",
+              "processId": 184,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 55805072,
+              "heapCommittedBytes": 88080384,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 9,
+              "gcMillis": 52
+            }
+          ],
+          "lifetimes": [
+            {
+              "canonicalRemoteId": 11,
+              "retainedMillis": 643.665301,
+              "lastAliasPublicationToRetirementMillis": 111.982167,
+              "retirementReason": "WORKER_RESET"
+            }
+          ],
+          "probeSha256": "b2abf9982b47404e5ac7ba62310c4e21aea42bfc5d039e325e89458f0a9634ec"
+        },
+        {
+          "kind": "updated",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": {
+            "actions": [
+              {
+                "canonicalIds": [
+                  13,
+                  49,
+                  85
+                ],
+                "creations": 3,
+                "distinctRuntimeVersions": 3,
+                "executions": 9,
+                "lifecycleCounts": {
+                  "ALIAS": 9,
+                  "CLEANUP": 3,
+                  "CREATION_ATTEMPT": 3,
+                  "CREATION_SUCCESS": 3,
+                  "HIT": 6,
+                  "RETAINED": 3,
+                  "RETIREMENT": 3
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "REFED|64:d58b1d2d4c385fa215074b2799f20b894c0c0ad1ee861b180cb3525a41802798|2:S0|157:64:d58b1d2d4c385fa215074b2799f20b894c0c0ad1ee861b180cb3525a41802798|4:main|33:30:main/1/loop-body/1/loop-body/0|30:main/1/loop-body/1/loop-body/0|9:recompile|1:1|8:ORDINARY|50:47:cfg-definition:S0#1@main/1/loop-body/0:ORDINARY|FULL|11:fed-init:LB|4:FULL|65:62:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|9:2:16,2:16|64:d58b1d2d4c385fa215074b2799f20b894c0c0ad1ee861b180cb3525a41802798|4:main|33:30:main/1/loop-body/1/loop-body/0|30:main/1/loop-body/1/loop-body/0|9:recompile",
+                "shared": true,
+                "source": "S0"
+              }
+            ],
+            "expectedActionCount": 1,
+            "expectedSources": [
+              "S0"
+            ],
+            "passed": true
+          },
+          "transport": {
+            "actions": [
+              {
+                "actionKeyDigest": "55ab2f4a0505dc2b",
+                "instructionExecutions": 9,
+                "observedCreations": 3,
+                "passed": true,
+                "source": "S0",
+                "sourceGets": 3,
+                "targetMatrixPuts": 3
+              }
+            ],
+            "passed": true
+          },
+          "cleanup": {
+            "cleanupFailures": 0,
+            "confirmedRemoteCleanupCount": 3,
+            "currentCanonicalCount": 0,
+            "currentEstimatedBytes": 0,
+            "logicalRetirementOnly": false,
+            "passed": true,
+            "remoteCleanupConfirmed": true,
+            "retirementReasons": [
+              "SOURCE_REMOVAL",
+              "WORKER_RESET"
+            ],
+            "workerClearFailureDetected": false
+          },
+          "canonicalProof": {
+            "certificateObjectiveBits": "4639213691721078404",
+            "canonicalObjectiveBits": "4639213691721078404",
+            "canonicalObjectiveMillis": 142.38353164836383,
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true,
+            "reconstructedCostSurfaceFingerprint": "5da3385cd7b96ce3ed51fdeb3302a264260201acdfafbca6e9d10891658106a0",
+            "assignment": [
+              2,
+              1,
+              0,
+              12,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              49,
+              24,
+              0,
+              49,
+              24,
+              72,
+              12,
+              1,
+              1,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "compileSeconds": 14.590998757,
+          "executionSeconds": 2.376285853,
+          "sampledRssPeakBytes": {
+            "coordinator": 759517184,
+            "worker-13001": 205275136,
+            "worker-13002": 227889152
+          },
+          "refedCounters": {
+            "enabled": true,
+            "creationAttempts": 3,
+            "creationSuccesses": 3,
+            "creationFailures": 0,
+            "hits": 6,
+            "aliases": 9,
+            "currentCanonicalCount": 0,
+            "peakCanonicalCount": 1,
+            "currentEstimatedBytes": 0,
+            "peakEstimatedBytes": 1048728,
+            "eventCapacity": 4096,
+            "droppedEvents": 0,
+            "droppedLifecycleEvents": 0,
+            "droppedSupplyEvents": 0,
+            "loggingFailures": 0,
+            "modes": [
+              {
+                "mode": "PLANNED",
+                "creationAttempts": 3,
+                "creationSuccesses": 3,
+                "creationFailures": 0,
+                "hits": 6,
+                "aliases": 9,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 1,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 1048728
+              },
+              {
+                "mode": "LEGACY",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              },
+              {
+                "mode": "SINGLE_USE",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              }
+            ]
+          },
+          "workerObservations": [
+            {
+              "address": "localhost/127.0.0.1:13001",
+              "processId": 359,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 30386064,
+              "heapCommittedBytes": 88080384,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 11,
+              "gcMillis": 57
+            },
+            {
+              "address": "localhost/127.0.0.1:13002",
+              "processId": 360,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 65258496,
+              "heapCommittedBytes": 148897792,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 10,
+              "gcMillis": 60
+            }
+          ],
+          "lifetimes": [
+            {
+              "canonicalRemoteId": 13,
+              "retainedMillis": 528.999379,
+              "lastAliasPublicationToRetirementMillis": 45.209906,
+              "retirementReason": "SOURCE_REMOVAL"
+            },
+            {
+              "canonicalRemoteId": 49,
+              "retainedMillis": 166.541034,
+              "lastAliasPublicationToRetirementMillis": 26.139348,
+              "retirementReason": "SOURCE_REMOVAL"
+            },
+            {
+              "canonicalRemoteId": 85,
+              "retainedMillis": 179.517363,
+              "lastAliasPublicationToRetirementMillis": 71.819061,
+              "retirementReason": "WORKER_RESET"
+            }
+          ],
+          "probeSha256": "061b4dd2e5cd5ae808b9df591a308cbd1236d1abb8c5a6754f4f68ad1e421c4c"
+        },
+        {
+          "kind": "updated",
+          "planner": "global",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": {
+            "actions": [
+              {
+                "canonicalIds": [
+                  13,
+                  49,
+                  85
+                ],
+                "creations": 3,
+                "distinctRuntimeVersions": 3,
+                "executions": 9,
+                "lifecycleCounts": {
+                  "ALIAS": 9,
+                  "CLEANUP": 3,
+                  "CREATION_ATTEMPT": 3,
+                  "CREATION_SUCCESS": 3,
+                  "HIT": 6,
+                  "RETAINED": 3,
+                  "RETIREMENT": 3
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "REFED|64:8b548f1f5b75eaaf95b56153fd92f8ed147f7f6b165fc33237e972548d422d23|2:S0|157:64:8b548f1f5b75eaaf95b56153fd92f8ed147f7f6b165fc33237e972548d422d23|4:main|33:30:main/1/loop-body/1/loop-body/0|30:main/1/loop-body/1/loop-body/0|9:recompile|1:1|8:ORDINARY|50:47:cfg-definition:S0#1@main/1/loop-body/0:ORDINARY|FULL|11:fed-init:LB|4:FULL|65:62:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|9:2:16,2:16|64:8b548f1f5b75eaaf95b56153fd92f8ed147f7f6b165fc33237e972548d422d23|4:main|33:30:main/1/loop-body/1/loop-body/0|30:main/1/loop-body/1/loop-body/0|9:recompile",
+                "shared": true,
+                "source": "S0"
+              }
+            ],
+            "expectedActionCount": 1,
+            "expectedSources": [
+              "S0"
+            ],
+            "passed": true
+          },
+          "transport": {
+            "actions": [
+              {
+                "actionKeyDigest": "df8be7bbc236f4f8",
+                "instructionExecutions": 9,
+                "observedCreations": 3,
+                "passed": true,
+                "source": "S0",
+                "sourceGets": 3,
+                "targetMatrixPuts": 3
+              }
+            ],
+            "passed": true
+          },
+          "cleanup": {
+            "cleanupFailures": 0,
+            "confirmedRemoteCleanupCount": 3,
+            "currentCanonicalCount": 0,
+            "currentEstimatedBytes": 0,
+            "logicalRetirementOnly": false,
+            "passed": true,
+            "remoteCleanupConfirmed": true,
+            "retirementReasons": [
+              "SOURCE_REMOVAL",
+              "WORKER_RESET"
+            ],
+            "workerClearFailureDetected": false
+          },
+          "canonicalProof": {
+            "certificateObjectiveBits": "4639213691721078404",
+            "canonicalObjectiveBits": "4639213691721078404",
+            "canonicalObjectiveMillis": 142.38353164836383,
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true,
+            "reconstructedCostSurfaceFingerprint": "e2b50db8cad23915046bff46cfd05f1adc94f571c62bd9a5bffb506b913dc076",
+            "assignment": [
+              2,
+              1,
+              0,
+              12,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              49,
+              24,
+              0,
+              49,
+              24,
+              72,
+              12,
+              1,
+              1,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "compileSeconds": 6.034765073,
+          "executionSeconds": 2.704600654,
+          "sampledRssPeakBytes": {
+            "coordinator": 553603072,
+            "worker-13001": 202928128,
+            "worker-13002": 201871360
+          },
+          "refedCounters": {
+            "enabled": true,
+            "creationAttempts": 3,
+            "creationSuccesses": 3,
+            "creationFailures": 0,
+            "hits": 6,
+            "aliases": 9,
+            "currentCanonicalCount": 0,
+            "peakCanonicalCount": 1,
+            "currentEstimatedBytes": 0,
+            "peakEstimatedBytes": 1048728,
+            "eventCapacity": 4096,
+            "droppedEvents": 0,
+            "droppedLifecycleEvents": 0,
+            "droppedSupplyEvents": 0,
+            "loggingFailures": 0,
+            "modes": [
+              {
+                "mode": "PLANNED",
+                "creationAttempts": 3,
+                "creationSuccesses": 3,
+                "creationFailures": 0,
+                "hits": 6,
+                "aliases": 9,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 1,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 1048728
+              },
+              {
+                "mode": "LEGACY",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              },
+              {
+                "mode": "SINGLE_USE",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              }
+            ]
+          },
+          "workerObservations": [
+            {
+              "address": "localhost/127.0.0.1:13001",
+              "processId": 505,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 30951488,
+              "heapCommittedBytes": 88080384,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 11,
+              "gcMillis": 71
+            },
+            {
+              "address": "localhost/127.0.0.1:13002",
+              "processId": 506,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 34042888,
+              "heapCommittedBytes": 88080384,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 10,
+              "gcMillis": 48
+            }
+          ],
+          "lifetimes": [
+            {
+              "canonicalRemoteId": 13,
+              "retainedMillis": 718.156549,
+              "lastAliasPublicationToRetirementMillis": 67.956805,
+              "retirementReason": "SOURCE_REMOVAL"
+            },
+            {
+              "canonicalRemoteId": 49,
+              "retainedMillis": 145.80818,
+              "lastAliasPublicationToRetirementMillis": 27.380929,
+              "retirementReason": "SOURCE_REMOVAL"
+            },
+            {
+              "canonicalRemoteId": 85,
+              "retainedMillis": 168.148008,
+              "lastAliasPublicationToRetirementMillis": 70.99373,
+              "retirementReason": "WORKER_RESET"
+            }
+          ],
+          "probeSha256": "7eb837e3672eb6c3fb7025f0ee97a23a362a3d6a3f6c44b9703a7e7597ee02b3"
+        }
+      ]
+    },
+    {
+      "id": "automatic-sharing-memory-72m-1g-final",
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/automatic-sharing-memory-72m-1g-final",
+      "status": "PASSED",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "local"
+        ],
+        "rows": 8,
+        "width": 3072,
+        "workerHeap": "1g"
+      },
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "classPreflightPassed": true,
+      "javaSourceMatch": {
+        "main-sources": {
+          "files": 1652,
+          "differences": []
+        },
+        "test-sources": {
+          "files": 1928,
+          "differences": []
+        }
+      },
+      "cases": [
+        {
+          "kind": "invariant",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": {
+            "actions": [
+              {
+                "canonicalIds": [
+                  13
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "ACTION|267:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|2:S0|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S0#1@main/0:ORDINARY|29:FED/LOUT/FULL/SHAPE_DEPENDENT|4:FULL|92:11:fed-init:LB|4:FULL|67:64:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|10:1:8,4:1024|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|381:377:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|18:main/1/loop-body/0|9:recompile|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|30:root-0/input-0/input-2/input-0|93:/evidence/cases/invariant-local/program.dml:9:23:org.apache.sysds.hops.AggBinaryOp:ba(+*):QB0",
+                "shared": true,
+                "source": "S0"
+              },
+              {
+                "canonicalIds": [
+                  16
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "ACTION|267:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|2:S1|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S1#1@main/0:ORDINARY|29:FED/LOUT/FULL/SHAPE_DEPENDENT|4:FULL|92:11:fed-init:LB|4:FULL|67:64:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|10:1:8,4:1024|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|382:378:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|18:main/1/loop-body/0|9:recompile|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|30:root-0/input-0/input-4/input-0|94:/evidence/cases/invariant-local/program.dml:12:23:org.apache.sysds.hops.AggBinaryOp:ba(+*):QB1",
+                "shared": true,
+                "source": "S1"
+              },
+              {
+                "canonicalIds": [
+                  19
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "ACTION|267:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|2:S2|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S2#1@main/0:ORDINARY|29:FED/LOUT/FULL/SHAPE_DEPENDENT|4:FULL|92:11:fed-init:LB|4:FULL|67:64:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|10:1:8,4:1024|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|382:378:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|18:main/1/loop-body/0|9:recompile|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|30:root-0/input-0/input-6/input-0|94:/evidence/cases/invariant-local/program.dml:15:23:org.apache.sysds.hops.AggBinaryOp:ba(+*):QB2",
+                "shared": true,
+                "source": "S2"
+              }
+            ],
+            "expectedActionCount": 3,
+            "expectedSources": [
+              "S0",
+              "S1",
+              "S2"
+            ],
+            "passed": true
+          },
+          "transport": {
+            "actions": [
+              {
+                "actionKeyDigest": "6574581e8fb7c247",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S0",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              },
+              {
+                "actionKeyDigest": "71d9ce1c966766de",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S1",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              },
+              {
+                "actionKeyDigest": "d403f6b1f9a24382",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S2",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              }
+            ],
+            "passed": true
+          },
+          "cleanup": {
+            "cleanupFailures": 0,
+            "confirmedRemoteCleanupCount": 3,
+            "currentCanonicalCount": 0,
+            "currentEstimatedBytes": 0,
+            "logicalRetirementOnly": false,
+            "passed": true,
+            "remoteCleanupConfirmed": true,
+            "retirementReasons": [
+              "WORKER_RESET"
+            ],
+            "workerClearFailureDetected": false
+          },
+          "canonicalProof": {
+            "certificateObjectiveBits": "4653197656110435331",
+            "canonicalObjectiveBits": "4653197656110435331",
+            "canonicalObjectiveMillis": 1246.6536336622673,
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true,
+            "reconstructedCostSurfaceFingerprint": "ac758fbc4f2c8e4a27897c9f0306d9676676b0e823c5d1a9b9318a4e42779cb8",
+            "assignment": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              386,
+              27,
+              386,
+              27,
+              386,
+              27,
+              8,
+              1,
+              2,
+              1,
+              1,
+              2,
+              0,
+              2,
+              0,
+              0,
+              1,
+              4,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              1,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "compileSeconds": 9.936490064,
+          "executionSeconds": 3.996506236,
+          "sampledRssPeakBytes": {
+            "coordinator": 816152576,
+            "worker-13001": 425037824,
+            "worker-13002": 291713024
+          },
+          "refedCounters": {
+            "enabled": true,
+            "creationAttempts": 3,
+            "creationSuccesses": 3,
+            "creationFailures": 0,
+            "hits": 6,
+            "aliases": 9,
+            "currentCanonicalCount": 0,
+            "peakCanonicalCount": 3,
+            "currentEstimatedBytes": 0,
+            "peakEstimatedBytes": 75497928,
+            "eventCapacity": 4096,
+            "droppedEvents": 0,
+            "droppedLifecycleEvents": 0,
+            "droppedSupplyEvents": 0,
+            "loggingFailures": 0,
+            "modes": [
+              {
+                "mode": "PLANNED",
+                "creationAttempts": 3,
+                "creationSuccesses": 3,
+                "creationFailures": 0,
+                "hits": 6,
+                "aliases": 9,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 3,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 75497928
+              },
+              {
+                "mode": "LEGACY",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              },
+              {
+                "mode": "SINGLE_USE",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              }
+            ]
+          },
+          "workerObservations": [
+            {
+              "address": "localhost/127.0.0.1:13001",
+              "processId": 37,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 142049432,
+              "heapCommittedBytes": 246415360,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 26,
+              "gcMillis": 74
+            },
+            {
+              "address": "localhost/127.0.0.1:13002",
+              "processId": 38,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 115776696,
+              "heapCommittedBytes": 173015040,
+              "heapMaxBytes": 1073741824,
+              "gcCount": 14,
+              "gcMillis": 48
+            }
+          ],
+          "lifetimes": [
+            {
+              "canonicalRemoteId": 13,
+              "retainedMillis": 1173.571012,
+              "lastAliasPublicationToRetirementMillis": 93.951184,
+              "retirementReason": "WORKER_RESET"
+            },
+            {
+              "canonicalRemoteId": 16,
+              "retainedMillis": 592.343688,
+              "lastAliasPublicationToRetirementMillis": 79.037975,
+              "retirementReason": "WORKER_RESET"
+            },
+            {
+              "canonicalRemoteId": 19,
+              "retainedMillis": 301.018315,
+              "lastAliasPublicationToRetirementMillis": 65.611393,
+              "retirementReason": "WORKER_RESET"
+            }
+          ],
+          "probeSha256": "382e1700267cb1327b5fbd41a677333ed9517b1967dbb4a0dfdd3c2abf96b6f3"
+        }
+      ]
+    },
+    {
+      "id": "automatic-sharing-memory-72m-256m-final",
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/automatic-sharing-memory-72m-256m-final",
+      "status": "PASSED",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "local"
+        ],
+        "rows": 8,
+        "width": 3072,
+        "workerHeap": "256m"
+      },
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "classPreflightPassed": true,
+      "javaSourceMatch": {
+        "main-sources": {
+          "files": 1652,
+          "differences": []
+        },
+        "test-sources": {
+          "files": 1928,
+          "differences": []
+        }
+      },
+      "cases": [
+        {
+          "kind": "invariant",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": {
+            "actions": [
+              {
+                "canonicalIds": [
+                  13
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "ACTION|267:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|2:S0|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S0#1@main/0:ORDINARY|29:FED/LOUT/FULL/SHAPE_DEPENDENT|4:FULL|92:11:fed-init:LB|4:FULL|67:64:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|10:1:8,4:1024|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|381:377:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|18:main/1/loop-body/0|9:recompile|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|30:root-0/input-0/input-2/input-0|93:/evidence/cases/invariant-local/program.dml:9:23:org.apache.sysds.hops.AggBinaryOp:ba(+*):QB0",
+                "shared": true,
+                "source": "S0"
+              },
+              {
+                "canonicalIds": [
+                  16
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "ACTION|267:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|2:S1|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S1#1@main/0:ORDINARY|29:FED/LOUT/FULL/SHAPE_DEPENDENT|4:FULL|92:11:fed-init:LB|4:FULL|67:64:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|10:1:8,4:1024|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|382:378:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|18:main/1/loop-body/0|9:recompile|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|30:root-0/input-0/input-4/input-0|94:/evidence/cases/invariant-local/program.dml:12:23:org.apache.sysds.hops.AggBinaryOp:ba(+*):QB1",
+                "shared": true,
+                "source": "S1"
+              },
+              {
+                "canonicalIds": [
+                  19
+                ],
+                "creations": 1,
+                "distinctRuntimeVersions": 1,
+                "executions": 3,
+                "lifecycleCounts": {
+                  "ALIAS": 3,
+                  "CLEANUP": 1,
+                  "CREATION_ATTEMPT": 1,
+                  "CREATION_SUCCESS": 1,
+                  "HIT": 2,
+                  "RETAINED": 1,
+                  "RETIREMENT": 1
+                },
+                "passed": true,
+                "physicalEmissionIdentity": "ACTION|267:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|2:S2|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|38:35:cfg-definition:S2#1@main/0:ORDINARY|29:FED/LOUT/FULL/SHAPE_DEPENDENT|4:FULL|92:11:fed-init:LB|4:FULL|67:64:37:localhost:13002//evidence/data/LB.csv|7:1:0,1:0|10:1:8,4:1024|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|382:378:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|18:main/1/loop-body/0|9:recompile|133:64:e90a22ed592e8db6f9d41b39e62a11f5677cf9bdb2f7c49e133ab6696953d02a|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|30:root-0/input-0/input-6/input-0|94:/evidence/cases/invariant-local/program.dml:15:23:org.apache.sysds.hops.AggBinaryOp:ba(+*):QB2",
+                "shared": true,
+                "source": "S2"
+              }
+            ],
+            "expectedActionCount": 3,
+            "expectedSources": [
+              "S0",
+              "S1",
+              "S2"
+            ],
+            "passed": true
+          },
+          "transport": {
+            "actions": [
+              {
+                "actionKeyDigest": "6574581e8fb7c247",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S0",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              },
+              {
+                "actionKeyDigest": "71d9ce1c966766de",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S1",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              },
+              {
+                "actionKeyDigest": "d403f6b1f9a24382",
+                "instructionExecutions": 3,
+                "observedCreations": 1,
+                "passed": true,
+                "source": "S2",
+                "sourceGets": 1,
+                "targetMatrixPuts": 1
+              }
+            ],
+            "passed": true
+          },
+          "cleanup": {
+            "cleanupFailures": 0,
+            "confirmedRemoteCleanupCount": 3,
+            "currentCanonicalCount": 0,
+            "currentEstimatedBytes": 0,
+            "logicalRetirementOnly": false,
+            "passed": true,
+            "remoteCleanupConfirmed": true,
+            "retirementReasons": [
+              "WORKER_RESET"
+            ],
+            "workerClearFailureDetected": false
+          },
+          "canonicalProof": {
+            "certificateObjectiveBits": "4653197656110435331",
+            "canonicalObjectiveBits": "4653197656110435331",
+            "canonicalObjectiveMillis": 1246.6536336622673,
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true,
+            "reconstructedCostSurfaceFingerprint": "ac758fbc4f2c8e4a27897c9f0306d9676676b0e823c5d1a9b9318a4e42779cb8",
+            "assignment": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              386,
+              27,
+              386,
+              27,
+              386,
+              27,
+              8,
+              1,
+              2,
+              1,
+              1,
+              2,
+              0,
+              2,
+              0,
+              0,
+              1,
+              4,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              1,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "compileSeconds": 8.437473974,
+          "executionSeconds": 4.015209017,
+          "sampledRssPeakBytes": {
+            "coordinator": 824582144,
+            "worker-13001": 451829760,
+            "worker-13002": 284164096
+          },
+          "refedCounters": {
+            "enabled": true,
+            "creationAttempts": 3,
+            "creationSuccesses": 3,
+            "creationFailures": 0,
+            "hits": 6,
+            "aliases": 9,
+            "currentCanonicalCount": 0,
+            "peakCanonicalCount": 3,
+            "currentEstimatedBytes": 0,
+            "peakEstimatedBytes": 75497928,
+            "eventCapacity": 4096,
+            "droppedEvents": 0,
+            "droppedLifecycleEvents": 0,
+            "droppedSupplyEvents": 0,
+            "loggingFailures": 0,
+            "modes": [
+              {
+                "mode": "PLANNED",
+                "creationAttempts": 3,
+                "creationSuccesses": 3,
+                "creationFailures": 0,
+                "hits": 6,
+                "aliases": 9,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 3,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 75497928
+              },
+              {
+                "mode": "LEGACY",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              },
+              {
+                "mode": "SINGLE_USE",
+                "creationAttempts": 0,
+                "creationSuccesses": 0,
+                "creationFailures": 0,
+                "hits": 0,
+                "aliases": 0,
+                "currentCanonicalCount": 0,
+                "peakCanonicalCount": 0,
+                "currentEstimatedBytes": 0,
+                "peakEstimatedBytes": 0
+              }
+            ]
+          },
+          "workerObservations": [
+            {
+              "address": "localhost/127.0.0.1:13001",
+              "processId": 37,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 228148752,
+              "heapCommittedBytes": 267386880,
+              "heapMaxBytes": 268435456,
+              "gcCount": 39,
+              "gcMillis": 93
+            },
+            {
+              "address": "localhost/127.0.0.1:13002",
+              "processId": 38,
+              "fsWrites": 0,
+              "fsHits": 0,
+              "fsBufferWrites": 0,
+              "fsBufferHits": 0,
+              "cachingActive": false,
+              "unifiedMemoryManagerEnabled": false,
+              "cacheManager": "STATIC",
+              "cacheManagerObservation": "INACTIVE_CACHING_DISABLED",
+              "heapUsedBytes": 115639344,
+              "heapCommittedBytes": 177209344,
+              "heapMaxBytes": 268435456,
+              "gcCount": 14,
+              "gcMillis": 49
+            }
+          ],
+          "lifetimes": [
+            {
+              "canonicalRemoteId": 13,
+              "retainedMillis": 1322.204679,
+              "lastAliasPublicationToRetirementMillis": 105.694903,
+              "retirementReason": "WORKER_RESET"
+            },
+            {
+              "canonicalRemoteId": 16,
+              "retainedMillis": 595.683466,
+              "lastAliasPublicationToRetirementMillis": 89.296428,
+              "retirementReason": "WORKER_RESET"
+            },
+            {
+              "canonicalRemoteId": 19,
+              "retainedMillis": 320.331214,
+              "lastAliasPublicationToRetirementMillis": 70.983778,
+              "retirementReason": "WORKER_RESET"
+            }
+          ],
+          "probeSha256": "a2964ccee0d1a9bf2917ea22493e4c6631bd449bc2c357fb8e7477c36e71ca31"
+        }
+      ]
+    }
+  ],
+  "javaRegression": {
+    "classes": [
+      {
+        "class": "RefedReuseAuditTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.runtime.controlprogram.federated.RefedReuseAuditTest.xml"
+      },
+      {
+        "class": "OwnedRefedReuseTest",
+        "tests": 30,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest.xml"
+      },
+      {
+        "class": "FederationUtilsRefedReuseLayoutTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.test.component.federated.FederationUtilsRefedReuseLayoutTest.xml"
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDerivedSupplySharingTest.xml"
+      },
+      {
+        "class": "ExactCompiledSupplySharingTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledSupplySharingTest.xml"
+      },
+      {
+        "class": "ExactStagedSupplyCanonicalCostTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactStagedSupplyCanonicalCostTest.xml"
+      },
+      {
+        "class": "ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalNativeSupplyRepresentationTest.xml"
+      },
+      {
+        "class": "ExactSharedSourceOrdinalReuseTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 5,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSharedSourceOrdinalReuseTest.xml"
+      },
+      {
+        "class": "ExactSharedSourceOrdinalLifecycleTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 2,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSharedSourceOrdinalLifecycleTest.xml"
+      },
+      {
+        "class": "ExactFunctionGetSharingTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionGetSharingTest.xml"
+      },
+      {
+        "class": "ExactCanonicalCostTraceTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCanonicalCostTraceTest.xml"
+      },
+      {
+        "class": "ExactAuxiliaryCommunicationCostTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryCommunicationCostTest.xml"
+      },
+      {
+        "class": "ExactAuxiliaryNativeInputUploadTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryNativeInputUploadTest.xml"
+      },
+      {
+        "class": "ExactCtableMaterializationCostTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "report": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCtableMaterializationCostTest.xml"
+      }
+    ],
+    "tests": 75,
+    "failures": 0,
+    "errors": 7,
+    "skipped": 0,
+    "baselineAttribution": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-baseline/evidence/status.json"
+  },
+  "pythonRegression": {
+    "tests": 35,
+    "failures": 0,
+    "log": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006/regression-final/automatic-supply-sharing-python-tests-final.log"
+  },
+  "limitations": [
+    "Updated automatic fixture uses three fresh outer versions and three inner uses each (nine executions, three creations); it does not claim automatic SINGLE_USE selection in the flat loop.",
+    "Worker caching inactive: FS spill counters are zero; no spill/restore cost calibration was performed.",
+    "RSS sampled every 100ms; coordinator samples include compilation and canonical recost.",
+    "Last alias publication to retirement is a proxy, not exact last-consumer completion.",
+    "Flat-loop r5 relocation selection still needs coupled-constraint/contribution diagnosis; candidate presence alone does not establish a legal cheaper complete assignment."
+  ]
+}

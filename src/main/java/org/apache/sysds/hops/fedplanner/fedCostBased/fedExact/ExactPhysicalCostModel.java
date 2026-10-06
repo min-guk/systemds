@@ -73,6 +73,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
@@ -1689,7 +1690,11 @@ public final class ExactPhysicalCostModel {
 							matched = profiles.get(0);
 						if(matched != null) { origin = candidate; sourceProfile = matched; }
 					}
+					var loopEpoch = loopPhiSnapshotEpoch(analysis, frequencies,
+						producer.node().key(), readProfile, transientByRead, creationSources);
 					var creation = new CreationScope(origin, sourceProfile, readProfile.contextOrdinal());
+					var epochCreation = loopEpoch == null ? null : new CreationScope(loopEpoch.origin(),
+						loopEpoch.profile(), readProfile.contextOrdinal());
 					// Fresh outputs retain the existing lifetime calculation. Only proven
 					// retained aliases use the ancestor object's activation and creation cap.
 					boolean transparentAliasSources = creationSources.size() == 1
@@ -1737,20 +1742,26 @@ public final class ExactPhysicalCostModel {
 							// the same retained MatrixObject across its initializer, TWrite/TRead
 							// aliases and function formals. Fresh relocation/derived outputs and
 							// runtime-relocated boundaries retain a private identity.
+							boolean directOwner = selected.relocationAction() == null
+								&& selected.derivedFoutAction() == null && selected.inputAuthorities().stream()
+									.noneMatch(a -> a.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION);
 							boolean alias = transparentAliasSources
 								&& aliasCreations.size() == creationSources.size()
 								&& key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT
 								&& layout.exactRanges() && !layout.ranges().isEmpty()
-								&& selected.state().execType() == ExecType.FED && selected.relocationAction() == null
-								&& selected.derivedFoutAction() == null && selected.inputAuthorities().stream()
-									.noneMatch(a -> a.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION);
-							String privateIdentity = alias ? "" : producer.node().key().normalizedSignature()
+								&& selected.state().execType() == ExecType.FED && directOwner;
+							boolean epochAlias = epochCreation != null && directOwner
+								&& selected.state().execType() == ExecType.FED
+								&& layout.exactRanges() && !layout.ranges().isEmpty()
+								&& key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT;
+							String privateIdentity = alias || epochAlias ? "" : producer.node().key().normalizedSignature()
 								+ '|' + key.physicalEmissionIdentity();
 							// Function arguments retain the caller's MatrixObject and its local
 							// cache. Charge a proven alias in that object's creation context,
 							// while fresh/relocated outputs keep their read-context discriminator.
-							List<AliasCreation> downloadCreations = alias ? aliasCreations
-								: List.of(new AliasCreation(creation, creation.profile()));
+							List<AliasCreation> downloadCreations = epochAlias
+								? List.of(new AliasCreation(epochCreation, epochCreation.profile()))
+								: alias ? aliasCreations : List.of(new AliasCreation(creation, creation.profile()));
 							for(AliasCreation downloadCreation : downloadCreations) {
 								var observation = new DownloadKey(downloadCreation.creation(), layout,
 									privateIdentity, unitPrices[value]);
@@ -1784,16 +1795,37 @@ public final class ExactPhysicalCostModel {
 								activations, sourceProfile.expectedExecutions(), factors, factorizations, null);
 						}
 						else {
-							if(anyTrue(uploadSource))
+							boolean[] epochUploadSource = new boolean[uploadSource.length];
+							if(epochCreation != null && key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT)
+								for(int value = 0; value < uploadSource.length; value++) {
+									var selected = producer.alternatives().get(value);
+									epochUploadSource[value] = uploadSource[value]
+										&& selected.relocationAction() == null && selected.derivedFoutAction() == null
+										&& selected.inputAuthorities().stream().noneMatch(authority -> authority.kind()
+											== ExactPhysicalModel.InputAuthorityKind.RELOCATION);
+								}
+							boolean[] ordinaryUploadSource = uploadSource.clone();
+							for(int value = 0; value < ordinaryUploadSource.length; value++)
+								ordinaryUploadSource[value] &= !epochUploadSource[value];
+							if(anyTrue(ordinaryUploadSource))
 								addMaterializationActivationFactors(id + "|source=ORIGINAL", producer.variable(),
-									uploadSource, unitPrices, activations,
+									ordinaryUploadSource, unitPrices, activations,
 									sourceProfile.expectedExecutions(), factors, factorizations, null);
+							if(anyTrue(ordinaryUploadSource) && activations.stream()
+								.anyMatch(ActivationDemand::crossExecutionReuse))
+								supplySharingGroups.add(new SupplySharingGroup(key.physicalEmissionIdentity(),
+									producer.variable(), ordinaryUploadSource, activations));
+							List<ActivationDemand> epochActivations = epochCreation == null ? List.of()
+								: activationsForCreation.apply(epochCreation.profile());
+							if(anyTrue(epochUploadSource))
+								addMaterializationActivationFactors(id + "|source=LOOP_EPOCH", producer.variable(),
+									epochUploadSource, unitPrices, epochActivations,
+									epochCreation.profile().expectedExecutions(), factors, factorizations, null);
+							if(anyTrue(epochUploadSource) && epochActivations.stream()
+								.anyMatch(ActivationDemand::crossExecutionReuse))
+								supplySharingGroups.add(new SupplySharingGroup(key.physicalEmissionIdentity(),
+									producer.variable(), epochUploadSource, epochActivations));
 						}
-						if(key.direction() == Direction.UPLOAD && anyTrue(uploadSource)
-							&& activations.stream()
-							.anyMatch(ActivationDemand::crossExecutionReuse))
-							supplySharingGroups.add(new SupplySharingGroup(key.physicalEmissionIdentity(),
-								producer.variable(), uploadSource, activations));
 					}
 				}
 				if(!sourceDownload) transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(),
@@ -2386,12 +2418,67 @@ public final class ExactPhysicalCostModel {
 
 	private record RuntimeMaterializationSource(CompiledHopKey occurrence,
 		ValueVersionKey valueVersion, List<CompiledHopKey> returnBoundaries,
-		List<CompiledHopKey> reachabilityGuards) {
+		List<CompiledHopKey> reachabilityGuards, List<CompiledHopKey> loopPhiCarriers) {
 		private RuntimeMaterializationSource {
 			returnBoundaries = List.copyOf(returnBoundaries);
 			reachabilityGuards = List.copyOf(reachabilityGuards);
+			loopPhiCarriers = List.copyOf(loopPhiCarriers);
 		}
 	}
+	private record LoopPhiSnapshotEpoch(CompiledHopKey origin,
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact profile) { }
+
+	/**
+	 * A transparent snapshot assignment inside an outer recurrence publishes exactly
+	 * one MatrixObject value per recurrence epoch. Its consumers may execute in a
+	 * nested loop, but the REFED cache key follows that object/version and therefore
+	 * creates one remote copy per snapshot assignment, not one per nested use.
+	 *
+	 * <p>This proof intentionally accepts only the canonical entry-plus-one-backedge
+	 * loop PHI shape. Branch-selected backedges, function boundaries, ambiguous
+	 * contexts, and direct PHI reads retain the conservative read profile.</p>
+	 */
+	private static LoopPhiSnapshotEpoch loopPhiSnapshotEpoch(PlacementAnalysis analysis,
+		OccurrenceExecutionFrequencyFacts frequencies, CompiledHopKey read,
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact readProfile,
+		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead,
+		List<RuntimeMaterializationSource> creationSources) {
+		if(creationSources.size() != 2 || creationSources.stream().anyMatch(source ->
+			!source.returnBoundaries().isEmpty() || !source.reachabilityGuards().isEmpty()))
+			return null;
+		List<LogicalTransientInputFact> snapshotInputs = transientByRead.getOrDefault(read, List.of());
+		if(snapshotInputs.size() != 1)
+			return null;
+		CompiledHopKey snapshotWrite = snapshotInputs.get(0).sourceWrite();
+		List<CompiledHopKey> carrierReads = creationSources.get(0).loopPhiCarriers();
+		if(carrierReads.size() != 1 || creationSources.stream()
+			.anyMatch(source -> !source.loopPhiCarriers().equals(carrierReads)))
+			return null;
+		List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> snapshotProfiles =
+			exactOccurrenceProfiles(frequencies, snapshotWrite).stream()
+				.filter(profile -> profile.contextOrdinal() == readProfile.contextOrdinal()).toList();
+		if(snapshotProfiles.size() != 1)
+			return null;
+		var snapshot = snapshotProfiles.get(0);
+		boolean carrierProfilesMatch = carrierReads.stream().allMatch(carrierRead -> {
+			List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> profiles =
+				exactOccurrenceProfiles(frequencies, carrierRead).stream()
+					.filter(profile -> profile.contextOrdinal() == readProfile.contextOrdinal()).toList();
+			return profiles.size() == 1
+				&& snapshot.loopContext().equals(profiles.get(0).loopContext())
+				&& snapshot.activationConditions().equals(profiles.get(0).activationConditions())
+				&& Double.doubleToLongBits(snapshot.expectedExecutions())
+					== Double.doubleToLongBits(profiles.get(0).expectedExecutions());
+		});
+		if(!carrierProfilesMatch || snapshot.loopContext().size() >= readProfile.loopContext().size()
+			|| !readProfile.loopContext().subList(0, snapshot.loopContext().size())
+				.equals(snapshot.loopContext())
+			|| snapshot.expectedExecutions() <= 0d
+			|| readProfile.expectedExecutions() < snapshot.expectedExecutions())
+			return null;
+		return new LoopPhiSnapshotEpoch(snapshotWrite, snapshot);
+	}
+
 	private record FunctionOutputAliases(
 		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> sourcesByTarget,
 		IdentityHashMap<CompiledHopKey,Map<Long,Long>> calleeContextsByBoundary,
@@ -2487,8 +2574,12 @@ public final class ExactPhysicalCostModel {
 					sameContextFunctionOutputs, visiting);
 			if(direct.isEmpty()) {
 				ValueVersionKey value = analysis.graph().node(read).orElseThrow().valueVersion();
-				return List.of(new RuntimeMaterializationSource(read, value, List.of(), List.of()));
+				return List.of(new RuntimeMaterializationSource(read, value, List.of(), List.of(), List.of()));
 			}
+			List<LogicalTransientInputFact> transientInputs = transientByRead.getOrDefault(read, List.of());
+			boolean loopPhiCarrier = transientInputs.size() == 2
+				&& transientInputs.stream().filter(input -> input.sourceValueVersion()
+					.versionKind() == VersionKind.LOOP_BACKEDGE).count() == 1;
 			Map<String,RuntimeMaterializationSource> resolved = new LinkedHashMap<>();
 			for(CompiledHopKey source : direct.stream().distinct().sorted().toList()) {
 				List<RuntimeMaterializationSource> authorities = runtimeMaterializationSources(
@@ -2507,6 +2598,7 @@ public final class ExactPhysicalCostModel {
 				for(RuntimeMaterializationSource authority : authorities) {
 					List<CompiledHopKey> returnBoundaries = authority.returnBoundaries();
 					List<CompiledHopKey> reachabilityGuards = authority.reachabilityGuards();
+					List<CompiledHopKey> loopPhiCarriers = authority.loopPhiCarriers();
 					if(analysis.graph().node(read).orElseThrow().kind() == NodeKind.FUNCTION_OUTPUT
 						&& !sameContextFunctionOutputs.contains(read)) {
 						returnBoundaries = new ArrayList<>(returnBoundaries.size() + 1);
@@ -2520,15 +2612,22 @@ public final class ExactPhysicalCostModel {
 						reachabilityGuards.add(read);
 						reachabilityGuards.addAll(authority.reachabilityGuards());
 					}
+					if(loopPhiCarrier && !loopPhiCarriers.contains(read)) {
+						loopPhiCarriers = new ArrayList<>(loopPhiCarriers.size() + 1);
+						loopPhiCarriers.add(read);
+						loopPhiCarriers.addAll(authority.loopPhiCarriers());
+					}
 					var resolvedAuthority = new RuntimeMaterializationSource(authority.occurrence(),
-						authority.valueVersion(), returnBoundaries, reachabilityGuards);
+						authority.valueVersion(), returnBoundaries, reachabilityGuards, loopPhiCarriers);
 					String returnPath = returnBoundaries.stream()
 						.map(CompiledHopKey::normalizedSignature).collect(java.util.stream.Collectors.joining("->"));
 					String guardPath = reachabilityGuards.stream()
 						.map(CompiledHopKey::normalizedSignature).collect(java.util.stream.Collectors.joining("->"));
+					String loopPhiPath = loopPhiCarriers.stream()
+						.map(CompiledHopKey::normalizedSignature).collect(java.util.stream.Collectors.joining("->"));
 					resolved.putIfAbsent(authority.occurrence().normalizedSignature() + '|'
 						+ authority.valueVersion().normalizedSignature() + "|returns=" + returnPath
-						+ "|guards=" + guardPath,
+						+ "|guards=" + guardPath + "|loop-phis=" + loopPhiPath,
 						resolvedAuthority);
 				}
 			}

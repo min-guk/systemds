@@ -29,6 +29,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -157,8 +158,7 @@ public class ExactSharedSourceOrdinalReuseTest {
 	private static Object ordinalView(int[] headers, int[][] values) throws Exception {
 		CompiledHopKey owner = owner("wide-owner-" + headers.length + '-' + values[0][0]);
 		int headerDomain = Arrays.stream(headers).max().orElseThrow() + 1;
-		Object header = construct(nested("AlternativeHeader"), null, null, null, null, null, null,
-			null, null, null, null, List.of(), List.of(), null, List.of());
+		Object header = sourceIndependentHeader(owner);
 		List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> raw = new ArrayList<>();
 		List<IdentityHashMap<CompiledHopKey,Integer>> ordinals = new ArrayList<>();
 		for(int row = 0; row < headers.length; row++) {
@@ -206,8 +206,7 @@ public class ExactSharedSourceOrdinalReuseTest {
 			if(row[1] != null) raw.put(right, row[1]);
 			rawRows.add(raw);
 		}
-		Object header = construct(nested("AlternativeHeader"), null, null, null, null, null, null,
-			null, null, null, null, List.of(), List.of(), null, List.of());
+		Object header = sourceIndependentHeader(left);
 		Object view = construct(nested("DomainView"), 0, null, List.of(header, header, header), headers,
 			List.of(left, right), rawRows);
 		int av0 = reverse ? 2 : 0, av1 = reverse ? 0 : 2;
@@ -249,6 +248,22 @@ public class ExactSharedSourceOrdinalReuseTest {
 
 	private static Class<?> nested(String name) throws ClassNotFoundException {
 		return Class.forName(ExactPhysicalSharedSourceEncoding.class.getName() + '$' + name);
+	}
+
+	private static Object sourceIndependentHeader(CompiledHopKey decision) throws Exception {
+		// These tests isolate source-reference ordinals after the a_v/b_e header projection.
+		// A valid local a_v with no b_e or binding distinction keeps that axis constant.
+		PlacementState local = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		ExactPhysicalNativeSupplyRepresentation.NativeCandidate nativeCandidate =
+			new ExactPhysicalNativeSupplyRepresentation.NativeCandidate(decision,
+				ExactPhysicalNativeSupplyRepresentation.NativeExecutionKind.LEGAL_SINGLETON,
+				null, ExecType.CP, null, List.of(), local,
+				new ExactPhysicalNativeSupplyRepresentation.NativeLayout(
+					PlacementLayoutKind.LOCAL, null, null, false));
+		Constructor<?> constructor = nested("AlternativeHeader").getDeclaredConstructor(
+			ExactPhysicalNativeSupplyRepresentation.NativeCandidate.class, List.class, List.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(nativeCandidate, List.of(), List.of());
 	}
 
 	private static Object construct(Class<?> type, Object... arguments) throws Exception {

@@ -97,8 +97,8 @@ public class ProductionDecodedPlanSpaceCompletenessTest {
 		long rawCartesianSize = cartesianSize(rawDomainSizes);
 		long supportCartesianSize = cartesianSize(supportDomainSizes);
 		// Equivalent proof clauses can be canonicalized without losing a joint
-		// plan. Keep their multiplicity diagnostic; the independent eight-plan
-		// relation and missing-half mutations below are the completeness contract.
+		// plan. Keep their multiplicity diagnostic; the independent exact-plan
+		// relation and missing-plan mutations below are the completeness contract.
 		System.out.println("PRODUCTION_DECODED_SUPPORT_DOMAIN|sizes=" + supportDomainSizes
 			+ "|cartesian=" + supportCartesianSize);
 		Assert.assertTrue("raw receipt universe must expose explicitly classified out-of-support assignments; raw="
@@ -114,8 +114,10 @@ public class ProductionDecodedPlanSpaceCompletenessTest {
 		Map<String,Integer> distinctDeclaredIdentities = declaredDomains.entrySet().stream().collect(
 			java.util.stream.Collectors.toMap(Map.Entry::getKey, entry -> (int)entry.getValue().stream()
 				.map(receipt -> receiptShapeIdentity(receipt, roles)).distinct().count()));
+		// Canonical function formals expose one DURABLE_MAP receipt. A downstream
+		// NATIVE_LINEAGE source reference is not the same exact DIRECT receipt.
 		Assert.assertEquals("literal role domains must retain each distinct receipt relation identity",
-			Map.of("X", 2, "Y", 2, "U", 2, "V", 2, "D", 2), distinctDeclaredIdentities);
+			Map.of("X", 1, "Y", 1, "U", 2, "V", 2, "D", 2), distinctDeclaredIdentities);
 		Assert.assertTrue("declared finite contract must be action-free DIRECT support",
 			declaredDomains.values().stream().flatMap(List::stream)
 				.flatMap(receipt -> receipt.supportClause().inputBindings().stream())
@@ -132,33 +134,35 @@ public class ProductionDecodedPlanSpaceCompletenessTest {
 			expected, audit.legalPlans());
 		assertSamePlans("legal versus unfiltered decoded finite-support relation",
 			audit.legalPlans(), audit.decodedPlans());
-		Assert.assertEquals("literal contract must retain all eight correlated plans", 8,
+		Assert.assertEquals("literal contract must retain both exact DIRECT correlated plans", 2,
 			audit.decodedPlans().size());
 		Assert.assertTrue("fixture must exercise a two-input AND clause", declaredDomains.get("D").stream()
 			.anyMatch(receipt -> bindingPositions(receipt).equals(Set.of(0, 1))));
 		Assert.assertTrue("D must retain the exact selected U and V occurrences", declaredDomains.get("D").stream()
 			.anyMatch(receipt -> hasSources(receipt, roles.get("U"), roles.get("V"))));
-		// Deliberately remove one distinguishable source layout and one consumer
-		// geometry from the *unfiltered* input relation. The literal eight-plan
-		// contract must detect missing joint plans, not merely preserve row counts.
-		Map<String,List<CandidateSelectionReceipt>> withoutNativeX = new LinkedHashMap<>(supportDomains);
-		withoutNativeX.put("X", supportDomains.get("X").stream()
-			.filter(receipt -> !"NATIVE_LINEAGE".equals(
-				receipt.realization().key().layoutKind().name())).toList());
-		assertMissingHalfOfLiteralPlans("source-layout mutation", expected,
-			decodeFullSupport(roles, withoutNativeX).decodedPlans());
+		// Deliberately remove the only exact X binding and one consumer geometry
+		// from the unfiltered input relation. The literal joint-plan contract must
+		// detect missing plans, not merely preserve row counts.
+		Map<String,List<CandidateSelectionReceipt>> withoutExactXBinding =
+			new LinkedHashMap<>(supportDomains);
+		withoutExactXBinding.put("U", supportDomains.get("U").stream()
+			.filter(receipt -> receipt.supportClause().inputBindings().stream().noneMatch(binding ->
+				binding.source().realization().layoutKind().name().equals("DURABLE_MAP"))).toList());
+		assertMissingLiteralPlans("source-binding mutation", expected,
+			decodeFullSupport(roles, withoutExactXBinding).decodedPlans(), 2);
 		Map<String,List<CandidateSelectionReceipt>> withoutBGeometryD = new LinkedHashMap<>(supportDomains);
 		withoutBGeometryD.put("D", supportDomains.get("D").stream()
 			.filter(receipt -> !B_GEOMETRY.equals(geometry(receipt))).toList());
-		assertMissingHalfOfLiteralPlans("consumer-geometry mutation", expected,
-			decodeFullSupport(roles, withoutBGeometryD).decodedPlans());
+		assertMissingLiteralPlans("consumer-geometry mutation", expected,
+			decodeFullSupport(roles, withoutBGeometryD).decodedPlans(), 1);
 	}
 
-	private static void assertMissingHalfOfLiteralPlans(String mutation, Set<String> expected,
-		Set<String> actual) {
+	private static void assertMissingLiteralPlans(String mutation, Set<String> expected,
+		Set<String> actual, int expectedMissing) {
 		Set<String> missing = new LinkedHashSet<>(expected);
 		missing.removeAll(actual);
-		Assert.assertEquals(mutation + " must eliminate four distinct joint plans", 4, missing.size());
+		Assert.assertEquals(mutation + " must eliminate the expected exact joint plans",
+			expectedMissing, missing.size());
 		Assert.assertTrue(mutation + " must not invent a plan", expected.containsAll(actual));
 	}
 
@@ -323,22 +327,20 @@ public class ProductionDecodedPlanSpaceCompletenessTest {
 	private static Set<String> expectedPlans() {
 		String state = state(PROTECTED_ROW);
 		Set<String> expected = new LinkedHashSet<>();
-		for(String xLayout : List.of("DURABLE_MAP", "NATIVE_LINEAGE"))
-			for(String yLayout : List.of("DURABLE_MAP", "NATIVE_LINEAGE"))
-				for(String dGeometry : List.of(A_GEOMETRY, B_GEOMETRY)) {
-					String x = "X|state=" + state + "|layout=" + xLayout + "|geometry=" + A_GEOMETRY
-						+ "|bindings=[]";
-					String y = "Y|state=" + state + "|layout=" + yLayout + "|geometry=" + B_GEOMETRY
-						+ "|bindings=[]";
-					String u = "U|state=" + state + "|layout=DURABLE_MAP|geometry=" + A_GEOMETRY
-						+ "|bindings=[0:DIRECT:X@" + state + ':' + xLayout + ':' + A_GEOMETRY + ":action=-]";
-					String v = "V|state=" + state + "|layout=DURABLE_MAP|geometry=" + B_GEOMETRY
-						+ "|bindings=[0:DIRECT:Y@" + state + ':' + yLayout + ':' + B_GEOMETRY + ":action=-]";
-					String d = "D|state=" + state + "|layout=DURABLE_MAP|geometry=" + dGeometry
-						+ "|bindings=[0:DIRECT:U@" + state + ":DURABLE_MAP:" + A_GEOMETRY
-						+ ":action=-,1:DIRECT:V@" + state + ":DURABLE_MAP:" + B_GEOMETRY + ":action=-]";
-					expected.add(String.join("\n", x, y, u, v, d));
-				}
+		String x = "X|state=" + state + "|layout=DURABLE_MAP|geometry=" + A_GEOMETRY
+			+ "|bindings=[]";
+		String y = "Y|state=" + state + "|layout=DURABLE_MAP|geometry=" + B_GEOMETRY
+			+ "|bindings=[]";
+		String u = "U|state=" + state + "|layout=DURABLE_MAP|geometry=" + A_GEOMETRY
+			+ "|bindings=[0:DIRECT:X@" + state + ":DURABLE_MAP:" + A_GEOMETRY + ":action=-]";
+		String v = "V|state=" + state + "|layout=DURABLE_MAP|geometry=" + B_GEOMETRY
+			+ "|bindings=[0:DIRECT:Y@" + state + ":DURABLE_MAP:" + B_GEOMETRY + ":action=-]";
+		for(String dGeometry : List.of(A_GEOMETRY, B_GEOMETRY)) {
+			String d = "D|state=" + state + "|layout=DURABLE_MAP|geometry=" + dGeometry
+				+ "|bindings=[0:DIRECT:U@" + state + ":DURABLE_MAP:" + A_GEOMETRY
+				+ ":action=-,1:DIRECT:V@" + state + ":DURABLE_MAP:" + B_GEOMETRY + ":action=-]";
+			expected.add(String.join("\n", x, y, u, v, d));
+		}
 		return Set.copyOf(expected);
 	}
 

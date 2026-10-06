@@ -1,0 +1,2743 @@
+{
+  "schema": "cofee-derived-supply-remaining-validation-v1",
+  "baseCommit": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+  "workspace": "/home/mchoi/w1357-derived-supply-sharing-20261006",
+  "evidenceRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/automatic-supply-sharing-20261006",
+  "publication": "uncommitted worktree changes",
+  "status": "requested implementation and Docker checks passed; expanded Exact certificate campaign has a baseline solver ceiling",
+  "automaticCases": [
+    {
+      "kind": "invariant",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 1,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "22aeb9e65f6cfde1",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-automatic-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveMillis": 46.42780322869491,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "f3cfc54a9bccc503c5f409483f4474eae6da91c5d0d66a5ee8b3cf9cdd92fd31",
+        "modelCounts": {
+          "exactSolverFactorCount": 377,
+          "canonicalCostFactorCount": 269,
+          "exactSolverAuxiliaryVariableCount": 126,
+          "decisionCount": 61,
+          "exactSolverVariableCount": 187,
+          "hardFactorCount": 151,
+          "totalAlternativeCount": 403
+        }
+      },
+      "compileSeconds": 5.667677136,
+      "executionSeconds": 1.665468307,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a91dbf31e9f3ef70976665059cd099386bfbe5b17cbb56829887f621e5651173",
+      "auditPeakCanonicalCount": 1,
+      "auditPeakEstimatedBytes": 1048728,
+      "sharing": [
+        {
+          "canonicalIds": [
+            11
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "afb3e18a2586611e2afe30ebbfd9168fe5a45218d21b5ef031aba9f8d67a00cb"
+        }
+      ]
+    },
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 1,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "997215af42bf05bc",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-automatic-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveMillis": 46.42780322869491,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "142569fbae3abb69cd8b473ab5b825a4d77537e491ac7e412cdc1cd6a03781df",
+        "modelCounts": {
+          "exactSolverVariableCount": 187,
+          "decisionCount": 61,
+          "exactSolverAuxiliaryVariableCount": 126,
+          "canonicalCostFactorCount": 269,
+          "exactSolverFactorCount": 377,
+          "totalAlternativeCount": 403,
+          "hardFactorCount": 151
+        }
+      },
+      "compileSeconds": 4.512395585,
+      "executionSeconds": 1.748580136,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "54255a1c5e1ba61df856d9a01913e9f79009046dd8b108fdba683ecc4c7755d4",
+      "auditPeakCanonicalCount": 1,
+      "auditPeakEstimatedBytes": 1048728,
+      "sharing": [
+        {
+          "canonicalIds": [
+            11
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "45605b1eb094cf34f00a8b0d91595f5ae85b73af2660fa5ddf12c3f314ab22ed"
+        }
+      ]
+    },
+    {
+      "kind": "updated",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 2,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 1,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": false,
+        "retirementReasons": [
+          "SOURCE_REMOVAL",
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "55ab2f4a0505dc2b",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-automatic-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "06618aed8d632cad4026dea797374479af078ef3f7a34ed8d13359a04da0c708",
+        "modelCounts": {
+          "canonicalCostFactorCount": 319,
+          "exactSolverAuxiliaryVariableCount": 183,
+          "decisionCount": 71,
+          "exactSolverVariableCount": 254,
+          "hardFactorCount": 171,
+          "totalAlternativeCount": 593,
+          "exactSolverFactorCount": 478
+        }
+      },
+      "compileSeconds": 10.328008472,
+      "executionSeconds": 2.173521064,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "60d437ae266b1382d5b2e65a037f1ab182506be7eb41052d3e9ff5d8043cab4c",
+      "auditPeakCanonicalCount": 1,
+      "auditPeakEstimatedBytes": 1048728,
+      "sharing": [
+        {
+          "canonicalIds": [
+            13,
+            49,
+            85
+          ],
+          "creations": 3,
+          "distinctRuntimeVersions": 3,
+          "executions": 9,
+          "lifecycleCounts": {
+            "ALIAS": 9,
+            "CLEANUP": 3,
+            "CREATION_ATTEMPT": 3,
+            "CREATION_SUCCESS": 3,
+            "HIT": 6,
+            "RETAINED": 3,
+            "RETIREMENT": 3
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "20f29554da31f86aaeaf2af3d415b36c90e918744290ec13acebe926a6581e89"
+        }
+      ]
+    },
+    {
+      "kind": "updated",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 2,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 1,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": false,
+        "retirementReasons": [
+          "SOURCE_REMOVAL",
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "df8be7bbc236f4f8",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-automatic-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "986d64eaf4032911331babcaea4816395523b0606ce98aa69e61991d72ea7e77",
+        "modelCounts": {
+          "totalAlternativeCount": 593,
+          "hardFactorCount": 171,
+          "exactSolverVariableCount": 254,
+          "decisionCount": 71,
+          "exactSolverAuxiliaryVariableCount": 183,
+          "canonicalCostFactorCount": 319,
+          "exactSolverFactorCount": 478
+        }
+      },
+      "compileSeconds": 5.19477059,
+      "executionSeconds": 1.93501761,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "4093287b221fdf1bf8ca8915f8d59d22ae955d0d06a20a754d23c4cd240320dc",
+      "auditPeakCanonicalCount": 1,
+      "auditPeakEstimatedBytes": 1048728,
+      "sharing": [
+        {
+          "canonicalIds": [
+            13,
+            49,
+            85
+          ],
+          "creations": 3,
+          "distinctRuntimeVersions": 3,
+          "executions": 9,
+          "lifecycleCounts": {
+            "ALIAS": 9,
+            "CLEANUP": 3,
+            "CREATION_ATTEMPT": 3,
+            "CREATION_SUCCESS": 3,
+            "HIT": 6,
+            "RETAINED": 3,
+            "RETIREMENT": 3
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "5659b74aaf20d04864fe48e3ca8177ce08cbdc20a71bedbf8ec2cec158eabff0"
+        }
+      ]
+    },
+    {
+      "kind": "phi",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 2,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 1,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": false,
+        "retirementReasons": [
+          "SOURCE_REMOVAL",
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "89cf48bd945e2b01",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-automatic-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "d80e9dff50b02630cdd89a1b989b1621c0125b1d7bfc4c250560065714756e01",
+        "modelCounts": {
+          "exactSolverVariableCount": 251,
+          "hardFactorCount": 190,
+          "totalAlternativeCount": 484,
+          "exactSolverFactorCount": 487,
+          "canonicalCostFactorCount": 333,
+          "exactSolverAuxiliaryVariableCount": 178,
+          "decisionCount": 73
+        }
+      },
+      "compileSeconds": 6.61925339,
+      "executionSeconds": 2.163062182,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "6ce1408919ae329f14a3b04c4073050fbe6c20272d79da6c6d67d3dd8b944f9b",
+      "auditPeakCanonicalCount": 1,
+      "auditPeakEstimatedBytes": 1048728,
+      "sharing": [
+        {
+          "canonicalIds": [
+            11,
+            47,
+            83
+          ],
+          "creations": 3,
+          "distinctRuntimeVersions": 3,
+          "executions": 9,
+          "lifecycleCounts": {
+            "ALIAS": 9,
+            "CLEANUP": 3,
+            "CREATION_ATTEMPT": 3,
+            "CREATION_SUCCESS": 3,
+            "HIT": 6,
+            "RETAINED": 3,
+            "RETIREMENT": 3
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "c72c3f8f90236797eb00f03805d5fb8fd4ca9c35254e1053259167c28aa7cae4"
+        }
+      ]
+    },
+    {
+      "kind": "phi",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 2,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 1,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": false,
+        "retirementReasons": [
+          "SOURCE_REMOVAL",
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "7c9e57eb0513a51f",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-automatic-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "c7aae9df0c70246cebea1f3225dfc4b0794d651abc8dda46b7e119ceacffd3d5",
+        "modelCounts": {
+          "hardFactorCount": 190,
+          "exactSolverVariableCount": 251,
+          "decisionCount": 73,
+          "exactSolverAuxiliaryVariableCount": 178,
+          "canonicalCostFactorCount": 333,
+          "exactSolverFactorCount": 487,
+          "totalAlternativeCount": 484
+        }
+      },
+      "compileSeconds": 5.221798386,
+      "executionSeconds": 1.968420228,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "0f9f0271b559393f6e0ba63659e29c19f0bd081c298d4ed8181544ef262ef6de",
+      "auditPeakCanonicalCount": 1,
+      "auditPeakEstimatedBytes": 1048728,
+      "sharing": [
+        {
+          "canonicalIds": [
+            11,
+            47,
+            83
+          ],
+          "creations": 3,
+          "distinctRuntimeVersions": 3,
+          "executions": 9,
+          "lifecycleCounts": {
+            "ALIAS": 9,
+            "CLEANUP": 3,
+            "CREATION_ATTEMPT": 3,
+            "CREATION_SUCCESS": 3,
+            "HIT": 6,
+            "RETAINED": 3,
+            "RETIREMENT": 3
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "ce25290151c9cc2804997ed5d060daa054953b5efb69b6ab76fc55a1d4316d9c"
+        }
+      ]
+    },
+    {
+      "kind": "flat",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 0,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": false,
+        "retirementReasons": [],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "e66ee1588e15c5a1",
+            "instructionExecutions": 3,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-flat-final-r7",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4633862423046457917",
+        "canonicalObjectiveBits": "4633862423046457917",
+        "canonicalObjectiveMillis": 61.572832073569295,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "454693820efbef5db7c918e7238171f288630795ae8e57650e305b29d9bad321",
+        "modelCounts": {
+          "totalAlternativeCount": 333,
+          "hardFactorCount": 149,
+          "exactSolverVariableCount": 175,
+          "decisionCount": 59,
+          "exactSolverAuxiliaryVariableCount": 116,
+          "canonicalCostFactorCount": 262,
+          "exactSolverFactorCount": 335
+        }
+      },
+      "compileSeconds": 8.137741346,
+      "executionSeconds": 1.405692808,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "b68e7b352f250bc07f498e86a006d42bb75a46a82323fe25fb0fafd0b60f764b",
+      "auditPeakCanonicalCount": 0,
+      "auditPeakEstimatedBytes": 0,
+      "sharing": [
+        {
+          "canonicalIds": [
+            9,
+            20,
+            31
+          ],
+          "creations": 3,
+          "distinctRuntimeVersions": 3,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 0,
+            "CLEANUP": 0,
+            "CREATION_ATTEMPT": 3,
+            "CREATION_SUCCESS": 3,
+            "HIT": 0,
+            "RETAINED": 0,
+            "RETIREMENT": 0
+          },
+          "passed": true,
+          "shared": false,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "0a93e37865f4866984d59cf48e86247c32ae4ae676f88dcd1d5ad020e7510a13"
+        }
+      ],
+      "flatDiagnostic": {
+        "bestForcedCost": 60.572832073569295,
+        "bestForcedHardCost": 0.0,
+        "bestForcedPhysicalEmissionIdentity": "REFED|64:5339863e587bb71604747dbfea16bcff1861b8a71ceb9ee4decb6b71de5f7b41|2:S0|133:64:5339863e587bb71604747dbfea16bcff1861b8a71ceb9ee4decb6b71de5f7b41|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|94:35:cfg-definition:S0#1@main/0:ORDINARY,52:cfg-definition:S0#2@main/1/loop-body/0:LOOP_BACKEDGE|FULL|11:fed-init:UB|4:FULL|68:65:37:localhost:13002//evidence/data/UB.csv|7:1:0,1:0|11:2:16,4:4096|64:5339863e587bb71604747dbfea16bcff1861b8a71ceb9ee4decb6b71de5f7b41|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile",
+        "cheaperLegalAlternativeFound": true,
+        "commonRelocationCompletionLegal": true,
+        "exactOptimalityGap": 1.0,
+        "selectedCommonPhysicalEmissionIdentity": "REFED|64:5339863e587bb71604747dbfea16bcff1861b8a71ceb9ee4decb6b71de5f7b41|2:S0|133:64:5339863e587bb71604747dbfea16bcff1861b8a71ceb9ee4decb6b71de5f7b41|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|94:35:cfg-definition:S0#1@main/0:ORDINARY,52:cfg-definition:S0#2@main/1/loop-body/0:LOOP_BACKEDGE|FULL|11:fed-init:UB|4:FULL|68:65:37:localhost:13002//evidence/data/UB.csv|7:1:0,1:0|11:2:16,4:4096|64:5339863e587bb71604747dbfea16bcff1861b8a71ceb9ee4decb6b71de5f7b41|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile",
+        "selectedCommonRelocation": true,
+        "selectedCost": 61.572832073569295,
+        "selectedHardCost": 0.0,
+        "status": "checked"
+      },
+      "selectedSharedIdentityExecuted": true
+    },
+    {
+      "kind": "flat",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 0,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": false,
+        "retirementReasons": [],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "0d3973bc5f67a1c4",
+            "instructionExecutions": 3,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 0,
+            "staged": false,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": false,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-flat-final-r7",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4633721685558102589",
+        "canonicalObjectiveBits": "4633721685558102589",
+        "canonicalObjectiveMillis": 60.572832073569295,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "f83bd4276f2b24a88128b0e9b488d61c7c71b19247954807b9c5ff81d877aff1",
+        "modelCounts": {
+          "decisionCount": 59,
+          "exactSolverVariableCount": 175,
+          "hardFactorCount": 149,
+          "totalAlternativeCount": 333,
+          "exactSolverFactorCount": 335,
+          "canonicalCostFactorCount": 262,
+          "exactSolverAuxiliaryVariableCount": 116
+        }
+      },
+      "compileSeconds": 7.345334154,
+      "executionSeconds": 1.374117438,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "aa0bea0c9933cac66673ef83e33c73a3da2df48bcb221ea53f61587b660a3385",
+      "auditPeakCanonicalCount": 0,
+      "auditPeakEstimatedBytes": 0,
+      "sharing": [
+        {
+          "canonicalIds": [
+            8,
+            18,
+            28
+          ],
+          "creations": 3,
+          "distinctRuntimeVersions": 3,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 0,
+            "CLEANUP": 0,
+            "CREATION_ATTEMPT": 3,
+            "CREATION_SUCCESS": 3,
+            "HIT": 0,
+            "RETAINED": 0,
+            "RETIREMENT": 0
+          },
+          "passed": true,
+          "shared": false,
+          "source": "S0",
+          "staged": false,
+          "physicalEmissionIdentitySha256": "9365495974d280056630c9e768ddd2ac0e68334da5f29ab09c83ce6c1114d82b"
+        }
+      ],
+      "flatDiagnostic": {
+        "bestForcedCost": 60.572832073569295,
+        "bestForcedHardCost": 0.0,
+        "bestForcedPhysicalEmissionIdentity": "REFED|64:fd4337fb4d790aee9a46d971176d80bb4e50f0efc503c4d4c47241971e5c22de|2:S0|133:64:fd4337fb4d790aee9a46d971176d80bb4e50f0efc503c4d4c47241971e5c22de|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|94:35:cfg-definition:S0#1@main/0:ORDINARY,52:cfg-definition:S0#2@main/1/loop-body/0:LOOP_BACKEDGE|FULL|11:fed-init:UB|4:FULL|68:65:37:localhost:13002//evidence/data/UB.csv|7:1:0,1:0|11:2:16,4:4096|64:fd4337fb4d790aee9a46d971176d80bb4e50f0efc503c4d4c47241971e5c22de|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile",
+        "cheaperLegalAlternativeFound": false,
+        "commonRelocationCompletionLegal": true,
+        "exactOptimalityGap": 0.0,
+        "selectedCommonPhysicalEmissionIdentity": "REFED|64:fd4337fb4d790aee9a46d971176d80bb4e50f0efc503c4d4c47241971e5c22de|2:S0|133:64:fd4337fb4d790aee9a46d971176d80bb4e50f0efc503c4d4c47241971e5c22de|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile|1:1|8:ORDINARY|94:35:cfg-definition:S0#1@main/0:ORDINARY,52:cfg-definition:S0#2@main/1/loop-body/0:LOOP_BACKEDGE|FULL|11:fed-init:UB|4:FULL|68:65:37:localhost:13002//evidence/data/UB.csv|7:1:0,1:0|11:2:16,4:4096|64:fd4337fb4d790aee9a46d971176d80bb4e50f0efc503c4d4c47241971e5c22de|4:main|21:18:main/1/loop-body/0|18:main/1/loop-body/0|9:recompile",
+        "selectedCommonRelocation": true,
+        "selectedCost": 60.572832073569295,
+        "selectedHardCost": 0.0,
+        "status": "checked"
+      },
+      "selectedSharedIdentityExecuted": true
+    }
+  ],
+  "flatBeforeAfter": {
+    "baselineLocalRun": "remaining-flat-compatible-qm-r4",
+    "baselineGlobalRun": "remaining-flat-upstream-r3",
+    "baselineLocalCostMillis": 70.57631107747555,
+    "baselineGlobalCostMillis": 69.57631107747555,
+    "beforeCounts": {
+      "exactSolverAuxiliaryVariableCount": 112,
+      "canonicalCostFactorCount": 262,
+      "exactSolverFactorCount": 335,
+      "totalAlternativeCount": 333,
+      "hardFactorCount": 149,
+      "exactSolverVariableCount": 171,
+      "decisionCount": 59
+    },
+    "afterCounts": {
+      "totalAlternativeCount": 333,
+      "hardFactorCount": 149,
+      "exactSolverVariableCount": 175,
+      "decisionCount": 59,
+      "exactSolverAuxiliaryVariableCount": 116,
+      "canonicalCostFactorCount": 262,
+      "exactSolverFactorCount": 335
+    },
+    "compatibleParentAlternativeCountBefore": 0,
+    "compatibleParentAlternativeCountAfter": 1
+  },
+  "memoryCases": [
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 3,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "3d25fe57278e84f9",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "786a388601df4c9e",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S1",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "b267dc7eff8a7368",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S2",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": true,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-memory-216m-1g-final-r1",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveMillis": 3634.7839434728144,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "fb354d7262dded936b47e027483ac2e699c59d6cac4d4a737bcd9acc167a0460",
+        "modelCounts": {
+          "hardFactorCount": 226,
+          "totalAlternativeCount": 2078,
+          "exactSolverFactorCount": 839,
+          "canonicalCostFactorCount": 407,
+          "exactSolverAuxiliaryVariableCount": 488,
+          "decisionCount": 84,
+          "exactSolverVariableCount": 572
+        }
+      },
+      "compileSeconds": 7.833278332,
+      "executionSeconds": 9.842068012,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+      "auditPeakCanonicalCount": 3,
+      "auditPeakEstimatedBytes": 226492872,
+      "sharing": [
+        {
+          "canonicalIds": [
+            19
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "df3830a42224278348bdfb17fd08cea7ecd055dcdd241c0edf1a4c3cba981330"
+        },
+        {
+          "canonicalIds": [
+            24
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S1",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "6bb86bde962bbcf7d232cf554360345ba4e9195c54da49e30bdcb3378ea8e17f"
+        },
+        {
+          "canonicalIds": [
+            29
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S2",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "06287789ff6a79358180719569063a43b51ee653de8bea9e375b073c2580edce"
+        }
+      ],
+      "heap": "1g",
+      "workers": [
+        {
+          "address": "localhost/127.0.0.1:13001",
+          "processId": 37,
+          "memoryHits": 38,
+          "hdfsHits": 4,
+          "fsWrites": 0,
+          "fsHits": 0,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "1.531/0.001/0.004/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 161061273,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13001/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 0,
+          "cacheFileBytes": 0,
+          "heapUsedBytes": 268680136,
+          "heapCommittedBytes": 559939584,
+          "heapMaxBytes": 1073741824,
+          "gcCount": 39,
+          "gcMillis": 99
+        },
+        {
+          "address": "localhost/127.0.0.1:13002",
+          "processId": 38,
+          "memoryHits": 38,
+          "hdfsHits": 1,
+          "fsWrites": 7,
+          "fsHits": 0,
+          "fsBufferWrites": 30,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "0.095/0.004/0.739/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 155256456,
+          "writeBufferLimitBytes": 161061273,
+          "writeBufferQueueSize": 10,
+          "cachePath": "/evidence/cases/invariant-global/worker-13002/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 6,
+          "cacheFileBytes": 227737654,
+          "heapUsedBytes": 264731816,
+          "heapCommittedBytes": 445644800,
+          "heapMaxBytes": 1073741824,
+          "gcCount": 20,
+          "gcMillis": 61
+        }
+      ]
+    },
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 3,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "3d25fe57278e84f9",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "786a388601df4c9e",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S1",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "b267dc7eff8a7368",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S2",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": true,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-memory-216m-1g-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveMillis": 3634.7839434728144,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "2d94afe981acfc694db7c19df994414fe71fbeb745190e873df04e91e374008c",
+        "modelCounts": {
+          "exactSolverVariableCount": 572,
+          "decisionCount": 84,
+          "exactSolverAuxiliaryVariableCount": 488,
+          "canonicalCostFactorCount": 407,
+          "exactSolverFactorCount": 839,
+          "totalAlternativeCount": 2078,
+          "hardFactorCount": 226
+        }
+      },
+      "compileSeconds": 8.586749209,
+      "executionSeconds": 9.544993021,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+      "auditPeakCanonicalCount": 3,
+      "auditPeakEstimatedBytes": 226492872,
+      "sharing": [
+        {
+          "canonicalIds": [
+            19
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "df3830a42224278348bdfb17fd08cea7ecd055dcdd241c0edf1a4c3cba981330"
+        },
+        {
+          "canonicalIds": [
+            24
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S1",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "6bb86bde962bbcf7d232cf554360345ba4e9195c54da49e30bdcb3378ea8e17f"
+        },
+        {
+          "canonicalIds": [
+            29
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S2",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "06287789ff6a79358180719569063a43b51ee653de8bea9e375b073c2580edce"
+        }
+      ],
+      "heap": "1g",
+      "workers": [
+        {
+          "address": "localhost/127.0.0.1:13001",
+          "processId": 37,
+          "memoryHits": 38,
+          "hdfsHits": 4,
+          "fsWrites": 0,
+          "fsHits": 0,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "1.767/0.001/0.003/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 161061273,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13001/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 0,
+          "cacheFileBytes": 0,
+          "heapUsedBytes": 269994680,
+          "heapCommittedBytes": 524288000,
+          "heapMaxBytes": 1073741824,
+          "gcCount": 38,
+          "gcMillis": 94
+        },
+        {
+          "address": "localhost/127.0.0.1:13002",
+          "processId": 38,
+          "memoryHits": 38,
+          "hdfsHits": 1,
+          "fsWrites": 7,
+          "fsHits": 0,
+          "fsBufferWrites": 30,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "0.103/0.001/0.692/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 155256456,
+          "writeBufferLimitBytes": 161061273,
+          "writeBufferQueueSize": 10,
+          "cachePath": "/evidence/cases/invariant-global/worker-13002/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 6,
+          "cacheFileBytes": 227737654,
+          "heapUsedBytes": 264006816,
+          "heapCommittedBytes": 444596224,
+          "heapMaxBytes": 1073741824,
+          "gcCount": 19,
+          "gcMillis": 55
+        }
+      ]
+    },
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 3,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "3d25fe57278e84f9",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "786a388601df4c9e",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S1",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "b267dc7eff8a7368",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S2",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": true,
+        "passed": true,
+        "requireTargetSpillRestore": false,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": false
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-memory-216m-1g-final-r3",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveMillis": 3634.7839434728144,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "2d94afe981acfc694db7c19df994414fe71fbeb745190e873df04e91e374008c",
+        "modelCounts": {
+          "exactSolverAuxiliaryVariableCount": 488,
+          "decisionCount": 84,
+          "exactSolverVariableCount": 572,
+          "hardFactorCount": 226,
+          "totalAlternativeCount": 2078,
+          "exactSolverFactorCount": 839,
+          "canonicalCostFactorCount": 407
+        }
+      },
+      "compileSeconds": 8.239790451,
+      "executionSeconds": 9.966485771,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+      "auditPeakCanonicalCount": 3,
+      "auditPeakEstimatedBytes": 226492872,
+      "sharing": [
+        {
+          "canonicalIds": [
+            19
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "df3830a42224278348bdfb17fd08cea7ecd055dcdd241c0edf1a4c3cba981330"
+        },
+        {
+          "canonicalIds": [
+            24
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S1",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "6bb86bde962bbcf7d232cf554360345ba4e9195c54da49e30bdcb3378ea8e17f"
+        },
+        {
+          "canonicalIds": [
+            29
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S2",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "06287789ff6a79358180719569063a43b51ee653de8bea9e375b073c2580edce"
+        }
+      ],
+      "heap": "1g",
+      "workers": [
+        {
+          "address": "localhost/127.0.0.1:13001",
+          "processId": 37,
+          "memoryHits": 38,
+          "hdfsHits": 4,
+          "fsWrites": 0,
+          "fsHits": 0,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "1.725/0.001/0.007/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 161061273,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13001/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 0,
+          "cacheFileBytes": 0,
+          "heapUsedBytes": 266997792,
+          "heapCommittedBytes": 533725184,
+          "heapMaxBytes": 1073741824,
+          "gcCount": 44,
+          "gcMillis": 111
+        },
+        {
+          "address": "localhost/127.0.0.1:13002",
+          "processId": 38,
+          "memoryHits": 38,
+          "hdfsHits": 1,
+          "fsWrites": 7,
+          "fsHits": 0,
+          "fsBufferWrites": 30,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "0.106/0.001/0.725/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 155256456,
+          "writeBufferLimitBytes": 161061273,
+          "writeBufferQueueSize": 10,
+          "cachePath": "/evidence/cases/invariant-global/worker-13002/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 6,
+          "cacheFileBytes": 227737654,
+          "heapUsedBytes": 264441200,
+          "heapCommittedBytes": 445644800,
+          "heapMaxBytes": 1073741824,
+          "gcCount": 20,
+          "gcMillis": 67
+        }
+      ]
+    },
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 3,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "3d25fe57278e84f9",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "786a388601df4c9e",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S1",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "b267dc7eff8a7368",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S2",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": true,
+        "passed": true,
+        "requireTargetSpillRestore": true,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": true
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-memory-216m-256m-final-r1",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveMillis": 3634.7839434728144,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "8a1b0bea97aaa5ca1218a40ff529480655615c3be86aea9ac0684625fb52e135",
+        "modelCounts": {
+          "decisionCount": 84,
+          "exactSolverVariableCount": 572,
+          "hardFactorCount": 226,
+          "totalAlternativeCount": 2078,
+          "exactSolverFactorCount": 839,
+          "canonicalCostFactorCount": 407,
+          "exactSolverAuxiliaryVariableCount": 488
+        }
+      },
+      "compileSeconds": 8.974773574,
+      "executionSeconds": 15.675561793,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+      "auditPeakCanonicalCount": 3,
+      "auditPeakEstimatedBytes": 226492872,
+      "sharing": [
+        {
+          "canonicalIds": [
+            19
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "df3830a42224278348bdfb17fd08cea7ecd055dcdd241c0edf1a4c3cba981330"
+        },
+        {
+          "canonicalIds": [
+            24
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S1",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "6bb86bde962bbcf7d232cf554360345ba4e9195c54da49e30bdcb3378ea8e17f"
+        },
+        {
+          "canonicalIds": [
+            29
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S2",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "06287789ff6a79358180719569063a43b51ee653de8bea9e375b073c2580edce"
+        }
+      ],
+      "heap": "256m",
+      "workers": [
+        {
+          "address": "localhost/127.0.0.1:13001",
+          "processId": 37,
+          "memoryHits": 29,
+          "hdfsHits": 13,
+          "fsWrites": 0,
+          "fsHits": 0,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "6.462/0.001/0.004/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 40265318,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13001/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 0,
+          "cacheFileBytes": 0,
+          "heapUsedBytes": 189611944,
+          "heapCommittedBytes": 217055232,
+          "heapMaxBytes": 268435456,
+          "gcCount": 808,
+          "gcMillis": 1124
+        },
+        {
+          "address": "localhost/127.0.0.1:13002",
+          "processId": 38,
+          "memoryHits": 34,
+          "hdfsHits": 1,
+          "fsWrites": 6,
+          "fsHits": 4,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "0.593/0.001/1.282/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 40265318,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13002/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 3,
+          "cacheFileBytes": 226492443,
+          "heapUsedBytes": 263370168,
+          "heapCommittedBytes": 268435456,
+          "heapMaxBytes": 268435456,
+          "gcCount": 37,
+          "gcMillis": 144
+        }
+      ]
+    },
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 3,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "3d25fe57278e84f9",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "786a388601df4c9e",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S1",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "b267dc7eff8a7368",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S2",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": true,
+        "passed": true,
+        "requireTargetSpillRestore": true,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": true
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-memory-216m-256m-final-r2",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveMillis": 3634.7839434728144,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "fb354d7262dded936b47e027483ac2e699c59d6cac4d4a737bcd9acc167a0460",
+        "modelCounts": {
+          "canonicalCostFactorCount": 407,
+          "exactSolverAuxiliaryVariableCount": 488,
+          "decisionCount": 84,
+          "exactSolverVariableCount": 572,
+          "hardFactorCount": 226,
+          "totalAlternativeCount": 2078,
+          "exactSolverFactorCount": 839
+        }
+      },
+      "compileSeconds": 7.919846357,
+      "executionSeconds": 13.662393553,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+      "auditPeakCanonicalCount": 3,
+      "auditPeakEstimatedBytes": 226492872,
+      "sharing": [
+        {
+          "canonicalIds": [
+            19
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "df3830a42224278348bdfb17fd08cea7ecd055dcdd241c0edf1a4c3cba981330"
+        },
+        {
+          "canonicalIds": [
+            24
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S1",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "6bb86bde962bbcf7d232cf554360345ba4e9195c54da49e30bdcb3378ea8e17f"
+        },
+        {
+          "canonicalIds": [
+            29
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S2",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "06287789ff6a79358180719569063a43b51ee653de8bea9e375b073c2580edce"
+        }
+      ],
+      "heap": "256m",
+      "workers": [
+        {
+          "address": "localhost/127.0.0.1:13001",
+          "processId": 37,
+          "memoryHits": 34,
+          "hdfsHits": 8,
+          "fsWrites": 0,
+          "fsHits": 0,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "4.153/0.001/0.003/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 40265318,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13001/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 0,
+          "cacheFileBytes": 0,
+          "heapUsedBytes": 263317912,
+          "heapCommittedBytes": 268435456,
+          "heapMaxBytes": 268435456,
+          "gcCount": 376,
+          "gcMillis": 600
+        },
+        {
+          "address": "localhost/127.0.0.1:13002",
+          "processId": 38,
+          "memoryHits": 32,
+          "hdfsHits": 1,
+          "fsWrites": 6,
+          "fsHits": 6,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "0.772/0.001/1.416/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 40265318,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13002/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 3,
+          "cacheFileBytes": 226492443,
+          "heapUsedBytes": 110188368,
+          "heapCommittedBytes": 182452224,
+          "heapMaxBytes": 268435456,
+          "gcCount": 40,
+          "gcMillis": 212
+        }
+      ]
+    },
+    {
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "cleanup": {
+        "asynchronousCleanupDispatchCount": 0,
+        "cleanupFailures": 0,
+        "confirmedRemoteCleanupCount": 3,
+        "currentCanonicalCount": 0,
+        "currentEstimatedBytes": 0,
+        "logicalRetirementOnly": false,
+        "passed": true,
+        "remoteCleanupConfirmed": true,
+        "retirementReasons": [
+          "WORKER_RESET"
+        ],
+        "workerClearFailureDetected": false
+      },
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "3d25fe57278e84f9",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "786a388601df4c9e",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S1",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          },
+          {
+            "actionKeyDigest": "b267dc7eff8a7368",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S2",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "workerCache": {
+        "cacheManagerMatches": true,
+        "cachePathsIsolated": true,
+        "cachingStateMatches": true,
+        "expectedCachingActive": true,
+        "passed": true,
+        "requireTargetSpillRestore": true,
+        "scope": "worker aggregate cache counters; not per-canonical attribution",
+        "targetSpillRestoreObserved": true
+      },
+      "workerObservationPassed": true,
+      "run": "remaining-memory-216m-256m-final-r3",
+      "canonicalProof": {
+        "certificateObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveBits": "4660211389494326093",
+        "canonicalObjectiveMillis": 3634.7839434728144,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "2d94afe981acfc694db7c19df994414fe71fbeb745190e873df04e91e374008c",
+        "modelCounts": {
+          "exactSolverFactorCount": 839,
+          "canonicalCostFactorCount": 407,
+          "exactSolverAuxiliaryVariableCount": 488,
+          "decisionCount": 84,
+          "exactSolverVariableCount": 572,
+          "hardFactorCount": 226,
+          "totalAlternativeCount": 2078
+        }
+      },
+      "compileSeconds": 9.260181652,
+      "executionSeconds": 12.184167319,
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0,
+      "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+      "auditPeakCanonicalCount": 3,
+      "auditPeakEstimatedBytes": 226492872,
+      "sharing": [
+        {
+          "canonicalIds": [
+            19
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S0",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "df3830a42224278348bdfb17fd08cea7ecd055dcdd241c0edf1a4c3cba981330"
+        },
+        {
+          "canonicalIds": [
+            24
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S1",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "6bb86bde962bbcf7d232cf554360345ba4e9195c54da49e30bdcb3378ea8e17f"
+        },
+        {
+          "canonicalIds": [
+            29
+          ],
+          "creations": 1,
+          "distinctRuntimeVersions": 1,
+          "executions": 3,
+          "lifecycleCounts": {
+            "ALIAS": 3,
+            "CLEANUP": 1,
+            "CREATION_ATTEMPT": 1,
+            "CREATION_SUCCESS": 1,
+            "HIT": 2,
+            "RETAINED": 1,
+            "RETIREMENT": 1
+          },
+          "passed": true,
+          "shared": true,
+          "source": "S2",
+          "staged": true,
+          "physicalEmissionIdentitySha256": "06287789ff6a79358180719569063a43b51ee653de8bea9e375b073c2580edce"
+        }
+      ],
+      "heap": "256m",
+      "workers": [
+        {
+          "address": "localhost/127.0.0.1:13001",
+          "processId": 37,
+          "memoryHits": 36,
+          "hdfsHits": 6,
+          "fsWrites": 0,
+          "fsHits": 0,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "3.313/0.001/0.004/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 40265318,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13001/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 0,
+          "cacheFileBytes": 0,
+          "heapUsedBytes": 263316248,
+          "heapCommittedBytes": 268435456,
+          "heapMaxBytes": 268435456,
+          "gcCount": 364,
+          "gcMillis": 590
+        },
+        {
+          "address": "localhost/127.0.0.1:13002",
+          "processId": 38,
+          "memoryHits": 34,
+          "hdfsHits": 1,
+          "fsWrites": 6,
+          "fsHits": 4,
+          "fsBufferWrites": 24,
+          "fsBufferHits": 0,
+          "cacheOperationTimesSeconds": "0.554/0.001/1.367/0.000",
+          "cachingActive": true,
+          "unifiedMemoryManagerEnabled": false,
+          "cacheManager": "STATIC",
+          "writeBufferSizeBytes": 5506848,
+          "writeBufferLimitBytes": 40265318,
+          "writeBufferQueueSize": 12,
+          "cachePath": "/evidence/cases/invariant-global/worker-13002/tmp/_p0_0.0.0.0//cache/",
+          "cacheFileCount": 3,
+          "cacheFileBytes": 226492443,
+          "heapUsedBytes": 260299840,
+          "heapCommittedBytes": 268435456,
+          "heapMaxBytes": 268435456,
+          "gcCount": 35,
+          "gcMillis": 165
+        }
+      ]
+    }
+  ],
+  "memoryComparison": {
+    "selectedNativeSupplyReceiptLifetimeContentEqual": true,
+    "semanticDigestSchema": "JSON sort_keys=true,separators=(comma,colon): selectedOccurrences, selectedCandidateSelections,selectedLocalMaterializations,sharedSupplyLifetimes,selectedRelocations excluding runtimeSupplyEvents,runtimeSupplyEventCount,runtimeCreationCount",
+    "selectedPlanSemanticSha256": "a0551ff0b64a886916d99c8d931f967e504cdef6c3018c8b635df0cd34107190",
+    "analysisFingerprintEqual": true,
+    "fullNormalizedPlanFingerprintEqual": false,
+    "fullReconstructedCostSurfaceFingerprintEqual": false,
+    "canonicalCostBitsEqual": true,
+    "canonicalCostBits": "4660211389494326093",
+    "executionMedianSeconds": {
+      "1g": 9.842068012,
+      "256m": 13.662393553
+    },
+    "observedMedianIncreasePercent": 38.8162887753066,
+    "repetitionsPerHeap": 3,
+    "causalOrGeneralPenaltyCoefficientClaimed": false,
+    "workerDiskIoIsAggregateNotPerCanonical": true,
+    "productionDefaultWorkerCacheChanged": false,
+    "staticModelPricesWorkerDiskIoGcOrFileRereads": false,
+    "remoteLogicalCleanupConfirmedButCacheBackingFilesRemain": true
+  },
+  "runManifests": [
+    {
+      "run": "remaining-automatic-final-r2",
+      "resultSha256": "3ae250a32bec52e094319f0e558ea5808754709c2200d23bdbfc0a04f23f61b7",
+      "manifestSha256": "3eee37a4e325e390e6665d12fdd4fe6a1c2b8e3b9471095741353067ab900170",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 1,
+        "inner": 16,
+        "iterations": 3,
+        "kinds": [
+          "invariant",
+          "updated",
+          "phi"
+        ],
+        "planners": [
+          "local",
+          "global"
+        ],
+        "requireWorkerSpill": false,
+        "rows": 16,
+        "usesPerVersion": 3,
+        "width": 8192,
+        "workerBufferPercent": 15,
+        "workerCache": "disabled",
+        "workerHeap": "1g",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-flat-final-r7",
+      "resultSha256": "e733811e3e75636df34ea0318ad04fb4f0c55cf679a2c87faf6516bf4973d2e9",
+      "manifestSha256": "61ecb67959bd8027c03b4c2ce63dde095e366898c54aaf14b2de8f1fd9406e9e",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 1,
+        "inner": 16,
+        "iterations": 3,
+        "kinds": [
+          "flat"
+        ],
+        "planners": [
+          "local",
+          "global"
+        ],
+        "requireWorkerSpill": false,
+        "rows": 16,
+        "usesPerVersion": 3,
+        "width": 4096,
+        "workerBufferPercent": 15,
+        "workerCache": "disabled",
+        "workerHeap": "1g",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-memory-216m-1g-final-r1",
+      "resultSha256": "415a5e3762e98a25f12a2e566d42e9453a4c309f3b9a6ee66e21cfc08d717f39",
+      "manifestSha256": "612f3397877bf577c974b7240a8691560b64828fe19491c37e62b3c674654023",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "global"
+        ],
+        "requireWorkerSpill": false,
+        "rows": 8,
+        "usesPerVersion": 3,
+        "width": 9216,
+        "workerBufferPercent": 15,
+        "workerCache": "static",
+        "workerHeap": "1g",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-memory-216m-1g-final-r2",
+      "resultSha256": "83bd88d7f8be2beb3d682f7f571719e77f52dafea1c0fb9e1adb78386b0fb186",
+      "manifestSha256": "447d40c3ce45e7239761f532b92fa58bc5b48118c76c839f62a3286239554637",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "global"
+        ],
+        "requireWorkerSpill": false,
+        "rows": 8,
+        "usesPerVersion": 3,
+        "width": 9216,
+        "workerBufferPercent": 15,
+        "workerCache": "static",
+        "workerHeap": "1g",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-memory-216m-1g-final-r3",
+      "resultSha256": "c930719247d095a264030b1380d7ad8e0d6df5fe83c8753427f774ce1813d792",
+      "manifestSha256": "1473dbcc9eedded33107e78dd2a68ec5a6a734db1682454c1e46c9360303bf05",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "global"
+        ],
+        "requireWorkerSpill": false,
+        "rows": 8,
+        "usesPerVersion": 3,
+        "width": 9216,
+        "workerBufferPercent": 15,
+        "workerCache": "static",
+        "workerHeap": "1g",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-memory-216m-256m-final-r1",
+      "resultSha256": "c4695b07d31ad2e1c3ff012ccb416dc97d32628e8a5756db930093e3c7365175",
+      "manifestSha256": "62b2cd2613c3fe3e1c85fb76d1b8e0460cf2f5d9841cf3e4ee23e153f17e4e4f",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "global"
+        ],
+        "requireWorkerSpill": true,
+        "rows": 8,
+        "usesPerVersion": 3,
+        "width": 9216,
+        "workerBufferPercent": 15,
+        "workerCache": "static",
+        "workerHeap": "256m",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-memory-216m-256m-final-r2",
+      "resultSha256": "a1bb47097536935a90576e043651d6f1d034a43ba22e07e9a7037ec71ff91b80",
+      "manifestSha256": "776f25db48f7d457072b85fa760fb9e0fdf695cb8eb18fc66454e0d9dfe7ed53",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "global"
+        ],
+        "requireWorkerSpill": true,
+        "rows": 8,
+        "usesPerVersion": 3,
+        "width": 9216,
+        "workerBufferPercent": 15,
+        "workerCache": "static",
+        "workerHeap": "256m",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    },
+    {
+      "run": "remaining-memory-216m-256m-final-r3",
+      "resultSha256": "e4df3f28356076f7b8592006fde59ba7284fe756975eb8d90da6f80930425367",
+      "manifestSha256": "890a1bc052c3238e0db5819d149b6754a8c747cb9eaf506d93d513339981d894",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "spec": {
+        "caseTimeoutSeconds": 600,
+        "coordinatorHeap": "3g",
+        "copies": 3,
+        "inner": 1024,
+        "iterations": 3,
+        "kinds": [
+          "invariant"
+        ],
+        "planners": [
+          "global"
+        ],
+        "requireWorkerSpill": true,
+        "rows": 8,
+        "usesPerVersion": 3,
+        "width": 9216,
+        "workerBufferPercent": 15,
+        "workerCache": "static",
+        "workerHeap": "256m",
+        "workerSoftRefMsPerMb": null
+      },
+      "currentMainSourcesMatchFrozenInventory": true
+    }
+  ],
+  "javaRegression": {
+    "totals": {
+      "tests": 220,
+      "failures": 0,
+      "errors": 1,
+      "skipped": 1,
+      "passed": 218
+    },
+    "classes": [
+      {
+        "class": "RefedReuseAuditTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.323,
+        "xmlFile": "TEST-org.apache.sysds.runtime.controlprogram.federated.RefedReuseAuditTest.xml",
+        "xmlSha256": "0d50c9caafdba41ead087ebbcb9854247d4a8d7222ef75bdfc52e5173fa3d446",
+        "incidents": []
+      },
+      {
+        "class": "OwnedRefedReuseTest",
+        "tests": 30,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.407,
+        "xmlFile": "TEST-org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest.xml",
+        "xmlSha256": "49c6f60d337f58dbaa46c2b2d758cacf190e4ab627a10f1a7ed5d24824d786cc",
+        "incidents": []
+      },
+      {
+        "class": "FederationUtilsRefedReuseLayoutTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.32,
+        "xmlFile": "TEST-org.apache.sysds.test.component.federated.FederationUtilsRefedReuseLayoutTest.xml",
+        "xmlSha256": "d0bf505c64645115e8c208d563f8d2489ca85cf01b65003c655bb27c50e2b998",
+        "incidents": []
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.09,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDerivedSupplySharingTest.xml",
+        "xmlSha256": "597119bbb0780eff459c8a37656681db4ee41da75d2eb9f439525907492e4895",
+        "incidents": []
+      },
+      {
+        "class": "ExactCompiledSupplySharingTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 4.971,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledSupplySharingTest.xml",
+        "xmlSha256": "db3bdb96a7a09c658bd9c6b47d18865de779861669f970d2fa17f34f8e0a370a",
+        "incidents": []
+      },
+      {
+        "class": "ExactStagedSupplyCanonicalCostTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 5.701,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactStagedSupplyCanonicalCostTest.xml",
+        "xmlSha256": "370aeacf1a2aebf80a5c9c5ac9b7204fc8cc3a5c152eb30512a6e037ee5abcaa",
+        "incidents": []
+      },
+      {
+        "class": "ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 1.92,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalNativeSupplyRepresentationTest.xml",
+        "xmlSha256": "98f56f3476cdf55d5979345b0d451cbfcda1c8024bdb9e16d012c85c7c3d5a41",
+        "incidents": []
+      },
+      {
+        "class": "ExactSharedSourceOrdinalReuseTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.113,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSharedSourceOrdinalReuseTest.xml",
+        "xmlSha256": "684934e40f5153ff1ce6c8a7dd6e51888184cb662481cc1d2c9c9b5610c6fa47",
+        "incidents": []
+      },
+      {
+        "class": "ExactSharedSourceOrdinalLifecycleTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.055,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSharedSourceOrdinalLifecycleTest.xml",
+        "xmlSha256": "50ca717d0136421760c240215c6b7cf4975c297f5845206dc9f3a4baf6d03b41",
+        "incidents": []
+      },
+      {
+        "class": "ExactFunctionGetSharingTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 4.41,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionGetSharingTest.xml",
+        "xmlSha256": "79b39d3a7fde8144dd3a37c66e76aa707ee9a0d77d078a5e6e09204062649913",
+        "incidents": []
+      },
+      {
+        "class": "ExactCanonicalCostTraceTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.05,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCanonicalCostTraceTest.xml",
+        "xmlSha256": "15b548850ed998ddd308f92b2771d82033971ae740edc05b1189ed91a50aed48",
+        "incidents": []
+      },
+      {
+        "class": "ExactAuxiliaryCommunicationCostTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 1.265,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryCommunicationCostTest.xml",
+        "xmlSha256": "a9e7ef0d4fe507b395a39dbfb623b31052e76ecaa0018a5c3f5fff2647713362",
+        "incidents": []
+      },
+      {
+        "class": "ExactAuxiliaryNativeInputUploadTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 1.3,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryNativeInputUploadTest.xml",
+        "xmlSha256": "34e43d275cd075d14eb4a75895312e0c9e896eaeae7a8244cdb966a46b81fe43",
+        "incidents": []
+      },
+      {
+        "class": "ExactCtableMaterializationCostTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 4.706,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCtableMaterializationCostTest.xml",
+        "xmlSha256": "def108f13a3f89cef1657a69fbb18cdd7fe8b8beb977497936bea94110ca78cd",
+        "incidents": []
+      },
+      {
+        "class": "ExactLoopPhiSupplySharingTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 39.122,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactLoopPhiSupplySharingTest.xml",
+        "xmlSha256": "c768314ad2899ab4234d136d8b1946d7af0b0082901c651cdd62337afe76e360",
+        "incidents": []
+      },
+      {
+        "class": "ExactDurableOutputSupportTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.059,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDurableOutputSupportTest.xml",
+        "xmlSha256": "52f45a8ef1b46f54b9db870b81f6f181d9bf08b5856e908b2e3f67fce3bad2d7",
+        "incidents": []
+      },
+      {
+        "class": "DirectedDirectClosureDirtyConeTest",
+        "tests": 22,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.138,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.placement.DirectedDirectClosureDirtyConeTest.xml",
+        "xmlSha256": "bc2981207fbb934a279f93c23eefeeda08b8548f9f7db95a96bb56cee9016e77",
+        "incidents": []
+      },
+      {
+        "class": "NativePlacementContinuityTest",
+        "tests": 79,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "timeSeconds": 0.751,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.placement.NativePlacementContinuityTest.xml",
+        "xmlSha256": "c62e4378bb5bbf64125775f706b88cedec0161314ee9bff11d835a764cba0964",
+        "incidents": [
+          {
+            "method": "publicSourceWithoutDirectBroadcastKeepsRelocationRowActive",
+            "status": "skipped",
+            "message": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+            "detail": ""
+          }
+        ]
+      },
+      {
+        "class": "CompositionRecurrenceDiagnosticsTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 0.01,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.placement.CompositionRecurrenceDiagnosticsTest.xml",
+        "xmlSha256": "0b1e85be8aa203062b575189f2b3b9105b72334311d305bf57eaaeda285ed7f4",
+        "incidents": []
+      },
+      {
+        "class": "LoopEntryCompletePlacementSpaceTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 4.605,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LoopEntryCompletePlacementSpaceTest.xml",
+        "xmlSha256": "07d1901d022d2c3069318cddae664bcfdf0012f65b8aa3d5a85e757b8a77dcae",
+        "incidents": []
+      },
+      {
+        "class": "CandidateReceiptAssignmentCompletenessTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 1.845,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.placement.CandidateReceiptAssignmentCompletenessTest.xml",
+        "xmlSha256": "b081478f56d140506fb080341af61bc5bba373fd8109af2752955bcddeba11e3",
+        "incidents": []
+      },
+      {
+        "class": "GlobalReceiptPlanSpaceCompletenessTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 1.229,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.placement.GlobalReceiptPlanSpaceCompletenessTest.xml",
+        "xmlSha256": "cc200a7c2306af5ea421483af2bff144cf918c9472dbefc83c37bc00a477c434",
+        "incidents": []
+      },
+      {
+        "class": "ProductionDecodedPlanSpaceCompletenessTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 2.39,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.placement.ProductionDecodedPlanSpaceCompletenessTest.xml",
+        "xmlSha256": "53ba9490263a7895c3398449c6e4c1e53bacef5bbed7f3a22b4cd2f66b1d70c2",
+        "incidents": []
+      },
+      {
+        "class": "ExactPhysicalRealizationSupportFactorCacheTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 4.195,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest.xml",
+        "xmlSha256": "3487ec990f21ddbfc854824168d4f41ae9a46ac0ed4ba12407b73226f1661e3d",
+        "incidents": []
+      },
+      {
+        "class": "ExactPhysicalWitnessEncodingTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": 4.217,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalWitnessEncodingTest.xml",
+        "xmlSha256": "63e9f07ddada6e87c8e63e741624df9c3cba0c49b7fe0a20455b10523b8157e2",
+        "incidents": []
+      },
+      {
+        "class": "ExactPhysicalModelCertificateTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 1,
+        "skipped": 0,
+        "timeSeconds": 44.501,
+        "xmlFile": "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModelCertificateTest.xml",
+        "xmlSha256": "3d4c7911e3bada5e3faa5316025abe2bede4d412981472931ef0d8448a70e71a",
+        "incidents": [
+          {
+            "method": "sevenWorkloadsBuildBaselineFreePhysicalDomainsAndFactors",
+            "status": "error",
+            "message": "EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells=19322130|limit=10000000|input",
+            "detail": "java.lang.IllegalArgumentException: EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells=19322130|limit=10000000|input\n\tat org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModelCertificateTest.sevenWorkloadsBuildBaselineFreePhysicalDomainsAndFactors(ExactPhysicalModelCertificateTest.java:42)"
+          }
+        ]
+      }
+    ],
+    "execution": "25 unchanged final class results plus fresh final certificate-class rerun",
+    "finalEvidenceDirectory": "remaining-regression-final",
+    "baselineAttributionDirectory": "remaining-regression-certificate-proof",
+    "baselineWithIdenticalCorrectedTest": "L2SVM: EXACT_VE_FACTOR_CELL_OVERFLOW in optimizer",
+    "currentWithIdenticalCorrectedTest": "L2SVM: EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells=19322130|limit=10000000|input",
+    "solverLimitsChanged": false,
+    "campaignBeyondL2svmNotVerified": true
+  },
+  "pythonRegression": {
+    "tests": 42,
+    "passed": 42,
+    "command": "python3 -m unittest discover -s scripts/fedplanner/tests -p 'test_run_*e2e.py' -v"
+  },
+  "staticChecks": {
+    "shellSyntax": "passed",
+    "pythonCompile": "passed",
+    "gitDiffCheck": "passed"
+  },
+  "changedSourceSha256": {
+    "scripts/fedplanner/run_LAN_docker.sh": "de7ba5c51ff0773c4eb2c0552dd54a77bda3b3c02a1e91ece4281bd5accc731b",
+    "scripts/fedplanner/run_supply_sharing_e2e.py": "2d9ee8177ad79403638b3dcbc02a6d55ac8f6e885a8eaf31bf86987244bc014d",
+    "scripts/fedplanner/tests/test_run_supply_sharing_e2e.py": "4cd4bdc4be2f26694f05c8141b7524d04b1c0c5f1db24fafb0160f57b9723f84",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "04eb7d7bd9d461c45d3e174ccc877602e1363d928ad80953c03fa3e2a6d33a6f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "29f6a92782cd81511fff5321b2a2a0204091db71eee8bc09e2b34e4258a2d1bf",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java": "7b57d2d024af24f4974dacd2f733b9dc1d876c31c1c6d6de6ffc6eb2b2319710",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentity.java": "aabdb6e6917221587c5f24ab3b99b20184404741f05f28e17bf113ef1b0f739f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "cefbedb1cb8b73ec09087233755965ed3a129774c9a6b0187615e789594319f6",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/caching/CacheableData.java": "752da3ffba4d2f2ebf4329d196f82972a232cc595c98c1fd836eff818d931dea",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.java": "a88d5c76fbf93a5face116febd870803e93f9cc22578d9e9b8cff80b1c74f049",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/context/MatrixObjectFuture.java": "970f52a36c0a162078dceb1291d258b19bd9a8f9b5a1cf71d536cdf3d582555c",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/federated/FederatedData.java": "d80e964356e9a1dda1d09b0310bc0b7056aa3ba10d9a1c72568e453a20cd34a4",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/federated/FederationUtils.java": "791ab656f2b82e6b104dd9dee218303a96aeb7d7c05fa229da3694439636a435",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/federated/RefedReuseAudit.java": "271d7f044f026b77e95c80a60efb645c62cf99fbd942a559eeb9f5c0617d6723",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDRefedInstruction.java": "469e0edbd0b3dd0c3877df3ca859b1e3a7ff16fc817601350ce99aa97ce001d0",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/AutomaticSupplySharingDockerProbe.java": "9d87da30c3180b6ac9d66ee259904f61cd0afdccfdff1ccac6a5bdec12ec86bc",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactDurableOutputSupportTest.java": "2cb5b333751b97ed7ae0171650520c1613de34bf9f3aff4f65533618eb22e0d8",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactLoopPhiSupplySharingTest.java": "0b892e7fc96fb18a3fa7b5789e292079c8bde69754928c3313ad60e254c58a8b",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModelCertificateTest.java": "7c673e211bdcf417fecd173090b13c999dc7edcf5e41c9a2ac8f86af07e65258",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalRealizationSupportFactorCacheTest.java": "fa944e1a6dd28c23bb08655fb8bdc6cd516e06f961c06b72386a26a6df9ff0b5",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactSharedSourceOrdinalLifecycleTest.java": "4c9f782d59876e4c0dde108b11bab5cd4bce95f91d2473047693fb49c7c49fda",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactSharedSourceOrdinalReuseTest.java": "0d6fb6050d022cc24cc1ac92eba4f60e90ca8e29a34eea5479f043115c549025",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/ProductionDecodedPlanSpaceCompletenessTest.java": "c6d0f0dabd9851ba415adcb5f62f8ba5a0bea36ba93a3d5578b6fd2b6f4ad7fa",
+    "src/test/java/org/apache/sysds/runtime/controlprogram/federated/RefedReuseAuditTest.java": "eb3f190b53d8e5301d4b92ca5b2e38eca4b718a5b2f5d8db55dd85fc5c5fb6bd"
+  }
+}
