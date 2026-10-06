@@ -42,9 +42,15 @@ DEFAULT_MODEL_PROOF_CLASS = (
     "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
     "JointBoundaryPhysicalModelProofTest")
 MARKER = re.compile(
-    r"^JOINT_E2E_(SUM|NORM2|ROWS|COLS|CALL_C|CALL_D|WEIGHTED)="
+    r"^JOINT_E2E_(SUM|NORM2|ROWS|COLS|CALL_C|CALL_D|WEIGHTED|LOSS_INITIAL|LOSS_FINAL)="
     r"([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)$",
     re.MULTILINE)
+CHECKPOINT = re.compile(r"^\[PlannerTrace\]\[DP-IncrementalRegional\] (?P<body>.+)$", re.MULTILINE)
+CHECKPOINT_FIELD = re.compile(r"([A-Za-z][A-Za-z0-9]*)=([^ ]+)")
+STATISTIC = re.compile(
+    r"^(Total compilation time|Total execution time):\s*([0-9.]+) sec\.?$", re.MULTILINE)
+AUDIT_VIOLATION = re.compile(r"(?m)^\[PlannerRuntimeAudit\].*\bstatus=(?:MISMATCH|UNKNOWN)\b")
+TERMINAL_CHECKPOINT_PHASES = {"EXACT", "TARGET_REACHED", "TIME", "RESOURCE"}
 ACTION_PATTERN = re.compile(
     r"(?i)(plannerSyntheticActionKey|localMaterializationAction|relocationAction|fed_refed|prefetch)")
 CLASS_PREFLIGHT_MAIN = (
@@ -67,6 +73,9 @@ class Case:
     requires_fed_no_relocation: bool = False
     requires_branch_upload: bool = False
     expected_failure: str = ""
+    training: bool = False
+    requires_loss_progress: bool = False
+    default_selected: bool = True
 
 
 def cases() -> tuple[Case, ...]:
@@ -89,7 +98,20 @@ def cases() -> tuple[Case, ...]:
              requires_branch_upload=True),
         Case("l2svm_protected_y_negative", "l2svm", (0, 1, 0, 1, 0, 1, 0, 1),
              y_privacy="private", expected_success=False),
+        Case("ml_logreg", "ml_logreg", training=True, default_selected=False),
+        Case("ml_l2svm", "ml_l2svm", training=True, default_selected=False),
+        Case("ml_lm", "ml_lm", training=True, default_selected=False),
+        Case("ml_logreg_gd", "ml_logreg_gd", training=True,
+             requires_loss_progress=True, default_selected=False),
+        Case("ml_l2svm_gd", "ml_l2svm_gd", training=True,
+             requires_loss_progress=True, default_selected=False),
+        Case("ml_lm_gd", "ml_lm_gd", training=True,
+             requires_loss_progress=True, default_selected=False),
     )
+
+
+def default_cases() -> tuple[Case, ...]:
+    return tuple(case for case in cases() if case.default_selected)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -228,7 +250,23 @@ def local_read(name: str) -> str:
 
 def federated_read(name: str, rows: int, cols: int) -> str:
     return (f'{name}=federated(addresses=list("localhost:{WORKER_PORT}//evidence/data/{name}.csv"),'
-            f'ranges=list(list(0,0),list({rows},{cols})));\n')
+             f'ranges=list(list(0,0),list({rows},{cols})));\n')
+
+
+def training_x_read(federated: bool) -> str:
+    if not federated:
+        return local_read("X_ML_PUBLIC") + "X=X_ML_PUBLIC;\n"
+    return (
+        f'X=federated(addresses=list("localhost:{WORKER_PORT}//evidence/data/X_ML_0.csv",'
+        f'"localhost:{POOL_A_PORT}//evidence/data/X_ML_1.csv",'
+        f'"localhost:{POOL_B_PORT}//evidence/data/X_ML_2.csv"),'
+        'ranges=list(list(0,0),list(64,8),list(64,0),list(128,8),'
+        'list(128,0),list(192,8)));\n')
+
+
+def model_output() -> str:
+    return (fingerprint("m")
+            + 'write(m,$MODEL_OUTPUT,format="csv");\n')
 
 
 def pool_read(name: str, port: int, federated: bool, public_federated: bool = False) -> str:
@@ -249,6 +287,52 @@ def pool_prefix(federated: bool, public_second_inputs: bool = False) -> str:
 
 
 def program(case: Case, federated: bool) -> str:
+    if case.training:
+        prefix = training_x_read(federated)
+        if case.kind == "ml_logreg":
+            body = (local_read("Y_ML_LOGREG") + "Y=Y_ML_LOGREG;\n"
+                    "m=multiLogReg(X=X,Y=Y,icpt=0,tol=1e-7,reg=1e-4,maxi=10,maxii=5,"
+                    "verbose=FALSE,numclasses=3,numrows=192,numcols=8);\n")
+        elif case.kind == "ml_l2svm":
+            body = (local_read("Y_ML_SVM") + "Y=Y_ML_SVM;\n"
+                    "m=l2svm(X=X,Y=Y,intercept=FALSE,epsilon=1e-8,reg=1e-3,"
+                    "maxIterations=10,maxii=5,verbose=FALSE);\n")
+        elif case.kind == "ml_lm":
+            body = (local_read("Y_ML_LM") + "Y=Y_ML_LM;\n"
+                    "m=lmCG(X=X,y=Y,icpt=0,reg=1e-4,tol=1e-9,maxi=10,verbose=FALSE);\n")
+        elif case.kind == "ml_logreg_gd":
+            body = (local_read("Y_ML_SVM") + "Y=(Y_ML_SVM+1)/2;\n"
+                    "m=matrix(0,rows=8,cols=1);p=1/(1+exp(-(X%*%m)));\n"
+                    "loss0=-sum(Y*log(p)+(1-Y)*log(1-p))/192+5e-5*sum(m*m);\n"
+                    "i=1;while(i<=20){p=1/(1+exp(-(X%*%m)));"
+                    "g=t(X)%*%(p-Y)/192+1e-4*m;m=m-0.05*g;i=i+1;}\n"
+                    "p=1/(1+exp(-(X%*%m)));"
+                    "loss1=-sum(Y*log(p)+(1-Y)*log(1-p))/192+5e-5*sum(m*m);\n"
+                    'print("JOINT_E2E_LOSS_INITIAL="+loss0);'
+                    'print("JOINT_E2E_LOSS_FINAL="+loss1);\n')
+        elif case.kind == "ml_l2svm_gd":
+            body = (local_read("Y_ML_SVM") + "Y=Y_ML_SVM;\n"
+                    "m=matrix(0,rows=8,cols=1);margin=1-Y*(X%*%m);"
+                    "active=margin>0;loss0=sum((margin*active)^2)/384+5e-5*sum(m*m);\n"
+                    "i=1;while(i<=20){margin=1-Y*(X%*%m);active=margin>0;"
+                    "g=-(t(X)%*%(Y*margin*active))/192+1e-4*m;"
+                    "m=m-0.05*g;i=i+1;}\n"
+                    "margin=1-Y*(X%*%m);active=margin>0;"
+                    "loss1=sum((margin*active)^2)/384+5e-5*sum(m*m);\n"
+                    'print("JOINT_E2E_LOSS_INITIAL="+loss0);'
+                    'print("JOINT_E2E_LOSS_FINAL="+loss1);\n')
+        elif case.kind == "ml_lm_gd":
+            body = (local_read("Y_ML_LM") + "Y=Y_ML_LM;\n"
+                    "m=matrix(0,rows=8,cols=1);res=X%*%m-Y;"
+                    "loss0=sum(res*res)/384+5e-5*sum(m*m);\n"
+                    "i=1;while(i<=20){res=X%*%m-Y;"
+                    "g=t(X)%*%res/192+1e-4*m;m=m-0.05*g;i=i+1;}\n"
+                    "res=X%*%m-Y;loss1=sum(res*res)/384+5e-5*sum(m*m);\n"
+                    'print("JOINT_E2E_LOSS_INITIAL="+loss0);'
+                    'print("JOINT_E2E_LOSS_FINAL="+loss1);\n')
+        else:
+            raise ValueError(f"unknown training case kind: {case.kind}")
+        return prefix + body + model_output()
     prefix = federated_read("X", 8, 3) if federated else local_read("X_PUBLIC") + "X=X_PUBLIC;\n"
     if case.kind == "dynamic_reverse":
         if federated:
@@ -320,7 +404,26 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
         "X": ("\n".join(",".join(map(str, row)) for row in x) + "\n", 8, 3, "private-aggregate"),
         "X_PUBLIC": ("\n".join(",".join(map(str, row)) for row in x) + "\n", 8, 3, "public"),
     }
-    if any(case.kind == "dynamic_reverse" for case in selected or cases()):
+    selected_cases = selected if selected is not None else default_cases()
+    if any(case.training for case in selected_cases):
+        ml_x = tuple(tuple(
+            ((row + 3) * (col + 5) % 29 - 14) / 7.0
+            + ((row % 5) - 2) * (col + 1) / 37.0
+            for col in range(8)) for row in range(192))
+        ml_payload = "\n".join(",".join(f"{value:.17g}" for value in row) for row in ml_x) + "\n"
+        texts["X_ML_PUBLIC"] = (ml_payload, 192, 8, "public")
+        for shard in range(3):
+            values = ml_x[shard * 64:(shard + 1) * 64]
+            payload = "\n".join(",".join(f"{value:.17g}" for value in row) for row in values) + "\n"
+            texts[f"X_ML_{shard}"] = (payload, 64, 8, "private-aggregate")
+        logreg = tuple(1 + ((row * 7 + row // 11) % 3) for row in range(192))
+        svm = tuple(-1 if (row * 5 + row // 7) % 2 == 0 else 1 for row in range(192))
+        lm = tuple(sum(ml_x[row][col] * (col + 1) / 9.0 for col in range(8))
+                   + ((row % 7) - 3) / 50.0 for row in range(192))
+        for name, values in (("Y_ML_LOGREG", logreg), ("Y_ML_SVM", svm), ("Y_ML_LM", lm)):
+            texts[name] = ("\n".join(f"{value:.17g}" for value in values) + "\n",
+                           192, 1, "public")
+    if any(case.kind == "dynamic_reverse" for case in selected_cases):
         for name, values in (("X_TOP", x[:4]), ("X_BOTTOM", x[4:])):
             payload = "\n".join(",".join(map(str, row)) for row in values) + "\n"
             texts[name] = (payload, 4, 3, "private-aggregate")
@@ -334,7 +437,7 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
         payload = "\n".join(",".join(map(str, row)) for row in values) + "\n"
         texts[name] = (payload, 8, 3, "private-aggregate")
         texts[name + "_PUBLIC"] = (payload, 8, 3, "public")
-    for case in selected or cases():
+    for case in selected_cases:
         if case.kind != "l2svm":
             continue
         name = "Y_PROTECTED" if not case.expected_success else f"Y_{case.name}"
@@ -361,7 +464,7 @@ def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None) -> dict[
         "<sysds.localtmpdir>/evidence/tmp/local</sysds.localtmpdir>"
         "<sysds.scratch>/evidence/tmp/scratch</sysds.scratch></root>\n", encoding="utf-8")
     fixture_hashes: dict[str, dict[str, str]] = {}
-    for case in selected or cases():
+    for case in selected if selected is not None else default_cases():
         case_dir = run / "cases" / case.name
         case_dir.mkdir(parents=True)
         cp = case_dir / "cp.dml"
@@ -385,11 +488,16 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300) -> str:
         "-Dsysds.fedplanner.capability.audit=true",
         f"-Dsysds.fedplanner.capability.audit.dir={audit}",
     ))
+    if case.training:
+        properties += " -Dsysds.fedplanner.trace=true -Dsysds.fedplanner.trace.details=false"
+    output_argument = (f' -nvargs MODEL_OUTPUT=/evidence/cases/{case.name}/{mode}-model.csv'
+                       if case.training else "")
     return (f'timeout {case_timeout_seconds} java --add-modules jdk.incubator.vector -Xmx3g '
             f'-XX:ActiveProcessorCount=4 {properties} -cp "$CP" '
             f'org.apache.sysds.api.DMLScript -f /evidence/cases/{case.name}/{mode}.dml '
             '-config /evidence/config.xml -exec singlenode -seed 7 '
-            '-noFedRuntimeConversion -stats 100 -explain runtime')
+            '-noFedRuntimeConversion -stats 100 -explain runtime'
+            f'{output_argument}')
 
 
 def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PROOF_CLASS,
@@ -432,7 +540,7 @@ def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PRO
     ]
     if debug_fedreq:
         lines.insert(5, "export JAVA_TOOL_OPTIONS=-Dsysds.debug.fedreq=true")
-    for case in selected or cases():
+    for case in selected if selected is not None else default_cases():
         modes = ("fed",) if not case.expected_success else ("cp", "fed")
         for mode in modes:
             command = java_command(case, mode, case_timeout_seconds)
@@ -479,6 +587,81 @@ def close_markers(reference: dict[str, float], actual: dict[str, float]) -> bool
         return False
     return all(math.isfinite(value) for value in (*reference.values(), *actual.values())) and all(
         math.isclose(reference[key], actual[key], rel_tol=1e-8, abs_tol=1e-9) for key in reference)
+
+
+def read_model(path: Path) -> tuple[list[float], list[str]]:
+    values: list[float] = []
+    errors: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return values, [str(exc)]
+    for line_number, line in enumerate(lines, 1):
+        for token in line.split(","):
+            try:
+                value = float(token.strip())
+                if not math.isfinite(value):
+                    raise ValueError("non-finite value")
+                values.append(value)
+            except ValueError as exc:
+                errors.append(f"{path}:{line_number}: {token!r}: {exc}")
+    if not values:
+        errors.append(f"{path}: empty model")
+    return values, errors
+
+
+def compare_models(reference_path: Path, actual_path: Path) -> dict[str, object]:
+    reference, reference_errors = read_model(reference_path)
+    actual, actual_errors = read_model(actual_path)
+    same_size = len(reference) == len(actual) and bool(reference)
+    differences = [abs(left - right) for left, right in zip(reference, actual)]
+    matched = (same_size and not reference_errors and not actual_errors
+               and all(math.isclose(left, right, rel_tol=1e-7, abs_tol=1e-7)
+                       for left, right in zip(reference, actual)))
+    return {
+        "matched": matched,
+        "entries": len(reference),
+        "actualEntries": len(actual),
+        "finite": not reference_errors and not actual_errors,
+        "nonzero": any(abs(value) > 1e-12 for value in reference),
+        "maxAbsDifference": max(differences, default=None),
+        "errors": reference_errors + actual_errors,
+    }
+
+
+def planner_checkpoints(text: str) -> list[dict[str, object]]:
+    checkpoints: list[dict[str, object]] = []
+    integer_fields = {
+        "merges", "clusters", "elapsedNanos", "dpNanos", "scoringNanos",
+        "validationNanos", "assignments", "retainedSlots", "improvements",
+        "resourceRejected", "internalDecisions", "conditionalAttempts",
+        "conditionalImprovements", "plannerElapsedNanos",
+    }
+    float_fields = {"lower", "upper", "relativeGap"}
+    for match in CHECKPOINT.finditer(text):
+        raw = dict(CHECKPOINT_FIELD.findall(match.group("body")))
+        if "phase" not in raw:
+            continue
+        parsed: dict[str, object] = {"phase": raw["phase"]}
+        for key, value in raw.items():
+            if key in integer_fields:
+                try:
+                    parsed[key] = int(value)
+                except ValueError:
+                    parsed[key] = value
+            elif key in float_fields:
+                try:
+                    parsed[key] = float(value)
+                except ValueError:
+                    parsed[key] = value
+        checkpoints.append(parsed)
+    return checkpoints
+
+
+def runtime_statistics(text: str) -> dict[str, float]:
+    names = {"Total compilation time": "compilationSeconds",
+             "Total execution time": "executionSeconds"}
+    return {names[name]: float(value) for name, value in STATISTIC.findall(text)}
 
 
 def read_rc(path: Path) -> int | None:
@@ -530,7 +713,7 @@ def evaluate(run: Path, container_returncode: int,
     all_frontiers: list[dict] = []
     all_actions: list[str] = []
     required_action_cases: dict[str, bool] = {}
-    selected_cases = selected or cases()
+    selected_cases = selected if selected is not None else default_cases()
     for case in selected_cases:
         fed_log = run / "cases" / case.name / "fed.log"
         fed_rc = read_rc(run / "cases" / case.name / "fed.rc")
@@ -555,7 +738,9 @@ def evaluate(run: Path, container_returncode: int,
                 r"opcode=fed_fout .*plannedPhysical=FED/FOUT.*actual=FED/FOUT", text)))
         if case.expected_success:
             cp_rc = read_rc(run / "cases" / case.name / "cp.rc")
-            reference = markers(run / "cases" / case.name / "cp.log")
+            cp_log = run / "cases" / case.name / "cp.log"
+            cp_text = cp_log.read_text(encoding="utf-8", errors="replace") if cp_log.is_file() else ""
+            reference = markers(cp_log)
             actual = markers(fed_log)
             dynamic_native = case.kind != "dynamic_reverse" or (
                 "WEIGHTED" in reference
@@ -564,17 +749,57 @@ def evaluate(run: Path, container_returncode: int,
                     rf"(?m)^\[PlannerRuntimeAudit\]\[Execution\] status=MATCH .*opcode={opcode} .*"
                     r"plannedTarget=FED/FOUT.*actual=FED/FOUT", text)
                     for opcode in ("rev", "exp")))
+            model_comparison = (compare_models(
+                run / "cases" / case.name / "cp-model.csv",
+                run / "cases" / case.name / "fed-model.csv") if case.training else None)
+            checkpoints = planner_checkpoints(text) if case.training else []
+            checkpoint_phases = {str(item.get("phase")) for item in checkpoints}
+            trace_complete = (not case.training or
+                              ("INITIAL_BOUND" in checkpoint_phases and bool(checkpoints)
+                               and checkpoints[-1].get("phase") in TERMINAL_CHECKPOINT_PHASES))
+            checkpoint_summary = (None if not case.training else {
+                "initial": next((item for item in checkpoints
+                                 if item.get("phase") == "INITIAL_BOUND"), None),
+                "seedBoundary": next((item for item in checkpoints
+                                      if item.get("phase") == "SEED_BOUNDARY"), None),
+                "final": checkpoints[-1] if checkpoints else None,
+                "seedBoundaryCount": sum(item.get("phase") == "SEED_BOUNDARY"
+                                         for item in checkpoints),
+            })
+            audit_violations = AUDIT_VIOLATION.findall(text)
+            loss_progress = (None if not case.requires_loss_progress else {
+                "initial": reference.get("LOSS_INITIAL"),
+                "final": reference.get("LOSS_FINAL"),
+                "decreased": ("LOSS_INITIAL" in reference and "LOSS_FINAL" in reference
+                              and math.isfinite(reference["LOSS_INITIAL"])
+                              and math.isfinite(reference["LOSS_FINAL"])
+                              and reference["LOSS_FINAL"] < reference["LOSS_INITIAL"]),
+            })
             passed = (cp_rc == 0 and fed_rc == 0 and close_markers(reference, actual)
                       and dynamic_native
                       and (case.kind != "function_calls"
                            or {"CALL_C", "CALL_D"}.issubset(reference))
                       and not audit_errors
+                      and not audit_violations
+                      and (not case.training or bool(model_comparison and
+                           model_comparison["matched"] and model_comparison["nonzero"]))
+                      and (not case.requires_loss_progress or bool(
+                           loss_progress and loss_progress["decreased"]))
+                      and trace_complete
                       and (not case.requires_fed_no_relocation or fed_no_relocation))
             result = {"case": case.name, "expected": "success", "passed": passed,
                       "cpReturncode": cp_rc, "fedReturncode": fed_rc,
                       "cpFingerprint": reference, "fedFingerprint": actual,
                       "auditSchemas": schemas, "auditRows": len(audit_rows),
                       "auditErrors": audit_errors, "actionDiagnostics": actions,
+                      "runtimeAuditViolations": audit_violations,
+                      "modelComparison": model_comparison,
+                      "plannerCheckpoints": checkpoints,
+                      "plannerCheckpointSummary": checkpoint_summary,
+                      "plannerTraceComplete": trace_complete,
+                      "lossProgress": loss_progress,
+                      "cpStatistics": runtime_statistics(cp_text),
+                      "fedStatistics": runtime_statistics(text),
                       "dynamicNativeExecution": dynamic_native if case.kind == "dynamic_reverse" else None,
                       "requiresFedNoRelocation": case.requires_fed_no_relocation,
                       "fedNoRelocation": fed_no_relocation,
@@ -656,7 +881,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.case_timeout_seconds < 30 or args.case_timeout_seconds > 900:
         raise ValueError("--case-timeout-seconds must be between 30 and 900")
     available = {case.name: case for case in cases()}
-    requested = args.selected_cases or list(available)
+    requested = args.selected_cases or [case.name for case in default_cases()]
     unknown = sorted(set(requested) - set(available))
     if unknown:
         raise ValueError("unknown --case: " + ", ".join(unknown))
@@ -703,6 +928,13 @@ def main(argv: list[str] | None = None) -> int:
         "runner": sha256(runner_source),
         "dispatch": sha256(dispatch_source),
     }
+    frozen_runner_source = run / "runner-source.py"
+    frozen_dispatch_source = run / "dispatch-source.sh"
+    shutil.copy2(runner_source, frozen_runner_source)
+    shutil.copy2(dispatch_source, frozen_dispatch_source)
+    if (sha256(frozen_runner_source) != source_hashes["runner"]
+            or sha256(frozen_dispatch_source) != source_hashes["dispatch"]):
+        raise ValueError("runner source changed while it was being frozen")
     manifest = {
         "schema": "systemds-joint-boundary-e2e-input-v1", "run": str(run),
         "containerStage": str(stage),
@@ -719,6 +951,8 @@ def main(argv: list[str] | None = None) -> int:
                                      for key, value in artifact_inventories.items()},
         "artifactFileCounts": {key: len(value) for key, value in artifact_inventories.items()},
         "sourceSha256": source_hashes,
+        "frozenRunnerSource": str(frozen_runner_source),
+        "frozenDispatchSource": str(frozen_dispatch_source),
         "inputSha256": input_hashes, "fixtureSha256": fixture_hashes,
         "container": container, "dockerArgv": command, "containerScriptSha256": sha256(script),
         "network": "none (worker and coordinator use container loopback)",

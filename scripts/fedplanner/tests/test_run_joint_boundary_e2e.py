@@ -24,11 +24,119 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "joint_dynamic_reverse",
                           "joint_function_private_mix_negative",
                           "joint_branch_upload",
-                          "l2svm_protected_y_negative"}, set(by_name))
+                          "l2svm_protected_y_negative", "ml_logreg", "ml_l2svm",
+                          "ml_lm", "ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"},
+                         set(by_name))
         self.assertEqual("private", by_name["l2svm_protected_y_negative"].y_privacy)
         self.assertFalse(by_name["l2svm_protected_y_negative"].expected_success)
         self.assertTrue(by_name["l2svm_true_01"].requires_action_evidence)
         self.assertTrue(by_name["joint_branch_upload"].requires_branch_upload)
+        self.assertEqual({"ml_logreg", "ml_l2svm", "ml_lm"},
+                         {case.name for case in runner.cases()
+                          if case.training and not case.requires_loss_progress})
+        self.assertEqual({"ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"},
+                         {case.name for case in runner.cases()
+                          if case.requires_loss_progress})
+        self.assertFalse({"ml_logreg", "ml_l2svm", "ml_lm",
+                          "ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"}
+                         & {case.name for case in runner.default_cases()})
+
+    def test_ml_training_programs_use_three_protected_shards_and_write_full_model(self):
+        by_name = {case.name: case for case in runner.cases()}
+        for name, builtin in (("ml_logreg", "multiLogReg"),
+                              ("ml_l2svm", "l2svm"), ("ml_lm", "lmCG")):
+            script = runner.program(by_name[name], True)
+            self.assertIn(f"m={builtin}(", script)
+            self.assertIn("localhost:13000//evidence/data/X_ML_0.csv", script)
+            self.assertIn("localhost:13001//evidence/data/X_ML_1.csv", script)
+            self.assertIn("localhost:13002//evidence/data/X_ML_2.csv", script)
+            self.assertIn("list(128,0),list(192,8)", script)
+            self.assertIn('write(m,$MODEL_OUTPUT,format="csv")', script)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_inputs(root, tuple(by_name[name] for name in
+                                            ("ml_logreg", "ml_l2svm", "ml_lm")))
+            public = (root / "data/X_ML_PUBLIC.csv").read_text()
+            shards = "".join((root / f"data/X_ML_{index}.csv").read_text()
+                             for index in range(3))
+            self.assertEqual(public, shards)
+            for index in range(3):
+                metadata = json.loads((root / f"data/X_ML_{index}.csv.mtd").read_text())
+                self.assertEqual((64, 8, "private-aggregate"),
+                                 (metadata["rows"], metadata["cols"], metadata["privacy"]))
+
+    def test_ml_model_and_planner_evidence_parsers_are_strict(self):
+        trace = ("[PlannerTrace][DP-IncrementalRegional] phase=INITIAL_BOUND merges=0 "
+                 "lower=1.0 upper=9.0 dpNanos=10 plannerElapsedNanos=20\n"
+                 "[PlannerTrace][DP-IncrementalRegional] phase=SEED_BOUNDARY merges=0 "
+                 "lower=1.0 upper=4.0 dpNanos=30 plannerElapsedNanos=40\n"
+                 "Total compilation time: 0.125 sec.\nTotal execution time: 1.500 sec.\n")
+        checkpoints = runner.planner_checkpoints(trace)
+        self.assertEqual(["INITIAL_BOUND", "SEED_BOUNDARY"],
+                         [item["phase"] for item in checkpoints])
+        self.assertEqual(30, checkpoints[1]["dpNanos"])
+        self.assertEqual({"compilationSeconds": 0.125, "executionSeconds": 1.5},
+                         runner.runtime_statistics(trace))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference = root / "reference.csv"
+            actual = root / "actual.csv"
+            reference.write_text("1.0,2.0\n3.0,4.0\n")
+            actual.write_text("1.00000001,2.0\n3.0,4.0\n")
+            self.assertTrue(runner.compare_models(reference, actual)["matched"])
+            actual.write_text("1.01,2.0\n3.0,4.0\n")
+            self.assertFalse(runner.compare_models(reference, actual)["matched"])
+
+    def test_gradient_training_programs_iterate_and_report_loss(self):
+        by_name = {case.name: case for case in runner.cases()}
+        for name in ("ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"):
+            script = runner.program(by_name[name], True)
+            self.assertIn("while(i<=20)", script)
+            self.assertIn("t(X)%*%", script)
+            self.assertIn('print("JOINT_E2E_LOSS_INITIAL="+loss0)', script)
+            self.assertIn('print("JOINT_E2E_LOSS_FINAL="+loss1)', script)
+            self.assertIn('write(m,$MODEL_OUTPUT,format="csv")', script)
+
+    def test_gradient_training_requires_loss_decrease_and_terminal_trace(self):
+        case = next(case for case in runner.cases() if case.name == "ml_lm_gd")
+        fingerprint = ("JOINT_E2E_SUM=1\nJOINT_E2E_NORM2=1\n"
+                       "JOINT_E2E_ROWS=8\nJOINT_E2E_COLS=1\n")
+        initial = ("[PlannerTrace][DP-IncrementalRegional] phase=INITIAL_BOUND merges=0 "
+                   "lower=1 upper=2 dpNanos=10 plannerElapsedNanos=20\n")
+        terminal = ("[PlannerTrace][DP-IncrementalRegional] phase=EXACT merges=1 "
+                    "lower=1 upper=1 dpNanos=30 plannerElapsedNanos=40\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / case.name
+            case_dir.mkdir(parents=True)
+            for mode in ("cp", "fed"):
+                (case_dir / f"{mode}.rc").write_text("0\n")
+                (case_dir / f"{mode}-model.csv").write_text("1\n0\n0\n0\n0\n0\n0\n0\n")
+            good = fingerprint + "JOINT_E2E_LOSS_INITIAL=5\nJOINT_E2E_LOSS_FINAL=1\n"
+            (case_dir / "cp.log").write_text(good)
+            (case_dir / "fed.log").write_text(good + initial + terminal)
+            result = runner.evaluate(root, 0, (case,))["cases"][0]
+            self.assertTrue(result["passed"])
+            self.assertTrue(result["lossProgress"]["decreased"])
+            (case_dir / "fed.log").write_text(good + initial)
+            self.assertFalse(runner.evaluate(root, 0, (case,))["cases"][0]["passed"])
+            stalled = fingerprint + "JOINT_E2E_LOSS_INITIAL=5\nJOINT_E2E_LOSS_FINAL=5\n"
+            (case_dir / "cp.log").write_text(stalled)
+            (case_dir / "fed.log").write_text(stalled + initial + terminal)
+            stalled_result = runner.evaluate(root, 0, (case,))["cases"][0]
+            self.assertFalse(stalled_result["passed"])
+            self.assertFalse(stalled_result["lossProgress"]["decreased"])
+
+    def test_ml_java_command_enables_trace_and_places_named_argument_last(self):
+        by_name = {case.name: case for case in runner.cases()}
+        training = runner.java_command(by_name["ml_lm"], "fed")
+        ordinary = runner.java_command(by_name["l2svm_true_01"], "fed")
+        self.assertIn("-Dsysds.fedplanner.trace=true", training)
+        self.assertTrue(training.endswith(
+            "-nvargs MODEL_OUTPUT=/evidence/cases/ml_lm/fed-model.csv"))
+        self.assertNotIn("sysds.fedplanner.trace=true", ordinary)
+        self.assertNotIn("-nvargs", ordinary)
 
     def test_programs_pin_branch_and_privacy_inputs(self):
         true_case = runner.cases()[0]
