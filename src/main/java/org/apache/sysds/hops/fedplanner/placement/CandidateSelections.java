@@ -1502,11 +1502,33 @@ public final class CandidateSelections {
 		Collection<RelocationChoiceReceipt> choices) {
 		if(!realizationsCanStillBeCompatible(analysis, assignment, receipts))
 			throw new IllegalArgumentException("Selected candidate realizations violate transient compatibility");
+		validateJointValueMapSelections(analysis, assignment, receipts);
 		// This verifies the exact chosen actions as well as origin-residency/privacy;
 		// relation support alone is not authority to emit an upload.
 		RelocationSelections.resolveAndValidate(analysis, assignment, receipts, choices);
 		if(!realizationActionsMatch(analysis, assignment, receipts, choices))
 			throw new IllegalArgumentException("Selected relocation contradicts candidate realization input proof");
+	}
+
+	/** Shared final gate used by normalization, emission, and complete heuristic witnesses. */
+	public static final class JointValueMapIncompatibilityException extends IllegalArgumentException {
+		private static final long serialVersionUID = 1L;
+		private final List<CompiledHopKey> consumers;
+		JointValueMapIncompatibilityException(List<CompiledHopKey> consumers) {
+			super("JOINT_VALUE_MAP_INCOMPATIBLE: selected execution rows are not physically aligned; consumers="
+				+ consumers.stream().map(CompiledHopKey::normalizedSignature).toList());
+			this.consumers = List.copyOf(consumers);
+		}
+		public List<CompiledHopKey> consumers() { return consumers; }
+	}
+
+	public static void validateJointValueMapSelections(PlacementAnalysis analysis,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> receipts) {
+		List<CompiledHopKey> incompatible = JointValueMapRelations.incompatibleSelectedExecutionConsumers(
+			analysis, assignment, receipts);
+		if(!incompatible.isEmpty())
+			throw new JointValueMapIncompatibilityException(incompatible);
 	}
 
 	private static boolean realizationActionsMatch(PlacementAnalysis analysis,
@@ -1599,6 +1621,8 @@ public final class CandidateSelections {
 		if(!realizationsCanStillBeCompatible(analysis, assignment, selected))
 			return false;
 		if(position == domains.size()) {
+			if(!JointValueMapRelations.selectedExecutionRowsAligned(analysis, assignment, selected))
+				return false;
 			try {
 				List<RelocationChoiceReceipt> choices = RelocationSelections.selectCanonical(
 					analysis, actions, assignment, selected,
@@ -1655,7 +1679,9 @@ public final class CandidateSelections {
 				+ feasible.size() + " selected=" + selected.size());
 		if(!realizationsCanStillBeCompatible(analysis, assignment, selected.values()))
 			throw new IllegalArgumentException("Candidate selection violates exact transient realization support");
-		return analysis.canonicalCandidateReceipts(selected.values());
+		List<CandidateSelectionReceipt> canonical = analysis.canonicalCandidateReceipts(selected.values());
+		validateJointValueMapSelections(analysis, assignment, canonical);
+		return canonical;
 	}
 
 	static List<CandidateSelectionReceipt> resolveAndValidatePartial(PlacementAnalysis analysis,
@@ -1694,6 +1720,7 @@ public final class CandidateSelections {
 		resolved.forEach(receipt -> actual.add(receipt.rule().parentOccurrence()));
 		if(!expected.equals(actual))
 			throw new IllegalArgumentException("Candidate selections do not cover every active consumer");
+		validateJointValueMapSelections(analysis, assignment, resolved);
 		return resolved;
 	}
 

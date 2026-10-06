@@ -33,6 +33,10 @@ import org.apache.sysds.utils.Statistics;
 public final class PolicyGreedyDockerProbe {
 	private PolicyGreedyDockerProbe() { }
 	public static void main(String[] args) throws Exception {
+		if(args.length > 0 && args[0].equals("reject")) {
+			runExpectedRejection(args);
+			return;
+		}
 		if(args.length > 0 && args[0].equals("als")) {
 			runAls(args);
 			return;
@@ -77,6 +81,46 @@ public final class PolicyGreedyDockerProbe {
 			.mapToLong(pool -> pool.getPeakUsage().getUsed()).sum();
 		System.out.println("FEDPOLICY_HEAP_POOL_PEAK_BYTES=" + heapPeaks);
 		System.out.println("FEDPOLICY_PROBE_SUCCESS=" + planner + ";runtimeAudit=true");
+	}
+
+	private static void runExpectedRejection(String[] args) throws Exception {
+		if(args.length != 5)
+			throw new IllegalArgumentException("reject script config expected-planner diagnostic");
+		System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, "true");
+		try {
+			DMLScript.executeScript(new String[] {"-f", args[1], "-config", args[2],
+				"-exec", "singlenode", "-stats"});
+		}
+		catch(RuntimeException rejected) {
+			boolean expected = false;
+			for(Throwable cause = rejected; cause != null; cause = cause.getCause())
+				expected |= String.valueOf(cause.getMessage()).contains(args[4]);
+			if(!expected)
+				throw rejected;
+			// Constant folding executes CP ProgramBlocks during compilation and records
+			// heavy hitters. The actual DML runtime program starts its own run timer.
+			Map<String,Long> compilationInstructions = new LinkedHashMap<>();
+			Statistics.getCPHeavyHitterOpCodes().stream().sorted().forEach(opcode ->
+				compilationInstructions.put(opcode, Statistics.getCPHeavyHitterCount(opcode)));
+			boolean federatedExecution = compilationInstructions.keySet().stream()
+				.anyMatch(opcode -> opcode.startsWith("fed_"));
+			var observability = PlacementEmissionTransaction.observabilitySnapshot();
+			String audit = PlannerRuntimePlacementAudit.display().lines().findFirst().orElseThrow();
+			if(Statistics.getRunTime() != 0 || federatedExecution
+				|| !audit.contains(" authorityGenerations=0 ") || observability.runtimeFallbackCount() != 0
+				|| observability.runtimeRepairCount() != 0)
+				throw new IllegalStateException("Expected rejection must precede DML runtime program: "
+					+ "runNanos=" + Statistics.getRunTime() + "; instructions=" + compilationInstructions
+					+ "; audit=" + audit, rejected);
+			if(!args[3].equals(ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER)))
+				throw new IllegalStateException("Wrong planner for rejection", rejected);
+			System.out.println("FEDPOLICY_COMPILATION_HEAVY_HITTERS=" + compilationInstructions);
+			System.out.println(audit);
+			System.out.println("FEDPOLICY_EXPECTED_REJECTION=" + args[4]
+				+ ";runtimeNanos=0;federatedExecution=false;authorityGenerations=0");
+			return;
+		}
+		throw new IllegalStateException("Expected compile rejection was not raised: " + args[4]);
 	}
 
 	private static void runAls(String[] args) throws Exception {

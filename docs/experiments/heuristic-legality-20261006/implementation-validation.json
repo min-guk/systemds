@@ -1,0 +1,899 @@
+{
+  "status": "passed",
+  "worktree": "/home/mchoi/heuristic-legality-20261006",
+  "branch": "fix/heuristic-legality-20261006",
+  "fetchedOriginMain": "825acfca9d",
+  "integrationBase": "0ccf4c9c9f",
+  "report": "docs/HEURISTIC_LEGALITY_IMPLEMENTATION_2026-10-06.md",
+  "scope": [
+    "shared joint VALUE_MAP legality",
+    "small-scope direct and latent WDIVMM supports",
+    "bounded reversible greedy repair",
+    "runtime-read alias/upload audit"
+  ],
+  "unitIntegration": {
+    "status": "passed",
+    "packageExitCode": 0,
+    "classes": [
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedAll.CampaignBG014FedAllAlsSingleWorkerRuntimeRecompileRedTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 19.676
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryPhysicalModelProofTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 4.116
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.RuntimeReadLegalityParityTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 2.518
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.ExplicitWdivmmPreparationTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.983
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.HeuristicLocalContinuationTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 45.352
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.HeuristicProtectedNestedDemotionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 2.592
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.JointValueMapRelationsTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.67
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.JointValueMapSelectionLegalityTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 6.365
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.LogregProtectedLoopSliceTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 61.013
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.NeutralPlacementFixedPointCompositionTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 58.772
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.447
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.145
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.WdivmmFactorAlignmentTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.017
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelectorTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 4.369
+      }
+    ],
+    "totals": {
+      "tests": 80,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "sourceChangesDuringRun": [
+      "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyPlacementSelector.java"
+    ],
+    "changeReason": "Only test-budget constructor visibility narrowed public -> package-private; targeted package rerun follows"
+  },
+  "evidenceRoot": "/home/mchoi/heuristic-legality-20261006/.omx/heuristic-legality-evidence",
+  "runtimeReadDisposition": "do not transplant over-strong original-source/read relation; explicit-upload boundary regression covers risk, not reachable WDIVMM cost assembly",
+  "limits": [
+    "bounded repair is incomplete; budget256 does not prove infeasibility",
+    "no large models",
+    "long L2SVM closure expansion stopped before selection; not counted as passing",
+    "WDIVMM compatible selections covered; no retained end-to-end unsupported weights-state test",
+    "no runtime performance speedup claim"
+  ],
+  "docker": [
+    {
+      "kind": "joint",
+      "artifact": "/home/mchoi/heuristic-legality-20261006/target/fedpolicy-greedy-docker/heuristic-legality-run-kxd1tfyo",
+      "receiptSha256": "096da8cf715b5bd5f2301af2472a277e1d00db98fdd82757471b05673d818bf7",
+      "manifestSha256": "aeb1ad648970508d82d74608de67235f7622f475eda51583516d8eb19e993da9",
+      "allProductionSourceHashesMatch": true,
+      "productionFilesChecked": 2184,
+      "negativeDiagnostic": "NOTE: Picked up JDK_JAVA_OPTIONS: --add-modules=jdk.incubator.vector --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED\nWARNING: Using incubator modules: jdk.incubator.vector\nFEDPOLICY_COMPILATION_HEAVY_HITTERS={+=2, mvvar=2}\n[PlannerRuntimeAudit][Summary] plan=- authorityGenerations=0 plannedHops=0 plannedPhysicalHops=0 loweredPhysicalHops=0 missingPhysicalHops=0 plannedSynthetic=0 missingSynthetic=0 loweringRecords=0 runtimeInstructionKinds=0 federatedDispatchKinds=0 workerFragmentKinds=0 mismatches=0\nFEDPOLICY_EXPECTED_REJECTION=JOINT_VALUE_MAP_INCOMPATIBLE:;runtimeNanos=0;federatedExecution=false;authorityGenerations=0\n",
+      "receiptSummary": {
+        "status": "passed",
+        "containerExitCode": 0,
+        "checks": [
+          {
+            "workload": "function-loop",
+            "expected": [
+              17.5,
+              20.0,
+              22.5,
+              30.0
+            ],
+            "actual": [
+              "17.5",
+              "20.0",
+              "22.5",
+              "30.0"
+            ],
+            "runtimeFallbackAndRepairZero": true,
+            "runtimeAudits": [
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 92,
+                "plannedPhysicalHops": 37,
+                "loweredPhysicalHops": 37,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 4,
+                "missingSynthetic": 0,
+                "loweringRecords": 138,
+                "runtimeInstructionKinds": 76,
+                "federatedDispatchKinds": 18,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              },
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 92,
+                "plannedPhysicalHops": 37,
+                "loweredPhysicalHops": 37,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 4,
+                "missingSynthetic": 0,
+                "loweringRecords": 138,
+                "runtimeInstructionKinds": 76,
+                "federatedDispatchKinds": 18,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              }
+            ],
+            "runtimeAuditsPassed": true,
+            "passed": true
+          },
+          {
+            "workload": "mixed-branch",
+            "expected": [
+              -17.5,
+              -20.0,
+              -22.5,
+              30.0
+            ],
+            "actual": [
+              "-17.5",
+              "-20.0",
+              "-22.5",
+              "30.0"
+            ],
+            "runtimeFallbackAndRepairZero": true,
+            "runtimeAudits": [
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 92,
+                "plannedPhysicalHops": 37,
+                "loweredPhysicalHops": 37,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 4,
+                "missingSynthetic": 0,
+                "loweringRecords": 138,
+                "runtimeInstructionKinds": 76,
+                "federatedDispatchKinds": 18,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              },
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 92,
+                "plannedPhysicalHops": 37,
+                "loweredPhysicalHops": 37,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 4,
+                "missingSynthetic": 0,
+                "loweringRecords": 138,
+                "runtimeInstructionKinds": 76,
+                "federatedDispatchKinds": 18,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              }
+            ],
+            "runtimeAuditsPassed": true,
+            "passed": true
+          },
+          {
+            "workload": "joint-correlated-x",
+            "expected": [
+              272,
+              5984,
+              8,
+              2
+            ],
+            "actual": [
+              "272.0",
+              "5984.0",
+              "8",
+              "2"
+            ],
+            "runtimeFallbackAndRepairZero": true,
+            "runtimeAudits": [
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 57,
+                "plannedPhysicalHops": 24,
+                "loweredPhysicalHops": 24,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 0,
+                "missingSynthetic": 0,
+                "loweringRecords": 65,
+                "runtimeInstructionKinds": 35,
+                "federatedDispatchKinds": 9,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              },
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 57,
+                "plannedPhysicalHops": 24,
+                "loweredPhysicalHops": 24,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 0,
+                "missingSynthetic": 0,
+                "loweringRecords": 65,
+                "runtimeInstructionKinds": 35,
+                "federatedDispatchKinds": 9,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              }
+            ],
+            "runtimeAuditsPassed": true,
+            "passed": true
+          },
+          {
+            "workload": "joint-correlated-y",
+            "expected": [
+              -272,
+              5984,
+              8,
+              2
+            ],
+            "actual": [
+              "-272.0",
+              "5984.0",
+              "8",
+              "2"
+            ],
+            "runtimeFallbackAndRepairZero": true,
+            "runtimeAudits": [
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 57,
+                "plannedPhysicalHops": 24,
+                "loweredPhysicalHops": 24,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 0,
+                "missingSynthetic": 0,
+                "loweringRecords": 65,
+                "runtimeInstructionKinds": 35,
+                "federatedDispatchKinds": 9,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              },
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 57,
+                "plannedPhysicalHops": 24,
+                "loweredPhysicalHops": 24,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 0,
+                "missingSynthetic": 0,
+                "loweringRecords": 65,
+                "runtimeInstructionKinds": 35,
+                "federatedDispatchKinds": 9,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              }
+            ],
+            "runtimeAuditsPassed": true,
+            "passed": true
+          },
+          {
+            "workload": "joint-independent-rejected",
+            "expected": "joint-legality rejection before DML runtime program",
+            "passed": true
+          },
+          {
+            "workload": "joint-independent-public-movement",
+            "expected": [
+              168,
+              2104,
+              8,
+              2
+            ],
+            "actual": [
+              "168.0",
+              "2104.0",
+              "8",
+              "2"
+            ],
+            "runtimeFallbackAndRepairZero": true,
+            "runtimeAudits": [
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 74,
+                "plannedPhysicalHops": 30,
+                "loweredPhysicalHops": 30,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 1,
+                "missingSynthetic": 0,
+                "loweringRecords": 86,
+                "runtimeInstructionKinds": 48,
+                "federatedDispatchKinds": 15,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              },
+              {
+                "authorityGenerations": 1,
+                "plannedHops": 74,
+                "plannedPhysicalHops": 30,
+                "loweredPhysicalHops": 30,
+                "missingPhysicalHops": 0,
+                "plannedSynthetic": 1,
+                "missingSynthetic": 0,
+                "loweringRecords": 86,
+                "runtimeInstructionKinds": 48,
+                "federatedDispatchKinds": 15,
+                "workerFragmentKinds": 0,
+                "mismatches": 0
+              }
+            ],
+            "runtimeAuditsPassed": true,
+            "passed": true
+          }
+        ],
+        "runtimeArtifactsMatch": true,
+        "manifestSha256": "aeb1ad648970508d82d74608de67235f7622f475eda51583516d8eb19e993da9",
+        "commandSha256": "ec303e26eed1e658cd064780cf97561d497e01139c3760f8ce5f8e3a701f868b",
+        "logSha256": {
+          "container.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "worker-13000.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+          "worker-13001.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+          "worker-13002.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+          "worker-13003.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+          "function-loop.log": "df8290da9b9b21c9624b5d1c83c461b107ac56d27ad2d5559a7ce474ac0bae5b",
+          "mixed-branch.log": "a6e7ab522c24bd38cc38a311411910b28cce0688849ea0e004aef7d9257108fa",
+          "joint-correlated-x.log": "ff046a9ce409621f0bf621a71b5b341449e0383c80ec154462087406f2c0298f",
+          "joint-correlated-y.log": "81fb2454fdb043101c73c8863043a8ab37124be15de49dbbcb09ad3210efea19",
+          "joint-independent-rejected.log": "db39cfd6d713d796f4f5b09cf6d954e4f5b314d91b0b2f75b8ada6aaf80e8969",
+          "joint-independent-public-movement.log": "0c3688577cb7cac4f5e5524af82938c8ad6164c8ff62262487074dc9e08b7068"
+        }
+      }
+    },
+    {
+      "kind": "als",
+      "artifact": "/home/mchoi/heuristic-legality-20261006/target/fedpolicy-greedy-docker/als-run-seokg1pb",
+      "receiptSha256": "b33d938772d229426312ae8226c12f0688a4f30821687f4cd49529ad590e62ea",
+      "manifestSha256": "dc2b08e557327143a7fa7fb607bdb4cfaf43aca088325d79f4ae6ea478c28fe2",
+      "allProductionSourceHashesMatch": true,
+      "productionFilesChecked": 2184,
+      "auditExplicitlyChecked": true,
+      "receiptSummary": {
+        "status": "passed",
+        "containerExitCode": 0,
+        "manifestSha256": "dc2b08e557327143a7fa7fb607bdb4cfaf43aca088325d79f4ae6ea478c28fe2",
+        "commandSha256": "d049505a9183fe7dc59264203675cb7b206eb66bc91a0b391ad1a5f11a81f4d9",
+        "runtimeArtifactSha256": {
+          "jarSha256": "777ad2ab1460b9802121225f414b8e2695fa29648a4de669b84d0baafd66e591",
+          "probeSha256": "3128d07d8ceda7e0a55372e97e484689e3f6797c4da08e5868827a07d9b1b863"
+        },
+        "frozenRuntimeArtifactsMatch": true,
+        "cp": {
+          "status": "passed",
+          "planner": "NONE",
+          "compileNanos": 1905858460,
+          "executionNanos": 1008614604,
+          "probeWallNanos": 3833747060,
+          "allHeavyHitters": {
+            "!": 9,
+            "!=": 2,
+            "&&": 49,
+            "*": 134,
+            "+": 94,
+            "+*": 80,
+            "-": 4,
+            "-*": 40,
+            "/": 85,
+            "<": 5,
+            "<=": 44,
+            "==": 2,
+            ">": 44,
+            "assignvar": 143,
+            "castvti": 5,
+            "cpvar": 173,
+            "createvar": 307,
+            "m_alsCG": 1,
+            "mvvar": 153,
+            "r'": 1,
+            "rand": 4,
+            "rlit": 4,
+            "rmvar": 442,
+            "tak+*": 40,
+            "uasqk+": 40,
+            "wdivmm": 44,
+            "write": 1
+          },
+          "federatedHeavyHitters": {},
+          "federatedComputeHeavyHitters": {},
+          "federatedRequestCounts": "",
+          "networkTraffic": "Server I/O bytes (read/written):\t0/0\nWorker I/O bytes (read/written):\t0/0\n",
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0,
+          "runtimeAuditSummary": "[PlannerRuntimeAudit][Summary] plan=- authorityGenerations=0 plannedHops=0 plannedPhysicalHops=0 loweredPhysicalHops=0 missingPhysicalHops=0 plannedSynthetic=0 missingSynthetic=0 loweringRecords=0 runtimeInstructionKinds=0 federatedDispatchKinds=0 workerFragmentKinds=0 mismatches=0"
+        },
+        "fedall": {
+          "status": "passed",
+          "planner": "COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS",
+          "compileNanos": 27574950630,
+          "executionNanos": 6628671116,
+          "probeWallNanos": 35122249334,
+          "allHeavyHitters": {
+            "!": 9,
+            "!=": 1,
+            "&&": 49,
+            "*": 94,
+            "+": 50,
+            "/": 85,
+            "<": 5,
+            "<=": 44,
+            "==": 2,
+            ">": 44,
+            "assignvar": 143,
+            "castvti": 5,
+            "cpvar": 421,
+            "createvar": 795,
+            "fed_!=": 1,
+            "fed_*": 200,
+            "fed_+": 124,
+            "fed_-": 44,
+            "fed_fed_fout": 4,
+            "fed_fedinit": 1,
+            "fed_uak+": 40,
+            "fed_uasqk+": 44,
+            "fed_wdivmm": 44,
+            "list": 4,
+            "m_alsCG": 1,
+            "mvvar": 113,
+            "prefetch": 200,
+            "r'": 1,
+            "rand": 4,
+            "rmvar": 735,
+            "write": 1
+          },
+          "federatedHeavyHitters": {
+            "fed_!=": 1,
+            "fed_*": 200,
+            "fed_+": 124,
+            "fed_-": 44,
+            "fed_fed_fout": 4,
+            "fed_fedinit": 1,
+            "fed_uak+": 40,
+            "fed_uasqk+": 44,
+            "fed_wdivmm": 44
+          },
+          "federatedComputeHeavyHitters": {
+            "fed_!=": 1,
+            "fed_*": 200,
+            "fed_+": 124,
+            "fed_-": 44,
+            "fed_uak+": 40,
+            "fed_uasqk+": 44,
+            "fed_wdivmm": 44
+          },
+          "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t1/436/248.\nFederated Execute (Inst, UDF):\t1278/0.\nFed Put Count (Sc/Li/Ma/Fr/MC):\t120/0/316/0/0.\nFed Put Bytes (Mat/Frame):\t808032/0 Bytes.\nFederated prefetch count:\t0.\n",
+          "networkTraffic": "Server I/O bytes (read/written):\t823350/1558774\nWorker I/O bytes (read/written):\t0/0\n",
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0,
+          "runtimeAuditSummary": "[PlannerRuntimeAudit][Summary] plan=f086d970edde7a6985e44dc5ab22dd8811b86662244d02d2e203ccfdf87d2743 authorityGenerations=1 plannedHops=207 plannedPhysicalHops=74 loweredPhysicalHops=74 missingPhysicalHops=0 plannedSynthetic=10 missingSynthetic=0 loweringRecords=898 runtimeInstructionKinds=1045 federatedDispatchKinds=815 workerFragmentKinds=0 mismatches=0"
+        },
+        "matrixComparison": {
+          "shape": [
+            10,
+            20
+          ],
+          "shapeValid": true,
+          "allFinite": true,
+          "entriesCompared": 200,
+          "absoluteTolerance": 1e-08,
+          "relativeTolerance": 1e-07,
+          "maxAbsoluteDifference": 0.0,
+          "withinTolerance": true,
+          "cpOutputSha256": {
+            "cp-V.csv": "b6e7b0e5b5c482fc9dfd3a41db9a923c628d9830b5d1f036468221bd4345d597"
+          },
+          "fedallOutputSha256": {
+            "fedall-V.csv": "b6e7b0e5b5c482fc9dfd3a41db9a923c628d9830b5d1f036468221bd4345d597"
+          }
+        },
+        "logSha256": {
+          "container.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "worker.log": "e9e73a50b2490dd339d93ed1482a3a2bb368838ee274abb09b03796f1dae5174",
+          "cp.log": "6938e5aecd6e18d8ab0e1899f08d740b568853f5c235bbade0f49bff8227bb12",
+          "fedall.log": "94c10a711071136235d5d2ec0c6a1c1443dd28d4a6d9ae035e1225827f733cee"
+        }
+      }
+    },
+    {
+      "kind": "smoke-scaling",
+      "artifact": "/home/mchoi/heuristic-legality-20261006/target/fedpolicy-greedy-docker/run-4n823l_t",
+      "receiptSha256": "e36e92de013d30383e2cef0df50b63e084a6e1bb403ac6fef020c0021ff0202a",
+      "manifestSha256": "3e3f843261dd53701eb6d835e739d4c7ec10467e3529ce20c494bdf11f254676",
+      "allProductionSourceHashesMatch": true,
+      "productionFilesChecked": 2184,
+      "scaling": [
+        {
+          "nodes": 512,
+          "metrics": {
+            "candidateChecks": 1024,
+            "supportIncidences": 3066,
+            "deletedRows": 512,
+            "decisionCommits": 512,
+            "factEvents": 3581
+          },
+          "medianMilliseconds": 50.312863
+        },
+        {
+          "nodes": 4096,
+          "metrics": {
+            "candidateChecks": 8192,
+            "supportIncidences": 24570,
+            "deletedRows": 4096,
+            "decisionCommits": 4096,
+            "factEvents": 28669
+          },
+          "medianMilliseconds": 420.674606
+        },
+        {
+          "nodes": 16384,
+          "metrics": {
+            "candidateChecks": 32768,
+            "supportIncidences": 98298,
+            "deletedRows": 16384,
+            "decisionCommits": 16384,
+            "factEvents": 114685
+          },
+          "medianMilliseconds": 873.132799
+        },
+        {
+          "nodes": 65536,
+          "metrics": {
+            "candidateChecks": 131072,
+            "supportIncidences": 393210,
+            "deletedRows": 65536,
+            "decisionCommits": 65536,
+            "factEvents": 458749
+          },
+          "medianMilliseconds": 3566.956009
+        }
+      ],
+      "receiptSummary": {
+        "status": "passed",
+        "checks": [
+          {
+            "engine": "current",
+            "repeat": 0,
+            "planner": "FedFirst",
+            "workload": "nested",
+            "expected": 1926,
+            "actual": [
+              "1926.0"
+            ],
+            "passed": true,
+            "phases": {
+              "commonPreparationNanos": 11012680,
+              "analysisNanos": 1801892872,
+              "plannerSetupNanos": 8504573,
+              "modelNanos": 0,
+              "costSurfaceNanos": 0,
+              "optimizerNanos": 0,
+              "selectionNanos": 0,
+              "otherPlanningNanos": 177488356,
+              "diagnosticsNanos": 11419601,
+              "conversionNanos": 17309567,
+              "applicationNanos": 153055126,
+              "finalVerificationNanos": 1913907,
+              "registrationNanos": 7193723,
+              "receiptHandoffNanos": 293979,
+              "totalNanos": 2190084384
+            },
+            "heapPoolPeakBytesUpperBound": 101876256,
+            "compilationSeconds": 3.114988
+          },
+          {
+            "engine": "current",
+            "repeat": 0,
+            "planner": "FedFirst",
+            "workload": "elementwise",
+            "expected": 90,
+            "actual": [
+              "90.0"
+            ],
+            "passed": true,
+            "phases": {
+              "commonPreparationNanos": 11011187,
+              "analysisNanos": 1127779626,
+              "plannerSetupNanos": 11048949,
+              "modelNanos": 0,
+              "costSurfaceNanos": 0,
+              "optimizerNanos": 0,
+              "selectionNanos": 0,
+              "otherPlanningNanos": 156820502,
+              "diagnosticsNanos": 20227811,
+              "conversionNanos": 15729545,
+              "applicationNanos": 118539063,
+              "finalVerificationNanos": 2969860,
+              "registrationNanos": 12874970,
+              "receiptHandoffNanos": 465761,
+              "totalNanos": 1477467274
+            },
+            "heapPoolPeakBytesUpperBound": 91648664,
+            "compilationSeconds": 2.389292
+          },
+          {
+            "engine": "current",
+            "repeat": 0,
+            "planner": "FedFirst",
+            "workload": "loop",
+            "expected": 234,
+            "actual": [
+              "234.0"
+            ],
+            "passed": true,
+            "phases": {
+              "commonPreparationNanos": 11741442,
+              "analysisNanos": 2778069778,
+              "plannerSetupNanos": 11257969,
+              "modelNanos": 0,
+              "costSurfaceNanos": 0,
+              "optimizerNanos": 0,
+              "selectionNanos": 0,
+              "otherPlanningNanos": 158148764,
+              "diagnosticsNanos": 15314910,
+              "conversionNanos": 41353080,
+              "applicationNanos": 105087615,
+              "finalVerificationNanos": 2779574,
+              "registrationNanos": 8785268,
+              "receiptHandoffNanos": 694608,
+              "totalNanos": 3133233008
+            },
+            "heapPoolPeakBytesUpperBound": 111076376,
+            "compilationSeconds": 4.059708
+          },
+          {
+            "engine": "current",
+            "repeat": 0,
+            "planner": "AggLocal",
+            "workload": "nested",
+            "expected": 1926,
+            "actual": [
+              "1926.0"
+            ],
+            "passed": true,
+            "phases": {
+              "commonPreparationNanos": 15213501,
+              "analysisNanos": 1856638630,
+              "plannerSetupNanos": 18941096,
+              "modelNanos": 0,
+              "costSurfaceNanos": 0,
+              "optimizerNanos": 0,
+              "selectionNanos": 0,
+              "otherPlanningNanos": 182875524,
+              "diagnosticsNanos": 14911035,
+              "conversionNanos": 28823645,
+              "applicationNanos": 142087670,
+              "finalVerificationNanos": 2177179,
+              "registrationNanos": 9199441,
+              "receiptHandoffNanos": 266398,
+              "totalNanos": 2271134119
+            },
+            "heapPoolPeakBytesUpperBound": 102430400,
+            "compilationSeconds": 3.268598
+          },
+          {
+            "engine": "current",
+            "repeat": 0,
+            "planner": "AggLocal",
+            "workload": "elementwise",
+            "expected": 90,
+            "actual": [
+              "90.0"
+            ],
+            "passed": true,
+            "phases": {
+              "commonPreparationNanos": 13949378,
+              "analysisNanos": 1174227387,
+              "plannerSetupNanos": 10622591,
+              "modelNanos": 0,
+              "costSurfaceNanos": 0,
+              "optimizerNanos": 0,
+              "selectionNanos": 0,
+              "otherPlanningNanos": 162351819,
+              "diagnosticsNanos": 21220346,
+              "conversionNanos": 19779133,
+              "applicationNanos": 102523022,
+              "finalVerificationNanos": 5212141,
+              "registrationNanos": 9002714,
+              "receiptHandoffNanos": 329095,
+              "totalNanos": 1519217626
+            },
+            "heapPoolPeakBytesUpperBound": 93403040,
+            "compilationSeconds": 2.42945
+          },
+          {
+            "engine": "current",
+            "repeat": 0,
+            "planner": "AggLocal",
+            "workload": "loop",
+            "expected": 234,
+            "actual": [
+              "234.0"
+            ],
+            "passed": true,
+            "phases": {
+              "commonPreparationNanos": 15604121,
+              "analysisNanos": 2582214358,
+              "plannerSetupNanos": 6646410,
+              "modelNanos": 0,
+              "costSurfaceNanos": 0,
+              "optimizerNanos": 0,
+              "selectionNanos": 0,
+              "otherPlanningNanos": 134055330,
+              "diagnosticsNanos": 12041442,
+              "conversionNanos": 43519498,
+              "applicationNanos": 103697959,
+              "finalVerificationNanos": 6701663,
+              "registrationNanos": 7420438,
+              "receiptHandoffNanos": 294169,
+              "totalNanos": 2912195388
+            },
+            "heapPoolPeakBytesUpperBound": 111926784,
+            "compilationSeconds": 3.828813
+          }
+        ],
+        "engines": {
+          "current": {
+            "exitCode": 0,
+            "runs": [
+              {
+                "repeat": 0,
+                "exitCode": 0
+              }
+            ]
+          }
+        },
+        "scalingRuns": 12
+      }
+    }
+  ],
+  "finalPackage": {
+    "status": "passed",
+    "packageExitCode": 0,
+    "tests": [
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelectorTest",
+        "tests": "14",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0"
+      }
+    ],
+    "allFinalSourceHashesMatch": true,
+    "jarSha256": "777ad2ab1460b9802121225f414b8e2695fa29648a4de669b84d0baafd66e591",
+    "probeSha256": "3128d07d8ceda7e0a55372e97e484689e3f6797c4da08e5868827a07d9b1b863"
+  },
+  "probeOnlyFollowup": {
+    "reason": "Compiler constant folding records CP heavy hitters before DML runtime; negative probe now requires zero runtime timer, zero fed_ execution, zero authority generations and exact joint cause",
+    "javacExitCode": 0,
+    "currentProbeSha256": "57020550f28d707e0f08b5feeb20f9cb7edfdc8f07529147a796222ad34b1088",
+    "productionJarUnchanged": true,
+    "firstFailedArtifact": "/home/mchoi/heuristic-legality-20261006/target/fedpolicy-greedy-docker/heuristic-legality-run-m7a8gcch"
+  },
+  "dockerCommands": [
+    "bash scripts/fedplanner/run_LAN_docker.sh --greedy-validation --image sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434 --heuristic-legality",
+    "bash scripts/fedplanner/run_LAN_docker.sh --greedy-validation --image sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434 --als-only",
+    "bash scripts/fedplanner/run_LAN_docker.sh --greedy-validation --image sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434"
+  ],
+  "dockerPurpose": "correctness and structural scaling; independent containers overlapped, no paired performance comparison",
+  "finalChangedSourceSha256": {
+    "scripts/fedplanner/validate_greedy_docker.py": "14000caf3fbb83e37b76ce83e82b33999a9994975a719e6abca309d5eb22dc93",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "08e9a77e0ded2c4e7e3952fa50832d8c544ddc8b253a7d38623dd9f0cc556594",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java": "4d44450cd5dd6c7f7bcfe25375e2747a49e41f300bb72ebe46bb41476dff27d2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java": "dfda643399e2ccbecec66dc23a83192e6179911bcc02f60a76e0cca6b73cb74c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/HeuristicPlacementAdapter.java": "e36ef24a746bcb3cab3e7198f84d96314fe4b70506aa3958cebec4ed77cfb534",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyPlacementSelector.java": "89472ad043f223bb4013f7ffd28da1e5448b9167355b51a4cb1fe0399312f88c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedHeuristic/CampaignBG014HeuristicL2SvmLoopLocalityRedTest.java": "faa500971c4696614ca4c326c37c9f6b96a3bc2956b047f0a53c79efbffb55bf",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/HeuristicLocalContinuationTest.java": "a3214a480f0b61e71898d73b34a62014b0320f116098cc3bad217c4455aa61ae",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/HeuristicProtectedNestedDemotionTest.java": "a1f2710fcb7e515548fad996abe700c342782fffe29060532f596fde95e81e1a",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelationsTest.java": "35f6c54e7d20d83c9656de6d8c1360af666b3bfccac6d1017e8ca5bbaa1b03b4",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PolicyGreedyGroundingTest.java": "603bfc46db2a1dbe76c77ee28beebf74e12d57bc44af97e67390f59d89496ed7",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.java": "15db739c4d3f75c359e74b4c219f78159e87921ca3780e2347356a45b252997c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyPlacementSelectorTest.java": "562ede8371b2043dfd21d59081ad6895158756961ab7a787645a8055a8a85034",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RuntimeReadLegalityParityTest.java": "d322fc4f8f8a4b6a3759b8539561939e6179c31ac9594f55209f758617783f67",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapSelectionLegalityTest.java": "4079b2828a47f53cfe4d59832a83aa4a5c40101d8063808e320e88780a2f5081"
+  },
+  "sourceChangesAfterFinalPackage": [
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.java"
+  ],
+  "checks": {
+    "mavenPackage": true,
+    "unitTests80": true,
+    "constructorVisibilityTests19": true,
+    "javacFinalProbe": true,
+    "pythonCompile": true,
+    "bashSyntax": true,
+    "gitDiffCheck": true,
+    "independentReviewBlockingFindings": 0
+  }
+}

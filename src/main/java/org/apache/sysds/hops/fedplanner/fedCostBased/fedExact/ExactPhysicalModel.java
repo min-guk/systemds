@@ -1244,31 +1244,26 @@ final class ExactPhysicalModel {
 					if(selectedConsumer.realization() == null)
 						return Double.POSITIVE_INFINITY;
 					Set<Integer> directPositions = new java.util.TreeSet<>();
+					Set<Integer> physicalPositions = new java.util.TreeSet<>();
 					List<DurableAnchorKey> relocatedPools = new ArrayList<>();
 					for(InputAuthority authority : selectedConsumer.inputAuthorities()) {
-						if(authority.kind() == InputAuthorityKind.RELOCATION)
+						if(authority.kind() == InputAuthorityKind.RELOCATION) {
 							relocatedPools.add(authority.relocationAction().key().durableAnchor());
-						else if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
+							physicalPositions.add(authority.inputPosition());
+						}
+						else if(authority.kind() == InputAuthorityKind.DIRECT_FOUT) {
 							directPositions.add(authority.inputPosition());
+							physicalPositions.add(authority.inputPosition());
+						}
 					}
+					if(physicalPositions.size() <= 1)
+						return 0.0;
 					// LOCAL/broadcast and REFED are explicit, separately costed authorities.
 					// Their source map need not equal the map used by the FED kernel.
 					List<JointValueMapRelations.GroundedLayoutRow> rows =
 						grounding.rows(selectedReceipts, -1, directPositions);
-					if(rows.size() != relation.rows().size())
-						return Double.POSITIVE_INFINITY;
-					for(JointValueMapRelations.GroundedLayoutRow row : rows) {
-						DurableAnchorKey first = null;
-						List<DurableAnchorKey> pools = new ArrayList<>(relocatedPools);
-						row.inputs().forEach(input -> pools.add(input.pool()));
-						for(DurableAnchorKey pool : pools) {
-							if(first == null)
-								first = pool;
-							else if(!PlacementIdentity.samePhysicalWorkerPool(first, pool))
-								return Double.POSITIVE_INFINITY;
-						}
-					}
-					return 0.0;
+					return JointValueMapRelations.executionRowsAligned(relation, rows, relocatedPools)
+						? 0.0 : Double.POSITIVE_INFINITY;
 				});
 			factors.add(factor);
 			var encoded = ExactHardFactorObservationDecomposition.create(

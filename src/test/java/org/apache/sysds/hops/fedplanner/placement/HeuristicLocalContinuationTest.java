@@ -116,9 +116,9 @@ public class HeuristicLocalContinuationTest {
 			+ result.selectedRelocations(), result.selectedRelocations().stream().noneMatch(action ->
 				action.sourceValueVersion().equals(z.valueVersion())
 					&& action.compatibleConsumers().contains(r.key())));
-		Assert.assertEquals("LOCAL_VECTOR_CONTINUATION_POLICY_V5",
+		Assert.assertEquals("LOCAL_VECTOR_CONTINUATION_POLICY_V6",
 			result.plannerFacts().get("policy"));
-		Assert.assertEquals("GREEDY_NO_BACKTRACKING", result.plannerFacts().get("search"));
+		Assert.assertEquals("GREEDY_BOUNDED_REVERSIBLE_REPAIR", result.plannerFacts().get("search"));
 		Assert.assertEquals("AGG_LOCAL", result.plannerFacts().get("stateOrdering"));
 		Assert.assertEquals("Policy selection must not rewrite the owned analysis",
 			analysisFingerprint, analysis.analysisFingerprint());

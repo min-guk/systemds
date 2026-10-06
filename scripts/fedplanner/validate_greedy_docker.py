@@ -227,9 +227,50 @@ def run_als_only(args, repo, jar, probe, image, sources):
     return 0 if receipt["status"] == "passed" else 1
 
 
+def write_joint_legality_fixtures(run):
+    values = list(range(1, 17))
+    matrices = {"JX": values, "JY": [-value for value in values],
+        "JP": [1] * 16, "JQ": [2] * 16}
+    sources = []
+    for name, data in matrices.items():
+        first_port = 13000 if name in ("JX", "JP") else 13002
+        privacy = "private-aggregate" if name in ("JX", "JY") else "public"
+        for part in range(2):
+            block = data[part * 8:(part + 1) * 8]
+            path = run / f"{name}-{part}.csv"
+            path.write_text("".join(f"{block[row]},{block[row + 1]}\n" for row in range(0, 8, 2)))
+            path.with_suffix(".csv.mtd").write_text(json.dumps({"data_type": "matrix",
+                "value_type": "double", "rows": 4, "cols": 2, "nnz": 8, "format": "csv",
+                "header": False, "sep": ",", "privacy": privacy}) + "\n")
+        sources.append(f'{name}=federated(addresses=list('
+            f'"localhost:{first_port}//evidence/{name}-0.csv",'
+            f'"localhost:{first_port + 1}//evidence/{name}-1.csv"),'
+            'ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));')
+    protected = "\n".join(sources[:2]) + "\n"
+    all_sources = "\n".join(sources) + "\n"
+    output = ('C=A+B;\nprint("FEDPOLICY_NUMERIC="+sum(C));\n'
+        'print("FEDPOLICY_NUMERIC="+sum(C*C));\n'
+        'print("FEDPOLICY_NUMERIC="+nrow(C));\n'
+        'print("FEDPOLICY_NUMERIC="+ncol(C));\n')
+    correlated = 'if(sum(JX)>0){A=JX;B=JX;}else{A=JY;B=JY;}\n'
+    result = {}
+    for suffix, sign in (("x", 1), ("y", -1)):
+        branch = correlated if sign == 1 else correlated.replace(">0", "<0")
+        actual = [sign * 2 * value for value in values]
+        result[f"joint-correlated-{suffix}"] = (protected + branch + output,
+            [sum(actual), sum(value * value for value in actual), 8, 2])
+    independent = 'if(sum(JX)>0){A=JX;}else{A=JY;}\nif(sum(JX)<0){B=JX;}else{B=JY;}\n'
+    result["joint-independent-rejected"] = (protected + independent + output, None)
+    mixed = independent.replace("{B=JX;}", "{B=JP;}").replace("{B=JY;}", "{B=JQ;}")
+    actual = [value + 2 for value in values]
+    result["joint-independent-public-movement"] = (all_sources + mixed + output,
+        [sum(actual), sum(value * value for value in actual), 8, 2])
+    return result
+
+
 def run_heuristic_continuation(args, repo, jar, probe, image, sources):
     if args.baseline_root:
-        raise SystemExit("--heuristic-continuation does not accept --baseline-root")
+        raise SystemExit("Heuristic correctness modes do not accept --baseline-root")
     fixture_source = repo / "src/test/java/org/apache/sysds/hops/fedplanner/placement/HeuristicLocalContinuationTest.java"
     probe_source = repo / "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.java"
     harness_source = Path(__file__).resolve()
@@ -237,7 +278,8 @@ def run_heuristic_continuation(args, repo, jar, probe, image, sources):
         raise SystemExit("Probe class predates PolicyGreedyDockerProbe.java; rebuild test classes")
     root = repo / "target/fedpolicy-greedy-docker"
     root.mkdir(exist_ok=True)
-    run = Path(tempfile.mkdtemp(prefix="heuristic-continuation-run-", dir=root))
+    mode = "heuristic-legality" if args.heuristic_legality else "heuristic-continuation"
+    run = Path(tempfile.mkdtemp(prefix=f"{mode}-run-", dir=root))
     (run / "X.csv").write_text("1,2,3\n4,5,6\n7,8,9\n10,11,12\n")
     (run / "X.csv.mtd").write_text(json.dumps({"data_type": "matrix", "value_type": "double",
         "rows": 4, "cols": 3, "nnz": 12, "format": "csv", "header": False, "sep": ",",
@@ -273,25 +315,36 @@ def run_heuristic_continuation(args, repo, jar, probe, image, sources):
             "if(do_clip) { z=(err<0)*0+(err>=0)*err; } else { z=y; }"),
             heuristic_continuation_oracle(True)),
     }
+    if args.heuristic_legality:
+        workloads.update(write_joint_legality_fixtures(run))
     for name, (script, _) in workloads.items():
         (run / f"{name}.dml").write_text(script)
     planner = "COMPILE_FED_HEURISTIC_SINGLE_PASS"
     (run / "AggLocal.xml").write_text(f"<root><sysds.federated.planner>{planner}</sysds.federated.planner>"
         "<sysds.localtmpdir>/tmp/systemds</sysds.localtmpdir>"
         "<sysds.scratch>/tmp/scratch</sysds.scratch></root>\n")
+    ports = list(range(13000, 13004)) if args.heuristic_legality else [13000]
+    worker_heap = "384m" if args.heuristic_legality else "768m"
     commands = ["set -euo pipefail", "cd /evidence",
         "export JDK_JAVA_OPTIONS='--add-modules=jdk.incubator.vector --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED'",
         "CP='/probe:/engine/systemds-3.4.0-SNAPSHOT.jar:/engine/lib/*'",
-        "java -Xmx768m -cp \"$CP\" org.apache.sysds.api.DMLScript -w 13000 >worker.log 2>&1 &",
-        "worker=$!", "trap 'kill \"$worker\" 2>/dev/null || true; wait \"$worker\" 2>/dev/null || true' EXIT",
-        "python3 - <<'PY'\nimport socket,time\nfor i in range(120):\n try:\n  s=socket.create_connection(('localhost',13000),0.5);s.close();break\n except OSError: time.sleep(0.5)\nelse: raise SystemExit('worker did not start')\nPY"]
-    for name in workloads:
+        "workers=()", "trap 'kill \"${workers[@]}\" 2>/dev/null || true; wait 2>/dev/null || true' EXIT"]
+    for port in ports:
+        commands.extend([f'java -Xmx{worker_heap} -cp "$CP" org.apache.sysds.api.DMLScript -w {port} '
+            f'>worker-{port}.log 2>&1 &', 'workers+=("$!")'])
+    commands.append("python3 - <<'PY'\nimport socket,time\n"
+        f"for port in {ports!r}:\n for i in range(120):\n  try:\n"
+        "   s=socket.create_connection(('localhost',port),0.5);s.close();break\n"
+        "  except OSError: time.sleep(0.5)\n else: raise SystemExit(f'worker {port} did not start')\nPY")
+    for name, (_, expected) in workloads.items():
+        arguments = f"{name}.dml AggLocal.xml {planner}"
+        if expected is None:
+            arguments = f"reject {arguments} JOINT_VALUE_MAP_INCOMPATIBLE:"
         commands.append("timeout 120 java -Xms128m -Xmx1536m -Xss1m -cp \"$CP\" "
             "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyDockerProbe "
-            f"{name}.dml AggLocal.xml {planner} >{name}.log 2>&1")
+            f"{arguments} >{name}.log 2>&1")
     (run / "run.sh").write_text("\n".join(commands) + "\n")
-    fixture_files = [run / name for name in ("X.csv", "X.csv.mtd", "y.csv", "y.csv.mtd",
-        "function-loop.dml", "mixed-branch.dml", "AggLocal.xml", "run.sh")]
+    fixture_files = sorted(path for path in run.iterdir() if path.is_file())
     manifest = {"image": image, "jarSha256": sha(jar), "probeSha256": sha(probe),
         "harnessSha256": sha(harness_source), "testFixtureSha256": sha(fixture_source),
         "probeSourceSha256": sha(probe_source),
@@ -299,12 +352,15 @@ def run_heuristic_continuation(args, repo, jar, probe, image, sources):
         "fixtureSha256": {path.name: sha(path) for path in fixture_files},
         "fixture": {"X": {"rows": 4, "cols": 3, "privacy": "private-aggregate"},
             "y": {"rows": 4, "cols": 1, "privacy": "public"}, "iterations": 2},
-        "oracle": "independent scalar Python evaluation of both loop iterations",
+        "oracle": "independent scalar Python evaluation; null expects joint-legality rejection before runtime",
         "planner": planner, "workloads": {name: expected for name, (_, expected) in workloads.items()},
         "comparison": {"absoluteTolerance": NUMERIC_ABSOLUTE_TOLERANCE,
             "relativeTolerance": NUMERIC_RELATIVE_TOLERANCE, "exactMarkerCount": 4},
         "attempts": 1, "cpus": 2, "memory": "4g", "network": "none (container loopback only)",
-        "runtimeAudit": True}
+        "runtimeAudit": True, "workerPorts": ports,
+        "jointFixture": {"rows": 8, "cols": 2, "partitionsPerPool": 2,
+            "protectedSources": ["JX", "JY"], "publicSources": ["JP", "JQ"]}
+            if args.heuristic_legality else None}
     (run / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     argv = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--cpus", "2",
         "--memory", "4g", "--user", f"{os.getuid()}:{os.getgid()}",
@@ -313,11 +369,19 @@ def run_heuristic_continuation(args, repo, jar, probe, image, sources):
     (run / "command.json").write_text(json.dumps(argv, indent=2) + "\n")
     print(run, flush=True)
     with (run / "container.log").open("w") as log:
-        result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=400)
+        result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT,
+            timeout=900 if args.heuristic_legality else 400)
     checks = []
     for name, (_, expected) in workloads.items():
         path = run / f"{name}.log"
         text = path.read_text() if path.exists() else ""
+        if expected is None:
+            rejection_ok = ("FEDPOLICY_EXPECTED_REJECTION=JOINT_VALUE_MAP_INCOMPATIBLE:;"
+                "runtimeNanos=0;federatedExecution=false;authorityGenerations=0") in text
+            checks.append({"workload": name, "expected": "joint-legality rejection before DML runtime program",
+                "passed": rejection_ok and "FEDPOLICY_PROBE_SUCCESS=" not in text
+                    and not re.search(r"^FEDPOLICY_NUMERIC=", text, re.MULTILINE)})
+            continue
         actual, numeric_ok = check_numerical_markers(text, expected, NUMERIC_RELATIVE_TOLERANCE)
         runtime_ok = "FEDPOLICY_RUNTIME_FALLBACK=0;repair=0" in text
         audits = [{key: int(value) for key, value in re.findall(r"(\w+)=(\d+)(?=\s|$)", line)}
@@ -334,7 +398,8 @@ def run_heuristic_continuation(args, repo, jar, probe, image, sources):
     receipt = {"status": "passed" if passed else "failed", "containerExitCode": result.returncode,
         "checks": checks, "runtimeArtifactsMatch": runtime_artifacts_match,
         "manifestSha256": sha(run / "manifest.json"), "commandSha256": sha(run / "command.json"),
-        "logSha256": {path.name: sha(path) for path in [run / "container.log", run / "worker.log",
+        "logSha256": {path.name: sha(path) for path in [run / "container.log",
+            *(run / f"worker-{port}.log" for port in ports),
             *(run / f"{name}.log" for name in workloads)] if path.is_file()}}
     (run / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps({"status": receipt["status"], "artifact": str(run), "checks": checks}, indent=2))
@@ -349,6 +414,8 @@ def main():
     modes.add_argument("--als-only", action="store_true", help="Run the single-worker ALS CP/FedAll correctness comparison only")
     modes.add_argument("--heuristic-continuation", action="store_true",
         help="Run the AggLocal function-loop and mixed-branch continuation checks only")
+    modes.add_argument("--heuristic-legality", action="store_true",
+        help="Run continuation plus protected joint-pool positive/negative and public movement checks")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     jar = repo / "target/systemds-3.4.0-SNAPSHOT.jar"
@@ -361,7 +428,7 @@ def main():
     image = subprocess.check_output(["docker", "image", "inspect", args.image, "--format", "{{.Id}}"], text=True).strip()
     if args.als_only:
         return run_als_only(args, repo, jar, probe, image, sources)
-    if args.heuristic_continuation:
+    if args.heuristic_continuation or args.heuristic_legality:
         return run_heuristic_continuation(args, repo, jar, probe, image, sources)
     root = repo / "target/fedpolicy-greedy-docker"
     root.mkdir(exist_ok=True)
@@ -397,7 +464,7 @@ def main():
     for name, planner in planners.items():
         (run / f"{name}.xml").write_text(f"<root><sysds.federated.planner>{planner}</sysds.federated.planner>"
             "<sysds.localtmpdir>/tmp/systemds</sysds.localtmpdir><sysds.scratch>/tmp/scratch</sysds.scratch></root>\n")
-    commands = ["set -euo pipefail", "cd /evidence", "export HOME=/tmp",
+    commands = ["set -euo pipefail", "cd /evidence",
         "export JDK_JAVA_OPTIONS='--add-modules=jdk.incubator.vector --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.ref=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED'",
         "CP='/probe:/engine/systemds-3.4.0-SNAPSHOT.jar:/engine/lib/*'",
         "java -Xmx768m -cp \"$CP\" org.apache.sysds.api.DMLScript -w 13000 >worker-${REPEAT}.log 2>&1 &",

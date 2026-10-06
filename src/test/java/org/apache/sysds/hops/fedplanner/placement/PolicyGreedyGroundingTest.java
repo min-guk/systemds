@@ -56,10 +56,10 @@ public class PolicyGreedyGroundingTest {
 	@Test
 	public void unusedExternalSchedulingEdgeCannotGroundTheSelectedProofCycle() {
 		PlacementAnalysis analysis = cycle(false);
-		var error = Assert.assertThrows(PolicyGreedyPlacementSelector.UnresolvedBoundaryContractException.class,
+		var error = Assert.assertThrows(PolicyGreedyPlacementSelector.NoSupportedPolicyWitnessException.class,
 			() -> new PolicyGreedyPlacementSelector().select(analysis));
-		Assert.assertTrue(error.getMessage().contains("no external value entry"));
 		Assert.assertTrue(error.getMessage().contains("not global infeasibility"));
+		Assert.assertTrue(rootCause(error).getMessage().contains("no external value entry"));
 	}
 
 	@Test
@@ -73,8 +73,9 @@ public class PolicyGreedyGroundingTest {
 		Assert.assertEquals(List.of(b.key()),analysis.logicalBoundaryRealizations().sources(a.key()));
 		Assert.assertTrue("The FOUT-only relation is deliberately empty for this local fixture",
 			analysis.logicalBoundaryRealizations().relations().isEmpty());
-		Assert.assertThrows(PolicyGreedyPlacementSelector.UnresolvedBoundaryContractException.class,
+		var error = Assert.assertThrows(PolicyGreedyPlacementSelector.NoSupportedPolicyWitnessException.class,
 			() -> new PolicyGreedyPlacementSelector().select(analysis));
+		Assert.assertTrue(rootCause(error).getMessage().contains("no external value entry"));
 	}
 
 	@Test
@@ -160,6 +161,10 @@ public class PolicyGreedyGroundingTest {
 	}
 	private static CandidateRealizationSupportClause clause(CandidateRealizationInputBinding... bindings) {
 		return new CandidateRealizationSupportClause(List.of(), List.of(bindings));
+	}
+	private static Throwable rootCause(Throwable error) {
+		while(error.getCause() != null) error = error.getCause();
+		return error;
 	}
 	private static CandidateRuleFact fact(CandidateRuleKey rule, List<CandidateRealizationSupportClause> clauses) {
 		return new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,

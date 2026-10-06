@@ -2,6 +2,8 @@
 
 조사 기준은 `82b2f63735783ce4a3d35b142bf434d5addc49dd`다. 이 커밋은 앞서 검증한 unbound relocation publication 오류 2건의 수정이다. 이번에는 production/test source를 더 수정하지 않고 코드 비교와 작은 compile/selection probe만 수행했다. 원격 push는 하지 않았다.
 
+후속 구현과 검증은 [Heuristic 합법성 구현 보고서](HEURISTIC_LEGALITY_IMPLEMENTATION_2026-10-06.md)에 기록했다. 아래 내용은 구현 전 조사 결과를 보존한 것이다.
+
 **질문:** cost-based planner에서 수행하는 것 중 Heuristic이 합법적인 plan을 고르기 위해 공유해야 할 것이 있는가?
 
 **결론:** 있다. `VALUE_MAP`의 실행 가능한 분기 조합별 worker-pool 정렬 검사는 실제로 공통 합법성 경로에 빠져 있다. Heuristic 선택·정규화·emission 사전 검사가 이를 수락하는 반례를 확인했다. 비용 점수나 cost solver 전체를 가져올 필요는 없으며, 해당 hard relation을 공유해야 한다. WDIVMM runtime 입력 관계의 조기 전파와 greedy의 충돌 복구는 별도 우선순위다.

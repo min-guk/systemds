@@ -13,6 +13,8 @@ import java.util.Map;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations.Relation;
+import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations.GroundedInput;
+import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations.GroundedLayoutRow;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -53,6 +55,48 @@ public class JointValueMapRelationsTest {
 		long repeated = relation.sources().stream().filter(source -> relation.rows().stream()
 			.filter(row -> row.inputs().stream().anyMatch(input -> input.source() == source)).count() > 1).count();
 		Assert.assertTrue("fixture must reuse one producer decision across rows", repeated > 0);
+	}
+
+	@Test
+	public void executionRowsAlignDirectAndRelocatedPoolsWithoutRequiringOneGlobalPool() throws Exception {
+		PlacementJointInputAnalysis joint = analyze("p=as.scalar(rand(rows=1,cols=1));"
+			+ "if(p>0.5){A=matrix(1,2,2);B=matrix(2,2,2);}"
+			+ "else{A=matrix(3,2,2);B=matrix(4,2,2);}C=A+B;print(sum(C));");
+		Relation relation = relation(joint);
+		DurableAnchorKey first = pool("first", "worker-first");
+		DurableAnchorKey second = pool("second", "worker-second");
+		List<GroundedLayoutRow> correlated = List.of(
+			grounded(relation.rows().get(0), first, first),
+			grounded(relation.rows().get(1), second, second));
+		Assert.assertTrue(JointValueMapRelations.executionRowsAligned(
+			relation, correlated, List.of()));
+
+		List<GroundedLayoutRow> independent = List.of(
+			grounded(relation.rows().get(0), first, second),
+			grounded(relation.rows().get(1), second, first));
+		Assert.assertFalse(JointValueMapRelations.executionRowsAligned(
+			relation, independent, List.of()));
+
+		List<GroundedLayoutRow> oneDirectInput = correlated.stream().map(row ->
+			new GroundedLayoutRow(List.of(row.inputs().get(0)), null)).toList();
+		Assert.assertFalse("a relocation target participates in the same execution row",
+			JointValueMapRelations.executionRowsAligned(relation, oneDirectInput, List.of(first)));
+		List<GroundedLayoutRow> relocatedToFirst = correlated.stream().map(row ->
+			new GroundedLayoutRow(List.of(new GroundedInput(0, row.inputs().get(0).reader(),
+				row.inputs().get(0).source(), first)), null)).toList();
+		Assert.assertTrue("an explicitly aligned relocation remains legal",
+			JointValueMapRelations.executionRowsAligned(relation, relocatedToFirst, List.of(first)));
+		Assert.assertFalse("an ungrounded relocation cannot invent a joint execution row",
+			JointValueMapRelations.executionRowsAligned(relation, List.of(), List.of(first)));
+		Assert.assertTrue("LOCAL/broadcast inputs are excluded from the pool relation",
+			JointValueMapRelations.executionRowsAligned(relation, oneDirectInput, List.of()));
+	}
+
+	private static GroundedLayoutRow grounded(JointValueMapRelations.Row row,
+		DurableAnchorKey first, DurableAnchorKey second) {
+		return new GroundedLayoutRow(List.of(
+			new GroundedInput(0, row.inputs().get(0).reader(), row.inputs().get(0).source(), first),
+			new GroundedInput(1, row.inputs().get(1).reader(), row.inputs().get(1).source(), second)), null);
 	}
 
 	private static Relation relation(PlacementJointInputAnalysis joint) {
