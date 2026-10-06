@@ -1,0 +1,476 @@
+{
+  "status": "requested-two-errors-fixed; validation-gaps-explicit",
+  "baseCommit": "d053a8f24a910f9209f11c3f54811d92bfc16dd0",
+  "worktree": "/home/mchoi/heuristic-relocation-20261006",
+  "branch": "fix/heuristic-relocation-20261006",
+  "publication": "Validated fix prepared for local commit on fix/heuristic-relocation-20261006; not pushed",
+  "rootCause": "Coarse relocation discovery retained a COL action with a FULL X 4x3 anchor for a 3x1 loop-update result; nativeOutputAnchor cannot bind that geometry. An alternate legal exact realization exists, but the unused action failed the unchanged final publication verifier.",
+  "change": "Only at the completed semantic fixed point, project discovery actions onto AVAILABLE exact RELOCATION support clauses or existing directSourcePlacements proofs. Preserve all facts/clauses, late binding, direct-source proofs, action identity/order, privacy/geometry/TR-TW rules and final verifier.",
+  "sourceSha256": {
+    "scripts/fedplanner/validate_greedy_docker.py": "709ca46756244fd5f15052d04a8ed41126a89a6dc3d40f4ff04163c11c993b33",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "4fce26aa3f39d176f4e997eddceb3afb891c0278ef82c36ef20bc3e8d7cacb26",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementSupportRelations.java": "c6d6ab764ba25883af07db5ac991249aaaaf14d426707575283a0ed54710509c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PublicationSupportClosureTest.java": "15e48cbee87012fd29b2feeead7f70e555ffdd98ae5eb84907d08db92aa12c2e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyDockerProbe.java": "58c0253260e25ca66f30d6f606a21d36187e5cf2265dd5fdfe6d3180440eb200"
+  },
+  "baseline": {
+    "testClass": "HeuristicLocalContinuationTest",
+    "methods": [
+      "functionLoopKeepsLocalVectorTransposeAndLossInCP",
+      "mixedFederatedBranchDoesNotAuthorizeLocalPhi"
+    ],
+    "tests": 2,
+    "errors": 2,
+    "signature": "Final publication has an unbound relocation action",
+    "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/baseline.log"
+  },
+  "focused": {
+    "command": "mvn -q -Djacoco.skip=true -Dtest-forkCount=1 -Dtest=PublicationSupportClosureTest,HeuristicLocalContinuationTest test",
+    "tests": 19,
+    "passed": 19,
+    "reportDirectory": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/focused-reports"
+  },
+  "regression": {
+    "interpretation": "Deduplicated completed XML test cases across bounded runs, not a successful single full-suite invocation. The 19 focused tests are included, not added again. All five skips predate this change.",
+    "tests": 99,
+    "passed": 87,
+    "failures": 0,
+    "errors": 7,
+    "skipped": 5,
+    "suites": [
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 1,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest.xml",
+        "sha256": "0056b652e84d3814ab54e96596829853310ff22e61a8cfd93c79001bd75a6587"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.GlobalReceiptPlanSpaceCompletenessTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 10,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.GlobalReceiptPlanSpaceCompletenessTest.xml",
+        "sha256": "3522acc8e62904460bad25608c2aff2a0ec7895df280b99cea3759889efae8b8"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.HeuristicLocalContinuationTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 9,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.HeuristicLocalContinuationTest.xml",
+        "sha256": "e973fb0fe0eabdc6581ed31d1a1987683440054d1df01d06ef1b9c548e2cd08c"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.HeuristicProtectedNestedDemotionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 3,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.HeuristicProtectedNestedDemotionTest.xml",
+        "sha256": "d98c2ab5a9d4b8d1b3ee05ab722868f705f5613fd04f017adb57452f4ab704a3"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.IndependentPlanSpaceGenerationCompletenessTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "passed": 2,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.IndependentPlanSpaceGenerationCompletenessTest.xml",
+        "sha256": "3f938c7583f476c9226395ff1cb925130545e3b5cd3920b23d1451c0d9d80f2a"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.NeutralPlacementFixedPointCompositionTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 12,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.NeutralPlacementFixedPointCompositionTest.xml",
+        "sha256": "8145c179c35461f671436240796eaa65700ea4cfe32c09028196fa2369fd2834"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphUploadRelocationRedTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 7,
+        "skipped": 0,
+        "passed": 1,
+        "nonpassingCases": [
+          {
+            "method": "twoPresentInputsOnSamePhysicalPoolUseTwoDirectReceiptsAndNoRefed",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'A' (hopID=42); cannot safely plan federated execution."
+          },
+          {
+            "method": "candidateReceiptRejectsLegacyAbsentLocalFallbackAuthority",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'X' (hopID=132); cannot safely plan federated execution."
+          },
+          {
+            "method": "twoPresentInputsOnDistinctPhysicalPoolsChooseOneCommonAnchorAndOneRefed",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'A' (hopID=192); cannot safely plan federated execution."
+          },
+          {
+            "method": "localMatrixNativeFedOperandDoesNotCreateSyntheticUploadAction",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'X' (hopID=282); cannot safely plan federated execution."
+          },
+          {
+            "method": "everyPublishedReceiptOrUploadIsBackedByAnExactPresentOracleCandidate",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'X' (hopID=342); cannot safely plan federated execution."
+          },
+          {
+            "method": "functionCallPlaceholderDoesNotOwnArgumentRelocations",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'X' (hopID=920); cannot safely plan federated execution."
+          },
+          {
+            "method": "sparseOracleDomainRetainsNativeAbsentWithoutInventingRefed",
+            "type": "org.apache.sysds.runtime.DMLRuntimeException",
+            "message": "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'X' (hopID=1138); cannot safely plan federated execution."
+          }
+        ],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphUploadRelocationRedTest.xml",
+        "sha256": "6ba9804bcd2de896b1b253d8888e080a56ac35f5d56c8be85966c1ff8ed57c01"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PlacementSupportDeletionWorklistTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 10,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.PlacementSupportDeletionWorklistTest.xml",
+        "sha256": "dd2c3a7e57df08c74d585a4b00884a64cc75dfc72a4d0c1d5bb3d4fad7479aaa"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 5,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest.xml",
+        "sha256": "c91f5fd7b8a3c54a89576602ff35cdcaa3aae497cd8b772de8591a77c9c09287"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PrivacyMovementCertificationTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 4,
+        "passed": 7,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.PrivacyMovementCertificationTest.xml",
+        "sha256": "b7247dbe8ee3494a52410042c04ea99e0c1f16e2d31de144ab8131484a8b6417"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 10,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest.xml",
+        "sha256": "83f363a01f8e28e7ade5c4d97cedc463d99529792afe0c59c35628c641e0904e"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.RelocationProductMemoTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 6,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.RelocationProductMemoTest.xml",
+        "sha256": "ee1422e87d812959a45a8a0c96eaa5e0197525390ff67323deaa584a649a89ce"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelectorTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 11,
+        "nonpassingCases": [],
+        "report": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/final-reports/TEST-org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelectorTest.xml",
+        "sha256": "31a75289bd7808b55350c713ecb413f9372efd063041d1fd710afba5438ba5d7"
+      }
+    ],
+    "incompleteGlmMethods": [
+      "rewrittenInlinedOutputRetainsItsCompilerDeclaredTargetAuthority",
+      "inlinedGlmInputsAreTraceOnlyWithOrWithoutLexicalCarriers",
+      "candidateMaterializationSearchMatchesBoundedExhaustiveOracle"
+    ],
+    "interruption": "Two wider Maven attempts stopped while full builtin GLM fixtures remained in closeBoundaryStructure/PlacementJointInputAnalysis, before the changed final publication boundary; not counted as passes. Three methods were excluded from the final bounded method list.",
+    "privacyErrors": {
+      "class": "NeutralPlacementGraphUploadRelocationRedTest",
+      "explanation": "Seven fixtures query absent workers for privacy before reaching changed code; all seven reproduce against original main classes in the read-only ALS worktree. No privacy relaxation or test ignore was introduced.",
+      "baselineSourceMatchesHead": true,
+      "baselineClassesMatchJar": true,
+      "baselineWorkspace": "/home/mchoi/als-fedall-greedy-20261006",
+      "methods": [
+        {
+          "method": "twoPresentInputsOnSamePhysicalPoolUseTwoDirectReceiptsAndNoRefed",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-twoPresentInputsOnSamePhysicalPoolUseTwoDirectReceiptsAndNoRefed.log",
+          "sha256": "1b0cfd39ac01df9b400bd941e99bbc723d9e3a77312e877facd6afd6229069e6"
+        },
+        {
+          "method": "candidateReceiptRejectsLegacyAbsentLocalFallbackAuthority",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-candidateReceiptRejectsLegacyAbsentLocalFallbackAuthority.log",
+          "sha256": "af687308e159460b554954aa2605313fc7cf6312beb13b30d70c111fc24ea063"
+        },
+        {
+          "method": "twoPresentInputsOnDistinctPhysicalPoolsChooseOneCommonAnchorAndOneRefed",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-twoPresentInputsOnDistinctPhysicalPoolsChooseOneCommonAnchorAndOneRefed.log",
+          "sha256": "42ad7e76f3df331f97890f81ed00ca41280e7f0a637598d25079105ba5602b70"
+        },
+        {
+          "method": "localMatrixNativeFedOperandDoesNotCreateSyntheticUploadAction",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-localMatrixNativeFedOperandDoesNotCreateSyntheticUploadAction.log",
+          "sha256": "eccafa3cc8ad9f2f9e9a7115a21a22b9fe3ba6e66446ce13aceb6bc4c2f18311"
+        },
+        {
+          "method": "everyPublishedReceiptOrUploadIsBackedByAnExactPresentOracleCandidate",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-everyPublishedReceiptOrUploadIsBackedByAnExactPresentOracleCandidate.log",
+          "sha256": "5f192c87524cd35c4e60da05eb1c24fda2852c4f48bc6c8020246ed4fbd7b414"
+        },
+        {
+          "method": "functionCallPlaceholderDoesNotOwnArgumentRelocations",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-functionCallPlaceholderDoesNotOwnArgumentRelocations.log",
+          "sha256": "9a8bf2686544a8881ae4c0bcda3a1580665a406a15dcbdd95d6ceb9487ce2122"
+        },
+        {
+          "method": "sparseOracleDomainRetainsNativeAbsentWithoutInventingRefed",
+          "exitCode": 1,
+          "privacyFailureReproduced": true,
+          "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/network-baseline-sparseOracleDomainRetainsNativeAbsentWithoutInventingRefed.log",
+          "sha256": "c0e0525b06d65575ccf598aeaeb7a020442767321f24f448efcd57b431b00589"
+        }
+      ]
+    }
+  },
+  "package": {
+    "status": "passed",
+    "command": "mvn -q -Djacoco.skip=true -Dtest-forkCount=1 -Dtest=StartupTest package",
+    "startupTestsPassed": 7,
+    "log": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/package-retry.log",
+    "earlierAttempt": {
+      "command": "mvn -q -DskipTests -Djacoco.skip=true package",
+      "tests": 10,
+      "passed": 9,
+      "failures": 1,
+      "failure": "StartupTest.testStartupCorrect: log message count expected 4, actual 5; retry passed without source changes. POM uses maven.test.skip, so skipTests did not skip execution.",
+      "reportDirectory": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/package-failed-reports"
+    }
+  },
+  "docker": {
+    "status": "passed",
+    "command": "bash scripts/fedplanner/run_LAN_docker.sh --greedy-validation --image sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434 --heuristic-continuation",
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "artifactRoot": "/home/mchoi/heuristic-relocation-20261006/target/fedpolicy-greedy-docker/heuristic-continuation-run-y6kbicsd",
+    "manifestSha256": "d5daedfbd35808ec98480917a6a3ca25c47e437f5124dab7c11b958741c1fd79",
+    "receiptSha256": "eb169d2dc11650b2a639881bfa2d1c6295865546aa0c55c03fc8f69fd48b222c",
+    "jarSha256": "f6d0301583ef82ae211def4fb82c5b8b06dcefd66737034678f60f5fdeac0acc",
+    "probeSha256": "4cdb797cd3f46ccf2f7a1bdf1f713c8805f225985ba60fab10144bfcc7a4881a",
+    "sourceInventoryFiles": 2184,
+    "allRecordedSourcesAndArtifactsMatchFinal": true,
+    "cpus": 2,
+    "memory": "4g",
+    "network": "none; worker/coordinator share container loopback",
+    "fixture": {
+      "X": {
+        "rows": 4,
+        "cols": 3,
+        "privacy": "private-aggregate"
+      },
+      "y": {
+        "rows": 4,
+        "cols": 1,
+        "privacy": "public"
+      },
+      "iterations": 2
+    },
+    "runs": [
+      {
+        "workload": "function-loop",
+        "expected": [
+          17.5,
+          20.0,
+          22.5,
+          30.0
+        ],
+        "actual": [
+          "17.5",
+          "20.0",
+          "22.5",
+          "30.0"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true,
+        "maxAbsoluteError": 0.0,
+        "compileSeconds": 34.644866,
+        "executionSeconds": 1.611,
+        "federatedComputeInstructionCount": 8,
+        "log": "/home/mchoi/heuristic-relocation-20261006/target/fedpolicy-greedy-docker/heuristic-continuation-run-y6kbicsd/function-loop.log",
+        "sha256": "7def70cc263add638cbfe43a8dad0cfbb4edd931f7d2bd1696625a18faf0efcd"
+      },
+      {
+        "workload": "mixed-branch",
+        "expected": [
+          -17.5,
+          -20.0,
+          -22.5,
+          30.0
+        ],
+        "actual": [
+          "-17.5",
+          "-20.0",
+          "-22.5",
+          "30.0"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true,
+        "maxAbsoluteError": 0.0,
+        "compileSeconds": 30.254373,
+        "executionSeconds": 0.647,
+        "federatedComputeInstructionCount": 8,
+        "log": "/home/mchoi/heuristic-relocation-20261006/target/fedpolicy-greedy-docker/heuristic-continuation-run-y6kbicsd/mixed-branch.log",
+        "sha256": "7cb1ea9fb64be4fc12d2a90e04630dd0fe43f1ce98498526799fe437442ada95"
+      }
+    ],
+    "timingInterpretation": "Single-run correctness timings only; no performance A/B or large-model run.",
+    "earlierAttempt": {
+      "artifactRoot": "/home/mchoi/heuristic-relocation-20261006/target/fedpolicy-greedy-docker/heuristic-continuation-run-slmb1gus",
+      "status": "harness numeric-parser false negative; both runtime results/audits valid",
+      "fix": "Anchor numeric markers to whole output lines so embedded audit instruction strings are not parsed as values. Also require every runtime audit summary to report zero missing physical/synthetic Hops and mismatches.",
+      "sameProductionJar": true
+    }
+  },
+  "review": {
+    "productionAndRegression": "Independent code review approved; no blockers",
+    "harness": "Independent code review approved after marker/audit checks; negative checks for malformed/nonfinite/missing/extra numbers and absent/incomplete/nonzero audit summaries passed"
+  },
+  "checks": [
+    "git diff --check",
+    "python3 -m py_compile scripts/fedplanner/validate_greedy_docker.py",
+    "bash -n scripts/fedplanner/run_LAN_docker.sh",
+    "Modified production classes byte-match final JAR; original baseline classes byte-match baseline JAR"
+  ],
+  "evidenceSha256": {
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/baseline.log": "3b571c3e60e9fdcc5f5b362167f055129b9e2a0c41d7c7bdece286d748754853",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/focused.log": "1ea2aff7ceb227a26853365019512d3b31b3a009aa39d15e2a69d9a077a225de",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/regression.log": "4769f60dbd697f43bb542310493031f72edc1d2638cf295f5b8dcbb704a053b7",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/regression-thread-dump.txt": "b344c78be06adf86d085efcc5e235cfd1c080c5abd2010e4cbef3ac1e12280df",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/expanded-stop.json": "5a0d6f554b2f0a3b071ce517ddd5104b8d490b0e850124976b279d2b64226ac0",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/remaining-regression.log": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/remaining-stop.json": "2b1a6e9dd139d3a72d94593fedb9511226a82c0c7a99f67e035b70eaeb377b94",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/bounded-package.log": "47230185046cb16f07e33dbebdaf9c89cd4c2a6a96b8fed0dd6a484d3e0f71cb",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/package.log": "afa030e5c73b682443b8e67b00b4bbad3398323a8fa825685a9f1b1ff854c720",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/package-retry.log": "00424558fbac754d5b8eaed55a5bc37402bcdc04d073e8a2d8f56d8f79e772f1",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/docker-continuation.log": "9a6e2fc9c02060af213bfc4fc6a05381650962109f7470d8837e0eaa769b75e4",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/docker-continuation-final.log": "5ba408646f59b464b1098f305d18c8e98097d0f4cfd6228fa0be8a340af19837",
+    "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-relocation-evidence/orphan-diagnostic.log": "7df0fc4e42663f8dd9be98fb9391a962eebee8b06bae956179e6b8a77750df7b"
+  },
+  "limitations": [
+    "The three full GLM fixture methods were not completed.",
+    "Seven external-worker privacy fixture errors remain, reproduced on main.",
+    "No full repository suite, large-model training, or before/after latency comparison was performed.",
+    "Publishing too early could lose future support; projection is deliberately after convergence. Future binder bugs remain detectable by exact-support regression and unchanged final validation."
+  ]
+}

@@ -105,7 +105,7 @@ public class HeuristicProtectedNestedDemotionTest {
 		Assert.assertEquals("Without a demotion, AggLocal retains FedFirst choices",
 			fedFirst.assignment(), heuristic.assignment());
 		Assert.assertEquals("AGG_LOCAL", heuristic.plannerFacts().get("stateOrdering"));
-		Assert.assertEquals("GREEDY_NO_BACKTRACKING", heuristic.plannerFacts().get("search"));
+		Assert.assertEquals("GREEDY_BOUNDED_REVERSIBLE_REPAIR", heuristic.plannerFacts().get("search"));
 	}
 
 	private static PlacementAnalysis analyzeProtected(String script) throws Exception {

@@ -13,6 +13,7 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -570,6 +571,115 @@ public final class JointValueMapRelations {
 
 	public static List<CompiledHopKey> supportOwners(PlacementAnalysis analysis, Relation relation) {
 		return new Grounding(analysis, relation).supportOwners();
+	}
+
+	/**
+	 * Shared hard legality for a complete selected witness. A VALUE_MAP reader can
+	 * resolve to a different pool in each correlated control-flow row, but every
+	 * physical input used by one FED execution row must resolve to the same worker
+	 * pool. LOCAL inputs are owned by their broadcast/download authority, while an
+	 * explicit relocation contributes its target pool rather than its source pool.
+	 */
+	public static boolean selectedExecutionRowsAligned(PlacementAnalysis analysis,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> receipts) {
+		return incompatibleSelectedExecutionConsumers(analysis, assignment, receipts).isEmpty();
+	}
+
+	/** Identity-owned consumers whose selected runtime rows cannot share one worker pool. */
+	public static List<CompiledHopKey> incompatibleSelectedExecutionConsumers(PlacementAnalysis analysis,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> receipts) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(assignment, "assignment");
+		Objects.requireNonNull(receipts, "receipts");
+		List<CompiledHopKey> incompatible = new ArrayList<>();
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
+		for(CandidateSelectionReceipt receipt : receipts)
+			if(selected.put(receipt.rule().parentOccurrence(), receipt) != null)
+				return List.of(receipt.rule().parentOccurrence());
+		for(Relation relation : from(analysis)) {
+			boolean valueMapped = relation.readers().stream().map(selected::get)
+				.filter(Objects::nonNull).anyMatch(receipt -> receipt.realization().key().layoutKind()
+					== PlacementIdentity.PlacementLayoutKind.VALUE_MAP);
+			if(!valueMapped)
+				continue;
+			PlacementState state = assignment.get(relation.consumer());
+			if(state == null) {
+				incompatible.add(relation.consumer());
+				continue;
+			}
+			// Exact admits a receiptless CP/LOUT alternative before consulting its
+			// realization because the coordinator collects every input locally.
+			if(state.execType() == org.apache.sysds.common.Types.ExecType.CP
+				&& state.output()
+					== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
+				continue;
+			CandidateSelectionReceipt consumer = selected.get(relation.consumer());
+			if(consumer == null) {
+				incompatible.add(relation.consumer());
+				continue;
+			}
+			// Exact inputAuthorityProducts classifies every CP input and every DML
+			// FunctionOp placeholder input as NATIVE_LOCAL. They do not represent a
+			// runtime kernel consuming multiple FederationMaps, even for CP/FOUT or a
+			// FED forwarding placeholder, so joint worker-pool alignment does not apply.
+			if(state.execType() != org.apache.sysds.common.Types.ExecType.FED
+				|| analysis.isDmlFunctionCallBoundary(relation.consumer()))
+				continue;
+			Set<Integer> directPositions = new TreeSet<>();
+			Set<Integer> physicalPositions = new TreeSet<>();
+			List<DurableAnchorKey> relocatedPools = new ArrayList<>();
+			for(var binding : consumer.supportClause().inputBindings()) {
+				if(binding.inputPosition() >= consumer.rule().orderedInputs().size()) {
+					incompatible.add(relation.consumer());
+					break;
+				}
+				if(!consumer.rule().orderedInputs().get(binding.inputPosition()).present())
+					continue; // Exact classifies ABSENT_LOCAL as NATIVE_LOCAL.
+				if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT) {
+					directPositions.add(binding.inputPosition());
+					physicalPositions.add(binding.inputPosition());
+				}
+				else if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION) {
+					relocatedPools.add(binding.relocationAction().durableAnchor());
+					physicalPositions.add(binding.inputPosition());
+				}
+			}
+			// One runtime FederationMap has no peer to align with. Its availability
+			// remains owned by the ordinary exact input authority; requiring complete
+			// joint row grounding here would reject matrix-scalar kernels such as
+			// alpha*HS solely because the scalar's control-flow relation is dynamic.
+			if(physicalPositions.size() <= 1)
+				continue;
+			List<GroundedLayoutRow> rows = new Grounding(analysis, relation)
+				.rows(selected, -1, directPositions);
+			if(!executionRowsAligned(relation, rows, relocatedPools))
+				incompatible.add(relation.consumer());
+		}
+		return incompatible.stream().distinct().sorted().toList();
+	}
+
+	/** Shared row predicate used by exact factors without changing their scope. */
+	public static boolean executionRowsAligned(Relation relation,
+		List<GroundedLayoutRow> rows, Collection<DurableAnchorKey> relocatedPools) {
+		Objects.requireNonNull(relation, "relation");
+		Objects.requireNonNull(rows, "rows");
+		Objects.requireNonNull(relocatedPools, "relocatedPools");
+		if(rows.size() != relation.rows().size())
+			return false;
+		for(GroundedLayoutRow row : rows) {
+			DurableAnchorKey first = null;
+			List<DurableAnchorKey> pools = new ArrayList<>(relocatedPools);
+			row.inputs().forEach(input -> pools.add(input.pool()));
+			for(DurableAnchorKey pool : pools) {
+				if(first == null)
+					first = pool;
+				else if(!PlacementIdentity.samePhysicalWorkerPool(first, pool))
+					return false;
+			}
+		}
+		return true;
 	}
 
 	private static List<Relation> from(PlacementAnalysis analysis, PlacementJointInputAnalysis joint) {

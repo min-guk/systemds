@@ -1,0 +1,7 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+CASE=correlated ANALYSIS_OK decisions=76
+EXACT=FEASIBLE
+HEURISTIC=NORMALIZED_SUCCESS candidates=76 relocations=0
+CONSUMER=PlacementEmissionState[placementState=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], derivedFedFout=false] inputs=[CandidateInputState[presence=PRESENT, fType=ROW], CandidateInputState[presence=PRESENT, fType=ROW]] layout=VALUE_MAP bindings=[DIRECT, DIRECT]
+JOINT_ROWS=2 EXPECTED_ROWS=2 INCOMPATIBLE_POOL_ROWS=0
+EMISSION_PREVALIDATE=ACCEPTED
