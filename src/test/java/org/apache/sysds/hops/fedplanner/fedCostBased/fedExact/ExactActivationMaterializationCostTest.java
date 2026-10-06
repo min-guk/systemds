@@ -80,6 +80,20 @@ public class ExactActivationMaterializationCostTest {
 	}
 
 	@Test
+	public void conditionalConsumerLoopRequiresRetentionAtEqualExpectedFrequency() {
+		var source = new OccurrenceProfileFact(1, List.of(), 0);
+		var consumer = new OccurrenceProfileFact(1, List.of(Pair.of(7L, 2d)), 0,
+			List.of(new BranchActivationFact("outer", true, 0.5, List.of())));
+		Assert.assertEquals(0.5,
+			ExactPhysicalCostModel.materializationActivation(source, consumer).weight(), 0);
+		Assert.assertTrue(ExactPhysicalCostModel.requiresCrossExecutionReuse(source, consumer));
+		var conditionalSingleUse = new OccurrenceProfileFact(0.5, List.of(), 0,
+			List.of(new BranchActivationFact("outer", true, 0.5, List.of())));
+		Assert.assertFalse(ExactPhysicalCostModel.requiresCrossExecutionReuse(
+			source, conditionalSingleUse));
+	}
+
+	@Test
 	public void oppositeArmsInsideRepeatedLoopAreNotDisjointLifetimeEvents() {
 		var source = new OccurrenceProfileFact(1, List.of(), 0);
 		var loops = List.of(Pair.of(7L, 10d));

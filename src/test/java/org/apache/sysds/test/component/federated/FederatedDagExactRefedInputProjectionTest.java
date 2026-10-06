@@ -47,13 +47,17 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Data;
+import org.apache.sysds.lops.FederatedRefed;
+import org.apache.sysds.lops.FederatedFoutMaterialize;
 import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.MapMultChain.ChainType;
 import org.apache.sysds.lops.MMTSJ.MMTSJType;
+import org.apache.sysds.lops.UnaryCP;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -64,6 +68,8 @@ import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.FEDInstructionParser;
 import org.apache.sysds.runtime.instructions.fed.MMChainFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
 import org.junit.After;
 import org.junit.Test;
 
@@ -87,6 +93,149 @@ public class FederatedDagExactRefedInputProjectionTest {
 			fixture.otherLop, fixture.consumerLop.getInput(0));
 		assertTrue("The reordered physical occurrence of the exact logical source must be rewired",
 			fixture.consumerLop.getInput(1) instanceof org.apache.sysds.lops.FederatedRefed);
+	}
+
+	@Test
+	public void derivedSharingSurvivesRegistrySnapshotLoweringAndInstructionReparse() throws Exception {
+		Fixture fixture = fixture(false, true);
+		String group = "REFED|value-version-1|ROW|anchor|scope";
+		FederatedRefedRegistry.registerConsumerInputs(-1L, fixture.localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(fixture.consumerHop.getHopID(), 0)),
+			"selected-action", false, group);
+		var snapshot = FederatedRefedRegistry.snapshotAll();
+		FederatedRefedRegistry.clear();
+		FederatedRefedRegistry.restoreAll(snapshot);
+		assertTrue(invokeInsertRefedLops(fixture));
+		FederatedRefed refed = (FederatedRefed) fixture.consumerLop.getInput(1);
+		FEDRefedInstruction instruction = FEDRefedInstruction.parseInstruction(refed.getInstructions("L", "out"));
+		assertEquals(group, instruction.getSupplySharingGroup());
+		assertEquals(FType.ROW, instruction.getMaterializationFType());
+		assertEquals(group, FEDRefedInstruction.parseInstruction(instruction.toString()).getSupplySharingGroup());
+	}
+
+	@Test
+	public void selectedFoutStageLowersAsOneRefedInstructionAndSurvivesReparse() throws Exception {
+		Fixture fixture = fixture(false, true);
+		fixture.localLop.setExecType(ExecType.FED);
+		fixture.localLop.setFederatedOutput(FederatedOutput.FOUT);
+		String action = "selected-staged-action";
+		String group = "REFED|immutable-fout|ROW|anchor|scope";
+		FederatedRefedRegistry.registerConsumerInputs(-1L, fixture.localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(fixture.consumerHop.getHopID(), 0)), action, true, group);
+		var snapshot = FederatedRefedRegistry.snapshotAll();
+		FederatedRefedRegistry.clear();
+		FederatedRefedRegistry.restoreAll(snapshot);
+
+		assertTrue(invokeInsertRefedLops(fixture));
+		FederatedRefed refed = (FederatedRefed) fixture.consumerLop.getInput(1);
+		assertSame("Fused staging must retain the original FOUT owner as the REFED input",
+			fixture.localLop, refed.getInput(0));
+		assertFalse("Fused staging must not publish a separate PREFETCH MatrixObject",
+			fixture.lops.stream().anyMatch(UnaryCP.class::isInstance));
+		assertEquals(PlannerRuntimePlacementAudit.syntheticActionKey(action, "REFED_STAGED"),
+			refed.getPlannerSyntheticActionKey());
+		FEDRefedInstruction instruction = FEDRefedInstruction.parseInstruction(
+			refed.getInstructions("fout", "out"));
+		assertTrue(instruction.requiresLocalMaterialization());
+		assertEquals(group, instruction.getSupplySharingGroup());
+		FEDRefedInstruction reparsed = FEDRefedInstruction.parseInstruction(instruction.toString());
+		assertTrue(reparsed.requiresLocalMaterialization());
+		assertEquals(group, reparsed.getSupplySharingGroup());
+	}
+
+	@Test
+	public void selectedSingleSupplyMayUseFusedFoutStaging() throws Exception {
+		Fixture fixture = fixture(false, true);
+		fixture.localLop.setExecType(ExecType.FED);
+		fixture.localLop.setFederatedOutput(FederatedOutput.FOUT);
+		FederatedRefedRegistry.registerConsumerInputs(-1L, fixture.localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(fixture.consumerHop.getHopID(), 0)),
+			"selected-single-stage", true, "");
+
+		assertTrue(invokeInsertRefedLops(fixture));
+		FederatedRefed refed = (FederatedRefed) fixture.consumerLop.getInput(1);
+		FEDRefedInstruction instruction = FEDRefedInstruction.parseInstruction(
+			refed.getInstructions("fout", "out"));
+		assertTrue(instruction.requiresLocalMaterialization());
+		assertEquals("", instruction.getSupplySharingGroup());
+	}
+
+	@Test
+	public void selectedFoutStageUsesExactAuthorityWhenLopMetadataIsNotFinal() throws Exception {
+		Fixture fixture = fixture(false, true);
+		FederatedRefedRegistry.registerConsumerInputs(-1L, fixture.localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(fixture.consumerHop.getHopID(), 0)),
+			"selected-staged-action", true, "stage-group");
+
+		assertTrue(invokeInsertRefedLops(fixture));
+		FederatedRefed refed = (FederatedRefed) fixture.consumerLop.getInput(1);
+		assertSame("Exact registry authority must survive intermediate Lop metadata",
+			fixture.localLop, refed.getInput(0));
+		assertTrue(FEDRefedInstruction.parseInstruction(refed.getInstructions("source", "out"))
+			.requiresLocalMaterialization());
+	}
+
+	@Test
+	public void derivedFoutCrossPoolStageConsumesTheSelectedFoutMaterializer() throws Exception {
+		Fixture fixture = fixture(false, true);
+		FederatedRefedRegistry.registerConsumerInputs(-1L, fixture.localHop.getHopID(), -1L,
+			"fedinit://target-pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(fixture.consumerHop.getHopID(), 0)),
+			"selected-cross-pool-refed", true, "derived-fout-sharing");
+		FederatedFoutMaterializeRegistry.registerConsumerInputs(-1L,
+			fixture.localHop.getHopID(), -1L, "ROW", null,
+			"fedinit://source-pool|ROW", List.of(), "selected-derived-fout");
+
+		assertTrue(invokeInsertRefedLops(fixture));
+		FederatedRefed refed = (FederatedRefed) fixture.consumerLop.getInput(1);
+		assertSame(fixture.localLop, refed.getInput(0));
+		assertTrue(invokeInsertFoutMaterializeLops(fixture));
+
+		assertTrue(refed.getInput(0) instanceof FederatedFoutMaterialize);
+		FederatedFoutMaterialize sourceFout = (FederatedFoutMaterialize) refed.getInput(0);
+		assertSame("The selected source materializer must consume the native local result",
+			fixture.localLop, sourceFout.getInput(0));
+		assertSame("The relocation consumer must retain the staged REFED boundary",
+			refed, fixture.consumerLop.getInput(1));
+		assertFalse(fixture.lops.stream().anyMatch(UnaryCP.class::isInstance));
+	}
+
+	@Test
+	public void selectedSingleSupplyHasExplicitEmptyLifetime() throws Exception {
+		Fixture fixture = fixture(false, true);
+		FederatedRefedRegistry.registerConsumerInputs(-1L, fixture.localHop.getHopID(), -1L,
+			"fedinit://pool|ROW", FType.ROW,
+			List.of(new ConsumerInputSpec(fixture.consumerHop.getHopID(), 0)),
+			"selected-action", false, "");
+		assertTrue(invokeInsertRefedLops(fixture));
+		FederatedRefed refed = (FederatedRefed) fixture.consumerLop.getInput(1);
+		assertEquals("", FEDRefedInstruction.parseInstruction(refed.getInstructions("L", "out"))
+			.getSupplySharingGroup());
+	}
+
+	@Test
+	public void legacySupplyRemainsParseableWithoutSharingAuthority() {
+		Data input = localLop("L", 1L);
+		FederatedRefed legacy = new FederatedRefed(input, "fedinit://pool|ROW");
+		assertEquals(null, FEDRefedInstruction.parseInstruction(legacy.getInstructions("L", "out"))
+			.getSupplySharingGroup());
+		legacy.setSupplySharingGroup("");
+		assertEquals("", FEDRefedInstruction.parseInstruction(legacy.getInstructions("L", "out"))
+			.getSupplySharingGroup());
+	}
+
+	@Test
+	public void plannedFoutMaterializationCarriesSingleCreationContract() {
+		Data input = localLop("L", 1L);
+		FederatedFoutMaterialize materialize = new FederatedFoutMaterialize(input, "fedinit://pool|ROW", "ROW");
+		materialize.setPlannerSyntheticActionKey("selected-output-action");
+		String instruction = materialize.getInstructions("L", "out");
+		assertTrue(instruction.endsWith(Lop.OPERAND_DELIMITOR + "sharing=single"));
+		assertTrue(FEDInstructionParser.parseSingleInstruction(instruction) instanceof FEDFoutInstruction);
 	}
 
 	@Test
@@ -477,6 +626,13 @@ public class FederatedDagExactRefedInputProjectionTest {
 			List.class, StatementBlock.class, List.class);
 		insert.setAccessible(true);
 		return (boolean) insert.invoke(new Dag<>(), lops, null, logicalHopRoots);
+	}
+
+	private static boolean invokeInsertFoutMaterializeLops(Fixture fixture) throws Exception {
+		Method insert = Dag.class.getDeclaredMethod("insertFoutMaterializeLops",
+			List.class, StatementBlock.class, List.class);
+		insert.setAccessible(true);
+		return (boolean) insert.invoke(new Dag<>(), fixture.lops, null, List.of(fixture.consumerHop));
 	}
 
 	private static boolean invokeTernaryAggregateRewriteApplicable(AggUnaryOp aggregate) throws Exception {

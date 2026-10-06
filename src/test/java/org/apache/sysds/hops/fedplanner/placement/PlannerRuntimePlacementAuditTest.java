@@ -1103,6 +1103,58 @@ public class PlannerRuntimePlacementAuditTest {
 	}
 
 	@Test
+	public void stagedRefedSyntheticRequiresItsSerializedStageMarker() {
+		String base = "selected-staged-refed";
+		String token = PlannerRuntimePlacementAudit.syntheticActionKey(base, "REFED_STAGED");
+		PlannerRuntimePlacementAudit.PlannedSyntheticAction action =
+			new PlannerRuntimePlacementAudit.PlannedSyntheticAction(token, base, "REFED_STAGED", "fed_refed",
+				ExecType.FED, FEDInstruction.FederatedOutput.FOUT,
+				org.apache.sysds.hops.fedplanner.FTypes.FType.ROW);
+		PlannerRuntimePlacementAudit.installForTesting(List.of(), List.of(action));
+		org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction refed = refedInstruction(true);
+		refed.setPlannerSyntheticActionKey(token);
+
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(refed)));
+
+		assertTrue(PlannerRuntimePlacementAudit.display().contains("stage=REFED_STAGED"));
+	}
+
+	@Test
+	public void stagedRefedSyntheticRejectsAMissingSerializedStageMarker() {
+		String base = "selected-staged-refed";
+		String token = PlannerRuntimePlacementAudit.syntheticActionKey(base, "REFED_STAGED");
+		PlannerRuntimePlacementAudit.PlannedSyntheticAction action =
+			new PlannerRuntimePlacementAudit.PlannedSyntheticAction(token, base, "REFED_STAGED", "fed_refed",
+				ExecType.FED, FEDInstruction.FederatedOutput.FOUT,
+				org.apache.sysds.hops.fedplanner.FTypes.FType.ROW);
+		PlannerRuntimePlacementAudit.installForTesting(List.of(), List.of(action));
+		org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction refed = refedInstruction(false);
+		refed.setPlannerSyntheticActionKey(token);
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(refed))));
+		assertTrue(failure.getMessage().contains("LOWERING_SYNTHETIC_MISMATCH"));
+	}
+
+	@Test
+	public void unselectedStagedRefedSyntheticFailsClosed() {
+		String base = "selected-refed";
+		String selectedToken = PlannerRuntimePlacementAudit.syntheticActionKey(base, "REFED");
+		PlannerRuntimePlacementAudit.PlannedSyntheticAction action =
+			new PlannerRuntimePlacementAudit.PlannedSyntheticAction(selectedToken, base, "REFED", "fed_refed",
+				ExecType.FED, FEDInstruction.FederatedOutput.FOUT,
+				org.apache.sysds.hops.fedplanner.FTypes.FType.ROW);
+		PlannerRuntimePlacementAudit.installForTesting(List.of(), List.of(action));
+		org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction refed = refedInstruction(true);
+		refed.setPlannerSyntheticActionKey(
+			PlannerRuntimePlacementAudit.syntheticActionKey(base, "REFED_STAGED"));
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(refed))));
+		assertTrue(failure.getMessage().contains("LOWERING_SYNTHETIC_UNSELECTED"));
+	}
+
+	@Test
 	public void sameSyntheticCategoryWithDifferentActionIdentityFailsClosed() {
 		String selectedBase = "selected-local-action";
 		String selectedToken = PlannerRuntimePlacementAudit.syntheticActionKey(selectedBase, "LOCAL");
@@ -1415,6 +1467,18 @@ public class PlannerRuntimePlacementAuditTest {
 		return (VariableCPInstruction) VariableCPInstruction.prepCreatevarInstruction(
 			variable, "/tmp/L", false, DataType.MATRIX, "binary",
 			new MatrixCharacteristics(12, 12, 1000, 144), UpdateType.COPY);
+	}
+
+	private static org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction refedInstruction(
+		boolean staged) {
+		org.apache.sysds.lops.Data input = new org.apache.sysds.lops.Data(OpOpData.TRANSIENTREAD,
+			null, null, "in", null, DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+		org.apache.sysds.lops.FederatedRefed lop = new org.apache.sysds.lops.FederatedRefed(
+			input, "fedinit://pool|ROW", DataType.MATRIX, ValueType.FP64, "ROW");
+		lop.setSupplySharingGroup("audit-sharing-group");
+		lop.setRequiresLocalMaterialization(staged);
+		return org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction.parseInstruction(
+			lop.getInstructions("in", "out"));
 	}
 
 	private static class AuditCpInstruction extends Instruction {

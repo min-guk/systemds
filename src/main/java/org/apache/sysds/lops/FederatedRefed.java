@@ -23,13 +23,56 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.lops.LopsException;
 
 public class FederatedRefed extends Lop {
-	private final Lop _input;
+	private Lop _input;
 	private final Lop _anchor;
 	private final String _anchorKey;
 	private final String _materializationFType;
+	// null is the legacy instruction contract; empty is an explicitly unshared supply.
+	private String _supplySharingGroup;
+	private boolean _requiresLocalMaterialization;
+
+	public void setSupplySharingGroup(String group) {
+		_supplySharingGroup = java.util.Objects.requireNonNull(group, "supply sharing group");
+	}
+
+	/** Fuse the selected FED/FOUT collect into this planned REFED instruction. */
+	public void setRequiresLocalMaterialization(boolean requiresLocalMaterialization) {
+		_requiresLocalMaterialization = requiresLocalMaterialization;
+	}
+
+	public boolean requiresLocalMaterialization() {
+		return _requiresLocalMaterialization;
+	}
+
+	/** Bind a planned staged REFED to the selected post-operation FOUT materializer. */
+	public void replaceStagedInput(Lop expectedInput, Lop materializedInput) {
+		if(!_requiresLocalMaterialization || _input != expectedInput || getInput(0) != expectedInput
+			|| materializedInput == null || materializedInput.getFederatedOutput() != FederatedOutput.FOUT)
+			throw new LopsException("FederatedRefed staged input does not match its exact FOUT authority.");
+		replaceInput(0, materializedInput);
+		expectedInput.removeOutput(this);
+		materializedInput.addOutput(this);
+		_input = materializedInput;
+		setLevel();
+	}
+
+	private String supplyInstruction(String instruction) {
+		if(_requiresLocalMaterialization && _supplySharingGroup == null)
+			throw new LopsException("Staged FederatedRefed requires an explicit supply sharing authority.");
+		if(_supplySharingGroup == null)
+			return _materializationFType == null ? instruction
+				: InstructionUtils.concatOperands(instruction, _materializationFType);
+		String group = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+			_supplySharingGroup.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		String planned = InstructionUtils.concatOperands(instruction,
+			_materializationFType == null ? "AUTO" : _materializationFType, "sharing=" + group);
+		return _requiresLocalMaterialization
+			? InstructionUtils.concatOperands(planned, "stage=true") : planned;
+	}
 
 	public FederatedRefed(Lop input, Lop anchor) {
 		this(input, anchor, input.getDataType(), input.getValueType());
@@ -85,8 +128,7 @@ public class FederatedRefed extends Lop {
 			_input.prepInputOperand(input),
 			anchorOperand,
 			prepOutputOperand(output));
-		return _materializationFType == null ? instruction
-			: InstructionUtils.concatOperands(instruction, _materializationFType);
+		return supplyInstruction(instruction);
 	}
 
 	@Override
@@ -98,8 +140,7 @@ public class FederatedRefed extends Lop {
 			_input.prepInputOperand(input),
 			InstructionUtils.createLiteralOperand(_anchorKey, ValueType.STRING),
 			prepOutputOperand(output));
-		return _materializationFType == null ? instruction
-			: InstructionUtils.concatOperands(instruction, _materializationFType);
+		return supplyInstruction(instruction);
 	}
 
 	@Override

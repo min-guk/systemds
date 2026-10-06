@@ -63,8 +63,9 @@ final class ExactPhysicalPlacementProjector {
 			+ ";assignment=" + selection.assignmentInDecisionOrder()
 			+ ";maxFactorCells=" + selection.statistics().maximumFactorCells();
 		NormalizedPlannerResult normalized = NormalizedPlannerResults
-			.createWithEmissionStatesAndCandidateSelections(analysis, plannerId, emissions,
-				selection.candidateReceipts(), selection.relocationChoices(), certificate);
+			.createWithEmissionStatesCandidateSelectionsAndSharedSupplyLifetimes(
+				analysis, plannerId, emissions, selection.candidateReceipts(),
+				selection.relocationChoices(), selection.sharedSupplyLifetimes(), certificate);
 		List<ExactPlacementInput.OccurrenceReceipt> occurrences = occurrenceReceipts(analysis, states);
 		ExactPlacementInput.ProducerReceipt producer = new ExactPlacementInput.ProducerReceipt(
 			selection.analysisFingerprint(), selection.objectiveBits());

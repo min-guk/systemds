@@ -128,16 +128,57 @@ public class FederationUtils {
 	public static FederationMap getOrCreateOwnedRefedAlias(MatrixObject owner, long inputMutationVersion,
 		long rows, long cols, long nnz, long tid, String layoutSig, FType outType,
 		Supplier<FederationMap> materializer) {
+		return getOrCreateOwnedRefedAlias(owner, inputMutationVersion, rows, cols, nnz, tid,
+			layoutSig, outType, null, materializer);
+	}
+
+	/**
+	 * Execute a selected supply. An empty group publishes the new map directly and its
+	 * consumers own the ordinary output lifetime. A nonempty group was derived by the
+	 * planner from repeated demands for this source version; retain its private copy
+	 * until source invalidation/removal, independently of the opportunistic LRU cache.
+	 */
+	public static FederationMap materializePlannedRefed(MatrixObject owner, long inputMutationVersion,
+		long rows, long cols, long nnz, long tid, String layoutSig, FType outType,
+		String sharingGroup, Supplier<FederationMap> materializer) {
+		if(owner == null || materializer == null || sharingGroup == null)
+			throw new DMLRuntimeException("Planned REFED requires explicit source and sharing authority");
+		if(!sharingGroup.isEmpty())
+			return getOrCreateOwnedRefedAlias(owner, inputMutationVersion, rows, cols, nnz, tid,
+				layoutSig, outType, sharingGroup, materializer);
+		synchronized(owner) {
+			if(owner.getMutationVersion() != inputMutationVersion)
+				throw new DMLRuntimeException("Planned REFED used a stale source version");
+			FederatedValueIdentity source = federatedValueIdentity(owner.getFedMapping());
+			FederationMap result = materializer.get();
+			if(result == null || result.getMap() == null || result.getMap().isEmpty())
+				throw new DMLRuntimeException("Planned REFED materializer returned an empty federation map");
+			if(owner.getMutationVersion() != inputMutationVersion
+				|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping()))) {
+				result.execCleanup(tid, result.getID());
+				throw new DMLRuntimeException("Planned REFED materializer changed the source version");
+			}
+			return result;
+		}
+	}
+
+	private static FederationMap getOrCreateOwnedRefedAlias(MatrixObject owner, long inputMutationVersion,
+		long rows, long cols, long nnz, long tid, String layoutSig, FType outType,
+		String sharingGroup, Supplier<FederationMap> materializer) {
 		if (owner == null || materializer == null)
 			throw new DMLRuntimeException("Owned REFED reuse requires an owner and materializer");
-		OwnedRefedReuseKey key = new OwnedRefedReuseKey(owner, inputMutationVersion, rows, cols, nnz,
-			tid, normalizeRefedReuseLayoutSig(layoutSig), outType);
 		// Mutation paths lock the MatrixObject before retiring from the global cache. Keep
 		// the same owner -> cache lock order while materializing (which acquires owner data).
 		synchronized (owner) {
 			if (owner.getMutationVersion() != inputMutationVersion)
 				throw new DMLRuntimeException("Owned REFED request used stale local input version "
 					+ inputMutationVersion + "; current version is " + owner.getMutationVersion());
+			FederatedValueIdentity source = federatedValueIdentity(owner.getFedMapping());
+			// A FED read can resolve previously unknown nnz without changing its value. Source
+			// identity/version and dimensions already distinguish its semantic definitions.
+			OwnedRefedReuseKey key = new OwnedRefedReuseKey(owner, inputMutationVersion, source,
+				rows, cols, source == null ? nnz : -1, tid, normalizeRefedReuseLayoutSig(layoutSig),
+				outType, sharingGroup);
 			synchronized (_ownedRefedReuseCache) {
 				OwnedRefedReuseEntry entry = _ownedRefedReuseCache.get(key);
 				boolean retained = entry != null;
@@ -145,13 +186,14 @@ public class FederationUtils {
 					FederationMap canonical = materializer.get();
 					if (canonical == null || canonical.getMap() == null || canonical.getMap().isEmpty())
 						throw new DMLRuntimeException("Owned REFED materializer returned an empty federation map");
-					if (owner.getMutationVersion() != inputMutationVersion) {
+					if (owner.getMutationVersion() != inputMutationVersion
+						|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping()))) {
 						canonical.execCleanup(tid, canonical.getID());
-						throw new DMLRuntimeException("Owned REFED materializer changed local input version from "
-							+ inputMutationVersion + " to " + owner.getMutationVersion());
+						throw new DMLRuntimeException("Owned REFED materializer changed the source value/version");
 					}
-					entry = new OwnedRefedReuseEntry(canonical, tid, estimateOwnedRefedBytes(canonical));
-					retained = entry._estimatedBytes <= OWNED_REFED_REUSE_CACHE_BYTES;
+					entry = new OwnedRefedReuseEntry(canonical, tid, estimateOwnedRefedBytes(canonical),
+						sharingGroup != null);
+					retained = entry._planned || entry._estimatedBytes <= OWNED_REFED_REUSE_CACHE_BYTES;
 					if (retained) {
 						_ownedRefedReuseCache.put(key, entry);
 						_ownedRefedReuseCacheBytes = saturatedAdd(_ownedRefedReuseCacheBytes,
@@ -161,6 +203,9 @@ public class FederationUtils {
 				long aliasID = getNextFedDataID();
 				try {
 					FederationMap alias = entry._canonical.identCopy(tid, aliasID);
+					if(owner.getMutationVersion() != inputMutationVersion
+						|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping())))
+						throw new DMLRuntimeException("Owned REFED source changed while publishing an alias");
 					if (retained)
 						evictOwnedRefedEntries();
 					else
@@ -250,11 +295,13 @@ public class FederationUtils {
 	}
 
 	private static void evictOwnedRefedEntries() {
-		while (_ownedRefedReuseCache.size() > REFED_REUSE_CACHE_LIMIT
-			|| _ownedRefedReuseCacheBytes > OWNED_REFED_REUSE_CACHE_BYTES) {
-			Map.Entry<OwnedRefedReuseKey, OwnedRefedReuseEntry> eldest =
-				_ownedRefedReuseCache.entrySet().iterator().next();
-			_ownedRefedReuseCache.remove(eldest.getKey());
+		var entries = _ownedRefedReuseCache.entrySet().iterator();
+		while (entries.hasNext() && (_ownedRefedReuseCache.size() > REFED_REUSE_CACHE_LIMIT
+			|| _ownedRefedReuseCacheBytes > OWNED_REFED_REUSE_CACHE_BYTES)) {
+			Map.Entry<OwnedRefedReuseKey, OwnedRefedReuseEntry> eldest = entries.next();
+			if(eldest.getValue()._planned)
+				continue;
+			entries.remove();
 			_ownedRefedReuseCacheBytes = saturatedSubtract(_ownedRefedReuseCacheBytes,
 				eldest.getValue()._estimatedBytes);
 			cleanupOwnedRefedEntry(eldest.getValue());
@@ -413,6 +460,25 @@ public class FederationUtils {
 			return "layout:null";
 		String trimmed = layoutSig.trim();
 		return trimmed.isEmpty() ? "layout:null" : trimmed;
+	}
+
+	/**
+	 * Identity of the remote value behind a local collection. Unlike a placement signature,
+	 * this includes the remote variable IDs and the exact map owner. It is captured by value
+	 * because FederationMap, its entries and their ranges remain mutable runtime structures.
+	 */
+	public record FederatedValueIdentity(FederationMap mapping, String signature) { }
+
+	public static FederatedValueIdentity federatedValueIdentity(FederationMap map) {
+		if(map == null)
+			return null;
+		String layout = deriveFedLayoutSignature(map);
+		if(layout == null)
+			throw new DMLRuntimeException("Cannot identify an incomplete federated source map");
+		StringBuilder signature = new StringBuilder().append(map.getID()).append('|').append(layout);
+		for(FederatedData data : map.getFederatedData())
+			signature.append('|').append(data.getVarID());
+		return new FederatedValueIdentity(map, signature.toString());
 	}
 
 	public static String deriveFedLayoutSignature(FederationMap fmap) {
@@ -1330,46 +1396,54 @@ public class FederationUtils {
 		private final FederationMap _canonical;
 		private final long _tid;
 		private final long _estimatedBytes;
+		private final boolean _planned;
 
-		private OwnedRefedReuseEntry(FederationMap canonical, long tid, long estimatedBytes) {
+		private OwnedRefedReuseEntry(FederationMap canonical, long tid, long estimatedBytes, boolean planned) {
 			_canonical = canonical;
 			_tid = tid;
 			_estimatedBytes = estimatedBytes;
+			_planned = planned;
 		}
 	}
 
 	private static final class OwnedRefedReuseKey {
 		private final MatrixObject _owner;
 		private final long _inputMutationVersion;
+		private final FederatedValueIdentity _source;
 		private final long _rows;
 		private final long _cols;
 		private final long _nnz;
 		private final long _tid;
 		private final String _layoutSig;
 		private final FType _outType;
+		private final String _sharingGroup;
 
-		private OwnedRefedReuseKey(MatrixObject owner, long inputMutationVersion,
-			long rows, long cols, long nnz, long tid, String layoutSig, FType outType) {
+		private OwnedRefedReuseKey(MatrixObject owner, long inputMutationVersion, FederatedValueIdentity source,
+			long rows, long cols, long nnz, long tid, String layoutSig, FType outType, String sharingGroup) {
 			_owner = owner;
 			_inputMutationVersion = inputMutationVersion;
+			_source = source;
 			_rows = rows;
 			_cols = cols;
 			_nnz = nnz;
 			_tid = tid;
 			_layoutSig = layoutSig;
 			_outType = outType;
+			_sharingGroup = sharingGroup;
 		}
 
 		@Override
 		public int hashCode() {
 			int result = System.identityHashCode(_owner);
 			result = 31 * result + Long.hashCode(_inputMutationVersion);
+			result = 31 * result + Objects.hashCode(_source);
 			result = 31 * result + Long.hashCode(_rows);
 			result = 31 * result + Long.hashCode(_cols);
 			result = 31 * result + Long.hashCode(_nnz);
 			result = 31 * result + Long.hashCode(_tid);
 			result = 31 * result + Objects.hashCode(_layoutSig);
 			result = 31 * result + Objects.hashCode(_outType);
+			result = 31 * result + Objects.hashCode(_sharingGroup);
 			return result;
 		}
 
@@ -1382,12 +1456,14 @@ public class FederationUtils {
 			OwnedRefedReuseKey that = (OwnedRefedReuseKey) obj;
 			return _owner == that._owner
 				&& _inputMutationVersion == that._inputMutationVersion
+				&& Objects.equals(_source, that._source)
 				&& _rows == that._rows
 				&& _cols == that._cols
 				&& _nnz == that._nnz
 				&& _tid == that._tid
 				&& Objects.equals(_layoutSig, that._layoutSig)
-				&& _outType == that._outType;
+				&& _outType == that._outType
+				&& Objects.equals(_sharingGroup, that._sharingGroup);
 		}
 	}
 }

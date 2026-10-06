@@ -44,9 +44,9 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 	// ExactAliasGetCoalescingTest. Prior R55 digests and change evidence are recorded
 	// in docs/COST_EXPLICIT_ALIAS_CALIBRATION_2026-10-05_KO.md.
 	private static final String PROTECTED_NATIVE_LOCAL_FINGERPRINT =
-		"9b98077bae863999570a04c9f59100f19a5c8a710a777486f96541da648fc6f7";
+		"f18298001c392b9c4719e564f7d6e4a5e39b0a0f3a3caea6417237f6f840e936";
 	private static final String PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256 =
-		"9b91f6be0d109632b834037dbaa55db795a2e943a5e0f45e854ce41484caea1c";
+		"be38b2b3443c56373846f157adaffaca113f1952673f64550beb7e295d7d2507";
 	private static final String PROTECTED_NATIVE_LOCAL_BITS_SHA256 =
 		"ed382489615a62cb3bccecf5f90264d071a1a8413505a8f60dc15bbfe2dda2db";
 
@@ -93,9 +93,13 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_BITS_SHA256, contributionBitsDigest(model, surface));
 		// The authority receipt hashes even excluded rows. Certified omission of
 		// the aggregate's illegal ABSENT_LOCAL row changes that receipt, not the
-		// R56 factor structure or raw cost bits asserted above. R59 also
+		// raw cost bits asserted above. The derived-supply change gives the
+		// same factors explicit operator/movement ownership labels, changing
+		// the structure and receipt digests while preserving those bits. R59 also
 		// canonicalizes initializer/TWrite/TRead creation identity in the activation
 		// descriptor. That receipt change preserves this fixture's structure and bits.
+		// Fused FOUT staging unifies the upload descriptor under source=ORIGINAL;
+		// this protected fixture still preserves both structure and numeric bit digests.
 		var omittedAggregate = analysis.candidateRuleDomain().privacyPrunedInputs().stream()
 			.filter(proof -> analysis.hop(proof.consumer().occurrence()).orElseThrow()
 				instanceof org.apache.sysds.hops.AggUnaryOp).findFirst().orElseThrow();

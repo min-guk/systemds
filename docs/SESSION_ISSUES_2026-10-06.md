@@ -1,5 +1,17 @@
 # Session issues: 2026-10-06
 
+## Invariant FOUT staging의 logical lifetime 보존 — 해결
+
+- **환경**: `/home/mchoi/w1357-derived-supply-sharing-20261006`, 기준 `eb64f9c939708735940f2ae095c5c8bd526decf7`과 이 worktree의 앞선 derived sharing 구현. 기존 다른 workspace/실험은 보존한다.
+- **문제 정의/증상**: invariant FOUT 원본도 새 local staging MatrixObject 때문에 반복마다 REFED upload가 실행/과금됐다. 아래 과거 derived-sharing 보고서의 FOUT staging N× 설명은 수정 전 동작이다.
+- **원인**: 비용의 FOUT 전용 fresh-stage 분류와 PREFETCH output을 owner로 삼는 runtime cache가 원본 source/version 수명을 끊었다. 추가로 FED map 변경이 local mutationVersion을 바꾸지 않고 이미 collect한 `_data`를 남길 수 있다.
+- **해결 방향/근거**: exact selected staging을 명시적 `REFED_STAGED`로 묶어 원본 Lop/MatrixObject를 직접 입력으로 유지한다. 같은 creation profile로 비용과 공유 group을 도출한다. Runtime은 원본 version·FED map/remote ID·target layout/FType를 구분하고 변경된 FED read의 local cache를 무효화한다. 일반 candidate legality/privacy/TW/TR/function binding 규칙은 유지한다.
+- **연결 보완**: selected native LOUT→derived FOUT 뒤에 다른 pool의 REFED가 오는 경우 중간 Lop의 LOUT 표시는 최종 source authority가 아니다. 이를 거부하는 guard 대신 선택된 FOUT materializer 결과를 staged REFED에 연결한다.
+- **수정 파일**: `ExactPhysicalCostModel`, `FederatedRefed`, `Dag`, `FEDRefedInstruction`, `PlannerRuntimePlacementAudit`, `FederationUtils`, `CacheableData` 및 관련 회귀/실 worker proof.
+- **검증**: 원본 identity/cache 관련 33 tests에서 baseline 7 failures → 수정본 33/33. Global/Local 동일 production surface의 canonical recost/selected lifetime/receipt 검증 통과. 통합 38 classes / 327 cases 중 323 통과, 기존 skip 4, 실패/오류 0. GET/PUT을 구분하도록 테스트 oracle을 고쳤으며 protected 비용의 구조/numeric bits는 유지되고 descriptor rename에 따른 fingerprint만 갱신했다. Docker model proof 12/12, DML E2E 12/12 기대 결과 충족, 원본/검증 class·source inventory 일치. 실제 3회 실행에서 invariant FOUT GET/PUT 1/1, updated FOUT 3/3 및 수치 결과/alias cleanup 통과.
+- **잠재 회귀 위험/감지**: 변경된 remote ID가 이전 local bytes를 재업로드하거나, source와 target의 layout identity를 혼동할 위험. 생성 도중 mutation 거부, cleanup-disabled 함수 alias의 stale cache, nnz 확정, emitted stage 재파싱 및 Docker PUT/수치 결과로 검사한다.
+- **잔여 사항**: source lifetime 단위 해제는 유지하며 exact last-consumer 해제는 추가하지 않는다. 임의의 외부 remote-ID in-place 덮어쓰기를 감지하는 새로운 분산 mutation protocol은 범위 밖이다. 상세 설계/최종 증거는 `INVARIANT_FOUT_SHARING_2026-10-06_KO.md`와 `.omx/invariant-fout-sharing/`에 기록했다.
+
 ## Loop initial conversion — isolated implementation verified
 
 ### 1. 초기 로컬값에서 반복 FED 배치로 진입하는 유효 후보 누락 — 해결
@@ -411,3 +423,25 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **수정본 최종 Docker runtime**: `joint_loop_toggle` 및 `joint_function_calls` 모두 PASS, CP/FED 숫자 fingerprint 일치, model-proof preflight PASS, runtime conversion 위반 0. 증거 `/grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006/grounding-main-final-20261006/result.json`. Package PASS. 큰 logreg compile은 인덱스 오류를 넘었으나 이후 cost surface에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. factor 한도나 후보 공간을 변경해 우회하지 않으며 기준 빌드 비교로 귀속을 확인한다.
 
 - **최종 귀속 확인**: 최신 main에 인덱스 수정만 적용한 기준 빌드도 같은 cost-surface 검증 지점에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. 동일 Docker/input/profile, 공통 replay 수정, 차이는 NativePlacementContinuity/SearchSpaceMetrics 두 파일뿐임을 manifest로 확인했다. 기존 인덱스 오류는 양쪽에서 제거됐으며 큰 모델 한계는 upstream 후속 과제로 남긴다. 작은 loop/function Docker runtime 성공과 큰 logreg compile 실패를 구분한다. 컨테이너 cleanup 완료, 최종 source hash 일치. 증거 `main-final-docker-attribution.json`.
+
+## Native/supply 분리와 파생 materialization 공유 — 진행중
+
+- **문제**: 사용자는 transient/retained 공급 선택의 제거와 native 연산·이동 분리를 요청했다. 최신 main 조사에서 명시적 retained 후보는 없지만, node authority 행의 post-operation movement 결합 및 무조건적인 REFED owned caching을 확인했다.
+- **환경**: origin/main `eb64f9c939`, 새 worktree `/home/mchoi/w1357-derived-supply-sharing-20261006`. 기존 worktree/실험은 변경하지 않는다.
+- **설계/근거**: `DERIVED_SUPPLY_SHARING_DESIGN_2026-10-06_KO.md`. DIRECT_FOUT/RELOCATION 및 privacy/TW/TR는 유지한다. 기존 정확한 demand activation과 lifetime grouping을 재사용한다.
+- **검증 기준**: 기준 8개 class 82/82 PASS. 새 native/supply 관계의 양방향 계획 보존, 실제 version/layout 구별, Global/Local canonical recost, selected lifetime 및 Docker runtime을 검사한다.
+- **잔여 이슈**: 구현 및 이후 검증 진행중. 기준에 없는 retained 차원을 삭제했다고 주장하지 않는다.
+- **회귀 위험/감지**: invariant loop의 반복 REFED를 매번 재생성하면서 한 번만 과금하지 않도록 cost-derived lifetime과 runtime 동작을 함께 검사한다.
+# Derived supply sharing 추가 검증 이슈
+
+- **상태**: 해결. 최종 회귀 및 Docker 통합 검증 완료.
+- **환경**: 새 worktree `w1357-derived-supply-sharing-20261006`, 기준 `eb64f9c939708735940f2ae095c5c8bd526decf7`.
+- **문제 정의**: (1) 비용이 같은 physical movement로 묶는 consumer별 receipt가 서로 다른 registry authority/Lop으로 내려갔다. (2) 연산 capability의 `nativeExec`를 선택된 execution으로 오해하면 CP 대안을 FED로 가격 매겨 `EXACT_FED_EXECUTION_LAYOUT_UNPROVEN`이 발생한다. (3) FOUT → 새 local staging → REFED를 원본 FOUT lifetime으로 과금하면 반복 upload를 누락한다.
+- **해결**: emission에서 physical identity별로 exact obligation을 합치고 전체 원래 receipt는 normalized plan에 보존한다. Runtime audit은 실제 emitted representative를 검증한다. Native candidate의 execution은 선택된 emission에서 얻고, native output state와 구별한다. 새 staging upload는 consumer 실행 빈도로 계산한다.
+- **원칙/판단 근거**: 합법 후보를 닫거나 runtime에서 보정하지 않고 representation·비용·lowering의 동일 계약을 수정한다. TW/TR, privacy, source/version/layout 권한은 유지한다.
+- **수정 파일**: `ExactPhysicalNativeSupplyRepresentation`, `ExactPhysicalCostModel`, `PlacementEmissionTransaction`, `PlannerRuntimePlacementAudit`, runtime REFED/FOUT 및 관련 회귀 테스트.
+- **검증**: 최초 focused 116 tests 통과. 이후 확장 검증에서 execution/capability 구별 결함을 찾아 수정했다. 최종 35개 class / 308 cases: 304 통과, 기존 skip 4, 실패/오류 0. Loop entry 유한 공간은 raw 32,928 / admitted 292 / physical 10으로 검증됐다. 최종 frozen Docker 12개 케이스 모두 기대 결과, model proof 10 tests 및 class preflight 통과, 계획 밖 runtime conversion 0. 상세 결과는 `DERIVED_SUPPLY_SHARING_RESULT_2026-10-06_KO.md` 참조.
+- **추가 경계 수정**: FED/LOUT input upload의 유효한 `ACTION` identity를 prefix만으로 거부하지 않고 exact selected-action membership을 검증한다. 평균 실행 횟수가 같거나 작아도 consumer-only 반복 loop가 있으면 공유 lifetime을 도출한다. 두 경우를 production fixture 및 activation 테스트로 확인했다.
+- **기존 실패 구분**: `IndependentCompletePlacementSpaceTest`의 3건(`bounded protected receipt needs an exact worker map`)과 별도 KMEANS oracle 실패는 frozen baseline에서도 재현했다. `.omx/derived-supply-sharing/baseline-independent-complete.log`, `baseline-kmeans-oracle-evidence.txt` 참조.
+- **잔여 이슈**: 반복 공유 copy는 source value lifetime까지 유지한다. Exact last-consumer 해제나 shared memory budget 최적화는 구현하지 않았다.
+- **잠재 회귀 위험/감지**: selection metadata가 재컴파일에서 유실되면 비용/runtime sharing이 달라질 수 있다. Registry snapshot, Lop/명령 round-trip, planner authority fail-closed, mutation/owner cleanup 및 격리 Docker 실행으로 검사한다.

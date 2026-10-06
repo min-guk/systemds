@@ -114,7 +114,8 @@ final class LocalPhysicalOptimizer {
 		ExactCategoricalSolver.Result solverResult = new ExactCategoricalSolver.Result(
 			canonicalObjective, selectedAssignment, solverStatistics);
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
-			solverResult, canonicalBits, surface.contributionFingerprint());
+			solverResult, canonicalBits, surface.contributionFingerprint(),
+			surface.selectedSharedSupplyLifetimes(selectedAssignment));
 		return new Result(physical, statistics);
 	}
 

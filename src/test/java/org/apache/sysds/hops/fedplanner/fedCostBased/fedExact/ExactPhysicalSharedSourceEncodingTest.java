@@ -289,7 +289,7 @@ public class ExactPhysicalSharedSourceEncodingTest {
 		var encoded = ExactPhysicalSharedSourceEncoding.prepare(model, surface,
 			List.of(), ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 
-		assertTrue(encoded.statistics().transformed());
+		assertTrue(encoded.statistics().toString(), encoded.statistics().transformed());
 		assertEquals("EXACT_SHARED_SOURCE_TRUTH_QUOTIENT", encoded.statistics().reason());
 		assertTrue(encoded.statistics().rawProfileCells() > 0);
 		assertEquals(model.variables().size(), encoded.decisionPrefixCount());
@@ -622,8 +622,7 @@ public class ExactPhysicalSharedSourceEncodingTest {
 
 	private static Object[] projectedXorFixture() throws Exception {
 		Class<?> alternativeHeader = nested("AlternativeHeader");
-		Object header = construct(alternativeHeader, null, null, null, null, null, null, null,
-			null, null, null, List.of(), List.of(), null, List.of());
+		Object header = construct(alternativeHeader, null, List.of(), List.of());
 		CompiledHopKey leftOwner = syntheticNode("xor-left", List.of(LOCAL)).key();
 		CompiledHopKey rightOwner = syntheticNode("xor-right", List.of(LOCAL)).key();
 		Class<?> domainView = nested("DomainView");

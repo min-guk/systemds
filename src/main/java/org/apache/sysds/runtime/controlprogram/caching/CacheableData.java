@@ -43,6 +43,7 @@ import org.apache.sysds.runtime.compress.CompressedMatrixBlock;
 import org.apache.sysds.runtime.controlprogram.caching.LazyWriteBuffer.RPolicy;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils.FederatedValueIdentity;
 import org.apache.sysds.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysds.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysds.runtime.instructions.cp.Data;
@@ -182,6 +183,8 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	protected FederationMap _fedMapping = null;
 	// Monotonic token for local data updates; used by runtime refed/fout reuse cache.
 	private volatile long _mutationVersion = 0;
+	// Provenance of bytes collected from FED, independent of this envelope's local version.
+	private FederatedValueIdentity _federatedReadIdentity;
 
 	protected boolean _compressed = false;
 
@@ -574,6 +577,10 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	private synchronized T acquireReadIntern() {
 		if ( !isAvailableToRead() )
 			throw new DMLRuntimeException("MatrixObject not available to read.");
+		// setFedMapping and in-place map edits can change remote values without a local
+		// acquireModify. Never use a collected block belonging to the old remote source.
+		if(hasStaleFederatedRead())
+			clearData(-1, true);
 
 		//get object from cache
 		if( _data == null )
@@ -658,6 +665,11 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 
 		return _data;
 	}
+
+	private boolean hasStaleFederatedRead() {
+		return _federatedReadIdentity != null && !_federatedReadIdentity.equals(
+			FederationUtils.federatedValueIdentity(_fedMapping));
+	}
 	
 	/**
 	 * Acquires the exclusive "write" lock for a thread that wants to throw away the
@@ -718,6 +730,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		if (newData == null)
 			throw new DMLRuntimeException("acquireModify with empty cache block.");
 		_data = newData;
+		_federatedReadIdentity = null;
 		_mutationVersion++;
 		return _data;
 	}
@@ -819,8 +832,14 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	 */
 	public synchronized void clearData(long tid) 
 	{
+		clearData(tid, false);
+	}
+
+	private void clearData(long tid, boolean invalidateCollectedValue)
+	{
 		// check if cleanup enabled and possible 
-		if( !isCleanupEnabled() ) 
+		// Function aliases disable lifetime cleanup, not invalidation of stale local bytes.
+		if( !isCleanupEnabled() && !invalidateCollectedValue )
 			return; // do nothing
 		if( !isAvailableToModify() )
 			throw new DMLRuntimeException("CacheableData (" + getDebugName() + ") not available to "
@@ -835,6 +854,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 
 		// clear the in-memory data
 		_data = null;
+		_federatedReadIdentity = null;
 		clearCache();
 		setCacheLineage(null);
 		
@@ -904,6 +924,8 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		//prevent concurrent modifications
 		if ( !isAvailableToRead() )
 			throw new DMLRuntimeException("MatrixObject not available to read.");
+		if(hasStaleFederatedRead() && FileFormat.safeValueOf(outputFormat) != FileFormat.FEDERATED)
+			acquireReadAndRelease();
 
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Exporting " + this.getDebugName() + " to " + fName + " in format " + outputFormat);
@@ -1161,7 +1183,12 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 			LOG.debug("Pulling data from federated sites");
 		MetaDataFormat iimd = (MetaDataFormat) _metaData;
 		DataCharacteristics dc = iimd.getDataCharacteristics();
-		return readBlobFromFederated(fedMap, dc.getDims());
+		FederatedValueIdentity source = FederationUtils.federatedValueIdentity(fedMap);
+		T collected = readBlobFromFederated(fedMap, dc.getDims());
+		if(!source.equals(FederationUtils.federatedValueIdentity(_fedMapping)))
+			throw new DMLRuntimeException("Federated source changed while collecting its value");
+		_federatedReadIdentity = source;
+		return collected;
 	}
 	
 	protected abstract T readBlobFromFederated(FederationMap fedMap, long[] dims)

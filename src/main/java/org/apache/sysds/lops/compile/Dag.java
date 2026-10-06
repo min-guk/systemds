@@ -650,10 +650,15 @@ public class Dag<N extends Lop>
 					&& isFederatedMatrixLop(local);
 				boolean requiresLocalMaterialization = plannedLocalMaterialization != null
 					? plannedLocalMaterialization : observedLocalMaterialization;
+				boolean fusedFoutStaging = spec.getPlannerActionKey() != null
+					&& requiresLocalMaterialization;
+				if(fusedFoutStaging && spec.getSupplySharingGroup() == null)
+					throw new LopsException("selected staged fed_refed authority requires an explicit supply lifetime"
+						+ " for hop=" + hopId + " action=" + spec.getPlannerActionKey());
 
-				plans.add(new RefedInsertionPlan(hopId, local, requiresLocalMaterialization, authority,
+				plans.add(new RefedInsertionPlan(hopId, local, requiresLocalMaterialization, fusedFoutStaging, authority,
 					spec.getMaterializationFType() == null ? null : spec.getMaterializationFType().name(), consumers,
-					spec.getPlannerActionKey()));
+					spec.getPlannerActionKey(), spec.getSupplySharingGroup()));
 			}
 		}
 		validateDistinctRefedInputOwnership(plans);
@@ -662,10 +667,9 @@ public class Dag<N extends Lop>
 		for (RefedInsertionPlan plan : plans) {
 			Lop refedInput = plan.local;
 			UnaryCP localMaterialize = null;
-			if (plan.requiresLocalMaterialization) {
-				// A selected cross-anchor relocation of a FED/FOUT value is the explicit
-				// FED->LOUT->FOUT path costed by the planner, not a runtime repair. Materialize
-				// the selected source locally before uploading it to the target worker pool.
+			if (plan.requiresLocalMaterialization && !plan.fusedFoutStaging) {
+				// Legacy registrations retain their established explicit PREFETCH path. Exact
+				// planner authorities fuse this stage into FederatedRefed above.
 				localMaterialize = new UnaryCP(plan.local, OpOp1.PREFETCH,
 					plan.local.getDataType(), plan.local.getValueType(), ExecType.CP);
 				if(plan.plannerActionKey != null)
@@ -684,7 +688,12 @@ public class Dag<N extends Lop>
 					refedInput.getDataType(), refedInput.getValueType(), plan.materializationFType);
 			if(plan.plannerActionKey != null)
 				refed.setPlannerSyntheticActionKey(
-					PlannerRuntimePlacementAudit.syntheticActionKey(plan.plannerActionKey, "REFED"));
+					PlannerRuntimePlacementAudit.syntheticActionKey(plan.plannerActionKey,
+						plan.fusedFoutStaging ? "REFED_STAGED" : "REFED"));
+			if(plan.supplySharingGroup != null)
+				refed.setSupplySharingGroup(plan.supplySharingGroup);
+			if(plan.fusedFoutStaging)
+				refed.setRequiresLocalMaterialization(true);
 			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
 			copyOutputParams(refed.getOutputParameters(), refedInput.getOutputParameters());
 			refed.setFederatedOutput(FederatedOutput.FOUT);
@@ -1117,21 +1126,26 @@ public class Dag<N extends Lop>
 		private final long hopId;
 		private final Lop local;
 		private final boolean requiresLocalMaterialization;
+		private final boolean fusedFoutStaging;
 		private final RefedAnchorAuthority authority;
 		private final String materializationFType;
 		private final List<RefedConsumerEdge> consumers;
 		private final String plannerActionKey;
+		private final String supplySharingGroup;
 
 		private RefedInsertionPlan(long hopId, Lop local, boolean requiresLocalMaterialization,
+			boolean fusedFoutStaging,
 			RefedAnchorAuthority authority, String materializationFType,
-			List<RefedConsumerEdge> consumers, String plannerActionKey) {
+			List<RefedConsumerEdge> consumers, String plannerActionKey, String supplySharingGroup) {
 			this.hopId = hopId;
 			this.local = local;
 			this.requiresLocalMaterialization = requiresLocalMaterialization;
+			this.fusedFoutStaging = fusedFoutStaging;
 			this.authority = authority;
 			this.materializationFType = materializationFType;
 			this.consumers = consumers;
 			this.plannerActionKey = plannerActionKey;
+			this.supplySharingGroup = supplySharingGroup;
 		}
 	}
 
@@ -1447,6 +1461,16 @@ public class Dag<N extends Lop>
 				fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
 				copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
 				fout.setFederatedOutput(FederatedOutput.FOUT);
+				List<Lop> consumers = new ArrayList<>();
+				if(materializeInput == local) {
+					List<FederatedRefed> stagedRefeds = new ArrayList<>(local.getOutputs()).stream()
+						.filter(FederatedRefed.class::isInstance).map(FederatedRefed.class::cast)
+						.filter(FederatedRefed::requiresLocalMaterialization).toList();
+					for(FederatedRefed stagedRefed : stagedRefeds) {
+						stagedRefed.replaceStagedInput(local, fout);
+						consumers.add(stagedRefed);
+					}
+				}
 
 				if (isSelectedFederatedTWrite) {
 					local.replaceInput(materializeInput, fout);
@@ -1454,11 +1478,11 @@ public class Dag<N extends Lop>
 					fout.addOutput(local);
 				}
 
-				List<Lop> consumers = new ArrayList<>();
 				if(spec.hasExactConsumerAuthority()) {
 					// The normalized candidate receipt owns exact PRESENT/ABSENT_LOCAL input
 					// occurrences. Rewire only PRESENT inputs that use this source placement;
-					// selected REFED consumers were already handled by insertRefedLops.
+					// Selected staged REFED inputs were rebound above to consume this exact FOUT.
+					// Other REFED consumers were already handled by insertRefedLops.
 					for(RefedConsumerEdge edge : exactFoutConsumers) {
 						for(int inputPosition : edge.inputPositions) {
 							if(edge.consumer.getInput(inputPosition) != materializeInput)

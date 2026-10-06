@@ -268,7 +268,7 @@ public final class PlacementEmissionTransaction {
 			result.selectedRelocationChoices(), "selectedRelocationChoices"));
 		List<LocalMaterializationActionKey> locals = typedLocalMaterializations(result);
 		return canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected, candidates,
-			choices, relocations, locals, objective);
+			choices, relocations, locals, result.sharedSupplyLifetimes(), objective);
 	}
 
 	private static String canonicalPlanHash(PlacementAnalysis analysis,
@@ -276,7 +276,7 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, PlacementEmissionState> selected,
 		List<CandidateSelectionReceipt> candidates, List<RelocationChoiceReceipt> choices,
 		List<RelocationActionKey> relocations,
-		List<LocalMaterializationActionKey> locals, String objective) {
+		List<LocalMaterializationActionKey> locals, Set<String> sharedSupplyLifetimes, String objective) {
 		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
 			.append(analysisFingerprint).append('\n');
 		selected.entrySet().stream().sorted(Comparator.comparing(entry ->
@@ -296,6 +296,8 @@ public final class PlacementEmissionTransaction {
 		locals.stream().map(key -> Objects.requireNonNull(key, "selected local materialization"))
 			.sorted(Comparator.comparing(LocalMaterializationActionKey::normalizedSignature))
 			.forEach(local -> canonical.append("LOCAL=").append(local.normalizedSignature()).append('\n'));
+		sharedSupplyLifetimes.stream().sorted().forEach(group ->
+			canonical.append("SHARED_SUPPLY=").append(group.length()).append(':').append(group).append('\n'));
 		canonical.append(objective);
 		return sha256(canonical.toString());
 	}
@@ -320,7 +322,8 @@ public final class PlacementEmissionTransaction {
 		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
 		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
 		if(!planHash.equals(canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected,
-			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals, objective)))
+			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals,
+			result.sharedSupplyLifetimes(), objective)))
 			throw new PlacementEmissionException("Normalized plan changed during prevalidation");
 
 		List<Node> decisionNodes = analysis.graph().decisionNodes();
@@ -388,7 +391,7 @@ public final class PlacementEmissionTransaction {
 			selected, selectedCandidates, selectedLocals);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(
 			analysis, occurrences, selected, selectedCandidates, relocations,
-			foutMaterializations, locals);
+			foutMaterializations, locals, result.sharedSupplyLifetimes());
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites),
 			runtimeActionSnapshot(registryWrites));
 	}
@@ -656,7 +659,8 @@ public final class PlacementEmissionTransaction {
 			result.selectedRelocationChoices(), "selectedRelocationChoices"));
 		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
 		if(!planHash.equals(canonicalPlanHash(analysis, plannerId, analysisFingerprint, selected,
-			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals, objective)))
+			selectedCandidates, selectedChoices, selectedRelocations, selectedLocals,
+			result.sharedSupplyLifetimes(), objective)))
 			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
 		return planHash;
 	}
@@ -826,14 +830,20 @@ public final class PlacementEmissionTransaction {
 		List<CandidateSelectionReceipt> selectedCandidates,
 		List<SelectedRelocation> relocations,
 		List<SelectedFoutMaterialization> foutMaterializations,
-		List<LocalMaterializationActionKey> locals) {
+		List<LocalMaterializationActionKey> locals, Set<String> sharedSupplyLifetimes) {
+		List<SelectedRelocation> physicalRelocations = coalescePhysicalRelocations(relocations);
+		Set<String> emittedGroups = physicalRelocations.stream()
+			.map(relocation -> RelocationSelections.physicalEmissionIdentity(relocation.action().key()))
+			.collect(java.util.stream.Collectors.toSet());
+		if(!emittedGroups.containsAll(sharedSupplyLifetimes))
+			throw new PlacementEmissionException("Shared supply lifetime has no selected movement");
 		Map<RegistrySlot, RegistryWrite> writesBySlot = new LinkedHashMap<>();
 		for(SelectedFoutMaterialization selectedFout : foutMaterializations) {
 			DerivedFoutMaterializationActionKey action = selectedFout.action();
 			HopOccurrenceProjection producer = selectedFout.producer();
 			HopOccurrenceProjection anchor = selectedFout.anchor();
 			List<ConsumerInputSpec> directConsumers = directFoutConsumerInputs(
-				analysis, occurrences, selectedCandidates, relocations,
+				analysis, occurrences, selectedCandidates, physicalRelocations,
 				action.producer(), action.producerValueVersion());
 			RegistryWrite write = RegistryWrite.fout(producer.scopeId(), producer.hop().getHopID(),
 				anchor.hop().getHopID(), action.materializationFType().name(),
@@ -842,7 +852,7 @@ public final class PlacementEmissionTransaction {
 				action.normalizedSignature());
 			addRelocationRegistryWrite(writesBySlot, write);
 		}
-		for(SelectedRelocation selectedRelocation : relocations) {
+		for(SelectedRelocation selectedRelocation : physicalRelocations) {
 			RelocationAction action = selectedRelocation.action();
 			RelocationActionKey key = action.key();
 			List<Node> sources = analysis.graph().nodes().stream()
@@ -903,7 +913,9 @@ public final class PlacementEmissionTransaction {
 			}
 			RegistryWrite write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(),
 				anchorHopId, anchorKey, key.materializationFType().name(), consumerInputs,
-				key.normalizedSignature(), requiresLocalMaterialization);
+				key.normalizedSignature(), requiresLocalMaterialization,
+				sharedSupplyLifetimes.contains(RelocationSelections.physicalEmissionIdentity(key))
+					? RelocationSelections.physicalEmissionIdentity(key) : "");
 			addRelocationRegistryWrite(writesBySlot, write);
 		}
 		for(LocalMaterializationActionKey local : locals) {
@@ -923,6 +935,33 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException("Multiple actions target one registry slot");
 		}
 		return List.copyOf(writesBySlot.values());
+	}
+
+	/**
+	 * Consumer-specific action receipts can denote one physical upload.  Preserve the
+	 * canonical selected action as runtime authority and union only its exact active
+	 * obligations at the emission boundary; the normalized result retains every action.
+	 */
+	static List<SelectedRelocation> coalescePhysicalRelocations(
+		List<SelectedRelocation> relocations) {
+		Map<String,List<SelectedRelocation>> byPhysicalIdentity = new java.util.TreeMap<>();
+		for(SelectedRelocation relocation : relocations)
+			byPhysicalIdentity.computeIfAbsent(RelocationSelections.physicalEmissionIdentity(
+				relocation.action().key()), ignored -> new ArrayList<>()).add(relocation);
+		List<SelectedRelocation> result = new ArrayList<>(byPhysicalIdentity.size());
+		for(Map.Entry<String,List<SelectedRelocation>> entry : byPhysicalIdentity.entrySet()) {
+			List<SelectedRelocation> group = entry.getValue().stream()
+				.sorted(java.util.Comparator.comparing(relocation -> relocation.action().key()))
+				.toList();
+			RelocationAction representative = group.get(0).action();
+			List<ObligationKey> obligations = group.stream()
+				.flatMap(relocation -> relocation.obligations().stream())
+				.sorted().toList();
+			if(obligations.isEmpty())
+				throw new PlacementEmissionException("Selected physical relocation has no active obligation");
+			result.add(new SelectedRelocation(representative, obligations));
+		}
+		return List.copyOf(result);
 	}
 
 	/**
@@ -1229,7 +1268,7 @@ public final class PlacementEmissionTransaction {
 			return hopOrder != 0 ? hopOrder : Integer.compare(inputPosition, that.inputPosition);
 		}
 	}
-	private record SelectedRelocation(RelocationAction action, List<ObligationKey> obligations) { }
+	static record SelectedRelocation(RelocationAction action, List<ObligationKey> obligations) { }
 	private record SelectedFoutMaterialization(DerivedFoutMaterializationActionKey action,
 		HopOccurrenceProjection producer, HopOccurrenceProjection anchor) { }
 
@@ -1240,11 +1279,11 @@ public final class PlacementEmissionTransaction {
 		List<ConsumerInputSpec> foutConsumerInputs) {
 		private static RegistryWrite refed(long scopeId, long hopId, long anchorHopId, String anchorKey,
 			String materializationFType, List<ConsumerInputSpec> consumers, String plannerActionKey,
-			boolean requiresLocalMaterialization) {
+			boolean requiresLocalMaterialization, String supplySharingGroup) {
 			FederatedRefedRegistry.AnchorSpec authority = FederatedRefedRegistry.AnchorSpec.forConsumerInputs(
 				anchorHopId, anchorKey,
 				materializationFType == null ? null : FType.valueOf(materializationFType), consumers,
-				plannerActionKey, requiresLocalMaterialization);
+				plannerActionKey, requiresLocalMaterialization, supplySharingGroup);
 			return new RegistryWrite(new RegistrySlot(RegistryKind.REFED, scopeId, hopId), anchorHopId,
 				authority.getConsumerHopIds(), materializationFType, null, anchorKey, null, null,
 				authority, null, null);
@@ -1284,7 +1323,7 @@ public final class PlacementEmissionTransaction {
 								authority.getAnchorHopId(), authority.getAnchorKey(),
 								authority.getMaterializationFType(), authority.getConsumerInputs(),
 								authority.getPlannerActionKey(),
-								authority.getRequiresLocalMaterialization());
+								authority.getRequiresLocalMaterialization(), authority.getSupplySharingGroup());
 				}
 				case FOUT -> FederatedFoutMaterializeRegistry.registerConsumerInputs(
 					slot.scopeId(), slot.hopId(), anchorHopId, fType, label, anchorKey,

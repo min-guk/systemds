@@ -120,6 +120,50 @@ public final class ExactPhysicalCostModel {
 		}
 	}
 
+	/**
+	 * A runtime lifetime requirement derived from the same source and demand masks
+	 * that own the canonical materialization cost.  It is not a solver choice.
+	 */
+	static record SupplySharingGroup(String physicalEmissionIdentity,
+		ExactCategoricalSolver.Variable source, boolean[] activeSource,
+		List<ActivationDemand> demands) {
+		SupplySharingGroup {
+			if(physicalEmissionIdentity == null || physicalEmissionIdentity.isBlank())
+				throw new IllegalArgumentException("EXACT_SUPPLY_SHARING_IDENTITY_INVALID");
+			Objects.requireNonNull(source, "source");
+			activeSource = activeSource.clone();
+			demands = List.copyOf(demands);
+			if(activeSource.length != source.domainSize() || demands.isEmpty())
+				throw new IllegalArgumentException("EXACT_SUPPLY_SHARING_GROUP_INVALID");
+		}
+
+		@Override public boolean[] activeSource() { return activeSource.clone(); }
+
+		boolean selectedRequiresCrossExecutionRetention(List<Integer> assignment,
+			IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions) {
+			Integer sourcePosition = positions.get(source);
+			if(sourcePosition == null || !activeSource[assignment.get(sourcePosition)])
+				return false;
+			int[] values = assignment.stream().mapToInt(Integer::intValue).toArray();
+			return demands.stream().anyMatch(demand -> demand.crossExecutionReuse()
+				&& demand.active(values, positions));
+		}
+
+		String semanticDescriptor() {
+			StringBuilder result = new StringBuilder(physicalEmissionIdentity)
+				.append("|source=").append(source.key())
+				.append("|active=").append(java.util.Arrays.toString(activeSource));
+			for(ActivationDemand demand : demands)
+				result.append("|demand=").append(demand.variables().stream()
+					.map(ExactCategoricalSolver.Variable::key).toList())
+					.append(':').append(demand.observations().stream()
+						.map(java.util.Arrays::toString).toList())
+					.append(":event=").append(demand.event())
+					.append(":crossExecution=").append(demand.crossExecutionReuse());
+			return result.toString();
+		}
+	}
+
 	enum CostTransportKind { IDENTITY, ONE_MONETARY_TABLE, ZERO }
 
 	sealed interface CostTransportDeclaration {
@@ -257,10 +301,22 @@ public final class ExactPhysicalCostModel {
 	static record PhysicalCostSurface(PlacementAnalysis owner, String ownerFingerprint,
 		List<ExactCategoricalSolver.Variable> variables,
 		List<PhysicalContribution> contributions, List<PhysicalTransferKey> transferKeys,
+		List<SupplySharingGroup> supplySharingGroups,
 		String contributionFingerprint,
 		List<ExactCategoricalSolver.Variable> exactSolverVariables,
 		List<ExactCategoricalSolver.Factor> exactSolverFactors,
 		FrozenDyadicCostTransport dyadicCostTransport) {
+		PhysicalCostSurface(PlacementAnalysis owner, String ownerFingerprint,
+			List<ExactCategoricalSolver.Variable> variables,
+			List<PhysicalContribution> contributions, List<PhysicalTransferKey> transferKeys,
+			String contributionFingerprint,
+			List<ExactCategoricalSolver.Variable> exactSolverVariables,
+			List<ExactCategoricalSolver.Factor> exactSolverFactors,
+			FrozenDyadicCostTransport dyadicCostTransport) {
+			this(owner, ownerFingerprint, variables, contributions, transferKeys, List.of(),
+				contributionFingerprint, exactSolverVariables, exactSolverFactors, dyadicCostTransport);
+		}
+
 		PhysicalCostSurface {
 			Objects.requireNonNull(owner, "owner");
 			if(ownerFingerprint == null || ownerFingerprint.isBlank()
@@ -269,6 +325,7 @@ public final class ExactPhysicalCostModel {
 			variables = List.copyOf(variables);
 			contributions = List.copyOf(contributions);
 			transferKeys = List.copyOf(transferKeys);
+			supplySharingGroups = List.copyOf(supplySharingGroups);
 			if(contributionFingerprint == null || contributionFingerprint.isBlank())
 				throw new IllegalArgumentException("EXACT_PHYSICAL_COST_FINGERPRINT_INVALID");
 			exactSolverVariables = List.copyOf(exactSolverVariables);
@@ -330,6 +387,19 @@ public final class ExactPhysicalCostModel {
 					"EXACT_PHYSICAL_OBJECTIVE_UNPROVEN");
 			}
 			return total.totalBits("EXACT_PHYSICAL_OBJECTIVE_UNPROVEN");
+		}
+
+		Set<String> selectedSharedSupplyLifetimes(List<Integer> assignment) {
+			if(assignment == null || assignment.size() != variables.size())
+				throw new IllegalArgumentException("EXACT_SUPPLY_SHARING_ASSIGNMENT_SIZE_MISMATCH");
+			IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions = new IdentityHashMap<>();
+			for(int index = 0; index < variables.size(); index++)
+				positions.put(variables.get(index), index);
+			Set<String> selected = new java.util.TreeSet<>();
+			for(SupplySharingGroup group : supplySharingGroups)
+				if(group.selectedRequiresCrossExecutionRetention(assignment, positions))
+					selected.add(group.physicalEmissionIdentity());
+			return Collections.unmodifiableSet(selected);
 		}
 	}
 
@@ -443,14 +513,17 @@ public final class ExactPhysicalCostModel {
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations =
 			new IdentityHashMap<>();
 		List<PhysicalTransferKey> transferKeys = new ArrayList<>();
+		List<SupplySharingGroup> supplySharingGroups = new ArrayList<>();
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains =
 			new IdentityHashMap<>();
 		Map<CompiledHopKey,PreparedExecutionCost> preparedCosts =
 			PlacementCostSemantics.prepareExecutionCosts(analysis, sparseAssignments);
+		ExactPhysicalNativeSupplyRepresentation nativeSupply = model.nativeSupplyRepresentation();
 		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
 			domains.put(domain.node().key(), domain);
 			addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers,
-				frequencies, factors, preparedCosts.get(domain.node().key()));
+				frequencies, factors, factorKinds, preparedCosts.get(domain.node().key()),
+				nativeSupply.domain(domain.node().key()));
 		}
 		addJointPhysicalExecutionFactors(analysis, sparseAssignments, domains, frequencies,
 			preparedCosts, factors, factorKinds);
@@ -465,7 +538,8 @@ public final class ExactPhysicalCostModel {
 		Set<RetainedFunctionDownload> retainedFunctionDownloads = new LinkedHashSet<>();
 		addPhysicalCompiledTransferFactors(analysis, sparseAssignments, model.domains(),
 			domains, workers, physicalWorkerCounts, frequencies, latentRuntimeBoundaries,
-			fusedFactors, factors, factorizations, transferKeys, retainedFunctionDownloads);
+			fusedFactors, factors, factorizations, transferKeys, supplySharingGroups,
+			retainedFunctionDownloads, nativeSupply);
 		addPhysicalLatentWdivmmRuntimeInputFactors(analysis, sparseAssignments,
 			model.domains(), domains, workers, frequencies, factors, factorKinds,
 			factorizations, transferKeys);
@@ -559,11 +633,13 @@ public final class ExactPhysicalCostModel {
 		}
 		for(PhysicalTransferKey key : transferKeys)
 			normalized.append("|transfer:").append(key);
+		for(SupplySharingGroup group : supplySharingGroups)
+			normalized.append("|sharing-group:").append(group.semanticDescriptor());
 		String contributionFingerprint = normalized.finish();
 		FrozenDyadicCostTransport dyadicTransport = new FrozenDyadicCostTransport(analysis,
 			analysis.analysisFingerprint(), contributionFingerprint, exactSolverFactors, dyadicEncodings);
 		PhysicalCostSurface surface = new PhysicalCostSurface(analysis, analysis.analysisFingerprint(),
-			model.variables(), contributions, transferKeys, contributionFingerprint,
+			model.variables(), contributions, transferKeys, supplySharingGroups, contributionFingerprint,
 			exactSolverVariables, exactSolverFactors, dyadicTransport);
 		dyadicTransport.bind(surface);
 		return surface;
@@ -831,14 +907,18 @@ public final class ExactPhysicalCostModel {
 		OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors) {
 		addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers, frequencies,
-			factors, PlacementCostSemantics.prepareExecutionCost(analysis, sparseAssignments, domain.node().key()));
+			factors, new IdentityHashMap<>(),
+			PlacementCostSemantics.prepareExecutionCost(analysis, sparseAssignments, domain.node().key()), null);
 	}
 
 	private static void addPhysicalUnaryFactor(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		ExactPhysicalModel.DecisionDomain domain, int workers,
 		OccurrenceExecutionFrequencyFacts frequencies,
-		List<ExactCategoricalSolver.Factor> factors, PreparedExecutionCost prepared) {
+		List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds,
+		PreparedExecutionCost prepared,
+		ExactPhysicalNativeSupplyRepresentation.Domain nativeSupplyDomain) {
 		if(domain.node().kind() == NodeKind.FUNCTION_INPUT
 			|| domain.node().kind() == NodeKind.FUNCTION_OUTPUT
 			|| analysis.isDmlFunctionCallBoundary(domain.node().key())) {
@@ -865,25 +945,49 @@ public final class ExactPhysicalCostModel {
 				continue;
 			ExactPhysicalModel.Alternative alternative = domain.alternatives().get(value);
 			PlacementState state = alternative.state();
+			var nativeCandidate = nativeSupplyDomain == null ? null
+				: nativeSupplyDomain.nativeCandidate(value);
+			PlacementState nativeState = nativeSupplyDomain == null
+				? alternative.derivedFoutAction() == null ? state
+					: alternative.derivedFoutAction().key().sourcePlacement()
+				: nativeCandidate.nativeOutputState();
+			ExecType nativeExecutionType = nativeCandidate == null
+				? nativeState.execType() : nativeCandidate.executionType();
+			var outputMovement = nativeSupplyDomain == null ? null
+				: nativeSupplyDomain.supplies(value).stream()
+					.filter(supply -> supply.direction()
+						== ExactPhysicalNativeSupplyRepresentation.SupplyDirection.OUTPUT)
+					.filter(supply -> supply.actionKind()
+						== ExactPhysicalNativeSupplyRepresentation.SupplyActionKind.OUTPUT_MATERIALIZATION)
+					.findFirst().orElse(null);
+			// SUPPLY_ONLY is a legality row for an already-owned source value.  Its
+			// relocation is priced by b_e transfer factors; it does not execute a
+			// second producer kernel or own a native return.
+			if(nativeCandidate != null && nativeCandidate.executionKind()
+				== ExactPhysicalNativeSupplyRepresentation.NativeExecutionKind.SUPPLY_ONLY)
+				continue;
 			// Dynamic input maps are priced row by row in a separate factor, with
 			// the selected reader clauses in scope. Alias nodes have no kernel.
-			if(state.execType() == ExecType.FED && JointPhysicalCostRows.dynamic(alternative))
+			if(nativeExecutionType == ExecType.FED && JointPhysicalCostRows.dynamic(alternative))
 				continue;
-			if(state.execType() == ExecType.CP) {
+			if(nativeExecutionType == ExecType.CP) {
 				execution[value] = requireCost(weight * prepared.localCost(), "EXACT_CP_COST_UNPROVEN");
-				if(state.output() == FederatedOutput.FOUT)
+				if(outputMovement != null || nativeSupplyDomain == null && state.output() == FederatedOutput.FOUT)
 					nativeCpUpload[value] = physicalResultUploadCost(analysis, sparseAssignments,
-						domain.node().key(), hop, state.fType(),
+						domain.node().key(), hop,
+						outputMovement == null ? state.fType() : outputMovement.targetState().fType(),
 						realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts), weight);
 				continue;
 			}
 			CandidateEmissionFact emission = alternative.captured()
 				? alternative.candidateEmission() : alternative.executionEmission();
 			if(prepared.fusedWeightsOccurrence() != null) {
-				if(state.output() == FederatedOutput.FOUT && emission != null
+				if(outputMovement != null || nativeSupplyDomain == null
+					&& state.output() == FederatedOutput.FOUT && emission != null
 					&& emission.emissionState().derivedFedFout())
 					outputMaterialization[value] = physicalResultUploadCost(analysis, sparseAssignments,
-						domain.node().key(), hop, state.fType(),
+						domain.node().key(), hop,
+						outputMovement == null ? state.fType() : outputMovement.targetState().fType(),
 						realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts), weight);
 				continue;
 			}
@@ -905,25 +1009,33 @@ public final class ExactPhysicalCostModel {
 						effectiveUploadBytes(analysis, sparseAssignments, domain.node().key(), hop)), observation);
 				projections.put(observation, projection);
 			}
-			boolean derivedFout = state.output() == FederatedOutput.FOUT && emission != null
+			boolean derivedFout = outputMovement != null || nativeSupplyDomain == null
+				&& state.output() == FederatedOutput.FOUT && emission != null
 				&& emission.emissionState().derivedFedFout();
-			execution[value] = derivedFout
-				? requireCost(projection.fedUnaryCost() + projection.resultDownloadCost(),
-					"EXACT_PHYSICAL_FED_DOWNLOAD_COST_UNPROVEN")
-				: projection.fedUnaryCost();
+			execution[value] = projection.fedUnaryCost();
 			if(derivedFout)
 				outputMaterialization[value] = physicalResultUploadCost(analysis, sparseAssignments,
-					domain.node().key(), hop, state.fType(),
+					domain.node().key(), hop,
+					outputMovement == null ? state.fType() : outputMovement.targetState().fType(),
 					realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts), weight);
-			else if(state.output() == FederatedOutput.LOUT)
+			if(nativeState.output() == FederatedOutput.LOUT)
 				nativeFedDownload[value] = projection.resultDownloadCost();
 		}
-		// Preserve the established edge-level arithmetic grouping, including the one case
-		// where FED unary and derived-FOUT execution download share compute->sink.
-		factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), execution));
-		factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), outputMaterialization));
-		factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), nativeFedDownload));
-		factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), nativeCpUpload));
+		// Native execution and native LOUT return remain operator-owned contributions.
+		// Only the explicit post-output upload is owned by the projected b_e supply.
+		var operator = ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), execution);
+		var explicitOutputMovement = ExactCategoricalSolver.Factor.dense(
+			List.of(domain.variable()), outputMaterialization);
+		var nativeReturn = ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), nativeFedDownload);
+		var explicitCpUpload = ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), nativeCpUpload);
+		factors.add(operator);
+		factors.add(explicitOutputMovement);
+		factors.add(nativeReturn);
+		factors.add(explicitCpUpload);
+		factorKinds.put(operator, "OPERATOR_EXECUTION");
+		factorKinds.put(explicitOutputMovement, "SUPPLY_MOVEMENT|POST_OUTPUT");
+		factorKinds.put(nativeReturn, "OPERATOR_NATIVE_RETURN");
+		factorKinds.put(explicitCpUpload, "SUPPLY_MOVEMENT|CP_UPLOAD");
 	}
 
 	private static void addJointPhysicalExecutionFactors(PlacementAnalysis analysis,
@@ -1309,7 +1421,9 @@ public final class ExactPhysicalCostModel {
 		List<FusedFactorUse> fusedFactors, List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
 		List<PhysicalTransferKey> transferKeys,
-		Set<RetainedFunctionDownload> retainedFunctionDownloads) {
+		List<SupplySharingGroup> supplySharingGroups,
+		Set<RetainedFunctionDownload> retainedFunctionDownloads,
+		ExactPhysicalNativeSupplyRepresentation nativeSupply) {
 		record Demand(PhysicalTransferEndpoint edge, ExactPhysicalModel.DecisionDomain consumer,
 			FusedFactorUse runtime, boolean[] active, EffectiveLogicalFunctionInput functionInput) { }
 		record Key(Direction direction, FType type, BoundaryMode boundary,
@@ -1370,12 +1484,20 @@ public final class ExactPhysicalCostModel {
 				for(int value = 0; value < consumer.alternatives().size(); value++) {
 					var selected = consumer.alternatives().get(value);
 					boolean cp = selected.state().execType() == ExecType.CP;
-					var authority = selected.inputAuthorities().stream()
-						.filter(a -> a.inputPosition() == edge.inputPosition()).findFirst().orElse(null);
-					boolean relocation = authority != null
-						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION;
-					boolean nativeLocal = !cp && authority != null
-						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL;
+					List<ExactPhysicalNativeSupplyRepresentation.SupplyCandidate> rowSupplies =
+						nativeSupply.domain(consumer.node().key()).supplies(value);
+					var relocationSupply = rowSupplies.stream().filter(supply ->
+						supply.direction() == ExactPhysicalNativeSupplyRepresentation.SupplyDirection.INPUT
+							&& supply.inputPosition() == edge.inputPosition()
+							&& supply.actionKind()
+								== ExactPhysicalNativeSupplyRepresentation.SupplyActionKind.RELOCATION)
+						.findFirst().orElse(null);
+					boolean relocation = relocationSupply != null;
+					boolean nativeLocal = !cp && rowSupplies.stream().anyMatch(supply ->
+						supply.direction() == ExactPhysicalNativeSupplyRepresentation.SupplyDirection.INPUT
+							&& supply.inputPosition() == edge.inputPosition()
+							&& supply.actionKind()
+								== ExactPhysicalNativeSupplyRepresentation.SupplyActionKind.NATIVE_LOCAL);
 					boolean runtimeCollect = false;
 					if(!cp && (PlacementCostSemantics.isWdivmmMatrixOperand(consumerHop, edge.inputPosition())
 						|| edge.inputPosition() == 3 && PlacementCostSemantics.hasWdivmmEpsilon(consumerHop))) {
@@ -1385,7 +1507,7 @@ public final class ExactPhysicalCostModel {
 						runtimeCollect = PlacementCostSemantics.wdivmmInputNeedsCollection(
 							consumerHop, layout, edge.inputPosition());
 						if(relocation && runtimeCollect) {
-							var action = authority.relocationAction();
+							var action = (RelocationAction)relocationSupply.action();
 							var key = new Key(Direction.DOWNLOAD, action.key().materializationFType(),
 								BoundaryMode.RUNTIME_RELOCATED_INPUT, RelocationSelections.physicalEmissionIdentity(action.key()),
 								physicalWorkerCounts.count(action.key().durableAnchor()), bytes);
@@ -1407,9 +1529,9 @@ public final class ExactPhysicalCostModel {
 						collectByBytes.computeIfAbsent(sourceBytes,
 							ignored -> new boolean[consumer.alternatives().size()])[value] = true;
 					}
-					if(relocation && authority.relocationAction().key().sourceValueVersion()
+					if(relocation && ((RelocationAction)relocationSupply.action()).key().sourceValueVersion()
 						.equals(producer.node().valueVersion())) {
-						var action = authority.relocationAction();
+						var action = (RelocationAction)relocationSupply.action();
 						var key = new Key(Direction.UPLOAD, action.key().materializationFType(),
 							uploadBoundaryMode(analysis, edge), RelocationSelections.physicalEmissionIdentity(action.key()),
 							physicalWorkerCounts.count(action.key().durableAnchor()), bytes);
@@ -1488,6 +1610,7 @@ public final class ExactPhysicalCostModel {
 				Key key = entry.getKey();
 				boolean sourceDownload = key.direction() == Direction.DOWNLOAD && key.targetWorkers() == 0;
 				boolean[] activeSource = new boolean[producer.alternatives().size()];
+				boolean[] uploadSource = new boolean[activeSource.length];
 				double[] unitPrices = new double[activeSource.length];
 				for(int value = 0; value < activeSource.length; value++) {
 					var alternative = producer.alternatives().get(value);
@@ -1495,6 +1618,12 @@ public final class ExactPhysicalCostModel {
 					int sourceWorkers = realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts);
 					activeSource[value] = !sourceDownload || state.output() == FederatedOutput.FOUT
 						&& state.fType() == key.type() && outputLayoutIdentity(alternative).equals(key.physicalEmissionIdentity());
+					// Planned FOUT staging is part of the REFED supply action. On a cache miss it
+					// collects and uploads once; subsequent executions reuse the resulting copy
+					// under the original source/value-version lifetime proven below.
+					uploadSource[value] = key.direction() == Direction.UPLOAD
+						&& (state.output() == FederatedOutput.LOUT
+							|| state.output() == FederatedOutput.FOUT);
 					double unit = key.direction() == Direction.DOWNLOAD
 						? FederatedCostModel.computeReusableMaterializationDownloadCost(key.bytes(), key.type(),
 							sourceDownload ? sourceWorkers : key.targetWorkers())
@@ -1543,8 +1672,8 @@ public final class ExactPhysicalCostModel {
 							aliasCreation = new CreationScope(candidate, aliasProfile, aliasProfile.contextOrdinal());
 					}
 					var creation = new CreationScope(origin, sourceProfile, readProfile.contextOrdinal());
-					// Fresh outputs retain the existing lifetime calculation. Only proven
-					// retained aliases use the ancestor object's activation and creation cap.
+					// Every upload is owned by its original source/value version. FOUT's local
+					// stage is fused into that action rather than treated as a new value lifetime.
 					java.util.function.Function<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact,
 						List<ActivationDemand>> activationsForCreation = profile -> {
 						List<ActivationDemand> activations = new ArrayList<>();
@@ -1557,15 +1686,19 @@ public final class ExactPhysicalCostModel {
 									var consumerProfile = requireContextProfile(frequencies,
 										demand.edge().consumer(), occurrence.calleeProfile().contextOrdinal());
 									activations.add(new ActivationDemand(List.of(demand.consumer().variable()),
-										List.of(demand.active()), materializationActivation(profile, consumerProfile)));
+										List.of(demand.active()), materializationActivation(profile, consumerProfile),
+										requiresCrossExecutionReuse(profile, consumerProfile)));
 								}
 								continue;
 							}
-							var event = materializationActivation(profile, requireContextProfile(frequencies,
-								demand.edge().consumer(), readProfile.contextOrdinal()));
-							if(demand.runtime() != null) addFusedFactorGetDemands(demand.runtime(), event, activations);
+							var consumerProfile = requireContextProfile(frequencies,
+								demand.edge().consumer(), readProfile.contextOrdinal());
+							var event = materializationActivation(profile, consumerProfile);
+							boolean crossExecution = requiresCrossExecutionReuse(profile, consumerProfile);
+							if(demand.runtime() != null)
+								addFusedFactorGetDemands(demand.runtime(), event, crossExecution, activations);
 							else activations.add(new ActivationDemand(List.of(demand.consumer().variable()),
-								List.of(demand.active()), event));
+								List.of(demand.active()), event, crossExecution));
 						}
 						return activations;
 					};
@@ -1598,11 +1731,13 @@ public final class ExactPhysicalCostModel {
 						for(var observation : observations.entrySet()) {
 							var group = downloads.computeIfAbsent(observation.getKey(), ignored ->
 								new DownloadGroup(producer, new ArrayList<>(), new ArrayList<>()));
-							for(var activation : activationsForCreation.apply(observation.getKey().creation().profile())) {
+							for(var activation : activationsForCreation.apply(
+								observation.getKey().creation().profile())) {
 								List<ExactCategoricalSolver.Variable> vars = new ArrayList<>(activation.variables());
 								List<boolean[]> masks = new ArrayList<>(activation.observations());
 								vars.add(producer.variable()); masks.add(observation.getValue());
-								group.demands().add(new ActivationDemand(vars, masks, activation.event()));
+								group.demands().add(new ActivationDemand(vars, masks, activation.event(),
+									activation.crossExecutionReuse()));
 							}
 							for(var demand : demands)
 								if(!group.endpoints().contains(demand.edge())) group.endpoints().add(demand.edge());
@@ -1611,9 +1746,22 @@ public final class ExactPhysicalCostModel {
 					else {
 						String id = "exact-materialization|" + producer.node().key().normalizedSignature() + '|' + key
 							+ "|creation=" + origin.normalizedSignature() + "|context=" + readProfile.contextOrdinal();
-						addMaterializationActivationFactors(id, producer.variable(), activeSource, unitPrices,
-							activationsForCreation.apply(sourceProfile), sourceProfile.expectedExecutions(),
-							factors, factorizations, null);
+						List<ActivationDemand> activations = activationsForCreation.apply(sourceProfile);
+						if(key.direction() != Direction.UPLOAD) {
+							addMaterializationActivationFactors(id, producer.variable(), activeSource, unitPrices,
+								activations, sourceProfile.expectedExecutions(), factors, factorizations, null);
+						}
+						else {
+							if(anyTrue(uploadSource))
+								addMaterializationActivationFactors(id + "|source=ORIGINAL", producer.variable(),
+									uploadSource, unitPrices, activations,
+									sourceProfile.expectedExecutions(), factors, factorizations, null);
+						}
+						if(key.direction() == Direction.UPLOAD && anyTrue(uploadSource)
+							&& activations.stream()
+							.anyMatch(ActivationDemand::crossExecutionReuse))
+							supplySharingGroups.add(new SupplySharingGroup(key.physicalEmissionIdentity(),
+								producer.variable(), uploadSource, activations));
 					}
 				}
 				if(!sourceDownload) transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(),
@@ -1666,14 +1814,16 @@ public final class ExactPhysicalCostModel {
 
 	/** Union these runtime reads with ordinary CP consumers of the same selected value/layout. */
 	private static void addFusedFactorGetDemands(FusedFactorUse use,
-		ExactMaterializationActivation.Event event, List<ActivationDemand> demands) {
+		ExactMaterializationActivation.Event event, boolean crossExecutionReuse,
+		List<ActivationDemand> demands) {
 		boolean[] cp = new boolean[use.owner().alternatives().size()];
 		boolean[] fed = new boolean[cp.length];
 		for(int i = 0; i < cp.length; i++) {
 			cp[i] = use.owner().alternatives().get(i).state().execType() == ExecType.CP;
 			fed[i] = use.owner().alternatives().get(i).state().execType() == ExecType.FED;
 		}
-		demands.add(new ActivationDemand(List.of(use.owner().variable()), List.of(cp), event));
+		demands.add(new ActivationDemand(List.of(use.owner().variable()), List.of(cp), event,
+			crossExecutionReuse));
 		Map<InputLayout,boolean[]> weightClasses = new LinkedHashMap<>();
 		for(int w = 0; w < use.weightLayouts().size(); w++) {
 			InputLayout layout = use.weightLayouts().get(w);
@@ -1685,13 +1835,20 @@ public final class ExactPhysicalCostModel {
 			for(int f = 0; f < collect.length; f++)
 				collect[f] = !use.reused(entry.getKey(), f);
 			demands.add(new ActivationDemand(List.of(use.owner().variable(), use.weights().variable(),
-				use.source().variable()), List.of(fed, entry.getValue(), collect), event));
+				use.source().variable()), List.of(fed, entry.getValue(), collect), event,
+				crossExecutionReuse));
 		}
 	}
 
 	/** A selected plan demands a copy when every observation in this demand is true. */
 	record ActivationDemand(List<ExactCategoricalSolver.Variable> variables,
-		List<boolean[]> observations, ExactMaterializationActivation.Event event) {
+		List<boolean[]> observations, ExactMaterializationActivation.Event event,
+		boolean crossExecutionReuse) {
+		ActivationDemand(List<ExactCategoricalSolver.Variable> variables,
+			List<boolean[]> observations, ExactMaterializationActivation.Event event) {
+			this(variables, observations, event, false);
+		}
+
 		ActivationDemand {
 			variables = List.copyOf(variables);
 			observations = observations.stream().map(boolean[]::clone).toList();
@@ -1708,6 +1865,24 @@ public final class ExactPhysicalCostModel {
 					return false;
 			return true;
 		}
+	}
+
+	/** Raw profile relation retained separately from the source-capped cost event. */
+	static boolean requiresCrossExecutionReuse(
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact source,
+		OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact consumer) {
+		Set<Long> sourceLoops = source.loopContext().stream().map(Pair::getLeft)
+			.collect(java.util.stream.Collectors.toSet());
+		for(var loop : consumer.loopContext())
+			if(!sourceLoops.contains(loop.getLeft()) && loop.getRight() > 1d)
+				return true;
+		double sourceExecutions = source.expectedExecutions();
+		double consumerExecutions = consumer.expectedExecutions();
+		if(!Double.isFinite(sourceExecutions) || !Double.isFinite(consumerExecutions)
+			|| sourceExecutions <= 0d || consumerExecutions <= 0d)
+			return false;
+		double tolerance = Math.max(Math.ulp(sourceExecutions) * 4d, 1e-12d);
+		return consumerExecutions > sourceExecutions + tolerance;
 	}
 
 	/**
@@ -2105,6 +2280,13 @@ public final class ExactPhysicalCostModel {
 		boolean[] values = new boolean[size];
 		java.util.Arrays.fill(values, true);
 		return values;
+	}
+
+	private static boolean anyTrue(boolean[] values) {
+		for(boolean value : values)
+			if(value)
+				return true;
+		return false;
 	}
 
 	private static List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact>

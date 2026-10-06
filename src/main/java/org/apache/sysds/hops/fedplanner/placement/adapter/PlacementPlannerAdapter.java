@@ -34,6 +34,7 @@ public interface PlacementPlannerAdapter<R extends NormalizedPlannerResult> {
 		Objects.requireNonNull(result.plannerId(), "plannerId");
 		Objects.requireNonNull(result.selectedStates(), "selectedStates");
 		Objects.requireNonNull(result.selectedRelocations(), "selectedRelocations");
+		Objects.requireNonNull(result.sharedSupplyLifetimes(), "sharedSupplyLifetimes");
 		Objects.requireNonNull(result.objectiveCertificate(), "objectiveCertificate");
 		Objects.requireNonNull(result.normalizedPlanFingerprint(), "normalizedPlanFingerprint");
 		return ImmutableNormalizedPlannerResult.of(context, result);

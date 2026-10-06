@@ -18,6 +18,7 @@ package org.apache.sysds.hops.fedplanner.placement.adapter;
 
 import java.util.Map;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
@@ -59,6 +60,11 @@ public interface NormalizedPlannerResult {
 	@SuppressWarnings("rawtypes")
 	default List selectedLocalMaterializations() {
 		return List.of();
+	}
+
+	/** Exact relocation emission identities retained across repeated executions. */
+	default Set<String> sharedSupplyLifetimes() {
+		return Set.of();
 	}
 
 	String objectiveCertificate();

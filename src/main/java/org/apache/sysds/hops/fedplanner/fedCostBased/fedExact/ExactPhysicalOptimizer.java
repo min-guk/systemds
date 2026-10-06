@@ -3,6 +3,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 
@@ -13,11 +14,18 @@ final class ExactPhysicalOptimizer {
 		new ExactCategoricalSolver.Limits(Integer.MAX_VALUE, Long.MAX_VALUE);
 
 	record Result(ExactCategoricalSolver.Result solverResult,
-		long canonicalObjectiveBits, String contributionFingerprint) {
+		long canonicalObjectiveBits, String contributionFingerprint,
+		Set<String> sharedSupplyLifetimes) {
+		Result(ExactCategoricalSolver.Result solverResult,
+			long canonicalObjectiveBits, String contributionFingerprint) {
+			this(solverResult, canonicalObjectiveBits, contributionFingerprint, Set.of());
+		}
+
 		Result {
 			Objects.requireNonNull(solverResult, "solverResult");
 			if(contributionFingerprint == null || contributionFingerprint.isBlank())
 				throw new IllegalArgumentException("EXACT_PHYSICAL_COST_FINGERPRINT_INVALID");
+			sharedSupplyLifetimes = Set.copyOf(sharedSupplyLifetimes);
 		}
 	}
 
@@ -181,7 +189,8 @@ final class ExactPhysicalOptimizer {
 			throw new IllegalArgumentException("EXACT_PHYSICAL_SOLVER_CANONICAL_OBJECTIVE_MISMATCH"
 				+ "|solver=" + decisionResult.objective() + "|canonical="
 				+ Double.longBitsToDouble(canonicalBits));
-		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint());
+		return new Result(decisionResult, canonicalBits, surface.contributionFingerprint(),
+			surface.selectedSharedSupplyLifetimes(decisionResult.assignmentInVariableOrder()));
 	}
 
 	private static String orderTrace(ExactEliminationOrderPolicy.Configuration policy,
