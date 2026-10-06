@@ -1,0 +1,4 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+FEASIBLE_WITNESS_P=CP/LOUT/-/SHAPE_INDEPENDENT
+POLICY=FED_FIRST EXPECTED_CONFLICT=Greedy policy conflict (not global infeasibility): empty owned-row domain at 12:greedy-depth|4:main|4:root|8:compiled|49:12:greedy-depth|4:main|6:4:main|4:root|8:compiled|10:hop-000002|8:origin-2; commits=1; deletedRows=4
+POLICY=AGG_LOCAL EXPECTED_CONFLICT=Greedy policy conflict (not global infeasibility): empty owned-row domain at 12:greedy-depth|4:main|4:root|8:compiled|49:12:greedy-depth|4:main|6:4:main|4:root|8:compiled|10:hop-000002|8:origin-2; commits=1; deletedRows=4
