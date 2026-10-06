@@ -245,3 +245,53 @@
 - **최종 검증 결과**: 최신 main 통합 후 대상 Java 82개와 package 검사 10개가 실패/오류/제외 없이 통과했다. Python 실행·분석 회귀 19개, Python compile, shell syntax, diff 검사도 통과했다. 독립 코드 검토 승인. Docker wrapper로 logreg/GNMF × baseline/local_only 4개 정규 compile/lowering audit를 실행해 전부 성공했고, 동 workload의 비용 bits·플랜 fingerprint·lower/upper·종료 이유가 동일했다. 결과는 새로운 성능 비교로 해석하지 않는다.
 - **증거/산출물**: `docs/pruning-factorial-20261006/removal-validation.json`, home 실험 root의 `pruning-delete-main-tests-final.log`, `pruning-delete-main-package.log`, `pruning-deletion-main-v1/`. 최종 JAR SHA `58c889c77fb9d6dcd2ba54659a9410b608303d1f594b542eca7447239f594dc1`. clean build의 enum은 BASELINE/LOCAL_ONLY만 포함하고 삭제된 GLOBAL 내부 class는 없다. 측정 시점의 production source와 최종 source hash가 동일하다. 기존 ablation 원시 자료와 독립적인 새 보존본을 생성한다.
 - **잔여 이슈/위험**: 기존 unknown-shape golden mismatch는 별도 미해결로 유지한다. 실제 training runtime은 실행하지 않았다. 이번 삭제는 기본 local-only의 동작을 유지하며, 더 이상 지원하지 않는 D/S/global/과거 local property를 사용한 외부 명령은 명시적 설정 오류를 받는다. 원래 의미를 바꿔 조용히 실행하지 않는다.
+
+
+## Joint input/boundary 구현과 최신 main 통합 — 검증 진행 중
+
+- **요청/환경**: 사용자가 병합·문제 수정·`origin/main` push를 명시적으로 요청했다. 원본 dirty 작업 트리 `/home/mchoi/w1357-paper-aligned-refactor`는 보존하고 `integrate/joint-boundary-main-20261006` / `/home/mchoi/w1357-joint-main-20261006`에서 작업한다. 통합 기준 main은 `58145e73667e0a4f43589e9d37199fc90d293ee8`다.
+- **범위 결정**: 구현 시작 시 보관한 490개 main source baseline과 비교해 실제 joint 변경 25개를 추출했다. `_PLACEMENT` 타입·LOP lowering·zero compute 및 federation ID 0 alias 수명 수정, 새 joint source 6개, 관련 테스트와 Docker harness를 추가한다. 기존 physical snapshot export, STEP-LM/lmCG, 캠페인·보정 스크립트의 다른 미커밋 변경은 포함하지 않는다. Main의 반환 GET·RTT·loop-entry·pruning 수정은 유지한다.
+- **병합 방식**: main 위에서 `git merge-file`로 구현 baseline/current/main의 3-way source 통합을 수행했다. 전체 dirty snapshot의 24개 충돌을 임의로 한쪽으로 해소하지 않고, 해당 기능의 delta만 사용했다. 운영 코드 충돌 2개는 `PlacementAnalysis`의 action-aware emission identity 및 `PlacementRelationClosure`의 양쪽 import를 보존하여 해결했다. 함수 alias-only 검사는 별도 순수 alias 회귀로 보존하고 typed transfer의 명시적 action·privacy·omission 거절도 함께 검사한다.
+- **전체 빌드**: 첫 clean build는 병합된 테스트에서 `LocalMaterializationActionKey` import가 빠져 test-compile 실패했다. Import를 복원한 전체 main/test compile r2는 통과했다. 로그 `/home/mchoi/joint-main-integration-20261006/build-r2.log`.
+- **비용 검증**: 반환 GET 11개, native result projection 6개, native batch ownership 7개가 C2W=3ms/W2C=7ms에서 **24/24 PASS**했다. J_hat의 동적 경로 비용과 main의 호출별 lifetime 및 batch RTT 계산을 함께 유지한다. 다중 원본 분기 값을 하나의 cache identity로 합치는 추가 최적화는 증명이 부족하여 채택하지 않았다.
+- **진행 중 회귀**: 43개 관련 Java class를 실행 중이며 `LoopEntryCompletePlacementSpaceTest`의 identity fixture에서 추가 relocation이 나오는 행을 발견했다. 합법적인 추가 계획인지 잘못된 공급 증명인지 분석하며, 기존 main의 entry 이동·TW/TR 배치 보존 목적을 유지해 해결한다. 테스트를 끄거나 후보를 편의상 제거하지 않는다.
+- **검증 경로**: 실제 runtime은 `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e`로만 확인한다. Harness는 이 통합 저장소의 전체 소스·main/test class·의존성을 복사·hash 고정하여 사용한다. 다른 작업 트리 overlay에 의존하지 않도록 바꿨고 Python 17개 테스트 및 Bash 문법 검사를 통과했다.
+- **의사결정 근거/잔여 위험**: 순수 전달의 canonical TW/TR와 privacy는 유지한다. 명시적 이동만 계획·과금·lowering하며 runtime fallback을 사용하지 않는다. 병합 후 동일 최종 빌드의 전체 집중 회귀와 12개 Docker 사례가 완료되기 전에는 push하지 않는다. 변경·실행 증거는 `/home/mchoi/joint-main-integration-20261006`에 보관한다.
+
+### Loop-entry 전체 계획 공간 oracle — 해결
+
+- **증상/원인**: identity loop의 모든 합법 계획에서 relocation이 없어야 한다는 기존 단언이 실패했다. 실제 행의 이동 원본은 `p`, consumer는 `main/1/loop-body/0`의 `TWrite p`였다. 무관한 `sum(X)` 이동이나 잘못된 worker 공급이 아니었다. 공동 VALUE_MAP 증명이 직접 전달과 동일 layout의 명시적 normalization을 각각 보존하면서 후자의 합법적이지만 비싼 계획이 추가됐다.
+- **해결**: `LoopEntryCompletePlacementSpaceTest`가 LOCAL 및 ROW/COL/BROADCAST의 직접 전달과 명시적 normalization을 구별하도록 수정했다. Canonical TW/TR 일치는 계속 요구하며 이동 원본·consumer·layout도 검사한다. 동일 상태에서 normalization 비용이 직접 전달보다 크고 Exact가 이동 없는 계획을 선택하는지 검증한다. 후보를 제거하여 테스트에 맞추지 않는다.
+- **검증**: 격리 실행 2/2 PASS, raw 32,928행 / 합법 292행 / 물리 요약 10개. 추가로 `BranchPlacementNormalizationTest` 12/12 PASS: 서로 다른 concrete worker pool의 같은 FType 업로드가 full action signature로 구별되어 모두 남는다. 근거: `/home/mchoi/joint-main-integration-20261006/loop-verification`.
+- **잔여 위험**: 합법 후보가 늘면 계획 공간 검사의 coarse summary도 달라진다. 후보 수만 고정하지 않고 공급 합법성·비용·최적 선택을 함께 검증한다.
+
+### 큰 함수·loop 그래프의 증명 고정점 성능 — 수정 완료, 전체 재검증 중
+
+- **증상**: 43개 회귀 class 중 42개가 종료한 뒤 `ExactInputAuthorityOptimizationTest.solverHardFactorEncodingsExactlyProjectCanonicalTruth`가 끝나지 않았다. 888초 시점에 증거를 보존하고 이 실행의 마지막 JVM만 SIGTERM으로 종료했다. 회귀 결과를 PASS로 기록하지 않는다.
+- **직접 관측**: 두 thread dump에서 실행 중인 경로가 `closePhysicalDependencies -> exactSinglePartitionRealizationProofs -> TreeMap`이었다. `CandidateRealizationReference` 비교에 필요한 canonical text를 반복 생성했다. 6.6초 동안 hot-thread CPU가 6.23초 증가했고 heap도 증가했다. Deadlock이 아닌 반복 증명 계산·할당 병목이다.
+- **비교 범위**: 앞선 joint 빌드의 해당 method는 303.864초였다. 이번 845초 관측은 그보다 2.78배 길다. 이는 같은 Docker 조건의 workload 성능 실험이 아니라 Java 회귀 병목 진단이다.
+- **수정 원칙**: 후보, FULL 증명, privacy, loop seed 및 joint 관계를 보존하면서 중복 증명·key 계산을 줄인다. 자원 제한을 늘리거나 합법 후보를 삭제하여 숨기지 않는다.
+- **해결**: `PlacementRelationClosure.exactSinglePartitionRealizationProofs`의 내부 lookup을 exact reference의 구조적 equality/hash로 수행한다. 동기식 고정점 계산은 그대로 유지하여 순서에 의존하지 않는다. `PhysicalCandidateState`가 같은 fact revision의 증명 결과를 재사용하고, 모든 owner fact commit에서 이를 무효화한다. 정적 전역 cache나 변경되지 않은 것으로 추정하는 가드를 추가하지 않는다.
+- **격리 검증**: `PhysicalSinglePartitionProofFixedPointTest` 5/5 PASS, `ExactInputAuthorityOptimizationTest` 8/8 PASS(97.52초, wall 98.48초). 후자는 기존 joint 약 313초, 이번 병합 수정 전 888초 중단과 비교한 진단 결과이며 workload 실행 성능 주장에는 사용하지 않는다. Hard-factor 집계 canonical 1,556 / factorized 115 / canonical cells 1,123,863,150 / encoded cells 29,124,985를 유지했다.
+- **잠재 회귀/감지**: facts 변경 후 잘못된 cache 재사용이 위험하다. 모든 쓰기를 `PhysicalCandidateState.commit`에서 무효화하고 entry/backedge 증명 확대·철회 회귀 및 전체 모델 truth 비교를 다시 수행한다.
+- **근거/재현**: `/home/mchoi/joint-main-integration-20261006/optimization-audit/{result.json,thread-1.txt,thread-2.txt,terminated-owned-test.json}`. 전체 r1 결과는 `regressions-r1.json`이다.
+
+### Concrete action과 owner pool의 권한 확인 — 추가 제약 불필요
+
+- **검토 질문**: derived upload의 owner 검사에 worker pool equality를 더 넣어야 하는지 확인했다. 실제 nested branch 두 pool의 16개 derived action 및 B-10∼B-16 지원 fixture에서 같은 owner가 서로 다른 pool을 선택하는 위반 행은 발견되지 않았다.
+- **구현 근거**: exact lowering은 `action.durableAnchor()`를 runtime key로 등록하고, `Dag`는 concrete planner key가 있으면 live anchor를 사용하지 않는다. Runtime은 그 key의 worker/range/FType를 복원한다. Owner는 graph authority·수명 조건이고 action key가 실제 배치의 권한이다. Seed pool의 range를 출력 크기에 맞춰 투영하는 합법적 경우가 있어 owner와 output anchor의 전체 equality는 오히려 잘못된 제약이 된다.
+- **결론/한계**: 이 검사 코드는 base/main/ours가 동일하며 새 guard를 추가하지 않았다. Fixture 조사는 모든 DML에 대한 완전 증명은 아니다. 근거: `/home/mchoi/joint-main-integration-20261006/owner-pool-audit`.
+
+### 최종 재빌드 및 집중 Java 회귀 — 통과
+
+- `mvn -q -Dskip.format=true -DskipTests test-compile`로 최종 main/test 전체를 다시 컴파일했다(40.729초, exit 0).
+- 같은 소스의 43개 class를 다시 실행해 **351 PASS / 4 기존 제외 / 실패·오류 0**을 확인했다(355개 집계, 128.241초). 큰 그래프 증명 검사도 이 실행에 포함되어 종료했다.
+- Build와 regression의 전체 Java source manifest SHA256은 동일한 `e29c937a479ac13d4273326e9e9af1b777abb75e583c701134026a12ac5a7cdf`다. 명령·class별 개수·XML은 artifact root의 `final-build.json`, `final-regressions.json`, `final-regressions-reports/`에 보존한다.
+- Docker 첫 시도 `joint-main-20261006-final`은 DML 실행 전에 `/evidence/container-run.sh`를 찾지 못하여 종료했다. Runtime 성공/실패로 집계하지 않고 실행 경로의 mount 문제를 확인하여 다시 수행한다. 실패 결과와 `container.log`는 지우지 않는다.
+
+### Docker 임시 경로와 최종 비용 검사 — 해결
+
+- **원인/해결**: Docker daemon은 snap 경로 `/var/snap/docker/common/var-lib-docker`를 사용한다. `/tmp` staging 대신 저장소의 `target/joint-boundary-e2e-runtime`을 기본 경로로 사용하며 `--stage-root`로 명시할 수도 있다. 새 경로의 bind가 daemon에 보이고 입력 mount가 읽기 전용임을 확인했다. `exist_ok=False`를 유지하여 이전 실행 디렉터리와 섞지 않는다.
+- **파일/회귀**: `scripts/fedplanner/run_joint_boundary_e2e.py`, `scripts/fedplanner/tests/test_run_joint_boundary_e2e.py`. 기본 경로·override·기존 stage 재사용 거절을 포함한 Python **18/18 PASS**, Bash 문법 통과.
+- **최종 비용 회귀**: 최종 빌드에서도 반환 GET·응답 batch 3개 class **24/24 PASS**, C2W=3ms/W2C=7ms. 앞의 43개 class와 합쳐 **46개 class / 375 PASS / 4 기존 제외 / 실패·오류 0**이다. `final-cost-regressions.json`의 Java source manifest도 전체 빌드와 동일하다.
+- **재실행**: `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e --run-id joint-main-20261006-final-stagefix --timeout-seconds 1800`. 같은 최종 빌드를 새 stage에 고정했으며 class preflight 6개와 model proof 10개는 통과했다. 실제 12개 사례의 최종 결과는 완료 후 아래에 기록한다.

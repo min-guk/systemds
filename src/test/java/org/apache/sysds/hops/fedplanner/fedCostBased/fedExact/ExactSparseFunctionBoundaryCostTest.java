@@ -16,10 +16,10 @@ import org.apache.sysds.test.component.federated.placement.shadow.ProductionShad
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Exact planning treats a DML function input as an alias, never as a hidden GET. */
+/** Exact planning accepts LOCAL function input delivery only through an explicit selected transfer. */
 public class ExactSparseFunctionBoundaryCostTest {
 	@Test
-	public void exactModelRejectsFoutActualWithLocalFunctionBinding() throws Exception {
+	public void protectedFoutActualRejectsLocalFunctionInputTransfer() throws Exception {
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
 			.bindAtFinalHopBoundary(compile());
 		var input = analysis.logicalFunctionInputsInCanonicalOrder().stream()
@@ -29,17 +29,17 @@ public class ExactSparseFunctionBoundaryCostTest {
 		var source = analysis.graph().node(input.sourceArgument()).orElseThrow();
 		var boundary = analysis.graph().node(input.boundary()).orElseThrow();
 		var formal = analysis.graph().node(input.targetRead()).orElseThrow();
-		var alias = analysis.graph().constraints().stream()
-			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
+		var transfer = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.FUNCTION_INPUT_TRANSFER)
 			.filter(constraint -> constraint.left() == source.key()
 				&& constraint.right() == boundary.key())
 			.findFirst().orElseThrow();
-		Assert.assertNotNull(alias);
+		Assert.assertNotNull(transfer);
 		Assert.assertTrue("fixture must retain the federated actual",
 			source.legalAlternatives().stream().anyMatch(state -> state.output() == FederatedOutput.FOUT));
-		Assert.assertTrue("candidate closure must remove the old hidden function-boundary GET",
+		Assert.assertTrue("privacy closure must remove the explicit LOCAL transfer candidate",
 			boundary.legalAlternatives().stream().noneMatch(state -> state.output() == FederatedOutput.LOUT));
-		Assert.assertTrue("the formal read must inherit the alias-only FOUT domain",
+		Assert.assertTrue("the protected formal read must retain only FOUT identity delivery",
 			formal.legalAlternatives().stream().noneMatch(state -> state.output() == FederatedOutput.LOUT));
 	}
 

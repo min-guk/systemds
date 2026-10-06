@@ -3165,6 +3165,10 @@ final class NativePlacementContinuity {
 			return data.getOp() == OpOpData.FEDERATED || data.getOp() == OpOpData.TRANSIENTREAD
 				|| data.getOp() == OpOpData.TRANSIENTWRITE;
 		if(hop instanceof UnaryOp unary && unary.getInput().size() == 1) {
+			if(unary.getOp() == OpOp1._PLACEMENT)
+				return fact.key().orderedInputs().size() == 1
+					&& fact.key().orderedInputs().get(0).present()
+					&& fact.key().orderedInputs().get(0).fType() == witness.fType;
 			if(unary.getOp() == OpOp1.CAST_AS_FRAME && unary.getDataType().isFrame()
 				&& unary.getInput(0).getDataType().isMatrix())
 				return true;
@@ -3376,7 +3380,8 @@ final class NativePlacementContinuity {
 			return aggregate.getInput().size() == 1;
 		if(hop instanceof UnaryOp unary)
 			return unary.getInput().size() == 1 && unary.getInput(0).getDataType().isMatrix()
-				&& NATIVE_UNARY_ELEMWISE_OPCODES.contains(unary.getOp().toString());
+				&& (unary.getOp() == OpOp1._PLACEMENT
+					|| NATIVE_UNARY_ELEMWISE_OPCODES.contains(unary.getOp().toString()));
 		if(hop instanceof BinaryOp binary)
 			return binary.getInput().stream().filter(NativePlacementContinuity::isPlacementData).count() == 1;
 		if(hop instanceof DataOp data)

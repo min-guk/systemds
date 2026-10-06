@@ -16,6 +16,11 @@ if [[ "${1:-}" == "--function-boundary-compare" ]]; then
     exec python3 "$(dirname "$0")/check_function_boundary_plans.py" "$@"
 fi
 
+if [[ "${1:-}" == "--joint-boundary-e2e" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_joint_boundary_e2e.py" "$@"
+fi
+
 if [[ "${1:-}" == "--campaign" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_matrix_campaign.py" "$@"

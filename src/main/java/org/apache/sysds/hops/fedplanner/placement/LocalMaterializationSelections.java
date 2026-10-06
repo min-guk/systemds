@@ -471,6 +471,14 @@ public final class LocalMaterializationSelections {
 		if(selected != null && (selected.rule().parentOccurrence() != node.key()
 			|| !selected.emission().emissionState().placementState().equals(producer)))
 			throw new IllegalArgumentException("LOCAL provenance receipt belongs to a different producer");
+		if(selected != null && selected.realization().key().layoutKind()
+			== PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+			// The selected static relation owns every reaching map. The GET operates
+			// on the actual Data object, preserving the original object's map; no one
+			// durable anchor is claimed for mutually exclusive executions.
+			return "selected-value-map:" + node.valueVersion().normalizedSignature()
+				+ ":occurrence:" + node.key().normalizedSignature()
+				+ ":realization:" + selected.realization().key().normalizedSignature();
 		long compatible = node.anchors().stream().filter(anchor -> anchor.fType() == producer.fType()).count();
 		if(compatible <= 1 || selected == null)
 			return durableLocalProvenance(node, producer);

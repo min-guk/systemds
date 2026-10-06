@@ -132,6 +132,10 @@ public class UnaryOp extends MultiThreadedHop
 			Hop input = getInput().get(0);
 			Lop ret = null;
 			switch(_op){
+				case _PLACEMENT:
+					ret = new org.apache.sysds.lops.PlacementAlias(input.constructLops(),
+						getDataType(), getValueType(), optFindExecType());
+					break;
 				case COMPRESS:
 					ret = new Compression(input.constructLops(), getDataType(), getValueType(), optFindExecType(), 0, k);
 					break;
@@ -577,7 +581,8 @@ public class UnaryOp extends MultiThreadedHop
 			setDim1( input.getDim1() );
 			setDim2( input.getDim2() );
 			if( _op==OpOp1.ABS || _op==OpOp1.SQRT || _op==OpOp1.SPROP
-				|| _op==OpOp1.COMPRESS || _op==OpOp1.DECOMPRESS || _op==OpOp1.LOCAL) //sparsity preserving
+				|| _op==OpOp1.COMPRESS || _op==OpOp1.DECOMPRESS || _op==OpOp1.LOCAL
+				|| _op==OpOp1._PLACEMENT) //sparsity preserving
 			{
 				setNnz( input.getNnz() );
 			}

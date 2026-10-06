@@ -66,6 +66,8 @@ public final class NeutralPlacementGraph {
 		 * additionally retain their exact FederationMap layout.
 		 */
 		SAME_VALUE_PLACEMENT,
+		/** Identity or a planner-owned LOCAL action before the actual argument is bound. */
+		FUNCTION_INPUT_TRANSFER,
 		SAME_FTYPE,
 		DOMINATES,
 		CONJUNCTIVE,
@@ -598,6 +600,8 @@ public final class NeutralPlacementGraph {
 		Objects.requireNonNull(right, "right");
 		if(constraint.kind() == ConstraintKind.SAME_PLACEMENT)
 			return left.equals(right);
+		if(constraint.kind() == ConstraintKind.FUNCTION_INPUT_TRANSFER)
+			return FunctionInputTransfer.accepts(left, right);
 		if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
 			return left.output() == right.output()
 				&& (left.output()

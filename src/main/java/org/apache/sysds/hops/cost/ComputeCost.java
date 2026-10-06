@@ -67,6 +67,7 @@ public class ComputeCost {
 		double costs = 1;
 		if( currentHop instanceof UnaryOp) {
 			switch( ((UnaryOp)currentHop).getOp() ) {
+				case _PLACEMENT: return 0;
 				case ABS:
 				case ROUND:
 				case CEIL:

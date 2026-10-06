@@ -39,9 +39,11 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -49,7 +51,8 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 /** Exact, factorized native-pool support across compiler-declared function value boundaries. */
 public final class LogicalBoundaryRealizations {
 	public record Relation(CompiledHopKey source, CompiledHopKey target) { }
-	private record Option(CandidateRealizationReference reference, PlacementState state,
+	private record Option(CandidateRealizationReference reference,
+		CandidateEmissionRealization realization, CandidateRealizationSupportClause clause, PlacementState state,
 		DurableAnchorKey pool, boolean exactLayout) { }
 	private record SupportedPool(DurableAnchorKey pool, boolean exactLayout) { }
 	private final Map<CompiledHopKey,List<CompiledHopKey>> sources = new IdentityHashMap<>();
@@ -58,7 +61,7 @@ public final class LogicalBoundaryRealizations {
 	private final Map<CompiledHopKey,List<Option>> options = new IdentityHashMap<>();
 	private final List<Relation> relations;
 
-	/** Invocation-local incremental boundary closure over one immutable structural context. */
+	/** Invocation-local incremental closure; value-map carrier changes rebuild its source projection. */
 	static final class Session {
 		record ClosureResult(List<CandidateRuleFact> facts, Set<CompiledHopKey> changedOwners) { }
 		record Work(long topologyBuilds, long optionFactSlotsVisited, long boundaryFactSlotsVisited) {
@@ -69,7 +72,11 @@ public final class LogicalBoundaryRealizations {
 			}
 		}
 
-		private final LogicalBoundaryRealizations boundary;
+		private LogicalBoundaryRealizations boundary;
+		private final List<Node> nodes;
+		private final Collection<Constraint> constraints;
+		private final Map<CompiledHopKey,Hop> origins;
+		private Set<CompiledHopKey> valueMapCarriers;
 		private final Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<CompiledHopKey>> targetsBySource = new IdentityHashMap<>();
 		private final int factCount;
@@ -77,18 +84,20 @@ public final class LogicalBoundaryRealizations {
 		private boolean firstClose = true;
 		private long optionFactSlotsVisited;
 		private long boundaryFactSlotsVisited;
+		private long topologyBuilds = 1;
 
 		Session(List<Node> nodes, Collection<Constraint> constraints,
 			Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
+			this.nodes = nodes;
+			this.constraints = constraints;
+			this.origins = origins;
+			valueMapCarriers = valueMapCarriers(nodes, facts);
 			boundary = new LogicalBoundaryRealizations(nodes, constraints, origins, facts);
 			factCount = facts.size();
 			maxPasses = nodes.size();
 			for(int slot = 0; slot < facts.size(); slot++)
 				slots.computeIfAbsent(facts.get(slot).key().parentOccurrence(), ignored -> new ArrayList<>()).add(slot);
-			for(var entry : boundary.sources.entrySet())
-				for(CompiledHopKey source : entry.getValue())
-					targetsBySource.computeIfAbsent(source,
-						ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(entry.getKey());
+			indexTargets();
 			// The cold construction classifies every row once. Subsequent revisions
 			// count only explicitly changed owner slots below.
 			optionFactSlotsVisited = facts.size();
@@ -98,6 +107,15 @@ public final class LogicalBoundaryRealizations {
 			if(facts.size() != factCount)
 				throw new IllegalStateException("Logical boundary session changed candidate fact count");
 			List<CandidateRuleFact> input = facts;
+			Set<CompiledHopKey> revisedCarriers = valueMapCarriers(nodes, facts);
+			if(!revisedCarriers.equals(valueMapCarriers)) {
+				boundary = new LogicalBoundaryRealizations(nodes, constraints, origins, facts);
+				valueMapCarriers = revisedCarriers;
+				topologyBuilds++;
+				optionFactSlotsVisited += facts.size();
+				indexTargets();
+				firstClose = true;
+			}
 			for(CompiledHopKey owner : completeChangedOwners)
 				refreshOptions(owner, facts);
 			Set<CompiledHopKey> affected = firstClose
@@ -120,7 +138,15 @@ public final class LogicalBoundaryRealizations {
 		}
 
 		Work work() {
-			return new Work(1, optionFactSlotsVisited, boundaryFactSlotsVisited);
+			return new Work(topologyBuilds, optionFactSlotsVisited, boundaryFactSlotsVisited);
+		}
+
+		private void indexTargets() {
+			targetsBySource.clear();
+			for(var entry : boundary.sources.entrySet())
+				for(CompiledHopKey source : entry.getValue())
+					targetsBySource.computeIfAbsent(source,
+						ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(entry.getKey());
 		}
 
 		private void refreshOptions(CompiledHopKey owner, List<CandidateRuleFact> facts) {
@@ -175,6 +201,7 @@ public final class LogicalBoundaryRealizations {
 
 	LogicalBoundaryRealizations(List<Node> nodes, Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
+		Set<CompiledHopKey> valueMapCarriers = valueMapCarriers(nodes, facts);
 		Map<CompiledHopKey,Node> byKey = new IdentityHashMap<>();
 		nodes.forEach(node -> byKey.put(node.key(), node));
 		Map<CompiledHopKey,List<CompiledHopKey>> incoming = new IdentityHashMap<>();
@@ -190,8 +217,7 @@ public final class LogicalBoundaryRealizations {
 				&& (edge.evidence().startsWith("cfg-function-output-value:")
 					|| "function-formal-input".equals(edge.evidence()));
 			boolean argument = target != null && target.kind() == NodeKind.FUNCTION_INPUT
-				&& (edge.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
-						&& edge.evidence().startsWith("function-argument:")
+				&& (FunctionInputTransfer.isArgumentConstraint(edge)
 					|| edge.kind() == ConstraintKind.CONJUNCTIVE
 						&& edge.evidence().startsWith("inlined-function-argument:"));
 			boolean primary = edge.kind() == ConstraintKind.DOMINATES && edge.inputPosition() == 0
@@ -215,8 +241,18 @@ public final class LogicalBoundaryRealizations {
 		for(CompiledHopKey target : declared) {
 			Set<CompiledHopKey> leaves = new TreeSet<>();
 			boolean complete = true;
-			for(CompiledHopKey source : incoming.getOrDefault(target, List.of()))
-				complete &= collectSources(source, byKey, incoming, new HashSet<>(), leaves);
+			Node targetNode = byKey.get(target);
+			for(CompiledHopKey source : incoming.getOrDefault(target, List.of())) {
+				Node sourceNode = byKey.get(source);
+				if(targetNode != null && targetNode.kind() != NodeKind.FUNCTION_INPUT
+					&& targetNode.kind() != NodeKind.FUNCTION_OUTPUT && sourceNode != null
+					&& (sourceNode.kind() == NodeKind.FUNCTION_INPUT
+						|| sourceNode.kind() == NodeKind.FUNCTION_OUTPUT)
+					&& valueMapCarriers.contains(source))
+					leaves.add(source); // Preserve the call-site carrier before flattening its own map.
+				else
+					complete &= collectSources(source, byKey, incoming, new HashSet<>(), leaves);
+			}
 			if(complete && !leaves.isEmpty())
 				sources.put(target, List.copyOf(leaves));
 		}
@@ -240,6 +276,21 @@ public final class LogicalBoundaryRealizations {
 				.thenComparing(relation -> relation.source().normalizedSignature())).toList();
 	}
 
+	private static Set<CompiledHopKey> valueMapCarriers(List<Node> nodes, List<CandidateRuleFact> facts) {
+		Set<CompiledHopKey> carriers = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Node node : nodes)
+			if(node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT)
+				carriers.add(node.key());
+		Set<CompiledHopKey> result = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CandidateRuleFact fact : facts)
+			if(carriers.contains(fact.key().parentOccurrence())
+				&& fact.status() == CandidateEvaluationStatus.AVAILABLE
+				&& fact.allowedEmissionFacts().stream().flatMap(emission -> emission.realizations().stream())
+					.anyMatch(realization -> realization.key().layoutKind() == PlacementLayoutKind.VALUE_MAP))
+				result.add(fact.key().parentOccurrence());
+		return result;
+	}
+
 	private static void addOptions(List<Option> result, CandidateRuleFact fact) {
 		if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
 			return;
@@ -248,10 +299,11 @@ public final class LogicalBoundaryRealizations {
 				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 					PlacementState state = realization.key().emissionState().placementState();
 					DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
-					if(state.output() == FederatedOutput.FOUT && pool == null)
+					if(state.output() == FederatedOutput.FOUT && pool == null
+						&& realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP)
 						continue; // Staging lineage is not native execution authority.
-					result.add(new Option(CandidateRealizationReference.of(fact.key(), realization), state,
-						pool, realization.nativeWorkerPoolLayoutExactForOwnedClause(clause)));
+					result.add(new Option(CandidateRealizationReference.of(fact.key(), realization), realization, clause,
+						state, pool, realization.nativeWorkerPoolLayoutExactForOwnedClause(clause)));
 				}
 	}
 
@@ -387,6 +439,10 @@ public final class LogicalBoundaryRealizations {
 						: CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
 							lineage, pool, List.of(proof), List.of()));
 				}
+				CandidateEmissionRealization valueMap = valueMapRealization(target, emission.emissionState(),
+					state.fType());
+				if(valueMap != null)
+					realizations.add(valueMap);
 				// No pool is a staging result, not permission to use an arbitrary anchor.
 				emissions.add(realizations.isEmpty()
 					? new CandidateEmissionFact(emission.emissionState(), emission.executionFType())
@@ -396,13 +452,84 @@ public final class LogicalBoundaryRealizations {
 			fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode());
 	}
 
+	private CandidateEmissionRealization valueMapRealization(CompiledHopKey target,
+		PlacementEmissionState emission, FType type) {
+		if(type == null || type == FType.PART || type == FType.OTHER || sources(target).isEmpty())
+			return null;
+		List<List<Option>> choices = new ArrayList<>();
+		for(CompiledHopKey source : sources(target)) {
+			List<Option> candidates = options.getOrDefault(source, List.of()).stream()
+				.filter(option -> option.state().output() == FederatedOutput.FOUT
+					&& option.state().fType() == type
+					&& (option.realization().key().layoutKind() == PlacementLayoutKind.VALUE_MAP
+						|| option.pool() != null && option.exactLayout()))
+				.toList();
+			// A binding selects a source realization; its clause remains that source
+			// decision's choice. Do not duplicate products for identical references.
+			Map<CandidateRealizationReference,Option> unique = new java.util.LinkedHashMap<>();
+			for(Option candidate : candidates)
+				unique.putIfAbsent(candidate.reference(), candidate);
+			List<Option> exact = List.copyOf(unique.values());
+			if(exact.isEmpty())
+				return null;
+			choices.add(exact);
+		}
+		List<List<Option>> products = new ArrayList<>();
+		enumerateOptions(choices, 0, new ArrayList<>(), products);
+		List<CandidateRealizationSupportClause> clauses = new ArrayList<>(products.size());
+		for(List<Option> product : products) {
+			// A shared fixed map already has a native realization. Retain every
+			// heterogeneous product even if another product has a common map.
+			DurableAnchorKey first = product.get(0).pool();
+			if(first != null && product.stream().allMatch(option -> option.pool() != null
+				&& PlacementIdentity.samePhysicalWorkerPool(first, option.pool())))
+				continue;
+			List<CandidateRealizationInputBinding> bindings = new ArrayList<>(product.size());
+			for(int position = 0; position < product.size(); position++)
+				bindings.add(CandidateRealizationInputBinding.logicalTransient(0,
+					product.get(position).reference()));
+			clauses.add(new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+				PlacementProofKind.CONTROL_FLOW, target, "logical-boundary-value-map")), bindings));
+		}
+		if(clauses.isEmpty())
+			return null;
+		return CandidateEmissionRealization.valueMap(emission,
+			"logical-boundary-map:" + target.normalizedSignature(), clauses);
+	}
+
+	private static void enumerateOptions(List<List<Option>> choices, int source,
+		List<Option> product, List<List<Option>> products) {
+		if(source == choices.size()) {
+			products.add(List.copyOf(product));
+			return;
+		}
+		for(Option option : choices.get(source)) {
+			product.add(option);
+			enumerateOptions(choices, source + 1, product, products);
+			product.remove(product.size() - 1);
+		}
+	}
+
 	void validate(List<CandidateRuleFact> facts) {
 		for(CandidateRuleFact fact : facts)
 			if(declared.contains(fact.key().parentOccurrence()) && fact.status() == CandidateEvaluationStatus.AVAILABLE)
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 					if(requiresNativeBoundaryProof(emission.emissionState()) && emission.derivedFoutAction() == null)
 						for(CandidateEmissionRealization realization : emission.realizations())
-							for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+							if(realization.key().layoutKind() == PlacementLayoutKind.VALUE_MAP) {
+								Set<CompiledHopKey> bound = Collections.newSetFromMap(new IdentityHashMap<>());
+								for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+									if(binding.kind() != PlacementIdentity.CandidateInputBindingKind.LOGICAL_TRANSIENT)
+										throw new IllegalArgumentException("Function value-map binding is not logical");
+									bound.add(binding.source().rule().parentOccurrence());
+								}
+								if(!hasCompleteBoundary(fact.key().parentOccurrence())
+									|| !bound.containsAll(sources(fact.key().parentOccurrence())))
+									throw new IllegalArgumentException("Function value-map lacks all-source support: "
+										+ fact.key().normalizedSignature());
+								continue;
+							}
 								DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
 								boolean exactLayout = realization.nativeWorkerPoolLayoutExactForOwnedClause(clause);
 								if(pool == null || !hasCompleteBoundary(fact.key().parentOccurrence())
@@ -431,6 +558,11 @@ public final class LogicalBoundaryRealizations {
 			return false;
 		if(!requiresNativeBoundaryProof(target.key().emissionState()))
 			return true;
+		if(target.key().layoutKind() == PlacementLayoutKind.VALUE_MAP)
+			return target.key().emissionState().placementState().fType()
+				== source.key().emissionState().placementState().fType()
+				&& targetClause.inputBindings().stream()
+					.anyMatch(binding -> binding.source().realization().equals(source.key()));
 		DurableAnchorKey targetPool = target.nativeWorkerPoolResidencyWitness(targetClause);
 		DurableAnchorKey sourcePool = source.nativeWorkerPoolResidencyWitness(sourceClause);
 		return targetPool != null && sourcePool != null
@@ -453,9 +585,12 @@ public final class LogicalBoundaryRealizations {
 			if(targets.stream().anyMatch(option -> !requiresNativeBoundaryProof(option.reference().realization().emissionState())))
 				continue; // Existing value/call-boundary constraints still own local legality.
 			List<Option> inputs = possible(relation.source(), assignment, selected, remaining);
-			if(targets.stream().noneMatch(target -> target.pool() != null && inputs.stream().anyMatch(source ->
-				source.pool() != null && compatiblePools(target.pool(), target.exactLayout(),
-					source.pool(), source.exactLayout()))))
+			if(targets.stream().noneMatch(target -> inputs.stream().anyMatch(source ->
+				target.realization().key().layoutKind() == PlacementLayoutKind.VALUE_MAP
+					? target.clause().requiredInputSupport().contains(source.reference())
+					: target.pool() != null && source.pool() != null
+						&& compatiblePools(target.pool(), target.exactLayout(),
+							source.pool(), source.exactLayout()))))
 				return false;
 		}
 		return true;
@@ -467,7 +602,7 @@ public final class LogicalBoundaryRealizations {
 		CandidateSelectionReceipt receipt = selected.get(key);
 		if(receipt != null)
 			return List.of(new Option(CandidateRealizationReference.of(receipt.rule(), receipt.realization()),
-				receipt.realization().key().emissionState().placementState(),
+				receipt.realization(), receipt.supportClause(), receipt.realization().key().emissionState().placementState(),
 				receipt.realization().nativeWorkerPoolResidencyWitness(receipt.supportClause()),
 				receipt.realization().nativeWorkerPoolLayoutExact(receipt.supportClause())));
 		PlacementState state = assignment.get(key);

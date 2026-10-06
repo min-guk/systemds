@@ -18,6 +18,7 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -479,11 +480,13 @@ public final class PlannerCandidateSpaceAudit {
 		try {
 			synchronized(WRITE_LOCK) {
 				Files.createDirectories(directory);
-				StringBuilder jsonl = new StringBuilder();
-				for(Map<String,Object> row : rows)
-					jsonl.append(MAPPER.writeValueAsString(row)).append('\n');
-				Files.writeString(output, jsonl, StandardCharsets.UTF_8,
-					StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+				try(BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8,
+					StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+					for(Map<String,Object> row : rows) {
+						writer.write(MAPPER.writeValueAsString(row));
+						writer.newLine();
+					}
+				}
 			}
 		}
 		catch(IOException ex) {

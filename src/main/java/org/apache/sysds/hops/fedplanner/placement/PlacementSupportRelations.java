@@ -803,6 +803,8 @@ final class PlacementSupportRelations {
 			case DURABLE_MAP -> PlacementIdentity.PlacementRealizationKey.durable(emission, realization.anchor());
 			case NATIVE_LINEAGE -> PlacementIdentity.PlacementRealizationKey.nativeLineage(
 				emission, realization.key().nativeLineage());
+			case VALUE_MAP -> PlacementIdentity.PlacementRealizationKey.valueMap(
+				emission, realization.key().nativeLineage());
 		};
 		return CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
 			key, realization.supportClauses());

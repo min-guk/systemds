@@ -1461,4 +1461,57 @@ public class PlannerRuntimePlacementAuditTest {
 
 		@Override public void processInstruction(ExecutionContext ec) { }
 	}
+
+	@Test
+	public void placementAliasControlPreservesFederatedValueAndRejectsLocalReplacement() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(planWithName(451, "alias-sig",
+			"_placement", "aliasTarget", FED_FOUT, FED_FOUT, true, NodeKind.OPERATION)));
+		Instruction copy = VariableCPInstruction.prepareCopyInstruction("source", "aliasTarget");
+		copy.setPlannerOriginHopID(451);
+		copy.setPlannerRecompileSignature("alias-sig");
+		PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(copy)));
+		PlannerRuntimePlacementAudit.validateExecution(copy);
+		ExecutionContext ec = org.apache.sysds.runtime.controlprogram.context.ExecutionContextFactory.createContext();
+		var value = new org.apache.sysds.runtime.controlprogram.caching.MatrixObject(ValueType.FP64, "alias-value");
+		value.setFedMapping(new org.apache.sysds.runtime.controlprogram.federated.FederationMap(1,
+			List.of(), org.apache.sysds.hops.fedplanner.FTypes.FType.ROW));
+		ec.setVariable("aliasTarget", value);
+		PlannerRuntimePlacementAudit.recordSuccessfulExecution(copy, ec);
+		ec.setVariable("aliasTarget", new org.apache.sysds.runtime.instructions.cp.DoubleObject(1));
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.recordSuccessfulExecution(copy, ec));
+		assertTrue(failure.getMessage().contains("RUNTIME_VALUE_MISMATCH"));
+	}
+
+	@Test
+	public void placementAliasControlRejectsAnUnrelatedDestination() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(planWithName(452, "alias-destination",
+			"_placement", "aliasTarget", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION)));
+		Instruction move = VariableCPInstruction.prepMoveInstruction("source", "wrongTarget");
+		move.setPlannerOriginHopID(452);
+		move.setPlannerRecompileSignature("alias-destination");
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+			() -> PlannerRuntimePlacementAudit.verifyLowering(List.of(), new ArrayList<>(List.of(move))));
+		assertTrue(failure.getMessage().contains("LOWERING_VALUE_NAME_MISMATCH"));
+	}
+
+	@Test
+	public void recompiledPlacementAliasUsesItsExactFreshLopTemporary() {
+		PlannerRuntimePlacementAudit.installForTesting(List.of(planWithName(453, "alias-recompile",
+			"_placement", "originalTemporary", CP_LOUT, CP_LOUT, true, NodeKind.OPERATION)));
+		for(String destination : List.of("_mVar36", "_mVar312")) {
+			DataOp input = new DataOp("Y", DataType.MATRIX, ValueType.FP64,
+				org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD, null, 2, 2, 4, 1000);
+			var alias = new org.apache.sysds.lops.PlacementAlias(input.constructLops(),
+				DataType.MATRIX, ValueType.FP64, ExecType.CP);
+			alias.setHopID(453);
+			alias.setPlannerOriginHopID(453);
+			alias.setPlannerRecompileSignature("alias-recompile");
+			alias.getOutputParameters().setLabel(destination);
+			Instruction move = VariableCPInstruction.prepMoveInstruction("Y", destination);
+			move.setLocation(alias);
+			PlannerRuntimePlacementAudit.verifyLowering(List.of(), List.of(alias), new ArrayList<>(List.of(move)));
+			PlannerRuntimePlacementAudit.validateExecution(move);
+		}
+	}
 }

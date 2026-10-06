@@ -961,7 +961,8 @@ public final class PlacementCostSemantics {
 		boolean removedKernel = removed.contains(key);
 		boolean metadata = hop instanceof DataOp && (((DataOp)hop).getOp() == OpOpData.TRANSIENTREAD
 			|| ((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE);
-		boolean zeroExecution = analysis.isDmlFunctionCallBoundary(key) || removedKernel || metadata;
+		boolean zeroExecution = analysis.isDmlFunctionCallBoundary(key) || removedKernel || metadata
+			|| BranchPlacementNormalization.isPlacementAlias(hop);
 		RuntimeWdivmmKernel runtimeWdivmm = zeroExecution ? null
 			: runtimeWdivmmKernel(analysis, sparseAssignments, key, hop, inputs);
 		if(runtimeWdivmm != null && runtimeWdivmm.fusedWeights() != null)

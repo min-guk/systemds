@@ -51,6 +51,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.lops.MMTSJ.MMTSJType;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
@@ -62,8 +63,11 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
  * remain independent requirements.
  */
 final class SinglePartitionFacts {
-	// Finite lattice: absent = bottom, one endpoint = exact, empty = unknown.
+	// Finite lattice: absent = bottom, one endpoint = exact, varying single =
+	// one partition on every execution, empty = unknown cardinality. The varying
+	// state deliberately grants no worker-alignment authority.
 	private static final String UNKNOWN = "";
+	private static final String VARYING_SINGLE = "<single-partition:execution-dependent-worker>";
 	private final Map<Hop,String> endpoints;
 	private final Map<CompiledHopKey,String> occurrenceEndpoints;
 
@@ -152,6 +156,7 @@ final class SinglePartitionFacts {
 		Map<CompiledHopKey,List<CompiledHopKey>> dependencies = new java.util.LinkedHashMap<>();
 		Set<CompiledHopKey> conditional = new java.util.LinkedHashSet<>();
 		Set<CompiledHopKey> leftIndexes = new java.util.LinkedHashSet<>();
+		Set<CompiledHopKey> alternativeValues = new java.util.LinkedHashSet<>();
 		Map<CompiledHopKey,Integer> rmemptyTargets = new java.util.LinkedHashMap<>();
 		Set<CompiledHopKey> owned = new java.util.LinkedHashSet<>();
 		for(Node node : nodes) {
@@ -219,9 +224,11 @@ final class SinglePartitionFacts {
 			// ground synthetic boundaries and TReads. Missing/conflicting sources still
 			// close to UNKNOWN below.
 			facts.remove(constraint.right());
+			alternativeValues.add(constraint.right());
 			dependencies.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
 				.add(constraint.left());
 			if(constraint.kind() == ConstraintKind.SAME_ORIGIN) {
+				alternativeValues.add(constraint.left());
 				dependencies.computeIfAbsent(constraint.left(), ignored -> new ArrayList<>())
 					.add(constraint.right());
 			}
@@ -230,10 +237,10 @@ final class SinglePartitionFacts {
 			if(!owned.contains(entry.getKey()) || entry.getValue().isEmpty()
 				|| entry.getValue().stream().anyMatch(source -> !owned.contains(source)))
 				facts.put(entry.getKey(), UNKNOWN);
-		closeOccurrences(facts, dependencies, conditional, leftIndexes);
+		closeOccurrences(facts, dependencies, conditional, leftIndexes, alternativeValues);
 		for(CompiledHopKey key : owned)
 			facts.putIfAbsent(key, UNKNOWN);
-		closeOccurrences(facts, dependencies, conditional, leftIndexes);
+		closeOccurrences(facts, dependencies, conditional, leftIndexes, alternativeValues);
 		return new SinglePartitionFacts(endpoints, facts);
 	}
 
@@ -265,6 +272,7 @@ final class SinglePartitionFacts {
 	}
 
 	Optional<Boolean> fullInputHint(Hop hop, List<CompiledHopKey> inputOccurrences,
+		List<DurableAnchorKey> inputAnchors, List<Optional<Boolean>> exactCandidateSinglePartitions,
 		List<FType> inputs) {
 		if(occurrenceEndpoints.isEmpty())
 			return fullInputHint(hop, inputs);
@@ -276,7 +284,24 @@ final class SinglePartitionFacts {
 			if(position >= inputOccurrences.size())
 				return Optional.empty();
 			CompiledHopKey source = inputOccurrences.get(position);
-			if(source == null || occurrenceEndpoints.getOrDefault(source, UNKNOWN).isEmpty())
+			boolean structuralSingle = source != null
+				&& !occurrenceEndpoints.getOrDefault(source, UNKNOWN).isEmpty();
+			DurableAnchorKey exactCandidateAnchor = position < inputAnchors.size()
+				? inputAnchors.get(position) : null;
+			boolean candidateSingle = exactCandidateAnchor != null
+				&& exactCandidateAnchor.fType() == FType.FULL
+				&& exactCandidateAnchor.partitions().size() == 1;
+			Optional<Boolean> candidateProof = position < exactCandidateSinglePartitions.size()
+				? exactCandidateSinglePartitions.get(position) : Optional.empty();
+			if(Boolean.FALSE.equals(candidateProof.orElse(null)))
+				return Optional.empty();
+			candidateSingle |= candidateProof.orElse(false);
+			// A branch-join value can be structurally UNKNOWN because one arm is local,
+			// while its selected FOUT receipt is an explicit upload to one exact durable
+			// partition. The consumer oracle needs the cardinality of that selected
+			// receipt, not the union of all branch representations. Candidate replay
+			// supplies this authority only after checking every executable FOUT realization.
+			if(!structuralSingle && !candidateSingle)
 				return Optional.empty();
 		}
 		return sawFull ? Optional.of(true) : Optional.empty();
@@ -388,14 +413,19 @@ final class SinglePartitionFacts {
 			// IdentityHashMap traversal order. Facts only widen in the finite lattice.
 			Map<Hop,String> previous = new IdentityHashMap<>(facts);
 			for(var entry : dependencies.entrySet()) {
-				String next = previous.get(entry.getKey());
+				String derived = null;
 				if(entry.getKey() instanceof LeftIndexingOp update && update.getInput(1).getDataType().isMatrix())
-					next = join(next, fullLeftIndexTransfer(update, previous));
+					derived = fullLeftIndexTransfer(update, previous);
 				else if(conditionalFullResultTransfers.contains(entry.getKey()))
-					next = join(next, fullResultTransfer(entry.getValue(), previous));
-				else
+					derived = fullResultTransfer(entry.getValue(), previous);
+				else {
+					boolean alternatives = entry.getKey() instanceof DataOp data
+						&& data.getOp() == OpOpData.TRANSIENTREAD;
 					for(Hop source : entry.getValue())
-						next = join(next, previous.get(source));
+						derived = alternatives ? joinAlternatives(derived, previous.get(source))
+							: join(derived, previous.get(source));
+				}
+				String next = joinAlternatives(previous.get(entry.getKey()), derived);
 				if(next != null && !next.equals(previous.get(entry.getKey()))) {
 					facts.put(entry.getKey(), next);
 					changed = true;
@@ -441,20 +471,23 @@ final class SinglePartitionFacts {
 
 	private static void closeOccurrences(Map<CompiledHopKey,String> facts,
 		Map<CompiledHopKey,List<CompiledHopKey>> dependencies, Set<CompiledHopKey> conditional,
-		Set<CompiledHopKey> leftIndexes) {
+		Set<CompiledHopKey> leftIndexes, Set<CompiledHopKey> alternativeValues) {
 		boolean changed;
 		do {
 			changed = false;
 			Map<CompiledHopKey,String> previous = new java.util.LinkedHashMap<>(facts);
 			for(var entry : dependencies.entrySet()) {
-				String next = previous.get(entry.getKey());
+				String derived = null;
 				if(leftIndexes.contains(entry.getKey()))
-					next = join(next, fullLeftIndexTransferKeys(entry.getValue(), previous));
+					derived = fullLeftIndexTransferKeys(entry.getValue(), previous);
 				else if(conditional.contains(entry.getKey()))
-					next = join(next, fullResultTransferKeys(entry.getValue(), previous));
+					derived = fullResultTransferKeys(entry.getValue(), previous);
 				else
 					for(CompiledHopKey source : entry.getValue())
-						next = join(next, previous.get(source));
+						derived = alternativeValues.contains(entry.getKey())
+							? joinAlternatives(derived, previous.get(source))
+							: join(derived, previous.get(source));
+				String next = joinAlternatives(previous.get(entry.getKey()), derived);
 				if(next != null && !next.equals(previous.get(entry.getKey()))) {
 					facts.put(entry.getKey(), next);
 					changed = true;
@@ -491,6 +524,17 @@ final class SinglePartitionFacts {
 	private static String join(String left, String right) {
 		if(left == null) return right;
 		if(right == null) return left;
+		if(left.isEmpty() || right.isEmpty()) return UNKNOWN;
+		// Execution-dependent maps are aligned by the physical joint-input proof.
+		// A legal map-copying kernel still produces one partition on each row.
+		if(VARYING_SINGLE.equals(left) || VARYING_SINGLE.equals(right)) return VARYING_SINGLE;
 		return left.equals(right) ? left : UNKNOWN;
+	}
+
+	private static String joinAlternatives(String left, String right) {
+		if(left == null) return right;
+		if(right == null) return left;
+		if(left.isEmpty() || right.isEmpty()) return UNKNOWN;
+		return left.equals(right) ? left : VARYING_SINGLE;
 	}
 }

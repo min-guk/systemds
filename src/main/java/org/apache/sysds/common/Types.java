@@ -556,6 +556,7 @@ public interface Types {
 		
 		COMPRESS, DECOMPRESS,
 		LOCAL, // instruction to pull data back from spark forcefully and return a CP matrix.
+		_PLACEMENT, // compiler-owned alias; selected input transfers are lowered separately
 
 		//low-level operators //TODO used?
 		MULT2, MINUS1_MULT, MINUS_RIGHT, 

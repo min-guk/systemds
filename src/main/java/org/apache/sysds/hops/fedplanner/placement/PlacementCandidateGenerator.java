@@ -126,7 +126,8 @@ final class PlacementCandidateGenerator {
 		List<NodeShapeFact> inputShapeFacts, List<List<FType>> inputDomains,
 		List<CandidateRuleKey> ruleKeys, List<CandidateRuleFact> ruleFacts) {
 		return buildNode(hop, key, value, anchors, inputAnchors, inputAnchorOwners, shape,
-			abstractShape, singlePartitions, inputShapeFacts, inputDomains, ruleKeys, ruleFacts, null);
+			abstractShape, singlePartitions, List.of(), inputShapeFacts, inputDomains,
+			ruleKeys, ruleFacts, null);
 	}
 
 	Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
@@ -134,6 +135,18 @@ final class PlacementCandidateGenerator {
 		NodeShapeFact shape, AbstractShapeFact abstractShape, SinglePartitionFacts singlePartitions,
 		List<NodeShapeFact> inputShapeFacts, List<List<FType>> inputDomains,
 		List<CandidateRuleKey> ruleKeys, List<CandidateRuleFact> ruleFacts, GenerationPrivacy privacy) {
+		return buildNode(hop, key, value, anchors, inputAnchors, inputAnchorOwners, shape,
+			abstractShape, singlePartitions, List.of(), inputShapeFacts, inputDomains,
+			ruleKeys, ruleFacts, privacy);
+	}
+
+	Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
+		List<DurableAnchorKey> inputAnchors, List<CompiledHopKey> inputAnchorOwners,
+		NodeShapeFact shape, AbstractShapeFact abstractShape, SinglePartitionFacts singlePartitions,
+		List<Optional<Boolean>> exactCandidateSinglePartitions,
+		List<NodeShapeFact> inputShapeFacts,
+		List<List<FType>> inputDomains, List<CandidateRuleKey> ruleKeys,
+		List<CandidateRuleFact> ruleFacts, GenerationPrivacy privacy) {
 		int candidateFactStart = ruleFacts.size();
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
@@ -176,7 +189,8 @@ final class PlacementCandidateGenerator {
 					complexityMetrics.recordCandidateOracleCall();
 				evidence = preparedOracle.decideWithEvidence(inputs,
 					exactShapeHint(hop, shape, inputShapeFacts,
-						singlePartitions.fullInputHint(hop, inputAnchorOwners, inputs)));
+						singlePartitions.fullInputHint(hop, inputAnchorOwners, inputAnchors,
+							exactCandidateSinglePartitions, inputs)));
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
 			}
