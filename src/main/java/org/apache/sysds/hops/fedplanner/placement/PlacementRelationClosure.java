@@ -50,6 +50,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder.P
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder.FixedPointObserver;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder.FixedPointPass;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -6661,22 +6662,54 @@ final class PlacementRelationClosure {
 		Map<CandidateRealizationReference,SinglePartitionPossibilities> states = new HashMap<>();
 		realizations.keySet().forEach(reference -> states.put(reference,
 			new SinglePartitionPossibilities(false, false, false)));
-		boolean changed;
-		do {
-			changed = false;
-			Map<CandidateRealizationReference,SinglePartitionPossibilities> previous =
-				new HashMap<>(states);
-			for(Map.Entry<CandidateRealizationReference,CandidateEmissionRealization> entry
-				: realizations.entrySet()) {
-				SinglePartitionPossibilities next = singlePartitionPossibilities(
-					entry.getValue(), previous, realizations.keySet());
-				if(!next.equals(states.get(entry.getKey()))) {
-					states.put(entry.getKey(), next);
-					changed = true;
+		List<Map.Entry<CandidateRealizationReference,CandidateEmissionRealization>> entries =
+			new ArrayList<>(realizations.entrySet());
+		Map<CandidateRealizationReference,Integer> ordinals = new HashMap<>();
+		List<List<Integer>> dependents = new ArrayList<>();
+		ArrayDeque<Integer> pending = new ArrayDeque<>();
+		boolean[] queued = new boolean[entries.size()];
+		for(int ordinal = 0; ordinal < entries.size(); ordinal++) {
+			ordinals.put(entries.get(ordinal).getKey(), ordinal);
+			dependents.add(new ArrayList<>());
+			pending.addLast(ordinal);
+			queued[ordinal] = true;
+		}
+		for(int ordinal = 0; ordinal < entries.size(); ordinal++) {
+			CandidateEmissionRealization realization = entries.get(ordinal).getValue();
+			if(realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP)
+				continue;
+			Set<Integer> sources = new HashSet<>();
+			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+				if(realization.nativeWorkerPoolResidencyForOwnedClause(clause) != null)
+					continue;
+				for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+					if(binding.kind() == CandidateInputBindingKind.RELOCATION)
+						continue;
+					Integer source = ordinals.get(binding.source());
+					if(source != null)
+						sources.add(source);
 				}
 			}
+			for(int source : sources)
+				dependents.get(source).add(ordinal);
 		}
-		while(changed);
+		// The inventory is immutable here. Each of the three possibility bits grows
+		// monotonically, so only a changed source can enable another transfer step.
+		while(!pending.isEmpty()) {
+			int ordinal = pending.removeFirst();
+			queued[ordinal] = false;
+			Map.Entry<CandidateRealizationReference,CandidateEmissionRealization> entry = entries.get(ordinal);
+			SinglePartitionPossibilities next = singlePartitionPossibilities(
+				entry.getValue(), states, realizations.keySet());
+			if(next.equals(states.get(entry.getKey())))
+				continue;
+			states.put(entry.getKey(), next);
+			for(int dependent : dependents.get(ordinal))
+				if(!queued[dependent]) {
+					pending.addLast(dependent);
+					queued[dependent] = true;
+				}
+		}
 		Map<CandidateRealizationReference,SinglePartitionRealizationProof> result = new HashMap<>();
 		states.forEach((reference, state) -> result.put(reference,
 			state.nonSingle() ? SinglePartitionRealizationProof.NON_SINGLE

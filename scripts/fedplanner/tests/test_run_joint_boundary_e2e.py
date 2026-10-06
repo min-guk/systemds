@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE = Path(__file__).resolve().parents[1] / "run_joint_boundary_e2e.py"
@@ -456,6 +457,90 @@ class JointBoundaryE2ETest(unittest.TestCase):
             script = runner.write_container_script(
                 root, selected=(runner.cases()[0],), debug_fedreq=True).read_text()
         self.assertIn("JAVA_TOOL_OPTIONS=-Dsysds.debug.fedreq=true", script)
+
+    def test_jfr_profile_is_opt_in_and_fed_coordinator_only(self):
+        case = next(case for case in runner.cases() if case.name == "ml_logreg")
+        self.assertTrue(runner.parse_args(["--profile-jfr"]).profile_jfr)
+        cp_command = runner.java_command(case, "cp", 120, profile_jfr=True)
+        fed_command = runner.java_command(case, "fed", 120, profile_jfr=True)
+        self.assertNotIn("FlightRecorder", cp_command)
+        self.assertIn("-XX:FlightRecorderOptions=stackdepth=256", fed_command)
+        self.assertIn("settings=profile,disk=true,dumponexit=true,duration=119s", fed_command)
+        self.assertIn(f"filename=/evidence/cases/{case.name}/fed.jfr", fed_command)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = runner.write_container_script(
+                root, case_timeout_seconds=120, selected=(case,),
+                profile_jfr=True).read_text()
+        worker_lines = [line for line in script.splitlines() if " -w 1300" in line]
+        self.assertEqual(3, len(worker_lines))
+        self.assertTrue(all("FlightRecorder" not in line for line in worker_lines))
+        self.assertEqual(1, script.count("StartFlightRecording"))
+        manifest = runner.jfr_profile_manifest((case,), True, 120)
+        self.assertTrue(manifest["recordProfile"])
+        self.assertEqual("fed-coordinator-only", manifest["scope"])
+        self.assertEqual(256, manifest["stackDepth"])
+        self.assertEqual("cases/ml_logreg/fed.jfr", manifest["files"]["ml_logreg"]["path"])
+
+    def test_enabled_jfr_profile_requires_nonempty_dump(self):
+        case = next(case for case in runner.cases() if case.name == "ml_logreg")
+        fingerprint = ("JOINT_E2E_SUM=1\nJOINT_E2E_NORM2=1\n"
+                       "JOINT_E2E_ROWS=8\nJOINT_E2E_COLS=1\n")
+        trace = ("[PlannerTrace][DP-IncrementalRegional] phase=INITIAL_BOUND merges=0 "
+                 "lower=1 upper=2 dpNanos=10 plannerElapsedNanos=20\n"
+                 "[PlannerTrace][DP-IncrementalRegional] phase=EXACT merges=1 "
+                 "lower=1 upper=1 dpNanos=30 plannerElapsedNanos=40\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / case.name
+            case_dir.mkdir(parents=True)
+            for mode in ("cp", "fed"):
+                (case_dir / f"{mode}.rc").write_text("0\n")
+                (case_dir / f"{mode}.log").write_text(fingerprint + trace)
+                (case_dir / f"{mode}-model.csv").write_text(
+                    "1\n0\n0\n0\n0\n0\n0\n0\n")
+            missing = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(missing["passed"])
+            self.assertFalse(missing["jfrProfilePassed"])
+            self.assertIn("missing", missing["jfrProfile"]["parserError"])
+            (case_dir / "fed.jfr").write_bytes(b"")
+            with mock.patch.object(runner.subprocess, "run") as parser:
+                empty = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(empty["passed"])
+            self.assertIn("empty", empty["jfrProfile"]["parserError"])
+            parser.assert_not_called()
+            (case_dir / "fed.jfr").write_bytes(b"FLR\x00profile")
+            with mock.patch.object(
+                    runner.subprocess, "run",
+                    return_value=runner.subprocess.CompletedProcess(
+                        ["jfr", "summary"], 1, stdout="", stderr="not a valid JFR file")) as parser:
+                rejected = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(rejected["passed"])
+            self.assertFalse(rejected["jfrProfile"]["parserPassed"])
+            self.assertIn("not a valid JFR", rejected["jfrProfile"]["parserError"])
+            self.assertEqual(["jfr", "summary", str(case_dir / "fed.jfr")],
+                             parser.call_args.args[0])
+            self.assertEqual(runner.JFR_SUMMARY_TIMEOUT_SECONDS,
+                             parser.call_args.kwargs["timeout"])
+            with mock.patch.object(
+                    runner.subprocess, "run",
+                    return_value=runner.subprocess.CompletedProcess(
+                        ["jfr", "summary"], 0, stdout="Version: 2.1\n", stderr="")) as parser:
+                profile = runner.jfr_profile_manifest((case,), True, 300, root)
+                present = runner.evaluate(
+                    root, 0, (case,), profile_jfr=True,
+                    jfr_profile_evidence=profile)["cases"][0]
+            parser.assert_called_once()
+            self.assertTrue(present["passed"])
+            self.assertTrue(present["jfrProfilePassed"])
+            self.assertTrue(present["jfrProfile"]["parserPassed"])
+            self.assertIsNone(present["jfrProfile"]["parserError"])
+            self.assertEqual(11, present["jfrProfile"]["size"])
+            self.assertIsNotNone(present["jfrProfile"]["sha256"])
+            with mock.patch.object(runner.subprocess, "run", side_effect=FileNotFoundError("jfr")):
+                unavailable = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(unavailable["passed"])
+            self.assertIn("unavailable", unavailable["jfrProfile"]["parserError"])
 
     def test_marker_comparison_requires_finite_complete_fingerprint(self):
         expected = {"SUM": 1.0, "NORM2": 2.0, "ROWS": 3.0, "COLS": 1.0}

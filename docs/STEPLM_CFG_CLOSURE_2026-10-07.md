@@ -45,6 +45,8 @@ privacy/TR-TW/geometry 규칙은 바꾸지 않는다. CP 강제 축소나 runtim
 
 ## 결과
 
+아래 수치는 최초 수정 커밋 `30e822dacb`의 통합 전 검증이다. 이후 main 통합 검증은 문서 끝에 별도로 기록한다.
+
 | 검증 | 결과 |
 |---|---|
 | 새 builtin StepLM common-closure 회귀 / baseline `93706bbaa9` | 264.837초 후 기존 CFG 비수렴, `f626/632`, pass1244 |
@@ -159,3 +161,20 @@ bash scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e \
   --output-root /grid/3/cofee-lm-sweep-mchoi-20260914/steplm-closure-20261007 \
   --case-timeout-seconds 360 --timeout-seconds 1200
 ```
+
+## origin/main 게시 통합
+
+- Push 요청 후 fetch한 main은 `73d1eb024f6f70a7d869f363d895d72313bcbff6`이다.
+- `30e822dacb`의 seed 수명 수정에 main의 partition-proof worklist와 opt-in JFR 기능을 통합했다.
+- Java는 자동 병합되었고, 세션 문서와 Python harness/tests의 충돌은 양쪽 기능·기록을 모두 유지하여 해결했다.
+  StepLM의 S 일치 조건과 JFR 활성화 시 profile 성공 조건을 함께 유지한다.
+- 독립 검토에서 Java 의미상 충돌은 발견하지 못했다. partition proof는 각 불변 inventory 안에서 계산하며,
+  바깥 physical owner 갱신 시 기존 proof cache 무효화가 유지된다.
+- CSV는 기존 실험 하네스의 데이터 공급 형식을 재사용한 추가 합성 학습 검증이다. 기존 운영 데이터나 동일한 전체 캠페인을
+  실행했다는 의미가 아니며, 보고된 비수렴 수정의 필수 입력 형식도 아니다.
+- 원래 Docker 측정은 통합 전 source에 대한 기록으로 보존한다. 이번 게시 통합에서 실제 CSV 학습을 다시 실행하거나
+  앞서 관찰한 timeout/overflow가 해결되었다고 주장하지 않는다.
+- 통합 후 Java13개 클래스61 PASS/기존 skip5/failure·error0, Python30 PASS, py_compile/diff check,
+  Maven package(4분12초)가 통과했다. StepLM canonical 회귀는26.904초에 통과했다.
+  동결 source3,578개는 빌드 중 변경되지 않았다. 대형 metadata 메서드는 실행 목록에서 제외했다.
+- 게시 검증: `docs/experiments/steplm-cfg-closure-20261007/publication-validation.json`.
