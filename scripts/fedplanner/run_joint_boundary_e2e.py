@@ -42,7 +42,7 @@ DEFAULT_MODEL_PROOF_CLASS = (
     "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
     "JointBoundaryPhysicalModelProofTest")
 MARKER = re.compile(
-    r"^JOINT_E2E_(SUM|NORM2|ROWS|COLS|CALL_C|CALL_D)="
+    r"^JOINT_E2E_(SUM|NORM2|ROWS|COLS|CALL_C|CALL_D|WEIGHTED)="
     r"([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)$",
     re.MULTILINE)
 ACTION_PATTERN = re.compile(
@@ -82,6 +82,7 @@ def cases() -> tuple[Case, ...]:
              expected_success=False, expected_failure="infeasible_private_tuple"),
         Case("joint_loop_toggle", "loop_toggle"),
         Case("joint_function_calls", "function_calls"),
+        Case("joint_dynamic_reverse", "dynamic_reverse"),
         Case("joint_function_private_mix_negative", "function_private_mix_negative",
              expected_success=False, expected_failure="infeasible_private_tuple"),
         Case("joint_branch_upload", "branch_upload", requires_action_evidence=True,
@@ -249,6 +250,15 @@ def pool_prefix(federated: bool, public_second_inputs: bool = False) -> str:
 
 def program(case: Case, federated: bool) -> str:
     prefix = federated_read("X", 8, 3) if federated else local_read("X_PUBLIC") + "X=X_PUBLIC;\n"
+    if case.kind == "dynamic_reverse":
+        if federated:
+            prefix = (f'X=federated(addresses=list("localhost:{POOL_A_PORT}//evidence/data/X_TOP.csv",'
+                      f'"localhost:{POOL_B_PORT}//evidence/data/X_BOTTOM.csv"),'
+                      'ranges=list(list(0,0),list(4,3),list(4,0),list(8,3)));\n')
+        return prefix + (
+            "flag=sum(X)>0;\nif(flag){T=rev(X);}else{T=rev(X);}\nZ=exp(T);\n"
+            + fingerprint("Z")
+            + 'print("JOINT_E2E_WEIGHTED="+sum(rowSums(Z)*seq(1,nrow(Z))));\n')
     if case.kind == "l2svm":
         y_name = "Y_PROTECTED" if not case.expected_success else f"Y_{case.name}"
         prefix += federated_read(y_name, 8, 1) if federated else local_read(y_name + "_PUBLIC")
@@ -310,6 +320,10 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
         "X": ("\n".join(",".join(map(str, row)) for row in x) + "\n", 8, 3, "private-aggregate"),
         "X_PUBLIC": ("\n".join(",".join(map(str, row)) for row in x) + "\n", 8, 3, "public"),
     }
+    if any(case.kind == "dynamic_reverse" for case in selected or cases()):
+        for name, values in (("X_TOP", x[:4]), ("X_BOTTOM", x[4:])):
+            payload = "\n".join(",".join(map(str, row)) for row in values) + "\n"
+            texts[name] = (payload, 4, 3, "private-aggregate")
     pool_values = {
         "A1": x,
         "A2": tuple((1, 1, 1) for _ in range(8)),
@@ -543,7 +557,15 @@ def evaluate(run: Path, container_returncode: int,
             cp_rc = read_rc(run / "cases" / case.name / "cp.rc")
             reference = markers(run / "cases" / case.name / "cp.log")
             actual = markers(fed_log)
+            dynamic_native = case.kind != "dynamic_reverse" or (
+                "WEIGHTED" in reference
+                and reference.get("ROWS") == 8 and reference.get("COLS") == 3
+                and all(re.search(
+                    rf"(?m)^\[PlannerRuntimeAudit\]\[Execution\] status=MATCH .*opcode={opcode} .*"
+                    r"plannedTarget=FED/FOUT.*actual=FED/FOUT", text)
+                    for opcode in ("rev", "exp")))
             passed = (cp_rc == 0 and fed_rc == 0 and close_markers(reference, actual)
+                      and dynamic_native
                       and (case.kind != "function_calls"
                            or {"CALL_C", "CALL_D"}.issubset(reference))
                       and not audit_errors
@@ -553,6 +575,7 @@ def evaluate(run: Path, container_returncode: int,
                       "cpFingerprint": reference, "fedFingerprint": actual,
                       "auditSchemas": schemas, "auditRows": len(audit_rows),
                       "auditErrors": audit_errors, "actionDiagnostics": actions,
+                      "dynamicNativeExecution": dynamic_native if case.kind == "dynamic_reverse" else None,
                       "requiresFedNoRelocation": case.requires_fed_no_relocation,
                       "fedNoRelocation": fed_no_relocation,
                       "requiresBranchUpload": case.requires_branch_upload,

@@ -4227,11 +4227,11 @@ final class PlacementRelationClosure {
 								else if(exact)
 									bound.add(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
 										"transient-alias:" + fact.key().parentOccurrence().normalizedSignature()
-											+ "|pool=" + pool.normalizedSignature(), pool, List.of(proof), binding));
+											+ "|pool=" + pool.normalizedSignature() + "|exact=true", pool, List.of(proof), binding));
 								else
 									bound.add(CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
 										"transient-alias:" + fact.key().parentOccurrence().normalizedSignature()
-											+ "|pool=" + pool.normalizedSignature(), pool, List.of(proof), binding));
+											+ "|pool=" + pool.normalizedSignature() + "|exact=false", pool, List.of(proof), binding));
 							}
 						}
 						realizations.addAll(bound.isEmpty() ? List.of(realization) : bound);
@@ -4379,13 +4379,18 @@ final class PlacementRelationClosure {
 									// when available, including for selected VALUE_MAP inputs.
 									if(proof.exactPartitionRanges() && outputAnchor != null)
 										outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
+									// One generation query can prove multiple layouts and precision
+									// classes. Only equivalent output authority may share a receipt.
+									String publicationLineage = nativeLineage
+										+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
+										+ "|exact=" + proof.exactPartitionRanges();
 									// Keep the proved output FType and worker endpoints even when the
 									// runtime recomputes partition extents or changes the partition axis.
 									bound.add(proof.exactPartitionRanges()
 										? CandidateEmissionRealization.nativeLineage(emission.emissionState(),
-											nativeLineage, outputPool, List.of(continuityProof), bindings)
+											publicationLineage, outputPool, List.of(continuityProof), bindings)
 										: CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
-											nativeLineage, outputPool, List.of(continuityProof), bindings));
+											publicationLineage, outputPool, List.of(continuityProof), bindings));
 								}
 							}
 						}

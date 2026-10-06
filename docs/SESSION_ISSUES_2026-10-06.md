@@ -597,3 +597,25 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **최종 Java 검증**: 원래 8x2 fixture 7 tests PASS, COL8x4 행 높이 보존과 CBIND8x2→8x4 확장 2 tests PASS. 같은 새 COL/CBIND 테스트를 frozen baseline main classes로 실행하면 높이/폭 1로 각각 실패한다. 최종 인접 결과 집계 147 tests: 145 PASS, 기존 skip 1, baseline에서도 재현한 dynamic-reverse 오류 1. 최종 production 소스는 동일하며 별도 run 결과를 합친 집계다. 전체 suite가 all-green이라고 주장하지 않는다.
 - **변경/검토**: production `PlacementRelationClosure` 5줄, 8x2 complete-space 테스트 복원 및 새 `NativeOutputGeometryTest`. 독립 read-only review CLEAR, diff whitespace PASS. 알려진 outputAnchor geometry만 복원하므로 memo/axis compatibility 또는 dynamic predecessor를 변경하지 않는다. 상세 보고서 `NATIVE_OUTPUT_GEOMETRY_2026-10-06.md`.
 - **Docker 최종 검증**: frozen class hash PASS, 복원된 8x2 oracle 7 tests PASS, loop/function 2 cases PASS. Loop의 8x3·sum54·norm2 140 및 function fingerprint가 CP와 일치하고 runtime conversion 위반·audit error 0. 결과 `/grid/3/cofee-lm-sweep-mchoi-20260914/native-output-geometry-20261006/native-output-geometry/result.json`. 최종 source SHA와 Java 검증 manifest 일치.
+
+## Dynamic native 배치 합성의 realization identity 충돌 — 수정 및 검증 완료
+
+- **문제/환경**: `d7e88516a1`, PRIVATE_AGGREGATE, 2-worker ROW 입력, 양쪽 분기 `T=rev(A)` 뒤 `U=exp(T)`. `DynamicNativeLayoutCompositionTest.transientReplayPreservesDynamicReverseAuthority`가 realization 합성에서 실패했다. 이전 geometry 수정 전 baseline에서도 재현된 오류다.
+- **재현/원인**: `.omx/dynamic-native-evidence/reproduction.log`. 일시적인 진단으로 동일 EXP owner+seed ID 아래 exact 8x2 witness와 endpoint-only 8x1 witness가 합쳐지는 것을 확인했다. 진단 코드는 제거했다. 입력 seed는 질의 identity이며, 여러 출력 배치/정확도 증명의 publication identity로 사용할 수 없다.
+- **수정/의사결정 근거**: `PlacementRelationClosure`에서 generation query는 유지하고, publication lineage에 최종 출력 witness의 canonical layout과 exactness를 포함한다. TWrite alias도 기존 owner+pool ID에 exactness를 포함한다. 모든 지원 증명과 기존 merge invariant를 유지한다. source-grounding, DP factor, runtime fallback 또는 후보 삭제를 추가하지 않는다.
+- **수정 파일**: `PlacementRelationClosure.java`, `DynamicNativeLayoutCompositionTest.java`; 실제 ROW reverse 실행을 위한 `run_joint_boundary_e2e.py`와 harness tests.
+- **초기 검증**: 기존 dynamic 5건과 lineage/support union 7건, 총 12건 PASS. 정확/동적 혼합 분기 회귀 및 인접 18개 class 검증 진행 중. Python harness 20건 PASS.
+- **잠재 회귀 위험/감지**: replay 중 key 변경으로 선택된 source reference를 잃거나 후보 증명이 축소될 위험을 complete-space/loop/support-union 테스트로 확인한다. 동적 authority를 durable 범위로 승격시키는 오류는 dynamic composition 검사와 2-worker Docker의 FED rev/exp 및 순서 민감 수치 비교로 감지한다.
+- **잔여 범위**: 이 절의 최종 검증 전에는 전체 통과로 간주하지 않는다. 큰 factor 표현/메모리, P1/GLM 등 별도 통합 이슈는 이번 범위가 아니다.
+
+### Dynamic native Docker 후속: REV lowering에서 출력 계약 누락 — 수정 및 검증 완료
+
+- **증상**: 최초 Docker `dynamic-native-final`의 model proof 6 tests와 loop/function 2 cases는 PASS. 새 2-worker ROW reverse case는 analysis/DP 선택 후 `LOWERING_MISMATCH ... opcode=rev plannedPhysical=FED/FOUT/ROW actual=FED/NONE`로 실패했다. 원래 realization 합성 오류와 발생 단계가 다르다.
+- **원인/해결 방향**: `Transform.getInstructions`가 FED REV의 `_fedOutput`을 직렬화하지 않는다. `ReorgFEDInstruction`의 parser는 이미 선택적 REV flag를 읽을 수 있다. 검사나 planner 계약을 완화하지 않고 emitter에서 계획된 FOUT/LOUT flag를 보존한다.
+- **회귀**: `ReorgFEDInstructionFullTest.reverseLoweringPreservesExplicitOutputContract`로 Transform→FED parser 왕복에서 FOUT/LOUT 보존을 검증한다. 실제 2-worker Docker 수치 및 audit 검사로 lowering 이후 실행까지 확인한다.
+- **범위/위험**: REV 직렬화만 변경한다. ROLL 등 다른 opcode의 별도 계약 문제로 범위를 넓히지 않는다. 기존 DIAG/TRANS/RESHAPE 직렬화 경로는 유지하며 인접 Reorg/Reshape unit tests로 확인한다.
+
+- **최종 검증**: Java 20개 class 최신 결과 합계 230 tests / 229 PASS / 기존 skip 1 / failure·error 0, Python 20/20 PASS. 초기 신규 테스트의 잘못된 exact-output/support-clause 가정은 경계 관계에 맞게 교정했으며 production invariant는 유지했다. 기준 HEAD의 closure를 별도 컴파일하여 최종 dynamic 6 tests에 적용하면 원래/신규 branch 2건이 같은 합성 오류로 실패하고 수정본은 모두 통과한다.
+- **최종 Docker**: `dynamic-native-runtimefix`의 dynamic ROW reverse·loop·function 3 cases PASS. model proof 6 tests 및 frozen class hash PASS, REV/EXP 실제 FED/FOUT/ROW audit MATCH. CP/FED 8x3 sum `124.07728482348034`, norm2 `1267.9351982067865`, weighted `571.954806162415` 일치, runtime conversion 위반·audit error 0.
+- **잔여 이슈/회귀 위험**: 이 범위의 두 오류는 해결됐다. ROLL 직렬화 등 다른 opcode와 큰 factor/메모리 및 P1/GLM 이슈의 해결을 주장하지 않는다. replay 참조/후보 보존은 complete-space·loop·support-union 등 인접 회귀, 출력 flag는 FOUT/LOUT 왕복 검사로 감지한다. 독립 read-only 리뷰 CLEAR, diff whitespace PASS.
+- **보고서/근거**: `docs/DYNAMIC_NATIVE_COMPOSITION_2026-10-06.md`, `.omx/dynamic-native-evidence/validation.json`. Docker: `/grid/3/cofee-lm-sweep-mchoi-20260914/dynamic-native-composition-20261006/dynamic-native-runtimefix/result.json`. 최종 Java source와 main/test class bytes는 성공한 frozen 빌드와 일치한다.

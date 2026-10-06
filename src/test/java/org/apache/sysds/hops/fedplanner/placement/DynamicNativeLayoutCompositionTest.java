@@ -8,6 +8,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.OpOp1;
@@ -19,9 +20,15 @@ import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.parser.DMLProgram;
@@ -33,6 +40,9 @@ import org.junit.Test;
 
 /** Composition regressions for dynamic native FederationMap authority. */
 public class DynamicNativeLayoutCompositionTest {
+	private record NativeClause(CandidateEmissionRealization realization,
+		CandidateRealizationSupportClause clause) { }
+
 	private static final String SCRIPT =
 		"A=federated(addresses=list(\"localhost:4234/A1\",\"localhost:4235/A2\"),"
 			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));\n"
@@ -54,6 +64,12 @@ public class DynamicNativeLayoutCompositionTest {
 			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));\n"
 			+ "gate=matrix(1,rows=1,cols=1);\n"
 			+ "if(sum(gate)>0) { T=rev(A); } else { T=rev(A); }\n"
+			+ "U=exp(T);\nprint(sum(U));\n";
+	private static final String MIXED_TRANSIENT_SCRIPT =
+		"A=federated(addresses=list(\"localhost:4234/A1\",\"localhost:4235/A2\"),"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));\n"
+			+ "gate=matrix(1,rows=1,cols=1);\n"
+			+ "if(sum(gate)>0) { T=A+1; } else { T=rev(A); }\n"
 			+ "U=exp(T);\nprint(sum(U));\n";
 
 	@Test
@@ -252,6 +268,88 @@ public class DynamicNativeLayoutCompositionTest {
 						&& clause.inputBindings().stream().anyMatch(binding ->
 							binding.kind() == CandidateInputBindingKind.DIRECT
 								&& binding.source().rule().parentOccurrence() == read.key()))));
+	}
+
+	@Test
+	public void mixedExactAndDynamicTransientInputsPreserveOutputAuthority() throws Exception {
+		DMLProgram program = compile(MIXED_TRANSIENT_SCRIPT);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var read = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof DataOp data
+				&& data.getOp() == OpOpData.TRANSIENTREAD && "T".equals(data.getName()))
+			.filter(occurrence -> !analysis.logicalTransientInputsForReader(occurrence.key(), 0).isEmpty())
+			.findFirst().orElseThrow(AssertionError::new);
+		var exponential = analysis.compiledHopOccurrences().stream()
+			.filter(occurrence -> occurrence.hop() instanceof UnaryOp unary && unary.getOp() == OpOp1.EXP)
+			.findFirst().orElseThrow(AssertionError::new);
+		var fact = analysis.candidateRuleFacts().requireExact(exponential.key(),
+			List.of(CandidateInputState.present(FType.ROW)));
+		List<NativeClause> outputs = fact.allowedEmissionFacts().stream()
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+				|| realization.key().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
+			.flatMap(realization -> realization.supportClauses().stream()
+				.map(clause -> new NativeClause(realization, clause)))
+			.filter(output -> output.clause().inputBindings().stream().anyMatch(binding ->
+				binding.kind() == CandidateInputBindingKind.DIRECT
+					&& binding.source().rule().parentOccurrence() == read.key()))
+			.toList();
+		List<NativeClause> dynamic = outputs.stream().filter(output ->
+			!output.realization().nativeWorkerPoolLayoutExact(output.clause())).toList();
+		Assert.assertFalse("the mixed branch must retain a dynamic native output", dynamic.isEmpty());
+		Set<CandidateRealizationReference> dynamicInputs = directInputs(dynamic, read.key());
+		var relations = analysis.logicalTransientInputsForReader(read.key(), 0);
+		Set<CompiledHopKey> writers = relations.stream().map(relation -> relation.sourceWrite())
+			.collect(java.util.stream.Collectors.toSet());
+		Assert.assertEquals("both branch writers must survive replay", 2, writers.size());
+		var sourceRealizations = relations.stream().flatMap(relation -> relation.compatibility().stream())
+			.filter(edge -> dynamicInputs.contains(edge.readerRealization()))
+			.map(edge -> analysis.requireExactCandidateRealization(edge.sourceRealization()))
+			.filter(source -> source.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE).toList();
+		Assert.assertTrue("exact branch authority must remain available to the dynamic join",
+			sourceRealizations.stream().anyMatch(CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout));
+		Assert.assertTrue("reverse branch authority must remain dynamic",
+			sourceRealizations.stream().anyMatch(source -> !source.allOwnedSupportClausesHaveExactNativeLayout()));
+		for(CandidateRealizationReference source : dynamicInputs) {
+			var selected = analysis.requireExactCandidateRealization(source);
+			Assert.assertEquals(PlacementLayoutKind.NATIVE_LINEAGE, selected.key().layoutKind());
+			Assert.assertTrue(selected.supportClauses().stream().allMatch(clause ->
+				!selected.nativeWorkerPoolLayoutExact(clause)));
+			// Native replay stores reaching writers in boundary relations, not in
+			// the reader's support clause (VALUE_MAP uses the latter representation).
+			Assert.assertEquals("the join must retain both reaching writers", writers,
+				relations.stream().filter(relation -> relation.compatibility().stream()
+					.anyMatch(edge -> edge.readerRealization().equals(source)))
+					.map(relation -> relation.sourceWrite()).collect(java.util.stream.Collectors.toSet()));
+		}
+		DurableAnchorKey endpoints = new DurableAnchorKey("expected-input", FType.ROW, List.of(
+			new AnchorPartition("localhost:4234", List.of(0L, 0L), List.of(4L, 2L)),
+			new AnchorPartition("localhost:4235", List.of(4L, 0L), List.of(8L, 2L))));
+		for(NativeClause output : dynamic) {
+			var witness = output.realization().nativeWorkerPoolResidencyWitness(output.clause());
+			Assert.assertNotNull(witness);
+			Assert.assertNull("dynamic authority must not claim an exact worker pool",
+				output.realization().provenWorkerPool(output.clause()));
+			Assert.assertTrue(PlacementIdentity.samePhysicalWorkerEndpoints(endpoints, witness));
+		}
+		Assert.assertFalse("native publication must not promote dynamic input to an exact map",
+			fact.allowedEmissionFacts().stream()
+				.filter(emission -> emission.derivedFoutAction() == null)
+				.flatMap(emission -> emission.realizations().stream())
+				.anyMatch(realization -> realization.supportClauses().stream().anyMatch(clause ->
+					realization.nativeWorkerPoolLayoutExact(clause)
+						&& clause.inputBindings().stream().anyMatch(binding ->
+							binding.kind() == CandidateInputBindingKind.DIRECT
+								&& dynamicInputs.contains(binding.source())))));
+	}
+
+	private static Set<CandidateRealizationReference> directInputs(
+		List<NativeClause> outputs, CompiledHopKey read) {
+		return outputs.stream().flatMap(output -> output.clause().inputBindings().stream())
+			.filter(binding -> binding.kind() == CandidateInputBindingKind.DIRECT
+				&& binding.source().rule().parentOccurrence() == read)
+			.map(binding -> binding.source()).collect(java.util.stream.Collectors.toSet());
 	}
 
 
