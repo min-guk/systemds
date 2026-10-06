@@ -1,0 +1,486 @@
+{
+  "coefficient_scope": "effective SystemDS RPC/serialization/deserialization payload throughput; not isolated hardware codec",
+  "fixed_intercept_seconds": 0.0,
+  "limitations": [
+    "Only LAN W1/W3 and WAN-Light W1 completed samples are calibrated.",
+    "Routed-link sysfs speed is nominal physical capacity, not available-throughput measurement.",
+    "Primary fit uses production-available logical/statistical wire quantities; observed encoded-frame bytes are validation diagnostics only.",
+    "Small 0.0625 MiB observations are diagnostics and do not create a fixed intercept."
+  ],
+  "profiles": {
+    "lan": {
+      "cost_environment": {
+        "SYSDS_FED_COST_NET_BW_C2W": "119.209290",
+        "SYSDS_FED_COST_NET_BW_COORD_C2W": "119.209290",
+        "SYSDS_FED_COST_NET_BW_COORD_W2C": "119.209290",
+        "SYSDS_FED_COST_NET_BW_W2C": "119.209290",
+        "SYSDS_FED_COST_NET_LATENCY_C2W": "0.000500",
+        "SYSDS_FED_COST_NET_LATENCY_W2C": "0.000500",
+        "SYSDS_FED_COST_NET_SERDES_BW_C2W": "210.000000",
+        "SYSDS_FED_COST_NET_SERDES_BW_W2C": "401.881358"
+      },
+      "coverage_workers": [
+        1,
+        3
+      ],
+      "directions": {
+        "C2W": {
+          "adopted": false,
+          "adoption_gate": "candidate held-out median relative error < same-wire baseline; no negative training residual",
+          "adoption_status": "baseline-retained",
+          "baseline_codec_mib_per_sec": 210.0,
+          "baseline_heldout_median_relative_error": 0.214577757326366,
+          "baseline_heldout_relative_errors": [
+            0.28450090836323255,
+            0.3014597161216114,
+            0.3003502338373643,
+            0.30246571674753603,
+            0.29221540371230487,
+            0.2835484984597124,
+            0.2790294082522549,
+            0.30093110420606056,
+            0.2922079281840471,
+            0.2768700928699627,
+            0.28241566782587463,
+            0.27713660108071914,
+            0.2841818751371357,
+            0.2853909126373361,
+            0.29906757211250706,
+            0.16890283164212874,
+            0.1763196683933281,
+            0.18155135974017,
+            0.19234839514080268,
+            0.2012313785693029,
+            0.21626416082364153,
+            0.20604099778831175,
+            0.214577757326366,
+            0.20044511552293487,
+            0.2090958687764644,
+            0.18394747257787344,
+            0.20810548214039998,
+            0.1636239102552038,
+            0.2147490844635135,
+            0.15951860381132746,
+            0.03914218671278904,
+            0.047417007933354294,
+            0.04399504836641889,
+            0.07554048932513581,
+            0.04615568557897219
+          ],
+          "candidate_codec_mib_per_sec": 442.93796991491354,
+          "candidate_heldout_median_relative_error": 0.22758070616265486,
+          "candidate_heldout_relative_errors": [
+            0.4205917100435881,
+            0.4343248844358906,
+            0.4334264301393493,
+            0.4351395397012505,
+            0.4268388773849994,
+            0.41982045232993564,
+            0.41616091123496113,
+            0.4338968166303268,
+            0.4268328237322485,
+            0.4144123063132296,
+            0.4189030906336955,
+            0.4146281235916282,
+            0.4203333582187812,
+            0.4213124319292478,
+            0.43238773582753404,
+            0.05360322323739762,
+            0.047598215631035244,
+            0.04336240090491963,
+            0.034620631080138416,
+            0.027428564590781107,
+            0.015074168793139974,
+            0.023352845148543525,
+            0.01643981157026452,
+            0.027884368126109272,
+            0.020879022894997525,
+            0.04142239921703227,
+            0.021862978396008044,
+            0.057877277547241625,
+            0.016484016471641567,
+            0.06120111994109497,
+            0.22190120295689902,
+            0.22860211993798826,
+            0.2258310308280882,
+            0.2513764021855826,
+            0.22758070616265486
+          ],
+          "coordinator_mib_per_sec": 119.20928955078125,
+          "diagnostic_payload_mib": [
+            0.0625
+          ],
+          "diagnostic_samples": 35,
+          "direction": "C2W",
+          "fit_model": "residual_seconds = total_codec_MiB * seconds_per_MiB",
+          "fixed_intercept_seconds": 0.0,
+          "heldout_payload_mib": [
+            64
+          ],
+          "heldout_samples": 35,
+          "minimum_training_residual_seconds": 0.007990114,
+          "negative_training_residual_count": 0,
+          "one_way_latency_seconds": 0.0005,
+          "operations": [
+            "broadcast-put",
+            "slice-put"
+          ],
+          "selected_codec_mib_per_sec": 210.0,
+          "training_payload_mib": [
+            4,
+            16
+          ],
+          "training_samples": 70,
+          "worker_leg_mib_per_sec": 119.20928955078125
+        },
+        "W2C": {
+          "adopted": true,
+          "adoption_gate": "candidate held-out median relative error < same-wire baseline; no negative training residual",
+          "adoption_status": "candidate-adopted",
+          "baseline_codec_mib_per_sec": 14.7,
+          "baseline_heldout_median_relative_error": 4.5364581882292345,
+          "baseline_heldout_relative_errors": [
+            2.8334079220379276,
+            2.811956052624255,
+            2.919462308664876,
+            2.9324472178697394,
+            2.56485965186479,
+            3.072948168949821,
+            3.0228908062737134,
+            3.0788539092974183,
+            2.9887742925367555,
+            3.1190573997399706,
+            6.1904315698672745,
+            6.055784403087418,
+            6.0960868513895035,
+            5.707469681519517,
+            5.837967143671686,
+            5.0935806633666845,
+            5.121763905658541,
+            5.070274702784149,
+            4.870864331881599,
+            5.110182524547662,
+            4.464241387962138,
+            4.576095818685558,
+            4.543420929506873,
+            4.5364581882292345,
+            4.504312925430362
+          ],
+          "candidate_codec_mib_per_sec": 401.8813584445614,
+          "candidate_heldout_median_relative_error": 0.21097873618365007,
+          "candidate_heldout_relative_errors": [
+            0.45368676859142587,
+            0.4567439543481944,
+            0.4414228376476879,
+            0.4395723099053952,
+            0.49195858214511473,
+            0.41954899640430265,
+            0.426682857479238,
+            0.41870734736543885,
+            0.43154492883795836,
+            0.4129777982998914,
+            0.024735166735942275,
+            0.005546097824015196,
+            0.011289749742458548,
+            0.04409352961896658,
+            0.025495850559267404,
+            0.13229336098779584,
+            0.12828015630626108,
+            0.13561205615951943,
+            0.16400746310969677,
+            0.1299293083949917,
+            0.22127062118996355,
+            0.20532982993094412,
+            0.20998645000795255,
+            0.21097873618365007,
+            0.21555987723393363
+          ],
+          "coordinator_mib_per_sec": 119.20928955078125,
+          "diagnostic_payload_mib": [
+            0.0625
+          ],
+          "diagnostic_samples": 25,
+          "direction": "W2C",
+          "fit_model": "residual_seconds = total_codec_MiB * seconds_per_MiB",
+          "fixed_intercept_seconds": 0.0,
+          "heldout_payload_mib": [
+            64
+          ],
+          "heldout_samples": 25,
+          "minimum_training_residual_seconds": 0.008395541,
+          "negative_training_residual_count": 0,
+          "one_way_latency_seconds": 0.0005,
+          "operations": [
+            "get"
+          ],
+          "selected_codec_mib_per_sec": 401.8813584445614,
+          "training_payload_mib": [
+            4,
+            16
+          ],
+          "training_samples": 50,
+          "worker_leg_mib_per_sec": 119.20928955078125
+        }
+      },
+      "observed_frame_to_logical_ratio_diagnostic": {
+        "maximum": 1.026580810546875,
+        "median": 1.004960536956787,
+        "minimum": 1.0048876702785492
+      },
+      "source_rows": 240
+    },
+    "wan_light": {
+      "cost_environment": {
+        "SYSDS_FED_COST_NET_BW_C2W": "119.209290",
+        "SYSDS_FED_COST_NET_BW_COORD_C2W": "119.209290",
+        "SYSDS_FED_COST_NET_BW_COORD_W2C": "119.209290",
+        "SYSDS_FED_COST_NET_BW_W2C": "119.209290",
+        "SYSDS_FED_COST_NET_LATENCY_C2W": "0.005000",
+        "SYSDS_FED_COST_NET_LATENCY_W2C": "0.005000",
+        "SYSDS_FED_COST_NET_SERDES_BW_C2W": "210.000000",
+        "SYSDS_FED_COST_NET_SERDES_BW_W2C": "218.590544"
+      },
+      "coverage_workers": [
+        1
+      ],
+      "directions": {
+        "C2W": {
+          "adopted": false,
+          "adoption_gate": "candidate held-out median relative error < same-wire baseline; no negative training residual",
+          "adoption_status": "baseline-retained",
+          "baseline_codec_mib_per_sec": 210.0,
+          "baseline_heldout_median_relative_error": 0.2933730742931228,
+          "baseline_heldout_relative_errors": [
+            0.30113090743315957,
+            0.296248614041329,
+            0.2997982494732085,
+            0.30107489303145973,
+            0.2961898093139483,
+            0.2965806188031558,
+            0.2933730742931228,
+            0.29497975033459356,
+            0.28997865909337456,
+            0.29064458028971824,
+            0.28952984001016674,
+            0.29004692592990045,
+            0.28701512770780757,
+            0.2836924720352429,
+            0.28127124393691466
+          ],
+          "candidate_codec_mib_per_sec": 225.60714247900606,
+          "candidate_heldout_median_relative_error": 0.3108662647032825,
+          "candidate_heldout_relative_errors": [
+            0.31843204564809174,
+            0.3136706178570959,
+            0.3171323788445726,
+            0.3183774179337074,
+            0.3136132688940735,
+            0.3139944035399371,
+            0.3108662647032825,
+            0.31243316602219684,
+            0.3075558813303161,
+            0.30820531704349735,
+            0.3071181731705625,
+            0.3076224581593902,
+            0.3046657148519274,
+            0.3014253145339679,
+            0.2990640261331089
+          ],
+          "coordinator_mib_per_sec": 119.20928955078125,
+          "diagnostic_payload_mib": [
+            0.0625
+          ],
+          "diagnostic_samples": 15,
+          "direction": "C2W",
+          "fit_model": "residual_seconds = total_codec_MiB * seconds_per_MiB",
+          "fixed_intercept_seconds": 0.0,
+          "heldout_payload_mib": [
+            64
+          ],
+          "heldout_samples": 15,
+          "minimum_training_residual_seconds": 0.019418699999999997,
+          "negative_training_residual_count": 0,
+          "one_way_latency_seconds": 0.005,
+          "operations": [
+            "broadcast-put",
+            "slice-put"
+          ],
+          "selected_codec_mib_per_sec": 210.0,
+          "training_payload_mib": [
+            4,
+            16
+          ],
+          "training_samples": 30,
+          "worker_leg_mib_per_sec": 119.20928955078125
+        },
+        "W2C": {
+          "adopted": true,
+          "adoption_gate": "candidate held-out median relative error < same-wire baseline; no negative training residual",
+          "adoption_status": "candidate-adopted",
+          "baseline_codec_mib_per_sec": 14.7,
+          "baseline_heldout_median_relative_error": 3.3998977073650343,
+          "baseline_heldout_relative_errors": [
+            3.5115540140824555,
+            3.2222976773520657,
+            3.2409349844848294,
+            3.56338944224807,
+            3.30749105006307,
+            3.4291660642159627,
+            3.433002968616106,
+            3.3770030262065,
+            3.4227923885235687,
+            3.207323943926344
+          ],
+          "candidate_codec_mib_per_sec": 218.59054448629365,
+          "candidate_heldout_median_relative_error": 0.24613514421807986,
+          "candidate_heldout_relative_errors": [
+            0.2270042981941436,
+            0.276564583699929,
+            0.2733713251770579,
+            0.21812297635953504,
+            0.2619678148875881,
+            0.24112039453890774,
+            0.24046299121395737,
+            0.25005784803023,
+            0.2422124404059297,
+            0.2791301368423585
+          ],
+          "coordinator_mib_per_sec": 119.20928955078125,
+          "diagnostic_payload_mib": [
+            0.0625
+          ],
+          "diagnostic_samples": 10,
+          "direction": "W2C",
+          "fit_model": "residual_seconds = total_codec_MiB * seconds_per_MiB",
+          "fixed_intercept_seconds": 0.0,
+          "heldout_payload_mib": [
+            64
+          ],
+          "heldout_samples": 10,
+          "minimum_training_residual_seconds": 0.018285192,
+          "negative_training_residual_count": 0,
+          "one_way_latency_seconds": 0.005,
+          "operations": [
+            "get"
+          ],
+          "selected_codec_mib_per_sec": 218.59054448629365,
+          "training_payload_mib": [
+            4,
+            16
+          ],
+          "training_samples": 20,
+          "worker_leg_mib_per_sec": 119.20928955078125
+        }
+      },
+      "observed_frame_to_logical_ratio_diagnostic": {
+        "maximum": 1.012115478515625,
+        "median": 1.0049358010292053,
+        "minimum": 1.0048876702785492
+      },
+      "source_rows": 100
+    }
+  },
+  "schema": "cofee-federated-transport-cost-profile/v2",
+  "source": {
+    "completed_cells": [
+      {
+        "links": [
+          {
+            "host": "so007",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          },
+          {
+            "host": "so002",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          }
+        ],
+        "network": {
+          "c2w_mbit": 5000,
+          "queue_limit_packets": 10000,
+          "rtt_ms": 1,
+          "w2c_mbit": 5000
+        },
+        "preflight_sha256": "414d660cfedac5ec1b25fbf55eb487380f9635a26ca67f381b964a10c5a5494d",
+        "profile": "lan",
+        "rows": 100,
+        "samples_sha256": "8a16a1a4b6154bf111a851bb66f09fdde292cce83e82e9b41bb531732579ad58",
+        "workers": 1
+      },
+      {
+        "links": [
+          {
+            "host": "so007",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          },
+          {
+            "host": "so002",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          },
+          {
+            "host": "so003",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          },
+          {
+            "host": "so004",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          }
+        ],
+        "network": {
+          "c2w_mbit": 5000,
+          "queue_limit_packets": 10000,
+          "rtt_ms": 1,
+          "w2c_mbit": 5000
+        },
+        "preflight_sha256": "2ea65f7c904c9ead969dbb470b7cbbc66717739bb879750f536fb23244d868eb",
+        "profile": "lan",
+        "rows": 140,
+        "samples_sha256": "a0ceb75f1d020a82b091589b47878aa7d548747cf924ebde53e0cb57a2adac20",
+        "workers": 3
+      },
+      {
+        "links": [
+          {
+            "host": "so007",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          },
+          {
+            "host": "so002",
+            "interface": "ens5f0",
+            "speed_mbit_per_sec": 1000.0
+          }
+        ],
+        "network": {
+          "c2w_mbit": 2500,
+          "queue_limit_packets": 10000,
+          "rtt_ms": 10,
+          "w2c_mbit": 1000
+        },
+        "preflight_sha256": "47d6470c23980edc0e4ddb675c5ec0ea7a28ae1ed380dfbcce12c188d67b16fb",
+        "profile": "wan_light",
+        "rows": 100,
+        "samples_sha256": "15b6484228b049a4b1a3b9e56d2561aeda3a14fdd54dff8ff079b7aedbf7e3b8",
+        "workers": 1
+      }
+    ],
+    "image": "cofee-experiment:content-0861f4ff197c868f42abf6478b66505f650325c267caa8be2e82b4b6317c7ff0",
+    "image_content_sha256": "f75eb2420276384ba77539d106537e6d855b44eb9a7ebf42d2c4810e4e1ef0bd",
+    "jar_sha256": "b56fc97e4b8b17b4fc5cc03f65faace7bbaf0cc7318de760221f2cd047bef131",
+    "manifest_sha256": "23ace573a26f90813c2bcc584346bc088726e02a7f10280a055ddfc9d94946ac",
+    "topology_sha256": "999508edd99c4eed2408b90427632f04fe7d584c9e636d2cfc6028dd7ea0010a",
+    "total_rows": 340
+  },
+  "stage_model": "one_way_latency + max(largest_wire_MiB/worker_leg_MiBps, total_wire_MiB/coordinator_MiBps) + total_codec_MiB/codec_MiBps",
+  "units": {
+    "latency": "seconds",
+    "source_link_speed": "Mbit/s",
+    "throughput": "MiB/s",
+    "volume": "MiB"
+  }
+}

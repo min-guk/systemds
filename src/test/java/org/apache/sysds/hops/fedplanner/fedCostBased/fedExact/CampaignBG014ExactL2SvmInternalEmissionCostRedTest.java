@@ -203,12 +203,13 @@ public class CampaignBG014ExactL2SvmInternalEmissionCostRedTest {
 				ExecPlacementPolicy.requiresOriginResidency(
 					analysis.requirePrivacy(action.sourceOccurrence())));
 		}
-		for(var action : analysis.graph().relocationActions()) {
-			if(!analysis.graph().isRelocationActive(action, normalized.selectedStates(),
-				normalized.selectedCandidateSelections()))
-				continue;
+		// The graph predicate is a coarse state-level demand, not the selected
+		// physical-action witness. Exact compatible native layouts can discharge
+		// that demand without relocation. Coverage above checks selected actions
+		// against resolved receipts and the runtime boundary registry.
+		for(var action : normalized.selectedRelocations()) {
 			var owners = analysis.graph().nodes().stream()
-				.filter(node -> node.valueVersion().equals(action.key().sourceValueVersion()))
+				.filter(node -> node.valueVersion().equals(action.sourceValueVersion()))
 				.filter(node -> analysis.isCompiledHopOccurrence(node.key())).toList();
 			Assert.assertFalse("Active relocation must have compiled source owners", owners.isEmpty());
 			Assert.assertTrue("Every compiled owner of an active relocation source must be unprotected",

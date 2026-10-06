@@ -27,11 +27,19 @@ ITERATIONS = 5
 CONDITION_ID = "microbench-unshaped-5gbit-assumed"
 NETWORK = {
     "c2w_mbit": 5000,
+    "cost_binding": {
+        "status": "configured-assumption-not-transport-calibration",
+        "physical_nic_capacity_assumed": False,
+    },
     "cost_environment": {
-        "SYSDS_FED_COST_NET_BW": "596.04644775390625",
-        "SYSDS_FED_COST_NET_BW_C2W": "596.04644775390625",
-        "SYSDS_FED_COST_NET_BW_W2C": "596.04644775390625",
-        "SYSDS_FED_COST_NET_LATENCY": ".001",
+        "SYSDS_FED_COST_NET_BW_C2W": "596.046448",
+        "SYSDS_FED_COST_NET_BW_W2C": "596.046448",
+        "SYSDS_FED_COST_NET_BW_COORD_C2W": "596.046448",
+        "SYSDS_FED_COST_NET_BW_COORD_W2C": "596.046448",
+        "SYSDS_FED_COST_NET_SERDES_BW_C2W": "210.000000",
+        "SYSDS_FED_COST_NET_SERDES_BW_W2C": "14.700000",
+        "SYSDS_FED_COST_NET_LATENCY_C2W": "0.000500",
+        "SYSDS_FED_COST_NET_LATENCY_W2C": "0.000500",
     },
     "profile": CONDITION_ID,
     "rtt_ms": 1,

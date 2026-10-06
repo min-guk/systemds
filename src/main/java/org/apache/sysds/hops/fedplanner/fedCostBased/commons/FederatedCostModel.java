@@ -28,7 +28,6 @@ import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
-import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
@@ -41,7 +40,6 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
-import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
@@ -50,6 +48,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.FederatedExecutionLayout;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -57,22 +56,19 @@ import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 public final class FederatedCostModel {
 	public static final class MixedFedLocalCost {
 		private static final MixedFedLocalCost NONE =
-			new MixedFedLocalCost("none", 0.0, 0.0, 0.0, 0.0);
+			new MixedFedLocalCost("none", 0.0, 0.0, 0.0);
 
 		private final String label;
 		private final double inputPreparationCost;
 		private final double partialResultDownloadCost;
 		private final double coordinatorLocalCost;
-		private final double federatedComputeFloor;
 
 		private MixedFedLocalCost(String label, double inputPreparationCost,
-				double partialResultDownloadCost, double coordinatorLocalCost,
-				double federatedComputeFloor) {
+				double partialResultDownloadCost, double coordinatorLocalCost) {
 			this.label = label;
 			this.inputPreparationCost = sanitizeCost(inputPreparationCost);
 			this.partialResultDownloadCost = sanitizeCost(partialResultDownloadCost);
 			this.coordinatorLocalCost = sanitizeCost(coordinatorLocalCost);
-			this.federatedComputeFloor = sanitizeCost(federatedComputeFloor);
 		}
 
 		public static MixedFedLocalCost none() {
@@ -95,8 +91,9 @@ public final class FederatedCostModel {
 			return coordinatorLocalCost;
 		}
 
+		/** Compatibility accessor: kernel work is now priced by the shared execution primitive. */
 		public double getFederatedComputeFloor() {
-			return federatedComputeFloor;
+			return 0.0;
 		}
 
 		public double getCoordinatorPhaseCost() {
@@ -112,29 +109,21 @@ public final class FederatedCostModel {
 		}
 
 		public boolean hasFederatedComputeFloor() {
-			return federatedComputeFloor > 0.0;
+			return false;
 		}
 	}
 
 	private static final String ENV_MBS_MEMORY_BANDWIDTH = "SYSDS_FED_COST_MEM_BW";
-	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_BW_C2W";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_BW_W2C";
 	// Additional per-byte overhead for federated PUT/GET (serialization + deserialization + RPC/Netty framing).
 	//
-	// Model: t(bytes) ~= latency + bytes/net_bw + bytes/serdes_bw (+ optional control overhead).
-	// Setting serdes_bw=0 disables this term (legacy behaviour).
-	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH = "SYSDS_FED_COST_NET_SERDES_BW";
+	// One-way stage: latency + wire bytes/net_bw + codec bytes/serdes_bw. No control intercept.
+	// Setting directional serdes_bw=0 disables this term.
 	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_SERDES_BW_C2W";
 	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_SERDES_BW_W2C";
-	private static final String ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
-		"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C";
-	private static final String ENV_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB =
-		"SYSDS_FED_COST_REUSABLE_GET_VAR_FAST_MAX_MB";
-	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
-	// Coordinator/runtime processing time only. This calibration must exclude network latency,
-	// which is configured independently by ENV_MBS_NETWORK_LATENCY.
-	private static final String ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS = "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS";
+	private static final String ENV_NETWORK_LATENCY_C2W = "SYSDS_FED_COST_NET_LATENCY_C2W";
+	private static final String ENV_NETWORK_LATENCY_W2C = "SYSDS_FED_COST_NET_LATENCY_W2C";
 	private static final String ENV_UPLOAD_ESTIMATE_CLAMP_RATIO = "SYSDS_FED_COST_UPLOAD_MEM_CLAMP_RATIO";
 	private static final String ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = "SYSDS_FED_COST_UNKNOWN_DIM_TRANSFER_MB";
 	private static final String ENV_FLOPS_PER_SEC = "SYSDS_FED_COST_FLOPS";
@@ -145,19 +134,14 @@ public final class FederatedCostModel {
 
 	// Default values are used as reasonable estimates since we only need to compare
 	// relative costs between different federated plans.
-	// Memory bandwidth for local computations (25 GB/s).
+	// Configured default memory throughput in MiB/s (not decimal GB/s).
 	private static final double DEFAULT_MBS_MEMORY_BANDWIDTH = 25000.0;
-	// Network bandwidth for data transfers between federated sites (1 Gbps).
+	// Configured default worker-link throughput in MiB/s (not a measured NIC speed).
 	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
 	// Additional per-byte overhead term for federated transfers (disabled by default).
 	private static final double DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH = 0.0;
-	// FederatedResponseEncoder preallocates one Netty response buffer. Netty 4.1.96's
-	// default pooled allocator chunk is 4 MiB; responses above this boundary use the
-	// separately calibrated large W2C path instead of the small-response critical path.
-	private static final double DEFAULT_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB = 4.0;
-	// Network latency between federated sites (1 ms).
-	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
-	private static final double DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS = 0.0;
+	// One-way seconds; preserves the previous default total of 1 ms per exchange.
+	private static final double DEFAULT_ONE_WAY_LATENCY = 0.0005;
 	// Clamp suspiciously large upload-size estimates when output dimensions are unknown.
 	// This avoids over-penalizing CP->FOUT candidates for shape-dependent operators
 	// (e.g., rightIndex/matmult chains before recompile resolves dimensions).
@@ -182,50 +166,26 @@ public final class FederatedCostModel {
 	// multi-worker planning and can bias Exact/DP toward pathological FED/FOUT chains.
 	// Keep the calibration shared so both planners see the same correction.
 	private static final double DEFAULT_AGGBINARY_FLOPS_PER_SEC = 32d * 1000 * 1000 * 1000;
-	// DML FunctionOp placeholders summarize whole callees. A pure output-size shell cost
-	// under-estimates the work because the placeholder at least has to account for one
-	// logical pass over distinct inputs plus result production. Keep this floor small and
-	// shared so both DP and Exact see the same correction without planner-specific hacks.
-	private static final double MIN_DML_FUNCTION_OP_COMPUTE_FLOPS_PER_CELL = 1.0;
-	// In the single-worker case, a federated function placeholder can still pay
-	// additional call-boundary control cost when we keep the callee federated.
-	//
-	// Important: this must remain a bounded boundary term, not a hard blocker.
-	// The function body is planned separately and can legitimately make FED cheaper
-	// than CP even with one worker (e.g., iterative federated matrix kernels).
-	private static final double SINGLE_WORKER_FED_EXEC_PENALTY_FACTOR = 1.0;
-	private static final double SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS = 10.0;
 	// All costs are returned in milliseconds.
 	private static final double TO_MS = 1000.0;
 	private static final double MBS_MEMORY_BANDWIDTH = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_MEMORY_BANDWIDTH,
 			DEFAULT_MBS_MEMORY_BANDWIDTH);
-	private static final double MBS_NETWORK_BANDWIDTH = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH,
-			DEFAULT_MBS_NETWORK_BANDWIDTH);
-	private static final double MBS_NETWORK_BANDWIDTH_C2W = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH_C2W,
-			MBS_NETWORK_BANDWIDTH);
-	private static final double MBS_NETWORK_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH_W2C,
-			MBS_NETWORK_BANDWIDTH);
-	private static final double MBS_NETWORK_SERDES_BANDWIDTH = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH,
-			DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH);
-	private static final double MBS_NETWORK_SERDES_BANDWIDTH_C2W = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W,
-			MBS_NETWORK_SERDES_BANDWIDTH);
-	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
-			MBS_NETWORK_SERDES_BANDWIDTH);
-	// Native FED/LOUT results use a distinct response critical path, but the same
-	// worker response codec as directional W2C collection. A dedicated in-band
-	// calibration can override the directional W2C default.
-	private static final double MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C =
-		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
-			ENV_MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
-			MBS_NETWORK_SERDES_BANDWIDTH_W2C);
-	private static final double REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_BYTES =
-		Math.max(0.0, FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
-			ENV_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB,
-			DEFAULT_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB)) * 1024 * 1024;
-	private static final double MBS_NETWORK_LATENCY = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_LATENCY,
-			DEFAULT_MBS_NETWORK_LATENCY);
-	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
-			DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+	private static final double MBS_NETWORK_BANDWIDTH_C2W = captureNetworkThroughput(
+		ENV_MBS_NETWORK_BANDWIDTH_C2W, DEFAULT_MBS_NETWORK_BANDWIDTH, false);
+	private static final double MBS_NETWORK_BANDWIDTH_W2C = captureNetworkThroughput(
+		ENV_MBS_NETWORK_BANDWIDTH_W2C, DEFAULT_MBS_NETWORK_BANDWIDTH, false);
+	// Capacities are fixed before optimization. A zero optional coordinator rate
+	// means that resource is unspecified, not a measured infinite-capacity NIC.
+	private static final double MBS_NETWORK_COORDINATOR_C2W = captureNetworkThroughput(
+		"SYSDS_FED_COST_NET_BW_COORD_C2W", MBS_NETWORK_BANDWIDTH_C2W, true);
+	private static final double MBS_NETWORK_COORDINATOR_W2C = captureNetworkThroughput(
+		"SYSDS_FED_COST_NET_BW_COORD_W2C", 0.0, true);
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH_C2W = captureNetworkThroughput(
+		ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W, DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH, true);
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = captureNetworkThroughput(
+		ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C, DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH, true);
+	private static final double NETWORK_LATENCY_C2W = captureOneWayLatency(ENV_NETWORK_LATENCY_C2W);
+	private static final double NETWORK_LATENCY_W2C = captureOneWayLatency(ENV_NETWORK_LATENCY_W2C);
 	private static final double UPLOAD_ESTIMATE_CLAMP_RATIO = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_UPLOAD_ESTIMATE_CLAMP_RATIO,
 			DEFAULT_UPLOAD_ESTIMATE_CLAMP_RATIO);
 	private static final double UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES =
@@ -244,60 +204,37 @@ public final class FederatedCostModel {
 		return Double.isFinite(cost) && cost > 0.0 ? cost : 0.0;
 	}
 
-	/**
-	 * Estimated per-operation coordination overhead for executing a federated instruction
-	 * across multiple workers.
-	 *
-	 * <p>This helper is intentionally <b>control-plane only</b> (RPC framing / Netty bookkeeping).
-	 * The configured value measures coordinator/runtime processing for one logical federated
-	 * instruction after excluding network latency. Network latency is configured independently and
-	 * combined by {@link #computeFixedFederatedInstructionStageCost(double, double, double)}.
-	 * Ordinary per-op coordination must not multiply either fixed term by worker fanout. Boundary
-	 * upload/download helpers separately model payload fan-in/fan-out and any additional transfer
-	 * stages.</p>
-	 *
-	 * @param numWorkers number of federated workers participating in the operation
-	 * @return estimated control-only coordination overhead in milliseconds
-	 */
-	public static double computeFedCoordinationCost(int numWorkers) {
-		final double ctrl = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		return ctrl;
+	private static double captureOneWayLatency(String directionKey) {
+		String value = FederatedPlannerConfiguration.captureNonEmptyPropertyOrEnvironment(directionKey);
+		return value == null || value.isBlank() ? DEFAULT_ONE_WAY_LATENCY
+			: parseLatencySeconds(directionKey, value);
 	}
 
-	/**
-	 * Pure fixed-stage cost for one logical FED instruction batch.
-	 *
-	 * <p>Network latency and coordinator/runtime control are independent calibrations in
-	 * milliseconds. The requests to participating workers are submitted as one parallel batch, so
-	 * the sum is weighted by logical execution frequency but never by worker fanout.</p>
-	 */
-	static double computeFixedFederatedInstructionStageCost(double executionWeight,
-			double networkLatencyMs, double coordinatorControlMs) {
-		return Math.max(0.0, executionWeight) * (Math.max(0.0, networkLatencyMs)
-			+ Math.max(0.0, coordinatorControlMs));
+	private static double captureNetworkThroughput(String key, double defaultValue, boolean allowZero) {
+		String value = FederatedPlannerConfiguration.captureNonEmptyPropertyOrEnvironment(key);
+		if(value == null || value.isBlank())
+			return defaultValue;
+		try {
+			double rate = Double.parseDouble(value);
+			if(Double.isFinite(rate) && (rate > 0.0 || allowZero && rate == 0.0))
+				return rate;
+		}
+		catch(NumberFormatException ignored) {
+			// Explicit invalid configuration must not silently become a different profile.
+		}
+		throw new IllegalArgumentException("FED_COST_INVALID_NETWORK_THROUGHPUT: " + key + "=" + value);
 	}
 
-	/**
-	 * Some federated executions are effectively metadata propagation at the planner/runtime
-	 * boundary and should not pay a full per-op FED coordination term.
-	 *
-	 * <p>In particular, transpose on a FULL federated layout preserves the runtime mapping
-	 * contract instead of initiating an ordinary worker RPC fanout. A BROADCAST output type
-	 * alone is insufficient proof: the input can still be partitioned and require a real
-	 * federated transpose instruction.</p>
-	 */
-	public static double adjustFedCoordinationCost(Hop hop, FType logicalFType, double coordinationCost) {
-		if (coordinationCost <= 0.0)
-			return coordinationCost;
-		return isMappingPreservingFederatedTranspose(hop, logicalFType) ? 0.0 : coordinationCost;
-	}
-
-	public static boolean isMappingPreservingFederatedTranspose(Hop hop, FType logicalFType) {
-		if (!(hop instanceof ReorgOp))
-			return false;
-		if (((ReorgOp) hop).getOp() != ReOrgOp.TRANS)
-			return false;
-		return logicalFType == FType.FULL;
+	private static double parseLatencySeconds(String key, String value) {
+		try {
+			double seconds = Double.parseDouble(value);
+			if(Double.isFinite(seconds) && seconds >= 0.0)
+				return seconds;
+		}
+		catch(NumberFormatException ignored) {
+			// Invalid explicit latency is a configuration error, not an implicit zero/default.
+		}
+		throw new IllegalArgumentException("FED_COST_INVALID_LATENCY: " + key + "=" + value);
 	}
 
 	public static boolean requiresFederatedWdivmmLocalAggregation(Hop hop, FType logicalFType) {
@@ -328,42 +265,9 @@ public final class FederatedCostModel {
 		return defaultFederatedComputeCost;
 	}
 
-	/**
-	 * FED self-cost scaling predicate shared by DP and Exact.
-	 *
-	 * <p>The generic static model divides a hop's self compute cost by worker count
-	 * for FED execution.  That is reasonable for arithmetic-heavy, partition-preserving
-	 * worker computation.  It is not a valid speedup assumption for operations where
-	 * runtime time is dominated by per-worker control, slicing/reindexing, representation
-	 * changes, or redundant fully-broadcast inputs. Partition-preserving binary operations
-	 * are intentionally excluded from the unscaled families: the runtime applies them to
-	 * independent worker shards, while dispatch latency is already modeled separately.</p>
-	 */
-	public static boolean shouldUseUnscaledFederatedComputeCost(Hop hop, boolean broadcastOnlyFedCompute) {
-		if (broadcastOnlyFedCompute)
-			return true;
-		if (isElementwiseTernaryOp(hop))
-			return true;
-		if (hop instanceof NaryOp && ((NaryOp) hop).getOp().isCellOp())
-			return true;
-		if (hop instanceof IndexingOp)
-			return true;
-		return hop instanceof ReorgOp && ((ReorgOp) hop).getOp() == ReOrgOp.TRANS;
-	}
-
-	private static boolean isElementwiseTernaryOp(Hop hop) {
-		if (!(hop instanceof TernaryOp))
-			return false;
-		OpOp3 op = ((TernaryOp) hop).getOp();
-		return op == OpOp3.PLUS_MULT
-			|| op == OpOp3.MINUS_MULT
-			|| op == OpOp3.IFELSE
-			|| op == OpOp3.MAP;
-	}
-
 	public static double computeFederatedComputeCost(Hop hop, double baseSelfCost,
 			int numWorkers, boolean broadcastOnlyFedCompute) {
-		if (shouldUseUnscaledFederatedComputeCost(hop, broadcastOnlyFedCompute))
+		if (broadcastOnlyFedCompute)
 			return baseSelfCost;
 		return baseSelfCost / Math.max(1, numWorkers);
 	}
@@ -410,21 +314,7 @@ public final class FederatedCostModel {
 	 */
 	public static double computeNativeFederatedAggregateUnaryCost(Hop hop,
 			FType logicalFType, double defaultFederatedComputeCost) {
-		if (!isNativeFederatedAggregateUnaryOutput(hop, logicalFType))
-			return defaultFederatedComputeCost;
-
-		AggUnaryOp aggregateUnary = (AggUnaryOp) hop;
-		double outputMemEstimate = estimateAggregateUnaryResultMemEstimate(aggregateUnary,
-			getEffectiveOutputMemEstimate(hop));
-		double outputCells = estimateAggregateUnaryResultCellCount(aggregateUnary, outputMemEstimate);
-		double outputComputeCost = outputCells > 0.0
-				? (outputCells / getComputeFlopsPerSec(hop)) * TO_MS
-				: 0.0;
-		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
-		double reducedOutputCost = Math.max(outputComputeCost, outputAccessCost) + outputAccessCost;
-		if (reducedOutputCost <= 0.0)
-			return defaultFederatedComputeCost;
-		return Math.min(defaultFederatedComputeCost, reducedOutputCost);
+		return defaultFederatedComputeCost;
 	}
 
 	public static boolean isNativeFederatedAggregateUnaryOutput(Hop hop, FType logicalFType) {
@@ -447,10 +337,10 @@ public final class FederatedCostModel {
 	 *
 	 * <p>The generic FED/LOUT boundary model describes an explicit materialization of
 	 * a federated matrix at the coordinator and includes an extra worker fan-in
-	 * control/latency term. Native aggregate-unary LOUT is different: the reduced
+	 * request and response latency. Native aggregate-unary LOUT is different: the reduced
 	 * result is returned as part of the federated aggregate instruction response.
-	 * The per-instruction control path is already represented by
-	 * {@link #computeFedCoordinationCost(int)}, so this helper charges only the
+	 * The instruction's two directional stages are already represented by
+	 * {@link #computeFederatedInstructionNetworkCost(Hop, double)}, so this helper charges only the
 	 * reduced result payload needed by the aggregate semantics. This keeps all
 	 * candidates open while avoiding a double-counted matrix-boundary download.</p>
 	 */
@@ -478,7 +368,7 @@ public final class FederatedCostModel {
 	 *
 	 * <p>The worker compute, result GET, and cleanup requests form one logical FED
 	 * request/response batch. The ordinary FED execution term therefore owns the
-	 * request's fixed latency and control cost; this {@code FED/LOUT} result term
+	 * request and response directional latencies; this {@code FED/LOUT} result term
 	 * owns only the returned payload transfer. Coordinator binding remains part of
 	 * the runtime semantics but has no separately quantified cost here. A later
 	 * standalone FOUT materialization remains a separate request and retains its
@@ -493,15 +383,21 @@ public final class FederatedCostModel {
 			? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
 		if (resultMemEstimate <= 0.0)
 			return genericResultDownloadCost;
-		int fanIn = estimateDownloadFanIn(logicalFType, numWorkers);
+		int fanIn = logicalFType == FType.FULL || logicalFType == FType.BROADCAST
+			? 1 : Math.max(1, numWorkers);
 		double resultCost = computeInBandWorkerResultDownloadCost(resultMemEstimate, fanIn, false);
 		return resultCost > 0.0 ? resultCost : genericResultDownloadCost;
 	}
 
-	private static double estimateNativeAggregateUnaryPayloadFanIn(AggUnaryOp aggregate,
+	/** Total payload in full-output equivalents, NOT the number of worker responses. */
+	private static double estimateNativeAggregateUnaryPayloadMultiplier(AggUnaryOp aggregate,
 			FType logicalFType, int numWorkers) {
-		if (aggregate == null || logicalFType == FType.FULL || logicalFType == FType.BROADCAST)
+		if (aggregate == null || logicalFType == FType.FULL)
 			return 1.0;
+		// processGetOutput sends compute + GET to the entire replicated map.
+		// Each response holds a full result even though the coordinator adopts one.
+		if (logicalFType == FType.BROADCAST)
+			return Math.max(1, numWorkers);
 		Direction direction = aggregate.getDirection();
 		if (direction == null)
 			return Math.max(1, numWorkers);
@@ -517,12 +413,11 @@ public final class FederatedCostModel {
 	 *
 	 * <p>{@code rightIndex} in native FED execution slices the worker-resident
 	 * federated object.  It is not the same compute stage as a CP rightIndex over a
-	 * fully materialized local input.  The generic unscaled FED floor remains useful
-	 * to avoid giving slicing a blanket worker-count speedup, but the arithmetic/
-	 * memory term itself should be bounded by the selected slice/output payload. The
-	 * separate control-path model still charges fanout and loop multiplicity, so LAN
-	 * can keep cheap native {@code fed_rightIndex} while WAN/high-control cases can
-	 * still choose CP/LOUT by cost.</p>
+	 * fully materialized local input. Worker overlap and slice quantities are projected
+	 * by the prepared execution layout; this compatibility hook must not add a second
+	 * post-hoc cap or floor. The intrinsic network stages still charge request and
+	 * response latencies per execution, so latency-sensitive plans can choose
+	 * CP/LOUT by cost without closing any FED candidate.</p>
 	 *
 	 * <p>This helper keeps all candidates open and is shared by DP and Exact. It is
 	 * based only on operation semantics and static size estimates, not workload,
@@ -530,17 +425,7 @@ public final class FederatedCostModel {
 	 */
 	public static double computeNativeFederatedIndexingCost(Hop hop,
 			FType logicalFType, double defaultFederatedComputeCost) {
-		if (!(hop instanceof IndexingOp))
-			return defaultFederatedComputeCost;
-		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
-			return defaultFederatedComputeCost;
-		if (logicalFType == null)
-			return defaultFederatedComputeCost;
-
-		double sliceCost = computeIndexingSlicePayloadCost(hop);
-		if (sliceCost <= 0.0)
-			return defaultFederatedComputeCost;
-		return Math.min(defaultFederatedComputeCost, sliceCost);
+		return defaultFederatedComputeCost;
 	}
 
 	/**
@@ -555,61 +440,22 @@ public final class FederatedCostModel {
 	 * semantics on both sides.</p>
 	 */
 	public static double computeLocalIndexingCostWithFallback(Hop hop, double defaultLocalCost) {
-		if (!(hop instanceof IndexingOp))
-			return defaultLocalCost;
-		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
-			return defaultLocalCost;
-		double sliceCost = computeIndexingSlicePayloadCost(hop);
-		if (sliceCost <= 0.0)
-			return defaultLocalCost;
-		if (defaultLocalCost <= 0.0)
-			return sliceCost;
-		return Math.min(defaultLocalCost, sliceCost);
-	}
-
-	private static double computeIndexingSlicePayloadCost(Hop hop) {
-		double sliceMemEstimate = getEffectiveOutputMemEstimate(hop);
-		double indexingBound = getIndexingUploadBound(hop);
-		if (indexingBound > 0.0)
-			sliceMemEstimate = sliceMemEstimate > 0.0
-				? Math.min(sliceMemEstimate, indexingBound)
-				: indexingBound;
-		if (sliceMemEstimate <= 0.0)
-			return 0.0;
-
-		double outputCells = estimateLogicalCellCount(hop, sliceMemEstimate);
-		double outputComputeCost = outputCells > 0.0
-				? (outputCells / getComputeFlopsPerSec(hop)) * TO_MS
-				: 0.0;
-		double outputAccessCost = computeMemoryAccessCost(sliceMemEstimate);
-		return Math.max(outputComputeCost, outputAccessCost) + outputAccessCost;
+		return defaultLocalCost;
 	}
 
 	/**
-	 * Network-latency contribution for one logical FED instruction batch.
-	 *
-	 * <p>Arithmetic-heavy and control-dominated instructions both cross the same remote
-	 * request boundary. Compute may scale by worker count, but the request batch still
-	 * owns one fixed network round trip. An explicitly calibrated local-to-FED control
-	 * cost represents coordinator/runtime work in addition to that network latency.
-	 * This method therefore always supplies the one network-latency stage. It never
-	 * multiplies the fixed stage by worker count because {@code FederationMap} submits
-	 * all worker requests as futures before waiting. Mapping-preserving transpose is
-	 * metadata-only and remains exempt.</p>
+	 * The latency contributions of one C2W request and one W2C response per remote
+	 * instruction. In-band payload factors contribute bytes to these same stages;
+	 * they do not create more latency. Parallel worker fanout does not multiply the
+	 * stage count. Transient reads/writes create no remote instruction; a transpose
+	 * does, even when its FULL layout is preserved. Compiler-elided kernels are
+	 * excluded by the prepared execution cost, not by FType exceptions here.
 	 */
-	public static double computeControlDominatedFederatedInstructionCost(Hop hop,
-			FType logicalFType, double execWeight, int numWorkers, boolean broadcastOnlyFedCompute) {
+	public static double computeFederatedInstructionNetworkCost(Hop hop, double execWeight) {
 		if (hop == null || hop instanceof DataOp)
 			return 0.0;
-		if (isMappingPreservingFederatedTranspose(hop, logicalFType))
-			return 0.0;
-		double executionWeight = Math.max(0.0, execWeight);
-		double fixedStage = computeFixedFederatedInstructionStageCost(executionWeight,
-			MBS_NETWORK_LATENCY * TO_MS, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		// Existing planner call sites add the coordinator term through
-		// computeFedCoordinationCost. Return the separately configured latency remainder
-		// here so their combined fixed stage is exactly the pure additive formula above.
-		return fixedStage - executionWeight * computeFedCoordinationCost(numWorkers);
+		return Math.max(0.0, execWeight) * computeRequestResponseLatency(
+			NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C);
 	}
 
 	/**
@@ -636,34 +482,41 @@ public final class FederatedCostModel {
 	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
 			List<Double> inputMemEstimates, List<FType> inputFTypes, FType logicalFType,
 			double baseSelfCost, double outputMemEstimate, int numWorkers) {
+		return computeMixedFedLocalCost(hop, inputHops, inputMemEstimates, inputFTypes, logicalFType,
+			baseSelfCost, outputMemEstimate, numWorkers, null);
+	}
+
+	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
+			List<Double> inputMemEstimates, List<FType> inputFTypes, FType logicalFType,
+			double baseSelfCost, double outputMemEstimate, int numWorkers, FederatedExecutionLayout layout) {
 		if (requiresFederatedAggUnaryLocalAggregation(hop)) {
 			return computeAggregateUnaryLocalAggregationCost("agg-unary-local-aggregation",
 				(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, 0.0);
 		}
 		double wdivmmInputPreparationCost =
 			computeWdivmmInputPreparationCost(hop, inputHops, inputMemEstimates,
-				inputFTypes, numWorkers);
+				inputFTypes, numWorkers, layout);
 		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType)) {
 			return computePartialAggregationCost("wdivmm-local-aggregation",
-				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, 0.0);
+				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost);
 		}
 		if (wdivmmInputPreparationCost > 0.0) {
 			return new MixedFedLocalCost("wdivmm-input-preparation",
-				wdivmmInputPreparationCost, 0.0, 0.0, 0.0);
+				wdivmmInputPreparationCost, 0.0, 0.0);
 		}
 		if (requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes)) {
 			double inputPreparationCost =
 				computeAggBinaryRowLeftInputPreparationCost(hop, inputHops,
 					inputMemEstimates, inputFTypes, numWorkers);
 			return new MixedFedLocalCost("aggbinary-rowleft-input-prep",
-				inputPreparationCost, 0.0, 0.0, 0.0);
+				inputPreparationCost, 0.0, 0.0);
 		}
 		if (requiresFederatedAggBinaryAddAggregation(hop, inputFTypes)) {
 			double inputPreparationCost =
 				computeAggBinarySlicedInputBroadcastCost(hop, inputHops,
 					inputMemEstimates, inputFTypes, numWorkers);
 			return computePartialAggregationCost("aggbinary-add-aggregation",
-				hop, outputMemEstimate, numWorkers, inputPreparationCost, 0.0);
+				hop, outputMemEstimate, numWorkers, inputPreparationCost);
 		}
 		return MixedFedLocalCost.none();
 	}
@@ -735,20 +588,18 @@ public final class FederatedCostModel {
 	}
 
 	private static MixedFedLocalCost computePartialAggregationCost(String label, Hop hop,
-			double outputMemEstimate, int numWorkers, double inputPreparationCost,
-			double federatedComputeFloor) {
+			double outputMemEstimate, int numWorkers, double inputPreparationCost) {
 		double partialResultMem = outputMemEstimate > 0.0 ? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
 		if (partialResultMem <= 0.0)
 			partialResultMem = getEffectiveUploadMemEstimate(hop);
 		if (partialResultMem <= 0.0)
-			return new MixedFedLocalCost(label, inputPreparationCost, 0.0, 0.0, federatedComputeFloor);
+			return new MixedFedLocalCost(label, inputPreparationCost, 0.0, 0.0);
 
 		int fanIn = Math.max(1, numWorkers);
 		double partialDownloadCost = computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
 		double coordinatorAggregationCost = computeCoordinatorAggregationCost(hop, partialResultMem, fanIn);
-		double cleanupControlCost = computeLocalAggregationCleanupControlCost(fanIn);
 		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
-			coordinatorAggregationCost + cleanupControlCost, federatedComputeFloor);
+			coordinatorAggregationCost);
 	}
 
 	private static MixedFedLocalCost computeAggregateUnaryLocalAggregationCost(String label,
@@ -765,27 +616,39 @@ public final class FederatedCostModel {
 		double partialDownloadCost = computeAggregateUnaryPartialResultDownloadCost(
 			aggregateUnary, logicalFType, partialResultMem, workers);
 		double coordinatorAggregationCost = computeAggregateUnaryCoordinatorAggregationCost(
-			aggregateUnary, partialResultMem, workers);
-		double cleanupControlCost = computeLocalAggregationCleanupControlCost(workers);
+			aggregateUnary, logicalFType, partialResultMem, workers);
 		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
-			coordinatorAggregationCost + cleanupControlCost, 0.0);
+			coordinatorAggregationCost);
 	}
 
 	private static double computeAggregateUnaryPartialResultDownloadCost(AggUnaryOp aggregateUnary,
 			FType logicalFType, double partialResultMem, int numWorkers) {
 		if (partialResultMem <= 0.0)
 			return 0.0;
-		double payloadFanIn = estimateNativeAggregateUnaryPayloadFanIn(
+		double payloadMultiplier = estimateNativeAggregateUnaryPayloadMultiplier(
 			aggregateUnary, logicalFType, Math.max(1, numWorkers));
-		double totalPayloadMem = partialResultMem * Math.max(1.0, payloadFanIn);
-		return computeParallelInBandResultPayloadCost(totalPayloadMem,
-			Math.max(1, numWorkers), MBS_NETWORK_BANDWIDTH_W2C,
-			MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C);
+		double totalPayloadMem = partialResultMem * Math.max(1.0, payloadMultiplier);
+		return computeCalibratedGetResponsePayloadCost(totalPayloadMem,
+			Math.max(1, numWorkers));
 	}
 
 	private static double computeAggregateUnaryCoordinatorAggregationCost(AggUnaryOp aggregateUnary,
-			double partialResultMem, int fanIn) {
+			FType logicalFType, double partialResultMem, int fanIn) {
 		int workers = Math.max(1, fanIn);
+		// BROADCAST adopts an existing result: no payload scan/copy or arithmetic.
+		// Request bookkeeping and deserialization are already priced elsewhere.
+		// Scalar variance is different: processVar calls the mean/variance scalar
+		// merge overload, which does not have the replicated select-first branch.
+		boolean scalarVariance = aggregateUnary.getOp() == AggOp.VAR
+			&& aggregateUnary.getDataType() != null && aggregateUnary.getDataType().isScalar();
+		if (logicalFType == FType.BROADCAST && !scalarVariance)
+			return 0.0;
+		// Aligned-axis aggregates bind W disjoint responses. Their combined bytes
+		// are ONE full output, not W full outputs; no elementwise reduction occurs.
+		// Network fan-in remains W: payload-equivalent count is not response count.
+		if ((logicalFType == FType.ROW && aggregateUnary.getDirection() == Direction.Row)
+			|| (logicalFType == FType.COL && aggregateUnary.getDirection() == Direction.Col))
+			return 2 * computeMemoryAccessCost(partialResultMem);
 		if (workers <= 1)
 			return computeMemoryAccessCost(partialResultMem);
 
@@ -832,46 +695,35 @@ public final class FederatedCostModel {
 	 */
 	public static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
 			List<FType> inputFTypes, int numWorkers) {
-		return computeWdivmmInputPreparationCost(hop, inputHops, null, inputFTypes, numWorkers);
+		return computeWdivmmInputPreparationCost(hop, inputHops, null, inputFTypes, numWorkers, null);
+	}
+
+	public static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
+			List<FType> inputFTypes, int numWorkers, FederatedExecutionLayout layout) {
+		return computeWdivmmInputPreparationCost(hop, inputHops, null, inputFTypes, numWorkers, layout);
 	}
 
 	private static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
-			List<Double> inputMemEstimates, List<FType> inputFTypes, int numWorkers) {
-		if (!(hop instanceof QuaternaryOp))
-			return 0.0;
-		QuaternaryOp quaternaryOp = (QuaternaryOp) hop;
-		if (quaternaryOp.getOp() != OpOp4.WDIVMM)
-			return 0.0;
-
-		FType xType = typeAt(inputFTypes, 0);
+			List<Double> inputMemEstimates, List<FType> inputFTypes, int numWorkers,
+			FederatedExecutionLayout layout) {
+		if(!(hop instanceof QuaternaryOp q) || q.getOp() != OpOp4.WDIVMM) return 0.0;
+		FType weights = typeAt(inputFTypes, 0);
+		if(layout != null && !layout.inputs().isEmpty()) weights = layout.inputs().get(0).fType();
+		if(weights != FType.ROW && weights != FType.FULL && weights != FType.COL) return 0.0;
 		double cost = 0.0;
-		if (isStrictRowPartition(xType)) {
-			FType uType = typeAt(inputFTypes, 1);
-			if (!isStrictRowPartition(uType))
-				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1),
-					inputMemEstimateAt(inputMemEstimates, 1), numWorkers);
-			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 2),
-				inputMemEstimateAt(inputMemEstimates, 2), numWorkers);
+		for(int position = 1; position < hop.getInput().size(); position++) {
+			if(!PlacementCostSemantics.isWdivmmMatrixOperand(hop, position)
+				|| !PlacementCostSemantics.wdivmmInputNeedsCollection(hop, layout, position)) continue;
+			boolean sliced = position == 1 && (weights == FType.ROW || weights == FType.FULL)
+				|| position == 2 && weights == FType.COL || position == 3;
+			cost += sliced ? computeSlicedBroadcastInputCost(inputHopAt(inputHops, position),
+				inputMemEstimateAt(inputMemEstimates, position), numWorkers)
+				: computeFullBroadcastInputCost(inputHopAt(inputHops, position),
+					inputMemEstimateAt(inputMemEstimates, position), numWorkers);
 		}
-		else if (xType == FType.COL) {
-			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 1),
-				inputMemEstimateAt(inputMemEstimates, 1), numWorkers);
-			FType vType = typeAt(inputFTypes, 2);
-			if (vType != FType.COL)
-				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 2),
-					inputMemEstimateAt(inputMemEstimates, 2), numWorkers);
-		}
-		else {
-			return 0.0;
-		}
-
-		Hop fourth = inputHopAt(inputHops, 3);
-		if (fourth != null && fourth.getDataType() != null && fourth.getDataType().isMatrix()) {
-			FType fourthType = typeAt(inputFTypes, 3);
-			if (fourthType != FType.FULL)
-				cost += computeSlicedBroadcastInputCost(fourth,
-					inputMemEstimateAt(inputMemEstimates, 3), numWorkers);
-		}
+		// Matrix-valued EPS is read at (0,0) on the coordinator; runtime sends one scalar.
+		if(PlacementCostSemantics.hasWdivmmEpsilon(hop))
+			cost += computeInBandUploadPayloadCost(8.0, FType.BROADCAST, numWorkers);
 		return cost;
 	}
 
@@ -1004,8 +856,8 @@ public final class FederatedCostModel {
 			return 0.0;
 
 		// broadcastSliced is part of the same FederationMap.execute request batch as
-		// the instruction. The FED unary owns the one fixed dispatch stage, so this
-		// preparation term is payload/serdes only.
+		// the instruction. FED execution owns the request and response latencies,
+		// so this preparation term contributes payload/codec time only.
 		return computeInBandUploadPayloadCost(memEstimate, FType.ROW, numWorkers);
 	}
 
@@ -1038,8 +890,7 @@ public final class FederatedCostModel {
 
 	private static double computeReplicatedWorkerResultDownloadCost(double memSizePerWorker, int fanIn) {
 		int workers = Math.max(1, fanIn);
-		return computeParallelInBandResultPayloadCost(memSizePerWorker * workers, workers,
-			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C);
+		return computeCalibratedGetResponsePayloadCost(memSizePerWorker * workers, workers);
 	}
 
 	private static double computeInBandWorkerResultDownloadCost(double resultMem, int fanIn,
@@ -1048,44 +899,26 @@ public final class FederatedCostModel {
 			return 0.0;
 		int workers = Math.max(1, fanIn);
 		double payloadMem = replicatedResultPerWorker ? resultMem * workers : resultMem;
-		return computeParallelInBandResultPayloadCost(payloadMem, workers,
-			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C);
+		return computeCalibratedGetResponsePayloadCost(payloadMem, workers);
 	}
 
 	/**
 	 * Payload-only critical path for results returned inside one FED request batch.
 	 *
 	 * <p>{@code FederationMap.execute} submits all worker requests before any result
-	 * is consumed, and the coordinator owns multiple Netty event-loop threads.  Each
-	 * worker therefore serializes and transfers its response independently.  For a
-	 * balanced response set, both wire bytes and response ser/deser are on the largest
-	 * per-worker path, not on one serial path containing the complete logical result.
-	 * Coordinator binding/aggregation is modeled separately by the caller.  This is
-	 * deliberately different from explicit FED-to-CP collection, whose conservative
-	 * contract remains parallel wire plus full logical coordinator ser/deser.</p>
+	 * is consumed, while aggregate response-processing work is charged over total bytes. Coordinator
+	 * binding/aggregation is modeled separately by the caller. GET response payloads use
+	 * one purpose-independent calibration; this helper adds no request batch.</p>
 	 */
 	private static double computeParallelInBandResultPayloadCost(double totalMemSize, int fanIn,
 			double bandwidthMBps, double serdesBwMBps) {
-		if (totalMemSize <= 0.0)
-			return 0.0;
-		int workers = Math.max(1, fanIn);
-		double effectiveBw = bandwidthMBps > 0.0 ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
-		double criticalPayloadMb = estimateParallelDownloadPayload(totalMemSize, workers)
-			/ (1024 * 1024);
-		double payloadSec = criticalPayloadMb / effectiveBw;
-		if (serdesBwMBps > 0.0)
-			payloadSec += criticalPayloadMb / serdesBwMBps;
-		return payloadSec * TO_MS;
+		return computeGetResponsePayloadCost(totalMemSize, fanIn, bandwidthMBps,
+			serdesBwMBps);
 	}
 
-	private static double computeLocalAggregationCleanupControlCost(int fanIn) {
-		int workers = Math.max(1, fanIn);
-		if (workers <= 1)
-			return 0.0;
-		// AggregateBinaryFEDInstruction and the other local-aggregation paths append
-		// GET_VAR and cleanup to the same FederationMap.execute batch as worker compute.
-		// Cleanup therefore adds no separate fixed network stage.
-		return 0.0;
+	private static double computeCalibratedGetResponsePayloadCost(double totalMemSize, int fanIn) {
+		return computeGetResponsePayloadCost(totalMemSize, fanIn,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
 	}
 
 	private static double computeCoordinatorAggregationCost(Hop hop, double partialResultMem, int fanIn) {
@@ -1093,7 +926,8 @@ public final class FederatedCostModel {
 		if (workers <= 1)
 			return computeMemoryAccessCost(partialResultMem);
 
-		double outputCells = estimateLogicalCellCount(hop, partialResultMem);
+		double outputCells = hop == null ? partialResultMem / OptimizerUtils.DOUBLE_SIZE
+			: estimateLogicalCellCount(hop, partialResultMem);
 		double aggregateFlops = Math.max(0, workers - 1) * Math.max(0.0, outputCells);
 		double aggregateComputeCost = (aggregateFlops / getComputeFlopsPerSec(hop)) * TO_MS;
 		double aggregateReadCost = computeMemoryAccessCost(partialResultMem * workers);
@@ -1101,170 +935,45 @@ public final class FederatedCostModel {
 		return Math.max(aggregateComputeCost, aggregateReadCost) + aggregateWriteCost;
 	}
 
-	/**
-	 * Additional penalty for single-worker federated execution in degenerate cases.
-	 *
-	 * <p>This targets function-placeholder plans where FED execution over one worker
-	 * offers no data-parallel speedup, but the planner can still prefer FED because
-	 * the placeholder hop itself has near-zero compute cost. The penalty is applied
-	 * only when control-plane overhead is materially non-zero and either the hop has
-	 * no immediate concrete federated matrix input or it is executed repeatedly.</p>
-	 */
-	public static double computeSingleWorkerFedExecPenalty(Hop hop, double execWeight, int numWorkers) {
-		if (hop == null || numWorkers > 1)
-			return 0.0;
-		if (!(hop instanceof FunctionOp))
-			return 0.0;
-		FunctionOp functionOp = (FunctionOp) hop;
-		if (functionOp.getFunctionType() != FunctionOp.FunctionType.DML)
-			return 0.0;
-		final double ctrlMs = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		if (ctrlMs <= SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS)
-			return 0.0;
-
-		final boolean hasConcreteFedMatrixInput = hasConcreteFederatedMatrixInput(functionOp);
-		final double boundedExecWeight = Math.max(1.0, execWeight);
-		if (hasConcreteFedMatrixInput && boundedExecWeight <= 1.0)
-			return 0.0;
-
-		// Model only the additional call-boundary control cost that is not already captured by
-		// ordinary per-hop FED coordination. When a concrete federated matrix input already anchors
-		// the call boundary, a one-shot call should not receive any extra penalty. Repeated calls
-		// and fully local boundaries still pay a bounded overhead proportional to the number of
-		// distinct materialized inputs that must participate in the call.
-		final int boundaryInputs = Math.max(1, countDistinctFunctionBoundaryInputs(functionOp));
-		final double repetitionFactor = hasConcreteFedMatrixInput
-			? Math.max(0.0, boundedExecWeight - 1.0)
-			: boundedExecWeight;
-		return repetitionFactor * boundaryInputs * ctrlMs * SINGLE_WORKER_FED_EXEC_PENALTY_FACTOR;
-	}
-
-	private static boolean hasConcreteFederatedMatrixInput(FunctionOp hop) {
-		if (hop == null || hop.getInput() == null)
-			return false;
-		Set<Long> seen = new HashSet<>();
-		for (Hop inputHop : hop.getInput()) {
-			if (inputHop == null || !seen.add(inputHop.getHopID()))
-				continue;
-			if (inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
-				continue;
-			if (inputHop.getForcedExecType() == ExecType.FED || inputHop.getFederatedOutput() == FederatedOutput.FOUT)
-				return true;
-			if (inputHop instanceof DataOp && ((DataOp) inputHop).getOp() == OpOpData.FEDERATED)
-				return true;
-		}
-		return false;
-	}
-
-	private static int countDistinctFunctionBoundaryInputs(FunctionOp hop) {
-		if (hop == null || hop.getInput() == null)
-			return 0;
-		Set<Long> seen = new HashSet<>();
-		for (Hop inputHop : hop.getInput()) {
-			if (inputHop == null)
-				continue;
-			if (inputHop.getDataType() != null && inputHop.getDataType().isScalar())
-				continue;
-			seen.add(inputHop.getHopID());
-		}
-		return seen.size();
-	}
-
 	public static double computeOpCost(Hop currentHop) {
 		return computeOpCost(currentHop, 0.0);
 	}
 
-	/**
-	 * Computes the local operation cost while honoring a runtime-kernel compute-time
-	 * floor established from immutable placement-analysis evidence.
-	 *
-	 * <p>The supplemental floor is expressed in milliseconds rather than FLOPs.  A
-	 * dynamically recompiled kernel can have a different calibrated throughput family
-	 * than the pre-rewrite HOP (for example, a Quaternary WDivMM represented initially
-	 * by an AggBinary root), so applying its FLOPs to the old HOP's throughput would be
-	 * dimensionally correct but semantically wrong.</p>
-	 */
-	public static double computeOpCost(Hop currentHop, double supplementalComputeTimeFloor) {
+	/** Compatibility overload using a minimum compute-work quantity, in FLOPs. */
+	public static double computeOpCost(Hop currentHop, double minimumComputeFlops) {
 		double inputMemEstimate = getEffectiveInputMemEstimate(currentHop);
 		double outputMemEstimate = getEffectiveOutputMemEstimate(currentHop);
-		return computeOpCost(currentHop, supplementalComputeTimeFloor,
+		return computeOpCost(currentHop, minimumComputeFlops,
 			inputMemEstimate, outputMemEstimate);
 	}
 
-	private static double computeOpCost(Hop currentHop, double supplementalComputeTimeFloor,
+	private static double computeOpCost(Hop currentHop, double minimumComputeFlops,
 			double inputMemEstimate, double outputMemEstimate) {
-		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
-		computeCost = Math.max(computeCost, estimateWdivmmRankAwareComputeFloor(currentHop));
-		if (isDmlFunctionOp(currentHop)) {
-			computeCost = Math.max(computeCost,
-				estimateDmlFunctionOpComputeFloor((FunctionOp) currentHop, inputMemEstimate, outputMemEstimate));
-		}
-		double computeTime = Math.max((computeCost / getComputeFlopsPerSec(currentHop)) * TO_MS,
-			Math.max(0.0, supplementalComputeTimeFloor));
-		double inputAccessCost = computeMemoryAccessCost(inputMemEstimate);
-		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
-
-		// Total cost assumes:
-		// 1) Computation and input access can overlap (take max)
-		// 2) Output access must wait for both (add)
-		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
+		return computeOpCost(currentHop, minimumComputeFlops, inputMemEstimate,
+			outputMemEstimate, ComputeCost.getHOPComputeCost(currentHop));
 	}
 
-	private static double estimateWdivmmRankAwareComputeFloor(Hop hop) {
-		if (hop == null)
-			return 0.0;
-		if (hop instanceof QuaternaryOp && ((QuaternaryOp) hop).getOp() == OpOp4.WDIVMM)
-			return estimateWdivmmRankAwareComputeFloor((QuaternaryOp) hop);
-		return 0.0;
+	private static double computeOpCost(Hop currentHop, double minimumComputeFlops,
+			double inputMemEstimate, double outputMemEstimate, double computeCost) {
+		double flops = Math.max(Double.isFinite(computeCost) ? computeCost : 0.0,
+			Double.isFinite(minimumComputeFlops) ? minimumComputeFlops : 0.0);
+		return computeExecutionCost(currentHop, flops, inputMemEstimate, outputMemEstimate);
 	}
 
-	private static double estimateWdivmmRankAwareComputeFloor(QuaternaryOp hop) {
-		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
-			return 0.0;
-		return estimateWdivmmRankAwareComputeFloor(hop.getInput(0),
-			hop.getInput().size() > 1 ? hop.getInput(1) : null,
-			hop.getInput().size() > 2 ? hop.getInput(2) : null, hop);
+	/**
+	 * One execution primitive for CP and worker kernels:
+	 * {@code max(flops/rho, readBytes/mu) + writeBytes/mu}.
+	 */
+	public static double computeExecutionCost(Hop hop, double flops,
+			double readBytes, double writeBytes) {
+		double safeFlops = Double.isFinite(flops) && flops > 0.0 ? flops : 0.0;
+		double safeRead = Double.isFinite(readBytes) && readBytes > 0.0 ? readBytes : 0.0;
+		double safeWrite = Double.isFinite(writeBytes) && writeBytes > 0.0 ? writeBytes : 0.0;
+		double computeTime = safeFlops / getComputeFlopsPerSec(hop) * TO_MS;
+		double readTime = computeMemoryAccessCost(safeRead);
+		return Math.max(computeTime, readTime) + computeMemoryAccessCost(safeWrite);
 	}
 
-	private static double estimateWdivmmRankAwareComputeFloor(Hop weights, Hop u, Hop v,
-			Hop output) {
-
-		double weightCells = estimateLogicalCellCount(weights, getEffectiveOutputMemEstimate(weights));
-		double rank = estimateWdivmmRank(u, v, output);
-		if (weightCells <= 0.0 || rank <= 1.0)
-			return 0.0;
-
-		// Runtime WDivMM kernels do not only touch each weighted input cell once.  For
-		// BASIC/LEFT/RIGHT variants every active weight cell participates in a
-		// rank-width U/V factor interaction (dot product plus output contribution).
-		// The generic HOP compute model charges roughly a constant four flops per
-		// weighted cell, which is suitable only for rank=1 and underestimates ALS
-		// factor-update WDivMM by about the factor rank.  Keep this as a floor for the
-		// FedPlanner cost model instead of closing legal FED candidates.
-		return 4.0 * rank * weightCells;
-	}
-
-	/** Runtime-kernel compute-time floor for a rank-aware WDivMM over known weights. */
-	public static double computeWdivmmRankAwareComputeTimeFloor(long weightRows,
-			long weightCols, long rank) {
-		if(weightRows <= 0 || weightCols <= 0 || rank <= 1)
-			return 0.0;
-		double cells = weightRows * (double) weightCols;
-		return (4.0 * rank * cells / FLOPS_PER_SEC) * TO_MS;
-	}
-
-	private static double estimateWdivmmRank(Hop u, Hop v, Hop output) {
-		if (u != null && u.getDim2() > 0)
-			return u.getDim2();
-		if (v != null) {
-			long vRank = HopRewriteUtils.isTransposeOperation(v) && !v.getInput().isEmpty()
-				? v.getInput(0).getDim2() : v.getDim2();
-			if (vRank > 0)
-				return vRank;
-		}
-		long outputCols = output == null ? -1 : output.getDim2();
-		return outputCols > 0 ? outputCols : 1.0;
-	}
 
 	private static double getComputeFlopsPerSec(Hop hop) {
 		if (hop instanceof AggBinaryOp && hop.getDataType() != null && hop.getDataType().isMatrix())
@@ -1272,34 +981,6 @@ public final class FederatedCostModel {
 		return FLOPS_PER_SEC;
 	}
 
-	private static boolean isDmlFunctionOp(Hop hop) {
-		return hop instanceof FunctionOp
-			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.DML;
-	}
-
-	private static double estimateDmlFunctionOpComputeFloor(FunctionOp hop,
-		double inputMemEstimate, double outputMemEstimate) {
-		if (hop == null || hop.getFunctionType() != FunctionOp.FunctionType.DML)
-			return 0.0;
-
-		double logicalCells = 0.0;
-		Set<Long> seenInputHops = new HashSet<>();
-		if (hop.getInput() != null) {
-			for (Hop inputHop : hop.getInput()) {
-				if (inputHop == null || !seenInputHops.add(inputHop.getHopID()))
-					continue;
-				logicalCells += estimateLogicalCellCount(inputHop, getEffectiveOutputMemEstimate(inputHop));
-			}
-		}
-		logicalCells += estimateLogicalCellCount(hop, outputMemEstimate);
-
-		if (logicalCells <= 0.0 && inputMemEstimate > 0.0) {
-			double perCell = Math.max(1.0, getInjectedDefaultMemEstimatePerCell(hop));
-			logicalCells = inputMemEstimate / perCell;
-		}
-
-		return Math.max(0.0, logicalCells) * MIN_DML_FUNCTION_OP_COMPUTE_FLOPS_PER_CELL;
-	}
 
 	private static double estimateLogicalCellCount(Hop hop, double memEstimate) {
 		if (hop == null)
@@ -1365,19 +1046,27 @@ public final class FederatedCostModel {
 
 	/** See {@link #computeOpCost(Hop, double)}. */
 	public static double computeOpCostWithFallback(Hop hop,
-			double supplementalComputeTimeFloor) {
-		return computeOpCostWithFallback(hop, supplementalComputeTimeFloor,
+			double minimumComputeFlops) {
+		return computeOpCostWithFallback(hop, minimumComputeFlops,
 			Double.NaN, Double.NaN);
 	}
 
 	/**
 	 * Occurrence-aware ordinary HOP cost. Positive finite byte estimates replace
 	 * the memory-derived inputs to the existing formula; missing estimates retain
-	 * all existing HOP fallbacks and kernel compute floors.
+	 * all existing HOP fallbacks and compute-work estimates.
 	 */
 	public static double computeOpCostWithFallback(Hop hop,
-			double supplementalComputeTimeFloor, double inputMemEstimate,
+			double minimumComputeFlops, double inputMemEstimate,
 			double outputMemEstimate) {
+		return computeOpCostWithFallback(hop, minimumComputeFlops, inputMemEstimate,
+			outputMemEstimate, Double.NaN);
+	}
+
+	/** Same primitive and kernel corrections, with occurrence-exact ordinary FLOPs. */
+	public static double computeOpCostWithFallback(Hop hop,
+			double minimumComputeFlops, double inputMemEstimate,
+			double outputMemEstimate, double computeFlops) {
 		if (hop == null) {
 			return 0.0;
 		}
@@ -1386,8 +1075,10 @@ public final class FederatedCostModel {
 			? inputMemEstimate : getEffectiveInputMemEstimate(hop);
 		double effectiveOutputMemEstimate = positiveFinite(outputMemEstimate)
 			? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
-		double opCost = computeOpCost(hop, supplementalComputeTimeFloor,
-			effectiveInputMemEstimate, effectiveOutputMemEstimate);
+		double opCost = computeOpCost(hop, minimumComputeFlops,
+			effectiveInputMemEstimate, effectiveOutputMemEstimate,
+			Double.isFinite(computeFlops) && computeFlops >= 0.0
+				? computeFlops : ComputeCost.getHOPComputeCost(hop));
 		if (opCost > 0.0) {
 			return opCost;
 		}
@@ -2029,23 +1720,58 @@ public final class FederatedCostModel {
 		return 0;
 	}
 
-	public static double computeNetworkCost(double memSize) {
-		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH, MBS_NETWORK_SERDES_BANDWIDTH);
+	public static double computeRequestResponseLatency() {
+		return computeRequestResponseLatency(NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C);
 	}
 
 	public static double computeDownloadNetworkCost(double memSize) {
-		if (memSize <= 0)
-			return 0.0;
-		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+		return computeGetResponseCost(memSize, 1,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C, 1,
+			NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C);
 	}
 
 	public static double computeDownloadNetworkCost(double memSize, FType fType, int numWorkers) {
-		if (memSize <= 0)
-			return 0.0;
-		int fanIn = estimateDownloadFanIn(fType, numWorkers);
-		return computeParallelDownloadCost(memSize, fanIn,
-			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C,
-			MBS_NETWORK_LATENCY, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		return computeResultGetCost(memSize, fType, numWorkers, 1);
+	}
+
+	/** Runtime-specific result batch ownership; all payloads still use the same GET policy. */
+	public static double computeNativeFederatedLoutResultCost(Hop hop, FType executionType,
+			double bytes, int workers) {
+		boolean inBand = nativeResultIsInBand(hop);
+		if(hop instanceof QuaternaryOp quaternary && quaternary.getOp() == OpOp4.WDIVMM)
+			return computeWdivmmLoutResultCost(quaternary.getBaseType(), executionType, bytes, workers);
+		return computeResultGetCost(bytes, executionType, workers, inBand ? 0 : 1);
+	}
+
+	private static boolean nativeResultIsInBand(Hop hop) {
+		return hop instanceof TernaryOp
+			|| hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS;
+	}
+
+	public static double computeNativeFederatedLoutResultCost(Hop hop,
+			PlacementCostSemantics.WorkerResponseSummary responses) {
+		double payload = computeGetResponsePayloadCost(responses.totalBytes(), responses.largestBytes(),
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+		return payload + (nativeResultIsInBand(hop) ? 0.0
+			: computeRequestResponseLatency(NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C));
+	}
+
+	/** Explicit and dynamically fused WDivMM have the same partial/bind response contract. */
+	public static double computeWdivmmLoutResultCost(int baseType, FType inputType,
+			double outputBytes, int workers) {
+		boolean partial = (baseType == 1 || baseType == 3) && inputType == FType.ROW
+			|| (baseType == 2 || baseType == 4) && inputType == FType.COL;
+		double payload = computeResultGetCost(outputBytes, partial ? FType.PART : inputType, workers, 0);
+		return payload + (partial ? computeCoordinatorAggregationCost(null, outputBytes, workers) : 0.0);
+	}
+
+	private static double computeResultGetCost(double memSize, FType fType, int numWorkers,
+			int additionalBatches) {
+		// FULL is a non-replicated single-worker map; BROADCAST represents replicas.
+		int fanIn = fType == FType.FULL ? 1 : Math.max(1, numWorkers);
+		return computeGetResponseCost(estimateCollectResponseBytes(memSize, fType, fanIn), fanIn,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C, additionalBatches,
+			NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C);
 	}
 
 	/**
@@ -2054,55 +1780,83 @@ public final class FederatedCostModel {
 	 * <p>The emitted {@code prefetch} calls {@code acquireReadAndRelease} once for the
 	 * selected producer and rewires all compatible local consumers to that materialized
 	 * value. Its runtime path is therefore one parallel {@code GET_VAR} batch, not a
-	 * standalone serial collection per consumer. Worker response transfer and codec
-	 * work lie on the largest per-worker path; the batch itself owns one latency/control
-	 * stage. Small responses use the in-band response calibration. Once a worker response
-	 * exceeds the pooled response-buffer boundary, the large directional W2C codec
-	 * calibration applies to that worker's critical path. This preserves cheap repeated
-	 * materialization of small intermediates without pricing a single very large response
-	 * as if it followed the small-message path.</p>
+	 * standalone serial collection per consumer. Worker links use the largest response, the shared coordinator NIC uses total
+	 * response bytes, and aggregate processing uses total response bytes. The batch owns
+	 * one request and one response stage, using the same payload policy as every other GET. Reuse affects activation count outside this helper,
+	 * never the price of one response.</p>
 	 */
 	public static double computeReusableMaterializationDownloadCost(double memSize,
 			FType fType, int numWorkers) {
-		if (memSize <= 0.0)
-			return 0.0;
-		int fanIn = estimateDownloadFanIn(fType, numWorkers);
-		return computeReusableMaterializationDownloadCost(memSize, fanIn,
-			MBS_NETWORK_BANDWIDTH_W2C, MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C,
-			MBS_NETWORK_SERDES_BANDWIDTH_W2C,
-			REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_BYTES,
-			MBS_NETWORK_LATENCY, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		return computeDownloadNetworkCost(memSize, fType, numWorkers);
 	}
 
 	static double computeReusableMaterializationDownloadCost(double totalMemSize, int fanIn,
-			double bandwidthMBps, double fastSerdesBwMBps, double largeSerdesBwMBps,
-			double fastResponseMaxBytes, double latencySec, double controlMs) {
-		if (totalMemSize <= 0.0)
-			return 0.0;
-		int workers = Math.max(1, fanIn);
-		double criticalResponseBytes = estimateParallelDownloadPayload(totalMemSize, workers);
-		double responseSerdesBwMBps = criticalResponseBytes > Math.max(0.0, fastResponseMaxBytes)
-			&& largeSerdesBwMBps > 0.0 ? largeSerdesBwMBps : fastSerdesBwMBps;
-		double payload = computeParallelInBandResultPayloadCost(totalMemSize,
-			workers, bandwidthMBps, responseSerdesBwMBps);
-		double fixedStage = computeFixedFederatedInstructionStageCost(1.0,
-			latencySec * TO_MS, controlMs);
-		return payload + fixedStage;
+			double bandwidthMBps, double serdesBwMBps, double requestLatencySec, double responseLatencySec) {
+		return computeGetResponseCost(totalMemSize, fanIn, bandwidthMBps,
+			serdesBwMBps, 1, requestLatencySec, responseLatencySec);
 	}
 
-	private static double computeParallelDownloadCost(double totalMemSize, int fanIn,
-			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) {
-		if (totalMemSize <= 0.0)
+	/** Payload contribution to an already owned stage, not another directional exchange. */
+	static double computeNetworkPayloadCost(double largestWireBytes, double totalWireBytes,
+			double codecBytes, double workerBandwidthMiBps, double coordinatorBandwidthMiBps,
+			double codecMiBps) {
+		return computeOneWayNetworkCost(largestWireBytes, totalWireBytes, codecBytes,
+			workerBandwidthMiBps, coordinatorBandwidthMiBps, codecMiBps, 0.0);
+	}
+
+	/** One-way latency + star-network bottleneck time + aggregate endpoint processing. */
+	static double computeOneWayNetworkCost(double largestWireBytes, double totalWireBytes,
+			double codecBytes, double workerBandwidthMiBps, double coordinatorBandwidthMiBps,
+			double codecMiBps, double latencySec) {
+		if(!Double.isFinite(latencySec) || latencySec < 0.0)
+			throw new IllegalArgumentException("FED_COST_INVALID_ONE_WAY_LATENCY: " + latencySec);
+		double largest = positiveFinite(largestWireBytes) ? largestWireBytes : 0.0;
+		double total = positiveFinite(totalWireBytes) ? totalWireBytes : 0.0;
+		double codec = positiveFinite(codecBytes) ? codecBytes : 0.0;
+		if(largest > 0.0 && !positiveFinite(workerBandwidthMiBps))
+			throw new IllegalArgumentException("FED_COST_WORKER_BANDWIDTH_REQUIRED");
+		double workerTime = largest > 0.0 ? largest / (1024 * 1024) / workerBandwidthMiBps : 0.0;
+		double coordinatorTime = positiveFinite(coordinatorBandwidthMiBps)
+			? total / (1024 * 1024) / coordinatorBandwidthMiBps : 0.0;
+		double codecTime = positiveFinite(codecMiBps) ? codec / (1024 * 1024) / codecMiBps : 0.0;
+		return (latencySec + Math.max(workerTime, coordinatorTime) + codecTime) * TO_MS;
+	}
+
+	/** Two zero-payload stage contributions; payload factors add bytes to these same stages. */
+	static double computeRequestResponseLatency(double requestLatencySec, double responseLatencySec) {
+		return computeOneWayNetworkCost(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, requestLatencySec)
+			+ computeOneWayNetworkCost(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, responseLatencySec);
+	}
+
+	/** Purpose-independent payload price for a balanced GET response set. */
+	static double computeGetResponsePayloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double aggregateProcessingMBps) {
+		return computeGetResponsePayloadCost(totalMemSize,
+			estimateParallelDownloadPayload(totalMemSize, Math.max(1, fanIn)),
+			bandwidthMBps, aggregateProcessingMBps);
+	}
+
+	/**
+	 * Wire critical path plus aggregate coordinator response-processing work.
+	 * The configured processing rate is effective throughput over total bytes, not
+	 * a per-thread codec rate. Neither event-loop count nor response size changes it.
+	 */
+	static double computeGetResponsePayloadCost(double totalMemSize, double largestResponseBytes,
+			double bandwidthMBps, double aggregateProcessingMBps) {
+		if(!Double.isFinite(totalMemSize) || totalMemSize <= 0.0)
 			return 0.0;
-		int workers = Math.max(1, fanIn);
-		double effectiveBw = bandwidthMBps > 0.0 ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
-		double parallelPayloadMb = estimateParallelDownloadPayload(totalMemSize, workers) / (1024 * 1024);
-		double totalPayloadMb = totalMemSize / (1024 * 1024);
-		double payloadSec = parallelPayloadMb / effectiveBw;
-		if (serdesBwMBps > 0.0)
-			payloadSec += totalPayloadMb / serdesBwMBps;
-		double fixedStageMs = latencySec * TO_MS + Math.max(0.0, controlMs);
-		return payloadSec * TO_MS + fixedStageMs;
+		return computeNetworkPayloadCost(largestResponseBytes, totalMemSize, totalMemSize,
+			bandwidthMBps, MBS_NETWORK_COORDINATOR_W2C, aggregateProcessingMBps);
+	}
+
+	/** GET payload plus the explicitly owned count of additional request/response batches. */
+	static double computeGetResponseCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double aggregateProcessingMBps, int additionalBatches,
+			double requestLatencySec, double responseLatencySec) {
+		double payload = computeGetResponsePayloadCost(totalMemSize, fanIn,
+			bandwidthMBps, aggregateProcessingMBps);
+		return payload + Math.max(0, additionalBatches)
+			* computeRequestResponseLatency(requestLatencySec, responseLatencySec);
 	}
 
 	public static boolean requiresExplicitMatrixBoundaryTransfer(Hop hop) {
@@ -2112,58 +1866,18 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeUploadNetworkCost(double memSize, FType fType, int numWorkers) {
-		if (memSize <= 0)
-			return 0.0;
-		double multiplier = (fType != null && (fType == FType.FULL || fType == FType.BROADCAST))
-				? Math.max(1, numWorkers)
-				: 1.0;
-		return computeDirectionalNetworkCost(memSize * multiplier, MBS_NETWORK_BANDWIDTH_C2W, MBS_NETWORK_SERDES_BANDWIDTH_C2W);
+		return computeInBandUploadPayloadCost(memSize, fType, numWorkers) + computeRequestResponseLatency();
 	}
 
-	/**
-	 * Payload-only C2W cost for an input carried inside an existing FED instruction
-	 * request batch. The enclosing FED unary owns the batch's one latency/control
-	 * stage; this helper accounts only for wire payload and serialization.
-	 */
+	/** Payload contribution to the enclosing FED request, with no additional latency. */
 	public static double computeInBandUploadPayloadCost(double memSize, FType fType, int numWorkers) {
-		if (memSize <= 0.0)
+		if(!positiveFinite(memSize))
 			return 0.0;
-		double multiplier = fType != null && (fType == FType.FULL || fType == FType.BROADCAST)
-			? Math.max(1, numWorkers) : 1.0;
-		double effectiveBw = MBS_NETWORK_BANDWIDTH_C2W > 0.0
-			? MBS_NETWORK_BANDWIDTH_C2W : MBS_NETWORK_BANDWIDTH;
-		double payloadMb = memSize * multiplier / (1024 * 1024);
-		double payloadSec = payloadMb / effectiveBw;
-		if (MBS_NETWORK_SERDES_BANDWIDTH_C2W > 0.0)
-			payloadSec += payloadMb / MBS_NETWORK_SERDES_BANDWIDTH_C2W;
-		return payloadSec * TO_MS;
-	}
-
-	private static double computeDirectionalNetworkCost(double memSize, double bandwidthMBps, double serdesBwMBps) {
-		double ctrlMs = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		if (memSize <= 0)
-			return MBS_NETWORK_LATENCY * TO_MS + ctrlMs;
-		double effectiveBw = (bandwidthMBps > 0.0) ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
-		double payloadMb = memSize / (1024 * 1024);
-		double payloadSec = payloadMb / effectiveBw;
-		double effectiveSerdesBw = (serdesBwMBps > 0.0) ? serdesBwMBps : 0.0;
-		if (effectiveSerdesBw > 0.0) {
-			payloadSec += payloadMb / effectiveSerdesBw;
-		}
-		return (MBS_NETWORK_LATENCY + payloadSec) * TO_MS + ctrlMs;
-	}
-
-	/**
-	 * Compatibility term for local-to-federated forwarding
-	 * (CP/LOUT -> FOUT -> FED).
-	 *
-	 * <p>The base upload already accounts for the one logical latency/control stage.
-	 * {@code FederationMap.execute} submits every worker request before waiting, so
-	 * no additional fixed stage is charged per worker. Payload fanout remains in
-	 * {@link #computeUploadNetworkCost(double, FType, int)}.
-	 */
-	public static double computeLocalToFedForwardingPenalty(FType fType, int numWorkers) {
-		return 0.0;
+		int workers = Math.max(1, numWorkers);
+		double total = fType == FType.BROADCAST ? memSize * workers : memSize;
+		double largest = fType == FType.ROW || fType == FType.COL ? memSize / workers : memSize;
+		return computeNetworkPayloadCost(largest, total, total, MBS_NETWORK_BANDWIDTH_C2W,
+			MBS_NETWORK_COORDINATOR_C2W, MBS_NETWORK_SERDES_BANDWIDTH_C2W);
 	}
 
 	/**
@@ -2180,23 +1894,13 @@ public final class FederatedCostModel {
 			+ computeUploadNetworkCost(memSize, targetFType, numWorkers);
 	}
 
-	/**
-	 * Compatibility overload for estimates that do not yet carry an exact target
-	 * layout. It still models both physical transfer legs, using the source layout
-	 * as the conservative same-layout target. Exact placement enumeration replaces
-	 * this estimate with its selected action cost.
-	 */
-	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
-		return computeRefedNetworkCost(memSize, fType, fType, numWorkers);
-	}
-
-	private static int estimateDownloadFanIn(FType fType, int numWorkers) {
-		int workers = Math.max(1, numWorkers);
-		if (workers <= 1)
-			return 1;
-		if (fType == FType.FULL || fType == FType.BROADCAST)
-			return 1;
-		return workers;
+	private static double estimateCollectResponseBytes(double logicalBytes, FType fType, int workers) {
+		// MatrixObject requests every map entry. BROADCAST replicas and PART
+		// overlapping partials return one full-shaped block per worker; ROW/COL
+		// shards collectively return one logical matrix. Coordinator processing uses
+		// total response bytes even when wire critical size is one block.
+		return fType == FType.BROADCAST || fType == FType.PART
+			? logicalBytes * workers : logicalBytes;
 	}
 
 	private static double estimateParallelDownloadPayload(double totalMemSize, int fanIn) {
@@ -2204,11 +1908,9 @@ public final class FederatedCostModel {
 			return 0.0;
 		if (fanIn <= 1)
 			return totalMemSize;
-		// ROW/COL/PART federated matrices are materialized by collecting disjoint
-		// partitions from multiple workers. The worker requests overlap, so the wire
-		// critical path is bounded by the largest partition. Coordinator-side
-		// deserialization still processes all logical bytes and is therefore charged
-		// separately by computeParallelDownloadCost.
+		// The caller supplies total response bytes, including replica/partial
+		// multiplicity. Equal-size parallel responses are a cost approximation;
+		// coordinator processing is priced separately over total response bytes.
 		return totalMemSize / fanIn;
 	}
 

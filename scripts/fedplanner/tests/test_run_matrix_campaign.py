@@ -90,6 +90,12 @@ def valid_receipt(cell, phase, parsed):
 
 
 class MatrixContractTest(unittest.TestCase):
+	def test_measured_profile_provider_is_a_frozen_external_dependency(self):
+		source = Path(CAMPAIGN.__file__).read_text()
+		self.assertNotIn("driver/transport-cost-profile-r59.json", source)
+		self.assertIn("calibration/experiment_profile.py", source)
+		self.assertIn("auto-measured-environment/v1", source)
+
 	def test_exact_canonical_896_cell_cartesian_product(self):
 		rows = CAMPAIGN.matrix()
 		self.assertEqual(896, len(rows))
@@ -219,6 +225,8 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 					container_name=lambda selected: "test-coordinator")
 				base = SimpleNamespace(parse_manifest=lambda value: spec,
 					prepare_remote_directories=lambda *args: None,
+					prepare_cost_profile=mock.Mock(return_value={"profile_sha256": "p" * 64,
+						"_runtime": {"cache_hit": True, "preparation_seconds": 0.25}}),
 					build_plan=lambda *args: None,
 					capture_network_snapshot=lambda *args: {},
 					validate_network_quality=lambda *args: {"valid": True})
@@ -245,6 +253,10 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 						"remote_root": "/remote", "identity": {"jar_sha256": "a" * 64}},
 						CAMPAIGN.matrix()[0], phase, args, campaign, base, renderer)
 				self.assertIsNone(result["timeout_seconds"])
+				base.prepare_cost_profile.assert_called_once()
+				self.assertEqual("a" * 64, base.prepare_cost_profile.call_args.kwargs["jar_sha256"])
+				self.assertEqual("p" * 64, result["cost_profile_sha256"])
+				self.assertEqual(0.25, result["profiling_seconds"])
 				self.assertEqual(1, result["returncode"])
 				self.assertEqual("failed", result["status"])
 				self.assertNotIn("compile_seconds", result)
@@ -260,6 +272,36 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 		for phase in ("compile", "runtime"):
 			xml = CAMPAIGN.ET.fromstring(CAMPAIGN.config(CAMPAIGN.matrix()[0], phase))
 			self.assertEqual("-1", xml.findtext("sysds.federated.timeout"))
+
+
+class ProfileFailureContractTest(unittest.TestCase):
+	def test_profile_failure_prevents_worker_and_coordinator_start(self):
+		with tempfile.TemporaryDirectory() as directory:
+			root = Path(directory)
+			spec = SimpleNamespace(coordinator=SimpleNamespace(host="so007"), workers=[],
+				container_name=lambda node: "unused-container")
+			base = SimpleNamespace(parse_manifest=lambda life: spec,
+				prepare_remote_directories=lambda *args: None,
+				prepare_cost_profile=mock.Mock(side_effect=RuntimeError("profiling failed")))
+			cleanup = mock.Mock()
+			campaign = SimpleNamespace(bounded_pilot_lifecycle=lambda *args, **kwargs:
+				{"mounts": [], "coordinator": {"environment": {}}, "workers": []},
+				remote_resource_preflight=lambda *args: {"passed": True},
+				_strict_experiment_cleanup=cleanup)
+			renderer = SimpleNamespace(render=lambda cell: {"source": "print(1);"})
+			with mock.patch.object(CAMPAIGN, "run", return_value=""), \
+					mock.patch.object(CAMPAIGN, "ssh", return_value=""), \
+					mock.patch.object(CAMPAIGN.lifecycle, "execute_start") as start, \
+					mock.patch.object(CAMPAIGN.subprocess, "run") as process, \
+					mock.patch("sys.stdout", new=io.StringIO()):
+				result = CAMPAIGN.execute_cell(root, {"remote_root": "/remote",
+					"identity": {"jar_sha256": "a" * 64}}, CAMPAIGN.matrix()[0], "runtime",
+					SimpleNamespace(stage=Path("/stage")), campaign, base, renderer)
+			self.assertEqual("failed", result["status"])
+			self.assertIn("profiling failed", result["errors"])
+			start.assert_not_called()
+			process.assert_not_called()
+			cleanup.assert_not_called()  # Provider owns and cleans its separate probe lifecycle.
 
 
 class TimingContractTest(unittest.TestCase):
@@ -541,6 +583,7 @@ class LifecycleIntegrationTest(unittest.TestCase):
 		base = SimpleNamespace(
 			parse_manifest=lambda life: spec,
 			prepare_remote_directories=lambda spec, remote: None,
+			prepare_cost_profile=mock.Mock(return_value={"profile_sha256": "p" * 64}),
 			build_plan=lambda spec, action: plan,
 			capture_network_snapshot=lambda spec: {"captured": True},
 		)

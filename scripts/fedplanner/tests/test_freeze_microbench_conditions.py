@@ -26,6 +26,21 @@ def render_program(family, k, *, n, d, variant=None, iterations=5):
 
 
 class FreezeMicrobenchConditionsTest(unittest.TestCase):
+    def test_frozen_network_uses_one_way_latency_and_mib_bandwidth(self):
+        cost = FREEZER.NETWORK["cost_environment"]
+        self.assertEqual(cost["SYSDS_FED_COST_NET_LATENCY_C2W"], "0.000500")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_LATENCY_W2C"], "0.000500")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_BW_C2W"], "596.046448")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_BW_W2C"], "596.046448")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_BW_COORD_C2W"], "596.046448")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_BW_COORD_W2C"], "596.046448")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_SERDES_BW_C2W"], "210.000000")
+        self.assertEqual(cost["SYSDS_FED_COST_NET_SERDES_BW_W2C"], "14.700000")
+        self.assertNotIn("SYSDS_FED_COST_NET_BW", cost)
+        self.assertNotIn("SYSDS_FED_COST_NET_SERDES_BW", cost)
+        self.assertNotIn("SYSDS_FED_COST_NET_LATENCY", cost)
+        self.assertNotIn("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", cost)
+
     def fixture(self, root):
         microbench = root / "microbench"
         microbench.mkdir(exist_ok=True)

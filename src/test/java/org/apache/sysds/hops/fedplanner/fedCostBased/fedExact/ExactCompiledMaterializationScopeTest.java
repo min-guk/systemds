@@ -187,7 +187,7 @@ public class ExactCompiledMaterializationScopeTest {
 		List<ExactCategoricalSolver.Variable> targetScope =
 			List.of(download.sourceDomain().variable(), download.consumerDomain().variable());
 		List<Double> positive = surface.contributions().stream()
-			.filter(contribution -> contribution.factor().scope().equals(targetScope))
+			.filter(contribution -> contribution.factor().scope().containsAll(targetScope))
 			.mapToDouble(contribution -> surface.evaluateContributionCanonical(contribution, assignment))
 			.filter(cost -> cost > 0.0).boxed().toList();
 		Assert.assertEquals("Exactly one selected download contribution for " + download.variable(),

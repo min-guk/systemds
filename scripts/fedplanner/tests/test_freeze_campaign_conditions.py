@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+
+from scripts.fedplanner.tests.test_network_cost_profile import SYNTHETIC_ENVIRONMENT, synthetic_binding
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "freeze_campaign_conditions.py"
@@ -13,6 +16,23 @@ SPEC.loader.exec_module(FREEZE)
 
 
 class CampaignConditionFreezeTest(unittest.TestCase):
+    def setUp(self):
+        binding = patch.object(FREEZE.NETWORK_COST, "cost_binding", side_effect=synthetic_binding)
+        reference = patch.object(FREEZE.NETWORK_COST, "profile_reference",
+                                 return_value={"path": "/synthetic/measured-profile.json",
+                                               "sha256": "b" * 64})
+        binding.start(); reference.start()
+        self.addCleanup(binding.stop); self.addCleanup(reference.stop)
+
+    def test_network_cost_uses_complete_measured_profile_verbatim(self):
+        cost = FREEZE.network_cost("lan", {"rtt_ms": 1, "c2w_mbit": 5000,
+                                           "w2c_mbit": 5000},
+                                   coordinator_host="coord", worker_hosts=("worker",))
+        self.assertEqual(cost, SYNTHETIC_ENVIRONMENT)
+        self.assertNotIn("SYSDS_FED_COST_NET_BW", cost)
+        self.assertNotIn("SYSDS_FED_COST_NET_LATENCY", cost)
+        self.assertNotIn("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", cost)
+
     def write(self, root, relative, content):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,8 +76,9 @@ class CampaignConditionFreezeTest(unittest.TestCase):
                     "partitions": [{"worker": 1, "begin": [0, 0], "end": [10, 2],
                                     "metadata": "data/P2P2D_features.data.mtd"}]}}}))
             planned = {"workers": 1, "network": {
-                "cost_environment": FREEZE.network_cost({
-                    "rtt_ms": 1, "c2w_mbit": 5000, "w2c_mbit": 5000})},
+                "cost_environment": FREEZE.network_cost("lan", {
+                    "rtt_ms": 1, "c2w_mbit": 5000, "w2c_mbit": 5000},
+                    coordinator_host="coord", worker_hosts=("worker",))},
                 "case": {"workers": 1, "workload": "P2_PREP", "dataset": "P2",
                          "metadata": {"X": self.metadata()},
                          "worker_input_mappings": ["P2P2D_features"],
@@ -128,6 +149,10 @@ class CampaignConditionFreezeTest(unittest.TestCase):
                 self.assertNotRegex(program["text"], r"__[A-Z0-9_]+__")
             base = next(row for row in result["conditions"]
                         if row["kind"] == "base-campaign")
+            frozen_cost = base["compileModelInput"]["networkCost"]
+            self.assertEqual(frozen_cost, SYNTHETIC_ENVIRONMENT)
+            self.assertNotIn("SYSDS_FED_COST_NET_LATENCY", frozen_cost)
+            self.assertNotIn("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", frozen_cost)
             self.assertEqual([FREEZE.P2_METADATA_RELEASE_OPTION],
                              base["compileModelInput"]["workloadJvmOptions"])
             FREEZE.publish(output, FREEZE.render(result), False)

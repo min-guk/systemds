@@ -1,0 +1,238 @@
+{
+  "base_commit": "904b4445c02d172d1293a7d266521a72447c592e",
+  "production_sha256": {
+    "src/main/java/org/apache/sysds/hops/cost/ComputeCost.java": "8fe8c920f154288879c3bb22db7c0c2a717210afe7d39e0091bd04985fac0f0a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "acf7b7202002a16abd07bc98a47ca1df53267cd15808d19656adad791a48692b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "a6b04865c20411608762b1f2c8f3edda3e83903a7213f4389ff439004f928f66",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "9f87dbe3216b65b1b1e9e574bf4604cf57939ed76d381525e9c7fe32469be982"
+  },
+  "build": "mvn -q -DskipTests -Dcheckstyle.skip -Drat.skip=true clean test-compile",
+  "java": {
+    "classes": [
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsAnalysisMemoryCostTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsNativeInputSourceShapeTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsSparseAssignmentTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSizeBoundsTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementSolveAbstractShapeTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModelInstructionNetworkStageTest",
+      "org.apache.sysds.test.component.federated.FederatedAggregateUnaryTopologyCostTest",
+      "org.apache.sysds.test.component.federated.FederatedCostModelFallbackTest",
+      "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalUnaryPreparationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalWorkerCountTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactProjectionAuthorityPreservationRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintPreflightTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSparseFunctionBoundaryCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactZeroFrequencyCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CoordinatorMetadataExactCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactL2SvmInternalEmissionCostRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+      "org.apache.sysds.hops.fedplanner.placement.PreparedExecutionCostQuantityTest",
+      "org.apache.sysds.hops.fedplanner.placement.PreparedWdivmmOperandQuantityTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedNetworkCostUnificationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExecutionOwnershipCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactWorkerLayoutProjectionTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationMaterializationCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactMaterializationActivationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledMaterializationScopeTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationIndependentOracleTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationClassFactorDecompositionTest",
+      "org.apache.sysds.hops.fedplanner.placement.FusedKernelOwnershipTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeResultBatchCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedKernelLayoutCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.GetAggregateProcessingCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedFactorReuseCostTest",
+      "org.apache.sysds.hops.fedplanner.placement.WdivmmFactorAlignmentTest",
+      "org.apache.sysds.hops.fedplanner.placement.ExplicitWdivmmPreparationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAliasGetCoalescingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExplicitWdivmmTransferTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.OneWayNetworkCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.SharedNicNetworkCostTest",
+      "org.apache.sysds.hops.fedplanner.placement.OccurrenceActivationContextTest",
+      "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryRuntimeAliasContractTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionGetSharingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasGetCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasActivationEncodingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LoopEntryCompletePlacementSpaceTest",
+      "org.apache.sysds.hops.fedplanner.placement.LoopEntryMaterializationTest",
+      "org.apache.sysds.hops.fedplanner.placement.MaterializedContinuityTest",
+      "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverCycleTest",
+      "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverFunctionReturnTest"
+    ],
+    "run": 353,
+    "passed": 352,
+    "failed": 1,
+    "baseline_reproduced_failure": {
+      "method": "FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding",
+      "error": "EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "baseline_commit": "904b4445c02d172d1293a7d266521a72447c592e",
+      "tests_disabled": false
+    }
+  },
+  "python": {
+    "run": 46,
+    "passed": 46
+  },
+  "docker": {
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "compile_only": true,
+    "runtime_executed": false,
+    "cases": [
+      {
+        "case": "ADULT_w1",
+        "status": "COMPLETE",
+        "script_sha256": "aad943c86d77a864fb4fc9a7f3d9265801e51e6e96e52b615a84d553accb24f9"
+      },
+      {
+        "case": "ADULT_w3",
+        "status": "COMPLETE",
+        "script_sha256": "bd853716899ac43a692566535ca05a71a305650189fd30cd0a0f889f6f61b9fe"
+      },
+      {
+        "case": "COVTYPE_w1",
+        "status": "COMPLETE",
+        "script_sha256": "97578ec084f0ddd68118a7974d797e0e5a4820165faaf4da58b7e038afce104f"
+      },
+      {
+        "case": "COVTYPE_w3",
+        "status": "COMPLETE",
+        "script_sha256": "2f2fbe1613e62e474eb14f19673d47b02a3ad8057b2cd33d9b16cb08b4eef4e3"
+      },
+      {
+        "case": "P1_FULL_w1",
+        "status": "COMPLETE",
+        "script_sha256": "967271bfca5725e598c873bd9448131849a2e5fa2d2211785c1fb70253aee51d"
+      },
+      {
+        "case": "P1_FULL_w3",
+        "status": "COMPLETE",
+        "script_sha256": "90f54135a4dd7ffb472519f191ce669c9067d472a77ac1846d708cf3d6b9bd23"
+      },
+      {
+        "case": "P2_PREP_w1",
+        "status": "COMPLETE",
+        "script_sha256": "af3afc3ad86c4a030299ac652d6ac122b9c93d7c5f81a7ba80d2aab170fd0302"
+      },
+      {
+        "case": "P2_PREP_w3",
+        "status": "COMPLETE",
+        "script_sha256": "fddc1993875f1cfabb9aecbd0a466c197f42fd748556fb4ec87e218f7cbb83e0"
+      },
+      {
+        "case": "als_w1",
+        "status": "COMPLETE",
+        "script_sha256": "c3a90127383f1268d9e945af9ca4f6ae2e1848369a01dbce317713d0990ceb57"
+      },
+      {
+        "case": "als_w3",
+        "status": "COMPLETE",
+        "script_sha256": "7a9688f12fadead10c88e5e2683c5e3e9024c565632e6c5ac761871d9680b59e"
+      },
+      {
+        "case": "glm_w1",
+        "status": "COMPLETE",
+        "script_sha256": "3918504919a7c947d4c5f378ad78c288b43c394254918a26b7aeca3ba53abb11"
+      },
+      {
+        "case": "glm_w3",
+        "status": "COMPLETE",
+        "script_sha256": "2ecdd41ba5b90f79cb35f9c44262912e3b290a652c8672d26aa99c916b35949d"
+      },
+      {
+        "case": "gmm_w1",
+        "status": "COMPLETE",
+        "script_sha256": "504df6d183fbdedc4c13b35c3c3dd5be56ce00805b915f715294f436b5d6e1b7"
+      },
+      {
+        "case": "gmm_w3",
+        "status": "COMPLETE",
+        "script_sha256": "94beee220b42a30d32c7d6f8aa57637e63bf2de65f1fe6263a9958ba51100c43"
+      },
+      {
+        "case": "gnmf_w1",
+        "status": "COMPLETE",
+        "script_sha256": "22c82a19b10cd66ed917dbcb097b17114314512b4f0efc2f7c509b73b8c7c831"
+      },
+      {
+        "case": "gnmf_w3",
+        "status": "COMPLETE",
+        "script_sha256": "d40fce5634039ac6fef2b55bf7b907a88a1a9af4ea831aa251e9fdee1a01bb71"
+      },
+      {
+        "case": "kmeans_w1",
+        "status": "COMPLETE",
+        "script_sha256": "19b76a1c35f9022d6fa3b784d0962206a34343457bfdb6919074c5d41e121c44"
+      },
+      {
+        "case": "kmeans_w3",
+        "status": "COMPLETE",
+        "script_sha256": "bc5fd199d28112b83145c0ef5cef53cbfedb04bd2626d86ba0aa998373fe4adc"
+      },
+      {
+        "case": "l2svm_w1",
+        "status": "COMPLETE",
+        "script_sha256": "4b2ad7bb4f6b7fb6ff9292845a89968b5dad561f4890ea3fe80eea4abc214b5a"
+      },
+      {
+        "case": "l2svm_w3",
+        "status": "COMPLETE",
+        "script_sha256": "18b38944c8893a59fbd400b59f61bcb202e0014eb9d8831194212adf0aaec9f3"
+      },
+      {
+        "case": "lm_w1",
+        "status": "COMPLETE",
+        "script_sha256": "89a1f29dda2276f78e0b615ccf82434960d166e21b1df24e293b90e502b7a2ba"
+      },
+      {
+        "case": "lm_w3",
+        "status": "COMPLETE",
+        "script_sha256": "450e706f6087d5ba8f83e06c64a53bea0f14c62c4af55a274bafa7bc93b7f688"
+      },
+      {
+        "case": "logreg_w1",
+        "status": "COMPLETE",
+        "script_sha256": "a25e895153b6162aeb4f6ae5834c12b058d7f0289e3a87c70288e2c9366e2071"
+      },
+      {
+        "case": "logreg_w3",
+        "status": "COMPLETE",
+        "script_sha256": "704731abd7bb37e82a1d09f19ffd57ce89b29e46f6ac6dcd5922e07a6620a284"
+      },
+      {
+        "case": "pca_w1",
+        "status": "COMPLETE",
+        "script_sha256": "f2d3a3ae04264a22f01c4414456f50d914b69fdf1fd7ea5dffe75653ef49d73e"
+      },
+      {
+        "case": "pca_w3",
+        "status": "COMPLETE",
+        "script_sha256": "fb532f8fb90d0440b910f17a05447d5436913b3a3ca36289716fd42d7ab30b04"
+      },
+      {
+        "case": "steplm_w1",
+        "status": "COMPLETE",
+        "script_sha256": "23626af45ea65266007c90508b8b20557062dd0719a94e356542f67668a0639e"
+      },
+      {
+        "case": "steplm_w3",
+        "status": "COMPLETE",
+        "script_sha256": "b6d0bd4f66e21082733f293c92ce3deac8a6efb8a1b986748aea2fe6568f5fa0"
+      }
+    ],
+    "frozen_campaign_builtin_sha256": {
+      "scripts/builtin/steplm.dml": "4ae71049f360c655cb917a465e96aeeb600d7967aef92f89265fa4567eefc726",
+      "scripts/builtin/lmCG.dml": "a023e4e2c8d9da34d50f078546c0256d62ac198dfcb96ca1c128fdceaa8121f3"
+    },
+    "fixture_note": "STEP-LM uses the same frozen campaign builtin with max_features as the previous main comparison; this builtin extension is not included in the source commit. Relative code imports use the frozen campaign dependency checkout. Initial fixture/classpath setup failures were rerun after repair."
+  },
+  "limits": [
+    "No distributed runtime/performance run",
+    "No live remote automatic-profiling run",
+    "Preexisting StepLM local-cost solver overflow remains"
+  ],
+  "local_evidence": "/home/mchoi/cost-model-main-publish-20261006"
+}

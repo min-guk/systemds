@@ -38,12 +38,17 @@ import org.junit.Test;
 
 /** Unrelated graph endpoints must not multiply the selected native FULL upload. */
 public class ExactNativeLocalAnchorFanoutCostTest {
+	// R56 cost-ownership baseline: source GET moved out of native-local/REFED PUT
+	// tables into the shared activation collector. Legality products are unchanged.
+	// Component regression: ExactExplicitWdivmmTransferTest; alias lifetime/versions:
+	// ExactAliasGetCoalescingTest. Prior R55 digests and change evidence are recorded
+	// in docs/COST_EXPLICIT_ALIAS_CALIBRATION_2026-10-05_KO.md.
 	private static final String PROTECTED_NATIVE_LOCAL_FINGERPRINT =
-		"373c055df8b56905d0962010cee1b249bd42be37ed2840ff56af5cfcb004f2dd";
+		"9b98077bae863999570a04c9f59100f19a5c8a710a777486f96541da648fc6f7";
 	private static final String PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256 =
-		"6eabb96f81f1c831a67ee82f76775d1f8ea8e64dd7b7cd0776a09f7cb674c4d3";
+		"9b91f6be0d109632b834037dbaa55db795a2e943a5e0f45e854ce41484caea1c";
 	private static final String PROTECTED_NATIVE_LOCAL_BITS_SHA256 =
-		"f949de6c7f44f5bc770ab2e3ec0966f3f94a0c6d2be74e7e898c92b02444909d";
+		"ed382489615a62cb3bccecf5f90264d071a1a8413505a8f60dc15bbfe2dda2db";
 
 	@Test
 	public void buildScopedWorkerCountMemoPreservesLegacyInvalidAddressCardinality() {
@@ -73,9 +78,9 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 	@Test
 	public void protectedNativeLocalCostSurfaceIsBitAndStructureStable() throws Exception {
 		PlacementAnalysis analysis = analysis(false);
-		// Retain the historical full-product golden unchanged. The production domain
-		// now omits independently-proven privacy-illegal relocation rows; its surviving
-		// costs are compared to this reference in the next test, not re-blessed by SHA.
+		// Keep the historical full legality product as an independent authority reference.
+		// R56 intentionally changes transfer ownership, not which rows are legal; the
+		// next test checks every surviving current row against this full-product model.
 		ExactPhysicalModel model = ExactPhysicalModel.buildWithLegacyInputAuthorityProductsForTest(analysis);
 		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
 		long nativeLocalAlternatives = model.domains().stream()
@@ -88,7 +93,9 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_BITS_SHA256, contributionBitsDigest(model, surface));
 		// The authority receipt hashes even excluded rows. Certified omission of
 		// the aggregate's illegal ABSENT_LOCAL row changes that receipt, not the
-		// historical factor structure or raw cost bits asserted above.
+		// R56 factor structure or raw cost bits asserted above. R59 also
+		// canonicalizes initializer/TWrite/TRead creation identity in the activation
+		// descriptor. That receipt change preserves this fixture's structure and bits.
 		var omittedAggregate = analysis.candidateRuleDomain().privacyPrunedInputs().stream()
 			.filter(proof -> analysis.hop(proof.consumer().occurrence()).orElseThrow()
 				instanceof org.apache.sysds.hops.AggUnaryOp).findFirst().orElseThrow();

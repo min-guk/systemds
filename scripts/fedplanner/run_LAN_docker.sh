@@ -16,6 +16,13 @@ if [[ "${1:-}" == "--campaign" ]]; then
     exec python3 "$(dirname "$0")/run_matrix_campaign.py" "$@"
 fi
 
+# Bounded, artifact-pinned GET/PUT calibration. This is the only supported
+# entrypoint for the transport lane; the Python runner owns its Docker lease.
+if [[ "${1:-}" == "--transport-calibration" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/transport_calibration.py" "$@"
+fi
+
 # Explicit repo-owned correctness lane. The historical frozen P5 path below is unchanged.
 if [[ "${1:-}" == "--greedy-validation" ]]; then
     shift

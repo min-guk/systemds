@@ -1,9 +1,22 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0.
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
+
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
@@ -24,6 +37,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.AggBinaryOp;
@@ -32,8 +46,12 @@ import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
@@ -135,6 +153,435 @@ public final class PlacementCostSemantics {
 			previousEnd = end;
 		}
 		return previousEnd == length;
+	}
+
+
+	/** Cost-only operand layout. Exact ranges are never placement-legality evidence. */
+	public record InputLayout(FType fType, List<AnchorPartition> ranges, boolean exactRanges) {
+		public InputLayout {
+			ranges = ranges == null ? List.of() : List.copyOf(ranges);
+			if(exactRanges && ranges.isEmpty())
+				throw new IllegalArgumentException("Exact input layout requires ranges");
+		}
+	}
+
+	/** Immutable execution layout supplied by the selected realization. */
+	public record FederatedExecutionLayout(FType executionType, int workers,
+		List<InputLayout> inputs) {
+		public FederatedExecutionLayout {
+			if(workers <= 0)
+				throw new IllegalArgumentException("Federated execution requires workers");
+			inputs = inputs == null ? List.of() : List.copyOf(inputs);
+		}
+	}
+
+	public record RuntimeFactorInput(CompiledHopKey source, int position, boolean generatedTranspose) { }
+
+	/** Mirrors QuaternaryWDivMMFEDInstruction / FederationMap.isAligned, not FType similarity. */
+	public static boolean reusesWdivmmFactor(InputLayout weights, InputLayout factor,
+			int position, boolean generatedTranspose) {
+		if(generatedTranspose || weights == null || factor == null || factor.fType() == null
+			|| !weights.exactRanges() || !factor.exactRanges())
+			return false;
+		if(position == 1 && (weights.fType() == FType.ROW || weights.fType() == FType.FULL))
+			return factor.fType().isType(FType.ROW) && alignedAxis(weights, factor, 0, 0);
+		if(position == 2 && weights.fType() == FType.COL)
+			return alignedAxis(weights, factor, 1, 1) || alignedAxis(weights, factor, 1, 0);
+		if(position == 3 && (weights.fType() == FType.ROW || weights.fType() == FType.COL || weights.fType() == FType.FULL))
+			return weights.ranges().stream().allMatch(w -> {
+				var matches = factor.ranges().stream().filter(f ->
+					w.begin().equals(f.begin()) && w.end().equals(f.end())).toList();
+				return !matches.isEmpty() && matches.stream().allMatch(f -> w.workerId().equals(f.workerId()));
+			});
+		return false;
+	}
+
+	/** Matches QuaternaryOp.checkWDivMMType: only base LEFT/RIGHT plus a matrix fourth input is MX. */
+	public static boolean isWdivmmMatrixOperand(Hop hop, int position) {
+		if(!(hop instanceof QuaternaryOp q) || q.getOp() != OpOp4.WDIVMM
+			|| position <= 0 || position >= hop.getInput().size()
+			|| !hop.getInput(position).getDataType().isMatrix()) return false;
+		return position <= 2 || position == 3 && (q.getBaseType() == 1 || q.getBaseType() == 2);
+	}
+
+	public static boolean hasWdivmmEpsilon(Hop hop) {
+		return hop instanceof QuaternaryOp q && q.getOp() == OpOp4.WDIVMM
+			&& (q.getBaseType() == 3 || q.getBaseType() == 4) && hop.getInput().size() > 3;
+	}
+
+	/** Runtime coordinator read, distinct from the producer's placement or a relocation pre-stage. */
+	public static boolean wdivmmInputNeedsCollection(Hop hop, FederatedExecutionLayout layout, int position) {
+		if(position == 3 && hasWdivmmEpsilon(hop))
+			return hop.getInput(position).getDataType().isMatrix();
+		if(!isWdivmmMatrixOperand(hop, position)) return false;
+		InputLayout weights = layout == null || layout.inputs().isEmpty() ? null : layout.inputs().get(0);
+		InputLayout factor = layout == null || position >= layout.inputs().size() ? null : layout.inputs().get(position);
+		return !reusesWdivmmFactor(weights, factor, position, false);
+	}
+
+	private static boolean alignedAxis(InputLayout weights, InputLayout factor, int axis, int factorAxis) {
+		for(AnchorPartition w : weights.ranges()) {
+			boolean found = false;
+			for(AnchorPartition f : factor.ranges()) {
+				if(w.begin().size() <= axis || w.end().size() <= axis
+					|| f.begin().size() <= factorAxis || f.end().size() <= factorAxis)
+					return false;
+				if(w.begin().get(axis).equals(f.begin().get(factorAxis))
+					&& w.end().get(axis).equals(f.end().get(factorAxis))) {
+					found = true;
+					// Runtime requires EVERY axis-matching range to be at the same address.
+					if(!w.workerId().equals(f.workerId()))
+						return false;
+				}
+			}
+			if(!found) return false;
+		}
+		return true;
+	}
+
+	/** Returned worker payloads, separate from the full execution pool. */
+	public record WorkerResponseSummary(double totalBytes, double largestBytes, int responses) { }
+
+	/** Prepared once per occurrence; alternative pricing only projects worker quantities. */
+	public static final class PreparedExecutionCost {
+		private final Hop hop;
+		private final List<OperandQuantity> inputs;
+		private final OperandQuantity output;
+		private final double flops;
+		private final RuntimeWdivmmKernel runtimeWdivmm;
+		private final boolean zeroExecution;
+		private final boolean removedKernel;
+		private final IndexSlice indexSlice;
+		private final double localCost;
+
+		private PreparedExecutionCost(Hop hop, List<OperandQuantity> inputs,
+				OperandQuantity output, double flops, RuntimeWdivmmKernel runtimeWdivmm,
+				boolean zeroExecution, boolean removedKernel, IndexSlice indexSlice, double localCost) {
+			this.hop = hop;
+			this.inputs = List.copyOf(inputs);
+			this.output = output;
+			this.flops = positive(flops);
+			this.runtimeWdivmm = runtimeWdivmm;
+			this.zeroExecution = zeroExecution;
+			this.removedKernel = removedKernel;
+			this.indexSlice = indexSlice;
+			this.localCost = positive(localCost);
+		}
+
+		public double localCost() {
+			return localCost;
+		}
+
+		public boolean removedKernel() { return removedKernel; }
+
+		/** Actual factor reads, including the source of a runtime-generated transpose. */
+		public List<RuntimeFactorInput> fusedFactorInputs() {
+			return fusedWeightsOccurrence() == null ? List.of() : runtimeWdivmm.factorInputs();
+		}
+
+		public double fusedFactorTransposeCost() {
+			return fusedWeightsOccurrence() == null ? 0.0 : runtimeWdivmm.factorTransposeCost();
+		}
+
+		/** PUT payload only. Reusable GET and its lifetime belong to the materialization collector. */
+		public double fusedFactorUploadCost(int position, FType weightsType, int workers) {
+			boolean sliced = position == 1 && (weightsType == FType.ROW || weightsType == FType.FULL)
+				|| position == 2 && weightsType == FType.COL;
+			return FederatedCostModel.computeInBandUploadPayloadCost(
+				runtimeWdivmm.factors().get(position - 1).bytes(),
+				sliced ? weightsType : FType.BROADCAST, workers);
+		}
+
+		/** Compatibility quantity for callers without selected layouts: no alignment is assumed. */
+		public double fusedInputPreparationCost(FType weightsType, int workers) {
+			return fusedFactorInputs().stream().mapToDouble(input ->
+				fusedFactorUploadCost(input.position(), weightsType, workers)).sum()
+				+ fusedFactorTransposeCost();
+		}
+
+		public double fusedResultCost(FType weightsType, int workers) {
+			if(fusedWeightsOccurrence() == null)
+				return 0.0;
+			return FederatedCostModel.computeWdivmmLoutResultCost(
+				runtimeWdivmm.baseType(), weightsType, output.bytes(), workers);
+		}
+
+		/** Fused owners consume this occurrence, not the removed source-shell input. */
+		public CompiledHopKey fusedWeightsOccurrence() {
+			return runtimeWdivmm == null ? null : runtimeWdivmm.fusedWeights();
+		}
+
+		public double federatedCost(FederatedExecutionLayout layout) {
+			Objects.requireNonNull(layout, "layout");
+			if(zeroExecution)
+				return 0.0;
+			List<String> workerIds = workerIds(layout);
+			double maximum = 0.0;
+			for(String workerId : workerIds) {
+				KernelQuantity quantity = workerQuantity(layout, workerId);
+				double cost = FederatedCostModel.computeExecutionCost(
+					runtimeWdivmm == null ? hop : null,
+					quantity.flops(), quantity.readBytes(), quantity.writeBytes());
+				maximum = Math.max(maximum, cost);
+			}
+			return maximum;
+		}
+
+		public WorkerResponseSummary outputResponses(FederatedExecutionLayout layout, double serializedBytes) {
+			if(zeroExecution || output.bytes() <= 0 || hop instanceof IndexingOp && indexSlice == null
+				|| layout.inputs().stream().noneMatch(InputLayout::exactRanges))
+				return null; // No exact response geometry: retain the explicit balanced cost approximation.
+			double total = 0.0, largest = 0.0;
+			int responses = 0;
+			for(String worker : workerIds(layout)) {
+				double bytes = serializedBytes * workerQuantity(layout, worker).writeBytes() / output.bytes();
+				if(bytes <= 0) continue;
+				total += bytes;
+				largest = Math.max(largest, bytes);
+				responses++;
+			}
+			return new WorkerResponseSummary(total, largest, responses);
+		}
+
+		private KernelQuantity workerQuantity(FederatedExecutionLayout layout,
+				String workerId) {
+			if(runtimeWdivmm != null)
+				return wdivmmWorkerQuantity(layout, workerId);
+			if(hop instanceof IndexingOp)
+				return indexingWorkerQuantity(layout, workerId);
+			if(hop instanceof AggUnaryOp)
+				return aggregateWorkerQuantity(layout, workerId);
+			if(hop instanceof AggBinaryOp && ((AggBinaryOp)hop).isMatrixMultiply())
+				return matmulWorkerQuantity(layout, workerId);
+			return genericWorkerQuantity(layout, workerId);
+		}
+
+		private KernelQuantity genericWorkerQuantity(FederatedExecutionLayout layout,
+				String workerId) {
+			double share = executionShare(layout, workerId);
+			double read = 0.0;
+			for(int i = 0; i < inputs.size(); i++)
+				read += inputBytes(layout, i, workerId);
+			return new KernelQuantity(flops * share, read, output.bytes() * share);
+		}
+
+		private KernelQuantity aggregateWorkerQuantity(FederatedExecutionLayout layout,
+				String workerId) {
+			double inputShare = inputShare(layout, 0, workerId);
+			double read = inputs.isEmpty() ? 0.0 : inputs.get(0).bytes() * inputShare;
+			InputLayout inputLayout = inputLayout(layout, 0);
+			FType inputType = inputLayout == null ? null : inputLayout.fType();
+			Direction direction = ((AggUnaryOp)hop).getDirection();
+			boolean aligned = inputType == FType.ROW && direction == Direction.Row
+				|| inputType == FType.COL && direction == Direction.Col;
+			double writeShare = aligned ? inputShare : 1.0;
+			return new KernelQuantity(flops * inputShare, read, output.bytes() * writeShare);
+		}
+
+		private KernelQuantity indexingWorkerQuantity(FederatedExecutionLayout layout,
+				String workerId) {
+			InputLayout inputLayout = inputLayout(layout, 0);
+			if(indexSlice == null || inputLayout == null || !inputLayout.exactRanges()) {
+				double share = inputShare(layout, 0, workerId);
+				return new KernelQuantity(flops * share, output.bytes() * share,
+					output.bytes() * share);
+			}
+			double overlap = 0.0;
+			for(AnchorPartition range : inputLayout.ranges())
+				if(range.workerId().equals(workerId))
+					overlap += indexSlice.overlapCells(range);
+			double sliceCells = indexSlice.cells();
+			double share = sliceCells > 0.0 ? Math.min(1.0, overlap / sliceCells) : 0.0;
+			return new KernelQuantity(flops * share, output.bytes() * share,
+				output.bytes() * share);
+		}
+
+		private KernelQuantity matmulWorkerQuantity(FederatedExecutionLayout layout,
+				String workerId) {
+			if(inputs.size() < 2)
+				return genericWorkerQuantity(layout, workerId);
+			InputLayout leftLayout = inputLayout(layout, 0);
+			InputLayout rightLayout = inputLayout(layout, 1);
+			FType leftType = leftLayout == null ? null : leftLayout.fType();
+			FType rightType = rightLayout == null ? null : rightLayout.fType();
+			if(leftType == FType.ROW) {
+				double share = inputShare(layout, 0, workerId);
+				return new KernelQuantity(flops * share,
+					inputs.get(0).bytes() * share + inputs.get(1).bytes(),
+					output.bytes() * share);
+			}
+			if(leftType == FType.COL || rightType == FType.ROW) {
+				int partitioned = leftType == FType.COL ? 0 : 1;
+				double share = inputShare(layout, partitioned, workerId);
+				return new KernelQuantity(flops * share,
+					inputs.get(0).bytes() * share + inputs.get(1).bytes() * share,
+					output.bytes());
+			}
+			return genericWorkerQuantity(layout, workerId);
+		}
+
+		private KernelQuantity wdivmmWorkerQuantity(FederatedExecutionLayout layout,
+				String workerId) {
+			// Explicit and fused callers both project the actual weights as input 0.
+			// A fused source shell (e.g. rank x columns) is not an operand of this kernel.
+			InputLayout weights = inputLayout(layout, 0);
+			double weightShare = operandShare(weights, runtimeWdivmm.weights(),
+				layout.workers(), workerId);
+			FType weightType = weights == null ? layout.executionType() : weights.fType();
+			double read = runtimeWdivmm.weights().bytes() * weightShare;
+			// QuaternaryWDivMMFEDInstruction slices U with ROW X, V with COL X,
+			// and the optional matrix operand with X. The other factor is broadcast.
+			for(int i = 0; i < runtimeWdivmm.factors().size(); i++) {
+				OperandQuantity operand = runtimeWdivmm.factors().get(i);
+				boolean sliced = i == 0 && weightType == FType.ROW
+					|| i == 1 && weightType == FType.COL
+					|| i >= 2 && operand.cells() > 1;
+				read += operand.bytes() * (sliced ? weightShare : 1.0);
+			}
+			boolean left = runtimeWdivmm.baseType() == 1 || runtimeWdivmm.baseType() == 3;
+			boolean right = runtimeWdivmm.baseType() == 2 || runtimeWdivmm.baseType() == 4;
+			boolean fullPartial = left && weightType == FType.ROW
+				|| right && weightType == FType.COL;
+			return new KernelQuantity(runtimeWdivmm.flops() * weightShare, read,
+				output.bytes() * (fullPartial ? 1.0 : weightShare));
+		}
+
+		private double executionShare(FederatedExecutionLayout layout, String workerId) {
+			for(int i = 0; i < inputs.size(); i++) {
+				InputLayout input = inputLayout(layout, i);
+				if(input != null && isPartitioned(input.fType()))
+					return inputShare(layout, i, workerId);
+			}
+			return 1.0;
+		}
+
+		private double inputBytes(FederatedExecutionLayout layout, int position,
+				String workerId) {
+			OperandQuantity operand = inputs.get(position);
+			InputLayout input = inputLayout(layout, position);
+			if(input != null && isPartitioned(input.fType()))
+				return operand.bytes() * inputShare(layout, position, workerId);
+			if(input == null || input.fType() == null) {
+				double share = localOperandShare(layout, operand, workerId);
+				return operand.bytes() * share;
+			}
+			return operand.bytes();
+		}
+
+		private double localOperandShare(FederatedExecutionLayout layout,
+				OperandQuantity operand, String workerId) {
+			int partitionedPosition = firstPartitionedInput(layout);
+			if(partitionedPosition < 0 || operand.rows() <= 0 || operand.cols() <= 0)
+				return 1.0;
+			InputLayout partitioned = inputLayout(layout, partitionedPosition);
+			FType type = partitioned.fType();
+			boolean sliced = (type == FType.ROW || type == FType.PART)
+				? output.rows() > 1 && operand.rows() == output.rows()
+				: type == FType.COL && output.cols() > 1 && operand.cols() == output.cols();
+			return sliced ? inputShare(layout, partitionedPosition, workerId) : 1.0;
+		}
+
+		private int firstPartitionedInput(FederatedExecutionLayout layout) {
+			for(int i = 0; i < inputs.size(); i++) {
+				InputLayout input = inputLayout(layout, i);
+				if(input != null && isPartitioned(input.fType()))
+					return i;
+			}
+			return -1;
+		}
+
+		private double inputShare(FederatedExecutionLayout layout, int position,
+				String workerId) {
+			if(position < 0 || position >= inputs.size())
+				return 0.0;
+			return operandShare(inputLayout(layout, position), inputs.get(position),
+				layout.workers(), workerId);
+		}
+
+		private static double operandShare(InputLayout input, OperandQuantity operand,
+				int workers, String workerId) {
+			if(input == null || !isPartitioned(input.fType()))
+				return 1.0;
+			// PART can denote overlapping full partials. Only proven ranges authorize
+			// a geometric share; an unknown PART map conservatively prices full work.
+			if(!input.exactRanges() && input.fType() == FType.PART)
+				return 1.0;
+			if(!input.exactRanges())
+				return 1.0 / workers;
+			double totalCells = operand.cells();
+			if(totalCells <= 0.0)
+				return 1.0 / workers;
+			double workerCells = 0.0;
+			for(AnchorPartition range : input.ranges())
+				if(range.workerId().equals(workerId))
+					workerCells += operand.clippedCells(range);
+			return Math.min(1.0, workerCells / totalCells);
+		}
+
+		private static InputLayout inputLayout(FederatedExecutionLayout layout, int position) {
+			return position >= 0 && position < layout.inputs().size()
+				? layout.inputs().get(position) : null;
+		}
+
+		private List<String> workerIds(FederatedExecutionLayout layout) {
+			LinkedHashSet<String> ids = new LinkedHashSet<>();
+			List<InputLayout> executionInputs = runtimeWdivmm == null || layout.inputs().isEmpty()
+				? layout.inputs() : layout.inputs().subList(0, 1);
+			for(InputLayout input : executionInputs)
+				if(input != null && input.exactRanges())
+					for(AnchorPartition range : input.ranges())
+						ids.add(range.workerId());
+			for(int i = ids.size(); i < layout.workers(); i++)
+				ids.add("cost-worker-" + i);
+			return List.copyOf(ids);
+		}
+	}
+
+	private record OperandQuantity(long rows, long cols, long nnz, double bytes) {
+		private double cells() {
+			return rows > 0 && cols > 0 ? rows * (double)cols : 0.0;
+		}
+
+		private double clippedCells(AnchorPartition range) {
+			if(rows <= 0 || cols <= 0 || range.begin().size() < 2 || range.end().size() < 2)
+				return 0.0;
+			long rowBegin = Math.max(0L, Math.min(rows, range.begin().get(0)));
+			long rowEnd = Math.max(rowBegin, Math.min(rows, range.end().get(0)));
+			long colBegin = Math.max(0L, Math.min(cols, range.begin().get(1)));
+			long colEnd = Math.max(colBegin, Math.min(cols, range.end().get(1)));
+			return (rowEnd - rowBegin) * (double)(colEnd - colBegin);
+		}
+	}
+
+	private record KernelQuantity(double flops, double readBytes, double writeBytes) { }
+	private record RuntimeWdivmmKernel(OperandQuantity weights,
+		List<OperandQuantity> factors, double flops, int baseType,
+		CompiledHopKey fusedWeights, double factorTransposeCost, List<RuntimeFactorInput> factorInputs) {
+		private RuntimeWdivmmKernel {
+			factors = List.copyOf(factors);
+			factorInputs = List.copyOf(factorInputs);
+		}
+
+		private double readBytes() {
+			return weights.bytes() + factors.stream()
+				.mapToDouble(OperandQuantity::bytes).sum();
+		}
+	}
+
+	private record IndexSlice(long rowBegin, long rowEnd, long colBegin, long colEnd) {
+		private double cells() {
+			return Math.max(0L, rowEnd - rowBegin) * (double)Math.max(0L, colEnd - colBegin);
+		}
+
+		private double overlapCells(AnchorPartition range) {
+			if(range.begin().size() < 2 || range.end().size() < 2)
+				return 0.0;
+			long rows = Math.max(0L, Math.min(rowEnd, range.end().get(0))
+				- Math.max(rowBegin, range.begin().get(0)));
+			long cols = Math.max(0L, Math.min(colEnd, range.end().get(1))
+				- Math.max(colBegin, range.begin().get(1)));
+			return rows * (double)cols;
+		}
 	}
 
 	/**
@@ -469,68 +916,228 @@ public final class PlacementCostSemantics {
 	/**
 	 * Occurrence-exact local operation cost shared by DP and Exact.
 	 *
-	 * <p>The ordinary HOP cost remains authoritative.  The only supplemental term
-	 * modeled here is a runtime WDivMM kernel that the dynamic algebraic rewrite can
-	 * create after loop/function dimensions become concrete.  This uses immutable
+	 * <p>Known HOP dimensions remain authoritative; unknown dimensions use immutable
+	 * occurrence-exact shape facts for both ordinary FLOPs and bytes. Cost-size upper
+	 * bounds are not exact dimensions. A runtime WDivMM kernel that the dynamic
+	 * algebraic rewrite can create after loop/function dimensions become concrete
+	 * replaces the source shell with its actual weights, factors, FLOPs and output.
+	 * This uses immutable
 	 * compiled-input and shape facts rather than mutating HOP dimensions or matching
 	 * workload names, source lines, or hop ids.</p>
 	 */
-	public static double analysisAwareUnitLocalCost(PlacementAnalysis analysis,
-			CompiledHopKey key) {
-		return analysisAwareUnitLocalCost(analysis, null, key);
+	public static PreparedExecutionCost prepareExecutionCost(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key) {
+		return prepareExecutionCost(analysis, sparseAssignments, key,
+			runtimeRemovedIntermediates(analysis));
 	}
 
-	public static double analysisAwareUnitLocalCost(PlacementAnalysis analysis,
-			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key) {
+	/** Prepare all occurrence kernels with one shared runtime-ownership analysis. */
+	public static Map<CompiledHopKey,PreparedExecutionCost> prepareExecutionCosts(
+			PlacementAnalysis analysis, ExpectedSparseAssignmentEstimates sparseAssignments) {
+		Set<CompiledHopKey> removed = runtimeRemovedIntermediates(analysis);
+		Map<CompiledHopKey,PreparedExecutionCost> costs = new IdentityHashMap<>();
+		for(var node : analysis.graph().nodes())
+			costs.put(node.key(), prepareExecutionCost(analysis, sparseAssignments, node.key(), removed));
+		return Collections.unmodifiableMap(costs);
+	}
+
+	private static PreparedExecutionCost prepareExecutionCost(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key,
+			Set<CompiledHopKey> removed) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(key, "key");
 		if(sparseAssignments != null && sparseAssignments.analysis != analysis)
 			throw new IllegalArgumentException("Sparse estimates are not owned by placement analysis");
 		Hop hop = analysis.hop(key).orElseThrow(() ->
 			new IllegalArgumentException("Placement cost key has no owned Hop"));
-		if(isLatentWdivmmTransposePairInner(analysis, key, hop)
-			|| isDirectWdivmmRemovedIntermediate(analysis, key))
-			return 0.0;
-		double dynamicKernelFloor = latentWdivmmComputeTimeFloor(analysis, key, hop);
-		double operation = FederatedCostModel.computeOpCostWithFallback(hop, dynamicKernelFloor,
-			analysisAwareInputBytes(analysis, sparseAssignments, key, hop),
-			analysisAwareOutputBytes(analysis, sparseAssignments, key, hop));
-		if(hop instanceof DataOp) {
-			OpOpData op = ((DataOp)hop).getOp();
-			return op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE
-				? 0.0 : operation;
-		}
-		return FederatedCostModel.computeLocalIndexingCostWithFallback(hop, operation);
-	}
-
-	private static double analysisAwareInputBytes(PlacementAnalysis analysis,
-			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey owner, Hop hop) {
-		boolean replacedUnknownInput = false;
-		double total = 0.0;
-		Set<CompiledHopKey> countedLargeInputs =
-			Collections.newSetFromMap(new IdentityHashMap<>());
+		List<OperandQuantity> inputs = new ArrayList<>(hop.getInput().size());
 		for(int position = 0; position < hop.getInput().size(); position++) {
 			Hop input = hop.getInput(position);
-			double ordinary = FederatedCostModel.getEffectiveOutputMemEstimate(input);
-			double estimate = ordinary;
-			CompiledHopKey producer = analysis.compiledInputEdge(owner, position)
+			CompiledHopKey producer = analysis.compiledInputEdge(key, position)
 				.map(PlacementAnalysis.CompiledInputEdgeFact::producer).orElse(null);
-			if(input != null && producer != null && input.getDataType() != null
-				&& input.getDataType().isMatrix()
-				&& (!input.dimsKnown() || input.getDim1() <= 0 || input.getDim2() <= 0)) {
-				double exact = analysisAwareOutputBytes(analysis, sparseAssignments, producer, input);
-				if(Double.isFinite(exact) && exact > 0.0) {
-					estimate = exact;
-					replacedUnknownInput = true;
-				}
-			}
-			if(estimate > 1024 * 1024 && producer != null
-				&& !countedLargeInputs.add(producer))
-				estimate = 0.0;
-			total += Math.max(0.0, estimate);
+			inputs.add(operandQuantity(analysis, sparseAssignments, producer, input));
 		}
-		return replacedUnknownInput && total > 0.0 ? total : Double.NaN;
+		OperandQuantity output = operandQuantity(analysis, sparseAssignments, key, hop);
+		boolean removedKernel = removed.contains(key);
+		boolean metadata = hop instanceof DataOp && (((DataOp)hop).getOp() == OpOpData.TRANSIENTREAD
+			|| ((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE);
+		boolean zeroExecution = analysis.isDmlFunctionCallBoundary(key) || removedKernel || metadata;
+		RuntimeWdivmmKernel runtimeWdivmm = zeroExecution ? null
+			: runtimeWdivmmKernel(analysis, sparseAssignments, key, hop, inputs);
+		if(runtimeWdivmm != null && runtimeWdivmm.fusedWeights() != null)
+			output = withKernelDimensions(output, hop,
+				runtimeWdivmm.baseType() == 1 ? runtimeWdivmm.weights().cols() : runtimeWdivmm.weights().rows(),
+				runtimeWdivmm.factors().get(0).cols());
+		double flops = zeroExecution ? 0.0 : runtimeWdivmm != null
+			? runtimeWdivmm.flops() : analysisAwareComputeFlops(analysis, key, hop);
+		double inputBytes = runtimeWdivmm != null ? runtimeWdivmm.readBytes()
+			: inputs.stream().mapToDouble(OperandQuantity::bytes).sum();
+		double local = zeroExecution ? 0.0 : FederatedCostModel.computeExecutionCost(
+			runtimeWdivmm == null ? hop : null, flops, inputBytes, output.bytes());
+		if(runtimeWdivmm != null)
+			local += runtimeWdivmm.factorTransposeCost();
+		if(!zeroExecution && hop instanceof IndexingOp)
+			local = FederatedCostModel.computeExecutionCost(hop, flops,
+				output.bytes(), output.bytes());
+		return new PreparedExecutionCost(hop, inputs, output, flops, runtimeWdivmm,
+			zeroExecution, removedKernel, indexSlice(hop), local);
 	}
+
+	public static PreparedExecutionCost prepareExecutionCost(PlacementAnalysis analysis,
+			CompiledHopKey key) {
+		return prepareExecutionCost(analysis, null, key);
+	}
+
+	public static double analysisAwareUnitLocalCost(PlacementAnalysis analysis,
+			CompiledHopKey key) {
+		return prepareExecutionCost(analysis, null, key).localCost();
+	}
+
+	public static double analysisAwareUnitLocalCost(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key) {
+		return prepareExecutionCost(analysis, sparseAssignments, key).localCost();
+	}
+
+	private static OperandQuantity operandQuantity(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
+		if(hop == null)
+			return new OperandQuantity(-1, -1, -1, 0.0);
+		long rows = analysisAwareComputeDimension(analysis, key, hop, true);
+		long cols = analysisAwareComputeDimension(analysis, key, hop, false);
+		double bytes = key == null ? FederatedCostModel.getEffectiveOutputMemEstimate(hop)
+			: analysisAwareOutputBytes(analysis, sparseAssignments, key, hop);
+		if(!Double.isFinite(bytes) || bytes <= 0.0)
+			bytes = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		return new OperandQuantity(rows, cols, hop.getNnz(), positive(bytes));
+	}
+
+
+	private static RuntimeWdivmmKernel runtimeWdivmmKernel(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key,
+			Hop hop, List<OperandQuantity> sourceInputs) {
+		if(hop instanceof QuaternaryOp quaternary && quaternary.getOp() == OpOp4.WDIVMM
+			&& sourceInputs.size() >= 3) {
+			List<OperandQuantity> replicated = new ArrayList<>(sourceInputs.subList(1, 3));
+			if(isWdivmmMatrixOperand(hop, 3)) replicated.add(sourceInputs.get(3));
+			else if(hasWdivmmEpsilon(hop)) replicated.add(new OperandQuantity(1, 1, 1, 8.0));
+			return new RuntimeWdivmmKernel(sourceInputs.get(0), replicated,
+				analysisAwareComputeFlops(analysis, key, hop), quaternary.getBaseType(), null, 0.0, List.of());
+		}
+
+		LatentWdivmmTransposePairFact pair = latentWdivmmTransposePair(analysis, key, hop);
+		if(pair != null) {
+			ExactInput inner = findExactInput(analysis, key, 0);
+			ExactInput weightedInput = inner == null ? null
+				: findExactInput(analysis, inner.key(), 1);
+			WeightedOuter weighted = weightedInput == null ? null
+				: weightedOuter(analysis, weightedInput);
+			if(weighted != null)
+				return runtimeWdivmmKernel(analysis, sparseAssignments, weighted,
+					pair.computeFlops(), 1, provenLatentShape(findExactInput(analysis, inner.key(), 0)).rows(), null);
+		}
+
+		DirectWdivmmRuntimeFact direct = directWdivmmRuntimeFact(analysis, key);
+		if(direct != null) {
+			ExactInput weightedInput = findExactInput(analysis, key, 0);
+			WeightedOuter weighted = weightedInput == null ? null
+				: weightedOuter(analysis, weightedInput);
+			if(weighted != null)
+				return runtimeWdivmmKernel(analysis, sparseAssignments, weighted,
+					direct.computeFlops(), 2, provenLatentShape(findExactInput(analysis, key, 1)).cols(),
+					findExactInput(analysis, key, 1));
+		}
+		return null;
+	}
+
+	private static RuntimeWdivmmKernel runtimeWdivmmKernel(PlacementAnalysis analysis,
+			ExpectedSparseAssignmentEstimates sparseAssignments, WeightedOuter weighted,
+			double flops, int baseType, long rank, ExactInput directRight) {
+		NodeShapeFact shape = provenLatentShape(weighted.weights());
+		boolean explicitTranspose = weighted.outerRight().hop() instanceof ReorgOp reorg
+			&& reorg.getOp() == ReOrgOp.TRANS;
+		ExactInput vInput = directRight != null ? directRight
+			: explicitTranspose ? findExactInput(analysis, weighted.outerRight().key(), 0) : weighted.outerRight();
+		OperandQuantity weights = withKernelDimensions(operandQuantity(analysis, sparseAssignments,
+			weighted.weights().key(), weighted.weights().hop()), weighted.weights().hop(), shape.rows(), shape.cols());
+		OperandQuantity u = withKernelDimensions(operandQuantity(analysis, sparseAssignments,
+			weighted.outerLeft().key(), weighted.outerLeft().hop()), weighted.outerLeft().hop(), shape.rows(), rank);
+		OperandQuantity v = withKernelDimensions(operandQuantity(analysis, sparseAssignments,
+			vInput.key(), vInput.hop()), vInput.hop(), shape.cols(), rank);
+		// Pattern 1 also accepts U %*% B; the rewrite then creates V = t(B).
+		double transposeCost = directRight != null || explicitTranspose ? 0.0
+			: FederatedCostModel.computeExecutionCost(null, v.cells(), v.bytes(), v.bytes());
+		return new RuntimeWdivmmKernel(weights, List.of(u, v), flops, baseType,
+			weighted.weights().key(), transposeCost, List.of(
+				new RuntimeFactorInput(weighted.outerLeft().key(), 1, false),
+				new RuntimeFactorInput(vInput.key(), 2, directRight == null && !explicitTranspose)));
+	}
+
+	/** Use the same matched kernel dimensions for bytes and FLOPs, not an unknown-size sentinel.
+	 * These are cost-only quantities; they do not change abstract shapes or placement authority. */
+	private static OperandQuantity withKernelDimensions(OperandQuantity operand, Hop hop, long rows, long cols) {
+		if(operand.rows() == rows && operand.cols() == cols)
+			return operand;
+		double sparsity = hop.getNnz() >= 0 ? Math.min(1.0, hop.getNnz() / (double)rows / cols) : 1.0;
+		return new OperandQuantity(rows, cols, hop.getNnz(),
+			OptimizerUtils.estimateSizeExactSparsity(rows, cols, sparsity, DataType.MATRIX));
+	}
+
+	private static IndexSlice indexSlice(Hop hop) {
+		if(!(hop instanceof IndexingOp) || hop.getInput().size() < 5)
+			return null;
+		Long rowLower = literalLong(hop.getInput(1));
+		Long rowUpper = literalLong(hop.getInput(2));
+		Long colLower = literalLong(hop.getInput(3));
+		Long colUpper = literalLong(hop.getInput(4));
+		if(rowLower == null || rowUpper == null || colLower == null || colUpper == null)
+			return null;
+		return new IndexSlice(Math.max(0L, rowLower - 1), Math.max(0L, rowUpper),
+			Math.max(0L, colLower - 1), Math.max(0L, colUpper));
+	}
+
+	private static Long literalLong(Hop hop) {
+		if(!(hop instanceof LiteralOp))
+			return null;
+		try {
+			return HopRewriteUtils.getIntValueSafe((LiteralOp)hop);
+		}
+		catch(Exception exception) {
+			return null;
+		}
+	}
+
+	private static boolean isPartitioned(FType type) {
+		return type == FType.ROW || type == FType.COL || type == FType.PART;
+	}
+
+	private static double positive(double value) {
+		return Double.isFinite(value) && value > 0.0 ? value : 0.0;
+	}
+
+	static double analysisAwareComputeFlops(PlacementAnalysis analysis, CompiledHopKey key, Hop hop) {
+		return ComputeCost.getHOPComputeCost(hop,
+			analysisAwareComputeDimension(analysis, key, hop, true),
+			analysisAwareComputeDimension(analysis, key, hop, false),
+			position -> analysisAwareComputeDimension(analysis,
+				analysis.compiledInputEdge(key, position).map(PlacementAnalysis.CompiledInputEdgeFact::producer)
+					.orElse(null), hop.getInput(position), true),
+			position -> analysisAwareComputeDimension(analysis,
+				analysis.compiledInputEdge(key, position).map(PlacementAnalysis.CompiledInputEdgeFact::producer)
+					.orElse(null), hop.getInput(position), false));
+	}
+
+	private static long analysisAwareComputeDimension(PlacementAnalysis analysis,
+			CompiledHopKey key, Hop hop, boolean rows) {
+		long ordinary = rows ? hop.getDim1() : hop.getDim2();
+		if(ordinary > 0 || key == null || !hop.getDataType().isMatrix())
+			return ordinary;
+		AbstractShapeFact shape = analysis.abstractShapeFact(key).orElse(null);
+		if(shape == null) return ordinary;
+		var dimension = rows ? shape.rows() : shape.cols();
+		return dimension.knowledge() == DimensionKnowledge.EXACT && dimension.value() > 0
+			? dimension.value() : ordinary;
+	}
+
 
 	private static double analysisAwareOutputBytes(PlacementAnalysis analysis,
 			ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
@@ -568,6 +1175,14 @@ public final class PlacementCostSemantics {
 			PlacementAnalysis analysis, CompiledHopKey key, List<Hop> inputHops,
 			List<FType> inputFTypes, FType logicalFType, double baseSelfCost,
 			double outputMemEstimate, int workers) {
+		return analysisAwareMixedFedLocalCost(analysis, key, inputHops, inputFTypes,
+			logicalFType, baseSelfCost, outputMemEstimate, workers, null);
+	}
+
+	public static FederatedCostModel.MixedFedLocalCost analysisAwareMixedFedLocalCost(
+			PlacementAnalysis analysis, CompiledHopKey key, List<Hop> inputHops,
+			List<FType> inputFTypes, FType logicalFType, double baseSelfCost,
+			double outputMemEstimate, int workers, FederatedExecutionLayout layout) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(key, "key");
 		Hop hop = analysis.hop(key).orElseThrow(() ->
@@ -592,7 +1207,7 @@ public final class PlacementCostSemantics {
 		}
 		return FederatedCostModel.computeMixedFedLocalCost(hop, exactInputs,
 			inputMemEstimates, inputFTypes, logicalFType, baseSelfCost,
-			outputMemEstimate, workers);
+			outputMemEstimate, workers, layout);
 	}
 
 	/** Dense in-memory bytes from an exact occurrence-scoped abstract shape, or NaN. */
@@ -777,14 +1392,14 @@ public final class PlacementCostSemantics {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(key, "key");
 		LatentWdivmmTransposePairFact pair = latentWdivmmTransposePairFact(analysis, key);
-		if(pair == null || !pair.nativeOutputMustBeLocal()
-			|| pair.partitionedInputFType() == null)
-			return genericResultDownloadCost;
-		Hop runtimeKernel = analysis.hop(pair.inner()).orElseThrow(() ->
-			new IllegalStateException("Latent WDivMM runtime kernel has no owned Hop"));
-		return FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
-			runtimeKernel, pair.partitionedInputFType(), outputMemEstimate, workers,
-			genericResultDownloadCost);
+		if(pair != null && pair.partitionedInputFType() != null)
+			return FederatedCostModel.computeWdivmmLoutResultCost(
+				1, pair.partitionedInputFType(), outputMemEstimate, workers);
+		DirectWdivmmRuntimeFact direct = directWdivmmRuntimeFact(analysis, key);
+		if(direct != null && direct.runtimeInputFType() != null)
+			return FederatedCostModel.computeWdivmmLoutResultCost(
+				2, direct.runtimeInputFType(), outputMemEstimate, workers);
+		return genericResultDownloadCost;
 	}
 
 	/** One reusable worker-to-coordinator materialization of a latent WDivMM input. */
@@ -817,20 +1432,38 @@ public final class PlacementCostSemantics {
 			latentWdivmmRuntimeTransferBoundaries(PlacementAnalysis analysis) {
 		Objects.requireNonNull(analysis, "analysis");
 		Set<LatentWdivmmRuntimeTransferBoundary> boundaries = new java.util.TreeSet<>();
-		for(PlacementAnalysis.HopOccurrenceProjection occurrence
-				: analysis.compiledHopOccurrences()) {
+		for(var occurrence : analysis.compiledHopOccurrences()) {
 			CompiledHopKey owner = occurrence.key();
-			LatentWdivmmTransposePairFact pair = latentWdivmmTransposePairFact(
-				analysis, owner);
-			if(pair == null)
+			var pair = latentWdivmmTransposePairFact(analysis, owner);
+			var direct = pair == null ? directWdivmmRuntimeFact(analysis, owner) : null;
+			if(pair == null && direct == null)
 				continue;
-			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
-				pair.inner(), owner, 0));
-			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
-				pair.weighted(), pair.inner(), 1));
-			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
-				pair.weights(), pair.weighted(), 0));
+			CompiledHopKey root = pair == null ? owner : pair.inner();
+			CompiledHopKey weightedKey = pair == null ? direct.weighted() : pair.weighted();
+			CompiledHopKey weightsKey = pair == null ? direct.weights() : pair.weights();
+			if(pair != null) {
+				boundaries.add(new LatentWdivmmRuntimeTransferBoundary(root, owner, 0));
+				analysis.compiledInputEdge(root, 0).ifPresent(edge -> boundaries.add(
+					new LatentWdivmmRuntimeTransferBoundary(edge.producer(), root, 0)));
+			}
+			else
+				analysis.compiledInputEdge(root, 1).ifPresent(edge -> boundaries.add(
+					new LatentWdivmmRuntimeTransferBoundary(edge.producer(), root, 1)));
+			boundaries.add(new LatentWdivmmRuntimeTransferBoundary(weightedKey, root, pair == null ? 0 : 1));
+			Hop weighted = analysis.hop(weightedKey).orElseThrow();
+			if(weighted.getParent().size() == 1
+				&& weighted.getParent().get(0) == analysis.hop(root).orElseThrow()) {
+				boundaries.add(new LatentWdivmmRuntimeTransferBoundary(weightsKey, weightedKey, 0));
+				analysis.compiledInputEdge(weightedKey, 1).ifPresent(edge -> boundaries.add(
+					new LatentWdivmmRuntimeTransferBoundary(edge.producer(), weightedKey, 1)));
+			}
 		}
+		Set<CompiledHopKey> removed = runtimeRemovedIntermediates(analysis);
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder())
+			if(removed.contains(edge.consumer()))
+				boundaries.add(new LatentWdivmmRuntimeTransferBoundary(
+					edge.producer(), edge.consumer(), edge.inputPosition()));
+
 		return List.copyOf(boundaries);
 	}
 
@@ -908,12 +1541,14 @@ public final class PlacementCostSemantics {
 			return -1.0;
 		NodeShapeFact weights = provenLatentShape(weighted.weights());
 		if(rootEdge.inputPosition() == 0
-			&& latentLeftWeightedWdivmmFloor(analysis, rootEdge.consumer(), left, right) > 0.0) {
+			&& latentLeftWeightedWdivmmFlops(exactPlacementFacts(analysis),
+				rootEdge.consumer(), left, right) >= 0.0) {
 			long rank = provenLatentShape(right).cols();
 			return denseMatrixBytes(weights.rows(), rank);
 		}
 		if(rootEdge.inputPosition() == 1
-			&& latentRightWeightedWdivmmFloor(analysis, rootEdge.consumer(), left, right) > 0.0) {
+			&& latentRightWeightedWdivmmFlops(exactPlacementFacts(analysis),
+				rootEdge.consumer(), left, right) >= 0.0) {
 			long rank = provenLatentShape(left).rows();
 			return denseMatrixBytes(weights.cols(), rank);
 		}
@@ -1030,33 +1665,6 @@ public final class PlacementCostSemantics {
 
 	private record MatrixShape(long rows, long cols) { }
 
-	private static double latentWdivmmComputeTimeFloor(PlacementAnalysis analysis,
-			CompiledHopKey rootKey, Hop root) {
-		LatentWdivmmTransposePairFact pair = latentWdivmmTransposePair(analysis, rootKey, root);
-		if(pair != null)
-			return pair.computeTimeFloor();
-		return directLatentWdivmmComputeTimeFloor(analysis, rootKey, root);
-	}
-
-	private static double directLatentWdivmmComputeTimeFloor(PlacementAnalysis analysis,
-			CompiledHopKey rootKey, Hop root) {
-		DirectWdivmmRuntimeFact direct = directWdivmmRuntimeFact(analysis, rootKey);
-		if(direct != null)
-			return direct.computeTimeFloor();
-		if(!(root instanceof AggBinaryOp) || !((AggBinaryOp)root).isMatrixMultiply()
-			|| root.getInput() == null || root.getInput().size() != 2)
-			return 0.0;
-		ExactInput left = findExactInput(analysis, rootKey, 0);
-		ExactInput right = findExactInput(analysis, rootKey, 1);
-		if(left == null || right == null)
-			return 0.0;
-		double rightWeighted = latentRightWeightedWdivmmFloor(analysis, rootKey,
-			left, right);
-		if(rightWeighted > 0.0)
-			return rightWeighted;
-		return latentLeftWeightedWdivmmFloor(analysis, rootKey, left, right);
-	}
-
 	private static DirectWdivmmRuntimeFact directWdivmmRuntimeFact(
 			ExactPlacementFacts facts, CompiledHopKey rootKey, Hop root) {
 		if(!OptimizerUtils.ALLOW_OPERATOR_FUSION
@@ -1070,8 +1678,8 @@ public final class PlacementCostSemantics {
 			|| weighted.hop().getParent().size() != 1
 			|| weighted.hop().getParent().get(0) != root)
 			return null;
-		double floor = latentLeftWeightedWdivmmFloor(facts, rootKey, weighted, right);
-		if(floor <= 0.0)
+		double runtimeFlops = latentLeftWeightedWdivmmFlops(facts, rootKey, weighted, right);
+		if(runtimeFlops < 0.0)
 			return null;
 		WeightedOuter structure = weightedOuter(facts, weighted);
 		if(structure == null || structure.outer().hop().getParent() == null
@@ -1080,31 +1688,56 @@ public final class PlacementCostSemantics {
 			return null;
 		FType runtimeInputFType = uniquePartitionedFoutType(facts, structure.weights().key());
 		return new DirectWdivmmRuntimeFact(rootKey, weighted.key(), structure.outer().key(),
-			structure.weights().key(), floor, runtimeInputFType,
+			structure.weights().key(), runtimeFlops, runtimeInputFType,
 			runtimeInputFType == FType.COL);
 	}
 
-	private static boolean isDirectWdivmmRemovedIntermediate(PlacementAnalysis analysis,
-			CompiledHopKey key) {
-		for(PlacementAnalysis.CompiledInputEdgeFact edge
-				: analysis.compiledInputEdgesInCanonicalOrder()) {
-			if(edge.producer() != key)
+	private static Set<CompiledHopKey> runtimeRemovedIntermediates(PlacementAnalysis analysis) {
+		Set<CompiledHopKey> removed = Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<CompiledHopKey,List<CompiledHopKey>> consumers = new IdentityHashMap<>();
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder())
+			consumers.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge.consumer());
+		for(var node : analysis.graph().nodes()) {
+			CompiledHopKey owner = node.key();
+			var latent = latentWdivmmTransposePairFact(analysis, owner);
+			var direct = latent == null ? directWdivmmRuntimeFact(analysis, owner) : null;
+			CompiledHopKey weightedKey = latent != null ? latent.weighted()
+				: direct != null ? direct.weighted() : null;
+			if(weightedKey == null)
 				continue;
-			DirectWdivmmRuntimeFact direct = directWdivmmRuntimeFact(
-				analysis, edge.consumer());
-			if(direct != null && direct.weighted() == key)
-				return true;
-			for(PlacementAnalysis.CompiledInputEdgeFact parentEdge
-					: analysis.compiledInputEdgesInCanonicalOrder()) {
-				if(parentEdge.producer() != edge.consumer())
-					continue;
-				direct = directWdivmmRuntimeFact(analysis, parentEdge.consumer());
-				if(direct != null && direct.outer() == key
-					&& direct.weighted() == edge.consumer())
-					return true;
+			Hop weightedHop = analysis.hop(weightedKey).orElseThrow();
+			WeightedOuter weighted = weightedOuter(analysis, new ExactInput(weightedKey, weightedHop,
+				analysis.shapeFact(weightedKey).orElse(null), analysis.sourceCompiledShapeFact(weightedKey).orElse(null)));
+			if(weighted == null)
+				continue;
+			Set<CompiledHopKey> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+			retained.add(weighted.weights().key());
+			retained.add(weighted.outerLeft().key());
+			ExactInput v = direct != null ? findExactInput(analysis, owner, 1) : weighted.outerRight();
+			if(direct == null && v.hop() instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS) {
+				ExactInput original = findExactInput(analysis, v.key(), 0);
+				if(original != null) v = original;
+			}
+			retained.add(v.key());
+			List<CompiledHopKey> pending = new ArrayList<>();
+			pending.add(owner);
+			for(int index = 0; index < pending.size(); index++) {
+				CompiledHopKey parent = pending.get(index);
+				Hop parentHop = analysis.hop(parent).orElseThrow();
+				for(int position = 0; position < parentHop.getInput().size(); position++) {
+					var edge = analysis.compiledInputEdge(parent, position).orElse(null);
+					if(edge == null || retained.contains(edge.producer()) || removed.contains(edge.producer()))
+						continue;
+					CompiledHopKey child = edge.producer();
+					if(consumers.getOrDefault(child, List.of()).stream()
+						.allMatch(consumer -> consumer == owner || removed.contains(consumer))) {
+						removed.add(child);
+						pending.add(child);
+					}
+				}
 			}
 		}
-		return false;
+		return removed;
 	}
 
 	/**
@@ -1139,8 +1772,8 @@ public final class PlacementCostSemantics {
 		ExactInput right = findExactInput(facts, inner.key(), 1);
 		if(left == null || right == null)
 			return null;
-		double floor = latentRightWeightedWdivmmFloor(facts, inner.key(), left, right);
-		if(floor <= 0.0)
+		double runtimeFlops = latentRightWeightedWdivmmFlops(facts, inner.key(), left, right);
+		if(runtimeFlops < 0.0)
 			return null;
 		WeightedOuter weighted = weightedOuter(facts, right);
 		FType partitionedInputFType = weighted == null ? null
@@ -1152,7 +1785,7 @@ public final class PlacementCostSemantics {
 		boolean nativeOutputMustBeLocal = partitionedInputFType == FType.ROW;
 		return new LatentWdivmmTransposePairFact(inner.key(), right.key(),
 			weighted.weights().key(),
-			floor, partitionedInputFType, nativeOutputMustBeLocal);
+			runtimeFlops, partitionedInputFType, nativeOutputMustBeLocal);
 	}
 
 	private static FType uniquePartitionedFoutType(PlacementAnalysis analysis,
@@ -1171,40 +1804,14 @@ public final class PlacementCostSemantics {
 		return types.size() == 1 ? types.get(0) : null;
 	}
 
-	private static boolean isLatentWdivmmTransposePairInner(PlacementAnalysis analysis,
-			CompiledHopKey innerKey, Hop inner) {
-		if(!(inner instanceof AggBinaryOp) || !((AggBinaryOp)inner).isMatrixMultiply())
-			return false;
-		PlacementAnalysis.CompiledInputEdgeFact soleConsumer = null;
-		for(PlacementAnalysis.CompiledInputEdgeFact edge
-				: analysis.compiledInputEdgesInCanonicalOrder()) {
-			if(edge.producer() != innerKey)
-				continue;
-			if(soleConsumer != null)
-				return false;
-			soleConsumer = edge;
-		}
-		if(soleConsumer == null || soleConsumer.inputPosition() != 0)
-			return false;
-		Hop owner = analysis.hop(soleConsumer.consumer()).orElse(null);
-		LatentWdivmmTransposePairFact pair = latentWdivmmTransposePair(
-			analysis, soleConsumer.consumer(), owner);
-		return pair != null && pair.inner() == innerKey;
-	}
 
-	/** Pattern 1: {@code t(U) %*% (W op (U %*% t(V)))}. */
-	private static double latentRightWeightedWdivmmFloor(PlacementAnalysis analysis,
-			CompiledHopKey rootKey, ExactInput left, ExactInput weightedInput) {
-		return latentRightWeightedWdivmmFloor(exactPlacementFacts(analysis), rootKey,
-			left, weightedInput);
-	}
-
-	private static double latentRightWeightedWdivmmFloor(ExactPlacementFacts facts,
+	/** Returns -1 when the pattern does not match; zero FLOPs is a valid empty kernel. Pattern 1: {@code t(U) %*% (W op (U %*% t(V)))}. */
+	private static double latentRightWeightedWdivmmFlops(ExactPlacementFacts facts,
 			CompiledHopKey rootKey, ExactInput left, ExactInput weightedInput) {
 		WeightedOuter weighted = weightedOuter(facts, weightedInput);
 		if(weighted == null || !HopRewriteUtils.isTransposeOfItself(
 			left.hop(), weighted.outerLeft().hop()))
-			return 0.0;
+			return -1.0;
 		NodeShapeFact weights = provenLatentShape(weighted.weights());
 		NodeShapeFact weightedShape = provenLatentShape(weightedInput);
 		NodeShapeFact root = provenLatentShape(facts.shape(rootKey), facts.sourceShape(rootKey));
@@ -1212,7 +1819,7 @@ public final class PlacementCostSemantics {
 		NodeShapeFact u = provenLatentShape(weighted.outerLeft());
 		NodeShapeFact transposedV = provenLatentShape(weighted.outerRight());
 		if(!knownMatrix(weights))
-			return 0.0;
+			return -1.0;
 		long rank = transposeU == null ? -1 : transposeU.rows();
 		if(rank <= 1 || !matchesMatrix(weightedShape, weights.rows(), weights.cols())
 			|| !matchesMatrix(root, rank, weights.cols())
@@ -1221,24 +1828,18 @@ public final class PlacementCostSemantics {
 			|| !matchesMatrix(transposedV, rank, weights.cols())
 			|| weighted.outerLeft().hop().getBlocksize() <= 0
 			|| rank > weighted.outerLeft().hop().getBlocksize())
-			return 0.0;
-		return FederatedCostModel.computeWdivmmRankAwareComputeTimeFloor(
-			weights.rows(), weights.cols(), rank);
+			return -1.0;
+		return ComputeCost.getWdivmmComputeCost(weights.rows(), weights.cols(),
+			weighted.weights().hop().getNnz(), rank);
 	}
 
-	/** Pattern 2: {@code (W op (U %*% t(V))) %*% V}. */
-	private static double latentLeftWeightedWdivmmFloor(PlacementAnalysis analysis,
-			CompiledHopKey rootKey, ExactInput weightedInput, ExactInput right) {
-		return latentLeftWeightedWdivmmFloor(exactPlacementFacts(analysis), rootKey,
-			weightedInput, right);
-	}
-
-	private static double latentLeftWeightedWdivmmFloor(ExactPlacementFacts facts,
+	/** Returns -1 when the pattern does not match; zero FLOPs is a valid empty kernel. Pattern 2: {@code (W op (U %*% t(V))) %*% V}. */
+	private static double latentLeftWeightedWdivmmFlops(ExactPlacementFacts facts,
 			CompiledHopKey rootKey, ExactInput weightedInput, ExactInput right) {
 		WeightedOuter weighted = weightedOuter(facts, weightedInput);
 		if(weighted == null || !HopRewriteUtils.isTransposeOfItself(
 			right.hop(), weighted.outerRight().hop()))
-			return 0.0;
+			return -1.0;
 		NodeShapeFact weights = provenLatentShape(weighted.weights());
 		NodeShapeFact weightedShape = provenLatentShape(weightedInput);
 		NodeShapeFact root = provenLatentShape(facts.shape(rootKey), facts.sourceShape(rootKey));
@@ -1246,7 +1847,7 @@ public final class PlacementCostSemantics {
 		NodeShapeFact u = provenLatentShape(weighted.outerLeft());
 		NodeShapeFact transposedV = provenLatentShape(weighted.outerRight());
 		if(!knownMatrix(weights))
-			return 0.0;
+			return -1.0;
 		long rank = v == null ? -1 : v.cols();
 		if(rank <= 1 || !matchesMatrix(weightedShape, weights.rows(), weights.cols())
 			|| !matchesMatrix(root, weights.rows(), rank)
@@ -1255,9 +1856,9 @@ public final class PlacementCostSemantics {
 			|| !matchesMatrix(transposedV, rank, weights.cols())
 			|| weighted.outerLeft().hop().getBlocksize() <= 0
 			|| rank > weighted.outerLeft().hop().getBlocksize())
-			return 0.0;
-		return FederatedCostModel.computeWdivmmRankAwareComputeTimeFloor(
-			weights.rows(), weights.cols(), rank);
+			return -1.0;
+		return ComputeCost.getWdivmmComputeCost(weights.rows(), weights.cols(),
+			weighted.weights().hop().getNnz(), rank);
 	}
 
 	private static WeightedOuter weightedOuter(PlacementAnalysis analysis,
@@ -1381,7 +1982,7 @@ public final class PlacementCostSemantics {
 	private record WeightedOuter(ExactInput weights, ExactInput outer,
 		ExactInput outerLeft, ExactInput outerRight) { }
 	public record LatentWdivmmTransposePairFact(CompiledHopKey inner,
-		CompiledHopKey weighted, CompiledHopKey weights, double computeTimeFloor,
+		CompiledHopKey weighted, CompiledHopKey weights, double computeFlops,
 		FType partitionedInputFType, boolean nativeOutputMustBeLocal) { }
 	public record LatentWdivmmRuntimeTransferBoundary(CompiledHopKey producer,
 		CompiledHopKey consumer, int inputPosition)
@@ -1405,7 +2006,7 @@ public final class PlacementCostSemantics {
 		}
 	}
 	public record DirectWdivmmRuntimeFact(CompiledHopKey root, CompiledHopKey weighted,
-		CompiledHopKey outer, CompiledHopKey weights, double computeTimeFloor,
+		CompiledHopKey outer, CompiledHopKey weights, double computeFlops,
 		FType runtimeInputFType, boolean nativeOutputMustBeLocal) { }
 	private interface ExactPlacementFacts {
 		Hop hop(CompiledHopKey key);

@@ -9,6 +9,7 @@ does not rewrite either the historical snapshot or the v1 frozen cohort.
 
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -31,6 +32,17 @@ FEDERATED = re.compile(
     r'addresses=list\((.*)\),\s*ranges=list\((.*)\)\)\s*$')
 QUOTED = re.compile(r'"([^"]+)"')
 RANGE_PAIR = re.compile(r"list\(\s*([0-9]+)\s*,\s*([0-9]+)\s*\)")
+
+
+def _load_network_cost_profile():
+    path = Path(__file__).resolve().parent / "network_cost_profile.py"
+    spec = importlib.util.spec_from_file_location("derive_network_cost_profile", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+NETWORK_COST = _load_network_cost_profile()
 
 
 def canonical(value):
@@ -83,21 +95,9 @@ def normalized_privacy(value):
     return value
 
 
-def network_cost(profile):
-    c2w, w2c = float(profile["c2w_mbit"]), float(profile["w2c_mbit"])
-    harmonic = 2.0 / ((1.0 / c2w) + (1.0 / w2c))
-    return {
-        "SYSDS_FED_COST_MEM_BW": "25000",
-        "SYSDS_FED_COST_FLOPS": "2147483648",
-        "SYSDS_FED_COST_NET_BW": f"{harmonic / 8.0:.6f}",
-        "SYSDS_FED_COST_NET_BW_C2W": f"{c2w / 8.0:.6f}",
-        "SYSDS_FED_COST_NET_BW_W2C": f"{w2c / 8.0:.6f}",
-        "SYSDS_FED_COST_NET_SERDES_BW": "210",
-        "SYSDS_FED_COST_NET_SERDES_BW_C2W": "210",
-        "SYSDS_FED_COST_NET_SERDES_BW_W2C": "14.7",
-        "SYSDS_FED_COST_NET_LATENCY": f"{float(profile['rtt_ms']) / 1000.0:.6f}",
-        "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS": "0.35",
-    }
+def network_cost(profile_name, profile, *, coordinator_host="so007", worker_hosts=("so002",)):
+    return NETWORK_COST.network_cost(profile_name, profile, coordinator_host=coordinator_host,
+                                     worker_hosts=worker_hosts, image=NETWORK_COST.DEFAULT_IMAGE)
 
 
 def _metadata(path, expected_sha):
@@ -249,7 +249,10 @@ def build(base_catalog_path, base_campaign_path, evaluation, stage, topology_pat
     core_path, core_sha = sealed(stage, seal_entries, CORE)
     prepare_path = evaluation / "planning_study/native/prepare_inputs.py"
     driver_path = evaluation / "driver/run_multihost_campaign_network_quality_v2.py"
+    measured_profile = NETWORK_COST.profile_reference()
     source_hashes = {"prepareInputs": file_sha(prepare_path), "driver": file_sha(driver_path),
+                     "networkCostProfile": measured_profile["sha256"],
+                     "networkCostCode": file_sha(NETWORK_COST.__file__),
                      "stageSeal": file_sha(seal_path), "template": template_sha,
                      "core": core_sha, "topology": file_sha(topology_path)}
     files, derived, cells = {}, [], []
@@ -288,8 +291,13 @@ def build(base_catalog_path, base_campaign_path, evaluation, stage, topology_pat
         program_relative, core_relative = prefix / "program.dml", prefix / "imports/core.dml"
         files[program_relative.as_posix()] = program.encode()
         files[core_relative.as_posix()] = core_path.read_bytes()
+        selected_worker_hosts = tuple(item["host"] for item in topology["workers"][:workers])
+        binding = NETWORK_COST.cost_binding(profile, profile_value,
+            coordinator_host=topology["coordinator"]["host"], worker_hosts=selected_worker_hosts,
+            image=NETWORK_COST.DEFAULT_IMAGE)
         planned = {"workers": workers,
-                   "network": {"cost_environment": network_cost(profile_value)},
+                   "network": {"cost_environment": binding["cost_environment"],
+                               "cost_binding": binding},
                    "case": {"program": program_relative.as_posix(),
                             "program_sha256": hashlib.sha256(program.encode()).hexdigest(),
                             "arguments": {}, "compileLocalArguments": {},

@@ -19,6 +19,8 @@
 
 package org.apache.sysds.hops.cost;
 
+import java.util.function.IntToLongFunction;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types;
@@ -50,6 +52,18 @@ public class ComputeCost {
 	 * @return compute cost of currentHop as number of floating point operations
 	 */
 	public static double getHOPComputeCost(Hop currentHop){
+		return getHOPComputeCost(currentHop, currentHop.getDim1(), currentHop.getDim2(),
+			position -> currentHop.getInput(position).getDim1(),
+			position -> currentHop.getInput(position).getDim2());
+	}
+
+	/**
+	 * Evaluate the same operation with immutable, occurrence-resolved dimensions.
+	 * Input dimensions are addressed by position, not Hop identity: a shared Hop
+	 * may represent different values at distinct compiled input occurrences.
+	 */
+	public static double getHOPComputeCost(Hop currentHop, long outputRows, long outputCols,
+			IntToLongFunction inputRows, IntToLongFunction inputCols) {
 		double costs = 1;
 		if( currentHop instanceof UnaryOp) {
 			switch( ((UnaryOp)currentHop).getOp() ) {
@@ -170,11 +184,13 @@ public class ComputeCost {
 				// shrinks relative to the input (e.g., RMEMPTY/removeEmpty).
 				ParameterizedBuiltinOp pb = (ParameterizedBuiltinOp) currentHop;
 				if (pb.getOp() == Types.ParamBuiltinOp.RMEMPTY) {
-					Hop target = pb.getTargetHop();
-					long inSize = (target != null) ? getSize(target) : getSize(currentHop);
-					long outSize = getSize(currentHop);
-					long effective = Math.max(inSize, outSize);
-					costs = (outSize > 0) ? ((double) effective) / outSize : effective;
+					int position = pb.getParamIndexMap().getOrDefault("target", -1);
+					double inSize = position >= 0
+						? getSize(inputRows.applyAsLong(position), inputCols.applyAsLong(position))
+						: getSize(outputRows, outputCols);
+					double outSize = getSize(outputRows, outputCols);
+					double effective = Math.max(inSize, outSize);
+					costs = (outSize > 0) ? effective / outSize : effective;
 				}
 				else {
 					costs = 1;
@@ -198,19 +214,27 @@ public class ComputeCost {
 			}
 		}
 		else if( currentHop instanceof QuaternaryOp) {
-			long outputSize = getSize(currentHop);
+			double outputSize = getSize(outputRows, outputCols);
 			if( outputSize <= 0 )
 				outputSize = 1;
 			double totalFlops;
 			switch( ((QuaternaryOp)currentHop).getOp() ) {
 				case WSLOSS:
-				case WDIVMM:
 				case WCEMM:
-					totalFlops = 4d * getSize(currentHop.getInput().get(0));
+					totalFlops = 4d * getSize(inputRows.applyAsLong(0), inputCols.applyAsLong(0));
+					break;
+				case WDIVMM:
+					long weightRows = inputRows.applyAsLong(0);
+					long weightCols = inputCols.applyAsLong(0);
+					long rank = currentHop.getInput().size() > 1
+						? inputCols.applyAsLong(1) : -1;
+					long weightNnz = currentHop.getInput().isEmpty()
+						? -1 : currentHop.getInput(0).getNnz();
+					totalFlops = getWdivmmComputeCost(weightRows, weightCols, weightNnz, rank);
 					break;
 				case WSIGMOID:
 				case WUMM:
-					totalFlops = 3d * getSize(currentHop.getInput().get(0));
+					totalFlops = 3d * getSize(inputRows.applyAsLong(0), inputCols.applyAsLong(0));
 					break;
 				default:
 					LOG.warn("Cost model not "
@@ -222,9 +246,12 @@ public class ComputeCost {
 		else if( currentHop instanceof AggBinaryOp) {
 			//outer product template w/ matrix-matrix
 			//or row template w/ matrix-vector or matrix-matrix
-			costs = 2 * currentHop.getInput().get(0).getDim2();
-			if( currentHop.getInput().get(0).dimsKnown(true) )
-				costs *= currentHop.getInput().get(0).getSparsity();
+			long rows = inputRows.applyAsLong(0), cols = inputCols.applyAsLong(0);
+			costs = 2d * cols;
+			if(currentHop.getInput(0).dimsKnown(true))
+				costs *= currentHop.getInput(0).getSparsity();
+			else if(rows > 0 && cols > 0 && currentHop.getInput(0).getNnz() >= 0)
+				costs *= Math.min(1d, currentHop.getInput(0).getNnz() / (double)rows / cols);
 		}
 		else if( currentHop instanceof AggUnaryOp) {
 			switch(((AggUnaryOp)currentHop).getOp()) {
@@ -237,26 +264,30 @@ public class ComputeCost {
 						+ "implemented yet for: "+((AggUnaryOp)currentHop).getOp());
 			}
 			switch(((AggUnaryOp)currentHop).getDirection()) {
-				case Col: costs *= Math.max(currentHop.getInput().get(0).getDim1(),1); break;
-				case Row: costs *= Math.max(currentHop.getInput().get(0).getDim2(),1); break;
-				case RowCol: costs *= getSize(currentHop.getInput().get(0)); break;
+				case Col: costs *= Math.max(inputRows.applyAsLong(0),1); break;
+				case Row: costs *= Math.max(inputCols.applyAsLong(0),1); break;
+				case RowCol: costs *= getSize(inputRows.applyAsLong(0), inputCols.applyAsLong(0)); break;
 			}
 		}
 
 		//scale by current output size in order to correctly reflect
 		//a mix of row and cell operations in the same fused operator
 		//(e.g., row template with fused column vector operations)
-		costs *= getSize(currentHop);
+		costs *= getSize(outputRows, outputCols);
 		return costs;
 	}
 
+	/** Runtime WDivMM work over active weights and the factor rank. */
+	public static double getWdivmmComputeCost(long weightRows, long weightCols,
+			long weightNnz, long rank) {
+		double cells = weightNnz >= 0 ? weightNnz : getSize(weightRows, weightCols);
+		return 4d * Math.max(rank, 1L) * Math.max(cells, 0d);
+	}
+
 	/**
-	 * Get number of output cells of given hop.
-	 * @param hop for which the number of output cells are found
-	 * @return number of output cells of given hop
+	 * Number of logical cells without overflowing long for large shape estimates.
 	 */
-	private static long getSize(Hop hop) {
-		return Math.max(hop.getDim1(),1)
-			* Math.max(hop.getDim2(),1);
+	private static double getSize(long rows, long cols) {
+		return (double)Math.max(rows,1) * Math.max(cols,1);
 	}
 }

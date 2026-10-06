@@ -445,25 +445,16 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testOnlyFullFederatedTransposeSkipsCoordinationCost() {
+	public void testFederatedTransposeKeepsRequestAndResponseStages() {
 		TestMatrixHop input = new TestMatrixHop("fedTransposeInput", 10, 4,
 			32 * 1024 * 1024, 32 * 1024 * 1024);
 		ReorgOp transpose = HopRewriteUtils.createTranspose(input);
 		transpose.setDim1(4);
 		transpose.setDim2(10);
 
-		Assert.assertTrue("FULL federated transpose should be recognized as mapping-preserving",
-			FederatedCostModel.isMappingPreservingFederatedTranspose(transpose, FType.FULL));
-		Assert.assertFalse("BROADCAST output alone does not prove that transpose avoids worker execution",
-			FederatedCostModel.isMappingPreservingFederatedTranspose(transpose, FType.BROADCAST));
-		Assert.assertFalse("ROW-partitioned transpose should not use the mapping-preserving shortcut",
-			FederatedCostModel.isMappingPreservingFederatedTranspose(transpose, FType.ROW));
-		Assert.assertEquals("Mapping-preserving federated transpose should not pay a generic FED coordination term",
-			0.0, FederatedCostModel.adjustFedCoordinationCost(transpose, FType.FULL, 123.0), 1e-9);
-		Assert.assertEquals("BROADCAST transpose must retain coordination without input-layout proof",
-			123.0, FederatedCostModel.adjustFedCoordinationCost(transpose, FType.BROADCAST, 123.0), 1e-9);
-		Assert.assertEquals("Non-mapping-preserving reorgs must keep their FED coordination term",
-			123.0, FederatedCostModel.adjustFedCoordinationCost(transpose, FType.ROW, 123.0), 1e-9);
+		Assert.assertEquals("Transpose executes PUT_VAR + EXEC even with a FULL mapping",
+			123.0 * FederatedCostModel.computeRequestResponseLatency(),
+			FederatedCostModel.computeFederatedInstructionNetworkCost(transpose, 123.0), 1e-9);
 	}
 
 	@Test
@@ -580,7 +571,7 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testDmlFunctionOpCostExceedsGenericPlaceholderBaseline() throws Exception {
+	public void testDmlFunctionOpHasNoSyntheticCellFloor() throws Exception {
 		TestDmlFunctionOp functionHop = createTestDmlFunctionOp();
 
 		double inputMem = FederatedCostModel.getEffectiveInputMemEstimate(functionHop);
@@ -588,88 +579,50 @@ public class FederatedCostModelFallbackTest {
 		double placeholderBaseline = computeGenericPlaceholderBaseline(functionHop, inputMem, outputMem);
 		double opCost = FederatedCostModel.computeOpCost(functionHop);
 
-		Assert.assertTrue("DML FunctionOp cost should exceed the generic placeholder baseline",
-				opCost > placeholderBaseline);
+		Assert.assertEquals("Function bodies own execution; the generic helper must not add a"
+			+ " call-placeholder cell floor", placeholderBaseline, opCost, 0.0);
 	}
 
 	@Test
-	public void testSingleWorkerFedExecPenaltySkipsConcreteFedInputSingleCall() throws Exception {
-		TestDmlFunctionOp functionHop = createTestDmlFunctionOp();
-		functionHop.getInput().get(0).setForcedExecType(Types.ExecType.FED);
-		functionHop.getInput().get(0).setFederatedOutput(FederatedOutput.FOUT);
-
-		double penalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(functionHop, 1.0, 1);
-		Assert.assertEquals("A one-shot DML FunctionOp with an immediate concrete federated matrix input should not"
-			+ " receive any extra single-worker placeholder penalty",
-			0.0, penalty, 0.0);
-	}
-
-	@Test
-	public void testSingleWorkerFedExecPenaltyStaysBoundedForRepeatedConcreteFedInput() throws Exception {
-		TestDmlFunctionOp functionHop = createTestDmlFunctionOp();
-		functionHop.getInput().get(0).setForcedExecType(Types.ExecType.FED);
-		functionHop.getInput().get(0).setFederatedOutput(FederatedOutput.FOUT);
-
-		double penalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(functionHop, 5.0, 1);
-		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
-		double thresholdMs = getFederatedCostModelConstant("SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS");
-
-		if (ctrlMs <= thresholdMs)
-			Assert.assertEquals("Without material control-plane overhead, the repeated single-worker penalty stays disabled",
-				0.0, penalty, 0.0);
-		else
-			Assert.assertTrue("Repeated single-worker DML FunctionOp calls may pay a bounded boundary penalty, but"
-				+ " the cost must stay well below the old hard blocker regime",
-				penalty > 0.0 && penalty < 1e6);
-	}
-
-	@Test
-	public void testFedInstructionOwnsNetworkLatencyAndCalibratedControlCost() throws Exception {
+	public void testFedInstructionOwnsTwoDirectionalLatencies() throws Exception {
 		TestMatrixHop left = new TestMatrixHop("ctrlLeft", 1000, 10, 1024 * 1024, 1024 * 1024);
 		TestMatrixHop right = new TestMatrixHop("ctrlRight", 1000, 10, 1024 * 1024, 1024 * 1024);
 		BinaryOp binary = new BinaryOp("ctrlPlus", DataType.MATRIX, ValueType.FP64,
 			OpOp2.PLUS, left, right);
 
-		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
-		double latencySec = getFederatedCostModelConstant("MBS_NETWORK_LATENCY");
+		double latencySec = (getFederatedCostModelConstant("NETWORK_LATENCY_C2W")
+			+ getFederatedCostModelConstant("NETWORK_LATENCY_W2C"));
 		double toMs = getFederatedCostModelConstant("TO_MS");
 		double execWeight = 7.0;
-		int workers = 4;
 
-		double perInstructionCoordination = FederatedCostModel.computeFedCoordinationCost(workers);
-		double controlDominatedTopup = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
-			binary, FType.ROW, execWeight, workers, false);
-		double totalControlCost = execWeight * perInstructionCoordination + controlDominatedTopup;
+		double instructionLatency = FederatedCostModel.computeFederatedInstructionNetworkCost(
+			binary, execWeight);
 
-		double expected = execWeight * (ctrlMs + latencySec * toMs);
-		Assert.assertEquals("Every logical FED instruction owns one parallel network round trip plus"
-			+ " the separately configured coordinator/runtime control path; neither term is"
-			+ " multiplied by worker fanout",
-			expected, totalControlCost, 1e-9);
+		double expected = execWeight * latencySec * toMs;
+		Assert.assertEquals("Every logical FED instruction owns two directional latencies, with no control intercept",
+			expected, instructionLatency, 1e-9);
 	}
 
 	@Test
-	public void testFedInstructionFixedStagePreservesFractionalBranchWeight() throws Exception {
+	public void testFedInstructionLatenciesPreserveFractionalBranchWeight() throws Exception {
 		TestMatrixHop left = new TestMatrixHop("branchLeft", 1000, 10,
 			1024 * 1024, 1024 * 1024);
 		TestMatrixHop right = new TestMatrixHop("branchRight", 1000, 10,
 			1024 * 1024, 1024 * 1024);
 		BinaryOp binary = new BinaryOp("branchPlus", DataType.MATRIX, ValueType.FP64,
 			OpOp2.PLUS, left, right);
-		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
-		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
+		double latencyMs = (getFederatedCostModelConstant("NETWORK_LATENCY_C2W")
+			+ getFederatedCostModelConstant("NETWORK_LATENCY_W2C"))
 			* getFederatedCostModelConstant("TO_MS");
 		double branchWeight = 0.5;
-		int workers = 4;
-		double actual = branchWeight * FederatedCostModel.computeFedCoordinationCost(workers)
-			+ FederatedCostModel.computeControlDominatedFederatedInstructionCost(
-				binary, FType.ROW, branchWeight, workers, false);
-		Assert.assertEquals("Expected branch frequency must scale both fixed-stage terms",
-			branchWeight * (ctrlMs + latencyMs), actual, 1e-9);
+		double actual = FederatedCostModel.computeFederatedInstructionNetworkCost(
+				binary, branchWeight);
+		Assert.assertEquals("Expected branch frequency must scale both directional latencies",
+			branchWeight * latencyMs, actual, 1e-9);
 	}
 
 	@Test
-	public void testElementwiseTernaryFederatedComputeUsesUnscaledFloor() {
+	public void testLegacyTernaryProjectionNoLongerHasBlanketUnscaledException() {
 		TestMatrixHop left = new TestMatrixHop("ternaryLeft", 2100, 2100,
 			32 * 1024 * 1024, 32 * 1024 * 1024);
 		TestMatrixHop right = new TestMatrixHop("ternaryRight", 2100, 2100,
@@ -684,14 +637,14 @@ public class FederatedCostModelFallbackTest {
 		double baseSelfCost = 100.0;
 		double fedComputeCost = FederatedCostModel.computeFederatedComputeCost(
 			minusMult, baseSelfCost, 4, false);
-		double controlFloor = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
-			minusMult, FType.ROW, 1.0, 4, false);
+		double instructionLatency = FederatedCostModel.computeFederatedInstructionNetworkCost(
+			minusMult, 1.0);
 
-		Assert.assertEquals("Elementwise ternary FED compute is a per-worker cell-op stage and must not"
-			+ " receive generic linear worker speedup",
-			baseSelfCost, fedComputeCost, 0.0);
-		Assert.assertTrue("Elementwise ternary FED instructions should carry a positive control/latency floor",
-			controlFloor > 0.0);
+		Assert.assertEquals("The prepared quantity path supplies actual shard work; the legacy"
+			+ " projection must not retain an opcode-family exception",
+			baseSelfCost / 4.0, fedComputeCost, 0.0);
+		Assert.assertTrue("Elementwise ternary FED instructions should carry a positive request/response latency",
+			instructionLatency > 0.0);
 	}
 
 	@Test
@@ -703,41 +656,36 @@ public class FederatedCostModelFallbackTest {
 			1024 * 1024, 1024 * 1024);
 		AggBinaryOp matrixMultiply = new AggBinaryOp("mm", DataType.MATRIX, ValueType.FP64,
 			OpOp2.MULT, AggOp.SUM, left, right);
-		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
-		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
+		double latencyMs = (getFederatedCostModelConstant("NETWORK_LATENCY_C2W")
+			+ getFederatedCostModelConstant("NETWORK_LATENCY_W2C"))
 			* getFederatedCostModelConstant("TO_MS");
 		double execWeight = 7.0;
-		double expected = execWeight * (ctrlMs + latencyMs);
+		double expected = execWeight * latencyMs;
 
-		for(int workers = 1; workers <= 4; workers++) {
-			double actual = execWeight * FederatedCostModel.computeFedCoordinationCost(workers)
-				+ FederatedCostModel.computeControlDominatedFederatedInstructionCost(
-					matrixMultiply, FType.ROW, execWeight, workers, false);
-			Assert.assertEquals("Every remote instruction batch pays one critical-path dispatch stage,"
-				+ " independent of worker fanout", expected, actual, 1e-9);
-		}
+		double actual = FederatedCostModel.computeFederatedInstructionNetworkCost(matrixMultiply, execWeight);
+		Assert.assertEquals("Every remote instruction batch pays one critical-path dispatch stage,"
+			+ " independent of worker fanout", expected, actual, 1e-9);
 	}
 
 	@Test
-	public void testIndexingControlDominatedCostUsesOneParallelDispatch() throws Exception {
+	public void testIndexingUsesOneRequestAndOneResponse() throws Exception {
 		TestMatrixHop input = new TestMatrixHop("idxInput", 50000, 2100,
 			16 * 1024 * 1024, 16 * 1024 * 1024);
 		IndexingOp slice = createUnknownDimIndexingHop("rightIndex",
 			input, new LiteralOp(50000), new LiteralOp(2100), false, false, 1024 * 1024);
 
-		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
-		double latencySec = getFederatedCostModelConstant("MBS_NETWORK_LATENCY");
+		double latencySec = (getFederatedCostModelConstant("NETWORK_LATENCY_C2W")
+			+ getFederatedCostModelConstant("NETWORK_LATENCY_W2C"));
 		double toMs = getFederatedCostModelConstant("TO_MS");
 		double execWeight = 7.0;
-		int workers = 4;
 
-		double controlDominatedTopup = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
-			slice, FType.ROW, execWeight, workers, false);
+		double instructionLatency = FederatedCostModel.computeFederatedInstructionNetworkCost(
+			slice, execWeight);
 		double expected = execWeight * latencySec * toMs;
 
 		Assert.assertEquals("Native FED indexing submits all worker requests before waiting; it owns one"
-			+ " parallel critical-path network round trip in addition to calibrated coordinator control",
-			expected, controlDominatedTopup, 1e-9);
+			+ " parallel request and response stage, without a separate control charge",
+			expected, instructionLatency, 1e-9);
 	}
 
 	@Test
@@ -774,44 +722,17 @@ public class FederatedCostModelFallbackTest {
 		wdivmm.setDim2(32);
 
 		double computeCost = ComputeCost.getHOPComputeCost(wdivmm);
-		double expected = 4d * Math.max(x.getDim1(), 1) * Math.max(x.getDim2(), 1);
+		double expected = ComputeCost.getWdivmmComputeCost(
+			x.getDim1(), x.getDim2(), x.getNnz(), u.getDim2());
 
-		Assert.assertEquals("Quaternary WDIVMM compute cost should use the CPCostUtils flop model",
+		Assert.assertEquals("Quaternary WDIVMM work must include active weights and factor rank",
 			expected, computeCost, 1e-9);
 		Assert.assertTrue("Quaternary WDIVMM cost should exceed the generic output-size fallback",
 			computeCost > (double) wdivmm.getDim1() * wdivmm.getDim2());
 	}
 
 	@Test
-	public void testLocalToFedForwardingPenaltyRequiresFederatedType() {
-		Assert.assertEquals(0.0,
-				FederatedCostModel.computeLocalToFedForwardingPenalty(null, 4), 0.0);
-	}
-
-	@Test
-	public void testLocalToFedForwardingPenaltyDoesNotDuplicateParallelDispatchStage() {
-		double rowPenaltyOneWorker = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 1);
-		double rowPenaltyFourWorkers = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
-		double broadcastPenaltyFourWorkers = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, 4);
-
-		Assert.assertEquals(0.0, rowPenaltyOneWorker, 0.0);
-		Assert.assertEquals("The base upload owns the one parallel request stage; forwarding must not"
-			+ " duplicate fixed latency/control by worker count", 0.0, rowPenaltyFourWorkers, 0.0);
-		Assert.assertEquals("Additional fixed forwarding cost is independent of FType payload multiplier",
-				rowPenaltyFourWorkers, broadcastPenaltyFourWorkers, 0.0);
-	}
-
-	@Test
-	public void testLocalToFedForwardingPenaltyChargesNoAdditionalParallelWorkerStages() {
-		int workers = 4;
-		Assert.assertEquals("FederationMap submits worker futures before waiting, so the base upload's one"
-			+ " latency/control stage covers the complete parallel worker fanout",
-			0.0,
-			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, workers), 1e-9);
-	}
-
-	@Test
-	public void testDownloadNetworkCostScalesWithWorkerFanInForPartitionedLayouts() {
+	public void testDownloadNetworkCostScalesWithWorkerFanInForPartitionedLayouts() throws Exception {
 		double memSize = 32 * 1024 * 1024;
 		double singleWorker = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.ROW, 1);
 		double fourWorkerRow = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.ROW, 4);
@@ -819,7 +740,7 @@ public class FederatedCostModelFallbackTest {
 		double fourWorkerFull = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.FULL, 4);
 		double fourWorkerBroadcast = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.BROADCAST, 4);
 
-		Assert.assertEquals("A one-worker partitioned download must equal the legacy directional download",
+		Assert.assertEquals("A one-worker partitioned download must equal the single-worker directional download",
 			FederatedCostModel.computeDownloadNetworkCost(memSize), singleWorker, 1e-9);
 		Assert.assertTrue("Partitioned downloads must not be cheaper than one parallel wire partition;"
 			+ " full logical serdes may add cost, but fixed latency is one shared stage",
@@ -828,53 +749,56 @@ public class FederatedCostModelFallbackTest {
 			fourWorkerRow < singleWorker);
 		Assert.assertEquals("Single-source FULL downloads should not pay multi-worker fan-in overhead",
 			FederatedCostModel.computeDownloadNetworkCost(memSize), fourWorkerFull, 1e-9);
-		Assert.assertEquals("Replicated BROADCAST downloads materialize one local copy and should not pay full fan-in",
-			FederatedCostModel.computeDownloadNetworkCost(memSize), fourWorkerBroadcast, 1e-9);
+		double rate = getFederatedCostModelConstant("MBS_NETWORK_SERDES_BANDWIDTH_W2C");
+		double extraProcessing = rate > 0.0 ? 3 * 32 / rate * 1000 : 0.0;
+		Assert.assertEquals("BROADCAST collects all four responses even though the logical result is one copy",
+			singleWorker + extraProcessing, fourWorkerBroadcast, 1e-9);
 	}
 
 	@Test
-	public void testPartitionedDownloadUsesParallelWireAndFullLogicalSerdesForWorkersOneToFour()
+	public void testPartitionedDownloadUsesParallelWireAndAggregateProcessing()
 			throws Exception {
 		double totalBytes = 256d * 1024 * 1024;
 		double networkBwMBps = 25.0;
 		double serdesBwMBps = 14.7;
-		double latencySec = 0.080;
-		double controlMs = 0.0;
+		double requestLatencySec = 0.030;
+		double responseLatencySec = 0.050;
 		for (int workers = 1; workers <= 4; workers++) {
-			double expected = ((256.0 / workers) / networkBwMBps + 256.0 / serdesBwMBps) * 1000.0
-				+ latencySec * 1000.0;
+			double expected = ((256.0 / workers) / networkBwMBps
+				+ 256.0 / serdesBwMBps) * 1000.0
+				+ (requestLatencySec + responseLatencySec) * 1000.0;
 			double actual = invokeParallelDownloadCost(totalBytes, workers,
-				networkBwMBps, serdesBwMBps, latencySec, controlMs);
-			Assert.assertEquals("Partitioned download must parallelize only wire bytes for workers=" + workers,
+				networkBwMBps, serdesBwMBps, requestLatencySec, responseLatencySec);
+			Assert.assertEquals("Every GET must use the same total-response processing policy for workers=" + workers,
 				expected, actual, 1e-9);
 		}
 	}
 
 	@Test
-	public void testPartitionedDownloadPreservesLegacyParallelPayloadWhenSerdesDisabled()
+	public void testPartitionedDownloadUsesConfiguredWorkerLinkWhenCoordinatorIsUnspecified()
 			throws Exception {
 		double totalBytes = 256d * 1024 * 1024;
 		double networkBwMBps = 25.0;
-		double latencySec = 0.080;
-		double controlMs = 1.5;
+		double requestLatencySec = 0.030;
+		double responseLatencySec = 0.050;
 		for (int workers = 1; workers <= 4; workers++) {
 			double expected = ((256.0 / workers) / networkBwMBps) * 1000.0
-				+ latencySec * 1000.0 + controlMs;
+				+ (requestLatencySec + responseLatencySec) * 1000.0;
 			double actual = invokeParallelDownloadCost(totalBytes, workers,
-				networkBwMBps, 0.0, latencySec, controlMs);
-			Assert.assertEquals("Disabled serdes must retain the legacy parallel wire model for workers=" + workers,
+				networkBwMBps, 0.0, requestLatencySec, responseLatencySec);
+			Assert.assertEquals("With no coordinator cap, worker-link wire time remains for workers=" + workers,
 				expected, actual, 1e-9);
 		}
 	}
 
 	@Test
-	public void testInBandResultSerdesStaticInitializationPrecedence() throws Exception {
-		assertInBandResultSerdesStaticInitialization(210.0,
+	public void testOnlyDirectionalGetProcessingRateIsRecognized() throws Exception {
+		assertInBandResultSerdesStaticInitialization(0.0,
 			"SYSDS_FED_COST_NET_SERDES_BW", "210");
 		assertInBandResultSerdesStaticInitialization(14.7,
 			"SYSDS_FED_COST_NET_SERDES_BW", "210",
 			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7");
-		assertInBandResultSerdesStaticInitialization(333.0,
+		assertInBandResultSerdesStaticInitialization(14.7,
 			"SYSDS_FED_COST_NET_SERDES_BW", "210",
 			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7",
 			"SYSDS_FED_COST_INBAND_RESULT_SERDES_BW_W2C", "333");
@@ -884,86 +808,52 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testInBandResultUsesPerWorkerResponseCriticalPath() throws Exception {
+	public void testInBandResultUsesWireCriticalPathAndTotalProcessing() throws Exception {
 		double totalBytes = 256d * 1024 * 1024;
 		double networkBwMBps = 125.0;
 		double responseSerdesBwMBps = 210.0;
 		for (int workers = 1; workers <= 4; workers++) {
 			double criticalPayloadMb = 256.0 / workers;
 			double expected = (criticalPayloadMb / networkBwMBps
-				+ criticalPayloadMb / responseSerdesBwMBps) * 1000.0;
+				+ 256.0 / responseSerdesBwMBps) * 1000.0;
 			double actual = invokeParallelInBandResultPayloadCost(totalBytes, workers,
 				networkBwMBps, responseSerdesBwMBps);
-			Assert.assertEquals("One FED request batch returns independently encoded worker responses;"
-				+ " both wire and response serdes belong to the largest per-worker path for workers="
+			Assert.assertEquals("One GET policy charges all response processing;"
+				+ " only wire cost follows the largest per-worker path for workers="
 				+ workers, expected, actual, 1e-9);
 		}
 	}
 
 	@Test
-	public void testInBandResultDoesNotWeakenExplicitCollectionCost() throws Exception {
+	public void testInBandAndExplicitCollectionSharePayloadPriceButNotBatchCount() throws Exception {
 		double totalBytes = 256d * 1024 * 1024;
 		int workers = 4;
 		double networkBwMBps = 125.0;
 		double responseSerdesBwMBps = 210.0;
-		double explicitCollectionSerdesBwMBps = 14.7;
 		double explicit = invokeParallelDownloadCost(totalBytes, workers,
-			networkBwMBps, explicitCollectionSerdesBwMBps, 0.020, 0.0);
+			networkBwMBps, responseSerdesBwMBps, 0.020, 0.0);
 		double inBand = invokeParallelInBandResultPayloadCost(totalBytes, workers,
 			networkBwMBps, responseSerdesBwMBps);
 
-		Assert.assertTrue("Native in-band result response and explicit FED-to-CP collection are"
-			+ " distinct runtime paths; the response calibration must not replace full-result"
-			+ " coordinator serdes in the explicit collection contract", inBand < explicit);
-		Assert.assertEquals("Explicit collection must retain full logical W2C serdes",
-			((256.0 / workers) / networkBwMBps + 256.0 / explicitCollectionSerdesBwMBps)
+		Assert.assertEquals("Explicit collection owns exactly one additional request/response batch",
+			20.0, explicit - inBand, 1e-9);
+		Assert.assertEquals("Explicit collection uses the same aggregate processing arithmetic",
+			((256.0 / workers) / networkBwMBps
+				+ 256.0 / responseSerdesBwMBps)
 				* 1000.0 + 20.0, explicit, 1e-9);
 	}
 
 	@Test
-	public void testReusableMaterializationUsesOneParallelGetVarBatch() throws Exception {
-		double totalBytes = 400304.0;
-		int workers = 2;
-		double networkBwMBps = 1250.0;
-		double fastResponseSerdesBwMBps = 210.0;
-		double largeResponseSerdesBwMBps = 14.7;
-		double fastResponseMaxBytes = 4.0 * 1024 * 1024;
-		double latencySec = 0.001;
-		double controlMs = 1.0;
-		double criticalPayloadMb = totalBytes / workers / (1024.0 * 1024.0);
-		double expected = (criticalPayloadMb / networkBwMBps
-			+ criticalPayloadMb / fastResponseSerdesBwMBps) * 1000.0
-			+ latencySec * 1000.0 + controlMs;
-		double actual = invokeReusableMaterializationDownloadCost(totalBytes, workers,
-			networkBwMBps, fastResponseSerdesBwMBps, largeResponseSerdesBwMBps,
-			fastResponseMaxBytes, latencySec, controlMs);
-
-		Assert.assertEquals("One planner-selected FOUT-to-local boundary emits one parallel GET_VAR"
-			+ " materialization that is reused by all compatible CP consumers; a small response must"
-			+ " retain the measured small-message path", expected, actual, 1e-9);
-	}
-
-	@Test
-	public void testReusableLargeMaterializationUsesParallelDirectionalCodecPath() throws Exception {
-		double totalBytes = 840_000_000.0;
-		double networkBwMBps = 1250.0;
-		double fastResponseSerdesBwMBps = 210.0;
-		double largeResponseSerdesBwMBps = 14.7;
-		double fastResponseMaxBytes = 4.0 * 1024 * 1024;
-		double latencySec = 0.001;
-		double controlMs = 1.0;
-		for(int workers : new int[] {1, 2, 4}) {
-			double criticalPayloadMb = totalBytes / workers / (1024.0 * 1024.0);
-			double expected = (criticalPayloadMb / networkBwMBps
-				+ criticalPayloadMb / largeResponseSerdesBwMBps) * 1000.0
-				+ latencySec * 1000.0 + controlMs;
-			double actual = invokeReusableMaterializationDownloadCost(totalBytes, workers,
-				networkBwMBps, fastResponseSerdesBwMBps, largeResponseSerdesBwMBps,
-				fastResponseMaxBytes, latencySec, controlMs);
-			Assert.assertEquals("A large reusable GET_VAR remains parallel across workers but must not"
-				+ " inherit the small-response codec rate for workers=" + workers,
-				expected, actual, 1e-9);
-		}
+	public void testReusableMaterializationUsesTheSameTotalProcessingModelAtEverySize() throws Exception {
+		for(double totalBytes : new double[] {400304.0, 840_000_000.0})
+			for(int workers : new int[] {1, 2, 4}) {
+				double mib = totalBytes / (1024 * 1024);
+				double expected = (mib / workers / 1250.0 + mib / 14.7) * 1000.0 + 2.0;
+				Method method = FederatedCostModel.class.getDeclaredMethod("computeReusableMaterializationDownloadCost",
+					double.class, int.class, double.class, double.class, double.class, double.class);
+				method.setAccessible(true);
+				Assert.assertEquals(expected, (double)method.invoke(null, totalBytes, workers, 1250.0, 14.7, 0.001, 0.001), 1e-9);
+			}
 	}
 
 	@Test
@@ -1085,7 +975,7 @@ public class FederatedCostModelFallbackTest {
 
 		public static void main(String[] args) throws Exception {
 			double expected = Double.parseDouble(args[0]);
-			double actual = getFederatedCostModelConstant("MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C");
+			double actual = getFederatedCostModelConstant("MBS_NETWORK_SERDES_BANDWIDTH_W2C");
 			if(Double.compare(expected, actual) != 0)
 				throw new AssertionError("expected=" + expected + ", actual=" + actual);
 		}
@@ -1098,12 +988,12 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	private static double invokeParallelDownloadCost(double totalMemSize, int fanIn,
-			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) throws Exception {
-		Method method = FederatedCostModel.class.getDeclaredMethod("computeParallelDownloadCost",
-			double.class, int.class, double.class, double.class, double.class, double.class);
+			double bandwidthMBps, double serdesBwMBps, double requestLatencySec, double responseLatencySec) throws Exception {
+		Method method = FederatedCostModel.class.getDeclaredMethod("computeGetResponseCost",
+			double.class, int.class, double.class, double.class, int.class, double.class, double.class);
 		method.setAccessible(true);
 		return (double) method.invoke(null, totalMemSize, fanIn,
-			bandwidthMBps, serdesBwMBps, latencySec, controlMs);
+			bandwidthMBps, serdesBwMBps, 1, requestLatencySec, responseLatencySec);
 	}
 
 	private static double invokeParallelInBandResultPayloadCost(double totalMemSize, int fanIn,
@@ -1115,17 +1005,6 @@ public class FederatedCostModelFallbackTest {
 		return (double) method.invoke(null, totalMemSize, fanIn, bandwidthMBps, serdesBwMBps);
 	}
 
-	private static double invokeReusableMaterializationDownloadCost(double totalMemSize, int fanIn,
-			double bandwidthMBps, double fastSerdesBwMBps, double largeSerdesBwMBps,
-			double fastResponseMaxBytes, double latencySec, double controlMs) throws Exception {
-		Method method = FederatedCostModel.class.getDeclaredMethod(
-			"computeReusableMaterializationDownloadCost", double.class, int.class,
-			double.class, double.class, double.class, double.class, double.class, double.class);
-		method.setAccessible(true);
-		return (double) method.invoke(null, totalMemSize, fanIn,
-			bandwidthMBps, fastSerdesBwMBps, largeSerdesBwMBps,
-			fastResponseMaxBytes, latencySec, controlMs);
-	}
 
 	private static final class TestMatrixHop extends DataOp {
 		private final double rawInputMemEstimate;

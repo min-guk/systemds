@@ -164,7 +164,7 @@ def runtime_selection_ids(root, manifest):
 
 def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, direct_runtime=False,
                continuation_source=None, diagnostic_runtime_cell=False,
-               diagnostic_plan_details=False, runtime_selection=None):
+               diagnostic_plan_details=False, runtime_selection=None, profile_native_blas="mkl"):
     """Freeze build/probe once. Resumes verify rather than replace artifacts."""
     selection_raw = None
     if runtime_selection is not None:
@@ -181,6 +181,9 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, dire
         raise RuntimeError(f'probe source missing: {PROBE_SOURCE}')
     external = [EVALUATION / x for x in ('campaign/run_w1357_integrated.py',
         'campaign/render_w1357_workload.py', 'driver/run_multihost_campaign_network_quality_v2.py',
+        'calibration/experiment_profile.py', 'calibration/experiment_profile_probe.py',
+        'calibration/java/BasicRateProbe.java', 'calibration/java/ProbeEnvironment.java',
+        'calibration/java/TransportProbe.java',
         'driver/tools/multihost_docker.py', 'config/multihost_topology.json',
         'campaign/w1357_output_compare.py', 'campaign/w1357_metric_producer.py',
         'config/w1357_correctness_contract.json', 'calibration/java/W1357OutputDecoder.java',
@@ -194,6 +197,8 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, dire
                 'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json'),
                 'timeout_seconds': dict.fromkeys(('compile', 'runtime'), WORKLOAD_TIMEOUT_SECONDS),
                 'direct_runtime': bool(direct_runtime),
+                'cost_profiling': 'auto-measured-environment/v1',
+                'profile_native_blas': profile_native_blas,
                 'diagnostic': diagnostic_contract(diagnostic_jfr, diagnostic_compact,
                                                   diagnostic_runtime_cell,
                                                   diagnostic_plan_details)}
@@ -519,6 +524,18 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
             run(['rsync', '-a', '--', str(local / 'cell.dml'), str(local / 'execution.xml'),
                  f'{node.host}:{remote}/tmp/'])
         lifecycle.prepare_nodes(nodes, copy_input)
+        cost_profile = base.prepare_cost_profile(life, root / 'cost-profiles',
+            jar_path='/candidate/SystemDS.jar', jar_sha256=manifest['identity']['jar_sha256'],
+            classpath='/candidate/SystemDS.jar:/opt/systemds/target/lib/*',
+            jvm_options=JAVA[1:], config_path='/workspace/experiments/tmp/execution.xml',
+            local_classpath=f"{root / 'overlay/SystemDS.jar'}:{args.stage}/systemds/target/lib/*",
+            expected_native_blas=getattr(args, 'profile_native_blas', 'mkl'))
+        spec = base.parse_manifest(life)
+        dump(local / 'lifecycle.json', life)
+        dump(local / 'cost-profile.json', cost_profile)
+        result['cost_profile_sha256'] = cost_profile['profile_sha256']
+        result['cost_profile_preparation'] = cost_profile.get('_runtime')
+        result['profiling_seconds'] = cost_profile.get('_runtime', {}).get('preparation_seconds', 0.0)
         start_attempted = True
         def start_command(command):
             (local / (command.label + '.log')).write_text(run(command.argv, timeout=150))
@@ -625,8 +642,9 @@ def summarize(root):
                    'compile_seconds', 'common_preparation_seconds', 'analysis_seconds',
                    'searchspace_seconds', 'selection_adapter_seconds',
                    'planning_after_analysis_seconds', 'full_initial_planning_seconds',
-                   'runtime_seconds', 'attempt', 'setup_seconds', 'process_seconds',
-                   'postprocess_seconds', 'cell_wall_seconds', 'origin_root', 'origin_result']
+                   'runtime_seconds', 'attempt', 'setup_seconds', 'profiling_seconds',
+                   'cost_profile_sha256', 'process_seconds', 'postprocess_seconds',
+                   'cell_wall_seconds', 'origin_root', 'origin_result']
         with (root / f'{phase}-comparison.csv').open('w') as stream:
             writer = csv.DictWriter(stream, fieldnames=columns)
             writer.writeheader()
@@ -666,6 +684,8 @@ def main(argv=None):
     parser.add_argument('--stage', type=Path, default=STAGE)
     parser.add_argument('--phase', choices=('prepare', 'compile', 'runtime', 'all', 'summary'), default='compile')
     parser.add_argument('--reference-manifest', type=Path)
+    parser.add_argument('--profile-native-blas', choices=('mkl', 'openblas', 'unavailable'), default='mkl',
+                        help='assert the observed backend when profiling; never changes the execution engine')
     parser.add_argument('--continue-runtime-from', type=Path,
                         help='preserve verified completed results from a stopped compatible campaign; '
                              'requires explicit direct runtime and a new immutable root')
@@ -737,7 +757,7 @@ def main(argv=None):
     if args.runtime_selection is not None:
         continuation_options['runtime_selection'] = args.runtime_selection.resolve()
     manifest = initialize(args.root, args.stage, args.diagnostic_jfr, args.diagnostic_compact,
-                          direct_runtime=direct_runtime, **continuation_options)
+                          direct_runtime=direct_runtime, profile_native_blas=args.profile_native_blas, **continuation_options)
     selected_ids = runtime_selection_ids(args.root, manifest)
     if args.phase == 'prepare':
         print(json.dumps({'prepared': True, 'cells': len(matrix()), 'root': str(args.root)}))

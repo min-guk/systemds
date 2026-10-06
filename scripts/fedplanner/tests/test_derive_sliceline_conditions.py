@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+
+from scripts.fedplanner.tests.test_network_cost_profile import SYNTHETIC_ENVIRONMENT, synthetic_binding
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "derive_sliceline_conditions.py"
@@ -19,6 +22,16 @@ def write_json(path, value):
 
 
 class DeriveSliceLineConditionsTest(unittest.TestCase):
+    def test_network_cost_uses_complete_measured_profile_verbatim(self):
+        with patch.object(MODULE.NETWORK_COST, "cost_binding", side_effect=synthetic_binding):
+            cost = MODULE.network_cost("lan", {"rtt_ms": 1, "c2w_mbit": 5000,
+                                               "w2c_mbit": 5000},
+                                       coordinator_host="coord", worker_hosts=("worker",))
+        self.assertEqual(cost, SYNTHETIC_ENVIRONMENT)
+        self.assertNotIn("SYSDS_FED_COST_NET_BW", cost)
+        self.assertNotIn("SYSDS_FED_COST_NET_LATENCY", cost)
+        self.assertNotIn("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", cost)
+
     def test_base_requires_all_promoted_compiler_argv_and_ranges(self):
         rows = []
         for index in range(296):

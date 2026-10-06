@@ -10,6 +10,7 @@ binding can all be reconstructed from frozen inputs.
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -23,6 +24,17 @@ PLANNING_WORKER = Path("planning_study/native/input_templates")
 STAGE_EXPERIMENTS = Path("harness/sigmod2021-exdra-p523/experiments")
 TOKEN = re.compile(r"__[A-Z0-9_]+__")
 P2_METADATA_RELEASE_OPTION = "-Dsysds.privacy.allowPublicRecodeMetadata=true"
+
+
+def _load_network_cost_profile():
+    path = Path(__file__).resolve().parent / "network_cost_profile.py"
+    spec = importlib.util.spec_from_file_location("freeze_network_cost_profile", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+NETWORK_COST = _load_network_cost_profile()
 
 
 def canonical(value):
@@ -256,10 +268,13 @@ def base_condition(candidate, planning, evaluation_root, topology, network, seed
     expected_network = network.get(candidate["networkProfile"])
     if planned["workers"] != candidate["workers"] or expected_network is None:
         raise ValueError(f"base candidate axes differ from planning snapshot: {candidate['candidateId']}")
-    expected_cost = network_cost(expected_network)
+    selected_hosts = tuple(item["host"] for item in topology["workers"][:candidate["workers"]])
+    binding = NETWORK_COST.cost_binding(candidate["networkProfile"], expected_network,
+        coordinator_host=topology["coordinator"]["host"], worker_hosts=selected_hosts,
+        image=NETWORK_COST.DEFAULT_IMAGE)
+    expected_cost = dict(binding["cost_environment"])
     planned_cost = planned["network"].get("cost_environment")
-    if not isinstance(planned_cost, dict) \
-            or {key: expected_cost.get(key) for key in planned_cost} != planned_cost:
+    if not isinstance(planned_cost, dict) or planned_cost != expected_cost:
         raise ValueError(f"network cost binding differs: {candidate['candidateId']}")
     worker_root = Path(evaluation_root) / PLANNING_WORKER / f"w{candidate['workers']}"
     partition_index = json.loads((worker_root / "metadata/worker-partitions.json").read_text())
@@ -303,26 +318,16 @@ def base_condition(candidate, planning, evaluation_root, topology, network, seed
                              int(inputs[0]["globalMetadata"]["cols"]), seeds)
     dependencies = dependency_refs(template_path.read_text(), Path(evaluation_root) / PLANNING_COMMON,
                                    row.get("sourceFiles", {}), Path(evaluation_root))
-    return make_condition(candidate, workload, case["dataset"], expected_cost, topology,
+    return make_condition(candidate, workload, case["dataset"], expected_cost,
+                          binding, topology,
                           inputs, template_path, template_sha, dependencies, program, output,
                           "FROZEN_PLANNING_INPUT_CONTRACT_REBOUND", seeds,
                           workload_options), []
 
 
-def network_cost(profile):
-    c2w = float(profile["c2w_mbit"])
-    w2c = float(profile["w2c_mbit"])
-    harmonic = 2.0 / ((1.0 / c2w) + (1.0 / w2c))
-    return {"SYSDS_FED_COST_MEM_BW": "25000",
-            "SYSDS_FED_COST_FLOPS": "2147483648",
-            "SYSDS_FED_COST_NET_BW": f"{harmonic / 8.0:.6f}",
-            "SYSDS_FED_COST_NET_BW_C2W": f"{c2w / 8.0:.6f}",
-            "SYSDS_FED_COST_NET_BW_W2C": f"{w2c / 8.0:.6f}",
-            "SYSDS_FED_COST_NET_SERDES_BW": "210",
-            "SYSDS_FED_COST_NET_SERDES_BW_C2W": "210",
-            "SYSDS_FED_COST_NET_SERDES_BW_W2C": "14.7",
-            "SYSDS_FED_COST_NET_LATENCY": f"{float(profile['rtt_ms']) / 1000.0:.6f}",
-            "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS": "0.35"}
+def network_cost(profile_name, profile, *, coordinator_host="so007", worker_hosts=("so002",)):
+    return NETWORK_COST.network_cost(profile_name, profile, coordinator_host=coordinator_host,
+                                     worker_hosts=worker_hosts, image=NETWORK_COST.DEFAULT_IMAGE)
 
 
 def dependency_refs(template, source_root, source_files, evaluation_root):
@@ -378,17 +383,25 @@ def ml10_condition(candidate, stage_root, seal_entries, topology, network, seeds
     program = render_program(template_path.read_text(), inputs, output,
                              int(inputs[0]["globalMetadata"]["rows"]),
                              int(inputs[0]["globalMetadata"]["cols"]), seeds)
-    return make_condition(candidate, workload, dataset, network_cost(expected_network), topology,
+    selected_hosts = tuple(item["host"] for item in topology["workers"][:candidate["workers"]])
+    binding = NETWORK_COST.cost_binding(candidate["networkProfile"], expected_network,
+        coordinator_host=topology["coordinator"]["host"], worker_hosts=selected_hosts,
+        image=NETWORK_COST.DEFAULT_IMAGE)
+    cost = dict(binding["cost_environment"])
+    return make_condition(candidate, workload, dataset, cost, binding, topology,
                           inputs, template_path, template_sha, [], program, output,
                           "SEALED_STAGE_STATIC_RENDER", seeds, []), []
 
 
-def make_condition(candidate, workload, dataset, cost, topology, inputs, template_path,
+def make_condition(candidate, workload, dataset, cost, cost_binding, topology, inputs, template_path,
                    template_sha, dependencies, program, output, method, seeds,
                    workload_jvm_options):
     selected_workers = topology["workers"][:candidate["workers"]]
     payload = {"workers": candidate["workers"], "workerEndpoints": selected_workers,
                "networkProfile": candidate["networkProfile"], "networkCost": cost,
+               "networkCostBinding": {**{key: value for key, value in cost_binding.items()
+                                           if key != "cost_environment"},
+                                      "codeSha256": file_sha(NETWORK_COST.__file__)},
                "privacyMode": "private-aggregate", "workload": workload, "dataset": dataset,
                "inputs": inputs, "template": {"path": str(template_path), "sha256": template_sha},
                "dependencies": dependencies, "program": {"sha256": hashlib.sha256(program.encode()).hexdigest(),
@@ -495,6 +508,8 @@ def build(unresolved_path, catalog_path, evaluation_root, base_topology_path,
                 "ml10Stage": {"path": str(stage_root), "seal": stage_seal,
                                "generatorBindings": generator_bindings,
                                "verificationScope": "REQUIRED_SEALED_FILES_ONLY"},
+                "networkCostProfile": {**NETWORK_COST.profile_reference(),
+                                       "codeSha256": file_sha(NETWORK_COST.__file__)},
                 "producerSha256": file_sha(Path(__file__))},
             "counts": {"campaignCandidates": len(candidates),
                        "readyForNativeCapture": len(ready), "blocked": len(blocked),

@@ -74,3 +74,21 @@
 - **의사결정 근거**: binding의 alias 계약과 MatrixObject 생성 수명에 비용을 맞춘다. 런타임 fallback, privacy 완화, recompile CP/FOUT 허용을 추가하지 않는다. if 문제는 별도 명시적 변환 표현으로 풀어야 한다.
 
 - **통합 최종 검증**: Maven compile/test-compile 성공, 신규6 GET 회귀 및64-assignment 인코딩 동등성을 포함한120 tests PASS. 기존 main에서도 재현한 GLM/fingerprint 메서드2개를 제외하고 기록했으며 non-hermetic worker metadata fixture 클래스1개는 성공으로 계산하지 않았다. 고정한 최종 engine으로 frozen 실험 DML의14workloads×W1/W3 Docker compile-only28/28 PASS. production SHA 일치, 독립 리뷰 APPROVE, Python/shell/whitespace 검사 PASS. 상세 한계와 portable receipt는 FUNCTION_BOUNDARY_GET_SHARING_2026-10-06.md 및 docs/experiments/function-alias-main-20261006/validation.json.
+
+
+## Remaining cost model — origin/main integration
+
+- **상태**: 통합 및 검증 완료. 기준 main은 `904b4445c02d172d1293a7d266521a72447c592e`.
+- **문제 정의**: R54–R60에서 구현한 연산량·통신·융합 입력 재사용·실험 profile 변경이 원래 작업 폴더에만 남아 있었다. 사용자가 해당 변경의 main 커밋/push를 요청했다.
+- **해결**: 별도 최신 main worktree에서 ComputeCost, FederatedCostModel, PlacementCostSemantics, ExactPhysicalCostModel과 관련 회귀/실험 설정을 통합한다. CP/FED 공통 실행 비용, worker별 입력/출력량, 방향별 RPC stage 및 coordinator NIC 병목, 융합 이후 실제 연산/전송 소유권, 정확한 배치의 입력 재사용을 반영한다.
+- **최신 main 보존**: materializedOutputAnchor/range 정렬 helper와 함수 alias 생성 문맥 및 bounded activation 분해를 보존한다. 원본 PlacementAnalysis/closure를 덮어쓰지 않는다. 원본에서 미추적이던 PlacementCostSizeBounds는 이미 main `535c52b1e6`에 동일하게 반영돼 있어 추가 변경하지 않는다.
+- **수정 파일**: 핵심 Java 4개, 비용 회귀 테스트, `scripts/fedplanner`의 profile/calibration 및 비용 조건 전달 코드. 무관한 runtime/heuristic/plan-diff 작업은 제외한다.
+- **통합 중 문제**: 공유 target에서 Maven을 동시에 실행한 초기 검증은 클래스 누락으로 무효화했다. 모든 보조 빌드를 중단하고 단일 clean test-compile 뒤 다시 검증한다. Docker fixture의 상대경로 code/scripts 의존성도 새 artifact root에 연결한다. STEP-LM의 max_features 인자는 main 기본 builtin에 없는 frozen campaign 확장이므로, 이전 비교와 동일한 frozen builtin을 해당 Docker fixture에서 사용한다. 이 builtin 확장은 이번 source commit에 포함하지 않는다. 이 준비 실패를 planner 동작 실패나 성공으로 계산하지 않는다.
+- **의사결정 근거**: 실행 비용과 실제 데이터 이동을 맞추며 candidate legality/privacy/runtime fallback 규칙은 바꾸지 않는다.
+- **잔여 이슈**: 기존 if 합류 배치 제약은 별도 문제로 남는다. compile-only 검증은 분산 실행 정확성이나 실측 성능 검증이 아니다. 자동 profile의 실제 원격 측정은 이번 publish 검증에 포함하지 않는다.
+- **잠재 회귀 위험**: worker layout/응답 크기 추정, GET 재사용 수명, fused kernel 소유권, profile 계수 변경으로 선택 계획이 달라질 수 있다. 관련 Java/Python 회귀 및 고정 Docker 14 workloads × W1/W3 compile-only로 검증한다.
+
+- **단위 검증**: 단일 `mvn -q -DskipTests -Dcheckstyle.skip -Drat.skip=true clean test-compile` 성공. 기존 비용 suite와 최신 loop-entry/function alias suite를 합친 53개 클래스에서 353 tests 실행, 352 PASS / 1 FAIL. 실패 `FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding`의 `EXACT_VE_FACTOR_CELL_OVERFLOW`는 이전 main `904b4445c0`의 production/test classes 및 builtin에서도 동일하게 재현했다. 테스트를 삭제하거나 ignore하지 않는다. Python 관련 46 tests, shell syntax 및 diff whitespace 검사도 수행한다.
+- **외부 profile 의존성**: sibling cofee-evaluation의 최소 공개 커밋은 `639496a6ab7f17b76d0ce0c2a24cf1b0eb669407`이며 현재 원격 `c9514557ba853bd1e5f131ccb463844cf9f37236`에 필요한 provider/probe/driver API가 포함돼 있음을 확인했다. 미공개 외부 변경에는 의존하지 않는다. 외부 checkout이 없는 독립 clone에서는 자동 campaign profiling 준비가 명시적으로 실패한다.
+
+- **최종 결과**: Docker compile-only 14 workloads × W1/W3 = 28/28 PASS. Java352 PASS + 기존 main 재현 실패1, Python46 PASS. 핵심 비용 코드4파일 독립 리뷰 승인, Exact layout/activation 보존 검토 완료. 상세 소스 SHA·테스트 목록·fixture 한계는 [validation.json](experiments/cost-model-main-20261006/validation.json)에 기록했다. 원본 dirty worktree와 실행 target은 변경하지 않았다.

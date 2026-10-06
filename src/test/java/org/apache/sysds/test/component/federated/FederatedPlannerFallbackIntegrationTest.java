@@ -448,8 +448,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 			leftWdivmm.getInput(), Arrays.asList(FType.ROW, FType.ROW, FType.FULL, null), 4);
 		double colInputPrepCost = FederatedCostModel.computeWdivmmInputPreparationCost(rightWdivmm,
 			rightWdivmm.getInput(), Arrays.asList(FType.COL, FType.FULL, FType.FULL, null), 4);
-		assertTrue("ROW-X WDIVMM must charge runtime input preparation for sliced U plus full V broadcast",
-			rowInputPrepCost > rowAlignedUInputPrepCost);
+		assertEquals("FType alone cannot prove aligned U reuse; both inputs require conservative preparation",
+			rowInputPrepCost, rowAlignedUInputPrepCost, 0.0);
 		assertTrue("ROW-X WDIVMM must still charge full V broadcast even when U is ROW-aligned",
 			rowAlignedUInputPrepCost > 0.0);
 		assertTrue("COL-X WDIVMM must charge runtime input preparation for full U broadcast and sliced V",
@@ -471,9 +471,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 				0.0, nativeFedWdivmmCost.getFederatedComputeFloor(), 0.0);
 			assertEquals("Native FED WDIVMM does not use the local-aggregation partial GET path",
 				0.0, nativeFedWdivmmCost.getCoordinatorPhaseCost(), 0.0);
-		assertEquals("FULL-X WDIVMM is not a native FED input-preparation path",
-			0.0, FederatedCostModel.computeWdivmmInputPreparationCost(leftWdivmm,
-				leftWdivmm.getInput(), Arrays.asList(FType.FULL, FType.ROW, FType.FULL, null), 4), 0.0);
+		assertEquals("FULL W1 follows the same sliced-U/full-V runtime branch as ROW W1",
+			FederatedCostModel.computeWdivmmInputPreparationCost(leftWdivmm,
+				leftWdivmm.getInput(), Arrays.asList(FType.ROW, FType.ROW, FType.FULL, null), 1),
+			FederatedCostModel.computeWdivmmInputPreparationCost(leftWdivmm,
+				leftWdivmm.getInput(), Arrays.asList(FType.FULL, FType.ROW, FType.FULL, null), 1), 0.0);
 	}
 
 	@Test
@@ -631,9 +633,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedCostModel.isNativeFederatedAggregateUnaryOutput(rowAggregate, FType.ROW));
 		assertTrue("Replicated FULL aggregate-unary output is also native FED/FOUT",
 			FederatedCostModel.isNativeFederatedAggregateUnaryOutput(rowAggregate, FType.FULL));
-		assertTrue("Native aggregate-unary FED cost must be reduced below the CP local self cost",
-			FederatedCostModel.computeNativeFederatedAggregateUnaryCost(rowAggregate, FType.ROW, baseSelfCost)
-				< baseSelfCost);
+		assertEquals("Native output topology must not cap worker input reduction work; prepared"
+			+ " execution quantities price the shard scan separately",
+			baseSelfCost,
+			FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+				rowAggregate, FType.ROW, baseSelfCost), 0.0);
 		double staleFullMatrixMem = ROWS * COLS * (double) OptimizerUtils.DOUBLE_SIZE;
 		double rowVectorMem = ROWS * (double) OptimizerUtils.DOUBLE_SIZE;
 		double genericFullDownload = FederatedCostModel.computeDownloadNetworkCost(

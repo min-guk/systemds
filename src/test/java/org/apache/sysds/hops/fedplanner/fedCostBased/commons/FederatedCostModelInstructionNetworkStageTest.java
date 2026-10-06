@@ -17,19 +17,14 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-/** Deterministic arithmetic contract for the fixed stage of one logical FED instruction. */
-public class FederatedCostModelFixedInstructionStageTest {
+/** One-way latency composition and in-band payload ownership for a logical FED instruction. */
+public class FederatedCostModelInstructionNetworkStageTest {
 	@Test
-	public void fixedInstructionStageAddsIndependentLatencyAndControl() {
-		Assert.assertEquals("Seven executions must each pay one millisecond of network latency"
-			+ " plus one millisecond of coordinator control", 14.0,
-			FederatedCostModel.computeFixedFederatedInstructionStageCost(7.0, 1.0, 1.0), 0.0);
-		Assert.assertEquals(7.0,
-			FederatedCostModel.computeFixedFederatedInstructionStageCost(7.0, 1.0, 0.0), 0.0);
-		Assert.assertEquals(7.0,
-			FederatedCostModel.computeFixedFederatedInstructionStageCost(7.0, 0.0, 1.0), 0.0);
-		Assert.assertEquals("A branch probability is an execution weight, not a minimum-one count",
-			1.0, FederatedCostModel.computeFixedFederatedInstructionStageCost(0.5, 1.0, 1.0), 0.0);
+	public void instructionLatencySumsTwoDirectionsWithoutControl() {
+		Assert.assertEquals(10.0, FederatedCostModel.computeRequestResponseLatency(.003, .007), 0.0);
+		Assert.assertEquals(3.0, FederatedCostModel.computeRequestResponseLatency(.003, 0.0), 0.0);
+		Assert.assertEquals(7.0, FederatedCostModel.computeRequestResponseLatency(0.0, .007), 0.0);
+		Assert.assertEquals(0.0, FederatedCostModel.computeRequestResponseLatency(0.0, 0.0), 0.0);
 	}
 
 	@Test
@@ -48,10 +43,10 @@ public class FederatedCostModelFixedInstructionStageTest {
 	@Test
 	public void rowResultFanInUsesTheLargestConcurrentWorkerResponse() throws Exception {
 		double outputBytes = 50_000D * 50D * 8D;
-		double oneWorker = inBandPayload(outputBytes, 1);
-		double fiveWorkers = inBandPayload(outputBytes, 5);
-		Assert.assertEquals("Five balanced ROW responses overlap on independent worker paths",
-			oneWorker / 5.0, fiveWorkers, 1e-12);
+		double oneWorker = inBandPayload(outputBytes, 1, 125.0, 14.7);
+		double fiveWorkers = inBandPayload(outputBytes, 5, 125.0, 14.7);
+		Assert.assertEquals("Only wire bytes shrink; aggregate coordinator processing does not",
+			(outputBytes / (1024 * 1024) / 125.0) * 0.8 * 1000, oneWorker - fiveWorkers, 1e-9);
 	}
 
 	@Test
@@ -73,14 +68,13 @@ public class FederatedCostModelFixedInstructionStageTest {
 	@Test
 	public void separateFoutMaterializationOwnsOneMoreRequestStageThanInlineLout() throws Exception {
 		double outputBytes = 50_000D * 50D * 8D;
-		double instructionStage = FederatedCostModel.computeFixedFederatedInstructionStageCost(
-			1.0, 100.0, 0.35);
+		double instructionStage = FederatedCostModel.computeRequestResponseLatency(.030, .070);
 		double inlineLout = instructionStage + inBandPayload(outputBytes, 5, 25.0, 210.0);
 		double separateFout = instructionStage
 			+ FederatedCostModel.computeReusableMaterializationDownloadCost(outputBytes, 5,
-				25.0, 210.0, 14.7, 4D * 1024 * 1024, 0.100, 0.35);
+				25.0, 210.0, 0.030, 0.070);
 		Assert.assertEquals("A later FOUT GET is a second request; inline LOUT is not",
-			100.35, separateFout - inlineLout, 1e-9);
+			100.0, separateFout - inlineLout, 1e-9);
 	}
 
 	@Test
@@ -119,7 +113,7 @@ public class FederatedCostModelFixedInstructionStageTest {
 
 	private static double inBandPayload(double bytes, int fanIn) throws Exception {
 		return inBandPayload(bytes, fanIn, constant("MBS_NETWORK_BANDWIDTH_W2C"),
-			constant("MBS_IN_BAND_RESULT_SERDES_BANDWIDTH_W2C"));
+			constant("MBS_NETWORK_SERDES_BANDWIDTH_W2C"));
 	}
 
 	private static double inBandPayload(double bytes, int fanIn,

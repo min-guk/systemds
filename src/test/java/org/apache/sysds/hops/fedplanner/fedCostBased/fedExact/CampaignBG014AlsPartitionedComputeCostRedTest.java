@@ -41,6 +41,39 @@ import org.junit.Test;
 @net.jcip.annotations.NotThreadSafe
 public class CampaignBG014AlsPartitionedComputeCostRedTest {
 	@Test
+	public void fusedFactorsUseTheSameProvenDimensionsAsTheirFlops() throws Exception {
+		Map<String,String> oldProperties = installWanLightCostProperties();
+		try {
+			for(int workers : List.of(1, 3)) {
+				FederatedPlannerUtils.resetFederatedPlannerRunState();
+				PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+					.bindAtFinalHopBoundary(als(workers));
+				FType type = workers == 1 ? FType.FULL : FType.ROW;
+				double uBytes = org.apache.sysds.hops.OptimizerUtils.estimateSizeExactSparsity(
+					50000, 10, 1.0, org.apache.sysds.common.Types.DataType.MATRIX);
+				double vBytes = org.apache.sysds.hops.OptimizerUtils.estimateSizeExactSparsity(
+					2100, 10, 1.0, org.apache.sysds.common.Types.DataType.MATRIX);
+				double expected = FederatedCostModel.computeInBandUploadPayloadCost(uBytes, type, workers)
+					+ FederatedCostModel.computeInBandUploadPayloadCost(vBytes, FType.BROADCAST, workers);
+				int owners = 0;
+				var costs = PlacementCostSemantics.prepareExecutionCosts(analysis, null);
+				for(var node : analysis.graph().nodes()) {
+					var prepared = costs.get(node.key());
+					if(prepared.fusedWeightsOccurrence() == null) continue;
+					owners++;
+					Assert.assertEquals("The proven rank-10 factors are not unknown 256MiB matrices",
+						expected, prepared.fusedInputPreparationCost(type, workers), 1e-6);
+				}
+				Assert.assertEquals("Fixture must cover direct and transpose-pair kernels", 2, owners);
+			}
+		}
+		finally {
+			restoreProperties(oldProperties);
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+		}
+	}
+
+	@Test
 	public void reusableRuntimeMaterializationUsesControlFlowEventUnion() {
 		var branchAIf = new ExactPhysicalCostModel.BranchLiteral("main/0", true);
 		var branchAElse = new ExactPhysicalCostModel.BranchLiteral("main/0", false);
@@ -332,9 +365,11 @@ public class CampaignBG014AlsPartitionedComputeCostRedTest {
 				double runtimeFanIn = PlacementCostSemantics
 					.analysisAwareNativeFederatedLoutResultCost(
 						analysis, owner, outputBytes, 3, genericDownload);
-				double expectedFanIn = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
-					analysis.hop(input.producer()).orElseThrow(), FType.ROW,
-					outputBytes, 3, genericDownload);
+				double expectedFanIn = FederatedCostModel.computeWdivmmLoutResultCost(
+					1, FType.ROW, outputBytes, 3);
+				Assert.assertTrue("LEFT/ROW returns three full partials, not three disjoint shards",
+					expectedFanIn > FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+						analysis.hop(input.producer()).orElseThrow(), FType.ROW, outputBytes, 3, genericDownload));
 				Assert.assertEquals("The transpose shell must use the runtime WDivMM partial-result fan-in",
 					expectedFanIn, runtimeFanIn, 0.0);
 			}

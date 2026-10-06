@@ -50,7 +50,7 @@ public class ExactActivationMaterializationCostTest {
 		var fixture = assemble(List.of(event(0.6, "a", true), event(0.6, "b", true),
 			event(0.6, "c", true)), 1, 10);
 		Assert.assertTrue(fixture.descriptors.stream()
-			.anyMatch(value -> value.contains("CONSERVATIVE_CAPPED_ACTIVATION_UNION")));
+			.anyMatch(value -> value.contains("CONSERVATIVE_EVENT_QUOTIENT_V1")));
 		Assert.assertEquals(6, fixture.cost(1, 1, 0, 0), 0);
 		Assert.assertEquals(10, fixture.cost(1, 1, 1, 0), 0);
 		Assert.assertEquals(10, fixture.cost(1, 1, 1, 1), 0);
@@ -114,6 +114,23 @@ public class ExactActivationMaterializationCostTest {
 		var fixture = assemble(List.of(new ExactMaterializationActivation.Event(1, List.of()),
 			event(0.3, "a", true), event(0.7, "a", false)), 1, 1.234567891234567e16);
 		fixture.verifyEveryAssignment();
+	}
+
+	@Test public void duplicateUnresolvedEventsRetainRawBitsAndOnePriceTable() {
+		var a = event(0.6, "a", true); var b = event(0.6, "b", true);
+		var fixture = assemble(List.of(a, a, b, event(0.3, "a", true)), 1, 1.234567891234567e16);
+		fixture.verifyEveryAssignment();
+		assemble(List.of(a, b), 1, 0d).verifyEveryAssignment();
+	}
+	@Test public void manyDuplicateDemandsDoNotExpandMonetaryEventDomain() {
+		var events = new ArrayList<ExactMaterializationActivation.Event>();
+		for(int i = 0; i < 40; i++) events.add(event(0.6, "event-" + (i % 5), true));
+		var fixture = assemble(events, 1, 10);
+		ExactCategoricalSolver.validateInputStructure(fixture.augmented(), fixture.factors(), LIMITS);
+		long largest = fixture.factors().stream().mapToLong(f -> {
+			long cells = 1; for(var v : f.scope()) cells *= v.domainSize(); return cells;
+		}).max().orElseThrow();
+		Assert.assertEquals("Five event bits plus the two-valued source, not 40 categorical demands", 64, largest);
 	}
 
 	private static ExactMaterializationActivation.Event event(double weight, String key, boolean arm) {

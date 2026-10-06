@@ -52,6 +52,9 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.FederatedExecutionLayout;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.InputLayout;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.PreparedExecutionCost;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.ExpectedSparseAssignmentEstimates;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.LatentWdivmmRuntimeTransferBoundary;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -64,7 +67,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTrans
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.WorkerPoolIdentity;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
@@ -75,7 +77,7 @@ import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 /** Shared exact physical objective over the canonical placement analysis. */
 public final class ExactPhysicalCostModel {
 	enum Direction { UPLOAD, DOWNLOAD }
-	enum BoundaryMode { ANCHOR_TRANSFER, TWRITE_METADATA, RUNTIME_FUSED_INPUT }
+	enum BoundaryMode { ANCHOR_TRANSFER, TWRITE_METADATA, RUNTIME_FUSED_INPUT, RUNTIME_RELOCATED_INPUT }
 
 	private ExactPhysicalCostModel() {
 		// utility class
@@ -442,25 +444,33 @@ public final class ExactPhysicalCostModel {
 		List<PhysicalTransferKey> transferKeys = new ArrayList<>();
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains =
 			new IdentityHashMap<>();
+		Map<CompiledHopKey,PreparedExecutionCost> preparedCosts =
+			PlacementCostSemantics.prepareExecutionCosts(analysis, sparseAssignments);
 		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
 			domains.put(domain.node().key(), domain);
 			addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers,
-				frequencies, factors);
+				frequencies, factors, preparedCosts.get(domain.node().key()));
 		}
+		addPhysicalFusedKernelFactors(analysis, model.domains(), domains, workers,
+			physicalWorkerCounts, frequencies, preparedCosts, factors, factorKinds);
+		List<FusedFactorUse> fusedFactors = fusedFactorUses(analysis, model.domains(), domains,
+			preparedCosts, workers, physicalWorkerCounts);
+		addPhysicalFusedFactorUploads(fusedFactors, frequencies, factors, factorKinds);
 		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries =
 			new LinkedHashSet<>(PlacementCostSemantics
 				.latentWdivmmRuntimeTransferBoundaries(analysis));
-		List<EffectiveLogicalFunctionInput> logicalInputs = effectiveLogicalFunctionInputs(analysis);
+		Set<RetainedFunctionDownload> retainedFunctionDownloads = new LinkedHashSet<>();
 		addPhysicalCompiledTransferFactors(analysis, sparseAssignments, model.domains(),
-			domains, workers, physicalWorkerCounts, frequencies, logicalInputs, latentRuntimeBoundaries,
-			factors, factorizations, transferKeys);
+			domains, workers, physicalWorkerCounts, frequencies, latentRuntimeBoundaries,
+			fusedFactors, factors, factorizations, transferKeys, retainedFunctionDownloads);
 		addPhysicalLatentWdivmmRuntimeInputFactors(analysis, sparseAssignments,
 			model.domains(), domains, workers, frequencies, factors, factorKinds,
 			factorizations, transferKeys);
 		addPhysicalNativeLocalInputTransferFactors(analysis, sparseAssignments, domains,
 			workers, physicalWorkerCounts, frequencies, latentRuntimeBoundaries, factors, factorizations);
 		addPhysicalLogicalFunctionFactors(analysis, sparseAssignments, domains, workers,
-			physicalWorkerCounts, frequencies, latentRuntimeBoundaries, factors, transferKeys);
+			physicalWorkerCounts, frequencies, latentRuntimeBoundaries, factors, transferKeys,
+			retainedFunctionDownloads);
 		List<PhysicalContribution> contributions = new ArrayList<>(factors.size());
 		List<ExactCategoricalSolver.Variable> exactSolverVariables =
 			new ArrayList<>(model.variables());
@@ -817,8 +827,18 @@ public final class ExactPhysicalCostModel {
 		ExactPhysicalModel.DecisionDomain domain, int workers,
 		OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors) {
+		addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers, frequencies,
+			factors, PlacementCostSemantics.prepareExecutionCost(analysis, sparseAssignments, domain.node().key()));
+	}
+
+	private static void addPhysicalUnaryFactor(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments,
+		ExactPhysicalModel.DecisionDomain domain, int workers,
+		OccurrenceExecutionFrequencyFacts frequencies,
+		List<ExactCategoricalSolver.Factor> factors, PreparedExecutionCost prepared) {
 		if(domain.node().kind() == NodeKind.FUNCTION_INPUT
-			|| domain.node().kind() == NodeKind.FUNCTION_OUTPUT) {
+			|| domain.node().kind() == NodeKind.FUNCTION_OUTPUT
+			|| analysis.isDmlFunctionCallBoundary(domain.node().key())) {
 			double[] zero = new double[domain.alternatives().size()];
 			factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), zero));
 			return;
@@ -829,33 +849,53 @@ public final class ExactPhysicalCostModel {
 		double[] outputMaterialization = new double[execution.length];
 		double[] nativeFedDownload = new double[execution.length];
 		double[] nativeCpUpload = new double[execution.length];
-		record ProjectionKey(List<CandidateInputState> inputs, FType executionType) { }
 		// Receipt/support variants do not change this unary observation. The owning
-		// analysis, Hop, estimates, workers and weight are fixed within this loop;
+		// analysis, kernel, estimates and weight are fixed within this loop. Actual
+		// operand ranges (not proof identities or only W) distinguish skew and slicing;
 		// retain only successfully computed projections, never a cross-build result.
-		Map<ProjectionKey,FedCostProjection> projections = new LinkedHashMap<>();
+		Map<FederatedExecutionLayout,FedCostProjection> projections = new LinkedHashMap<>();
+		PhysicalWorkerCounts physicalWorkerCounts = new PhysicalWorkerCounts();
+		ExecutionWorkerCounts executionWorkerCounts = new ExecutionWorkerCounts();
+		InputLayoutCache inputLayouts = new InputLayoutCache();
 		for(int value = 0; value < execution.length; value++) {
+			if(prepared.removedKernel())
+				continue;
 			ExactPhysicalModel.Alternative alternative = domain.alternatives().get(value);
 			PlacementState state = alternative.state();
 			if(state.execType() == ExecType.CP) {
-				execution[value] = cpUnaryCost(analysis, sparseAssignments,
-					domain.node().key(), hop, weight);
+				execution[value] = requireCost(weight * prepared.localCost(), "EXACT_CP_COST_UNPROVEN");
 				if(state.output() == FederatedOutput.FOUT)
 					nativeCpUpload[value] = physicalResultUploadCost(analysis, sparseAssignments,
-						domain.node().key(), hop, state.fType(), workers, weight);
+						domain.node().key(), hop, state.fType(),
+						realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts), weight);
 				continue;
 			}
 			CandidateEmissionFact emission = alternative.captured()
 				? alternative.candidateEmission() : alternative.executionEmission();
+			if(prepared.fusedWeightsOccurrence() != null) {
+				if(state.output() == FederatedOutput.FOUT && emission != null
+					&& emission.emissionState().derivedFedFout())
+					outputMaterialization[value] = physicalResultUploadCost(analysis, sparseAssignments,
+						domain.node().key(), hop, state.fType(),
+						realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts), weight);
+				continue;
+			}
 			FType executionFType = emission == null ? state.fType() : emission.executionFType();
-			ProjectionKey observation = new ProjectionKey(alternative.orderedInputs(), executionFType);
+			int executionWorkers = executionWorkerCount(
+				analysis, alternative, workers, physicalWorkerCounts, executionWorkerCounts);
+			FederatedExecutionLayout observation = executionLayout(
+				analysis, alternative, executionFType, executionWorkers, inputLayouts);
 			FedCostProjection projection = projections.get(observation);
 			if(projection == null) {
 				boolean federatedSource = hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED;
 				List<FType> inputFTypes = federatedSource ? List.of() : alternative.orderedInputs().stream()
 					.map(input -> input.present() ? input.fType() : null).toList();
-				projection = fedCostProjection(analysis, sparseAssignments,
-					domain.node().key(), hop, inputFTypes, executionFType, workers, weight);
+				projection = fedCostProjection(analysis, domain.node().key(), hop, inputFTypes,
+					executionFType, executionWorkers, weight, weight * prepared.localCost(),
+					effectiveOutputBytes(analysis, sparseAssignments, domain.node().key(), hop),
+					effectiveUploadBytes(analysis, sparseAssignments, domain.node().key(), hop),
+					weight * prepared.federatedCost(observation), prepared.outputResponses(observation,
+						effectiveUploadBytes(analysis, sparseAssignments, domain.node().key(), hop)), observation);
 				projections.put(observation, projection);
 			}
 			boolean derivedFout = state.output() == FederatedOutput.FOUT && emission != null
@@ -866,7 +906,8 @@ public final class ExactPhysicalCostModel {
 				: projection.fedUnaryCost();
 			if(derivedFout)
 				outputMaterialization[value] = physicalResultUploadCost(analysis, sparseAssignments,
-					domain.node().key(), hop, state.fType(), workers, weight);
+					domain.node().key(), hop, state.fType(),
+					realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts), weight);
 			else if(state.output() == FederatedOutput.LOUT)
 				nativeFedDownload[value] = projection.resultDownloadCost();
 		}
@@ -878,13 +919,276 @@ public final class ExactPhysicalCostModel {
 		factors.add(ExactCategoricalSolver.Factor.dense(List.of(domain.variable()), nativeCpUpload));
 	}
 
+	/** The existing runtime owner/weights legality relation also owns fused worker compute. */
+	private static void addPhysicalFusedKernelFactors(PlacementAnalysis analysis,
+		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
+		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
+		int workers, PhysicalWorkerCounts workerCounts, OccurrenceExecutionFrequencyFacts frequencies,
+		Map<CompiledHopKey,PreparedExecutionCost> preparedCosts,
+		List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds) {
+		InputLayoutCache layouts = new InputLayoutCache();
+		for(var owner : orderedDomains) {
+			PreparedExecutionCost prepared = preparedCosts.get(owner.node().key());
+			CompiledHopKey weightsKey = prepared.fusedWeightsOccurrence();
+			if(weightsKey == null)
+				continue;
+			var weights = domains.get(weightsKey);
+			if(weights == null)
+				throw new IllegalArgumentException("EXACT_FUSED_WEIGHTS_DOMAIN_MISSING");
+			double frequency = frequencies.exactExecutionWeight(owner.node().key());
+			double[] prices = new double[weights.alternatives().size()];
+			double[] results = new double[prices.length];
+			Map<FederatedExecutionLayout,Double> observations = new LinkedHashMap<>();
+			for(int index = 0; index < prices.length; index++) {
+				var selected = weights.alternatives().get(index);
+				if(selected.state().output() != FederatedOutput.FOUT)
+					continue; // infeasible FED combinations remain owned by the legality factor
+				int sourceWorkers = realizationWorkerCount(analysis, selected, workers, workerCounts);
+				InputLayout input = physicalValueLayout(analysis, selected, sourceWorkers, layouts);
+				var layout = new FederatedExecutionLayout(selected.state().fType(), sourceWorkers, List.of(input));
+				prices[index] = observations.computeIfAbsent(layout,
+					ignored -> requireCost(frequency * (prepared.federatedCost(layout)
+						+ prepared.fusedFactorTransposeCost()
+						+ FederatedCostModel.computeRequestResponseLatency()), "EXACT_FUSED_KERNEL_COST_UNPROVEN"));
+				results[index] = frequency * prepared.fusedResultCost(layout.executionType(), sourceWorkers);
+			}
+			var factor = ExactCategoricalSolver.Factor.lazy(List.of(owner.variable(), weights.variable()), values -> {
+				var selected = owner.alternatives().get(values[0]);
+				if(selected.state().execType() != ExecType.FED)
+					return 0.0;
+				var emission = selected.captured() ? selected.candidateEmission() : selected.executionEmission();
+				boolean localResult = selected.state().output() == FederatedOutput.LOUT
+					|| emission != null && emission.emissionState().derivedFedFout();
+				return prices[values[1]] + (localResult ? results[values[1]] : 0.0);
+			});
+			factors.add(factor);
+			factorKinds.put(factor, "RUNTIME_FUSED_KERNEL");
+		}
+	}
+
+	/** One bounded owner/W/factor dependency; U and V never form a joint tensor. */
+	private record FusedFactorUse(ExactPhysicalModel.DecisionDomain owner,
+		ExactPhysicalModel.DecisionDomain weights, ExactPhysicalModel.DecisionDomain source,
+		PlacementCostSemantics.RuntimeFactorInput input, PreparedExecutionCost prepared,
+		List<InputLayout> weightLayouts, List<InputLayout> factorLayouts, List<Integer> workers) {
+		boolean reused(InputLayout weight, int sourceValue) {
+			return PlacementCostSemantics.reusesWdivmmFactor(weight, factorLayouts.get(sourceValue),
+				input.position(), input.generatedTranspose());
+		}
+	}
+
+	private static List<FusedFactorUse> fusedFactorUses(PlacementAnalysis analysis,
+		List<ExactPhysicalModel.DecisionDomain> ordered,
+		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
+		Map<CompiledHopKey,PreparedExecutionCost> preparedCosts, int workers, PhysicalWorkerCounts counts) {
+		List<FusedFactorUse> result = new ArrayList<>();
+		InputLayoutCache cache = new InputLayoutCache();
+		for(var owner : ordered) {
+			var prepared = preparedCosts.get(owner.node().key());
+			if(prepared.fusedWeightsOccurrence() == null) continue;
+			var weights = Objects.requireNonNull(domains.get(prepared.fusedWeightsOccurrence()));
+			List<Integer> poolSizes = weights.alternatives().stream()
+				.map(a -> realizationWorkerCount(analysis, a, workers, counts)).toList();
+			List<InputLayout> weightLayouts = selectedValueLayouts(analysis, weights, workers, counts, cache);
+			for(var input : prepared.fusedFactorInputs()) {
+				var source = Objects.requireNonNull(domains.get(input.source()), "Fused factor domain");
+				result.add(new FusedFactorUse(owner, weights, source, input, prepared, weightLayouts,
+					selectedValueLayouts(analysis, source, workers, counts, cache), poolSizes));
+			}
+		}
+		return List.copyOf(result);
+	}
+
+	private static List<InputLayout> selectedValueLayouts(PlacementAnalysis analysis,
+		ExactPhysicalModel.DecisionDomain domain, int workers, PhysicalWorkerCounts counts, InputLayoutCache cache) {
+		return domain.alternatives().stream().map(a -> a.state().output() == FederatedOutput.FOUT
+			? physicalValueLayout(analysis, a, realizationWorkerCount(analysis, a, workers, counts), cache)
+			: new InputLayout(null, List.of(), false)).toList();
+	}
+
+	private static void addPhysicalFusedFactorUploads(List<FusedFactorUse> uses,
+		OccurrenceExecutionFrequencyFacts frequencies, List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> kinds) {
+		for(var use : uses) {
+			List<ExactCategoricalSolver.Variable> scope = java.util.stream.Stream.of(use.owner().variable(),
+				use.weights().variable(), use.source().variable()).distinct().toList();
+			int o = scope.indexOf(use.owner().variable()), w = scope.indexOf(use.weights().variable()),
+				f = scope.indexOf(use.source().variable());
+			double frequency = frequencies.exactExecutionWeight(use.owner().node().key());
+			var factor = ExactCategoricalSolver.Factor.lazy(scope, values -> {
+				InputLayout layout = use.weightLayouts().get(values[w]);
+				if(use.owner().alternatives().get(values[o]).state().execType() != ExecType.FED
+					|| layout.fType() == null || use.reused(layout, values[f])) return 0.0;
+				return frequency * use.prepared().fusedFactorUploadCost(use.input().position(),
+					layout.fType(), use.workers().get(values[w]));
+			});
+			factors.add(factor);
+			kinds.put(factor, "RUNTIME_FUSED_FACTOR_PUT_" + use.input().position());
+		}
+	}
+
+	private static InputLayout physicalValueLayout(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative selected, int workers, InputLayoutCache cache) {
+		FType type = selected.state().fType();
+		InputLayout input = selected.durableAnchor() != null
+			? cache.anchor(type, selected.durableAnchor())
+			: selected.realization() == null ? new InputLayout(type, List.of(), false)
+				: cache.realization(selected.realization());
+		Hop hop = analysis.hop(selected.decision()).orElseThrow();
+		if(!input.exactRanges() && hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+			var anchors = analysis.graph().node(selected.decision()).orElseThrow().anchors();
+			if(anchors.size() == 1 && anchors.get(0).fType() == type)
+				input = cache.anchor(type, anchors.get(0));
+		}
+		if(input.fType() != type || input.exactRanges()
+			&& (!occurrenceRangesFit(analysis, selected.decision(), hop, input)
+				|| input.ranges().stream().map(AnchorPartition::workerId).distinct().count() != workers))
+			return new InputLayout(type, List.of(), false);
+		return input;
+	}
+
 	private static double physicalResultUploadCost(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop,
 		FType fType, int workers, double weight) {
 		return requireCost(weight * (FederatedCostModel.computeUploadNetworkCost(
-			effectiveUploadBytes(analysis, sparseAssignments, key, hop), fType, workers)
-			+ FederatedCostModel.computeLocalToFedForwardingPenalty(fType, workers)),
+			effectiveUploadBytes(analysis, sparseAssignments, key, hop), fType, workers)),
 			"EXACT_RESULT_UPLOAD_COST_UNPROVEN");
+	}
+
+	static FederatedExecutionLayout executionLayout(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative alternative, FType executionType, int workers) {
+		return executionLayout(analysis, alternative, executionType, workers, new InputLayoutCache());
+	}
+
+	private static FederatedExecutionLayout executionLayout(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative alternative, FType executionType, int workers,
+		InputLayoutCache cache) {
+		Hop owner = analysis.hop(alternative.decision()).orElseThrow();
+		if(owner instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
+			return new FederatedExecutionLayout(executionType, Math.max(1, workers), List.of());
+		List<InputLayout> inputs = new ArrayList<>(alternative.orderedInputs().size());
+		for(int position = 0; position < alternative.orderedInputs().size(); position++) {
+			CandidateInputState state = alternative.orderedInputs().get(position);
+			FType type = state.present() ? state.fType() : null;
+			InputLayout input = new InputLayout(type, List.of(), false);
+			if(type != null && alternative.supportClause() != null) {
+				for(var binding : alternative.supportClause().inputBindings()) {
+					if(binding.inputPosition() != position)
+						continue;
+					if(binding.relocationAction() != null)
+						input = cache.anchor(type, binding.relocationAction().durableAnchor());
+					else {
+						var source = analysis.requireExactCandidateRealization(binding.source());
+						input = cache.realization(source);
+						// A literal FED source may carry source-lineage rather than a durable
+						// realization. Only its own declared map supplies operand geometry.
+						var sourceKey = binding.source().rule().parentOccurrence();
+						if(!input.exactRanges() && analysis.hop(sourceKey).orElse(null)
+							instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+							var anchors = analysis.graph().node(sourceKey).orElseThrow().anchors();
+							if(anchors.size() == 1 && anchors.get(0).fType() == type)
+								input = cache.anchor(type, anchors.get(0));
+						}
+					}
+					break;
+				}
+			}
+			if(type != null && !input.exactRanges())
+				for(var authority : alternative.inputAuthorities())
+					if(authority.inputPosition() == position
+						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION) {
+						input = cache.anchor(type, authority.relocationAction().key().durableAnchor());
+						break;
+					}
+			if(type != null && !input.exactRanges()) {
+				var edge = analysis.compiledInputEdge(alternative.decision(), position).orElse(null);
+				int inputPosition = position;
+				boolean direct = alternative.inputAuthorities().stream().anyMatch(a -> a.inputPosition() == inputPosition
+					&& a.kind() == ExactPhysicalModel.InputAuthorityKind.DIRECT_FOUT);
+				if(direct && edge != null && analysis.hop(edge.producer()).orElse(null)
+					instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+					var anchors = analysis.graph().node(edge.producer()).orElseThrow().anchors();
+					if(anchors.size() == 1 && anchors.get(0).fType() == type) input = cache.anchor(type, anchors.get(0));
+				}
+			}
+			// Relocation maps can be rebuilt to fit a new shape. Do not reuse stale
+			// template ranges, a different input type, or another execution pool.
+			if(input.fType() != type || input.exactRanges()
+				&& (!operandRangesFit(analysis, alternative.decision(), position, input)
+					|| input.ranges().stream().map(AnchorPartition::workerId).distinct().count() != workers))
+				input = new InputLayout(type, List.of(), false);
+			inputs.add(input);
+		}
+		return new FederatedExecutionLayout(executionType, Math.max(1, workers), inputs);
+	}
+
+	private static boolean operandRangesFit(PlacementAnalysis analysis, CompiledHopKey owner,
+		int position, InputLayout input) {
+		Hop parent = analysis.hop(owner).orElseThrow();
+		if(position >= parent.getInput().size())
+			return false;
+		var edge = analysis.compiledInputEdge(owner, position).orElse(null);
+		return occurrenceRangesFit(analysis, edge == null ? null : edge.producer(),
+			parent.getInput(position), input);
+	}
+
+	private static boolean occurrenceRangesFit(PlacementAnalysis analysis, CompiledHopKey key,
+		Hop operand, InputLayout input) {
+		long rows = operand.getDim1(), cols = operand.getDim2();
+		var shape = key == null ? null : analysis.abstractShapeFact(key).orElse(null);
+		if(shape != null) {
+			if(rows <= 0 && shape.rows().knowledge()
+				== org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DimensionKnowledge.EXACT)
+				rows = shape.rows().value();
+			if(cols <= 0 && shape.cols().knowledge()
+				== org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DimensionKnowledge.EXACT)
+				cols = shape.cols().value();
+		}
+		long maxRow = 0L, maxCol = 0L;
+		for(var range : input.ranges()) {
+			if(range.begin().size() < 2 || range.begin().get(0) < 0 || range.begin().get(1) < 0)
+				return false;
+			maxRow = Math.max(maxRow, range.end().get(0));
+			maxCol = Math.max(maxCol, range.end().get(1));
+		}
+		return (rows <= 0 || rows == maxRow) && (cols <= 0 || cols == maxCol);
+	}
+
+	/** A native endpoint witness alone is not evidence of an operand's ranges. */
+	static InputLayout realizationInputLayout(PlacementAnalysis.CandidateEmissionRealization source) {
+		return new InputLayoutCache().realization(source);
+	}
+
+	private static final class InputLayoutCache {
+		private final IdentityHashMap<DurableAnchorKey,Map<FType,InputLayout>> anchors = new IdentityHashMap<>();
+		private final IdentityHashMap<PlacementAnalysis.CandidateEmissionRealization,InputLayout>
+			realizations = new IdentityHashMap<>();
+
+		private InputLayout anchor(FType type, DurableAnchorKey anchor) {
+			if(type != anchor.fType())
+				return new InputLayout(type, List.of(), false);
+			return anchors.computeIfAbsent(anchor, ignored -> new java.util.EnumMap<>(FType.class))
+				.computeIfAbsent(type, ignored -> new InputLayout(type, anchor.partitions().stream()
+					.map(range -> new AnchorPartition(
+						FederationUtils.canonicalFederatedWorkerAddress(range.workerId()), range.begin(), range.end()))
+					.sorted().toList(), true));
+		}
+
+		private InputLayout realization(PlacementAnalysis.CandidateEmissionRealization source) {
+			return realizations.computeIfAbsent(source, ignored -> {
+				FType type = source.placementState().fType();
+				if(type == null)
+					return new InputLayout(null, List.of(), false);
+				if(source.anchor() != null)
+					return anchor(type, source.anchor());
+				// The realization constructor already proves all clauses agree on the
+				// witness layout/exactness. Dynamic witnesses authorize endpoints only.
+				var clause = source.supportClauses().get(0);
+				return clause.nativeWorkerPoolWitness() != null && clause.nativeWorkerPoolLayoutExact()
+					? anchor(type, clause.nativeWorkerPoolWitness()) : new InputLayout(type, List.of(), false);
+			});
+		}
 	}
 
 	private static void addPhysicalCompiledTransferFactors(PlacementAnalysis analysis,
@@ -893,20 +1197,24 @@ public final class ExactPhysicalCostModel {
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
 		int workers, PhysicalWorkerCounts physicalWorkerCounts,
 		OccurrenceExecutionFrequencyFacts frequencies,
-		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs,
 		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries,
-		List<ExactCategoricalSolver.Factor> factors,
+		List<FusedFactorUse> fusedFactors, List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
-		List<PhysicalTransferKey> transferKeys) {
-		record Demand(CompiledInputEdgeFact edge, ExactPhysicalModel.DecisionDomain consumer) { }
+		List<PhysicalTransferKey> transferKeys,
+		Set<RetainedFunctionDownload> retainedFunctionDownloads) {
+		record Demand(PhysicalTransferEndpoint edge, ExactPhysicalModel.DecisionDomain consumer,
+			FusedFactorUse runtime, boolean[] active, EffectiveLogicalFunctionInput functionInput) { }
 		record Key(Direction direction, FType type, BoundaryMode boundary,
-			String physicalEmissionIdentity) { }
+			String physicalEmissionIdentity, int targetWorkers, double bytes) { }
 		record CreationScope(CompiledHopKey origin,
 			OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact profile, long contextOrdinal) { }
-		record DownloadKey(CreationScope creation, WorkerPoolIdentity layout,
-			String privateIdentity, double unit) { }
+		record DownloadKey(CreationScope creation, InputLayout layout, String privateIdentity, double unit) { }
 		record DownloadGroup(ExactPhysicalModel.DecisionDomain representative,
-			List<ActivationDemand> demands) { }
+			List<ActivationDemand> demands, List<PhysicalTransferEndpoint> endpoints) { }
+		Map<DownloadKey,DownloadGroup> downloads = new LinkedHashMap<>();
+		InputLayoutCache inputLayouts = new InputLayoutCache();
+		ExecutionWorkerCounts executionCounts = new ExecutionWorkerCounts();
+		var executionLayouts = new IdentityHashMap<ExactPhysicalModel.Alternative,FederatedExecutionLayout>();
 		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead = new IdentityHashMap<>();
 		for(var fact : analysis.logicalTransientInputsInCanonicalOrder())
 			transientByRead.computeIfAbsent(fact.targetRead(), ignored -> new ArrayList<>()).add(fact);
@@ -922,15 +1230,11 @@ public final class ExactPhysicalCostModel {
 					throw new IllegalArgumentException("EXACT_MATERIALIZATION_CALLER_CONTEXT_AMBIGUOUS");
 			}
 		}
-		Set<CompiledHopKey> functionAliasOrigins = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(var fact : analysis.logicalFunctionInputsInCanonicalOrder()) {
-			List<RuntimeMaterializationSource> sources = runtimeMaterializationSources(
-				analysis, fact.targetRead(), transientByRead, functionByRead,
-				Collections.newSetFromMap(new IdentityHashMap<>()), true);
-			if(sources.size() == 1)
-				functionAliasOrigins.add(sources.get(0).occurrence());
-		}
-		Map<DownloadKey,DownloadGroup> downloads = new LinkedHashMap<>();
+		IdentityHashMap<CompiledHopKey,List<EffectiveLogicalFunctionInput>> functionInputsBySource =
+			new IdentityHashMap<>();
+		for(EffectiveLogicalFunctionInput input : effectiveLogicalFunctionInputs(analysis))
+			functionInputsBySource.computeIfAbsent(input.authority().sourceArgument(),
+				ignored -> new ArrayList<>()).add(input);
 		for(ExactPhysicalModel.DecisionDomain producer : orderedDomains) {
 			if(producer.node().kind() == NodeKind.FUNCTION_INPUT
 				|| producer.node().kind() == NodeKind.FUNCTION_OUTPUT)
@@ -940,8 +1244,6 @@ public final class ExactPhysicalCostModel {
 				|| (!producerHop.getDataType().isMatrix() && !producerHop.getDataType().isFrame()))
 				continue;
 			double bytes = estimatedBytes(analysis, sparseAssignments, producer.node().key(), producerHop);
-			boolean forwarded = functionInputsForTarget(effectiveFunctionInputs, producer.node().key())
-				.stream().anyMatch(input -> input.forwardedAuthority() != null);
 			Map<Key,List<Demand>> grouped = new LinkedHashMap<>();
 			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.producer() != producer.node().key()
@@ -949,205 +1251,252 @@ public final class ExactPhysicalCostModel {
 					|| latentRuntimeBoundaries.contains(new LatentWdivmmRuntimeTransferBoundary(
 						edge.producer(), edge.consumer(), edge.inputPosition())))
 					continue;
-				ExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
-				if(consumer == null)
+				var consumer = domains.get(edge.consumer());
+				if(consumer == null) continue;
+				Hop consumerHop = analysis.hop(edge.consumer()).orElseThrow();
+				var endpoint = new PhysicalTransferEndpoint(edge.producer(), edge.consumer(), edge.inputPosition());
+				Map<Double,boolean[]> collectByBytes = new LinkedHashMap<>();
+				for(int value = 0; value < consumer.alternatives().size(); value++) {
+					var selected = consumer.alternatives().get(value);
+					boolean cp = selected.state().execType() == ExecType.CP;
+					var authority = selected.inputAuthorities().stream()
+						.filter(a -> a.inputPosition() == edge.inputPosition()).findFirst().orElse(null);
+					boolean relocation = authority != null
+						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION;
+					boolean nativeLocal = !cp && authority != null
+						&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL;
+					boolean runtimeCollect = false;
+					if(!cp && (PlacementCostSemantics.isWdivmmMatrixOperand(consumerHop, edge.inputPosition())
+						|| edge.inputPosition() == 3 && PlacementCostSemantics.hasWdivmmEpsilon(consumerHop))) {
+						var layout = executionLayouts.computeIfAbsent(selected, a -> executionLayout(analysis, a,
+							executionFType(a), executionWorkerCount(analysis, a, workers,
+								physicalWorkerCounts, executionCounts), inputLayouts));
+						runtimeCollect = PlacementCostSemantics.wdivmmInputNeedsCollection(
+							consumerHop, layout, edge.inputPosition());
+						if(relocation && runtimeCollect) {
+							var action = authority.relocationAction();
+							var key = new Key(Direction.DOWNLOAD, action.key().materializationFType(),
+								BoundaryMode.RUNTIME_RELOCATED_INPUT, RelocationSelections.physicalEmissionIdentity(action.key()),
+								physicalWorkerCounts.count(action.key().durableAnchor()), bytes);
+							boolean[] active = new boolean[consumer.alternatives().size()];
+							active[value] = true;
+							grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
+								.add(new Demand(endpoint, consumer, null, active, null));
+						}
+					}
+					if(!analysis.isCoordinatorMetadataOnlyInput(edge)
+						&& (cp || relocation || nativeLocal || runtimeCollect && !relocation)) {
+						double sourceBytes = bytes;
+						if(nativeLocal) {
+							var bounded = PlacementCostSemantics.boundedElementwiseNativeLocalInputTransfer(
+								analysis, edge.producer(), edge.consumer(), edge.inputPosition(), executionFType(selected),
+								executionWorkerCount(analysis, selected, workers, physicalWorkerCounts, executionCounts));
+							if(bounded != null) sourceBytes = bounded.logicalBytesUpperBound();
+						}
+						collectByBytes.computeIfAbsent(sourceBytes,
+							ignored -> new boolean[consumer.alternatives().size()])[value] = true;
+					}
+					if(relocation && authority.relocationAction().key().sourceValueVersion()
+						.equals(producer.node().valueVersion())) {
+						var action = authority.relocationAction();
+						var key = new Key(Direction.UPLOAD, action.key().materializationFType(),
+							uploadBoundaryMode(analysis, edge), RelocationSelections.physicalEmissionIdentity(action.key()),
+							physicalWorkerCounts.count(action.key().durableAnchor()), bytes);
+						List<Demand> demands = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
+						Demand demand = demands.stream().filter(d -> d.edge().equals(endpoint)).findFirst().orElse(null);
+						if(demand == null) {
+							demand = new Demand(endpoint, consumer, null, new boolean[consumer.alternatives().size()], null);
+							demands.add(demand);
+						}
+						demand.active()[value] = true;
+					}
+				}
+				for(var collect : collectByBytes.entrySet())
+					for(Key key : producer.alternatives().stream()
+						.filter(a -> a.state().output() == FederatedOutput.FOUT)
+						.map(a -> new Key(Direction.DOWNLOAD, a.state().fType(), BoundaryMode.ANCHOR_TRANSFER,
+							outputLayoutIdentity(a), 0, collect.getKey())).distinct().toList())
+						grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
+							.add(new Demand(endpoint, consumer, null, collect.getValue(), null));
+			}
+			for(EffectiveLogicalFunctionInput input : functionInputsBySource.getOrDefault(
+				producer.node().key(), List.of())) {
+				if(input.authority().sourceArgument() != producer.node().key()
+					|| !input.authority().sourceValueVersion().equals(producer.node().valueVersion())
+					|| !retainedFunctionCoverageProven(frequencies, input, producer.node().key()))
 					continue;
-				if(!analysis.isCoordinatorMetadataOnlyInput(edge))
-					for(Key download : producer.alternatives().stream()
-						.filter(alternative -> alternative.state().output() == FederatedOutput.FOUT)
-						.map(alternative -> new Key(Direction.DOWNLOAD, alternative.state().fType(),
-							BoundaryMode.ANCHOR_TRANSFER, outputLayoutIdentity(alternative))).distinct().toList())
-						grouped.computeIfAbsent(download, ignored -> new ArrayList<>()).add(new Demand(edge, consumer));
-				for(RelocationAction action : consumer.alternatives().stream()
-					.flatMap(a -> a.inputAuthorities().stream())
-					.filter(a -> a.inputPosition() == edge.inputPosition()
-						&& a.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
-						&& a.relocationAction().key().sourceValueVersion().equals(producer.node().valueVersion()))
-					.map(ExactPhysicalModel.InputAuthority::relocationAction)
-					.distinct().sorted().toList()) {
-					Key key = new Key(Direction.UPLOAD, action.key().materializationFType(),
-						uploadBoundaryMode(analysis, edge), RelocationSelections.physicalEmissionIdentity(action.key()));
-					List<Demand> demands = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
-					if(demands.stream().noneMatch(d -> d.edge().consumer() == edge.consumer()
-						&& d.edge().inputPosition() == edge.inputPosition()))
-						demands.add(new Demand(edge, consumer));
+				ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
+				if(formal == null)
+					continue;
+				boolean[] collect = new boolean[formal.alternatives().size()];
+				for(int value = 0; value < collect.length; value++)
+					collect[value] = formal.alternatives().get(value).state().execType() == ExecType.CP;
+				var endpoint = new PhysicalTransferEndpoint(producer.node().key(),
+					formal.node().key(), input.logicalPosition());
+				double functionBytes = physicalLogicalFunctionInputBytes(analysis, sparseAssignments, input,
+					producer, formal);
+				Map<FType,Boolean> retainedTypeEligibility = new LinkedHashMap<>();
+				for(var alternative : producer.alternatives())
+					if(alternative.state().output() == FederatedOutput.FOUT
+						&& alternative.state().fType() != null)
+						retainedTypeEligibility.merge(alternative.state().fType(),
+							alternative.relocationAction() == null
+								&& alternative.derivedFoutAction() == null
+								&& alternative.inputAuthorities().stream().noneMatch(authority ->
+									authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION),
+							Boolean::logicalAnd);
+				for(Key key : producer.alternatives().stream()
+					.filter(a -> a.state().output() == FederatedOutput.FOUT
+						&& retainedTypeEligibility.getOrDefault(a.state().fType(), false))
+					.map(a -> new Key(Direction.DOWNLOAD, a.state().fType(), BoundaryMode.ANCHOR_TRANSFER,
+						outputLayoutIdentity(a), 0, functionBytes)).distinct().toList()) {
+					grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
+						.add(new Demand(endpoint, formal, null, collect, input));
+					retainedFunctionDownloads.add(new RetainedFunctionDownload(input, key.type()));
 				}
 			}
-			// Transient/formal reads do not create a new payload. Resolve the same
-			// compiler-owned alias provenance used by latent reusable input costing.
-			for(Map.Entry<Key,List<Demand>> entry : grouped.entrySet()) {
+			for(var use : fusedFactors) {
+				if(use.source() != producer) continue;
+				for(Key key : producer.alternatives().stream()
+					.filter(a -> a.state().output() == FederatedOutput.FOUT)
+					.map(a -> new Key(Direction.DOWNLOAD, a.state().fType(), BoundaryMode.ANCHOR_TRANSFER,
+						outputLayoutIdentity(a), 0, bytes)).distinct().toList())
+					grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(new Demand(
+						new PhysicalTransferEndpoint(producer.node().key(), use.owner().node().key(), use.input().position()),
+						use.owner(), use, null, null));
+			}
+			List<RuntimeMaterializationSource> creationSources = grouped.isEmpty() ? List.of()
+				: runtimeMaterializationSources(analysis, producer.node().key(), transientByRead,
+					functionByRead, Collections.newSetFromMap(new IdentityHashMap<>()));
+			for(var entry : grouped.entrySet()) {
 				List<Demand> demands = entry.getValue().stream().sorted(Comparator
 					.comparing((Demand d) -> d.edge().consumer().normalizedSignature())
 					.thenComparingInt(d -> d.edge().inputPosition())).toList();
 				Key key = entry.getKey();
-				List<RuntimeMaterializationSource> legacyCreationSources = runtimeMaterializationSources(
-					analysis, producer.node().key(), transientByRead, functionByRead,
-					Collections.newSetFromMap(new IdentityHashMap<>()));
-				List<RuntimeMaterializationSource> aliasCreationSources = key.direction() == Direction.DOWNLOAD
-					? runtimeMaterializationSources(analysis, producer.node().key(), transientByRead,
-						functionByRead, Collections.newSetFromMap(new IdentityHashMap<>()), true)
-					: legacyCreationSources;
+				boolean sourceDownload = key.direction() == Direction.DOWNLOAD && key.targetWorkers() == 0;
 				boolean[] activeSource = new boolean[producer.alternatives().size()];
 				double[] unitPrices = new double[activeSource.length];
 				for(int value = 0; value < activeSource.length; value++) {
 					var alternative = producer.alternatives().get(value);
-					PlacementState state = alternative.state();
-					int sourceWorkers = realizationWorkerCount(
-						analysis, alternative, workers, physicalWorkerCounts);
-					activeSource[value] = key.direction() == Direction.UPLOAD
-						|| state.output() == FederatedOutput.FOUT && state.fType() == key.type()
-							&& outputLayoutIdentity(alternative).equals(key.physicalEmissionIdentity());
+					var state = alternative.state();
+					int sourceWorkers = realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts);
+					activeSource[value] = !sourceDownload || state.output() == FederatedOutput.FOUT
+						&& state.fType() == key.type() && outputLayoutIdentity(alternative).equals(key.physicalEmissionIdentity());
 					double unit = key.direction() == Direction.DOWNLOAD
-						? FederatedCostModel.computeReusableMaterializationDownloadCost(bytes, key.type(), sourceWorkers)
-						: FederatedCostModel.computeUploadNetworkCost(bytes, key.type(), workers)
-							+ FederatedCostModel.computeLocalToFedForwardingPenalty(key.type(), workers);
-					if(key.direction() == Direction.UPLOAD && state.output() == FederatedOutput.FOUT)
-						unit += forwarded ? FederatedCostModel.computeDownloadNetworkCost(bytes)
-							: FederatedCostModel.computeReusableMaterializationDownloadCost(bytes,
-								Objects.requireNonNull(state.fType(), "FOUT source layout"), sourceWorkers);
+						? FederatedCostModel.computeReusableMaterializationDownloadCost(key.bytes(), key.type(),
+							sourceDownload ? sourceWorkers : key.targetWorkers())
+						: FederatedCostModel.computeUploadNetworkCost(key.bytes(), key.type(), key.targetWorkers());
 					unitPrices[value] = requireCost(unit, "EXACT_PHYSICAL_MATERIALIZATION_UNIT_UNPROVEN");
 				}
-				String groupKey = "exact-materialization|" + producer.node().key().normalizedSignature()
-					+ '|' + key.direction() + '|' + key.type() + '|' + key.boundary()
-					+ '|' + key.physicalEmissionIdentity() + '|' + transferKeys.size();
-				boolean sharedFunctionAliasDownload = key.direction() == Direction.DOWNLOAD
-					&& aliasCreationSources.size() == 1
-					&& functionAliasOrigins.contains(aliasCreationSources.get(0).occurrence());
-				List<RuntimeMaterializationSource> creationSources = sharedFunctionAliasDownload
-					? aliasCreationSources : legacyCreationSources;
-				if(sharedFunctionAliasDownload) {
-					for(var readProfile : exactOccurrenceProfiles(frequencies, producer.node().key())) {
-						CompiledHopKey origin = producer.node().key();
-						var sourceProfile = readProfile;
-						OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact aliasProfile = null;
-						if(creationSources.size() == 1) {
-							CompiledHopKey candidate = creationSources.get(0).occurrence();
-							var profiles = exactOccurrenceProfiles(frequencies, candidate);
-							var matched = profiles.stream().filter(profile -> profile.contextOrdinal()
-								== readProfile.contextOrdinal()).findFirst().orElse(null);
-							if(matched == null && profiles.size() == 1)
-								matched = profiles.get(0);
-							if(matched != null) {
-								origin = candidate;
-								sourceProfile = matched;
-							}
-							aliasProfile = materializationCreationProfile(
-								profiles, readProfile.contextOrdinal(), callerContexts);
-						}
-						CreationScope privateCreation = new CreationScope(
-							origin, sourceProfile, readProfile.contextOrdinal());
-						CreationScope aliasCreation = aliasProfile == null ? null
-							: new CreationScope(creationSources.get(0).occurrence(), aliasProfile,
-								aliasProfile.contextOrdinal());
-						Map<DownloadKey,boolean[]> observations = new LinkedHashMap<>();
-						for(int value = 0; value < activeSource.length; value++) {
-							if(!activeSource[value])
-								continue;
-							var alternative = producer.alternatives().get(value);
-							WorkerPoolIdentity layout = exactDownloadLayout(analysis, alternative);
-							boolean alias = aliasCreation != null && layout != null
-								&& alternative.state().execType() == ExecType.FED
-								&& alternative.relocationAction() == null
-								&& alternative.derivedFoutAction() == null
-								&& alternative.inputAuthorities().stream().noneMatch(authority ->
-									authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION);
-							String privateIdentity = alias ? "" : producer.node().key().normalizedSignature()
-								+ '|' + key.physicalEmissionIdentity();
-							DownloadKey observation = new DownloadKey(alias ? aliasCreation : privateCreation,
-								layout, privateIdentity, unitPrices[value]);
-							observations.computeIfAbsent(observation,
-								ignored -> new boolean[activeSource.length])[value] = true;
-						}
-						for(var observation : observations.entrySet()) {
-							DownloadGroup group = downloads.computeIfAbsent(observation.getKey(), ignored ->
-								new DownloadGroup(producer, new ArrayList<>()));
-							for(Demand demand : demands) {
-								boolean[] activeConsumers = new boolean[demand.consumer().alternatives().size()];
-								for(int value = 0; value < activeConsumers.length; value++)
-									activeConsumers[value] = demand.consumer().alternatives().get(value)
-										.state().execType() == ExecType.CP;
-								var consumerProfile = requireContextProfile(frequencies,
-									demand.edge().consumer(), readProfile.contextOrdinal());
-								group.demands().add(new ActivationDemand(
-									List.of(demand.consumer().variable(), producer.variable()),
-									List.of(activeConsumers, observation.getValue()),
-									materializationActivation(observation.getKey().creation().profile(),
-										consumerProfile)));
-							}
-						}
-					}
-					transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(), demands.stream()
-						.map(d -> new PhysicalTransferEndpoint(d.edge().producer(), d.edge().consumer(),
-							d.edge().inputPosition())).toList(), key.direction(), key.type(), key.boundary(),
-						key.physicalEmissionIdentity()));
-					continue;
-				}
-				Map<CreationScope,List<ActivationDemand>> demandsByCreation = new LinkedHashMap<>();
 				for(var readProfile : exactOccurrenceProfiles(frequencies, producer.node().key())) {
 					CompiledHopKey origin = producer.node().key();
 					var sourceProfile = readProfile;
-					if(creationSources.size() == 1) {
+					// REFED's cached worker payload is published through a fresh MatrixObject
+					// alias in this read's block. Its subsequent GET cannot inherit the
+					// original value's longer lifetime; same-emission consumers still union.
+					var aliasCreation = new CreationScope(origin, readProfile, readProfile.contextOrdinal());
+					if(creationSources.size() == 1 && key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT) {
 						CompiledHopKey candidate = creationSources.get(0).occurrence();
 						var profiles = exactOccurrenceProfiles(frequencies, candidate);
 						var matched = profiles.stream().filter(profile -> profile.contextOrdinal()
 							== readProfile.contextOrdinal()).findFirst().orElse(null);
-						if(matched == null && profiles.size() == 1)
-							matched = profiles.get(0);
-						if(matched != null) {
-							origin = candidate;
-							sourceProfile = matched;
+						if(matched == null && profiles.size() == 1) matched = profiles.get(0);
+						if(matched != null) { origin = candidate; sourceProfile = matched; }
+						var aliasProfile = materializationCreationProfile(profiles,
+							readProfile.contextOrdinal(), callerContexts);
+						if(aliasProfile != null)
+							aliasCreation = new CreationScope(candidate, aliasProfile, aliasProfile.contextOrdinal());
+					}
+					var creation = new CreationScope(origin, sourceProfile, readProfile.contextOrdinal());
+					// Fresh outputs retain the existing lifetime calculation. Only proven
+					// retained aliases use the ancestor object's activation and creation cap.
+					java.util.function.Function<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact,
+						List<ActivationDemand>> activationsForCreation = profile -> {
+						List<ActivationDemand> activations = new ArrayList<>();
+						for(Demand demand : demands) {
+							if(demand.functionInput() != null) {
+								for(var occurrence : frequencies.exactFunctionBoundaryOccurrences(
+									demand.functionInput().authority())) {
+									if(occurrence.callerContextOrdinal() != readProfile.contextOrdinal())
+										continue;
+									var consumerProfile = requireContextProfile(frequencies,
+										demand.edge().consumer(), occurrence.calleeProfile().contextOrdinal());
+									activations.add(new ActivationDemand(List.of(demand.consumer().variable()),
+										List.of(demand.active()), materializationActivation(profile, consumerProfile)));
+								}
+								continue;
+							}
+							var event = materializationActivation(profile, requireContextProfile(frequencies,
+								demand.edge().consumer(), readProfile.contextOrdinal()));
+							if(demand.runtime() != null) addFusedFactorGetDemands(demand.runtime(), event, activations);
+							else activations.add(new ActivationDemand(List.of(demand.consumer().variable()),
+								List.of(demand.active()), event));
+						}
+						return activations;
+					};
+					if(sourceDownload) {
+						Map<DownloadKey,boolean[]> observations = new LinkedHashMap<>();
+						for(int value = 0; value < activeSource.length; value++) {
+							if(!activeSource[value]) continue;
+							var selected = producer.alternatives().get(value);
+							var layout = physicalValueLayout(analysis, selected,
+								realizationWorkerCount(analysis, selected, workers, physicalWorkerCounts), inputLayouts);
+							// A unique canonical creation origin and exact direct FED layout prove
+							// the same retained MatrixObject across its initializer, TWrite/TRead
+							// aliases and function formals. Fresh relocation/derived outputs and
+							// runtime-relocated boundaries retain a private identity.
+							boolean alias = creationSources.size() == 1
+								&& key.boundary() != BoundaryMode.RUNTIME_RELOCATED_INPUT
+								&& layout.exactRanges() && !layout.ranges().isEmpty()
+								&& selected.state().execType() == ExecType.FED && selected.relocationAction() == null
+								&& selected.derivedFoutAction() == null && selected.inputAuthorities().stream()
+									.noneMatch(a -> a.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION);
+							String privateIdentity = alias ? "" : producer.node().key().normalizedSignature()
+								+ '|' + key.physicalEmissionIdentity();
+							// Function arguments retain the caller's MatrixObject and its local
+							// cache. Charge a proven alias in that object's creation context,
+							// while fresh/relocated outputs keep their read-context discriminator.
+							var downloadCreation = alias ? aliasCreation : creation;
+							var observation = new DownloadKey(downloadCreation, layout, privateIdentity, unitPrices[value]);
+							observations.computeIfAbsent(observation, ignored -> new boolean[activeSource.length])[value] = true;
+						}
+						for(var observation : observations.entrySet()) {
+							var group = downloads.computeIfAbsent(observation.getKey(), ignored ->
+								new DownloadGroup(producer, new ArrayList<>(), new ArrayList<>()));
+							for(var activation : activationsForCreation.apply(observation.getKey().creation().profile())) {
+								List<ExactCategoricalSolver.Variable> vars = new ArrayList<>(activation.variables());
+								List<boolean[]> masks = new ArrayList<>(activation.observations());
+								vars.add(producer.variable()); masks.add(observation.getValue());
+								group.demands().add(new ActivationDemand(vars, masks, activation.event()));
+							}
+							for(var demand : demands)
+								if(!group.endpoints().contains(demand.edge())) group.endpoints().add(demand.edge());
 						}
 					}
-					// Ambiguous reaching definitions/context mappings retain the read scope;
-					// they never authorize reuse of an earlier version or a different call.
-					List<ActivationDemand> activations = demandsByCreation.computeIfAbsent(
-						new CreationScope(origin, sourceProfile, sourceProfile.contextOrdinal()),
-						ignored -> new ArrayList<>());
-					for(Demand demand : demands) {
-						boolean[] activeConsumers = new boolean[demand.consumer().alternatives().size()];
-						for(int value = 0; value < activeConsumers.length; value++) {
-							var consumer = demand.consumer().alternatives().get(value);
-							activeConsumers[value] = key.direction() == Direction.DOWNLOAD
-								? consumer.state().execType() == ExecType.CP
-								: consumer.inputAuthorities().stream().anyMatch(authority ->
-									authority.inputPosition() == demand.edge().inputPosition()
-										&& authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION
-										&& authority.expectedFType() == key.type()
-										&& authority.relocationAction().key().sourceValueVersion()
-											.equals(producer.node().valueVersion())
-										&& RelocationSelections.physicalEmissionIdentity(authority.relocationAction().key())
-											.equals(key.physicalEmissionIdentity()));
-						}
-						var consumerProfile = requireContextProfile(frequencies, demand.edge().consumer(),
-							readProfile.contextOrdinal());
-						activations.add(new ActivationDemand(List.of(demand.consumer().variable()),
-							List.of(activeConsumers), materializationActivation(sourceProfile, consumerProfile)));
+					else {
+						String id = "exact-materialization|" + producer.node().key().normalizedSignature() + '|' + key
+							+ "|creation=" + origin.normalizedSignature() + "|context=" + readProfile.contextOrdinal();
+						addMaterializationActivationFactors(id, producer.variable(), activeSource, unitPrices,
+							activationsForCreation.apply(sourceProfile), sourceProfile.expectedExecutions(),
+							factors, factorizations, null);
 					}
 				}
-				for(var creation : demandsByCreation.entrySet())
-					addMaterializationActivationFactors(groupKey + "|creation="
-						+ creation.getKey().origin().normalizedSignature()
-						+ "|context=" + creation.getKey().profile().contextOrdinal(), producer.variable(),
-						activeSource, unitPrices, creation.getValue(), creation.getKey().profile().expectedExecutions(),
-						factors, factorizations, null);
-
-				transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(), demands.stream()
-					.map(d -> new PhysicalTransferEndpoint(d.edge().producer(), d.edge().consumer(),
-						d.edge().inputPosition())).toList(), key.direction(), key.type(), key.boundary(),
+				if(!sourceDownload) transferKeys.add(new PhysicalTransferKey(producer.node().valueVersion(),
+					demands.stream().map(Demand::edge).distinct().toList(), key.direction(), key.type(), key.boundary(),
 					key.physicalEmissionIdentity()));
 			}
 		}
 		for(var entry : downloads.entrySet()) {
-			DownloadKey key = entry.getKey();
-			DownloadGroup group = entry.getValue();
+			var key = entry.getKey(); var group = entry.getValue();
 			double[] prices = new double[group.representative().alternatives().size()];
 			java.util.Arrays.fill(prices, key.unit());
 			String identity = "exact-get|" + key.creation().origin().normalizedSignature()
 				+ "|context=" + key.creation().contextOrdinal() + "|layout=" + key.layout()
-				+ "|private=" + key.privateIdentity() + "|unit=" + key.unit();
-			addMaterializationActivationFactors(identity, group.representative().variable(),
-				allTrue(prices.length), prices, group.demands(), key.creation().profile().expectedExecutions(),
-				factors, factorizations, null, true);
+				+ "|private=" + key.privateIdentity() + "|unit=" + key.unit() + "|group=" + transferKeys.size();
+			addMaterializationActivationFactors(identity, group.representative().variable(), allTrue(prices.length), prices,
+				group.demands(), key.creation().profile().expectedExecutions(), factors, factorizations, null);
+			transferKeys.add(new PhysicalTransferKey(group.representative().node().valueVersion(), group.endpoints(),
+				Direction.DOWNLOAD, key.layout().fType(), BoundaryMode.ANCHOR_TRANSFER, identity));
 		}
 	}
 
@@ -1165,23 +1514,34 @@ public final class ExactPhysicalCostModel {
 		return null;
 	}
 
-	/** Exact existing worker layout only; dynamic or unproven native layouts never share GETs. */
-	private static WorkerPoolIdentity exactDownloadLayout(PlacementAnalysis analysis,
-		ExactPhysicalModel.Alternative alternative) {
-		DurableAnchorKey anchor = alternative.durableAnchor();
-		if(anchor == null && alternative.realization() != null && alternative.supportClause() != null
-			&& alternative.realization().nativeWorkerPoolLayoutExact(alternative.supportClause()))
-			anchor = alternative.realization().nativeWorkerPoolResidencyWitness(alternative.supportClause());
-		if(anchor == null) {
-			Hop hop = analysis.hop(alternative.decision()).orElse(null);
-			List<DurableAnchorKey> anchors = analysis.graph().node(alternative.decision())
-				.map(NeutralPlacementGraph.Node::anchors).orElse(List.of()).stream()
-				.filter(candidate -> candidate.fType() == alternative.state().fType()).toList();
-			if(hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED && anchors.size() == 1)
-				anchor = anchors.get(0);
+	private static FType executionFType(ExactPhysicalModel.Alternative selected) {
+		CandidateEmissionFact emission = selected.captured() ? selected.candidateEmission() : selected.executionEmission();
+		return emission == null ? selected.state().fType() : emission.executionFType();
+	}
+
+	/** Union these runtime reads with ordinary CP consumers of the same selected value/layout. */
+	private static void addFusedFactorGetDemands(FusedFactorUse use,
+		ExactMaterializationActivation.Event event, List<ActivationDemand> demands) {
+		boolean[] cp = new boolean[use.owner().alternatives().size()];
+		boolean[] fed = new boolean[cp.length];
+		for(int i = 0; i < cp.length; i++) {
+			cp[i] = use.owner().alternatives().get(i).state().execType() == ExecType.CP;
+			fed[i] = use.owner().alternatives().get(i).state().execType() == ExecType.FED;
 		}
-		return anchor == null ? null
-			: org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.physicalWorkerPoolIdentity(anchor);
+		demands.add(new ActivationDemand(List.of(use.owner().variable()), List.of(cp), event));
+		Map<InputLayout,boolean[]> weightClasses = new LinkedHashMap<>();
+		for(int w = 0; w < use.weightLayouts().size(); w++) {
+			InputLayout layout = use.weightLayouts().get(w);
+			if(layout.fType() != null)
+				weightClasses.computeIfAbsent(layout, ignored -> new boolean[use.weightLayouts().size()])[w] = true;
+		}
+		for(var entry : weightClasses.entrySet()) {
+			boolean[] collect = new boolean[use.source().alternatives().size()];
+			for(int f = 0; f < collect.length; f++)
+				collect[f] = !use.reused(entry.getKey(), f);
+			demands.add(new ActivationDemand(List.of(use.owner().variable(), use.weights().variable(),
+				use.source().variable()), List.of(fed, entry.getValue(), collect), event));
+		}
 	}
 
 	/** A selected plan demands a copy when every observation in this demand is true. */
@@ -1246,17 +1606,6 @@ public final class ExactPhysicalCostModel {
 		List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
 		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds) {
-		addMaterializationActivationFactors(key, source, activeSource, unitPrices, demands, scopeWeight,
-			factors, factorizations, factorKinds, false);
-	}
-
-	private static void addMaterializationActivationFactors(String key,
-		ExactCategoricalSolver.Variable source, boolean[] activeSource, double[] unitPrices,
-		List<ActivationDemand> demands, double scopeWeight,
-		List<ExactCategoricalSolver.Factor> factors,
-		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
-		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds,
-		boolean boundedConservativeUnion) {
 		List<ExactMaterializationActivation.Event> events = demands.stream().map(ActivationDemand::event).toList();
 		var partition = ExactMaterializationActivation.partition(events, scopeWeight);
 		StringBuilder descriptor = new StringBuilder("MATERIALIZATION_ACTIVATION_V1|")
@@ -1284,14 +1633,6 @@ public final class ExactPhysicalCostModel {
 					"EXACT_ACTIVATION_UNION_COST_UNPROVEN");
 			});
 			factors.add(canonical);
-			if(!boundedConservativeUnion) {
-				factorizations.put(canonical, new SolverFactorization(List.of(), List.of(canonical),
-					descriptor + "|encoding=CONSERVATIVE_CAPPED_ACTIVATION_UNION", List.of(canonical), null,
-					new CostTransportDeclaration.Identity(canonical)));
-				if(factorKinds != null)
-					factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|CONSERVATIVE_UNION");
-				return;
-			}
 			Map<ExactMaterializationActivation.Event,List<ActivationDemand>> byEvent = new LinkedHashMap<>();
 			for(var demand : demands)
 				byEvent.computeIfAbsent(demand.event(), ignored -> new ArrayList<>()).add(demand);
@@ -1302,9 +1643,9 @@ public final class ExactPhysicalCostModel {
 			for(var members : byEvent.values()) {
 				String eventKey = key + "|event=" + eventOrdinal++;
 				List<ExactCategoricalSolver.Variable> activeDemands = new ArrayList<>();
-				for(int demandOrdinal = 0; demandOrdinal < members.size(); demandOrdinal++) {
-					var demand = members.get(demandOrdinal);
-					activeDemands.add(activationIndicator(eventKey + "|demand=" + demandOrdinal,
+				for(int d = 0; d < members.size(); d++) {
+					var demand = members.get(d);
+					activeDemands.add(activationIndicator(eventKey + "|demand=" + d,
 						demand.variables(), demand.observations(), true, auxiliaries, encoded));
 				}
 				monetaryScope.add(activationIndicator(eventKey, activeDemands,
@@ -1313,11 +1654,9 @@ public final class ExactPhysicalCostModel {
 			}
 			List<ExactMaterializationActivation.Event> uniqueEvents = List.copyOf(byEvent.keySet());
 			var monetary = ExactCategoricalSolver.Factor.lazy(monetaryScope, values -> {
-				if(!activeSource[values[0]])
-					return 0d;
+				if(!activeSource[values[0]]) return 0d;
 				boolean[] active = new boolean[uniqueEvents.size()];
-				for(int event = 0; event < active.length; event++)
-					active[event] = values[event + 1] != 0;
+				for(int e = 0; e < active.length; e++) active[e] = values[e + 1] != 0;
 				return requireCost(unitPrices[values[0]]
 					* ExactMaterializationActivation.conservativeUnion(uniqueEvents, scopeWeight, active),
 					"EXACT_ACTIVATION_UNION_COST_UNPROVEN");
@@ -1354,19 +1693,8 @@ public final class ExactPhysicalCostModel {
 					observations.add(new ExactActivationClassFactorDecomposition.Demand(
 						demand.variables().get(0), demand.observations().get(0)));
 				else {
-					ExactCategoricalSolver.Variable active = new ExactCategoricalSolver.Variable(
-						classKey + "|demand=" + index, 2);
-					auxiliaries.add(active);
-					List<ExactCategoricalSolver.Variable> demandScope = new ArrayList<>();
-					for(var variable : demand.variables())
-						if(demandScope.stream().noneMatch(existing -> existing == variable))
-							demandScope.add(variable);
-					var demandPositions = variablePositions(demandScope);
-					demandScope.add(active);
-					int activePosition = demandScope.size() - 1;
-					solverFactors.add(ExactCategoricalSolver.Factor.lazy(demandScope, values ->
-						values[activePosition] == (demand.active(values, demandPositions) ? 1 : 0)
-							? 0d : Double.POSITIVE_INFINITY));
+					ExactCategoricalSolver.Variable active = activationIndicator(classKey + "|demand=" + index,
+						demand.variables(), demand.observations(), true, auxiliaries, solverFactors);
 					observations.add(new ExactActivationClassFactorDecomposition.Demand(active,
 						new boolean[] {false, true}));
 				}
@@ -1396,15 +1724,31 @@ public final class ExactPhysicalCostModel {
 		}
 	}
 
+	/**
+	 * Compatibility entry point for the bounded function-alias encoding introduced on main.
+	 * The unified cost model now uses the bounded event quotient for every unresolved union,
+	 * so the former call-site switch no longer changes the encoding.
+	 */
+	private static void addMaterializationActivationFactors(String key,
+		ExactCategoricalSolver.Variable source, boolean[] activeSource, double[] unitPrices,
+		List<ActivationDemand> demands, double scopeWeight,
+		List<ExactCategoricalSolver.Factor> factors,
+		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds,
+		boolean boundedConservativeUnion) {
+		addMaterializationActivationFactors(key, source, activeSource, unitPrices, demands,
+			scopeWeight, factors, factorizations, factorKinds);
+	}
+
 	/** Deterministic Boolean observation chain; no categorical Cartesian product. */
 	private static ExactCategoricalSolver.Variable activationIndicator(String key,
 		List<ExactCategoricalSolver.Variable> variables, List<boolean[]> masks, boolean conjunction,
 		List<ExactCategoricalSolver.Variable> auxiliaries, List<ExactCategoricalSolver.Factor> factors) {
 		ExactCategoricalSolver.Variable previous = null;
-		for(int index = 0; index < variables.size(); index++) {
-			var observed = variables.get(index);
-			boolean[] mask = masks.get(index);
-			var next = new ExactCategoricalSolver.Variable(key + "|observed=" + index, 2);
+		for(int i = 0; i < variables.size(); i++) {
+			var observed = variables.get(i);
+			boolean[] mask = masks.get(i);
+			var next = new ExactCategoricalSolver.Variable(key + "|observed=" + i, 2);
 			auxiliaries.add(next);
 			if(previous == null)
 				factors.add(ExactCategoricalSolver.Factor.lazy(List.of(observed, next), values ->
@@ -1412,8 +1756,7 @@ public final class ExactPhysicalCostModel {
 			else {
 				var prior = previous;
 				factors.add(ExactCategoricalSolver.Factor.lazy(List.of(observed, prior, next), values -> {
-					boolean active = conjunction
-						? mask[values[0]] && values[1] != 0 : mask[values[0]] || values[1] != 0;
+					boolean active = conjunction ? mask[values[0]] && values[1] != 0 : mask[values[0]] || values[1] != 0;
 					return values[2] == (active ? 1 : 0) ? 0d : Double.POSITIVE_INFINITY;
 				}));
 			}
@@ -1476,19 +1819,21 @@ public final class ExactPhysicalCostModel {
 			PlacementCostSemantics.LatentWdivmmTransposePairFact runtime =
 				PlacementCostSemantics.latentWdivmmTransposePairFact(
 					analysis, owner.node().key());
-			if(runtime == null)
+			var direct = runtime == null ? PlacementCostSemantics.directWdivmmRuntimeFact(analysis, owner.node().key()) : null;
+			if(runtime == null && direct == null)
 				continue;
-			ExactPhysicalModel.DecisionDomain read = domains.get(runtime.weights());
+			CompiledHopKey weightsKey = runtime == null ? direct.weights() : runtime.weights();
+			ExactPhysicalModel.DecisionDomain read = domains.get(weightsKey);
 			if(read == null)
 				throw new IllegalArgumentException(
 					"EXACT_LATENT_WDIVMM_RUNTIME_INPUT_DOMAIN_MISSING|owner="
 						+ owner.node().key().normalizedSignature());
 			List<RuntimeMaterializationSource> sources = runtimeMaterializationSources(
-				analysis, runtime.weights(), transientByRead, functionByRead,
+				analysis, weightsKey, transientByRead, functionByRead,
 				Collections.newSetFromMap(new IdentityHashMap<>()));
 			if(sources.isEmpty())
 				throw new IllegalArgumentException("EXACT_LATENT_WDIVMM_RUNTIME_SOURCE_CYCLE|read="
-					+ runtime.weights().normalizedSignature());
+					+ weightsKey.normalizedSignature());
 			for(RuntimeMaterializationSource sourceFact : sources) {
 				if(!domains.containsKey(sourceFact.occurrence()))
 					throw new IllegalArgumentException(
@@ -1570,10 +1915,12 @@ public final class ExactPhysicalCostModel {
 						demand.activationWeight(), demand.branchLiterals())));
 			}
 			double[] unitPrices = new double[source.alternatives().size()];
+			PhysicalWorkerCounts sourceCounts = new PhysicalWorkerCounts();
 			for(int index = 0; index < unitPrices.length; index++)
 				unitPrices[index] = cpOwner == null ? 0d : requireCost(PlacementCostSemantics
 					.latentWdivmmCpRuntimeInputMaterializationCost(bytes, cpOwner,
-						source.alternatives().get(index).state(), workers),
+						source.alternatives().get(index).state(), realizationWorkerCount(
+							analysis, source.alternatives().get(index), workers, sourceCounts)),
 					"EXACT_LATENT_WDIVMM_RUNTIME_INPUT_UNIT_UNPROVEN");
 			addMaterializationActivationFactors("exact-runtime-input|"
 				+ sourceKey.occurrence().normalizedSignature() + '|' + sourceKey.valueVersion().normalizedSignature()
@@ -1656,15 +2003,6 @@ public final class ExactPhysicalCostModel {
 		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead,
 		IdentityHashMap<CompiledHopKey,List<LogicalFunctionInputFact>> functionByRead,
 		Set<CompiledHopKey> visiting) {
-		return runtimeMaterializationSources(
-			analysis, read, transientByRead, functionByRead, visiting, false);
-	}
-
-	private static List<RuntimeMaterializationSource> runtimeMaterializationSources(
-		PlacementAnalysis analysis, CompiledHopKey read,
-		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead,
-		IdentityHashMap<CompiledHopKey,List<LogicalFunctionInputFact>> functionByRead,
-		Set<CompiledHopKey> visiting, boolean followTransientAssignments) {
 		// Loop-backedge alias cycles do not prove a unique payload origin. Ordinary
 		// costing retains the read's creation scope; latent source authority requires
 		// a complete resolution and rejects this empty result at its call site.
@@ -1676,12 +2014,11 @@ public final class ExactPhysicalCostModel {
 				direct.add(fact.sourceWrite());
 			for(LogicalFunctionInputFact fact : functionByRead.getOrDefault(read, List.of()))
 				direct.add(fact.sourceArgument());
-			CompiledHopKey passThroughRead = followTransientAssignments
-				? runtimeMaterializationAssignedInput(analysis, read)
-				: runtimeMaterializationPassThroughRead(analysis, read);
+			CompiledHopKey passThroughRead = runtimeMaterializationPassThroughRead(
+				analysis, read);
 			if(direct.isEmpty() && passThroughRead != null)
 				return runtimeMaterializationSources(analysis, passThroughRead,
-					transientByRead, functionByRead, visiting, followTransientAssignments);
+					transientByRead, functionByRead, visiting);
 			if(direct.isEmpty()) {
 				ValueVersionKey value = analysis.graph().node(read).orElseThrow().valueVersion();
 				return List.of(new RuntimeMaterializationSource(read, value));
@@ -1689,12 +2026,9 @@ public final class ExactPhysicalCostModel {
 			Map<String,RuntimeMaterializationSource> resolved = new LinkedHashMap<>();
 			for(CompiledHopKey source : direct.stream().distinct().sorted().toList()) {
 				List<RuntimeMaterializationSource> authorities = runtimeMaterializationSources(
-					analysis, source, transientByRead, functionByRead, visiting,
-					followTransientAssignments);
+					analysis, source, transientByRead, functionByRead, visiting);
 				if(authorities.isEmpty()) {
-					CompiledHopKey passThrough = followTransientAssignments
-						? runtimeMaterializationAssignedInput(analysis, source)
-						: runtimeMaterializationPassThroughRead(analysis, source);
+					CompiledHopKey passThrough = runtimeMaterializationPassThroughRead(analysis, source);
 					// A compiler-inserted W=W loop carrier may point back to the very
 					// phi/read currently being resolved. It introduces no new payload;
 					// ignore only this exact cyclic carrier and retain independently
@@ -1718,9 +2052,10 @@ public final class ExactPhysicalCostModel {
 	}
 
 	/**
-	 * Collapse compiler-inserted {@code W = W} transient carriers. These writes
-	 * execute at statement-block/loop boundaries but do not create a new MatrixObject
-	 * payload or invalidate an already materialized local block.
+	 * Follow a transient assignment to the compiled value whose Data object it
+	 * publishes. Variable assignment rebinds that object and does not itself create
+	 * another MatrixObject payload. Loop-carrier {@code W = W} is the degenerate
+	 * instance of the same runtime contract.
 	 */
 	private static CompiledHopKey runtimeMaterializationPassThroughRead(
 		PlacementAnalysis analysis, CompiledHopKey occurrence) {
@@ -1732,22 +2067,10 @@ public final class ExactPhysicalCostModel {
 		if(inputs.size() != 1 || inputs.get(0).inputPosition() != 0)
 			return null;
 		CompiledHopKey producer = inputs.get(0).producer();
-		Hop producerHop = analysis.hop(producer).orElseThrow();
-		return producerHop instanceof DataOp read
-			&& read.getOp() == OpOpData.TRANSIENTREAD
-			&& Objects.equals(write.getName(), read.getName()) ? producer : null;
-	}
-
-	/** Ordinary GET ownership follows the Data object published by any transient assignment. */
-	private static CompiledHopKey runtimeMaterializationAssignedInput(
-		PlacementAnalysis analysis, CompiledHopKey occurrence) {
-		Hop hop = analysis.hop(occurrence).orElseThrow();
-		if(!(hop instanceof DataOp write) || write.getOp() != OpOpData.TRANSIENTWRITE)
-			return null;
-		List<CompiledInputEdgeFact> inputs = analysis.compiledInputEdgesInCanonicalOrder()
-			.stream().filter(edge -> edge.consumer() == occurrence).toList();
-		return inputs.size() == 1 && inputs.get(0).inputPosition() == 0
-			? inputs.get(0).producer() : null;
+		// TRANSIENTWRITE publishes its input Data object under the target
+		// variable name. The assignment creates a variable version, not a new
+		// MatrixObject payload; the compiled producer remains the copy origin.
+		return producer;
 	}
 
 	static double reusableActivationUnion(List<List<BranchLiteral>> events,
@@ -1799,17 +2122,15 @@ public final class ExactPhysicalCostModel {
 				PlacementCostSemantics.latentWdivmmFusedInputPreparationBytes(
 					analysis, edge.producer(), edge.consumer(), edge.inputPosition());
 			double weight = frequencies.exactForwardingWeight(edge.consumer(), edge.producer());
+			ExecutionWorkerCounts executionCounts = new ExecutionWorkerCounts();
 			int[] targetWorkerCounts = consumer.alternatives().stream()
-				.mapToInt(target -> nativeLocalInputWorkerCount(
-					target.inputAuthorities(), workers, physicalWorkerCounts)).toArray();
-			// Target facts are evaluated in first-source/target order only after aggregate
-			// structural preflight. Source candidate receipts do not affect this cost:
-			// it observes only LOUT, or the concrete FOUT layout. Preserve the original
-			// policy contribution while giving the exact kernel that smaller observation.
+				.mapToInt(target -> executionWorkerCount(analysis, target, workers,
+					physicalWorkerCounts, executionCounts)).toArray();
+			// GETs, including bounded native-local payloads, share the materialization
+			// collector. This factor owns only per-instruction PUT preparation.
 			NativeLocalTargetCost[] targetCosts = new NativeLocalTargetCost[consumer.alternatives().size()];
 			var canonical = ExactCategoricalSolver.Factor.lazy(
 				List.of(producer.variable(), consumer.variable()), values -> {
-					ExactPhysicalModel.Alternative source = producer.alternatives().get(values[0]);
 					int targetIndex = values[1];
 					NativeLocalTargetCost targetCost = targetCosts[targetIndex];
 					if(targetCost == null) {
@@ -1820,28 +2141,13 @@ public final class ExactPhysicalCostModel {
 					}
 					if(!targetCost.applicable())
 						return 0.0;
-					double cost = targetCost.baseCost();
-					if(source.state().output() == FederatedOutput.FOUT) {
-						FType sourceType = Objects.requireNonNull(source.state().fType(),
-							"FOUT native-local source has no exact FType");
-						cost += FederatedCostModel.computeReusableMaterializationDownloadCost(
-							targetCost.sourceBytes(), sourceType, workers);
-					}
-					return requireCost(weight * cost,
+					return requireCost(weight * targetCost.baseCost(),
 						"EXACT_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
 				});
 			factors.add(canonical);
-			Map<FType,Integer> sourceClasses = new LinkedHashMap<>();
 			int[] sourceClass = new int[producer.alternatives().size()];
-			for(int value = 0; value < sourceClass.length; value++) {
-				var state = producer.alternatives().get(value).state();
-				FType type = state.output() == FederatedOutput.FOUT
-					? Objects.requireNonNull(state.fType(), "FOUT native-local source has no exact FType") : null;
-				sourceClass[value] = sourceClasses.computeIfAbsent(type, ignored -> sourceClasses.size());
-			}
 			long originalCells = (long) sourceClass.length * consumer.alternatives().size();
-			long projectedCells = (long) sourceClasses.size()
-				* (sourceClass.length + (long) consumer.alternatives().size());
+			long projectedCells = sourceClass.length + (long) consumer.alternatives().size();
 			logicalCells += originalCells;
 			if(projectedCells < originalCells) {
 				String key = "exact-native-local|" + edge.producer().normalizedSignature() + '|'
@@ -1936,7 +2242,7 @@ public final class ExactPhysicalCostModel {
 		FederatedCostModel.MixedFedLocalCost mixed =
 			PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis,
 				edge.consumer(), new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
-				unitLocalCost(analysis, sparseAssignments, edge.consumer(), consumerHop),
+				0.0, // This projection prices transfers only; kernel work is prepared once per occurrence.
 				effectiveOutputBytes(analysis, sparseAssignments,
 					edge.consumer(), consumerHop), targetWorkers);
 		double cost;
@@ -1950,14 +2256,12 @@ public final class ExactPhysicalCostModel {
 		else
 			cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
 				executionFType, targetWorkers);
-		double sourceBytes = boundedElementwise == null ? bytes
-			: boundedElementwise.logicalBytesUpperBound();
-		return new NativeLocalTargetCost(true, cost, sourceBytes);
+		return new NativeLocalTargetCost(true, cost);
 	}
 
-	private record NativeLocalTargetCost(boolean applicable, double baseCost, double sourceBytes) {
+	private record NativeLocalTargetCost(boolean applicable, double baseCost) {
 		private static final NativeLocalTargetCost NOT_APPLICABLE =
-			new NativeLocalTargetCost(false, 0.0, 0.0);
+			new NativeLocalTargetCost(false, 0.0);
 	}
 
 	private static String outputLayoutIdentity(ExactPhysicalModel.Alternative alternative) {
@@ -1972,6 +2276,75 @@ public final class ExactPhysicalCostModel {
 		ExactPhysicalModel.Alternative alternative, int fallbackWorkers) {
 		return realizationWorkerCount(analysis, alternative, fallbackWorkers,
 			new PhysicalWorkerCounts());
+	}
+
+	static int executionWorkerCount(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative alternative, int fallbackWorkers) {
+		return executionWorkerCount(analysis, alternative, fallbackWorkers,
+			new PhysicalWorkerCounts(), new ExecutionWorkerCounts());
+	}
+
+	private static int executionWorkerCount(PlacementAnalysis analysis,
+		ExactPhysicalModel.Alternative alternative, int fallbackWorkers,
+		PhysicalWorkerCounts physicalWorkerCounts,
+		ExecutionWorkerCounts executionWorkerCounts) {
+		// WDivMM dispatches exclusively through W's FederationMap. Remote U/V/MX
+		// are preparation sources, not extra execution workers. A union of their
+		// endpoints would shrink kernel work and inflate broadcasts simultaneously.
+		Hop owner = analysis.hop(alternative.decision()).orElse(null);
+		if(owner instanceof org.apache.sysds.hops.QuaternaryOp q
+			&& q.getOp() == org.apache.sysds.common.Types.OpOp4.WDIVMM && alternative.supportClause() != null) {
+			for(var binding : alternative.supportClause().inputBindings()) {
+				if(binding.inputPosition() != 0) continue;
+				if(binding.relocationAction() != null)
+					return physicalWorkerCounts.count(binding.relocationAction().durableAnchor());
+				var sourceKey = binding.source().rule().parentOccurrence();
+				if(analysis.hop(sourceKey).orElse(null) instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+					var anchors = analysis.graph().node(sourceKey).orElseThrow().anchors();
+					if(anchors.size() == 1) return physicalWorkerCounts.count(anchors.get(0));
+				}
+				var weights = analysis.requireExactCandidateRealization(binding.source());
+				Set<Integer> counts = new LinkedHashSet<>();
+				for(var clause : weights.supportClauses())
+					counts.add(realizationWorkerCount(analysis, weights, clause, new LinkedHashSet<>(), physicalWorkerCounts));
+				if(counts.size() == 1 && counts.iterator().next() > 0) return counts.iterator().next();
+			}
+			var edge = analysis.compiledInputEdge(alternative.decision(), 0).orElse(null);
+			boolean direct = alternative.inputAuthorities().stream().anyMatch(a -> a.inputPosition() == 0
+				&& a.kind() == ExactPhysicalModel.InputAuthorityKind.DIRECT_FOUT);
+			if(direct && edge != null && analysis.hop(edge.producer()).orElse(null)
+				instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+				var anchors = analysis.graph().node(edge.producer()).orElseThrow().anchors();
+				if(anchors.size() == 1) return physicalWorkerCounts.count(anchors.get(0));
+			}
+		}
+		// Relocation-backed alternatives carry the execution realization and a
+		// different emitted durable anchor. Captured derived-FOUT realizations also
+		// carry their materialized output anchor, so their execution pool must come
+		// exclusively from the support clause.
+		if(alternative.realization() != null) {
+			CandidateEmissionFact emission = alternative.captured()
+				? alternative.candidateEmission() : alternative.executionEmission();
+			boolean derivedFout = emission != null && emission.emissionState().derivedFedFout();
+			Integer cached = executionWorkerCounts.get(
+				alternative.realization(), alternative.supportClause(), derivedFout);
+			int exact = cached == null ? (derivedFout
+				? realizationSupportWorkerCount(analysis, alternative.supportClause(),
+					new LinkedHashSet<>(), physicalWorkerCounts)
+				: realizationWorkerCount(analysis, alternative.realization(),
+					alternative.supportClause(), new LinkedHashSet<>(), physicalWorkerCounts)) : cached;
+			// Cache only proven top-level support. A zero may be contextual to cycle
+			// detection and must not poison another alternative.
+			if(cached == null && exact > 0)
+				executionWorkerCounts.put(
+					alternative.realization(), alternative.supportClause(), derivedFout, exact);
+			return exact > 0 ? exact : Math.max(1, fallbackWorkers);
+		}
+		// A federated source has no separate execution realization: its durable map
+		// is both the source and execution pool.
+		if(alternative.durableAnchor() != null)
+			return physicalWorkerCounts.count(alternative.durableAnchor());
+		return Math.max(1, fallbackWorkers);
 	}
 
 	private static int realizationWorkerCount(PlacementAnalysis analysis,
@@ -1995,6 +2368,14 @@ public final class ExactPhysicalCostModel {
 		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(realization.anchor() != null)
 			return physicalWorkerCounts.count(realization.anchor());
+		return realizationSupportWorkerCount(
+			analysis, selectedClause, visiting, physicalWorkerCounts);
+	}
+
+	private static int realizationSupportWorkerCount(PlacementAnalysis analysis,
+		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting,
+		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(selectedClause.nativeWorkerPoolWitness() != null)
 			return physicalWorkerCounts.count(selectedClause.nativeWorkerPoolWitness());
 		Set<Integer> counts = new LinkedHashSet<>();
@@ -2060,6 +2441,32 @@ public final class ExactPhysicalCostModel {
 		}
 	}
 
+	private static final class ExecutionWorkerCounts {
+		private final IdentityHashMap<PlacementAnalysis.CandidateRealizationSupportClause,Integer>
+			derivedBySupport = new IdentityHashMap<>();
+		private final IdentityHashMap<PlacementAnalysis.CandidateEmissionRealization,
+			IdentityHashMap<PlacementAnalysis.CandidateRealizationSupportClause,Integer>>
+			ordinaryByRealization = new IdentityHashMap<>();
+
+		private Integer get(PlacementAnalysis.CandidateEmissionRealization realization,
+			PlacementAnalysis.CandidateRealizationSupportClause supportClause, boolean derivedFout) {
+			if(derivedFout)
+				return derivedBySupport.get(supportClause);
+			var bySupport = ordinaryByRealization.get(realization);
+			return bySupport == null ? null : bySupport.get(supportClause);
+		}
+
+		private void put(PlacementAnalysis.CandidateEmissionRealization realization,
+			PlacementAnalysis.CandidateRealizationSupportClause supportClause,
+			boolean derivedFout, int workers) {
+			if(derivedFout)
+				derivedBySupport.put(supportClause, workers);
+			else
+				ordinaryByRealization.computeIfAbsent(realization,
+					ignored -> new IdentityHashMap<>()).put(supportClause, workers);
+		}
+	}
+
 	static record PhysicalWorkerCountCacheProbe(List<Integer> counts, int computations) {
 		PhysicalWorkerCountCacheProbe { counts = List.copyOf(counts); }
 	}
@@ -2092,6 +2499,62 @@ public final class ExactPhysicalCostModel {
 			? executionFType : FType.BROADCAST;
 	}
 
+	private static boolean retainedFunctionCoverageProven(
+		OccurrenceExecutionFrequencyFacts frequencies, EffectiveLogicalFunctionInput input,
+		CompiledHopKey source) {
+		List<OccurrenceExecutionFrequencyFacts.FunctionBoundaryOccurrenceFact> occurrences =
+			frequencies.exactFunctionBoundaryOccurrences(input.authority());
+		if(occurrences.isEmpty())
+			return false;
+		List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> sourceProfiles;
+		List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> targetProfiles;
+		try {
+			sourceProfiles = frequencies.exactProfiles(source);
+			targetProfiles = frequencies.exactProfiles(input.targetRead());
+		}
+		catch(IllegalArgumentException unproven) {
+			return false;
+		}
+		for(var occurrence : occurrences) {
+			boolean callerKnown = sourceProfiles.stream().anyMatch(profile ->
+				profile.contextOrdinal() == occurrence.callerContextOrdinal());
+			boolean calleeKnown = targetProfiles.stream().anyMatch(profile ->
+				profile.contextOrdinal() == occurrence.calleeProfile().contextOrdinal());
+			if(!callerKnown || !calleeKnown)
+				return false;
+		}
+		for(var sourceProfile : sourceProfiles)
+			if(sourceProfile.expectedExecutions() > 0.0 && occurrences.stream().noneMatch(occurrence ->
+				occurrence.callerContextOrdinal() == sourceProfile.contextOrdinal()))
+				return false;
+		return true;
+	}
+
+	private static double physicalLogicalFunctionInputBytes(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments, EffectiveLogicalFunctionInput input,
+		ExactPhysicalModel.DecisionDomain source, ExactPhysicalModel.DecisionDomain formal) {
+		Hop sourceHop = analysis.hop(source.node().key()).orElseThrow();
+		double bytes = sparseAssignments.serializedEstimate(source.node().key());
+		boolean unresolvedMatrixShape = sourceHop.getDataType() != null
+			&& sourceHop.getDataType().isMatrix()
+			&& (!sourceHop.dimsKnown() || sourceHop.getDim1() <= 0 || sourceHop.getDim2() <= 0);
+		if((!Double.isFinite(bytes) || bytes <= 0.0) && unresolvedMatrixShape) {
+			bytes = PlacementCostSemantics.analysisAwareDenseOutputBytes(
+				analysis, source.node().key());
+			if(Double.isFinite(bytes) && bytes > 0.0 && sourceHop.getNnz() >= 0) {
+				var shape = analysis.abstractShapeFact(source.node().key()).orElseThrow();
+				bytes = MatrixBlock.estimateSizeOnDisk(
+					shape.rows().value(), shape.cols().value(), sourceHop.getNnz());
+			}
+		}
+		if(!Double.isFinite(bytes) || bytes <= 0.0)
+			bytes = PlacementCostSemantics.boundedDenseOutputBytes(analysis, source.node().key());
+		if(!Double.isFinite(bytes) || bytes <= 0.0)
+			bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+				analysis.hop(formal.node().key()).orElseThrow(), sourceHop);
+		return bytes;
+	}
+
 	private static void addPhysicalLogicalFunctionFactors(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
@@ -2099,36 +2562,21 @@ public final class ExactPhysicalCostModel {
 		OccurrenceExecutionFrequencyFacts frequencies,
 		Set<LatentWdivmmRuntimeTransferBoundary> latentRuntimeBoundaries,
 		List<ExactCategoricalSolver.Factor> factors,
-		List<PhysicalTransferKey> transferKeys) {
+		List<PhysicalTransferKey> transferKeys,
+		Set<RetainedFunctionDownload> retainedFunctionDownloads) {
 		for(EffectiveLogicalFunctionInput input : effectiveLogicalFunctionInputs(analysis)) {
 			ExactPhysicalModel.DecisionDomain source = domains.get(input.authority().sourceArgument());
 			ExactPhysicalModel.DecisionDomain formal = domains.get(input.targetRead());
 			if(source == null || formal == null)
 				continue;
-			Hop sourceHop = analysis.hop(source.node().key()).orElseThrow();
-			double bytes = sparseAssignments.serializedEstimate(source.node().key());
-			boolean unresolvedMatrixShape = sourceHop.getDataType() != null
-				&& sourceHop.getDataType().isMatrix()
-				&& (!sourceHop.dimsKnown() || sourceHop.getDim1() <= 0 || sourceHop.getDim2() <= 0);
-			if((!Double.isFinite(bytes) || bytes <= 0.0) && unresolvedMatrixShape) {
-				bytes = PlacementCostSemantics.analysisAwareDenseOutputBytes(
-					analysis, source.node().key());
-				if(Double.isFinite(bytes) && bytes > 0.0 && sourceHop.getNnz() >= 0) {
-					var shape = analysis.abstractShapeFact(source.node().key()).orElseThrow();
-					bytes = MatrixBlock.estimateSizeOnDisk(
-						shape.rows().value(), shape.cols().value(), sourceHop.getNnz());
-				}
-			}
-			if(!Double.isFinite(bytes) || bytes <= 0.0)
-				bytes = PlacementCostSemantics.boundedDenseOutputBytes(analysis, source.node().key());
-			if(!Double.isFinite(bytes) || bytes <= 0.0)
-				bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
-					analysis.hop(formal.node().key()).orElseThrow(),
-					sourceHop);
+			double bytes = physicalLogicalFunctionInputBytes(analysis, sparseAssignments, input,
+				source, formal);
 			double callWeight = frequencies.logicalFunctionCallWeight(input.authority());
 			List<FType> sourceTypes = source.alternatives().stream().map(a -> a.state().fType())
 				.filter(Objects::nonNull).distinct().toList();
 			for(FType type : sourceTypes) {
+				if(retainedFunctionDownloads.contains(new RetainedFunctionDownload(input, type)))
+					continue;
 				double[] costs = new double[source.alternatives().size()];
 				for(int index = 0; index < costs.length; index++) {
 					var alternative = source.alternatives().get(index);
@@ -2159,24 +2607,30 @@ public final class ExactPhysicalCostModel {
 				for(Map.Entry<String,RelocationAction> uploadEntry : uploadActions.entrySet()) {
 					RelocationAction action = uploadEntry.getValue();
 					FType type = action.key().materializationFType();
-					double upload = requireCost(callWeight * (FederatedCostModel.computeUploadNetworkCost(bytes,
-						type, workers) + FederatedCostModel.computeLocalToFedForwardingPenalty(type, workers)),
+					int targetWorkers = physicalWorkerCounts.count(action.key().durableAnchor());
+					double upload = requireCost(callWeight * FederatedCostModel.computeUploadNetworkCost(bytes,
+						type, targetWorkers),
 						"EXACT_PHYSICAL_LOGICAL_FUNCTION_UPLOAD_COST_UNPROVEN");
-					double refedDownload = requireCost(callWeight
-						* FederatedCostModel.computeDownloadNetworkCost(bytes),
-						"EXACT_PHYSICAL_LOGICAL_FUNCTION_REFED_DOWNLOAD_COST_UNPROVEN");
+					double[] refedDownloads = new double[source.alternatives().size()];
+					for(int index = 0; index < refedDownloads.length; index++) {
+						var sourceAlternative = source.alternatives().get(index);
+						if(sourceAlternative.state().output() == FederatedOutput.FOUT)
+							refedDownloads[index] = requireCost(callWeight
+								* FederatedCostModel.computeReusableMaterializationDownloadCost(bytes,
+									sourceAlternative.state().fType(), realizationWorkerCount(
+										analysis, sourceAlternative, workers, physicalWorkerCounts)),
+								"EXACT_PHYSICAL_LOGICAL_FUNCTION_REFED_DOWNLOAD_COST_UNPROVEN");
+					}
 					String emissionIdentity = uploadEntry.getKey();
 					factors.add(ExactCategoricalSolver.Factor.lazy(
 						List.of(source.variable(), formal.variable()), values -> {
-							PlacementState sourceState = source.alternatives().get(values[0]).state();
 							boolean active = formal.alternatives().get(values[1]).inputAuthorities().stream()
 								.anyMatch(authority -> authority.inputPosition() == input.logicalPosition()
 									&& authority.kind()
 										== ExactPhysicalModel.InputAuthorityKind.RELOCATION
 									&& RelocationSelections.physicalEmissionIdentity(
 										authority.relocationAction().key()).equals(emissionIdentity));
-							return active ? upload + (sourceState.output() == FederatedOutput.FOUT
-								? refedDownload : 0.0) : 0.0;
+							return active ? upload + refedDownloads[values[0]] : 0.0;
 						}));
 					transferKeys.add(new PhysicalTransferKey(source.node().valueVersion(),
 						List.of(new PhysicalTransferEndpoint(source.node().key(), formal.node().key(),
@@ -2200,50 +2654,51 @@ public final class ExactPhysicalCostModel {
 	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop,
 		List<FType> inputFTypes, FType executionFType, int workers, double executionWeight) {
-		double base = cpUnaryCost(analysis, sparseAssignments, key, hop, executionWeight);
+		return fedCostProjection(analysis, sparseAssignments, key, hop, inputFTypes,
+			executionFType, workers, executionWeight, new FederatedExecutionLayout(executionFType,
+				Math.max(1, workers), inputFTypes.stream()
+					.map(type -> new InputLayout(type, List.of(), false)).toList()));
+	}
+
+	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
+		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop,
+		List<FType> inputFTypes, FType executionFType, int workers, double executionWeight,
+		FederatedExecutionLayout layout) {
+		PreparedExecutionCost prepared = PlacementCostSemantics.prepareExecutionCost(analysis, sparseAssignments, key);
+		if(prepared.removedKernel() || prepared.fusedWeightsOccurrence() != null)
+			return FedCostProjection.none();
+		double base = executionWeight * prepared.localCost();
 		return fedCostProjection(analysis, key, hop, inputFTypes, executionFType, workers,
 			executionWeight, base, effectiveOutputBytes(analysis, sparseAssignments, key, hop),
-			effectiveUploadBytes(analysis, sparseAssignments, key, hop));
+			effectiveUploadBytes(analysis, sparseAssignments, key, hop),
+			executionWeight * prepared.federatedCost(layout), prepared.outputResponses(layout,
+				effectiveUploadBytes(analysis, sparseAssignments, key, hop)), layout);
 	}
 
 	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
 		CompiledHopKey key, Hop hop, List<FType> inputFTypes, FType executionFType,
 		int workers, double executionWeight, double base, double outputBytes,
-		double uploadBytes) {
+		double uploadBytes, double fedCompute, PlacementCostSemantics.WorkerResponseSummary responses,
+		FederatedExecutionLayout layout) {
 		if(executionFType == null)
 			throw new IllegalArgumentException("EXACT_FED_EXECUTION_LAYOUT_UNPROVEN");
-		boolean federatedSource = hop instanceof DataOp
-			&& ((DataOp)hop).getOp() == OpOpData.FEDERATED;
-		boolean broadcastOnlyFedCompute = !federatedSource
-			&& broadcastOnlyMatrixInputs(hop, inputFTypes)
-			&& !PlacementCostSemantics.hasPartitionedLatentWdivmmRuntimeInput(
-				analysis, key);
-		double fedCompute = PlacementCostSemantics.analysisAwareFederatedComputeCost(
-			analysis, key, base, workers, broadcastOnlyFedCompute);
-		fedCompute = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
-			hop, executionFType, fedCompute);
-		fedCompute = FederatedCostModel.computeNativeFederatedIndexingCost(
-			hop, executionFType, fedCompute);
-		double fedCoordination = hop instanceof DataOp ? 0.0
-			: FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
-				executionWeight * FederatedCostModel.computeFedCoordinationCost(workers));
 		double fedInstructionLatency = FederatedCostModel
-			.computeControlDominatedFederatedInstructionCost(hop, executionFType,
-				executionWeight, workers, broadcastOnlyFedCompute);
+			.computeFederatedInstructionNetworkCost(hop, executionWeight);
 		FederatedCostModel.MixedFedLocalCost mixed = hop instanceof DataOp
 			? FederatedCostModel.MixedFedLocalCost.none()
 			: PlacementCostSemantics.analysisAwareMixedFedLocalCost(analysis, key,
 				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
-				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers);
+				executionWeight > 0.0 ? base / executionWeight : 0.0, outputBytes, workers, layout);
 		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
-		// The legacy control-plane heuristic floors a positive call count at one.
-		// A compiler-proven unreachable occurrence is not a one-shot invocation.
-		double singleWorkerPenalty = executionWeight == 0.0 ? 0.0
-			: FederatedCostModel.computeSingleWorkerFedExecPenalty(hop, executionWeight, workers);
-		double fedCost = requireCost(fedCompute + fedCoordination + fedInstructionLatency
-			+ fedInputPreparation + singleWorkerPenalty, "EXACT_FED_COST_UNPROVEN");
+		double fedCost = requireCost(fedCompute + fedInstructionLatency
+			+ fedInputPreparation, "EXACT_FED_COST_UNPROVEN");
 
-		double resultDownloadUnit = FederatedCostModel.computeDownloadNetworkCost(uploadBytes);
+		double resultDownloadUnit = responses != null
+			&& !(hop instanceof org.apache.sysds.hops.AggUnaryOp)
+			&& !(hop instanceof org.apache.sysds.hops.AggBinaryOp)
+			&& !(hop instanceof org.apache.sysds.hops.QuaternaryOp)
+			? FederatedCostModel.computeNativeFederatedLoutResultCost(hop, responses)
+			: FederatedCostModel.computeNativeFederatedLoutResultCost(hop, executionFType, uploadBytes, workers);
 		if(!(hop instanceof DataOp)) {
 			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
 				hop, executionFType, outputBytes, workers, resultDownloadUnit);
@@ -2270,20 +2725,6 @@ public final class ExactPhysicalCostModel {
 			return requireCost(fedUnaryCost + resultDownloadCost,
 				"EXACT_FED_LOUT_COST_UNPROVEN");
 		}
-	}
-
-	private static boolean broadcastOnlyMatrixInputs(Hop hop, List<FType> inputFTypes) {
-		boolean hasMatrix = false;
-		for(int position = 0; position < hop.getInput().size(); position++) {
-			Hop input = hop.getInput(position);
-			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix())
-				continue;
-			hasMatrix = true;
-			FType inputType = position < inputFTypes.size() ? inputFTypes.get(position) : null;
-			if(inputType != null && inputType != FType.BROADCAST)
-				return false;
-		}
-		return hasMatrix;
 	}
 
 	private static double unitLocalCost(PlacementAnalysis analysis,
@@ -2364,6 +2805,13 @@ public final class ExactPhysicalCostModel {
 			.toList();
 	}
 
+	private record RetainedFunctionDownload(EffectiveLogicalFunctionInput input, FType type) {
+		private RetainedFunctionDownload {
+			Objects.requireNonNull(input, "input");
+			Objects.requireNonNull(type, "type");
+		}
+	}
+
 	private record EffectiveLogicalFunctionInput(LogicalFunctionInputFact authority,
 		LogicalTransientInputFact forwardedAuthority, CompiledHopKey targetRead) {
 		private EffectiveLogicalFunctionInput {
@@ -2394,13 +2842,6 @@ public final class ExactPhysicalCostModel {
 			throw new IllegalArgumentException("EXACT_TWRITE_EDGE_IDENTITY_UNPROVEN|consumer="
 				+ edge.consumer().normalizedSignature() + "|input=" + edge.inputPosition());
 		return BoundaryMode.TWRITE_METADATA;
-	}
-
-	private static List<EffectiveLogicalFunctionInput> functionInputsForTarget(
-		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, CompiledHopKey target) {
-		return effectiveFunctionInputs.stream()
-			.filter(input -> input.targetRead() == target)
-			.toList();
 	}
 
 	private static double cpUnaryCost(PlacementAnalysis analysis,
