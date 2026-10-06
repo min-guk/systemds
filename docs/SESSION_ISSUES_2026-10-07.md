@@ -40,3 +40,26 @@
 - **독립 검토**: 세 변경 Java 파일에 대해 blocking finding 0. 원래 support 제약과 cycle token 보존, partial evaluator, exact/regional parity를 확인했다.
 - **정적 확인**: Java 전체 재컴파일(타입 검사 및 기존 unchecked lint 포함), `git diff --check` 통과. full checkstyle/RAT는 기존 targeted package 명령과 같이 skip했고 별도 전체 정적 분석 실행으로 주장하지 않는다.
 - **재현 artifact**: `target/joint-alias-evidence/{regression.log,final-test.log,final-build-source-sha.json,final-build-status.json,docker-command.json}`. Docker raw evidence는 `/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/joint-alias-candidate-01/`. 커밋되는 [검증 JSON](experiments/joint-alias-20261007/validation.json)에 hash·비교 수치·범위를 보존한다.
+
+## StepLM·LogReg·GLM 공통 병목 진단과 ablation — 진행 중
+
+- **새 요청**: 사용자가 StepLM, LogReg, GLM 세 workload가 모두 느리므로 공통 원인을 확인하고 통합 수정하도록 요청했다. 일곱 가지 최적화를 가정만으로 한꺼번에 적용하지 않고, 동일 baseline에서 측정한 원인별 변경을 비교해 채택한다.
+- **기준**: `57933f328c` 및 새 fetch의 origin/main 동일. 이전 LogReg의 analysis55.180초는 aggregate 측정이며 내부 memoization hotspot을 입증하지 않는다. StepLM/GLM의 과거 compile-only·다른 builtin 확장 결과를 이번 actual-training baseline으로 혼용하지 않는다.
+- **실행 계획**: 기존 Docker-only joint-boundary harness에 현재 builtin StepLM/GLM을 opt-in 추가한다. 동일 192×8 X, PRIVATE_AGGREGATE, 3 ROW workers, public local labels, 고정 image/resources에서 실제 학습과 CP 전체 결과 비교를 수행한다. 진단용 FED coordinator JFR을 별도 opt-in으로 보존하고 analysis/model/cost/optimizer/runtime phase와 hot stacks를 나눈다. baseline source/classes를 동결한 뒤 공통 hotspot을 겨냥한 작은 수정과 회귀를 적용한다. 효과 없는 ablation은 production에서 제외한다.
+- **채택 조건**: 합법 선택과 support/cost 계약을 보존하고 작은 전수 oracle·음성 회귀·fixed/free 복원을 통과해야 한다. 실제 학습의 모든 계수와 StepLM 선택 결과가 CP와 맞고 audit/runtime conversion 위반이 없어야 한다. 같은 입력·image·privacy·리소스의 반복 A/B에서 시간 및 작업량 이득을 확인하며, anytime upper/lower/gap을 함께 비교한다. 단순 후보 수 감소만으로 채택하지 않는다.
+- **구현 경계/소유권**: harness와 Python tests만 별도 agent가 수정한다. root만 production Java와 Maven/shared target을 관리한다. 소스 동결 이후 수정 금지를 유지한다. runtime fallback·privacy 완화·임의 후보 cap·builtin 알고리즘 대체는 도입하지 않는다.
+- **예상 위험**: loop/branch/function 문맥이나 analysis snapshot 경계가 다른 증명을 캐시하면 합법성이 달라질 수 있다. 조건부 결과는 경계와 free-set을 포함하거나 매번 재구축한다. 압축 표현/순서 변경이 local DP 탐색 경로를 바꿀 수 있으므로 비용 품질과 전체 컴파일 시간을 따로 확인한다.
+
+### 측정 기반 수정 계획 A/B
+
+- **A 관측**: 실제 LogReg FED JFR 2,873개 execution samples 중 common analysis 2,024개, single-partition proof 경로 901개다. 약 44.5%는 해당 분석 내부 표본 비율이며 wall time 비율로 단정하지 않는다.
+- **A 사전 회귀/설계**: 기존 synchronous 전체 inventory scan을 독립 oracle로 한 250개 무작위 그래프, 미접지 cycle, 긴 cycle, 늦은 multi-partition backedge, 다중 source conjunction, missing/동등 reference 회귀 9건이 baseline에서 통과했다. invocation 안의 불변 inventory에서 세 possibility bit의 단조 최소 고정점을 reverse-dependency worklist로 계산한다. 초기 모든 노드를 enqueue하고 self-edge와 전체 bit 변경을 보존하며 commit 간 cache 재사용은 하지 않는다. 최종 enum 우선순위도 유지한다.
+- **B 관측/계획**: GLM CP common analysis가 수 분째 종료되지 않아 실행 중인 소유 JVM에 60초 JFR을 부착했다. 2,333개 execution samples에서 Environment.stableKey 862개, Definition.stableKey 301개, Environment 생성자 204개가 application leaf다. 실행 도중 붙인 profile이므로 깨끗한 시간 비교 자료로 쓰지 않는다. 불변 환경의 같은 정의 재기록/중복 복사/키 계산을 줄이는 정확한 변경을 검토한다. provenance·call context·값/읽기 map equality와 정렬 계약을 유지한다.
+- **별도 correctness 문제**: baseline StepLM은 analysis 18.241초, model 1.447초 이후 EXACT_VE_NO_FEASIBLE_ASSIGNMENT로 실패한다. CP는 성공했다. 이를 성능 timeout과 혼용하지 않고 support/factor 원인을 별도 진단한다.
+
+### 범위 변경 — LogReg 집중
+
+- 사용자가 StepLM/GLM은 다른 담당자에게 맡기고 LogReg에 집중하도록 변경했다. 소유 mount를 확인한 GLM 두 컨테이너만 중지했다. 이 중단은 workload 실패나 timeout 수치로 집계하지 않는다. StepLM 진단 agent도 추가 작업과 소유 실행을 종료했다.
+- GLM 환경 표현 최적화 B 및 회귀는 `target/three-workload-evidence/handoff-glm-environment.patch`에 보존하고 현재 production/test 변경에서 제외했다. baseline 회귀 4건 및 후보+joint reaching-definition 회귀 13건은 통과했으나 GLM 성능 채택 검증은 미완료다.
+- StepLM 인계: alias projection을 비활성화해도 동일 실패다. binary arc consistency가 canonical input-authority factor 1123(m_lm)·1143(m_lmCG)의 유일 셀이 infinity여서 domain을 비운다. `ExactPhysicalModel.inputAuthorityProducts`에서 relocation authority가 먼저 생겨 sole-input action-free DIRECT_FOUT을 누락한다. 진단용 수정은 solver를 통과시키지만 canonical relocation completion에서 다시 실패하므로 그대로 채택하면 안 된다. 다음 담당자는 `ExactPhysicalSelection`의 demand completion과 direct authority 의미를 일치시켜야 한다. raw run은 `three-workload-ablation-20261007/diag-steplm-{unprojected,reduction-trace,single-fed-input}-57933f-*`, diagnostic overlays도 같은 root다.
+- LogReg A 첫 진단 실행은 전체 계수 16개와 audit를 통과했고, 최종 upper/lower/gap 및 assignments 17,336,646·merges 4,566이 baseline과 같다. analysis 53.872→31.044초, compilation72.507→44.005초지만 진단 실행 간 호스트 부하 차이가 있으므로 이 비율을 최종 효과로 단정하지 않는다. JFR 없는 순차 교차 실행으로 채택 효과를 다시 측정한다.

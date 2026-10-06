@@ -141,6 +141,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="write and validate fixtures/receipts without Docker")
     parser.add_argument("--debug-fedreq", action="store_true",
                         help="emit coordinator/worker federated request lifecycle diagnostics")
+    parser.add_argument("--profile-jfr", action="store_true",
+                        help="record JFR diagnostics for each FED coordinator process")
     return parser.parse_args(argv)
 
 
@@ -476,7 +478,8 @@ def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None) -> dict[
     return fixture_hashes
 
 
-def java_command(case: Case, mode: str, case_timeout_seconds: int = 300) -> str:
+def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
+                 profile_jfr: bool = False) -> str:
     audit = f"/evidence/audit/{case.name}-{mode}"
     properties = " ".join((
         "-Dsysds.fedplanner.runtime.audit=true",
@@ -490,10 +493,14 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300) -> str:
     ))
     if case.training:
         properties += " -Dsysds.fedplanner.trace=true -Dsysds.fedplanner.trace.details=false"
+    jfr = ('-XX:FlightRecorderOptions=stackdepth=256 '
+           f'-XX:StartFlightRecording=filename=/evidence/cases/{case.name}/fed.jfr,'
+           f'settings=profile,disk=true,dumponexit=true,duration={case_timeout_seconds - 1}s '
+           if profile_jfr and mode == "fed" else "")
     output_argument = (f' -nvargs MODEL_OUTPUT=/evidence/cases/{case.name}/{mode}-model.csv'
                        if case.training else "")
     return (f'timeout {case_timeout_seconds} java --add-modules jdk.incubator.vector -Xmx3g '
-            f'-XX:ActiveProcessorCount=4 {properties} -cp "$CP" '
+            f'-XX:ActiveProcessorCount=4 {jfr}{properties} -cp "$CP" '
             f'org.apache.sysds.api.DMLScript -f /evidence/cases/{case.name}/{mode}.dml '
             '-config /evidence/config.xml -exec singlenode -seed 7 '
             '-noFedRuntimeConversion -stats 100 -explain runtime'
@@ -504,6 +511,7 @@ def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PRO
                            case_timeout_seconds: int = 300,
                            selected: tuple[Case, ...] | None = None,
                            debug_fedreq: bool = False,
+                           profile_jfr: bool = False,
                            class_preflight: dict[str, dict[str, object]] | None = None) -> Path:
     write_json(run / "class-preflight-expected.json", class_preflight or {})
     lines = [
@@ -543,7 +551,7 @@ def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PRO
     for case in selected if selected is not None else default_cases():
         modes = ("fed",) if not case.expected_success else ("cp", "fed")
         for mode in modes:
-            command = java_command(case, mode, case_timeout_seconds)
+            command = java_command(case, mode, case_timeout_seconds, profile_jfr)
             lines.extend((
                 f"mkdir -p /evidence/audit/{case.name}-{mode}",
                 f"{command} > /evidence/cases/{case.name}/{mode}.log 2>&1",
@@ -570,6 +578,26 @@ def docker_command(run: Path, classes: Path, test_classes: Path,
         "--entrypoint", "bash", PINNED_IMAGE, "/evidence/container-run.sh",
     ]
     return container, command
+
+
+def jfr_profile_manifest(selected: tuple[Case, ...], enabled: bool,
+                         case_timeout_seconds: int,
+                         evidence_root: Path | None = None) -> dict[str, object]:
+    files: dict[str, dict[str, object]] = {}
+    if enabled:
+        for case in selected:
+            relative = Path("cases") / case.name / "fed.jfr"
+            path = evidence_root / relative if evidence_root is not None else None
+            entry: dict[str, object] = {"path": str(relative)}
+            if path is not None:
+                entry.update({"exists": path.is_file(),
+                              "size": path.stat().st_size if path.is_file() else 0,
+                              "sha256": sha256(path) if path.is_file() else None})
+            files[case.name] = entry
+    return {"enabled": enabled, "recordProfile": enabled,
+            "scope": "fed-coordinator-only", "stackDepth": 256,
+            "settings": "profile", "durationSeconds": case_timeout_seconds - 1,
+            "files": files}
 
 
 def markers(path: Path) -> dict[str, float]:
@@ -708,13 +736,20 @@ def action_diagnostics(log: Path, audit_rows: list[dict]) -> list[str]:
 
 
 def evaluate(run: Path, container_returncode: int,
-             selected: tuple[Case, ...] | None = None) -> dict:
+             selected: tuple[Case, ...] | None = None,
+             profile_jfr: bool = False,
+             case_timeout_seconds: int = 300) -> dict:
     results: list[dict] = []
     all_frontiers: list[dict] = []
     all_actions: list[str] = []
     required_action_cases: dict[str, bool] = {}
     selected_cases = selected if selected is not None else default_cases()
     for case in selected_cases:
+        jfr_evidence = jfr_profile_manifest(
+            (case,), profile_jfr, case_timeout_seconds, run)["files"].get(case.name)
+        jfr_passed = (not profile_jfr or bool(
+            jfr_evidence and jfr_evidence["exists"] and jfr_evidence["size"] > 0
+            and jfr_evidence["sha256"]))
         fed_log = run / "cases" / case.name / "fed.log"
         fed_rc = read_rc(run / "cases" / case.name / "fed.rc")
         audit_rows, audit_errors = read_audits(run / "audit" / f"{case.name}-fed")
@@ -783,6 +818,7 @@ def evaluate(run: Path, container_returncode: int,
                       and not audit_violations
                       and (not case.training or bool(model_comparison and
                            model_comparison["matched"] and model_comparison["nonzero"]))
+                      and jfr_passed
                       and (not case.requires_loss_progress or bool(
                            loss_progress and loss_progress["decreased"]))
                       and trace_complete
@@ -794,6 +830,8 @@ def evaluate(run: Path, container_returncode: int,
                       "auditErrors": audit_errors, "actionDiagnostics": actions,
                       "runtimeAuditViolations": audit_violations,
                       "modelComparison": model_comparison,
+                      "jfrProfile": jfr_evidence,
+                      "jfrProfilePassed": jfr_passed,
                       "plannerCheckpoints": checkpoints,
                       "plannerCheckpointSummary": checkpoint_summary,
                       "plannerTraceComplete": trace_complete,
@@ -822,8 +860,9 @@ def evaluate(run: Path, container_returncode: int,
                              and bool(re.search(r"(?i)privacy|private", text)))
                 expected = "privacy_rejection"
             result = {"case": case.name, "expected": expected,
-                      "passed": rejection and not audit_errors,
+                      "passed": rejection and not audit_errors and jfr_passed,
                       "fedReturncode": fed_rc, "rejectionDiagnostic": rejection,
+                      "jfrProfile": jfr_evidence, "jfrProfilePassed": jfr_passed,
                       "auditSchemas": schemas, "auditRows": len(audit_rows),
                       "auditErrors": audit_errors, "actionDiagnostics": actions}
         results.append(result)
@@ -854,6 +893,8 @@ def evaluate(run: Path, container_returncode: int,
             "noFedRuntimeConversion": len(runtime_conversions) == 0,
             "runtimeConversionViolations": runtime_conversions,
             "modelProofPassed": model_proof_passed, "modelProofReturncode": model_proof_rc,
+            "recordProfile": profile_jfr,
+            "jfrProfilePassed": all(item["jfrProfilePassed"] for item in results),
             "actionEvidencePresent": action_gate, "requiredActionCases": required_action_cases,
             "requestedCases": [case.name for case in selected_cases],
             "actionDiagnostics": sorted(set(all_actions)),
@@ -918,8 +959,9 @@ def main(argv: list[str] | None = None) -> int:
         if not args.dry_run else {})
     input_hashes = write_inputs(stage, selected)
     fixture_hashes = write_fixtures(stage, selected)
-    script = write_container_script(stage, args.model_proof_class, args.case_timeout_seconds,
-                                    selected, args.debug_fedreq, preflight)
+    script = write_container_script(
+        stage, args.model_proof_class, args.case_timeout_seconds, selected,
+        args.debug_fedreq, args.profile_jfr, preflight)
     container, command = docker_command(
         stage, frozen_classes, frozen_test_classes, frozen_dependencies)
     runner_source = Path(__file__).resolve()
@@ -960,6 +1002,8 @@ def main(argv: list[str] | None = None) -> int:
         "caseTimeoutSeconds": args.case_timeout_seconds,
         "classPreflightExpected": preflight,
         "debugFedreq": args.debug_fedreq,
+        "jfrProfile": jfr_profile_manifest(
+            selected, args.profile_jfr, args.case_timeout_seconds),
         "requestedCases": [case.name for case in selected],
         "dryRun": args.dry_run, "buildReady": classes.is_dir() and test_classes.is_dir(),
     }
@@ -970,6 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(stage)
         write_json(run / "result.json", {"schema": "systemds-joint-boundary-e2e-v1",
                                           "status": "DRY_RUN", "buildReady": True,
+                                          "recordProfile": args.profile_jfr,
                                           "requestedCases": [case.name for case in selected]})
         print(json.dumps({"status": "DRY_RUN", "run": str(run),
                           "buildReady": True}, sort_keys=True))
@@ -983,7 +1028,11 @@ def main(argv: list[str] | None = None) -> int:
                                    timeout=args.timeout_seconds, check=False)
     shutil.copytree(stage, run, dirs_exist_ok=True)
     shutil.rmtree(stage)
-    result = evaluate(run, completed.returncode, selected)
+    manifest["jfrProfile"] = jfr_profile_manifest(
+        selected, args.profile_jfr, args.case_timeout_seconds, run)
+    write_json(run / "manifest.json", manifest)
+    result = evaluate(run, completed.returncode, selected, args.profile_jfr,
+                      args.case_timeout_seconds)
     result["run"] = str(run)
     result["image"] = inspected
     write_json(run / "result.json", result)
