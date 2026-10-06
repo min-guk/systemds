@@ -244,5 +244,193 @@
       "sha256": "db7cf9d9e2ca3c3f64d0801c20e4ca1a26a05cf97c0cc7b1d14bf88576866df9",
       "bytes": 165
     }
+  },
+  "mainIntegration": {
+    "remoteMain": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+    "testedMergeCommit": "c890fb651f6653791e70a6335a027edf511bdf22",
+    "conflictResolution": "Only session documentation conflicted; preserve both additions. No production merge conflicts or integration source edits.",
+    "sourceSnapshotFileCount": 4305,
+    "sourceSnapshotSha256": "dacabf49343b4ae32680f1215d918eb2ed7aafb5b856d85c70b599a365e543d6",
+    "sourceSnapshotMatches": true,
+    "build": {
+      "exitCode": 0,
+      "command": [
+        "mvn",
+        "-q",
+        "-DskipTests",
+        "-Djacoco.skip=true",
+        "package"
+      ],
+      "jarSha256": "9dcf1903919f07e19e019582a80d4a408800bab188d8861c5212d9aac3aaaeab",
+      "sourceSnapshotMatches": true,
+      "sourceFileCount": 4305
+    },
+    "tests": {
+      "exitCode": 1,
+      "totals": {
+        "tests": 168,
+        "errors": 2,
+        "failures": 0,
+        "skipped": 0
+      },
+      "classes": [
+        {
+          "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+          "tests": 1,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 16.749
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDerivedSupplySharingTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.22
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalWitnessEncodingTest",
+          "tests": 5,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 6.517
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.placement.HeuristicLocalContinuationTest",
+          "tests": 9,
+          "errors": 2,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 52.86
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.placement.HeuristicProtectedNestedDemotionTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 3.646
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest",
+          "tests": 17,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 6.335
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAuditTest",
+          "tests": 79,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.778
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest",
+          "tests": 5,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.442
+        },
+        {
+          "class": "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelectorTest",
+          "tests": 11,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 4.58
+        },
+        {
+          "class": "org.apache.sysds.runtime.controlprogram.federated.FederatedSourceCacheIdentityTest",
+          "tests": 5,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.814
+        },
+        {
+          "class": "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest",
+          "tests": 30,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.619
+        }
+      ]
+    },
+    "knownErrors": "The same two HeuristicLocalContinuationTest analysis errors as the original main baseline; no new test failure.",
+    "dockerALS": {
+      "artifact": "/home/mchoi/als-fedall-greedy-20261006/target/fedpolicy-greedy-docker/als-run-afnm0crr",
+      "status": "passed",
+      "receiptSha256": "7dffa0d966098c5fda22d28695fff7e151168a5df86fd3363375083fee8e3d1a",
+      "manifestSha256": "de697ad9239ad9e6d210d4762f17734f32717b529e46f0da9bc4922da178f9e1",
+      "jarSha256": "9dcf1903919f07e19e019582a80d4a408800bab188d8861c5212d9aac3aaaeab",
+      "matrixComparison": {
+        "shape": [
+          10,
+          20
+        ],
+        "shapeValid": true,
+        "allFinite": true,
+        "entriesCompared": 200,
+        "absoluteTolerance": 1e-08,
+        "relativeTolerance": 1e-07,
+        "maxAbsoluteDifference": 0.0,
+        "withinTolerance": true,
+        "cpOutputSha256": {
+          "cp-V.csv": "b6e7b0e5b5c482fc9dfd3a41db9a923c628d9830b5d1f036468221bd4345d597"
+        },
+        "fedallOutputSha256": {
+          "fedall-V.csv": "b6e7b0e5b5c482fc9dfd3a41db9a923c628d9830b5d1f036468221bd4345d597"
+        }
+      },
+      "runs": {
+        "cp": {
+          "planner": "NONE",
+          "compileNanos": 1754880931,
+          "executionNanos": 917542956,
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0,
+          "federatedComputeHeavyHitters": {},
+          "runtimeAuditSummary": "[PlannerRuntimeAudit][Summary] plan=- authorityGenerations=0 plannedHops=0 plannedPhysicalHops=0 loweredPhysicalHops=0 missingPhysicalHops=0 plannedSynthetic=0 missingSynthetic=0 loweringRecords=0 runtimeInstructionKinds=0 federatedDispatchKinds=0 workerFragmentKinds=0 mismatches=0"
+        },
+        "fedall": {
+          "planner": "COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS",
+          "compileNanos": 21858483106,
+          "executionNanos": 5380112714,
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0,
+          "federatedComputeHeavyHitters": {
+            "fed_!=": 1,
+            "fed_*": 200,
+            "fed_+": 124,
+            "fed_-": 44,
+            "fed_uak+": 40,
+            "fed_uasqk+": 44,
+            "fed_wdivmm": 44
+          },
+          "runtimeAuditSummary": "[PlannerRuntimeAudit][Summary] plan=311f0812388bd2cffe62901b1a348822b403af2b036f63ccdaad3b831334f773 authorityGenerations=1 plannedHops=207 plannedPhysicalHops=74 loweredPhysicalHops=74 missingPhysicalHops=0 plannedSynthetic=10 missingSynthetic=0 loweringRecords=898 runtimeInstructionKinds=1045 federatedDispatchKinds=815 workerFragmentKinds=0 mismatches=0"
+        }
+      }
+    },
+    "dockerSmallGreedy": {
+      "artifact": "/home/mchoi/als-fedall-greedy-20261006/target/fedpolicy-greedy-docker/run-djl7ot3a",
+      "status": "passed",
+      "checks": 6,
+      "scalingRuns": 12,
+      "receiptSha256": "09e37b5ea5976b5ba82e1c211f7db658313093c1325b0f9fc36092b69780ca48"
+    },
+    "logs": {
+      ".omx/als-fedall-evidence/main-integration/tests.log": "7891084ab47df8d9468726f9b8c65a5aebadb3e997127f89ec082f38e0c38def",
+      ".omx/als-fedall-evidence/main-integration/package.log": "f86586bd57fc37dbb5073c907a0da775ca577c26ed8f790700fcb90d2e2f6d95",
+      ".omx/als-fedall-evidence/main-integration/als-docker.log": "0a8e29bc7f03ea4dcfd3f791538c440b48a3122d030fa11a12bb2deb0361e48d",
+      ".omx/als-fedall-evidence/main-integration/small-greedy-docker.log": "1bfe866b6b7e814f9af56fc82fc68de8febf0f1ece0a78ebbf59e6694ad36f0c"
+    }
   }
 }
