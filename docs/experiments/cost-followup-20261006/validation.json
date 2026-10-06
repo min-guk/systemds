@@ -1,0 +1,43 @@
+{
+  "base_commit": "d57bca99d9b5947272113680ce17dbb63ab94aed",
+  "branch": "fix/cost-followup-20261006",
+  "artifact_root": "/home/mchoi/cost-followup-20261006",
+  "production_sha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "da30eab98276ff40aa348702de8b4ba3a6b582c9c39ab832789c79ca3df8a0d1",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "2ad20bb3b22357231a71e93bd70a450d538839288b4b8c66ea6936a4bd0450ee"
+  },
+  "jar_sha256": "fa5ea172611c2a06cd5db70c1f9b9709254663d0f726d6ac30e8416c11ad4cbf",
+  "build": {
+    "command": "mvn package -DskipTests -Djacoco.skip=true",
+    "status": "PASS"
+  },
+  "java": {
+    "classes": 65,
+    "tests": 447,
+    "passed": 446,
+    "failures": 1,
+    "new_regressions_passed": 34,
+    "preexisting_failure": "FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding: EXACT_VE_FACTOR_CELL_OVERFLOW",
+    "baseline_same_failure_reproduced": true
+  },
+  "docker": {
+    "entrypoint": "scripts/fedplanner/run_LAN_docker.sh --function-boundary-compare",
+    "cases": 28,
+    "passed": 28,
+    "scope": "DP compile/lowering only; no distributed training latency measurement"
+  },
+  "upload_reachability": {
+    "production_cases": 22,
+    "repeated_function_probe": "PASS",
+    "cross_block_alias_probe": "PASS",
+    "duplicate_payload_selected_reproductions": 0
+  },
+  "remaining": [
+    "Two-FED CTABLE secondary collect/rebroadcast requires cache/materialization ownership facts",
+    "No complete selected native-FOUT CTABLE witness in tested fixtures; dormant post-slice batch not charged",
+    "Existing StepLM factor-cell overflow is unchanged"
+  ],
+  "diff_check": "PASS",
+  "verification_round": "initial auxiliary/MMChain follow-up; CTABLE secondary collection fixed in subsequent round",
+  "superseded_by": "ctable-validation.json"
+}

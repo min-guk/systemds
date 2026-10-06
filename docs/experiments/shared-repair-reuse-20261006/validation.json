@@ -1,0 +1,107 @@
+{
+  "schema": "shared-reduction-repair-validation-v1",
+  "status": "PASS",
+  "implementation": "repair-only-reuse-preserving-seed",
+  "baseCommit": "d57bca99d9b5947272113680ce17dbb63ab94aed",
+  "branch": "fix/cost-followup-20261006",
+  "artifactRoot": "/home/mchoi/cost-followup-20261006/shared-repair-reuse",
+  "baseline": {
+    "description": "pre-task snapshot includes earlier cost/StepLM fixes",
+    "classes": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/baseline-pre-reuse/target-classes.tar.gz",
+    "classesSha256": "8fa50884fb5c97fb99ea16fdea99e15436deba8057ed396ede4552a6f0f42872",
+    "sourceDelta": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/validation/reuse-only-diff.patch"
+  },
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizer.java": "753bfcdc553d77a174db35a08cfbfb86fe37272e195ec2eebc1dd9681d3d6ddc",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparation.java": "1da881e1cc04326f7b15330afb7d42e0d86f726ac83556f8d92f764614273a9a",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizerTest.java": "a9e6610a0614562e572cd8058a846c83ad9176176a36937d1c2b62d8ccd07af1",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparationTest.java": "24e3ddf171013d3d13646b232f61afb421793458a8bcd1aca7bb0edbc2399cd3",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalCompactionParityTest.java": "1c6c8a03ce897cf2ef8cf72f80d52a66f5bfeaef95c02e5db1b234d768643606",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedReductionRepairTest.java": "6453b1590f6d2089f005a6f1473fc2ee82c88a0d65bc0e7b6f4e3a435dabea0d"
+  },
+  "build": {
+    "argv": [
+      "/home/hadoop/apache-maven-3.9.7/bin/mvn",
+      "-q",
+      "-DskipTests",
+      "-Djacoco.skip=true",
+      "package"
+    ],
+    "javaHome": "/usr/lib/jvm/java-17-openjdk-amd64",
+    "exitCode": 0,
+    "sourceManifestMatches": true,
+    "sourceFiles": 3528,
+    "systemdsJarSha256": "cc3450f44b276a44cbac9b41dc02bc17dcb292a6d970c6d0fbd38fc23c2ddd04"
+  },
+  "regression": {
+    "exitCode": 0,
+    "classCount": 86,
+    "elapsedSeconds": 154.85134271532297,
+    "tests": 645,
+    "passed": 645,
+    "failures": 0,
+    "log": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/validation/regression.log",
+    "argvFile": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/validation/java-command.json",
+    "stepLmOriginalRegressionIncluded": true,
+    "focusedTestsPassed": 43
+  },
+  "focusedWork": {
+    "unchangedSeedAlternatives": 9,
+    "plainBlockAssignmentsBefore": 5,
+    "plainBlockAssignmentsAfter": 2,
+    "compactBlockAssignmentsBefore": 2,
+    "compactBlockAssignmentsAfter": 0,
+    "unsupportedCostEvaluationsBefore": 3,
+    "unsupportedCostEvaluationsAfter": 2,
+    "unsupportedEvaluationsAfterAreSeedOnly": true,
+    "metricsLog": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/repair-only-tests/metrics.log",
+    "noReuseNegativeControl": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/repair-only-tests/no-reuse-control.log",
+    "noReuseControlExpectedFailure": "expected 2 but was 3"
+  },
+  "coverage": [
+    "unconditional support reuse without quotient-alias loss",
+    "conditional boundary flip and fixed-to-free restoration",
+    "conditionally infeasible slice expansion",
+    "batched unsupported boundaries before table construction",
+    "immutable prepared solver",
+    "noncontiguous original projection and auxiliary closure",
+    "original-factor resource retry projection",
+    "compact/plain versus exhaustive oracle for 36 deterministic boundary cases"
+  ],
+  "workloads": {
+    "beforeCasesReused": 8,
+    "finalCasesRun": 8,
+    "passedPairs": 8,
+    "sameObjectiveAndStatesPairs": 8,
+    "sameLocalAndIncrementalCounters": true,
+    "observedRepresentativeWorkReduction": false,
+    "runtimeExecuted": false,
+    "latencyClaim": false,
+    "verdictFile": "workload-verdict.json",
+    "rawEvidenceManifest": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/docker/metadata/final-evidence-sha256.txt"
+  },
+  "rejectedTrial": {
+    "reason": "seed filtering worsened StepLM W3 anytime cost and incremental work",
+    "stepLmW3UpperBefore": 76349276.54845388,
+    "stepLmW3UpperAfter": 77527467.27077073,
+    "incrementalAssignmentsBefore": 18318,
+    "incrementalAssignmentsAfter": 24544,
+    "implementationRetained": false,
+    "archive": "/home/mchoi/cost-followup-20261006/shared-repair-reuse/seed-reduced-rejected",
+    "briefFile": "rejected-seed-filter-brief.json"
+  },
+  "pruning": {
+    "newDominance": false,
+    "newGlobal": false,
+    "newNarySupport": false,
+    "existingLocalPruningPreserved": true
+  },
+  "review": "Independent read-only review of mapping, support assumptions, expansion, fallback, and anytime effects; final scoped seed restoration follows observed workload evidence.",
+  "limitations": [
+    "Representative runs retain the existing anytime/resource-limited termination; full optimum is checked on exhaustive small fixtures, not claimed for these workloads.",
+    "Root preparation moves before the seed; mandatory cached root is reused later.",
+    "Genuine resource-limit fallback policy is unchanged.",
+    "No distributed training or latency improvement claim."
+  ],
+  "diffCheck": "PASS"
+}

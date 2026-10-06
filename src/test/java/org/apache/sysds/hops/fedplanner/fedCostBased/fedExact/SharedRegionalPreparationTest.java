@@ -83,7 +83,7 @@ public class SharedRegionalPreparationTest {
 	}
 
 	@Test
-	public void removedFixedBoundaryUsesOriginalPreparationFallback() {
+	public void removedFixedBoundaryRequestsRepairInsteadOfCanonicalFallback() {
 		Variable block = variable("fallback-block", 2);
 		Variable boundary = variable("fallback-boundary", 3);
 		List<Variable> variables = List.of(block, boundary);
@@ -94,8 +94,11 @@ public class SharedRegionalPreparationTest {
 			Factor.dense(List.of(boundary), Double.POSITIVE_INFINITY, 0d, 0d));
 		SharedRegionalPreparation preparation = shared(variables, factors);
 
-		Assert.assertNull(preparation.prepare(new int[] {0, 0}, new int[] {0}));
-		Assert.assertEquals(1L, preparation.fallbacks());
+		LocalCategoricalOptimizer.UnsupportedBoundaryException boundaryFailure = Assert.assertThrows(
+			LocalCategoricalOptimizer.UnsupportedBoundaryException.class,
+			() -> preparation.prepare(new int[] {0, 0}, new int[] {0}));
+		Assert.assertArrayEquals(new int[] {1}, boundaryFailure.variables);
+		Assert.assertEquals(0L, preparation.fallbacks());
 		Assert.assertEquals(0L, preparation.blocks());
 	}
 

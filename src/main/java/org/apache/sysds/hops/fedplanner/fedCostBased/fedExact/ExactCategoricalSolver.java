@@ -489,6 +489,63 @@ public final class ExactCategoricalSolver {
 		validateInputs(variables, factors, limits);
 	}
 
+	/**
+	 * Validates the complete raw model before support reduction without requiring a
+	 * lazy factor's conceptual Cartesian product to fit a Java array. Dense factors
+	 * retain the ordinary exact-size and cost validation contract.
+	 */
+	static void validateReductionInputStructure(List<Variable> variables, List<Factor> factors,
+		Limits limits) {
+		Objects.requireNonNull(variables, "variables");
+		Objects.requireNonNull(factors, "factors");
+		Objects.requireNonNull(limits, "limits");
+		List<Variable> canonical = List.copyOf(variables);
+		Map<Variable,Integer> index = new LinkedHashMap<>();
+		Map<String,Variable> keys = new HashMap<>();
+		for(int position = 0; position < canonical.size(); position++) {
+			Variable variable = Objects.requireNonNull(canonical.get(position), "variable");
+			if(index.put(variable, position) != null || keys.put(variable.key(), variable) != null)
+				throw new IllegalArgumentException("EXACT_VE_VARIABLE_DUPLICATE|key=" + variable.key());
+		}
+		long denseCells = 0L;
+		long maximumDenseCells = 0L;
+		for(Factor factor : factors) {
+			Objects.requireNonNull(factor, "factor");
+			Set<Integer> unique = new HashSet<>();
+			long cells = 1L;
+			for(Variable scoped : factor.scope) {
+				Integer variable = index.get(scoped);
+				if(variable == null)
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_UNKNOWN");
+				if(!unique.add(variable))
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_DUPLICATE");
+				if(cells <= Integer.MAX_VALUE)
+					cells = Math.min((long)Integer.MAX_VALUE + 1L,
+						cells * canonical.get(variable).domainSize());
+			}
+			if(factor.denseValues != null) {
+				if(cells > Integer.MAX_VALUE)
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_CELL_OVERFLOW");
+				if(factor.denseValues.length != (int)cells)
+					throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
+				denseCells = checkedAdd(denseCells, cells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
+				maximumDenseCells = Math.max(maximumDenseCells, cells);
+			}
+		}
+		if(maximumDenseCells > limits.maximumFactorCells())
+			throw new IllegalArgumentException("EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells="
+				+ maximumDenseCells + "|limit=" + limits.maximumFactorCells() + "|input");
+		if(denseCells > limits.maximumMaterializedCells())
+			throw new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED|cells="
+				+ denseCells + "|limit=" + limits.maximumMaterializedCells());
+		// Preserve batch validation order: reject every malformed dense value before
+		// any support factor invokes a lazy evaluator.
+		for(Factor factor : factors)
+			if(factor.denseValues != null)
+				for(double value : factor.denseValues)
+					validateCost(value);
+	}
+
 	static Factor freezeValidatedFactor(Factor factor) {
 		Objects.requireNonNull(factor, "factor");
 		if(factor.denseValues != null)

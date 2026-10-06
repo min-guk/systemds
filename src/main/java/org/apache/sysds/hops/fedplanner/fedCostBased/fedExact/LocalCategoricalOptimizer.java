@@ -46,6 +46,24 @@ final class LocalCategoricalOptimizer {
 	interface BlockPreparation {
 		/** Original decision indexes/values in, original block values out. */
 		PreparedBlockSolver prepare(int[] assignment, int[] block);
+
+		/**
+		 * Supported original values under the immutable whole problem, never under
+		 * a provisional assignment or block boundary. Null means no shared reduction.
+		 * Keep all supported quotient aliases, not just their representatives.
+		 */
+		default int[][] unconditionalDomains(List<Variable> originalVariables) { return null; }
+	}
+
+	/** A provisional boundary value removed by exact support reduction must be repaired too. */
+	static final class UnsupportedBoundaryException extends IllegalArgumentException {
+		private static final long serialVersionUID = 1L;
+		final int[] variables;
+
+		UnsupportedBoundaryException(int... variables) {
+			super("LOCAL_BLOCK_UNSUPPORTED_BOUNDARY|variables=" + Arrays.toString(variables));
+			this.variables = variables.clone();
+		}
 	}
 
 	static final String COMPACT_PROPERTY = "sysds.fedplanner.regional.compact";
@@ -159,6 +177,8 @@ final class LocalCategoricalOptimizer {
 		final boolean compact;
 		final ExactEliminationOrderPolicy.Configuration orderPolicy;
 		final BlockPreparation sharedPreparation;
+		final int[][] domainValues;
+		final List<Variable> searchVariables;
 
 		Context(List<Variable> variables, List<Factor> hardFactors,
 			List<Factor> costFactors, StateKeyProvider stateKeys, boolean compact,
@@ -186,6 +206,28 @@ final class LocalCategoricalOptimizer {
 				for(int value = 0; value < variable.domainSize(); value++)
 					Objects.requireNonNull(stateKeys.stateKey(variable, value),
 						"local state key for " + variable.key() + ':' + value);
+			int[][] supported = sharedPreparation == null ? null
+				: sharedPreparation.unconditionalDomains(this.variables);
+			if(supported != null && supported.length != this.variables.size())
+				throw new IllegalArgumentException("LOCAL_SHARED_DOMAIN_COUNT_MISMATCH");
+			domainValues = new int[this.variables.size()][];
+			List<Variable> search = new ArrayList<>(this.variables.size());
+			for(int index = 0; index < this.variables.size(); index++) {
+				Variable original = this.variables.get(index);
+				int[] values = supported == null
+					? java.util.stream.IntStream.range(0, original.domainSize()).toArray()
+					: supported[index].clone();
+				if(values.length == 0)
+					throw new IllegalArgumentException("LOCAL_DOMAIN_EMPTY|variable=" + original.key());
+				for(int i = 0; i < values.length; i++)
+					if(values[i] < 0 || values[i] >= original.domainSize()
+						|| (i > 0 && values[i] <= values[i - 1]))
+						throw new IllegalArgumentException("LOCAL_SHARED_DOMAIN_VALUES_INVALID");
+				domainValues[index] = values;
+				search.add(values.length == original.domainSize() ? original
+					: new Variable(original.key(), values.length));
+			}
+			searchVariables = List.copyOf(search);
 		}
 
 		private List<IndexedFactor> indexFactors(List<Factor> factors,
@@ -466,8 +508,7 @@ final class LocalCategoricalOptimizer {
 			}
 			else {
 				int global = searchOrder[depth];
-				Variable variable = context.variables.get(global);
-				for(int value = 0; value < variable.domainSize(); value++) {
+				for(int value : context.domainValues[global]) {
 					assignment[global] = value;
 					if(hardFactorsSatisfiedWhenClosed(context.incidentHard.get(global), assignment))
 						search(depth + 1);
@@ -510,7 +551,7 @@ final class LocalCategoricalOptimizer {
 			for(int variable : block)
 				blockVariables.add(variable);
 			List<Variable> variables = Arrays.stream(block)
-				.mapToObj(context.variables::get).toList();
+				.mapToObj(context.searchVariables::get).toList();
 			List<Factor> reducedFactors = new ArrayList<>(hard.size() + cost.size());
 			for(IndexedFactor factor : hard)
 				reducedFactors.add(reduceFactor(context, assignment, blockVariables, factor));
@@ -583,6 +624,9 @@ final class LocalCategoricalOptimizer {
 			}
 			int[] values = solved.assignmentInVariableOrder().stream()
 				.mapToInt(Integer::intValue).toArray();
+			if(shared == null)
+				for(int i = 0; i < values.length; i++)
+					values[i] = context.domainValues[block[i]][values[i]];
 			int[] completed = assignment.clone();
 			apply(completed, block, values);
 			if(hard.stream().anyMatch(factor -> evaluate(factor, completed)
@@ -779,7 +823,7 @@ final class LocalCategoricalOptimizer {
 			return Double.compare(candidate, current) < 0;
 		}
 		int variable = variables[depth];
-		for(int value = 0; value < context.variables.get(variable).domainSize(); value++) {
+		for(int value : context.domainValues[variable]) {
 			assignment[variable] = value;
 			if(hasLowerFactorValue(context, factor, assignment, variables, depth + 1, current,
 				statistics))
@@ -831,6 +875,8 @@ final class LocalCategoricalOptimizer {
 		MutableStatistics statistics) {
 		Variable decision = context.variables.get(variable);
 		Map<Object,LocalChoice> representatives = new LinkedHashMap<>();
+		// Preserve the seed's conflict regions: removing unsupported provisional
+		// choices here can skip repairs that improve the anytime incumbent.
 		for(int value = 0; value < decision.domainSize(); value++) {
 			statistics.rawLocalAlternatives++;
 			assignment[variable] = value;
@@ -889,7 +935,23 @@ final class LocalCategoricalOptimizer {
 			int[] block;
 			while(true) {
 				block = variables.stream().sorted().mapToInt(Integer::intValue).toArray();
-				solution = solveBlock(context, assignment, block, statistics);
+				try {
+					solution = solveBlock(context, assignment, block, statistics);
+				}
+				catch(UnsupportedBoundaryException boundary) {
+					// Rebuild incidence and encoded auxiliary closure with this original
+					// decision free. Falling back to canonical factors loses factorization.
+					boolean expanded = false;
+					for(int variable : boundary.variables) {
+						if(variable < 0 || variable >= context.variables.size())
+							throw boundary;
+						expanded |= variables.add(variable);
+					}
+					if(!expanded)
+						throw boundary;
+					statistics.conflictBlockExpansions++;
+					continue;
+				}
 				if(solution != null)
 					break;
 				boolean expanded = false;
@@ -1012,7 +1074,7 @@ final class LocalCategoricalOptimizer {
 			int global = globalScope[scopePosition];
 			if(blockVariables.contains(global)) {
 				localPositionByScope[scopePosition] = localScope.size();
-				localScope.add(context.variables.get(global));
+				localScope.add(context.searchVariables.get(global));
 			}
 		}
 		if(localScope.isEmpty())
@@ -1030,7 +1092,8 @@ final class LocalCategoricalOptimizer {
 			for(int scopePosition = 0; scopePosition < originalValues.length; scopePosition++) {
 				int local = localPositionByScope[scopePosition];
 				if(local >= 0)
-					originalValues[scopePosition] = localValues[local];
+					originalValues[scopePosition] =
+						context.domainValues[globalScope[scopePosition]][localValues[local]];
 
 			}
 			return indexed.factor().cost(originalValues);
@@ -1130,7 +1193,7 @@ final class LocalCategoricalOptimizer {
 	private static int[] orderForSearch(Context context, int[] block) {
 		return Arrays.stream(block).boxed().sorted(Comparator
 			.<Integer>comparingInt(variable -> -context.incidentHard.get(variable).size())
-			.thenComparingInt(variable -> context.variables.get(variable).domainSize())
+			.thenComparingInt(variable -> context.domainValues[variable].length)
 			.thenComparingInt(Integer::intValue)).mapToInt(Integer::intValue).toArray();
 	}
 
@@ -1138,7 +1201,7 @@ final class LocalCategoricalOptimizer {
 		for(int variable : block) {
 			Set<Object> keys = new LinkedHashSet<>();
 			Variable decision = context.variables.get(variable);
-			for(int value = 0; value < decision.domainSize(); value++)
+			for(int value : context.domainValues[variable])
 				if(!keys.add(context.stateKeys.stateKey(decision, value)))
 					return true;
 		}
