@@ -63,3 +63,19 @@
 - GLM 환경 표현 최적화 B 및 회귀는 `target/three-workload-evidence/handoff-glm-environment.patch`에 보존하고 현재 production/test 변경에서 제외했다. baseline 회귀 4건 및 후보+joint reaching-definition 회귀 13건은 통과했으나 GLM 성능 채택 검증은 미완료다.
 - StepLM 인계: alias projection을 비활성화해도 동일 실패다. binary arc consistency가 canonical input-authority factor 1123(m_lm)·1143(m_lmCG)의 유일 셀이 infinity여서 domain을 비운다. `ExactPhysicalModel.inputAuthorityProducts`에서 relocation authority가 먼저 생겨 sole-input action-free DIRECT_FOUT을 누락한다. 진단용 수정은 solver를 통과시키지만 canonical relocation completion에서 다시 실패하므로 그대로 채택하면 안 된다. 다음 담당자는 `ExactPhysicalSelection`의 demand completion과 direct authority 의미를 일치시켜야 한다. raw run은 `three-workload-ablation-20261007/diag-steplm-{unprojected,reduction-trace,single-fed-input}-57933f-*`, diagnostic overlays도 같은 root다.
 - LogReg A 첫 진단 실행은 전체 계수 16개와 audit를 통과했고, 최종 upper/lower/gap 및 assignments 17,336,646·merges 4,566이 baseline과 같다. analysis 53.872→31.044초, compilation72.507→44.005초지만 진단 실행 간 호스트 부하 차이가 있으므로 이 비율을 최종 효과로 단정하지 않는다. JFR 없는 순차 교차 실행으로 채택 효과를 다시 측정한다.
+
+## Heuristic legality main publication — 통합 검증 완료
+
+- **문제/상태**: 이전 Heuristic legality 구현 `93170f9dfb`를 최신 `origin/main` `57933f328c`에 통합했다. 새 worktree는 `/home/mchoi/heuristic-main-publication-20261007`이며 기존 workspace는 수정하지 않는다.
+- **원인/해결**: main의 support-certified joint alias projection/partial truth와 Heuristic 공통 row predicate가 동일 factor에서 만났다. alias projection과 기존 support factors를 유지하고 completed cost만 공유 predicate를 사용한다. 물리 입력 위치가 하나 이하인 경우 completed cost와 partial truth 모두 정렬 의무가 없도록 맞춘다. 두 경로가 다르면 partial truth가 합법 leaf를 금지하는 잘못된 가지치기가 가능하다.
+- **수정 파일**: `ExactPhysicalModel.java`, `JointPartialTruthTest.java`. 기존 `JointValueMapRelations.java` 및 `PlacementRelationClosure.java`의 양쪽 독립 변경도 보존했다. Oct 6 이슈 문서의 양쪽 기록을 모두 보존했다.
+- **검증**: loop matrix-scalar 소형 fixture에서 joint consumer와 단일 physical FED 입력의 존재를 확인하고 모든 partial certificate/완성 tuple 및 frozen table parity를 검사했다. local operand 시도는 joint factor가 없어 실패한 fixture로 기록 후 제거했다. alias projection, support-prefix, closure, greedy, common legality 등 19개 클래스 100/100 및 최종 Maven package가 통과했다. Docker Heuristic 6/6, 소형 ALS CP/FedAll 200개 값 오차0, 소형 builtin LogReg/L2SVM/lmCG 3/3도 통과했다. runtime audit/conversion 위반0. 최종 frozen 소스/클래스 및 JAR 일치를 확인했다. 상세는 `HEURISTIC_MAIN_PUBLICATION_2026-10-07.md` 및 `experiments/heuristic-main-publication-20261007/validation.json`에 기록했다.
+- **원칙**: runtime fallback/repair, privacy/TR-TW/geometry 완화 없이 planner의 실행 합법성 규칙을 일치시킨다. factor scope/auxiliary encoding은 확대하지 않는다. 대형 모델은 실행하지 않는다.
+- **잔여 이슈**: StepLM closure 비수렴은 20×5 compile-only 기존 테스트에서 **이번 통합본에서도 229.971초 후 재현**했다. `f=626/632`, `changed=[281,423]`, iteration1244의 기존 signature와 일치하며 selector/optimizer 이전 common closure에서 실패한다. 이는 통과한 100개 회귀와 별도인 미해결1건이다. ALS/StepLM Exact overflow는 여전히 `0146f043e0`의 과거 근거이며 최신 재현으로 취급하지 않는다. Heuristic L2SVM full fixture 중단은 별도 대형 metadata 검증 공백이다. 실제 소형 L2SVM 학습 성공과 모순되지 않는다. WDIVMM 음성 fixture 및 read/source 실제 factor 경로는 검증 공백이다.
+- **잠재 회귀 위험/감지**: support 제약이 필요한 alias projection을 독립 predicate 동치로 오해하면 legal space를 바꿀 수 있다. 기존 exhaustive support-conjunction parity/alias/partial-truth 검사를 유지하고, 소형 ML 전체 계수 CP/FED 비교 및 runtime audit로 통합 실행을 확인한다.
+
+### LogReg worklist — 최신 main 통합
+
+- 작업 도중 fetch한 origin/main이 `93706bbaa9`로 전진했다. heuristic legality와 grounded relocation publication 변경을 모두 보존했다. `PlacementRelationClosure`는 서로 다른 위치라 자동 병합했고, 세션 문서의 append 충돌은 양쪽 기록을 모두 유지했다.
+- 통합 전 candidate는 52개 Java 클래스 382건, Python unittest 27건 및 package를 통과했다. Java build 중 source 변경 0이다. 이 결과를 최신 통합본 검증으로 혼용하지 않으며 통합 후 다시 검사한다.
+- 최종 actual-training A/B는 동일 최신 main을 양쪽에 넣고 `exactSinglePartitionRealizationProofs` 계산 방식만 바꾼다. 이전 57933f 실행은 진단 근거로만 남긴다.

@@ -7,8 +7,16 @@ import java.util.List;
 import java.util.Collections;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.DataGenOp;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
@@ -19,6 +27,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
@@ -35,6 +44,8 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdap
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -114,10 +125,19 @@ public class PolicyGreedyPlacementSelectorTest {
 			Assert.fail("Equal structural signatures cannot forge rule ownership");
 		}
 		catch(IllegalArgumentException expected) { Assert.assertTrue(expected.getMessage().contains("foreign")); }
+		List<Node> foreignNodes = a.graph().nodes().stream().map(node -> node.key() == key
+			? new Node(foreignKey, node.kind(), node.valueVersion(), node.emittedWork(),
+				node.legalAlternatives(), node.exclusions(), node.anchors()) : node).toList();
+		var foreignGraph = new NeutralPlacementGraph(foreignNodes, a.graph().constraints(),
+			a.graph().relocationActions(), a.graph().derivedFoutMaterializationActions());
+		var invariant = Assert.assertThrows(IllegalArgumentException.class,
+			() -> new PolicyGreedyPlacementSelector().select(a, foreignGraph));
+		Assert.assertNotEquals("Foreign analysis ownership is an invariant error, not repair exhaustion",
+			PolicyGreedyPlacementSelector.BoundedRepairExhaustedException.class, invariant.getClass());
 	}
 
 	@Test
-	public void reconvergenceFailsTypedWithoutPretendingInfeasibilityOrRetrying() {
+	public void reconvergenceRepairsThePolicyChoiceAndRestoresConditionalSupports() {
 		Node p = node(0), l = node(1), r = node(2);
 		PlacementState local = p.legalAlternatives().stream().filter(s -> s.execType() == ExecType.CP).findFirst().orElseThrow();
 		PlacementState fed = p.legalAlternatives().stream().filter(s -> s.execType() == ExecType.FED).findFirst().orElseThrow();
@@ -127,11 +147,72 @@ public class PolicyGreedyPlacementSelectorTest {
 			forbid(p,l,fed,fed), forbid(p,r,fed,local), forbid(l,r,local,fed), forbid(l,r,fed,local)), List.of());
 		Assert.assertNotNull("An existing feasible plan is not a greedy completeness guarantee",
 			new PolicyFirstFeasiblePlacementSelector().select(graph));
-		try { new PolicyGreedyPlacementSelector().select(graph); Assert.fail("No backtracking allowed"); }
-		catch(PolicyGreedyPlacementSelector.GreedyConflictException expected) {
-			Assert.assertTrue(expected.getMessage().contains("not global infeasibility"));
-			Assert.assertTrue(expected.getMessage().contains("commits=1"));
+		for(var policy : PolicyGreedyPlacementSelector.Policy.values()) {
+			var selected = new PolicyGreedyPlacementSelector(policy).select(graph);
+			Assert.assertSame("The conflicting FED policy row must be replaced", local,
+				selected.assignment().get(p.key()));
+			Assert.assertEquals("Rollback must restore the FED support removed by the failed branch", fed,
+				selected.assignment().get(l.key()));
+			Assert.assertEquals("Both restored OR alternatives remain usable", fed,
+				selected.assignment().get(r.key()));
 		}
+	}
+
+	@Test
+	public void boundedRepairExhaustionIsDistinctFromExhaustiveInfeasibility() {
+		Node p = node(0), l = node(1), r = node(2);
+		PlacementState local = p.legalAlternatives().get(0), fed = p.legalAlternatives().get(1);
+		var recoverable = new NeutralPlacementGraph(List.of(p,l,r), List.of(
+			new Constraint(ConstraintKind.DOMINATES, p.key(), l.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, p.key(), r.key(), 0, "data-input"),
+			forbid(p,l,fed,fed), forbid(p,r,fed,local), forbid(l,r,local,fed), forbid(l,r,fed,local)), List.of());
+		var exhausted = Assert.assertThrows(PolicyGreedyPlacementSelector.BoundedRepairExhaustedException.class,
+			() -> new PolicyGreedyPlacementSelector(PolicyGreedyPlacementSelector.Policy.FED_FIRST, 0)
+				.select(recoverable));
+		Assert.assertTrue(exhausted.getMessage().contains("repairBudget=0"));
+
+		Node a = node(10), b = node(11);
+		List<Constraint> impossiblePairs = new ArrayList<>();
+		for(PlacementState left : a.legalAlternatives())
+			for(PlacementState right : b.legalAlternatives())
+				impossiblePairs.add(forbid(a,b,left,right));
+		var impossible = new NeutralPlacementGraph(List.of(a,b), impossiblePairs, List.of());
+		var infeasible = Assert.assertThrows(PolicyGreedyPlacementSelector.NoSupportedPolicyWitnessException.class,
+			() -> new PolicyGreedyPlacementSelector().select(impossible));
+		Assert.assertTrue(infeasible.getMessage().contains("not global infeasibility"));
+	}
+
+	@Test
+	public void directWdivmmRuntimeInputRelationKeepsOnlyCompatibleSelections() throws Exception {
+		PlacementAnalysis analysis = wdivmmAnalysis(false);
+		var owner = analysis.graph().decisionNodes().stream()
+			.filter(node -> PlacementCostSemantics.directWdivmmRuntimeFact(analysis, node.key()) != null)
+			.findFirst().orElseThrow();
+		var runtime = PlacementCostSemantics.directWdivmmRuntimeFact(analysis, owner.key());
+		var weights = analysis.graph().node(runtime.weights()).orElseThrow();
+		for(var policy : PolicyGreedyPlacementSelector.Policy.values()) {
+			var selected = new PolicyGreedyPlacementSelector(policy).select(analysis);
+			PlacementState selectedOwner = selected.assignment().get(owner.key());
+			PlacementState selectedWeights = selected.assignment().get(weights.key());
+			Assert.assertTrue(PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+				runtime, selectedOwner, selectedWeights));
+		}
+	}
+
+	@Test
+	public void latentWdivmmOwnerKeepsItsExactRuntimeWeightsSupport() throws Exception {
+		PlacementAnalysis analysis = wdivmmAnalysis(true);
+		var owner = analysis.graph().decisionNodes().stream()
+			.filter(node -> PlacementCostSemantics.latentWdivmmTransposePairFact(analysis, node.key()) != null)
+			.findFirst().orElseThrow();
+		var runtime = PlacementCostSemantics.latentWdivmmTransposePairFact(analysis, owner.key());
+		Assert.assertNotNull(runtime.partitionedInputFType());
+		var selected = new PolicyGreedyPlacementSelector().select(analysis);
+		PlacementState selectedOwner = selected.assignment().get(owner.key());
+		PlacementState selectedWeights = selected.assignment().get(runtime.weights());
+		Assert.assertTrue(selectedOwner.execType() != ExecType.FED
+			|| selectedWeights.output() == FederatedOutput.FOUT
+				&& selectedWeights.fType() == runtime.partitionedInputFType());
 	}
 
 	@Test
@@ -290,6 +371,46 @@ public class PolicyGreedyPlacementSelectorTest {
 		t.constructHops(p);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(p, Privacy.PRIVATE_AGGREGATE);
 		return new NeutralPlacementGraphBuilder().buildAnalysis(p);
+	}
+
+	private static PlacementAnalysis wdivmmAnalysis(boolean latent) throws Exception {
+		String script = "W=federated(addresses=list(\"localhost:1234/W\",\"localhost:1235/W\"),"
+			+ "ranges=list(list(0,0),list(50,20),list(50,0),list(100,20)));"
+			+ "U=rand(rows=100,cols=2,seed=7);V=rand(rows=20,cols=2,seed=8);"
+			+ "print(sum(W)+sum(U)+sum(V));";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		List<Hop> hops = new ArrayList<>();
+		for(var block : program.getStatementBlocks())
+			for(Hop root : block.getHops()) collect(root, java.util.Collections.newSetFromMap(
+				new java.util.IdentityHashMap<>()), hops);
+		Hop weights = hops.stream().filter(hop -> hop instanceof DataOp data
+			&& data.getOp() == OpOpData.FEDERATED).findFirst().orElseThrow();
+		Hop u = hops.stream().filter(hop -> hop instanceof DataGenOp && hop.getDim1() == 100
+			&& hop.getDim2() == 2).findFirst().orElseThrow();
+		Hop v = hops.stream().filter(hop -> hop instanceof DataGenOp && hop.getDim1() == 20
+			&& hop.getDim2() == 2).findFirst().orElseThrow();
+		Hop weighted = HopRewriteUtils.createBinary(weights,
+			HopRewriteUtils.createMatrixMultiply(u, HopRewriteUtils.createTranspose(v)), OpOp2.MULT);
+		Hop owner = latent ? HopRewriteUtils.createTranspose(HopRewriteUtils.createMatrixMultiply(
+			HopRewriteUtils.createTranspose(u), weighted))
+			: HopRewriteUtils.createMatrixMultiply(weighted, v);
+		StatementBlock block = new StatementBlock();
+		block.setHops(new ArrayList<>(List.of(new DataOp("H", DataType.MATRIX, ValueType.FP64,
+			owner, OpOpData.TRANSIENTWRITE, "H"))));
+		program.setStatementBlocks(new ArrayList<>(List.of(block)));
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		return CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
+	}
+	private static void collect(Hop hop, java.util.Set<Hop> seen, List<Hop> hops) {
+		if(!seen.add(hop)) return;
+		hop.setBlocksize(1000);
+		hops.add(hop);
+		for(Hop input : hop.getInput()) collect(input, seen, hops);
 	}
 
 	private static Node node(int i) {

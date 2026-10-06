@@ -52,6 +52,59 @@ public class PublicationSupportClosureTest {
 		CONSUMER = rule("consumer"), DOWNSTREAM = rule("downstream");
 
 	@Test
+	public void finalActionProjectionRetainsExactAndDirectAuthorityAfterClausePruning() throws Exception {
+		var current = source("current");
+		var expired = source("expired");
+		var liveAction = action("live-action", 0);
+		var orphanAction = action("orphan-action", 0);
+		var directTemplate = action("direct-action", 0);
+		var directAction = new NeutralPlacementGraph.RelocationAction(directTemplate.key(),
+			directTemplate.obligations(), List.of(ROW.placementState()));
+		var live = CandidateEmissionRealization.local(LOCAL, List.of(), List.of(
+			CandidateRealizationInputBinding.relocation(0,
+				CandidateRealizationReference.of(SOURCE, current), liveAction.key())));
+		var stale = CandidateEmissionRealization.local(LOCAL, List.of(), List.of(
+			CandidateRealizationInputBinding.relocation(0,
+				CandidateRealizationReference.of(SOURCE, expired), orphanAction.key())));
+		var facts = publish(List.of(fact(SOURCE, ROW, List.of(current)),
+			fact(CONSUMER, LOCAL, List.of(live, stale))),
+			Map.of(liveAction.key(), liveAction, orphanAction.key(), orphanAction));
+		Assert.assertEquals(List.of(live), facts.get(1).allowedEmissionFacts().get(0).realizations());
+		var actions = List.of(orphanAction, directAction, liveAction);
+		Assert.assertThrows("the final validator must still reject discovery-only actions",
+			IllegalStateException.class, () ->
+				PlacementSupportRelations.verifyPublishedRelocationRealizations(facts, actions));
+
+		var projected = PlacementSupportRelations.projectRelocationActionsToExecutableSupports(facts, actions);
+
+		Assert.assertEquals(List.of(directAction, liveAction), projected);
+		Assert.assertSame(directAction, projected.get(0));
+		Assert.assertSame(liveAction, projected.get(1));
+		Assert.assertSame(projected,
+			PlacementSupportRelations.projectRelocationActionsToExecutableSupports(facts, projected));
+		PlacementSupportRelations.verifyPublishedRelocationRealizations(facts, projected);
+	}
+
+	@Test
+	public void finalActionProjectionCannotHideMissingActionOrExpiredSource() {
+		var current = source("current");
+		var expired = source("expired");
+		var action = action("action", 0);
+		for(var referencedSource : List.of(current, expired)) {
+			var consumer = CandidateEmissionRealization.local(LOCAL, List.of(), List.of(
+				CandidateRealizationInputBinding.relocation(0,
+					CandidateRealizationReference.of(SOURCE, referencedSource), action.key())));
+			var facts = List.of(fact(SOURCE, ROW, List.of(current)), fact(CONSUMER, LOCAL, List.of(consumer)));
+			var actions = referencedSource == current ? List.<NeutralPlacementGraph.RelocationAction>of()
+				: List.of(action);
+			var projected = PlacementSupportRelations.projectRelocationActionsToExecutableSupports(facts, actions);
+			Assert.assertSame(actions, projected);
+			Assert.assertThrows(IllegalStateException.class, () ->
+				PlacementSupportRelations.verifyPublishedRelocationRealizations(facts, projected));
+		}
+	}
+
+	@Test
 	public void unchangedPublicationReusesAlreadyCanonicalObjects() throws Exception {
 		CandidateRuleFact original = fact(SOURCE, ROW, List.of(source("a"), source("b")));
 		Assert.assertSame(original, publish(List.of(original)).get(0));

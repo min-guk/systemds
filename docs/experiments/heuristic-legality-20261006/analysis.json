@@ -1,0 +1,100 @@
+{
+  "question": "Which cost-based mechanisms should Heuristic share to select legal plans?",
+  "analyzedCommit": "82b2f63735783ce4a3d35b142bf434d5addc49dd",
+  "priorFixCommit": "82b2f63735783ce4a3d35b142bf434d5addc49dd",
+  "baselineMainCommit": "d053a8f24a910f9209f11c3f54811d92bfc16dd0",
+  "publication": "local commits only; no push requested",
+  "method": "Static comparison plus bounded unit-level compilation/selection probes. No production or test source implementation change.",
+  "primaryFinding": {
+    "status": "confirmed shared legality gap at Heuristic selection, normalization and emission prevalidation",
+    "predicate": "Every reachable joint VALUE_MAP row must align all direct FED input pools and explicit relocation target pools.",
+    "fixture": {
+      "sourceShapes": "X,Y each8x2; different two-worker ROW pools",
+      "privacy": "PRIVATE_AGGREGATE",
+      "correlated": "if(p){A=X;B=X;}else{A=Y;B=Y;}C=A+B",
+      "independent": "if(p){A=X;}else{A=Y;}if(q){B=X;}else{B=Y;}C=A+B"
+    },
+    "canonicalPreparation": "DMLTranslator.prepareSearchSpaceOnly(program,false); false disables detailed counters only; canonical program authority asserted",
+    "correlated": {
+      "decisions": 76,
+      "exact": "feasible",
+      "heuristic": "normalization accepted",
+      "emissionPrevalidation": "accepted",
+      "jointRows": 2,
+      "misalignedRows": 0
+    },
+    "independent": {
+      "decisions": 93,
+      "exact": "EXACT_VE_NO_FEASIBLE_ASSIGNMENT",
+      "heuristic": "normalization accepted",
+      "emissionPrevalidation": "accepted",
+      "jointRows": 4,
+      "misalignedRows": 2,
+      "consumer": "FED/FOUT/ROW; VALUE_MAP; PRESENT/ROW plus PRESENT/ROW; DIRECT plus DIRECT",
+      "selectedRelocations": 0
+    },
+    "baseline": "Same independent result reproduced on clean original main worktree compiled classes; predates relocation publication fix",
+    "review": "Independent read-only review confirmed same canonical analysis, exact directPositions match, no ignored relocation/local exception, no ownership bypass"
+  },
+  "secondaryFindings": [
+    {
+      "priority": 1,
+      "topic": "latent/direct WDIVMM runtime input legality",
+      "evidence": "Cost model has owner/weights binary hard factors; shared receipt validation has same runtime predicates; greedy lacks an explicit early relation for them.",
+      "recommendation": "Reuse existing predicates in precommit support propagation, preserving derived/execution FType semantics.",
+      "limit": "No additional real-workload failure isolated for this gap; indirect support may enforce some instances."
+    },
+    {
+      "priority": 2,
+      "topic": "greedy completeness",
+      "evidence": "Existing three-node reconvergence fixture has a feasible CP seed; both FED_FIRST and AGG_LOCAL fail after first irreversible commit in fresh probe.",
+      "recommendation": "Optional reversible local hard-conflict repair/lookahead if finding more feasible plans is desired; monetary costs unnecessary.",
+      "limit": "Changes current no-backtracking contract; bounded repair does not guarantee global completeness."
+    },
+    {
+      "priority": 3,
+      "topic": "runtimeReadCompatibilityFactor",
+      "evidence": "Hard 0/infinity relation exists inside cost surface; read FOUT requires resolved source FOUT same FType.",
+      "recommendation": "Audit overlap with existing transient/function/alias supports before importing.",
+      "limit": "No concrete mismatch established."
+    }
+  ],
+  "doNotTransplantForLegality": [
+    "monetary FLOP/network costs",
+    "canonical cost/activation OR variables",
+    "whole shared reduced root mixing hard and cost factors",
+    "cost-dependent quotient representatives or unconditional deletion of conditionally pruned values",
+    "automatic exact/runtime fallback"
+  ],
+  "scopeGuidance": "Keep WDIVMM relations binary; preserve existing joint observation decomposition or use relational support evaluation. Do not flatten support/supply auxiliary chains into a large dense table.",
+  "notExecuted": [
+    "actual emission commit",
+    "Lop lowering",
+    "worker runtime",
+    "large-model training",
+    "latency comparison"
+  ],
+  "earlierProbeLimitation": "Detached analysis prevalidation rejected canonical ownership in both controls. Superseded by public canonical search-space preparation; earlier logs remain in local evidence directory.",
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyPlacementSelector.java": "77b46ff5d5324a825f9d1e5fe9bc0e3a7288fa27cc70a2e2fb7802ec90edf0e2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java": "b2eab607f41129daac66ae602a6dfd4f79e95ba92bc2131930f46eae2f8d7c24",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java": "2825cffa09669f5aa379de64eb646e982c1fe2c1c1168fc2b0ac4c6a93cb86a2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java": "bc8ef62740b71d295e9e141ee0b39688a93baa369e520fd35895fa5ebb787b1f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "4fce26aa3f39d176f4e997eddceb3afb891c0278ef82c36ef20bc3e8d7cacb26",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "7038990499542173f6f2c758411fcdd92b48f39301bd5004d023b6c89a57c970",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "20d1dfc439664d502008772de60a8812ef1b642a9746ac1ee0650c2db1254272",
+    "src/main/java/org/apache/sysds/parser/DMLTranslator.java": "9ea2df1922a2f48030e01ad1bd91f8e6cf8fec29674d7785cbd605c5a59fd598",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.java": "5eb8bd1f1adc2147a9d27917c5d9256ec8cb3899157bab498ef9e0d7ca6d4da6",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyPlacementSelectorTest.java": "5552ccaf01794f17bfe16e2f191d1b5e90b121a07c22768ec71c17b98676408f"
+  },
+  "artifactSha256": {
+    "GreedyCompletenessProbe.java": "3ff0d9e2b5611cdce0022da5cd489346147c335e92eb4ae50f43d4a9e6b98672",
+    "CanonicalJointLegalityProbe.java": "c7527ec42dc7569bd0c6ec338be5b0f9ad9ae7c37a5af7b434f85465fc598ed4",
+    "probe.log": "6220dcc5c8bc7c7d54903f0e0958113bcccf6478628d571112c27683f46433bd",
+    "canonical-joint-correlated.log": "f94d1cf8283c77900dab25ec008f8f75036dfbae544feef18c9d76a860ecb605",
+    "canonical-joint-independent.log": "18a38aebe64380e00e064f0fa3959fe643e988bce53f3c46fc3137bcaf6b7f02",
+    "canonical-joint-baseline-independent.log": "18a38aebe64380e00e064f0fa3959fe643e988bce53f3c46fc3137bcaf6b7f02"
+  },
+  "localEvidenceRoot": "/home/mchoi/heuristic-relocation-20261006/.omx/heuristic-legality-analysis",
+  "artifactNote": "Preserved probe source adds a license comment and normalizes trailing whitespace; executable code is unchanged. Original execution receipts and hashes remain in localEvidenceRoot."
+}

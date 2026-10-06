@@ -621,6 +621,29 @@ final class PlacementSupportRelations {
 				&& obligation.requiredPlacement().equals(emission.placementState()));
 	}
 
+	/**
+	 * Discovery proposes worker pools before exact input/output geometry is bound.
+	 * At the completed fixed point, only actions named by executable clauses or
+	 * carrying a direct-source proof have publication authority. Keep discovery
+	 * proposals during iteration so later support can still make them executable.
+	 */
+	static List<NeutralPlacementGraph.RelocationAction> projectRelocationActionsToExecutableSupports(
+		List<CandidateRuleFact> facts, List<NeutralPlacementGraph.RelocationAction> actions) {
+		Set<RelocationActionKey> usedActions = new HashSet<>();
+		for(CandidateRuleFact fact : facts)
+			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations())
+						for(CandidateRealizationSupportClause clause : realization.supportClauses())
+							for(CandidateRealizationInputBinding binding : clause.inputBindings())
+								if(binding.kind() == CandidateInputBindingKind.RELOCATION)
+									usedActions.add(binding.relocationAction());
+		List<NeutralPlacementGraph.RelocationAction> executable = actions.stream()
+			.filter(action -> !action.directSourcePlacements().isEmpty() || usedActions.contains(action.key()))
+			.toList();
+		return executable.size() == actions.size() ? actions : executable;
+	}
+
 	/** Checks action/realization identity without mutating the converged publication. */
 	static void verifyPublishedRelocationRealizations(List<CandidateRuleFact> facts,
 		List<NeutralPlacementGraph.RelocationAction> actions) {

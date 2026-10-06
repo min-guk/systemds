@@ -116,7 +116,7 @@ public final class HeuristicPlacementAdapter {
 		if(selection.certificate().terminationReason() != TerminationReason.POLICY_FEASIBLE)
 			throw new IllegalStateException("Heuristic selector must return a non-optimal policy feasibility certificate");
 		Map<String, String> facts = Collections.unmodifiableMap(new TreeMap<>(Map.of(
-			"policy", greedy ? "LOCAL_VECTOR_CONTINUATION_POLICY_V5" : "EXPLICIT_CUSTOM_POLICY",
+			"policy", greedy ? "LOCAL_VECTOR_CONTINUATION_POLICY_V6" : "EXPLICIT_CUSTOM_POLICY",
 			"markerCount", Integer.toString(demotionMarkers.size()),
 			"localPrefixCount", Long.toString(analysis.heuristicPolicyFacts().paths().stream()
 				.flatMap(path -> path.localPrefix().stream()).distinct().count()),
@@ -127,7 +127,7 @@ public final class HeuristicPlacementAdapter {
 				.flatMap(path -> path.reentries().stream()).distinct().count()),
 			"nativeContinuationCount", Long.toString(analysis.heuristicPolicyFacts().paths().stream()
 				.flatMap(path -> path.nativeContinuations().stream()).distinct().count()),
-			"search", greedy ? "GREEDY_NO_BACKTRACKING" : "EXPLICIT_CUSTOM_SELECTOR",
+			"search", greedy ? "GREEDY_BOUNDED_REVERSIBLE_REPAIR" : "EXPLICIT_CUSTOM_SELECTOR",
 			"stateOrdering", stateOrdering, "shapeProof", "COMMON_OWNED_ABSTRACT_SHAPE_AND_EXACT_ROW")));
 		String assignmentHash = commonAssignmentHash(assignment);
 		String policyFingerprint = sha256(facts.get("policy") + '|' + stateOrdering + '|' + analysis.analysisFingerprint()
@@ -143,7 +143,7 @@ public final class HeuristicPlacementAdapter {
 			structuralUpper.distinctRelocationCount(), structuralUpper.normalizedSignature());
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
 			assignmentHash, explored + pruned, explored, pruned,
-			List.of(greedy ? "greedy-no-backtracking" : "explicit-custom-selector"), incumbent,
+			List.of(greedy ? "greedy-bounded-reversible-repair" : "explicit-custom-selector"), incumbent,
 			upper.normalizedSignature(), selection.certificate().terminationReason().name(), false,
 			sha256(filtered.normalizedSignature()), score, upper,
 			boundComponents, filtered.nodes().size(), filtered.constraints().size(), boundComponents.size(),

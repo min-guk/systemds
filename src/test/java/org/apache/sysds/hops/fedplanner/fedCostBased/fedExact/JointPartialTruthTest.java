@@ -5,8 +5,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -36,6 +38,11 @@ public class JointPartialTruthTest {
 			+ "else{A=Y;B=Y;}i=i+1;}C=A+B;print(sum(C));");
 	}
 
+	@Test public void loopMatrixScalarKeepsPartialProofsSound() throws Exception {
+		check(SOURCES + "A=X;i=1;while(i<=2){if(p>0.5){A=X;}else{A=Y;}"
+			+ "i=i+1;}C=p*A;print(sum(C));", true);
+	}
+
 	@Test public void functionAliasesPreserveSelectedPoolProof() throws Exception {
 		long provenSubtrees = check("f=function(matrix[double] A,matrix[double] B) return (matrix[double] C){"
 			+ "i=1;while(i<1){i=i+1;}C=A+B;}" + SOURCES
@@ -44,6 +51,10 @@ public class JointPartialTruthTest {
 	}
 
 	private static long check(String script) throws Exception {
+		return check(script, false);
+	}
+
+	private static long check(String script, boolean requireSinglePhysicalInput) throws Exception {
 		var program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		var translator = new DMLTranslator(program);
@@ -51,7 +62,22 @@ public class JointPartialTruthTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
-		var model = ExactPhysicalModel.build(new NeutralPlacementGraphBuilder().buildAnalysis(program));
+		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var model = ExactPhysicalModel.build(analysis);
+		if(requireSinglePhysicalInput) {
+			var relations = JointValueMapRelations.from(analysis);
+			Assert.assertTrue("fixture must exercise a FED joint consumer with exactly one physical input",
+				model.domains().stream().anyMatch(domain -> relations.stream()
+					.anyMatch(relation -> relation.consumer() == domain.node().key())
+					&& model.hardFactors().stream().anyMatch(factor -> factor.supportsPartialTruth()
+						&& factor.scope().get(0).equals(domain.variable()))
+					&& domain.alternatives().stream().anyMatch(alternative ->
+						alternative.state().execType() == ExecType.FED && alternative.realization() != null
+							&& alternative.inputAuthorities().stream().filter(authority ->
+								authority.kind() == ExactPhysicalModel.InputAuthorityKind.DIRECT_FOUT
+									|| authority.kind() == ExactPhysicalModel.InputAuthorityKind.RELOCATION)
+								.map(ExactPhysicalModel.InputAuthority::inputPosition).distinct().count() == 1)));
+		}
 		int factors = 0;
 		long[] work = new long[2];
 		for(var factor : model.hardFactors()) {

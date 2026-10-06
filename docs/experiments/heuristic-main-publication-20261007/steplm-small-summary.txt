@@ -1,0 +1,17 @@
+IllegalStateException: CFG transient candidate closure did not converge; f=626/632 oscillation, changed=[281,423], terminal iteration 1244
+BOUNDED_TEST_RESULT tests=1 failures=1 ignored=0 milliseconds=229971
+/home/mchoi/heuristic-main-publication-20261007/target/main-publication-evidence/steplm-small.log
+	at org.apache.sysds.hops.fedplanner.placement.PlacementRelationClosure.closeCfgTransientCandidateDependenciesMeasured(PlacementRelationClosure.java:3835)
+	at org.apache.sysds.hops.fedplanner.placement.PlacementRelationClosure.closeCfgTransientCandidateDependencies(PlacementRelationClosure.java:3468)
+	at org.apache.sysds.hops.fedplanner.placement.PlacementRelationClosure.closeFunctionBoundaryRelations(PlacementRelationClosure.java:767)
+	at org.apache.sysds.hops.fedplanner.placement.PlacementRelationClosure.close(PlacementRelationClosure.java:430)
+	at org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder.buildDetachedAnalysis(NeutralPlacementGraphBuilder.java:190)
+	at org.apache.sysds.parser.DMLProgram.bindPlacementAnalysisAtFinalHopBoundary(DMLProgram.java:73)
+	at org.apache.sysds.parser.DMLTranslator.prepareCommonSearchSpace(DMLTranslator.java:552)
+	at org.apache.sysds.parser.DMLTranslator.runFederatedPlannerAtFinalHopBoundary(DMLTranslator.java:373)
+	at org.apache.sysds.parser.DMLTranslator.constructLops(DMLTranslator.java:827)
+	at org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest.invokeLocalCostPlannerRewriteScript(FederatedPlannerFallbackIntegrationTest.java:1746)
+	at org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding(FederatedPlannerFallbackIntegrationTest.java:277)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)

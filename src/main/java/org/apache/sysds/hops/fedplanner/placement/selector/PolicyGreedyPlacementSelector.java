@@ -48,17 +48,20 @@ import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate.
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
- * Non-backtracking policy selection over the common, fully generated candidate universe.
+ * Policy-first selection with bounded reversible conflict repair over the common,
+ * fully generated candidate universe.
  * Rows retain their exact realization AND support clause. Support groups count alternatives;
  * deleting one clause must not invalidate a realization that still has another clause.
  *
  * <p>Index construction and monotone propagation are proportional to rows and indexed support
  * incidences (plus bounded placement-state pairs), not to combinations of whole-program plans.
- * Every row is examined at most once by the policy, and deleted at most once. Canonical order
- * and final authority validation have their own costs; this is not an end-to-end linear-time
- * claim about the shared candidate generator. Cyclic decisions remain provisional until the
- * complete owned witness is validated. There is no retry, rollback, or exact-search fallback.
- * Arc consistency is necessary, not complete: a greedy conflict is NOT global infeasibility.
+ * The no-conflict path examines every row once and deletes it at most once. Canonical order and
+ * final authority validation have their own costs; this is not an end-to-end linear-time claim
+ * about the shared candidate generator. Cyclic decisions remain provisional until the complete
+ * owned witness is validated. A compiler-selection conflict enables deterministic bounded repair
+ * over the same indexed rows. Repair reverses propagation events; it does not copy the graph or
+ * invoke a cost, exact, or runtime fallback. Arc consistency and bounded repair are incomplete:
+ * a selection failure is NOT global infeasibility.
  */
 public final class PolicyGreedyPlacementSelector implements PlacementSelector, PlacementAnalysisSelector {
 	public enum Policy { FED_FIRST, AGG_LOCAL }
@@ -72,6 +75,20 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		GreedyConflictException(String message) { super("Greedy policy conflict (not global infeasibility): " + message); }
 		GreedyConflictException(String message, Throwable cause) { this(message); initCause(cause); }
 	}
+	/** The explicit compiler-selection repair budget ended before another branch could be checked. */
+	public static final class BoundedRepairExhaustedException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+		BoundedRepairExhaustedException(String message, Throwable cause) {
+			super("Bounded greedy repair exhausted (not global infeasibility): " + message, cause);
+		}
+	}
+	/** Every indexed policy row branch was rejected; this is still not a whole-program infeasibility proof. */
+	public static final class NoSupportedPolicyWitnessException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+		NoSupportedPolicyWitnessException(String message, Throwable cause) {
+			super("No supported greedy policy witness (not global infeasibility): " + message, cause);
+		}
+	}
 	/** No selected external entry grounds a cyclic proof; this is not global infeasibility. */
 	public static final class UnresolvedBoundaryContractException extends IllegalStateException {
 		private static final long serialVersionUID = 1L;
@@ -81,15 +98,22 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 	}
 
 	private final Policy policy;
+	private final int repairBudget;
+	private static final int DEFAULT_REPAIR_BUDGET = 256;
 	public PolicyGreedyPlacementSelector() { this(Policy.FED_FIRST); }
-	public PolicyGreedyPlacementSelector(Policy policy) { this.policy = Objects.requireNonNull(policy); }
+	public PolicyGreedyPlacementSelector(Policy policy) { this(policy, DEFAULT_REPAIR_BUDGET); }
+	PolicyGreedyPlacementSelector(Policy policy, int repairBudget) {
+		this.policy = Objects.requireNonNull(policy);
+		if(repairBudget < 0) throw new IllegalArgumentException("Negative greedy repair budget");
+		this.repairBudget = repairBudget;
+	}
 	public Policy policy() { return policy; }
 	@Override public PlacementSelection select(NeutralPlacementGraph graph) { return select(null, graph); }
 	@Override public PlacementSelection select(PlacementAnalysis analysis, NeutralPlacementGraph graph) {
 		return selectWithMetrics(analysis, graph).selection();
 	}
 	public Run selectWithMetrics(PlacementAnalysis analysis, NeutralPlacementGraph graph) {
-		return new Invocation(analysis, Objects.requireNonNull(graph), policy).run();
+		return new Invocation(analysis, Objects.requireNonNull(graph), policy, repairBudget).run();
 	}
 
 	private static final class Row {
@@ -213,12 +237,25 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		final List<Domain> domains = new ArrayList<>();
 		final Map<CompiledHopKey,Domain> byKey = new IdentityHashMap<>();
 		final ArrayDeque<Row> deletions = new ArrayDeque<>();
+		final List<Row> deletionTrail = new ArrayList<>();
+		final int repairBudget;
 		long checks, incidences, deleted, commits, events;
 
-		Invocation(PlacementAnalysis analysis, NeutralPlacementGraph graph, Policy policy) {
+		Invocation(PlacementAnalysis analysis, NeutralPlacementGraph graph, Policy policy, int repairBudget) {
 			this.analysis = analysis;
 			this.graph = graph;
 			this.policy = policy;
+			this.repairBudget = repairBudget;
+		}
+		private static final class DecisionFrame {
+			final Domain domain;
+			final int checkpoint;
+			final Set<Row> tried = Collections.newSetFromMap(new IdentityHashMap<>());
+			Row selected;
+			DecisionFrame(Domain domain, int checkpoint) {
+				this.domain = domain;
+				this.checkpoint = checkpoint;
+			}
 		}
 
 		Run run() {
@@ -229,39 +266,104 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 				indexPhysicalInputs();
 				indexTransients();
 				indexBoundaries();
+				indexWdivmmRuntimeInputs();
 				if(policy == Policy.AGG_LOCAL) indexLocalContinuations();
 			}
-			propagate();
+			try { propagate(); }
+			catch(GreedyConflictException ex) {
+				throw new NoSupportedPolicyWitnessException(
+					"initial hard-support propagation rejected every row", ex);
+			}
 			Map<Domain,Set<Domain>> dependencies = new LinkedHashMap<>();
 			for(Domain domain : domains) dependencies.put(domain, domain.producers);
-			// Condensation is dependency-first. Internal choices are provisional, NOT
-			// seeds: the selected exact proof graph must separately establish grounding.
-			for(List<Domain> component : dependencyComponents(dependencies)) for(Domain domain : component) {
-				Row best = null;
-				int rank = Integer.MAX_VALUE;
-				for(Row row : domain.rows) {
-					checks++;
-					if(!row.active) continue;
-					int candidateRank = rank(row);
-					if(best == null || candidateRank < rank || candidateRank == rank
-						&& row.movementInputs < best.movementInputs) {
-						best = row;
-						rank = candidateRank;
+			// Condensation is dependency-first. The first traversal is exactly the old
+			// policy path; reversible frames become observable only after a conflict.
+			List<Domain> order = dependencyComponents(dependencies).stream().flatMap(List::stream).toList();
+			List<DecisionFrame> frames = new ArrayList<>();
+			int index = 0, repairs = 0;
+			Throwable lastFailure = null;
+			while(true) {
+				if(index == order.size()) {
+					try {
+						PlacementSelection selection = finish();
+						return new Run(selection, new Metrics(checks, incidences, deleted, commits, events));
+					}
+					catch(CandidateSelections.JointValueMapIncompatibilityException
+						| UnresolvedBoundaryContractException | GreedyConflictException ex) {
+						lastFailure = new GreedyConflictException(
+							"complete witness validation: " + ex.getMessage(), ex);
+						if(index == 0)
+							throw new NoSupportedPolicyWitnessException(
+								"the only complete indexed witness failed validation", lastFailure);
+						index--;
+						DecisionFrame prior = frames.get(index);
+						rollback(prior.checkpoint);
+						prior.domain.selected = null;
+						prior.tried.add(prior.selected);
+						prior.selected = null;
+						continue;
 					}
 				}
-				if(best == null) throw conflict(domain);
-				domain.selected = best;
+				DecisionFrame frame;
+				if(frames.size() == index) {
+					frame = new DecisionFrame(order.get(index), deletionTrail.size());
+					frames.add(frame);
+				}
+				else frame = frames.get(index);
+				Row best = best(frame.domain, frame.tried);
+				if(best == null) {
+					frames.remove(index);
+					if(index == 0)
+						throw new NoSupportedPolicyWitnessException(
+							"exhausted all indexed row alternatives; checkedRepairs=" + repairs, lastFailure);
+					index--;
+					DecisionFrame prior = frames.get(index);
+					rollback(prior.checkpoint);
+					prior.domain.selected = null;
+					prior.tried.add(prior.selected);
+					prior.selected = null;
+					continue;
+				}
+				if(!frame.tried.isEmpty()) {
+					if(repairs >= repairBudget)
+						throw new BoundedRepairExhaustedException("repairBudget=" + repairBudget
+							+ "; attemptedRepairs=" + repairs + "; next="
+							+ frame.domain.node.key().normalizedSignature(), lastFailure);
+					repairs++;
+				}
+				frame.selected = best;
+				frame.domain.selected = best;
 				commits++;
-				for(Row row : domain.rows) if(row != best) deletions.add(row);
-				propagate();
+				for(Row row : frame.domain.rows) if(row != best) deletions.add(row);
+				try {
+					propagate();
+					index++;
+				}
+				catch(GreedyConflictException ex) {
+					lastFailure = ex;
+					rollback(frame.checkpoint);
+					frame.domain.selected = null;
+					frame.tried.add(best);
+					frame.selected = null;
+				}
 			}
-			PlacementSelection selection;
-			try { selection = finish(); }
-			catch(UnresolvedBoundaryContractException ex) { throw ex; }
-			catch(IllegalArgumentException | IllegalStateException ex) {
-				throw new GreedyConflictException("complete witness validation: " + ex.getMessage(), ex);
+		}
+
+		Row best(Domain domain, Set<Row> excluded) {
+			Row best = null;
+			int bestRank = Integer.MAX_VALUE, bestMovement = Integer.MAX_VALUE;
+			for(Row row : domain.rows) {
+				checks++;
+				if(!row.active || excluded.contains(row)) continue;
+				int candidateRank = rank(row), candidateMovement = movementInputs(row);
+				if(best == null || candidateRank < bestRank || candidateRank == bestRank
+					&& candidateMovement < bestMovement) {
+					best = row;
+					bestRank = candidateRank;
+					bestMovement = candidateMovement;
+				}
 			}
-			return new Run(selection, new Metrics(checks, incidences, deleted, commits, events));
+			return best;
 		}
 
 		void indexRows() {
@@ -385,7 +487,6 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 				Row source = input.source().selected;
 				if(source != null && source.state.output() == FederatedOutput.FOUT
 					&& source.state.fType() == input.required()) residentCount++;
-				else row.movementInputs++;
 			}
 			boolean fed = row.state.execType() == ExecType.FED;
 			boolean fout = row.state.output() == FederatedOutput.FOUT;
@@ -405,6 +506,15 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 			// Uploads remain legal exact alternatives, but not speculative first preferences.
 			if(fed && nativeOutput) return fout ? 3 : 4;
 			return fed ? 5 : 6;
+		}
+		int movementInputs(Row row) {
+			int movement = row.movementInputs;
+			for(PhysicalInput input : row.physicalInputs) {
+				Row source = input.source().selected;
+				if(source == null || source.state.output() != FederatedOutput.FOUT
+					|| source.state.fType() != input.required()) movement++;
+			}
+			return movement;
 		}
 		void dependency(Domain source, Domain target) {
 			if(source != null && target != null && source != target) target.producers.add(source);
@@ -589,6 +699,58 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 				}
 			}
 		}
+		void indexWdivmmRuntimeInputs() {
+			for(Domain owner : domains) {
+				var latent = PlacementCostSemantics.latentWdivmmTransposePairFact(
+					analysis, owner.node.key());
+				if(latent != null && latent.partitionedInputFType() != null) {
+					Domain weights = requiredRuntimeInput(owner, latent.weights(), "latent");
+					indexRuntimeInputRelation(owner, weights, (ownerRow, weightsState) ->
+						ownerRow.state.execType() != ExecType.FED
+							|| weightsState.output() == FederatedOutput.FOUT
+								&& weightsState.fType() == latent.partitionedInputFType());
+				}
+				var direct = PlacementCostSemantics.directWdivmmRuntimeFact(
+					analysis, owner.node.key());
+				if(direct != null) {
+					Domain weights = requiredRuntimeInput(owner, direct.weights(), "direct");
+					indexRuntimeInputRelation(owner, weights, (ownerRow, weightsState) -> {
+						if(ownerRow.receipt == null)
+							return PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+								direct, ownerRow.state, weightsState);
+						var emission = ownerRow.receipt.emission();
+						return PlacementCostSemantics.directWdivmmRuntimeAssignmentCompatible(
+							direct, ownerRow.state, emission.executionFType(),
+							emission.emissionState().derivedFedFout(), weightsState);
+					});
+				}
+			}
+		}
+		Domain requiredRuntimeInput(Domain owner, CompiledHopKey key, String kind) {
+			Domain input = byKey.get(key);
+			if(input == null)
+				throw new IllegalArgumentException("Greedy " + kind
+					+ " WDIVMM runtime input domain missing for " + owner.node.key().normalizedSignature());
+			dependency(input, owner);
+			return input;
+		}
+		void indexRuntimeInputRelation(Domain owner, Domain weights,
+			java.util.function.BiPredicate<Row,PlacementState> compatible) {
+			Map<PlacementState,Group> supportedOwners = new HashMap<>();
+			for(Row ownerRow : owner.rows) {
+				List<Group> supports = new ArrayList<>();
+				for(var entry : weights.states.entrySet())
+					if(compatible.test(ownerRow, entry.getKey())) {
+						supports.add(entry.getValue());
+						supportedOwners.computeIfAbsent(entry.getKey(), ignored -> new Group()).add(ownerRow);
+					}
+				require(ownerRow.singleton, supports);
+			}
+			for(var entry : weights.states.entrySet()) {
+				Group supported = supportedOwners.get(entry.getKey());
+				require(entry.getValue(), supported == null ? List.of() : List.of(supported));
+			}
+		}
 		void indexTransients() {
 			for(var fact : analysis.logicalTransientInputsInCanonicalOrder()) {
 				Domain source = byKey.get(fact.sourceWrite()), target = byKey.get(fact.targetRead());
@@ -663,6 +825,7 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 				Row row = deletions.removeFirst();
 				if(!row.active) continue;
 				row.active = false;
+				deletionTrail.add(row);
 				deleted++;
 				for(Group group : row.memberships) {
 					events++;
@@ -673,6 +836,22 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 						}
 				}
 				if(row.domain.all.live == 0) throw conflict(row.domain);
+			}
+		}
+		void rollback(int checkpoint) {
+			deletions.clear();
+			for(int index = deletionTrail.size() - 1; index >= checkpoint; index--) {
+				Row row = deletionTrail.remove(index);
+				if(row.active) throw new IllegalStateException("Greedy rollback trail contains a live row");
+				row.active = true;
+				for(Group group : row.memberships) {
+					events++;
+					if(group.live++ == 0)
+						for(Requirement requirement : group.watchers) {
+							events++;
+							requirement.liveSupports++;
+						}
+				}
 			}
 		}
 		GreedyConflictException conflict(Domain domain) {
@@ -720,7 +899,8 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 			PlacementScore upper = new PlacementScore(upperFed, upperFout, 0, "");
 			Set<String> nodes = new LinkedHashSet<>();
 			graph.nodes().forEach(node -> nodes.add(node.key().normalizedSignature()));
-			String derivation = "monotone-owned-row-greedy-" + policy.name().toLowerCase(java.util.Locale.ROOT);
+			String derivation = "bounded-reversible-owned-row-greedy-"
+				+ policy.name().toLowerCase(java.util.Locale.ROOT);
 			List<ComponentBound> bounds = List.of(new ComponentBound("whole-graph-envelope", nodes,
 				graph.nodes().size(), graph.constraints().size(), upper, "structural-envelope-not-an-optimality-proof"));
 			PlacementCertificate certificate = new PlacementCertificate(score, upper, 1, 0,

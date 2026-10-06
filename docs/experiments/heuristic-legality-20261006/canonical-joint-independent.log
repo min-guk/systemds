@@ -1,0 +1,7 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+CASE=independent ANALYSIS_OK decisions=93
+EXACT=REJECTED EXACT_VE_NO_FEASIBLE_ASSIGNMENT
+HEURISTIC=NORMALIZED_SUCCESS candidates=93 relocations=0
+CONSUMER=PlacementEmissionState[placementState=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], derivedFedFout=false] inputs=[CandidateInputState[presence=PRESENT, fType=ROW], CandidateInputState[presence=PRESENT, fType=ROW]] layout=VALUE_MAP bindings=[DIRECT, DIRECT]
+JOINT_ROWS=4 EXPECTED_ROWS=4 INCOMPATIBLE_POOL_ROWS=2
+EMISSION_PREVALIDATE=ACCEPTED

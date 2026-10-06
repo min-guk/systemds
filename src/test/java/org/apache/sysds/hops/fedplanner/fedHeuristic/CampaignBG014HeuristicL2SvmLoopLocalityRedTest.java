@@ -187,9 +187,9 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Assert.assertEquals("workers=" + workers + " must consume every analysis-owned marker",
 			markers, receipt.markers());
 		Assert.assertEquals("workers=" + workers + " must publish local-vector policy v5",
-			"LOCAL_VECTOR_CONTINUATION_POLICY_V5", selected.plannerFacts().get("policy"));
+			"LOCAL_VECTOR_CONTINUATION_POLICY_V6", selected.plannerFacts().get("policy"));
 		Assert.assertEquals("workers=" + workers + " must use greedy search without backtracking",
-			"GREEDY_NO_BACKTRACKING", selected.plannerFacts().get("search"));
+			"GREEDY_BOUNDED_REVERSIBLE_REPAIR", selected.plannerFacts().get("search"));
 		Assert.assertEquals("workers=" + workers + " must publish the AggLocal comparator",
 			"AGG_LOCAL", selected.plannerFacts().get("stateOrdering"));
 		Assert.assertEquals("workers=" + workers
@@ -199,7 +199,7 @@ public class CampaignBG014HeuristicL2SvmLoopLocalityRedTest {
 		Assert.assertEquals("workers=" + workers + " must terminate with a certified policy plan",
 			"POLICY_FEASIBLE", selected.certificate().terminationReason());
 		Assert.assertEquals("workers=" + workers + " must publish the non-backtracking AggLocal certificate",
-			"monotone-owned-row-greedy-agg_local",
+			"bounded-reversible-owned-row-greedy-agg_local",
 			selected.certificate().boundDerivation());
 		Assert.assertFalse("workers=" + workers + " must not use planner fallback",
 			selected.certificate().fallbackUsed());
