@@ -37,6 +37,20 @@ public class CfgNativeLineageNormalizationTest {
 			"fed-init:X", literal.placementId());
 		Assert.assertEquals("normalization must not replace the carried source identity",
 			"native-output:loop-carrier", carried.placementId());
+		DurableAnchorKey pathAddresses = new DurableAnchorKey("fed-init:path", FType.ROW, List.of(
+			new AnchorPartition("localhost:8001/X1", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("localhost:8002/X2", List.of(4L, 0L), List.of(8L, 8L))));
+		DurableAnchorKey endpointAddresses = new DurableAnchorKey("native-proof:endpoint", FType.ROW, List.of(
+			new AnchorPartition("localhost:8001", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("localhost:8002", List.of(4L, 0L), List.of(8L, 8L))));
+		Assert.assertEquals("generated reader layouts normalize equivalent worker URL and endpoint witnesses",
+			lineage(owner, pathAddresses, true), lineage(owner, endpointAddresses, true));
+		Assert.assertEquals("dynamic layouts normalize equivalent worker URL and endpoint witnesses",
+			lineage(owner, pathAddresses, false), lineage(owner, endpointAddresses, false));
+		Assert.assertEquals("lineage normalization must retain the path-bearing source authority",
+			"localhost:8001/X1", pathAddresses.partitions().get(0).workerId());
+		Assert.assertEquals("lineage normalization must retain the endpoint source authority",
+			"localhost:8001", endpointAddresses.partitions().get(0).workerId());
 
 		Assert.assertNotEquals("reader owner remains part of the derived identity",
 			exact, lineage(owner("reader-b"), literal, true));
@@ -67,6 +81,28 @@ public class CfgNativeLineageNormalizationTest {
 			exact, lineage(owner, literal, false));
 	}
 
+	@Test
+	public void readerLineageUsesActualOutputWitnessInsteadOfCompatibilitySeed() throws Exception {
+		CompiledHopKey owner = owner("reader-output");
+		DurableAnchorKey seed = new DurableAnchorKey("seed", FType.ROW, List.of(
+			new AnchorPartition("worker:8001", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("worker:8002", List.of(4L, 0L), List.of(8L, 8L))));
+		DurableAnchorKey outputA = new DurableAnchorKey("output-a", FType.ROW, List.of(
+			new AnchorPartition("worker:9001", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("worker:9002", List.of(4L, 0L), List.of(8L, 8L))));
+		DurableAnchorKey outputB = new DurableAnchorKey("output-b", FType.ROW, List.of(
+			new AnchorPartition("worker:7001", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("worker:7002", List.of(4L, 0L), List.of(8L, 8L))));
+
+		Assert.assertNotEquals("one seed cannot collapse distinct native output pools",
+			lineage(owner, seed, outputA, false), lineage(owner, seed, outputB, false));
+		DurableAnchorKey renamedSeed = new DurableAnchorKey("other-seed", FType.ROW, List.of(
+			new AnchorPartition("worker:6001", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("worker:6002", List.of(4L, 0L), List.of(8L, 8L))));
+		Assert.assertEquals("different compatible seeds must share an identical output pool identity",
+			lineage(owner, seed, outputA, false), lineage(owner, renamedSeed, outputA, false));
+	}
+
 	private static CompiledHopKey owner(String occurrence) {
 		ControlRegionKey region = new ControlRegionKey("cfg-native-lineage", "main",
 			List.of("main"), "main", "compiled");
@@ -76,9 +112,15 @@ public class CfgNativeLineageNormalizationTest {
 
 	private static String lineage(CompiledHopKey owner, DurableAnchorKey seed,
 		boolean exactLayout) throws Exception {
+		return lineage(owner, seed, seed, exactLayout);
+	}
+
+	private static String lineage(CompiledHopKey owner, DurableAnchorKey seed,
+		DurableAnchorKey outputWitness, boolean exactLayout) throws Exception {
 		Method method = PlacementRelationClosure.class.getDeclaredMethod(
-			"cfgNativeDerivedLineage", CompiledHopKey.class, DurableAnchorKey.class, boolean.class);
+			"cfgNativeDerivedLineage", CompiledHopKey.class, DurableAnchorKey.class,
+			DurableAnchorKey.class, boolean.class);
 		method.setAccessible(true);
-		return (String)method.invoke(null, owner, seed, exactLayout);
+		return (String)method.invoke(null, owner, seed, outputWitness, exactLayout);
 	}
 }

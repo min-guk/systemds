@@ -365,6 +365,22 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void replayShrinkAndReorderReportsSemanticOwnersWithoutPositionalAccess() throws Exception {
+		Node oldSource = node("replay-old-source"), newSource = node("replay-new-source");
+		Node changed = node("replay-changed-owner"), stable = node("replay-stable-owner");
+		Node removed = node("replay-removed-owner");
+		CandidateRuleFact changedBefore = supportFact(oldSource, changed);
+		CandidateRuleFact stableBefore = supportFact(oldSource, stable);
+		CandidateRuleFact removedBefore = supportFact(oldSource, removed);
+		CandidateRuleFact changedAfter = supportFact(newSource, changed);
+		CandidateRuleFact stableAfter = supportFact(oldSource, stable);
+
+		assertSameKeys(keys(changed, removed), changedCandidateOccurrences(
+			List.of(changedBefore, stableBefore, removedBefore),
+			List.of(stableAfter, changedAfter)));
+	}
+
+	@Test
 	public void supportAdditionsAndDeletionsRebuildCycleSchedule() throws Exception {
 		Node a = node("cycle-index-a"), b = node("cycle-index-b"), c = node("cycle-index-c");
 		List<CandidateRuleFact> before = List.of(excludedFact(a), supportFact(a, b), supportFact(b, c));

@@ -434,7 +434,8 @@ final class ExactPhysicalReducedSolver {
 				.filter(variable -> reducedToCompiled[reducedIndexes.get(variable)] >= 0).toList();
 			int cells = compactScope.stream().mapToInt(
 				ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
-			double[] values = new double[cells];
+			PlannerResourceGuard.checkAdditionalCells(cells, "exact-compact-factor");
+			double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
 			int[] compactLocal = new int[compactScope.size()];
 			int[] reducedLocal = new int[factor.scope().size()];
 			for(int cell = 0; cell < cells; cell++) {
@@ -562,7 +563,9 @@ final class ExactPhysicalReducedSolver {
 			int[] scope = frozen.scope(factor);
 			List<ExactCategoricalSolver.Variable> reducedScope = Arrays.stream(scope)
 				.mapToObj(reducedVariables::get).toList();
-			double[] source = frozen.values(factor);
+			// All observations are complete. Release each old table as its replacement
+			// is built instead of retaining two complete copies of the factor model.
+			double[] source = frozen.takeValues(factor);
 			boolean identity = true;
 			for(int variable : scope)
 				if(!identityRepresentatives(frozenRepresentatives[variable],
@@ -576,7 +579,8 @@ final class ExactPhysicalReducedSolver {
 			}
 			int cells = reducedScope.stream().mapToInt(
 				ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
-			double[] values = new double[cells];
+			PlannerResourceGuard.checkAdditionalCells(cells, "exact-reduced-factor");
+			double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
 			int[] reducedLocal = new int[scope.length];
 			int[] originalLocal = new int[scope.length];
 			for(int cell = 0; cell < cells; cell++) {
@@ -679,7 +683,8 @@ final class ExactPhysicalReducedSolver {
 				}
 				int cells = reducedScope.stream().mapToInt(
 					ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
-				double[] values = new double[cells];
+				PlannerResourceGuard.checkAdditionalCells(cells, "exact-reduced-factor");
+				double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
 				int[] reducedLocal = new int[scope.length];
 				int[] sourceLocal = new int[scope.length];
 				for(int cell = 0; cell < cells; cell++) {

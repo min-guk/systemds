@@ -161,11 +161,15 @@ final class RegionalSearchProblem {
 	}
 
 	static boolean isResourceLimit(IllegalArgumentException failure) {
+		if(failure instanceof PlannerResourceGuard.ResourceExhaustedException)
+			return true;
 		String message = failure.getMessage();
 		return message != null && (message.startsWith("EXACT_VE_FACTOR_LIMIT_EXCEEDED")
 			|| message.startsWith("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED")
 			|| message.startsWith("EXACT_VE_FACTOR_CELL_OVERFLOW")
 			|| message.startsWith("EXACT_VE_MATERIALIZED_CELL_OVERFLOW")
+			|| message.startsWith("EXACT_VE_ASSIGNMENT_LIMIT_EXCEEDED")
+			|| message.startsWith("INCREMENTAL_MESSAGE_RESOURCE")
 			|| message.startsWith("EXACT_VE_ELIMINATION_ASSIGNMENT_OVERFLOW"));
 	}
 }

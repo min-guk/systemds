@@ -89,6 +89,9 @@ public class IncrementalBoundaryMessageTest {
 			}), GENEROUS);
 		Assert.assertEquals(4, leftEvaluations.get());
 		Assert.assertEquals(4, rightEvaluations.get());
+		Assert.assertEquals("each solve-local lazy table owns its four frozen cells",
+			4L, left.retainedCells());
+		Assert.assertEquals(4L, right.retainedCells());
 
 		IllegalArgumentException rejected = Assert.assertThrows(IllegalArgumentException.class,
 			() -> ExactCategoricalSolver.mergeBoundary(
@@ -103,6 +106,30 @@ public class IncrementalBoundaryMessageTest {
 		Assert.assertEquals(0d, accepted.minimum(), 0d);
 		Assert.assertEquals(4, leftEvaluations.get());
 		Assert.assertEquals(4, rightEvaluations.get());
+	}
+
+	@Test
+	public void leafOwnershipChargesLazyStorageButBorrowsDenseSourceTables() {
+		var x = variable("leaf-owner-x", 3);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x);
+		var denseFactor = ExactCategoricalSolver.Factor.dense(List.of(x), 3d, 2d, 1d);
+		AtomicInteger evaluations = new AtomicInteger();
+		var lazyFactor = ExactCategoricalSolver.Factor.lazy(List.of(x), values -> {
+			evaluations.incrementAndGet();
+			return 3d-values[0];
+		});
+
+		var leaves = ExactCategoricalSolver.boundaryLeaves(
+			variables, List.of(denseFactor, lazyFactor), GENEROUS);
+		var dense = leaves.get(0);
+		var lazy = leaves.get(1);
+
+		Assert.assertEquals(0L, ExactCategoricalSolver.boundaryLeafRetainedCells(denseFactor));
+		Assert.assertEquals(0L, dense.retainedCells());
+		Assert.assertEquals(3L, ExactCategoricalSolver.boundaryLeafRetainedCells(lazyFactor));
+		Assert.assertEquals(3L, lazy.retainedCells());
+		Assert.assertEquals("mixed batches freeze each lazy cell exactly once", 3, evaluations.get());
+		Assert.assertArrayEquals(dense.minMarginals(x), lazy.minMarginals(x), 0d);
 	}
 
 	@Test
@@ -134,6 +161,31 @@ public class IncrementalBoundaryMessageTest {
 		IllegalArgumentException rejected = Assert.assertThrows(IllegalArgumentException.class,
 			() -> leaf.decodeInto(assignment, variables));
 		Assert.assertEquals("INCREMENTAL_MESSAGE_BOUNDARY_INFEASIBLE", rejected.getMessage());
+	}
+
+	@Test
+	public void mergeShortCircuitRequiresBothExactCostAndLowerBoundInfinity() {
+		Assert.assertTrue(ExactCategoricalSolver.absorbingBoundaryInfinity(
+			Double.POSITIVE_INFINITY,Double.POSITIVE_INFINITY));
+		Assert.assertFalse("a finite lower bound must still accumulate later terms",
+			ExactCategoricalSolver.absorbingBoundaryInfinity(Double.POSITIVE_INFINITY,7d));
+		Assert.assertFalse("a finite exact cost must still accumulate later terms",
+			ExactCategoricalSolver.absorbingBoundaryInfinity(7d,Double.POSITIVE_INFINITY));
+
+		var x = variable("absorbing-infinity-x",2);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x);
+		var infeasibleFirst = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(List.of(x),Double.POSITIVE_INFINITY,2d),GENEROUS);
+		var finiteSecond = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(List.of(x),100d,3d),GENEROUS);
+		var finiteThird = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(List.of(x),200d,5d),GENEROUS);
+		var merged = ExactCategoricalSolver.mergeBoundary(
+			List.of(infeasibleFirst,finiteSecond,finiteThird),List.of(x),GENEROUS,2L);
+
+		Assert.assertArrayEquals(new double[] {Double.POSITIVE_INFINITY,10d},
+			merged.minMarginals(x),0d);
+		Assert.assertEquals(10d,merged.minimum(),0d);
 	}
 
 	@Test

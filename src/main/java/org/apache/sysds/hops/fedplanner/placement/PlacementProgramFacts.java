@@ -64,11 +64,15 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder.F
 record PlacementProgramFacts(String programFingerprint, String registryFingerprint, String programId,
 	List<StatementBlock> topLevelStatementBlocks,
 	List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+	List<CompiledHopKey> occurrenceKeys,
 	Map<Hop,NodeShapeFact> compiledShapeFactsByHop, CfgAnalysis cfg,
 	PlacementAbstractShapeAnalysis.HopFacts preliminaryAbstractFacts,
 	SinglePartitionFacts initialSinglePartitions) {
 	PlacementProgramFacts {
 		occurrences = List.copyOf(occurrences);
+		occurrenceKeys = List.copyOf(occurrenceKeys);
+		if(occurrences.size() != occurrenceKeys.size())
+			throw new IllegalArgumentException("Occurrence/key cardinality mismatch");
 	}
 
 	static PlacementProgramFacts analyze(DMLProgram program, FunctionCallGraph fgraph,
@@ -82,6 +86,8 @@ record PlacementProgramFacts(String programFingerprint, String registryFingerpri
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences)
 			compiledShapeFactsByHop.put(occurrence.hop(), deriveNodeShapeFact(occurrence.hop()));
 		String programId = structuralFingerprint(occurrences);
+		List<CompiledHopKey> occurrenceKeys = occurrences.stream()
+			.map(occurrence -> compiledOccurrenceKey(programId, occurrence)).toList();
 		CfgAnalysis conservativeCfg = analyzeCfg(program, topLevelStatementBlocks, occurrences, Map.of());
 		CfgAnalysis cfg = conservativeCfg;
 		PlacementAbstractShapeAnalysis.HopFacts preliminaryAbstractFacts = null;
@@ -129,7 +135,7 @@ record PlacementProgramFacts(String programFingerprint, String registryFingerpri
 			occurrences.stream().map(PlacementGraphFingerprint.HopOccurrence::hop).toList(),
 			preliminaryAbstractFacts.valueSources(), unresolvedValueSources);
 		return new PlacementProgramFacts(before, registryBefore, programId, topLevelStatementBlocks,
-			occurrences, Collections.unmodifiableMap(compiledShapeFactsByHop), cfg,
+			occurrences, occurrenceKeys, Collections.unmodifiableMap(compiledShapeFactsByHop), cfg,
 			preliminaryAbstractFacts, singlePartitions);
 	}
 
@@ -601,6 +607,15 @@ record PlacementProgramFacts(String programFingerprint, String registryFingerpri
 
 	/** Create the exact occurrence identity at its original point in seeding order. */
 	CompiledHopKey compiledOccurrenceKey(PlacementGraphFingerprint.HopOccurrence occurrence) {
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++)
+			if(occurrences.get(ordinal) == occurrence)
+				return occurrenceKeys.get(ordinal);
+		throw new IllegalArgumentException("Occurrence is not owned by these program facts");
+	}
+
+	/** Shared construction for analyses that consume the same compiled occurrence universe. */
+	static CompiledHopKey compiledOccurrenceKey(String programId,
+		PlacementGraphFingerprint.HopOccurrence occurrence) {
 		Hop hop = occurrence.hop();
 		String context = requiresRecompileMetadata(hop) || occurrence.dynamicRecompileRegion()
 			? "recompile" : "compiled";

@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
@@ -124,6 +125,37 @@ public class DirectSupportUnionScheduleTest {
 		CompiledHopKey outside = key("outside");
 		Assert.assertTrue("same SCC is not a substitute for exact potential-pair membership",
 			dependencyUnionChanged(update(cycleEdge, b, List.of(supportFact(outside, b)))));
+	}
+
+	@Test
+	public void nativeRebindingRetainsGroundedAlternativesButNotStagingAuthority() throws Exception {
+		CompiledHopKey source = key("source"), owner = key("owner");
+		List<CandidateRealizationInputBinding> bindings = supportFact(source, owner).allowedEmissionFacts()
+			.get(0).realizations().get(0).supportClauses().get(0).inputBindings();
+		PlacementEmissionState nativeEmission = new PlacementEmissionState(new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		CandidateEmissionRealization staging = CandidateEmissionRealization.nativeLineage(
+			nativeEmission, "staging", List.of(), List.of());
+		CandidateEmissionRealization widthOne = CandidateEmissionRealization.nativeLineage(
+			nativeEmission, "layout-width-1", List.of(), bindings);
+		CandidateEmissionRealization widthMany = CandidateEmissionRealization.nativeLineage(
+			nativeEmission, "layout-width-128", List.of(), bindings);
+		CandidateEmissionFact mixed = new CandidateEmissionFact(nativeEmission, FType.ROW, null,
+			List.of(staging, widthOne, widthMany));
+
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"retainPreviouslyGroundedNativeSupport", CandidateEmissionFact.class);
+		method.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		List<CandidateEmissionRealization> retained =
+			(List<CandidateEmissionRealization>)method.invoke(null, mixed);
+
+		Assert.assertEquals(2, retained.size());
+		Assert.assertEquals(1, retained.get(0).supportClauses().size());
+		Assert.assertEquals(1, retained.get(0).supportClauses().get(0).inputBindings().size());
+		for(CandidateEmissionRealization realization : retained)
+			Assert.assertSame(source, realization.supportClauses().get(0)
+				.inputBindings().get(0).source().rule().parentOccurrence());
 	}
 
 	private static Object index(List<CandidateRuleFact> facts,

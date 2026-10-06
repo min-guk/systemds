@@ -107,7 +107,7 @@ public class NativePlacementPruneOwnerTest {
 	}
 
 	@Test
-	public void closedUngroundedCycleRemainsForGroundingPhase() throws Exception {
+	public void closedCycleRetainsPhysicallyViableAlternatives() throws Exception {
 		Object witness = witness();
 		CompiledHopKey leftKey = key("cycle-left");
 		CompiledHopKey rightKey = key("cycle-right");
@@ -117,7 +117,7 @@ public class NativePlacementPruneOwnerTest {
 			left, List.of(alternative(List.of(dependency(rightKey, 4, witness)), witness)),
 			right, List.of(alternative(List.of(dependency(leftKey, 3, witness)), witness)));
 		Map<?,?> cyclePruned = prune(continuity(new SearchSpaceMetrics()), closedCycle);
-		Assert.assertSame("pruning retains a closed nonempty cycle for the grounding phase to reject",
+		Assert.assertSame("physical viability pruning retains cycle alternatives; program validity is a frontend obligation",
 			closedCycle, cyclePruned);
 	}
 

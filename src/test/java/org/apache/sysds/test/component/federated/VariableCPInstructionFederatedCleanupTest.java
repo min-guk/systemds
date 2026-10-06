@@ -102,6 +102,36 @@ public class VariableCPInstructionFederatedCleanupTest {
 	}
 
 	@Test
+	public void liveAliasWithFederatedIdZeroPreventsWorkerCleanup() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		CountingFederationMap map = new CountingFederationMap(0);
+		MatrixObject liveAlias = federatedMatrix("A", map);
+		MatrixObject removedTemporary = federatedMatrix("tmp", map);
+		ec.setVariable("A", liveAlias);
+
+		ec.cleanupDataObject(removedTemporary);
+
+		assertSame(liveAlias, ec.getVariable("A"));
+		assertEquals("Federated ID zero is valid and must remain live through an alias", 0, map.cleanupCalls);
+		assertTrue(map.cleanedIds.isEmpty());
+	}
+
+	@Test
+	public void negativeFederatedIdDoesNotSuppressCleanup() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		CountingFederationMap map = new CountingFederationMap(-1);
+		MatrixObject invalidAlias = federatedMatrix("invalid", map);
+		MatrixObject removedTemporary = federatedMatrix("tmp", map);
+		ec.setVariable("invalid", invalidAlias);
+
+		ec.cleanupDataObject(removedTemporary);
+
+		assertEquals("Negative federated IDs are invalid and cannot prove a live worker reference",
+			1, map.cleanupCalls);
+		assertEquals(List.of(-1L), map.cleanedIds);
+	}
+
+	@Test
 	public void removeVariableDoesNotWriteDebugOutputByDefault() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 		PrintStream originalOut = System.out;

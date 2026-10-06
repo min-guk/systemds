@@ -53,6 +53,12 @@ final class LocalCategoricalOptimizer {
 		 * Keep all supported quotient aliases, not just their representatives.
 		 */
 		default int[][] unconditionalDomains(List<Variable> originalVariables) { return null; }
+
+		/**
+		 * Expands a repair neighborhood when a shared exact representation proves that
+		 * a fixed boundary value cannot participate in any feasible assignment.
+		 */
+		default int[] expandRepairBlock(int[] assignment, int[] block) { return block; }
 	}
 
 	/** A provisional boundary value removed by exact support reduction must be repaired too. */
@@ -935,6 +941,15 @@ final class LocalCategoricalOptimizer {
 			int[] block;
 			while(true) {
 				block = variables.stream().sorted().mapToInt(Integer::intValue).toArray();
+				if(context.sharedPreparation != null) {
+					int[] expanded = context.sharedPreparation.expandRepairBlock(assignment, block);
+					for(int variable : expanded)
+						variables.add(variable);
+					if(expanded.length != block.length) {
+						statistics.conflictBlockExpansions++;
+						block = variables.stream().sorted().mapToInt(Integer::intValue).toArray();
+					}
+				}
 				try {
 					solution = solveBlock(context, assignment, block, statistics);
 				}

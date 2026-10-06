@@ -1,0 +1,128 @@
+[
+  {
+    "case": "lm_w3",
+    "globalCost": 503.06545153648824,
+    "localCost": 503.0654668486443,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": true
+  },
+  {
+    "case": "l2svm_w3",
+    "globalCost": 4078.110175394804,
+    "localCost": 4078.1101747451994,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "gnmf_w1",
+    "globalCost": 18501.025174567498,
+    "localCost": 18501.025174381895,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "P2_PREP_w3",
+    "globalCost": 6820.298780581913,
+    "localCost": 6820.298779839508,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "lm_w1",
+    "globalCost": 481.1137149103021,
+    "localCost": 481.11371463190017,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "gmm_w3",
+    "globalCost": 18305.95617004455,
+    "localCost": 18305.956169673344,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "pca_w3",
+    "globalCost": 1149.2430433891104,
+    "localCost": 1149.243043017908,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "P2_PREP_w1",
+    "globalCost": 7378.54600161681,
+    "localCost": 7378.546001245607,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "COVTYPE_w1",
+    "globalCost": 2499512.036924475,
+    "localCost": 2580074.3044519573,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": true
+  },
+  {
+    "case": "ADULT_w1",
+    "globalCost": 2214935.5420889826,
+    "localCost": 2218143.581366614,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": true
+  },
+  {
+    "case": "steplm_w3",
+    "globalCost": 1609875238.449475,
+    "localCost": 1609875419.6035252,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": true
+  },
+  {
+    "case": "COVTYPE_w3",
+    "globalCost": 6056010.973828936,
+    "localCost": 6056010.973828287,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "pca_w1",
+    "globalCost": 1438.0377160659602,
+    "localCost": 1438.037715880359,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "gnmf_w3",
+    "globalCost": 18521.179045546916,
+    "localCost": 18521.179045175715,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "gmm_w1",
+    "globalCost": 20822.183077860875,
+    "localCost": 20822.183077675276,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "kmeans_w1",
+    "globalCost": 15017.065215164634,
+    "localCost": 15017.065214979033,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "ADULT_w3",
+    "globalCost": 5481285.785279489,
+    "localCost": 5481285.785278839,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  },
+  {
+    "case": "kmeans_w3",
+    "globalCost": 14593.08481979554,
+    "localCost": 14593.084819424337,
+    "graphCountsEqual": true,
+    "globalAtMostLocal": false
+  }
+]

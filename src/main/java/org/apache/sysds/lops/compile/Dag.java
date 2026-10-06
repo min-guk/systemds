@@ -1703,8 +1703,54 @@ public class Dag<N extends Lop>
 			return true;
 		long rows = shape != null ? shape.getNumRows() : -1;
 		long cols = shape != null ? shape.getNumCols() : -1;
+		if (rows <= 0)
+			rows = compatibleNonPartitionedExtent(left, right, "COL");
+		if (cols <= 0)
+			cols = compatibleNonPartitionedExtent(left, right, "ROW");
 		String canonicalLeft = canonicalConcreteAnchorKey(left, rows, cols);
 		return canonicalLeft != null && canonicalLeft.equals(canonicalConcreteAnchorKey(right, rows, cols));
+	}
+
+	private static long compatibleNonPartitionedExtent(String left, String right, String fType) {
+		long leftExtent = completeNonPartitionedExtent(left, fType);
+		long rightExtent = completeNonPartitionedExtent(right, fType);
+		if (leftExtent > 0 && rightExtent > 0 && leftExtent != rightExtent)
+			return -1;
+		return leftExtent > 0 ? leftExtent : rightExtent;
+	}
+
+	private static long completeNonPartitionedExtent(String anchorKey, String fType) {
+		if (!isConcreteAnchorKey(anchorKey))
+			return -1;
+		String[] sections = anchorKey.split("\\|", -1);
+		if (sections.length != 3 || !fType.equals(sections[2]))
+			return -1;
+		List<String> ranges = semicolonEntries(sections[1]);
+		if (ranges == null || ranges.isEmpty())
+			return -1;
+		long extent = -1;
+		for (String range : ranges) {
+			String[] dims = range.split(",", -1);
+			if (dims.length != 4)
+				return -1;
+			try {
+				long rb = Long.parseLong(dims[0].trim());
+				long cb = Long.parseLong(dims[1].trim());
+				long re = Long.parseLong(dims[2].trim());
+				long ce = Long.parseLong(dims[3].trim());
+				if (rb < 0 || cb < 0 || re < rb || ce < cb)
+					return -1;
+				long candidate = "ROW".equals(fType) && cb == 0 ? ce
+					: "COL".equals(fType) && rb == 0 ? re : -1;
+				if (candidate <= 0 || extent > 0 && extent != candidate)
+					return -1;
+				extent = candidate;
+			}
+			catch (NumberFormatException ex) {
+				return -1;
+			}
+		}
+		return extent;
 	}
 
 	/**

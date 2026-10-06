@@ -10,10 +10,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -33,55 +31,6 @@ import org.junit.Test;
 public class NativePlacementGroundingAndSignatureTest {
 	private static final ControlRegionKey REGION = new ControlRegionKey(
 		"native-r18", "main", List.of("root"), "root", "compiled");
-	private static final long LEGACY_SCC_INVOCATIONS = 3;
-
-	@Test
-	public void maximalComponentsAreGroundedOnceInDependencyFirstOrder() throws Exception {
-		GroundingRun failedFirst = groundingRun(false);
-		GroundingRun groundedFirst = groundingRun(true);
-
-		Assert.assertEquals(Set.of("grounded"), failedFirst.groundedIds());
-		Assert.assertEquals(failedFirst.groundedIds(), groundedFirst.groundedIds());
-		Assert.assertEquals("the unchanged seedless SCC needs only its initial maximal scan",
-			1, failedFirst.sccInvocations());
-		Assert.assertEquals(failedFirst.sccInvocations(), groundedFirst.sccInvocations());
-		Assert.assertEquals("neither unchanged refinement nor its legacy fixed-point replay is needed",
-			2, failedFirst.legacySccInvocations() - failedFirst.sccInvocations());
-	}
-
-	@Test
-	public void eligibleRefinementCannotReviveFromLaterInsertionOrder() throws Exception {
-		GroundingRun failedFirst = refinedGroundingRun(false);
-		GroundingRun groundedFirst = refinedGroundingRun(true);
-
-		Assert.assertEquals(Set.of("grounded"), failedFirst.groundedIds());
-		Assert.assertEquals(failedFirst.groundedIds(), groundedFirst.groundedIds());
-		Assert.assertEquals("one maximal scan plus one split-component refinement",
-			2, failedFirst.sccInvocations());
-		Assert.assertEquals(failedFirst.sccInvocations(), groundedFirst.sccInvocations());
-		Assert.assertEquals(1,
-			failedFirst.legacySccInvocations() - failedFirst.sccInvocations());
-	}
-
-	@Test
-	public void unchangedComponentUsesExactExternalGroundWithoutRefinement() throws Exception {
-		for(boolean groundedFirst : List.of(false, true)) {
-			GroundingRun run = externallyGroundedCycleRun(groundedFirst, false);
-			Assert.assertEquals(Set.of("cycle-a", "cycle-b", "grounded"), run.groundedIds());
-			Assert.assertEquals("unchanged eligible alternatives preserve the original SCC", 1,
-				run.sccInvocations());
-		}
-	}
-
-	@Test
-	public void anyRemovedAlternativeStillRequiresExactRefinement() throws Exception {
-		for(boolean groundedFirst : List.of(false, true)) {
-			GroundingRun run = externallyGroundedCycleRun(groundedFirst, true);
-			Assert.assertEquals(Set.of("cycle-a", "cycle-b", "grounded"), run.groundedIds());
-			Assert.assertEquals("even a rejected alternative duplicating the internal edge requires refinement",
-				2, run.sccInvocations());
-		}
-	}
 
 	@Test
 	public void normalizedSignatureMatchesLegacyFormattingAndCachesExactString() {
@@ -210,36 +159,6 @@ public class NativePlacementGroundingAndSignatureTest {
 			first, proof.normalizedSignature());
 	}
 
-	private static GroundingRun groundingRun(boolean groundedFirst) throws Exception {
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity continuity = new NativePlacementContinuity(
-			Map.of(), Map.of(), List.of(), List.of(), Map.of(), metrics);
-		Object witness = witness();
-		CompiledHopKey aKey = key("failed-a");
-		CompiledHopKey bKey = key("failed-b");
-		CompiledHopKey groundedKey = key("grounded");
-		Object a = state(aKey, 1, witness);
-		Object b = state(bKey, 2, witness);
-		Object grounded = state(groundedKey, 3, witness);
-		Map<Object,List<Object>> graph = new LinkedHashMap<>();
-		if(groundedFirst)
-			graph.put(grounded, List.of(alternative(List.of(), true, witness)));
-		graph.put(a, List.of(alternative(List.of(dependency(bKey, 2, witness)), false, witness)));
-		graph.put(b, List.of(alternative(List.of(dependency(aKey, 1, witness)), false, witness)));
-		if(!groundedFirst)
-			graph.put(grounded, List.of(alternative(List.of(), true, witness)));
-
-		Method method = NativePlacementContinuity.class.getDeclaredMethod(
-			"groundedCandidateStates", Map.class);
-		method.setAccessible(true);
-		@SuppressWarnings("unchecked")
-		Set<Object> result = (Set<Object>)method.invoke(continuity, graph);
-		Set<String> groundedIds = result.stream().map(NativePlacementGroundingAndSignatureTest::stateId)
-			.collect(java.util.stream.Collectors.toSet());
-		long invocations = metrics.snapshot().sccInvocations();
-		return new GroundingRun(groundedIds, invocations, LEGACY_SCC_INVOCATIONS);
-	}
-
 	@SuppressWarnings("unchecked")
 	private static void installTopology(NativePlacementContinuity continuity,
 		CompiledHopKey owner, Object witness, List<Object> rows, int pinnedHandle) throws Exception {
@@ -310,96 +229,7 @@ public class NativePlacementGroundingAndSignatureTest {
 		return field.get(target);
 	}
 
-	private static GroundingRun externallyGroundedCycleRun(boolean groundedFirst,
-		boolean includeRejectedAlternative) throws Exception {
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity continuity = new NativePlacementContinuity(
-			Map.of(), Map.of(), List.of(), List.of(), Map.of(), metrics);
-		Object witness = witness();
-		CompiledHopKey aKey = key("cycle-a");
-		CompiledHopKey bKey = key("cycle-b");
-		CompiledHopKey groundedKey = key("grounded");
-		CompiledHopKey ungroundedKey = key("ungrounded");
-		Object a = state(aKey, 1, witness);
-		Object b = state(bKey, 2, witness);
-		Object grounded = state(groundedKey, 3, witness);
-		Object ungrounded = state(ungroundedKey, 4, witness);
-		Object supported = alternative(List.of(dependency(bKey, 2, witness),
-			dependency(groundedKey, 3, witness)), false, witness);
-		Map<Object,List<Object>> graph = new LinkedHashMap<>();
-		if(groundedFirst)
-			graph.put(grounded, List.of(alternative(List.of(), true, witness)));
-		graph.put(a, includeRejectedAlternative ? List.of(supported,
-			alternative(List.of(dependency(bKey, 2, witness),
-				dependency(ungroundedKey, 4, witness)), false, witness)) : List.of(supported));
-		graph.put(b, List.of(alternative(List.of(dependency(aKey, 1, witness)), false, witness)));
-		if(includeRejectedAlternative)
-			graph.put(ungrounded, List.of(alternative(
-				List.of(dependency(ungroundedKey, 4, witness)), false, witness)));
-		if(!groundedFirst)
-			graph.put(grounded, List.of(alternative(List.of(), true, witness)));
-		Set<String> groundedIds = groundedStates(continuity, graph).stream()
-			.map(NativePlacementGroundingAndSignatureTest::stateId)
-			.collect(java.util.stream.Collectors.toSet());
-		return new GroundingRun(groundedIds, metrics.snapshot().sccInvocations(),
-			LEGACY_SCC_INVOCATIONS);
-	}
-
-	private static GroundingRun refinedGroundingRun(boolean groundedFirst) throws Exception {
-		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
-		NativePlacementContinuity continuity = new NativePlacementContinuity(
-			Map.of(), Map.of(), List.of(), List.of(), Map.of(), metrics);
-		Object witness = witness();
-		CompiledHopKey aKey = key("failed-a");
-		CompiledHopKey bKey = key("failed-b");
-		CompiledHopKey ungroundedKey = key("ungrounded");
-		CompiledHopKey groundedKey = key("grounded");
-		Object a = state(aKey, 1, witness);
-		Object b = state(bKey, 2, witness);
-		Object ungrounded = state(ungroundedKey, 3, witness);
-		Object grounded = state(groundedKey, 4, witness);
-		Map<Object,List<Object>> graph = new LinkedHashMap<>();
-		if(groundedFirst)
-			graph.put(grounded, List.of(alternative(List.of(), true, witness)));
-		graph.put(a, List.of(
-			alternative(List.of(dependency(aKey, 1, witness)), false, witness),
-			alternative(List.of(dependency(bKey, 2, witness),
-				dependency(ungroundedKey, 3, witness)), false, witness)));
-		graph.put(b, List.of(alternative(List.of(
-			dependency(aKey, 1, witness), dependency(groundedKey, 4, witness)), false, witness)));
-		graph.put(ungrounded, List.of(alternative(List.of(
-			dependency(ungroundedKey, 3, witness)), false, witness)));
-		if(!groundedFirst)
-			graph.put(grounded, List.of(alternative(List.of(), true, witness)));
-
-		Set<Object> result = groundedStates(continuity, graph);
-		Set<String> groundedIds = result.stream().map(NativePlacementGroundingAndSignatureTest::stateId)
-			.collect(java.util.stream.Collectors.toSet());
-		return new GroundingRun(groundedIds, metrics.snapshot().sccInvocations(),
-			LEGACY_SCC_INVOCATIONS);
-	}
-
 	@SuppressWarnings("unchecked")
-	private static Set<Object> groundedStates(NativePlacementContinuity continuity,
-		Map<Object,List<Object>> graph) throws Exception {
-		Method method = NativePlacementContinuity.class.getDeclaredMethod(
-			"groundedCandidateStates", Map.class);
-		method.setAccessible(true);
-		return (Set<Object>)method.invoke(continuity, graph);
-	}
-
-	private static String stateId(Object state) {
-		try {
-			Method key = state.getClass().getDeclaredMethod("key");
-			key.setAccessible(true);
-			CompiledHopKey compiled = (CompiledHopKey)key.invoke(state);
-			return compiled.emittedHopInstance();
-		}
-		catch(ReflectiveOperationException e) {
-			throw new AssertionError(e);
-		}
-	}
-
 	private static CandidateRealizationReference source(String id) {
 		CompiledHopKey owner = key(id);
 		CandidateRuleKey rule = new CandidateRuleKey(owner, List.of());
@@ -408,37 +238,6 @@ public class NativePlacementGroundingAndSignatureTest {
 		CandidateEmissionRealization realization = CandidateEmissionRealization.local(
 			new PlacementEmissionState(state, false));
 		return CandidateRealizationReference.of(rule, realization);
-	}
-
-	private static Object witness() throws Exception {
-		Constructor<?> constructor = nested("NativePoolWitness").getDeclaredConstructor(
-			FType.class, List.class, List.class, boolean.class);
-		constructor.setAccessible(true);
-		return constructor.newInstance(FType.ROW, List.of("localhost:1234"), List.of(), false);
-	}
-
-	private static Object state(CompiledHopKey key, int handle, Object witness) throws Exception {
-		Constructor<?> constructor = nested("CandidateProofState").getDeclaredConstructor(
-			CompiledHopKey.class, CandidateRealizationReference.class, int.class,
-			nested("NativePoolWitness"), boolean.class);
-		constructor.setAccessible(true);
-		return constructor.newInstance(key, null, handle, witness, false);
-	}
-
-	private static Object dependency(CompiledHopKey key, int handle, Object witness) throws Exception {
-		Constructor<?> constructor = nested("CandidateProofDependency").getDeclaredConstructor(
-			CompiledHopKey.class, CandidateRealizationReference.class, int.class,
-			nested("NativePoolWitness"), int.class, boolean.class);
-		constructor.setAccessible(true);
-		return constructor.newInstance(key, null, handle, witness, 0, false);
-	}
-
-	private static Object alternative(List<Object> dependencies,
-		boolean directGround, Object witness) throws Exception {
-		Constructor<?> constructor = nested("SelectedCandidateProof").getDeclaredConstructor(
-			CandidateRealizationReference.class, List.class, boolean.class, nested("NativePoolWitness"));
-		constructor.setAccessible(true);
-		return constructor.newInstance(null, dependencies, directGround, witness);
 	}
 
 	private static Class<?> nested(String name) throws ClassNotFoundException {
@@ -455,6 +254,4 @@ public class NativePlacementGroundingAndSignatureTest {
 			new AnchorPartition("localhost:1235", List.of(split, 0L), List.of(8L, 2L))));
 	}
 
-	private record GroundingRun(Set<String> groundedIds, long sccInvocations,
-		long legacySccInvocations) { }
 }

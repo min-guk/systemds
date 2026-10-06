@@ -715,7 +715,7 @@ public final class PlannerRuntimePlacementAudit {
 				PlanEntry first = entries.get(0);
 				String destination = instruction.getOutputVariableName();
 				if(destination == null || entries.stream().anyMatch(entry ->
-					!destination.equals(entry.plan().valueName())))
+					!destination.equals(valueBindingDestination(entry, instruction, loweredLops))))
 					throw new IllegalStateException(
 						"[PlannerRuntimeAudit] LOWERING_VALUE_NAME_MISMATCH planned="
 							+ entries.stream().map(PlanEntry::plan)
@@ -2130,12 +2130,37 @@ public final class PlannerRuntimePlacementAudit {
 
 	private static boolean isVariablePlacementControl(List<PlanEntry> entries, Instruction instruction) {
 		if(!(instruction instanceof VariableCPInstruction variable) || entries.isEmpty()
-			|| entries.stream().anyMatch(entry -> !isValueBindingNode(entry.plan().nodeKind())))
+			|| entries.stream().anyMatch(entry -> !isValueBindingNode(entry.plan().nodeKind())
+				&& !isPlacementAliasControl(entry)))
 			return false;
 		VariableOperationCode opcode = variable.getVariableOpcode();
-		return opcode == VariableOperationCode.AssignVariable
+		return opcode == VariableOperationCode.AssignVariable && entries.stream().noneMatch(
+			PlannerRuntimePlacementAudit::isPlacementAliasControl)
 			|| opcode == VariableOperationCode.CopyVariable
 			|| opcode == VariableOperationCode.MoveVariable;
+	}
+
+	private static boolean isPlacementAliasControl(PlanEntry entry) {
+		return (entry.plan().nodeKind() == NodeKind.OPERATION || entry.plan().nodeKind() == NodeKind.CLONE)
+			&& "_placement".equals(entry.plan().opcode())
+			&& (entry.hop() == null || BranchPlacementNormalization.isPlacementAlias(entry.hop()));
+	}
+
+	private static String valueBindingDestination(PlanEntry entry, Instruction instruction, List<Lop> loweredLops) {
+		// A placement alias produces a compiler temporary before the final TW.
+		// Its cpvar/mvvar is a value-preserving binding; the materialized output
+		// still has to match the selected physical placement after execution.
+		if(isPlacementAliasControl(entry)) {
+			// Recompilation gives this immutable planned occurrence a fresh Lop
+			// and temporary. Validate the exact current Lop, not the initial label.
+			if(loweredLops != null)
+				return loweredLops.stream().filter(lop -> lop instanceof org.apache.sysds.lops.PlacementAlias
+					&& lop.getID() == instruction.getLopID()).map(lop -> lop.getOutputParameters().getLabel())
+					.findFirst().orElse(null);
+			if(entry.hop() != null && entry.hop().getLops() != null)
+				return entry.hop().getLops().getOutputParameters().getLabel();
+		}
+		return entry.plan().valueName();
 	}
 
 	private static boolean isValueBindingNode(NodeKind kind) {

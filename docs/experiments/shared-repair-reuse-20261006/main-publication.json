@@ -1,0 +1,453 @@
+{
+  "schema": "shared-repair-main-publication-v1",
+  "workCommit": "33dfbdc4c8e2952e495be2a9c37b64bb4358ffa6",
+  "validatedIncomingMain": "0146f043e07ca445d9084257759aa78fe14ddf55",
+  "artifactRoot": "/home/mchoi/cost-followup-20261006/main-publication",
+  "build": {
+    "exitCode": 0,
+    "elapsedSeconds": 57.33566902577877,
+    "sourceFiles": 3558,
+    "changedSinceBroadGate": [
+      "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014ExactL2SvmInternalEmissionCostRedTest.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCtableMaterializationCostTest.java"
+    ],
+    "sourceSha256Verified": true,
+    "productionSourceUnchangedSinceDockerSmoke": true,
+    "systemdsJarSha256": "210788ab7617ea6f1b0f8480778d7e53d70be2e5bb7892771ccc4dbb45303ae9"
+  },
+  "initialBroadSuite": {
+    "exitCode": 1,
+    "classCount": 96,
+    "elapsedSeconds": 595.3992512449622,
+    "tests": 733,
+    "failures": 6,
+    "passed": 727,
+    "failureDetails": [
+      {
+        "method": "testDpPlansSteplmWithSameNamedFormalTransientBinding",
+        "class": "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+        "failure": "java.lang.IllegalStateException: CFG transient candidate closure did not converge: [0:n=556,f=619,l=125->n=556,f=623,l=96,changed=[117, 120, 125, 126, 127, 141, 155, 159, 203, 210, 214, 281, 283, 287, 312, 318, 329, 338, 341, 343, 355, 423], 1:n=556,f=633,l=125->n=556,f=633,l=125,changed=[281, 423], 2:n=556,f=643,l=125->n=556,f=643,l=125,changed=[], 3:n=556,f=626,l=125->n=556,f=626,l=125,changed=[281, 423], 4:n=556,f=632,l=125->n=556,f=632,l=125,changed=[], 5:n=556,f=626,l=125->n=556,f=626,l=125,changed=[281, 423], 6:n=556,f=632,l=125->n=556,f=632,l=125,changed=[], 7:n=556,f=626,l=125->n=556,f"
+      },
+      {
+        "method": "singleWorkerFullAlsHasCandidateReachableFedAllPlan",
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+        "failure": "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelector$GreedyConflictException: Greedy policy conflict (not global infeasibility): complete witness validation: Greedy policy conflict (not global infeasibility): no common relocation pool at CompiledHopKey[programFingerprint=8ff2fad595b61bbe16e23d732784c7c3e7a715f6c633e50b1b9b02fb5be552e2, functionNamespace=.builtinNS::m_alsCG, callSitePath=function/.builtinNS::m_alsCG/body/2/loop-body/1/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=8ff2fad595b61bbe16e23d732784c7c3e7a715f6c6"
+      },
+      {
+        "method": "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization",
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+        "failure": "java.lang.IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW"
+      },
+      {
+        "method": "cliWanLightLogRegPlanRemainsStableAcrossWorkerCounts",
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest",
+        "failure": "org.apache.sysds.runtime.DMLRuntimeException: No privacy-safe physical placement for occurrence 64:3570893d34b097ef94b3f688695be1c02c42b12a03a2ccbd6a21d7edea3f9bc7|25:.builtinNS::m_multiLogReg|65:function/.builtinNS::m_multiLogReg/body/5/loop-body/1/loop-body/0|9:recompile|249:64:3570893d34b097ef94b3f688695be1c02c42b12a03a2ccbd6a21d7edea3f9bc7|25:.builtinNS::m_multiLogReg|68:65:function/.builtinNS::m_multiLogReg/body/5/loop-body/1/loop-body/0|65:function/.builtinNS::m_multiLogReg/body/5/loop-body/1/loop-body/0|9:recompile|62:root-0/input-0/input-0/input-0/input-0/input-0/input-0/input-0|83:scr"
+      },
+      {
+        "method": "costBasedSelectorsDoNotCollectTheFullFeatureMatrix",
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+        "failure": "java.lang.IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW"
+      },
+      {
+        "method": "loopReusesOneColdGetWhileCtableInvocationCostScales",
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCtableMaterializationCostTest",
+        "failure": "java.lang.AssertionError: a transfer key must map to one exact canonical contribution|key=PhysicalTransferKey[sourceValueVersion=ValueVersionKey[programFingerprint=7f1e093ed7a60855885e248ea883b7f05078617a36fc7323cae3310398ec0a9a, lexicalVariable=B, definingControlRegion=ControlRegionKey[programFingerprint=7f1e093ed7a60855885e248ea883b7f05078617a36fc7323cae3310398ec0a9a, functionNamespace=main, regionPath=[main/2/loop-body/0], callSitePath=main/2/loop-body/0, recompileContext=recompile], definitionOrdinal=2, versionKind=ORDINARY, predecessorVersions=[cfg-definition:B#2@main/1:ORDINARY]], endpoi"
+      }
+    ]
+  },
+  "supplementalSplitSuite": {
+    "exitCode": 1,
+    "classCount": 95,
+    "elapsedSeconds": 377.83993154764175,
+    "separatelyRunningIntegrationClass": "FederatedPlannerFallbackIntegrationTest",
+    "reasonForSplit": "Original broad run is still diagnosing StepLM placement closure before optimizer entry.",
+    "tests": 689,
+    "failures": 5
+  },
+  "filteredRunBeforeTestIsolationFix": {
+    "exitCode": 1,
+    "classCount": 96,
+    "elapsedSeconds": 208.1001101359725,
+    "explicitBaselineExclusions": [
+      "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest#testDpPlansSteplmWithSameNamedFormalTransientBinding",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest#singleWorkerFullAlsHasCandidateReachableFedAllPlan",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest#singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest#cliWanLightLogRegPlanRemainsStableAcrossWorkerCounts",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest#costBasedSelectorsDoNotCollectTheFullFeatureMatrix"
+    ],
+    "runnerSha256": "cd325160d4188ae57a1d10b4223a3ebca8214b59d80a401403b1cc5a271c5d7a",
+    "tests": 728,
+    "failures": 1,
+    "ignored": 0
+  },
+  "finalFilteredSuite": {
+    "exitCode": 0,
+    "classCount": 96,
+    "elapsedSeconds": 226.58669444918633,
+    "explicitBaselineExclusions": [
+      "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest#testDpPlansSteplmWithSameNamedFormalTransientBinding",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest#singleWorkerFullAlsHasCandidateReachableFedAllPlan",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest#singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest#cliWanLightLogRegPlanRemainsStableAcrossWorkerCounts",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest#costBasedSelectorsDoNotCollectTheFullFeatureMatrix"
+    ],
+    "runnerSha256": "cd325160d4188ae57a1d10b4223a3ebca8214b59d80a401403b1cc5a271c5d7a",
+    "tests": 728,
+    "failures": 0,
+    "ignored": 0
+  },
+  "excludedFailureAttribution": {
+    "originMain": "0146f043e07ca445d9084257759aa78fe14ddf55",
+    "mergedHeadAtExtraction": "33dfbdc4c8e2952e495be2a9c37b64bb4358ffa6",
+    "overlayAccurate": true,
+    "overlayProductionDiffCount": 7,
+    "overlayClassCount": 131,
+    "provenance": {
+      "allCurrentVsOriginProductionDifferencesOverlaid": true,
+      "allExtractedBlobHashesMatchOrigin": true,
+      "fallbackIntegrationTestSourceMatchesOrigin": true,
+      "campaignTestSourcesMatchOrigin": true,
+      "jvm": "Java 17, -Xmx8g, -XX:ActiveProcessorCount=4",
+      "classpathOrder": "utility, origin overlay, merged target/classes, target/test-classes, target/lib/*"
+    },
+    "attributionSummary": {
+      "exactOriginBaselineSignatureMatches": 4,
+      "broadRunSignaturesNotExactlyReproduced": 1,
+      "stableFixtureProductionParityMatches": 1,
+      "conclusion": "Four merged-suite failures reproduce the same terminal signature on the exact origin/main production overlay. The ALS plan method also fails on origin/main, but its uncontrolled temporary fixture path changes the program fingerprint and can change the greedy terminal conflict. With one identical deterministic fixture path, origin/main and merged production produce byte-identical logs with the same fingerprint and the same empty-owned-row failure in Invocation.propagate. The ALS method failure is baseline-existing and production-parity is demonstrated for the same input identity, while the broad-run no-common-pool terminal signature is not claimed as an exact origin reproduction."
+    },
+    "testSourceSha256": {
+      "FederatedPlannerFallbackIntegrationTest.java": "8597a3d5ae6cceef7fd40dcd5ebeabb0c88fba197c5991ce087e7cccb70ddd55",
+      "CampaignBG014AlsPartitionedComputeCostRedTest.java": "f241d50dbeebb24938b6eb678055aa57050b8f807a6b9247f9cd35d799e2446c",
+      "CampaignBG014ExactLogRegParallelDispatchCostRedTest.java": "cf9baaad424dc3df721b311ab2bebcf188ae520acc22891bd58b3c3903978d1e",
+      "CampaignBG014StepLmLargeGetVarCostRedTest.java": "a95e4372bea564815def506bd7b22896b8a0b1e578d5940cf38a0c7d5de456f9"
+    },
+    "results": [
+      {
+        "class": "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+        "method": "testDpPlansSteplmWithSameNamedFormalTransientBinding",
+        "exitCode": 1,
+        "elapsedSeconds": 235,
+        "signature": "IllegalStateException: CFG transient candidate closure did not converge; f=626/632 oscillation, changed=[281,423], terminal after iteration 1244",
+        "phase": "PlacementRelationClosure.closeFunctionBoundaryRelations, before optimizer"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+        "method": "singleWorkerFullAlsHasCandidateReachableFedAllPlan",
+        "exitCode": 1,
+        "elapsedSeconds": 11,
+        "signature": "PolicyGreedyPlacementSelector.GreedyConflictException: empty owned-row domain",
+        "phase": "Invocation.propagate",
+        "attribution": "Same method fails on origin/main, but with a different terminal signature and phase from merged classes."
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+        "method": "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization",
+        "exitCode": 1,
+        "elapsedSeconds": 13,
+        "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest",
+        "method": "cliWanLightLogRegPlanRemainsStableAcrossWorkerCounts",
+        "exitCode": 1,
+        "elapsedSeconds": 200,
+        "signature": "DMLRuntimeException: No privacy-safe physical placement for TRead P_1K (privacy=PRIVATE_AGGREGATE)"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+        "method": "costBasedSelectorsDoNotCollectTheFullFeatureMatrix",
+        "exitCode": 1,
+        "elapsedSeconds": 19,
+        "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW"
+      }
+    ],
+    "mergedIsolatedComparison": {
+      "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+      "method": "singleWorkerFullAlsHasCandidateReachableFedAllPlan",
+      "classpathOrder": "utility, merged target/classes, target/test-classes, target/lib/*",
+      "exitCode": 1,
+      "elapsedSeconds": 20,
+      "signature": "PolicyGreedyPlacementSelector.GreedyConflictException: complete witness validation found no common relocation pool",
+      "phase": "Invocation.finish/choosePools",
+      "comparison": "The merged isolated failure category and phase match the merged broad-run failure, but the temporary fixture path is part of the program fingerprint. The deterministic paired comparison below supersedes this uncontrolled-path comparison for production parity."
+    },
+    "stableFixturePairedComparison": {
+      "testOverlay": "Only Files.createTempFile was replaced in an external copy of the unchanged test with one fixed absolute fixture path; checked-in production and test sources were not modified.",
+      "fixturePath": "/home/mchoi/cost-followup-20261006/main-publication/origin-baseline/stable-fixtures/g014-als-cost-w{workers}-p{worker}.data",
+      "origin": {
+        "exitCode": 1,
+        "elapsedSeconds": 15,
+        "signature": "PolicyGreedyPlacementSelector.GreedyConflictException: empty owned-row domain",
+        "phase": "Invocation.propagate"
+      },
+      "merged": {
+        "exitCode": 1,
+        "elapsedSeconds": 14,
+        "signature": "PolicyGreedyPlacementSelector.GreedyConflictException: empty owned-row domain",
+        "phase": "Invocation.propagate"
+      },
+      "stableProgramFingerprintPrefix": "1aa8741fab0efe15984ef02b731e654e11b32b5b314e1fa5dc1c56473c7df60b",
+      "byteIdenticalLogs": true,
+      "comparison": "Origin/main and merged production have identical terminal behavior when invoked through the same test class with the same absolute input paths."
+    },
+    "artifactSha256": {
+      "run.log": "52cb3bfb5e7b9c13534c9d2749ccaf5d620782b43aa146c81aa5e5108841e6a6",
+      "thread-2m.txt": "c7fb18cdbe85b41b392518a3e018f72819836f063870a0379fc1af96453587a9",
+      "legacy/als-plan.log": "a45568f61e886fe161636e3618145f0266e9d28e7ecf8affc2f2746703821a22",
+      "legacy/als-plan-merged-isolated.log": "d7b57238a6d2b3443aeb865956d4c4a459db3b4ed748d36b2cbd7ce0eb8a7766",
+      "legacy/als-plan-merged-isolated.result": "ccee89d4e5acdeef3253711db8e9e3ce823492bbaa8099b3a0633a2e6287f896",
+      "legacy/als-plan-stable-origin.log": "1a85ad143cc8b9979bcb8bf8c320d6231de6985d7247f4c0f3d087530154fca3",
+      "legacy/als-plan-stable-origin.result": "21db04fd24a33926739d20796884599eeaf7b538ead5c684b64d99c0736882b1",
+      "legacy/als-plan-stable-merged.log": "1a85ad143cc8b9979bcb8bf8c320d6231de6985d7247f4c0f3d087530154fca3",
+      "legacy/als-plan-stable-merged.result": "7802c22fd43d53360d96120d828fa4158f4e22c238e625dfeffbed623127f188",
+      "stable-test-source/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014AlsPartitionedComputeCostRedTest.java": "17d64501108e46ba686ae457375e4f21ba4f6f2a582c400889f035e56967b780",
+      "stable-test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014AlsPartitionedComputeCostRedTest.class": "c6b6bec1d172c2b1fbc2a3d32a940289f00b3bb408e111e9ed0c90e0866f5cf7",
+      "stable-test-single-change.diff": "51d511c86bc0128d345a27cc72c73919a816c828b1d76476712ae4e89bf4ce50",
+      "legacy/als-cost.log": "0cbf4d2e6a79be87afa6d67ef24a6f7f92943dd96898c35de48188126f561c63",
+      "legacy/logreg.log": "e1908ba44c32c8ccb08a44a103abe9325d4e48086b868649534ece154d40de65",
+      "legacy/steplm-cost.log": "0bad0420e29fa3f7fa9db9455c64576e6d83861ed8406b2729d49058d41c0b05",
+      "provenance.txt": "75b930ce7d8564f8b465ebbab5fe90ba8ee9415f128f5d75a3d4202b1c69f104"
+    }
+  },
+  "testCorrections": {
+    "ctable": "Sum distinct matching canonical contributions across alternative keys; independently assert exactly one reusable ROW GET and preserve 1/2/10 loop scaling checks.",
+    "l2svm": "Reset PlacementEmissionTransaction at test entry and exit; keep the exactly-one-committed-program and all placement/cost/emission assertions."
+  },
+  "dockerCompileSmoke": {
+    "cases": {
+      "pca_w3": {
+        "error": null,
+        "outputStatus": "passed",
+        "returncode": 0,
+        "runnerStatus": "COMPLETE",
+        "runtimeExecuted": false
+      },
+      "steplm_w3": {
+        "error": null,
+        "outputStatus": "passed",
+        "returncode": 0,
+        "runnerStatus": "COMPLETE",
+        "runtimeExecuted": false
+      }
+    },
+    "claimPolicy": "Compile-only publication smoke passed; no runtime execution or performance claim.",
+    "compileOnly": true,
+    "completedUtc": "2026-10-06T19:44:41.708940+00:00",
+    "fixture": {
+      "pinnedBuiltinFiles": 1110,
+      "pinnedBuiltinTree": "/home/mchoi/cost-followup-20261006/main-publication/docker/runtime/scripts",
+      "sourceDestinationIdentical": true,
+      "treeManifest": "/home/mchoi/cost-followup-20261006/main-publication/docker/metadata/runtime-scripts-sha256.txt"
+    },
+    "originMainObserved": "0146f043e07ca445d9084257759aa78fe14ddf55",
+    "overallPassed": true,
+    "pinnedImage": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "preflightCorrection": {
+      "archivedFailure": "/home/mchoi/cost-followup-20261006/main-publication/docker/attempts/missing-pinned-builtin-tree",
+      "cause": "The first publication fixture omitted runtime/scripts, so StepLM resolved the repository fallback seven-argument builtin instead of the pinned workload builtin that accepts max_features.",
+      "classification": "HARNESS_INCOMPLETENESS",
+      "productionEditedToResolve": false,
+      "productionRegression": false
+    },
+    "runtimeExecuted": false,
+    "schema": "main-publication-compile-smoke-verdict-v2",
+    "summary": "StepLM W3 and PCA W3 passed compile-only planning against the merged target with the exact pinned builtin script tree used by the sealed A/B fixture.",
+    "worktreeHeadBeforeMergeCommit": "33dfbdc4c8e2952e495be2a9c37b64bb4358ffa6"
+  },
+  "additionalIncomingValidation": {
+    "originMain": "e8e42e93fa6fca0406fab4fcddcad22d4ee92f6f",
+    "sourcePath": "src/test/java/org/apache/sysds/runtime/controlprogram/federated/OwnedRefedReuseTest.java",
+    "sourceSha256": "e63999b1713eb267171a3eebd45732761de1c5525a9571606bf93a83c5aa68d8",
+    "productionChangedSince0146": false,
+    "javacCommand": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+      "-cp",
+      "target/classes:target/test-classes:target/lib/*",
+      "-d",
+      "/home/mchoi/cost-followup-20261006/main-publication/later-main/classes",
+      "/home/mchoi/cost-followup-20261006/main-publication/later-main/OwnedRefedReuseTest.java"
+    ],
+    "testCommand": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules=jdk.incubator.vector",
+      "-Xmx8g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "/home/mchoi/cost-followup-20261006/main-publication/later-main/classes:target/classes:target/test-classes:target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 2.842766135931015
+  },
+  "buildCommand": [
+    "/home/hadoop/apache-maven-3.9.7/bin/mvn",
+    "-q",
+    "-DskipTests",
+    "-Djacoco.skip=true",
+    "package"
+  ],
+  "finalTestCommand": [
+    "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+    "--add-modules=jdk.incubator.vector",
+    "-Xmx8g",
+    "-XX:ActiveProcessorCount=4",
+    "-cp",
+    "/home/mchoi/cost-followup-20261006/main-publication/utility:target/classes:target/test-classes:target/lib/*",
+    "FilteredSuiteRunner",
+    "/home/mchoi/cost-followup-20261006/main-publication/baseline-failure-exclusions.txt",
+    "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsAnalysisMemoryCostTest",
+    "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsNativeInputSourceShapeTest",
+    "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsSparseAssignmentTest",
+    "org.apache.sysds.hops.fedplanner.placement.PlacementCostSizeBoundsTest",
+    "org.apache.sysds.hops.fedplanner.placement.PlacementSolveAbstractShapeTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModelInstructionNetworkStageTest",
+    "org.apache.sysds.test.component.federated.FederatedAggregateUnaryTopologyCostTest",
+    "org.apache.sysds.test.component.federated.FederatedCostModelFallbackTest",
+    "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalUnaryPreparationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalWorkerCountTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactProjectionAuthorityPreservationRedTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintPreflightTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSparseFunctionBoundaryCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactZeroFrequencyCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CoordinatorMetadataExactCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactL2SvmInternalEmissionCostRedTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+    "org.apache.sysds.hops.fedplanner.placement.PreparedExecutionCostQuantityTest",
+    "org.apache.sysds.hops.fedplanner.placement.PreparedWdivmmOperandQuantityTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedNetworkCostUnificationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExecutionOwnershipCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactWorkerLayoutProjectionTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationMaterializationCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactMaterializationActivationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledMaterializationScopeTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationIndependentOracleTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationClassFactorDecompositionTest",
+    "org.apache.sysds.hops.fedplanner.placement.FusedKernelOwnershipTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeResultBatchCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedKernelLayoutCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.GetAggregateProcessingCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedFactorReuseCostTest",
+    "org.apache.sysds.hops.fedplanner.placement.WdivmmFactorAlignmentTest",
+    "org.apache.sysds.hops.fedplanner.placement.ExplicitWdivmmPreparationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAliasGetCoalescingTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExplicitWdivmmTransferTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.OneWayNetworkCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.SharedNicNetworkCostTest",
+    "org.apache.sysds.hops.fedplanner.placement.OccurrenceActivationContextTest",
+    "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryRuntimeAliasContractTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionGetSharingTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasGetCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasActivationEncodingTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LoopEntryCompletePlacementSpaceTest",
+    "org.apache.sysds.hops.fedplanner.placement.LoopEntryMaterializationTest",
+    "org.apache.sysds.hops.fedplanner.placement.MaterializedContinuityTest",
+    "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverCycleTest",
+    "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverFunctionReturnTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.NativeResultBatchOwnershipCostTest",
+    "org.apache.sysds.runtime.instructions.fed.NativeResultBatchContractTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDownloadAuthorityAmbiguityRedTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.AuxiliaryFederatedStageCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.AuxiliaryFederatedQuantityCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.MMChainCostOwnershipTest",
+    "org.apache.sysds.runtime.instructions.fed.AggregateAuxiliaryBatchContractTest",
+    "org.apache.sysds.runtime.instructions.fed.AuxiliaryStageBatchContractTest",
+    "org.apache.sysds.runtime.instructions.fed.CtableFEDInstructionOutputContractTest",
+    "org.apache.sysds.runtime.instructions.fed.ReshapeFEDInstructionNoFallbackTest",
+    "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest",
+    "org.apache.sysds.test.component.federated.FederationUtilsRefedReuseLayoutTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.CtableInputPreparationCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryNativeInputUploadTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCtableMaterializationCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalCategoricalOptimizerTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedRegionalPreparationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedRegionalCompactionParityTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverArithmeticParityTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDyadicSolverTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryPruningTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CostBasedPruningTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PruningAblationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.RegionalCompactTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.RegionalSearchProblemTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalConfigurationTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalSeedTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundaryMessageTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalPhysicalOptimizerIncrementalTraceTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedReductionRepairTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PlannerResourceGuardTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactReductionMemoryTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.GlobalExactCompletionTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryCommunicationCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPhysicalCostTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryMixedInputTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryPhysicalModelProofTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalSharedSourceEncodingTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.TransparentCarrierCostAuthorityTest",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedAuxiliaryNetworkCostTest"
+  ],
+  "filterRunnerSource": "import java.nio.file.*;\nimport java.util.*;\nimport org.junit.internal.TextListener;\nimport org.junit.runner.*;\nimport org.junit.runner.manipulation.Filter;\n\n/** Publication rerun: retain all tests except individually reproduced upstream failures. */\npublic final class FilteredSuiteRunner {\n public static void main(String[] args) throws Exception {\n  Set<String> excluded = new LinkedHashSet<>(Files.readAllLines(Path.of(args[0])));\n  Set<String> matched = new LinkedHashSet<>();\n  Class<?>[] classes = new Class<?>[args.length - 1];\n  for(int i=1; i<args.length; i++) classes[i-1] = Class.forName(args[i]);\n  Request request = Request.classes(classes).filterWith(new Filter() {\n   public boolean shouldRun(Description d) {\n    if(d.isTest()) {\n     String key = d.getClassName() + \"#\" + d.getMethodName();\n     if(excluded.contains(key)) { matched.add(key); return false; }\n     return true;\n    }\n    for(Description child : d.getChildren()) if(shouldRun(child)) return true;\n    return false;\n   }\n   public String describe() { return \"Individually reproduced upstream failures: \" + excluded; }\n  });\n  System.out.println(\"EXPLICIT_BASELINE_EXCLUSIONS=\" + excluded);\n  JUnitCore core = new JUnitCore();\n  core.addListener(new TextListener(System.out));\n  Result result = core.run(request);\n  System.out.println(\"MATCHED_EXCLUSIONS=\" + matched);\n  System.out.println(\"RESULT run=\" + result.getRunCount() + \" failures=\" + result.getFailureCount()\n   + \" ignored=\" + result.getIgnoreCount());\n  if(!matched.equals(excluded)) throw new AssertionError(\"Exclusion identity mismatch: \" + matched);\n  System.exit(result.wasSuccessful() ? 0 : 1);\n }\n}\n",
+  "changedJavaSourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "e93fe54e366fac6b306b0c4c19b0fc4a24117903d785eb7948534f8487da6281",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java": "00552db0f004fba755a5dc0e4d34fbffb5a640e3a7ff698c609923b9d6099a3a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "0824215d42ef77cf06ebf0ab666cef6e77eeee614586e5ed7e7486af48c607f0",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.java": "38d85bd753886a3239e832bae880fe1d27553ce8091cfa0ce5e2b7399f4ed839",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizer.java": "c9bd39f222c5ab306525c2a1edc4bbea8f021a838fd7f24e5eae354eb28a26cc",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparation.java": "a79991919843b1b405448f20e6089bf9ca438371f505da7d29260781db4efc22",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "b5771663c5785a49b2ef60c6084767b6fb78873ecac8238b988a2d988af1d29d",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/AuxiliaryFederatedQuantityCostTest.java": "9966fa2f0a884ea1d95340b16e6902c5fe54b9d847fc674833a6c0b7882d9a94",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/AuxiliaryFederatedStageCostTest.java": "f4219a22c2c25f8fe127f844c2f82fd1750b941a96872bfaff053fb254b51e1f",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/CtableInputPreparationCostTest.java": "ea08f7d4d422a2ca5ffa37b64fae96ec94fac4f447e23f2701f4c71144a2ae6f",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/NativeResultBatchOwnershipCostTest.java": "864a780aba183b95d57778a8b6fc4d9af1bfa39996faa87babd756ccf87bc592",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014ExactL2SvmInternalEmissionCostRedTest.java": "3ea3c5c0f6869403adadb9aa226a384c146f8a3fd1af3c709a29ff7a3e4dfabd",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactAuxiliaryCommunicationCostTest.java": "54a2fd8fbaecfc3f38b2bf393e21a92709f025b0077951bc6608d986adcd4ca6",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactAuxiliaryNativeInputUploadTest.java": "8762cf6f334f8bd763f376424bad08781d71587624733022e7994139a4e15cdd",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCtableMaterializationCostTest.java": "34a9204f01905f2424cd6c1cc9014ab818d32007a83cdfd578ecdd5d52b3da91",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactNativeResultBatchCostTest.java": "a434687f8ad0f6f98e25f347da65f2e7e8a5cd52a048b0d5b5165ba9eac34b6e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolverTest.java": "c97efa9cb49141eb711f7ae3babd2b1d26e56dffcfb57ed12d240c18ca45c463",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalCategoricalOptimizerTest.java": "a9e6610a0614562e572cd8058a846c83ad9176176a36937d1c2b62d8ccd07af1",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/MMChainCostOwnershipTest.java": "472b587cae6464d3fc230a06622b0e70fc54901a698d22a33c9140fcb25edbf5",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedReductionRepairTest.java": "6453b1590f6d2089f005a6f1473fc2ee82c88a0d65bc0e7b6f4e3a435dabea0d",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalCompactionParityTest.java": "1c6c8a03ce897cf2ef8cf72f80d52a66f5bfeaef95c02e5db1b234d768643606",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparationTest.java": "cf9d6ffb5291288d173b03b285f87b81989a9923e633950af0184d2a3883290a",
+    "src/test/java/org/apache/sysds/runtime/instructions/fed/AggregateAuxiliaryBatchContractTest.java": "aa128137f5422b7ba2d3bc0d5810527deb770a16cb03f214f9b04c0e4d07ed6e",
+    "src/test/java/org/apache/sysds/runtime/instructions/fed/AuxiliaryStageBatchContractTest.java": "35b0520bcfda74eae78704afe748ec8e2d61a8856659ce59141c51fbaa5b2e94"
+  },
+  "evidenceSha256": {
+    "source-sha256.json": "a6ca76cbb605a50df97aa9eee13e51be72062dfba5b034c741a407290517e7a9",
+    "build-result.json": "ebc1e3eb4e00d0ddda006a781188c0d56ef76546c89775a44f7a909773bba2ae",
+    "regression.log": "f44f81194cd3f9b8daad41fc2837a832d55733da1a3263f7fd007a52afbc77dc",
+    "initial-suite-summary.json": "c845c916a9cbd4b080cbf75aa8e67aceeec3b9e856f934dde6dfa38d857d9ccf",
+    "core-regression.log": "4205642f21d457fb2d0d4f8ac4663620738d359ccb2f1d3194763d8a08d6d5e3",
+    "core-regression-result.json": "0a7e7e6864bb10c49cc7046dc6bb4a4d2d58c394e23f8a4e4201076eb91d5200",
+    "final-source-sha256.json": "3eec26d9a34806623dcfe908e690d9bb03fbc6d94033bda59adb645549392b3d",
+    "final-build.log": "ad928bb703faeefa99447e831d40028effcb612161deb6858236eef7e3a9bc4b",
+    "final-build-result.json": "cb0bed2be0ac3c3b1bf37cfbaa4cba305ece62b57c80f79db7503e56832a29ea",
+    "before-l2-isolation/final-regression.log": "c258982fd237125215b220096fb11a1f3e01c277cc749bdfc3a6b158dcb5a55e",
+    "before-l2-isolation/final-regression-result.json": "afbea4bc07e0e84a98b0a81f7f54eb51c400ce7161b898144c9b1b5293cee07d",
+    "FilteredSuiteRunner.java": "cd325160d4188ae57a1d10b4223a3ebca8214b59d80a401403b1cc5a271c5d7a",
+    "baseline-failure-exclusions.txt": "386fbc74c0dbc3af59c3ae9649b722cbe611775d7bbf11c12f90c2c463c8f07e",
+    "final-java-command.json": "52d58b3bc3afde7c97d9b33a045263fffd92057119b69f946ce92f0706d995ce",
+    "final-regression.log": "c8cdfe473138691be7457ab61dbac137933b3b7d1b847b691979f815610dc56b",
+    "final-regression-result.json": "7c4500a6d6d21f55426d3474a622802e2a088abf2f4af4df78cc50732daf5b9b",
+    "origin-baseline/verdict.json": "4afeacb46a828ccd49efb0caef2976d2c02c2c2fdfa3feb896341b44c3d8c391",
+    "docker/verdict.json": "e7eff5690c4b66b7d6a454ea03773f34cb2cea93dbe301dfe4868d6f359e3703",
+    "later-main/validation.json": "68bb8a40c10eab3bb6bcc6a3233349473fc7fb7e01f81884f97766c8cc580bcd",
+    "later-main/test.log": "6ee33710ca7b7dcb150a1267d1f782e51d06d1b3c15554081e69d22e0aaa1008"
+  },
+  "claims": {
+    "all733TestsPass": false,
+    "fiveExistingFailuresRemain": true,
+    "noProductionEditsAfterFullIntegratedBuild": true,
+    "runtimeTrainingExecuted": false,
+    "performanceWinClaimed": false
+  }
+}

@@ -193,15 +193,24 @@ public class ExactCtableMaterializationCostTest {
 		ExactPhysicalModel.DecisionDomain table = tableDomains(fixture).get(0);
 		Solved solved = solve(fixture, Map.of(table, directLout(table)));
 		List<ExactPhysicalCostModel.PhysicalTransferKey> gets =
-			activeCtableSecondaryGets(fixture, solved.values(), List.of(table));
-		Assert.assertEquals("a loop over one retained B object performs one cold GET", 1, gets.size());
+			ctableSecondaryGets(fixture, List.of(table));
+		Assert.assertFalse("the loop must retain a CTABLE secondary GET candidate", gets.isEmpty());
+		Assert.assertEquals("all loop GET candidates must refer to the same retained B object", 1,
+			gets.stream().map(ExactPhysicalCostModel.PhysicalTransferKey::sourceValueVersion).distinct().count());
+		double getCost = materializationCost(fixture, solved.values(), gets);
+		double secondaryBytes = FederatedCostModel.getEffectiveOutputMemEstimate(
+			fixture.analysis.hop(gets.get(0).endpoints().get(0).producer()).orElseThrow());
+		double expectedGet = FederatedCostModel.computeReusableMaterializationDownloadCost(
+			secondaryBytes, FType.ROW, 2);
+		Assert.assertEquals("the loop retains exactly one independently priced cold GET",
+			expectedGet, getCost, 1e-12);
 		double invocation = fixture.surface.contributions().stream()
 			.filter(contribution -> contribution.factor().scope().equals(List.of(table.variable())))
 			.mapToDouble(contribution -> fixture.surface.evaluateContributionCanonical(
 				contribution, solved.values())).sum();
 		Assert.assertTrue("the selected CTABLE invocation must carry positive per-call work",
 			invocation > 0);
-		return new LoopCost(materializationCost(fixture, solved.values(), gets.get(0)), invocation);
+		return new LoopCost(getCost, invocation);
 	}
 
 	private static Fixture fixture(String script) throws Exception {
@@ -310,19 +319,25 @@ public class ExactCtableMaterializationCostTest {
 
 	private static double materializationCost(Fixture fixture, List<Integer> values,
 		ExactPhysicalCostModel.PhysicalTransferKey get) {
-		List<ExactCategoricalSolver.Variable> endpointVariables = get.endpoints().stream()
-			.flatMap(endpoint -> fixture.model.domains().stream()
+		return materializationCost(fixture, values, List.of(get));
+	}
+
+	private static double materializationCost(Fixture fixture, List<Integer> values,
+		List<ExactPhysicalCostModel.PhysicalTransferKey> gets) {
+		List<List<ExactCategoricalSolver.Variable>> endpointScopes = gets.stream().map(get ->
+			get.endpoints().stream().flatMap(endpoint -> fixture.model.domains().stream()
 				.filter(domain -> domain.node().key() == endpoint.producer()
 					|| domain.node().key() == endpoint.consumer())
-				.map(ExactPhysicalModel.DecisionDomain::variable)).distinct().toList();
-		List<ExactPhysicalCostModel.PhysicalContribution> matches =
-			fixture.surface.contributions().stream().filter(contribution ->
-			contribution.factor().scope().size() == endpointVariables.size()
-				&& endpointVariables.stream().allMatch(contribution.factor().scope()::contains))
-			.toList();
-		Assert.assertEquals("a transfer key must map to one exact canonical contribution|key=" + get,
-			1, matches.size());
-		return fixture.surface.evaluateContributionCanonical(matches.get(0), values);
+				.map(ExactPhysicalModel.DecisionDomain::variable)).distinct().toList()).toList();
+		List<ExactPhysicalCostModel.PhysicalContribution> matches = fixture.surface.contributions().stream()
+			.filter(contribution -> endpointScopes.stream().anyMatch(endpointVariables ->
+				contribution.factor().scope().size() == endpointVariables.size()
+					&& endpointVariables.stream().allMatch(contribution.factor().scope()::contains)))
+			.distinct().toList();
+		Assert.assertFalse("transfer keys must retain canonical contributions|keys=" + gets,
+			matches.isEmpty());
+		return matches.stream().mapToDouble(contribution ->
+			fixture.surface.evaluateContributionCanonical(contribution, values)).sum();
 	}
 
 	private static String twoSourceScript(String suffix) {

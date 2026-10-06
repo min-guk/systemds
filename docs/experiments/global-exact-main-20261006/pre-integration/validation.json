@@ -1,0 +1,50 @@
+{
+  "codeCommit": "719bedf86cc071506bf9dca58115492c6d7fd966",
+  "status": "superseded_by_main_integration",
+  "unit": {
+    "tests": 742,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "global14": {
+    "attempted": 28,
+    "passed": 26,
+    "failures": [
+      {
+        "case": "glm_w1",
+        "status": "failed",
+        "wallSeconds": 208.632364392,
+        "error": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PlannerResourceGuard$ResourceExhaustedException: SYSTEM_RESOURCE_EXHAUSTED|phase=exact-numeric|requiredBytes=176356904|availableBytes=577837648|maxMemory=10737418240|allocation=double[]",
+        "causes": [
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PlannerResourceGuard$ResourceExhaustedException: SYSTEM_RESOURCE_EXHAUSTED|phase=exact-numeric|requiredBytes=176356904|availableBytes=577837648|maxMemory=10737418240|allocation=double[]",
+          "java.lang.OutOfMemoryError: Java heap space"
+        ],
+        "committedProgramsAfterFailure": 0
+      },
+      {
+        "case": "glm_w3",
+        "status": "failed",
+        "wallSeconds": 127.514822567,
+        "error": "java.lang.IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+        "causes": [
+          "java.lang.IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW"
+        ],
+        "committedProgramsAfterFailure": 0
+      }
+    ]
+  },
+  "local14": {
+    "attempted": 28,
+    "passed": 27,
+    "failures": [
+      {
+        "case": "logreg_w3",
+        "status": "failed",
+        "wallSeconds": 47.913883048,
+        "error": "java.lang.IllegalStateException: INCREMENTAL_CONDITIONAL_DP_WORSENED"
+      }
+    ]
+  },
+  "evidenceRoot": "/home/mchoi/fedplanner-global-publish-20261006"
+}

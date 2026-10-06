@@ -30,8 +30,15 @@ public class SearchSpaceAttributionTimingTest {
 		SearchSpaceMetrics.AttributionSnapshot timing = metrics.attributionSnapshot();
 		Assert.assertEquals(work.proofQueries(), work.exactContextUniqueQueries()
 			+ work.exactContextRepeatedQueries() + work.exactContextOverflowQueries());
-		for(SearchSpaceMetrics.Phase phase : SearchSpaceMetrics.Phase.values())
-			Assert.assertTrue("missing phase " + phase, timing.phase(phase).inclusiveWallNanos() > 0);
+		for(SearchSpaceMetrics.Phase phase : SearchSpaceMetrics.Phase.values()) {
+			if(phase == SearchSpaceMetrics.Phase.PROOF_GROUNDING) {
+				Assert.assertEquals("mandatory input relations make source-grounding work unnecessary", 0,
+					timing.phase(phase).calls());
+				Assert.assertEquals(0, timing.phase(phase).inclusiveWallNanos());
+			}
+			else
+				Assert.assertTrue("missing phase " + phase, timing.phase(phase).inclusiveWallNanos() > 0);
+		}
 		SearchSpaceMetrics.PhaseMeasurement topology =
 			timing.phase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
 		Assert.assertEquals("each measured topology call is classified as a build or hit",

@@ -103,6 +103,48 @@ public class SharedRegionalPreparationTest {
 	}
 
 	@Test
+	public void repairExpansionIncludesRemovedBoundaryAndDoesNotKeepItsIncumbent() {
+		Variable block = variable("repair-block", 2);
+		Variable boundary = variable("repair-boundary", 3);
+		List<Variable> variables = List.of(block, boundary);
+		List<Factor> factors = List.of(
+			Factor.dense(List.of(block, boundary),
+				1d, 2d, 3d,
+				3d, 2d, 1d),
+			Factor.dense(List.of(boundary), Double.POSITIVE_INFINITY, 0d, 0d));
+		SharedRegionalPreparation preparation = shared(variables, factors);
+
+		int[] expanded = preparation.expandRepairBlock(new int[] {0, 0}, new int[] {0});
+		Assert.assertArrayEquals(new int[] {0, 1}, expanded);
+		LocalCategoricalOptimizer.PreparedBlockSolver solver =
+			preparation.prepare(new int[] {0, 0}, expanded);
+		Assert.assertNotNull(solver);
+		ExactCategoricalSolver.Result result = solver.solve();
+
+		Assert.assertEquals(2, result.assignmentInVariableOrder().size());
+		Assert.assertNotEquals(0, result.assignmentInVariableOrder().get(1).intValue());
+		Assert.assertTrue(Double.isFinite(result.objective()));
+		Assert.assertEquals(0L, preparation.fallbacks());
+	}
+
+	@Test
+	public void repairExpansionFindsTransitiveRemovedBoundaries() {
+		Variable first = variable("repair-first", 2);
+		Variable second = variable("repair-second", 2);
+		Variable third = variable("repair-third", 2);
+		List<Variable> variables = List.of(first, second, third);
+		List<Factor> factors = List.of(
+			Factor.dense(List.of(first, second), 0d, 0d, 0d, 0d),
+			Factor.dense(List.of(second), Double.POSITIVE_INFINITY, 0d),
+			Factor.dense(List.of(second, third), 0d, 0d, 0d, 0d),
+			Factor.dense(List.of(third), Double.POSITIVE_INFINITY, 0d));
+		SharedRegionalPreparation preparation = shared(variables, factors);
+
+		Assert.assertArrayEquals(new int[] {0, 1, 2},
+			preparation.expandRepairBlock(new int[] {0, 0, 0}, new int[] {0}));
+	}
+
+	@Test
 	public void fastBlockOrderIsOptInAndUsedForNonCompactBlock() {
 		String previous = System.getProperty(SharedRegionalPreparation.FAST_BLOCK_ORDER_PROPERTY);
 		String previousAssignments =

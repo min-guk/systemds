@@ -1,5 +1,17 @@
 # Session issues: 2026-10-06
 
+## Local 및 Global DP 공통 모델과 그룹 충돌 처리 분석 완료
+
+- **상태**: 보고서 작성 및 대상 단위 검증 완료.
+- **문제 정의 및 증상**: 사용자가 최신 로컬 SystemDS의 공통 HOP 탐색 공간, Local/Global DP 알고리즘, Local의 그룹 간 충돌 해소 원리를 요청했다. 기본 `/home/mchoi/systemds`는 구형 체크아웃이므로 분석 기준을 혼동할 수 있었다.
+- **환경 및 원인 확인**: 사용자가 지정한 `/home/mchoi/w1357-cost-model-main-20261006`, HEAD `e1fdfe4446180ef9d6fbd93fd0c4f5ab899d7440`을 기준으로 생산 호출 경로를 추적했다. 현재 Local의 본체는 feasible seed 이후 incremental boundary-message DP이며, 과거 local conflict repair 설명만으로는 부족하다.
+- **해결 방법**: 공통 physical alternative와 hard/cost factors, Global variable elimination, Local seed repair와 factor cluster 병합을 구분하고, 공유 pivot 전체 bucket 병합 및 조건부 복원을 수식과 가상 비용 예시로 문서화했다.
+- **수정 파일**: `docs/FEDPLANNER_LOCAL_GLOBAL_DP_REPORT_2026-10-06_KO.md`, 이 세션 기록. Java 소스 및 테스트 변경 없음.
+- **검증 방법 및 결과**: `mvn -o -DskipTests=false -Dtest=IncrementalBoundaryMessageTest,IncrementalRegionalOptimizerTest,LocalPhysicalOptimizerIncrementalTraceTest test` 실행. 30 tests, 0 failures, 0 errors, 0 skipped. 새 Surefire 보고서 확인. 기존 비용 campaign 로그와 구별했다.
+- **의사결정 근거**: 사용자가 지정한 로컬 커밋의 실제 생산 경로와 테스트를 기준으로 하고, canonical 모델의 정확성과 실측 runtime 성능을 구별한다.
+- **잔여 이슈**: 이번 대상 테스트는 전체 workload의 완전성이나 실측 성능을 검증하지 않는다. 기존 세션에 기록된 별도 결함은 수정하거나 해소됐다고 주장하지 않는다.
+- **잠재 회귀 위험 및 감지**: 실행 코드 수정에 따른 회귀는 없다. 후속 커밋에서 알고리즘·기본값이 변경되면 보고서가 오래될 수 있으므로 문서의 고정 커밋과 Factory/LocalPhysicalOptimizer 진입점을 대조한다.
+
 ## Loop initial conversion — isolated implementation verified
 
 ### 1. 초기 로컬값에서 반복 FED 배치로 진입하는 유효 후보 누락 — 해결
@@ -294,6 +306,320 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **재현/증거**: 앞선 Maven 명령의 `-Dtest`에 위 6개 클래스명을 쉼표로 연결한다. [검증 결과](../.omx/unknown-shape-golden-20261006/test-fix/verification.json), [31건 실행 로그](../.omx/unknown-shape-golden-20261006/test-fix/golden-test-fix-final.log), [이전 구현 음성 대조](../.omx/unknown-shape-golden-20261006/test-fix/golden-test-legacy-negative-control-final.log). 이전 원인 조사 snapshot과 로그는 그대로 보존했다.
 - **잔여 이슈/회귀 위험**: 요청된 golden 불일치는 해결됐다. 이 검증은 해당 fixture와 관련 unit 계약을 대상으로 하며 전체 ML training runtime 검증을 대신하지 않는다. 이후 식별자 계약의 의도된 변경도 테스트 실패를 일으키므로, 다시 전체 snapshot 차이를 확인한 뒤 기준을 갱신해야 한다. 명시적인 worker/range·proof·참조·pruning parity 검사로 후보 손실을 감지한다.
 
+## Remaining planner work after transfer deduplication — 최종 검증 완료
+
+- **환경**: `/home/mchoi/w1357-cost-model-main-20261006`, baseline `10e14bc791d391a678ecab67ffd9f98949be32c6`; DP-LocalConflict 우선.
+- **문제 정의**: 사용자가 남은 비용 누락, MMChain 감사, StepLM 오류, if 합류 제약, 실제 Docker 검증을 모두 요청했다. 작업 범위와 체크리스트는 `FEDPLANNER_REMAINING_WORK_2026-10-06.md`에 기록한다.
+- **통신 비용 원인/해결**: 기본 FED instruction 및 LOUT result 비용 밖에서 실행되는 VAR mean, covariance means/weight sum, cumulative correction, CTABLE maxima, reshape metadata batch가 누락됐다. runtime별 추가 RTT/payload helper와 occurrence shape 전달을 추가했다. 실제 native result와 같은 batch인 GET을 다시 과금하지 않는다.
+- **StepLM 원인/해결**: shared exact reduction은 성공했지만 hard-conflict repair가 이미 제거된 incumbent boundary category를 고정하여 원래 거대 lazy factor로 돌아갔다. unsupported boundary 원본 변수만 repair block에 포함하여 기존 encoded root에서 해결한다. 후보를 삭제하거나 cap을 높이지 않는다. isolated StepLM 및 solver 56건 통과; 통합 검증 진행 중.
+- **if 합류 원인/해결 방향**: CFG-only alias edge에는 이동 명령을 붙일 수 없다. immutable analysis 이전에 분기 끝의 실제 TR→TW carrier를 만들어 그 input edge에서 LOCAL/REFED를 선택하게 한다. 합류 TW/TR와 일반 함수 binding equality는 유지한다. recompile clone marker, liveness, privacy, lowering 검증 진행 중.
+- **MMChain/TSMM 감사**: 과거 probe는 root 한 개만 FED로 강제했고 complete feasible selection을 증명하지 않았다. final physical normalization 및 selected fusion boundary를 거치면 같은 instruction이 생성된다고 보장할 수 없다. forced-FOUT TSMM pattern에 일괄 비용을 추가하는 방식은 unfused 연산을 잘못 과금하므로 적용하지 않는다. 실제 DP runtime witness를 확인한다.
+- **수정 파일**: `FederatedCostModel.java`, `PlacementCostSemantics.java`, `ExactPhysicalCostModel.java`, `LocalCategoricalOptimizer.java`, `SharedRegionalPreparation.java`, branch normalization 및 관련 테스트/검증 harness.
+- **검증**: 초기 Maven production/test compile 성공. 나머지 로그는 `/home/mchoi/fedplanner-remaining-20261006/`; 최종 결과는 후속 항목에 갱신한다.
+- **의사결정 근거**: runtime의 실제 batch/placement를 비용화하고, carrier의 명시적 이동만 허용한다. runtime fallback, TW/TR CP/FOUT, 후보 임의 축소는 허용하지 않는다.
+- **잔여 이슈**: 통합 회귀, all14 W1/W3 compile, 실제 Docker worker 실행 및 예상/측정 구분이 미완료다. 업로드 중복 의심은 여전히 현재 feasible plan에서 재현되지 않았다.
+- **잠재 회귀 위험/감지**: 보조 payload의 deferred dimensions, batch 중복, branch carrier 제거/잘못된 liveness, 공유 solver 보조변수 연결 누락. focused arithmetic tests, feasibility/lowering, 실제 true/false 및 반복 실행, all14 compile로 확인한다.
+
+
+### 실제 Docker에서 추가 재현된 함수 경계 문제 — 수정/검증 진행 중
+
+- **증상 1**: 같은 실제 행렬을 같은 함수 formal에 두 번 전달하면 `Exact logical function input fact is missing or ambiguous`. `runtime/run-ix2x1zx3/control.log`에서 분석 publication 단계 재현.
+- **원인 1**: `(sourceArgument,targetRead,logicalPosition)`만으로 lookup하여 서로 다른 호출 boundary를 합쳤다.
+- **해결 1**: boundary와 callInputPosition을 함께 검증하는 occurrence-exact lookup을 추가하고 physical consumer 및 비용 모델의 fact 검증에 사용한다. 호출별 실행 횟수와 컨텍스트는 유지한다.
+- **증상 2**: 새 empty-else carrier가 컴파일되지만 실제 함수 최초 재컴파일에서 `exact local materialization requires a federated producer lop` 발생. `runtime/run-9k3brdl0/branch_true.log`, `runtime/run-onfb65gw/branch_false.log` 모두 재현.
+- **원인 2**: then/else에 생성한 carrier가 같은 if parse range를 공유하여 recompile signature가 충돌했다. 서로 다른 FED/FOUT와 CP/LOUT 상태를 source 위치만으로 구분하지 못했다. branch 변수맵 오염이라는 초기 가설은 이 증거로 교정한다.
+- **해결 2 방향**: 결정적인 branch path 기반 carrier identity를 clone 및 recompile signature에 보존한다. Dag의 mismatch 오류는 유지하며 이동을 생략하거나 runtime 보정하지 않는다.
+- **검증 범위**: 초기 core439건 통과. Docker aggregate/shape/linear/control 수치 검사 통과. 실제 FED VAR 실행 및 GET/PUT/request·네트워크 byte 기록을 확보했다. shape 연산은 rewrite가 제거하지 않도록 위치별 weighted checksum으로 바꿨으며 현재 DP 선택은 CP 연산이므로 FED native 경로 검증으로 주장하지 않는다.
+- **잠재 회귀/잔여**: 함수 boundary 조회의 foreign fact 허용, signature collision, carrier clone identity 손실을 새 회귀 및 최종 실제 true/false 실행으로 검사한다. 최종 통합 결과는 별도 receipt로 기록한다.
+
+### 확장 검증에서 추가 발견한 회귀 — 해결 진행 중
+
+- 2026-10-06 최종 후보 첫 all14 실행은 **26/28 compile PASS**. `kmeans_w3`는 executable realization/action closure 비수렴, `glm_w1`은 reduced solver 배열 materialization 중 Java heap 부족이다. 이전 28/28 결과와 구별하며 완료로 주장하지 않는다.
+- GMM W3는 기존 270개 노드의 coarse 선택이 그대로인데 objective 18,305.96→8,760,104.45ms가 됐다. 새 보조 통신 연산이 선택되지 않았고 carrier 자체 비용은 기존 metadata 규칙으로 0이다. shape/frequency/physical realization 변경을 분해하여 확인한다.
+- 실제 worker 최종 후보 첫 실행은 4/6 PASS. 동일 인자 반복 함수는 call identity ambiguity 수정 이후 hard model의 infeasibility를 드러냈다. 한 번 호출은 feasible이며 두 번 호출한 if-only/loop-only에서도 실패하므로 solver 예외를 숨기지 않고 function constraint encoding을 조사한다.
+- Empty else의 실제 변환 유실은 함수의 2단계 재컴파일에서 재현했다. 1단계는 runtime 값으로 planner-keyed prefetch/mvvar를 만들지만 runtime 값이 없는 2단계가 자기대입을 빈 instruction 목록으로 덮어썼다. marked branch carrier block만 1단계 instruction을 보존하도록 수정했고 두 단계 재컴파일 회귀 4건 및 관련 recompile 44건을 통과했다. 실제 worker 재검증은 별도로 수행한다.
+- 업로드 반례 초기 probe의 X가 PUBLIC으로 표시됐음을 확인하여 해당 결과를 mixed-privacy 증거에서 제외했다. PRIVATE_AGGREGATE X/public local Y로 보정한 feasible aggregate-binary probe에서도 선택된 명시적 REFED는 없었다. intrinsic FED matmul RHS upload와 REFED cache를 혼동하지 않는다.
+
+- **추가 수정 확인**: 같은 source/formal/position에 대한 반복 함수의 중복 static input-authority link만 합쳐 hard factor의 zero-support 오류를 제거했다. 호출 boundary와 실행 횟수는 별개로 보존한다. 실제 혼합 privacy control 결과 304 및 전체 6/6 worker 수치/audit PASS, fallback=repair=0 (`runtime/run-1igaimzq`).
+- **메모리 수정 확인**: support/quotient 관측이 끝난 뒤 frozen raw factor table을 축소 테이블로 순차 이전하여 두 전체 테이블 집합을 동시에 유지하지 않는다. 64MiB에서 1,500개 lazy factor 반례는 기존 reduce 배열 할당 OOM, 수정 후 모든 32×64 지원 상태 및 비용 보존 PASS. 실제 GLM W1은 기존과 같은 `-Xmx10g`에서 PASS. 한도 상향/후보 축소 없음.
+- **고정점 수정 확인**: native rebinding이 기존 DIRECT support clause를 버리면서 서로 다른 worker layout을 3-pass 주기로 재발견했다. 이미 근거가 있는 clause의 합집합을 보존하고 기존 외부 support/action pruning이 소멸한 근거를 제거한다. staging empty-binding authority는 보존하지 않는다. kmeans W3 9.84초 compile PASS, 관련 closure 90건 통과.
+- **GMM 원인 확인**: normalizer 단독 A/B 및 emission 전 contribution 합계의 objective bit 일치를 확인했다. carrier의 source 없는 TR이 UNKNOWN shape로 승격되어 합류를 오염시키고, downstream이 10GiB fallback을 적용했다. 실행 횟수·통신 보조 stage·carrier 자체 연산 비용의 문제가 아니다. 분기에서 실제 정의되지 않은 값을 새 자기대입으로 읽지 않도록 수정 중이다. 상세 근거 `gmm-cost-audit/REPORT.md`.
+
+
+### 최종 결과 — 남은 항목 처리 완료
+
+- 보조 통신 비용, StepLM repair, 분기별 명시적 이동, 반복 함수 boundary identity/static authority, 재컴파일 carrier 보존, k-means support 고정점, GLM 메모리, GMM undefined carrier 문제를 수정했다.
+- GMM은 definite-bound 값에만 branch carrier를 생성하여 크기 정보 유실을 해소했다. 최종 objective는 W1 25,042.749584ms, W3 18,305.956167ms로 기존 수준이다. 기존 값이 있는 empty else 변환은 유지한다.
+- 최종 소스의 Java 전체 컴파일/jar 성공, **77개 클래스 606 tests PASS (실패/오류/제외 0)**. **14×W1/W3 28/28 compile PASS**, 실제 Docker worker **6/6 PASS**, 모든 fallback/repair=0. 최종 jar SHA와 모든 source SHA, command, receipt freshness를 교차 확인했다.
+- MMChain/forced-FOUT TSMM 및 반복 업로드 cache 의심은 complete feasible selection에서 추가 중복 비용이 확인되지 않았다. root-only 강제 probe와 all-PUBLIC probe를 혼합 privacy의 실행 증거로 사용하지 않는다. 감사 범위와 미확정 결론을 별도로 기록했다.
+- 변경 전후 objective/그래프/후보 수와 측정 한계는 [최종 보고서](FEDPLANNER_REMAINING_WORK_2026-10-06.md), 소스 해시·명령·단위 검증 결과는 [validation.json](experiments/remaining-planner-work-20261006/validation.json)에 있다. 실제 네트워크는 loopback이므로 WAN 예측 정확도나 성능 개선율은 주장하지 않는다.
+- 기존 Local/Global DP 보고서 및 verification 미커밋 자료는 보존했다. 위 진행 중 기록들은 발견·수정 순서의 이력이며, 현재 상태는 이 최종 결과를 기준으로 한다.
+
+- **계획 비교의 한계**: 최종 GLM W1과 L2SVM W3의 예측 objective는 증가했으며, 두 경우 각각 기존 대응 노드 4개의 선택 배치가 바뀌었다. 전후 선택이 모두 같거나 모든 경우 더 저렴해졌다고 주장하지 않는다. 비용 보정과 로컬 탐색 품질의 영향 분리는 이번 28-case 비교만으로 확정하지 않았다.
+
+### GLM W1 / L2SVM W3 비용 증가 분리 감사 — 진행 중
+
+- **문제 정의**: 최종 objective 증가가 비용 보정인지, 기존 계획의 불가능화인지, 탐색 품질 문제인지 분리한다. 과거 수치만 비교하지 않고 현재 emission 이전의 동일 physical model/cost surface에서 complete assignment와 모든 hard factor를 검증한다.
+- **수정 범위**: production/test/shared target은 변경하지 않는다. 외부 diagnostic overlay `/home/mchoi/fedplanner-plan-increase-20261006/`만 사용하고, 모든 실험은 `run_LAN_docker.sh --function-boundary-compare`로 실행한다.
+- **현재 관측**: GLM bootstrap 46,212.52ms, incremental 단계 `RESOURCE_INITIAL`, merges/improvements=0. 현재 모델의 line983 주변 feasible 조합에서 27,027.08ms를 발견했다. 큰 전수 탐색은 중단하고 과거 coarse 배치로 제한한 완전 witness 검증을 진행한다. 초기 중단 로그와 source는 `glm/exhaustive-partial-results/`, `glm/exhaustive-partial.java`에 보존한다.
+- **L2SVM 판단 주의**: 네 Y 노드만 바꾼 56개 조합의 infeasibility는 주변 alias/carrier를 함께 바꾼 과거 배치의 extension까지 불가능하다는 증명이 아니다. pinned heuristic 결과가 더 비싸다는 사실도 최적성 증명이 아니다. 기존 대응 노드를 고정하고 신규/보조 노드의 feasibility를 추가 검사한다.
+- **의사결정 근거/잔여 위험**: 후보 삭제나 비용 변경 없이 현재 모델의 feasible witness로 탐색 품질을 판단한다. 모델 비용을 실제 WAN 실행시간으로 해석하지 않는다. 최종 결과는 후속 항목에 기록한다.
+
+### GLM / L2SVM 증가 감사 — 확인 결과
+
+- **GLM 확인 완료/수정 미착수**: 동일 현재 모델에서 46,212.521644ms보다 싼 21,977.116965ms complete witness를 확보했다. 모든 3,458 hard factor 위반 0. 실제 탐색은 초기 dense cover 예산으로 RESOURCE_INITIAL, merges/improvements=0. 따라서 탐색 품질 문제 확정. 후보/비용/런타임을 바꾸지 않고 확인했다.
+- **L2SVM 조건부 확인 완료/잔여 분석**: 기존 191 coarse state를 고정하고 4개 새 carrier 및 alias/physical 선택을 푼 exact optimum은 27,412.450394ms, hardCost=0. 기존 배치가 불가능하다는 초기 가설은 폐기한다. 현재 9,014.979380ms 선택보다 비싸지만, unrestricted lower=3,358.047271ms로 전역 최적성은 미확정이다. 새 경계 이후 같은 배치의 비용이 달라진 세부 정당성은 추가 확인 대상이다.
+- **수정 파일/검증**: 본체 변경 없음. diagnostic overlay 및 문서/receipt만 추가. 동일 Docker entrypoint의 compile/conditional exact solver로 확인했고 production source/jar가 이전 검증 SHA와 동일함을 재확인했다. 상세 근거는 [증가 감사 보고서](FEDPLANNER_PLAN_INCREASE_AUDIT_2026-10-06.md).
+- **잔여 문제/회귀 위험**: GLM의 초기 DP factor 표현/예산 내 탐색 개선, L2SVM carrier 전후 물리 비용 차이 감사. 수정 시 후보 축소나 메모리 검사 제거로 우회하지 않으며 complete feasible witness와 all14 회귀로 확인해야 한다. 이번 확인 작업에서 코드 수정/commit/push는 하지 않았다.
+
+### GLM 탐색 / L2SVM 경계 비용 수정 — 진행 중
+
+- **요청/성공 조건**: 확인된 GLM RESOURCE_INITIAL 탐색 실패를 예산 내에서 고치고, L2SVM carrier 추가 후 물리 비용 차이의 원인을 수정한다. GLM 저비용 witness를 실제 DP가 찾는지, L2SVM 투명 경계의 비용/물리 권한이 보존되는지 검사한다.
+- **실행 계획**: (1) 작은 solver/경계 비용 반례를 회귀 테스트로 고정, (2) 초기 factor 표현/투명 carrier cost authority를 최소 수정, (3) focused tests와 통합 build, (4) 동일 Docker GLM/L2SVM 및 14×W1/W3, 실제 2-worker 수치/audit 회귀, (5) source SHA와 결과 기록.
+- **작업 경계**: solver와 cost model을 독립 lane으로 수정하고 root가 통합 build/검증을 담당한다. 기존 미커밋 수정/문서/verification은 보존한다. 후보 삭제, 메모리 cap 단순 상향, runtime fallback, TW/TR·recompile 규칙 완화는 하지 않는다.
+- **근거 위치**: 기존 감사 `/home/mchoi/fedplanner-plan-increase-20261006/`; 이번 수정/회귀 `/home/mchoi/fedplanner-search-boundary-fix-20261006/`.
+- **회귀 위험**: lazy/sparse message의 lower-bound·decode·소유권·실제 메모리 합계, carrier alias의 경로별 이동과 cache invalidation. 독립 비용 oracle/solver exact 대조 및 Docker fallback=repair=0으로 확인한다.
+
+- **GLM 1차 수정 검증**: dense source table은 이미 CompactModel에서 공유하고 있었으므로 Regional 추가 메모리 예산의 중복 집계만 제거했다. 혼합 dense/lazy 소유권 회귀 및 solver 테스트 통과. 실제 GLM은 RESOURCE_INITIAL을 벗어나 10,311회 merge했으나 46,202.63ms에서 RESOURCE 종료하여 21,977ms witness에는 미달했다. 따라서 해결로 선언하지 않고, 남은 예산에서 경계를 고정한 작은 exact 개선 문제를 푸는 보강을 진행한다.
+- **L2SVM 비용 원인/수정**: 여러 branch reaching definitions 때문에 GET 생성 수명을 inner-loop TRead(600회)로 대체하여 중복 과금했다. 실제 MatrixObject origin의 수명과 branch reachability predicate를 따로 유지한다. 동일 origin의 여러 경로는 합집합으로 과금하고, 반복마다 새 값인 loop phi는 단순 alias로 합치지 않는다. 빈 else·같은 원본 양쪽 경로·양쪽 새 값·nested/sequential branches·반복 분기 반대 arm 테스트를 추가했다.
+- **L2SVM 비용 수치**: 같은 모델에서 기존 191개 coarse states의 exact extension은 27,412.45→7,289.35ms로 내려왔다. 이전 7,198.29ms와 남은 약 91.04ms 차이는 기존 runtime에도 있던 post-if `prefetch Y` 한 번의 GET 누락을 복원한 것으로 확인했다. 반복 GET 과금과 이 한 번의 비용을 구별한다.
+- **추가 lowering 회귀**: 새 L2SVM 계획의 REFED anchor가 동일 ROW worker/partition을 legacy 1D와 full 2D로 표시하여, live Lop shape unknown일 때 문자열 충돌로 판정했다. complete counterpart의 일관된 전체 비분할 축 범위로만 canonicalize한다. 실제 다른 worker/partition/extent는 계속 거부한다. Dag 회귀 44건 isolated PASS, Docker 재검증 대기.
+- **검증 실행 관리**: 한 초기 Docker 실행은 동시 Maven compile이 shared target/classes를 갱신하면서 ClassNotFound로 무효화됐다. 이후 전체 engine classes를 immutable 외부 snapshot으로 복사해 실행한다. 한 regression driver는 surefire:test만 호출해 새 테스트 class가 stale했다. 재현 로그는 보존하며, 최종 driver는 test lifecycle로 소스 컴파일부터 수행한다. 이 두 실행은 최종 성공 근거로 사용하지 않는다.
+
+- **L2SVM lowering 검증 완료**: 동일 의미의 legacy/full anchor 정규화 수정 후 Docker L2SVM W3 compile/lowering PASS, objective 7,289.332817889578ms, LOCAL=6/REFED=1. 비용/anchor snapshot의 추가 25개 case도 모두 PASS.
+- **GLM 보강의 안전성 검토**: persistent message cover를 검증하고 scalar lower bound를 보존한 뒤 message storage를 해제하여, 거절된 작은 neighborhood를 현재 incumbent에 조건화해 exact solve한다. 이미 root가 소유한 dense array는 추가 저장량에 중복 집계하지 않는다. 조건화 table 및 intermediate는 추가 cell 한도에 포함한다. 재compaction의 중복 배열을 막고 선택적 solve/lift의 resource rejection에서는 incumbent를 유지한다. 후보 삭제나 runtime fallback은 없다.
+- **자원 제한의 정확한 범위**: 추가 numeric-cell storage 및 elimination당 assignment 제한이다. 전체 JVM 메모리 보장 또는 solve 내부의 강제 wall-clock interrupt로 해석하지 않는다. 시간은 conditional attempt 사이에 검사하며 frontier에 남은 원본 변수만 변경하므로 완전 탐색/전역 최적 보장이 아니다.
+- **중간 검증**: 통합 86개 클래스 679 tests 실패/오류/제외 0. 이후 선택적 refine의 resource 처리와 noncompact 변경은 isolated 관련 81 tests PASS; 최종 소스로 다시 build/검증한다. GLM 실제 개선 여부는 아직 확인 중이다.
+
+- **GLM 추가 원인 분리**: 처음 cheap neighborhood는 필요한 결합 연산을 포함하지 않았고, regret 우선순위만으로는 singleton 변경에 머물렀다. owned 원본을 복원하고 보조변수 관계 및 두 원본 hop을 포함해 네 연산 전체를 묶었다. 그 결과 필요한 `[758,759,760,762]` block이 생성되지만 아직 거절되는 것을 확인했다.
+- **최종 거절 원인/수정**: 4-variable block의 기본 MIN_SEPARATOR 순서는 최대 단계 작업량 3,799,552라 1M cap에 걸렸지만, 이미 생성된 MIN_FILL/MIN_ELIMINATION 순서는 593,680, materialized 약 789k로 기존 한도 안이었다. bounded exact portfolio 선택에서 메모리와 단계 작업량을 함께 admission 기준으로 적용했다. configured fast path는 보존한다. 추가 compaction이나 cap 상향은 필요 없었다. 새 order 회귀 및 관련 84 tests PASS; 실제 최종 GLM 재실행 중.
+- **예산 보존/우선순위**: positive potential 확인 후에만 두 단계 관계를 구성하고, 큰 영역과 작은 원본 영역을 모두 보존한다. 큰 영역 거절로 L2SVM에서 이미 가능한 작은 개선이 사라지지 않게 한다. 새로운 상태 후보 삭제나 실행 경로 변경 없이 기존 exact order portfolio만 한도에 맞춰 선택한다.
+
+
+### GLM 탐색 / L2SVM 경계 비용 수정 — 최종 완료
+
+- **최종 결과**: GLM W1 46,212.52→20,956.64ms, L2SVM W3 9,014.98→4,259.97ms. GLM은 동일 모델의 알려진 21,977.12ms witness보다 저렴한 feasible 선택을 실제 DP에서 찾았고 compile/lowering도 통과했다. 예측 비용이며 측정 학습시간으로 해석하지 않는다.
+- **검증**: 전체 Java compile/jar, 86개 클래스 **681 tests PASS**(실패/오류/제외 0), **28/28 Docker compile PASS**, 실제 2-worker **6/6 PASS**, fallback=repair=0. source/jar SHA와 XML/command/result freshness를 확인했다. 정적 diff/shell/Python syntax 검사도 통과했다.
+- **계획 공간/비교**: 28개 graph node/coarse alternative 수 유지. 0.01ms 허용 오차 기준 11개 objective 감소, 17개 유지, 증가 0개. Lowering 후 physical domain 수까지 불변이라고 주장하지 않는다. 후보 삭제, cap 상향, runtime fallback, TW/TR 후보 규칙 완화는 없다.
+- **리뷰/잔여 한계**: 독립 리뷰에서 bounded order 선택과 factor cover/canonical acceptance에 blocker 없음. lower=12,645.75ms, selected=20,956.64ms로 GLM 전역 최적은 미증명이다. 추가 numeric-table 예산은 전체 JVM 메모리 보장이 아니며 시간은 시도 사이에 검사한다. configured-order counter는 최초 순서 시도를, pre-solve trace는 실제 bounded 순서를 나타낸다.
+- **문서/근거**: [해결 보고서](FEDPLANNER_SEARCH_BOUNDARY_FIX_2026-10-06.md), [최종 validation](experiments/search-boundary-fix-20261006/validation.json). 앞선 실패/부분 성공 기록은 원인 분리 이력이다. 최종 상태는 이 항목을 기준으로 한다. 기존 미커밋 자료는 보존했고 commit/push는 하지 않았다.
+
+
+## Local/Global DP 임의 resource budget 제거 — 완료
+
+- **사용자 요구**: Global은 전체 문제를 exact로 풀어야 하며, 메모리/계산량에 유리한 elimination order를 사용할 수 있다. 실제 시스템 자원 소진을 막는 경우 외에는 Local/Global의 임의 시간·메모리 budget을 삭제한다. 이전 1M/8M/10초 예산 유지 결정은 이번 요청으로 대체된다.
+- **감사 결과**: Global의 production 경로는 이미 전체 hard+cost model을 exact로 풀고 오류를 전파한다. 표현 변환이 부적격일 때도 원래 전체 문제로 돌아가며 일부 영역의 해를 Global 성공으로 내보내지 않는다. Local production의 1M assignment/8M retained slots/10s/16 후보 제한이 실제 제거 대상이다.
+- **변경**: production Local의 네 제한과 해당 property 입력을 제거하고, test-only 명시적 Options로 한도 회귀를 유지한다. Local의 5% 상대 gap은 자원 예산과 다른 알고리즘 품질 종료 기준이므로 유지하며 Global에 적용하지 않는다. 새 PlannerResourceGuard는 실제 배열 할당과 JVM 최대 heap의 불가능성만 보호한다. 현재 heap 사용량에 collectible garbage가 들어 있으므로 그것만으로 새 고정 예산처럼 거절하지 않는다.
+- **order 의미**: Global과 Local 내부의 exact 부분 문제는 같은 elimination-order portfolio를 사용한다. Local의 incremental 병합은 separator 크기, 작업량, conflict 점수를 이용해 순서를 정한다. fastOrderAssignments는 단일 순서 shortcut을 쓸지 전체 portfolio를 비교할지 결정하는 기준이며 전체 문제 풀이를 중단하거나 후보를 삭제하는 budget이 아니다. 한도를 초과해도 전체 exact 풀이로 진행함을 구별한다.
+- **수정 파일/소유**: IncrementalRegionalOptimizer, SharedRegionalPreparation, RegionalSearchProblem, ExactCategoricalSolver, ExactPhysicalReducedSolver, 새 PlannerResourceGuard 및 회귀. 이전 비용/분기/런타임 변경은 보존한다.
+- **검증 계획/현재**: 고정 1M를 초과하는 production Local solve, Global 전체 연결/비연결 factor의 완전 optimum 대조, infeasible component의 partial success 금지, 64MiB에서 불가능한 배열을 평가 전에 명시적 resource failure로 처리하는 focused 검증 통과. GC/실제 allocation 처리 보완 후 통합 suite와 Docker compile/runtime을 확인한다.
+- **잔여/회귀 위험**: 임의 시간 한도가 없으므로 오래 걸릴 수 있다. 실제 자원 부족 또는 표현 한계는 명시적으로 남긴다. lower/canonical 검증과 Global 전체 성공/실패 경계가 유지되는지 검증한다. Local은 자원 부족에서 feasible incumbent를 반환할 수 있지만 Global exact 성공으로 표시하지 않는다.
+
+- **계산량 개선/중간 결과**: 시간/메모리 cap 없이 실행하자 STEP-LM 기존 merge가 10분 이상 소요됐다. exact 비용과 lower bound가 모두 +Infinity인 조합에서 나머지 합산만 생략하는 정확한 단축을 추가했다. 17개 boundary 회귀 및 실제 STEP-LM Local+Global compile 테스트(3GiB heap, wall 72.16초) 통과. 이전 broad run의 88개 클래스/695 tests는 통과했으나 마지막 STEP-LM 진행 중 새 kernel로 대체하여 중단했고, 최종 소스로 전체 suite를 재실행한다. 중단 실행을 전체 PASS 근거로 쓰지 않는다.
+
+- **실제 heap 소진에서 추가 결함 발견**: 최종 Docker L2SVM W1이 3.47B 누적 assignments, 약 1.42B retained slots까지 진행한 뒤 10GiB heap을 소진했다. `allocateInts`가 원래 OOME를 잡았지만 `Long.toString`으로 진단 메시지를 만드는 할당도 실패하여 raw OOME가 유출됐다. 고정 예산을 복원하지 않고, heap 소진 전에 준비한 typed resource exception을 진단 실패 시 사용하는 방식으로 보완한다. 해당 실패 receipt는 보존하며 최종 PASS 집계에서 제외한다. runner `COMPLETE`는 결과 파일 생성만 의미하므로 검증은 결과 JSON `status=passed`도 확인한다.
+
+- **최종 완료**: 고정 production assignment/retained-slots/time/scored-candidate budget 제거. Global 전체 exact·실패 경계 유지. 실제 배열/진단 할당 실패를 처리하는 preallocated typed error 보완까지 완료.
+- **최종 검증**: 최신 소스 Maven compile/test/jar, 89개 클래스 **699 tests PASS**, immutable engine의 **28/28 Docker compile PASS**, 실제 2-worker **6/6 PASS**, fallback=repair=0. 소스/3,713 classes/JAR hash 및 XML/command/result freshness 확인.
+- **실험 결과**: 28개 graph/coarse 후보 수 유지. Local 예상 비용 4개 감소·22개 유지·2개 증가. 두 증가는 5% TARGET_REACHED에 따른 Local 결과이며 Global exact 성공으로 표시하지 않는다. 종료는 TARGET_REACHED 22, RESOURCE 4, EXACT 2, TIME 0. 실제 heap 소진의 L2SVM W1도 typed resource 처리 후 compile/lowering PASS.
+- **잔여 한계/근거**: Local 5% 품질 조건 유지, JVM/Java 표현 한계 유지, 모든 metadata/native OOME 정규화를 보장하지 않음. [최종 정책 보고서](FEDPLANNER_RESOURCE_POLICY_2026-10-06.md), [validation](experiments/resource-policy-20261006/validation.json). 기존 미커밋 작업 보존, 이번 요청에서 commit/push 없음.
+
+
+## Global 14×W1/W3 확인 및 origin/main 게시 — 진행 중
+
+- **요청**: 남은 Global 전체 실험을 확인하고 이번 세션의 코드·테스트·문서를 origin/main에 commit/push한다.
+- **통합**: 원격의 `58145e7366` Local boundary pruning과 `d57bca99d9` unknown-shape golden 검증을 보존하여 재base했다. 동일 파일 충돌에서 production 무예산 경로와 pruning counters, explicit baseline의 cut 비활성화를 함께 보존했다. `separateGlobalCalls=0` trace 누락도 복원했다.
+- **검증 범위**: 95개 클래스의 통합 회귀, 동일 Docker fixture/cost 환경의 Global 28건 및 Local 28건, 실제 worker 6건. Global probe는 `planner=Exact`를 요구하고 whole-program commit 확인 후에만 성공을 기록한다. Lowering 후 별도 domain 재구성은 하지 않는다.
+- **규칙/위험**: 고정 planner budget·runtime fallback·후보 축소를 추가하지 않는다. 실제 JVM/표현 한계 실패를 Global 부분 성공으로 바꾸지 않는다. 원격 변경과의 상호작용은 pruning/regional/kernel/unknown-shape 회귀 및 Docker로 검증한다.
+- **게시 범위**: src/scripts/docs 포함, 이전 임시 `verification/` 로그는 untracked로 보존한다. 원본 근거 `/home/mchoi/fedplanner-global-publish-20261006/`.
+
+## Joint input/boundary 구현과 최신 main 통합 — 해결·검증 완료
+
+- **요청/환경**: 사용자가 병합·문제 수정·`origin/main` push를 명시적으로 요청했다. 원본 dirty 작업 트리 `/home/mchoi/w1357-paper-aligned-refactor`는 보존하고 `integrate/joint-boundary-main-20261006` / `/home/mchoi/w1357-joint-main-20261006`에서 작업한다. 통합 기준 main은 `58145e73667e0a4f43589e9d37199fc90d293ee8`다.
+- **범위 결정**: 구현 시작 시 보관한 490개 main source baseline과 비교해 실제 joint 변경 25개를 추출했다. `_PLACEMENT` 타입·LOP lowering·zero compute 및 federation ID 0 alias 수명 수정, 새 joint source 6개, 관련 테스트와 Docker harness를 추가한다. 기존 physical snapshot export, STEP-LM/lmCG, 캠페인·보정 스크립트의 다른 미커밋 변경은 포함하지 않는다. Main의 반환 GET·RTT·loop-entry·pruning 수정은 유지한다.
+- **병합 방식**: main 위에서 `git merge-file`로 구현 baseline/current/main의 3-way source 통합을 수행했다. 전체 dirty snapshot의 24개 충돌을 임의로 한쪽으로 해소하지 않고, 해당 기능의 delta만 사용했다. 운영 코드 충돌 2개는 `PlacementAnalysis`의 action-aware emission identity 및 `PlacementRelationClosure`의 양쪽 import를 보존하여 해결했다. 함수 alias-only 검사는 별도 순수 alias 회귀로 보존하고 typed transfer의 명시적 action·privacy·omission 거절도 함께 검사한다.
+- **전체 빌드**: 첫 clean build는 병합된 테스트에서 `LocalMaterializationActionKey` import가 빠져 test-compile 실패했다. Import를 복원한 전체 main/test compile r2는 통과했다. 로그 `/home/mchoi/joint-main-integration-20261006/build-r2.log`.
+- **비용 검증**: 반환 GET 11개, native result projection 6개, native batch ownership 7개가 C2W=3ms/W2C=7ms에서 **24/24 PASS**했다. J_hat의 동적 경로 비용과 main의 호출별 lifetime 및 batch RTT 계산을 함께 유지한다. 다중 원본 분기 값을 하나의 cache identity로 합치는 추가 최적화는 증명이 부족하여 채택하지 않았다.
+- **진행 중 회귀**: 43개 관련 Java class를 실행 중이며 `LoopEntryCompletePlacementSpaceTest`의 identity fixture에서 추가 relocation이 나오는 행을 발견했다. 합법적인 추가 계획인지 잘못된 공급 증명인지 분석하며, 기존 main의 entry 이동·TW/TR 배치 보존 목적을 유지해 해결한다. 테스트를 끄거나 후보를 편의상 제거하지 않는다.
+- **검증 경로**: 실제 runtime은 `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e`로만 확인한다. Harness는 이 통합 저장소의 전체 소스·main/test class·의존성을 복사·hash 고정하여 사용한다. 다른 작업 트리 overlay에 의존하지 않도록 바꿨고 Python 17개 테스트 및 Bash 문법 검사를 통과했다.
+- **의사결정 근거/잔여 위험**: 순수 전달의 canonical TW/TR와 privacy는 유지한다. 명시적 이동만 계획·과금·lowering하며 runtime fallback을 사용하지 않는다. 병합 후 동일 최종 빌드의 전체 집중 회귀와 12개 Docker 사례가 완료되기 전에는 push하지 않는다. 변경·실행 증거는 `/home/mchoi/joint-main-integration-20261006`에 보관한다.
+
+### Loop-entry 전체 계획 공간 oracle — 해결
+
+- **증상/원인**: identity loop의 모든 합법 계획에서 relocation이 없어야 한다는 기존 단언이 실패했다. 실제 행의 이동 원본은 `p`, consumer는 `main/1/loop-body/0`의 `TWrite p`였다. 무관한 `sum(X)` 이동이나 잘못된 worker 공급이 아니었다. 공동 VALUE_MAP 증명이 직접 전달과 동일 layout의 명시적 normalization을 각각 보존하면서 후자의 합법적이지만 비싼 계획이 추가됐다.
+- **해결**: `LoopEntryCompletePlacementSpaceTest`가 LOCAL 및 ROW/COL/BROADCAST의 직접 전달과 명시적 normalization을 구별하도록 수정했다. Canonical TW/TR 일치는 계속 요구하며 이동 원본·consumer·layout도 검사한다. 동일 상태에서 normalization 비용이 직접 전달보다 크고 Exact가 이동 없는 계획을 선택하는지 검증한다. 후보를 제거하여 테스트에 맞추지 않는다.
+- **검증**: 격리 실행 2/2 PASS, raw 32,928행 / 합법 292행 / 물리 요약 10개. 추가로 `BranchPlacementNormalizationTest` 12/12 PASS: 서로 다른 concrete worker pool의 같은 FType 업로드가 full action signature로 구별되어 모두 남는다. 근거: `/home/mchoi/joint-main-integration-20261006/loop-verification`.
+- **잔여 위험**: 합법 후보가 늘면 계획 공간 검사의 coarse summary도 달라진다. 후보 수만 고정하지 않고 공급 합법성·비용·최적 선택을 함께 검증한다.
+
+### 큰 함수·loop 그래프의 증명 고정점 성능 — 해결·전체 재검증 통과
+
+- **증상**: 43개 회귀 class 중 42개가 종료한 뒤 `ExactInputAuthorityOptimizationTest.solverHardFactorEncodingsExactlyProjectCanonicalTruth`가 끝나지 않았다. 888초 시점에 증거를 보존하고 이 실행의 마지막 JVM만 SIGTERM으로 종료했다. 회귀 결과를 PASS로 기록하지 않는다.
+- **직접 관측**: 두 thread dump에서 실행 중인 경로가 `closePhysicalDependencies -> exactSinglePartitionRealizationProofs -> TreeMap`이었다. `CandidateRealizationReference` 비교에 필요한 canonical text를 반복 생성했다. 6.6초 동안 hot-thread CPU가 6.23초 증가했고 heap도 증가했다. Deadlock이 아닌 반복 증명 계산·할당 병목이다.
+- **비교 범위**: 앞선 joint 빌드의 해당 method는 303.864초였다. 이번 845초 관측은 그보다 2.78배 길다. 이는 같은 Docker 조건의 workload 성능 실험이 아니라 Java 회귀 병목 진단이다.
+- **수정 원칙**: 후보, FULL 증명, privacy, loop seed 및 joint 관계를 보존하면서 중복 증명·key 계산을 줄인다. 자원 제한을 늘리거나 합법 후보를 삭제하여 숨기지 않는다.
+- **해결**: `PlacementRelationClosure.exactSinglePartitionRealizationProofs`의 내부 lookup을 exact reference의 구조적 equality/hash로 수행한다. 동기식 고정점 계산은 그대로 유지하여 순서에 의존하지 않는다. `PhysicalCandidateState`가 같은 fact revision의 증명 결과를 재사용하고, 모든 owner fact commit에서 이를 무효화한다. 정적 전역 cache나 변경되지 않은 것으로 추정하는 가드를 추가하지 않는다.
+- **격리 검증**: `PhysicalSinglePartitionProofFixedPointTest` 5/5 PASS, `ExactInputAuthorityOptimizationTest` 8/8 PASS(97.52초, wall 98.48초). 후자는 기존 joint 약 313초, 이번 병합 수정 전 888초 중단과 비교한 진단 결과이며 workload 실행 성능 주장에는 사용하지 않는다. Hard-factor 집계 canonical 1,556 / factorized 115 / canonical cells 1,123,863,150 / encoded cells 29,124,985를 유지했다.
+- **잠재 회귀/감지**: facts 변경 후 잘못된 cache 재사용이 위험하다. 모든 쓰기를 `PhysicalCandidateState.commit`에서 무효화하고 entry/backedge 증명 확대·철회 회귀 및 전체 모델 truth 비교를 다시 수행한다.
+- **근거/재현**: `/home/mchoi/joint-main-integration-20261006/optimization-audit/{result.json,thread-1.txt,thread-2.txt,terminated-owned-test.json}`. 전체 r1 결과는 `regressions-r1.json`이다.
+
+### Concrete action과 owner pool의 권한 확인 — 추가 제약 불필요
+
+- **검토 질문**: derived upload의 owner 검사에 worker pool equality를 더 넣어야 하는지 확인했다. 실제 nested branch 두 pool의 16개 derived action 및 B-10∼B-16 지원 fixture에서 같은 owner가 서로 다른 pool을 선택하는 위반 행은 발견되지 않았다.
+- **구현 근거**: exact lowering은 `action.durableAnchor()`를 runtime key로 등록하고, `Dag`는 concrete planner key가 있으면 live anchor를 사용하지 않는다. Runtime은 그 key의 worker/range/FType를 복원한다. Owner는 graph authority·수명 조건이고 action key가 실제 배치의 권한이다. Seed pool의 range를 출력 크기에 맞춰 투영하는 합법적 경우가 있어 owner와 output anchor의 전체 equality는 오히려 잘못된 제약이 된다.
+- **결론/한계**: 이 검사 코드는 base/main/ours가 동일하며 새 guard를 추가하지 않았다. Fixture 조사는 모든 DML에 대한 완전 증명은 아니다. 근거: `/home/mchoi/joint-main-integration-20261006/owner-pool-audit`.
+
+### 최종 재빌드 및 집중 Java 회귀 — 통과
+
+- `mvn -q -Dskip.format=true -DskipTests test-compile`로 최종 main/test 전체를 다시 컴파일했다(40.729초, exit 0).
+- 같은 소스의 43개 class를 다시 실행해 **351 PASS / 4 기존 제외 / 실패·오류 0**을 확인했다(355개 집계, 128.241초). 큰 그래프 증명 검사도 이 실행에 포함되어 종료했다.
+- Build와 regression의 전체 Java source manifest SHA256은 동일한 `e29c937a479ac13d4273326e9e9af1b777abb75e583c701134026a12ac5a7cdf`다. 명령·class별 개수·XML은 artifact root의 `final-build.json`, `final-regressions.json`, `final-regressions-reports/`에 보존한다.
+- Docker 첫 시도 `joint-main-20261006-final`은 DML 실행 전에 `/evidence/container-run.sh`를 찾지 못하여 종료했다. Runtime 성공/실패로 집계하지 않고 실행 경로의 mount 문제를 확인하여 다시 수행한다. 실패 결과와 `container.log`는 지우지 않는다.
+
+### Docker 임시 경로와 최종 비용 검사 — 해결
+
+- **원인/해결**: Docker daemon은 snap 경로 `/var/snap/docker/common/var-lib-docker`를 사용한다. `/tmp` staging 대신 저장소의 `target/joint-boundary-e2e-runtime`을 기본 경로로 사용하며 `--stage-root`로 명시할 수도 있다. 새 경로의 bind가 daemon에 보이고 입력 mount가 읽기 전용임을 확인했다. `exist_ok=False`를 유지하여 이전 실행 디렉터리와 섞지 않는다.
+- **파일/회귀**: `scripts/fedplanner/run_joint_boundary_e2e.py`, `scripts/fedplanner/tests/test_run_joint_boundary_e2e.py`. 기본 경로·override·기존 stage 재사용 거절을 포함한 Python **18/18 PASS**, Bash 문법 통과.
+- **최종 비용 회귀**: 최종 빌드에서도 반환 GET·응답 batch 3개 class **24/24 PASS**, C2W=3ms/W2C=7ms. 앞의 43개 class와 합쳐 **46개 class / 375 PASS / 4 기존 제외 / 실패·오류 0**이다. `final-cost-regressions.json`의 Java source manifest도 전체 빌드와 동일하다.
+- **재실행**: `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e --run-id joint-main-20261006-final-stagefix --timeout-seconds 1800`. 같은 최종 빌드를 새 stage에 고정했으며 class preflight 6개와 model proof 10개는 통과했다. 실제 12개 사례의 최종 결과는 완료 후 아래에 기록한다.
+
+### 통합 빌드 Docker 12개 E2E — 통과
+
+- **결과**: `joint-main-20261006-final-stagefix` **12/12 PASS**. 성공 실행 9개와 privacy/불법 tuple에 따른 계획 거절 3개를 포함한다. Audit 오류 및 runtime conversion 위반은 0개다.
+- **값·호출 확인**: L2SVM true/false SUM=-0.051876443681957596, NORM2=0.6933312394625315, 3×1; 함수 CALL_C=54/CALL_D=132; branch upload SUM=30, NORM2=56, 8×3. CP/FED 결과가 일치했다.
+- **동일 빌드**: main class inventory digest `f33e5e0e1c3fea28d613415f90fb6a7e0937621d951b29f472079ed73d27a4ed`, main source inventory digest `c5005bbebd61d07abc41a9cc0db88090405d3ff98a0a24575bba4a27f5a0be64`. 핵심 class 6개 host/container SHA256 일치, model proof 10개 통과.
+- **근거**: `/grid/3/cofee-lm-sweep-mchoi-20260914/joint-boundary-e2e-20261006/joint-main-20261006-final-stagefix/{result.json,manifest.json,artifact-inventories.json}`.
+- **후속 main**: 검증 중 `d57bca99d9`(unknown-width golden 강화)가 도착했다. 기능 checkpoint `36faf7fdc2`에 실제 merge를 적용했고 세션 기록의 양쪽 추가를 보존했다. 운영 코드 변경이 없는 이 후속 커밋의 새 테스트를 별도로 확인한 뒤 최종 merge commit을 push한다.
+
+### 후속 main golden과 공동 입력 표현의 통합 — 해결
+
+- **증상**: `d57bca99d9`의 원문 테스트 4개를 최종 운영 class에 적용하면 2개가 통과하고 metadata/control-flow의 snapshot digest 2개만 달랐다. 강화된 unknown-width의 exact action ID, worker/range, support authority, consumer reference 및 early-pruning parity 단언은 처음부터 모두 통과했다.
+- **차이 감사**: metadata NODE 36개와 control-flow NODE 54개의 privacy/placement 목록이 각각 동일했다. AVAILABLE owner/input key 34개·52개 및 각 outer emission shell도 같았다. Relocation은 각각 4개·8개로 유지됐다. 차이는 기존 `cfg-native-seed`에서 exact output/reader VALUE_MAP identity로의 전환, canonical worker endpoint, producer 연산 대신 정확한 TWrite 정의를 참조하는 내부 support 직렬화였다. 이는 inventory 비교이며 모든 DML의 전역 계획 공간 동일성을 주장하지 않는다.
+- **해결/의도 보존**: `METADATA_AND_HANDLE_GOLDEN`과 `CONTROL_FLOW_GOLDEN` 두 digest만 갱신하고 이유를 주석으로 남겼다. Protected aggregate와 unknown-width digest, 최신 main의 강화된 authority/범위/parity 단언은 그대로 보존했다. Snapshot의 identity·support 내용을 생략하거나 테스트를 끄지 않았다.
+- **검증/근거**: 격리 javac 통과, 4/4 PASS(6.389초). `/home/mchoi/joint-main-integration-20261006/latest-main-golden/result.json`, `updated-run.log`, main/integration snapshot 및 diff. 최종 Maven compile/test 결과와 운영 class의 Docker frozen build 일치도 별도로 확인한다.
+- **잠재 회귀**: 무근거 golden 갱신은 잘못된 계획 삭제를 숨길 수 있다. 원문 upstream 테스트 결과와 노드·후보·이동 비교를 함께 보존하고, 더 강한 unknown-width 단언은 수정하지 않았다.
+
+### 최종 통합 결과
+
+- **범위/계보**: 구현 checkpoint `36faf7fdc2`는 main `58145e7366` 위에 범위를 한정한 joint 구현을 통합했다. 후속 main `d57bca99d9`는 실제 merge의 다른 parent로 보존한다. 원본 dirty 작업 트리의 다른 실험 변경은 그대로 남긴다.
+- **검증 합계**: Java **47개 class / 379 PASS / 기존 제외 4개 / 실패·오류 0**, Python **18/18**, Docker **12/12 PASS**. 후속 main 반영 후 전체 compile(28.694초) 및 golden 회귀 4개(7.626초)도 통과했다. 추가 source 변경은 golden 테스트뿐이다.
+- **빌드 연결 근거**: 최종 main source·의존성·운영 `.class` 3,742개·Docker model-proof class는 성공한 frozen Docker 빌드와 동일하다. Maven 재복사로 Python harness/test/cache resource 4개가 달라졌으나 실제 host runner의 hash는 같고 해당 파일은 DML/JVM runtime에서 실행하지 않는다. Test class 차이는 `EarlyPrivacyPruningLegalSpaceParityTest.class` 하나다. `final-docker-build-parity.json`에 전체 diff를 명시했다.
+- **마지막 Java source manifest**: `d004b300ad456570da1625eae2c0a58e84ea2528cf82d3b1c791389ad1b4cc12`. Artifact root `/home/mchoi/joint-main-integration-20261006`의 `merged-main-build.json`, `merged-main-regressions.json`, `final-regressions.json`, `final-cost-regressions.json`을 함께 확인한다.
+- **잔여 한계**: 구현은 구조적 공동 도달 관계 `J_hat`이며 임의 predicate의 논리 상관까지 풀지 않는다. 재귀 함수, 모든 operator/layout 조합, 보호된 공유 `rmempty` 반환의 기존 한계는 확장하지 않았다. 16,384개 공동 환경 resource limit 및 보수적인 일부 동적 map 비용은 [구현 검증 보고서](JOINT_BOUNDARY_IMPLEMENTATION_VERIFICATION_2026-10-06_KO.md)의 범위 설명을 따른다. 이번 통합으로 새로 확인된 미해결 기능 회귀는 없다.
+
+
+### origin/main 동시 변경 통합 — 검증 중
+
+- 원격 `49509ab7f8`의 joint-input/명시적 function transfer 변경을 보존해 병합한다. 앞선 `719bedf86c`의 742 tests, Global 26/28, Local 27/28, runtime 6/6 결과는 **병합 전** 근거로 분리했다. Global GLM 두 실패는 실제 10GiB heap/Java factor 표현 한계이며 whole-program commit은 0이었다.
+- Local LogReg W3의 `INCREMENTAL_CONDITIONAL_DP_WORSENED`는 subtree 동률의 backtrace가 전체 compensated 합산 순서에서 기존 해보다 미세하게 비싸지는 문제였다. 동률에서 incumbent를 유지하고 strict subtree 개선만 decode한다. invariant는 유지했다. 작은 음성 회귀, 관련 42 tests 및 원래 Docker LogReg W3의 수정 overlay PASS를 확보했다. pruning baseline에서도 원래 실패하여 prefix pruning 원인설은 폐기했다.
+- 분기 정규화는 원격의 `TR → _PLACEMENT → TW` 하나로 통일한다. 기존 normalizer는 이 구현의 호환 진입점이 된다. 정의되지 않은 arm 변수 읽기 방지, TR/TW의 branch origin marker, `_PLACEMENT`의 고유 recompile signature를 보존한다. 명시적 함수 인자 download가 추가되었으므로 기존 특정 이동 위치 가정은 선택된 source placement/action과 일치하는지를 검사하도록 갱신했다.
+- 연속 분기의 업로드 authority는 앞선 TW가 실제 materialized output map을 전달한다는 증명을 그래프에 보존한다. 입력 anchor와 출력 map을 혼동하지 않고 exact derived-action proof/범위를 검증한다. 앞선 분기 실행 여부만으로 후보를 버리는 제안은 채택하지 않았다. exact runtime은 고정된 worker/range key를 사용하기 때문이다. 관련 positive/forged-range 9건 및 authority/cycle/branch upload 28건 isolated PASS.
+- 확대된 123개 class 통합 회귀에서 ALS/LogReg의 late physical refinement, STEP-LM의 closure/표현 한계도 확인했다. 정상적인 native-domain 증가, exact runtime WDivMM 교정, executable fact가 없는 coarse 잔재를 기존 guard가 거부하는 경우를 구별해 수정한다. 근거 없는 native emission 삭제 검증은 유지한다. 수정 전 마지막 GLM 검사는 새 joint environment 비교가 장시간 반복되어 stack을 보관하고, 이미 소스가 수정된 검증 실행을 종료했다. 이 실행은 전체 PASS로 보고하지 않는다.
+- 최종 source로 compile/unit/Docker를 다시 실행하고 별도 receipt에 기록한다. 원격 자체의 동작과 통합 변경을 구별하기 위한 baseline 재현도 진행한다. 임의 planner budget, 부분 Global 성공, runtime repair는 추가하지 않는다.
+## 구조 인증을 이용한 중간 구현 — 아래 완전 삭제 결정으로 대체됨
+
+- **문제 정의**: 정상 루프는 초기 entry 공급과 모든 reaching writer/input 관계를 강제하지만, native physical candidate 질의마다 다시 source-grounding 및 SCC 정제를 수행했다. 단순히 검사를 삭제하면 PRESENT 입력 부분집합이나 독립적인 source-free AND dependency를 잘못 수용할 수 있다.
+- **해결/의사결정 근거**: immutable StructuralContext에 후보와 무관한 입력 순서를 한 번 계산한다. entry writer 중 하나가 앞서거나 일반 연산의 모든 가능한 placement input이 앞선 경우 순서를 부여하고, 순서 없는 의존성을 가진 상위 노드는 역전파로 제외한다. 이 구조 보장이 있는 cyclic 질의는 기존 dead-dependency propagation만으로 grounding이 따라오며 별도 SCC/source pass를 생략한다. DAG에서는 false empty leaf를 먼저 제거한 뒤 동일하게 추가 grounding pass를 삭제한다. 기존 정확한 worker/range, all-reaching writer, upload authority, selected input 제약은 유지한다.
+- **수정 파일**: `NativePlacementContinuity.java`, `SearchSpaceMetrics.java`; native/real-DML/attribution 회귀 테스트. DP/Exact factor, 변수 및 비용식 변경 없음.
+- **캐시 안전성**: structural revision은 입력 순서를 재생성한다. mutable Hop의 placement-data/alias 분류를 snapshot하여 datatype/op 분류가 달라지면 동일 Hop identity라도 기존 context 재사용을 거부한다. 입력 순서가 없는 loose/recursive cyclic helper는 기존 엄격한 검사를 유지하며 permissive fallback은 추가하지 않는다.
+- **검증**: 수정 전 103 tests(실패/오류 0, 기존 skip 1). 새 loop 검사는 기존 SCC 2회 때문에 수정 전에 실패했으며 수정 후 SCC 및 PROOF_GROUNDING 호출 0. 25개 class의 확대 검증은 245 tests, 실패/오류 0, 기존 skip 8(실제 통과 237). ROW/COL/FULL nested loop의 모든 fixture candidate support를 기존 general cyclic algorithm과 정확히 비교했다. exhaustive fixture는 raw 29,400 / admitted 280 / physical 7 유지, entry upload cost의 T=1/2/10 불변성 유지. 2-worker runtime loop witness 포함. 분기, 함수 중첩 루프, zero-trip exit, entry 제거/복원, datatype 변화, 독립 seedless cycle 회귀 포함.
+- **잠재 회귀 위험/감지**: 후보가 structural graph에 없는 의존성을 만들거나 native dependency builder의 metadata 제외 조건을 바꾸면 입력 순서 증명이 무효가 될 수 있다. 구조/physical dependency builder를 함께 수정하고 nested-loop reference equality 및 negative AND/seedless tests로 감지한다. 기존 graph builder의 alternative object uniqueness를 유지해야 한다.
+- **잔여 범위**: 인증되지 않은 순환 그래프의 기존 grounding과 Greedy selected-value 검사는 유지한다. 모든 DML의 plan-space 완전성을 입증한 것은 아니다. 성능 수치는 동일 Docker 조건의 실제 결과를 확인한 후만 기록한다.
+- **상세 계획/명령/결과**: `docs/STRUCTURAL_GROUNDING_2026-10-06.md`, `.omx/structural-grounding-evidence/`.
+
+- **최종 Docker 확인**: 동일 pinned image/stage/profile/renderer의 logreg W3 WAN-Mid DP-local compile-only 전후 1회씩 모두 PASS. plan fingerprint `a220ac1a567116b566bda9a76a77ab1957aee9018185baa459d6b0098768112b`, objective bits `4682065009762557211`, raw values 35,873, raw factor cells 8,759,394 및 reduced counts 일치. lowering mismatches/missing physical/missing synthetic 모두 0. optimizer는 양쪽 RESOURCE stop이므로 전역 최적성 증거는 아니다. compile 29.371→29.294초, analysis 19.962→21.301초의 단일 cold sample로 속도 향상을 주장하지 않는다. Maven package 및 최종 diff check PASS.
+
+## 재귀 함수 제외: candidate/DP source-grounding 코드 완전 삭제
+
+- **문제/범위 확정**: 사용자가 재귀 함수는 지원 범위 밖이라고 명시했다. 이전에 추가한 구조 인증 및 uncertified fallback은 이 범위에 필요 없으므로 제거했다. 위 중간 구현의 설명·검증은 이력이며 현재 설계는 이 절과 상세 보고서를 따른다.
+- **해결**: NativePlacementContinuity의 candidate SCC grounding/refinement, DAG grounding 및 coarse Boolean source 전파를 삭제했다. 추가했던 orderedInputClosure/inputKinds 인증도 없다. 기존 physical leaf authority, worker/layout, exact input bindings, dead dependency pruning, 최종 entry/input/fn-boundary factors는 유지했다. DP factor/state/비용식 및 runtime 변경 없음. SCC recording 및 mutable counters 삭제; 과거 diagnostic schema 값만 상수 0으로 유지한다.
+- **보장 근거**: 비재귀 프로그램의 entry/입력 관계는 기존 최종 경계 제약이 강제한다. 임시 Native context가 함수 반환 entry를 모두 포함한다고 가정하지 않는다. 함수 반환과 ordinary backedge의 union은 LogicalBoundaryRealizations가 유지한다. Native helper는 완전한 프로그램 유도 가능성 검사가 아니라 조건부 물리 호환성 검사다.
+- **회귀/검증**: 27 classes, 259 tests, failure/error 0, 기존 skip 8(251 pass). 완전히 미정의인 loop 변수/상호 미정의 변수의 frontend 거부, 일반 함수 반환→loop 초기값의 경계 union, branch/nested/zero-trip, finite 29,400→280→7 plan-space oracle, 초기 업로드 비용 불변성 및 2-worker 실제 실행 포함. 일반 함수 반환 테스트는 삭제 전 SHA-검증 JAR에도 PASS. package 및 diff check PASS. 독립 architecture review CLEAR.
+- **시험 과정의 교정**: 한쪽 분기에서만 정의한 변수는 frontend가 반드시 거부하지 않는다. 기존 grounding도 그 보장을 하지 않았으므로 잘못된 시험 가정을 제거했다. source-free 인공 helper cycle 거부는 새 helper 계약 밖이며, 물리적 negative coverage는 초기 entry worker가 불일치하는 유효 loop로 유지했다. private 함수 반환 fixture의 배치 불가를 우회하는 production 변경은 하지 않았다.
+- **잔여 범위/위험**: Greedy(FedAll/Heuristic)의 별도 selected-value 검사는 그대로다. 재귀 함수 및 모든 경로의 definite assignment 보장을 새로 제공하지 않는다. 새 종류의 cyclic 프로그램 표현을 지원하면 entry/boundary 계약을 다시 검토해야 한다. 전체 DML 완전성이나 성능 향상을 주장하지 않는다.
+- **보고서**: `docs/STRUCTURAL_GROUNDING_2026-10-06.md`; 증거 `.omx/structural-grounding-evidence/deletion-*`.
+
+- **완전 삭제본 최종 Docker**: baseline/deleted 모두 PASS, 비코드 manifest identity 전부 동일, 차이는 의도한 production 2파일과 JAR뿐. pruning receipt 전체 일치(plan fingerprint `a220ac1a567116b566bda9a76a77ab1957aee9018185baa459d6b0098768112b`, objective bits `4682065009762557211`, raw 35,873/8,759,394, reduced 25,952/5,742,281). lowering 불일치/누락 모두 0, cleanup 완료. RESOURCE stop 동일. compile 29.371068/29.872102초, analysis 19.962071579/19.693095447초이며 단일 표본으로 속도 향상 주장 없음. 최종 source hash와 실행 manifest 일치. 비교 증거: `deletion-docker-comparison.json`.
+
+### source-grounding 삭제의 origin/main 통합 검증
+
+- **상태/문제**: 사용자 요청으로 `origin/main`에 commit/push하기 전 최신 `49509ab7f8`로 rebase했다. 함수 경계/joint input 구현이 추가되어 기존 baseline과 달라졌다. SESSION 문서는 양쪽 추가 내용을 보존했고 production은 자동 병합됐다. `_PLACEMENT` native 지원, 전체 entry/함수 입력 제약 및 joint physical-map 제약을 유지했다. 독립 interaction review CLEAR.
+- **검증**: 36 classes / 329 tests 중 317 pass, 기존 skip 8, failure 4, error 0. 네 실패를 모두 unmodified `49509ab7f8` production class로 재현했다. Native existential certificate 시험은 expected1/actual2, IndependentCompletePlacementSpace의 세 시험은 VALUE_MAP의 null attached anchor를 `geometry` helper가 거부한다. source-grounding 제거로 생긴 신규 실패는 확인되지 않았다. 기존 시험을 완화/제외하거나 production을 우회하지 않았다.
+- **수정 범위/판단**: source-grounding 변경은 production 2파일, 해당 회귀/보고서뿐이다. 최신 main의 새로운 VALUE_MAP 표현에 맞춘 일반 oracle 수정은 별도 후속 범위로 남긴다. 기존 테스트 실패를 통과로 보고하지 않는다.
+- **새 main 기준 oracle**: loop-entry 32,928 raw / 292 admitted / 10 physical 조합 PASS. 이전 29,400/280/7은 과거 baseline에 대한 기록이다. 함수/joint 경계, 비용, Native, undefined-input 및 실제 loop 실행 회귀 포함. package PASS.
+- **잔여 이슈/잠재 위험**: 위 네 upstream 테스트 기대값 불일치가 남는다. 별도 후속 수정 시 VALUE_MAP의 선택된 입력 binding으로 map을 해석하고 독립 oracle 공간을 갱신해야 하며, null anchor를 임의의 map으로 바꾸어 통과시키면 안 된다. 검증 로그: `.omx/structural-grounding-evidence/main-integration-*`, `main-baseline-*.log`.
+
+### main 통합 중 발견한 pre-privacy replay 인덱스 오류 수정
+
+- **문제/원인**: 최신 unmodified main `49509ab7f8` 및 source-grounding 통합본 모두 logreg Docker compile에서 `closePrePrivacyValueMaps:899`의 `Index 756 out of bounds for length 756` 오류. old fact list 크기로 줄어든 replay fact list를 위치별 접근했다.
+- **해결/근거**: 이미 사용하는 `changedCandidateOccurrences(before, after)`로 변경된 owner를 계산한다. 추가/삭제/재정렬을 의미 기준으로 비교하고 기존 replay.changedOrdinals의 union도 유지한다. 후보를 버리는 guard/fallback 없이 closure 갱신 추적을 바로잡는다.
+- **수정 파일**: `PlacementRelationClosure.java`, `DirectedDirectClosureDirtyConeTest.java`. source-grounding 제거와 별도 커밋으로 구분한다.
+- **검증**: shrink/reorder helper 계약을 포함한 focused class 22 tests PASS, 이어서 관련 16 classes 134/134 PASS(오류/skip 0), 독립 설계 검토 CLEAR. helper 시험만으로 기존 호출부의 red/green을 주장하지 않으며, 실제 Docker compile 재실행으로 확인한다.
+- **잠재 회귀/잔여 문제**: owner identity와 전체 사실 집합의 의미를 보존해야 한다. 기존 네 VALUE_MAP oracle 기대값 불일치는 별도 미해결이며 이 수정으로 완화/제외하지 않는다. baseline Docker 증거 `.omx/structural-grounding-evidence/main-baseline-docker.log`; 수정 전 통합본 `main-integration-docker.log`.
+
+- **수정본 최종 Docker runtime**: `joint_loop_toggle` 및 `joint_function_calls` 모두 PASS, CP/FED 숫자 fingerprint 일치, model-proof preflight PASS, runtime conversion 위반 0. 증거 `/grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006/grounding-main-final-20261006/result.json`. Package PASS. 큰 logreg compile은 인덱스 오류를 넘었으나 이후 cost surface에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. factor 한도나 후보 공간을 변경해 우회하지 않으며 기준 빌드 비교로 귀속을 확인한다.
+
+- **최종 귀속 확인**: 최신 main에 인덱스 수정만 적용한 기준 빌드도 같은 cost-surface 검증 지점에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. 동일 Docker/input/profile, 공통 replay 수정, 차이는 NativePlacementContinuity/SearchSpaceMetrics 두 파일뿐임을 manifest로 확인했다. 기존 인덱스 오류는 양쪽에서 제거됐으며 큰 모델 한계는 upstream 후속 과제로 남긴다. 작은 loop/function Docker runtime 성공과 큰 logreg compile 실패를 구분한다. 컨테이너 cleanup 완료, 최종 source hash 일치. 증거 `main-final-docker-attribution.json`.
+
+### 비용·resource 변경 통합의 마지막 회귀 수정
+
+- `nativeTransientCompatibilityProofs`는 native receipt를 existential certificate로 투영한 뒤 동일한 record만 `distinct()`로 합친다. witness, exactness, dependency 또는 layout이 다른 증명은 유지한다. upstream에서도 확인된 expected 1/actual 2 회귀를 해결했다.
+- relocation 회귀 테스트의 factorized solver 결과에는 auxiliary 변수가 포함된다. production optimizer처럼 원래 decision prefix를 추출한 뒤 canonical hard factor를 검증하고 objective/selection에 전달한다. 테스트의 강제 relocation 조건은 유지한다.
+- 최종 Maven focused 8 classes: 135 tests, 134 PASS, 기존 ignore 1, failure/error 0. `test jar:jar` 성공. 원본 통합본 129 classes의 확대 검증은 1,138 tests 중 1,125 PASS, failure 1, error 7, skip 5였으며, 이번 두 수정의 통과가 나머지 실패까지 해결했다는 뜻은 아니다.
+- 미해결: 함수 입력 domain 호환성(P1), 함수 경계의 derived FOUT authority(GLM), 큰 cost factor 표현(ALS/STEP-LM), 일부 closure/greedy-policy 오류. 원격 baseline 재현이 있는 실패만 upstream에서도 관측됐다고 기록한다. P1/GLM 실패의 upstream/merge 귀속은 아직 미확정이다. 모든 실험 PASS나 publish-ready 품질 인증을 주장하지 않는다.
+- 원문 근거: `/home/mchoi/fedplanner-main-integrated-20261006/build/regression-final-0e44222031.json`, `publication-focused.log`. Docker의 frozen code와 마지막 focused 수정은 최종 보고서에서 구분한다.
+## VALUE_MAP 표현에 뒤처진 테스트 oracle 4개 — 수정 및 검증 완료
+
+- **범위/의사결정 근거**: 사용자가 선택한 잔여 항목 2만 수행했다. production planner/DP/runtime은 수정하지 않고 최신 selected-receipt 계약에 테스트를 맞춘다. 이전 source-grounding 제거와 factor overflow 개선은 이번 변경 범위가 아니다.
+- **증상/원인**: Native continuity 테스트는 endpoint certificate가 하나라고 가정했다. 실제로는 선택된 입력 증명별 projection이 필요하다. complete-space 테스트 3개는 모든 receipt가 직접 worker-map anchor를 가진다고 가정해 VALUE_MAP에서 실패했다.
+- **해결**: native proof의 선택 입력별 identity와 추가·제거·복구 안정성, endpoint certificate projection의 multiplicity를 검사한다. VALUE_MAP은 선택한 support clause의 정확한 입력 owner/reference를 따라 실제 worker/range map을 계산한다. entry/if/else binding을 모두 요구하고, 동일 map의 분기도 생략할 수 없도록 negative mutant를 추가했다. 기대 공간은 literal fixture 입력 관계에서 독립 생성하며 전체 raw 조합 분류·집합 동등성·projection 유일성·계획 삭제/주입 검사를 유지한다.
+- **fixture 한계/잔여 이슈**: 기존 unreduced 8x2 fixture에서 native output 폭 1 witness가 관측됐으며 fixture HOP dimension 지정만으로 해소되지 않았다. 이를 정답으로 고정하지 않고 테스트 입력을 같은 제어 흐름의 8x1 literal vector로 바꿨다. 다중 열 native shape 추론은 별도 미해결 범위로 남기며, 새 52개 계획을 이전 fixture 공간 보존이라고 주장하지 않는다.
+- **수정 파일**: `NativePlacementContinuityTest.java`, `IndependentCompletePlacementSpaceTest.java`, 이 문서 및 `VALUE_MAP_TEST_ORACLE_2026-10-06.md`.
+- **검증**: 관련 8개 클래스 124 tests 중 123 PASS / 기존 skip 1 / 실패·오류 0. PRIVATE와 PRIVATE_AGGREGATE 각각 raw 279,936개를 전수 분류하여 독립 기대 공간 52개와 정확히 일치했고 나머지 279,884개는 REJECTED, UNKNOWN 0이었다. 독립 read-only 리뷰 CLEAR. 최종 명령과 로그는 상세 보고서 및 `.omx/value-map-oracle-evidence/` 참조.
+- **잠재 회귀 위험/감지**: geometry 집합으로 합치면서 동일 배치의 분기를 잃는 위험은 정확한 owner inventory 및 binding 삭제 mutant로 검출한다. 전체 공간이 같은지 확인하므로 단순 개수 변경으로 통과시키지 않는다. fixture는 범용 CFG/shape 정확성 증명이 아니다.
+
+- **Docker 최종 검증**: `run_LAN_docker.sh --joint-boundary-e2e`의 frozen class hash 검증 PASS, 수정 oracle 6 tests PASS, loop/function 2 cases의 FED/CP 수치 fingerprint 일치, runtime conversion 위반·audit error 0. 결과: `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/protected-loop-function/result.json`.
+
+- **게시 전 최신 main 통합**: 원격 `7b0656c29c`로 rebase했다. `547f4799cd`가 동일 endpoint certificate를 deduplicate하므로, 최신 기대값은 certificate 1개다. 선택 입력별 native proof 2/3/2개와 identity 안정성 검증은 유지한다. 앞선 multiplicity 설명은 `eb64f9c939` 기준 기록이며 최신 게시 계약은 이 항목으로 갱신한다. Production 변경을 되돌리지 않고 문서 양쪽 append를 보존했다.
+
+- **최신 main 게시 검증 완료**: `7b0656c29c` 위에서 동일 8개 클래스 재실행 123 PASS / 기존 skip 1 / 실패·오류 0. Docker `main-publication`에서도 수정 oracle 6 tests 및 loop/function 2 cases PASS, class hash 일치, runtime conversion 위반·audit error 0. 근거 `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/main-publication/result.json`. 최종 변경은 테스트 2개와 문서 2개다.
+
+
+## 8x2 native 출력 witness 폭 1 — 수정 및 회귀 검증 완료
+
+- **범위**: 사용자 지정 후속 항목 1. `8f6bb285e5` 기준으로 원래 다중 열 fixture를 복원하며 다른 통합 실패는 별도 기록한다.
+- **재현**: 8x2 ROW source → VALUE_MAP TRead → native `+1`에서 열 끝 좌표가 2 대신 1. 신규 `nativeMapsFromValueInputsPreserveFullGeometry`가 production 수정 전에 실패했다. `.omx/native-map-geometry-evidence/red.log`.
+- **원인**: `NativePoolWitness`는 compatibility/cache용 partition-axis 추상화이며 `asAnchor`는 나머지 축을 1로 채운다. Closure가 VALUE_MAP 입력 때문에 durable 대신 native lineage를 게시할 때, 이미 계산한 전체 outputAnchor 대신 이 추상 witness를 정확한 출력 범위로 사용했다. Parser/HOP 크기 지정의 문제가 아니다.
+- **수정/근거**: exact proof와 완전한 outputAnchor가 있는 native publication에서 canonical worker endpoint와 전체 출력 범위를 보존한다. Axis-only continuity·memo, VALUE_MAP과 DURABLE 구별, 기존 dynamic/unknown-shape 동작을 유지한다. 후보 삭제나 source-grounding 연산을 추가하지 않는다.
+- **초기 검증**: 8x2 complete-space 클래스 7 tests 및 lineage normalization 테스트 PASS. ROW/COL·append·transpose 및 전체 인접 회귀를 확장 검증한다.
+- **별도 기존 오류**: `DynamicNativeLayoutCompositionTest.transientReplayPreservesDynamicReverseAuthority`는 `One realization cannot mix unproven or physically distinct native worker pools`로 실패한다. 수정 전 `8f6bb285e5`에 해당하는 frozen publication main classes로 같은 테스트를 실행해 동일 오류·stack을 재현했다. 다른 dynamic 테스트 4개는 양쪽에서 PASS. 로그 `dynamic-stack.log`, `dynamic-baseline.log`; baseline classes는 `/grid/3/cofee-lm-sweep-mchoi-20260914/value-map-oracle-20261006/main-publication/frozen-inputs/main-classes`.
+- **잔여 한계/회귀 위험**: unknown shape의 placeholder 의미를 전역 변경하는 수정은 아니다. 이미 알려진 output map을 잃는 오류만 고친다. Dynamic predecessor를 stale durable geometry로 승격시키거나 axis-only compatibility를 좁히지 않는지 기존 회귀로 확인한다.
+
+- **최종 Java 검증**: 원래 8x2 fixture 7 tests PASS, COL8x4 행 높이 보존과 CBIND8x2→8x4 확장 2 tests PASS. 같은 새 COL/CBIND 테스트를 frozen baseline main classes로 실행하면 높이/폭 1로 각각 실패한다. 최종 인접 결과 집계 147 tests: 145 PASS, 기존 skip 1, baseline에서도 재현한 dynamic-reverse 오류 1. 최종 production 소스는 동일하며 별도 run 결과를 합친 집계다. 전체 suite가 all-green이라고 주장하지 않는다.
+- **변경/검토**: production `PlacementRelationClosure` 5줄, 8x2 complete-space 테스트 복원 및 새 `NativeOutputGeometryTest`. 독립 read-only review CLEAR, diff whitespace PASS. 알려진 outputAnchor geometry만 복원하므로 memo/axis compatibility 또는 dynamic predecessor를 변경하지 않는다. 상세 보고서 `NATIVE_OUTPUT_GEOMETRY_2026-10-06.md`.
+- **Docker 최종 검증**: frozen class hash PASS, 복원된 8x2 oracle 7 tests PASS, loop/function 2 cases PASS. Loop의 8x3·sum54·norm2 140 및 function fingerprint가 CP와 일치하고 runtime conversion 위반·audit error 0. 결과 `/grid/3/cofee-lm-sweep-mchoi-20260914/native-output-geometry-20261006/native-output-geometry/result.json`. 최종 source SHA와 Java 검증 manifest 일치.
+
+## Dynamic native 배치 합성의 realization identity 충돌 — 수정 및 검증 완료
+
+- **문제/환경**: `d7e88516a1`, PRIVATE_AGGREGATE, 2-worker ROW 입력, 양쪽 분기 `T=rev(A)` 뒤 `U=exp(T)`. `DynamicNativeLayoutCompositionTest.transientReplayPreservesDynamicReverseAuthority`가 realization 합성에서 실패했다. 이전 geometry 수정 전 baseline에서도 재현된 오류다.
+- **재현/원인**: `.omx/dynamic-native-evidence/reproduction.log`. 일시적인 진단으로 동일 EXP owner+seed ID 아래 exact 8x2 witness와 endpoint-only 8x1 witness가 합쳐지는 것을 확인했다. 진단 코드는 제거했다. 입력 seed는 질의 identity이며, 여러 출력 배치/정확도 증명의 publication identity로 사용할 수 없다.
+- **수정/의사결정 근거**: `PlacementRelationClosure`에서 generation query는 유지하고, publication lineage에 최종 출력 witness의 canonical layout과 exactness를 포함한다. TWrite alias도 기존 owner+pool ID에 exactness를 포함한다. 모든 지원 증명과 기존 merge invariant를 유지한다. source-grounding, DP factor, runtime fallback 또는 후보 삭제를 추가하지 않는다.
+- **수정 파일**: `PlacementRelationClosure.java`, `DynamicNativeLayoutCompositionTest.java`; 실제 ROW reverse 실행을 위한 `run_joint_boundary_e2e.py`와 harness tests.
+- **초기 검증**: 기존 dynamic 5건과 lineage/support union 7건, 총 12건 PASS. 정확/동적 혼합 분기 회귀 및 인접 18개 class 검증 진행 중. Python harness 20건 PASS.
+- **잠재 회귀 위험/감지**: replay 중 key 변경으로 선택된 source reference를 잃거나 후보 증명이 축소될 위험을 complete-space/loop/support-union 테스트로 확인한다. 동적 authority를 durable 범위로 승격시키는 오류는 dynamic composition 검사와 2-worker Docker의 FED rev/exp 및 순서 민감 수치 비교로 감지한다.
+- **잔여 범위**: 이 절의 최종 검증 전에는 전체 통과로 간주하지 않는다. 큰 factor 표현/메모리, P1/GLM 등 별도 통합 이슈는 이번 범위가 아니다.
+
+### Dynamic native Docker 후속: REV lowering에서 출력 계약 누락 — 수정 및 검증 완료
+
+- **증상**: 최초 Docker `dynamic-native-final`의 model proof 6 tests와 loop/function 2 cases는 PASS. 새 2-worker ROW reverse case는 analysis/DP 선택 후 `LOWERING_MISMATCH ... opcode=rev plannedPhysical=FED/FOUT/ROW actual=FED/NONE`로 실패했다. 원래 realization 합성 오류와 발생 단계가 다르다.
+- **원인/해결 방향**: `Transform.getInstructions`가 FED REV의 `_fedOutput`을 직렬화하지 않는다. `ReorgFEDInstruction`의 parser는 이미 선택적 REV flag를 읽을 수 있다. 검사나 planner 계약을 완화하지 않고 emitter에서 계획된 FOUT/LOUT flag를 보존한다.
+- **회귀**: `ReorgFEDInstructionFullTest.reverseLoweringPreservesExplicitOutputContract`로 Transform→FED parser 왕복에서 FOUT/LOUT 보존을 검증한다. 실제 2-worker Docker 수치 및 audit 검사로 lowering 이후 실행까지 확인한다.
+- **범위/위험**: REV 직렬화만 변경한다. ROLL 등 다른 opcode의 별도 계약 문제로 범위를 넓히지 않는다. 기존 DIAG/TRANS/RESHAPE 직렬화 경로는 유지하며 인접 Reorg/Reshape unit tests로 확인한다.
+
+- **최종 검증**: Java 20개 class 최신 결과 합계 230 tests / 229 PASS / 기존 skip 1 / failure·error 0, Python 20/20 PASS. 초기 신규 테스트의 잘못된 exact-output/support-clause 가정은 경계 관계에 맞게 교정했으며 production invariant는 유지했다. 기준 HEAD의 closure를 별도 컴파일하여 최종 dynamic 6 tests에 적용하면 원래/신규 branch 2건이 같은 합성 오류로 실패하고 수정본은 모두 통과한다.
+- **최종 Docker**: `dynamic-native-runtimefix`의 dynamic ROW reverse·loop·function 3 cases PASS. model proof 6 tests 및 frozen class hash PASS, REV/EXP 실제 FED/FOUT/ROW audit MATCH. CP/FED 8x3 sum `124.07728482348034`, norm2 `1267.9351982067865`, weighted `571.954806162415` 일치, runtime conversion 위반·audit error 0.
+- **잔여 이슈/회귀 위험**: 이 범위의 두 오류는 해결됐다. ROLL 직렬화 등 다른 opcode와 큰 factor/메모리 및 P1/GLM 이슈의 해결을 주장하지 않는다. replay 참조/후보 보존은 complete-space·loop·support-union 등 인접 회귀, 출력 flag는 FOUT/LOUT 왕복 검사로 감지한다. 독립 read-only 리뷰 CLEAR, diff whitespace PASS.
+- **보고서/근거**: `docs/DYNAMIC_NATIVE_COMPOSITION_2026-10-06.md`, `.omx/dynamic-native-evidence/validation.json`. Docker: `/grid/3/cofee-lm-sweep-mchoi-20260914/dynamic-native-composition-20261006/dynamic-native-runtimefix/result.json`. 최종 Java source와 main/test class bytes는 성공한 frozen 빌드와 일치한다.
+
 ## 보조 실행 단계·MMChain·업로드 중복 비용 후속 점검 — 점검 및 확인된 결함 수정 완료
 
 - **범위/환경**: 사용자 요청으로 `d57bca99d9`에서 분리한 `/home/mchoi/w1357-cost-followup-20261006`, `fix/cost-followup-20261006`에서 작업한다. DP/Exact 공통 비용 모델을 점검하며 후보 legality/privacy/runtime 계약은 변경하지 않는다. 기존 compiler-only PUBLIC 비용 fixture 예외 문서를 따른다.
@@ -363,3 +689,19 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **최초 A/B 실험과 범위 수정**: 4 workload × W1/W3의 16개 Docker compile/lowering이 모두 성공했다. seed까지 축소하면 후보 합계는 757,506→748,963으로 줄지만 StepLM W3의 기존 hard repair 2,188 assignments가 없어지면서 최종 anytime 비용이 1.543% 높아지고 incremental assignments가 33.99% 늘었다. 유효 최적해 손실이 아니라 초기 선택/repair 경로 변경이며, 성능 개선으로 채택하지 않았다. `selectLocalState`의 기존 전체 domain/대표 선택만 복원하고 실제 repair의 지원값 재사용은 유지한다. 이 수정의 focused 43건이 통과했고, 작은 fixture에서 seed 9개를 유지하면서 block assignments는 plain 5→2, compact 2→0이다. 제외한 구현·실험은 `seed-reduced-rejected/`에 보존하며 같은 A를 재사용해 최종 B를 다시 비교한다.
 - **최종 검증/판정**: 최종 source로 Maven package 및 **86개 클래스 645건**을 다시 통과했다. 최종 B의 Docker 8건도 모두 성공했다. 같은 A8과 비교해 8/8에서 objective certificate·선택 상태·종료 단계·upper/lower/gap·초기 후보·incremental 작업량이 동일하고, repair가 발생하는 두 조건의 solver-reported block assignments와 비교 가능한 factor cell 수도 같다. 최종 구현은 대표 workload의 추가 작업량 감소를 보이지 않았다. root의 지원값 8,543개 제거 결과를 실제 repair/direct/factorwise/fallback 경로에 공유하는 구조적 개선과 작은 회귀의 탐색 감소만 주장한다. training runtime 또는 latency 향상을 주장하지 않는다.
 - **최종 위험/한계 및 기록**: 초기 선택 정책은 유지하지만 root 준비는 앞당겨진다. production은 이후 incremental 진입 시 같은 cached root를 반드시 사용하므로 bootstrap trace의 rootBuilds 0→1은 전체 root 구성 증가의 증거가 아니다. 추가 lazy Context나 pruning 모드를 도입하지 않았다. 진짜 resource-limit fallback 정책은 유지한다. source SHA 일치·독립 검토·diff 검사, 재사용 소비를 끈 음성 대조(비용 평가 2회 기대/3회 관측 실패), 전체 회귀와 최종 비교를 [보고서](SHARED_REDUCTION_REPAIR_2026-10-06.md) 및 `docs/experiments/shared-repair-reuse-20261006/`에 기록한다.
+
+## Shared repair·비용 후속 변경의 최신 main 통합 및 공개 — 통합 검증 완료
+
+- **요청/환경**: 사용자의 commit 및 `origin/main` push 요청으로 검증한 비용/StepLM/shared-repair 변경을 `33dfbdc4c8`에 커밋했다. 작업 중 진전된 원격 `0146f043e0`을 병합하며 joint-input/동적 native authority/resource-policy 변경을 보존한다. 이전 645건과 A/B workload 기록은 병합 전 source의 증거로 유지하고 통합 source를 별도로 검증한다.
+- **충돌 해결**: main의 proactive `expandRepairBlock`과 이번 `unconditionalDomains` 및 prepare 시의 typed batched boundary 검사를 함께 유지한다. 선행 확장 후에도 unsupported 경계가 발견되면 typed 경로로 다시 확장한다. root/block budget 분리, conditional preflight/portfolio, `lastFallbackReason` 및 원래 값 projection을 보존했다. session 문서는 양쪽 기록을 합쳤다.
+- **자동 병합의 의미적 결함 수정**: `ExactPhysicalCostModel.fedCostProjection`에 network-only 보조 비용과 full mixed auxiliary 비용이 함께 들어가 동일 RTT/payload가 이중 과금되는 것을 독립 검토에서 발견했다. 실제 runtime stage 전체를 소유하는 mixed 모델만 한 번 과금하고 incoming `ExactAuxiliaryCommunicationCostTest`의 기대값을 전체 보조 단계의 단일 소유 계약에 맞췄다. network-only helper/test 자체와 CTABLE GET/cache·per-execution PUT 및 MMChain ownership은 보존했다.
+- **resource 계약 정렬**: 이전 early support-table 재구축의 raw `double[]` 할당을 main의 `PlannerResourceGuard.checkAdditionalCells/allocateDoubles`로 맞췄다. 이미 frozen된 unary/binary support factor의 domain을 줄이는 경로이므로 cell product는 원래 검증된 크기를 넘지 않는다. 큰 conceptual lazy product는 여전히 support 축소 후 checked materialization을 거친다.
+- **의사결정 근거/위험**: 후보 허용 규칙이나 runtime fallback을 변경하지 않는다. 독립 solver/cost 검토 후 merged Maven package가 성공했다. 이전 회귀에 incoming resource/memory/Global exact/auxiliary cost/joint cost 검사를 더한 96개 클래스와 별도 Docker compile smoke로 중복 과금, mapping 손실, resource 오류 분류 및 최신 candidate 공간과의 충돌을 검사한다. 통합 뒤 관측되는 실패는 최신 원격과 비교하여 원인을 구분하며 과거 통과 기록으로 덮지 않는다.
+- **검증 artifact**: `/home/mchoi/cost-followup-20261006/main-publication/`에 원본 source SHA, build 결과, 정확한 명령과 로그를 보관한다. 최종 결과는 아래에 추가한다.
+- **통합 CTABLE oracle 정정**: 처음 실행한 96개 클래스 733건 중 6건이 실패했다. 그중 새 loop CTABLE 검사는 transfer key의 endpoint scope가 canonical contribution 하나와 반드시 일치한다는 가정으로 실패했다. main의 joint/activation factorization은 같은 scope에 여러 contribution과 같은 retained source의 대체 key를 허용한다. production을 바꾸지 않고 관련 contribution을 중복 없이 평가·합산하도록 검사를 고쳤다. 독립적으로 계산한 ROW reusable download 1회의 비용과 정확히 일치하는지, loop 1/2/10회의 cold GET 불변성과 invocation 비용 비례 관계를 유지한다. 별도 컴파일의 CTABLE 4건이 통과했다.
+- **원격 baseline 대조**: 기존 StepLM 통합 실패는 현재 원격 `0146f043e0`의 production 7개 차이 파일을 모두 복원한 격리 class overlay에서도 새로 재현했다. 오류는 solver 진입 전 `PlacementRelationClosure`의 CFG transient candidate closure 비수렴이며, 이전에 해결한 unsupported-boundary overflow와 발생 단계가 다르다. 나머지 기존 실패도 같은 원격 overlay에서 메서드별로 대조한다. 최초 실패 로그는 보존하며 제외 목록을 명시한 후속 검증과 구분한다.
+- **Docker 통합 smoke**: 고정 image와 기존 A/B의 pinned builtin tree로 StepLM W3·PCA W3 compile/lowering 2/2 성공. training runtime은 실행하지 않았다. 최초 fixture 복사에서 빠진 `runtime/scripts` 때문에 StepLM이 다른 builtin signature를 읽은 harness 오류는 원본 tree 1,110개 파일의 SHA를 확인해 복원했다. workload 인자나 production을 바꾸지 않았으며 실패 시도도 artifact에 보존한다.
+- **L2SVM 테스트 격리 정정**: 기존 main에서도 실패하는 메서드 5개만 분리한 첫 재검증은 728건 중 727건 통과, L2SVM의 `Expected one committed program` 검사 1건 실패였다. 이 검사는 전역 `PlacementEmissionTransaction` receipt 수를 읽으면서 스스로 초기화하지 않아 앞선 테스트 2개의 기록을 포함했다. 이전에 우연히 실행되던 ALS 테스트의 reset에 의존한 것이다. L2SVM 시작/종료에 기존 `resetForTesting`을 추가하고 정확한 1개 receipt, 선택 비용·배치·emission 검사를 유지한다. production은 변경하지 않았으며 실패 실행은 `before-l2-isolation/`에 보존한다.
+- **최종 baseline 판정**: 원격의 모든 production 차이 7개 파일을 origin blob으로 복원한 격리 overlay와 동일한 test source로 5개 메서드의 실패를 확인했다. 4개는 최초 통합 실행의 오류 signature가 일치한다. ALS FedAll은 임시 입력 경로가 program fingerprint/greedy tie에 영향을 줄 수 있어 외부 진단 fixture의 절대 경로를 고정해 재대조했다. 동일 fixture에서 origin과 통합본은 `empty owned-row domain`으로 실패하며 로그가 byte 단위로 같다. 최초 통합의 `no common relocation pool` 문구까지 원격에서 동일하게 재현했다고 주장하지 않는다.
+- **최종 검증**: Java 17 Maven package 성공. 원래 733건을 실행한 최초 실패 기록과 원격에서 재현된 5개 메서드의 명시적 제외 목록을 보존했다. CTABLE/L2SVM 검사 정정 뒤 같은 목록으로 **96개 클래스의 나머지 728/728 통과**, failure/ignore 0이다. 전체 733건 무실패로 보고하지 않는다. 최종 source SHA가 빌드 때와 일치하고 production/JAR는 Docker 2건 성공 시점과 동일하다. [통합 검증 기록](experiments/shared-repair-reuse-20261006/main-publication.json)에 명령, runner, 실패·수정·재검증 이력, source/evidence SHA와 baseline 대조를 기록했다.
+- **잔여 범위**: main의 StepLM CFG closure 비수렴, ALS FedAll greedy conflict, ALS/StepLM canonical factor overflow, LogReg privacy placement 실패 5건은 남아 있다. 이전 unsupported-boundary repair overflow 해결이나 병합 전 645건 통과와 구분한다. 이번 publication 검증은 training runtime 또는 latency 개선을 주장하지 않는다.

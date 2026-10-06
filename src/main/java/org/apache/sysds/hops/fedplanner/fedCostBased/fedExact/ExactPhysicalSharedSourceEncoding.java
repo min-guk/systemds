@@ -650,7 +650,8 @@ final class ExactPhysicalSharedSourceEncoding {
 		}
 		List<CompiledHopKey> orderedOwners = owners.stream().sorted(Comparator.comparingInt(owner ->
 			decisionOrder.getOrDefault(owner, Integer.MAX_VALUE))).toList();
-		for(int header = 0; header < headers.size(); header++) {
+		int originalHeaderCount = headers.size();
+		for(int header = 0; header < originalHeaderCount; header++) {
 			List<Integer> rows = new ArrayList<>();
 			for(int row = 0; row < headerByRow.length; row++)
 				if(headerByRow[row] == header)
@@ -680,8 +681,26 @@ final class ExactPhysicalSharedSourceEncoding {
 			long product = 1;
 			for(HashSet<?> projection : projections)
 				product = saturatedMultiply(product, projection.size());
-			if(product != tuples.size())
-				throw new Unsupported("NON_RECTANGULAR_HEADER|decision=" + index);
+			if(product != tuples.size()) {
+				// Correlated support is a union of exact source tuples, not the
+				// Cartesian product of its projections. Refine this internal header
+				// by tuple instead of abandoning shared-source encoding for every
+				// other decision. Membership factors then preserve precisely these
+				// rows, including duplicate-proof fibers and demanded-only references.
+				Map<List<CandidateRealizationReference>,Integer> refined = new LinkedHashMap<>();
+				AlternativeHeader original = headers.get(header);
+				for(int row : rows) {
+					List<CandidateRealizationReference> tuple = required.stream()
+						.map(owner -> refsByRow.get(row).get(owner)).toList();
+					Integer refinedHeader = refined.get(tuple);
+					if(refinedHeader == null) {
+						refinedHeader = refined.isEmpty() ? header : headers.size();
+						if(!refined.isEmpty()) headers.add(original);
+						refined.put(tuple, refinedHeader);
+					}
+					headerByRow[row] = refinedHeader;
+				}
+			}
 		}
 		return new DomainView(index, domain, headers, headerByRow, orderedOwners, refsByRow);
 	}

@@ -113,3 +113,13 @@ StepLM W1·logreg W3·PCA W1은 `RESOURCE`, GLM W1/W3·logreg W1은 `RESOURCE_IN
 최종 [검증 기록](experiments/shared-repair-reuse-20261006/validation.json), [workload 비교표](experiments/shared-repair-reuse-20261006/workload-brief.json), [전체 비교](experiments/shared-repair-reuse-20261006/workload-comparison.json), [제외한 seed 축소 실험](experiments/shared-repair-reuse-20261006/rejected-seed-filter-brief.json)을 보관한다. 원본 로그·명령·동결 classes·fixture manifest는 아래 artifact root에 있다.
 
 원본 artifact: `/home/mchoi/cost-followup-20261006/shared-repair-reuse/`.
+
+## 최신 main 통합 검증
+
+위의 645건과 A/B 비교는 작업 커밋 `33dfbdc4c8`까지의 증거다. 공개 전에 `0146f043e0`의 joint-input, resource-policy, dynamic native authority 변경을 병합해 별도로 검증했다. main의 선행 repair 확장과 이번 immutable domain 재사용/typed boundary 확장을 함께 유지하고, support table 할당에 기존 resource guard를 적용했다. 자동 병합으로 겹친 보조 network 비용은 full mixed stage에서 한 번만 소유하도록 정렬했다.
+
+최초 통합 733건 중 6건이 실패했다. CTABLE의 factor와 transfer key가 일대일이라는 오래된 테스트 가정은 정확한 총 GET 비용 검사로 정정했다. 나머지 5개 메서드는 현재 main에서도 실패한다. StepLM closure, ALS/StepLM canonical factor overflow, LogReg privacy placement 오류 4개는 같은 signature를 확인했다. ALS FedAll은 입력 경로를 고정한 대조에서 양쪽 실패 로그가 byte 단위로 같았다. 임시 경로가 다른 최초 실행의 greedy conflict 문구까지 동일하다고 주장하지 않는다.
+
+5개 기존 실패를 명시적으로 분리한 첫 재검증은 L2SVM 테스트가 전역 receipt를 초기화하지 않는 순서 의존성도 드러냈다. 시작/종료의 test reset만 추가하고 원래 배치·비용·emission 검사를 유지했다. 최종 Maven package와 **나머지 728건이 모두 통과**했다. 고정 fixture/image의 Docker StepLM W3·PCA W3 compile/lowering도 2/2 통과했다. 전체 733건 무실패 또는 학습 runtime/latency 향상으로 해석하지 않는다.
+
+통합 증거와 명시적 제외 목록은 [publication 검증 기록](experiments/shared-repair-reuse-20261006/main-publication.json)에 있다. 원본 로그와 baseline overlay는 `/home/mchoi/cost-followup-20261006/main-publication/`에 보존한다.

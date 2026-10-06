@@ -192,7 +192,8 @@ public class Transform extends Lop
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _fedOutput.name() );
 		}
-		else if( getExecType()==ExecType.FED && _operation == ReOrgOp.DIAG ) {
+		else if( getExecType()==ExecType.FED
+			&& (_operation == ReOrgOp.DIAG || _operation == ReOrgOp.REV) ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _fedOutput.name() );
 		}

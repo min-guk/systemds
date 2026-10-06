@@ -2059,6 +2059,36 @@ public final class Rulesets {
     }
   }
 
+  /** Compiler-owned identity site. Transfers belong to selected physical inputs. */
+  public static final class PlacementAliasRule extends BaseRule {
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return Set.of(OpOp1._PLACEMENT.toString()); }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OpOp1._PLACEMENT.toString().equals(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inputs, ShapeHint hint) {
+      Set<FType> outputs = new LinkedHashSet<>();
+      for (FType input : candidates(inputs, 0))
+        if (input != null)
+          outputs.add(input);
+      return profileOf(outputs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inputs, ShapeHint hint) {
+      if (!hasExpectedArity(inputs, 1))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+      FType input = typeAt(inputs, 0);
+      return input == null ? cpCaps(sig, ReasonCode.NO_FED_INPUT)
+          : fedFoutCaps(sig, input, ReasonCode.OK);
+    }
+  }
+
   /** Variable write rule modeling federated side effects. */
   public static final class VariableWriteRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(Opcodes.WRITE.toString());

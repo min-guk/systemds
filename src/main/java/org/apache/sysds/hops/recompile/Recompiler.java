@@ -1530,6 +1530,14 @@ public class Recompiler {
 			ArrayList<Instruction> tmp = bpb.getInstructions();
 			if( sb == null ) 
 				return;
+			// The second function-recompile phase deliberately uses an empty symbol
+			// table. A branch-exit carrier may need the runtime federation map seen by
+			// phase one in order to lower its selected LOCAL/REFED edge. Recompiling
+			// that real self-assignment without runtime state filters it to an empty
+			// block and discards the phase-one transfer. Keep the phase-one carrier
+			// instructions; ordinary statement blocks still receive phase-two rewrites.
+			if( !status.isInPlace() && isPlannerBranchNormalizationBlock(sb) )
+				return;
 			
 			//recompile all for stats propagation and recompile flags
 			tmp = Recompiler.recompileHopsDag(
@@ -1552,6 +1560,12 @@ public class Recompiler {
 			}
 			status.trackRecompile(sb.requiresRecompilation());
 		}
+	}
+
+	private static boolean isPlannerBranchNormalizationBlock(StatementBlock sb) {
+		return sb != null && sb.getHops() != null && !sb.getHops().isEmpty()
+			&& sb.getHops().stream().allMatch(hop -> hop instanceof DataOp
+				&& ((DataOp) hop).isPlannerBranchNormalization());
 	}
 	
 	public static boolean reconcileUpdatedCallVarsLoops( LocalVariableMap oldCallVars, LocalVariableMap callVars, StatementBlock sb )
