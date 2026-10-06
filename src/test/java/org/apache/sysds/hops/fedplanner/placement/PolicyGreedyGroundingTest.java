@@ -103,6 +103,45 @@ public class PolicyGreedyGroundingTest {
 		Assert.assertEquals(3, run.selection().selectedCandidateSelections().size());
 	}
 
+	@Test
+	public void reciprocalInputRequirementsMustHaveOneCommonRowPair() {
+		Node seed = node("seed"), a = node("a"), b = node("b");
+		var seedRule = rule(seed, 0);
+		var aBad = rule(a, 2);
+		var aGood = rule(a, 3);
+		var bBad = rule(b, 1);
+		var bGood = rule(b, 2);
+		var seedRef = new CandidateRealizationReference(seedRule, LAYOUT);
+		var aBadRef = new CandidateRealizationReference(aBad, LAYOUT);
+		var aGoodRef = new CandidateRealizationReference(aGood, LAYOUT);
+		var bBadRef = new CandidateRealizationReference(bBad, LAYOUT);
+		var bGoodRef = new CandidateRealizationReference(bGood, LAYOUT);
+		var goodClause = clause(CandidateRealizationInputBinding.direct(0, aGoodRef));
+		var graph = new NeutralPlacementGraph(List.of(seed, a, b), List.of(
+			new Constraint(ConstraintKind.DOMINATES, seed.key(), a.key(), 1, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, b.key(), a.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, a.key(), b.key(), 0, "data-input")), List.of());
+		var analysis = analysis(graph, List.of(fact(seedRule, List.of(clause())),
+			fact(aBad, List.of(clause(CandidateRealizationInputBinding.direct(0, bBadRef),
+				CandidateRealizationInputBinding.direct(1, seedRef)))),
+			fact(aGood, List.of(clause(CandidateRealizationInputBinding.direct(0, bGoodRef),
+				CandidateRealizationInputBinding.direct(1, seedRef)))),
+			fact(bBad, List.of(clause(CandidateRealizationInputBinding.direct(0, aGoodRef)))),
+			fact(bGood, List.of(clause(CandidateRealizationInputBinding.direct(0, aBadRef)), goodClause))));
+		// aBad can find bBad in isolation, and a different bGood clause accepts aBad.
+		// No single pair satisfies both directions; only aGood/bGood is feasible.
+		for(var policy : PolicyGreedyPlacementSelector.Policy.values()) {
+			var run = new PolicyGreedyPlacementSelector(policy).selectWithMetrics(analysis, graph);
+			Assert.assertEquals(3, run.metrics().decisionCommits());
+			var rows = run.selection().selectedCandidateSelections();
+			Assert.assertTrue(rows.stream().anyMatch(row -> row.rule() == aGood));
+			Assert.assertTrue(rows.stream().anyMatch(row -> row.rule() == bGood
+				&& row.supportClause() == goodClause));
+			Assert.assertEquals(rows, CandidateSelections.resolveAndValidateSelected(analysis, graph,
+				run.selection().assignment(), rows));
+		}
+	}
+
 	private static PlacementAnalysis cycle(boolean seeded) {
 		Node seed = node("seed"), a = node("a"), b = node("b");
 		CandidateRuleKey seedRule = rule(seed, 0), aRule = rule(a, 2), bRule = rule(b, 1);
