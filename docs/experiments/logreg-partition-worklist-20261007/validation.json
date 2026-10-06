@@ -1,0 +1,492 @@
+{
+  "schema": "logreg-partition-worklist-v1",
+  "status": "ADOPTED",
+  "baselineCommit": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+  "candidateCodeCommit": "6bc25f3300",
+  "workload": {
+    "builtin": "multiLogReg",
+    "rows": 192,
+    "features": 8,
+    "classes": 3,
+    "maxi": 10,
+    "maxii": 5,
+    "workers": 3,
+    "partition": "ROW",
+    "privacy": "PRIVATE_AGGREGATE",
+    "labels": "public-local",
+    "cpus": 4,
+    "memoryGiB": 8,
+    "jfr": false,
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434"
+  },
+  "sequence": [
+    "baseline",
+    "candidate",
+    "candidate",
+    "baseline"
+  ],
+  "means": {
+    "baseline": {
+      "analysisSeconds": 33.8445303175,
+      "fullPlannerSeconds": 10.305008939499999,
+      "compilationSeconds": 45.315991499999996,
+      "executionSeconds": 3.4455
+    },
+    "candidate": {
+      "analysisSeconds": 28.999022275,
+      "fullPlannerSeconds": 8.640907873,
+      "compilationSeconds": 38.767572,
+      "executionSeconds": 3.2439999999999998
+    }
+  },
+  "meanReductionPercent": {
+    "analysisSeconds": 14.316960516348287,
+    "fullPlannerSeconds": 16.148467956406655,
+    "compilationSeconds": 14.45057094248946,
+    "executionSeconds": 5.848207807284867
+  },
+  "parity": {
+    "fixtureSha256": true,
+    "inputSha256": true,
+    "image": true,
+    "sourceSha256": true,
+    "analysisFingerprint": true,
+    "allNonTimePlannerCheckpoints": true,
+    "checkpointCountPerRun": 1224,
+    "allProfileDisabled": true,
+    "allModelAndAuditChecks": true
+  },
+  "artifactParity": {
+    "main-sources": {
+      "baselineFiles": 1651,
+      "candidateFiles": 1651,
+      "differences": [
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java"
+      ]
+    },
+    "main-classes": {
+      "baselineFiles": 4361,
+      "candidateFiles": 4361,
+      "differences": [
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$1.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$AnchorClosure.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CallBoundaryContext.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CandidateBase.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CandidateMaterializationClosure.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CanonicalConstraintSet.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CfgReplayBaseline.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ClosureUpdate.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CommittedProofInventory$RevisionWork.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$CommittedProofInventory.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectBindingIndex.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectClosureResult.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectEdgeIdentity.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectNativeSeedKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectSourceIndex$SourceRow.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectSourceIndex.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectSupportIndex.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectSupportUpdate.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$DirectTemplateKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ExactEmissionIdentity.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ExactRealizationOption.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ExactTransientReplay.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ExactTransientReplayResult.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FactorizedBindingKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FactorizedProofKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FunctionExpansion.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FunctionInputBinding.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FunctionInputCandidateClosure.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FunctionOutputBoundaryKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$FunctionOutputCandidateClosure.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$GroundedReplayOption.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicCfgJoin.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicPathIndex.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicPathMetrics.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicPathPropagation$Step.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicPathPropagation.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicPathState.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$HeuristicTransition.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$IdentityListKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$InputUse.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$InputUseSeed.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$LoopSeedLedger.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$LoopSeedProofSnapshot.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$LoopSeedRevision.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$PhysicalCandidateState.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$PhysicalGenerationContext.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$PostMaterializationCandidate.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$PresentInputUseSeed.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$PrivacyClosure.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$PrivacyReplayState.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ProgramStructureGuard.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$RecursiveMapGrounding.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$RelocationGroup.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$RelocationProductKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$RelocationSourceOptionKey.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ReplayCompatibilityOption.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ReplayCompatibilitySupport.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ReplayPlacementAlternative.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ResolvedInlinedInput.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$SinglePartitionPossibilities.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$SinglePartitionRealizationProof.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$StaticPrivacyProjection.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$ValueMapCandidateClosure.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$WorkerPoolAnchorResolver$RealizationSlot.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure$WorkerPoolAnchorResolver.class",
+        "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class"
+      ]
+    },
+    "test-classes": {
+      "baselineFiles": 2824,
+      "candidateFiles": 2824,
+      "differences": []
+    },
+    "test-sources": {
+      "baselineFiles": 1935,
+      "candidateFiles": 1935,
+      "differences": []
+    }
+  },
+  "runs": [
+    {
+      "variant": "baseline",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-baseline-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 42.918503,
+        "executionSeconds": 3.546
+      },
+      "analysisSeconds": 31.4337925,
+      "fullPlannerSeconds": 10.395274734,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3899696089,
+        "elapsedNanos": 4373799538,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 9360646479,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 214081921,
+        "upper": 122.26631334184357,
+        "validationNanos": 108909239
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+    },
+    {
+      "variant": "candidate",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-candidate-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 36.415365,
+        "executionSeconds": 3.044
+      },
+      "analysisSeconds": 27.338954167,
+      "fullPlannerSeconds": 7.971252169,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 2788419266,
+        "elapsedNanos": 3059893112,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 7146211376,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 113809967,
+        "upper": 122.26631334184357,
+        "validationNanos": 77882337
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+    },
+    {
+      "variant": "candidate",
+      "repeat": 2,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-candidate-r2",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 41.119779,
+        "executionSeconds": 3.444
+      },
+      "analysisSeconds": 30.659090383,
+      "fullPlannerSeconds": 9.310563577,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3485742677,
+        "elapsedNanos": 3870510665,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8286055031,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 167929610,
+        "upper": 122.26631334184357,
+        "validationNanos": 101733793
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+    },
+    {
+      "variant": "baseline",
+      "repeat": 2,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-baseline-r2",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 47.71348,
+        "executionSeconds": 3.345
+      },
+      "analysisSeconds": 36.255268135,
+      "fullPlannerSeconds": 10.214743145,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3824529199,
+        "elapsedNanos": 4272243980,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 9232126851,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 200076395,
+        "upper": 122.26631334184357,
+        "validationNanos": 104394991
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+    }
+  ],
+  "fixtureSha256": {
+    "config": {
+      "sha256": "0593f01a6400b1f69b53f16fa07eaf0df46dc12fe5ec74cbddbf71c4c5f6f0a7"
+    },
+    "ml_logreg": {
+      "cp": "9bba9c7b183ebecd3c25e4577de37bdd1a9d19efe5cd5c44c1d0992b58888214",
+      "fed": "a58bf9416ec78b146126cb744c9eead1e6c7e60b954014994bb8cc5264a48293"
+    }
+  },
+  "inputSha256": {
+    "data/A1.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A1_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/A2.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A2_PUBLIC.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B1.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B1_PUBLIC.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B2.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B2_PUBLIC.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/X.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/X_ML_0.csv": "2db58fd05e48e711f78604edd4599113bdaac2290cbdcf46a5c7a5a9638b5449",
+    "data/X_ML_0.csv.mtd": "8c72e321bf8890a6d7c2b3999ebcbbedbc1271211a607175a875509c870e4c0e",
+    "data/X_ML_1.csv": "b25845d13ede155a86629feef98b94178d8a860fcfdfad376a4a47539cf68bfe",
+    "data/X_ML_1.csv.mtd": "8c72e321bf8890a6d7c2b3999ebcbbedbc1271211a607175a875509c870e4c0e",
+    "data/X_ML_2.csv": "e1f99cdf838ebfa9303c497cc9da468f082e38916a2866e1b17a86926c2c5218",
+    "data/X_ML_2.csv.mtd": "8c72e321bf8890a6d7c2b3999ebcbbedbc1271211a607175a875509c870e4c0e",
+    "data/X_ML_PUBLIC.csv": "ac04328eae4670b670835d6e7ecd552699f5a80ab622d664a21656cff3f8f353",
+    "data/X_ML_PUBLIC.csv.mtd": "4508ba414b0a8ac138649f03cb9c0d13351e97ee85a2c7540e794918cf96e18c",
+    "data/X_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/Y_ML_LM.csv": "cac6cb509f52d0916fd1b9d86ba2d9350c99bbe3fbc8a4d796a0fb44805c12f8",
+    "data/Y_ML_LM.csv.mtd": "addccefa9722f2b9cb3d9d1935a23f001a5fb401e588145651940f51a5085a12",
+    "data/Y_ML_LOGREG.csv": "48df6a214fd585ba3e45444dd0bd8e15be0b2f2dc0dfb132ae742f54a934f156",
+    "data/Y_ML_LOGREG.csv.mtd": "addccefa9722f2b9cb3d9d1935a23f001a5fb401e588145651940f51a5085a12",
+    "data/Y_ML_SVM.csv": "a6ab0344d08311acbe11dfca6c0300c6b99348b1ffef8711c65fb9c2dcbcfab5",
+    "data/Y_ML_SVM.csv.mtd": "addccefa9722f2b9cb3d9d1935a23f001a5fb401e588145651940f51a5085a12"
+  },
+  "runnerAndDispatchSha256": {
+    "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+    "runner": "8913d526c2220e11c57767b3c3f6c15198db57a819c71705d2925f1ffa6a99e2"
+  },
+  "rawEvidence": [
+    {
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-baseline-r1",
+      "resultSha256": "cddbe94219ebbedfd0a326d21fb0cca6d4943e2173d0a3ca13e3bc603b588cce",
+      "manifestSha256": "303cecb76d29367867b73c293417ce16c3dd235615402bdd3ad9d34c5f3ace41",
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "1f7c2849b9e7a2ea949b1507d23734ce8ea1eeddd4fb11e25e6be09cc77287c0",
+        "mainSources": "998eddd381792c9e26da99c5aef1d733f632034324cd92ae3144a4e95841f149",
+        "testClasses": "51b7401d8d722fd250a9857435ee2aaf1194ec71c92319c646a3e353a65b1de9",
+        "testSources": "a32869fc85a44926b26e63a02dee4ace3f2e5cc9ef032f7f32048a3acdceeffe"
+      }
+    },
+    {
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-candidate-r1",
+      "resultSha256": "36591143c46ee82a0202fd5d60340bdd9badd94382353f8e0b2ec5e2937c7c00",
+      "manifestSha256": "f01a8a3837bf9fecb4eb767d1e06ab8a2d43bc3917cbc54af040d96730d84cd0",
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "3806654c15b446b353332556ba9cea1c7aba436dee549629be9fdd0d66e628f3",
+        "mainSources": "df000010ef201255f90c0366ca67cccb144b3d36cf00c5eac8119b750559c6d4",
+        "testClasses": "51b7401d8d722fd250a9857435ee2aaf1194ec71c92319c646a3e353a65b1de9",
+        "testSources": "a32869fc85a44926b26e63a02dee4ace3f2e5cc9ef032f7f32048a3acdceeffe"
+      }
+    },
+    {
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-candidate-r2",
+      "resultSha256": "a43bd7a9f91ff5ab75c223af578f65ee75cd86d93c64dfe87898bb6d94b8e7b1",
+      "manifestSha256": "15edf50344543df4dfe63a46eadce06f3cef96fd7bc632e067e8faa292a211e9",
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "3806654c15b446b353332556ba9cea1c7aba436dee549629be9fdd0d66e628f3",
+        "mainSources": "df000010ef201255f90c0366ca67cccb144b3d36cf00c5eac8119b750559c6d4",
+        "testClasses": "51b7401d8d722fd250a9857435ee2aaf1194ec71c92319c646a3e353a65b1de9",
+        "testSources": "a32869fc85a44926b26e63a02dee4ace3f2e5cc9ef032f7f32048a3acdceeffe"
+      }
+    },
+    {
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/three-workload-ablation-20261007/logreg-latest-baseline-r2",
+      "resultSha256": "113fc39a791fb12687967d5b3d6f637ef6df73cc4e14ee04c33957758d8e9b52",
+      "manifestSha256": "90187f94491b9737993963359d4b1ee18b9ef284877a44c9d5011cdd6b6a01fd",
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "1f7c2849b9e7a2ea949b1507d23734ce8ea1eeddd4fb11e25e6be09cc77287c0",
+        "mainSources": "998eddd381792c9e26da99c5aef1d733f632034324cd92ae3144a4e95841f149",
+        "testClasses": "51b7401d8d722fd250a9857435ee2aaf1194ec71c92319c646a3e353a65b1de9",
+        "testSources": "a32869fc85a44926b26e63a02dee4ace3f2e5cc9ef032f7f32048a3acdceeffe"
+      }
+    }
+  ],
+  "verification": {
+    "javaTestClasses": 55,
+    "javaTests": 401,
+    "pythonUnitTests": 27,
+    "baselineAndCandidateFixedPointTestsEach": 9,
+    "randomOracleInventories": 250,
+    "packagePassed": true,
+    "sourceChangesDuringBuild": [],
+    "frozenCandidateMatchesFinalBuildMainSourcesAndClasses": true,
+    "codeReviews": "production and JFR harness APPROVE; parser validation issue fixed",
+    "regressionCommand": [
+      "mvn",
+      "-B",
+      "-Dtest=JointPartialTruthTest,ExactSharedSourceLinearPreparationTest,CostBasedPruningTest,ExactCategoricalSolverTest,IncrementalRegionalConfigurationTest,ExactPhysicalCostFingerprintPreflightTest,JointPhysicalCostTest,SharedRegionalCompactionParityTest,IncrementalRegionalSeedTest,SharedReductionRepairTest,BoundaryPruningTest,ExactFiniteSupportJoinTest,ExactPhysicalUnaryPreparationTest,ExactPhysicalReducedSolverTest,PlannerResourceGuardTest,ExactCompiledSupplySharingTest,LocalPhysicalOptimizerIncrementalTraceTest,SharedRegionalPreparationTest,FederatedPlanLocalCostIntegrationTest,ExactCategoricalSolverArithmeticParityTest,ExactPhysicalNativeSupplyRepresentationTest,JointBoundaryPhysicalModelProofTest,JointPhysicalCostRowsPrefixTest,ExactNativeLocalAnchorFanoutCostTest,ExactPhysicalDyadicCertificateTest,ExactDerivedSupplySharingTest,ExactPhysicalSharedSourceEncodingTest,IncrementalBoundaryMessageTest,CampaignBG014AlsPartitionedComputeCostRedTest#singleWorkerFullAlsHasCandidateReachableFedAllPlan,ExactFactorFreezeOrderTest,ExactPartialHardFactorTest,ExactPhysicalWitnessEncodingTest,IncrementalBoundarySeedTest,IncrementalRegionalOptimizerTest,ExactHardFactorObservationDecompositionTest,JointBoundaryMixedInputTest,ExactFiniteRowIndexTest,LocalCategoricalOptimizerTest,DynamicNativeLayoutCompositionTest,HeuristicProtectedNestedDemotionTest,JointValueMapRelationsTest,RelocationBindingPrefixPruningTest,ReferenceProductPrefixPruningTest,LogicalBoundaryRealizationsTest,PolicyGreedyGroundingTest,PolicyGreedyPlacementSelectorTest,LogregProtectedLoopSliceTest,JointAliasProjectionTest,EarlyPrivacyPruningLegalSpaceParityTest,PhysicalSinglePartitionProofFixedPointTest,PlacementJointInputEnvironmentTest,JointInputReachingDefinitionsTest,RuntimeReadLegalityParityTest,JointValueMapSelectionLegalityTest,PublicationSupportClosureTest",
+      "-Dcheckstyle.skip=true",
+      "-Drat.skip=true",
+      "-Ddoc.skip=true",
+      "package"
+    ],
+    "regressionLogSha256": "28c7b7c56c3c878e5a7e0cc9c1949eb0e99e0c411b7bcbd63a3d9159a992ea7a",
+    "pythonLogSha256": "850d21b62c9a9e103c0622a68b095b9a78ff83afe3f98d2cbb048ae190fdac12",
+    "jfrParserSmoke": {
+      "valid": {
+        "exists": true,
+        "size": 6105440,
+        "sha256": "f70b2228ce80204c7430d49f1eaaf68696ff03ea59e08a9eea1595e4fe03da4b",
+        "parserPassed": true,
+        "parserReturncode": 0,
+        "parserError": null
+      },
+      "malformed": {
+        "exists": true,
+        "size": 11,
+        "sha256": "e7693033d69ae299f9fd1692b91c56201251149f4b4736303fbba70a6da5a37d",
+        "parserPassed": false,
+        "parserReturncode": 1,
+        "parserError": "jfr summary: could not read recording at /tmp/logreg-jfr-negative-0ux63cua/bad.jfr. Not a complete Chunk header"
+      }
+    },
+    "diffCheckPassed": true,
+    "fullCheckstyleAndRat": "skipped; not claimed as separate full static analysis"
+  },
+  "diagnosticJfr": {
+    "baselineCommit": "57933f328c",
+    "scope": "separate earlier profiling runs; not used in final timing means",
+    "baselineAnalysisSamples": 2024,
+    "baselineProofSamples": 901,
+    "candidateAnalysisSamples": 994,
+    "candidateProofSamples": 212,
+    "note": "Execution sample counts, not exact wall-time attribution"
+  },
+  "limitations": [
+    "Two fresh JVM runs per variant on a shared host; no statistical confidence interval or broad workload scaling claim.",
+    "Only common-analysis proof propagation changed; optimizer time changes do not establish a separate optimizer algorithm improvement.",
+    "The final relative gap is 0.014298813731032978; this is not a proof of a global optimum.",
+    "StepLM/GLM optimization and validation are deferred by user scope change."
+  ]
+}

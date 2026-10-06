@@ -41,7 +41,7 @@
 - **정적 확인**: Java 전체 재컴파일(타입 검사 및 기존 unchecked lint 포함), `git diff --check` 통과. full checkstyle/RAT는 기존 targeted package 명령과 같이 skip했고 별도 전체 정적 분석 실행으로 주장하지 않는다.
 - **재현 artifact**: `target/joint-alias-evidence/{regression.log,final-test.log,final-build-source-sha.json,final-build-status.json,docker-command.json}`. Docker raw evidence는 `/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/joint-alias-candidate-01/`. 커밋되는 [검증 JSON](experiments/joint-alias-20261007/validation.json)에 hash·비교 수치·범위를 보존한다.
 
-## StepLM·LogReg·GLM 공통 병목 진단과 ablation — 진행 중
+## StepLM·LogReg·GLM 공통 병목 진단 — LogReg로 범위 변경
 
 - **새 요청**: 사용자가 StepLM, LogReg, GLM 세 workload가 모두 느리므로 공통 원인을 확인하고 통합 수정하도록 요청했다. 일곱 가지 최적화를 가정만으로 한꺼번에 적용하지 않고, 동일 baseline에서 측정한 원인별 변경을 비교해 채택한다.
 - **기준**: `57933f328c` 및 새 fetch의 origin/main 동일. 이전 LogReg의 analysis55.180초는 aggregate 측정이며 내부 memoization hotspot을 입증하지 않는다. StepLM/GLM의 과거 compile-only·다른 builtin 확장 결과를 이번 actual-training baseline으로 혼용하지 않는다.
@@ -79,3 +79,11 @@
 - 작업 도중 fetch한 origin/main이 `93706bbaa9`로 전진했다. heuristic legality와 grounded relocation publication 변경을 모두 보존했다. `PlacementRelationClosure`는 서로 다른 위치라 자동 병합했고, 세션 문서의 append 충돌은 양쪽 기록을 모두 유지했다.
 - 통합 전 candidate는 52개 Java 클래스 382건, Python unittest 27건 및 package를 통과했다. Java build 중 source 변경 0이다. 이 결과를 최신 통합본 검증으로 혼용하지 않으며 통합 후 다시 검사한다.
 - 최종 actual-training A/B는 동일 최신 main을 양쪽에 넣고 `exactSinglePartitionRealizationProofs` 계산 방식만 바꾼다. 이전 57933f 실행은 진단 근거로만 남긴다.
+
+### LogReg worklist 최종 채택 — 검증 완료
+
+- 최신 main93706bbaa9 기준 ABBA 순차 actual multiLogReg 네 실행 PASS. 평균 analysis33.844530→28.999022초(14.32% 감소), compilation45.315991→38.767572초(14.45% 감소). 입력·fixture·image·runner hash 동일. 공유 호스트 각군2회이므로 모든 원자료와 한계를 보고서에 공개했다.
+- CP/FED 전체16계수 최대오차2.22e-16, audit/conversion 위반0. analysis fingerprint 및 시간 제외1224개 DP체크포인트 전체가 같고 최종upper122.26631334184357/lower120.54269578813249/gap1.429881%도 같다. 후보 제거·품질 저하 없이 불변 inventory 안의 증명 전파 중복을 줄였다.
+- 최신 통합 Java55클래스401건, Python27건, package PASS. baseline/candidate 독립 fixed-point9건씩 PASS. build 중 source변경0, candidate frozen main source1651개/class-resource4361개가 Maven 결과와 hash 일치. production 및 harness 최종 독립 검토 blocker0.
+- JFR evidence 검사에서 nonempty 손상 파일이 통과할 수 있다는 리뷰를 반영해 bounded jfr summary parser 성공도 필수로 했다. 실제 기록 성공과 잘린11바이트 파일 거부 smoke를 확인했다. 비프로파일 학습 경로에는 parser 호출을 추가하지 않는다.
+- 상세: [LogReg 보고서](LOGREG_PARTITION_WORKLIST_2026-10-07.md), [검증 JSON](experiments/logreg-partition-worklist-20261007/validation.json). StepLM/GLM 추가 변경은 인계 패치로 보존했으며 현재 production에 포함하지 않았다.

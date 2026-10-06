@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE = Path(__file__).resolve().parents[1] / "run_joint_boundary_e2e.py"
@@ -391,12 +392,45 @@ class JointBoundaryE2ETest(unittest.TestCase):
             missing = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
             self.assertFalse(missing["passed"])
             self.assertFalse(missing["jfrProfilePassed"])
+            self.assertIn("missing", missing["jfrProfile"]["parserError"])
+            (case_dir / "fed.jfr").write_bytes(b"")
+            with mock.patch.object(runner.subprocess, "run") as parser:
+                empty = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(empty["passed"])
+            self.assertIn("empty", empty["jfrProfile"]["parserError"])
+            parser.assert_not_called()
             (case_dir / "fed.jfr").write_bytes(b"FLR\x00profile")
-            present = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            with mock.patch.object(
+                    runner.subprocess, "run",
+                    return_value=runner.subprocess.CompletedProcess(
+                        ["jfr", "summary"], 1, stdout="", stderr="not a valid JFR file")) as parser:
+                rejected = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(rejected["passed"])
+            self.assertFalse(rejected["jfrProfile"]["parserPassed"])
+            self.assertIn("not a valid JFR", rejected["jfrProfile"]["parserError"])
+            self.assertEqual(["jfr", "summary", str(case_dir / "fed.jfr")],
+                             parser.call_args.args[0])
+            self.assertEqual(runner.JFR_SUMMARY_TIMEOUT_SECONDS,
+                             parser.call_args.kwargs["timeout"])
+            with mock.patch.object(
+                    runner.subprocess, "run",
+                    return_value=runner.subprocess.CompletedProcess(
+                        ["jfr", "summary"], 0, stdout="Version: 2.1\n", stderr="")) as parser:
+                profile = runner.jfr_profile_manifest((case,), True, 300, root)
+                present = runner.evaluate(
+                    root, 0, (case,), profile_jfr=True,
+                    jfr_profile_evidence=profile)["cases"][0]
+            parser.assert_called_once()
             self.assertTrue(present["passed"])
             self.assertTrue(present["jfrProfilePassed"])
+            self.assertTrue(present["jfrProfile"]["parserPassed"])
+            self.assertIsNone(present["jfrProfile"]["parserError"])
             self.assertEqual(11, present["jfrProfile"]["size"])
             self.assertIsNotNone(present["jfrProfile"]["sha256"])
+            with mock.patch.object(runner.subprocess, "run", side_effect=FileNotFoundError("jfr")):
+                unavailable = runner.evaluate(root, 0, (case,), profile_jfr=True)["cases"][0]
+            self.assertFalse(unavailable["passed"])
+            self.assertIn("unavailable", unavailable["jfrProfile"]["parserError"])
 
     def test_marker_comparison_requires_finite_complete_fingerprint(self):
         expected = {"SUM": 1.0, "NORM2": 2.0, "ROWS": 3.0, "COLS": 1.0}

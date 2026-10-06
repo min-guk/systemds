@@ -33,6 +33,7 @@ DEFAULT_TEST_SOURCES = REPO_ROOT / "src/test/java"
 DEFAULT_OUTPUT_ROOT = Path(
     "/grid/3/cofee-lm-sweep-mchoi-20260914/joint-boundary-e2e-20261006")
 DEFAULT_STAGE_ROOT = REPO_ROOT / "target/joint-boundary-e2e-runtime"
+JFR_SUMMARY_TIMEOUT_SECONDS = 15
 WORKER_PORT = 13000
 POOL_A_PORT = 13001
 POOL_B_PORT = 13002
@@ -590,14 +591,48 @@ def jfr_profile_manifest(selected: tuple[Case, ...], enabled: bool,
             path = evidence_root / relative if evidence_root is not None else None
             entry: dict[str, object] = {"path": str(relative)}
             if path is not None:
-                entry.update({"exists": path.is_file(),
-                              "size": path.stat().st_size if path.is_file() else 0,
-                              "sha256": sha256(path) if path.is_file() else None})
+                entry.update(jfr_file_evidence(path))
             files[case.name] = entry
     return {"enabled": enabled, "recordProfile": enabled,
             "scope": "fed-coordinator-only", "stackDepth": 256,
             "settings": "profile", "durationSeconds": case_timeout_seconds - 1,
             "files": files}
+
+
+def jfr_file_evidence(path: Path) -> dict[str, object]:
+    exists = path.is_file()
+    size = path.stat().st_size if exists else 0
+    evidence: dict[str, object] = {
+        "exists": exists,
+        "size": size,
+        "sha256": sha256(path) if exists else None,
+        "parserPassed": False,
+        "parserReturncode": None,
+        "parserError": None,
+    }
+    if not exists:
+        evidence["parserError"] = "JFR recording is missing"
+        return evidence
+    if size == 0:
+        evidence["parserError"] = "JFR recording is empty"
+        return evidence
+    try:
+        parsed = subprocess.run(
+            ["jfr", "summary", str(path)], capture_output=True, text=True,
+            timeout=JFR_SUMMARY_TIMEOUT_SECONDS, check=False)
+        evidence["parserReturncode"] = parsed.returncode
+        evidence["parserPassed"] = parsed.returncode == 0
+        if parsed.returncode != 0:
+            diagnostic = (parsed.stderr or parsed.stdout or "jfr summary failed").strip()
+            evidence["parserError"] = diagnostic[:2000]
+    except FileNotFoundError as exc:
+        evidence["parserError"] = f"JFR parser is unavailable: {exc}"
+    except subprocess.TimeoutExpired:
+        evidence["parserError"] = (
+            f"jfr summary exceeded {JFR_SUMMARY_TIMEOUT_SECONDS} seconds")
+    except OSError as exc:
+        evidence["parserError"] = f"JFR parser failed: {exc}"
+    return evidence
 
 
 def markers(path: Path) -> dict[str, float]:
@@ -738,18 +773,21 @@ def action_diagnostics(log: Path, audit_rows: list[dict]) -> list[str]:
 def evaluate(run: Path, container_returncode: int,
              selected: tuple[Case, ...] | None = None,
              profile_jfr: bool = False,
-             case_timeout_seconds: int = 300) -> dict:
+             case_timeout_seconds: int = 300,
+             jfr_profile_evidence: dict[str, object] | None = None) -> dict:
     results: list[dict] = []
     all_frontiers: list[dict] = []
     all_actions: list[str] = []
     required_action_cases: dict[str, bool] = {}
     selected_cases = selected if selected is not None else default_cases()
     for case in selected_cases:
-        jfr_evidence = jfr_profile_manifest(
-            (case,), profile_jfr, case_timeout_seconds, run)["files"].get(case.name)
+        profile_files = (jfr_profile_evidence or {}).get("files", {})
+        jfr_evidence = (profile_files.get(case.name) if profile_jfr and profile_files
+                        else jfr_profile_manifest(
+                            (case,), profile_jfr, case_timeout_seconds, run)["files"].get(case.name))
         jfr_passed = (not profile_jfr or bool(
             jfr_evidence and jfr_evidence["exists"] and jfr_evidence["size"] > 0
-            and jfr_evidence["sha256"]))
+            and jfr_evidence["sha256"] and jfr_evidence["parserPassed"]))
         fed_log = run / "cases" / case.name / "fed.log"
         fed_rc = read_rc(run / "cases" / case.name / "fed.rc")
         audit_rows, audit_errors = read_audits(run / "audit" / f"{case.name}-fed")
@@ -1032,7 +1070,7 @@ def main(argv: list[str] | None = None) -> int:
         selected, args.profile_jfr, args.case_timeout_seconds, run)
     write_json(run / "manifest.json", manifest)
     result = evaluate(run, completed.returncode, selected, args.profile_jfr,
-                      args.case_timeout_seconds)
+                      args.case_timeout_seconds, manifest["jfrProfile"])
     result["run"] = str(run)
     result["image"] = inspected
     write_json(run / "result.json", result)
