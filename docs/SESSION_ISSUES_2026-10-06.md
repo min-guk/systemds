@@ -245,3 +245,51 @@
 - **최종 검증 결과**: 최신 main 통합 후 대상 Java 82개와 package 검사 10개가 실패/오류/제외 없이 통과했다. Python 실행·분석 회귀 19개, Python compile, shell syntax, diff 검사도 통과했다. 독립 코드 검토 승인. Docker wrapper로 logreg/GNMF × baseline/local_only 4개 정규 compile/lowering audit를 실행해 전부 성공했고, 동 workload의 비용 bits·플랜 fingerprint·lower/upper·종료 이유가 동일했다. 결과는 새로운 성능 비교로 해석하지 않는다.
 - **증거/산출물**: `docs/pruning-factorial-20261006/removal-validation.json`, home 실험 root의 `pruning-delete-main-tests-final.log`, `pruning-delete-main-package.log`, `pruning-deletion-main-v1/`. 최종 JAR SHA `58c889c77fb9d6dcd2ba54659a9410b608303d1f594b542eca7447239f594dc1`. clean build의 enum은 BASELINE/LOCAL_ONLY만 포함하고 삭제된 GLOBAL 내부 class는 없다. 측정 시점의 production source와 최종 source hash가 동일하다. 기존 ablation 원시 자료와 독립적인 새 보존본을 생성한다.
 - **잔여 이슈/위험**: 기존 unknown-shape golden mismatch는 별도 미해결로 유지한다. 실제 training runtime은 실행하지 않았다. 이번 삭제는 기본 local-only의 동작을 유지하며, 더 이상 지원하지 않는 D/S/global/과거 local property를 사용한 외부 명령은 명시적 설정 오류를 받는다. 원래 의미를 바꿔 조용히 실행하지 않는다.
+
+## Unknown-shape golden 불일치 — 원인 조사 기록 (후속 테스트 수정은 아래 참조)
+
+- **요청/범위**: `EarlyPrivacyPruningLegalSpaceParityTest.unknownShapeKeepsSafeAggregateAndCenteringAlternatives`의 기존 불일치 원인만 조사했다. production 코드, 테스트 및 golden은 변경하지 않았다. 아래 결과가 앞선 항목들의 “golden 원인 미해결” 상태를 대체한다. 테스트 기준의 갱신은 이번 범위에 포함하지 않는다.
+- **환경/조건**: Java 17, Maven 3.9.7. DML은 ROW worker 2개의 `A`에 `PrivateAggregation`을 부여하고 `colMean=colMeans(A); X=A-colMean; print(sum(X));`를 분석한다. HOP 생성 후 source `A`의 열 크기만 `-1`로 설정한다. worker를 실행하지 않는 기존 unit fixture이며 runtime/성능 실험은 수행하지 않았다.
+- **관측 증상 — Evidence**: 기대 SHA256은 `2bded4649153d1e1f4542c78d3e5862c19e3fa6fb7c52a00f96fad499050d3d0`, 관측값은 `ff0e870b4afd1d7ebb1708ea4b0c21fa99345dd369d91d1b8f5a65d2e68451b7`다. 해시 검사에 앞선 unknown source width, aggregate `FED/LOUT/ROW`, centering `FED/FOUT/ROW`, 반복 컴파일의 결정성 검사는 통과했다.
+
+| 독립 checkout | 대상 테스트 | 전체 snapshot 해시 |
+| --- | --- | --- |
+| 변경 직전 `adaebee9cc` | 1건 통과 | `2bded464…` — 기존 golden과 동일 |
+| 바로 다음 `3d0d683c1b` | golden 비교 1건 실패 | `ff0e870b…` |
+| 현재 `58145e7366` | golden 비교 1건 실패 | `ff0e870b…` — 변경 직후와 원문 전체 동일 |
+
+- **원인 — Evidence**: `3d0d683c1b` (`fix(fedplanner): allow one-time loop entry materialization`)의 `PlacementRelationClosure.bindDerivedFoutRealizations` 변경이다. derived FOUT 출력의 durable anchor ID를 `native-output:<producer occurrence>`에서 `materialized-output:SHA256(action.normalizedSignature())`로 바꿨다. 이 공용 처리는 루프가 없는 해당 fixture에도 적용된다. 테스트 파일과 `semanticSnapshot` 구현은 세 checkout에서 byte 단위로 동일하다.
+- **정확한 차이 — Evidence**: 52줄 snapshot 중 41, 43번째 AVAILABLE 행만 다르다. 하나는 `colMean`의 derived `FED/FOUT/BROADCAST` realization, 다른 하나는 `X=A-colMean`이 그 realization을 참조하는 input binding이다. 두 위치의 동일 anchor ID와 이를 포함하는 직렬화 길이 prefix만 바뀌었다. 새 ID는 `materialized-output:182437269d052d1054f017c135a2a5cc6b6b5bc82b7d0bade415804154931fae`다.
+- **후보 보존 — Evidence**: NODE 22개, AVAILABLE rule row 23개, relocation 6개, derived FOUT action 1개가 모두 동일하다. 노드별 실행·출력·FType·shape 조건, rule key, worker/range, emission, support/proof 및 action은 anchor 이름의 일대일 대응을 제외하면 같으며 순서도 같다. 진단 스크립트가 **그 ID 하나와 두 참조만 치환하고 중첩 길이를 재계산했을 때, 변경 전 snapshot 전체가 변경 후 snapshot과 byte 단위로 같음**을 assert한다. 후보 수만 비교하거나 다른 필드를 삭제한 검사가 아니다.
+- **물리 배치 — Evidence**: 해당 anchor는 BROADCAST이며 두 worker `localhost:1234/X1`, `localhost:1235/X2` 모두 `[0,0] → [1,2]`를 유지한다. fixture는 source 폭만 뒤늦게 unknown으로 만들므로 `colMean`의 알려진 출력 geometry가 남는다. `PlacementIdentity.samePhysicalLayout`은 FType와 partitions로 비교하고 placement ID는 비교하지 않는다.
+- **pruning 대조 — Evidence**: 기존 `UnknownWidthPruningProbe`를 재사용해 세 revision 각각 early pruning on/off를 실행했다. 각 revision에서 on/off snapshot 전체가 동일하다. 따라서 이 fixture의 불일치를 early privacy pruning이나 이후 D/S/global/local 변경으로 설명할 근거는 없다. 같은 커밋의 binary BROADCAST 규칙 확장도 이 snapshot에 후보를 추가·삭제하지 않았다.
+- **판정 — Inference, 높은 확신**: 이 fixture에서는 합법 후보 집합의 축소/확장이 아니라 **materialization 식별자 체계 변경에 golden이 뒤따르지 않은 것**이다. action별 ID는 같은 물리 배치를 만들더라도 업로드를 허용하는 anchor owner·scope·source 등 선택 근거가 다른 작업을 구별한다. 단순히 모든 ID를 무시하도록 golden 검사를 약화하면 다른 회귀를 놓칠 수 있으므로, 이번 이름 치환은 원인 검증용으로만 사용했다.
+- **의사결정 근거/수정 파일**: oracle, planner, runtime 및 golden을 수정하지 않았다. 이 문서에 원인·재현 근거만 추가했다. 진단 소스·snapshot·로그는 ignored `.omx/unknown-shape-golden-20261006/`에 보존했다.
+
+재현 명령은 각 revision의 checkout에서 동일하다.
+
+```bash
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+  /home/hadoop/apache-maven-3.9.7/bin/mvn test \
+  -Djacoco.skip=true -Dtest-forkCount=1 -Dtest-perCoreThreadCount=false \
+  '-Dtest=EarlyPrivacyPruningLegalSpaceParityTest#unknownShapeKeepsSafeAggregateAndCenteringAlternatives'
+
+python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
+```
+
+- **검증 자료**: [비교 결과](../.omx/unknown-shape-golden-20261006/comparison.json), [검증 스크립트](../.omx/unknown-shape-golden-20261006/compare_snapshots.py), [원문 diff](../.omx/unknown-shape-golden-20261006/before-current.diff), [revision/fixture SHA](../.omx/unknown-shape-golden-20261006/revisions.json). 같은 디렉터리의 `before/after/current`에 early on/off 전체 snapshot과 probe 로그를 보존했다. `before-loop-entry-test.log`, `after-loop-entry-test.log`, `current-test.log`가 fresh Maven 결과다. 역사적 checkout은 `/home/mchoi/w1357-unknown-shape-audit-20261006/{before-loop-entry,after-loop-entry}`에 있다.
+- **잔여 이슈/한계**: 원인 조사는 완료했으나 기존 golden을 유지했으므로 현재 테스트의 hash assertion 실패는 그대로다. 이 fixture의 후보 보존을 입증한 것이며 모든 unknown-shape workload 또는 runtime 실행의 완전성을 주장하지 않는다.
+- **잠재 회귀 위험/감지**: production 변경이 없어 이번 조사로 실행 동작의 회귀를 만들지 않는다. 이후 테스트 기준을 정비할 때는 단순 hash 교체 외에 action별 identity 구별과 정확한 support 참조의 보존을 검증해야 한다. 이번 진단의 특정 ID 치환을 일반적인 ID 무시 규칙으로 사용하지 않는다.
+
+### Unknown-shape golden 및 구조 검증 보강 — 해결
+
+- **요청/문제**: 원인 확인 후 사용자가 안전한 테스트 수정을 요청했다. 원인 조사에서 입증한 현재 식별자 체계를 반영하면서, 단순 hash 교체가 후보나 action authority 손실을 가리지 않도록 한다.
+- **변경/근거**: unknown-width golden 하나만 검증된 `ff0e870b…`로 갱신하고, 변경을 도입한 `3d0d683c1b` 및 직전 비교 revision을 주석에 기록했다. 다른 세 golden과 `semanticSnapshot` 구현은 그대로다. ID 정규화/제거, 예외 무시, 테스트 제외를 추가하지 않았다.
+- **구조 검증**: `colMean`의 단일 derived upload, ROW 실행, 작업 signature에 결합된 출력 ID, 두 worker의 정확한 BROADCAST 1×2 범위, 모든 support clause의 해당 작업 proof를 검사한다. centering의 오른쪽 입력은 정확한 uploaded realization과 producer value version을 참조하고 BROADCAST relocation을 사용해야 한다. 기존 same-row LOUT source 검사도 이 fixture에 적용했다.
+- **pruning 검증**: 별도의 동일 DML 분석에서 early privacy pruning을 끄고, 기본 분석과 전체 semantic snapshot의 byte 동일성을 검사한다. 기존 재컴파일 결정성 및 full golden 검사를 함께 유지했다.
+- **검사 작성 중 확인**: 첫 assertion은 centering의 입력 경로를 DIRECT로 가정해 실패했다. 실제 support clause를 추출해 LOUT-origin relocation과 derived-FOUT-origin relocation이 함께 존재함을 확인했다. derived-FOUT 경로에 대한 검사를 실제 RELOCATION 계약과 exact source authority로 수정했다. production 후보나 경로는 바꾸지 않았다.
+- **최종 검증**: Java 17 Maven test에서 `EarlyPrivacyPruningLegalSpaceParityTest` 4건 및 `EarlyPrivacyGenerationWorkTest`, `CandidatePrivacyInputPruningTest`, `DerivedFoutMaterializationAuthorityTest`, `PlacementRealizationAuthorityTest`, `MaterializedOutputLayoutTest`를 포함해 **31건 통과, 실패/오류/제외 0**. 독립 diff 검토와 `git diff --check`도 통과했다.
+- **음성 대조**: 수정된 테스트 class만 이전 `adaebee9cc`의 production/test classpath 위에 올려 JUnit으로 실행했다. 다른 3건은 통과하고 unknown-width 1건은 **golden 비교 전** 새 action-ID assertion에서 예상대로 실패했다. 실행에는 Maven과 동일하게 `--add-modules=jdk.incubator.vector`가 필요하며 이를 빠뜨린 첫 진단 실행의 환경 오류는 보완 후 재검증했다. 이 대조는 과거 구현이 새 식별자 계약을 만족하지 않음을 검사하며, 과거 구현 자체가 잘못됐다고 주장하는 것은 아니다.
+- **수정 파일/의사결정 근거**: `src/test/java/org/apache/sysds/hops/fedplanner/placement/EarlyPrivacyPruningLegalSpaceParityTest.java`와 이 문서. 원인은 snapshot이 기록하는 identity 계약의 의도된 변경이므로 테스트만 보강했다. production oracle/planner/runtime 및 비용 모델 변경은 없다.
+- **재현/증거**: 앞선 Maven 명령의 `-Dtest`에 위 6개 클래스명을 쉼표로 연결한다. [검증 결과](../.omx/unknown-shape-golden-20261006/test-fix/verification.json), [31건 실행 로그](../.omx/unknown-shape-golden-20261006/test-fix/golden-test-fix-final.log), [이전 구현 음성 대조](../.omx/unknown-shape-golden-20261006/test-fix/golden-test-legacy-negative-control-final.log). 이전 원인 조사 snapshot과 로그는 그대로 보존했다.
+- **잔여 이슈/회귀 위험**: 요청된 golden 불일치는 해결됐다. 이 검증은 해당 fixture와 관련 unit 계약을 대상으로 하며 전체 ML training runtime 검증을 대신하지 않는다. 이후 식별자 계약의 의도된 변경도 테스트 실패를 일으키므로, 다시 전체 snapshot 차이를 확인한 뒤 기준을 갱신해야 한다. 명시적인 worker/range·proof·참조·pruning parity 검사로 후보 손실을 감지한다.
