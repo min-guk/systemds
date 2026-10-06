@@ -399,3 +399,15 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **수정 범위/판단**: source-grounding 변경은 production 2파일, 해당 회귀/보고서뿐이다. 최신 main의 새로운 VALUE_MAP 표현에 맞춘 일반 oracle 수정은 별도 후속 범위로 남긴다. 기존 테스트 실패를 통과로 보고하지 않는다.
 - **새 main 기준 oracle**: loop-entry 32,928 raw / 292 admitted / 10 physical 조합 PASS. 이전 29,400/280/7은 과거 baseline에 대한 기록이다. 함수/joint 경계, 비용, Native, undefined-input 및 실제 loop 실행 회귀 포함. package PASS.
 - **잔여 이슈/잠재 위험**: 위 네 upstream 테스트 기대값 불일치가 남는다. 별도 후속 수정 시 VALUE_MAP의 선택된 입력 binding으로 map을 해석하고 독립 oracle 공간을 갱신해야 하며, null anchor를 임의의 map으로 바꾸어 통과시키면 안 된다. 검증 로그: `.omx/structural-grounding-evidence/main-integration-*`, `main-baseline-*.log`.
+
+### main 통합 중 발견한 pre-privacy replay 인덱스 오류 수정
+
+- **문제/원인**: 최신 unmodified main `49509ab7f8` 및 source-grounding 통합본 모두 logreg Docker compile에서 `closePrePrivacyValueMaps:899`의 `Index 756 out of bounds for length 756` 오류. old fact list 크기로 줄어든 replay fact list를 위치별 접근했다.
+- **해결/근거**: 이미 사용하는 `changedCandidateOccurrences(before, after)`로 변경된 owner를 계산한다. 추가/삭제/재정렬을 의미 기준으로 비교하고 기존 replay.changedOrdinals의 union도 유지한다. 후보를 버리는 guard/fallback 없이 closure 갱신 추적을 바로잡는다.
+- **수정 파일**: `PlacementRelationClosure.java`, `DirectedDirectClosureDirtyConeTest.java`. source-grounding 제거와 별도 커밋으로 구분한다.
+- **검증**: shrink/reorder helper 계약을 포함한 focused class 22 tests PASS, 이어서 관련 16 classes 134/134 PASS(오류/skip 0), 독립 설계 검토 CLEAR. helper 시험만으로 기존 호출부의 red/green을 주장하지 않으며, 실제 Docker compile 재실행으로 확인한다.
+- **잠재 회귀/잔여 문제**: owner identity와 전체 사실 집합의 의미를 보존해야 한다. 기존 네 VALUE_MAP oracle 기대값 불일치는 별도 미해결이며 이 수정으로 완화/제외하지 않는다. baseline Docker 증거 `.omx/structural-grounding-evidence/main-baseline-docker.log`; 수정 전 통합본 `main-integration-docker.log`.
+
+- **수정본 최종 Docker runtime**: `joint_loop_toggle` 및 `joint_function_calls` 모두 PASS, CP/FED 숫자 fingerprint 일치, model-proof preflight PASS, runtime conversion 위반 0. 증거 `/grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006/grounding-main-final-20261006/result.json`. Package PASS. 큰 logreg compile은 인덱스 오류를 넘었으나 이후 cost surface에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. factor 한도나 후보 공간을 변경해 우회하지 않으며 기준 빌드 비교로 귀속을 확인한다.
+
+- **최종 귀속 확인**: 최신 main에 인덱스 수정만 적용한 기준 빌드도 같은 cost-surface 검증 지점에서 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. 동일 Docker/input/profile, 공통 replay 수정, 차이는 NativePlacementContinuity/SearchSpaceMetrics 두 파일뿐임을 manifest로 확인했다. 기존 인덱스 오류는 양쪽에서 제거됐으며 큰 모델 한계는 upstream 후속 과제로 남긴다. 작은 loop/function Docker runtime 성공과 큰 logreg compile 실패를 구분한다. 컨테이너 cleanup 완료, 최종 source hash 일치. 증거 `main-final-docker-attribution.json`.

@@ -86,3 +86,24 @@ Integrated Java verification: **36 classes, 329 tests: 317 passed, 8 existing sk
 - `IndependentCompletePlacementSpaceTest` methods `privateExactHardModelMatchesIndependentCompleteUniverse`, `privateAggregateExactHardModelMatchesIndependentCompleteUniverse`, and `deletingOneAdmittedModelRowFailsCompleteness`: `geometry(receipt.provenWorkerPool())` assumes an attached exact anchor, while upstream VALUE_MAP receipts can carry their map through selected input bindings. All three fail at the same assertion on both builds. This oracle was not weakened or disabled.
 
 The updated upstream loop-entry oracle passes with **32,928 raw assignments, 292 admitted assignments, ten physical combinations**; upstream intentionally added body-normalization alternatives. The older seven-combination result above belongs only to the original baseline. New joint/function boundary, map, cost and source-removal regressions pass. Packaging (`mvn -q -DskipTests package`) and whitespace validation pass. Logs: `main-integration-tests.log`, `main-integration-summary.json`, `main-baseline-*.log`, `main-integration-package.log` under the same evidence directory. The four inherited oracle failures remain follow-up work for the joint-boundary changes; no production fix or test skip was introduced for them in this source-grounding commit.
+
+## Separate integration repair: replay fact-list resizing
+
+The newer unmodified `49509ab7f8` fails the same logreg Docker compile with `ArrayIndexOutOfBoundsException: Index 756 out of bounds for length 756` in `closePrePrivacyValueMaps`. The source-grounding integration fails identically before this repair. Frozen roots are `...-docker-main-baseline` and `...-docker-main`. This is an additional upstream production defect, distinct from the four stale test expectations above.
+
+A separate small fix in `PlacementRelationClosure.java` replaces positional old/new fact-list comparison with the existing `changedCandidateOccurrences` helper. It reports changed owners for additions, removals and reordered facts while preserving the existing changed-ordinal union. No candidate is skipped to avoid the error. `DirectedDirectClosureDirtyConeTest` adds a shrinking/reordered-list contract test; it validates the replacement helper semantics, while the actual call-site regression is established by the Docker failure and rerun. Independent review: CLEAR.
+
+After this repair, the 16 affected integration test classes pass **134/134**, with no errors or skips (`main-replay-fix-tests.log`, `main-replay-fix-test-summary.json`). This focused rerun does not erase the four pre-existing oracle failures documented above.
+
+Final integrated Docker runtime validation passes for `joint_loop_toggle` and `joint_function_calls`: both CP and federated numeric fingerprints match, model-proof preflight passes, and runtime conversion violations are zero. Evidence: `/grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006/grounding-main-final-20261006/result.json`. Command:
+
+```sh
+bash scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e \
+  --run-id grounding-main-final-20261006 \
+  --output-root /grid/3/cofee-lm-sweep-mchoi-20260914/grounding-main-joint-20261006 \
+  --case joint_loop_toggle --case joint_function_calls
+```
+
+The large logreg compile now passes the repaired replay stage but reports `EXACT_VE_FACTOR_CELL_OVERFLOW` when constructing its cost surface. This run is a failure, not a passing full-workload compile. Its baseline attribution is recorded below. Neither the factor limit nor legal candidate space was reduced to bypass it.
+
+Attribution complete: latest main **with only the replay-index repair** also fails logreg with `EXACT_VE_FACTOR_CELL_OVERFLOW` at the same cost-surface validation site. Both repaired runs pass the former index-error location. Manifest comparison confirms identical non-code inputs and identical replay repair; the only production source differences are NativePlacementContinuity and SearchSpaceMetrics. Thus this is an inherited large-model limitation, not a newly observed source-grounding regression. The experiment does not establish a performance speedup or successful large logreg compile on the new main. Both containers were cleaned up. Evidence: `main-final-docker-attribution.json`, `main-baseline-replay-fixed-docker.log`, `main-replay-fix-docker.log`; frozen roots end in `-docker-main-baseline-fixed` and `-docker-main-fixed`. The final production source hashes match the candidate Docker manifest.
