@@ -1,0 +1,85 @@
+{
+  "additional_nary_support_default": false,
+  "default": "LOCAL_ONLY",
+  "docker_new_samples": 110,
+  "dominance_default": false,
+  "final_jar_sha256": "4894a32e4fbf0ff18f9a1c23f381884fd7d60160d6c978fa7b718af0764fd4ac",
+  "global_implemented": false,
+  "head": "3d0d683c1bca099f004edf9105f5387369b4abea",
+  "java_tests": [
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "CostBasedPruningTest",
+      "skipped": 0,
+      "tests": 12
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "PruningAblationTest",
+      "skipped": 0,
+      "tests": 3
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "BoundaryPruningTest",
+      "skipped": 0,
+      "tests": 6
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "IncrementalBoundaryMessageTest",
+      "skipped": 0,
+      "tests": 15
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "ExactPhysicalReducedSolverTest",
+      "skipped": 0,
+      "tests": 27
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "IncrementalRegionalOptimizerTest",
+      "skipped": 0,
+      "tests": 13
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "IncrementalRegionalSeedTest",
+      "skipped": 0,
+      "tests": 4
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "UserInterfaceTest",
+      "skipped": 0,
+      "tests": 3
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "StartupTest",
+      "skipped": 0,
+      "tests": 7
+    }
+  ],
+  "known_unresolved_test": "EarlyPrivacyPruningLegalSpaceParityTest.unknownShapeKeepsSafeAggregateAndCenteringAlternatives",
+  "local_default": true,
+  "python_tests": 19,
+  "raw_samples_validated": 200,
+  "reused_samples": 60,
+  "selected_samples": 170,
+  "source_changes_since_bridge": [
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PruningAblation.java"
+  ],
+  "source_diff_since_bridge": "--- measured-bridge\n+++ final-default\n@@ -1,7 +1,7 @@\n /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */\n package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;\n \n-/** Explicit sequential feature gates for pruning ablation experiments. */\n+/** Production pruning defaults and explicit feature gates for ablation experiments. */\n final class PruningAblation {\n \tstatic final String PROPERTY = \"sysds.fedplanner.pruning.ablation\";\n \n@@ -40,7 +40,7 @@\n \tstatic Options current() {\n \t\tString configured = System.getProperty(PROPERTY);\n \t\tif(configured == null)\n-\t\t\treturn new Options(false, Variant.LOCAL);\n+\t\t\treturn new Options(false, Variant.LOCAL_ONLY);\n \t\ttry {\n \t\t\treturn new Options(true, Variant.valueOf(configured.trim().toUpperCase(java.util.Locale.ROOT)));\n \t\t}\n",
+  "stale_global_classes": 0
+}

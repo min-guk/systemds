@@ -20,7 +20,7 @@ public class LocalPhysicalOptimizerIncrementalTraceTest {
 	private static final List<String> FIELDS = List.of("phase", "merges", "clusters", "lower", "upper",
 		"relativeGap", "elapsedNanos", "dpNanos", "scoringNanos", "validationNanos", "assignments",
 		"retainedSlots", "improvements", "resourceRejected", "internalDecisions", "plannerElapsedNanos",
-		"separateGlobalCalls", "scope");
+		"scope");
 
 	@Test
 	public void checkpointTracePreservesSchemaAndRoundTripNumbers() {
@@ -75,7 +75,7 @@ public class LocalPhysicalOptimizerIncrementalTraceTest {
 			"phase=%s merges=%d clusters=%d lower=%.17g upper=%.17g relativeGap=%.17g "
 				+ "elapsedNanos=%d dpNanos=%d scoringNanos=%d validationNanos=%d assignments=%d "
 				+ "retainedSlots=%d improvements=%d resourceRejected=%d internalDecisions=%d "
-				+ "plannerElapsedNanos=%d separateGlobalCalls=0 scope=encoded-model",
+				+ "plannerElapsedNanos=%d scope=encoded-model",
 			cp.phase(), cp.merges(), cp.activeClusters(), cp.lower(), cp.upper(), cp.relativeGap(),
 			cp.elapsedNanos(), cp.dpNanos(), cp.scoringNanos(), cp.validationNanos(), cp.assignments(),
 			cp.retainedSlots(), cp.improvements(), cp.resourceRejected(), cp.internalDecisions(),

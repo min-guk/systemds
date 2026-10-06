@@ -6,6 +6,9 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -53,7 +56,7 @@ final class LocalPhysicalOptimizer {
 			.append(" resourceRejected=").append(cp.resourceRejected())
 			.append(" internalDecisions=").append(cp.internalDecisions())
 			.append(" plannerElapsedNanos=").append(plannerElapsedNanos)
-			.append(" separateGlobalCalls=0 scope=encoded-model")
+			.append(" scope=encoded-model")
 			.toString();
 	}
 
@@ -71,6 +74,7 @@ final class LocalPhysicalOptimizer {
 			LocalCategoricalOptimizer.configuredCompaction());
 		Seed seed = regionalSeed(model, surface, hardFactors, shared, false);
 		LocalCategoricalOptimizer.Result local = seed.local();
+		PruningAblation.Options ablation = PruningAblation.current();
 
 		long canonicalBits = surface.evaluateCanonical(local.assignmentInVariableOrder());
 		double canonicalObjective = Double.longBitsToDouble(canonicalBits);
@@ -86,15 +90,20 @@ final class LocalPhysicalOptimizer {
 				model.analysis().analysisFingerprint()));
 
 		var root = problem.reducedRoot(limits);
+		ExactCategoricalSolver.BoundaryMergeCounters mergeCounters = ablation.explicit()
+			? new ExactCategoricalSolver.BoundaryMergeCounters() : null;
 		var incremental = IncrementalRegionalOptimizer.optimize(problem, root,
 			local.assignmentInVariableOrder(), limits, IncrementalRegionalOptimizer.Options.configured(), cp -> {
 				if(FederatedPlannerTrace.isEnabled())
 					FederatedPlannerTrace.logGlobal("DP-IncrementalRegional",
 						incrementalCheckpointTrace(cp, FederatedPlannerTrace.plannerElapsedNanos()));
-			});
+			}, mergeCounters);
 		List<Integer> selectedAssignment = incremental.assignment();
 		canonicalObjective = incremental.upper();
 		canonicalBits = Double.doubleToRawLongBits(canonicalObjective);
+		if(ablation.explicit())
+			traceAblationReceipt(ablation, model, selectedAssignment, canonicalBits, incremental,
+				problem.domainValues(), problem.factorCells(), root, mergeCounters);
 
 		LocalCategoricalOptimizer.Statistics statistics = local.statistics();
 		ExactCategoricalSolver.Statistics solverStatistics = new ExactCategoricalSolver.Statistics(
@@ -107,6 +116,66 @@ final class LocalPhysicalOptimizer {
 		ExactPhysicalOptimizer.Result physical = new ExactPhysicalOptimizer.Result(
 			solverResult, canonicalBits, surface.contributionFingerprint());
 		return new Result(physical, statistics);
+	}
+
+	private static void traceAblationReceipt(PruningAblation.Options ablation,
+		ExactPhysicalModel model, List<Integer> selectedAssignment, long objectiveBits,
+		IncrementalRegionalOptimizer.Result result, long rawValues, long rawCells,
+		ExactPhysicalReducedSolver.CompactModel root,
+		ExactCategoricalSolver.BoundaryMergeCounters counters) {
+		double gap = result.checkpoints().get(result.checkpoints().size() - 1).relativeGap();
+		IncrementalRegionalOptimizer.Checkpoint initial = result.checkpoints().get(0);
+		IncrementalRegionalOptimizer.Checkpoint terminal =
+			result.checkpoints().get(result.checkpoints().size() - 1);
+		String json = "{\"variant\":\"" + ablation.variant().name().toLowerCase(java.util.Locale.ROOT)
+			+ "\",\"objectiveBits\":\"" + Long.toUnsignedString(objectiveBits)
+			+ "\",\"planFingerprint\":\"" + selectedPlanFingerprint(model, selectedAssignment)
+			+ "\",\"stop\":\"" + result.stopReason() + "\",\"gap\":\"" + gap
+			+ "\",\"lower\":\"" + result.lower() + "\",\"upper\":\"" + result.upper() + "\""
+			+ ",\"rawValues\":" + rawValues + ",\"rawCells\":" + rawCells
+			+ ",\"reducedValues\":" + root.variables().stream().mapToLong(Variable::domainSize).sum()
+			+ ",\"reducedCells\":" + factorCells(root.factors())
+			+ ",\"fullChildEvaluations\":" + counters.fullChildEvaluations()
+			+ ",\"childEvaluations\":" + counters.childEvaluations()
+			+ ",\"infeasibleCuts\":" + counters.infeasibleCuts()
+			+ ",\"costCuts\":" + counters.costCuts()
+			+ ",\"initialUpperBits\":\""
+			+ Long.toUnsignedString(Double.doubleToRawLongBits(initial.upper()))
+			+ "\",\"assignments\":" + terminal.assignments()
+			+ ",\"retainedSlots\":" + terminal.retainedSlots()
+			+ ",\"merges\":" + terminal.merges() + "}";
+		System.out.println("DP-PruningAblationReceipt " + json);
+	}
+
+	private static long factorCells(List<Factor> factors) {
+		long total = 0L;
+		for(Factor factor : factors) {
+			long cells = 1L;
+			for(Variable variable : factor.scope())
+				cells = Math.multiplyExact(cells, variable.domainSize());
+			total = Math.addExact(total, cells);
+		}
+		return total;
+	}
+
+	private static String selectedPlanFingerprint(ExactPhysicalModel model,
+		List<Integer> selectedAssignment) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			for(int decision = 0; decision < model.domains().size(); decision++) {
+				DecisionDomain domain = model.domains().get(decision);
+				String item = domain.variable().key() + '\0'
+					+ domain.alternatives().get(selectedAssignment.get(decision)).normalizedSignature() + '\0';
+				digest.update(item.getBytes(StandardCharsets.UTF_8));
+			}
+			StringBuilder hex = new StringBuilder(64);
+			for(byte value : digest.digest())
+				hex.append(String.format(java.util.Locale.ROOT, "%02x", value & 0xff));
+			return hex.toString();
+		}
+		catch(NoSuchAlgorithmException impossible) {
+			throw new IllegalStateException("SHA-256 is unavailable", impossible);
+		}
 	}
 
 	private static Seed regionalSeed(ExactPhysicalModel model,

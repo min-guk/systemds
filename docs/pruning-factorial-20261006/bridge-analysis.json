@@ -1,0 +1,392 @@
+{
+  "comparison": "SL/L; same cohort, GLOBAL removed, one repetition",
+  "container_overlap": false,
+  "effects": {
+    "STEP_compatible": {
+      "analysis_seconds_change_pct": 6.186998634274654,
+      "analysis_seconds_improved": 0,
+      "full_initial_planning_seconds_change_pct": 3.5275401516909666,
+      "full_initial_planning_seconds_improved": 0,
+      "n": 1,
+      "optimizer_seconds_change_pct": 5.836398683184352,
+      "optimizer_seconds_improved": 0
+    },
+    "primary_ML9": {
+      "analysis_seconds_change_pct": 8.537709276173434,
+      "analysis_seconds_improved": 3,
+      "full_initial_planning_seconds_change_pct": 6.2764421792615765,
+      "full_initial_planning_seconds_improved": 3,
+      "n": 9,
+      "optimizer_seconds_change_pct": -0.4169997368774214,
+      "optimizer_seconds_improved": 4
+    }
+  },
+  "frozen_import_dependencies": {
+    "matrix_continuation.py": {
+      "identical_to_HEAD": true,
+      "sha256": "56983814ad6684cbba8298b8a5baddc22f9a63ff8eecd40a390a0df2cc0337ba"
+    },
+    "matrix_lifecycle.py": {
+      "identical_to_HEAD": true,
+      "sha256": "441a60644d022f88fcec7eaa90018589bdfb4667f84b2a18c151ad66ae1d0783"
+    },
+    "matrix_runtime_compare.py": {
+      "identical_to_HEAD": true,
+      "sha256": "5b090e8e31356e457028c28d199c8af38c571648f267489e2eaac93ead8c0bca"
+    }
+  },
+  "jar_sha256": "15fab31bdf9ed80279b8735a679ad5db511149ff5bd31ca590fc5fbe3c579ff9",
+  "limitation": "One contemporaneous cold-JVM repetition on a shared host; no reliable full-planning benefit or significance claim.",
+  "manifest_sha256": "00230073c2d349e5ca292f82843fc3ffd42655ba02f0094dc5ee7d5fe27b0ed0",
+  "pairs": [
+    {
+      "analysis_seconds_L": 21.391047317,
+      "analysis_seconds_SL": 21.853991254,
+      "analysis_seconds_ratio": 1.0216419481542676,
+      "bounds_equal": true,
+      "childEvaluations_L": 13514121,
+      "childEvaluations_SL": 12336822,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 29.020430476,
+      "full_initial_planning_seconds_SL": 29.8515345,
+      "full_initial_planning_seconds_ratio": 1.0286385835898377,
+      "objective_equal": true,
+      "optimizer_seconds_L": 2.378441799,
+      "optimizer_seconds_SL": 2.333288695,
+      "optimizer_seconds_ratio": 0.9810156784080298,
+      "plan_equal": true,
+      "reducedCells_L": 4934658,
+      "reducedCells_SL": 4933771,
+      "reducedValues_L": 23791,
+      "reducedValues_SL": 23770,
+      "stop_equal": true,
+      "workload": "logreg"
+    },
+    {
+      "analysis_seconds_L": 7.263908728,
+      "analysis_seconds_SL": 7.842285489,
+      "analysis_seconds_ratio": 1.0796233519249143,
+      "bounds_equal": true,
+      "childEvaluations_L": 13093221,
+      "childEvaluations_SL": 12030740,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 11.158744124,
+      "full_initial_planning_seconds_SL": 11.86059188,
+      "full_initial_planning_seconds_ratio": 1.0628966618645264,
+      "objective_equal": true,
+      "optimizer_seconds_L": 1.252640959,
+      "optimizer_seconds_SL": 1.465055508,
+      "optimizer_seconds_ratio": 1.169573370145563,
+      "plan_equal": true,
+      "reducedCells_L": 1420988,
+      "reducedCells_SL": 1419416,
+      "reducedValues_L": 9190,
+      "reducedValues_SL": 9168,
+      "stop_equal": true,
+      "workload": "l2svm"
+    },
+    {
+      "analysis_seconds_L": 1.369424737,
+      "analysis_seconds_SL": 1.255759577,
+      "analysis_seconds_ratio": 0.9169978773357007,
+      "bounds_equal": true,
+      "childEvaluations_L": 15169,
+      "childEvaluations_SL": 15169,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 2.688474088,
+      "full_initial_planning_seconds_SL": 2.430989348,
+      "full_initial_planning_seconds_ratio": 0.9042264379079261,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.132804162,
+      "optimizer_seconds_SL": 0.097422942,
+      "optimizer_seconds_ratio": 0.7335835001918087,
+      "plan_equal": true,
+      "reducedCells_L": 5204,
+      "reducedCells_SL": 5204,
+      "reducedValues_L": 385,
+      "reducedValues_SL": 385,
+      "stop_equal": true,
+      "workload": "pca"
+    },
+    {
+      "analysis_seconds_L": 2.153203063,
+      "analysis_seconds_SL": 2.439939277,
+      "analysis_seconds_ratio": 1.13316728873704,
+      "bounds_equal": true,
+      "childEvaluations_L": 0,
+      "childEvaluations_SL": 0,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 3.869336868,
+      "full_initial_planning_seconds_SL": 4.22703252,
+      "full_initial_planning_seconds_ratio": 1.0924436574541228,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.113981881,
+      "optimizer_seconds_SL": 0.103448865,
+      "optimizer_seconds_ratio": 0.9075904353605114,
+      "plan_equal": true,
+      "reducedCells_L": 3144,
+      "reducedCells_SL": 3134,
+      "reducedValues_L": 359,
+      "reducedValues_SL": 358,
+      "stop_equal": true,
+      "workload": "als"
+    },
+    {
+      "analysis_seconds_L": 3.648946651,
+      "analysis_seconds_SL": 3.140704075,
+      "analysis_seconds_ratio": 0.8607152626194972,
+      "bounds_equal": true,
+      "childEvaluations_L": 4053792,
+      "childEvaluations_SL": 4053792,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 6.477650142,
+      "full_initial_planning_seconds_SL": 5.978009433,
+      "full_initial_planning_seconds_ratio": 0.922866981382583,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.649244222,
+      "optimizer_seconds_SL": 0.70682853,
+      "optimizer_seconds_ratio": 1.0886943711606878,
+      "plan_equal": true,
+      "reducedCells_L": 52244,
+      "reducedCells_SL": 52244,
+      "reducedValues_L": 1696,
+      "reducedValues_SL": 1696,
+      "stop_equal": true,
+      "workload": "kmeans"
+    },
+    {
+      "analysis_seconds_L": 0.774732489,
+      "analysis_seconds_SL": 0.929222003,
+      "analysis_seconds_ratio": 1.199410139878618,
+      "bounds_equal": true,
+      "childEvaluations_L": 1089,
+      "childEvaluations_SL": 1089,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 1.982267252,
+      "full_initial_planning_seconds_SL": 2.319882612,
+      "full_initial_planning_seconds_ratio": 1.1703177811464949,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.083260781,
+      "optimizer_seconds_SL": 0.089435894,
+      "optimizer_seconds_ratio": 1.0741659269326334,
+      "plan_equal": true,
+      "reducedCells_L": 4758,
+      "reducedCells_SL": 4758,
+      "reducedValues_L": 208,
+      "reducedValues_SL": 208,
+      "stop_equal": true,
+      "workload": "lm"
+    },
+    {
+      "analysis_seconds_L": 43.769813013,
+      "analysis_seconds_SL": 61.461835194,
+      "analysis_seconds_ratio": 1.404206026097149,
+      "bounds_equal": true,
+      "childEvaluations_L": 0,
+      "childEvaluations_SL": 0,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 79.765356939,
+      "full_initial_planning_seconds_SL": 99.73623476,
+      "full_initial_planning_seconds_ratio": 1.250370318486415,
+      "objective_equal": true,
+      "optimizer_seconds_L": 10.187083837,
+      "optimizer_seconds_SL": 10.839103426,
+      "optimizer_seconds_ratio": 1.0640045374547553,
+      "plan_equal": true,
+      "reducedCells_L": 90431506,
+      "reducedCells_SL": 90431230,
+      "reducedValues_L": 186154,
+      "reducedValues_SL": 186147,
+      "stop_equal": true,
+      "workload": "glm"
+    },
+    {
+      "analysis_seconds_L": 1.902257874,
+      "analysis_seconds_SL": 3.07084796,
+      "analysis_seconds_ratio": 1.6143173867077918,
+      "bounds_equal": false,
+      "childEvaluations_L": 625471,
+      "childEvaluations_SL": 506391,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 3.330134899,
+      "full_initial_planning_seconds_SL": 4.875605458,
+      "full_initial_planning_seconds_ratio": 1.4640864727324068,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.256121974,
+      "optimizer_seconds_SL": 0.300628911,
+      "optimizer_seconds_ratio": 1.1737724268828258,
+      "plan_equal": true,
+      "reducedCells_L": 16201,
+      "reducedCells_SL": 16145,
+      "reducedValues_L": 579,
+      "reducedValues_SL": 575,
+      "stop_equal": true,
+      "workload": "gnmf"
+    },
+    {
+      "analysis_seconds_L": 7.513339283,
+      "analysis_seconds_SL": 5.855696253,
+      "analysis_seconds_ratio": 0.779373329545938,
+      "bounds_equal": true,
+      "childEvaluations_L": 73405,
+      "childEvaluations_SL": 73405,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 11.608390108,
+      "full_initial_planning_seconds_SL": 9.402138861,
+      "full_initial_planning_seconds_ratio": 0.8099433921091652,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.385365612,
+      "optimizer_seconds_SL": 0.332653579,
+      "optimizer_seconds_ratio": 0.8632155247936341,
+      "plan_equal": true,
+      "reducedCells_L": 21830,
+      "reducedCells_SL": 21830,
+      "reducedValues_L": 1107,
+      "reducedValues_SL": 1107,
+      "stop_equal": true,
+      "workload": "gmm"
+    },
+    {
+      "analysis_seconds_L": 10.223095743,
+      "analysis_seconds_SL": 10.855598537,
+      "analysis_seconds_ratio": 1.0618699863427465,
+      "bounds_equal": true,
+      "childEvaluations_L": 0,
+      "childEvaluations_SL": 0,
+      "cost_change_pct": 0.0,
+      "cost_ratio": 1.0,
+      "full_initial_planning_seconds_L": 14.333143983,
+      "full_initial_planning_seconds_SL": 14.838751392,
+      "full_initial_planning_seconds_ratio": 1.0352754015169097,
+      "objective_equal": true,
+      "optimizer_seconds_L": 0.35115622,
+      "optimizer_seconds_SL": 0.371651097,
+      "optimizer_seconds_ratio": 1.0583639868318435,
+      "plan_equal": true,
+      "reducedCells_L": 26043,
+      "reducedCells_SL": 26043,
+      "reducedValues_L": 1071,
+      "reducedValues_SL": 1071,
+      "stop_equal": true,
+      "workload": "steplm"
+    }
+  ],
+  "passed": 20,
+  "previous_manifest_sha256": "e415905a12a10e4ea037bf66d2293f01997979607689a4ebb316fc8a4ea0687f",
+  "production_source_changes": [
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/LocalPhysicalOptimizer.java",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PruningAblation.java",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java"
+  ],
+  "provenance": [
+    {
+      "key": "ml|logreg|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298285572977077-4cc466/result.json",
+      "sha256": "2fcbc5019df64d597897dc859e18273cc5a0c942b1fe9b08079e3df17d6cd6b3"
+    },
+    {
+      "key": "ml|logreg|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298316662536390-b6cb83/result.json",
+      "sha256": "d0cce4bb8f01868ad68e4a88f0b498da803ebdce423daf72bd639abaeea70116"
+    },
+    {
+      "key": "ml|l2svm|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298348522265397-980ab9/result.json",
+      "sha256": "c53b0f1fc64eafa255485e03b0a519e4fe02a5a0f8582e41c8672aa91274a976"
+    },
+    {
+      "key": "ml|l2svm|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298362352447031-94b71c/result.json",
+      "sha256": "7bc3b3ee0f655af395a9ba6e69b86ef3ac096aff58dd2b6c257d10a01f734fe4"
+    },
+    {
+      "key": "ml|pca|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298375634029873-6e12c1/result.json",
+      "sha256": "d48739e759d926453c62c96af4cc2ee1bd35e97f63545eb70bc035b507e6606d"
+    },
+    {
+      "key": "ml|pca|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298380331404972-028f20/result.json",
+      "sha256": "daae4a16248c2cc7c384fb2bff5a908539e3649b33319bd9d72072b0aa5e9017"
+    },
+    {
+      "key": "ml|als|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298384635107745-3d3b4b/result.json",
+      "sha256": "a9cf776f7f3349563409679dca217ca263c6aa5c383c63360464956e1afda55f"
+    },
+    {
+      "key": "ml|als|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298390728092593-be1884/result.json",
+      "sha256": "d6eeab852dc0ff154d8de463e17e7c7de95e85115991350b9b407f1d4f3372a4"
+    },
+    {
+      "key": "ml|kmeans|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298396583066730-a86d34/result.json",
+      "sha256": "4e21af09ef12acb4e5182f57e958c1b35de1af07dfc6848c820666a0a24f58d1"
+    },
+    {
+      "key": "ml|kmeans|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298405101197448-f166ed/result.json",
+      "sha256": "bf8122764ec2ccd51d0c40e1857a0282f34b9ab6683798b3e58a60a04f168aaf"
+    },
+    {
+      "key": "ml|lm|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298413107155002-d63e0c/result.json",
+      "sha256": "d6512330a42e4437d81e989f4179584dd787e9a3fb57efadbcb5b740d9a5cd86"
+    },
+    {
+      "key": "ml|lm|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298417318338753-0da98f/result.json",
+      "sha256": "fe9bfd1ecd1a75f472a306fbe4cd0aa0d1dbc640931d9e958c3cb0560a102a41"
+    },
+    {
+      "key": "ml|steplm|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298421168650594-0cda5e/result.json",
+      "sha256": "e8bf4001ee7ad1b8c045438b24a19b54f640644497ba21a2aebca66575dd7c67"
+    },
+    {
+      "key": "ml|steplm|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298439184937787-3aabd3/result.json",
+      "sha256": "d6f8a5df8225eb64ba1886e8e14c8d4b29cd8fec5ab28b96c5d026f7c70f7019"
+    },
+    {
+      "key": "ml|glm|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298458409275153-a9922a/result.json",
+      "sha256": "d6674e0a2fc03c5d6c2ec01b74e136edc1b4e1366e716ca57a36fedb5dcce987"
+    },
+    {
+      "key": "ml|glm|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298561664486557-e18d65/result.json",
+      "sha256": "e5863d2c005e61d15ca19c889656d3a840a715ece4823ddcbe4d342fe8eae8dc"
+    },
+    {
+      "key": "ml|gnmf|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298644150864398-b790de/result.json",
+      "sha256": "a96598c83860c316cb318e529f8471ae887ded91bb7080c3c2c72511b32edec3"
+    },
+    {
+      "key": "ml|gnmf|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298649542678184-cddba3/result.json",
+      "sha256": "b6fd0b92461f79cc6b7a7217d87cf1e5759af49e06bdbcc6d5c9eb5ef05b909e"
+    },
+    {
+      "key": "ml|gmm|wan_mid|w3|DP-local|support_local|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298658079487288-03d275/result.json",
+      "sha256": "66f541d14d0e8b6437af2d58da119c3166364f7ab87072fb3f384bf18bcd1784"
+    },
+    {
+      "key": "ml|gmm|wan_mid|w3|DP-local|local_only|r1",
+      "result": "/home/mchoi/w1357-pruning-ablation-20261006/support-bridge-v1/attempts/01791298672158616078-947e7d/result.json",
+      "sha256": "233e364ad14d90c271d10e1ea064b3575acb484764209803234057f43b83ec58"
+    }
+  ]
+}

@@ -87,6 +87,7 @@ final class IncrementalRegionalOptimizer {
 	private final Limits limits;
 	private final Options options;
 	private final Consumer<Checkpoint> observer;
+	private final ExactCategoricalSolver.BoundaryMergeCounters mergeCounters;
 	private final List<Node> active = new ArrayList<>();
 	private final List<Node> sealed = new ArrayList<>();
 	private final Map<Variable,Set<Node>> incidence = new LinkedHashMap<>();
@@ -101,9 +102,10 @@ final class IncrementalRegionalOptimizer {
 
 	private IncrementalRegionalOptimizer(RegionalSearchProblem problem,
 		ExactPhysicalReducedSolver.CompactModel root, List<Integer> originalSeed, Limits limits,
-		Options options, Consumer<Checkpoint> observer) {
+		Options options, Consumer<Checkpoint> observer, ExactCategoricalSolver.BoundaryMergeCounters mergeCounters) {
 		this.problem = problem; this.root = root; this.variables = root.variables();
 		this.limits = limits; this.options = options; this.observer = observer;
+		this.mergeCounters = mergeCounters;
 		for(int i=0; i<variables.size(); i++) positions.put(variables.get(i),i);
 		incumbent = IncrementalRegionalSeed.lift(root, originalSeed, limits);
 		upper = validate(incumbent);
@@ -112,7 +114,14 @@ final class IncrementalRegionalOptimizer {
 	static Result optimize(RegionalSearchProblem problem, ExactPhysicalReducedSolver.CompactModel root,
 		List<Integer> originalSeed, Limits limits,
 		Options options, Consumer<Checkpoint> observer) {
-		return new IncrementalRegionalOptimizer(problem, root, originalSeed, limits, options, observer)
+		return optimize(problem, root, originalSeed, limits, options, observer, null);
+	}
+
+	/** Optional solve-local work accounting; it does not affect the planner's resource budgets. */
+	static Result optimize(RegionalSearchProblem problem, ExactPhysicalReducedSolver.CompactModel root,
+		List<Integer> originalSeed, Limits limits, Options options, Consumer<Checkpoint> observer,
+		ExactCategoricalSolver.BoundaryMergeCounters mergeCounters) {
+		return new IncrementalRegionalOptimizer(problem, root, originalSeed, limits, options, observer, mergeCounters)
 			.run();
 	}
 
@@ -176,7 +185,7 @@ final class IncrementalRegionalOptimizer {
 			dpStarted = System.nanoTime();
 			try {
 				merged = ExactCategoricalSolver.mergeBoundary(candidate.inputs().stream().map(n -> n.message).toList(),
-					candidate.boundary(), limits, options.maximumMergeAssignments());
+					candidate.boundary(), limits, options.maximumMergeAssignments(), mergeCounters);
 			}
 			catch(IllegalArgumentException | IllegalStateException ex) {
 				if(ex.getMessage() == null || !ex.getMessage().startsWith("INCREMENTAL_MESSAGE_RESOURCE")) throw ex;
@@ -246,7 +255,7 @@ final class IncrementalRegionalOptimizer {
 						resourceRejected++; continue;
 					}
 					try { projected=ExactCategoricalSolver.mergeBoundary(List.of(node.message),boundary,limits,
-						options.maximumMergeAssignments()); }
+						options.maximumMergeAssignments(),mergeCounters); }
 					catch(IllegalArgumentException | IllegalStateException ex) {
 						if(ex.getMessage()==null || !ex.getMessage().startsWith("INCREMENTAL_MESSAGE_RESOURCE")) throw ex;
 						resourceRejected++; continue;

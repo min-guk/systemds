@@ -1,0 +1,89 @@
+{
+  "completed_utc": "2026-10-06T13:13:37.999499+00:00",
+  "base_head": "3d0d683c1bca099f004edf9105f5387369b4abea",
+  "source_files_verified": 2175,
+  "jar_sha256": "aeb0deda220ed7dc96cccd9661e96d6d7d2ca8658373d9ccb67a1e2477c007f6",
+  "java_tests": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PruningAblationTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryPruningTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CostBasedPruningTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalSeedTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+      "tests": "27",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    }
+  ],
+  "python_tests": {
+    "count": 12,
+    "failures": 0,
+    "errors": 0,
+    "log": "/home/mchoi/w1357-pruning-ablation-20261006/harness-tests-final.log"
+  },
+  "full_compile_audits": {
+    "count": 150,
+    "missing_physical_hops": 0,
+    "missing_synthetic": 0,
+    "mismatches": 0,
+    "workload_executions": 0
+  },
+  "artifact_review": {
+    "png_and_svg_generated": true,
+    "png_visually_inspected": true,
+    "independent_code_and_report_review": "approved"
+  },
+  "evidence_totals": {
+    "preserved_original_failures": 55,
+    "raw_attempts": 205,
+    "raw_failed_attempts": 55,
+    "raw_passed_attempts": 150,
+    "unique_passed_logical_keys": 150
+  },
+  "r_version": "Rscript (R) version 4.5.1 (2025-06-13)",
+  "source_sha256": {
+    "scripts/fedplanner/run_pruning_ablation.py": "609a6232d005f4a99a6c6ca026f164a9573a3ae1c293f645becb673553feff12",
+    "scripts/fedplanner/analyze_pruning_ablation.py": "82d2628fb57104b97bf3f5d3eb760b3a6ba525e220e74c8cc3268f7e6911ebfe",
+    "scripts/fedplanner/plot_pruning_ablation.R": "63bc5f83d925388b06aeeb4e53e269774603b546c8e6e0c6b8a3b192fa45c7a2"
+  },
+  "artifacts": {
+    "tables.md": "3e7078052e43215feafc5e2547181964938fa797c63f6d5ef9a420f8bb615a41",
+    "ablation.csv": "75e5249e4ab8a815530ee747fddcd87ef02faec092fe75bcfccef2eb22adbf23",
+    "latency.svg": "887b6878f8823edf3cae0fd56bf1b49a29521bce5f3489658f4b692ef7cbc633",
+    "latency.png": "17947e265fed2164c6ff67820992b1c2c6f4a7331a904a06761b648d2764ab17",
+    "analysis.json": "7af21c48777e22df604bc2fdff21705c624aaab1ee6e809f6ca06e0babaaa1b2"
+  },
+  "report_sha256": "b7d406e7eef8fe48c3ed8b5fcd5b9b176aec8a280d1c3bc5a7ff06f26336e203"
+}

@@ -102,6 +102,21 @@ final class RegionalSearchProblem {
 	List<Factor> factors() { return factors; }
 	int decisionCount() { return decisionCount; }
 
+	long domainValues() {
+		return variables.stream().mapToLong(Variable::domainSize).sum();
+	}
+
+	long factorCells() {
+		long cells = 0L;
+		for(Factor factor : factors) {
+			long factorCells = 1L;
+			for(Variable variable : factor.scope())
+				factorCells = Math.multiplyExact(factorCells, variable.domainSize());
+			cells = Math.addExact(cells, factorCells);
+		}
+		return cells;
+	}
+
 	double evaluate(List<Integer> assignment) {
 		if(assignment == null || assignment.size() != decisionCount)
 			throw new IllegalArgumentException("REGIONAL_SEARCH_ASSIGNMENT_SIZE_INVALID");

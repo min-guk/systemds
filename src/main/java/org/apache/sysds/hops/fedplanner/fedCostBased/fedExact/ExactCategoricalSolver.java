@@ -287,6 +287,17 @@ public final class ExactCategoricalSolver {
 			return result;
 		}
 
+		double[] lowerMinMarginals(Variable variable) {
+			int position = marginalPosition(variable);
+			double[] minima = new double[variable.domainSize()];
+			Arrays.fill(minima, Double.POSITIVE_INFINITY);
+			for(int cell = 0; cell < lowerValues.length; cell++) {
+				int value = (cell / strides[position]) % domains[scopeIndices[position]];
+				minima[value] = Math.min(minima[value], lowerValues[cell]);
+			}
+			return minima;
+		}
+
 		private int marginalPosition(Variable variable) {
 			int position = scope.indexOf(Objects.requireNonNull(variable, "variable"));
 			if(position < 0)
@@ -579,6 +590,12 @@ public final class ExactCategoricalSolver {
 
 	static BoundaryMessage mergeBoundary(List<BoundaryMessage> inputMessages,
 		List<Variable> outputBoundary, Limits limits, long maximumAssignments) {
+		return mergeBoundary(inputMessages, outputBoundary, limits, maximumAssignments, null);
+	}
+
+	static BoundaryMessage mergeBoundary(List<BoundaryMessage> inputMessages,
+		List<Variable> outputBoundary, Limits limits, long maximumAssignments,
+		BoundaryMergeCounters counters) {
 		Objects.requireNonNull(inputMessages, "inputMessages");
 		Objects.requireNonNull(outputBoundary, "outputBoundary");
 		Objects.requireNonNull(limits, "limits");
@@ -640,6 +657,11 @@ public final class ExactCategoricalSolver {
 		long retained = boundaryMultiply(outputCells, 4L, "merge", "retained-overflow");
 		if(retained > limits.maximumMaterializedCells())
 			throw incrementalResource("merge", "retained-cells", retained);
+		if(counters != null)
+			counters.fullChildEvaluations += unionCells * inputMessages.size();
+		boolean localPrefixCuts = PruningAblation.current().local();
+		boolean localCostCut = localPrefixCuts && inputMessages.size() > 1 && internalCells > 1
+			&& exactNonnegativeBoundarySum(inputMessages);
 
 		int cells = (int)outputCells;
 		double[] values = new double[cells];
@@ -662,13 +684,52 @@ public final class ExactCategoricalSolver {
 				int childCell = first.boundaryCellUnchecked(assignment);
 				PreciseCost candidate = first.valueAt(childCell);
 				double candidateLower = first.lowerValues[childCell];
+				if(counters != null)
+					counters.childEvaluations++;
+				boolean cut = false;
+				// Both infinities are absorbing; no unread child can restore feasibility.
+				if(localPrefixCuts && inputMessages.size() > 1
+					&& candidate.high == Double.POSITIVE_INFINITY
+					&& candidateLower == Double.POSITIVE_INFINITY) {
+					if(counters != null)
+						counters.infeasibleCuts++;
+					continue;
+				}
+				// The certificate proves exact partial sums and nonnegative unread terms.
+				// Equality is also removable because canonical enumeration keeps the first tie.
+				if(inputMessages.size() > 1 && localCostCut && candidate.compareTo(best) >= 0) {
+					if(counters != null)
+						counters.costCuts++;
+					continue;
+				}
 				for(int messageIndex = 1; messageIndex < inputMessages.size(); messageIndex++) {
 					BoundaryMessage message = inputMessages.get(messageIndex);
 					childCell = message.boundaryCellUnchecked(assignment);
 					candidate = candidate.plus(message.valueAt(childCell));
 					candidateLower = addBoundaryLower(candidateLower,
 						message.lowerValues[childCell]);
+					if(counters != null)
+						counters.childEvaluations++;
+					// Apply the same absorbing-infinity and exact nonnegative-prefix proofs
+					// after each canonical child, but only when a suffix remains unread.
+					if(localPrefixCuts && messageIndex + 1 < inputMessages.size()
+						&& candidate.high == Double.POSITIVE_INFINITY
+						&& candidateLower == Double.POSITIVE_INFINITY) {
+						if(counters != null)
+							counters.infeasibleCuts++;
+						cut = true;
+						break;
+					}
+					if(messageIndex + 1 < inputMessages.size() && localCostCut
+						&& candidate.compareTo(best) >= 0) {
+						if(counters != null)
+							counters.costCuts++;
+						cut = true;
+						break;
+					}
 				}
+				if(cut)
+					continue;
 				if(candidate.compareTo(best) < 0) {
 					best = candidate;
 					bestUnionCell = encode(unionScope, first.domains, assignment);
@@ -686,6 +747,36 @@ public final class ExactCategoricalSolver {
 		return new BoundaryMessage(first.variables, first.domains, outputBoundary, outputScope,
 			values, lowValues, lowerValues, inputMessages, unionScope, choices,
 			retained, unionCells, messageMinimum, messageLowerBound);
+	}
+
+	private static boolean exactNonnegativeBoundarySum(List<BoundaryMessage> inputMessages) {
+		List<double[]> tables = new ArrayList<>(inputMessages.size());
+		for(BoundaryMessage message : inputMessages) {
+			tables.add(message.values);
+			for(int cell = 0; cell < message.values.length; cell++) {
+				double high = message.values[cell];
+				double low = message.lowValues == null ? 0d : message.lowValues[cell];
+				if(high != Double.POSITIVE_INFINITY && high < 0d)
+					return false;
+				if(low != 0d || Double.doubleToRawLongBits(message.lowerValues[cell])
+					!= Double.doubleToRawLongBits(high))
+					return false;
+			}
+		}
+		ExactDyadicCosts.Certificate certificate = ExactDyadicCosts.certifyTables(tables);
+		return certificate.supported() && certificate.maximumSumBits() <= 53;
+	}
+
+	static final class BoundaryMergeCounters {
+		private long fullChildEvaluations;
+		private long childEvaluations;
+		private long infeasibleCuts;
+		private long costCuts;
+
+		long fullChildEvaluations() { return fullChildEvaluations; }
+		long childEvaluations() { return childEvaluations; }
+		long infeasibleCuts() { return infeasibleCuts; }
+		long costCuts() { return costCuts; }
 	}
 
 	private static Result solve(Prepared prepared, List<Factor> factors,

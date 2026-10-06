@@ -1,0 +1,169 @@
+{
+  "additional_nary_support_implemented": false,
+  "default": "LOCAL_ONLY",
+  "dominance_implemented": false,
+  "global_implemented": false,
+  "jar_sha256": "58c889c77fb9d6dcd2ba54659a9410b608303d1f594b542eca7447239f594dc1",
+  "java_tests": [
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalPhysicalOptimizerIncrementalTraceTest",
+      "skipped": 0,
+      "tests": 2
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CostBasedPruningTest",
+      "skipped": 0,
+      "tests": 4
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PruningAblationTest",
+      "skipped": 0,
+      "tests": 3
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryPruningTest",
+      "skipped": 0,
+      "tests": 6
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundaryMessageTest",
+      "skipped": 0,
+      "tests": 15
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+      "skipped": 0,
+      "tests": 27
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDyadicCostsTest",
+      "skipped": 0,
+      "tests": 8
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+      "skipped": 0,
+      "tests": 13
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalSeedTest",
+      "skipped": 0,
+      "tests": 4
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.test.usertest.UserInterfaceTest",
+      "skipped": 0,
+      "tests": 3
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "name": "org.apache.sysds.test.usertest.pythonapi.StartupTest",
+      "skipped": 0,
+      "tests": 7
+    }
+  ],
+  "known_unresolved_issue": "Separate historical unknown-shape golden mismatch; not part of the selected regression suite.",
+  "main_base": "10e14bc791",
+  "manifest_sha256": "a60b4323bc85ee79a0b46454165912b368dc2995f7a740aed4b771210656ae2e",
+  "paired_semantics": [
+    {
+      "bounds_equal": true,
+      "key": "ml|logreg|wan_mid|w3|DP-local|local_only|r1",
+      "objective_equal": true,
+      "plan_equal": true,
+      "planning_speedup": 1.179108930555283,
+      "reference_variant": "baseline",
+      "stop_equal": true
+    },
+    {
+      "bounds_equal": true,
+      "key": "ml|gnmf|wan_mid|w3|DP-local|local_only|r1",
+      "objective_equal": true,
+      "plan_equal": true,
+      "planning_speedup": 1.0066952359709873,
+      "reference_variant": "baseline",
+      "stop_equal": true
+    }
+  ],
+  "production_source_manifest_sha256": "d8962b3b543bf2d3bb706f3906e12a54c44918fd9c3f1889aa4bd9c7d900376c",
+  "python_tests": 19,
+  "schema": "pruning-removal-validation/v1",
+  "scope": "PrivateAggregation compile/lowering smoke only; no training runtime or new latency claim.",
+  "smoke_root": "/home/mchoi/w1357-pruning-ablation-20261006/pruning-deletion-main-v1",
+  "smokes": [
+    {
+      "childEvaluations": 14017303,
+      "fullChildEvaluations": 14017303,
+      "lower": "12386.577273542773",
+      "objectiveBits": "4682065009762557211",
+      "planFingerprint": "a220ac1a567116b566bda9a76a77ab1957aee9018185baa459d6b0098768112b",
+      "result_sha256": "78598641aa87838570512fbaa13cdb1ee8b19fba28e1fe759f219b9059b003fc",
+      "stop": "RESOURCE",
+      "upper": "106645.11576734895",
+      "variant": "baseline",
+      "workload": "logreg"
+    },
+    {
+      "childEvaluations": 5344715,
+      "fullChildEvaluations": 14017303,
+      "lower": "12386.577273542773",
+      "objectiveBits": "4682065009762557211",
+      "planFingerprint": "a220ac1a567116b566bda9a76a77ab1957aee9018185baa459d6b0098768112b",
+      "result_sha256": "c7e621ee66aabc4c1b76fb5ab6383b8243a4c0b5a06a100115da3481417c6af5",
+      "stop": "RESOURCE",
+      "upper": "106645.11576734895",
+      "variant": "local_only",
+      "workload": "logreg"
+    },
+    {
+      "childEvaluations": 1979549,
+      "fullChildEvaluations": 1979549,
+      "lower": "8276.481032775791",
+      "objectiveBits": "4665775657894765614",
+      "planFingerprint": "c0dfacbbf904314161e96c17feff15ea61f893bbfc5d6e78d04906ec12e694ce",
+      "result_sha256": "07b3d07d421e5a3b6a1b413e45c6040d04f7747a3b391bb3a010608503f90f65",
+      "stop": "TARGET_REACHED",
+      "upper": "8276.481032775799",
+      "variant": "baseline",
+      "workload": "gnmf"
+    },
+    {
+      "childEvaluations": 597260,
+      "fullChildEvaluations": 1979549,
+      "lower": "8276.481032775791",
+      "objectiveBits": "4665775657894765614",
+      "planFingerprint": "c0dfacbbf904314161e96c17feff15ea61f893bbfc5d6e78d04906ec12e694ce",
+      "result_sha256": "ee3c533af4f9129da43b8fcf5ac8ef6d08334b6d202d85ff02571edd3b782dd4",
+      "stop": "TARGET_REACHED",
+      "upper": "8276.481032775799",
+      "variant": "local_only",
+      "workload": "gnmf"
+    }
+  ],
+  "source_commit_before_doc_test_amend": "20dad2726ba4258af229d16dfbd79890b77d11f4",
+  "supported_variants": [
+    "baseline",
+    "local_only"
+  ]
+}

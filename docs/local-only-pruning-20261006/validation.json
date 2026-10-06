@@ -1,0 +1,151 @@
+{
+  "samples": 90,
+  "container_protocol_passed": 90,
+  "command_protocol_passed": 90,
+  "rendered_inputs": {
+    "compatible/steplm": {
+      "source_sha256": "93c015db9591ad68cbce3b066745c391366199d42a3a0aba1fcdc368f9b1eff7",
+      "inputs_sha256": "2cd2b9499054c0816b351f2678520fd1bd98c61627d6a69635cb20dd31764ad5",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "341b6ebc34791b244f9bca0a5cd9b8747b38437dcdc601b0df831bc77795ff6c"
+    },
+    "primary/als": {
+      "source_sha256": "0c4595f63c68d890c27a340a9ca2d33c2357cc64a00518cc8ec89ed22cf67648",
+      "inputs_sha256": "1202f4fa8def866f8c0b58f155003e53c5d5cd7b9e87f8a5d9a7ef7a713c5b69",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "9f582404da1fb720f17ce39b7d169373a08b6b8458877e6c45a07a5bedebdcce"
+    },
+    "primary/glm": {
+      "source_sha256": "0b9a2ac0578a8110e7495188fe2338e7911a6384669e3fe2295b051aa47413b9",
+      "inputs_sha256": "2cd2b9499054c0816b351f2678520fd1bd98c61627d6a69635cb20dd31764ad5",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "5ba03b37448c8e7738077d0535f0abf08e392543541e5a7c4289a3dead9e7097"
+    },
+    "primary/gmm": {
+      "source_sha256": "f1a1f0ce2e9977ab802f88af7bd00ef91ccb66e15e848474d9b3e1efcfe3d2c4",
+      "inputs_sha256": "1202f4fa8def866f8c0b58f155003e53c5d5cd7b9e87f8a5d9a7ef7a713c5b69",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "a2576426c395384b36643f14c7b7bf08b797e45a664446761868c15bd47d6e98"
+    },
+    "primary/gnmf": {
+      "source_sha256": "bf718f7e4bcbb9d3c17e17788527c299c856fe7d24bc0327c1edd17ad18eb31e",
+      "inputs_sha256": "1202f4fa8def866f8c0b58f155003e53c5d5cd7b9e87f8a5d9a7ef7a713c5b69",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "1e00f37e97c7d722eca10a937630740ec69ed4b1c18ae7fe0148b03e2ca7f330"
+    },
+    "primary/kmeans": {
+      "source_sha256": "2d0c6c78a4e9b8582cd8b1c9d334c0bef1d7d17c9742aeabff1af55e67ae2260",
+      "inputs_sha256": "1202f4fa8def866f8c0b58f155003e53c5d5cd7b9e87f8a5d9a7ef7a713c5b69",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "8ddf96731d79d21d38a90f8082dbeac063a6840547edf3976fddaa4462d57b2a"
+    },
+    "primary/l2svm": {
+      "source_sha256": "e666de1ff640c19d7abc94b733d542097046e1d53dc6bc8ff1c0341547376d61",
+      "inputs_sha256": "eee69aaefd815c939fc42ab8b949b9d308be349e3a879ed1311d88ea902545b2",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "a066455ebd6596cc3a43274bbadd9240a86d9b35146e0fbe8d4720d356e0e890"
+    },
+    "primary/lm": {
+      "source_sha256": "1fcb32b6600abbcd4287a4e14d50ca3881bcc045b23a2fe3721b64d4d5a5b25a",
+      "inputs_sha256": "2cd2b9499054c0816b351f2678520fd1bd98c61627d6a69635cb20dd31764ad5",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "838fdecc9e253af417c53d46e3f0a09ee2a7bcf1ddc847e1dbf7c729d5039d5d"
+    },
+    "primary/logreg": {
+      "source_sha256": "00607c8d9ec7c06350a62cbe9ab470ac2afba45379824657829206e6326ac48e",
+      "inputs_sha256": "eee69aaefd815c939fc42ab8b949b9d308be349e3a879ed1311d88ea902545b2",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "c23b2e3f2818a01214ecf6ebc25bfa78317cb68e79adc0a2a87c27f40bae9029"
+    },
+    "primary/pca": {
+      "source_sha256": "4b10738e4b791bb25e5417dc467e8f0767d1108cd004c216c00e8d03230dabf9",
+      "inputs_sha256": "1202f4fa8def866f8c0b58f155003e53c5d5cd7b9e87f8a5d9a7ef7a713c5b69",
+      "dependencies_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "combined_sha256": "806936ce032154404f890e25c3e9617ca503160e59626c07d93fd0ebfdf9f63e"
+    }
+  },
+  "nonoverlapping_containers": true,
+  "start_utc": "2026-10-06T13:26:39.732396162Z",
+  "finish_utc": "2026-10-06T13:52:34.493879748Z",
+  "measured_jar_sha256": "2cfb6398b03eb844699f0b513c341a12d6ed8af7eb491a75e54e2e95158c4a55",
+  "final_source_changes_from_measured": [
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PruningAblation.java"
+  ],
+  "measured_source_snapshot": "/home/mchoi/w1357-pruning-ablation-20261006/local-only-measured-PruningAblation.java",
+  "global_disabled_samples": 90,
+  "final_tests": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PruningAblationTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:17.797397+00:00"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryPruningTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:15.595409+00:00"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CostBasedPruningTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:14.414416+00:00"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:18.499393+00:00"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalSeedTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:14.935413+00:00"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+      "tests": "27",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:16.437404+00:00"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundaryMessageTest",
+      "tests": "15",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "report_mtime_utc": "2026-10-06T13:56:17.103400+00:00"
+    }
+  ],
+  "final_java_total": 83,
+  "python_tests": 13,
+  "rendered_inputs_match_prior_study": true,
+  "final_jar_sha256": "4ece87ebdfa652a4f40752f38cb63faca68af42f78cc127af7cf1632de406957",
+  "test_log_sha256": "81dac9f4d5162dcca9ff1bc08a35b5e26ec2b1dd71d018639a0db190a1aca3ac",
+  "package_log_sha256": "eddb86dea7818f5e235d250ec31937aad59ac51f7bd03029ebf7c9550c06e872",
+  "analysis_gates": {
+    "real_samples_validated": 60,
+    "mutations": {
+      "global_boolean": "rejected",
+      "timing_boolean": "rejected",
+      "global_nonzero": "rejected",
+      "signed_bits": "rejected",
+      "zero_timing": "rejected",
+      "duplicate_triple": "rejected"
+    }
+  }
+}

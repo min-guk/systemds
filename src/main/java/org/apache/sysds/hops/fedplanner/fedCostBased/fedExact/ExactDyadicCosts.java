@@ -293,6 +293,32 @@ final class ExactDyadicCosts implements Comparable<ExactDyadicCosts> {
 			coarse.ceilLog2AccumulationCount(), coarse.bitsWithAccumulationHeadroom(), residualUnits, null, null);
 	}
 
+	/** Numeric only; the order and duplicate table occurrences are significant. */
+	static Certificate certifyTables(List<double[]> tables) {
+		double[] maxima = new double[tables.size()];
+		int q = Integer.MAX_VALUE;
+		for(int factor = 0; factor < maxima.length; factor++)
+			for(double value : tables.get(factor)) {
+				if(value == Double.POSITIVE_INFINITY)
+					continue; // An infeasible tuple contributes to no finite plan.
+				long bits = Double.doubleToRawLongBits(value);
+				if(!Double.isFinite(value) || value < 0 || bits == Long.MIN_VALUE)
+					return Certificate.rejected(0, 0, maxima.length, "INVALID_FACTOR_COST");
+				maxima[factor] = Math.max(maxima[factor], value);
+				if(value > 0)
+					q = Math.min(q, dyadicExponent(bits));
+			}
+		if(q == Integer.MAX_VALUE)
+			q = 0;
+		List<BigInteger> orderedMaxima = new ArrayList<>(maxima.length);
+		for(double value : maxima) {
+			long bits = Double.doubleToRawLongBits(value);
+			orderedMaxima.add(value == 0 ? BigInteger.ZERO : BigInteger.valueOf(dyadicSignificand(bits))
+				.shiftLeft(dyadicExponent(bits) - q));
+		}
+		return certifyOrderedMaxima(q, orderedMaxima);
+	}
+
 	private static ExactCategoricalSolver.Factor monetaryFactor(
 		ExactPhysicalCostModel.FrozenCostTransport transport) {
 		if(transport instanceof ExactPhysicalCostModel.FrozenCostTransport.Identity identity)
