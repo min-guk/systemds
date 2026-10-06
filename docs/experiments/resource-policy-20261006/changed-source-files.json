@@ -1,0 +1,13 @@
+[
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.java",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparation.java",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalBoundaryMessageTest.java",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalConfigurationTest.java",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizerTest.java",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PlannerResourceGuard.java",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/GlobalExactCompletionTest.java",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PlannerResourceGuardTest.java"
+]

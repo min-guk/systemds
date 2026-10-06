@@ -272,19 +272,30 @@ public class OccurrenceExecutionFrequencyFactsConstantBranchTest {
 
 	@Test
 	public void actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive() throws Exception {
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(glmProgram());
+		GlmProgramFixture fixture = glmProgram();
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(fixture.program());
 		List<HopOccurrenceProjection> deadGram = analysis.compiledHopOccurrences().stream()
-			.filter(occurrence -> occurrence.hop().getBeginLine() == 1065
+			.filter(occurrence -> occurrence.key().functionNamespace().endsWith("::straightenX")
+				&& "q_LS".equals(occurrence.hop().getName())
 				&& "ba(+*)".equals(occurrence.hop().getOpString()))
 			.toList();
-		Assert.assertFalse("Actual glm.dml straightenX Gram occurrence must be retained", deadGram.isEmpty());
-		for(HopOccurrenceProjection occurrence : deadGram)
-			Assert.assertEquals("Actual dfam=2/link=2 straightenX Gram is unreachable", 0.0,
-				analysis.executionFrequencyFacts().executionWeight(occurrence.key()), 0.0);
+		if(deadGram.isEmpty()) {
+			Assert.assertTrue("The parsed builtin must contain the semantic straightenX Gram before "
+				+ "constant specialization removes its call", fixture.parsedStraightenXGram());
+			Assert.assertFalse("dfam=2/link=2 must eliminate the physical straightenX call",
+				analysis.compiledHopOccurrences().stream().anyMatch(occurrence ->
+					occurrence.hop().getOpString().contains("straightenX")));
+		}
+		else
+			for(HopOccurrenceProjection occurrence : deadGram)
+				Assert.assertEquals("Actual dfam=2/link=2 straightenX Gram is unreachable", 0.0,
+					analysis.executionFrequencyFacts().executionWeight(occurrence.key()), 0.0);
 
 		List<HopOccurrenceProjection> liveCg = analysis.compiledHopOccurrences().stream()
-			.filter(occurrence -> occurrence.hop().getBeginLine() == 983
-				&& "b(*)".equals(occurrence.hop().getOpString()))
+			.filter(occurrence -> occurrence.key().functionNamespace()
+				.endsWith("::get_CG_Steihaug_point")
+				&& "temp_CG".equals(occurrence.hop().getName())
+				&& "ba(+*)".equals(occurrence.hop().getOpString()))
 			.toList();
 		Assert.assertFalse("Actual glm.dml CG occurrence must be retained", liveCg.isEmpty());
 		for(HopOccurrenceProjection occurrence : liveCg)
@@ -304,7 +315,9 @@ public class OccurrenceExecutionFrequencyFactsConstantBranchTest {
 		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
 	}
 
-	private static DMLProgram glmProgram() throws Exception {
+	private record GlmProgramFixture(DMLProgram program, boolean parsedStraightenXGram) { }
+
+	private static GlmProgramFixture glmProgram() throws Exception {
 		String script = "X=federated(addresses=list(\"localhost:1234/X1\"),"
 			+ "ranges=list(list(0,0),list(8,4)));\n"
 			+ "Y=federated(addresses=list(\"localhost:1234/Y1\"),"
@@ -319,9 +332,13 @@ public class OccurrenceExecutionFrequencyFactsConstantBranchTest {
 		translator.liveVariableAnalysis(program);
 		translator.validateParseTree(program);
 		translator.constructHops(program);
+		boolean parsedStraightenXGram = PlacementGraphFingerprint.orderedOccurrences(program).stream()
+			.anyMatch(occurrence -> occurrence.namespace().endsWith("::straightenX")
+				&& "q_LS".equals(occurrence.hop().getName())
+				&& "ba(+*)".equals(occurrence.hop().getOpString()));
 		translator.rewriteHopsDAG(program);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
-		return program;
+		return new GlmProgramFixture(program, parsedStraightenXGram);
 	}
 
 	private static void assertWeight(PlacementAnalysis analysis, String writeName, double expected) {

@@ -32,8 +32,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.FileFormat;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.lops.Data;
+import org.apache.sysds.lops.Transform;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
@@ -45,12 +51,28 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.instructions.FEDInstructionParser;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ReorgFEDInstructionFullTest {
+	@Test
+	public void reverseLoweringPreservesExplicitOutputContract() {
+		Data input = new Data(OpOpData.TRANSIENTREAD, null, null, "X", null,
+			DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+		for(FEDInstruction.FederatedOutput output : List.of(
+			FEDInstruction.FederatedOutput.FOUT, FEDInstruction.FederatedOutput.LOUT)) {
+			Transform reverse = new Transform(input, ReOrgOp.REV,
+				DataType.MATRIX, ValueType.FP64, ExecType.FED);
+			reverse.setFederatedOutput(output);
+			assertEquals("REV must serialize the planner's output contract", output,
+				FEDInstructionParser.parseSingleInstruction(reverse.getInstructions("X", "Y"))
+					.getFederatedOutput());
+		}
+	}
+
 	@Test
 	public void federatedReorgRejectsLocalInputInsteadOfExecutingCpFallback() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());

@@ -20,7 +20,13 @@ public class IncrementalRegionalConfigurationTest {
 	private static final String MODE = "sysds.fedplanner.regional.mode";
 	private static final String ALGORITHM = "sysds.fedplanner.regional.algorithm";
 	private static final String INITIAL_BOUND = "sysds.fedplanner.regional.initialBound";
-	private static final List<String> KEYS = List.of(ENABLED, MODE, ALGORITHM, INITIAL_BOUND);
+	private static final List<String> REMOVED_BUDGETS = List.of(
+		IncrementalRegionalOptimizer.PREFIX + "assignments",
+		IncrementalRegionalOptimizer.PREFIX + "retainedSlots",
+		IncrementalRegionalOptimizer.PREFIX + "timeMillis",
+		IncrementalRegionalOptimizer.PREFIX + "scoredCandidates");
+	private static final List<String> KEYS = java.util.stream.Stream.concat(
+		List.of(ENABLED,MODE,ALGORITHM,INITIAL_BOUND).stream(),REMOVED_BUDGETS.stream()).toList();
 	private final Map<String,String> previous = new LinkedHashMap<>();
 
 	@Before
@@ -91,6 +97,28 @@ public class IncrementalRegionalConfigurationTest {
 		System.setProperty(ALGORITHM, "legacy");
 		IncrementalRegionalOptimizer.validateConfiguration();
 		Assert.assertNotNull(IncrementalRegionalOptimizer.Options.configured());
+	}
+
+	@Test
+	public void fixedResourceBudgetPropertiesAreExplicitlyRemoved() {
+		for(String property : REMOVED_BUDGETS) {
+			System.setProperty(property,"1");
+			assertRejected("INCREMENTAL_REGIONAL_");
+			System.clearProperty(property);
+		}
+	}
+
+	@Test
+	public void configuredOptionsContainNoFixedResourceOrElapsedBudget() {
+		IncrementalRegionalOptimizer.Options options =
+			IncrementalRegionalOptimizer.Options.configured();
+		Assert.assertFalse(options.boundedTest());
+		Assert.assertEquals(0L,options.maximumMergeAssignments());
+		Assert.assertEquals(0L,options.maximumRetainedSlots());
+		Assert.assertEquals(0L,options.timeMillis());
+		Assert.assertEquals(0,options.scoredCandidates());
+		Assert.assertEquals(.05,options.relativeGap(),0d);
+		Assert.assertTrue("Local retains its quality-gap stopping rule",options.earlyStop());
 	}
 
 	private static void assertRejected(String prefix) {

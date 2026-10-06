@@ -19,8 +19,9 @@ import org.junit.Test;
 public class LocalPhysicalOptimizerIncrementalTraceTest {
 	private static final List<String> FIELDS = List.of("phase", "merges", "clusters", "lower", "upper",
 		"relativeGap", "elapsedNanos", "dpNanos", "scoringNanos", "validationNanos", "assignments",
-		"retainedSlots", "improvements", "resourceRejected", "internalDecisions", "plannerElapsedNanos",
-		"scope");
+		"retainedSlots", "improvements", "resourceRejected", "internalDecisions",
+		"conditionalAttempts", "conditionalImprovements", "plannerElapsedNanos",
+		"separateGlobalCalls", "scope");
 
 	@Test
 	public void checkpointTracePreservesSchemaAndRoundTripNumbers() {
@@ -67,7 +68,7 @@ public class LocalPhysicalOptimizerIncrementalTraceTest {
 
 	private static IncrementalRegionalOptimizer.Checkpoint checkpoint(double lower, double upper, double gap) {
 		return new IncrementalRegionalOptimizer.Checkpoint("MERGE", 2, 3, lower, upper, gap,
-			11L, 12L, 13L, 14L, 15L, 16L, 4, 5, 6);
+			11L, 12L, 13L, 14L, 15L, 16L, 4, 5, 6, 7, 8);
 	}
 
 	private static String oracle(IncrementalRegionalOptimizer.Checkpoint cp, long plannerElapsedNanos) {
@@ -75,10 +76,12 @@ public class LocalPhysicalOptimizerIncrementalTraceTest {
 			"phase=%s merges=%d clusters=%d lower=%.17g upper=%.17g relativeGap=%.17g "
 				+ "elapsedNanos=%d dpNanos=%d scoringNanos=%d validationNanos=%d assignments=%d "
 				+ "retainedSlots=%d improvements=%d resourceRejected=%d internalDecisions=%d "
-				+ "plannerElapsedNanos=%d scope=encoded-model",
+				+ "conditionalAttempts=%d conditionalImprovements=%d "
+				+ "plannerElapsedNanos=%d separateGlobalCalls=0 scope=encoded-model",
 			cp.phase(), cp.merges(), cp.activeClusters(), cp.lower(), cp.upper(), cp.relativeGap(),
 			cp.elapsedNanos(), cp.dpNanos(), cp.scoringNanos(), cp.validationNanos(), cp.assignments(),
 			cp.retainedSlots(), cp.improvements(), cp.resourceRejected(), cp.internalDecisions(),
+			cp.conditionalAttempts(), cp.conditionalImprovements(),
 			plannerElapsedNanos);
 	}
 

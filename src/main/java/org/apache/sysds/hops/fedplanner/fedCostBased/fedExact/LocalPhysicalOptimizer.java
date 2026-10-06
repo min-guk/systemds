@@ -55,8 +55,10 @@ final class LocalPhysicalOptimizer {
 			.append(" improvements=").append(cp.improvements())
 			.append(" resourceRejected=").append(cp.resourceRejected())
 			.append(" internalDecisions=").append(cp.internalDecisions())
+			.append(" conditionalAttempts=").append(cp.conditionalAttempts())
+			.append(" conditionalImprovements=").append(cp.conditionalImprovements())
 			.append(" plannerElapsedNanos=").append(plannerElapsedNanos)
-			.append(" scope=encoded-model")
+			.append(" separateGlobalCalls=0 scope=encoded-model")
 			.toString();
 	}
 

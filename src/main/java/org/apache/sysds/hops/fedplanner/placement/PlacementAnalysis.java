@@ -4569,6 +4569,25 @@ public final class PlacementAnalysis {
 		return facts.get(0);
 	}
 
+	/** Resolves one call occurrence when equal actual/formal identities occur at multiple call sites. */
+	public LogicalFunctionInputFact requireExactLogicalFunctionInput(CompiledHopKey sourceArgument,
+		CompiledHopKey boundary, CompiledHopKey targetRead, int callInputPosition, int logicalPosition) {
+		Objects.requireNonNull(boundary, "boundary");
+		Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>> byRead =
+			logicalFunctionInputsByIdentity.get(Objects.requireNonNull(sourceArgument, "sourceArgument"));
+		Map<Integer,List<LogicalFunctionInputFact>> byPosition = byRead == null ? null
+			: byRead.get(Objects.requireNonNull(targetRead, "targetRead"));
+		List<LogicalFunctionInputFact> facts = byPosition == null ? null : byPosition.get(logicalPosition);
+		List<LogicalFunctionInputFact> matches = facts == null ? List.of() : facts.stream()
+			.filter(fact -> fact.boundary().equals(boundary)
+				&& fact.callInputPosition() == callInputPosition)
+			.toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException(
+				"Exact logical function input occurrence is missing or ambiguous");
+		return matches.get(0);
+	}
+
 	/**
 	 * Validates one complete analysis-owned call-site binding. Multiple calls may
 	 * intentionally reuse the same source occurrence, formal read, and logical

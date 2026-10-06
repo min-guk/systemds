@@ -1520,10 +1520,8 @@ final class PlacementRelationClosure {
 			complexityMetrics == null ? null : complexityMetrics.startPhase(
 				SearchSpaceMetrics.Phase.RECEIPT_RANK_CONSUMER_PREPARATION);
 		try {
-		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions = ruleFacts.stream()
-			.flatMap(fact -> fact.allowedEmissionFacts().stream())
-			.map(CandidateEmissionFact::derivedFoutAction).filter(Objects::nonNull).distinct()
-			.map(NeutralPlacementGraph.DerivedFoutMaterializationAction::new).sorted().toList();
+		List<NeutralPlacementGraph.DerivedFoutMaterializationAction> derivedFoutActions =
+			graphDerivedFoutActions(ruleFacts);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations, derivedFoutActions);
 		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
 		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
@@ -4189,15 +4187,7 @@ final class PlacementRelationClosure {
 					: templateEmission.realizations();
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(recomputeNative)
-					for(CandidateEmissionRealization candidate : emission.realizations()) {
-						List<CandidateRealizationSupportClause> relocationClauses = candidate.supportClauses().stream()
-							.filter(clause -> clause.inputBindings().stream()
-								.anyMatch(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION))
-							.toList();
-						if(!relocationClauses.isEmpty())
-							realizations.add(CandidateEmissionRealization
-								.fromAlreadyCanonicalSupportClauses(candidate.key(), relocationClauses));
-					}
+					realizations.addAll(retainPreviouslyGroundedNativeSupport(emission));
 				for(CandidateEmissionRealization realization : templatesForEmission) {
 					if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
 						|| realization.supportClauses().stream().anyMatch(clause -> !clause.inputBindings().isEmpty())
@@ -4237,11 +4227,11 @@ final class PlacementRelationClosure {
 								else if(exact)
 									bound.add(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
 										"transient-alias:" + fact.key().parentOccurrence().normalizedSignature()
-											+ "|pool=" + pool.normalizedSignature(), pool, List.of(proof), binding));
+											+ "|pool=" + pool.normalizedSignature() + "|exact=true", pool, List.of(proof), binding));
 								else
 									bound.add(CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
 										"transient-alias:" + fact.key().parentOccurrence().normalizedSignature()
-											+ "|pool=" + pool.normalizedSignature(), pool, List.of(proof), binding));
+											+ "|pool=" + pool.normalizedSignature() + "|exact=false", pool, List.of(proof), binding));
 							}
 						}
 						realizations.addAll(bound.isEmpty() ? List.of(realization) : bound);
@@ -4384,13 +4374,23 @@ final class PlacementRelationClosure {
 											appendProof(clause.proofDependencies(), continuityProof), bindings));
 								else {
 									DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
+									// The continuity witness retains only the partition axis; its other
+									// extent is a placeholder. Publish the complete proved output map
+									// when available, including for selected VALUE_MAP inputs.
+									if(proof.exactPartitionRanges() && outputAnchor != null)
+										outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
+									// One generation query can prove multiple layouts and precision
+									// classes. Only equivalent output authority may share a receipt.
+									String publicationLineage = nativeLineage
+										+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
+										+ "|exact=" + proof.exactPartitionRanges();
 									// Keep the proved output FType and worker endpoints even when the
 									// runtime recomputes partition extents or changes the partition axis.
 									bound.add(proof.exactPartitionRanges()
 										? CandidateEmissionRealization.nativeLineage(emission.emissionState(),
-											nativeLineage, outputPool, List.of(continuityProof), bindings)
+											publicationLineage, outputPool, List.of(continuityProof), bindings)
 										: CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
-											nativeLineage, outputPool, List.of(continuityProof), bindings));
+											publicationLineage, outputPool, List.of(continuityProof), bindings));
 								}
 							}
 						}
@@ -4413,6 +4413,27 @@ final class PlacementRelationClosure {
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(rebound);
+	}
+
+	/**
+	 * A direct proof is one alternative support clause, not a replaceable snapshot of
+	 * the current replay frontier.  Preserve every previously grounded clause while a
+	 * dirty owner is rebound; the enclosing support fixed point removes clauses whose
+	 * exact source or relocation action is no longer executable.  Dropping DIRECT
+	 * clauses here made CFG replay alternate between independently proved worker-pool
+	 * layouts instead of reaching their union.
+	 */
+	private static List<CandidateEmissionRealization> retainPreviouslyGroundedNativeSupport(
+		CandidateEmissionFact emission) {
+		List<CandidateEmissionRealization> retained = new ArrayList<>();
+		for(CandidateEmissionRealization candidate : emission.realizations()) {
+			List<CandidateRealizationSupportClause> grounded = candidate.supportClauses().stream()
+				.filter(clause -> !clause.inputBindings().isEmpty()).toList();
+			if(!grounded.isEmpty())
+				retained.add(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+					candidate.key(), grounded));
+		}
+		return List.copyOf(retained);
 	}
 
 	private static Set<CompiledHopKey> changedCandidateOccurrences(List<CandidateRuleFact> before,
@@ -5637,6 +5658,7 @@ final class PlacementRelationClosure {
 				appendProof(commonProofs, new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
 					source, query + "|output-layout=" + nativeCompatibilityLayout(continuity.outputWorkerPoolWitness())
 						+ "|exact=" + continuity.exactPartitionRanges()))))
+			.distinct()
 			.sorted(PlacementAnalysis.<TransientCompatibilityProof>canonicalComparator()).toList();
 	}
 
@@ -6239,6 +6261,19 @@ final class PlacementRelationClosure {
 						consumerOrdinal, current, replacement, priorKeys,
 							priorFacts, replacementKeys, replacementFacts, occurrences, ordinalsByBlock, exactInputDomains,
 							refinedOrdinals, shapeFactsByHop);
+					if(!exactRefinement && compiledInputEdges != null && sourceCompiledFactsByHop != null
+						&& isPotentialLatentWdivmmOwner(hop)) {
+						// The exact runtime rewrite may become known only after an upstream
+						// layout is refined. Compare both inventories under that same proven
+						// runtime contract; ordinary candidate losses still need the usual proof.
+						ClosureUpdate normalizedPrior = closeLatentWdivmmRuntimeOutputContracts(
+							new ClosureUpdate(nodes, priorKeys, priorFacts, replay.logicalInputs(), List.of()),
+							compiledInputEdges, origins, shapeFactsByHop, sourceCompiledFactsByHop);
+						exactRefinement = isExactAffectedDescendantRefinement(consumerOrdinal,
+							normalizedPrior.nodes().get(consumerOrdinal), replacement, priorKeys,
+							normalizedPrior.facts(), replacementKeys, replacementFacts, occurrences,
+							ordinalsByBlock, exactInputDomains, refinedOrdinals, shapeFactsByHop);
+					}
 					boolean exactCardinalityRetraction = exactSinglePartitionProofRetracted(
 						priorFacts, replacementFacts, exactCandidateSinglePartitions);
 					if(!exactRefinement && !exactCardinalityRetraction) {
@@ -6691,7 +6726,8 @@ final class PlacementRelationClosure {
 			}
 		}
 		for(PlacementState state : removedLegal)
-			if(removedKeys.stream().map(priorByKey::get).noneMatch(fact -> exactFactPublishesState(fact, state))
+			if(priorFacts.stream().anyMatch(fact -> exactFactPublishesState(fact, state))
+				&& removedKeys.stream().map(priorByKey::get).noneMatch(fact -> exactFactPublishesState(fact, state))
 				&& removedMaterializations.stream().noneMatch(emission ->
 					emission.emissionState().placementState().equals(state))) {
 				return false;
@@ -6703,15 +6739,12 @@ final class PlacementRelationClosure {
 	 * A prior worker-pool closure may have augmented an otherwise unchanged candidate row with
 	 * CP/FOUT or derived FED/FOUT materialization actions. Physical dependency closure deliberately
 	 * rebuilds the oracle-owned base row first and reruns worker-pool closure afterwards. Treat only
-	 * that exact action-bearing delta as recomputable; native emissions and all other rule evidence
-	 * must remain byte-for-byte equal.
+	 * that exact action-bearing delta as recomputable. Native execution/output choices must be
+	 * retained; refined shape/capability evidence may also add executable choices.
 	 */
 	private static List<CandidateEmissionFact> removedProvisionalMaterializations(
 		CandidateRuleFact prior, CandidateRuleFact replacement) {
 		if(!prior.key().equals(replacement.key()) || prior.status() != replacement.status()
-			|| !Objects.equals(prior.capability(), replacement.capability())
-			|| !prior.shapeProof().equals(replacement.shapeProof())
-			|| !prior.profile().equals(replacement.profile())
 			|| !prior.failureCode().equals(replacement.failureCode()))
 			return null;
 		List<CandidateEmissionFact> priorNative = prior.allowedEmissionFacts().stream()
@@ -8116,6 +8149,10 @@ final class PlacementRelationClosure {
 	 */
 	private static boolean isTransparentFunctionInputBinding(Hop input, Hop consumer,
 		int inputPosition, Node inputNode, Node consumerNode) {
+		// Unlike entry binding, an explicit branch-exit assignment owns an executable
+		// input edge on which the planner can select and cost LOCAL/REFED.
+		if(consumer instanceof DataOp data && data.isPlannerBranchNormalization())
+			return false;
 		if(inputPosition != 0 || inputNode == null || consumerNode == null
 			|| inputNode.valueVersion().versionKind() != VersionKind.FUNCTION_INPUT
 			|| inputNode.kind() != NodeKind.TRANSIENT_READ
@@ -8241,6 +8278,56 @@ final class PlacementRelationClosure {
 				fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(result);
+	}
+
+	private List<NeutralPlacementGraph.DerivedFoutMaterializationAction> graphDerivedFoutActions(
+		List<CandidateRuleFact> facts) {
+		Map<DerivedFoutMaterializationActionKey,
+			Set<NeutralPlacementGraph.DerivedFoutOutputAuthority>> authorities = new LinkedHashMap<>();
+		for(CandidateRuleFact fact : facts)
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				DerivedFoutMaterializationActionKey action = emission.derivedFoutAction();
+				if(action == null)
+					continue;
+				Set<NeutralPlacementGraph.DerivedFoutOutputAuthority> exact =
+					authorities.computeIfAbsent(action, ignored -> new LinkedHashSet<>());
+				PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
+					fact.key().parentOccurrence(),"derived-fout:" + action.normalizedSignature());
+				for(CandidateEmissionRealization realization : emission.realizations())
+					if(realization.anchor() != null && realization.supportClauses().stream()
+						.anyMatch(clause -> clause.proofDependencies().contains(proof)))
+						for(CompiledHopKey owner : exactTransientWriteOutputAliases(action.producer()))
+							exact.add(new NeutralPlacementGraph.DerivedFoutOutputAuthority(
+								owner,realization.anchor()));
+			}
+		return authorities.entrySet().stream().map(entry ->
+			new NeutralPlacementGraph.DerivedFoutMaterializationAction(
+				entry.getKey(),entry.getValue().stream().sorted().toList())).sorted().toList();
+	}
+
+	private List<CompiledHopKey> exactTransientWriteOutputAliases(CompiledHopKey producer) {
+		Set<CompiledHopKey> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+		java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>();
+		pending.add(producer);
+		while(!pending.isEmpty()) {
+			CompiledHopKey current = pending.removeFirst();
+			if(!visited.add(current))
+				continue;
+			for(CompiledInputEdgeFact edge : compiledInputEdges) {
+				if(edge.producer() != current)
+					continue;
+				Node consumer = nodes.stream().filter(node -> node.key() == edge.consumer())
+					.findFirst().orElse(null);
+				Hop hop = origins.get(edge.consumer());
+				if(consumer != null && consumer.kind() == NodeKind.TRANSIENT_WRITE)
+					owners.add(consumer.key());
+				else if(hop instanceof org.apache.sysds.hops.UnaryOp unary
+					&& unary.getOp() == org.apache.sysds.common.Types.OpOp1._PLACEMENT)
+					pending.add(edge.consumer());
+			}
+		}
+		return owners.stream().sorted().toList();
 	}
 
 	private static List<CandidateEmissionRealization> retainDerivedOutputSupport(

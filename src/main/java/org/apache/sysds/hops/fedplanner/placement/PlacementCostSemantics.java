@@ -1189,6 +1189,15 @@ public final class PlacementCostSemantics {
 		Hop hop = analysis.hop(key).orElseThrow(() ->
 			new IllegalArgumentException("Placement cost key has no owned Hop"));
 		List<Hop> exactInputs = inputHops == null ? new ArrayList<>(hop.getInput()) : inputHops;
+		return FederatedCostModel.computeMixedFedLocalCost(hop, exactInputs,
+			analysisAwareInputMemEstimates(analysis, key), inputFTypes, logicalFType, baseSelfCost,
+			outputMemEstimate, workers, layout);
+	}
+
+	/** Deferred HOP sizes must use the same occurrence facts for all runtime stages. */
+	private static List<Double> analysisAwareInputMemEstimates(PlacementAnalysis analysis, CompiledHopKey key) {
+		Hop hop = analysis.hop(key).orElseThrow(() ->
+			new IllegalArgumentException("Placement cost key has no owned Hop"));
 		List<Double> inputMemEstimates = new ArrayList<>(hop.getInput().size());
 		for(int position = 0; position < hop.getInput().size(); position++) {
 			Hop compiledInput = hop.getInput(position);
@@ -1206,9 +1215,22 @@ public final class PlacementCostSemantics {
 			}
 			inputMemEstimates.add(estimate);
 		}
-		return FederatedCostModel.computeMixedFedLocalCost(hop, exactInputs,
-			inputMemEstimates, inputFTypes, logicalFType, baseSelfCost,
-			outputMemEstimate, workers, layout);
+		return inputMemEstimates;
+	}
+
+	public static double analysisAwareAuxiliaryNetworkCost(PlacementAnalysis analysis, CompiledHopKey key,
+		List<FType> inputFTypes, double outputBytes, int workers) {
+		Hop hop = analysis.hop(key).orElseThrow();
+		List<Long> rows = new ArrayList<>(hop.getInput().size());
+		List<Long> cols = new ArrayList<>(hop.getInput().size());
+		for(int position = 0; position < hop.getInput().size(); position++) {
+			CompiledHopKey producer = analysis.compiledInputEdge(key, position)
+				.map(PlacementAnalysis.CompiledInputEdgeFact::producer).orElse(null);
+			rows.add(analysisAwareComputeDimension(analysis, producer, hop.getInput(position), true));
+			cols.add(analysisAwareComputeDimension(analysis, producer, hop.getInput(position), false));
+		}
+		return FederatedCostModel.computeFederatedAuxiliaryNetworkCost(hop, hop.getInput(),
+			analysisAwareInputMemEstimates(analysis, key), rows, cols, inputFTypes, outputBytes, workers);
 	}
 
 	/** Dense in-memory bytes from an exact occurrence-scoped abstract shape, or NaN. */

@@ -1,0 +1,10 @@
+[
+  {
+    "neighborhood": "[PlannerTrace][DP-ConditionalNeighborhood] potential=9111.002323187615 originalVariables=5 estimatedAssignments=2024448800 block=[756, 758, 759, 760, 762]",
+    "portfolio": "[PlannerTrace][Exact-OrderPortfolio] variables=196 inputFactors=296 inputCells=133488 maximumInputCells=10912 candidates=[MIN_FILL:PlanMetrics[maximumFactorCells=40672, materializedFactorCells=1336656, maximumEliminationAssignments=1632620, eliminationAssignments=8174476]; MIN_SEPARATOR_CELLS:PlanMetrics[maximumFactorCells=40672, materializedFactorCells=869700, maximumEliminationAssignments=5206016, eliminationAssignments=14814394]; MIN_ELIMINATION_ASSIGNMENTS:PlanMetrics[maximumFactorCells=40672, materializedFactorCells=1305870, maximumEliminationAssignments=1789568, eliminationAssignments=7316606]; MIN_DEGREE:PlanMetrics[maximumFactorCells=40672, materializedFactorCells=1336656, maximumEliminationAssignments=1632620, eliminationAssignments=8174476]] selectedOrdering=MIN_SEPARATOR_CELLS selectedPriority=1"
+  },
+  {
+    "neighborhood": "[PlannerTrace][DP-ConditionalNeighborhood] potential=5049.96405 originalVariables=4 estimatedAssignments=8163100 block=[758, 759, 760, 762]",
+    "portfolio": "[PlannerTrace][Exact-OrderPortfolio] variables=160 inputFactors=243 inputCells=87051 maximumInputCells=5611 candidates=[MIN_FILL:PlanMetrics[maximumFactorCells=29684, materializedFactorCells=789124, maximumEliminationAssignments=593680, eliminationAssignments=3374702]; MIN_SEPARATOR_CELLS:PlanMetrics[maximumFactorCells=29684, materializedFactorCells=563051, maximumEliminationAssignments=3799552, eliminationAssignments=6968025]; MIN_ELIMINATION_ASSIGNMENTS:PlanMetrics[maximumFactorCells=29684, materializedFactorCells=788256, maximumEliminationAssignments=593680, eliminationAssignments=3372320]; MIN_DEGREE:PlanMetrics[maximumFactorCells=29684, materializedFactorCells=789124, maximumEliminationAssignments=593680, eliminationAssignments=3374702]] selectedOrdering=MIN_SEPARATOR_CELLS selectedPriority=1"
+  }
+]

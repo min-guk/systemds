@@ -64,6 +64,17 @@ public class DataOp extends Hop {
 	private boolean _hasOnlyRDD = false;
 	
 	private boolean _recompileRead = true;
+	// A real branch-exit assignment whose input edge may own a planned conversion.
+	// The key distinguishes the two branch copies during function recompilation.
+	private String _plannerBranchNormalizationKey;
+
+	public boolean isPlannerBranchNormalization() { return _plannerBranchNormalizationKey != null; }
+	public String getPlannerBranchNormalizationKey() { return _plannerBranchNormalizationKey; }
+	public void setPlannerBranchNormalization(String key) {
+		if(key == null || key.isEmpty())
+			throw new IllegalArgumentException("Branch-normalization key must be non-empty");
+		_plannerBranchNormalizationKey = key;
+	}
 
 	/**
 	 * List of "named" input parameters. They are maintained as a hashmap:
@@ -633,6 +644,7 @@ public class DataOp extends Hop {
 		ret._inFormat = _inFormat;
 		ret._inBlocksize = _inBlocksize;
 		ret._recompileRead = _recompileRead;
+		ret._plannerBranchNormalizationKey = _plannerBranchNormalizationKey;
 		ret._paramIndexMap = (HashMap<String, Integer>) _paramIndexMap.clone();
 		//note: no deep cp of params since read-only 
 		

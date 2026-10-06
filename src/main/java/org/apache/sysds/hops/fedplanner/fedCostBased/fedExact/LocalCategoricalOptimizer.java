@@ -46,6 +46,12 @@ final class LocalCategoricalOptimizer {
 	interface BlockPreparation {
 		/** Original decision indexes/values in, original block values out. */
 		PreparedBlockSolver prepare(int[] assignment, int[] block);
+
+		/**
+		 * Expands a repair neighborhood when a shared exact representation proves that
+		 * a fixed boundary value cannot participate in any feasible assignment.
+		 */
+		default int[] expandRepairBlock(int[] assignment, int[] block) { return block; }
 	}
 
 	static final String COMPACT_PROPERTY = "sysds.fedplanner.regional.compact";
@@ -889,6 +895,15 @@ final class LocalCategoricalOptimizer {
 			int[] block;
 			while(true) {
 				block = variables.stream().sorted().mapToInt(Integer::intValue).toArray();
+				if(context.sharedPreparation != null) {
+					int[] expanded = context.sharedPreparation.expandRepairBlock(assignment, block);
+					for(int variable : expanded)
+						variables.add(variable);
+					if(expanded.length != block.length) {
+						statistics.conflictBlockExpansions++;
+						block = variables.stream().sorted().mapToInt(Integer::intValue).toArray();
+					}
+				}
 				solution = solveBlock(context, assignment, block, statistics);
 				if(solution != null)
 					break;

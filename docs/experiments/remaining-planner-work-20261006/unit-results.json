@@ -1,0 +1,627 @@
+{
+  "returncode": 0,
+  "classes": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsAnalysisMemoryCostTest",
+      "tests": "10",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "9.781"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsNativeInputSourceShapeTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "20.932"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsSparseAssignmentTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.851"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PlacementCostSizeBoundsTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "12.741"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PlacementSolveAbstractShapeTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.999"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModelInstructionNetworkStageTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "9.994"
+    },
+    {
+      "name": "org.apache.sysds.test.component.federated.FederatedAggregateUnaryTopologyCostTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.547"
+    },
+    {
+      "name": "org.apache.sysds.test.component.federated.FederatedCostModelFallbackTest",
+      "tests": "35",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.101"
+    },
+    {
+      "name": "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+      "tests": "42",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "31.012"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalUnaryPreparationTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "23.909"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalWorkerCountTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.008"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "10.325"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactProjectionAuthorityPreservationRedTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "15.426"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintPreflightTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.834"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.955"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSparseFunctionBoundaryCostTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "11.54"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactZeroFrequencyCostTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.386"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CoordinatorMetadataExactCostTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "4.764"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "47.829"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactL2SvmInternalEmissionCostRedTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "36.525"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "108.171"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "50.897"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PreparedExecutionCostQuantityTest",
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.783"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PreparedWdivmmOperandQuantityTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "6.075"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedNetworkCostUnificationTest",
+      "tests": "11",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.855"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExecutionOwnershipCostTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "15.003"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactWorkerLayoutProjectionTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "11.916"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationMaterializationCostTest",
+      "tests": "10",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.013"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactMaterializationActivationTest",
+      "tests": "10",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.487"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledMaterializationScopeTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "16.974"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationIndependentOracleTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "7.071"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationClassFactorDecompositionTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.814"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.FusedKernelOwnershipTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.495"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeResultBatchCostTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.716"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedKernelLayoutCostTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "10.448"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.GetAggregateProcessingCostTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.874"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedFactorReuseCostTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "27.914"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.WdivmmFactorAlignmentTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.074"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.ExplicitWdivmmPreparationTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.926"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAliasGetCoalescingTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "19.502"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExplicitWdivmmTransferTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "13.034"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.OneWayNetworkCostTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "13.008"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.SharedNicNetworkCostTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "9.057"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.OccurrenceActivationContextTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "9.57"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryRuntimeAliasContractTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.03"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionGetSharingTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "15.751"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasGetCostTest",
+      "tests": "11",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "33.504"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasActivationEncodingTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "2.695"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LoopEntryCompletePlacementSpaceTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "19.217"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.LoopEntryMaterializationTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "28.194"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.MaterializedContinuityTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.931"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverCycleTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "2.291"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverFunctionReturnTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.829"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.NativeResultBatchOwnershipCostTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.453"
+    },
+    {
+      "name": "org.apache.sysds.runtime.instructions.fed.NativeResultBatchContractTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.45"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDownloadAuthorityAmbiguityRedTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "37.495"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedAuxiliaryNetworkCostTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.34"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAuxiliaryCommunicationCostTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "9.169"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedRegionalPreparationTest",
+      "tests": "11",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.191"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalCategoricalOptimizerTest",
+      "tests": "18",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.547"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+      "tests": "27",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.313"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.DirectedDirectClosureDirtyConeTest",
+      "tests": "21",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.171"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.086"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.CandidateRealizationCanonicalizationTest",
+      "tests": "49",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "4.152"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.LoopSeedReplayWideningTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "40.603"
+    },
+    {
+      "name": "org.apache.sysds.hops.recompile.PlannerRecompileProgramAuthorityTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.749"
+    },
+    {
+      "name": "org.apache.sysds.hops.recompile.RuntimeRecompileAuditTest",
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "2.358"
+    },
+    {
+      "name": "org.apache.sysds.hops.recompile.CampaignBG014DerivedFoutRecompileStateRedTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.566"
+    },
+    {
+      "name": "org.apache.sysds.hops.rewrite.RewritePlannerRecompileAuthorityTest",
+      "tests": "10",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.343"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.DirectSupportUnionScheduleTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.904"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactInputAuthorityOptimizationTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "72.205"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactReductionMemoryTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.412"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactRepeatedFunctionInputFeasibilityTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "17.842"
+    },
+    {
+      "name": "org.apache.sysds.hops.rewrite.FederatedBranchExitNormalizerTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.07"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BranchExitPlacementNormalizationTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "16.738"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryOccurrenceIdentityTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "7.411"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFactsConstantBranchTest",
+      "tests": "17",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "79.044"
+    }
+  ],
+  "totals": {
+    "tests": 606,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

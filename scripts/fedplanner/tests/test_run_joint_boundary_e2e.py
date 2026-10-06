@@ -21,6 +21,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "joint_correlated_bb", "joint_independent_ab", "joint_independent_ba",
                           "joint_independent_private_ab_negative",
                           "joint_loop_toggle", "joint_function_calls",
+                          "joint_dynamic_reverse",
                           "joint_function_private_mix_negative",
                           "joint_branch_upload",
                           "l2svm_protected_y_negative"}, set(by_name))
@@ -87,6 +88,53 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertIn(f"{dependencies}:/deps:ro", command)
         self.assertNotIn("/overlay", " ".join(command))
         self.assertEqual(len([value for value in command if value == str(run)]), 0)
+
+    def test_dynamic_reverse_uses_two_protected_row_shards(self):
+        case = next(case for case in runner.cases() if case.name == "joint_dynamic_reverse")
+        script = runner.program(case, True)
+        self.assertIn('localhost:13001//evidence/data/X_TOP.csv', script)
+        self.assertIn('localhost:13002//evidence/data/X_BOTTOM.csv', script)
+        self.assertIn('ranges=list(list(0,0),list(4,3),list(4,0),list(8,3))', script)
+        self.assertIn('if(flag){T=rev(X);}else{T=rev(X);}', script)
+        self.assertIn('Z=exp(T)', script)
+        self.assertIn('sum(rowSums(Z)*seq(1,nrow(Z)))', script)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_inputs(root, (case,))
+            shards = []
+            for name in ('X_TOP', 'X_BOTTOM'):
+                metadata = json.loads((root / f'data/{name}.csv.mtd').read_text())
+                self.assertEqual((4, 3, 'private-aggregate'),
+                                 (metadata['rows'], metadata['cols'], metadata['privacy']))
+                shards.append((root / f'data/{name}.csv').read_text())
+            self.assertEqual((root / 'data/X_PUBLIC.csv').read_text(), ''.join(shards))
+
+    def test_dynamic_reverse_requires_weighted_result_and_fed_execution(self):
+        case = next(case for case in runner.cases() if case.name == "joint_dynamic_reverse")
+        numeric = ('JOINT_E2E_SUM=24\nJOINT_E2E_NORM2=24\n'
+                   'JOINT_E2E_ROWS=8\nJOINT_E2E_COLS=3\nJOINT_E2E_WEIGHTED=108\n')
+        execution = ''.join(
+            f'[PlannerRuntimeAudit][Execution] status=MATCH plan=test opcode={opcode} '
+            'plannedTarget=FED/FOUT plannedPhysical=FED/FOUT actual=FED/FOUT count=1\n'
+            for opcode in ('rev', 'exp'))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            logs = root / 'cases' / case.name
+            logs.mkdir(parents=True)
+            for mode in ('cp', 'fed'):
+                (logs / f'{mode}.rc').write_text('0\n')
+            (logs / 'cp.log').write_text(numeric)
+            (logs / 'fed.log').write_text(numeric + execution)
+            self.assertTrue(runner.evaluate(root, 0, (case,))['cases'][0]['passed'])
+            for bad in (numeric, numeric + execution.replace('opcode=rev', 'opcode=other'),
+                        numeric + execution.replace('opcode=exp', 'opcode=other'),
+                        numeric.replace('WEIGHTED=108', 'WEIGHTED=109') + execution):
+                (logs / 'fed.log').write_text(bad)
+                self.assertFalse(runner.evaluate(root, 0, (case,))['cases'][0]['passed'])
+            missing_weight = numeric.replace('JOINT_E2E_WEIGHTED=108\n', '')
+            (logs / 'cp.log').write_text(missing_weight)
+            (logs / 'fed.log').write_text(missing_weight + execution)
+            self.assertFalse(runner.evaluate(root, 0, (case,))['cases'][0]['passed'])
 
     def test_default_inputs_are_from_the_current_repository(self):
         args = runner.parse_args([])

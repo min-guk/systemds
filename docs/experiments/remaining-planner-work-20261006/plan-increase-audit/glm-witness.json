@@ -1,0 +1,52 @@
+{
+  "case": "glm_w1",
+  "currentModelSelectedMs": 46212.5216437004,
+  "historicalCoarseWitnessMs": 21977.116964792665,
+  "improvementMs": 24235.404678907733,
+  "improvementPercent": 52.44337209244555,
+  "hardFactors": 3458,
+  "hardViolations": 0,
+  "searchStop": "RESOURCE_INITIAL",
+  "merges": 0,
+  "improvements": 0,
+  "counterfactualGlobalOptimalityProven": false,
+  "witnessMode": "first feasible cheaper complete assignment with seven line983 domains constrained to historical coarse states; all other variables fixed to current selected assignment",
+  "deltas": [
+    {
+      "before": 5051.820768500307,
+      "after": 1.856718500307433,
+      "id": "00002763|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|46:root-1/input-0/input-1/input-1/input-0/input-0|80:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.ReorgOp:r(r'):compiler-temp]"
+    },
+    {
+      "before": 5674.595460734336,
+      "after": 624.6314107343359,
+      "id": "00002767|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|54:root-1/input-0/input-1/input-1/input-0/input-0/input-0|80:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp]"
+    },
+    {
+      "before": 0.0,
+      "after": 4061.0382731876134,
+      "id": "00002777|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|62:root-1/input-0/input-1/input-1/input-0/input-0/input-0/input-1|85:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp]"
+    },
+    {
+      "before": 9085.512528907728,
+      "after": 0.0,
+      "id": "00004738|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|46:root-1/input-0/input-1/input-1/input-0/input-0|80:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.ReorgOp:r(r'):compiler-temp, 64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|38:root-1/input-0/input-1/input-1/input-0|85:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp]"
+    },
+    {
+      "before": 9111.002323187615,
+      "after": 0.0,
+      "id": "00005333|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|46:root-1/input-0/input-1/input-1/input-0/input-0|80:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.ReorgOp:r(r'):compiler-temp, 64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|38:root-1/input-0/input-1/input-1/input-0|85:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp]"
+    },
+    {
+      "before": 0.0,
+      "after": 4035.5484789077286,
+      "id": "00006065|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|46:root-1/input-0/input-1/input-1/input-0/input-0|80:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.ReorgOp:r(r'):compiler-temp, 64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|38:root-1/input-0/input-1/input-1/input-0|85:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp]"
+    },
+    {
+      "before": 4035.5484789077286,
+      "after": 0.0,
+      "id": "00006066|GENERIC|[64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|62:root-1/input-0/input-1/input-1/input-0/input-0/input-0/input-0|69:scripts/builtin/glm.dml:983:24:org.apache.sysds.hops.DataOp:TRead w:w, 64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|249:64:5e522e821c93aa15cf2b8d4ab52938683e64dca6c950e9534954203bab594cc2|33:.builtinNS::get_CG_Steihaug_point|64:61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|61:function/.builtinNS::get_CG_Steihaug_point/body/3/loop-body/0|9:recompile|54:root-1/input-0/input-1/input-1/input-0/input-0/input-0|80:scripts/builtin/glm.dml:983:35:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp]"
+    }
+  ],
+  "diagnosticSourceSha256": "8775a8c667586f5e263eb82299c295bb9a84c0924d310d09ba22f67208ef3b2b"
+}

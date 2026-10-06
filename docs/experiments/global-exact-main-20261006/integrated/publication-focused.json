@@ -1,0 +1,76 @@
+{
+  "codeCommit": "547f4799cd801ef1830923390b8e6d5d1971429a",
+  "buildReturnCode": 0,
+  "classes": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.NativePlacementContinuityTest",
+      "tests": "79",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "1",
+      "time": "1.444"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDownloadAuthorityAmbiguityRedTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "12.017"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.GlobalExactCompletionTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.635"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PlannerResourceGuardTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.084"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactEliminationOrderPolicyTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.041"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+      "tests": "19",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.867"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.placement.BranchPlacementNormalizationTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "11.623"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.TransparentCarrierCostAuthorityTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "13.282"
+    }
+  ],
+  "totals": {
+    "tests": 135,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  }
+}

@@ -53,26 +53,38 @@ public final class BranchPlacementNormalization {
 			liveBefore(function.getBody(), new HashSet<>(function.getOutputParams().stream()
 				.map(DataIdentifier::getName).toList()), liveExits);
 		}
-		prepare(program, program.getStatementBlocks(), liveExits);
-		for(FunctionStatementBlock block : program.getNamedNSFunctionStatementBlocks().values())
-			prepare(program, List.of(block), liveExits);
+		prepare(program, program.getStatementBlocks(), liveExits, "main", Set.of());
+		for(var entry : new java.util.TreeMap<>(program.getNamedNSFunctionStatementBlocks()).entrySet()) {
+			FunctionStatement function = (FunctionStatement)entry.getValue().getStatement(0);
+			Set<String> inputs = new HashSet<>(function.getInputParams().stream()
+				.map(DataIdentifier::getName).toList());
+			prepare(program, function.getBody(), liveExits, "function/" + entry.getKey(), inputs);
+		}
 	}
 
 	public static boolean isPlacementAlias(Hop hop) {
 		return hop instanceof UnaryOp unary && unary.getOp() == OpOp1._PLACEMENT;
 	}
 
-	private static void prepare(DMLProgram program, List<StatementBlock> blocks,
-		Map<IfStatementBlock,Set<String>> liveExits) {
-		for(StatementBlock block : blocks) {
+	private static Set<String> prepare(DMLProgram program, List<StatementBlock> blocks,
+		Map<IfStatementBlock,Set<String>> liveExits, String path, Set<String> incoming) {
+		Set<String> bound = new HashSet<>(incoming);
+		for(int index = 0; index < blocks.size(); index++) {
+			StatementBlock block = blocks.get(index);
+			String blockPath = path + "/" + index;
 			if(block instanceof IfStatementBlock branch) {
 				IfStatement statement = (IfStatement)branch.getStatement(0);
-				prepare(program, statement.getIfBody(), liveExits);
-				prepare(program, statement.getElseBody(), liveExits);
+				Set<String> thenBound = prepare(program, statement.getIfBody(), liveExits,
+					blockPath + "/branch-if", bound);
+				Set<String> elseBound = prepare(program, statement.getElseBody(), liveExits,
+					blockPath + "/branch-else", bound);
 				VariableSet live = branch.liveOut();
 				VariableSet updated = branch.variablesUpdated();
-				if(live == null || updated == null)
+				if(live == null || updated == null) {
+					thenBound.retainAll(elseBound);
+					bound = thenBound;
 					continue;
+				}
 				List<DataIdentifier> values = live.getVariables().entrySet().stream()
 					.filter(entry -> updated.containsVariable(entry.getKey())
 						&& liveExits.getOrDefault(branch, Set.of()).contains(entry.getKey())
@@ -80,17 +92,26 @@ public final class BranchPlacementNormalization {
 					.sorted(java.util.Map.Entry.comparingByKey())
 					.map(java.util.Map.Entry::getValue).toList();
 				if(!values.isEmpty()) {
-					appendExit(program, branch, statement.getIfBody(), values);
-					appendExit(program, branch, statement.getElseBody(), values);
+					appendExit(program, branch, statement.getIfBody(), values.stream()
+						.filter(value -> thenBound.contains(value.getName())).toList(), blockPath + "/branch-if");
+					appendExit(program, branch, statement.getElseBody(), values.stream()
+						.filter(value -> elseBound.contains(value.getName())).toList(), blockPath + "/branch-else");
 				}
+				thenBound.retainAll(elseBound);
+				bound = thenBound;
 			}
 			else if(block instanceof WhileStatementBlock)
-				prepare(program, ((WhileStatement)block.getStatement(0)).getBody(), liveExits);
+				prepare(program, ((WhileStatement)block.getStatement(0)).getBody(), liveExits,
+					blockPath + "/while-body", bound);
 			else if(block instanceof ForStatementBlock)
-				prepare(program, ((ForStatement)block.getStatement(0)).getBody(), liveExits);
+				prepare(program, ((ForStatement)block.getStatement(0)).getBody(), liveExits,
+					blockPath + "/for-body", bound);
 			else if(block instanceof FunctionStatementBlock)
-				prepare(program, ((FunctionStatement)block.getStatement(0)).getBody(), liveExits);
+				prepare(program, ((FunctionStatement)block.getStatement(0)).getBody(), liveExits, blockPath, bound);
+			else
+				bound.addAll(block.variablesUpdated().getVariableNames());
 		}
+		return bound;
 	}
 
 	/** AST liveOut can mention values removed by final HOP dead-code rewrites. */
@@ -151,7 +172,9 @@ public final class BranchPlacementNormalization {
 	}
 
 	private static void appendExit(DMLProgram program, IfStatementBlock branch,
-		ArrayList<StatementBlock> body, List<DataIdentifier> values) {
+		ArrayList<StatementBlock> body, List<DataIdentifier> values, String path) {
+		if(values.isEmpty())
+			return;
 		if(!body.isEmpty() && isExitSite(body.get(body.size() - 1)))
 			return; // search-space diagnostics and production may share preparation
 		StatementBlock exit = new StatementBlock();
@@ -174,6 +197,8 @@ public final class BranchPlacementNormalization {
 				hop.setParseInfo(branch);
 				hop.setBlocksize(value.getBlocksize());
 			}
+			read.setPlannerBranchNormalization(path + "/" + name);
+			write.setPlannerBranchNormalization(path + "/" + name);
 			write.refreshSizeInformation();
 			roots.add(write);
 			touched.addVariable(name, value);

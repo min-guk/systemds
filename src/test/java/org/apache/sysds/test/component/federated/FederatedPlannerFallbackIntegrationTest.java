@@ -1267,6 +1267,65 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDagRegistryRefedAcceptsLegacyRowRangesWithExtentFromDurableKey() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedConsumer = functionCallConsumerLop(localInput, 962);
+			Data liveAnchor = federatedMatrixAnchorLop("LiveAnchor", 916);
+			liveAnchor.getOutputParameters().setDimensions(-1, -1, BLOCKSIZE, -1);
+			String liveKey = "localhost:10001;localhost:10002;localhost:10003;"
+				+ "|0,5;5,10;10,15;|ROW";
+			String durableKey = "localhost:10001;localhost:10002;localhost:10003;"
+				+ "|0,0,5,1;5,0,10,1;10,0,15,1;|ROW";
+			FederatedPlannerUtils.registerFedAnchorKey(
+				liveAnchor.getOutputParameters().getLabel(), liveKey);
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), liveAnchor.getHopID(),
+				durableKey, List.of(selectedConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedConsumer, liveAnchor));
+			assertTrue("The complete durable ranges must supply the missing legacy ROW extent",
+				invokeInsertRefedLops(lops));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedRejectsDifferentRowGeometryWhenLiveShapeIsUnknown() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedConsumer = functionCallConsumerLop(localInput, 962);
+			Data liveAnchor = federatedMatrixAnchorLop("LiveAnchor", 916);
+			liveAnchor.getOutputParameters().setDimensions(-1, -1, BLOCKSIZE, -1);
+			String liveKey = "localhost:10001;localhost:10002;|0,5;5,10;|ROW";
+			String durableKey = "localhost:10001;localhost:10002;|0,0,6,1;6,0,10,1;|ROW";
+			FederatedPlannerUtils.registerFedAnchorKey(
+				liveAnchor.getOutputParameters().getLabel(), liveKey);
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), liveAnchor.getHopID(),
+				durableKey, List.of(selectedConsumer.getHopID()));
+
+			try {
+				invokeInsertRefedLops(new ArrayList<>(List.of(localInput, selectedConsumer, liveAnchor)));
+				throw new AssertionError("Different ROW partition geometry must fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected conflicting anchor authority but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
 	public void testDagRegistryRefedFailsClosedForUnresolvedSelectedConsumerId() throws Exception {
 		FederatedRefedRegistry.clear();
 		FederatedPlannerUtils.clearFedInitVars();

@@ -28,6 +28,7 @@ import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
@@ -459,6 +460,133 @@ public final class FederatedCostModel {
 			return 0.0;
 		return Math.max(0.0, execWeight) * computeRequestResponseLatency(
 			NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C);
+	}
+
+	/**
+	 * Network cost of runtime-defined request batches beyond the ordinary FED
+	 * instruction batch. Result payloads already owned by the native LOUT result
+	 * model are deliberately excluded.
+	 */
+	public static double computeFederatedAuxiliaryNetworkCost(Hop hop, List<Hop> inputHops,
+			List<Double> inputMemEstimates, List<FType> inputFTypes,
+			double outputMemEstimate, int numWorkers) {
+		return computeFederatedAuxiliaryNetworkCost(hop, inputHops, inputMemEstimates,
+			null, null, inputFTypes, outputMemEstimate, numWorkers);
+	}
+
+	public static double computeFederatedAuxiliaryNetworkCost(Hop hop, List<Hop> inputHops,
+			List<Double> inputMemEstimates, List<Long> inputRows, List<Long> inputCols,
+			List<FType> inputFTypes, double outputMemEstimate, int numWorkers) {
+		if(hop == null)
+			return 0.0;
+		int workers = Math.max(1, numWorkers);
+		double roundTrip = computeRequestResponseLatency();
+		if(hop instanceof AggUnaryOp aggregate && aggregate.getOp() == AggOp.VAR
+			&& typeAt(inputFTypes, 0) != null) {
+			double resultBytes = estimateAggregateUnaryResultMemEstimate(aggregate, outputMemEstimate);
+			return roundTrip + computeAggregateUnaryPartialResultDownloadCost(
+				aggregate, typeAt(inputFTypes, 0), resultBytes, workers);
+		}
+
+		// Exact native realization binding places every present covariance input on one
+		// target worker pool. Runtime rejects FED/FED covariance when that alignment is absent.
+		boolean alignedCovariance = typeAt(inputFTypes, 0) != null
+			&& typeAt(inputFTypes, 1) != null;
+		if(alignedCovariance && hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV) {
+			// The ordinary result term already owns the covariance batch. Runtime also
+			// returns one scalar per worker from each of the two mean batches.
+			return roundTrip + 2 * computeReplicatedWorkerResultDownloadCost(
+				getInjectedDefaultMemEstimatePerCell(hop), workers);
+		}
+		if(alignedCovariance && hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.COV) {
+			// Weighted aligned covariance executes covariance, two means, and weight-sum
+			// as four real batches. The base instruction term owns the first one.
+			return 3 * roundTrip + 3 * computeReplicatedWorkerResultDownloadCost(
+				getInjectedDefaultMemEstimatePerCell(hop), workers);
+		}
+
+		if(hop instanceof UnaryOp unary && isCumulative(unary.getOp())
+			&& typeAt(inputFTypes, 0) == FType.ROW)
+			return computeCumulativeAuxiliaryNetworkCost(unary, inputHops,
+				inputMemEstimates, inputRows, inputCols, outputMemEstimate, workers, roundTrip);
+
+		if(hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.CTABLE) {
+			int dimensionBatches = (typeAt(inputFTypes, 0) != null ? 1 : 0)
+				+ (typeAt(inputFTypes, 1) != null ? 1 : 0);
+			// CtableFEDInstruction currently derives maxima even when its dimension
+			// operands are literals; each federated value therefore returns W scalars.
+			return dimensionBatches * (roundTrip + computeReplicatedWorkerResultDownloadCost(
+				getInjectedDefaultMemEstimatePerCell(hop), workers));
+		}
+
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.RESHAPE
+			&& typeAt(inputFTypes, 0) != null) {
+			// Runtime sends the output schema PUT in a standalone execute before compute.
+			return roundTrip;
+		}
+		return 0.0;
+	}
+
+	private static boolean isCumulative(OpOp1 op) {
+		return op == OpOp1.CUMSUM || op == OpOp1.CUMPROD || op == OpOp1.CUMMIN
+			|| op == OpOp1.CUMMAX || op == OpOp1.CUMSUMPROD;
+	}
+
+	private static double computeCumulativeAuxiliaryNetworkCost(UnaryOp unary,
+			List<Hop> inputHops, List<Double> inputMemEstimates, List<Long> inputRows,
+			List<Long> inputCols, double outputMemEstimate, int workers, double roundTrip) {
+		Hop input = inputHopAt(inputHops, 0);
+		double inputBytes = inputMemEstimateAt(inputMemEstimates, 0);
+		if(!positiveFinite(inputBytes))
+			inputBytes = getEffectiveOutputMemEstimate(input);
+		long rows = dimensionAt(inputRows, 0, input == null ? -1 : input.getDim1());
+		long cols = dimensionAt(inputCols, 0, input == null ? -1 : input.getDim2());
+		if(unary.getOp() == OpOp1.CUMSUMPROD) {
+			double firstResultBytes = positiveFinite(outputMemEstimate)
+				? outputMemEstimate : estimateDenseMatrixBytes(rows, 1);
+			if(!positiveFinite(firstResultBytes))
+				firstResultBytes = inputBytes;
+			double conditionBytes = estimateDenseMatrixBytes(rows, cols);
+			double offsetBytes = estimateSparseMatrixBytes(rows, cols, Math.max(0, workers - 1));
+			if(!positiveFinite(conditionBytes))
+				conditionBytes = inputBytes;
+			double correctionUpload = computeInBandUploadPayloadCost(
+				conditionBytes + Math.max(0.0, offsetBytes), FType.ROW, workers);
+			return 3 * roundTrip
+				+ computeCalibratedGetResponsePayloadCost(firstResultBytes, workers)
+				+ computeCalibratedGetResponsePayloadCost(inputBytes, workers)
+				+ correctionUpload;
+		}
+
+		double rowVectorBytes = estimateDenseMatrixBytes(1, cols);
+		if(!positiveFinite(rowVectorBytes) && rows > 0 && positiveFinite(inputBytes))
+			rowVectorBytes = inputBytes / rows;
+		double correctionBytes = unary.getOp() == OpOp1.CUMSUM
+			? estimateSparseMatrixBytes(rows, cols, Math.max(0L, (long) (workers - 1) * cols))
+			: estimateDenseMatrixBytes(rows, cols);
+		if(!positiveFinite(correctionBytes))
+			correctionBytes = inputBytes;
+		return 2 * roundTrip
+			+ computeReplicatedWorkerResultDownloadCost(rowVectorBytes, workers)
+			+ computeInBandUploadPayloadCost(correctionBytes, FType.ROW, workers);
+	}
+
+	private static double estimateDenseMatrixBytes(long rows, long cols) {
+		return rows > 0 && cols > 0
+			? OptimizerUtils.estimateSizeExactSparsity(rows, cols, 1.0) : 0.0;
+	}
+
+	private static double estimateSparseMatrixBytes(long rows, long cols, long nonZeros) {
+		return rows > 0 && cols > 0
+			? OptimizerUtils.estimateSizeExactSparsity(rows, cols,
+				Math.min(1.0, Math.max(0.0, (double) nonZeros / rows / cols))) : 0.0;
+	}
+
+	private static long dimensionAt(List<Long> dimensions, int index, long fallback) {
+		if(dimensions == null || index < 0 || index >= dimensions.size())
+			return fallback;
+		Long dimension = dimensions.get(index);
+		return dimension != null && dimension > 0 ? dimension : fallback;
 	}
 
 	/**

@@ -102,12 +102,18 @@ public final class PlacementJointInputAnalysis {
 		}
 	}
 
-	private record Environment(Map<String,Definition> values, Map<Integer,Definition> readSources)
-		implements Comparable<Environment> {
-		Environment {
-			values = Collections.unmodifiableMap(new TreeMap<>(values));
-			readSources = Collections.unmodifiableMap(new TreeMap<>(readSources));
+	private static final class Environment implements Comparable<Environment> {
+		private final Map<String,Definition> values;
+		private final Map<Integer,Definition> readSources;
+		private final String stableKey;
+
+		Environment(Map<String,Definition> values, Map<Integer,Definition> readSources) {
+			this.values = Collections.unmodifiableMap(new TreeMap<>(values));
+			this.readSources = Collections.unmodifiableMap(new TreeMap<>(readSources));
+			stableKey = stableKey(this.values, this.readSources);
 		}
+		Map<String,Definition> values() { return values; }
+		Map<Integer,Definition> readSources() { return readSources; }
 		Environment with(String variable, Definition definition) {
 			Map<String,Definition> copy = new TreeMap<>(values);
 			copy.put(variable, definition);
@@ -119,15 +125,35 @@ public final class PlacementJointInputAnalysis {
 			return new Environment(values, copy);
 		}
 		Environment nextBlock() { return readSources.isEmpty() ? this : new Environment(values, Map.of()); }
-		@Override public int compareTo(Environment that) { return stableKey().compareTo(that.stableKey()); }
-		String stableKey() {
-			String definitions = values.entrySet().stream()
-				.map(entry -> entry.getKey() + '=' + entry.getValue().stableKey())
-				.reduce((left, right) -> left + ";" + right).orElse("");
-			String reads = readSources.entrySet().stream()
-				.map(entry -> entry.getKey() + "=>" + entry.getValue().stableKey())
-				.reduce((left, right) -> left + ";" + right).orElse("");
-			return definitions + "|reads=" + reads;
+		@Override public int compareTo(Environment that) { return stableKey.compareTo(that.stableKey); }
+		String stableKey() { return stableKey; }
+
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof Environment that
+				&& values.equals(that.values) && readSources.equals(that.readSources);
+		}
+
+		@Override public int hashCode() {
+			return 31 * values.hashCode() + readSources.hashCode();
+		}
+
+		private static String stableKey(Map<String,Definition> values,
+			Map<Integer,Definition> readSources) {
+			StringBuilder key = new StringBuilder();
+			for(Map.Entry<String,Definition> entry : values.entrySet()) {
+				if(key.length() > 0)
+					key.append(';');
+				key.append(entry.getKey()).append('=').append(entry.getValue().stableKey());
+			}
+			key.append("|reads=");
+			boolean firstRead = true;
+			for(Map.Entry<Integer,Definition> entry : readSources.entrySet()) {
+				if(!firstRead)
+					key.append(';');
+				key.append(entry.getKey()).append("=>").append(entry.getValue().stableKey());
+				firstRead = false;
+			}
+			return key.toString();
 		}
 	}
 

@@ -1,0 +1,315 @@
+{
+  "status": "passed",
+  "containerExitCode": 0,
+  "containerWallNanos": 34393678938,
+  "checks": [
+    {
+      "workload": "aggregate",
+      "expected": 92.0,
+      "actual": [
+        "92.0"
+      ],
+      "passed": true,
+      "prediction": {
+        "objectiveMillis": 606.0315195769034,
+        "objectiveCertificate": "local-conflict-objective=4648541925439569887;costSurface=2cac1d029e7e8740127e7c769f4b683481dac04e727e8e9405627c13afa24307;assignment=[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];maxFactorCells=0",
+        "selectedAssignmentSize": 34,
+        "selectedRelocations": [],
+        "selectedLocalMaterializations": [
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-2/input-0/input-0, canonicalSourceOrigin=aggregate.dml:2:0:org.apache.sysds.hops.DataOp:Fed P:P], sourceValueVersion=ValueVersionKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, lexicalVariable=P, definingControlRegion=ControlRegionKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], definitionOrdinal=0, versionKind=ORDINARY, predecessorVersions=[input-0:value-23#0@main/0:ORDINARY, input-1:value-26#0@main/0:ORDINARY, input-2:value-13#0@main/0:ORDINARY]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-2/input-0, canonicalSourceOrigin=aggregate.dml:4:26:org.apache.sysds.hops.IndexingOp:rix:P], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]], LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=2a364dd5a7df500f8f688155d8f2592bfa953f891afee9479aabd63a35c02607, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-2/input-1, canonicalSourceOrigin=aggregate.dml:4:32:org.apache.sysds.hops.IndexingOp:rix:P], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=0:main, durableProvenance=fed-init:P]"
+        ]
+      },
+      "measurement": {
+        "compileNanos": 1714667989,
+        "executionNanos": 907666980,
+        "probeWallNanos": 3129807152,
+        "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t4/0/5.\nFederated Execute (Inst, UDF):\t9/0.\nFederated prefetch count:\t0.\n",
+        "networkTraffic": "Server I/O bytes (read/written):\t8986/14420\nWorker I/O bytes (read/written):\t0/0\n",
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      "federatedHeavyHitters": {
+        "fed_fedinit": 2,
+        "fed_rightIndex": 2,
+        "fed_uak+": 1,
+        "fed_uavar": 1
+      },
+      "allHeavyHitters": {
+        "+": 1,
+        "cov": 1,
+        "createvar": 7,
+        "fed_fedinit": 2,
+        "fed_rightIndex": 2,
+        "fed_uak+": 1,
+        "fed_uavar": 1,
+        "list": 10,
+        "n+": 1,
+        "prefetch": 1,
+        "print": 1,
+        "rightIndex": 2,
+        "rmvar": 11
+      },
+      "error": null
+    },
+    {
+      "workload": "shape",
+      "expected": 4480.0,
+      "actual": [
+        "4480.0"
+      ],
+      "passed": true,
+      "prediction": {
+        "objectiveMillis": 303.02761477462144,
+        "objectiveCertificate": "local-conflict-objective=4644038534367321643;costSurface=7bc27397aaa6ef7207c8e3a178c189ab7225e45c16c82650b27ce55748b7f36f;assignment=[0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];maxFactorCells=0",
+        "selectedAssignmentSize": 49,
+        "selectedRelocations": [],
+        "selectedLocalMaterializations": [
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-1/input-0/input-0/input-0, canonicalSourceOrigin=shape.dml:2:0:org.apache.sysds.hops.DataOp:Fed P:P], sourceValueVersion=ValueVersionKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, lexicalVariable=P, definingControlRegion=ControlRegionKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], definitionOrdinal=0, versionKind=ORDINARY, predecessorVersions=[input-0:value-21#0@main/0:ORDINARY, input-1:value-24#0@main/0:ORDINARY, input-2:value-13#0@main/0:ORDINARY]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-1/input-0/input-0, canonicalSourceOrigin=shape.dml:4:0:org.apache.sysds.hops.UnaryOp:u(ucumk+):C], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]], LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-3/input-0/input-0, canonicalSourceOrigin=shape.dml:4:126:org.apache.sysds.hops.ReorgOp:r(rshape):R], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]], LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=f46a790e6a2b6d0720904a56eecffec02670c84078b768b692c44f9f326de2e1, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-2/input-0/input-0/input-0, canonicalSourceOrigin=shape.dml:4:67:org.apache.sysds.hops.IndexingOp:rix:P], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=0:main, durableProvenance=fed-init:P]"
+        ]
+      },
+      "measurement": {
+        "compileNanos": 1884714847,
+        "executionNanos": 347905755,
+        "probeWallNanos": 2776340805,
+        "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t4/0/3.\nFederated Execute (Inst, UDF):\t4/0.\nFederated prefetch count:\t0.\n",
+        "networkTraffic": "Server I/O bytes (read/written):\t5438/8408\nWorker I/O bytes (read/written):\t0/0\n",
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      "federatedHeavyHitters": {
+        "fed_fedinit": 2,
+        "fed_rightIndex": 1,
+        "fed_uak+": 1
+      },
+      "allHeavyHitters": {
+        "*": 1,
+        "+": 1,
+        "createvar": 14,
+        "ctable": 1,
+        "fed_fedinit": 2,
+        "fed_rightIndex": 1,
+        "fed_uak+": 1,
+        "list": 10,
+        "n+": 1,
+        "prefetch": 1,
+        "print": 1,
+        "rightIndex": 1,
+        "rmvar": 16,
+        "rshape": 4,
+        "seq": 2,
+        "tak+*": 2,
+        "uak+": 1,
+        "ucumk+": 1
+      },
+      "error": null
+    },
+    {
+      "workload": "linear",
+      "expected": 3588.0,
+      "actual": [
+        "3588.0"
+      ],
+      "passed": true,
+      "prediction": {
+        "objectiveMillis": 606.0932767450569,
+        "objectiveCertificate": "local-conflict-objective=4648542468661365753;costSurface=a3c1cf16c381e4d5fb45c31ad220db376f885e376e7d26780a2a6fe51124a87d;assignment=[0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 3, 0, 101, 0, 0, 0, 0, 1, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];maxFactorCells=0",
+        "selectedAssignmentSize": 46,
+        "selectedRelocations": [],
+        "selectedLocalMaterializations": [
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-1/input-0/input-0/input-0/input-0, canonicalSourceOrigin=linear.dml:2:0:org.apache.sysds.hops.DataOp:Fed P:P], sourceValueVersion=ValueVersionKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, lexicalVariable=P, definingControlRegion=ControlRegionKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], definitionOrdinal=0, versionKind=ORDINARY, predecessorVersions=[input-0:value-21#0@main/0:ORDINARY, input-1:value-24#0@main/0:ORDINARY, input-2:value-13#0@main/0:ORDINARY]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-1/input-0/input-0, canonicalSourceOrigin=linear.dml:4:9:org.apache.sysds.hops.AggBinaryOp:ba(+*):G], inputPosition=1, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]], LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=54d351689937237e99ce4e9e97f1d30519732995aaab4312c126f6ed1e244b4e, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0/input-1/input-1/input-0/input-0/input-0, canonicalSourceOrigin=linear.dml:4:2:org.apache.sysds.hops.ReorgOp:r(r'):compiler-temp], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=0:main, durableProvenance=fed-init:P]"
+        ]
+      },
+      "measurement": {
+        "compileNanos": 2567185512,
+        "executionNanos": 280124878,
+        "probeWallNanos": 3483344945,
+        "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t4/1/4.\nFederated Execute (Inst, UDF):\t10/0.\nFed Put Count (Sc/Li/Ma/Fr/MC):\t0/0/0/0/1.\nFederated prefetch count:\t0.\n",
+        "networkTraffic": "Server I/O bytes (read/written):\t8642/15706\nWorker I/O bytes (read/written):\t0/0\n",
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      "federatedHeavyHitters": {
+        "fed_ba+*": 1,
+        "fed_fedinit": 2,
+        "fed_r'": 1,
+        "fed_rightIndex": 1,
+        "fed_uak+": 1,
+        "fed_uark+": 1
+      },
+      "allHeavyHitters": {
+        "+": 1,
+        "ba+*": 2,
+        "castdts": 1,
+        "createvar": 13,
+        "fed_ba+*": 1,
+        "fed_fedinit": 2,
+        "fed_r'": 1,
+        "fed_rightIndex": 1,
+        "fed_uak+": 1,
+        "fed_uark+": 1,
+        "list": 10,
+        "n+": 1,
+        "prefetch": 1,
+        "print": 1,
+        "r'": 1,
+        "rand": 1,
+        "rmvar": 14,
+        "rshape": 1,
+        "seq": 1,
+        "tak+*": 1
+      },
+      "error": null
+    },
+    {
+      "workload": "control",
+      "expected": 304.0,
+      "actual": [
+        "304.0"
+      ],
+      "passed": true,
+      "prediction": {
+        "objectiveMillis": 303.02735920884976,
+        "objectiveCertificate": "local-conflict-objective=4644038529871361041;costSurface=355ba0e1ed1104ffdf4ca72a46f2486ed324100b4385015be39b4407dc7d9210;assignment=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];maxFactorCells=0",
+        "selectedAssignmentSize": 73,
+        "selectedRelocations": [],
+        "selectedLocalMaterializations": [
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, callSitePath=function/guarded/body/0/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, regionPath=[function/guarded/body/0/branch-if/0], callSitePath=function/guarded/body/0/branch-if/0, recompileContext=recompile], emittedHopInstance=root-0/input-0/input-0, canonicalSourceOrigin=control.dml:1:77:org.apache.sysds.hops.DataOp:TRead M:M], sourceValueVersion=ValueVersionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, lexicalVariable=M, definingControlRegion=ControlRegionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, regionPath=[function/guarded/body/0/branch-if/0], callSitePath=function/guarded/body/0/branch-if/0, recompileContext=recompile], definitionOrdinal=0, versionKind=FUNCTION_INPUT, predecessorVersions=[cfg-function-input:guarded:M]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, callSitePath=function/guarded/body/0/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, regionPath=[function/guarded/body/0/branch-if/0], callSitePath=function/guarded/body/0/branch-if/0, recompileContext=recompile], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=control.dml:1:79:org.apache.sysds.hops.BinaryOp:b(+):B], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=0:guarded, durableProvenance=fed-init:P]",
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, callSitePath=function/guarded/body/0/branch-else/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, regionPath=[function/guarded/body/0/branch-else/0], callSitePath=function/guarded/body/0/branch-else/0, recompileContext=recompile], emittedHopInstance=root-0/input-0/input-0, canonicalSourceOrigin=control.dml:1:89:org.apache.sysds.hops.DataOp:TRead M:M], sourceValueVersion=ValueVersionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, lexicalVariable=M, definingControlRegion=ControlRegionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, regionPath=[function/guarded/body/0/branch-else/0], callSitePath=function/guarded/body/0/branch-else/0, recompileContext=recompile], definitionOrdinal=0, versionKind=FUNCTION_INPUT, predecessorVersions=[cfg-function-input:guarded:M]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=ROW, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, callSitePath=function/guarded/body/0/branch-else/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=0cb5422b538abfdea8c82eff8825cfa20d8b20a8ecccafcc73ba0faeca0574a2, functionNamespace=guarded, regionPath=[function/guarded/body/0/branch-else/0], callSitePath=function/guarded/body/0/branch-else/0, recompileContext=recompile], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=control.dml:1:91:org.apache.sysds.hops.BinaryOp:b(-):B], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=1:guarded, durableProvenance=fed-init:P]"
+        ]
+      },
+      "measurement": {
+        "compileNanos": 2726707247,
+        "executionNanos": 346849561,
+        "probeWallNanos": 3595572776,
+        "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t4/0/3.\nFederated Execute (Inst, UDF):\t3/0.\nFederated prefetch count:\t0.\n",
+        "networkTraffic": "Server I/O bytes (read/written):\t4808/7552\nWorker I/O bytes (read/written):\t0/0\n",
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      "federatedHeavyHitters": {
+        "fed_fedinit": 2,
+        "fed_rightIndex": 1,
+        "fed_uak+": 1
+      },
+      "allHeavyHitters": {
+        "+": 10,
+        "-": 1,
+        "<=": 6,
+        "assignvar": 4,
+        "createvar": 11,
+        "fed_fedinit": 2,
+        "fed_rightIndex": 1,
+        "fed_uak+": 1,
+        "guarded": 2,
+        "list": 10,
+        "mvvar": 19,
+        "n+": 1,
+        "prefetch": 2,
+        "print": 1,
+        "rmvar": 21,
+        "uak+": 2
+      },
+      "error": null
+    },
+    {
+      "workload": "branch_true",
+      "expected": 95.0,
+      "actual": [
+        "95.0"
+      ],
+      "passed": true,
+      "prediction": {
+        "objectiveMillis": 252.53643704253352,
+        "objectiveCertificate": "local-conflict-objective=4643089352531132780;costSurface=7c43eea7102c1566fcfd893fc39a5db2763697ee3d03c99f87533d11205abd35;assignment=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];maxFactorCells=164",
+        "selectedAssignmentSize": 50,
+        "selectedRelocations": [],
+        "selectedLocalMaterializations": [
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=branch_true.dml:3:0:org.apache.sysds.hops.AggUnaryOp:ua(+C):Y], sourceValueVersion=ValueVersionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, lexicalVariable=value-14, definingControlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], definitionOrdinal=0, versionKind=ORDINARY, predecessorVersions=[input-0:Q#0@main/0:ORDINARY]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=COL, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-1/input-0, canonicalSourceOrigin=branch_true.dml:3:18:org.apache.sysds.hops.AggUnaryOp:ua(+RC):compiler-temp], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=10:main, durableProvenance=selected-source:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|8:value-14|105:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|4:main|8:6:main/0|6:main/0|8:compiled|1:0|8:ORDINARY|30:27:input-0:Q#0@main/0:ORDINARY:occurrence:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|4:main|6:main/0|8:compiled|105:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|4:main|8:6:main/0|6:main/0|8:compiled|14:root-0/input-0|61:branch_true.dml:3:0:org.apache.sysds.hops.AggUnaryOp:ua(+C):Y]",
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-else/0], callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=branch_true.dml:1:75:org.apache.sysds.hops.DataOp:TRead Y:Y], sourceValueVersion=ValueVersionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, lexicalVariable=Y, definingControlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-else/0], callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile], definitionOrdinal=2, versionKind=FUNCTION_INPUT, predecessorVersions=[cfg-function-input:branchExit:Y]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=COL, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-else/0], callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile], emittedHopInstance=root-0, canonicalSourceOrigin=branch_true.dml:1:75:org.apache.sysds.hops.DataOp:TWrite Y:Y], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=14:branchExit, durableProvenance=selected-source:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|1:Y|184:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|10:branchExit|43:40:function/branchExit/body/0/branch-else/0|40:function/branchExit/body/0/branch-else/0|9:recompile|1:2|14:FUNCTION_INPUT|34:31:cfg-function-input:branchExit:Y:occurrence:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|10:branchExit|40:function/branchExit/body/0/branch-else/0|9:recompile|184:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|10:branchExit|43:40:function/branchExit/body/0/branch-else/0|40:function/branchExit/body/0/branch-else/0|9:recompile|14:root-0/input-0|59:branch_true.dml:1:75:org.apache.sysds.hops.DataOp:TRead Y:Y]",
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-if/0], callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile], emittedHopInstance=root-0/input-0/input-0, canonicalSourceOrigin=branch_true.dml:1:86:org.apache.sysds.hops.DataOp:TRead Y:Y], sourceValueVersion=ValueVersionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, lexicalVariable=Y, definingControlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-if/0], callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile], definitionOrdinal=0, versionKind=FUNCTION_INPUT, predecessorVersions=[cfg-function-input:branchExit:Y]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=COL, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-if/0], callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=branch_true.dml:1:88:org.apache.sysds.hops.BinaryOp:b(+):Y], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=0:branchExit, durableProvenance=selected-source:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|1:Y|180:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|10:branchExit|41:38:function/branchExit/body/0/branch-if/0|38:function/branchExit/body/0/branch-if/0|9:recompile|1:0|14:FUNCTION_INPUT|34:31:cfg-function-input:branchExit:Y:occurrence:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|10:branchExit|38:function/branchExit/body/0/branch-if/0|9:recompile|180:64:b23aed2cfac2edc13cfacfc2766fbad4556e4ed793fa57008242a31a7f2bd5be|10:branchExit|41:38:function/branchExit/body/0/branch-if/0|38:function/branchExit/body/0/branch-if/0|9:recompile|22:root-0/input-0/input-0|59:branch_true.dml:1:86:org.apache.sysds.hops.DataOp:TRead Y:Y]"
+        ]
+      },
+      "measurement": {
+        "compileNanos": 2265676055,
+        "executionNanos": 293570389,
+        "probeWallNanos": 3076491965,
+        "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t2/0/2.\nFederated Execute (Inst, UDF):\t2/0.\nFederated prefetch count:\t0.\n",
+        "networkTraffic": "Server I/O bytes (read/written):\t3288/5122\nWorker I/O bytes (read/written):\t0/0\n",
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      "federatedHeavyHitters": {
+        "fed_fedinit": 1,
+        "fed_uack+": 1
+      },
+      "allHeavyHitters": {
+        "+": 3,
+        "<": 2,
+        ">": 1,
+        "assignvar": 2,
+        "branchExit": 1,
+        "createvar": 5,
+        "fed_fedinit": 1,
+        "fed_uack+": 1,
+        "list": 6,
+        "mvvar": 5,
+        "prefetch": 2,
+        "print": 2,
+        "rmvar": 11,
+        "toString": 1,
+        "uak+": 2
+      },
+      "error": null
+    },
+    {
+      "workload": "branch_false",
+      "expected": 92.0,
+      "actual": [
+        "92.0"
+      ],
+      "passed": true,
+      "prediction": {
+        "objectiveMillis": 252.53643704253352,
+        "objectiveCertificate": "local-conflict-objective=4643089352531132780;costSurface=929802ecf07fdd1c0edf350a0344e4cbe5734185f3bcd9837338b9cf8ebeb138;assignment=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];maxFactorCells=164",
+        "selectedAssignmentSize": 50,
+        "selectedRelocations": [],
+        "selectedLocalMaterializations": [
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=branch_false.dml:3:0:org.apache.sysds.hops.AggUnaryOp:ua(+C):Y], sourceValueVersion=ValueVersionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, lexicalVariable=value-14, definingControlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], definitionOrdinal=0, versionKind=ORDINARY, predecessorVersions=[input-0:Q#0@main/0:ORDINARY]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=COL, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=main, callSitePath=main/0, recompileContext=compiled, controlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=main, regionPath=[main/0], callSitePath=main/0, recompileContext=compiled], emittedHopInstance=root-0/input-1/input-0, canonicalSourceOrigin=branch_false.dml:3:18:org.apache.sysds.hops.AggUnaryOp:ua(+RC):compiler-temp], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=10:main, durableProvenance=selected-source:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|8:value-14|105:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|4:main|8:6:main/0|6:main/0|8:compiled|1:0|8:ORDINARY|30:27:input-0:Q#0@main/0:ORDINARY:occurrence:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|4:main|6:main/0|8:compiled|105:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|4:main|8:6:main/0|6:main/0|8:compiled|14:root-0/input-0|62:branch_false.dml:3:0:org.apache.sysds.hops.AggUnaryOp:ua(+C):Y]",
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-else/0], callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=branch_false.dml:1:75:org.apache.sysds.hops.DataOp:TRead Y:Y], sourceValueVersion=ValueVersionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, lexicalVariable=Y, definingControlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-else/0], callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile], definitionOrdinal=2, versionKind=FUNCTION_INPUT, predecessorVersions=[cfg-function-input:branchExit:Y]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=COL, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-else/0], callSitePath=function/branchExit/body/0/branch-else/0, recompileContext=recompile], emittedHopInstance=root-0, canonicalSourceOrigin=branch_false.dml:1:75:org.apache.sysds.hops.DataOp:TWrite Y:Y], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=14:branchExit, durableProvenance=selected-source:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|1:Y|184:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|10:branchExit|43:40:function/branchExit/body/0/branch-else/0|40:function/branchExit/body/0/branch-else/0|9:recompile|1:2|14:FUNCTION_INPUT|34:31:cfg-function-input:branchExit:Y:occurrence:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|10:branchExit|40:function/branchExit/body/0/branch-else/0|9:recompile|184:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|10:branchExit|43:40:function/branchExit/body/0/branch-else/0|40:function/branchExit/body/0/branch-else/0|9:recompile|14:root-0/input-0|60:branch_false.dml:1:75:org.apache.sysds.hops.DataOp:TRead Y:Y]",
+          "LocalMaterializationActionKey[sourceOccurrence=CompiledHopKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-if/0], callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile], emittedHopInstance=root-0/input-0/input-0, canonicalSourceOrigin=branch_false.dml:1:86:org.apache.sysds.hops.DataOp:TRead Y:Y], sourceValueVersion=ValueVersionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, lexicalVariable=Y, definingControlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-if/0], callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile], definitionOrdinal=0, versionKind=FUNCTION_INPUT, predecessorVersions=[cfg-function-input:branchExit:Y]], producerPlacement=PlacementState[execType=FED, output=FOUT, fType=COL, shapeDependent=false], obligations=[LocalMaterializationObligation[consumerOccurrence=CompiledHopKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile, controlRegion=ControlRegionKey[programFingerprint=35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6, functionNamespace=branchExit, regionPath=[function/branchExit/body/0/branch-if/0], callSitePath=function/branchExit/body/0/branch-if/0, recompileContext=recompile], emittedHopInstance=root-0/input-0, canonicalSourceOrigin=branch_false.dml:1:88:org.apache.sysds.hops.BinaryOp:b(+):Y], inputPosition=0, requiredPlacement=PlacementState[execType=CP, output=LOUT, fType=null, shapeDependent=false]]], statementBlockScope=0:branchExit, durableProvenance=selected-source:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|1:Y|180:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|10:branchExit|41:38:function/branchExit/body/0/branch-if/0|38:function/branchExit/body/0/branch-if/0|9:recompile|1:0|14:FUNCTION_INPUT|34:31:cfg-function-input:branchExit:Y:occurrence:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|10:branchExit|38:function/branchExit/body/0/branch-if/0|9:recompile|180:64:35d99ce201b974b5519a46107934b927824bb396b0aa63b3d619e6cd979294d6|10:branchExit|41:38:function/branchExit/body/0/branch-if/0|38:function/branchExit/body/0/branch-if/0|9:recompile|22:root-0/input-0/input-0|60:branch_false.dml:1:86:org.apache.sysds.hops.DataOp:TRead Y:Y]"
+        ]
+      },
+      "measurement": {
+        "compileNanos": 2251394682,
+        "executionNanos": 226662395,
+        "probeWallNanos": 3029195386,
+        "federatedRequestCounts": "Federated I/O (Read, Put, Get):\t2/0/2.\nFederated Execute (Inst, UDF):\t2/0.\nFederated prefetch count:\t0.\n",
+        "networkTraffic": "Server I/O bytes (read/written):\t3288/5122\nWorker I/O bytes (read/written):\t0/0\n",
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      "federatedHeavyHitters": {
+        "fed_fedinit": 1,
+        "fed_uack+": 1
+      },
+      "allHeavyHitters": {
+        "+": 2,
+        "<": 3,
+        "assignvar": 2,
+        "branchExit": 1,
+        "createvar": 4,
+        "fed_fedinit": 1,
+        "fed_uack+": 1,
+        "list": 6,
+        "mvvar": 5,
+        "prefetch": 2,
+        "print": 2,
+        "rmvar": 10,
+        "toString": 1,
+        "uak+": 2
+      },
+      "error": null
+    }
+  ],
+  "timingSemantics": "executionNanos excludes compilation; containerWallNanos includes startup and all workloads; objectiveMillis is modeled"
+}

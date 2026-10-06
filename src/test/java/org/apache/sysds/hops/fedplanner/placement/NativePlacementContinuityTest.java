@@ -1743,7 +1743,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void transientReplayProjectsNativeAlternativesToStableExistentialCertificate() {
+	public void transientReplayPreservesReceiptProofsWithStableEndpointCertificate() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref left = full.source("left", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref right = full.source("right", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -1764,21 +1764,26 @@ public class NativePlacementContinuityTest {
 		List<NativePlacementContinuity.NativeContinuityProof> twoNative = full.resolver()
 			.proveCandidateAlternatives(sourceRealization, left.anchor);
 		assertDistinctImmediateSources(twoNative, 2);
+		Map<CandidateRealizationReference,String> twoReceiptProofs = proofSignaturesBySelectedInput(twoNative);
 		PlacementProofKey valueEvidence = new PlacementProofKey(
 			PlacementProofKind.VALUE_IDENTITY, source.key, "source-value-evidence");
 		List<PlacementProofKey> commonProofs = List.of(valueEvidence);
 		List<PlacementAnalysis.TransientCompatibilityProof> twoCertificates =
 			transientCertificates(full, source, sourceRealization, left.anchor, commonProofs);
-		Assert.assertEquals("one endpoint relation needs one existential certificate", 1,
+		Assert.assertEquals("equivalent selected-input proofs share one endpoint certificate", 1,
 			twoCertificates.size());
-		Assert.assertTrue(twoCertificates.get(0).provesNativeContinuity(source.key, source.key));
-		Assert.assertSame("an exact certificate retains the actual seed witness",
-			left.anchor, twoCertificates.get(0).nativeWorkerPoolWitness());
-		Assert.assertTrue("common value evidence remains on the projected certificate",
-			twoCertificates.get(0).dependencies().contains(valueEvidence));
+		Assert.assertTrue(twoCertificates.stream().allMatch(
+			certificate -> certificate.provesNativeContinuity(source.key, source.key)));
+		Assert.assertTrue("each exact certificate retains the actual seed witness",
+			twoCertificates.stream().allMatch(
+				certificate -> certificate.nativeWorkerPoolWitness() == left.anchor));
+		Assert.assertTrue("common value evidence remains on every projected certificate",
+			twoCertificates.stream().allMatch(
+				certificate -> certificate.dependencies().contains(valueEvidence)));
 		Assert.assertEquals("projection keeps every typed witness/precision class",
 			proofClasses(twoNative, left.anchor), certificateClasses(twoCertificates));
 		String stableCertificate = twoCertificates.get(0).normalizedSignature();
+		assertCertificateIdentities(twoCertificates, stableCertificate);
 		Assert.assertEquals("Native proof and certificate projection must not mutate candidate supports",
 			twoFacts, full.candidates);
 
@@ -1789,6 +1794,8 @@ public class NativePlacementContinuityTest {
 		Assert.assertEquals(1, geometryCertificates.size());
 		Assert.assertNotEquals("complete seed geometry remains part of the certificate",
 			stableCertificate, geometryCertificates.get(0).normalizedSignature());
+		assertCertificateIdentities(geometryCertificates,
+			geometryCertificates.get(0).normalizedSignature());
 		DurableAnchorKey differentWorker = new DurableAnchorKey("different-worker", FType.FULL,
 			List.of(partition("worker2:8002", 0, 50)));
 		Assert.assertTrue("a certificate cannot merge an unproved worker pool",
@@ -1796,21 +1803,29 @@ public class NativePlacementContinuityTest {
 
 		full.samePoolRealizations(producer, producerInputs, producerA, producerB, producerC);
 		List<CandidateRuleFact> threeFacts = List.copyOf(full.candidates);
-		assertDistinctImmediateSources(full.resolver()
-			.proveCandidateAlternatives(sourceRealization, left.anchor), 3);
-		Assert.assertEquals("adding a same-relation execution receipt must not rename the certificate",
-			List.of(stableCertificate), transientCertificates(
-				full, source, sourceRealization, left.anchor, commonProofs)
-				.stream().map(PlacementAnalysis.TransientCompatibilityProof::normalizedSignature).toList());
+		List<NativePlacementContinuity.NativeContinuityProof> threeNative = full.resolver()
+			.proveCandidateAlternatives(sourceRealization, left.anchor);
+		assertDistinctImmediateSources(threeNative, 3);
+		Map<CandidateRealizationReference,String> threeReceiptProofs = proofSignaturesBySelectedInput(threeNative);
+		Assert.assertTrue("adding a receipt must preserve the prior selected-input proof identities",
+			threeReceiptProofs.entrySet().containsAll(twoReceiptProofs.entrySet()));
+		assertCertificateIdentities(transientCertificates(
+			full, source, sourceRealization, left.anchor, commonProofs), stableCertificate);
 		Assert.assertEquals(threeFacts, full.candidates);
 
 		full.samePoolRealizations(producer, producerInputs, producerB, producerC);
 		List<CandidateRuleFact> remainingFacts = List.copyOf(full.candidates);
-		assertDistinctImmediateSources(full.resolver()
-			.proveCandidateAlternatives(sourceRealization, left.anchor), 2);
-		Assert.assertEquals(List.of(stableCertificate),
-			transientCertificates(full, source, sourceRealization, left.anchor, commonProofs).stream()
-				.map(PlacementAnalysis.TransientCompatibilityProof::normalizedSignature).toList());
+		List<NativePlacementContinuity.NativeContinuityProof> remainingNative = full.resolver()
+			.proveCandidateAlternatives(sourceRealization, left.anchor);
+		assertDistinctImmediateSources(remainingNative, 2);
+		Map<CandidateRealizationReference,String> remainingReceiptProofs =
+			proofSignaturesBySelectedInput(remainingNative);
+		Assert.assertTrue("withdrawal must preserve every surviving selected-input proof identity",
+			threeReceiptProofs.entrySet().containsAll(remainingReceiptProofs.entrySet()));
+		Assert.assertFalse("withdrawal must remove one selected input receipt",
+			remainingReceiptProofs.keySet().containsAll(twoReceiptProofs.keySet()));
+		assertCertificateIdentities(transientCertificates(
+			full, source, sourceRealization, left.anchor, commonProofs), stableCertificate);
 		Assert.assertEquals(remainingFacts, full.candidates);
 
 		CandidateRuleFact remainingProducer = full.fact(producer, producerInputs);
@@ -1818,10 +1833,11 @@ public class NativePlacementContinuityTest {
 		Assert.assertTrue("withdrawing every execution path withdraws the certificate",
 			transientCertificates(full, source, sourceRealization, left.anchor, commonProofs).isEmpty());
 		full.candidates.add(remainingProducer);
-		Assert.assertEquals("restoring a path restores the same endpoint certificate",
-			List.of(stableCertificate), transientCertificates(
-				full, source, sourceRealization, left.anchor, commonProofs)
-				.stream().map(PlacementAnalysis.TransientCompatibilityProof::normalizedSignature).toList());
+		Assert.assertEquals("restoring paths restores the same selected input proofs",
+			remainingReceiptProofs, proofSignaturesBySelectedInput(full.resolver()
+				.proveCandidateAlternatives(sourceRealization, left.anchor)));
+		assertCertificateIdentities(transientCertificates(
+			full, source, sourceRealization, left.anchor, commonProofs), stableCertificate);
 
 		Fixture dynamic = new Fixture(FType.ROW);
 		Ref dynamicSeed = dynamic.source("dynamicSeed", anchor(FType.ROW, "worker1:8001", 0, 50));
@@ -1867,6 +1883,24 @@ public class NativePlacementContinuityTest {
 		Assert.assertTrue(proofs.stream().allMatch(proof -> proof.immediateBindings().size() == 1));
 		Assert.assertEquals(expected, proofs.stream()
 			.map(proof -> proof.immediateBindings().get(0).source()).distinct().count());
+	}
+
+	private static Map<CandidateRealizationReference,String> proofSignaturesBySelectedInput(
+		List<NativePlacementContinuity.NativeContinuityProof> proofs) {
+		return proofs.stream().collect(java.util.stream.Collectors.toMap(
+			proof -> proof.immediateBindings().get(0).source(),
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature));
+	}
+
+	private static void assertCertificateIdentities(
+		List<PlacementAnalysis.TransientCompatibilityProof> certificates,
+		String expectedIdentity) {
+		Assert.assertEquals("equivalent input proofs must coalesce to one endpoint certificate",
+			1, certificates.size());
+		Assert.assertEquals("same endpoint proofs must retain their stable certificate identity",
+			Set.of(expectedIdentity), certificates.stream()
+				.map(PlacementAnalysis.TransientCompatibilityProof::normalizedSignature)
+				.collect(java.util.stream.Collectors.toSet()));
 	}
 
 	private static List<PlacementAnalysis.TransientCompatibilityProof> transientCertificates(

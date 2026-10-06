@@ -1,0 +1,15 @@
+{
+  "codeCommit": "547f4799cd801ef1830923390b8e6d5d1971429a",
+  "baseManifestSha256": "f649b8f8ef1ebedf4e8a62d5e963b2b1fab6d583adc16ed8559634210254b9e3",
+  "sourceChangesFromCampaign": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": {
+      "before": "2de33931c75247fac6191a91c740b21de7c59c59bec0184bbc94431b48dabedd",
+      "after": "b29b207b4e245e725bb54b556837797c3107de773e02503a9fdec79cef664b46"
+    },
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactDownloadAuthorityAmbiguityRedTest.java": {
+      "before": "ff52b305d6e2b214bbaf37e33c5d1260cca8db29cc6fa4fd3d206b10e78b8a9a",
+      "after": "49eb98fef2fd1ac93bb392fc7ad73e4da1c025f3af5201f17cb06a525b306d0d"
+    }
+  },
+  "jarSha256": "fbc7933ddfc025c6efa8accb6237dc1c32f5bf1dc8befcedad17773dc39fe8b9"
+}

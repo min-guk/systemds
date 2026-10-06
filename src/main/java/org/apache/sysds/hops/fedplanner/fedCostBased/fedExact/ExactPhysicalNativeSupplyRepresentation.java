@@ -233,10 +233,9 @@ final class ExactPhysicalNativeSupplyRepresentation {
 		PlacementLayoutKind layoutKind = nativeState.output()
 			== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
 			? PlacementLayoutKind.LOCAL
-			: nativeAnchor != null ? PlacementLayoutKind.DURABLE_MAP
-				: alternative.realization() == null ? PlacementLayoutKind.VALUE_MAP
-					: alternative.realization().key().layoutKind();
-		String lineage = nativeAnchor == null && alternative.realization() != null
+			: alternative.realization() != null ? alternative.realization().key().layoutKind()
+				: nativeAnchor != null ? PlacementLayoutKind.DURABLE_MAP : PlacementLayoutKind.VALUE_MAP;
+		String lineage = alternative.realization() != null
 			? alternative.realization().key().nativeLineage() : null;
 		if(alternative.derivedFoutAction() != null) {
 			layoutKind = nativeState.output()

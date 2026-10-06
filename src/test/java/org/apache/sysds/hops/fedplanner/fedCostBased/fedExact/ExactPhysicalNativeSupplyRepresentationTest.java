@@ -26,6 +26,7 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -121,10 +122,43 @@ public class ExactPhysicalNativeSupplyRepresentationTest {
 			}
 	}
 
+	@Test
+	public void dynamicNativeResidencyWitnessDoesNotBecomeDurableLayout() throws Exception {
+		String script = "A=federated(addresses=list(\"localhost:4234/A1\",\"localhost:4235/A2\"),"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));"
+			+ "R=rev(A);U=exp(R);print(sum(U));";
+		ExactPhysicalNativeSupplyRepresentation representation =
+			model(script, Privacy.PRIVATE_AGGREGATE).nativeSupplyRepresentation();
+		int dynamicRows = 0;
+		for(var domain : representation.domains())
+			for(var witness : domain.relation()) {
+				var alternative = domain.authority().alternatives().get(witness.originalOrdinal());
+				var realization = alternative.realization();
+				var clause = alternative.supportClause();
+				if(realization == null || clause == null
+					|| realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+					|| clause.nativeWorkerPoolWitness() == null
+					|| clause.nativeWorkerPoolLayoutExact())
+					continue;
+				var nativeLayout = domain.nativeCandidate(witness.originalOrdinal()).nativeOutputLayout();
+				Assert.assertEquals(PlacementLayoutKind.NATIVE_LINEAGE, nativeLayout.kind());
+				Assert.assertEquals(realization.key().nativeLineage(), nativeLayout.lineage());
+				Assert.assertEquals("Endpoint residency remains evidence, not a durable exact map",
+					clause.nativeWorkerPoolWitness(), nativeLayout.anchor());
+				Assert.assertFalse(nativeLayout.exactWorkerPool());
+				dynamicRows++;
+			}
+		Assert.assertTrue("Fixture must contain dynamic native-lineage authority", dynamicRows > 0);
+	}
+
 	private static ExactPhysicalModel model() throws Exception {
 		String script = "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(4,3),list(4,0),list(8,3)));"
 			+ "p=matrix(1,rows=3,cols=1);pred=X%*%p;print(sum(pred));";
+		return model(script, Privacy.PUBLIC);
+	}
+
+	private static ExactPhysicalModel model(String script, Privacy privacy) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
@@ -132,7 +166,7 @@ public class ExactPhysicalNativeSupplyRepresentationTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
-		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, privacy);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		return ExactPhysicalModel.build(analysis);
 	}
