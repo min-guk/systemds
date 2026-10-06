@@ -20,12 +20,14 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.function.Predicate;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
@@ -56,6 +58,15 @@ public class ExactNativeResultBatchCostTest {
 	@Test public void binaryForcedLocalGetOwnsAdditionalBatch() throws Exception {
 		assertResult("Y=X+1;", hop -> hop instanceof BinaryOp, false);
 	}
+	@Test public void mixedCovarianceResultSharesItsUdfBatch() throws Exception {
+		assertResult("L=rand(rows=900,cols=100,seed=8);C=cov(X,L);Y=matrix(C,rows=1,cols=1);",
+			hop -> hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV,
+			true, false, Arrays.asList(FType.ROW, null));
+	}
+	@Test public void alignedCovarianceRetainsItsAuxiliaryStageEstimate() throws Exception {
+		assertResult("C=cov(X,X);Y=matrix(C,rows=1,cols=1);",
+			hop -> hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV, false);
+	}
 
 	@Test public void exactIndexSliceGetsOnlyItsOverlappingWorkerResponse() throws Exception {
 		assertResult("Y=X[1:10,1:20];", hop -> hop instanceof IndexingOp, false, true);
@@ -66,6 +77,11 @@ public class ExactNativeResultBatchCostTest {
 	}
 
 	private static void assertResult(String operation, Predicate<Hop> match, boolean inBand, boolean exactSlice) throws Exception {
+		assertResult(operation, match, inBand, exactSlice, null);
+	}
+
+	private static void assertResult(String operation, Predicate<Hop> match, boolean inBand,
+			boolean exactSlice, List<FType> requestedInputTypes) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			"X=rand(rows=900,cols=100,seed=7);" + operation + "print(sum(Y));", new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
@@ -80,7 +96,7 @@ public class ExactNativeResultBatchCostTest {
 			PlacementAnalysis.class, PlacementCostSemantics.ExpectedSparseAssignmentEstimates.class,
 			CompiledHopKey.class, Hop.class, List.class, FType.class, int.class, double.class);
 		project.setAccessible(true);
-		List<FType> inputs = hop.getInput().stream()
+		List<FType> inputs = requestedInputTypes != null ? requestedInputTypes : hop.getInput().stream()
 			.map(input -> input.getDataType().isMatrix() ? FType.ROW : null).toList();
 		Object projection = project.invoke(null, analysis, PlacementCostSemantics.expectedSparseAssignmentEstimates(analysis),
 			key, hop, inputs, FType.ROW, 3, 1.0);

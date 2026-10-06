@@ -30,6 +30,7 @@ import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.FederatedPlannerConfiguration;
@@ -41,10 +42,12 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.codegen.SpoofFusedOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
@@ -1737,22 +1740,48 @@ public final class FederatedCostModel {
 	/** Runtime-specific result batch ownership; all payloads still use the same GET policy. */
 	public static double computeNativeFederatedLoutResultCost(Hop hop, FType executionType,
 			double bytes, int workers) {
-		boolean inBand = nativeResultIsInBand(hop);
+		return computeNativeFederatedLoutResultCost(hop, null, executionType, bytes, workers);
+	}
+
+	public static double computeNativeFederatedLoutResultCost(Hop hop, List<FType> inputFTypes,
+			FType executionType, double bytes, int workers) {
+		boolean inBand = nativeResultIsInBand(hop, inputFTypes);
 		if(hop instanceof QuaternaryOp quaternary && quaternary.getOp() == OpOp4.WDIVMM)
 			return computeWdivmmLoutResultCost(quaternary.getBaseType(), executionType, bytes, workers);
 		return computeResultGetCost(bytes, executionType, workers, inBand ? 0 : 1);
 	}
 
-	private static boolean nativeResultIsInBand(Hop hop) {
+	private static boolean nativeResultIsInBand(Hop hop, List<FType> inputFTypes) {
+		// These runtimes return the result in the same EXEC+GET or UDF request batch. Mixed
+		// covariance does too, while aligned federated covariance has auxiliary mean stages
+		// and therefore retains its existing additional-stage estimate.
 		return hop instanceof TernaryOp
-			|| hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS;
+			|| hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.TRANS
+			|| hop instanceof ParameterizedBuiltinOp parameterized
+				&& parameterized.getOp() == ParamBuiltinOp.CONTAINS
+			|| hop instanceof BinaryOp binary && binary.getOp() == OpOp2.MOMENT
+			|| hop instanceof BinaryOp binary && binary.getOp() == OpOp2.COV
+				&& hasExactlyOneFederatedCovarianceInput(inputFTypes)
+			|| hop instanceof QuaternaryOp quaternary
+				&& (quaternary.getOp() == OpOp4.WSLOSS || quaternary.getOp() == OpOp4.WCEMM)
+			|| hop instanceof SpoofFusedOp;
+	}
+
+	private static boolean hasExactlyOneFederatedCovarianceInput(List<FType> inputFTypes) {
+		return inputFTypes != null && inputFTypes.size() >= 2
+			&& (inputFTypes.get(0) != null ^ inputFTypes.get(1) != null);
 	}
 
 	public static double computeNativeFederatedLoutResultCost(Hop hop,
 			PlacementCostSemantics.WorkerResponseSummary responses) {
+		return computeNativeFederatedLoutResultCost(hop, null, responses);
+	}
+
+	public static double computeNativeFederatedLoutResultCost(Hop hop, List<FType> inputFTypes,
+			PlacementCostSemantics.WorkerResponseSummary responses) {
 		double payload = computeGetResponsePayloadCost(responses.totalBytes(), responses.largestBytes(),
 			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
-		return payload + (nativeResultIsInBand(hop) ? 0.0
+		return payload + (nativeResultIsInBand(hop, inputFTypes) ? 0.0
 			: computeRequestResponseLatency(NETWORK_LATENCY_C2W, NETWORK_LATENCY_W2C));
 	}
 

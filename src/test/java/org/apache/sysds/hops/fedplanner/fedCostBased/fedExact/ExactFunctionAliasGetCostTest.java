@@ -80,17 +80,93 @@ public class ExactFunctionAliasGetCostTest {
 		assertGetCopies(analyzeRepeatedOuterCreation(), List.of("P"), 2);
 	}
 
+	@Test
+	public void passThroughFunctionReturnReusesDownloadedMatrixObject() throws Exception {
+		assertGetCopies(analyzeFunctionReturn(false, false), List.of("Y"), 1);
+	}
+
+	@Test
+	public void nestedPassThroughFunctionReturnReusesDownloadedMatrixObject() throws Exception {
+		assertGetCopies(analyzeFunctionReturn(true, false), List.of("Y"), 1);
+	}
+
+	@Test
+	public void repeatedPassThroughReturnsReuseDownloadedMatrixObject() throws Exception {
+		assertGetCopies(analyzeFunctionReturn(false, true), List.of("Y"), 1);
+	}
+
+	@Test
+	public void freshlyComputedFunctionReturnKeepsDistinctGetCharge() throws Exception {
+		assertAllFedScalarGetCopies(analyzeFreshFunctionReturn(false), 1);
+	}
+
+	@Test
+	public void repeatedFreshFunctionReturnsKeepPerInvocationGetCharges() throws Exception {
+		assertAllFedScalarGetCopies(analyzeFreshFunctionReturn(true), 2);
+	}
+
+	private static void assertAllFedScalarGetCopies(PlacementAnalysis analysis, int copies) {
+		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		ExactPhysicalCostModel.PhysicalCostSurface surface =
+			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>(model.exactSolverHardFactors());
+		factors.addAll(surface.exactSolverFactors());
+		Set<ExactPhysicalModel.DecisionDomain> scalarAggregates = new LinkedHashSet<>();
+		for(var domain : model.domains()) {
+			Hop hop = analysis.hop(domain.node().key()).orElse(null);
+			boolean hasCp = domain.alternatives().stream()
+				.anyMatch(alternative -> alternative.state().execType() == ExecType.CP);
+			if(hop instanceof org.apache.sysds.hops.AggUnaryOp && hop.getDataType().isScalar() && hasCp) {
+				scalarAggregates.add(domain);
+				force(factors, domain, alternative -> alternative.state().execType() == ExecType.CP);
+				continue;
+			}
+			boolean hasDirectFout = domain.alternatives().stream().anyMatch(alternative ->
+				alternative.state().execType() == ExecType.FED
+					&& alternative.state().output() == FederatedOutput.FOUT && direct(alternative));
+			if(hasDirectFout && hop != null && hop.getDataType() != null && hop.getDataType().isMatrix())
+				force(factors, domain, alternative -> alternative.state().execType() == ExecType.FED
+					&& alternative.state().output() == FederatedOutput.FOUT && direct(alternative));
+		}
+		Assert.assertFalse("Fixture must contain a scalar aggregate consumer", scalarAggregates.isEmpty());
+		ExactCategoricalSolver.Result result = ExactCategoricalSolver.solve(surface.exactSolverVariables(),
+			factors, ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		List<Integer> assignment = List.copyOf(
+			result.assignmentInVariableOrder().subList(0, model.variables().size()));
+		Assert.assertTrue("Forced return assignment must satisfy every production hard factor",
+			Double.isFinite(RegionalSearchProblem.evaluateFactors(
+				model.variables(), model.hardFactors(), assignment)));
+		double actual = surface.contributions().stream()
+			.filter(contribution -> contribution.factor().scope().size() > 1)
+			.filter(contribution -> contribution.factor().scope().stream().anyMatch(variable ->
+				scalarAggregates.stream().anyMatch(aggregate -> aggregate.variable() == variable)))
+			.mapToDouble(contribution -> surface.evaluateContributionCanonical(contribution, assignment)).sum();
+		var source = model.domains().stream().filter(domain -> "Y".equals(hopName(analysis, domain.node().key())))
+			.findFirst().orElseThrow();
+		int selected = assignment.get(model.domains().indexOf(source));
+		double expected = FederatedCostModel.computeReusableMaterializationDownloadCost(
+			PlacementCostSemantics.analysisAwareDenseOutputBytes(analysis, source.node().key()),
+			source.alternatives().get(selected).state().fType(), 2);
+		Assert.assertEquals("Fresh return values retain one MatrixObject per producing invocation",
+			copies * expected, actual, Math.max(1e-12, expected * 1e-12));
+	}
+
 	private static void assertGetCopies(PlacementAnalysis analysis, List<String> sourceNames, int copies) {
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
 		ExactPhysicalCostModel.PhysicalCostSurface surface =
 			ExactPhysicalCostModel.physicalCostSurface(analysis, model);
-		var roots = analysis.logicalFunctionInputsInCanonicalOrder().stream()
+		List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey> roots =
+			new ArrayList<>(analysis.logicalFunctionInputsInCanonicalOrder().stream()
 			.filter(input -> sourceNames.contains(hopName(analysis, input.sourceArgument())))
-			.toList();
+			.map(input -> input.sourceArgument()).toList());
+		if(roots.isEmpty())
+			roots.addAll(analysis.logicalInlinedFunctionInputsInCanonicalOrder().stream()
+				.flatMap(input -> input.sourceArgument().stream())
+				.filter(source -> sourceNames.contains(hopName(analysis, source))).toList());
 		Assert.assertEquals("Each requested source must enter one function", sourceNames.size(), roots.size());
 		Set<ExactPhysicalModel.DecisionDomain> aliases = new LinkedHashSet<>();
 		for(var root : roots)
-			aliases.addAll(aliasDomains(analysis, model, root.sourceArgument()));
+			aliases.addAll(aliasDomains(analysis, model, root));
 		Set<ExactPhysicalModel.DecisionDomain> consumers = new LinkedHashSet<>();
 		for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(aliases.stream().noneMatch(domain -> domain.node().key() == edge.producer()))
@@ -100,7 +176,7 @@ public class ExactFunctionAliasGetCostTest {
 				&& !analysis.isDmlFunctionCallBoundary(edge.consumer()))
 				consumers.add(domain(model, edge.consumer()));
 		}
-		Assert.assertTrue("Fixture must demand the selected value locally in caller and callee contexts",
+		Assert.assertTrue("Fixture must contain enough local consumers to observe the GET lifetime",
 			consumers.size() >= 2);
 
 		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>(model.exactSolverHardFactors());
@@ -124,10 +200,10 @@ public class ExactFunctionAliasGetCostTest {
 			.filter(contribution -> contribution.factor().scope().stream()
 				.anyMatch(variable -> consumers.stream().anyMatch(consumer -> consumer.variable() == variable)))
 			.mapToDouble(contribution -> surface.evaluateContributionCanonical(contribution, assignment)).sum();
-		var source = domain(model, roots.get(0).sourceArgument());
+		var source = domain(model, roots.get(0));
 		int selected = assignment.get(model.domains().indexOf(source));
 		double expected = FederatedCostModel.computeReusableMaterializationDownloadCost(
-			PlacementCostSemantics.analysisAwareDenseOutputBytes(analysis, roots.get(0).sourceArgument()),
+			PlacementCostSemantics.analysisAwareDenseOutputBytes(analysis, roots.get(0)),
 			source.alternatives().get(selected).state().fType(), 2);
 		Assert.assertEquals("GET cost follows the number of runtime MatrixObjects, not function contexts",
 			copies * expected, actual, Math.max(1e-12, expected * 1e-12));
@@ -159,6 +235,13 @@ public class ExactFunctionAliasGetCostTest {
 				if(keys.contains(input.sourceWrite()) || keys.contains(input.targetRead())) {
 					changed |= keys.add(input.sourceWrite());
 					changed |= keys.add(input.targetRead());
+				}
+			for(var constraint : analysis.graph().constraints())
+				if((constraint.evidence().startsWith("function-result:")
+					|| constraint.evidence().startsWith("cfg-function-output-value:"))
+					&& (keys.contains(constraint.left()) || keys.contains(constraint.right()))) {
+					changed |= keys.add(constraint.left());
+					changed |= keys.add(constraint.right());
 				}
 		}
 		while(changed);
@@ -325,6 +408,70 @@ public class ExactFunctionAliasGetCostTest {
 			  print(sum(Z));
 			}
 			""";
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(
+			program, Privacy.PRIVATE_AGGREGATE);
+		return CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
+	}
+
+	private static PlacementAnalysis analyzeFunctionReturn(boolean nested, boolean repeated) throws Exception {
+		String functions = nested ? """
+			inner=function(matrix[double] A) return(matrix[double] B) {
+			  print(sum(A)); B=A; i=1; while(i<2) { i=i+1; }
+			}
+			outer=function(matrix[double] A) return(matrix[double] B) {
+			  B=inner(A); i=1; while(i<2) { i=i+1; }
+			}
+			""" : """
+			outer=function(matrix[double] A) return(matrix[double] B) {
+			  print(sum(A)); B=A; i=1; while(i<2) { i=i+1; }
+			}
+			""";
+		String calls = repeated ? """
+			for(j in 1:2) {
+			  Z=outer(Y);
+			  print(sum(Z));
+			}
+			""" : """
+			Z=outer(Y);
+			print(sum(Z));
+			""";
+		return analyzeScript(functions + privateAggregateSource() + calls);
+	}
+
+	private static PlacementAnalysis analyzeFreshFunctionReturn(boolean repeated) throws Exception {
+		String calls = repeated ? """
+			for(j in 1:2) {
+			  Z=outer(Y);
+			  print(sum(Z));
+			}
+			""" : """
+			Z=outer(Y);
+			print(sum(Z));
+			""";
+		return analyzeScript("""
+			outer=function(matrix[double] A) return(matrix[double] B) {
+			  B=A+1; print(sum(B)); i=1; while(i<2) { i=i+1; }
+			}
+			""" + privateAggregateSource() + calls);
+	}
+
+	private static String privateAggregateSource() {
+		return """
+			X_LOCAL=rand(rows=8,cols=4,seed=7);
+			X=federated(local_matrix=X_LOCAL, addresses=list("localhost:1234","localhost:1235"),
+			 ranges=list(list(0,0),list(4,4),list(4,0),list(8,4)));
+			Y=rowSums(X);
+			""";
+	}
+
+	private static PlacementAnalysis analyzeScript(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

@@ -1230,6 +1230,7 @@ public final class ExactPhysicalCostModel {
 					throw new IllegalArgumentException("EXACT_MATERIALIZATION_CALLER_CONTEXT_AMBIGUOUS");
 			}
 		}
+		FunctionOutputAliases functionOutputs = functionOutputAliases(analysis, frequencies);
 		IdentityHashMap<CompiledHopKey,List<EffectiveLogicalFunctionInput>> functionInputsBySource =
 			new IdentityHashMap<>();
 		for(EffectiveLogicalFunctionInput input : effectiveLogicalFunctionInputs(analysis))
@@ -1367,7 +1368,9 @@ public final class ExactPhysicalCostModel {
 			}
 			List<RuntimeMaterializationSource> creationSources = grouped.isEmpty() ? List.of()
 				: runtimeMaterializationSources(analysis, producer.node().key(), transientByRead,
-					functionByRead, Collections.newSetFromMap(new IdentityHashMap<>()));
+					functionByRead, functionOutputs.sourcesByTarget(),
+					functionOutputs.sameContextBoundaries(),
+					Collections.newSetFromMap(new IdentityHashMap<>()));
 			for(var entry : grouped.entrySet()) {
 				List<Demand> demands = entry.getValue().stream().sorted(Comparator
 					.comparing((Demand d) -> d.edge().consumer().normalizedSignature())
@@ -1400,10 +1403,13 @@ public final class ExactPhysicalCostModel {
 						var profiles = exactOccurrenceProfiles(frequencies, candidate);
 						var matched = profiles.stream().filter(profile -> profile.contextOrdinal()
 							== readProfile.contextOrdinal()).findFirst().orElse(null);
-						if(matched == null && profiles.size() == 1) matched = profiles.get(0);
+						if(matched == null && creationSources.get(0).returnBoundaries().isEmpty()
+							&& profiles.size() == 1)
+							matched = profiles.get(0);
 						if(matched != null) { origin = candidate; sourceProfile = matched; }
 						var aliasProfile = materializationCreationProfile(profiles,
-							readProfile.contextOrdinal(), callerContexts);
+							readProfile.contextOrdinal(), callerContexts, creationSources.get(0),
+							functionOutputs.calleeContextsByBoundary());
 						if(aliasProfile != null)
 							aliasCreation = new CreationScope(candidate, aliasProfile, aliasProfile.contextOrdinal());
 					}
@@ -1503,7 +1509,8 @@ public final class ExactPhysicalCostModel {
 	/** Resolve the actual creating invocation, never a sibling call of the same source HOP. */
 	private static OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact materializationCreationProfile(
 		List<OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact> profiles, long readContext,
-		Map<Long,Long> callerContexts) {
+		Map<Long,Long> callerContexts, RuntimeMaterializationSource source,
+		IdentityHashMap<CompiledHopKey,Map<Long,Long>> calleeContextsByBoundary) {
 		Long context = readContext;
 		for(int depth = 0; context != null && depth <= callerContexts.size(); depth++) {
 			for(var profile : profiles)
@@ -1511,6 +1518,15 @@ public final class ExactPhysicalCostModel {
 					return profile;
 			context = callerContexts.get(context);
 		}
+		context = readContext;
+		for(CompiledHopKey boundary : source.returnBoundaries()) {
+			Map<Long,Long> callees = calleeContextsByBoundary.get(boundary);
+			if(callees == null || (context = callees.get(context)) == null)
+				return null;
+		}
+		for(var profile : profiles)
+			if(profile.contextOrdinal() == context)
+				return profile;
 		return null;
 	}
 
@@ -1830,6 +1846,7 @@ public final class ExactPhysicalCostModel {
 						+ owner.node().key().normalizedSignature());
 			List<RuntimeMaterializationSource> sources = runtimeMaterializationSources(
 				analysis, weightsKey, transientByRead, functionByRead,
+				new IdentityHashMap<>(), Collections.newSetFromMap(new IdentityHashMap<>()),
 				Collections.newSetFromMap(new IdentityHashMap<>()));
 			if(sources.isEmpty())
 				throw new IllegalArgumentException("EXACT_LATENT_WDIVMM_RUNTIME_SOURCE_CYCLE|read="
@@ -1978,7 +1995,60 @@ public final class ExactPhysicalCostModel {
 	}
 
 	private record RuntimeMaterializationSource(CompiledHopKey occurrence,
-		ValueVersionKey valueVersion) { }
+		ValueVersionKey valueVersion, List<CompiledHopKey> returnBoundaries) {
+		private RuntimeMaterializationSource {
+			returnBoundaries = List.copyOf(returnBoundaries);
+		}
+	}
+	private record FunctionOutputAliases(
+		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> sourcesByTarget,
+		IdentityHashMap<CompiledHopKey,Map<Long,Long>> calleeContextsByBoundary,
+		Set<CompiledHopKey> sameContextBoundaries) { }
+
+	private static FunctionOutputAliases functionOutputAliases(PlacementAnalysis analysis,
+		OccurrenceExecutionFrequencyFacts frequencies) {
+		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> sourcesByTarget = new IdentityHashMap<>();
+		Set<CompiledHopKey> sameContextBoundaries = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Constraint constraint : analysis.graph().constraints()) {
+			boolean functionResult = constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.evidence().startsWith("function-result:");
+			boolean inlinedFunctionResult = constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.evidence().startsWith("inlined-function-result:");
+			boolean callerBinding = constraint.kind() == ConstraintKind.SAME_PLACEMENT
+				&& constraint.evidence().startsWith("cfg-function-output-value:");
+			if(!functionResult && !inlinedFunctionResult && !callerBinding)
+				continue;
+			sourcesByTarget.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+				.add(constraint.left());
+			if(inlinedFunctionResult)
+				sameContextBoundaries.add(constraint.right());
+		}
+		for(var entry : sourcesByTarget.entrySet())
+			entry.setValue(entry.getValue().stream().distinct().sorted().toList());
+
+		IdentityHashMap<CompiledHopKey,Map<Long,Long>> calleeContexts = new IdentityHashMap<>();
+		for(CompiledHopKey boundary : sourcesByTarget.keySet()) {
+			if(analysis.graph().node(boundary).orElseThrow().kind() != NodeKind.FUNCTION_OUTPUT)
+				continue;
+			Hop call = analysis.hop(boundary).orElse(null);
+			Map<Long,Long> byCaller = new LinkedHashMap<>();
+			boolean ambiguous = false;
+			for(LogicalFunctionInputFact input : analysis.logicalFunctionInputsInCanonicalOrder()) {
+				if(analysis.hop(input.boundary()).orElse(null) != call)
+					continue;
+				for(var occurrence : frequencies.exactFunctionBoundaryOccurrences(input)) {
+					Long previous = byCaller.putIfAbsent(occurrence.callerContextOrdinal(),
+						occurrence.calleeProfile().contextOrdinal());
+					if(previous != null && previous != occurrence.calleeProfile().contextOrdinal())
+						ambiguous = true;
+				}
+			}
+			if(!ambiguous && !byCaller.isEmpty())
+				calleeContexts.put(boundary, Map.copyOf(byCaller));
+		}
+		return new FunctionOutputAliases(sourcesByTarget, calleeContexts,
+			Collections.unmodifiableSet(sameContextBoundaries));
+	}
 	private record RuntimeMaterializationDemand(
 		ExactPhysicalModel.DecisionDomain owner,
 		ExactPhysicalModel.DecisionDomain read, double activationWeight,
@@ -2002,6 +2072,8 @@ public final class ExactPhysicalCostModel {
 		PlacementAnalysis analysis, CompiledHopKey read,
 		IdentityHashMap<CompiledHopKey,List<LogicalTransientInputFact>> transientByRead,
 		IdentityHashMap<CompiledHopKey,List<LogicalFunctionInputFact>> functionByRead,
+		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> functionOutputsByTarget,
+		Set<CompiledHopKey> sameContextFunctionOutputs,
 		Set<CompiledHopKey> visiting) {
 		// Loop-backedge alias cycles do not prove a unique payload origin. Ordinary
 		// costing retains the read's creation scope; latent source authority requires
@@ -2014,19 +2086,22 @@ public final class ExactPhysicalCostModel {
 				direct.add(fact.sourceWrite());
 			for(LogicalFunctionInputFact fact : functionByRead.getOrDefault(read, List.of()))
 				direct.add(fact.sourceArgument());
+			direct.addAll(functionOutputsByTarget.getOrDefault(read, List.of()));
 			CompiledHopKey passThroughRead = runtimeMaterializationPassThroughRead(
 				analysis, read);
 			if(direct.isEmpty() && passThroughRead != null)
 				return runtimeMaterializationSources(analysis, passThroughRead,
-					transientByRead, functionByRead, visiting);
+					transientByRead, functionByRead, functionOutputsByTarget,
+					sameContextFunctionOutputs, visiting);
 			if(direct.isEmpty()) {
 				ValueVersionKey value = analysis.graph().node(read).orElseThrow().valueVersion();
-				return List.of(new RuntimeMaterializationSource(read, value));
+				return List.of(new RuntimeMaterializationSource(read, value, List.of()));
 			}
 			Map<String,RuntimeMaterializationSource> resolved = new LinkedHashMap<>();
 			for(CompiledHopKey source : direct.stream().distinct().sorted().toList()) {
 				List<RuntimeMaterializationSource> authorities = runtimeMaterializationSources(
-					analysis, source, transientByRead, functionByRead, visiting);
+					analysis, source, transientByRead, functionByRead, functionOutputsByTarget,
+					sameContextFunctionOutputs, visiting);
 				if(authorities.isEmpty()) {
 					CompiledHopKey passThrough = runtimeMaterializationPassThroughRead(analysis, source);
 					// A compiler-inserted W=W loop carrier may point back to the very
@@ -2037,9 +2112,22 @@ public final class ExactPhysicalCostModel {
 						continue;
 					return List.of();
 				}
-				for(RuntimeMaterializationSource authority : authorities)
+				for(RuntimeMaterializationSource authority : authorities) {
+					List<CompiledHopKey> returnBoundaries = authority.returnBoundaries();
+					if(analysis.graph().node(read).orElseThrow().kind() == NodeKind.FUNCTION_OUTPUT
+						&& !sameContextFunctionOutputs.contains(read)) {
+						returnBoundaries = new ArrayList<>(returnBoundaries.size() + 1);
+						returnBoundaries.add(read);
+						returnBoundaries.addAll(authority.returnBoundaries());
+					}
+					var resolvedAuthority = new RuntimeMaterializationSource(authority.occurrence(),
+						authority.valueVersion(), returnBoundaries);
+					String returnPath = returnBoundaries.stream()
+						.map(CompiledHopKey::normalizedSignature).collect(java.util.stream.Collectors.joining("->"));
 					resolved.putIfAbsent(authority.occurrence().normalizedSignature() + '|'
-						+ authority.valueVersion().normalizedSignature(), authority);
+						+ authority.valueVersion().normalizedSignature() + "|returns=" + returnPath,
+						resolvedAuthority);
+				}
 			}
 			return resolved.values().stream().sorted(Comparator
 				.comparing((RuntimeMaterializationSource source) ->
@@ -2697,8 +2785,9 @@ public final class ExactPhysicalCostModel {
 			&& !(hop instanceof org.apache.sysds.hops.AggUnaryOp)
 			&& !(hop instanceof org.apache.sysds.hops.AggBinaryOp)
 			&& !(hop instanceof org.apache.sysds.hops.QuaternaryOp)
-			? FederatedCostModel.computeNativeFederatedLoutResultCost(hop, responses)
-			: FederatedCostModel.computeNativeFederatedLoutResultCost(hop, executionFType, uploadBytes, workers);
+			? FederatedCostModel.computeNativeFederatedLoutResultCost(hop, inputFTypes, responses)
+			: FederatedCostModel.computeNativeFederatedLoutResultCost(
+				hop, inputFTypes, executionFType, uploadBytes, workers);
 		if(!(hop instanceof DataOp)) {
 			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
 				hop, executionFType, outputBytes, workers, resultDownloadUnit);

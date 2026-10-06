@@ -1,0 +1,356 @@
+{
+  "baseline_commit": "e1fdfe4446180ef9d6fbd93fd0c4f5ab899d7440",
+  "java": {
+    "run": 372,
+    "passed": 371,
+    "failed": 1,
+    "added_regressions": 17,
+    "existing_failure": {
+      "test": "FederatedPlannerFallbackIntegrationTest.testDpPlansSteplmWithSameNamedFormalTransientBinding",
+      "error": "EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "previous_evidence": "docs/experiments/cost-model-main-20261006/validation.json"
+    },
+    "classes": [
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsAnalysisMemoryCostTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsNativeInputSourceShapeTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSemanticsSparseAssignmentTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementCostSizeBoundsTest",
+      "org.apache.sysds.hops.fedplanner.placement.PlacementSolveAbstractShapeTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModelInstructionNetworkStageTest",
+      "org.apache.sysds.test.component.federated.FederatedAggregateUnaryTopologyCostTest",
+      "org.apache.sysds.test.component.federated.FederatedCostModelFallbackTest",
+      "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalUnaryPreparationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalWorkerCountTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactProjectionAuthorityPreservationRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintPreflightTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSparseFunctionBoundaryCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactZeroFrequencyCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CoordinatorMetadataExactCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactL2SvmInternalEmissionCostRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014ExactLogRegParallelDispatchCostRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+      "org.apache.sysds.hops.fedplanner.placement.PreparedExecutionCostQuantityTest",
+      "org.apache.sysds.hops.fedplanner.placement.PreparedWdivmmOperandQuantityTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedNetworkCostUnificationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExecutionOwnershipCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactWorkerLayoutProjectionTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationMaterializationCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactMaterializationActivationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledMaterializationScopeTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationIndependentOracleTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactActivationClassFactorDecompositionTest",
+      "org.apache.sysds.hops.fedplanner.placement.FusedKernelOwnershipTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeResultBatchCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedKernelLayoutCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.GetAggregateProcessingCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFusedFactorReuseCostTest",
+      "org.apache.sysds.hops.fedplanner.placement.WdivmmFactorAlignmentTest",
+      "org.apache.sysds.hops.fedplanner.placement.ExplicitWdivmmPreparationTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactAliasGetCoalescingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactExplicitWdivmmTransferTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.OneWayNetworkCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.SharedNicNetworkCostTest",
+      "org.apache.sysds.hops.fedplanner.placement.OccurrenceActivationContextTest",
+      "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryRuntimeAliasContractTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionGetSharingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasGetCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionAliasActivationEncodingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LoopEntryCompletePlacementSpaceTest",
+      "org.apache.sysds.hops.fedplanner.placement.LoopEntryMaterializationTest",
+      "org.apache.sysds.hops.fedplanner.placement.MaterializedContinuityTest",
+      "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverCycleTest",
+      "org.apache.sysds.hops.fedplanner.placement.WorkerPoolAnchorResolverFunctionReturnTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.commons.NativeResultBatchOwnershipCostTest",
+      "org.apache.sysds.runtime.instructions.fed.NativeResultBatchContractTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDownloadAuthorityAmbiguityRedTest"
+    ]
+  },
+  "docker": {
+    "workloads": 14,
+    "worker_conditions": [
+      "W1",
+      "W3"
+    ],
+    "passed": 28,
+    "failed": 0,
+    "planner": "DP-LocalConflict",
+    "compile_only": true,
+    "runtime_executed": false,
+    "runs": [
+      {
+        "case": "ADULT_w1",
+        "container_name": "codex-function-boundary-b-adult_w1-a1ff8e77364d",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 13.175669558346272
+      },
+      {
+        "case": "ADULT_w3",
+        "container_name": "codex-function-boundary-b-adult_w3-3c677ffbeaa2",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 11.110347524285316
+      },
+      {
+        "case": "COVTYPE_w1",
+        "container_name": "codex-function-boundary-b-covtype_w1-9f9dcf306052",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 12.689893946051598
+      },
+      {
+        "case": "COVTYPE_w3",
+        "container_name": "codex-function-boundary-b-covtype_w3-8ec4bf667121",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 10.425138130784035
+      },
+      {
+        "case": "P1_FULL_w1",
+        "container_name": "codex-function-boundary-b-p1_full_w1-8020a4f4dd28",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 26.97518154233694
+      },
+      {
+        "case": "P1_FULL_w3",
+        "container_name": "codex-function-boundary-b-p1_full_w3-353481bc7157",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 23.244101084768772
+      },
+      {
+        "case": "P2_PREP_w1",
+        "container_name": "codex-function-boundary-b-p2_prep_w1-1b980c8adc6b",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 4.20760952681303
+      },
+      {
+        "case": "P2_PREP_w3",
+        "container_name": "codex-function-boundary-b-p2_prep_w3-debedca2fde2",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 4.106397792696953
+      },
+      {
+        "case": "als_w1",
+        "container_name": "codex-function-boundary-b-als_w1-3d4ea284fd1a",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 5.352702870965004
+      },
+      {
+        "case": "als_w3",
+        "container_name": "codex-function-boundary-b-als_w3-f4c18aaf6e45",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 5.249627120792866
+      },
+      {
+        "case": "glm_w1",
+        "container_name": "codex-function-boundary-b-glm_w1-cec31860ef11",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 178.15452210605145
+      },
+      {
+        "case": "glm_w3",
+        "container_name": "codex-function-boundary-b-glm_w3-91bc3f045bfd",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 107.96053431928158
+      },
+      {
+        "case": "gmm_w1",
+        "container_name": "codex-function-boundary-b-gmm_w1-5dd3b54ef142",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 9.33246036618948
+      },
+      {
+        "case": "gmm_w3",
+        "container_name": "codex-function-boundary-b-gmm_w3-cd897d4a68f2",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 6.863751523196697
+      },
+      {
+        "case": "gnmf_w1",
+        "container_name": "codex-function-boundary-b-gnmf_w1-95fd27d249f8",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 6.67925851047039
+      },
+      {
+        "case": "gnmf_w3",
+        "container_name": "codex-function-boundary-b-gnmf_w3-856c72ef4ac1",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 4.612038642168045
+      },
+      {
+        "case": "kmeans_w1",
+        "container_name": "codex-function-boundary-b-kmeans_w1-fdfb482d1371",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 10.34992628544569
+      },
+      {
+        "case": "kmeans_w3",
+        "container_name": "codex-function-boundary-b-kmeans_w3-a9ec5a365e63",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 7.14242959022522
+      },
+      {
+        "case": "l2svm_w1",
+        "container_name": "codex-function-boundary-b-l2svm_w1-84a435b81de9",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 14.630609355866909
+      },
+      {
+        "case": "l2svm_w3",
+        "container_name": "codex-function-boundary-b-l2svm_w3-07b512789c55",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 12.897911131381989
+      },
+      {
+        "case": "lm_w1",
+        "container_name": "codex-function-boundary-b-lm_w1-d4b3d286efe8",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 3.6242775097489357
+      },
+      {
+        "case": "lm_w3",
+        "container_name": "codex-function-boundary-b-lm_w3-c336b44120e2",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 2.91650577634573
+      },
+      {
+        "case": "logreg_w1",
+        "container_name": "codex-function-boundary-b-logreg_w1-e43064d71c52",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 61.50254472345114
+      },
+      {
+        "case": "logreg_w3",
+        "container_name": "codex-function-boundary-b-logreg_w3-a9dfebef8a53",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 32.666344814002514
+      },
+      {
+        "case": "pca_w1",
+        "container_name": "codex-function-boundary-b-pca_w1-b0b6800ca33e",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 5.558187663555145
+      },
+      {
+        "case": "pca_w3",
+        "container_name": "codex-function-boundary-b-pca_w3-b410f23b09fb",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 3.945927582681179
+      },
+      {
+        "case": "steplm_w1",
+        "container_name": "codex-function-boundary-b-steplm_w1-36ac4bdb9dee",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 11.462241746485233
+      },
+      {
+        "case": "steplm_w3",
+        "container_name": "codex-function-boundary-b-steplm_w3-43d48be891d1",
+        "output_present": true,
+        "returncode": 0,
+        "status": "COMPLETE",
+        "variant": "B",
+        "wall_seconds": 8.07243524491787
+      }
+    ]
+  },
+  "provenance": {
+    "compiled_source_sha256": "a56b448304052a300dd2d4589f24bd18eb50120e3c4d0f024c0d1b8a5ba02538",
+    "current_source_sha256": "dcf5f6ff2daec1531dc56ce76c0707fa080f78350876ac952af904ec74ecdd2e",
+    "verified_changes": [
+      "removed optional braces around a one-statement for loop",
+      "ternary indentation only"
+    ],
+    "reconstructed_previous_source_hash_matches": true
+  },
+  "scope": "confirmed return GET and native result RTT duplicates only; no candidate or runtime modifications",
+  "production_sha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java": "274ee7a8bb1e3c615cf92d9b5988b5afc4e1613cab0cf63e04351fc2eaff968e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "dcf5f6ff2daec1531dc56ce76c0707fa080f78350876ac952af904ec74ecdd2e"
+  },
+  "build_commands": [
+    "mvn -q -DskipTests -Dcheckstyle.skip -Drat.skip=true compile",
+    "mvn -q -DskipTests -Dcheckstyle.skip -Drat.skip=true test-compile"
+  ]
+}

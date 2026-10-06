@@ -92,3 +92,31 @@
 - **외부 profile 의존성**: sibling cofee-evaluation의 최소 공개 커밋은 `639496a6ab7f17b76d0ce0c2a24cf1b0eb669407`이며 현재 원격 `c9514557ba853bd1e5f131ccb463844cf9f37236`에 필요한 provider/probe/driver API가 포함돼 있음을 확인했다. 미공개 외부 변경에는 의존하지 않는다. 외부 checkout이 없는 독립 clone에서는 자동 campaign profiling 준비가 명시적으로 실패한다.
 
 - **최종 결과**: Docker compile-only 14 workloads × W1/W3 = 28/28 PASS. Java352 PASS + 기존 main 재현 실패1, Python46 PASS. 핵심 비용 코드4파일 독립 리뷰 승인, Exact layout/activation 보존 검토 완료. 상세 소스 SHA·테스트 목록·fixture 한계는 [validation.json](experiments/cost-model-main-20261006/validation.json)에 기록했다. 원본 dirty worktree와 실행 target은 변경하지 않았다.
+
+
+## 이동 비용 전수 감사 — 조사 완료, 발견한 비용 오류는 미수정
+
+- **상태**: 현재 비용 발생 경로에 대한 감사 및 격리 재현 완료. 생산 코드 수정 없음.
+- **환경/조건**: `/home/mchoi/w1357-cost-model-main-20261006`, HEAD `e1fdfe4446180ef9d6fbd93fd0c4f5ab899d7440`. DP/Exact 공통 physical cost surface, generic GET, native result, broadcast/slice, REFED/FOUT 및 function alias를 조사했다.
+- **문제 정의/증상 1**: 함수에서 federated 행렬을 CP로 한 번 읽고 그 행렬을 그대로 반환하면, 호출자 CP read가 같은 MatrixObject의 로컬 사본을 재사용해도 비용은 GET을 다시 청구한다. Production hard factors를 만족하는 선택 상태에서 GET factor 2개, 각각 `1.001312255859375ms`, 합계 `2.00262451171875ms`를 재현했다. 강제한 유효 상태의 반례이며 무제약 최적해 선택을 주장하지 않는다.
+- **원인 1**: `ExactPhysicalCostModel.runtimeMaterializationSources`는 transient/function input alias만 추적하고 function output alias를 원본에 연결하지 않는다. 반면 `FunctionCallCPInstruction`의 input/output binding과 `cpvar`는 동일 Data 객체를 유지한다.
+- **문제 정의/증상 2**: contains, 비가중 central moment, FED+local covariance, WSLOSS/WCEMM, forced-local Spoof는 계산과 결과가 같은 runtime batch인데 base instruction RTT 뒤에 result RTT를 또 붙이는 경로가 있다. Payload 중복이 아니라 실행당 RTT 1회 과다 과금이다. Aligned covariance의 여러 batch에는 이 결론을 일반화하지 않는다.
+- **원인 2**: `FederatedCostModel.nativeResultIsInBand`와 연산별 override의 runtime batch 분류 누락. Contains/moment/mixed covariance는 production 유효 선택 및 실제 FED instruction의 mock transport 요청 수로 확인했다. WSLOSS/WCEMM은 rule caps·비용 helper 실행·runtime 소스로 확인했고 Spoof는 rule/runtime/비용 소스 근거다.
+- **업로드 판정**: B-01~B-22 fixture 및 반복 함수/서로 다른 if block의 stable local alias probe에서 유효 업로드 중복을 재현하지 못했다. Legacy function `callWeight × upload`, 서로 다른 producer의 alias 업로드, stable FEDFout 반복 캐시 비용은 도달 가능한 선택 반례가 없어 조건부 위험으로 남긴다. 버그 부재의 완전성 증명이 아니다. REFED cache hit도 새 worker alias 제어 RPC는 발생하므로 무조건 무료로 취급해서는 안 된다.
+- **별도 발견**: VAR/일부 covariance/cumulative unary/CTABLE/reshape/forced-FOUT TSMM의 보조 runtime stage 누락과 MMChain 융합 후 source cost 잔존은 중복 GET과 분리해서 기록했다. MMChain의 선택 배치별 전송 중복액은 미확정이다.
+- **해결/변경 요약**: 사용자 요청은 조사이므로 비용식, 후보 규칙, runtime은 수정하지 않았다. 격리 diagnostic과 전체 경로별 판정표를 `/home/mchoi/cost-transfer-audit-20261006/REPORT.md` 및 `downloads/REPORT.md`, `uploads/REPORT.md`, `native/REPORT.md`에 기록했다. 이 세션 문서에만 감사 결과를 추가한다.
+- **검증/재현**: 전체 보고서에 Java probe 및 명령을 보존했다. Download 관련 23 tests, upload/runtime/function 34 tests, native 60 tests PASS. 집합 일부가 겹치므로 고유 테스트 수로 합산하지 않는다. Mock transport는 실제 instruction/UDF 요청 생성을 실행하지만 분산 Netty 실측 성능 검증은 아니다. 모든 shape/privacy/cache 상태를 완전 탐색한 것은 아니다.
+- **의사결정 근거**: 유효 후보 도달 가능성, 같은 runtime 객체/생성 수명, 실제 batch 소유권을 각각 증명한다. 단순한 비용 helper와 cache 코드의 차이만으로 중복 버그를 확정하지 않는다. 후보 공간/함수 경계 제약은 변경하지 않는다.
+- **잔여 버그**: function output GET 원본 추적 누락, 일부 native result의 RTT 중복은 남아 있다. 업로드 조건부 위험과 보조 stage 과소계상은 추가 유효 계획별 검증이 필요하다.
+- **잠재 회귀 위험/감지**: 감사로 인한 실행 코드 회귀는 없다. 후속 수정에서 새 반환값이나 다른 호출의 값을 같은 alias로 합치거나 실제 별도 GET이 필요한 binary/rightIndex의 RTT를 제거하면 오계상한다. same-object return/새 객체 return/반복 호출 생성 문맥과 instruction batch 수 반례를 함께 검증해야 한다.
+
+
+## 확인된 이동 중복 과금 수정 — 수정 및 검증 완료
+
+- **문제 정의**: 위 감사에서 확인한 function return GET 재과금과 native result RTT 중복을 사용자가 수정 요청했다.
+- **수정 범위/방법**: 반환 경계의 같은 runtime 값과 생성 호출 문맥을 추적해 GET을 공유하고, 실제 계산 batch에 결과가 포함되는 연산만 RTT 추가 청구를 제거한다. Candidate legality, alias 배치 규칙, runtime은 유지한다.
+- **검증 계획**: 수정 전 실패하는 비용 회귀, 함수 새 값/반복 호출 반례, 별도 GET binary/rightIndex 보호, 실제 instruction 요청 batch 테스트를 추가한다. 이후 공통 비용/DP 관련 회귀와 Docker compile 검증을 수행한다.
+- **잔여 이슈/위험**: 업로드 중복은 미확정이므로 이번 수정 대상으로 확정하지 않는다. 별도 보조 stage 누락과 MMChain 문제는 이번 두 결함 수정과 분리한다. 생성 문맥을 잘못 합치거나 실제 별도 GET RTT를 제거하는 오류를 회귀로 감지한다.
+
+- **최종 변경/검증 결과**: function output의 생성 원본·호출 문맥을 추적하고 native response의 batch 소유권을 반영했다. 원래 반환 반례의 GET은 2→1회, 비용 2.00262451171875→1.001312255859375ms. Contains/mixed covariance 재현은 결과 비용의 RTT 10ms 중복이 제거됐다. 새 회귀 17개 포함 372 tests 중 371 PASS; 유일한 실패는 이전 main에서도 기록된 StepLM `EXACT_VE_FACTOR_CELL_OVERFLOW`다. Docker DP 14 workloads×W1/W3 28/28 compile PASS. 상세 변경·명령·잔여 한계는 [TRANSFER_COST_DEDUP_FIX_2026-10-06.md](TRANSFER_COST_DEDUP_FIX_2026-10-06.md) 참고.
+- **수정 파일/안전성**: production `ExactPhysicalCostModel.java`, `FederatedCostModel.java`; 테스트 4개 파일. Candidate/runtime 변경 없음. 반환 문맥이 불명확하면 기존 개별 과금을 유지하고 latent WDivMM의 기존 원본 해석을 보존한다. 별도 반복 업로드 위험/보조 stage 누락/MMChain 및 기존 StepLM overflow는 미해결로 분리한다.
