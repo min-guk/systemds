@@ -8,6 +8,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -49,6 +50,91 @@ import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 public final class PlacementCostSemantics {
 	private PlacementCostSemantics() {
 		// utility class
+	}
+
+	/**
+	 * Exact layout produced by a local-to-federated materialization on a proven worker pool.
+	 * This mirrors the range construction in {@code FEDLocalMaterializeUtil}: an exact
+	 * same-shaped ROW/COL anchor keeps its ranges, while every other partitioned output
+	 * is split evenly in the order encoded by the selected runtime anchor key.
+	 */
+	public static DurableAnchorKey materializedOutputAnchor(DurableAnchorKey seed, FType outputType,
+		NodeShapeFact shape, CompiledHopKey owner) {
+		if(seed == null || seed.fType() == FType.PART || seed.fType() == FType.OTHER
+			|| owner == null || outputType == null || shape == null
+			|| !shape.knownPositiveMatrix() || outputType == FType.PART || outputType == FType.OTHER)
+			return null;
+		List<AnchorPartition> source = seed.partitions();
+		if(source.isEmpty() || source.stream().anyMatch(partition ->
+			partition.begin().size() != 2 || partition.end().size() != 2))
+			return null;
+		source = materializationPartitions(seed);
+		long rows = shape.rows();
+		long cols = shape.cols();
+		if(outputType == FType.FULL && source.size() != 1)
+			return null;
+		if(outputType == FType.ROW && (rows < source.size()
+			|| rows > Integer.MAX_VALUE || cols > Integer.MAX_VALUE)
+			|| outputType == FType.COL && (cols < source.size()
+				|| rows > Integer.MAX_VALUE || cols > Integer.MAX_VALUE))
+			return null;
+
+		List<AnchorPartition> partitions = new ArrayList<>(source.size());
+		if(outputType == FType.BROADCAST || outputType == FType.FULL) {
+			for(AnchorPartition partition : source)
+				partitions.add(new AnchorPartition(partition.workerId(), List.of(0L, 0L),
+					List.of(rows, cols)));
+		}
+		else if(seed.fType() == outputType
+			&& source.stream().mapToLong(partition -> partition.end().get(0)).max().orElse(0) == rows
+			&& source.stream().mapToLong(partition -> partition.end().get(1)).max().orElse(0) == cols) {
+			// Runtime preserves target-sized anchor ranges; it cannot repair gaps or overlaps.
+			if(!exactPartition(source, outputType, rows, cols))
+				return null;
+			partitions.addAll(source);
+		}
+		else {
+			long length = outputType == FType.ROW ? rows : cols;
+			long base = length / source.size();
+			long remainder = length % source.size();
+			for(int i = 0; i < source.size(); i++) {
+				long begin = i * base + Math.min(i, remainder);
+				long end = begin + base + (i < remainder ? 1 : 0);
+				partitions.add(outputType == FType.ROW
+					? new AnchorPartition(source.get(i).workerId(), List.of(begin, 0L), List.of(end, cols))
+					: new AnchorPartition(source.get(i).workerId(), List.of(0L, begin), List.of(rows, end)));
+			}
+		}
+		return new DurableAnchorKey("materialized-output:" + owner.normalizedSignature(),
+			outputType, partitions);
+	}
+
+	/** Keep worker/range pairs together in the order used by fed_fout and FED result binding. */
+	static List<AnchorPartition> materializationPartitions(DurableAnchorKey anchor) {
+		if(anchor.fType() != FType.ROW && anchor.fType() != FType.COL)
+			return anchor.partitions();
+		int axis = anchor.fType() == FType.ROW ? 0 : 1;
+		return anchor.partitions().stream().sorted(Comparator
+			.comparingLong((AnchorPartition partition) -> partition.begin().get(axis))
+			.thenComparingLong(partition -> partition.end().get(axis))
+			.thenComparing(AnchorPartition::workerId)).toList();
+	}
+
+	private static boolean exactPartition(List<AnchorPartition> partitions, FType type,
+		long rows, long cols) {
+		long length = type == FType.ROW ? rows : cols;
+		long previousEnd = 0;
+		for(AnchorPartition partition : partitions) {
+			long begin = partition.begin().get(type == FType.ROW ? 0 : 1);
+			long end = partition.end().get(type == FType.ROW ? 0 : 1);
+			boolean fullOtherDimension = type == FType.ROW
+				? partition.begin().get(1) == 0 && partition.end().get(1) == cols
+				: partition.begin().get(0) == 0 && partition.end().get(0) == rows;
+			if(!fullOtherDimension || begin != previousEnd || end <= begin || end > length)
+				return false;
+			previousEnd = end;
+		}
+		return previousEnd == length;
 	}
 
 	/**

@@ -1213,6 +1213,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
 			FunctionCallCP selectedConsumer = functionCallConsumerLop(localInput, 962);
 			Data liveAnchor = federatedMatrixAnchorLop("LiveAnchor", 916);
+			liveAnchor.getOutputParameters().setDimensions(-1, -1, BLOCKSIZE, -1);
 			String liveKey = "localhost:10001;localhost:10002;|0,10;10,20;|ROW";
 			String durableKey = "localhost:10002;localhost:10001;|10,20;0,10;|ROW";
 			FederatedPlannerUtils.registerFedAnchorKey(
@@ -1229,6 +1230,31 @@ public class FederatedPlannerFallbackIntegrationTest {
 			assertEquals("Equivalent live authority must preserve key-backed deterministic lowering",
 				1, refed.getInputs().size());
 			assertTrue(refed.getInstructions("LocalLabels", "RefedOut").contains(durableKey));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedAcceptsLegacyAxisRangesMatchingCompleteDurableRanges() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedConsumer = functionCallConsumerLop(localInput, 962);
+			Data liveAnchor = federatedMatrixAnchorLop("LiveAnchor", 916);
+			String liveKey = "localhost:10001;localhost:10002;|0,5;5,10;|ROW";
+			String durableKey = "localhost:10002;localhost:10001;|5,0,10,10;0,0,5,10;|ROW";
+			FederatedPlannerUtils.registerFedAnchorKey(
+				liveAnchor.getOutputParameters().getLabel(), liveKey);
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), liveAnchor.getHopID(),
+				durableKey, List.of(selectedConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedConsumer, liveAnchor));
+			assertTrue("Legacy axis-only authority must match the same complete physical ranges",
+				invokeInsertRefedLops(lops));
 		}
 		finally {
 			FederatedRefedRegistry.clear();

@@ -1075,7 +1075,8 @@ public class Dag<N extends Lop>
 		if (durableKey != null) {
 			for (Lop liveAnchor : liveAnchors) {
 				String liveKey = knownDurableRefedAnchorKey(liveAnchor);
-				if (liveKey != null && !sameConcreteAnchorKey(durableKey, liveKey))
+				if (liveKey != null && !sameConcreteAnchorKey(durableKey, liveKey,
+					liveAnchor.getOutputParameters()))
 					throw new LopsException("fed_refed lowering found conflicting live/durable anchor authority"
 						+ " for hop=" + hopId + " anchorHop=" + anchorHopId
 						+ " durableKey=" + durableKey + " liveKey=" + liveKey
@@ -1289,22 +1290,15 @@ public class Dag<N extends Lop>
 					}
 					anchor = null;
 				}
-				// An exact durable FOUT action may name a computed occurrence as the metadata owner
-				// because placement provenance flows through the neutral graph. That occurrence is not
-				// itself a usable runtime anchor unless its Lop already serializes a concrete federated
-				// value. Passing such a Lop as the second fed_fout input both invents an unavailable
-				// FederationMap and makes the materializer appear as an output materializer of the anchor.
-				// Preserve the selected action through its own durable placement key instead; this is
-				// planner authority, not a lowering fallback or replacement-anchor choice.
-				if (plannerExact && anchor != null && !serializesConcreteFederatedAnchor(anchor)) {
-					if (!isConcreteAnchorKey(anchorKey))
+				// Exact uploads use the selected key's worker/range order. A live FederationMap
+				// may enumerate the same workers differently and would produce a different layout.
+				if (plannerExact) {
+					if (isConcreteAnchorKey(anchorKey))
+						anchor = null;
+					else if (anchor != null && !serializesConcreteFederatedAnchor(anchor))
 						throw new LopsException("selected exact FOUT materialization has a non-concrete live anchor "
 							+ "and no durable placement key for hop=" + hopId + " anchor=" + anchorHopId
 							+ " action=" + spec.getPlannerActionKey());
-					if (LOG_LOP_MAPPING)
-						System.out.printf("CP->FOUT non-concrete anchor: hop=%d anchorHop=%d "
-							+ "usingAnchorKey=%s%n", hopId, anchorHopId, anchorKey);
-					anchor = null;
 				}
 					boolean missingAnchor = (anchor == null && anchorKey == null);
 						if (local == null || missingAnchor) {
@@ -1704,11 +1698,13 @@ public class Dag<N extends Lop>
 		return anchorKey != null && !anchorKey.isEmpty() && !anchorKey.startsWith("VAR:");
 	}
 
-	private static boolean sameConcreteAnchorKey(String left, String right) {
+	private static boolean sameConcreteAnchorKey(String left, String right, OutputParameters shape) {
 		if (left.equals(right))
 			return true;
-		String canonicalLeft = canonicalConcreteAnchorKey(left);
-		return canonicalLeft != null && canonicalLeft.equals(canonicalConcreteAnchorKey(right));
+		long rows = shape != null ? shape.getNumRows() : -1;
+		long cols = shape != null ? shape.getNumCols() : -1;
+		String canonicalLeft = canonicalConcreteAnchorKey(left, rows, cols);
+		return canonicalLeft != null && canonicalLeft.equals(canonicalConcreteAnchorKey(right, rows, cols));
 	}
 
 	/**
@@ -1718,7 +1714,7 @@ public class Dag<N extends Lop>
 	 * belongs to which worker. Unknown concrete-key formats deliberately return null
 	 * and therefore retain strict string equality.
 	 */
-	private static String canonicalConcreteAnchorKey(String anchorKey) {
+	private static String canonicalConcreteAnchorKey(String anchorKey, long rows, long cols) {
 		if (!isConcreteAnchorKey(anchorKey))
 			return null;
 		String[] sections = anchorKey.split("\\|", -1);
@@ -1732,12 +1728,54 @@ public class Dag<N extends Lop>
 		for (int index = 0; index < workers.size(); index++) {
 			String worker = org.apache.sysds.runtime.controlprogram.federated.FederationUtils
 				.canonicalFederatedWorkerAddress(workers.get(index));
-			if (worker == null || worker.isEmpty())
+			String range = canonicalAnchorRange(ranges.get(index), sections[2], rows, cols);
+			if (worker == null || worker.isEmpty() || range == null)
 				return null;
-			partitions.add(worker + '|' + ranges.get(index));
+			partitions.add(worker + '|' + range);
 		}
 		Collections.sort(partitions);
 		return sections[2] + '|' + String.join(";", partitions);
+	}
+
+	private static String canonicalAnchorRange(String token, String fType, long rows, long cols) {
+		String[] dims = token.split(",", -1);
+		try {
+			long rb;
+			long cb;
+			long re;
+			long ce;
+			if (dims.length == 4) {
+				rb = Long.parseLong(dims[0].trim());
+				cb = Long.parseLong(dims[1].trim());
+				re = Long.parseLong(dims[2].trim());
+				ce = Long.parseLong(dims[3].trim());
+			}
+			else if (dims.length == 2 && "ROW".equals(fType) && cols > 0) {
+				rb = Long.parseLong(dims[0].trim());
+				cb = 0;
+				re = Long.parseLong(dims[1].trim());
+				ce = cols;
+			}
+			else if (dims.length == 2 && "COL".equals(fType) && rows > 0) {
+				rb = 0;
+				cb = Long.parseLong(dims[0].trim());
+				re = rows;
+				ce = Long.parseLong(dims[1].trim());
+			}
+			else if (dims.length == 2 && ("ROW".equals(fType) || "COL".equals(fType))) {
+				long begin = Long.parseLong(dims[0].trim());
+				long end = Long.parseLong(dims[1].trim());
+				return begin >= 0 && end >= begin ? "axis:" + begin + ',' + end : null;
+			}
+			else
+				return null;
+			if (rb < 0 || cb < 0 || re < rb || ce < cb)
+				return null;
+			return rb + "," + cb + "," + re + "," + ce;
+		}
+		catch (NumberFormatException ex) {
+			return null;
+		}
 	}
 
 	private static List<String> semicolonEntries(String section) {

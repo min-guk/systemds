@@ -234,6 +234,23 @@ public final class Rulesets {
     return false;
   }
 
+  private static boolean broadcastMatrixPair(OpSig sig, Collection<FType> left,
+      Collection<FType> right) {
+    return sig.inputKind(0) == OpSig.InputKind.MATRIX
+        && sig.inputKind(1) == OpSig.InputKind.MATRIX
+        && (containsType(left, FType.BROADCAST)
+            && hasBroadcastOrScalarFromList(right)
+          || containsType(right, FType.BROADCAST)
+            && hasBroadcastOrScalarFromList(left));
+  }
+
+  private static boolean broadcastMatrixPair(OpSig sig, FType left, FType right) {
+    return sig.inputKind(0) == OpSig.InputKind.MATRIX
+        && sig.inputKind(1) == OpSig.InputKind.MATRIX
+        && (left == FType.BROADCAST && (right == FType.BROADCAST || right == null)
+          || right == FType.BROADCAST && left == null);
+  }
+
   private static boolean broadcastMatrixCompatibleWithPartition(FType type, int inputPosition,
       FType axis, ShapeHint hint) {
     if (type != FType.BROADCAST || hint == null)
@@ -3290,6 +3307,11 @@ public final class Rulesets {
       // globally federated-like.
       if (otherMatrixScalarPair(sig, left, right))
         outs.add(FType.OTHER);
+      if (broadcastMatrixPair(sig, left, right))
+        outs.add(FType.BROADCAST);
+      if (left.contains(FType.BROADCAST) && sig.inputKind(1) == OpSig.InputKind.SCALAR
+          || right.contains(FType.BROADCAST) && sig.inputKind(0) == OpSig.InputKind.SCALAR)
+        outs.add(FType.BROADCAST);
       boolean vectorHint = isVectorHint(hint);
       if (vectorHint) {
         boolean leftHasBroadcast = left != null && left.contains(FType.BROADCAST);
@@ -3307,6 +3329,18 @@ public final class Rulesets {
       FType left = typeAt(inFTypes, 0);
       FType right = typeAt(inFTypes, 1);
       boolean hasFedInput = isFederatedLike(left) || isFederatedLike(right);
+
+      // BinaryMatrixMatrixFEDInstruction executes replicated pairs on the common
+      // worker pool and broadcasts a coordinator-local matrix to every replica.
+      // Exact candidate continuity proves the common pool for two PRESENT inputs.
+      if (broadcastMatrixPair(sig, left, right))
+        return guardAwareFout(sig, FType.BROADCAST, ReasonCode.OK, Guard.eval(sig));
+
+      // An explicitly selected FED matrix-scalar instruction executes on every
+      // replica and copies its BROADCAST map, independent of matrix dimensions.
+      if (left == FType.BROADCAST && right == null && sig.inputKind(1) == OpSig.InputKind.SCALAR
+          || right == FType.BROADCAST && left == null && sig.inputKind(0) == OpSig.InputKind.SCALAR)
+        return guardAwareFout(sig, FType.BROADCAST, ReasonCode.OK, Guard.eval(sig));
 
       // FULL denotes one complete matrix partition on a single worker. The binary FED runtime
       // can preserve that mapping when the other operand is coordinator-local, replicated, or

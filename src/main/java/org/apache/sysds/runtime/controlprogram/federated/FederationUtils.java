@@ -443,13 +443,8 @@ public class FederationUtils {
 			long[] end = range.getEndDims();
 			if (beg == null || end == null || beg.length < 2 || end.length < 2)
 				return null;
-			if (fType == FType.ROW)
-				sb.append(beg[0]).append(',').append(end[0]).append(';');
-			else if (fType == FType.COL)
-				sb.append(beg[1]).append(',').append(end[1]).append(';');
-			else
-				sb.append(beg[0]).append(',').append(beg[1]).append(',')
-					.append(end[0]).append(',').append(end[1]).append(';');
+			sb.append(beg[0]).append(',').append(beg[1]).append(',')
+				.append(end[0]).append(',').append(end[1]).append(';');
 		}
 
 		sb.append('|').append(fType.name());
@@ -483,7 +478,8 @@ public class FederationUtils {
 			long pos = 0;
 			for (int i = 0; i < numWorkers; i++) {
 				long size = base + (i < rem ? 1 : 0);
-				sb.append(pos).append(',').append(pos + size).append(';');
+				sb.append(pos).append(',').append(0).append(',')
+					.append(pos + size).append(',').append(clen).append(';');
 				pos += size;
 			}
 		}
@@ -493,7 +489,8 @@ public class FederationUtils {
 			long pos = 0;
 			for (int i = 0; i < numWorkers; i++) {
 				long size = base + (i < rem ? 1 : 0);
-				sb.append(pos).append(',').append(pos + size).append(';');
+				sb.append(0).append(',').append(pos).append(',')
+					.append(rlen).append(',').append(pos + size).append(';');
 				pos += size;
 			}
 		}
@@ -571,6 +568,13 @@ public class FederationUtils {
 			return null;
 		String[] dims = token.split(",");
 		try {
+			if ((fType == FType.ROW || fType == FType.COL) && dims.length == 4) {
+				long rb = Long.parseLong(dims[0].trim());
+				long cb = Long.parseLong(dims[1].trim());
+				long re = Long.parseLong(dims[2].trim());
+				long ce = Long.parseLong(dims[3].trim());
+				return new FederatedRange(new long[] {rb, cb}, new long[] {re, ce});
+			}
 			if (fType == FType.ROW && dims.length == 2) {
 				long rb = Long.parseLong(dims[0].trim());
 				long re = Long.parseLong(dims[1].trim());

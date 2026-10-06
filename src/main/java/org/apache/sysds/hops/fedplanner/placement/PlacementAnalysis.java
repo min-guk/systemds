@@ -1906,16 +1906,18 @@ public final class PlacementAnalysis {
 					&& (capability == null || profile.available() || failureCode.isEmpty()
 						|| !allowedEmissionFacts.isEmpty()))
 				throw new IllegalArgumentException("Candidate rule status and evidence differ");
-			Set<PlacementEmissionState> identities = new java.util.HashSet<>();
+			Set<String> identities = new java.util.HashSet<>();
 			for(CandidateEmissionFact fact : allowedEmissionFacts) {
 				Objects.requireNonNull(fact, "allowed emission fact");
-				if(!identities.add(fact.emissionState()))
+				// One output tuple can be uploaded to different concrete worker pools.
+				// The selected action is part of emission identity, not a duplicate state.
+				if(!identities.add(fact.selectionSignature()))
 					throw new IllegalArgumentException("Duplicate exact candidate emission state");
 			}
 		}
 
 		public List<PlacementEmissionState> allowedEmissionStates() {
-			return allowedEmissionFacts.stream().map(CandidateEmissionFact::emissionState).toList();
+			return allowedEmissionFacts.stream().map(CandidateEmissionFact::emissionState).distinct().toList();
 		}
 	}
 

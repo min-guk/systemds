@@ -136,9 +136,11 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFac
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.ForStatementBlock;
 import org.apache.sysds.parser.FunctionStatement;
 import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.parser.StatementBlock.InlinedFunctionCallBoundary;
 import org.apache.sysds.parser.StatementBlock.InlinedFunctionInputBoundary;
 import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
@@ -208,6 +210,7 @@ final class PlacementRelationClosure {
 		detachedConsumerProfileFacts = null;
 		cfgReplayBaseline = null;
 		loopSeedLedger = null;
+		loopEntryAnchors = Map.of();
 		functionExpansion = null;
 		constraints = null;
 		compiledInputEdges = null;
@@ -371,6 +374,7 @@ final class PlacementRelationClosure {
 	private PlacementProgramFacts programFacts;
 	private List<PlacementGraphFingerprint.HopOccurrence> occurrences;
 	private CfgAnalysis cfg;
+	private Map<CompiledHopKey,List<MaterializationAnchor>> loopEntryAnchors = Map.of();
 	private Map<Hop,NodeShapeFact> compiledShapeFactsByHop;
 	private PlacementAbstractShapeAnalysis.HopFacts preliminaryAbstractFacts;
 
@@ -517,6 +521,7 @@ final class PlacementRelationClosure {
 		AnchorClosure anchorClosure = closeCfgDurableAnchors(occurrences, nodes, occurrenceAnchorProvenance, cfg, shapeFactsByHop);
 		nodes = anchorClosure.nodes();
 		occurrenceAnchorProvenance = anchorClosure.anchors();
+		captureLoopEntryAnchors();
 		cfgReplayBaseline = cfgReplayBaseline(nodes,
 			ruleKeys, ruleFacts);
 		loopSeedLedger = new LoopSeedLedger(new LinkedHashMap<>());
@@ -607,6 +612,82 @@ final class PlacementRelationClosure {
 		nodes = materializationReplay.nodes();
 		ruleKeys = materializationReplay.domainKeys();
 		ruleFacts = materializationReplay.facts();
+	}
+
+	/**
+	 * An entry definition may compute locally and upload once before its TWrite. The
+	 * loop still aliases exactly the same selected layout on every reaching edge.
+	 * Only concrete pools available at that producer are borrowed; a pool introduced
+	 * inside the loop or on another branch is not entry materialization authority.
+	 */
+	private void captureLoopEntryAnchors() {
+		Set<Integer> producers = new java.util.TreeSet<>();
+		for(int read = 0; read < occurrences.size(); read++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(read);
+			if(!isTransientRead(occurrence.hop()))
+				continue;
+			int body = occurrence.path().lastIndexOf("/loop-body/");
+			String loopBody = body >= 0 ? occurrence.path().substring(0, body) + "/loop-body/"
+				: occurrence.block() instanceof WhileStatementBlock
+					|| occurrence.block() instanceof ForStatementBlock ? occurrence.path() + "/loop-body/" : null;
+			if(loopBody == null)
+				continue;
+			Set<Integer> definitions = cfg.reachingDefinitions().get(read);
+			if(definitions.stream().noneMatch(definition -> occurrences.get(definition).path().startsWith(loopBody)))
+				continue;
+			for(int definition : definitions)
+				if(!occurrences.get(definition).path().startsWith(loopBody))
+					collectEntryProducers(definition, new java.util.HashSet<>(), producers);
+		}
+		Map<CompiledHopKey,List<MaterializationAnchor>> result = new IdentityHashMap<>();
+		for(int producer : producers) {
+			List<MaterializationAnchor> anchors = new ArrayList<>();
+			for(int donor = 0; donor < occurrences.size(); donor++) {
+				PlacementGraphFingerprint.HopOccurrence source = occurrences.get(donor);
+				if(!(source.hop() instanceof DataOp data) || data.getOp() != OpOpData.FEDERATED
+					|| !entryAnchorAvailable(source, occurrences.get(producer)))
+					continue;
+				Node owner = nodes.get(donor);
+				for(DurableAnchorKey anchor : owner.anchors())
+					if(hasSelectableFoutType(owner, anchor.fType()))
+						anchors.add(new MaterializationAnchor(anchor, owner.key(), anchor.fType()));
+			}
+			if(!anchors.isEmpty())
+				result.put(nodes.get(producer).key(), List.copyOf(anchors));
+		}
+		loopEntryAnchors = Collections.unmodifiableMap(result);
+	}
+
+	private void collectEntryProducers(int definition, Set<Integer> visited, Set<Integer> producers) {
+		if(!visited.add(definition))
+			return;
+		PlacementGraphFingerprint.HopOccurrence write = occurrences.get(definition);
+		if(!(write.hop() instanceof DataOp data) || data.getOp() != OpOpData.TRANSIENTWRITE
+			|| data.getInput().size() != 1)
+			return;
+		Integer producer = ordinalsByBlock.get(write.block()).get(data.getInput(0));
+		if(producer == null)
+			return;
+		if(isTransientRead(occurrences.get(producer).hop())) {
+			for(int source : cfg.reachingDefinitions().get(producer))
+				collectEntryProducers(source, visited, producers);
+		}
+		else
+			producers.add(producer);
+	}
+
+	private static boolean entryAnchorAvailable(PlacementGraphFingerprint.HopOccurrence source,
+		PlacementGraphFingerprint.HopOccurrence producer) {
+		if(!source.namespace().equals(producer.namespace()))
+			return false;
+		if(source.block() == producer.block())
+			return true; // The concrete placement key is available within this DAG.
+		String[] from = source.path().split("/"), to = producer.path().split("/");
+		for(int i = 0; i < Math.min(from.length, to.length); i++)
+			if(!from[i].equals(to[i]))
+				return i == from.length - 1 && from[i].matches("[0-9]+") && to[i].matches("[0-9]+")
+					&& Integer.parseInt(from[i]) < Integer.parseInt(to[i]);
+		return false;
 	}
 
 	/** Close formal input/output and transient writer relations before privacy. */
@@ -3034,7 +3115,7 @@ final class PlacementRelationClosure {
 			ClosureUpdate replayed = replayUniqueCfgTransientForwards(occurrences, current.nodes(), cfg,
 				shapeFactsByHop, current.domainKeys(), current.facts(), current.logicalInputs(), baseline, nativePools,
 				eligibleLoopSeeds, installedLoopSeeds);
-			Map<CompiledHopKey,CompiledHopKey> newlyInstalledLoopSeeds = new IdentityHashMap<>();
+			Map<CompiledHopKey,List<CompiledHopKey>> newlyInstalledLoopSeeds = new IdentityHashMap<>();
 			for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 				CompiledHopKey readKey = current.nodes().get(ordinal).key();
 				if(!installedLoopSeeds.contains(readKey) || priorLoopSeeds.contains(readKey))
@@ -3042,12 +3123,13 @@ final class PlacementRelationClosure {
 				Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
 				Integer sourceOrdinal = exactLoopPassThroughSource(ordinal, occurrences.get(ordinal),
 					current.nodes().get(ordinal), definitions, occurrences, current.nodes(), shapeFactsByHop);
-				if(sourceOrdinal == null)
-					sourceOrdinal = exactLoopPlacementSeed(occurrences.get(ordinal), current.nodes().get(ordinal),
-						definitions, occurrences, current.nodes(), shapeFactsByHop);
-				if(sourceOrdinal == null)
+				List<Integer> sourceOrdinals = sourceOrdinal == null
+					? exactLoopPlacementSeed(occurrences.get(ordinal), current.nodes().get(ordinal),
+						definitions, occurrences, current.nodes(), shapeFactsByHop) : List.of(sourceOrdinal);
+				if(sourceOrdinals == null)
 					throw new IllegalStateException("Installed loop seed has no exact source");
-				newlyInstalledLoopSeeds.put(readKey, current.nodes().get(sourceOrdinal).key());
+				List<Node> seedNodes = current.nodes();
+				newlyInstalledLoopSeeds.put(readKey, sourceOrdinals.stream().map(source -> seedNodes.get(source).key()).toList());
 			}
 			closureTrace.add(pass + ":" + beforeSignature + "->n=" + replayed.nodes().size()
 				+ ",f=" + replayed.facts().size() + ",l=" + replayed.logicalInputs().size()
@@ -3100,7 +3182,7 @@ final class PlacementRelationClosure {
 						cfg.reachingDefinitions().get(ordinal).stream().sorted()
 							.map(source -> physicalNodes.get(source).key()).toList());
 			Map<CompiledHopKey,List<CompiledHopKey>> seedReachingSources = new IdentityHashMap<>(physicalReachingSources);
-			newlyInstalledLoopSeeds.forEach((read, source) -> seedReachingSources.put(read, List.of(source)));
+			seedReachingSources.putAll(newlyInstalledLoopSeeds);
 			// A provisional seed excludes backedges. It is a separate proof context,
 			// never the all-definition resolver used to validate the completed loop.
 			boolean provisionalSeedContext = !newlyInstalledLoopSeeds.isEmpty();
@@ -4491,13 +4573,13 @@ final class PlacementRelationClosure {
 				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
 			return read;
 		}
-		Integer loopPlacementSeed = allowLoopPlacementSeed
+		List<Integer> loopPlacementSeed = allowLoopPlacementSeed
 			&& loopPassThroughSource == null && definitions.size() > 1
 			? exactLoopPlacementSeed(readOccurrence, read, definitions, occurrences, nodes, shapeFactsByHop)
 			: null;
 		List<Integer> exactDefinitions = loopPassThroughSource != null
 			? List.of(loopPassThroughSource) : loopPlacementSeed != null
-				? List.of(loopPlacementSeed) : definitions.stream().sorted().toList();
+				? loopPlacementSeed : definitions.stream().sorted().toList();
 
 		ExactTransientReplayResult result = exactTransientReplay(readOccurrence, read, exactDefinitions,
 			occurrences, nodes, shapeFactsByHop, currentFacts, nativePools, loopPlacementSeed == null);
@@ -4906,11 +4988,11 @@ final class PlacementRelationClosure {
 	/**
 	 * Seeds the greatest placement fixed point of a real loop update. Every backedge
 	 * must derive the same transient variable from some loop read of that variable;
-	 * the sole non-recursive reaching definition supplies the provisional exact
+	 * every non-recursive entry definition supplies the provisional common
 	 * CP/LOUT + FED/FOUT tuple. Physical closure then proves each update supports the
 	 * tuple, after which ordinary all-definition replay replaces this seed authority.
 	 */
-	private static Integer exactLoopPlacementSeed(
+	private static List<Integer> exactLoopPlacementSeed(
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, Set<Integer> definitions,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
 		Map<Hop,NodeShapeFact> shapeFactsByHop) {
@@ -4933,7 +5015,7 @@ final class PlacementRelationClosure {
 				return null;
 			seeds.add(definition);
 		}
-		return seeds.size() == 1 ? seeds.get(0) : null;
+		return !seeds.isEmpty() && seeds.size() < definitions.size() ? seeds.stream().sorted().toList() : null;
 	}
 
 	private static boolean dependsOnTransientVariable(Hop current, String variable, Set<Hop> visited) {
@@ -6994,11 +7076,11 @@ final class PlacementRelationClosure {
 				bound.add(fact);
 				continue;
 			}
-			List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts().size());
+			Map<String,CandidateEmissionFact> emissions = new LinkedHashMap<>();
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				DerivedFoutMaterializationActionKey provisional = emission.derivedFoutAction();
 				if(provisional == null) {
-					emissions.add(emission);
+					emissions.put(emission.selectionSignature(), emission);
 					continue;
 				}
 				if(!scopes.containsKey(fact.key().parentOccurrence()))
@@ -7017,11 +7099,21 @@ final class PlacementRelationClosure {
 					provisional.durableAnchor(), anchorOwner.owner(),
 					anchorOwner.ownerFType(),
 					provisional.materializationFType(), exactScope);
-				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(), exact,
-					emission.realizations()));
+				CandidateEmissionFact rebound = new CandidateEmissionFact(emission.emissionState(),
+					emission.executionFType(), exact, emission.realizations());
+				CandidateEmissionFact prior = emissions.get(rebound.selectionSignature());
+				if(prior != null) {
+					// Distinct provisional witnesses can resolve to one exact durable owner.
+					// Preserve their support clauses under that one action-aware emission.
+					List<CandidateEmissionRealization> realizations = new ArrayList<>(prior.realizations());
+					realizations.addAll(rebound.realizations());
+					rebound = new CandidateEmissionFact(rebound.emissionState(), rebound.executionFType(),
+						rebound.derivedFoutAction(), realizations);
+				}
+				emissions.put(rebound.selectionSignature(), rebound);
 			}
 			bound.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
-				fact.profile(), emissions, fact.failureCode()));
+				fact.profile(), new ArrayList<>(emissions.values()), fact.failureCode()));
 		}
 		return List.copyOf(bound);
 	}
@@ -7038,13 +7130,18 @@ final class PlacementRelationClosure {
 					emissions.add(emission);
 					continue;
 				}
-				DurableAnchorKey outputAnchor = nativeOutputAnchor(action.durableAnchor(),
+				DurableAnchorKey outputAnchor = PlacementCostSemantics.materializedOutputAnchor(action.durableAnchor(),
 					emission.emissionState().placementState().fType(),
 					shapes.get(origins.get(fact.key().parentOccurrence())), fact.key().parentOccurrence());
 				if(outputAnchor == null) {
 					emissions.add(emission);
 					continue;
 				}
+				// Equal output geometry can have different selected upload authorities.
+				// Keep their references distinct without changing physical compatibility.
+				outputAnchor = new DurableAnchorKey("materialized-output:"
+					+ PlacementGraphFingerprint.sha256(action.normalizedSignature()),
+					outputAnchor.fType(), outputAnchor.partitions());
 				PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
 					fact.key().parentOccurrence(), "derived-fout:" + action.normalizedSignature());
 				CandidateEmissionRealization template = CandidateEmissionRealization.durable(
@@ -7941,7 +8038,7 @@ final class PlacementRelationClosure {
 	 * exact candidate must recursively resolve to one existing durable anchor.
 	 * Recompile and transient-access nodes remain closed by their global legality rules.</p>
 	 */
-	private static CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
+	private CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
 		List<Node> nodes, List<CandidateRuleFact> ruleFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> transientBindings,
 		java.util.Collection<Constraint> constraints,
@@ -7952,7 +8049,7 @@ final class PlacementRelationClosure {
 			constraints, origins, shapeFactsByHop);
 	}
 
-	private static CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
+	private CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
 		List<Node> nodes, List<CandidateRuleFact> ruleFacts,
 		List<Node> proofNodes, List<CandidateRuleFact> proofFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> transientBindings,
@@ -7964,7 +8061,7 @@ final class PlacementRelationClosure {
 				transientBindings, constraints, origins, shapeFactsByHop));
 	}
 
-	private static CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
+	private CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
 		List<Node> nodes, List<CandidateRuleFact> ruleFacts, CommittedProofInventory inventory) {
 		Map<CompiledHopKey,Hop> origins = inventory.origins;
 		Map<Hop,NodeShapeFact> shapeFactsByHop = inventory.shapeFactsByHop;
@@ -7983,6 +8080,7 @@ final class PlacementRelationClosure {
 			Hop hop = origins.get(node.key());
 			if(hop == null || !node.emittedWork() || !isMatrixShape(shapeFactsByHop, hop)
 				|| node.kind() == NodeKind.TRANSIENT_READ || node.kind() == NodeKind.TRANSIENT_WRITE
+				|| isTransientRead(hop) || isTransientWrite(hop) // LOOP_PHI is still a runtime alias.
 				|| node.legalAlternatives().stream().anyMatch(state ->
 					state.execType() == ExecType.CP && state.output() == FederatedOutput.FOUT))
 				continue;
@@ -8108,8 +8206,65 @@ final class PlacementRelationClosure {
 		}
 		if(resolver != null)
 			resolver.requireInactive();
-		return new CandidateMaterializationClosure(List.copyOf(closedNodes), List.copyOf(closedFacts),
-			List.copyOf(changedOrdinals));
+		return closeLoopEntryMaterializationCandidates(closedNodes, closedFacts, changedOrdinals);
+	}
+
+	private CandidateMaterializationClosure closeLoopEntryMaterializationCandidates(
+		List<Node> closedNodes, List<CandidateRuleFact> closedFacts, List<Integer> changedOrdinals) {
+		for(int ordinal = 0; ordinal < closedNodes.size(); ordinal++) {
+			Node node = closedNodes.get(ordinal);
+			List<MaterializationAnchor> anchors = loopEntryAnchors.getOrDefault(node.key(), List.of());
+			if(anchors.isEmpty() || !node.emittedWork() || node.key().recompileContext().equals("recompile"))
+				continue;
+			List<PlacementState> legal = new ArrayList<>(node.legalAlternatives());
+			List<Exclusion> exclusions = new ArrayList<>(node.exclusions());
+			boolean changed = false;
+			for(int index = 0; index < closedFacts.size(); index++) {
+				CandidateRuleFact fact = closedFacts.get(index);
+				if(fact.key().parentOccurrence() != node.key() || fact.status() != CandidateEvaluationStatus.AVAILABLE)
+					continue;
+				PlacementState source = fact.allowedEmissionFacts().stream()
+					.map(emission -> emission.emissionState().placementState())
+					.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+					.findFirst().orElse(null);
+				if(source == null)
+					continue; // Upload never authorizes otherwise forbidden local computation.
+				List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts());
+				for(MaterializationAnchor anchor : anchors)
+					for(FType type : List.of(FType.ROW, FType.COL, FType.FULL, FType.BROADCAST)) {
+						if(PlacementCostSemantics.materializedOutputAnchor(anchor.anchor(), type,
+							shapeFactsByHop.get(origins.get(node.key())), node.key()) == null)
+							continue;
+						PlacementState target = new PlacementState(ExecType.CP, FederatedOutput.FOUT, type,
+							source.shapeDependent());
+						if(!admitMaterializationClosureState(legal, exclusions, target))
+							continue;
+						target = legal.stream().filter(target::equals).findFirst().orElseThrow();
+						DerivedFoutMaterializationActionKey action = derivedFoutAction(node.key(), node.valueVersion(),
+							fact.key(), source, target, anchor.anchor(), anchor.owner(), anchor.ownerFType(), type);
+						CandidateEmissionFact candidate = candidateEmissionFact(target, false, null, action);
+						// Replay may rebuild equivalent occurrence keys as distinct objects. Deduplicate
+						// by the canonical action-aware emission identity used by CandidateRuleFact;
+						// comparing record objects misses those aliases, while comparing placement
+						// state alone would discard uploads to distinct worker pools.
+						if(emissions.stream().noneMatch(emission ->
+							emission.selectionSignature().equals(candidate.selectionSignature()))) {
+							emissions.add(candidate);
+							changed = true;
+						}
+					}
+				closedFacts.set(index, new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+					fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
+			}
+			if(changed) {
+				closedNodes.set(ordinal, new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
+					legal, exclusions, node.anchors()));
+				if(!changedOrdinals.contains(ordinal))
+					changedOrdinals.add(ordinal);
+			}
+		}
+		return new CandidateMaterializationClosure(List.copyOf(closedNodes),
+			bindDerivedFoutRealizations(closedFacts, origins, shapeFactsByHop), List.copyOf(changedOrdinals));
 	}
 
 	private static boolean admitMaterializationClosureState(List<PlacementState> legal,

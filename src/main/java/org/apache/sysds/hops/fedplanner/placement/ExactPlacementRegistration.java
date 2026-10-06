@@ -164,9 +164,11 @@ public final class ExactPlacementRegistration {
 
 	static String runtimeAnchorKey(DurableAnchorKey anchor) {
 		StringBuilder key = new StringBuilder();
-		for(var partition : anchor.partitions()) {
+		for(var partition : anchor.partitions())
 			if(partition.begin().size() != 2 || partition.end().size() != 2)
 				throw new DMLRuntimeException("Runtime federated anchors require exact two-dimensional ranges");
+		var partitions = PlacementCostSemantics.materializationPartitions(anchor);
+		for(var partition : partitions) {
 			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
 			if(worker == null)
 				throw new DMLRuntimeException("Runtime federated anchor has an invalid worker address: "
@@ -174,22 +176,12 @@ public final class ExactPlacementRegistration {
 			key.append(worker).append(';');
 		}
 		key.append('|');
-		for(var partition : anchor.partitions()) {
-			switch(anchor.fType()) {
-				case ROW:
-					key.append(partition.begin().get(0)).append(',').append(partition.end().get(0));
-					break;
-				case COL:
-					key.append(partition.begin().get(1)).append(',').append(partition.end().get(1));
-					break;
-				case FULL:
-				case BROADCAST:
-					key.append(partition.begin().get(0)).append(',').append(partition.begin().get(1))
-						.append(',').append(partition.end().get(0)).append(',').append(partition.end().get(1));
-					break;
-				default:
-					throw new DMLRuntimeException("Unsupported durable federated anchor type: " + anchor.fType());
-			}
+		if(anchor.fType() != FType.ROW && anchor.fType() != FType.COL
+			&& anchor.fType() != FType.FULL && anchor.fType() != FType.BROADCAST)
+			throw new DMLRuntimeException("Unsupported durable federated anchor type: " + anchor.fType());
+		for(var partition : partitions) {
+			key.append(partition.begin().get(0)).append(',').append(partition.begin().get(1))
+				.append(',').append(partition.end().get(0)).append(',').append(partition.end().get(1));
 			key.append(';');
 		}
 		return key.append('|').append(anchor.fType().name()).toString();

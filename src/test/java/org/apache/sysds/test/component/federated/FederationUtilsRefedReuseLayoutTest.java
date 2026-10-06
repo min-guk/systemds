@@ -113,6 +113,8 @@ public class FederationUtilsRefedReuseLayoutTest {
 	public void testBuildAnchorMapFromKeyPreservesRowRanges() {
 		FederationMap original = rowMap(1L, 0, 5, 5, 10);
 		String anchorKey = FederationUtils.deriveFedLayoutSignature(original);
+		assertTrue("Current ROW signatures must retain both matrix dimensions",
+			anchorKey.contains("|0,0,5,50;5,0,10,50;|ROW"));
 
 		FederationMap rebuilt = FederationUtils.buildAnchorMapFromKey(anchorKey);
 		assertNotNull(rebuilt);
@@ -122,8 +124,7 @@ public class FederationUtilsRefedReuseLayoutTest {
 		FederatedRange[] origRanges = original.getFederatedRanges();
 		FederatedRange[] rebuiltRanges = rebuilt.getFederatedRanges();
 		for (int i = 0; i < origRanges.length; i++) {
-			assertEquals(origRanges[i].getBeginDims()[0], rebuiltRanges[i].getBeginDims()[0]);
-			assertEquals(origRanges[i].getEndDims()[0], rebuiltRanges[i].getEndDims()[0]);
+			assertEquals(origRanges[i], rebuiltRanges[i]);
 			assertEquals(original.getFederatedData()[i].getAddress(), rebuilt.getFederatedData()[i].getAddress());
 		}
 	}

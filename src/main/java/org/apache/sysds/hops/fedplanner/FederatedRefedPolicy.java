@@ -5741,6 +5741,7 @@ public final class FederatedRefedPolicy {
 		private static Long parseAxisLenFromSignature(String signature) {
 			if (signature == null)
 				return null;
+			FType fType = getFTypeFromAnchorKey(signature);
 			String sig = stripTrailingFTypeSuffix(signature);
 			int sep = sig.indexOf('|');
 			if (sep < 0 || sep == sig.length() - 1)
@@ -5753,10 +5754,14 @@ public final class FederatedRefedPolicy {
 				if (token == null || token.isEmpty())
 					continue;
 				String[] parts = token.split(",");
-				if (parts.length < 2)
+				if (parts.length != 2 && parts.length != 4)
 					continue;
 				try {
-					long end = Long.parseLong(parts[1]);
+					int endIndex = parts.length == 2 ? 1
+						: fType == FType.ROW ? 2 : fType == FType.COL ? 3 : -1;
+					if (endIndex < 0)
+						return null;
+					long end = Long.parseLong(parts[endIndex].trim());
 					max = Math.max(max, end);
 				}
 				catch (NumberFormatException ex) {

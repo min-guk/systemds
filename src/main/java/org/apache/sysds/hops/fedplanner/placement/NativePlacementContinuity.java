@@ -2146,28 +2146,61 @@ final class NativePlacementContinuity {
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
-			|| node.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
-				&& state.output() == FederatedOutput.FOUT && state.fType() == witness.fType)) {
+			|| node.legalAlternatives().stream().noneMatch(state ->
+				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType)) {
 			CandidateTopology unavailable = new CandidateTopology(false, false, List.of(), Map.of());
 			cacheTopology(topologyKey, unavailable);
 			if(metrics != null)
 				metrics.recordTopologyExpansion(false, 0);
 			return unavailable;
 		}
-		boolean nodeDirectGround = node.anchors().stream()
+		boolean nodeDirectGround = node.legalAlternatives().stream().anyMatch(state ->
+			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() == witness.fType) && node.anchors().stream()
 			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
 		List<CandidateTopologyRow> rows = new ArrayList<>();
 		Set<ContinuityEdgeKey> seen = new java.util.HashSet<>();
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(metrics != null)
 				metrics.recordProofRowExamined();
-			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
-				|| isBroadcastRowProvablyUnselectable(fact)
-				|| !operationPreservesWitness(hop, witness, fact))
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
 				continue;
 			for(var emission : fact.allowedEmissionFacts()) {
 				if(metrics != null)
 					metrics.recordProofRowExamined();
+				// A declared, explicitly costed upload creates a new map. Its local
+				// computation need not preserve any input worker pool (rand has none).
+				// Only published action authority can ground this root; prospective
+				// native generation templates still follow their separate strict path.
+				if(emission.derivedFoutAction() != null) {
+					var action = emission.derivedFoutAction();
+					Node anchorOwner = nodesByKey.get(action.durableAnchorOwner());
+					boolean sourceAvailable = fact.allowedEmissionFacts().stream().anyMatch(source ->
+						source.derivedFoutAction() == null
+							&& source.emissionState().placementState().equals(action.sourcePlacement()));
+					if(action.producer() != key || action.candidateRule() != fact.key() || !sourceAvailable
+						|| !action.producerValueVersion().equals(node.valueVersion())
+						|| !action.statementBlockScope().equals(key.controlRegion().normalizedSignature())
+						|| anchorOwner == null || anchorOwner.legalAlternatives().stream().noneMatch(state ->
+							state.output() == FederatedOutput.FOUT && state.fType() == action.durableAnchorOwnerFType()))
+						continue;
+					if(anchorOwner.anchors().stream().noneMatch(anchor ->
+						PlacementIdentity.samePhysicalWorkerPool(anchor, action.durableAnchor())))
+						continue;
+					for(CandidateEmissionRealization realization : emission.realizations())
+						if(realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
+							&& realization.supportClauses().stream().anyMatch(clause -> clause.proofDependencies().stream()
+								.anyMatch(proof -> proof.authoritySignature().equals("derived-fout:" + action.normalizedSignature())))
+							&& witness.matches(nativeWitness(realization.anchor()), true)) {
+							CandidateTopologyRow row = CandidateTopologyRow.create(
+								CandidateRealizationReference.of(fact.key(), realization), List.of(), true, witness);
+							if(seen.add(ContinuityEdgeKey.of(row)))
+								rows.add(row);
+						}
+					continue;
+				}
+				if(isBroadcastRowProvablyUnselectable(fact) || !operationPreservesWitness(hop, witness, fact))
+					continue;
 				var state = emission.emissionState().placementState();
 				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
 					|| state.fType() != witness.fType || emission.executionFType() != witness.fType
