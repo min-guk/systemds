@@ -1210,11 +1210,7 @@ final class ExactPhysicalSharedSourceEncoding {
 		if(cells > Integer.MAX_VALUE || cells > limit)
 			throw new Unsupported(failure);
 		double[] values = new double[(int)cells];
-		int[] assignment = new int[factor.scope().size()];
-		for(int cell = 0; cell < values.length; cell++) {
-			decodeCell(cell, factor.scope(), assignment);
-			values[cell] = factor.cost(assignment);
-		}
+		ExactCategoricalSolver.materializeFactorValues(factor, values, false);
 		return values;
 	}
 

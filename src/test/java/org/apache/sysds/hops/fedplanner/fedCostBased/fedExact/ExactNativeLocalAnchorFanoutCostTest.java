@@ -235,6 +235,28 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 	}
 
 	@Test
+	public void conflictingAuthorityPrefixDoesNotExpandLaterGroups() throws Exception {
+		var first = authority(FType.BROADCAST, 3);
+		var incompatible = authority(FType.FULL, 1);
+		var visits = new java.util.concurrent.atomic.AtomicInteger();
+		List<List<ExactPhysicalModel.InputAuthority>> suffix = new java.util.AbstractList<>() {
+			@Override public int size() { return 20; }
+			@Override public List<ExactPhysicalModel.InputAuthority> get(int index) {
+				visits.incrementAndGet();
+				return List.of(first);
+			}
+		};
+		var enumerate = ExactPhysicalModel.class.getDeclaredMethod("expandAuthorityGroups",
+			List.class, int.class, List.class, List.class);
+		enumerate.setAccessible(true);
+		List<List<ExactPhysicalModel.InputAuthority>> rows = new java.util.ArrayList<>();
+		enumerate.invoke(null, List.of(List.of(List.of(first)), List.of(List.of(incompatible)), suffix),
+			0, new java.util.ArrayList<>(), rows);
+		Assert.assertTrue(rows.isEmpty());
+		Assert.assertEquals("a conflicting pool prefix cannot be repaired by later inputs", 0, visits.get());
+	}
+
+	@Test
 	public void emittedRelocationPoolOverridesExecutionRealizationFanIn() {
 		var execution = sourceAlternative(2);
 		var outputAction = authority(FType.ROW, 4).relocationAction();

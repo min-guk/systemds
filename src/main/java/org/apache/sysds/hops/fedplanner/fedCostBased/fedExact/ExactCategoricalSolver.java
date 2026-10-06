@@ -38,6 +38,20 @@ public final class ExactCategoricalSolver {
 		double cost(int[] valuesInScopeOrder);
 	}
 
+	enum PartialTruth {
+		UNKNOWN,
+		ALL_ZERO,
+		ALL_FORBIDDEN
+	}
+
+	interface PartialHardCostFunction extends CostFunction {
+		/**
+		 * Classifies every completion of this prefix. Assigned values precede unassigned
+		 * {@code -1} entries. Values are reused and must not be retained or modified.
+		 */
+		PartialTruth partialTruth(int[] valuesInScopeOrder);
+	}
+
 	@FunctionalInterface
 	public interface TieCostFunction {
 		/** Non-negative additive secondary cost charged once for a selected variable value. */
@@ -103,6 +117,17 @@ public final class ExactCategoricalSolver {
 				cell = cell * scope.get(index).domainSize() + values[index];
 			}
 			return denseValues[cell];
+		}
+		boolean supportsPartialTruth() {
+			return evaluator instanceof PartialHardCostFunction;
+		}
+		PartialTruth partialTruth(int[] values) {
+			if(values == null || values.length != scope.size())
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_SIZE_MISMATCH");
+			if(!(evaluator instanceof PartialHardCostFunction partial))
+				return PartialTruth.UNKNOWN;
+			return Objects.requireNonNull(partial.partialTruth(values),
+				"EXACT_VE_PARTIAL_TRUTH_NULL");
 		}
 	}
 
@@ -604,11 +629,35 @@ public final class ExactCategoricalSolver {
 			cells = Math.multiplyExact(cells, variable.domainSize());
 		PlannerResourceGuard.checkAdditionalCells(cells, "freeze-lazy-factor");
 		double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
+		materializeFactorValues(factor, values, true);
+		return Factor.denseOwned(factor.scope, values);
+	}
+
+	static void materializeFactorValues(Factor factor, double[] values, boolean validateCosts) {
+		Objects.requireNonNull(factor, "factor");
+		Objects.requireNonNull(values, "values");
+		if(factor.denseValues != null)
+			throw new IllegalArgumentException("EXACT_VE_FACTOR_ALREADY_DENSE");
+		int cells = 1;
+		for(Variable variable : factor.scope)
+			cells = Math.multiplyExact(cells, variable.domainSize());
+		if(values.length != cells)
+			throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
+		if(!factor.supportsPartialTruth()) {
+			materializeGenericFactorValues(factor, values, validateCosts);
+			return;
+		}
+		materializePartialHardFactorValues(factor, values, validateCosts);
+	}
+
+	private static void materializeGenericFactorValues(Factor factor, double[] values,
+		boolean validateCosts) {
 		int[] local = new int[factor.scope.size()];
 		int[] domains = factor.scope.stream().mapToInt(Variable::domainSize).toArray();
-		for(int cell = 0; cell < cells; cell++) {
+		for(int cell = 0; cell < values.length; cell++) {
 			values[cell] = factor.evaluator.cost(local);
-			validateCost(values[cell]);
+			if(validateCosts)
+				validateCost(values[cell]);
 			// Same last-axis-fastest callback order without divisions at every cell.
 			for(int position = local.length - 1; position >= 0; position--) {
 				if(++local[position] < domains[position])
@@ -616,7 +665,78 @@ public final class ExactCategoricalSolver {
 				local[position] = 0;
 			}
 		}
-		return Factor.denseOwned(factor.scope, values);
+	}
+
+	private static void materializePartialHardFactorValues(Factor factor, double[] values,
+		boolean validateCosts) {
+		int arity = factor.scope.size();
+		int[] local = new int[arity];
+		Arrays.fill(local, -1);
+		int[] domains = factor.scope.stream().mapToInt(Variable::domainSize).toArray();
+		int[] suffixCells = new int[arity + 1];
+		suffixCells[arity] = 1;
+		for(int position = arity - 1; position >= 0; position--)
+			suffixCells[position] = Math.multiplyExact(suffixCells[position + 1], domains[position]);
+		int depth = 0;
+		int cell = 0;
+		long partialCalls = 0;
+		long leafCalls = 0;
+		long zeroCells = 0;
+		long forbiddenCells = 0;
+		long provenSubtrees = 0;
+		long subtreeCells = 0;
+		long started = System.nanoTime();
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Exact-PartialHardFreezeBegin", "domains="
+				+ Arrays.toString(domains) + " logicalCells=" + values.length);
+		while(true) {
+			PartialTruth truth = factor.partialTruth(local);
+			partialCalls++;
+			if(truth != PartialTruth.UNKNOWN) {
+				double value = truth == PartialTruth.ALL_ZERO ? 0.0 : Double.POSITIVE_INFINITY;
+				int end = Math.addExact(cell, suffixCells[depth]);
+				Arrays.fill(values, cell, end, value);
+				if(depth < arity) {
+					provenSubtrees++;
+					subtreeCells += end - cell;
+				}
+				if(truth == PartialTruth.ALL_ZERO)
+					zeroCells += end - cell;
+				else
+					forbiddenCells += end - cell;
+				cell = end;
+			}
+			else if(depth == arity) {
+				values[cell] = factor.evaluator.cost(local);
+				leafCalls++;
+				if(validateCosts)
+					validateCost(values[cell]);
+				cell++;
+			}
+			else {
+				local[depth++] = 0;
+				continue;
+			}
+			while(depth > 0) {
+				int position = depth - 1;
+				if(++local[position] < domains[position])
+					break;
+				local[position] = -1;
+				depth--;
+			}
+			if(depth == 0)
+				break;
+		}
+		if(cell != values.length)
+			throw new IllegalStateException("EXACT_VE_PARTIAL_MATERIALIZATION_SIZE_MISMATCH");
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Exact-PartialHardFreeze", "scope="
+				+ factor.scope.stream().map(Variable::key).toList() + " domains="
+				+ Arrays.toString(domains) + " logicalCells=" + values.length
+				+ " partialCalls=" + partialCalls + " leafCalls=" + leafCalls
+				+ " zeroCells=" + zeroCells + " forbiddenCells=" + forbiddenCells
+				+ " provenSubtrees=" + provenSubtrees + " subtreeCells=" + subtreeCells
+				+ " elapsedNanos=" + (System.nanoTime() - started));
 	}
 
 	static BoundaryMessage boundaryLeaf(List<Variable> allVariables, Factor factor,

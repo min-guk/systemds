@@ -14,11 +14,11 @@ import java.math.BigInteger;
 
 /** Lossless exact-kernel encoding of one hard factor through factor-local observations. */
 final class ExactHardFactorObservationDecomposition {
-	private static final class RepresentativeTruthEvaluator
+	private static class RepresentativeTruthEvaluator
 		implements ExactCategoricalSolver.CostFunction {
-		private final ExactCategoricalSolver.Factor canonical;
-		private final List<int[]> representatives;
-		private final int[] sourceValues;
+		protected final ExactCategoricalSolver.Factor canonical;
+		protected final List<int[]> representatives;
+		protected final int[] sourceValues;
 
 		private RepresentativeTruthEvaluator(ExactCategoricalSolver.Factor canonical,
 			List<int[]> representatives) {
@@ -32,6 +32,23 @@ final class ExactHardFactorObservationDecomposition {
 			for(int position = 0; position < sourceValues.length; position++)
 				sourceValues[position] = representatives.get(position)[values[position]];
 			return canonical.cost(sourceValues);
+		}
+	}
+
+	private static final class PartialRepresentativeTruthEvaluator
+		extends RepresentativeTruthEvaluator
+		implements ExactCategoricalSolver.PartialHardCostFunction {
+		private PartialRepresentativeTruthEvaluator(ExactCategoricalSolver.Factor canonical,
+			List<int[]> representatives) {
+			super(canonical, representatives);
+		}
+
+		@Override
+		public synchronized ExactCategoricalSolver.PartialTruth partialTruth(int[] values) {
+			for(int position = 0; position < sourceValues.length; position++)
+				sourceValues[position] = values[position] < 0 ? -1
+					: representatives.get(position)[values[position]];
+			return canonical.partialTruth(sourceValues);
 		}
 	}
 
@@ -103,8 +120,10 @@ final class ExactHardFactorObservationDecomposition {
 			solverFactors.add(ExactCategoricalSolver.Factor.lazy(List.of(source, auxiliary), values ->
 				categories[values[0]] == values[1] ? 0.0 : Double.POSITIVE_INFINITY));
 		}
-		solverFactors.add(ExactCategoricalSolver.Factor.lazy(auxiliaries,
-			new RepresentativeTruthEvaluator(canonical, representatives)));
+		ExactCategoricalSolver.CostFunction truthEvaluator = canonical.supportsPartialTruth()
+			? new PartialRepresentativeTruthEvaluator(canonical, representatives)
+			: new RepresentativeTruthEvaluator(canonical, representatives);
+		solverFactors.add(ExactCategoricalSolver.Factor.lazy(auxiliaries, truthEvaluator));
 		String descriptor = key + "|canonicalScope=" + canonical.scope().stream()
 			.map(ExactCategoricalSolver.Variable::key).toList() + "|canonicalCells="
 			+ canonicalCellCount + "|encodedCells=" + encodedCellCount + "|categories="

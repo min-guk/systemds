@@ -1,0 +1,102 @@
+/* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
+package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
+
+import java.util.Arrays;
+import java.util.HashMap;
+
+import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
+import org.junit.Assert;
+import org.junit.Test;
+
+/** Compare each partial proof with every completion of the unchanged canonical predicate. */
+public class JointPartialTruthTest {
+	private static final String SOURCES =
+		"X=federated(addresses=list(\"localhost:23334/X1\",\"localhost:23335/X2\"),"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));"
+			+ "Y=federated(addresses=list(\"localhost:23336/Y1\",\"localhost:23337/Y2\"),"
+			+ "ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));"
+			+ "p=as.scalar(rand(rows=1,cols=1));q=as.scalar(rand(rows=1,cols=1));";
+
+	@Test public void correlatedRowsKeepDifferentLegalWorkerPools() throws Exception {
+		check(SOURCES + "if(p>0.5){A=X;B=X;}else{A=Y;B=Y;}C=A+B;print(sum(C));");
+	}
+
+	@Test public void independentBranchesCannotBorrowCorrelatedOrigins() throws Exception {
+		check(SOURCES + "if(p>0.5){A=X;}else{A=Y;}if(q>0.5){B=X;}else{B=Y;}"
+			+ "C=A+B;print(sum(C));");
+	}
+
+	@Test public void loopSourcesRequireGroundedProof() throws Exception {
+		check(SOURCES + "A=X;B=X;i=1;while(i<=2){if(p>0.5){A=X;B=X;}"
+			+ "else{A=Y;B=Y;}i=i+1;}C=A+B;print(sum(C));");
+	}
+
+	@Test public void functionAliasesPreserveSelectedPoolProof() throws Exception {
+		long provenSubtrees = check("f=function(matrix[double] A,matrix[double] B) return (matrix[double] C){"
+			+ "i=1;while(i<1){i=i+1;}C=A+B;}" + SOURCES
+			+ "C1=f(X,X);C2=f(Y,Y);print(sum(C1)+sum(C2));");
+		Assert.assertTrue("function aliases must certify a subtree before its leaves", provenSubtrees > 0);
+	}
+
+	private static long check(String script) throws Exception {
+		var program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		var translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		var model = ExactPhysicalModel.build(new NeutralPlacementGraphBuilder().buildAnalysis(program));
+		int factors = 0;
+		long[] work = new long[2];
+		for(var factor : model.hardFactors()) {
+			if(!factor.supportsPartialTruth()) continue;
+			factors++;
+			int[] assignment = new int[factor.scope().size()];
+			Arrays.fill(assignment, -1);
+			long cells = factor.scope().stream().mapToLong(v -> v.domainSize()).reduce(1, Math::multiplyExact);
+			Assert.assertTrue("bounded exhaustive physical fixture: " + cells, cells <= 1_000_000);
+			verify(factor, assignment, 0, work);
+			var frozen = ExactCategoricalSolver.freezeValidatedFactor(factor);
+			Arrays.fill(assignment, 0);
+			for(int cell = 0; cell < cells; cell++) {
+				Assert.assertEquals(Double.doubleToRawLongBits(factor.cost(assignment)),
+					Double.doubleToRawLongBits(frozen.denseCostAt(cell)));
+				for(int pos = assignment.length - 1; pos >= 0; pos--) {
+					if(++assignment[pos] < factor.scope().get(pos).domainSize()) break;
+					assignment[pos] = 0;
+				}
+			}
+		}
+		Assert.assertTrue("joint hard factors must retain partial proofs", factors > 0);
+		return work[1];
+	}
+
+	private static int verify(ExactCategoricalSolver.Factor factor, int[] values, int position, long[] work) {
+		var proof = factor.partialTruth(values);
+		int outcomes = 0;
+		if(position == values.length) {
+			double cost = factor.cost(values);
+			Assert.assertTrue(cost == 0.0 || cost == Double.POSITIVE_INFINITY);
+			outcomes = cost == 0.0 ? 1 : 2;
+			work[0]++;
+		}
+		else {
+			for(int value = 0; value < factor.scope().get(position).domainSize(); value++) {
+				values[position] = value;
+				outcomes |= verify(factor, values, position + 1, work);
+			}
+			values[position] = -1;
+			if(proof != ExactCategoricalSolver.PartialTruth.UNKNOWN) work[1]++;
+		}
+		if(proof != ExactCategoricalSolver.PartialTruth.UNKNOWN)
+			Assert.assertEquals("invalid proof for " + Arrays.toString(values),
+				proof == ExactCategoricalSolver.PartialTruth.ALL_ZERO ? 1 : 2, outcomes);
+		return outcomes;
+	}
+}

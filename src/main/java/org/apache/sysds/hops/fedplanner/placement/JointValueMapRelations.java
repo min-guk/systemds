@@ -155,6 +155,14 @@ public final class JointValueMapRelations {
 
 	/** Immutable-analysis projection; memoized proofs never depend on a selected plan. */
 	public static final class Grounding {
+		/** A proof about every completion of the currently assigned decision owners. */
+		public enum PartialAlignment { UNKNOWN, ALIGNED, FORBIDDEN }
+
+		private record PartialPool(DurableAnchorKey pool, boolean forbidden) {
+			private static final PartialPool UNKNOWN = new PartialPool(null, false);
+			private static final PartialPool FORBIDDEN = new PartialPool(null, true);
+		}
+
 		private final PlacementAnalysis analysis;
 		private final Relation relation;
 		private final boolean requireSameGeometry;
@@ -198,6 +206,84 @@ public final class JointValueMapRelations {
 				result.add(new GroundedLayoutRow(inputs, output));
 			}
 			return List.copyOf(result);
+		}
+
+		/**
+		 * Missing map keys denote free decisions; present null values denote selected
+		 * alternatives without a candidate receipt. Only a conflict that no remaining
+		 * choice can repair is forbidden. Each CFG row has its own aligned pool.
+		 */
+		public PartialAlignment partialAlignment(Map<CompiledHopKey,CandidateSelectionReceipt> selected,
+			Set<Integer> positions, List<DurableAnchorKey> relocatedPools) {
+			boolean unknown = false;
+			for(Row row : relation.rows()) {
+				DurableAnchorKey common = null;
+				for(DurableAnchorKey pool : relocatedPools) {
+					if(common != null && !sameObservedPool(common, pool))
+						return PartialAlignment.FORBIDDEN;
+					common = pool;
+				}
+				for(InputSource input : row.inputs()) {
+					if(!positions.contains(input.inputPosition())) continue;
+					if(!selected.containsKey(input.reader())) {
+						unknown = true;
+						continue;
+					}
+					CandidateSelectionReceipt receipt = selected.get(input.reader());
+					if(receipt == null) return PartialAlignment.FORBIDDEN;
+					PoolQuery query = new PoolQuery(CandidateRealizationReference.of(receipt.rule(),
+						receipt.realization()), input.source(), input.valueOrigin());
+					PartialPool proof = partialPool(query, receipt, selected, new java.util.HashSet<>());
+					if(proof.forbidden()) return PartialAlignment.FORBIDDEN;
+					if(proof.pool() == null) unknown = true;
+					else {
+						if(common != null && !sameObservedPool(common, proof.pool()))
+							return PartialAlignment.FORBIDDEN;
+						common = proof.pool();
+					}
+				}
+			}
+			return unknown ? PartialAlignment.UNKNOWN : PartialAlignment.ALIGNED;
+		}
+
+		private PartialPool partialPool(PoolQuery query, CandidateSelectionReceipt receipt,
+			Map<CompiledHopKey,CandidateSelectionReceipt> selected, Set<PoolQuery> active) {
+			if(!active.add(query)) return PartialPool.FORBIDDEN;
+			try {
+				DurableAnchorKey exact = exactPool(receipt.realization(), receipt.supportClause());
+				if(exact != null) return new PartialPool(exact, false);
+				if(receipt.realization().key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+					return PartialPool.FORBIDDEN;
+				List<CandidateRealizationReference> sources = sources(receipt.supportClause(), query);
+				if(sources.isEmpty()) return PartialPool.FORBIDDEN;
+				DurableAnchorKey common = null;
+				boolean unknown = false;
+				for(CandidateRealizationReference reference : sources) {
+					PoolQuery childQuery = new PoolQuery(reference, query.origin(), query.origin());
+					DurableAnchorKey pool = invariantPool(childQuery, new java.util.HashSet<>());
+					if(pool == null) {
+						CompiledHopKey owner = reference.rule().parentOccurrence();
+						if(!selected.containsKey(owner)) {
+							unknown = true;
+							continue;
+						}
+						CandidateSelectionReceipt child = selected.get(owner);
+						if(child == null || !CandidateSelections.matchesRealization(reference, child))
+							return PartialPool.FORBIDDEN;
+						PartialPool proof = partialPool(childQuery, child, selected, active);
+						if(proof.forbidden()) return proof;
+						pool = proof.pool();
+					}
+					if(pool == null) unknown = true;
+					else {
+						if(common != null && !sameObservedPool(common, pool))
+							return PartialPool.FORBIDDEN;
+						common = pool;
+					}
+				}
+				return unknown ? PartialPool.UNKNOWN : new PartialPool(common, false);
+			}
+			finally { active.remove(query); }
 		}
 
 		private DurableAnchorKey selectedPool(PoolQuery query, CandidateSelectionReceipt receipt,

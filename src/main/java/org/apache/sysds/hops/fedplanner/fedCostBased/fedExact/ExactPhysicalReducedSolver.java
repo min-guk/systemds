@@ -205,6 +205,46 @@ final class ExactPhysicalReducedSolver {
 				rebuildNanos + extraRebuildNanos, compileNanos, elapsedNanos(startedNanos));
 		}
 	}
+	private static class SupportedValueEvaluator implements ExactCategoricalSolver.CostFunction {
+		protected final ExactCategoricalSolver.Factor source;
+		protected final int[] scope;
+		protected final int[][] sourceValues;
+		protected final int[] sourceLocal;
+
+		private SupportedValueEvaluator(ExactCategoricalSolver.Factor source, int[] scope,
+			int[][] sourceValues) {
+			this.source = source;
+			this.scope = scope.clone();
+			this.sourceValues = sourceValues;
+			sourceLocal = new int[scope.length];
+		}
+
+		@Override
+		public synchronized double cost(int[] reducedLocal) {
+			map(reducedLocal);
+			return source.cost(sourceLocal);
+		}
+
+		protected void map(int[] reducedLocal) {
+			for(int position = 0; position < scope.length; position++)
+				sourceLocal[position] = reducedLocal[position] < 0 ? -1
+					: sourceValues[scope[position]][reducedLocal[position]];
+		}
+	}
+
+	private static final class PartialSupportedValueEvaluator extends SupportedValueEvaluator
+		implements ExactCategoricalSolver.PartialHardCostFunction {
+		private PartialSupportedValueEvaluator(ExactCategoricalSolver.Factor source, int[] scope,
+			int[][] sourceValues) {
+			super(source, scope, sourceValues);
+		}
+
+		@Override
+		public synchronized ExactCategoricalSolver.PartialTruth partialTruth(int[] reducedLocal) {
+			map(reducedLocal);
+			return source.partialTruth(sourceLocal);
+		}
+	}
 
 	private ExactPhysicalReducedSolver() { }
 
@@ -708,12 +748,10 @@ final class ExactPhysicalReducedSolver {
 					reducedFactors.add(factor);
 					continue;
 				}
-				int[] sourceLocal = new int[scope.length];
-				reducedFactors.add(ExactCategoricalSolver.Factor.lazy(reducedScope, reducedLocal -> {
-					for(int position = 0; position < scope.length; position++)
-						sourceLocal[position] = sourceValues[scope[position]][reducedLocal[position]];
-					return factor.cost(sourceLocal);
-				}));
+				ExactCategoricalSolver.CostFunction evaluator = factor.supportsPartialTruth()
+					? new PartialSupportedValueEvaluator(factor, scope, sourceValues)
+					: new SupportedValueEvaluator(factor, scope, sourceValues);
+				reducedFactors.add(ExactCategoricalSolver.Factor.lazy(reducedScope, evaluator));
 			}
 		}
 		if(supportOrdinal != supportFactors.size())

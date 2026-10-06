@@ -956,7 +956,9 @@ final class ExactPhysicalModel {
 					for(InputAuthority authority : authorities) {
 						List<InputAuthority> binding = new ArrayList<>(prefix);
 						binding.add(authority);
-						expanded.add(List.copyOf(binding));
+						// Conflicting exact pools cannot be reconciled by another input.
+						if(hasOneExactConsumerAnchor(binding))
+							expanded.add(List.copyOf(binding));
 					}
 				perLinkProducts = List.copyOf(expanded);
 			}
@@ -992,7 +994,9 @@ final class ExactPhysicalModel {
 		}
 		for(List<InputAuthority> group : choices.get(index)) {
 			selected.addAll(group);
-			expandAuthorityGroups(choices, index + 1, selected, result);
+			// Apply the same leaf legality rule before expanding its remaining axes.
+			if(hasOneExactConsumerAnchor(selected))
+				expandAuthorityGroups(choices, index + 1, selected, result);
 			for(int remove = 0; remove < group.size(); remove++)
 				selected.remove(selected.size() - 1);
 		}
@@ -1220,7 +1224,51 @@ final class ExactPhysicalModel {
 				observations[position] = keys;
 			}
 			ExactCategoricalSolver.Factor factor = ExactCategoricalSolver.Factor.lazy(
-				scope.stream().map(DecisionDomain::variable).toList(), values -> {
+				scope.stream().map(DecisionDomain::variable).toList(), new ExactCategoricalSolver.PartialHardCostFunction() {
+				@Override public ExactCategoricalSolver.PartialTruth partialTruth(int[] values) {
+					if(values[0] >= 0) {
+						Alternative selectedConsumer = consumer.alternatives().get(values[0]);
+						if(selectedConsumer.state().execType() == ExecType.CP
+							&& selectedConsumer.state().output() == FederatedOutput.LOUT)
+							return ExactCategoricalSolver.PartialTruth.ALL_ZERO;
+					}
+					Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
+					for(int position = 0; position < scope.size(); position++)
+						if(values[position] >= 0)
+							selected.put(scope.get(position).node().key(), receipts.get(position).get(values[position]));
+					boolean active = false;
+					boolean readersAssigned = true;
+					for(CompiledHopKey reader : relation.readers()) {
+						readersAssigned &= selected.containsKey(reader);
+						CandidateSelectionReceipt receipt = selected.get(reader);
+						active |= receipt != null && receipt.realization().key().layoutKind() == PlacementLayoutKind.VALUE_MAP;
+					}
+					if(!active && readersAssigned)
+						return ExactCategoricalSolver.PartialTruth.ALL_ZERO;
+					if(values[0] < 0)
+						return ExactCategoricalSolver.PartialTruth.UNKNOWN;
+					Alternative selectedConsumer = consumer.alternatives().get(values[0]);
+					if(selectedConsumer.realization() == null)
+						return active ? ExactCategoricalSolver.PartialTruth.ALL_FORBIDDEN
+							: ExactCategoricalSolver.PartialTruth.UNKNOWN;
+					Set<Integer> directPositions = new java.util.TreeSet<>();
+					List<DurableAnchorKey> relocatedPools = new ArrayList<>();
+					for(InputAuthority authority : selectedConsumer.inputAuthorities()) {
+						if(authority.kind() == InputAuthorityKind.RELOCATION)
+							relocatedPools.add(authority.relocationAction().key().durableAnchor());
+						else if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
+							directPositions.add(authority.inputPosition());
+					}
+					var proof = grounding.partialAlignment(selected, directPositions, relocatedPools);
+					// A forbidden row only matters when a selected reader activates VALUE_MAP.
+					// Without that guard, a later all-fixed-map completion bypasses this factor.
+					return proof == JointValueMapRelations.Grounding.PartialAlignment.ALIGNED
+						? ExactCategoricalSolver.PartialTruth.ALL_ZERO
+						: active && proof == JointValueMapRelations.Grounding.PartialAlignment.FORBIDDEN
+							? ExactCategoricalSolver.PartialTruth.ALL_FORBIDDEN : ExactCategoricalSolver.PartialTruth.UNKNOWN;
+				}
+
+				@Override public double cost(int[] values) {
 					Map<CompiledHopKey,CandidateSelectionReceipt> selectedReceipts = new IdentityHashMap<>();
 					for(int position = 0; position < scope.size(); position++) {
 						CandidateSelectionReceipt receipt = receipts.get(position).get(values[position]);
@@ -1269,6 +1317,7 @@ final class ExactPhysicalModel {
 						}
 					}
 					return 0.0;
+				}
 				});
 			factors.add(factor);
 			var encoded = ExactHardFactorObservationDecomposition.create(
