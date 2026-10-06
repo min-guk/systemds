@@ -75,7 +75,7 @@ final class RegionalSearchProblem {
 				? Double.longBitsToDouble(surface.evaluateCanonical(assignment)) : Double.POSITIVE_INFINITY);
 	}
 
-	private RegionalSearchProblem(List<Variable> variables, List<Factor> factors, int decisionCount,
+	RegionalSearchProblem(List<Variable> variables, List<Factor> factors, int decisionCount,
 		ToDoubleFunction<List<Integer>> evaluator) {
 		this.variables = List.copyOf(variables);
 		this.factors = List.copyOf(factors);

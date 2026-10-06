@@ -181,6 +181,8 @@ final class IncrementalRegionalOptimizer {
 			for(int i=0; i<problem.decisionCount(); i++)
 				if(variables.get(i).domainSize()>1 && !incidence.containsKey(variables.get(i))) internalDecisions++;
 		verifyCover(); updateLower(); checkpoint("INITIAL_BOUND");
+		if(!exact() && !(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap()))
+			refineSeedBoundary();
 		boolean scheduled = false;
 		while(true) {
 			if(exact()) {
@@ -207,7 +209,7 @@ final class IncrementalRegionalOptimizer {
 			if(candidate == null) {
 				rememberActiveNeighborhoods();
 				releaseCertifiedCover();
-				refineRejectedNeighborhoods();
+				refineNeighborhoods("CONDITIONAL");
 				return finish("RESOURCE");
 			}
 			// Diagnostics are optional: never reject required DP output because of an evictable cache.
@@ -275,6 +277,27 @@ final class IncrementalRegionalOptimizer {
 	}
 
 	/**
+	 * Improve the feasible seed before constructing any joint boundary message.
+	 * The owned-factor neighborhoods retain every crossing constraint, close encoded
+	 * auxiliaries and fix external original decisions to the incumbent. Conditional
+	 * exact solves may use temporary tables; the persistent cover and its lower bound
+	 * remain unchanged. Recollect neighborhoods after later merges/resource rejection.
+	 */
+	private void refineSeedBoundary() {
+		long start = System.nanoTime();
+		rememberActiveNeighborhoods();
+		scoringNanos += System.nanoTime()-start;
+		try {
+			refineNeighborhoods(null);
+		}
+		finally {
+			rejectedNeighborhoods.clear();
+		}
+		verifyCover();
+		checkpoint("SEED_BOUNDARY");
+	}
+
+	/**
 	 * Retains complete bucket neighborhoods whose persistent boundary message did
 	 * not fit available system resources. Explicit bounded tests may restrict the
 	 * retained diagnostic set. The neighborhood is still a valid
@@ -312,8 +335,8 @@ final class IncrementalRegionalOptimizer {
 			if(!Double.isFinite(potential) || potential <= 0d)
 				continue;
 			TreeSet<Integer> base = ownerOriginals(node.owners);
-			if(base.isEmpty())
-				continue;
+			// A cost owner can contain only a singleton source and an activation
+			// auxiliary. Its mutable consumers are still reachable through the latter.
 			rememberOwnerNeighborhood(ownerOriginalClosure(node.owners,factorIncidence),
 				potential,2,node);
 			rememberOwnerNeighborhood(base,potential,0,node);
@@ -452,11 +475,21 @@ final class IncrementalRegionalOptimizer {
 	}
 
 	/**
-	 * Uses exact conditional improvement after a system-resource rejection. This
-	 * does not publish or retain another boundary message, so it cannot weaken the
-	 * certified lower bound. Elapsed-time checks apply only to explicit bounded tests.
+	 * Uses exact conditional improvement for the initial seed or after a resource
+	 * rejection. No persistent boundary message or lower bound is changed. A null
+	 * phase aggregates the initial pass into one SEED_BOUNDARY checkpoint.
 	 */
-	private void refineRejectedNeighborhoods() {
+	private void refineNeighborhoods(String phase) {
+		long started = System.nanoTime(), priorValidation = validationNanos;
+		try {
+			refineNeighborhoodsImpl(phase);
+		}
+		finally {
+			dpNanos += System.nanoTime()-started-(validationNanos-priorValidation);
+		}
+	}
+
+	private void refineNeighborhoodsImpl(String phase) {
 		long conditionalCells = options.boundedTest()
 			? Math.min(limits.maximumMaterializedCells(),options.maximumRetainedSlots())
 			: limits.maximumMaterializedCells();
@@ -464,6 +497,8 @@ final class IncrementalRegionalOptimizer {
 			conditionalCells);
 		for(Neighborhood neighborhood : rejectedNeighborhoods.values().stream()
 			.sorted(NEIGHBORHOOD_ORDER).toList()) {
+			if(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap())
+				return;
 			if(options.boundedTest() && options.timeMillis() > 0
 				&& (System.nanoTime()-started)/1_000_000 >= options.timeMillis())
 				return;
@@ -497,7 +532,9 @@ final class IncrementalRegionalOptimizer {
 					throw new IllegalStateException("INCREMENTAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
 				for(int index=0; index<neighborhood.block().length; index++)
 					source[neighborhood.block()[index]] = solved.assignmentInVariableOrder().get(index);
-				accept(IncrementalRegionalSeed.lift(root,Arrays.stream(source).boxed().toList(),conditionalLimits));
+				// Conditioning can turn a canonical improvement/tie into a rounded
+				// local tie. Preserve the incumbent unless the full objective improves.
+				accept(IncrementalRegionalSeed.lift(root,Arrays.stream(source).boxed().toList(),conditionalLimits),false);
 			}
 			catch(IllegalArgumentException failure) {
 				if(!RegionalSearchProblem.isResourceLimit(failure))
@@ -505,7 +542,8 @@ final class IncrementalRegionalOptimizer {
 			}
 			if(improvements > priorImprovements)
 				conditionalImprovements++;
-			checkpoint("CONDITIONAL");
+			if(phase != null)
+				checkpoint(phase);
 		}
 	}
 
@@ -682,10 +720,14 @@ final class IncrementalRegionalOptimizer {
 		finally { validationNanos += System.nanoTime() - start; }
 	}
 	private void accept(int[] candidate) {
+		accept(candidate,true);
+	}
+	private void accept(int[] candidate, boolean requireNonIncreasing) {
 		if(Arrays.equals(candidate, incumbent)) return;
 		double objective = validate(candidate);
 		if(objective < lower) throw new IllegalStateException("INCREMENTAL_CANDIDATE_BELOW_PUBLISHED_LOWER");
-		if(objective > upper) throw new IllegalStateException("INCREMENTAL_CONDITIONAL_DP_WORSENED");
+		if(requireNonIncreasing && objective > upper)
+			throw new IllegalStateException("INCREMENTAL_CONDITIONAL_DP_WORSENED");
 		if(objective < upper) { incumbent = candidate; upper = objective; improvements++; }
 	}
 	private void updateLower() {

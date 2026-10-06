@@ -58,9 +58,9 @@ public class IncrementalRegionalOptimizerTest {
 			Factor.dense(List.of(y,z),1,3,4,2),Factor.dense(List.of(x,z),1,4,2,3));
 		var result=run(List.of(x,y,z),factors,List.of(0,0,0),100000,1000000,0,false);
 		// Initial triangle has no private axis. Each complete bucket removes one decision.
-		assertEquals(List.of("BOOTSTRAP","INITIAL_BOUND","MERGE","MERGE","MERGE","EXACT"),
+		assertEquals(List.of("BOOTSTRAP","INITIAL_BOUND","SEED_BOUNDARY","MERGE","MERGE","MERGE","EXACT"),
 			result.checkpoints().stream().map(IncrementalRegionalOptimizer.Checkpoint::phase).toList());
-		assertEquals(List.of(0,0,1,2,3,3),
+		assertEquals(List.of(0,0,0,1,2,3,3),
 			result.checkpoints().stream().map(IncrementalRegionalOptimizer.Checkpoint::internalDecisions).toList());
 	}
 	@Test public void exactLocalTiePreservesCanonicallyCheaperIncumbent() {
@@ -159,8 +159,11 @@ public class IncrementalRegionalOptimizerTest {
 			100,4,0,false,1);
 		assertEquals("RESOURCE",result.stopReason());
 		assertEquals("the sole conditional slot must target the larger feasible reduction",
-			2,result.upper(),0);
-		assertEquals(List.of(0,0,2,2),result.assignment());
+			2,result.checkpoints().stream().filter(checkpoint -> checkpoint.phase().equals("SEED_BOUNDARY"))
+				.findFirst().orElseThrow().upper(),0);
+		// After seed improvement, resource fallback recollects the remaining low-cost region.
+		assertEquals(0,result.upper(),0);
+		assertEquals(List.of(1,1,2,2),result.assignment());
 		assertEquals(1,result.checkpoints().stream()
 			.filter(checkpoint -> checkpoint.phase().equals("CONDITIONAL")).count());
 	}
