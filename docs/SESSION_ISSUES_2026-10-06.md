@@ -423,3 +423,12 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **최종 검증**: 최신 소스 Maven compile/test/jar, 89개 클래스 **699 tests PASS**, immutable engine의 **28/28 Docker compile PASS**, 실제 2-worker **6/6 PASS**, fallback=repair=0. 소스/3,713 classes/JAR hash 및 XML/command/result freshness 확인.
 - **실험 결과**: 28개 graph/coarse 후보 수 유지. Local 예상 비용 4개 감소·22개 유지·2개 증가. 두 증가는 5% TARGET_REACHED에 따른 Local 결과이며 Global exact 성공으로 표시하지 않는다. 종료는 TARGET_REACHED 22, RESOURCE 4, EXACT 2, TIME 0. 실제 heap 소진의 L2SVM W1도 typed resource 처리 후 compile/lowering PASS.
 - **잔여 한계/근거**: Local 5% 품질 조건 유지, JVM/Java 표현 한계 유지, 모든 metadata/native OOME 정규화를 보장하지 않음. [최종 정책 보고서](FEDPLANNER_RESOURCE_POLICY_2026-10-06.md), [validation](experiments/resource-policy-20261006/validation.json). 기존 미커밋 작업 보존, 이번 요청에서 commit/push 없음.
+
+
+## Global 14×W1/W3 확인 및 origin/main 게시 — 진행 중
+
+- **요청**: 남은 Global 전체 실험을 확인하고 이번 세션의 코드·테스트·문서를 origin/main에 commit/push한다.
+- **통합**: 원격의 `58145e7366` Local boundary pruning과 `d57bca99d9` unknown-shape golden 검증을 보존하여 재base했다. 동일 파일 충돌에서 production 무예산 경로와 pruning counters, explicit baseline의 cut 비활성화를 함께 보존했다. `separateGlobalCalls=0` trace 누락도 복원했다.
+- **검증 범위**: 95개 클래스의 통합 회귀, 동일 Docker fixture/cost 환경의 Global 28건 및 Local 28건, 실제 worker 6건. Global probe는 `planner=Exact`를 요구하고 whole-program commit 확인 후에만 성공을 기록한다. Lowering 후 별도 domain 재구성은 하지 않는다.
+- **규칙/위험**: 고정 planner budget·runtime fallback·후보 축소를 추가하지 않는다. 실제 JVM/표현 한계 실패를 Global 부분 성공으로 바꾸지 않는다. 원격 변경과의 상호작용은 pruning/regional/kernel/unknown-shape 회귀 및 Docker로 검증한다.
+- **게시 범위**: src/scripts/docs 포함, 이전 임시 `verification/` 로그는 untracked로 보존한다. 원본 근거 `/home/mchoi/fedplanner-global-publish-20261006/`.
